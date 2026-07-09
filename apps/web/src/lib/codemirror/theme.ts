@@ -11,7 +11,7 @@ export const virtuesTheme = EditorView.theme({
 	'&': {
 		fontFamily: 'var(--editor-font-family, var(--font-sans, ui-sans-serif, system-ui, -apple-system, sans-serif))',
 		fontSize: 'var(--editor-font-size, 1rem)',
-		lineHeight: '1.7',
+		lineHeight: 'var(--editor-line-height, 1.7)',
 		color: 'var(--color-foreground)',
 	},
 	'& .cm-content': {

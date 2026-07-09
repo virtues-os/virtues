@@ -24,16 +24,18 @@ interface PickerState {
 /**
  * Insert an entity reference at the picker position and close the picker.
  *
- * Density is chosen by context (the `!` marker = embed, matching image embeds):
- * - alone on an otherwise-empty line → `![@Label](url)` (block embed card)
- * - inline within text            → `[@Label](url) ` (pill)
- * Either can be toggled later via the ref's right-click menu.
+ * Drive files (entity_type === 'file') insert as MEDIA syntax `![Label](url)`
+ * with no `@`, so the media widgets render them as images/audio/video/file
+ * cards (type is detected from the label's extension, since the download URL
+ * has none). Real entities are always inline links `[@Label](url)` — there is
+ * no entity block card; richness lives on the entity's own page + the hover.
  */
 export function insertRef(
 	view: EditorView,
 	from: number,
 	label: string,
 	href: string,
+	entityType?: string,
 ): void {
 	const to = view.state.selection.main.head;
 	const line = view.state.doc.lineAt(from);
@@ -41,7 +43,14 @@ export function insertRef(
 	const after = view.state.doc.sliceString(to, line.to);
 	const alone = before.trim() === '' && after.trim() === '';
 
-	const insert = alone ? `![@${label}](${href})` : `[@${label}](${href}) `;
+	let insert: string;
+	if (entityType === 'file') {
+		// Media embed — no `@` marker; media widgets pick image/audio/video/file.
+		insert = alone ? `![${label}](${href})` : `![${label}](${href}) `;
+	} else {
+		// Entities are always inline links (no block card).
+		insert = alone ? `[@${label}](${href})` : `[@${label}](${href}) `;
+	}
 	view.dispatch({
 		changes: { from, to, insert },
 		selection: { anchor: from + insert.length },

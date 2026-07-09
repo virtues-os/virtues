@@ -93,6 +93,16 @@
 	text-decoration: underline;
 }
 
+/* ==highlight== — theme-aware; the highlight color comes from the active theme
+   (honors the no-hardcoded-colors rule), spanning wrapped lines cleanly. */
+.cm-highlight {
+	background-color: var(--color-highlight, rgba(250, 224, 130, 0.45));
+	border-radius: 2px;
+	padding: 0 1px;
+	box-decoration-break: clone;
+	-webkit-box-decoration-break: clone;
+}
+
 .cm-inline-code {
 	font-family: var(--font-mono, ui-monospace, monospace);
 	font-size: 0.875em;
@@ -127,118 +137,25 @@
 }
 
 /* =============================================================================
-   LIVE PREVIEW — ENTITY LINKS (pill chips with type-specific icon)
-   ============================================================================= */
-
-/* Consumes the shared ref-pill tokens from styles/ref-badge.css so the
-   editor pill stays identical to the chat/composer pills. Layout differs
-   (inline-flex, for icon+text alignment); appearance does not. */
-.cm-entity-link {
-	display: inline-flex;
-	align-items: center;
-	gap: 3px;
-	padding: 1px 7px 1px 5px;
-	margin: 0 1px;
-	border-radius: var(--ref-pill-radius);
-	background-color: var(--ref-pill-bg);
-	color: var(--ref-pill-color);
-	text-decoration: none;
-	cursor: pointer;
-	font-size: var(--ref-pill-font-size);
-	font-weight: normal;
-	transition: var(--ref-pill-transition);
-	border: none;
-	font-family: inherit;
-	user-select: none;
-	vertical-align: baseline;
-}
-
-.cm-entity-link:hover {
-	background-color: var(--ref-pill-bg-hover);
-	text-decoration: none;
-}
-
-.cm-entity-icon {
-	display: inline-flex;
-	align-items: center;
-	flex-shrink: 0;
-	opacity: 0.8;
-}
-
-.cm-entity-text {
-	overflow: hidden;
-	text-overflow: ellipsis;
-	white-space: nowrap;
-}
-
-/* =============================================================================
-   LIVE PREVIEW — EXTERNAL LINKS (ref pill, favicon as leading icon)
-   ============================================================================= */
-
-/* Same ref-pill shape as entity/file pills; the favicon is the leading glyph. */
-.cm-external-link {
-	display: inline-flex;
-	align-items: center;
-	gap: 3px;
-	padding: 1px 7px 1px 5px;
-	margin: 0 1px;
-	border-radius: var(--ref-pill-radius);
-	background-color: var(--ref-pill-bg);
-	color: var(--ref-pill-color);
-	text-decoration: none;
-	cursor: pointer;
-	font-size: var(--ref-pill-font-size);
-	transition: var(--ref-pill-transition);
-	vertical-align: baseline;
-}
-
-.cm-external-link:hover {
-	background-color: var(--ref-pill-bg-hover);
-	text-decoration: none;
-}
-
-.cm-external-icon {
-	display: inline-flex;
-	align-items: center;
-	flex-shrink: 0;
-	width: 14px;
-	height: 14px;
-	color: var(--color-foreground-muted);
-}
-
-.cm-external-icon svg {
-	width: 14px;
-	height: 14px;
-}
-
-.cm-external-favicon {
-	display: block;
-	width: 12px;
-	height: 12px;
-	border-radius: 2px;
-}
-
-/* =============================================================================
-   LIVE PREVIEW — INTERNAL LINKS (simple colored text)
-   ============================================================================= */
-
-.cm-internal-link {
-	color: var(--color-primary);
-	text-decoration: none;
-	cursor: pointer;
-}
-
-.cm-internal-link:hover {
-	text-decoration: underline;
-}
-
-/* =============================================================================
-   LIVE PREVIEW — LINK TEXT (shared)
-   ============================================================================= */
-
-.cm-link-text {
+   LIVE PREVIEW — REFERENCES (inline links: plain, Wikipedia-style)
+   =============================================================================
+   Every inline ref — entity, file, internal, or external — renders as a plain
+   underlined link that belongs to the prose: no pill, no chip, no favicon. The
+   target/type distinctions live in the hover preview and the block embed, not
+   in inline chrome. Colour inherits the surrounding text; the underline is a
+   muted hairline that firms up on hover. */
+.cm-ref-link {
 	color: inherit;
-	text-decoration: inherit;
+	text-decoration: underline;
+	text-decoration-color: color-mix(in srgb, currentColor 32%, transparent);
+	text-decoration-thickness: 1px;
+	text-underline-offset: 2px;
+	cursor: pointer;
+	transition: text-decoration-color 0.12s ease;
+}
+
+.cm-ref-link:hover {
+	text-decoration-color: currentColor;
 }
 
 /* =============================================================================

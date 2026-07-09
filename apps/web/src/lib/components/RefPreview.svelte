@@ -106,6 +106,12 @@
 		animation: ref-preview-in 0.12s ease-out;
 	}
 
+	/* RefCard is boxless (padding normally supplied by the embed shell); the
+	   floating popover supplies its own. */
+	.ref-preview :global(.ref-card) {
+		padding: 11px 12px;
+	}
+
 	@keyframes ref-preview-in {
 		from {
 			opacity: 0;

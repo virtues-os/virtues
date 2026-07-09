@@ -1,8 +1,20 @@
 <script lang="ts">
-	// Shared reference-card body — per-type content, no shell. Used by both
-	// RefPreview (floating, on hover) and RefEmbed (block, in the document) so the
-	// two densities never diverge. Fetches a normalized summary for entity targets;
+	// Shared reference body — per-type content, no shell. Used by both RefPreview
+	// (floating, on hover) and RefEmbed (block, in the document) so the two
+	// densities never diverge. Fetches a normalized summary for entity targets;
 	// files/links render from what the ref already carries.
+	//
+	// A `!` embed transcludes the RICH information of the thing, so this is
+	// image-forward and shows the full fact set (never capped). Three layouts,
+	// chosen by what the thing actually has:
+	//   • figure   — scene/content media as a full-width hero + caption below:
+	//                a place's map, a file image, a place/thing cover photo.
+	//   • portrait — an identity image beside the facts: a person's photo (round)
+	//                or an org's logo (rounded square).
+	//   • line     — no image: a quiet glyph + title + facts.
+	// Titles inherit the page font (--editor-font-family) at normal weight;
+	// captions are quiet natural case. Full facts shown; deeper transclusion
+	// (a page's text, an org's people) is a later step needing new data.
 	import Icon from "$lib/components/Icon.svelte";
 	import MovementMap from "$lib/components/timeline/MovementMap.svelte";
 	import { refIcon } from "$lib/utils/refRoutes";
@@ -33,7 +45,7 @@
 
 	const IMAGE_EXT = /\.(jpe?g|png|gif|webp|svg|bmp|ico|heic)$/i;
 	const isImage = $derived((mimeType?.startsWith("image/") ?? false) || IMAGE_EXT.test(label));
-	const thumbnailUrl = $derived(
+	const fileImageUrl = $derived(
 		type === "file" && isImage && id ? `/api/drive/files/${id}/download` : "",
 	);
 
@@ -55,147 +67,186 @@
 	const typeLabel = $derived((type && TYPE_LABEL[type]) || "Reference");
 
 	const title = $derived(summary?.name || label);
-	// Meta line = type (or the site domain for links). The per-type facts below
-	// already carry relationship/category, so we don't repeat it as a subtitle.
-	const meta = $derived(domain || typeLabel);
-	const avatar = $derived(summary?.avatarUrl || "");
+	const cover = $derived(summary?.avatarUrl || "");
+
+	// Caption: type/domain, then address, then every fact value we fetched.
+	// Quiet, natural case; may wrap to a second line.
+	const meta = $derived(
+		[
+			domain || typeLabel,
+			summary?.address,
+			...(summary?.facts?.map((f) => f.value) ?? []),
+		]
+			.filter(Boolean)
+			.join(" · "),
+	);
+
+	const hasMap = $derived(type === "place" && !!summary?.coords);
+	// Scene/content media → full-width figure: a file image, or a place/thing
+	// cover photo (when there's no map to show instead).
+	const figureImage = $derived(
+		fileImageUrl || (!hasMap && cover && (type === "place" || type === "thing") ? cover : ""),
+	);
+
+	// Monogram fallback so an image-less person/org still has a visual anchor
+	// with real mass (Gmail/Notion style) instead of a floating glyph.
+	function initials(name: string): string {
+		const parts = name.trim().split(/\s+/).filter(Boolean);
+		if (!parts.length) return "?";
+		if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase();
+		return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase();
+	}
+	const usesMonogram = $derived(!cover && (type === "person" || type === "org"));
 </script>
 
-<div class="ref-card">
-	{#if thumbnailUrl}
-		<div class="ref-card-media"><img src={thumbnailUrl} alt={title} loading="lazy" /></div>
-	{/if}
-
-	{#if type === "place" && summary?.coords}
-		<!-- Real map via the app's shared Leaflet/CartoDB component, non-interactive
-		     so clicks pass through to the card. -->
-		<div class="ref-card-map">
+{#if hasMap && summary?.coords}
+	<figure class="ref-card ref-figure">
+		<div class="ref-figure-media ref-figure-map">
 			<MovementMap
 				stops={[{ lat: summary.coords.lat, lng: summary.coords.lng, label: title }]}
-				height={120}
-				zoom={14}
+				height={150}
+				zoom={13}
 				interactive={false}
 			/>
 		</div>
-	{/if}
-
-	<div class="ref-card-body">
-		<div class="ref-card-header">
-			{#if avatar}
-				<img class="ref-card-avatar" src={avatar} alt="" />
-			{:else}
-				<Icon icon={refIcon(type, { mimeType, filename: label })} width="15" />
-			{/if}
-			<span class="ref-card-title">{title}</span>
+		<figcaption class="ref-caption">
+			<span class="ref-title">{title}</span>
+			<span class="ref-meta">{meta}</span>
+		</figcaption>
+	</figure>
+{:else if figureImage}
+	<figure class="ref-card ref-figure">
+		<div class="ref-figure-media"><img src={figureImage} alt={title} loading="lazy" /></div>
+		<figcaption class="ref-caption">
+			<span class="ref-title">{title}</span>
+			<span class="ref-meta">{meta}</span>
+		</figcaption>
+	</figure>
+{:else}
+	<div class="ref-card ref-line">
+		{#if cover}
+			<img class="ref-anchor ref-photo" class:round={type === "person"} src={cover} alt="" />
+		{:else if usesMonogram}
+			<span class="ref-anchor ref-monogram" class:round={type === "person"}>{initials(title)}</span>
+		{:else}
+			<span class="ref-anchor ref-tile">
+				<Icon icon={refIcon(type, { mimeType, filename: label })} width="18" />
+			</span>
+		{/if}
+		<div class="ref-line-text">
+			<span class="ref-title">{title}</span>
+			<span class="ref-meta ref-meta-wrap">{meta}</span>
 		</div>
-
-		<div class="ref-card-meta">{meta}</div>
-
-		{#if summary?.address}
-			<div class="ref-card-address">{summary.address}</div>
-		{/if}
-
-		{#if summary?.facts?.length}
-			<dl class="ref-card-facts">
-				{#each summary.facts as f}
-					<div class="ref-card-fact">
-						<dt>{f.label}</dt>
-						<dd>{f.value}</dd>
-					</div>
-				{/each}
-			</dl>
-		{/if}
 	</div>
-</div>
+{/if}
 
 <style>
-	.ref-card {
-		display: flex;
-		flex-direction: column;
-		/* Reset to the UI font — mounted inside the serif prose editor, the card
-		   would otherwise inherit large serif type. */
-		font-family: var(--font-sans, ui-sans-serif, system-ui, sans-serif);
-		font-size: 0.8125rem;
-		line-height: 1.4;
-	}
-
-	.ref-card-media {
-		width: 100%;
-		max-height: 150px;
-		overflow: hidden;
-		background: var(--color-surface-sunken, var(--color-border));
-	}
-	.ref-card-media img {
-		display: block;
-		width: 100%;
-		max-height: 150px;
-		object-fit: cover;
-	}
-
-	.ref-card-map {
-		width: 100%;
-		border-bottom: 1px solid var(--color-border);
-		background: var(--color-surface-sunken, var(--color-border));
-		pointer-events: none;
-	}
-
-	.ref-card-body {
-		padding: 8px 10px;
-	}
-
-	.ref-card-header {
-		display: flex;
-		align-items: center;
-		gap: 6px;
+	/* Title belongs to the writing — inherits the reader's page font at normal
+	   weight; never bold, never a hardcoded sans. */
+	.ref-title {
+		font-family: var(--editor-font-family, var(--font-serif, Georgia, serif));
+		font-size: 1.0625rem;
+		font-weight: 400;
 		color: var(--color-foreground);
-	}
-	.ref-card-avatar {
-		width: 20px;
-		height: 20px;
-		border-radius: 50%;
-		object-fit: cover;
-		flex-shrink: 0;
-	}
-	.ref-card-title {
-		font-weight: 500;
-		font-size: 0.8125rem;
+		line-height: 1.25;
 		overflow: hidden;
 		text-overflow: ellipsis;
 		white-space: nowrap;
 	}
-
-	.ref-card-meta {
-		margin-top: 2px;
-		font-size: 0.6875rem;
+	/* Caption — quiet natural case in the UI sans. */
+	.ref-meta {
+		font-family: var(--font-sans, ui-sans-serif, system-ui, sans-serif);
+		font-size: 0.75rem;
+		font-weight: 400;
 		color: var(--color-foreground-subtle);
+		overflow: hidden;
+		text-overflow: ellipsis;
+		white-space: nowrap;
 	}
-	.ref-card-address {
-		margin-top: 4px;
-		font-size: 0.6875rem;
-		color: var(--color-foreground-muted);
+	/* In the row layouts the caption may wrap to a second line (more facts). */
+	.ref-meta-wrap {
+		white-space: normal;
+		display: -webkit-box;
+		-webkit-line-clamp: 2;
+		line-clamp: 2;
+		-webkit-box-orient: vertical;
 	}
 
-	.ref-card-facts {
-		margin: 6px 0 0;
+	/* ---- Figure (map / image / cover): media full column-width, caption below ---- */
+	.ref-figure {
+		margin: 0;
+		display: flex;
+		flex-direction: column;
+	}
+	.ref-figure-media {
+		width: 100%;
+		border-radius: 6px;
+		overflow: hidden;
+		background: var(--color-surface-sunken, var(--color-border));
+	}
+	.ref-figure-media img {
+		display: block;
+		width: 100%;
+		/* Fixed height so the block reserves its space at first paint (before the
+		   image loads) — avoids the reflow that mis-positions lines below it. */
+		height: 200px;
+		object-fit: cover;
+	}
+	.ref-figure-map {
+		pointer-events: none;
+	}
+	.ref-caption {
 		display: flex;
 		flex-direction: column;
 		gap: 2px;
+		margin-top: 8px;
 	}
-	.ref-card-fact {
+
+	/* ---- Line (person / org / page / thing without scene media) ----
+	   Every row carries a 44px visual anchor: a photo/logo if we have one, else
+	   a monogram (person/org) or a filled glyph tile — so nothing is a bare,
+	   weightless icon. */
+	.ref-line {
 		display: flex;
-		justify-content: space-between;
+		align-items: center;
 		gap: 12px;
-		font-size: 0.6875rem;
 	}
-	.ref-card-fact dt {
+	.ref-anchor {
+		width: 44px;
+		height: 44px;
+		border-radius: 9px;
+		flex-shrink: 0;
+	}
+	.ref-anchor.round {
+		border-radius: 50%;
+	}
+	.ref-photo {
+		object-fit: cover;
+	}
+	.ref-monogram {
+		display: inline-flex;
+		align-items: center;
+		justify-content: center;
+		background: var(--color-surface-sunken, var(--color-border));
+		color: var(--color-foreground-muted);
+		font-family: var(--font-sans, ui-sans-serif, system-ui, sans-serif);
+		font-size: 0.9375rem;
+		font-weight: 500;
+		letter-spacing: 0.02em;
+		user-select: none;
+	}
+	.ref-tile {
+		display: inline-flex;
+		align-items: center;
+		justify-content: center;
+		background: var(--color-surface-sunken, var(--color-border));
 		color: var(--color-foreground-subtle);
 	}
-	.ref-card-fact dd {
-		margin: 0;
-		color: var(--color-foreground);
-		text-align: right;
-		overflow: hidden;
-		text-overflow: ellipsis;
-		white-space: nowrap;
+	.ref-line-text {
+		flex: 1;
+		min-width: 0;
+		display: flex;
+		flex-direction: column;
+		gap: 3px;
 	}
 </style>

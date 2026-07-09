@@ -1,8 +1,9 @@
 <script lang="ts">
 	import { onMount, onDestroy } from "svelte";
 	import { EditorView, keymap } from "@codemirror/view";
-	import { Prec } from "@codemirror/state";
+	import { Prec, Compartment } from "@codemirror/state";
 	import { createCodeMirrorEditor } from "$lib/codemirror/editor";
+	import { extractHeadings, type PageHeading } from "$lib/codemirror/outline";
 	import {
 		focusMode,
 		focusModeCompartment,
@@ -48,6 +49,10 @@
 		initialContent?: string;
 		/** Called when the document changes with computed stats */
 		onDocChange?: (stats: DocStats) => void;
+		/** Called with the h1–h3 outline whenever the document changes */
+		onOutline?: (headings: PageHeading[]) => void;
+		/** Exposes the live EditorView (null on teardown) for scroll/TOC control */
+		onViewReady?: (view: EditorView | null) => void;
 		placeholder?: string;
 		/** Optional Yjs document for real-time collaboration */
 		yjsDoc?: YjsDocument;
@@ -64,6 +69,8 @@
 	let {
 		initialContent = "",
 		onDocChange,
+		onOutline,
+		onViewReady,
 		placeholder: placeholderText,
 		yjsDoc,
 		isConnected = true,
@@ -74,6 +81,12 @@
 
 	let editorContainer: HTMLDivElement;
 	let view: EditorView | null = null;
+
+	// Browser spell-check on the editor's contenteditable, toggled from the toolbar.
+	const spellcheckCompartment = new Compartment();
+	function spellcheckExt(on: boolean) {
+		return EditorView.contentAttributes.of({ spellcheck: on ? "true" : "false" });
+	}
 	let cleanupListeners: (() => void) | null = null;
 
 	// --- Entity Picker state ---
@@ -153,12 +166,13 @@
 		if (onDocChange) {
 			onDocChange(computeStats(content));
 		}
+		onOutline?.(extractHeadings(content));
 	}
 
 	// --- Entity Picker handlers ---
 	function handleEntitySelect(entity: EntityResult) {
 		if (!view) return;
-		insertRef(view, entityPickerFrom, entity.name, entity.url);
+		insertRef(view, entityPickerFrom, entity.name, entity.url, entity.entity_type);
 		entityPickerOpen = false;
 	}
 
@@ -378,6 +392,7 @@
 				selectionToolbarExt,
 				mediaPasteExt,
 				focusModeCompartment.of(focusMode(pageDisplay.focusMode)),
+				spellcheckCompartment.of(spellcheckExt(pageDisplay.spellcheck)),
 				// High-precedence editor keymaps (Esc must beat default handlers
 				// when an AI session is running).
 				Prec.high(
@@ -440,6 +455,9 @@
 		// same AI presence animation as the inline session.
 		if (pageId) registerPageEditor(pageId, view);
 
+		// Expose the view so the table-of-contents can scroll + scroll-spy.
+		onViewReady?.(view);
+
 		cleanupListeners = () => {
 			editorContainer.removeEventListener("slash-command-image", handleImageCommand);
 			editorContainer.removeEventListener("slash-command-ai", handleAiCommand);
@@ -460,11 +478,20 @@
 		}
 	});
 
+	// Live-toggle spell-check from the toolbar.
+	$effect(() => {
+		const on = pageDisplay.spellcheck;
+		if (view) {
+			view.dispatch({ effects: spellcheckCompartment.reconfigure(spellcheckExt(on)) });
+		}
+	});
+
 	onDestroy(() => {
 		abortAiSession();
 		cleanupListeners?.();
 		cleanupListeners = null;
 		if (pageId && view) unregisterPageEditor(pageId, view);
+		onViewReady?.(null);
 		view?.destroy();
 		view = null;
 	});

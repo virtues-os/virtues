@@ -13,7 +13,10 @@
 	import PageCoverImage from "$lib/components/pages/PageCoverImage.svelte";
 	import PageStatusBar from "$lib/components/pages/PageStatusBar.svelte";
 	import PageToolbar from "$lib/components/pages/PageToolbar.svelte";
+	import PageOutline from "$lib/components/pages/PageOutline.svelte";
 	import ReferencesPanel from "$lib/components/pages/ReferencesPanel.svelte";
+	import type { PageHeading } from "$lib/codemirror/outline";
+	import type { EditorView } from "@codemirror/view";
 	import { Popover } from "$lib/floating";
 	import {
 		createPageShare,
@@ -117,6 +120,8 @@
 	// References (backlinks) — pages that link to this one. Loaded lazily; the
 	// panel is a quiet, summonable right-hand rail, not always-on chrome.
 	let showReferences = $state(false);
+	let outline = $state<PageHeading[]>([]);
+	let editorView = $state<EditorView | null>(null);
 	let backlinks = $state<Backlink[]>([]);
 	let backlinksLoading = $state(false);
 	let backlinksLoadedFor = $state<string | null>(null);
@@ -597,7 +602,9 @@
 		</div>
 	{:else if pageData}
 		<div class="page-layout">
-			<!-- Top Action Bar - flush to window -->
+			<!-- Top bar: TOC (left) + page actions (right), one classic row -->
+			<div class="page-topbar">
+			<PageOutline headings={outline} view={editorView} />
 			<PageToolbar
 				{icon}
 				{coverUrl}
@@ -624,6 +631,7 @@
 				onCopyMarkdown={copyMarkdown}
 				onDelete={deletePage}
 			/>
+			</div>
 
 			<!-- Body: scrollable editor + optional References rail -->
 			<div class="page-body">
@@ -632,6 +640,7 @@
 				class="page-content"
 				style:--editor-font-family={pageDisplay.fontFamily}
 				style:--editor-font-size={pageDisplay.fontSize}
+				style:--editor-line-height={pageDisplay.lineHeight}
 			>
 				<!-- Cover Image - above title, full bleed -->
 				{#if coverUrl}
@@ -716,6 +725,8 @@
 								<CodeMirrorEditor
 									initialContent={content}
 									onDocChange={handleDocChange}
+									onOutline={(h) => (outline = h)}
+									onViewReady={(v) => (editorView = v)}
 									placeholder="Start writing, or press / for commands…"
 									{yjsDoc}
 									{isConnected}
@@ -763,6 +774,18 @@
 		flex-direction: column;
 		height: 100%;
 		min-height: 0;
+	}
+
+	/* One classic top bar: TOC trigger (left) + page actions (right). Relative so
+	   the outline drawer anchors to it and spans the full width. */
+	.page-topbar {
+		position: relative;
+		display: flex;
+		align-items: center;
+		z-index: 20;
+	}
+	.page-topbar :global(.page-toolbar) {
+		flex: 1;
 	}
 
 	/* Body - editor + optional references rail, side by side */

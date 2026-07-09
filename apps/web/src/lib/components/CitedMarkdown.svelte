@@ -5,10 +5,8 @@
 	import InlineCitation from './citations/InlineCitation.svelte';
 	import Ref from './Ref.svelte';
 	import LinkChip from './LinkChip.svelte';
-	import RefEmbed from './RefEmbed.svelte';
 	import MarkdownCodeBlock from './MarkdownCodeBlock.svelte';
-	import { parseEntityRoute, getEntityTypeFromRoute } from '$lib/utils/refRoutes';
-	import { windowShellStore } from '$lib/stores/window-shell.svelte';
+	import { parseEntityRoute } from '$lib/utils/refRoutes';
 	import type { BundledTheme } from 'shiki';
 
 	interface Props {
@@ -170,16 +168,12 @@
 			{#snippet image({ token }: { token: any })}
 				{@const url = token?.href}
 				{@const label = (token?.text ?? '').replace(/^@/, '')}
-				{@const isRefEmbed = url ? parseEntityRoute(url) !== null : false}
-				{#if isRefEmbed}
-					<!-- `![@X](/entity/id)` is the embed density (`!` marker), same as the
-					     editor. Streamdown parses it as an image; we render the block card. -->
-					<RefEmbed
-						type={getEntityTypeFromRoute(url)}
-						{label}
-						{url}
-						onOpen={() => windowShellStore.openRouteBeside(url, label)}
-					/>
+				{@const isEntity = url ? parseEntityRoute(url) !== null : false}
+				{#if isEntity}
+					<!-- `![@X](/entity/id)` — entities are always inline links now (no
+					     card), same as the editor. Streamdown parses it as an image;
+					     we render the inline ref instead. -->
+					<Ref displayName={label} {url} />
 				{:else}
 					<img src={url} alt={token?.text ?? ''} loading="lazy" style="max-width: 100%; height: auto;" />
 				{/if}
