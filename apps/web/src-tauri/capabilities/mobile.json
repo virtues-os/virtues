@@ -8,6 +8,7 @@
     "core:default",
     "core:window:allow-create",
     "location-probe:default",
-    "reach:default"
+    "reach:default",
+    "health:default"
   ]
 }
