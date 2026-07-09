@@ -30,10 +30,25 @@ function detectViewport(): boolean {
 
 // Shell flag is sticky (a phone never becomes a desktop mid-session); the
 // viewport fallback is reactive so dev-browser resizing flips the chrome.
+function detectPaired(): boolean {
+	if (typeof window === "undefined") return false;
+	return (window as unknown as { __VIRTUES_PAIRED__?: boolean }).__VIRTUES_PAIRED__ === true;
+}
+
+const ONBOARDING_KEY = "virtues-onboarding-done";
+
 const shellMobile = detectShellFlag();
+const shellPaired = detectPaired();
 let viewportMobile = $state(detectViewport());
 let menuOpen = $state(false);
 let menuView = $state<MenuView>('root');
+// First-run "Set up your streams" flow — shown once on the paired phone shell.
+let onboardingOpen = $state(
+	shellMobile &&
+		shellPaired &&
+		typeof localStorage !== "undefined" &&
+		localStorage.getItem(ONBOARDING_KEY) !== "true"
+);
 
 if (typeof window !== "undefined" && !shellMobile) {
 	window.addEventListener("resize", () => {
@@ -71,5 +86,18 @@ export const mobileLayout = {
 	openDevice() {
 		menuView = 'device';
 		menuOpen = true;
+	},
+	/** First-run stream-setup flow (paired native shell, once). */
+	get onboardingOpen(): boolean {
+		return onboardingOpen;
+	},
+	/** Dismiss onboarding (Done or Skip) and don't show it again. */
+	finishOnboarding() {
+		onboardingOpen = false;
+		if (typeof localStorage !== "undefined") localStorage.setItem(ONBOARDING_KEY, "true");
+	},
+	/** Re-open onboarding on demand (e.g. from the device screen). */
+	openOnboarding() {
+		onboardingOpen = true;
 	},
 };
