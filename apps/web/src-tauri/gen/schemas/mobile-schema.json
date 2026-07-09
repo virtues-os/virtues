@@ -2193,6 +2193,48 @@
           "markdownDescription": "Denies the unminimize command without any pre-configured scope."
         },
         {
+          "description": "Default permissions for the health plugin\n#### This default permission set includes:\n\n- `allow-enable`\n- `allow-resume`\n- `allow-status`",
+          "type": "string",
+          "const": "health:default",
+          "markdownDescription": "Default permissions for the health plugin\n#### This default permission set includes:\n\n- `allow-enable`\n- `allow-resume`\n- `allow-status`"
+        },
+        {
+          "description": "Enables the enable command without any pre-configured scope.",
+          "type": "string",
+          "const": "health:allow-enable",
+          "markdownDescription": "Enables the enable command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the resume command without any pre-configured scope.",
+          "type": "string",
+          "const": "health:allow-resume",
+          "markdownDescription": "Enables the resume command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the status command without any pre-configured scope.",
+          "type": "string",
+          "const": "health:allow-status",
+          "markdownDescription": "Enables the status command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the enable command without any pre-configured scope.",
+          "type": "string",
+          "const": "health:deny-enable",
+          "markdownDescription": "Denies the enable command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the resume command without any pre-configured scope.",
+          "type": "string",
+          "const": "health:deny-resume",
+          "markdownDescription": "Denies the resume command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the status command without any pre-configured scope.",
+          "type": "string",
+          "const": "health:deny-status",
+          "markdownDescription": "Denies the status command without any pre-configured scope."
+        },
+        {
           "description": "Default permissions for the plugin\n#### This default permission set includes:\n\n- `allow-start-probe`\n- `allow-read-rows`",
           "type": "string",
           "const": "location-probe:default",
@@ -2203,6 +2245,12 @@
           "type": "string",
           "const": "location-probe:allow-read-rows",
           "markdownDescription": "Enables the read_rows command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the resume_probe command without any pre-configured scope.",
+          "type": "string",
+          "const": "location-probe:allow-resume-probe",
+          "markdownDescription": "Enables the resume_probe command without any pre-configured scope."
         },
         {
           "description": "Enables the start_probe command without any pre-configured scope.",
@@ -2217,16 +2265,22 @@
           "markdownDescription": "Denies the read_rows command without any pre-configured scope."
         },
         {
+          "description": "Denies the resume_probe command without any pre-configured scope.",
+          "type": "string",
+          "const": "location-probe:deny-resume-probe",
+          "markdownDescription": "Denies the resume_probe command without any pre-configured scope."
+        },
+        {
           "description": "Denies the start_probe command without any pre-configured scope.",
           "type": "string",
           "const": "location-probe:deny-start-probe",
           "markdownDescription": "Denies the start_probe command without any pre-configured scope."
         },
         {
-          "description": "Default permissions for the reach plugin\n#### This default permission set includes:\n\n- `allow-pair`\n- `allow-reach-status`\n- `allow-forget`\n- `allow-discover`",
+          "description": "Default permissions for the reach plugin\n#### This default permission set includes:\n\n- `allow-pair`\n- `allow-reach-status`\n- `allow-forget`\n- `allow-discover`\n- `allow-outbox-stats`",
           "type": "string",
           "const": "reach:default",
-          "markdownDescription": "Default permissions for the reach plugin\n#### This default permission set includes:\n\n- `allow-pair`\n- `allow-reach-status`\n- `allow-forget`\n- `allow-discover`"
+          "markdownDescription": "Default permissions for the reach plugin\n#### This default permission set includes:\n\n- `allow-pair`\n- `allow-reach-status`\n- `allow-forget`\n- `allow-discover`\n- `allow-outbox-stats`"
         },
         {
           "description": "Enables the discover command without any pre-configured scope.",
@@ -2239,6 +2293,12 @@
           "type": "string",
           "const": "reach:allow-forget",
           "markdownDescription": "Enables the forget command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the outbox_stats command without any pre-configured scope.",
+          "type": "string",
+          "const": "reach:allow-outbox-stats",
+          "markdownDescription": "Enables the outbox_stats command without any pre-configured scope."
         },
         {
           "description": "Enables the pair command without any pre-configured scope.",
@@ -2263,6 +2323,12 @@
           "type": "string",
           "const": "reach:deny-forget",
           "markdownDescription": "Denies the forget command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the outbox_stats command without any pre-configured scope.",
+          "type": "string",
+          "const": "reach:deny-outbox-stats",
+          "markdownDescription": "Denies the outbox_stats command without any pre-configured scope."
         },
         {
           "description": "Denies the pair command without any pre-configured scope.",

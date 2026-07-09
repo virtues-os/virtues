@@ -37,6 +37,11 @@
 		oldest: number; // unix seconds, 0 if empty
 	}
 
+	interface HealthStatus {
+		authorized: boolean;
+		collecting: boolean;
+	}
+
 	/** A collapsed run of consecutive near-identical fixes. */
 	interface LogRun {
 		ts: string;
@@ -50,9 +55,12 @@
 	let rows = $state<ProbeRow[]>([]);
 	let reach = $state<ReachStatus | null>(null);
 	let sync = $state<OutboxStats | null>(null);
+	let health = $state<HealthStatus | null>(null);
+	let healthSync = $state<OutboxStats | null>(null);
 	let version = $state<string>("");
 	let loading = $state(true);
 	let starting = $state(false);
+	let enablingHealth = $state(false);
 	let error = $state<string | null>(null);
 
 	const enabled = $derived(rows.length > 0);
@@ -102,17 +110,21 @@
 		loading = true;
 		error = null;
 		try {
-			const [rowsResp, reachResp, syncResp, ver] = await Promise.all([
+			const [rowsResp, reachResp, syncResp, healthResp, healthSyncResp, ver] = await Promise.all([
 				invoke<{ rows: ProbeRow[] }>("plugin:location-probe|read_rows", {
 					payload: { limit: 50 },
 				}),
 				invoke<ReachStatus>("plugin:reach|reach_status").catch(() => null),
 				invoke<OutboxStats>("plugin:reach|outbox_stats", { stream: "location" }).catch(() => null),
+				invoke<HealthStatus>("plugin:health|status").catch(() => null),
+				invoke<OutboxStats>("plugin:reach|outbox_stats", { stream: "healthkit" }).catch(() => null),
 				getVersion().catch(() => ""),
 			]);
 			rows = (rowsResp.rows ?? []).slice().reverse(); // newest first
 			reach = reachResp;
 			sync = syncResp;
+			health = healthResp;
+			healthSync = healthSyncResp;
 			version = ver;
 		} catch (e) {
 			error = String(e);
@@ -132,6 +144,20 @@
 			error = String(e);
 		} finally {
 			starting = false;
+		}
+	}
+
+	async function enableHealth() {
+		enablingHealth = true;
+		error = null;
+		try {
+			health = await invoke<HealthStatus>("plugin:health|enable");
+			// Backfill takes a moment to start enqueuing; refresh shortly after.
+			setTimeout(load, 1500);
+		} catch (e) {
+			error = String(e);
+		} finally {
+			enablingHealth = false;
 		}
 	}
 
@@ -190,12 +216,25 @@
 				<span class="dot on"></span>
 			{/if}
 		</div>
-		<div class="stream muted">
-			<div class="s-icon"><Icon icon="ri:heart-pulse-line" width={18} /></div>
+		<div class="stream">
+			<div class="s-icon" class:on={health?.authorized}>
+				<Icon icon="ri:heart-pulse-line" width={18} />
+			</div>
 			<div class="s-body">
 				<div class="s-title">Health</div>
-				<div class="s-sub">Coming soon</div>
+				<div class="s-sub">
+					{#if health?.authorized}
+						On{#if healthSync && healthSync.queued > 0} · {healthSync.queued} syncing{:else} · synced{/if}
+					{:else}Heart rate, steps, sleep &amp; more{/if}
+				</div>
 			</div>
+			{#if !health?.authorized}
+				<button class="s-action" onclick={enableHealth} disabled={enablingHealth}>
+					{enablingHealth ? "Enabling…" : "Enable"}
+				</button>
+			{:else}
+				<span class="dot on"></span>
+			{/if}
 		</div>
 	</div>
 

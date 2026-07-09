@@ -13,12 +13,14 @@
 #[tauri::mobile_entry_point]
 pub fn run() {
   use tauri::{WebviewUrl, WebviewWindowBuilder};
+  use tauri_plugin_health::HealthExt;
   use tauri_plugin_location_probe::LocationProbeExt;
   use tauri_plugin_reach::ReachExt;
 
   tauri::Builder::default()
     .plugin(tauri_plugin_reach::init())
     .plugin(tauri_plugin_location_probe::init())
+    .plugin(tauri_plugin_health::init())
     .setup(|app| {
       // Background location: install the CLLocationManager delegate as early as
       // Tauri lets us (runs on every launch, incl. cold background relaunch).
@@ -27,6 +29,10 @@ pub fn run() {
       // The explicit "Enable" opt-in calls start_probe (which prompts).
       if let Err(e) = app.location_probe().resume_probe() {
         eprintln!("[location-probe] resume failed: {e}");
+      }
+      // HealthKit: resume collecting only if already opted in (never prompts).
+      if let Err(e) = app.health().resume() {
+        eprintln!("[health] resume failed: {e}");
       }
 
       // Bundled-SPA architecture (Option A): the app IS the bundled SvelteKit

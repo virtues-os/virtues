@@ -55,6 +55,8 @@ targets:
         NSLocationWhenInUseUsageDescription: "Virtues records your location to build your personal timeline."
         NSLocationAlwaysAndWhenInUseUsageDescription: "Virtues records your location in the background to build your personal timeline, even when the app is closed."
         NSLocationAlwaysUsageDescription: "Virtues records your location in the background to build your personal timeline, even when the app is closed."
+        # HealthKit read access — collected on this device and synced to your box.
+        NSHealthShareUsageDescription: "Virtues reads your health data (heart rate, steps, sleep, and more) to build your personal timeline — stored on your own box, not Virtues' servers."
         UIBackgroundModes:
           - location
           - processing
@@ -73,6 +75,9 @@ targets:
           - _http._tcp
     entitlements:
       path: virtues_iOS/virtues_iOS.entitlements
+      properties:
+        com.apple.developer.healthkit: true
+        com.apple.developer.healthkit.access: []
     scheme:
       environmentVariables:
         RUST_BACKTRACE: full
