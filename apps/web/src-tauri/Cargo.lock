@@ -5777,6 +5777,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "tauri-plugin-eventkit"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "tauri",
+ "tauri-plugin",
+ "thiserror 2.0.18",
+]
+
+[[package]]
 name = "tauri-plugin-health"
 version = "0.1.0"
 dependencies = [
@@ -6689,6 +6699,7 @@ dependencies = [
  "serde_json",
  "tauri",
  "tauri-build",
+ "tauri-plugin-eventkit",
  "tauri-plugin-health",
  "tauri-plugin-location-probe",
  "tauri-plugin-notification",
