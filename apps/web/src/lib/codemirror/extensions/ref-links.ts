@@ -13,14 +13,13 @@
  * - External links open in a new tab
  */
 
-import { type EditorState, type Extension, type Range, StateField } from '@codemirror/state';
+import { type Extension, type Range } from '@codemirror/state';
 import { Decoration, type DecorationSet, EditorView, ViewPlugin, type ViewUpdate, WidgetType } from '@codemirror/view';
 import { mount, unmount } from 'svelte';
 import { contextMenu } from '$lib/stores/contextMenu.svelte';
 import { getEntityTypeFromRoute } from '$lib/utils/refRoutes';
-import { refIconSvg } from '$lib/utils/refBadge';
 import { windowShellStore } from '$lib/stores/window-shell.svelte';
-import RefEmbed from '$lib/components/RefEmbed.svelte';
+import RefPreview from '$lib/components/RefPreview.svelte';
 
 // =============================================================================
 // URL Classification
@@ -37,38 +36,6 @@ function isEntityUrl(url: string): boolean {
 
 function isExternalUrl(url: string): boolean {
 	return url.startsWith('http://') || url.startsWith('https://');
-}
-
-function getDomain(url: string): string {
-	try { return new URL(url).hostname; }
-	catch { return ''; }
-}
-
-function createGlobeSvg(): SVGElement {
-	const ns = 'http://www.w3.org/2000/svg';
-	const svg = document.createElementNS(ns, 'svg');
-	svg.setAttribute('viewBox', '0 0 24 24');
-	svg.setAttribute('fill', 'none');
-	svg.setAttribute('stroke', 'currentColor');
-	svg.setAttribute('stroke-width', '1.8');
-	svg.setAttribute('stroke-linecap', 'round');
-	svg.setAttribute('stroke-linejoin', 'round');
-
-	const circle = document.createElementNS(ns, 'circle');
-	circle.setAttribute('cx', '12');
-	circle.setAttribute('cy', '12');
-	circle.setAttribute('r', '10');
-
-	const meridian = document.createElementNS(ns, 'path');
-	meridian.setAttribute('d', 'M2 12h20');
-
-	const longitudes = document.createElementNS(ns, 'path');
-	longitudes.setAttribute('d', 'M12 2c3 3 3 17 0 20M12 2c-3 3-3 17 0 20');
-
-	svg.appendChild(circle);
-	svg.appendChild(meridian);
-	svg.appendChild(longitudes);
-	return svg;
 }
 
 // =============================================================================
@@ -156,10 +123,17 @@ function showLinkContextMenu(
 // =============================================================================
 
 /**
- * Entity link pill: [Label](/person/id), [@Label](/page/id), etc.
- * Rendered as pill chip with type-specific icon.
+ * Inline reference link — the ONE inline density. Every `[label](url)` (entity,
+ * file, internal path, or external URL) renders as a plain underlined link that
+ * belongs to the prose (Wikipedia-style): no pill, no chip, no favicon. The `@`
+ * marker, if any, is stripped for display. Target/type is surfaced on hover (see
+ * refHoverPlugin) and in the block embed — never in inline chrome.
+ *
+ * Click model: ⌘/Ctrl-click acts (external → new tab; entity → open beside;
+ * other internal → page-navigate event). Plain click falls through to CM so the
+ * caret lands in the line and the raw markdown reveals for editing.
  */
-class EntityLinkWidget extends WidgetType {
+class RefLinkWidget extends WidgetType {
 	constructor(
 		private label: string,
 		private href: string,
@@ -169,286 +143,65 @@ class EntityLinkWidget extends WidgetType {
 		super();
 	}
 
-	toDOM(view: EditorView) {
-		const chip = document.createElement('a');
-		chip.className = 'cm-entity-link';
-		chip.setAttribute('href', this.href);
-
-		const iconSpan = document.createElement('span');
-		iconSpan.className = 'cm-entity-icon';
-		// Inline SVG (bundled), not <iconify-icon> — the web component fetches from
-		// the Iconify network API, which fails offline / on a self-hosted box.
-		iconSpan.innerHTML = refIconSvg(getEntityTypeFromRoute(this.href), this.label, 14);
-		chip.appendChild(iconSpan);
-
-		const text = document.createElement('span');
-		text.className = 'cm-entity-text';
-		text.textContent = this.label;
-		chip.appendChild(text);
-
-		chip.addEventListener('click', (e) => {
-			// Click model: ⌘/Ctrl-click opens beside; plain click falls through to CM
-			// so the caret lands in the line and the raw markdown reveals for editing.
-			if (!(e.metaKey || e.ctrlKey)) return;
-			e.preventDefault();
-			e.stopPropagation();
-			windowShellStore.openRouteBeside(this.href, this.label.replace(/^@/, ''));
-		});
-
-		chip.addEventListener('contextmenu', (e) => {
-			showLinkContextMenu(e, view, this.from, this.to, this.href, false);
-		});
-
-		return chip;
-	}
-
-	eq(other: EntityLinkWidget) {
-		return other.label === this.label && other.href === this.href;
-	}
-
-	ignoreEvent() { return false; }
-}
-
-/**
- * External link: [text](https://example.com)
- * Rendered with Google favicon (globe SVG fallback) + text.
- */
-class ExternalLinkWidget extends WidgetType {
-	constructor(
-		private label: string,
-		private href: string,
-		private from: number,
-		private to: number,
-	) {
-		super();
-	}
-
-	toDOM(view: EditorView) {
-		const link = document.createElement('a');
-		link.className = 'cm-external-link';
-		link.href = this.href;
-		link.target = '_blank';
-		link.rel = 'noopener noreferrer';
-
-		const iconSpan = document.createElement('span');
-		iconSpan.className = 'cm-external-icon';
-		iconSpan.appendChild(createGlobeSvg());
-
-		const domain = getDomain(this.href);
-		if (domain) {
-			const favicon = document.createElement('img');
-			favicon.className = 'cm-external-favicon';
-			favicon.src = `https://www.google.com/s2/favicons?domain=${domain}&sz=16`;
-			favicon.width = 12;
-			favicon.height = 12;
-			favicon.alt = '';
-			favicon.loading = 'lazy';
-			favicon.referrerPolicy = 'no-referrer';
-			favicon.decoding = 'async';
-			favicon.onload = () => {
-				try { iconSpan.replaceChildren(favicon); } catch { /* ignore */ }
-			};
-		}
-
-		link.appendChild(iconSpan);
-
-		const text = document.createElement('span');
-		text.className = 'cm-link-text';
-		text.textContent = this.label;
-		link.appendChild(text);
-
-		link.addEventListener('click', (e) => {
-			// ⌘/Ctrl-click opens the link; plain click falls through to CM (edit).
-			if (!(e.metaKey || e.ctrlKey)) return;
-			e.preventDefault();
-			e.stopPropagation();
-			window.open(this.href, '_blank', 'noopener,noreferrer');
-		});
-
-		link.addEventListener('contextmenu', (e) => {
-			showLinkContextMenu(e, view, this.from, this.to, this.href, true);
-		});
-
-		return link;
-	}
-
-	eq(other: ExternalLinkWidget) {
-		return other.label === this.label && other.href === this.href;
-	}
-
-	ignoreEvent() { return false; }
-}
-
-/**
- * Internal link: [text](/some/path)
- * Simple colored link that dispatches page-navigate on click.
- */
-class InternalLinkWidget extends WidgetType {
-	constructor(
-		private label: string,
-		private href: string,
-		private from: number,
-		private to: number,
-	) {
-		super();
-	}
-
-	toDOM(view: EditorView) {
-		const link = document.createElement('a');
-		link.className = 'cm-internal-link';
-		link.href = this.href;
-
-		const text = document.createElement('span');
-		text.className = 'cm-link-text';
-		text.textContent = this.label;
-		link.appendChild(text);
-
-		link.addEventListener('click', (e) => {
-			e.preventDefault();
-			e.stopPropagation();
-			link.dispatchEvent(
-				new CustomEvent('page-navigate', {
-					bubbles: true,
-					detail: { href: this.href },
-				})
-			);
-		});
-
-		link.addEventListener('contextmenu', (e) => {
-			showLinkContextMenu(e, view, this.from, this.to, this.href, false);
-		});
-
-		return link;
-	}
-
-	eq(other: InternalLinkWidget) {
-		return other.label === this.label && other.href === this.href;
-	}
-
-	ignoreEvent() { return false; }
-}
-
-/**
- * Block embed: a whole line that is only `[@Label](/entity/id)` renders as a
- * persistent card (the RefEmbed Svelte component) instead of an inline pill.
- * This is the "embed" density — auto-promoted when a ref sits alone on a line.
- */
-class RefEmbedWidget extends WidgetType {
-	// biome-ignore lint/suspicious/noExplicitAny: Svelte mount() instance handle
-	private instance: any = null;
-
-	constructor(
-		private label: string,
-		private href: string,
-		private from: number,
-		private to: number,
-	) {
-		super();
-	}
-
-	private cleanLabel() {
+	private displayText() {
 		return this.label.replace(/^@/, '');
 	}
 
-	toDOM(view: EditorView) {
-		const container = document.createElement('div');
-		container.className = 'cm-ref-embed';
-
-		// Right-click → app menu (not the browser's). Same actions as inline links,
-		// framed for a card: open beside, copy, edit the raw markdown, remove.
-		container.addEventListener('contextmenu', (e) => {
-			e.preventDefault();
-			e.stopPropagation();
-			contextMenu.show({ x: e.clientX, y: e.clientY }, [
-				{
-					id: 'open',
-					label: 'Open beside',
-					icon: 'ri:layout-right-line',
-					action: () => {
-						windowShellStore.openRouteBeside(this.href, this.cleanLabel());
-					},
-				},
-				{
-					id: 'turn-into-pill',
-					label: 'Turn into pill',
-					icon: 'ri:price-tag-3-line',
-					dividerBefore: true,
-					// Drop the `!` marker → renders inline as a pill.
-					action: () =>
-						view.dispatch({
-							changes: { from: this.from, to: this.to, insert: `[${this.label}](${this.href})` },
-						}),
-				},
-				{
-					id: 'copy-link',
-					label: 'Copy link',
-					icon: 'ri:file-copy-line',
-					action: () => navigator.clipboard.writeText(`${window.location.origin}${this.href}`),
-				},
-				{
-					id: 'edit',
-					label: 'Edit (show markdown)',
-					icon: 'ri:edit-line',
-					dividerBefore: true,
-					action: () => {
-						view.dispatch({ selection: { anchor: this.from } });
-						view.focus();
-					},
-				},
-				{
-					id: 'remove',
-					label: 'Remove',
-					icon: 'ri:delete-bin-line',
-					variant: 'destructive' as const,
-					action: () => view.dispatch({ changes: { from: this.from, to: this.to, insert: '' } }),
-				},
-			]);
-		});
-
-		this.instance = mount(RefEmbed, {
-			target: container,
-			props: {
-				type: getEntityTypeFromRoute(this.href),
-				label: this.cleanLabel(),
-				url: this.href,
-				onOpen: () => windowShellStore.openRouteBeside(this.href, this.cleanLabel()),
-			},
-		});
-		return container;
-	}
-
-	destroy() {
-		if (this.instance) {
-			void unmount(this.instance);
-			this.instance = null;
+	private activate() {
+		if (isExternalUrl(this.href)) {
+			window.open(this.href, '_blank', 'noopener,noreferrer');
+		} else if (isEntityUrl(this.href)) {
+			windowShellStore.openRouteBeside(this.href, this.displayText());
+		} else {
+			// Non-entity internal path — let the app route it.
+			document.dispatchEvent(
+				new CustomEvent('page-navigate', { bubbles: true, detail: { href: this.href } }),
+			);
 		}
 	}
 
-	eq(other: RefEmbedWidget) {
+	toDOM(view: EditorView) {
+		const link = document.createElement('a');
+		link.className = 'cm-ref-link';
+		link.href = this.href;
+		link.textContent = this.displayText();
+
+		// Data for the hover-preview plugin (delegated on the editor DOM).
+		link.dataset.refHref = this.href;
+		link.dataset.refLabel = this.displayText();
+
+		link.addEventListener('click', (e) => {
+			// Always stop the <a> from navigating; the caret is placed on mousedown,
+			// so a plain click still drops into the line to reveal raw markdown.
+			e.preventDefault();
+			if (!(e.metaKey || e.ctrlKey)) return;
+			e.stopPropagation();
+			this.activate();
+		});
+
+		link.addEventListener('contextmenu', (e) => {
+			showLinkContextMenu(e, view, this.from, this.to, this.href, isExternalUrl(this.href));
+		});
+
+		return link;
+	}
+
+	eq(other: RefLinkWidget) {
 		return other.label === this.label && other.href === this.href;
 	}
 
-	ignoreEvent() { return true; }
+	ignoreEvent() { return false; }
 }
 
 // =============================================================================
 // Decoration Builder
 // =============================================================================
 
-// Regex to find markdown links: [label](url) — but NOT images ![alt](url)
+// Regex to find markdown links: [label](url). A leading `!` means media
+// (![alt](url)) — left to the media widgets — UNLESS the target is an entity,
+// in which case it's a legacy block embed that now renders as a plain inline
+// link (entities have no card; they are always inline links + hover).
 const LINK_REGEX = /\[([^\]]+)\]\(([^)]+)\)/g;
-
-// A line whose ENTIRE content is a `!`-prefixed link → embed. The `!` is the
-// density marker (same convention as image/media embeds): `![@X](url)` is a
-// block card, `[@X](url)` is an inline pill. Toggled via the right-click menu.
-const SOLE_EMBED_REGEX = /^\s*!\[([^\]]+)\]\(([^)]+)\)\s*$/;
-
-/** Any app ref — entity or file (/drive/) — embeds as a RefEmbed card. Direct/
- *  external media urls (e.g. /api/drive/.../download, https://…png) are left to
- *  the media widgets. */
-function isEmbeddableUrl(url: string): boolean {
-	return isEntityUrl(url);
-}
 
 function buildLinkDecorations(view: EditorView): DecorationSet {
 	const builder: Range<Decoration>[] = [];
@@ -473,28 +226,22 @@ function buildLinkDecorations(view: EditorView): DecorationSet {
 			const label = match[1];
 			const url = match[2];
 
-			// Skip image links: ![alt](url)
-			if (match.index > 0 && line.text[match.index - 1] === '!') continue;
-
 			// Skip empty URLs
 			if (!url.trim()) continue;
 
-			const from = line.from + match.index;
-			const to = from + match[0].length;
+			// A leading `!` is media (image/audio/video/file) → let the media
+			// widgets render it. But a `!` in front of an ENTITY link is a legacy
+			// block embed — render it inline and swallow the `!` too.
+			const bang = match.index > 0 && line.text[match.index - 1] === '!';
+			if (bang && !isEntityUrl(url)) continue;
 
-			// URL-aware widget selection
-			let widget: WidgetType;
-			if (isExternalUrl(url)) {
-				widget = new ExternalLinkWidget(label, url, from, to);
-			} else if (isEntityUrl(url)) {
-				widget = new EntityLinkWidget(label, url, from, to);
-			} else {
-				widget = new InternalLinkWidget(label, url, from, to);
-			}
+			const from = line.from + match.index - (bang ? 1 : 0);
+			const to = line.from + match.index + match[0].length;
 
+			// One inline density for every target — a plain underlined link.
 			builder.push(
 				Decoration.replace({
-					widget,
+					widget: new RefLinkWidget(label, url, from, to),
 					inclusive: false,
 				}).range(from, to)
 			);
@@ -529,44 +276,101 @@ const linkPillsPlugin = ViewPlugin.fromClass(
 );
 
 // =============================================================================
-// Block embeds — StateField (block decorations can't come from a plugin)
+// Hover preview
 // =============================================================================
 
-// A whole line that is only an entity/file ref → a block embed card. Scanned
-// from document state (not viewport) so it can live in a StateField; the
-// cursor's line is excluded so raw markdown reveals for editing.
-function buildEmbedDecorations(state: EditorState): DecorationSet {
-	const builder: Range<Decoration>[] = [];
-	const doc = state.doc;
-	const cursorLine = doc.lineAt(state.selection.main.head).number;
+// Inline links are plain, so the type/summary lives in a floating RefPreview
+// shown on dwell. Delegated on the editor DOM (one plugin, not one listener per
+// link) and mounts the same Svelte RefPreview the rendered views use. Show/hide
+// dwell matches refHover.svelte so the pointer can travel link → card.
+const HOVER_SHOW_DELAY = 350;
+const HOVER_HIDE_DELAY = 160;
 
-	for (let lineNum = 1; lineNum <= doc.lines; lineNum++) {
-		if (lineNum === cursorLine) continue;
-		const line = doc.line(lineNum);
-		if (line.length === 0) continue;
-		const sole = line.text.match(SOLE_EMBED_REGEX);
-		if (sole && isEmbeddableUrl(sole[2])) {
-			builder.push(
-				Decoration.replace({
-					widget: new RefEmbedWidget(sole[1], sole[2], line.from, line.to),
-					block: true,
-				}).range(line.from, line.to),
-			);
+const refHoverPlugin = ViewPlugin.fromClass(
+	class {
+		private showTimer: ReturnType<typeof setTimeout> | null = null;
+		private hideTimer: ReturnType<typeof setTimeout> | null = null;
+		// biome-ignore lint/suspicious/noExplicitAny: Svelte mount() instance handle
+		private instance: any = null;
+		private container: HTMLElement | null = null;
+		private anchor: HTMLElement | null = null;
+
+		private onOver = (e: MouseEvent) => {
+			const el = (e.target as HTMLElement)?.closest?.('.cm-ref-link') as HTMLElement | null;
+			if (!el || el === this.anchor) return;
+			this.clearHide();
+			this.clearShow();
+			this.anchor = el;
+			this.showTimer = setTimeout(() => this.show(el), HOVER_SHOW_DELAY);
+		};
+
+		private onOut = (e: MouseEvent) => {
+			if (!(e.target as HTMLElement)?.closest?.('.cm-ref-link')) return;
+			this.clearShow();
+			this.scheduleHide();
+		};
+
+		constructor(private view: EditorView) {
+			view.dom.addEventListener('mouseover', this.onOver);
+			view.dom.addEventListener('mouseout', this.onOut);
 		}
-	}
 
-	return Decoration.set(builder);
-}
+		private show(el: HTMLElement) {
+			this.destroyCard();
+			const href = el.dataset.refHref || el.getAttribute('href') || '';
+			const label = el.dataset.refLabel || el.textContent || '';
+			// External URLs report as 'link' so RefCard shows the domain; entities
+			// resolve their real type from the route.
+			const type = isExternalUrl(href) ? 'link' : getEntityTypeFromRoute(href);
+			const open = () => {
+				if (isExternalUrl(href)) window.open(href, '_blank', 'noopener,noreferrer');
+				else windowShellStore.openRouteBeside(href, label);
+			};
 
-const refEmbedField = StateField.define<DecorationSet>({
-	create(state) {
-		return buildEmbedDecorations(state);
+			this.container = document.createElement('div');
+			this.instance = mount(RefPreview, {
+				target: this.container,
+				props: {
+					anchor: el,
+					type,
+					label,
+					url: href,
+					onOpen: open,
+					oncardenter: () => this.clearHide(),
+					oncardleave: () => this.scheduleHide(),
+				},
+			});
+			this.anchor = el;
+		}
+
+		private scheduleHide() {
+			this.clearHide();
+			this.hideTimer = setTimeout(() => {
+				this.destroyCard();
+				this.anchor = null;
+			}, HOVER_HIDE_DELAY);
+		}
+		private clearShow() {
+			if (this.showTimer) { clearTimeout(this.showTimer); this.showTimer = null; }
+		}
+		private clearHide() {
+			if (this.hideTimer) { clearTimeout(this.hideTimer); this.hideTimer = null; }
+		}
+		private destroyCard() {
+			if (this.instance) { void unmount(this.instance); this.instance = null; }
+			// RefPreview portals its card to <body>; the mount container is empty
+			// but remove it too.
+			if (this.container) { this.container.remove(); this.container = null; }
+		}
+
+		destroy() {
+			this.clearShow();
+			this.clearHide();
+			this.destroyCard();
+			this.view.dom.removeEventListener('mouseover', this.onOver);
+			this.view.dom.removeEventListener('mouseout', this.onOut);
+		}
 	},
-	update(deco, tr) {
-		if (tr.docChanged || tr.selection) return buildEmbedDecorations(tr.state);
-		return deco.map(tr.changes);
-	},
-	provide: (f) => EditorView.decorations.from(f),
-});
+);
 
-export const entityLinks: Extension = [linkPillsPlugin, refEmbedField];
+export const entityLinks: Extension = [linkPillsPlugin, refHoverPlugin];

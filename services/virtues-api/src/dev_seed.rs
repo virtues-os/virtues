@@ -24,9 +24,10 @@ const DEFAULT_DEV_KEY: &str = "dev-local-key";
 /// Opaque account id for the dev account.
 const DEV_ACCOUNT_ID: &str = "dev-local-account";
 
-/// Balance to fund the dev account with ($1000 in micros). The per-call cap
-/// still bounds actual spend.
-const DEV_BALANCE_MICROS: i64 = 1_000_000_000;
+/// Balance to fund the dev account with ($10 in micros). Kept small so a
+/// runaway dev loop can't burn much; re-set to this on every boot, so a
+/// restart tops it back up. The per-call cap still bounds actual spend.
+const DEV_BALANCE_MICROS: i64 = 10_000_000;
 
 /// Seed a funded account + device key for the dev api_key. Idempotent enough:
 /// re-credits the account to the dev balance on each boot (dev convenience).

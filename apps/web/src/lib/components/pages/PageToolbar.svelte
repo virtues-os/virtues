@@ -5,6 +5,7 @@
 	import DisplaySettingsPopover from "$lib/components/pages/DisplaySettingsPopover.svelte";
 	import { VersionHistoryPanel } from "$lib/components/pages";
 	import { Popover } from "$lib/floating";
+	import { pageDisplay } from "$lib/stores/pageDisplay.svelte";
 	import type { YjsDocument } from "$lib/yjs";
 
 	interface Props {
@@ -118,6 +119,14 @@
 				<DisplaySettingsPopover />
 			{/snippet}
 		</Popover>
+		<button
+			onclick={() => pageDisplay.toggleSpellcheck()}
+			class="toolbar-action"
+			class:active={pageDisplay.spellcheck}
+			title={pageDisplay.spellcheck ? "Spell check on" : "Spell check off"}
+		>
+			<Icon icon="ri:check-double-line" width="15" />
+		</button>
 	</div>
 
 	<div class="toolbar-gap"></div>
@@ -220,14 +229,7 @@
 		padding: 6px 12px;
 		background: transparent;
 		flex-shrink: 0;
-		/* Calm at rest, present on demand — matches the table/code hover-reveal
-		   pattern used elsewhere in the editor. */
-		opacity: 0.35;
-		transition: opacity 0.18s ease;
-	}
-
-	.page-toolbar:hover,
-	.page-toolbar:focus-within {
+		/* Classic always-visible top bar (no fade). */
 		opacity: 1;
 	}
 

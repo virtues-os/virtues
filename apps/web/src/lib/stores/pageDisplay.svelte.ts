@@ -26,11 +26,20 @@ const FONT_SIZE: Record<TextSize, string> = {
 	l: "1.125rem",
 };
 
+// Line-height tracks the text size: tighter for small (denser reading), airier
+// for large (more breathing room). Surfaced as `--editor-line-height`.
+const LINE_HEIGHT: Record<TextSize, string> = {
+	s: "1.55",
+	m: "1.7",
+	l: "1.8",
+};
+
 interface Persisted {
 	fontMode: FontMode;
 	textSize: TextSize;
 	widthMode: WidthMode;
 	focusMode: boolean;
+	spellcheck: boolean;
 }
 
 const DEFAULTS: Persisted = {
@@ -38,6 +47,7 @@ const DEFAULTS: Persisted = {
 	textSize: "m",
 	widthMode: "medium",
 	focusMode: false,
+	spellcheck: true,
 };
 
 function load(): Persisted {
@@ -55,6 +65,7 @@ class PageDisplay {
 	textSize = $state<TextSize>(DEFAULTS.textSize);
 	widthMode = $state<WidthMode>(DEFAULTS.widthMode);
 	focusMode = $state(DEFAULTS.focusMode);
+	spellcheck = $state(DEFAULTS.spellcheck);
 
 	constructor() {
 		const p = load();
@@ -62,6 +73,7 @@ class PageDisplay {
 		this.textSize = p.textSize;
 		this.widthMode = p.widthMode;
 		this.focusMode = p.focusMode;
+		this.spellcheck = p.spellcheck;
 	}
 
 	/** CSS value for `--editor-font-family`. */
@@ -74,6 +86,11 @@ class PageDisplay {
 		return FONT_SIZE[this.textSize];
 	}
 
+	/** CSS value for `--editor-line-height`. Tracks the text size. */
+	get lineHeight(): string {
+		return LINE_HEIGHT[this.textSize];
+	}
+
 	private persist() {
 		try {
 			localStorage.setItem(
@@ -83,6 +100,7 @@ class PageDisplay {
 					textSize: this.textSize,
 					widthMode: this.widthMode,
 					focusMode: this.focusMode,
+					spellcheck: this.spellcheck,
 				}),
 			);
 		} catch {
@@ -113,6 +131,11 @@ class PageDisplay {
 
 	toggleFocus() {
 		this.focusMode = !this.focusMode;
+		this.persist();
+	}
+
+	toggleSpellcheck() {
+		this.spellcheck = !this.spellcheck;
 		this.persist();
 	}
 }

@@ -169,6 +169,10 @@
 			});
 			if (!res.ok) {
 				const err = await res.json().catch(() => ({ error: res.statusText }));
+				// Don't leak backend config errors — show a friendly, actionable line.
+				if (err.error?.code === 'service_not_configured' || res.status === 503) {
+					throw new Error('Image search is temporarily unavailable.');
+				}
 				throw new Error(err.error?.message || err.error || 'Search failed');
 			}
 			const data = await res.json();

@@ -21,6 +21,7 @@ import { checkboxes } from './extensions/checkboxes';
 import { codeBlocks } from './extensions/code-blocks';
 import { entityLinks } from './extensions/ref-links';
 import { markdownKeybindings } from './extensions/keybindings';
+import { listRenumber } from './extensions/list-renumber';
 import { livePreview } from './extensions/live-preview';
 import { mediaWidgets } from './extensions/media-widgets';
 import { shikiHighlight } from './extensions/shiki-highlight';
@@ -78,6 +79,9 @@ export function createCodeMirrorEditor(options: CodeMirrorEditorOptions): Editor
 		codeBlocks,
 		shikiHighlight,
 		tables,
+
+		// Keep ordered lists sequential after edits
+		listRenumber,
 
 		// Markdown formatting keybindings
 		markdownKeybindings,
