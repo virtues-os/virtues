@@ -59,6 +59,15 @@
 			statusCmd: "plugin:contacts|status",
 			state: "off",
 		},
+		{
+			key: "finance",
+			title: "Finance",
+			icon: "ri:bank-card-line",
+			why: "Apple Card, Cash and connected accounts — three years of transactions.",
+			enableCmd: "plugin:finance|enable",
+			statusCmd: "plugin:finance|status",
+			state: "off",
+		},
 	]);
 
 	const anyOn = $derived(streams.some((s) => s.state === "on"));
@@ -122,14 +131,6 @@
 				</div>
 			{/each}
 
-			<div class="card soon">
-				<div class="c-icon"><Icon icon="ri:bank-card-line" width={20} /></div>
-				<div class="c-body">
-					<div class="c-title">Finance</div>
-					<div class="c-why">Apple Card, Cash &amp; connected accounts — coming soon.</div>
-				</div>
-				<span class="c-soon">Soon</span>
-			</div>
 		</div>
 
 		<div class="foot">

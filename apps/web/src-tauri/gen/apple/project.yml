@@ -83,11 +83,11 @@ targets:
       properties:
         com.apple.developer.healthkit: true
         com.apple.developer.healthkit.access: []
-        # com.apple.developer.financekit: the App ID HAS this (prod shipped it),
-        # but automatic DEV signing won't attach it even with
-        # -allowProvisioningUpdates — it needs a MANUAL dev provisioning profile
-        # that includes FinanceKit (portal), or a distribution/TestFlight build.
-        # Re-enable + set `entitled=true` in Finance.swift once that's in place.
+        # Must be the ARRAY ["financial-data"] (matching the App ID's registered
+        # capability + the prod app's entitlements) — NOT `true`. A bool value
+        # mismatches the provisioning profile ("doesn't match the entitlements
+        # file's value"). With the correct value, automatic signing attaches it.
+        com.apple.developer.financekit: [financial-data]
     scheme:
       environmentVariables:
         RUST_BACKTRACE: full

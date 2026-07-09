@@ -370,13 +370,25 @@
 				<span class="dot on"></span>
 			{/if}
 		</div>
-		<div class="stream muted">
-			<div class="s-icon"><Icon icon="ri:bank-card-line" width={18} /></div>
+		<div class="stream">
+			<div class="s-icon" class:on={finance?.authorized}>
+				<Icon icon="ri:bank-card-line" width={18} />
+			</div>
 			<div class="s-body">
 				<div class="s-title">Finance</div>
-				<div class="s-sub">Accounts &amp; transactions — awaiting Apple approval</div>
+				<div class="s-sub">
+					{#if finance?.authorized}
+						On{#if financeSync && financeSync.queued > 0} · {financeSync.queued} syncing{:else} · synced{/if}
+					{:else}Accounts &amp; transactions{/if}
+				</div>
 			</div>
-			<span class="soon-chip">Soon</span>
+			{#if !finance?.authorized}
+				<button class="s-action" onclick={enableFinance} disabled={enablingFinance}>
+					{enablingFinance ? "Enabling…" : "Enable"}
+				</button>
+			{:else}
+				<span class="dot on"></span>
+			{/if}
 		</div>
 	</div>
 
