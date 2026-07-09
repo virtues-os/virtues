@@ -9,6 +9,7 @@
     "core:window:allow-create",
     "location-probe:default",
     "reach:default",
-    "health:default"
+    "health:default",
+    "eventkit:default"
   ]
 }

@@ -41,6 +41,8 @@
 		authorized: boolean;
 		collecting: boolean;
 	}
+	// Same shape for the other opt-in collectors.
+	type StreamStatus = HealthStatus;
 
 	/** A collapsed run of consecutive near-identical fixes. */
 	interface LogRun {
@@ -57,10 +59,13 @@
 	let sync = $state<OutboxStats | null>(null);
 	let health = $state<HealthStatus | null>(null);
 	let healthSync = $state<OutboxStats | null>(null);
+	let cal = $state<StreamStatus | null>(null);
+	let calSync = $state<OutboxStats | null>(null);
 	let version = $state<string>("");
 	let loading = $state(true);
 	let starting = $state(false);
 	let enablingHealth = $state(false);
+	let enablingCal = $state(false);
 	let error = $state<string | null>(null);
 
 	const enabled = $derived(rows.length > 0);
@@ -110,21 +115,26 @@
 		loading = true;
 		error = null;
 		try {
-			const [rowsResp, reachResp, syncResp, healthResp, healthSyncResp, ver] = await Promise.all([
-				invoke<{ rows: ProbeRow[] }>("plugin:location-probe|read_rows", {
-					payload: { limit: 50 },
-				}),
-				invoke<ReachStatus>("plugin:reach|reach_status").catch(() => null),
-				invoke<OutboxStats>("plugin:reach|outbox_stats", { stream: "location" }).catch(() => null),
-				invoke<HealthStatus>("plugin:health|status").catch(() => null),
-				invoke<OutboxStats>("plugin:reach|outbox_stats", { stream: "healthkit" }).catch(() => null),
-				getVersion().catch(() => ""),
-			]);
+			const [rowsResp, reachResp, syncResp, healthResp, healthSyncResp, calResp, calSyncResp, ver] =
+				await Promise.all([
+					invoke<{ rows: ProbeRow[] }>("plugin:location-probe|read_rows", {
+						payload: { limit: 50 },
+					}),
+					invoke<ReachStatus>("plugin:reach|reach_status").catch(() => null),
+					invoke<OutboxStats>("plugin:reach|outbox_stats", { stream: "location" }).catch(() => null),
+					invoke<HealthStatus>("plugin:health|status").catch(() => null),
+					invoke<OutboxStats>("plugin:reach|outbox_stats", { stream: "healthkit" }).catch(() => null),
+					invoke<StreamStatus>("plugin:eventkit|status").catch(() => null),
+					invoke<OutboxStats>("plugin:reach|outbox_stats", { stream: "eventkit" }).catch(() => null),
+					getVersion().catch(() => ""),
+				]);
 			rows = (rowsResp.rows ?? []).slice().reverse(); // newest first
 			reach = reachResp;
 			sync = syncResp;
 			health = healthResp;
 			healthSync = healthSyncResp;
+			cal = calResp;
+			calSync = calSyncResp;
 			version = ver;
 		} catch (e) {
 			error = String(e);
@@ -161,13 +171,27 @@
 		}
 	}
 
+	async function enableCalendar() {
+		enablingCal = true;
+		error = null;
+		try {
+			cal = await invoke<StreamStatus>("plugin:eventkit|enable");
+			setTimeout(load, 1500);
+		} catch (e) {
+			error = String(e);
+		} finally {
+			enablingCal = false;
+		}
+	}
+
 	let syncingNow = $state(false);
 	async function syncNow() {
 		syncingNow = true;
 		error = null;
 		try {
-			// Grab the latest health samples, then drain everything to the box.
+			// Grab the latest samples from each collector, then drain to the box.
 			if (health?.authorized) await invoke("plugin:health|collect").catch(() => {});
+			if (cal?.authorized) await invoke("plugin:eventkit|collect").catch(() => {});
 			await invoke("plugin:reach|drain_now");
 			await load();
 		} catch (e) {
@@ -247,6 +271,26 @@
 			{#if !health?.authorized}
 				<button class="s-action" onclick={enableHealth} disabled={enablingHealth}>
 					{enablingHealth ? "Enabling…" : "Enable"}
+				</button>
+			{:else}
+				<span class="dot on"></span>
+			{/if}
+		</div>
+		<div class="stream">
+			<div class="s-icon" class:on={cal?.authorized}>
+				<Icon icon="ri:calendar-line" width={18} />
+			</div>
+			<div class="s-body">
+				<div class="s-title">Calendar</div>
+				<div class="s-sub">
+					{#if cal?.authorized}
+						On{#if calSync && calSync.queued > 0} · {calSync.queued} syncing{:else} · synced{/if}
+					{:else}Events, past &amp; upcoming{/if}
+				</div>
+			</div>
+			{#if !cal?.authorized}
+				<button class="s-action" onclick={enableCalendar} disabled={enablingCal}>
+					{enablingCal ? "Enabling…" : "Enable"}
 				</button>
 			{:else}
 				<span class="dot on"></span>

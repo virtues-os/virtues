@@ -47,6 +47,7 @@ keyring = "3"
 tauri-plugin-location-probe = { path = "../plugins/location-probe" }
 tauri-plugin-reach = { path = "../plugins/reach" }
 tauri-plugin-health = { path = "../plugins/health" }
+tauri-plugin-eventkit = { path = "../plugins/eventkit" }
 
 [features]
 default = ["custom-protocol"]
