@@ -48,6 +48,7 @@ tauri-plugin-location-probe = { path = "../plugins/location-probe" }
 tauri-plugin-reach = { path = "../plugins/reach" }
 tauri-plugin-health = { path = "../plugins/health" }
 tauri-plugin-eventkit = { path = "../plugins/eventkit" }
+tauri-plugin-contacts = { path = "../plugins/contacts" }
 
 [features]
 default = ["custom-protocol"]
