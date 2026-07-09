@@ -29,6 +29,12 @@
 		<key>NSAllowsLocalNetworking</key>
 		<true/>
 	</dict>
+	<key>NSBonjourServices</key>
+	<array>
+		<string>_http._tcp</string>
+	</array>
+	<key>NSHealthShareUsageDescription</key>
+	<string>Virtues reads your health data (heart rate, steps, sleep, and more) to build your personal timeline — stored on your own box, not Virtues&apos; servers.</string>
 	<key>NSLocalNetworkUsageDescription</key>
 	<string>Virtues connects to your box on your local network to pair and sync your data.</string>
 	<key>NSLocationAlwaysAndWhenInUseUsageDescription</key>
@@ -62,10 +68,6 @@
 		<string>UIInterfaceOrientationPortraitUpsideDown</string>
 		<string>UIInterfaceOrientationLandscapeLeft</string>
 		<string>UIInterfaceOrientationLandscapeRight</string>
-	</array>
-	<key>NSBonjourServices</key>
-	<array>
-		<string>_http._tcp</string>
 	</array>
 </dict>
 </plist>

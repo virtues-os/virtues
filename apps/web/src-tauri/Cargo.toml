@@ -46,6 +46,7 @@ keyring = "3"
 [target.'cfg(any(target_os = "ios", target_os = "android"))'.dependencies]
 tauri-plugin-location-probe = { path = "../plugins/location-probe" }
 tauri-plugin-reach = { path = "../plugins/reach" }
+tauri-plugin-health = { path = "../plugins/health" }
 
 [features]
 default = ["custom-protocol"]

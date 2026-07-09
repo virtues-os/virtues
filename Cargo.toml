@@ -22,6 +22,7 @@ exclude = [
     # must be excluded too so `cargo metadata` (run by the tauri CLI) resolves.
     "apps/web/plugins/location-probe",
     "apps/web/plugins/reach",
+    "apps/web/plugins/health",
     # Throwaway iroh evaluation crate — own Cargo.lock, kept out of the main
     # build so iroh's dep tree can't destabilize it during the spike.
     "spike-iroh",
