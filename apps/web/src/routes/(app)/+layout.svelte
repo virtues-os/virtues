@@ -6,6 +6,7 @@
 	import { SplitContainer } from "$lib/components/tabs";
 	import MobileTabBar from "$lib/components/mobile/MobileTabBar.svelte";
 	import MobileSettingsView from "$lib/components/mobile/MobileSettingsView.svelte";
+	import MobileOnboarding from "$lib/components/mobile/MobileOnboarding.svelte";
 	import { mobileLayout } from "$lib/stores/mobileLayout.svelte";
 	import { ContextMenuProvider } from "$lib/components/contextMenu";
 	import ServerProvisioning from "$lib/components/ServerProvisioning.svelte";
@@ -303,6 +304,7 @@
 {#if mobileLayout.isMobile}
 	<MobileTabBar />
 	<MobileSettingsView />
+	<MobileOnboarding />
 {/if}
 
 <!-- Focus mode: floating exit affordance (chrome is hidden via body.focus-mode) -->
