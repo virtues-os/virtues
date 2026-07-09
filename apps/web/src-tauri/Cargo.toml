@@ -49,6 +49,7 @@ tauri-plugin-reach = { path = "../plugins/reach" }
 tauri-plugin-health = { path = "../plugins/health" }
 tauri-plugin-eventkit = { path = "../plugins/eventkit" }
 tauri-plugin-contacts = { path = "../plugins/contacts" }
+tauri-plugin-finance = { path = "../plugins/finance" }
 
 [features]
 default = ["custom-protocol"]

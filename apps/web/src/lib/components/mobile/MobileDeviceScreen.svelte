@@ -63,12 +63,15 @@
 	let calSync = $state<OutboxStats | null>(null);
 	let contacts = $state<StreamStatus | null>(null);
 	let contactsSync = $state<OutboxStats | null>(null);
+	let finance = $state<StreamStatus | null>(null);
+	let financeSync = $state<OutboxStats | null>(null);
 	let version = $state<string>("");
 	let loading = $state(true);
 	let starting = $state(false);
 	let enablingHealth = $state(false);
 	let enablingCal = $state(false);
 	let enablingContacts = $state(false);
+	let enablingFinance = $state(false);
 	let error = $state<string | null>(null);
 
 	const enabled = $derived(rows.length > 0);
@@ -128,6 +131,8 @@
 				calSyncResp,
 				contactsResp,
 				contactsSyncResp,
+				financeResp,
+				financeSyncResp,
 				ver,
 			] = await Promise.all([
 					invoke<{ rows: ProbeRow[] }>("plugin:location-probe|read_rows", {
@@ -141,6 +146,8 @@
 					invoke<OutboxStats>("plugin:reach|outbox_stats", { stream: "eventkit" }).catch(() => null),
 					invoke<StreamStatus>("plugin:contacts|status").catch(() => null),
 					invoke<OutboxStats>("plugin:reach|outbox_stats", { stream: "contacts" }).catch(() => null),
+					invoke<StreamStatus>("plugin:finance|status").catch(() => null),
+					invoke<OutboxStats>("plugin:reach|outbox_stats", { stream: "financekit" }).catch(() => null),
 					getVersion().catch(() => ""),
 				]);
 			rows = (rowsResp.rows ?? []).slice().reverse(); // newest first
@@ -152,6 +159,8 @@
 			calSync = calSyncResp;
 			contacts = contactsResp;
 			contactsSync = contactsSyncResp;
+			finance = financeResp;
+			financeSync = financeSyncResp;
 			version = ver;
 		} catch (e) {
 			error = String(e);
@@ -214,6 +223,19 @@
 		}
 	}
 
+	async function enableFinance() {
+		enablingFinance = true;
+		error = null;
+		try {
+			finance = await invoke<StreamStatus>("plugin:finance|enable");
+			setTimeout(load, 2000);
+		} catch (e) {
+			error = String(e);
+		} finally {
+			enablingFinance = false;
+		}
+	}
+
 	let syncingNow = $state(false);
 	async function syncNow() {
 		syncingNow = true;
@@ -223,6 +245,7 @@
 			if (health?.authorized) await invoke("plugin:health|collect").catch(() => {});
 			if (cal?.authorized) await invoke("plugin:eventkit|collect").catch(() => {});
 			if (contacts?.authorized) await invoke("plugin:contacts|collect").catch(() => {});
+			if (finance?.authorized) await invoke("plugin:finance|collect").catch(() => {});
 			await invoke("plugin:reach|drain_now");
 			await load();
 		} catch (e) {
@@ -342,6 +365,26 @@
 			{#if !contacts?.authorized}
 				<button class="s-action" onclick={enableContacts} disabled={enablingContacts}>
 					{enablingContacts ? "Enabling…" : "Enable"}
+				</button>
+			{:else}
+				<span class="dot on"></span>
+			{/if}
+		</div>
+		<div class="stream">
+			<div class="s-icon" class:on={finance?.authorized}>
+				<Icon icon="ri:bank-card-line" width={18} />
+			</div>
+			<div class="s-body">
+				<div class="s-title">Finance</div>
+				<div class="s-sub">
+					{#if finance?.authorized}
+						On{#if financeSync && financeSync.queued > 0} · {financeSync.queued} syncing{:else} · synced{/if}
+					{:else}Accounts &amp; transactions{/if}
+				</div>
+			</div>
+			{#if !finance?.authorized}
+				<button class="s-action" onclick={enableFinance} disabled={enablingFinance}>
+					{enablingFinance ? "Enabling…" : "Enable"}
 				</button>
 			{:else}
 				<span class="dot on"></span>
