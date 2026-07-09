@@ -161,6 +161,22 @@
 		}
 	}
 
+	let syncingNow = $state(false);
+	async function syncNow() {
+		syncingNow = true;
+		error = null;
+		try {
+			// Grab the latest health samples, then drain everything to the box.
+			if (health?.authorized) await invoke("plugin:health|collect").catch(() => {});
+			await invoke("plugin:reach|drain_now");
+			await load();
+		} catch (e) {
+			error = String(e);
+		} finally {
+			syncingNow = false;
+		}
+	}
+
 	function rel(ts: string): string {
 		const t = new Date(ts).getTime();
 		if (Number.isNaN(t)) return ts;
@@ -252,11 +268,9 @@
 					{#if sync && sync.failing > 0}{sync.failing} retrying{:else}Uploaded over your private link{/if}
 				</div>
 			</div>
-			{#if sync && sync.queued > 0}
-				<span class="dot"></span>
-			{:else if sync}
-				<span class="dot on"></span>
-			{/if}
+			<button class="s-action" onclick={syncNow} disabled={syncingNow}>
+				{syncingNow ? "Syncing…" : "Sync now"}
+			</button>
 		</div>
 	</div>
 

@@ -9,6 +9,7 @@ Default permissions for the reach plugin
 - `allow-forget`
 - `allow-discover`
 - `allow-outbox-stats`
+- `allow-drain-now`
 
 ## Permission Table
 
@@ -41,6 +42,32 @@ Enables the discover command without any pre-configured scope.
 <td>
 
 Denies the discover command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`reach:allow-drain-now`
+
+</td>
+<td>
+
+Enables the drain_now command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`reach:deny-drain-now`
+
+</td>
+<td>
+
+Denies the drain_now command without any pre-configured scope.
 
 </td>
 </tr>

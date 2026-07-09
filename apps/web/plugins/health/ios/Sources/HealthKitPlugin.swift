@@ -24,9 +24,21 @@ class HealthPlugin: Plugin {
       "collecting": HealthCollector.shared.isCollecting,
     ])
   }
+
+  /// Fetch new samples now (the "Sync now" button; the drain is a separate call).
+  @objc public func collect(_ invoke: Invoke) throws {
+    HealthCollector.shared.collectAll()
+    invoke.resolve([
+      "authorized": HealthCollector.shared.authorized(),
+      "collecting": HealthCollector.shared.isCollecting,
+    ])
+  }
 }
 
 @_cdecl("init_plugin_health")
 func initPlugin() -> Plugin {
+  // Register the BGProcessingTask handler during app launch (init_plugin_* runs
+  // synchronously inside didFinishLaunching, the window iOS requires).
+  BackgroundSync.shared.register()
   return HealthPlugin()
 }

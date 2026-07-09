@@ -52,3 +52,9 @@ pub(crate) async fn outbox_stats<R: Runtime>(
 ) -> Result<outbox::OutboxStats> {
   Ok(outbox::stats(&stream).unwrap_or_default())
 }
+
+/// Drain the outbox to the box immediately ("Sync now"). Returns records sent.
+#[command]
+pub(crate) async fn drain_now<R: Runtime>(app: AppHandle<R>) -> Result<usize> {
+  app.reach().drain_now().await
+}
