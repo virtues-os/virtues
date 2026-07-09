@@ -83,6 +83,10 @@ targets:
       properties:
         com.apple.developer.healthkit: true
         com.apple.developer.healthkit.access: []
+        # com.apple.developer.financekit: RESTRICTED — needs an Apple approval
+        # request (developer.apple.com/contact/request/financekit) before
+        # automatic provisioning will include it. Re-enable once granted; the
+        # Finance collector code is ready and compiles.
     scheme:
       environmentVariables:
         RUST_BACKTRACE: full

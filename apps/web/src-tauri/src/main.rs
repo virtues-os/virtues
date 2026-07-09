@@ -49,21 +49,6 @@ fn is_paired() -> bool {
         .unwrap_or(false)
 }
 
-/// Paired, but the WG private key file is gone — so the tunnel can't
-/// authenticate and the fix is **re-pair**, not "retry the network." This is the
-/// exact state that masqueraded as a generic "unreachable" and sent us chasing
-/// network ghosts. File-based (no keychain, no shell-out): `~/.virtues/bundle.json`
-/// present + `~/.virtues/wg-private.key` absent. The key file is the reliable
-/// store the standalone tunnel reads (the macOS keychain silently no-ops for
-/// it), so its absence is the truthful signal.
-fn wg_key_missing() -> bool {
-    dirs::home_dir()
-        .map(|h| {
-            let d = h.join(".virtues");
-            d.join("bundle.json").exists() && !d.join("wg-private.key").exists()
-        })
-        .unwrap_or(false)
-}
 
 /// Ask the local proxy (`localhost:7117`) whether THIS device's pairing is still
 /// valid with the box, by reading `/auth/session`. `is_paired()` only checks
@@ -192,9 +177,7 @@ async fn diagnose_box() -> String {
             Some(true) => "ok",
             Some(false) => "stale_bearer",
             None => {
-                if wg_key_missing() {
-                    "needs_repair"
-                } else if device_online() {
+                if device_online() {
                     "box_unreachable"
                 } else {
                     "device_offline"
@@ -324,23 +307,29 @@ async fn pair_with_code(
 /// at `http://localhost:7117`. The browser then talks plain loopback HTTP, so
 /// same-origin cookies/CSRF are untouched. No WireGuard, no root daemon.
 ///
-/// `up` is long-running (it's the proxy), so we spawn it rather than await it.
-/// TODO(iroh): persist it across app restarts via a LaunchAgent/Tauri sidecar so
-/// it survives an app quit; today it runs for the app session.
+/// The proxy is installed as a DURABLE background service (macOS LaunchAgent /
+/// Linux systemd user unit), not spawned as an app-session child. It has to
+/// outlive the desktop app: the collector uploads through `:7117`, so background
+/// collection would break whenever the app was closed if the proxy died with it.
+/// `virtues-client install` copies the binary into `~/.virtues/bin`, writes the
+/// service, and starts it (`RunAtLoad` + restart-on-crash). This also lights up
+/// the launch-time `reconcile_helpers`, which can now swap the client on update.
 ///
 /// The collector (data collection) is NOT installed here — it pairs as its own
 /// device and needs Full Disk Access / Accessibility grants, so it stays an
 /// explicit opt-in via `install_collector`.
 #[tauri::command]
 async fn install_helpers(app: AppHandle, _server: String) -> Result<(), String> {
-    let (_events, _child) = virtues_client_command(&app)?
-        .args(["up"])
-        .spawn()
-        .map_err(|e| format!("helper spawn failed: {e}"))?;
-    // Keep the proxy running for the app session; the child is managed by the
-    // Tauri shell plugin and torn down with the app.
-    std::mem::forget(_child);
-    Ok(())
+    let output = virtues_client_command(&app)?
+        .args(["install"])
+        .output()
+        .await
+        .map_err(|e| format!("helper install failed: {e}"))?;
+    if output.status.success() {
+        Ok(())
+    } else {
+        Err(String::from_utf8_lossy(&output.stderr).to_string())
+    }
 }
 
 /// Remove the localhost proxy LaunchAgent (reverse of [`install_helpers`]).
@@ -377,13 +366,58 @@ async fn forget_pairing(app: AppHandle) -> Result<(), String> {
     Ok(())
 }
 
+/// Ensure the proxy service is installed AND running before we probe. This is
+/// what makes "Retry" (and the poll behind it) able to *recover* rather than
+/// just re-observe a dead `:7117`: the common stranding is a proxy that isn't
+/// running (app quit before the service model landed, launchd unloaded it, a
+/// fresh boot before RunAtLoad, or a user paired before this fix and so has no
+/// service at all). Install-if-missing, else kickstart — both cheap and
+/// idempotent, and a no-op cost once the box is actually reachable.
+async fn ensure_client_service(app: &AppHandle) {
+    let installed = dirs::home_dir()
+        .map(|h| h.join(".virtues").join("bin").join("virtues-client").exists())
+        .unwrap_or(false);
+    if !installed {
+        // Migrates already-paired users and repairs a torn-down service.
+        if let Ok(cmd) = virtues_client_command(app) {
+            let _ = cmd.args(["install"]).output().await;
+        }
+        return;
+    }
+    // Installed → just make sure launchd/systemd has it running now.
+    #[cfg(target_os = "macos")]
+    {
+        let uid = std::process::Command::new("id")
+            .arg("-u")
+            .output()
+            .ok()
+            .and_then(|o| String::from_utf8(o.stdout).ok())
+            .map(|s| s.trim().to_string())
+            .unwrap_or_default();
+        if !uid.is_empty() {
+            let _ = std::process::Command::new("/bin/launchctl")
+                .args(["kickstart", &format!("gui/{uid}/com.virtues.client")])
+                .output();
+        }
+    }
+    #[cfg(target_os = "linux")]
+    {
+        let _ = std::process::Command::new("systemctl")
+            .args(["--user", "start", "virtues-client.service"])
+            .output();
+    }
+}
+
 /// Re-check whether the box now accepts this device — backs the connect
 /// screen's "Retry" on the unreachable state (box was off/asleep/elsewhere).
 /// `true` → load the box; `false` → still not reachable/accepted.
 #[tauri::command]
-async fn recheck_box() -> bool {
-    // Single attempt: the connect screen polls this on a timer, so the poll
-    // interval IS the retry. The async wrapper keeps the probe off the UI thread.
+async fn recheck_box(app: AppHandle) -> bool {
+    // First make sure our side is actually up (the frequent cause of a stuck
+    // Retry is a stopped proxy, not an offline box), THEN probe. Single probe
+    // attempt: the connect screen polls on a timer, so the poll interval IS the
+    // retry cadence.
+    ensure_client_service(&app).await;
     probe_box_session(1).await == Some(true)
 }
 
@@ -717,7 +751,6 @@ fn box_label() -> (Dot, &'static str) {
     match probe_box_session_blocking(1) {
         Some(true) => (Dot::Green, "Box: connected"),
         Some(false) => (Dot::Red, "Box: needs re-pairing"),
-        None if wg_key_missing() => (Dot::Red, "Box: needs re-pairing"),
         None => (Dot::Amber, "Box: unreachable"),
     }
 }
@@ -1058,6 +1091,69 @@ fn reconcile_helpers() -> bool {
     changed
 }
 
+/// Launch-time guarantee that the proxy service exists and is running whenever
+/// we're paired. `reconcile_helpers` only refreshes an ALREADY-installed helper
+/// on version drift; this covers the two cases it can't:
+///   - paired before the service model existed (no `~/.virtues/bin/virtues-client`,
+///     no LaunchAgent) → install it now, so re-opening the app stops stranding
+///     on the connect screen and background collector uploads have a live `:7117`;
+///   - installed but not currently running (launchd unloaded it, fresh boot
+///     racing RunAtLoad) → kickstart it.
+/// Returns true if it installed or (re)started something, so the caller can let
+/// the proxy settle before probing. No-op (and cheap) when already up.
+fn ensure_client_service_blocking() -> bool {
+    if !is_paired() {
+        return false;
+    }
+    let installed = dirs::home_dir()
+        .map(|h| h.join(".virtues").join("bin").join("virtues-client").exists())
+        .unwrap_or(false);
+    if !installed {
+        // Run the bundled helper (sitting next to this app binary in
+        // Contents/MacOS/) to install itself as a service. Dev builds without a
+        // co-located sidecar simply skip — the manual `virtues-client up` path
+        // still works there.
+        let bundled = std::env::current_exe()
+            .ok()
+            .and_then(|p| p.parent().map(|d| d.join("virtues-client")));
+        if let Some(bin) = bundled.filter(|b| b.exists()) {
+            let ran = std::process::Command::new(&bin)
+                .arg("install")
+                .output()
+                .map(|o| o.status.success())
+                .unwrap_or(false);
+            return ran;
+        }
+        return false;
+    }
+    // Installed → nudge the service manager so it's serving before we probe.
+    #[cfg(target_os = "macos")]
+    {
+        let uid = std::process::Command::new("id")
+            .arg("-u")
+            .output()
+            .ok()
+            .and_then(|o| String::from_utf8(o.stdout).ok())
+            .map(|s| s.trim().to_string())
+            .unwrap_or_default();
+        if !uid.is_empty() {
+            let _ = std::process::Command::new("/bin/launchctl")
+                .args(["kickstart", &format!("gui/{uid}/com.virtues.client")])
+                .output();
+            return true;
+        }
+    }
+    #[cfg(target_os = "linux")]
+    {
+        let _ = std::process::Command::new("systemctl")
+            .args(["--user", "start", "virtues-client.service"])
+            .output();
+        return true;
+    }
+    #[allow(unreachable_code)]
+    false
+}
+
 /// Reconcile one helper. `Ok(true)` = it was stale and got redeployed.
 fn reconcile_one(name: &str, agent: &str) -> Result<bool, String> {
     let installed = dirs::home_dir()
@@ -1163,7 +1259,14 @@ fn main() {
             // helper (e.g. a proxy that can't read a freshly-paired key) would
             // skew the launch decision. If anything was actually swapped, give
             // the just-restarted proxy a moment to bind :7117 before probing.
-            if reconcile_helpers() {
+            let reconciled = reconcile_helpers();
+            // Then guarantee the proxy service itself is installed + running
+            // (migrates pre-service-model pairings, restarts a stopped proxy).
+            // Both must run, so bind the results before the OR. Either action
+            // needs the just-(re)started proxy a moment to bind :7117 before the
+            // launch probe reads it.
+            let ensured = ensure_client_service_blocking();
+            if reconciled || ensured {
                 std::thread::sleep(std::time::Duration::from_millis(700));
             }
 
@@ -1182,7 +1285,8 @@ fn main() {
             //   not paired        → fresh connect screen
             //   box accepts us    → load the box
             //   box rejects us    → #reset      ("your box was reset, reconnect")
-            //   box unreachable   → #unreachable ("can't reach it" + Retry)
+            //   box unreachable   → #unreachable ("can't reach it" + Retry, which
+            //                       (re)starts the proxy service, then re-probes)
             // A SINGLE fast probe (not the multi-retry loop): reachable boxes
             // reconnect silently with no connect-screen flash (the
             // silent-reconnect doctrine), and an unreachable box bounds the
@@ -1195,7 +1299,6 @@ fn main() {
                 match probe_box_session_blocking(1) {
                     Some(true) => WebviewUrl::External("http://localhost:7117".parse().unwrap()),
                     Some(false) => WebviewUrl::App("pair.html#reset".into()),
-                    None if wg_key_missing() => WebviewUrl::App("pair.html#repair".into()),
                     None => WebviewUrl::App("pair.html#unreachable".into()),
                 }
             };

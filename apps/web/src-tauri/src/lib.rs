@@ -15,6 +15,7 @@ pub fn run() {
   use tauri::{WebviewUrl, WebviewWindowBuilder};
   use tauri_plugin_contacts::ContactsExt;
   use tauri_plugin_eventkit::EventKitExt;
+  use tauri_plugin_finance::FinanceExt;
   use tauri_plugin_health::HealthExt;
   use tauri_plugin_location_probe::LocationProbeExt;
   use tauri_plugin_reach::ReachExt;
@@ -25,6 +26,7 @@ pub fn run() {
     .plugin(tauri_plugin_health::init())
     .plugin(tauri_plugin_eventkit::init())
     .plugin(tauri_plugin_contacts::init())
+    .plugin(tauri_plugin_finance::init())
     .setup(|app| {
       // Background location: install the CLLocationManager delegate as early as
       // Tauri lets us (runs on every launch, incl. cold background relaunch).
@@ -45,6 +47,10 @@ pub fn run() {
       // Contacts: re-snapshot on launch if already authorized (never prompts).
       if let Err(e) = app.contacts().resume() {
         eprintln!("[contacts] resume failed: {e}");
+      }
+      // Finance: re-sync on launch if already opted in (never prompts).
+      if let Err(e) = app.finance().resume() {
+        eprintln!("[finance] resume failed: {e}");
       }
 
       // Bundled-SPA architecture (Option A): the app IS the bundled SvelteKit

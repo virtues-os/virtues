@@ -5797,6 +5797,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "tauri-plugin-finance"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "tauri",
+ "tauri-plugin",
+ "thiserror 2.0.18",
+]
+
+[[package]]
 name = "tauri-plugin-health"
 version = "0.1.0"
 dependencies = [
@@ -6711,6 +6721,7 @@ dependencies = [
  "tauri-build",
  "tauri-plugin-contacts",
  "tauri-plugin-eventkit",
+ "tauri-plugin-finance",
  "tauri-plugin-health",
  "tauri-plugin-location-probe",
  "tauri-plugin-notification",

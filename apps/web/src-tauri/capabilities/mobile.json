@@ -11,6 +11,7 @@
     "reach:default",
     "health:default",
     "eventkit:default",
-    "contacts:default"
+    "contacts:default",
+    "finance:default"
   ]
 }
