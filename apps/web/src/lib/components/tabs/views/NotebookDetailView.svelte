@@ -8,6 +8,9 @@
 	import { contextMenu } from '$lib/stores/contextMenu.svelte';
 	import RefPicker from '$lib/components/RefPicker.svelte';
 	import ColorPickerModal from '$lib/components/sidebar/ColorPickerModal.svelte';
+	import { getRefSummary } from '$lib/utils/refSummary';
+	import { getPage, getDriveFile } from '$lib/api/client';
+	import { askVirtues } from '$lib/stores/pendingPrompt.svelte';
 
 	let { tab }: { tab: Tab; active?: boolean } = $props();
 
@@ -47,8 +50,56 @@
 		chatSessions.sessions.filter((s) => s.notebook_id === notebookId),
 	);
 
-	// Pinned members = everything except chats (chats render in their own list).
+	// Members = everything except chats (chats render in their own list).
 	const pinnedItems = $derived((detail?.items ?? []).filter((i) => !i.url.startsWith('/chat/')));
+
+	// ---- Resolve real member names (not the type slug) -----------------------
+	let memberNames = $state<Record<string, string>>({});
+	const requestedNames = new Set<string>();
+	async function resolveMemberName(url: string): Promise<string> {
+		if (url.startsWith('http://') || url.startsWith('https://')) {
+			try { return new URL(url).hostname.replace(/^www\./, ''); } catch { return url; }
+		}
+		const parts = url.split('/'); // ['', type, id, ...]
+		const type = parts[1] ?? '';
+		const id = parts.slice(2).join('/');
+		try {
+			if (type === 'person' || type === 'place' || type === 'org' || type === 'thing') {
+				const s = await getRefSummary(type, id);
+				if (s?.name) return s.name;
+			} else if (type === 'page') {
+				const p = await getPage(id);
+				if (p) return p.title?.trim() || 'Untitled page';
+			} else if (type === 'drive') {
+				const f = await getDriveFile(parts[2] ?? id);
+				if (f?.filename) return f.filename;
+			} else if (type === 'day' || type === 'year') {
+				return id;
+			}
+		} catch { /* fall through to type label */ }
+		return type ? type[0].toUpperCase() + type.slice(1) : url;
+	}
+	$effect(() => {
+		for (const it of pinnedItems) {
+			if (!requestedNames.has(it.url)) {
+				requestedNames.add(it.url);
+				resolveMemberName(it.url).then((n) => {
+					memberNames = { ...memberNames, [it.url]: n };
+				});
+			}
+		}
+	});
+
+	// ---- Ask this notebook (opens a new chat bound + grounded here) ----------
+	let askDraft = $state('');
+	function submitAsk(e: Event) {
+		e.preventDefault();
+		const text = askDraft.trim();
+		const id = notebookId;
+		if (!text || !id) return;
+		askVirtues(text, id);
+		askDraft = '';
+	}
 
 	function iconForUrl(url: string): string {
 		if (url.startsWith('http://') || url.startsWith('https://')) return 'ri:external-link-line';
@@ -73,6 +124,16 @@
 		}
 		// e.g. "/person/p_abc" → "person"; the destination view shows the full name.
 		return url.split('/')[1] ?? url;
+	}
+
+	function memberType(url: string): string {
+		if (url.startsWith('http://') || url.startsWith('https://')) return 'Link';
+		const t = url.split('/')[1] ?? '';
+		const map: Record<string, string> = {
+			person: 'Person', page: 'Page', org: 'Org', place: 'Place',
+			thing: 'Thing', day: 'Day', year: 'Year', source: 'Source', drive: 'File',
+		};
+		return map[t] ?? t;
 	}
 
 	function openUrl(url: string) {
@@ -173,100 +234,107 @@
 	{:else if error}
 		<div class="state error">{error}</div>
 	{:else if detail}
-		<header class="head" class:tinted={!!accent}>
-			<button class="icon-btn room-icon" title="Set color" onclick={() => (colorOpen = true)}>
-				<Icon icon={detail.icon || 'ri:layout-masonry-line'} width="22" />
-			</button>
-			<div class="title-wrap">
+		<div class="inner">
+			<header class="head">
+				<div class="head-top">
+					<button class="nb-icon" class:tinted={!!accent} title="Set color" onclick={() => (colorOpen = true)}>
+						<Icon icon={detail.icon || 'ri:booklet-line'} width="22" />
+					</button>
+					<div class="head-actions">
+						<button class="icon-btn" title="Rename" onclick={startRename}><Icon icon="ri:edit-line" width="15" /></button>
+						<button class="icon-btn danger" title="Delete Notebook" onclick={deleteNotebook}><Icon icon="ri:delete-bin-line" width="15" /></button>
+					</div>
+				</div>
+
 				{#if editingName}
 					<!-- svelte-ignore a11y_autofocus -->
 					<input
-						class="title-input"
+						class="title-input font-serif"
 						bind:value={nameDraft}
 						autofocus
 						onblur={commitRename}
 						onkeydown={(e) => { if (e.key === 'Enter') commitRename(); if (e.key === 'Escape') editingName = false; }}
 					/>
 				{:else}
-					<h1 class="title" ondblclick={startRename}>{detail.name}</h1>
+					<h1 class="title font-serif" ondblclick={startRename}>{detail.name}</h1>
 				{/if}
-				<div class="meta">
-					<span>{roomChats.length} {roomChats.length === 1 ? 'chat' : 'chats'}</span>
-					<span class="dot-sep">·</span>
-					<span>{pinnedItems.length} pinned</span>
+
+				{#if editingMemo}
+					<!-- svelte-ignore a11y_autofocus -->
+					<textarea
+						class="desc-input"
+						bind:value={memoDraft}
+						autofocus
+						placeholder="Add a description — what this notebook is for. It also gives the assistant context."
+						onblur={commitMemo}
+					></textarea>
+				{:else if detail.current_status}
+					<button class="desc" onclick={startMemo}>{detail.current_status}</button>
+				{:else}
+					<button class="desc desc-empty" onclick={startMemo}>Add a description…</button>
+				{/if}
+
+				<div class="meta font-mono">
+					{pinnedItems.length} {pinnedItems.length === 1 ? 'source' : 'sources'}
+					<span class="dot">·</span>
+					{roomChats.length} {roomChats.length === 1 ? 'chat' : 'chats'}
 				</div>
-			</div>
-			<div class="head-actions">
-				<button class="icon-btn" title="Rename" onclick={startRename}><Icon icon="ri:edit-line" width="16" /></button>
-				<button class="icon-btn danger" title="Delete Notebook" onclick={deleteNotebook}><Icon icon="ri:delete-bin-line" width="16" /></button>
-			</div>
-		</header>
+			</header>
 
-		<!-- Catch-up memo -->
-		<section class="memo">
-			{#if editingMemo}
-				<!-- svelte-ignore a11y_autofocus -->
-				<textarea
-					class="memo-input"
-					bind:value={memoDraft}
-					autofocus
-					placeholder="What's the state of this Notebook? (a line or two you'll read when you come back)"
-					onblur={commitMemo}
-				></textarea>
-			{:else if detail.current_status}
-				<button class="memo-text" onclick={startMemo}>{detail.current_status}</button>
-			{:else}
-				<button class="memo-empty" onclick={startMemo}>
-					<Icon icon="ri:sticky-note-line" width="14" /> Add a catch-up note…
+			<!-- Ask this notebook — a new chat grounded in these sources -->
+			<form class="ask" onsubmit={submitAsk}>
+				<Icon icon="ri:sparkling-2-line" width="16" />
+				<input class="ask-input" bind:value={askDraft} placeholder="Ask this notebook…" />
+				<button class="ask-send" type="submit" disabled={!askDraft.trim()} title="Ask — grounded in this notebook">
+					<Icon icon="ri:arrow-right-line" width="15" />
 				</button>
-			{/if}
-		</section>
+			</form>
 
-		<!-- Chats -->
-		<section class="group">
-			<div class="group-head"><span>Chats</span></div>
-			{#if roomChats.length === 0}
-				<div class="empty">No chats in this Notebook yet.</div>
-			{:else}
-				<ul class="rows">
-					{#each roomChats as c (c.conversation_id)}
-						<li>
-							<button class="row" onclick={() => openChat(c.conversation_id)} title={c.title ?? 'Untitled chat'}>
-								<Icon icon={c.icon || 'ri:chat-3-line'} width="15" />
-								<span class="row-label">{c.title ?? 'Untitled chat'}</span>
-							</button>
-						</li>
-					{/each}
-				</ul>
-			{/if}
-		</section>
+			<!-- Library — the sources that ground this notebook -->
+			<section class="section">
+				<div class="eyebrow font-mono">
+					<span>Library</span>
+					<button class="add-btn" onclick={openPicker} title="Add a page, person, place, or link"><Icon icon="ri:add-line" width="14" /></button>
+				</div>
+				{#if pinnedItems.length === 0}
+					<button class="add-row" onclick={openPicker}>
+						<Icon icon="ri:add-line" width="15" /> Add pages, people, places, or links
+					</button>
+				{:else}
+					<ul class="ledger">
+						{#each pinnedItems as it (it.url)}
+							<li class="ledger-row">
+								<button class="ledger-item" onclick={() => openUrl(it.url)} oncontextmenu={(e) => memberMenu(e, it.url)} title={memberNames[it.url] || it.url}>
+									<Icon icon={iconForUrl(it.url)} width="16" class="ledger-ic" />
+									<span class="ledger-name">{memberNames[it.url] || labelForUrl(it.url)}</span>
+									<span class="ledger-type font-mono">{memberType(it.url)}</span>
+								</button>
+								<button class="ledger-remove" title="Remove from Notebook" onclick={() => removeMember(it.url)}><Icon icon="ri:close-line" width="13" /></button>
+							</li>
+						{/each}
+					</ul>
+				{/if}
+			</section>
 
-		<!-- Pinned members -->
-		<section class="group">
-			<div class="group-head">
-				<span>Pinned</span>
-				<button class="add-btn" onclick={openPicker} title="Add a person, page, or link"><Icon icon="ri:add-line" width="15" /></button>
-			</div>
-			{#if pinnedItems.length === 0}
-				<div class="empty">Nothing pinned. Add people, pages, or links to weight them here.</div>
-			{:else}
-				<ul class="rows">
-					{#each pinnedItems as it (it.url)}
-						<li class="row-li">
-							<button class="row" onclick={() => openUrl(it.url)} oncontextmenu={(e) => memberMenu(e, it.url)} title={it.url}>
-								<Icon icon={iconForUrl(it.url)} width="15" />
-								<span class="row-label">{labelForUrl(it.url)}</span>
-							</button>
-							<button
-								class="row-remove"
-								title="Remove from Notebook"
-								onclick={() => removeMember(it.url)}
-							><Icon icon="ri:close-line" width="13" /></button>
-						</li>
-					{/each}
-				</ul>
-			{/if}
-		</section>
+			<!-- Chats filed here -->
+			<section class="section">
+				<div class="eyebrow font-mono"><span>Chats</span></div>
+				{#if roomChats.length === 0}
+					<p class="empty">No chats yet — ask something above to start one here.</p>
+				{:else}
+					<ul class="ledger">
+						{#each roomChats as c (c.conversation_id)}
+							<li class="ledger-row">
+								<button class="ledger-item" onclick={() => openChat(c.conversation_id)} title={c.title ?? 'Untitled chat'}>
+									<Icon icon={c.icon || 'ri:chat-3-line'} width="16" class="ledger-ic" />
+									<span class="ledger-name">{c.title ?? 'Untitled chat'}</span>
+								</button>
+							</li>
+						{/each}
+					</ul>
+				{/if}
+			</section>
+		</div>
 	{:else}
 		<div class="state">Notebook not found.</div>
 	{/if}
@@ -286,187 +354,133 @@
 <ColorPickerModal open={colorOpen} value={accent} onSelect={setAccent} onClose={() => (colorOpen = false)} />
 
 <style>
-	.notebook-detail {
-		height: 100%;
-		overflow-y: auto;
-		padding: 24px 28px 48px;
-		max-width: 760px;
-		margin: 0 auto;
-	}
-	.state {
-		display: flex;
-		align-items: center;
-		gap: 8px;
-		padding: 40px 0;
-		color: var(--color-foreground-muted);
-	}
+	/* Centered reading column (robust: full-width scroller, auto-margin inner) */
+	.notebook-detail { width: 100%; height: 100%; overflow-y: auto; }
+	.inner { max-width: 720px; margin: 0 auto; padding: 3.5rem 2rem 6rem; }
+	.state { display: flex; align-items: center; gap: 8px; padding: 3rem 2rem; color: var(--color-foreground-muted); }
 	.state.error { color: var(--color-error, #dc2626); }
 
-	.head {
-		display: flex;
-		align-items: center;
-		gap: 14px;
-		padding: 12px 14px;
-		border-radius: 12px;
-		margin-bottom: 14px;
+	/* Header — serif title + one description (the app's title/description pattern) */
+	.head { margin-bottom: 2rem; }
+	.head-top { display: flex; align-items: center; justify-content: space-between; margin-bottom: 1.1rem; }
+	.nb-icon {
+		display: grid; place-items: center; width: 46px; height: 46px;
+		border-radius: 12px; border: 1px solid var(--color-border);
+		background: var(--color-surface-elevated); color: var(--color-foreground); cursor: pointer;
 	}
-	.head.tinted {
-		background: color-mix(in srgb, var(--room-accent) 8%, transparent);
-		box-shadow: inset 3px 0 0 var(--room-accent);
+	.nb-icon.tinted {
+		background: color-mix(in srgb, var(--room-accent) 14%, var(--color-surface-elevated));
+		border-color: color-mix(in srgb, var(--room-accent) 32%, var(--color-border));
+		color: color-mix(in srgb, var(--room-accent) 80%, var(--color-foreground));
 	}
-	.room-icon {
-		display: grid;
-		place-items: center;
-		width: 44px;
-		height: 44px;
-		border-radius: 10px;
-		background: var(--color-surface-elevated);
-		color: var(--color-foreground);
-		flex-shrink: 0;
-	}
-	.head.tinted .room-icon {
-		background: color-mix(in srgb, var(--room-accent) 16%, transparent);
-		color: color-mix(in srgb, var(--room-accent) 78%, var(--color-foreground));
-	}
-	.title-wrap { flex: 1; min-width: 0; }
-	.title {
-		font-size: 22px;
-		font-weight: 650;
-		margin: 0;
-		color: var(--color-foreground);
-		cursor: text;
-		overflow: hidden;
-		text-overflow: ellipsis;
-		white-space: nowrap;
-	}
-	.title-input {
-		font-size: 22px;
-		font-weight: 650;
-		width: 100%;
-		border: none;
-		border-bottom: 1px solid var(--color-border);
-		background: transparent;
-		color: var(--color-foreground);
-		outline: none;
-		padding: 0 0 2px;
-	}
-	.meta {
-		display: flex;
-		align-items: center;
-		gap: 6px;
-		font-size: 12px;
-		color: var(--color-foreground-muted);
-		margin-top: 3px;
-	}
-	.dot-sep { opacity: 0.5; }
-	.head-actions { display: flex; gap: 4px; }
+	.head-actions { display: flex; gap: 2px; }
 	.icon-btn {
-		display: grid;
-		place-items: center;
-		width: 30px;
-		height: 30px;
-		border: none;
-		border-radius: 7px;
-		background: transparent;
-		color: var(--color-foreground-muted);
-		cursor: pointer;
+		display: grid; place-items: center; width: 30px; height: 30px;
+		border: none; border-radius: 8px; background: transparent;
+		color: var(--color-foreground-subtle, #9ca3af); cursor: pointer;
 	}
 	.icon-btn:hover { background: var(--color-surface-elevated); color: var(--color-foreground); }
 	.icon-btn.danger:hover { color: var(--color-error, #dc2626); }
 
-	.memo { margin-bottom: 18px; }
-	.memo-text, .memo-empty {
-		display: flex;
-		align-items: flex-start;
-		gap: 7px;
-		width: 100%;
-		text-align: left;
-		border: none;
-		background: transparent;
-		cursor: text;
-		padding: 8px 10px;
-		border-radius: 8px;
-		font-size: 14px;
-		line-height: 1.5;
-		color: var(--color-foreground);
+	.title {
+		font-size: 2rem; font-weight: 500; line-height: 1.12; margin: 0;
+		color: var(--color-foreground); cursor: text;
 	}
-	.memo-text:hover, .memo-empty:hover { background: var(--color-surface-elevated); }
-	.memo-empty { color: var(--color-foreground-muted); font-size: 13px; align-items: center; }
-	.memo-input {
-		width: 100%;
-		min-height: 64px;
-		resize: vertical;
-		border: 1px solid var(--color-border);
-		border-radius: 8px;
-		background: var(--color-surface-elevated);
-		color: var(--color-foreground);
-		padding: 8px 10px;
-		font: inherit;
-		font-size: 14px;
-		line-height: 1.5;
-		outline: none;
+	.title-input {
+		font-size: 2rem; font-weight: 500; line-height: 1.12; width: 100%;
+		border: none; background: transparent; color: var(--color-foreground); outline: none; padding: 0 0 2px;
+		border-bottom: 1.5px solid color-mix(in srgb, var(--room-accent, var(--color-foreground)) 45%, var(--color-border));
 	}
+	.desc {
+		display: block; width: 100%; text-align: left; margin-top: 0.6rem;
+		border: none; background: transparent; cursor: text; padding: 0;
+		font: inherit; font-size: 0.95rem; line-height: 1.55; color: var(--color-foreground-muted);
+	}
+	.desc:hover { color: var(--color-foreground); }
+	.desc-empty { color: var(--color-foreground-subtle, #9ca3af); }
+	.desc-input {
+		width: 100%; margin-top: 0.6rem; min-height: 3rem; resize: vertical;
+		border: none; border-left: 2px solid var(--room-accent, var(--color-border));
+		background: var(--color-surface-elevated); border-radius: 0 8px 8px 0;
+		padding: 0.55rem 0.7rem; font: inherit; font-size: 0.95rem; line-height: 1.55;
+		color: var(--color-foreground); outline: none;
+	}
+	.meta {
+		margin-top: 1rem; font-size: 11px; letter-spacing: 0.04em;
+		text-transform: uppercase; color: var(--color-foreground-subtle, #9ca3af);
+	}
+	.meta .dot { margin: 0 0.6ch; opacity: 0.5; }
 
-	.group { margin-bottom: 20px; }
-	.group-head {
-		display: flex;
-		align-items: center;
-		justify-content: space-between;
-		padding: 0 10px 4px;
-		font-size: 11px;
-		font-weight: 600;
-		text-transform: uppercase;
-		letter-spacing: 0.06em;
+	/* Ask bar — the primary action */
+	.ask {
+		display: flex; align-items: center; gap: 10px; height: 48px;
+		padding: 0 6px 0 14px;
+		border: 1px solid var(--color-border); border-radius: 12px;
+		background: var(--color-surface-elevated); margin-bottom: 2.5rem;
+		transition: border-color 120ms, box-shadow 120ms;
+	}
+	.ask:focus-within {
+		border-color: color-mix(in srgb, var(--room-accent, var(--color-foreground-subtle, #9ca3af)) 55%, var(--color-border));
+		box-shadow: 0 0 0 3px color-mix(in srgb, var(--room-accent, var(--color-foreground-subtle, #9ca3af)) 13%, transparent);
+	}
+	.ask > :global(svg) { color: var(--color-foreground-subtle, #9ca3af); flex-shrink: 0; }
+	.ask-input {
+		flex: 1; min-width: 0; border: none; background: transparent; outline: none;
+		font: inherit; font-size: 0.95rem; color: var(--color-foreground);
+	}
+	.ask-input::placeholder { color: var(--color-foreground-subtle, #9ca3af); }
+	.ask-send {
+		display: grid; place-items: center; width: 34px; height: 34px; flex-shrink: 0;
+		border: none; border-radius: 9px; cursor: pointer;
+		background: var(--room-accent, var(--color-foreground)); color: var(--color-background, #fff);
+	}
+	.ask-send:disabled { opacity: 0.35; cursor: default; }
+
+	/* Sections — quiet ledger lists (hairline rows, not boxes) */
+	.section { margin-bottom: 2.25rem; }
+	.eyebrow {
+		display: flex; align-items: center; justify-content: space-between;
+		font-size: 11px; letter-spacing: 0.09em; text-transform: uppercase;
 		color: var(--color-foreground-subtle, #9ca3af);
+		padding-bottom: 0.55rem; border-bottom: 1px solid var(--color-border);
 	}
 	.add-btn {
-		display: grid;
-		place-items: center;
-		width: 22px;
-		height: 22px;
-		border: none;
-		border-radius: 6px;
-		background: transparent;
-		color: var(--color-foreground-muted);
-		cursor: pointer;
+		display: grid; place-items: center; width: 22px; height: 22px;
+		border: none; border-radius: 6px; background: transparent;
+		color: var(--color-foreground-subtle, #9ca3af); cursor: pointer;
 	}
 	.add-btn:hover { background: var(--color-surface-elevated); color: var(--color-foreground); }
-	.empty { padding: 8px 10px; font-size: 13px; color: var(--color-foreground-muted); }
-	.rows { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 1px; }
-	.row-li { position: relative; display: flex; align-items: center; }
-	.row {
-		display: flex;
-		align-items: center;
-		gap: 9px;
-		width: 100%;
-		padding: 7px 10px;
-		border: none;
-		border-radius: 7px;
-		background: transparent;
-		color: var(--color-foreground);
-		font: inherit;
-		font-size: 13.5px;
-		text-align: left;
-		cursor: pointer;
+	.empty { margin: 0; padding: 0.85rem 0; font-size: 0.9rem; color: var(--color-foreground-muted); }
+	.add-row {
+		display: flex; align-items: center; gap: 8px; width: 100%; text-align: left;
+		padding: 0.85rem 0; border: none; background: transparent; cursor: pointer;
+		font: inherit; font-size: 0.9rem; color: var(--color-foreground-subtle, #9ca3af);
 	}
-	.row:hover, .row-li:hover .row { background: var(--color-surface-elevated); }
-	.row-label { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-	.row-remove {
-		position: absolute;
-		right: 6px;
-		display: grid;
-		place-items: center;
-		width: 20px;
-		height: 20px;
-		border: none;
-		border-radius: 5px;
-		background: transparent;
-		color: var(--color-foreground-subtle, #9ca3af);
-		cursor: pointer;
-		opacity: 0;
+	.add-row:hover { color: var(--color-foreground); }
+
+	.ledger { list-style: none; margin: 0; padding: 0; }
+	.ledger-row {
+		position: relative; display: flex; align-items: center;
+		border-bottom: 1px solid color-mix(in srgb, var(--color-border) 55%, transparent);
 	}
-	.row-li:hover .row-remove { opacity: 1; }
-	.row-remove:hover { background: var(--color-border); color: var(--color-foreground); }
+	.ledger-item {
+		display: flex; align-items: center; gap: 12px; width: 100%;
+		padding: 0.7rem 0.25rem; border: none; background: transparent;
+		color: var(--color-foreground); font: inherit; font-size: 0.95rem; text-align: left; cursor: pointer;
+	}
+	.ledger-item :global(.ledger-ic) { color: var(--color-foreground-subtle, #9ca3af); flex-shrink: 0; }
+	.ledger-row:hover .ledger-item :global(.ledger-ic) { color: color-mix(in srgb, var(--room-accent, var(--color-foreground)) 70%, var(--color-foreground)); }
+	.ledger-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 450; }
+	.ledger-type { flex-shrink: 0; font-size: 10px; letter-spacing: 0.06em; color: var(--color-foreground-subtle, #9ca3af); }
+	.ledger-remove {
+		position: absolute; right: 0;
+		display: grid; place-items: center; width: 22px; height: 22px;
+		border: none; border-radius: 6px; background: var(--color-background);
+		color: var(--color-foreground-subtle, #9ca3af); cursor: pointer; opacity: 0;
+	}
+	.ledger-row:hover .ledger-remove { opacity: 1; }
+	.ledger-remove:hover { color: var(--color-foreground); }
+
 	:global(.spin) { animation: spin 0.8s linear infinite; }
 	@keyframes spin { to { transform: rotate(360deg); } }
 </style>

@@ -62,7 +62,7 @@
 	<header class="head">
 		<div>
 			<h1>Notebooks</h1>
-			<p class="sub">Rooms you return to — a project, pet, hobby, or goal. Each chat lives in one.</p>
+			<p class="sub">Notebooks you return to — a project, pet, hobby, or goal. Each chat lives in one.</p>
 		</div>
 		{#if drafting}
 			<input

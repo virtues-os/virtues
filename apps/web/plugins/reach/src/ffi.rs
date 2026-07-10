@@ -80,12 +80,25 @@ pub extern "C" fn virtues_drain_blocking(timeout_secs: i32) -> i32 {
   })
 }
 
+/// Recover the box connection after an iOS network change / app foreground.
+/// Pokes iroh (`network_change`), and if a bounded probe still fails, rebuilds the
+/// whole endpoint (same identity) — the escape from the iOS socket wedge
+/// (iroh#4289). Called from Swift's `NWPathMonitor` + `didBecomeActive`. Blocks
+/// briefly (~1–5s), so call off the main thread. Returns 0 healed / 1 rebuilt /
+/// negative on error. Never panics across the boundary.
+#[no_mangle]
+pub extern "C" fn virtues_recover_connection() -> i32 {
+  tauri::async_runtime::block_on(crate::recover_connection())
+}
+
 /// Force the linker to keep the C ABI symbols in the app's static lib. Call once
 /// from the plugin `init` (which is in the link graph); referencing the function
 /// pointer pulls this object out of the archive so Swift can find the symbol.
 pub(crate) fn keep_symbols() {
   let enqueue: extern "C" fn(*const c_char, *const c_char) -> i32 = virtues_enqueue;
   let drain: extern "C" fn(i32) -> i32 = virtues_drain_blocking;
+  let recover: extern "C" fn() -> i32 = virtues_recover_connection;
   std::hint::black_box(enqueue as *const ());
   std::hint::black_box(drain as *const ());
+  std::hint::black_box(recover as *const ());
 }

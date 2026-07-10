@@ -406,35 +406,35 @@
 	let citationPanelOpen = $state(false);
 	let selectedCitation = $state<Citation | null>(null);
 
-	// The Space (room) this chat lives in — at most one. Its id is sent with each
+	// The Notebook (room) this chat lives in — at most one. Its id is sent with each
 	// message (drives the agent's active-space context + server-side binding), and
 	// the breadcrumb at the top lets the user enter / file / create a room.
-	let chatSpaceId = $state<string | null>(null);
-	// Which conversation chatSpaceId was seeded for. Seeding happens ONCE per
+	let chatNotebookId = $state<string | null>(null);
+	// Which conversation chatNotebookId was seeded for. Seeding happens ONCE per
 	// conversation (when its session row is available, or once the session list
 	// has finished loading and confirms there's no row yet) so a later session
 	// refresh can never clobber a room the user just picked locally.
-	let seededSpaceFor = $state<string | null>(null);
+	let seededNotebookFor = $state<string | null>(null);
 
 	$effect(() => {
 		const id = conversationId;
-		if (seededSpaceFor === id) return;
+		if (seededNotebookFor === id) return;
 		const session = chatSessions.sessions.find((s) => s.conversation_id === id);
 		if (session) {
-			chatSpaceId = session.notebook_id ?? null;
-			seededSpaceFor = id;
+			chatNotebookId = session.notebook_id ?? null;
+			seededNotebookFor = id;
 		} else if (!chatSessions.isLoading) {
 			// Sessions are loaded and this chat has no row yet (brand-new, not yet
 			// persisted) — start unfiled; the create path binds it from the first
 			// message's notebookId.
-			chatSpaceId = null;
-			seededSpaceFor = id;
+			chatNotebookId = null;
+			seededNotebookFor = id;
 		}
 	});
 
 	async function setChatNotebook(notebookId: string | null) {
-		chatSpaceId = notebookId; // locally authoritative
-		seededSpaceFor = conversationId; // don't let a later seed override this pick
+		chatNotebookId = notebookId; // locally authoritative
+		seededNotebookFor = conversationId; // don't let a later seed override this pick
 		// Persist only if the chat already exists server-side; a brand-new chat
 		// has no row yet and is bound by the create path from getNotebookId().
 		const persisted = chatSessions.sessions.some((s) => s.conversation_id === conversationId);
@@ -776,10 +776,10 @@
 		return selectedModelValue?.id || getDefaultModel()?.id || "";
 	}
 
-	// Getter for the chat's Space (room) ID — sent with each message so the agent
+	// Getter for the chat's Notebook (room) ID — sent with each message so the agent
 	// gets the active-space context block and the server keeps the binding fresh.
 	function getNotebookId(): string | null {
-		return chatSpaceId;
+		return chatNotebookId;
 	}
 
 	// Get or create chat instance for the current conversationId
@@ -926,12 +926,19 @@
 
 	// Load conversation data on mount
 	onMount(() => {
-		// Load Spaces so the room breadcrumb can resolve name/accent immediately.
+		// Load Notebooks so the room breadcrumb can resolve name/accent immediately.
 		notebookStore.load();
 
-		// Claim any prompt handed off from Home / ⌘K "Ask Virtues" (consume-once,
-		// synchronously — so only this freshly-opened chat sends it).
+		// Claim any prompt handed off from Home / ⌘K / "Ask this notebook"
+		// (consume-once, synchronously — so only this freshly-opened chat sends it).
 		const initialPrompt = pendingPrompt.take();
+		// If the ask came from a notebook, bind this new chat to it before the
+		// first message so the create path files it + grounds retrieval there.
+		const seededNotebook = pendingPrompt.takeNotebook();
+		if (seededNotebook) {
+			chatNotebookId = seededNotebook;
+			seededNotebookFor = conversationId;
+		}
 		(async () => {
 			// Stage 1: Models must load first (other code depends on model list)
 			await getInitializationPromise();
@@ -1547,9 +1554,9 @@
 			<div class="chat-area" class:ghost={isGhost}>
 				<!-- Breadcrumb — the Space this chat lives in, then its title (top chrome) -->
 				<div class="chat-topbar">
-					<ChatNotebookBreadcrumb notebookId={chatSpaceId} onChange={setChatNotebook} />
+					<ChatNotebookBreadcrumb notebookId={chatNotebookId} onChange={setChatNotebook} />
 					{#if showTitle}
-						{#if chatSpaceId}
+						{#if chatNotebookId}
 							<Icon icon="ri:arrow-right-s-line" width="15" class="crumb-sep" />
 						{/if}
 						{#if editingTitle}

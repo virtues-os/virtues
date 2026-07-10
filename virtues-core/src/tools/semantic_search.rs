@@ -29,7 +29,11 @@ impl SemanticSearchTool {
             .map_err(|e| ToolError::ExecutionFailed(format!("Failed to init vec table: {}", e)))
     }
 
-    pub async fn execute(&self, arguments: serde_json::Value) -> Result<ToolResult, ToolError> {
+    pub async fn execute(
+        &self,
+        arguments: serde_json::Value,
+        notebook_id: Option<&str>,
+    ) -> Result<ToolResult, ToolError> {
         let query = arguments
             .get("query")
             .and_then(|v| v.as_str())
@@ -59,6 +63,7 @@ impl SemanticSearchTool {
                 date_after,
                 date_before,
                 entities.as_deref(),
+                notebook_id,
                 num_results,
             )
             .await

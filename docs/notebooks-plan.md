@@ -257,19 +257,37 @@ Explicitly NOT in Phase 1: Library/Map/tabbed home, asset viewer refactor, extra
 
 Four read-only deep-dives audited the feature against the real code. Findings + locked decisions:
 
-### Phase 1.5 — "pristine" cleanup (cheap; do before Phase 2)
-- **Surface the new columns.** `instructions`, `archived_at` (on `app_notebooks`) and item `role`
-  are in the DB but ABSENT from the Rust structs (`api/notebooks.rs`) and TS interfaces
-  (`client.ts`) — silent-drop landmine. Add to structs + SELECTs + client types now (read path),
-  even before their UI.
-- **Kill residual "space"/"room" naming.** `ChatView.svelte` vars `chatSpaceId`/`seededSpaceFor` +
-  comments; `NotebookDetailView` CSS `--room-accent`/`.room-*`; `NotebooksListView:65` copy "Rooms
-  you return to"; `contextMenuItems` fn names `getAddToSpaceMenuItems`/`getWorkspaceMenuItems`;
-  `SidebarNavItem:183` comment. All cosmetic, all confusing — sweep them.
-- **Split memo vs instructions (semantics).** `current_status` = transient "state of the room"
-  memo; `instructions` = persistent behavior. Today only the memo exists and is inlined by
-  `build_notebook_context` (chat.rs). Decide now: instructions goes in the system-prompt preamble
-  (persistent), memo stays the catch-up line. Wire both once `instructions` is on the struct.
+### Phase 1.5 — "pristine" cleanup (cheap; do before Phase 2) — precise spec
+
+NOTE: **keep the "room" metaphor** (`--room-accent`, `.room-icon/.room-trigger/.room-name`, "the
+room this chat lives in") — it's the documented internal design language. Only the stale OLD NAME
+("Space"/"Spaces") and user-facing "Rooms" copy are wrong.
+
+**(1) Surface the new columns** — `api/notebooks.rs`:
+- `Notebook` + `NotebookSummary` structs: add `instructions: Option<String>`, `archived_at: Option<Timestamp>`.
+- `NotebookItem` struct: add `role: String`.
+- Add `instructions, archived_at` to every notebook SELECT/RETURNING: `list_notebooks` (~L110),
+  `get_notebook` (~L131), `create_notebook` RETURNING (~L173), `update_notebook` SELECT+RETURNING (~L193,234).
+- Add `role` to the item SELECTs: `get_notebook` items (~L145) + `add_notebook_item` RETURNING (~L304).
+- `UpdateNotebookRequest`: add `instructions: Option<Option<String>>` (tri-state) + `archived: Option<bool>`
+  (→ set/clear `archived_at`); extend the UPDATE SET + binds.
+- `client.ts`: add `instructions`/`archived_at` to `Notebook` (Summary+Detail inherit) and `role` to
+  `NotebookItem`; add `instructions?`/`archived?` to the store `update()` patch type.
+- `role` is READ-ONLY in 1.5 (setting library-vs-pin is Phase 3); `add_notebook_item` keeps DB default 'pin'.
+
+**(2) Split memo vs instructions + wire into chat** — `chat.rs build_notebook_context` (~L767):
+- Add an `<instructions>` element (from `detail.notebook.instructions`) distinct from `<memo>`
+  (`current_status`); update the preamble to describe both (instructions = persistent behavior,
+  memo = transient catch-up). get_notebook already returns it once the struct carries it.
+- Optional (deferrable): a small "Instructions" textarea in `NotebookDetailView` beside the memo.
+
+**(3) Naming sweep — only old-name + user-facing "Rooms"** (NOT the room metaphor):
+- `ChatView.svelte`: `chatSpaceId`→`chatNotebookId`, `seededSpaceFor`→`seededNotebookFor`
+  (L412-437, 782, 1550-1552); comments L409/779 "Space (room)"→"Notebook (room)"; L929 "Load Spaces"→"Load Notebooks".
+- `chat.rs`: `MAX_SPACE_ITEMS_INLINED`→`MAX_NOTEBOOK_ITEMS_INLINED` (L763,789,792,795).
+- `NotebooksListView.svelte:65` copy "Rooms you return to"→"Notebooks you return to".
+- `contextMenuItems.ts`: `getAddToSpaceMenuItems`→`getAddToNotebookMenuItems`, `getWorkspaceMenuItems`→
+  `getNotebookMenuItems`; update `SidebarNavItem.svelte` import+call (L10,184) + its comment.
 
 ### Retrieval scoping — LOCKED approach (Phase 4)
 - Add `notebook_id: Option<&str>` + `ScopeMode { Boost, Strict }` to `search()` (query.rs).
@@ -325,3 +343,74 @@ Four read-only deep-dives audited the feature against the real code. Findings + 
 - **Templates + suggest-a-notebook** (adoption on-ramp) — much later, not worth it now.
 - Extra views (**Timeline**, **Outline/Board**) — built-in modules could be added later; not in v1.
 - **Notebook views as customizable `view` actions** — explicitly out. Built-in default only.
+
+---
+
+## Phase C — Citations (make grounding visible)  ← NEXT
+
+**Goal:** when the model answers inside a notebook, each claim carries a clickable pill that opens the *actual* cited source (a page, a person, a day, an uploaded doc), not a generic "5 matches" blob. This is the payoff of the notebook-scoped retrieval already built — it makes the grounding *legible and verifiable*, which is the whole NotebookLM feeling. No new extraction needed; it works on internal members today.
+
+### What already exists (do not rebuild)
+The full pipe is wired end-to-end — we are *upgrading one node*, not laying pipe:
+- Backend streams tool results verbatim: `AgentEvent::ToolCallResult` → `StreamEvent::ToolOutputAvailable { tool_call_id, output }` (`virtues-core/src/api/chat.rs:1454-1472`). The frontend already receives the full `semantic_search` results array.
+- `semantic_search` returns per-record `{ ontology, record_id, title, preview, author, timestamp, score }` (`virtues-core/src/tools/semantic_search.rs:72-91`).
+- Frontend builder maps tool calls → `Citation[]`, and **already expands `web_search` into one citation per result** (`apps/web/src/lib/citations/builder.ts:264-298`). `CitedMarkdown` parses `[n]` markers, `InlineCitation` renders the pill, `CitationPanel` shows detail, `Ref` deep-links `/page/<id>` etc.
+
+### The one real gap
+`semantic_search` is collapsed into a **single** citation whose preview is `"N matches"` (`builder.ts:102-108`). So `[1]` in the model's text points at "the search", not at a specific page. Two things to fix: (1) expand search hits into per-record citations, (2) make the model reference them stably.
+
+### Steps
+1. **Stable per-record cite ids (backend).** In `semantic_search.rs`, add a short stable `cite` key per result (e.g. `s1`, `s2`… scoped to the call, or reuse `record_id`). Return it in each result object. Cheap, additive.
+2. **Instruct the model to cite (backend prompt).** In the chat system-prompt assembly (`virtues-core/src/agent/prompt.rs` / `api/chat.rs` context build), add a short contract: *"When a claim rests on a retrieved source, append its `[cite]` id. Cite the specific source, not the search."* Keep it one paragraph; the deep-research prompt already has cited-report language to borrow tone from (`prompt.rs:86-99`).
+3. **Expand search citations (frontend).** In `builder.ts`, mirror the `web_search` expansion for `virtues_semantic_search`: one `Citation` per result, `id` = the backend `cite` key, `title`/`preview` from the record, `source_type: 'ontology'`, icon/color via existing `mapping.ts` ontology table, and **`url` = the ref route for that record** (`/page/<id>`, `/person/<id>`, `/day/<id>`, `/source/<id>`) so the pill is deep-linkable.
+4. **Deep-link the panel (frontend).** In `CitationPanel.svelte`, when a citation has an entity/page `url`, render it through `Ref`/`RefPreview` (reuse existing) and make "open" navigate/split-pane to the real source — not just show preview text. This is the "click the pill → land on the page" moment.
+5. **Grounded-answer affordance (notebook chat).** When a chat is notebook-bound, the answer's citations are its members. Optional: a small "N sources" footer under the answer listing the distinct cited members (dedupe by `record_id`). Low effort, high legibility.
+
+### Cut / deferred
+- Char-precise span highlights (already deferred). Pill-per-claim is enough.
+- No new schema. Citations are ephemeral in `message.parts` as they are today; persistence rides on the existing message store.
+- Don't touch the `web_search` / `dispatch_subagents` citation paths — they already work.
+
+### Done when
+Ask a notebook a question → answer shows inline pills → clicking a pill opens the exact page/person/day it cited, filtered to that notebook's members.
+
+---
+
+## Phase D — Asset track (upload → extract → embed → view → cite)
+
+**Goal:** a notebook can hold an uploaded PDF / text / doc whose **native text** is extracted, embedded, retrievable (scoped, via Phase C's citations), and viewable. This is the researcher/PhD archetype. Bigger than C; sequence it after.
+
+### What already exists (do not rebuild)
+- **Upload is done.** `POST /api/drive/upload` (multipart, quota, SHA-256 dedup, disk storage) + frontend `uploadDriveFile()` with progress (`virtues-core/src/api/drive.rs`, `apps/web/src/lib/api/client.ts`).
+- **Viewer is done and routed.** `AssetView.svelte` renders image/audio/video/PDF(iframe)/download by MIME (`apps/web/src/lib/components/tabs/views/AssetView.svelte:1-237`), fed by `getDriveFile()` + `/api/drive/files/:id/download`.
+- **Indexer is generic.** The embedding cron embeds any ontology with an `embed_text_sql` (`virtues-core/src/search/indexer.rs`) — so a new document-chunk ontology gets embedded "for free" once its table exists.
+- **Notebook membership already stores `/drive/file_<id>` URLs**; `resolve_notebook_scope` just skips them today (`virtues-core/src/search/query.rs:171`).
+
+### The real missing pieces (in build order)
+1. **Extraction (the core lift).** New async step: on upload (or a `document_extraction` cron, matching our cron-drain doctrine), parse **born-digital text only — no OCR** (already decided). PDF via a Rust text-extract crate (evaluate `pdf-extract` / `lopdf`; fall back to skip on scanned/no-text); `.txt`/`.md`/`.html` direct. Chunk to ~pages/paragraphs.
+2. **`extracted_document_chunks` table (new migration).** `(id, file_id FK→app_drive_files, chunk_index, page_num, text, char_start, char_end, created_at)`. Add `extracted_at TIMESTAMPTZ` to `app_drive_files` as the extraction cursor/state.
+3. **New ontology `uploaded_document`** in `crates/virtues-registry/src/ontologies.rs` with `embed_text_sql` selecting chunk text keyed by chunk id. Indexer picks it up; `search_embeddings.source_table = 'extracted_document_chunks'`.
+4. **Wire `/drive/file_<id>` into notebook scope.** In `resolve_notebook_scope` (`query.rs:157-171`), resolve a `/drive/file_` member to its chunk record-ids so scoped retrieval + boost include the doc. Phase C citations then deep-link a hit to `AssetView` **at its `page_num`**.
+5. **HTTP Range support (viewer quality).** Add `Range`/`206 Partial Content` to the drive download handler (`drive.rs:1045-1050`) so PDF/video seek works over the network. Currently full-file only.
+6. **Viewer: extraction status + citation jump.** In `AssetView`, show "indexing…/N chunks" state and accept a `?page=` (or `#page=`) to jump the PDF iframe to a cited page.
+
+### Sequencing within D
+Extraction + chunk table + ontology (1–3) are the spine — ship that first and confirm an uploaded PDF becomes searchable. Then scope-wiring (4) lights up notebook grounding for docs. Range (5) and viewer polish (6) are quality passes, last.
+
+### Cut / deferred (unchanged)
+- OCR, external-URL/webpage/YouTube ingestion, change-detection "watch", export/sharing — all stay deferred.
+- Non-text office formats (`.docx`/`.pptx`) after PDF+text prove out.
+
+### Done when
+Drop a PDF into a notebook → it extracts + embeds → ask the notebook → answer cites the PDF → clicking the pill opens the doc at the cited page.
+
+---
+
+## Build order across C + D
+
+1. **Phase C** (citations) first — small, self-contained, immediately visible, unlocks trust in retrieval already built.
+2. **Phase D spine** (extract → chunk → embed) — prove an uploaded PDF becomes searchable.
+3. **Phase D wiring** — `/drive/file_` into notebook scope; C's citations now cover docs.
+4. **Phase D polish** — Range requests, viewer page-jump, extraction status.
+
+Commit checkpoint before starting (Phase 1 + 1.5 + scoped retrieval + UI redesign are still uncommitted).

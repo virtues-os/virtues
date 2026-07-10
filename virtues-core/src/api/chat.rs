@@ -760,7 +760,7 @@ async fn build_system_prompt(
 }
 
 /// Maximum member URLs to inline for a Notebook before truncating.
-const MAX_SPACE_ITEMS_INLINED: usize = 100;
+const MAX_NOTEBOOK_ITEMS_INLINED: usize = 100;
 
 /// Build a context block for the active Notebook (room) the chat lives in.
 /// Returns None if the Notebook can't be loaded.
@@ -779,6 +779,15 @@ async fn build_notebook_context(pool: &PgPool, notebook_id: &str) -> Option<Stri
         escape_attr(&detail.notebook.name),
     ));
 
+    if let Some(instr) = detail.notebook.instructions.as_deref() {
+        if !instr.is_empty() {
+            out.push_str(&format!(
+                "\n  <instructions>{}</instructions>",
+                escape_attr(instr)
+            ));
+        }
+    }
+
     if let Some(memo) = detail.notebook.current_status.as_deref() {
         if !memo.is_empty() {
             out.push_str(&format!("\n  <memo>{}</memo>", escape_attr(memo)));
@@ -786,19 +795,19 @@ async fn build_notebook_context(pool: &PgPool, notebook_id: &str) -> Option<Stri
     }
 
     let total = detail.items.len();
-    for item in detail.items.iter().take(MAX_SPACE_ITEMS_INLINED) {
+    for item in detail.items.iter().take(MAX_NOTEBOOK_ITEMS_INLINED) {
         out.push_str(&format!("\n  <member url=\"{}\"/>", escape_attr(&item.url)));
     }
-    if total > MAX_SPACE_ITEMS_INLINED {
+    if total > MAX_NOTEBOOK_ITEMS_INLINED {
         out.push_str(&format!(
             "\n  <!-- {} more members not shown -->",
-            total - MAX_SPACE_ITEMS_INLINED
+            total - MAX_NOTEBOOK_ITEMS_INLINED
         ));
     }
 
     out.push_str("\n</active_notebook>");
 
-    let preamble = "\n\n<active_notebook_preamble>\nThis chat lives in the Notebook (room) below — a collection the user returns to (a project, pet, hobby, goal, or topic). Treat its members as high-salience: they are the user's actively curated focus for this room. The memo, if present, is a catch-up note about the room's current state.\n</active_notebook_preamble>";
+    let preamble = "\n\n<active_notebook_preamble>\nThis chat lives in the Notebook (room) below — a collection the user returns to (a project, pet, hobby, goal, or topic). Treat its members as high-salience: they are the user's actively curated focus for this room. <instructions>, if present, are standing directions for how you should behave in this notebook — follow them. <memo>, if present, is a catch-up note about the notebook's current state. Members are also boosted in semantic search while this notebook is active.\n</active_notebook_preamble>";
 
     Some(format!("{}{}", preamble, out))
 }

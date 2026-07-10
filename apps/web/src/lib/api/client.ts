@@ -1082,6 +1082,7 @@ export interface Notebook {
 	accent_color: string | null;
 	current_status: string | null;
 	current_status_at: string | null;
+	instructions: string | null;
 	sort_order: number;
 	created_at: string;
 	updated_at: string;
@@ -1146,6 +1147,7 @@ export async function updateNotebook(
 		icon?: string | null;
 		accent_color?: string | null;
 		current_status?: string | null;
+		instructions?: string | null;
 		sort_order?: number;
 	}
 ): Promise<Notebook> {

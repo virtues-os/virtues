@@ -14,7 +14,7 @@
 	import { sidebarState } from "$lib/stores/sidebarState.svelte";
 	import { mobileLayout } from "$lib/stores/mobileLayout.svelte";
 	import { iconPickerStore } from "$lib/stores/iconPicker.svelte";
-	import { getWorkspaceMenuItems } from "$lib/utils/contextMenuItems";
+	import { getNotebookMenuItems } from "$lib/utils/contextMenuItems";
 	import { updatePage, updateChat } from "$lib/api/client";
 	import { pagesStore } from "$lib/stores/pages.svelte";
 	import { pinsStore } from "$lib/stores/pins.svelte";
@@ -239,7 +239,7 @@
 
 		// Add "Add to Folder" / "Move to Workspace" submenus if tab has a route
 		if (tab.route) {
-			items.push(...getWorkspaceMenuItems(tab.route));
+			items.push(...getNotebookMenuItems(tab.route));
 		}
 
 		contextMenu.show({ x: e.clientX, y: e.clientY }, items);

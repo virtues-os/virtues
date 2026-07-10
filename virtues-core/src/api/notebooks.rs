@@ -28,8 +28,12 @@ pub struct Notebook {
     pub name: String,
     pub icon: Option<String>,
     pub accent_color: Option<String>,
+    /// Transient "state of the room" catch-up memo (what you read on re-entry).
     pub current_status: Option<String>,
     pub current_status_at: Option<Timestamp>,
+    /// Persistent behavior for the assistant in this notebook (Claude-Projects-
+    /// style custom instructions) — distinct from the transient memo above.
+    pub instructions: Option<String>,
     pub sort_order: i32,
     pub created_at: Timestamp,
     pub updated_at: Timestamp,
@@ -44,6 +48,7 @@ pub struct NotebookSummary {
     pub accent_color: Option<String>,
     pub current_status: Option<String>,
     pub current_status_at: Option<Timestamp>,
+    pub instructions: Option<String>,
     pub sort_order: i32,
     pub item_count: i64,
     pub chat_count: i64,
@@ -86,6 +91,7 @@ pub struct UpdateNotebookRequest {
     pub icon: Option<Option<String>>,
     pub accent_color: Option<Option<String>>,
     pub current_status: Option<Option<String>>,
+    pub instructions: Option<Option<String>>,
     pub sort_order: Option<i32>,
 }
 
@@ -109,7 +115,7 @@ pub async fn list_notebooks(pool: &PgPool) -> Result<NotebookListResponse> {
         r#"
         SELECT
             s.id, s.name, s.icon, s.accent_color,
-            s.current_status, s.current_status_at, s.sort_order,
+            s.current_status, s.current_status_at, s.instructions, s.sort_order,
             COALESCE((SELECT COUNT(*) FROM app_notebook_items WHERE notebook_id = s.id), 0) AS item_count,
             COALESCE((SELECT COUNT(*) FROM app_chats       WHERE notebook_id = s.id), 0) AS chat_count,
             s.created_at, s.updated_at
@@ -129,7 +135,7 @@ pub async fn get_notebook(pool: &PgPool, id: &str) -> Result<NotebookDetail> {
     let notebook = sqlx::query_as::<_, Notebook>(
         r#"
         SELECT id, name, icon, accent_color, current_status, current_status_at,
-               sort_order, created_at, updated_at
+               instructions, sort_order, created_at, updated_at
         FROM app_notebooks
         WHERE id = $1
         "#,
@@ -171,7 +177,7 @@ pub async fn create_notebook(pool: &PgPool, req: CreateNotebookRequest) -> Resul
         INSERT INTO app_notebooks (id, name, icon, accent_color)
         VALUES ($1, $2, $3, $4)
         RETURNING id, name, icon, accent_color, current_status, current_status_at,
-                  sort_order, created_at, updated_at
+                  instructions, sort_order, created_at, updated_at
         "#,
     )
     .bind(&id)
@@ -191,7 +197,7 @@ pub async fn update_notebook(pool: &PgPool, id: &str, req: UpdateNotebookRequest
     let existing = sqlx::query_as::<_, Notebook>(
         r#"
         SELECT id, name, icon, accent_color, current_status, current_status_at,
-               sort_order, created_at, updated_at
+               instructions, sort_order, created_at, updated_at
         FROM app_notebooks WHERE id = $1
         "#,
     )
@@ -220,6 +226,10 @@ pub async fn update_notebook(pool: &PgPool, id: &str, req: UpdateNotebookRequest
         None => existing.current_status,
     };
     let sort_order = req.sort_order.unwrap_or(existing.sort_order);
+    let instructions = match req.instructions {
+        Some(val) => val,
+        None => existing.instructions,
+    };
 
     let notebook = sqlx::query_as::<_, Notebook>(
         r#"
@@ -229,10 +239,11 @@ pub async fn update_notebook(pool: &PgPool, id: &str, req: UpdateNotebookRequest
             accent_color = $4,
             current_status = $5,
             current_status_at = CASE WHEN $6 THEN now() ELSE current_status_at END,
-            sort_order = $7
+            sort_order = $7,
+            instructions = $8
         WHERE id = $1
         RETURNING id, name, icon, accent_color, current_status, current_status_at,
-                  sort_order, created_at, updated_at
+                  instructions, sort_order, created_at, updated_at
         "#,
     )
     .bind(id)
@@ -242,6 +253,7 @@ pub async fn update_notebook(pool: &PgPool, id: &str, req: UpdateNotebookRequest
     .bind(&current_status)
     .bind(status_changed)
     .bind(sort_order)
+    .bind(&instructions)
     .fetch_one(pool)
     .await
     .map_err(|e| Error::Database(format!("Failed to update notebook: {}", e)))?;

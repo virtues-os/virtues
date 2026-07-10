@@ -107,6 +107,36 @@ pub async fn serve_on(listener: TcpListener, client: Arc<VirtuesIrohClient>) -> 
     }
 }
 
+/// Like [`serve_on`] but fetches the *current* client from `provider` per inbound
+/// connection, so a rebuilt client (after a network-change recovery that swaps the
+/// process-global warm client) is picked up **without** restarting the listener.
+/// `provider` returns `None` while unpaired / mid-rebuild — we just drop that
+/// connection (the local HTTP client retries).
+pub async fn serve_on_provider<F>(listener: TcpListener, provider: F) -> Result<()>
+where
+    F: Fn() -> Option<Arc<VirtuesIrohClient>> + Send + Sync + 'static,
+{
+    tracing::info!(addr = ?listener.local_addr().ok(), "reach helper: serving box over iroh (live client)");
+    loop {
+        let (mut tcp, _peer) = match listener.accept().await {
+            Ok(x) => x,
+            Err(e) => {
+                tracing::debug!(error = %e, "accept error");
+                continue;
+            }
+        };
+        let Some(client) = provider() else {
+            // No client right now (rebuilding / unpaired) — drop; caller retries.
+            continue;
+        };
+        tokio::spawn(async move {
+            if let Err(e) = client.proxy_stream(&mut tcp).await {
+                tracing::debug!(error = %format!("{e:#}"), "proxy stream ended");
+            }
+        });
+    }
+}
+
 /// Resolve the box's LAN host (from the paired `box_url`) to `IP:iroh_port`
 /// socket addresses to dial by NodeId. Re-resolved on each build, so a DHCP
 /// lease change never strands us. Best-effort: empty when the host can't be

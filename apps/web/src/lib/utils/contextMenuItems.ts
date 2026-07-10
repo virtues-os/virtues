@@ -19,7 +19,7 @@ import { toast } from 'svelte-sonner';
  * @param url - The URL of the item (e.g., '/page/page_xyz', 'https://...')
  * @param _name - Reserved for a future display label (membership is URL-native).
  */
-export function getAddToSpaceMenuItems(
+export function getAddToNotebookMenuItems(
 	url: string,
 	_name?: string | null,
 ): ContextMenuItem[] {
@@ -74,11 +74,11 @@ export function getAddToSpaceMenuItems(
  * Get organization-related menu items (Add to Notebook).
  * Used by tab/sidebar/page context menus.
  */
-export function getWorkspaceMenuItems(
+export function getNotebookMenuItems(
 	url: string,
 	name?: string | null,
 ): ContextMenuItem[] {
-	return getAddToSpaceMenuItems(url, name);
+	return getAddToNotebookMenuItems(url, name);
 }
 
 /**

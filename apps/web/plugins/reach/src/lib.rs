@@ -15,7 +15,6 @@ use tauri::{
   plugin::{Builder, TauriPlugin},
   Manager, Runtime,
 };
-use tokio::sync::Mutex;
 use virtues_reach_client::{
   outbox, BoxStore, PairedBox, SessionState, VirtuesIrohClient,
 };
@@ -48,6 +47,68 @@ pub(crate) fn set_warm_client(c: Arc<VirtuesIrohClient>) {
 
 pub(crate) fn warm_client() -> Option<Arc<VirtuesIrohClient>> {
   WARM_CLIENT.lock().ok().and_then(|g| g.clone())
+}
+
+/// One recovery at a time — NWPathMonitor + foreground can fire nearly together.
+static RECOVERING: AtomicBool = AtomicBool::new(false);
+
+/// Recover the box connection after an iOS network change / foreground.
+/// Two layers (docs/reach-reliability-plan.md):
+///   • **L1 poke** — `Endpoint::network_change()` (rebind sockets / re-STUN /
+///     relay reconnect). Heals the common case.
+///   • **L2 rebuild** — if a bounded probe still fails, the iOS UDP socket is
+///     wedged (iroh#4289) and a poke can't fix it, so rebuild the whole client
+///     from the persisted seed (same EndpointId → pairing survives) and swap the
+///     warm client. The loopback + drain read the warm client, so new pages /
+///     chat / uploads immediately route through the fresh endpoint.
+/// Returns: 0 healed by poke, 1 rebuilt, -1 not paired, -2 rebuild failed.
+pub(crate) async fn recover_connection() -> i32 {
+  if RECOVERING.swap(true, Ordering::SeqCst) {
+    return 0; // already recovering
+  }
+  let rc = recover_inner().await;
+  RECOVERING.store(false, Ordering::SeqCst);
+  rc
+}
+
+async fn recover_inner() -> i32 {
+  use std::time::Duration;
+  // L1: poke iroh to re-check the network.
+  if let Some(c) = warm_client() {
+    c.network_change().await;
+  }
+  // Let the rebind / relay reconnect settle, then probe for a live box.
+  tokio::time::sleep(Duration::from_millis(600)).await;
+  let alive = match warm_client() {
+    Some(c) => matches!(
+      tokio::time::timeout(Duration::from_secs(4), virtues_reach_client::probe_session(&c)).await,
+      Ok(SessionState::Authed) | Ok(SessionState::Rejected)
+    ),
+    None => false,
+  };
+  if alive {
+    return 0; // the poke healed it
+  }
+  // L2: the socket is wedged — rebuild the whole endpoint.
+  let store = FileStore::new();
+  let Ok(Some(rec)) = store.load() else {
+    return -1;
+  };
+  let old = warm_client();
+  match virtues_reach_client::build_client(&rec).await {
+    Ok(client) => {
+      set_warm_client(client);
+      if let Some(old) = old {
+        old.shutdown().await; // free the dead socket
+      }
+      tracing::info!("reach recovery: rebuilt endpoint after wedge");
+      1
+    }
+    Err(e) => {
+      tracing::warn!(error = %format!("{e:#}"), "reach recovery rebuild failed");
+      -2
+    }
+  }
 }
 
 // ─── Credential storage: a 0600 file in the app container ────────────────────
@@ -137,9 +198,6 @@ impl BoxStore for FileStore {
 
 pub struct ReachState {
   store: Arc<FileStore>,
-  /// The warm iroh client — shared between the loopback and (later) the upload
-  /// coordinator so there's exactly one endpoint/identity.
-  client: Mutex<Option<Arc<VirtuesIrohClient>>>,
   serving: AtomicBool,
 }
 
@@ -147,7 +205,6 @@ impl ReachState {
   fn new() -> Self {
     ReachState {
       store: Arc::new(FileStore::new()),
-      client: Mutex::new(None),
       serving: AtomicBool::new(false),
     }
   }
@@ -160,9 +217,10 @@ impl ReachState {
     format!("http://127.0.0.1:{LOOPBACK_PORT}")
   }
 
-  /// The warm iroh client, if serving. Used by the upload coordinator.
+  /// The warm iroh client, if serving. Reads the process-global source of truth
+  /// so a network-change rebuild is reflected here too.
   pub async fn client(&self) -> Option<Arc<VirtuesIrohClient>> {
-    self.client.lock().await.clone()
+    warm_client()
   }
 
   /// Bind the loopback and start splicing to the box over iroh. Idempotent.
@@ -189,15 +247,17 @@ impl ReachState {
     init_outbox(&self.store);
 
     let client = virtues_reach_client::build_client(&rec).await?;
-    *self.client.lock().await = Some(client.clone());
-    // Publish to the process-global so the FFI background drain reuses it.
+    // WARM_CLIENT is the single source of truth — the loopback, upload path, and
+    // FFI background drain all read it, so a network-change rebuild (which swaps
+    // it) is picked up everywhere without restarting anything.
     set_warm_client(client.clone());
 
-    // Serve the loopback (webview → box).
+    // Serve the loopback (webview → box). Reads the *current* warm client per
+    // connection, so a rebuilt client (recovery from an iOS socket wedge) routes
+    // new pages/chat/uploads through the fresh endpoint with no listener restart.
     let listener = tokio::net::TcpListener::from_std(std_listener)?;
-    let serve_client = client.clone();
     tauri::async_runtime::spawn(async move {
-      if let Err(e) = virtues_reach_client::serve_on(listener, serve_client).await {
+      if let Err(e) = virtues_reach_client::serve_on_provider(listener, warm_client).await {
         tracing::warn!(error = %format!("{e:#}"), "reach loopback ended");
       }
     });
