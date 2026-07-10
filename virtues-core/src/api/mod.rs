@@ -40,9 +40,9 @@ pub mod pins;
 pub mod things;
 pub mod places;
 pub mod profile;
+pub mod notebooks;
 pub mod seed_testing;
 pub mod source_auth;
-pub mod spaces;
 pub mod storage;
 pub mod subscription;
 pub mod system_telemetry;
@@ -190,11 +190,12 @@ pub use things::{
     CreateThingRequest, ListThingsParams, Thing, ThingListResponse, ThingSummary,
     UpdateThingRequest,
 };
-pub use spaces::{
-    add_space_item, create_space, delete_space, get_space, list_spaces, remove_space_item,
-    reorder_space_items, set_chat_space, touch_space, update_space, AddSpaceItemRequest,
-    CreateSpaceRequest, ReorderSpaceItemsRequest, Space, SpaceDetail, SpaceItem, SpaceListResponse,
-    SpaceSummary, UpdateSpaceRequest,
+pub use notebooks::{
+    add_notebook_item, create_notebook, delete_notebook, get_notebook, list_notebooks,
+    remove_notebook_item, reorder_notebook_items, set_chat_notebook, touch_notebook,
+    update_notebook, AddNotebookItemRequest, CreateNotebookRequest, Notebook, NotebookDetail,
+    NotebookItem, NotebookListResponse, NotebookSummary, ReorderNotebookItemsRequest,
+    UpdateNotebookRequest,
 };
 
 pub use chat_usage::{

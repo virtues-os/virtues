@@ -131,7 +131,7 @@
 
 <Page
 	title="Things"
-	description="A thing is a folder you can re-enter — a project, a pet, a goal, anything you want to keep loosely organized. Pin pages, chats, people, files, or external links to it, then @-mention it in chat to focus the agent."
+	description="A thing is an entity you reference — a pet, a car, a book, a concept: anything worth resolving and linking that isn't a person, place, or org. @-mention it in chat, or gather things into a Notebook to work with them."
 	maxWidth="wide"
 >
 	{#snippet actions()}

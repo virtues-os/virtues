@@ -36,4 +36,10 @@ pub struct ReachStatus {
   pub session: String,
   /// The loopback URL the webview should load once paired + reachable.
   pub loopback_url: String,
+  /// LIVE: did a bounded `/auth/session` probe just succeed? Distinguishes a
+  /// genuinely reachable box from a stale "paired" flag.
+  pub reachable: bool,
+  /// LIVE network path to the box right now: "direct" (LAN/hole-punched) |
+  /// "relay" | "offline". Read from iroh after the probe (re)connects.
+  pub path: String,
 }

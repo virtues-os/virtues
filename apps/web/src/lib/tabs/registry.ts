@@ -13,10 +13,7 @@ import type { TabType, ParsedRoute } from './types';
 import { getLocalDateSlug } from '$lib/utils/dateUtils';
 
 // Import all view components
-// PROTOTYPE: Home is served through the redesign harness (Original / Folio /
-// Refined). To remove: restore `import HomeView … HomeView.svelte` and set the
-// home entry's `component` back to `HomeView`.
-import HomeSwitcher from '$lib/components/tabs/views/HomeSwitcher.svelte';
+import HomeViewSpread from '$lib/components/tabs/views/HomeViewSpread.svelte';
 import ChatView from '$lib/components/tabs/views/ChatView.svelte';
 import HistoryView from '$lib/components/tabs/views/HistoryView.svelte';
 import WikiView from '$lib/components/tabs/views/WikiView.svelte';
@@ -50,8 +47,8 @@ import PagesView from '$lib/components/tabs/views/PagesView.svelte';
 import PageDetailView from '$lib/components/tabs/views/PageDetailView.svelte';
 import ThingsView from '$lib/components/tabs/views/ThingsView.svelte';
 import ThingDetailView from '$lib/components/tabs/views/ThingDetailView.svelte';
-import SpacesListView from '$lib/components/tabs/views/SpacesListView.svelte';
-import SpaceDetailView from '$lib/components/tabs/views/SpaceDetailView.svelte';
+import NotebooksListView from '$lib/components/tabs/views/NotebooksListView.svelte';
+import NotebookDetailView from '$lib/components/tabs/views/NotebookDetailView.svelte';
 import NarrativeIdentityView from '$lib/components/tabs/views/NarrativeIdentityView.svelte';
 import EntitiesView from '$lib/components/tabs/views/EntitiesView.svelte';
 import ToolsView from '$lib/components/tabs/views/ToolsView.svelte';
@@ -96,7 +93,7 @@ export const tabRegistry: Record<TabType, TabDefinition> = {
 		deserialize: () => '/home',
 		icon: 'ri:sparkling-2-line',
 		defaultLabel: 'Home',
-		component: HomeSwitcher, // PROTOTYPE: was HomeView
+		component: HomeViewSpread,
 	},
 
 	// ========================================================================
@@ -330,7 +327,8 @@ export const tabRegistry: Record<TabType, TabDefinition> = {
 	// ========================================================================
 	// THING NAMESPACE: /things (list), /thing/thg_{id} (detail)
 	//
-	// A "thing" is a folder you can re-enter — projects, pets, goals, topics.
+	// A "thing" is a pure reference entity — a pet, car, book, concept: the
+	// catch-all beside person/place/org (organization lives in Notebooks now).
 	// Sidebar "Things" links to `/things`. The DB has a `category` column for
 	// future use but it is not surfaced in v1 UX.
 	// ========================================================================
@@ -370,44 +368,45 @@ export const tabRegistry: Record<TabType, TabDefinition> = {
 	},
 
 	// ========================================================================
-	// SPACE NAMESPACE: /spaces (list), /space/space_{id} (detail)
+	// NOTEBOOK NAMESPACE: /notebooks (list), /notebook/{id} (detail)
 	//
-	// A Space is the "room" a chat lives in — a manual collection (project, pet,
-	// hobby, goal) of chats, entities, and pages.
+	// A Notebook is the "room" a chat lives in — a workspace lens over the graph:
+	// a Library of materials, filed chats, entities, and pages. (id may be a
+	// legacy `space_…` or a new `nb_…` — both route the same.)
 	// ========================================================================
-	space: {
+	notebook: {
 		match: (path) =>
-			path === '/spaces' ||
-			path === '/space' ||
-			/^\/space\/[^/]+$/.test(path),
+			path === '/notebooks' ||
+			path === '/notebook' ||
+			/^\/notebook\/[^/]+$/.test(path),
 		parse: (path) => {
-			if (path === '/spaces' || path === '/space') {
+			if (path === '/notebooks' || path === '/notebook') {
 				return {
-					type: 'space',
-					label: 'Spaces',
-					icon: 'ri:layout-masonry-line',
-					normalizedRoute: '/spaces',
+					type: 'notebook',
+					label: 'Notebooks',
+					icon: 'ri:booklet-line',
+					normalizedRoute: '/notebooks',
 				};
 			}
-			const match = path.match(/^\/space\/([^/]+)$/);
+			const match = path.match(/^\/notebook\/([^/]+)$/);
 			return {
-				type: 'space',
-				label: 'Space',
-				icon: 'ri:layout-masonry-line',
+				type: 'notebook',
+				label: 'Notebook',
+				icon: 'ri:booklet-line',
 				entityId: match?.[1],
 			};
 		},
-		serialize: (id) => id || 'spaces',
+		serialize: (id) => id || 'notebooks',
 		deserialize: (serialized) => {
-			if (serialized && serialized !== 'spaces' && serialized !== 'space') {
-				return `/space/${serialized}`;
+			if (serialized && serialized !== 'notebooks' && serialized !== 'notebook') {
+				return `/notebook/${serialized}`;
 			}
-			return '/spaces';
+			return '/notebooks';
 		},
-		icon: 'ri:layout-masonry-line',
-		defaultLabel: 'Spaces',
-		component: SpacesListView,
-		detailComponent: SpaceDetailView,
+		icon: 'ri:booklet-line',
+		defaultLabel: 'Notebooks',
+		component: NotebooksListView,
+		detailComponent: NotebookDetailView,
 	},
 
 	// ========================================================================
@@ -884,7 +883,7 @@ export function parseRoute(route: string): ParsedRoute {
 		'place',
 		'org',
 		'thing',
-		'space',
+		'notebook',
 		'day',
 		'year',
 		'narrative-identity',

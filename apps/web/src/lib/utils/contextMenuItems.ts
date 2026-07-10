@@ -6,15 +6,15 @@
  */
 
 import type { ContextMenuItem } from '$lib/stores/contextMenu.svelte';
-import { spaceStore } from '$lib/stores/space.svelte';
+import { notebookStore } from '$lib/stores/notebook.svelte';
 import { toast } from 'svelte-sonner';
 
 /**
- * Get "Add to Space" menu items — a submenu of all spaces plus a "New Space…"
+ * Get "Add to Notebook" menu items — a submenu of all notebooks plus a "New Notebook…"
  * action that creates one and adds this URL to it immediately.
  *
- * Organization moved from Things (folders) to Spaces; the menu now binds the
- * item as a Space member.
+ * Organization moved from Things (folders) to Notebooks; the menu now binds the
+ * item as a Notebook member.
  *
  * @param url - The URL of the item (e.g., '/page/page_xyz', 'https://...')
  * @param _name - Reserved for a future display label (membership is URL-native).
@@ -23,46 +23,46 @@ export function getAddToSpaceMenuItems(
 	url: string,
 	_name?: string | null,
 ): ContextMenuItem[] {
-	const spaces = spaceStore.spaces;
+	const notebooks = notebookStore.notebooks;
 
-	const submenu: ContextMenuItem[] = spaces.map((s) => ({
-		id: `space-${s.id}`,
+	const submenu: ContextMenuItem[] = notebooks.map((s) => ({
+		id: `notebook-${s.id}`,
 		label: s.name,
 		icon: s.icon || 'ri:folder-open-line',
 		action: async () => {
 			try {
-				await spaceStore.addItem(s.id, url);
+				await notebookStore.addItem(s.id, url);
 				toast(`Added to ${s.name}`);
 			} catch (e) {
-				console.error('[contextMenuItems] Failed to add to space:', e);
-				toast.error('Failed to add to space');
+				console.error('[contextMenuItems] Failed to add to notebook:', e);
+				toast.error('Failed to add to notebook');
 			}
 		},
 	}));
 
 	submenu.push({
-		id: 'new-space-with-item',
-		label: spaces.length > 0 ? 'New Space…' : 'Create First Space…',
+		id: 'new-notebook-with-item',
+		label: notebooks.length > 0 ? 'New Notebook…' : 'Create First Notebook…',
 		icon: 'ri:add-line',
-		dividerBefore: spaces.length > 0,
+		dividerBefore: notebooks.length > 0,
 		action: async () => {
-			const spaceName = prompt('Space name:');
-			if (!spaceName || !spaceName.trim()) return;
+			const notebookName = prompt('Notebook name:');
+			if (!notebookName || !notebookName.trim()) return;
 			try {
-				const space = await spaceStore.create(spaceName.trim());
-				await spaceStore.addItem(space.id, url);
-				toast(`Created "${space.name}" and added item`);
+				const notebook = await notebookStore.create(notebookName.trim());
+				await notebookStore.addItem(notebook.id, url);
+				toast(`Created "${notebook.name}" and added item`);
 			} catch (e) {
-				console.error('[contextMenuItems] Failed to create space:', e);
-				toast.error('Failed to create space');
+				console.error('[contextMenuItems] Failed to create notebook:', e);
+				toast.error('Failed to create notebook');
 			}
 		},
 	});
 
 	return [
 		{
-			id: 'add-to-space',
-			label: 'Add to Space',
+			id: 'add-to-notebook',
+			label: 'Add to Notebook',
 			icon: 'ri:folder-add-line',
 			dividerBefore: true,
 			submenu,
@@ -71,7 +71,7 @@ export function getAddToSpaceMenuItems(
 }
 
 /**
- * Get organization-related menu items (Add to Space).
+ * Get organization-related menu items (Add to Notebook).
  * Used by tab/sidebar/page context menus.
  */
 export function getWorkspaceMenuItems(

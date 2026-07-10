@@ -7,7 +7,7 @@
 	import { askVirtues } from "$lib/stores/pendingPrompt.svelte";
 	import { pagesStore } from "$lib/stores/pages.svelte";
 	import { thingsStore } from "$lib/stores/things.svelte";
-	import { spaceStore } from "$lib/stores/space.svelte";
+	import { notebookStore } from "$lib/stores/notebook.svelte";
 	import {
 		getAvailableThemes,
 		getThemeDisplayName,
@@ -143,16 +143,16 @@
 		},
 	];
 
-	// Type scope — a leading `#chats` / `#pages` / `#actions` / `#things` / `#spaces`
+	// Type scope — a leading `#chats` / `#pages` / `#actions` / `#things` / `#notebooks`
 	// token narrows results to one kind. Singular and plural both work (`#chat` ==
 	// `#chats`). The token is stripped from the text that's actually matched.
-	type Scope = "chats" | "pages" | "actions" | "things" | "spaces";
+	type Scope = "chats" | "pages" | "actions" | "things" | "notebooks";
 	const SCOPE_ALIASES: Record<string, Scope> = {
 		chat: "chats", chats: "chats",
 		page: "pages", pages: "pages",
 		action: "actions", actions: "actions",
 		thing: "things", things: "things",
-		space: "spaces", spaces: "spaces",
+		notebook: "notebooks", notebooks: "notebooks",
 	};
 	const scope = $derived.by<Scope | null>(() => {
 		const token = searchQuery.trimStart().match(/^#(\w+)/)?.[1]?.toLowerCase();
@@ -165,7 +165,7 @@
 	);
 
 	// Filter results based on search (respecting any active type scope). Things and
-	// spaces only surface once there's a query (or their explicit scope), so the
+	// notebooks only surface once there's a query (or their explicit scope), so the
 	// bare ⌘K stays lean — actions/chats/pages recents only.
 	const filteredResults = $derived.by(() => {
 		const query = effectiveQuery.toLowerCase().trim();
@@ -190,8 +190,8 @@
 			things: inScope("things")
 				? thingsStore.things.filter((t) => match(t.name)).slice(0, limit)
 				: [],
-			spaces: inScope("spaces")
-				? spaceStore.spaces.filter((s) => match(s.name)).slice(0, limit)
+			notebooks: inScope("notebooks")
+				? notebookStore.notebooks.filter((s) => match(s.name)).slice(0, limit)
 				: [],
 		};
 	});
@@ -209,14 +209,14 @@
 		| { kind: "chat"; item: (typeof chatSessions.sessions)[number] }
 		| { kind: "page"; item: (typeof pagesStore.pages)[number] }
 		| { kind: "thing"; item: (typeof thingsStore.things)[number] }
-		| { kind: "space"; item: (typeof spaceStore.spaces)[number] };
+		| { kind: "notebook"; item: (typeof notebookStore.notebooks)[number] };
 	const orderedRows = $derived.by<Row[]>(() => [
 		...(showAsk ? [{ kind: "ask" } as Row] : []),
 		...filteredResults.actions.map((item) => ({ kind: "action", item }) as Row),
 		...filteredResults.chats.map((item) => ({ kind: "chat", item }) as Row),
 		...filteredResults.pages.map((item) => ({ kind: "page", item }) as Row),
 		...filteredResults.things.map((item) => ({ kind: "thing", item }) as Row),
-		...filteredResults.spaces.map((item) => ({ kind: "space", item }) as Row),
+		...filteredResults.notebooks.map((item) => ({ kind: "notebook", item }) as Row),
 	]);
 	const totalResults = $derived(orderedRows.length);
 
@@ -290,8 +290,8 @@
 				});
 				onClose();
 				break;
-			case "space":
-				windowShellStore.openTabFromRoute(`/space/${row.item.id}`, {
+			case "notebook":
+				windowShellStore.openTabFromRoute(`/notebook/${row.item.id}`, {
 					label: row.item.name || "Untitled",
 				});
 				onClose();
@@ -321,12 +321,12 @@
 			if (chatSessions.sessions.length === 0 && !chatSessions.isLoading) {
 				chatSessions.load();
 			}
-			// Same for things and spaces so their scopes have data to match.
+			// Same for things and notebooks so their scopes have data to match.
 			if (thingsStore.things.length === 0 && !thingsStore.loading) {
 				thingsStore.load();
 			}
-			if (spaceStore.spaces.length === 0 && !spaceStore.loading) {
-				spaceStore.load();
+			if (notebookStore.notebooks.length === 0 && !notebookStore.loading) {
+				notebookStore.load();
 			}
 		}
 		wasOpen = open;
@@ -430,7 +430,7 @@
 						bind:this={inputEl}
 						bind:value={searchQuery}
 						type="text"
-						placeholder="Search… (try #chats, #pages, #things, #spaces)"
+						placeholder="Search… (try #chats, #pages, #things, #notebooks)"
 						class="search-input"
 					/>
 					<kbd class="escape-hint">Esc</kbd>
@@ -579,10 +579,10 @@
 					</div>
 				{/if}
 
-				{#if filteredResults.spaces.length > 0}
+				{#if filteredResults.notebooks.length > 0}
 					<div class="result-group">
-						<span class="group-label">Spaces</span>
-						{#each filteredResults.spaces as space, i}
+						<span class="group-label">Notebooks</span>
+						{#each filteredResults.notebooks as notebook, i}
 							{@const index =
 								askOffset +
 								filteredResults.actions.length +
@@ -595,15 +595,15 @@
 								class:selected={selectedIndex === index}
 								data-result-index={index}
 								onclick={() => {
-									windowShellStore.openTabFromRoute(`/space/${space.id}`, {
-										label: space.name || "Untitled",
+									windowShellStore.openTabFromRoute(`/notebook/${notebook.id}`, {
+										label: notebook.name || "Untitled",
 									});
 									onClose();
 								}}
 								onmouseenter={() => (selectedIndex = index)}
 							>
-								<Icon icon={space.icon || "ri:layout-grid-line"} width="16" class="result-icon" />
-								<span class="result-label">{space.name || "Untitled"}</span>
+								<Icon icon={notebook.icon || "ri:layout-grid-line"} width="16" class="result-icon" />
+								<span class="result-label">{notebook.name || "Untitled"}</span>
 							</button>
 						{/each}
 					</div>

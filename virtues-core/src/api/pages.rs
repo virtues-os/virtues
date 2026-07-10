@@ -4,8 +4,8 @@
 //! Pages are knowledge documents with entity linking support using
 //! the format: ((Display Name))[[prefix_hash]]
 //!
-//! Note: Pages don't "belong" to spaces - they're just URL-native entities.
-//! Organization is handled by space_items which hold URL references.
+//! Note: Pages don't "belong" to notebooks - they're just URL-native entities.
+//! Organization is handled by notebook_items which hold URL references.
 
 use crate::error::{Error, Result};
 use crate::ids::{generate_id, PAGE_PREFIX, PAGE_SHARE_PREFIX, PAGE_VERSION_PREFIX};
@@ -67,8 +67,8 @@ pub struct CreatePageRequest {
     pub title: String,
     #[serde(default)]
     pub content: String,
-    #[serde(rename = "spaceId")]
-    pub space_id: Option<String>,  // For auto-add to space_items (not stored on page)
+    #[serde(rename = "notebookId")]
+    pub notebook_id: Option<String>,  // For auto-add to notebook_items (not stored on page)
     pub icon: Option<String>,
     pub cover_url: Option<String>,
     pub tags: Option<serde_json::Value>, // JSONB array: ["tag1", "tag2"]
@@ -341,7 +341,7 @@ fn truncate_chars(s: &str, max: usize) -> String {
 }
 
 /// Create a new page
-/// If space_id is provided and not the system space, auto-adds to space_items
+/// If notebook_id is provided and not the system notebook, auto-adds to notebook_items
 pub async fn create_page(pool: &PgPool, req: CreatePageRequest) -> Result<Page> {
     let title = req.title.trim();
     if title.is_empty() {
@@ -369,17 +369,17 @@ pub async fn create_page(pool: &PgPool, req: CreatePageRequest) -> Result<Page> 
     .await
     .map_err(|e| Error::Database(format!("Failed to create page: {}", e)))?;
 
-    // Auto-add the page as a member of the Space it was created in.
-    if let Some(space_id) = &req.space_id {
+    // Auto-add the page as a member of the Notebook it was created in.
+    if let Some(notebook_id) = &req.notebook_id {
         let url = format!("/page/{}", page.id);
-        if let Err(e) = crate::api::spaces::add_space_item(
+        if let Err(e) = crate::api::notebooks::add_notebook_item(
             pool,
-            space_id,
-            crate::api::spaces::AddSpaceItemRequest { url },
+            notebook_id,
+            crate::api::notebooks::AddNotebookItemRequest { url },
         )
         .await
         {
-            tracing::warn!("Failed to auto-add page to space {}: {}", space_id, e);
+            tracing::warn!("Failed to auto-add page to notebook {}: {}", notebook_id, e);
             // Don't fail page creation if auto-add fails
         }
     }
@@ -433,7 +433,7 @@ pub async fn update_page(pool: &PgPool, id: &str, req: UpdatePageRequest) -> Res
 }
 
 /// Delete a page by ID
-/// Also cleans up all space_items references (orphan cleanup)
+/// Also cleans up all notebook_items references (orphan cleanup)
 pub async fn delete_page(pool: &PgPool, id: &str) -> Result<()> {
     // First delete the page
     let result = sqlx::query(r#"DELETE FROM app_pages WHERE id = $1"#)
@@ -446,10 +446,10 @@ pub async fn delete_page(pool: &PgPool, id: &str) -> Result<()> {
         return Err(Error::NotFound(format!("Page not found: {}", id)));
     }
 
-    // Clean up all space_items references
+    // Clean up all notebook_items references
     let url = format!("/page/{}", id);
-    if let Err(e) = crate::api::spaces::remove_items_by_url(pool, &url).await {
-        tracing::warn!("Failed to clean up space_items for page {}: {}", id, e);
+    if let Err(e) = crate::api::notebooks::remove_items_by_url(pool, &url).await {
+        tracing::warn!("Failed to clean up notebook_items for page {}: {}", id, e);
         // Don't fail deletion if cleanup fails
     }
 
@@ -539,7 +539,7 @@ fn get_entity_url(entity_type: &str, id: &str) -> String {
         "year" => format!("/year/{}", id),
         "source" => format!("/source/{}", id),
         "chat" => format!("/chat/{}", id),
-        "space" => format!("/space/{}", id),
+        "notebook" => format!("/notebook/{}", id),
         "thing" => format!("/thing/{}", id),
         "file" => format!("/drive/{}", id),
         _ => format!("/{}/{}", entity_type, id),
@@ -612,11 +612,11 @@ pub async fn search_refs(pool: &PgPool, query: &str) -> Result<RefSearchResponse
         FROM app_chats
         WHERE title ILIKE $1 AND title <> ''
         UNION ALL
-        SELECT id, name, 'space' as entity_type,
+        SELECT id, name, 'notebook' as entity_type,
                CASE WHEN icon LIKE 'ri:%' THEN icon ELSE 'ri:folder-line' END as icon,
                NULL as mime_type, updated_at,
                CASE WHEN name ILIKE $2 THEN 0 ELSE 1 END as relevance
-        FROM app_spaces
+        FROM app_notebooks
         WHERE name ILIKE $1
         ORDER BY relevance ASC, updated_at DESC
         LIMIT $3

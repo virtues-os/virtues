@@ -13,6 +13,7 @@
 #[tauri::mobile_entry_point]
 pub fn run() {
   use tauri::{WebviewUrl, WebviewWindowBuilder};
+  use tauri_plugin_audio::AudioExt;
   use tauri_plugin_contacts::ContactsExt;
   use tauri_plugin_eventkit::EventKitExt;
   use tauri_plugin_finance::FinanceExt;
@@ -27,6 +28,7 @@ pub fn run() {
     .plugin(tauri_plugin_eventkit::init())
     .plugin(tauri_plugin_contacts::init())
     .plugin(tauri_plugin_finance::init())
+    .plugin(tauri_plugin_audio::init())
     .setup(|app| {
       // Background location: install the CLLocationManager delegate as early as
       // Tauri lets us (runs on every launch, incl. cold background relaunch).
@@ -51,6 +53,12 @@ pub fn run() {
       // Finance: re-sync on launch if already opted in (never prompts).
       if let Err(e) = app.finance().resume() {
         eprintln!("[finance] resume failed: {e}");
+      }
+      // Audio: resume recording only if already authorized + left enabled. The
+      // recording session doubles as the background keepalive; a significant-
+      // location wake also calls this path so it resurrects after suspension.
+      if let Err(e) = app.audio().resume() {
+        eprintln!("[audio] resume failed: {e}");
       }
 
       // Bundled-SPA architecture (Option A): the app IS the bundled SvelteKit

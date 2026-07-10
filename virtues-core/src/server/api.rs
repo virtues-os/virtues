@@ -2967,87 +2967,87 @@ pub async fn reorder_pins_handler(
 }
 
 // ============================================================================
-// Spaces Handlers
+// Notebooks Handlers
 // ============================================================================
 
-/// GET /api/spaces - List all spaces
-pub async fn list_spaces_handler(State(state): State<AppState>) -> Response {
-    api_response(crate::api::spaces::list_spaces(state.db.pool()).await)
+/// GET /api/notebooks - List all notebooks
+pub async fn list_notebooks_handler(State(state): State<AppState>) -> Response {
+    api_response(crate::api::notebooks::list_notebooks(state.db.pool()).await)
 }
 
-/// GET /api/spaces/:id - Get a single space with its members
-pub async fn get_space_handler(State(state): State<AppState>, Path(id): Path<String>) -> Response {
-    api_response(crate::api::spaces::get_space(state.db.pool(), &id).await)
+/// GET /api/notebooks/:id - Get a single notebook with its members
+pub async fn get_notebook_handler(State(state): State<AppState>, Path(id): Path<String>) -> Response {
+    api_response(crate::api::notebooks::get_notebook(state.db.pool(), &id).await)
 }
 
-/// POST /api/spaces - Create a space
-pub async fn create_space_handler(
+/// POST /api/notebooks - Create a notebook
+pub async fn create_notebook_handler(
     State(state): State<AppState>,
-    Json(request): Json<crate::api::spaces::CreateSpaceRequest>,
+    Json(request): Json<crate::api::notebooks::CreateNotebookRequest>,
 ) -> Response {
-    match crate::api::spaces::create_space(state.db.pool(), request).await {
-        Ok(space) => (StatusCode::CREATED, Json(space)).into_response(),
+    match crate::api::notebooks::create_notebook(state.db.pool(), request).await {
+        Ok(notebook) => (StatusCode::CREATED, Json(notebook)).into_response(),
         Err(e) => error_response(e),
     }
 }
 
-/// PUT /api/spaces/:id - Update a space
-pub async fn update_space_handler(
+/// PUT /api/notebooks/:id - Update a notebook
+pub async fn update_notebook_handler(
     State(state): State<AppState>,
     Path(id): Path<String>,
-    Json(request): Json<crate::api::spaces::UpdateSpaceRequest>,
+    Json(request): Json<crate::api::notebooks::UpdateNotebookRequest>,
 ) -> Response {
-    api_response(crate::api::spaces::update_space(state.db.pool(), &id, request).await)
+    api_response(crate::api::notebooks::update_notebook(state.db.pool(), &id, request).await)
 }
 
-/// DELETE /api/spaces/:id - Delete a space
-pub async fn delete_space_handler(
+/// DELETE /api/notebooks/:id - Delete a notebook
+pub async fn delete_notebook_handler(
     State(state): State<AppState>,
     Path(id): Path<String>,
 ) -> Response {
-    match crate::api::spaces::delete_space(state.db.pool(), &id).await {
-        Ok(_) => success_message("Space deleted"),
+    match crate::api::notebooks::delete_notebook(state.db.pool(), &id).await {
+        Ok(_) => success_message("Notebook deleted"),
         Err(e) => error_response(e),
     }
 }
 
-/// POST /api/spaces/:id/items - Add a member URL to a space
-pub async fn add_space_item_handler(
+/// POST /api/notebooks/:id/items - Add a member URL to a notebook
+pub async fn add_notebook_item_handler(
     State(state): State<AppState>,
     Path(id): Path<String>,
-    Json(request): Json<crate::api::spaces::AddSpaceItemRequest>,
+    Json(request): Json<crate::api::notebooks::AddNotebookItemRequest>,
 ) -> Response {
-    match crate::api::spaces::add_space_item(state.db.pool(), &id, request).await {
+    match crate::api::notebooks::add_notebook_item(state.db.pool(), &id, request).await {
         Ok(item) => (StatusCode::CREATED, Json(item)).into_response(),
         Err(e) => error_response(e),
     }
 }
 
 #[derive(Debug, Deserialize)]
-pub struct RemoveSpaceItemRequest {
+pub struct RemoveNotebookItemRequest {
     pub url: String,
 }
 
-/// DELETE /api/spaces/:id/items - Remove a member URL from a space
-pub async fn remove_space_item_handler(
+/// DELETE /api/notebooks/:id/items - Remove a member URL from a notebook
+pub async fn remove_notebook_item_handler(
     State(state): State<AppState>,
     Path(id): Path<String>,
-    Json(request): Json<RemoveSpaceItemRequest>,
+    Json(request): Json<RemoveNotebookItemRequest>,
 ) -> Response {
-    match crate::api::spaces::remove_space_item(state.db.pool(), &id, &request.url).await {
-        Ok(_) => success_message("Item removed from space"),
+    match crate::api::notebooks::remove_notebook_item(state.db.pool(), &id, &request.url).await {
+        Ok(_) => success_message("Item removed from notebook"),
         Err(e) => error_response(e),
     }
 }
 
-/// PUT /api/spaces/:id/items/reorder - Reorder space members
-pub async fn reorder_space_items_handler(
+/// PUT /api/notebooks/:id/items/reorder - Reorder notebook members
+pub async fn reorder_notebook_items_handler(
     State(state): State<AppState>,
     Path(id): Path<String>,
-    Json(request): Json<crate::api::spaces::ReorderSpaceItemsRequest>,
+    Json(request): Json<crate::api::notebooks::ReorderNotebookItemsRequest>,
 ) -> Response {
-    match crate::api::spaces::reorder_space_items(state.db.pool(), &id, request).await {
-        Ok(_) => success_message("Space items reordered"),
+    match crate::api::notebooks::reorder_notebook_items(state.db.pool(), &id, request).await {
+        Ok(_) => success_message("Notebook items reordered"),
         Err(e) => error_response(e),
     }
 }

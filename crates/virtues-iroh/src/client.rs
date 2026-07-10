@@ -9,6 +9,28 @@ use crate::endpoint::VIRTUES_ALPN;
 /// Max response body we'll buffer from a single request stream (64 MiB).
 const MAX_RESPONSE: usize = 64 * 1024 * 1024;
 
+/// Which network path the connection to the box is using right now — for a
+/// live "Direct · LAN / Relay / Offline" status readout.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PathKind {
+    /// Direct peer-to-peer (LAN or hole-punched) — an IP transport addr is live.
+    Direct,
+    /// Reached via the relay — only a relay addr is live.
+    Relay,
+    /// No live path (nothing connected / box unreachable).
+    Offline,
+}
+
+impl PathKind {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            PathKind::Direct => "direct",
+            PathKind::Relay => "relay",
+            PathKind::Offline => "offline",
+        }
+    }
+}
+
 /// A client holding a warm iroh `Endpoint` + reconnecting `Connection` to the
 /// box. Dials an [`EndpointAddr`] — which may carry a relay URL (remote reach),
 /// direct IP addresses (LAN-direct), or both; iroh negotiates the best path and
@@ -67,6 +89,41 @@ impl VirtuesIrohClient {
 
     async fn drop_connection(&self) {
         *self.conn.lock().await = None;
+    }
+
+    /// Drop the cached connection so the next request re-dials fresh. Call on a
+    /// network change (LTE↔Wi-Fi/LAN) to recover promptly instead of waiting for
+    /// a request to fail on the stale connection first.
+    pub async fn drop_conn(&self) {
+        self.drop_connection().await;
+    }
+
+    /// Snapshot which path the connection to the box is using *right now*, from
+    /// live iroh state. `Offline` if nothing is connected — call after a request
+    /// (which dials) for a fresh reading. Prefers `Direct` when both are live
+    /// (iroh upgrades relay→direct after hole-punching).
+    pub async fn path_kind(&self) -> PathKind {
+        use iroh::endpoint::TransportAddrUsage;
+        let Some(info) = self.endpoint.remote_info(self.addr.id).await else {
+            return PathKind::Offline;
+        };
+        let mut relay = false;
+        for a in info.addrs() {
+            if !matches!(a.usage(), TransportAddrUsage::Active) {
+                continue;
+            }
+            if a.addr().is_ip() {
+                return PathKind::Direct;
+            }
+            if a.addr().is_relay() {
+                relay = true;
+            }
+        }
+        if relay {
+            PathKind::Relay
+        } else {
+            PathKind::Offline
+        }
     }
 
     /// Send a raw HTTP/1 request over a fresh bi-stream and return the raw

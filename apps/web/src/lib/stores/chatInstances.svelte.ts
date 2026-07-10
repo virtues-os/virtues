@@ -118,7 +118,7 @@ interface ActivePageContext {
 interface CreateChatConfig {
     conversationId: string;
     getModel: () => string; // Getter to always get current model
-    getSpaceId: () => string | null; // Getter for space ID (null for system space)
+    getNotebookId: () => string | null; // Getter for space ID (null for system space)
     getActivePageContext?: () => ActivePageContext | null; // Getter for active page context (bound page)
     getPersona?: () => string; // Getter for selected persona (per-chat)
     getAgentMode?: () => string; // Getter for agent mode (agent, chat, research)
@@ -163,7 +163,7 @@ class ChatInstanceStore {
      * @param config - Configuration including conversationId and getModel getter
      */
     getOrCreate(config: CreateChatConfig): Chat {
-        const { conversationId, getModel, getSpaceId, getActivePageContext, getPersona, getAgentMode, getTemporary } = config;
+        const { conversationId, getModel, getNotebookId, getActivePageContext, getPersona, getAgentMode, getTemporary } = config;
         const existing = this.instances.get(conversationId);
 
         if (existing) {
@@ -182,7 +182,7 @@ class ChatInstanceStore {
             transport: new DefaultChatTransport({
                 api: '/api/chat',
                 prepareSendMessagesRequest: ({ messages }) => {
-                    const spaceId = getSpaceId();
+                    const notebookId = getNotebookId();
                     const activePage = getActivePageContext?.();
                     const persona = getPersona?.() || 'default';
                     const agentMode = getAgentMode?.() || 'chat';
@@ -204,7 +204,7 @@ class ChatInstanceStore {
                             timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
                             // The Space (room) this chat lives in — drives the agent's
                             // active-space context block and binds the chat on the server.
-                            ...(spaceId && { spaceId }),
+                            ...(notebookId && { notebookId }),
                             // Include active page context if a page is bound
                             ...(activePage && { activePage }),
                             // Include thought signature if available

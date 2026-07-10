@@ -17,7 +17,7 @@ mod client;
 mod endpoint;
 mod server;
 
-pub use client::VirtuesIrohClient;
+pub use client::{PathKind, VirtuesIrohClient};
 pub use endpoint::{build_endpoint, iroh_port, DEFAULT_IROH_PORT, VIRTUES_ALPN};
 pub use server::{serve, AllowPolicy, ProvenPeer, StaticAllow};
 
