@@ -29,6 +29,7 @@ mod discover;
 mod keychain;
 mod pair;
 mod proxy;
+mod service;
 
 #[derive(Parser)]
 #[command(name = "virtues-client")]
@@ -80,6 +81,17 @@ enum Command {
         upstream: Option<String>,
     },
 
+    /// Install the proxy as a durable background service (macOS LaunchAgent /
+    /// Linux systemd user unit) and start it. `RunAtLoad`s at login and restarts
+    /// on crash, so `:7117` stays up across app quits and reboots — the collector
+    /// uploads through it, so it must outlive the desktop app. Copies this binary
+    /// into `~/.virtues/bin` so the app's launch-time reconcile can swap it on
+    /// update. Idempotent: safe to re-run to repair a torn-down service.
+    Install,
+
+    /// Stop and remove the proxy service installed by `install`.
+    Uninstall,
+
     /// Open the paired box in the default browser (via the `:7117` helper).
     /// Run `virtues-client up` first so the helper is serving.
     Open,
@@ -109,6 +121,8 @@ async fn main() -> Result<()> {
             let _ = pair::refresh_reach().await;
             proxy::run().await
         }
+        Command::Install => service::install(),
+        Command::Uninstall => service::uninstall(),
         Command::Open => run_open(),
         Command::Status => run_status().await,
         Command::Revoke => revoke().await,

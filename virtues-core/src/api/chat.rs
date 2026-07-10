@@ -121,10 +121,10 @@ pub struct ChatRequest {
     /// Optional client-generated message ID for idempotency
     #[serde(rename = "messageId")]
     pub message_id: Option<String>,
-    /// The Space (room) this chat lives in. Stored on the chat and inlined into
+    /// The Notebook (room) this chat lives in. Stored on the chat and inlined into
     /// the system prompt as a salience lens (name + memo + member URLs).
-    #[serde(rename = "spaceId", default)]
-    pub space_id: Option<String>,
+    #[serde(rename = "notebookId", default)]
+    pub notebook_id: Option<String>,
     /// Optional active page context for AI page editing
     #[serde(rename = "activePage")]
     pub active_page: Option<ActivePageContext>,
@@ -638,7 +638,7 @@ async fn build_system_prompt(
     agent_mode: &str,
     persona_id: &str,
     is_new_user: bool,
-    space_id: Option<&str>,
+    notebook_id: Option<&str>,
 ) -> String {
     use crate::agent::prompt::build_personalized_prompt;
     use crate::api::assistant_profile::get_assistant_name;
@@ -714,10 +714,10 @@ async fn build_system_prompt(
         prompt.push_str(&user_context);
     }
 
-    // Inline the active Space (room) as a salience lens: its name, catch-up
+    // Inline the active Notebook (room) as a salience lens: its name, catch-up
     // memo, and member URLs. This is the room the chat lives in.
-    if let Some(space_id) = space_id {
-        if let Some(block) = build_space_context(pool, space_id).await {
+    if let Some(notebook_id) = notebook_id {
+        if let Some(block) = build_notebook_context(pool, notebook_id).await {
             prompt.push_str(&block);
         }
     }
@@ -759,27 +759,27 @@ async fn build_system_prompt(
     prompt
 }
 
-/// Maximum member URLs to inline for a Space before truncating.
+/// Maximum member URLs to inline for a Notebook before truncating.
 const MAX_SPACE_ITEMS_INLINED: usize = 100;
 
-/// Build a context block for the active Space (room) the chat lives in.
-/// Returns None if the Space can't be loaded.
-async fn build_space_context(pool: &PgPool, space_id: &str) -> Option<String> {
-    let detail = match crate::api::spaces::get_space(pool, space_id).await {
+/// Build a context block for the active Notebook (room) the chat lives in.
+/// Returns None if the Notebook can't be loaded.
+async fn build_notebook_context(pool: &PgPool, notebook_id: &str) -> Option<String> {
+    let detail = match crate::api::notebooks::get_notebook(pool, notebook_id).await {
         Ok(d) => d,
         Err(e) => {
-            tracing::warn!("[chat] failed to load active space {}: {}", space_id, e);
+            tracing::warn!("[chat] failed to load active notebook {}: {}", notebook_id, e);
             return None;
         }
     };
 
     let mut out = String::new();
     out.push_str(&format!(
-        "\n\n<active_space name=\"{}\">",
-        escape_attr(&detail.space.name),
+        "\n\n<active_notebook name=\"{}\">",
+        escape_attr(&detail.notebook.name),
     ));
 
-    if let Some(memo) = detail.space.current_status.as_deref() {
+    if let Some(memo) = detail.notebook.current_status.as_deref() {
         if !memo.is_empty() {
             out.push_str(&format!("\n  <memo>{}</memo>", escape_attr(memo)));
         }
@@ -796,9 +796,9 @@ async fn build_space_context(pool: &PgPool, space_id: &str) -> Option<String> {
         ));
     }
 
-    out.push_str("\n</active_space>");
+    out.push_str("\n</active_notebook>");
 
-    let preamble = "\n\n<active_space_preamble>\nThis chat lives in the Space (room) below — a collection the user returns to (a project, pet, hobby, goal, or topic). Treat its members as high-salience: they are the user's actively curated focus for this room. The memo, if present, is a catch-up note about the room's current state.\n</active_space_preamble>";
+    let preamble = "\n\n<active_notebook_preamble>\nThis chat lives in the Notebook (room) below — a collection the user returns to (a project, pet, hobby, goal, or topic). Treat its members as high-salience: they are the user's actively curated focus for this room. The memo, if present, is a catch-up note about the room's current state.\n</active_notebook_preamble>";
 
     Some(format!("{}{}", preamble, out))
 }
@@ -921,13 +921,13 @@ pub async fn chat_handler(
         }
     };
 
-    // Bind the chat to its Space on first creation (stores space_id + folds
-    // the chat into the Space's membership).
+    // Bind the chat to its Notebook on first creation (stores notebook_id + folds
+    // the chat into the Notebook's membership).
     if chat_was_created {
         if let Err(e) =
-            crate::api::spaces::set_chat_space(&pool, &chat_id_str, request.space_id.as_deref()).await
+            crate::api::notebooks::set_chat_notebook(&pool, &chat_id_str, request.notebook_id.as_deref()).await
         {
-            tracing::warn!("Failed to set chat space: {}", e);
+            tracing::warn!("Failed to set chat notebook: {}", e);
         }
     }
 
@@ -1082,11 +1082,11 @@ pub async fn chat_handler(
         .collect();
 
     // Resolve the chat's room from the persisted row (single source of truth) so
-    // the active-space context always matches the binding, even if a stale client
-    // sends a different per-message spaceId. The create path above already bound a
-    // new chat from request.space_id, so the row is current by now.
-    let effective_space_id: Option<String> =
-        sqlx::query_scalar(r#"SELECT space_id FROM app_chats WHERE id = $1"#)
+    // the active-notebook context always matches the binding, even if a stale client
+    // sends a different per-message notebookId. The create path above already bound a
+    // new chat from request.notebook_id, so the row is current by now.
+    let effective_notebook_id: Option<String> =
+        sqlx::query_scalar(r#"SELECT notebook_id FROM app_chats WHERE id = $1"#)
             .bind(&chat_id_str)
             .fetch_optional(&pool)
             .await
@@ -1095,7 +1095,7 @@ pub async fn chat_handler(
 
     // Build system prompt with active page context, timezone, personalization, and agent mode
     // is_onboarding keeps the onboarding prompt active until set_user_name completes
-    let system_prompt = build_system_prompt(&pool, request.active_page.as_ref(), request.timezone.as_deref(), &request.agent_mode, &request.persona, is_onboarding, effective_space_id.as_deref()).await;
+    let system_prompt = build_system_prompt(&pool, request.active_page.as_ref(), request.timezone.as_deref(), &request.agent_mode, &request.persona, is_onboarding, effective_notebook_id.as_deref()).await;
 
     // Flip 'new' → 'onboarding' after the first synthetic message (NOT to 'active').
     // The onboarding prompt stays active. set_user_name flips 'onboarding' → 'active'.
@@ -1281,7 +1281,7 @@ fn create_agent_stream(
         let context = ToolContext {
             page_id: request.active_page.as_ref().and_then(|p| p.page_id.clone()),
             user_id: None,
-            space_id: request.space_id.clone(),
+            notebook_id: request.notebook_id.clone(),
             chat_id: Some(request.chat_id.clone()),
             action_id: None,
             subagent_tx: Some(subagent_tx),

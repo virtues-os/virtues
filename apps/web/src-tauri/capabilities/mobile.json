@@ -12,6 +12,7 @@
     "health:default",
     "eventkit:default",
     "contacts:default",
-    "finance:default"
+    "finance:default",
+    "audio:default"
   ]
 }

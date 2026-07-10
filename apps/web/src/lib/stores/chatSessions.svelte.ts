@@ -8,7 +8,7 @@ export interface ChatSession {
 	conversation_id: string;
 	title: string | null;
 	icon: string | null;
-	space_id?: string | null;
+	notebook_id?: string | null;
 	last_updated: string | null;
 	first_message_at: string;
 	last_message_at: string;
@@ -80,7 +80,7 @@ class ChatSessionStore {
 					conversation_id: chatId,
 					title,
 					icon: null,
-					space_id: null,
+					notebook_id: null,
 					last_updated: null,
 					first_message_at: '',
 					last_message_at: '',

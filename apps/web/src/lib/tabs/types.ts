@@ -20,8 +20,8 @@ export type TabType =
 	| 'person' // Wiki people: /person, /person/person_{id}
 	| 'place' // Wiki places: /place, /place/place_{id}
 	| 'org' // Wiki organizations: /org, /org/org_{id}
-	| 'thing' // Wiki things (projects, pets, goals, ...): /things, /thing/thg_{id}
-	| 'space' // Spaces (rooms a chat lives in): /spaces, /space/space_{id}
+	| 'thing' // Wiki things (reference entities: pets, cars, concepts, ...): /things, /thing/thg_{id}
+	| 'notebook' // Notebooks (rooms a chat lives in): /notebooks, /notebook/{id}
 	| 'day' // Wiki days: /day, /day/day_{date}
 	| 'year' // Wiki years: /year, /year/{year}
 	| 'narrative-identity' // Wiki narrative identity: /narrative-identity

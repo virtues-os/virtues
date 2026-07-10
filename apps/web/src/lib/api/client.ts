@@ -1033,7 +1033,7 @@ export async function createChat(
  */
 export async function updateChat(
 	chatId: string,
-	updates: { title?: string; icon?: string | null; spaceId?: string | null }
+	updates: { title?: string; icon?: string | null; notebookId?: string | null }
 ): Promise<{ conversation_id: string; title: string; icon?: string | null; updated_at: string }> {
 	const res = await fetch(`${API_BASE}/chats/${chatId}`, {
 		method: 'PATCH',
@@ -1066,16 +1066,16 @@ export async function deleteChat(chatId: string): Promise<{ deleted: boolean }> 
 }
 
 // =============================================================================
-// Spaces API — the "room" a chat lives in
+// Notebooks API — the "room" a chat lives in
 //
-// A Space is a manual collection the user returns to: a project, pet, hobby,
+// A Notebook is a manual collection the user returns to: a project, pet, hobby,
 // goal, or topic. It gathers entities, chats, and pages as URL-native members
 // and carries a single accent tint plus a catch-up memo (`current_status`).
-// A chat lives in at most one Space (see `updateChat`'s `spaceId`).
+// A chat lives in at most one Notebook (see `updateChat`'s `notebookId`).
 // =============================================================================
 
-/** Core Space row (no counts). Returned by create/update. */
-export interface Space {
+/** Core Notebook row (no counts). Returned by create/update. */
+export interface Notebook {
 	id: string;
 	name: string;
 	icon: string | null;
@@ -1088,58 +1088,58 @@ export interface Space {
 }
 
 /** List-view summary — adds member and chat counts. */
-export interface SpaceSummary extends Space {
+export interface NotebookSummary extends Notebook {
 	item_count: number;
 	chat_count: number;
 }
 
-/** A single URL-native member of a Space. */
-export interface SpaceItem {
+/** A single URL-native member of a Notebook. */
+export interface NotebookItem {
 	url: string;
 	sort_order: number;
 	added_at: string;
 }
 
-/** GET /api/spaces/:id — a Space plus its ordered members. */
-export interface SpaceDetail extends Space {
-	items: SpaceItem[];
+/** GET /api/notebooks/:id — a Notebook plus its ordered members. */
+export interface NotebookDetail extends Notebook {
+	items: NotebookItem[];
 }
 
-/** GET /api/spaces — all Spaces with counts. */
-export async function listSpaces(): Promise<{ spaces: SpaceSummary[] }> {
-	const res = await fetch(`${API_BASE}/spaces`);
-	if (!res.ok) throw new Error(`Failed to list spaces: ${res.statusText}`);
+/** GET /api/notebooks — all Notebooks with counts. */
+export async function listNotebooks(): Promise<{ notebooks: NotebookSummary[] }> {
+	const res = await fetch(`${API_BASE}/notebooks`);
+	if (!res.ok) throw new Error(`Failed to list notebooks: ${res.statusText}`);
 	return res.json();
 }
 
-/** GET /api/spaces/:id — a Space with its ordered members. */
-export async function getSpace(id: string): Promise<SpaceDetail> {
-	const res = await fetch(`${API_BASE}/spaces/${encodeURIComponent(id)}`);
-	if (!res.ok) throw new Error(`Failed to get space: ${res.statusText}`);
+/** GET /api/notebooks/:id — a Notebook with its ordered members. */
+export async function getNotebook(id: string): Promise<NotebookDetail> {
+	const res = await fetch(`${API_BASE}/notebooks/${encodeURIComponent(id)}`);
+	if (!res.ok) throw new Error(`Failed to get notebook: ${res.statusText}`);
 	return res.json();
 }
 
-/** POST /api/spaces — create a Space. */
-export async function createSpace(body: {
+/** POST /api/notebooks — create a Notebook. */
+export async function createNotebook(body: {
 	name: string;
 	icon?: string | null;
 	accent_color?: string | null;
-}): Promise<Space> {
-	const res = await fetch(`${API_BASE}/spaces`, {
+}): Promise<Notebook> {
+	const res = await fetch(`${API_BASE}/notebooks`, {
 		method: 'POST',
 		headers: { 'Content-Type': 'application/json' },
 		body: JSON.stringify(body)
 	});
-	if (!res.ok) throw new Error(`Failed to create space: ${res.statusText}`);
+	if (!res.ok) throw new Error(`Failed to create notebook: ${res.statusText}`);
 	return res.json();
 }
 
 /**
- * PUT /api/spaces/:id — update a Space. For the nullable fields
+ * PUT /api/notebooks/:id — update a Notebook. For the nullable fields
  * (`icon`/`accent_color`/`current_status`): omit the key to leave unchanged,
  * send `null` to clear, send a value to set.
  */
-export async function updateSpace(
+export async function updateNotebook(
 	id: string,
 	patch: {
 		name?: string;
@@ -1148,20 +1148,20 @@ export async function updateSpace(
 		current_status?: string | null;
 		sort_order?: number;
 	}
-): Promise<Space> {
-	const res = await fetch(`${API_BASE}/spaces/${encodeURIComponent(id)}`, {
+): Promise<Notebook> {
+	const res = await fetch(`${API_BASE}/notebooks/${encodeURIComponent(id)}`, {
 		method: 'PUT',
 		headers: { 'Content-Type': 'application/json' },
 		body: JSON.stringify(patch)
 	});
-	if (!res.ok) throw new Error(`Failed to update space: ${res.statusText}`);
+	if (!res.ok) throw new Error(`Failed to update notebook: ${res.statusText}`);
 	return res.json();
 }
 
-/** DELETE /api/spaces/:id */
-export async function deleteSpace(id: string): Promise<void> {
-	const res = await fetch(`${API_BASE}/spaces/${encodeURIComponent(id)}`, { method: 'DELETE' });
-	if (!res.ok) throw new Error(`Failed to delete space: ${res.statusText}`);
+/** DELETE /api/notebooks/:id */
+export async function deleteNotebook(id: string): Promise<void> {
+	const res = await fetch(`${API_BASE}/notebooks/${encodeURIComponent(id)}`, { method: 'DELETE' });
+	if (!res.ok) throw new Error(`Failed to delete notebook: ${res.statusText}`);
 }
 
 // =============================================================================
@@ -1204,42 +1204,42 @@ export async function executeSql(sql: string): Promise<SqlResult> {
 }
 
 // =============================================================================
-// Space Items API — the URL-native members of a Space
+// Notebook Items API — the URL-native members of a Notebook
 //
-// (Listing comes back inside `getSpace(id)` as `SpaceDetail.items`; there is
+// (Listing comes back inside `getNotebook(id)` as `NotebookDetail.items`; there is
 // no separate GET.)
 // =============================================================================
 
-/** POST /api/spaces/:id/items — add a member URL to a Space. */
-export async function addSpaceItem(spaceId: string, url: string): Promise<SpaceItem> {
+/** POST /api/notebooks/:id/items — add a member URL to a Notebook. */
+export async function addNotebookItem(notebookId: string, url: string): Promise<NotebookItem> {
 	const sanitizedUrl = sanitizeUrl(url);
-	const res = await fetch(`${API_BASE}/spaces/${encodeURIComponent(spaceId)}/items`, {
+	const res = await fetch(`${API_BASE}/notebooks/${encodeURIComponent(notebookId)}/items`, {
 		method: 'POST',
 		headers: { 'Content-Type': 'application/json' },
 		body: JSON.stringify({ url: sanitizedUrl })
 	});
-	if (!res.ok) throw new Error(`Failed to add space item: ${res.statusText}`);
+	if (!res.ok) throw new Error(`Failed to add notebook item: ${res.statusText}`);
 	return res.json();
 }
 
-/** DELETE /api/spaces/:id/items — remove a member URL from a Space. */
-export async function removeSpaceItem(spaceId: string, url: string): Promise<void> {
-	const res = await fetch(`${API_BASE}/spaces/${encodeURIComponent(spaceId)}/items`, {
+/** DELETE /api/notebooks/:id/items — remove a member URL from a Notebook. */
+export async function removeNotebookItem(notebookId: string, url: string): Promise<void> {
+	const res = await fetch(`${API_BASE}/notebooks/${encodeURIComponent(notebookId)}/items`, {
 		method: 'DELETE',
 		headers: { 'Content-Type': 'application/json' },
 		body: JSON.stringify({ url })
 	});
-	if (!res.ok) throw new Error(`Failed to remove space item: ${res.statusText}`);
+	if (!res.ok) throw new Error(`Failed to remove notebook item: ${res.statusText}`);
 }
 
-/** PUT /api/spaces/:id/items/reorder — set the member order by URL. */
-export async function reorderSpaceItems(spaceId: string, urls: string[]): Promise<void> {
-	const res = await fetch(`${API_BASE}/spaces/${encodeURIComponent(spaceId)}/items/reorder`, {
+/** PUT /api/notebooks/:id/items/reorder — set the member order by URL. */
+export async function reorderNotebookItems(notebookId: string, urls: string[]): Promise<void> {
+	const res = await fetch(`${API_BASE}/notebooks/${encodeURIComponent(notebookId)}/items/reorder`, {
 		method: 'PUT',
 		headers: { 'Content-Type': 'application/json' },
 		body: JSON.stringify({ urls })
 	});
-	if (!res.ok) throw new Error(`Failed to reorder space items: ${res.statusText}`);
+	if (!res.ok) throw new Error(`Failed to reorder notebook items: ${res.statusText}`);
 }
 
 // =============================================================================
@@ -1250,7 +1250,7 @@ export interface Page {
 	id: string;
 	title: string;
 	content: string;
-	space_id: string | null;
+	notebook_id: string | null;
 	icon: string | null;
 	cover_url: string | null;
 	tags: string | null; // JSON array string: '["tag1", "tag2"]'
@@ -1261,7 +1261,7 @@ export interface Page {
 export interface PageSummary {
 	id: string;
 	title: string;
-	space_id: string | null;
+	notebook_id: string | null;
 	icon: string | null;
 	cover_url: string | null;
 	tags: string | null; // JSON array string: '["tag1", "tag2"]'
@@ -1290,11 +1290,11 @@ export interface RefSearchResponse {
 /**
  * List all pages with optional pagination and workspace filter
  */
-export async function listPages(limit?: number, offset?: number, space_id?: string): Promise<PageListResponse> {
+export async function listPages(limit?: number, offset?: number, notebook_id?: string): Promise<PageListResponse> {
 	const params = new URLSearchParams();
 	if (limit !== undefined) params.set('limit', String(limit));
 	if (offset !== undefined) params.set('offset', String(offset));
-	if (space_id !== undefined) params.set('space_id', space_id);
+	if (notebook_id !== undefined) params.set('notebook_id', notebook_id);
 
 	const url = params.toString() ? `${API_BASE}/pages?${params}` : `${API_BASE}/pages`;
 	const res = await fetch(url);
@@ -1318,13 +1318,13 @@ export async function getPage(id: string): Promise<Page> {
 export async function createPage(
 	title: string,
 	content: string = '',
-	space_id: string | null = null,
+	notebook_id: string | null = null,
 	options?: { icon?: string; cover_url?: string; tags?: string }
 ): Promise<Page> {
 	const res = await fetch(`${API_BASE}/pages`, {
 		method: 'POST',
 		headers: { 'Content-Type': 'application/json' },
-		body: JSON.stringify({ title, content, spaceId: space_id, ...options })
+		body: JSON.stringify({ title, content, notebookId: notebook_id, ...options })
 	});
 
 	if (!res.ok) throw new Error(`Failed to create page: ${res.statusText}`);
@@ -1339,7 +1339,7 @@ export async function updatePage(
 	updates: {
 		title?: string;
 		content?: string;
-		space_id?: string | null;
+		notebook_id?: string | null;
 		icon?: string | null;
 		cover_url?: string | null;
 		tags?: string | null;
@@ -1459,7 +1459,7 @@ export async function getPageBacklinks(pageId: string): Promise<Backlink[]> {
 // Things API
 //
 // A "thing" is a plain entity — a project, pet, goal, topic, anything you want
-// to name and keep around. Membership/organization now lives in Spaces, not on
+// to name and keep around. Membership/organization now lives in Notebooks, not on
 // the Thing. The `category` column exists on the row but is not surfaced in v1.
 // ============================================================================
 

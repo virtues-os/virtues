@@ -17,7 +17,7 @@
 	import { windowShellStore } from "$lib/stores/window-shell.svelte";
 	import { thingsStore } from "$lib/stores/things.svelte";
 	import { pinsStore } from "$lib/stores/pins.svelte";
-	import { spaceStore } from "$lib/stores/space.svelte";
+	import { notebookStore } from "$lib/stores/notebook.svelte";
 	import { subscriptionStore } from "$lib/stores/subscription.svelte";
 	import { setupStateStore } from "$lib/stores/setupState.svelte";
 	import { sidebarState } from "$lib/stores/sidebarState.svelte";
@@ -73,7 +73,7 @@
 		chatSessions.load();
 		thingsStore.load('project');
 		pinsStore.load();
-		spaceStore.load();
+		notebookStore.load();
 		initTheme();
 
 		// Initialize workspace store (loads workspaces, tree, and tabs)

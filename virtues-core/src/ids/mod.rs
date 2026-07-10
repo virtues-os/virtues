@@ -87,9 +87,8 @@ pub const THING_PREFIX: &str = "thg";
 // Sidebar pins (user's globally-pinned URLs, distinct from thing membership)
 pub const PIN_PREFIX: &str = "pin";
 
-// Space Layer (Organization system)
-pub const SPACE_PREFIX: &str = "space";
-pub const WORKSPACE_PREFIX: &str = "ws";  // Deprecated: use SPACE_PREFIX
+// Notebook Layer (Organization system)
+pub const NOTEBOOK_PREFIX: &str = "nb";
 
 // Chat Layer (Conversations)
 pub const CHAT_PREFIX: &str = "chat";

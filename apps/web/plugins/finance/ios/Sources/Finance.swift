@@ -39,12 +39,21 @@ public final class FinanceCollector {
   public func authorized() -> Bool { UserDefaults.standard.bool(forKey: enabledKey) }
 
   public func enable(_ completion: @escaping (Bool) -> Void) {
+    NSLog("[Finance] enable() called, entitled=%d", entitled ? 1 : 0)
     guard entitled else { completion(false); return }
     #if canImport(FinanceKit)
-      guard #available(iOS 17.4, *), FinanceStore.isDataAvailable(.financialData) else {
+      guard #available(iOS 17.4, *) else {
+        NSLog("[Finance] iOS < 17.4, unsupported")
         completion(false)
         return
       }
+      NSLog("[Finance] checking isDataAvailable…")
+      guard FinanceStore.isDataAvailable(.financialData) else {
+        NSLog("[Finance] isDataAvailable == false")
+        completion(false)
+        return
+      }
+      NSLog("[Finance] isDataAvailable == true, spawning auth task")
       Task {
         let ok = await self.requestAndCollect()
         DispatchQueue.main.async {
@@ -81,9 +90,13 @@ public final class FinanceCollector {
     @available(iOS 17.4, *)
     private func requestAndCollect() async -> Bool {
       do {
+        NSLog("[Finance] calling requestAuthorization()…")
         let status = try await FinanceStore.shared.requestAuthorization()
+        NSLog("[Finance] requestAuthorization returned: %@", "\(status)")
         guard status == .authorized else { return false }
+        NSLog("[Finance] authorized, starting collect()")
         await collect()
+        NSLog("[Finance] collect() finished")
         return true
       } catch {
         NSLog("[Finance] auth failed: %@", error.localizedDescription)

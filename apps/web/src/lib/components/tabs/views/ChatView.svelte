@@ -29,8 +29,8 @@
 	import { chatInstances } from "$lib/stores/chatInstances.svelte";
 	import { animateChatEdit } from "$lib/ai/aiPresence";
 	import { pendingPrompt } from "$lib/stores/pendingPrompt.svelte";
-	import { spaceStore } from "$lib/stores/space.svelte";
-	import ChatSpaceBreadcrumb from "$lib/components/chat/ChatSpaceBreadcrumb.svelte";
+	import { notebookStore } from "$lib/stores/notebook.svelte";
+	import ChatNotebookBreadcrumb from "$lib/components/chat/ChatNotebookBreadcrumb.svelte";
 	import { updateChat, deleteChat } from "$lib/api/client";
 	import { contextMenu, type ContextMenuItem } from "$lib/stores/contextMenu.svelte";
 	import type { Chat } from "@ai-sdk/svelte";
@@ -421,25 +421,25 @@
 		if (seededSpaceFor === id) return;
 		const session = chatSessions.sessions.find((s) => s.conversation_id === id);
 		if (session) {
-			chatSpaceId = session.space_id ?? null;
+			chatSpaceId = session.notebook_id ?? null;
 			seededSpaceFor = id;
 		} else if (!chatSessions.isLoading) {
 			// Sessions are loaded and this chat has no row yet (brand-new, not yet
 			// persisted) — start unfiled; the create path binds it from the first
-			// message's spaceId.
+			// message's notebookId.
 			chatSpaceId = null;
 			seededSpaceFor = id;
 		}
 	});
 
-	async function setChatSpace(spaceId: string | null) {
-		chatSpaceId = spaceId; // locally authoritative
+	async function setChatNotebook(notebookId: string | null) {
+		chatSpaceId = notebookId; // locally authoritative
 		seededSpaceFor = conversationId; // don't let a later seed override this pick
 		// Persist only if the chat already exists server-side; a brand-new chat
-		// has no row yet and is bound by the create path from getSpaceId().
+		// has no row yet and is bound by the create path from getNotebookId().
 		const persisted = chatSessions.sessions.some((s) => s.conversation_id === conversationId);
 		if (persisted) {
-			await spaceStore.setChatSpace(conversationId, spaceId);
+			await notebookStore.setChatNotebook(conversationId, notebookId);
 		}
 	}
 
@@ -778,7 +778,7 @@
 
 	// Getter for the chat's Space (room) ID — sent with each message so the agent
 	// gets the active-space context block and the server keeps the binding fresh.
-	function getSpaceId(): string | null {
+	function getNotebookId(): string | null {
 		return chatSpaceId;
 	}
 
@@ -793,7 +793,7 @@
 			chat = chatInstances.getOrCreate({
 				conversationId,
 				getModel: getCurrentModel,
-				getSpaceId,
+				getNotebookId,
 				getActivePageContext: () => {
 					const page = getBoundPage();
 					if (!page) return null;
@@ -927,7 +927,7 @@
 	// Load conversation data on mount
 	onMount(() => {
 		// Load Spaces so the room breadcrumb can resolve name/accent immediately.
-		spaceStore.load();
+		notebookStore.load();
 
 		// Claim any prompt handed off from Home / ⌘K "Ask Virtues" (consume-once,
 		// synchronously — so only this freshly-opened chat sends it).
@@ -1547,7 +1547,7 @@
 			<div class="chat-area" class:ghost={isGhost}>
 				<!-- Breadcrumb — the Space this chat lives in, then its title (top chrome) -->
 				<div class="chat-topbar">
-					<ChatSpaceBreadcrumb spaceId={chatSpaceId} onChange={setChatSpace} />
+					<ChatNotebookBreadcrumb notebookId={chatSpaceId} onChange={setChatNotebook} />
 					{#if showTitle}
 						{#if chatSpaceId}
 							<Icon icon="ri:arrow-right-s-line" width="15" class="crumb-sep" />

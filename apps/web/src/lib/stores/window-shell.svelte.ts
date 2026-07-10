@@ -70,7 +70,7 @@ const ENTITY_TYPE_MAP: Record<string, { type: string; icon: string; routePrefix:
 	year: { type: 'year', icon: 'ri:calendar-line', routePrefix: '/year' },
 	source: { type: 'source', icon: 'ri:database-2-line', routePrefix: '/sources' },
 	file: { type: 'drive', icon: 'ri:file-line', routePrefix: '/drive' },
-	space: { type: 'space', icon: 'ri:layout-masonry-line', routePrefix: '/space' }
+	notebook: { type: 'notebook', icon: 'ri:booklet-line', routePrefix: '/notebook' }
 };
 
 /**

@@ -5777,6 +5777,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "tauri-plugin-audio"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "tauri",
+ "tauri-plugin",
+ "thiserror 2.0.18",
+]
+
+[[package]]
 name = "tauri-plugin-contacts"
 version = "0.1.0"
 dependencies = [
@@ -6719,6 +6729,7 @@ dependencies = [
  "serde_json",
  "tauri",
  "tauri-build",
+ "tauri-plugin-audio",
  "tauri-plugin-contacts",
  "tauri-plugin-eventkit",
  "tauri-plugin-finance",

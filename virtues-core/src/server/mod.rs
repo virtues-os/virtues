@@ -677,25 +677,25 @@ pub async fn run(client: Virtues, host: &str, port: u16) -> Result<()> {
             "/api/pins/:id",
             patch(api::update_pin_handler).delete(api::delete_pin_handler),
         )
-        // Spaces API (the "room" a chat lives in)
+        // Notebooks API (the "room" a chat lives in)
         .route(
-            "/api/spaces",
-            get(api::list_spaces_handler).post(api::create_space_handler),
+            "/api/notebooks",
+            get(api::list_notebooks_handler).post(api::create_notebook_handler),
         )
         .route(
-            "/api/spaces/:id",
-            get(api::get_space_handler)
-                .put(api::update_space_handler)
-                .delete(api::delete_space_handler),
+            "/api/notebooks/:id",
+            get(api::get_notebook_handler)
+                .put(api::update_notebook_handler)
+                .delete(api::delete_notebook_handler),
         )
-        // Space membership (items come back inside GET /api/spaces/:id)
+        // Notebook membership (items come back inside GET /api/notebooks/:id)
         .route(
-            "/api/spaces/:id/items",
-            post(api::add_space_item_handler).delete(api::remove_space_item_handler),
+            "/api/notebooks/:id/items",
+            post(api::add_notebook_item_handler).delete(api::remove_notebook_item_handler),
         )
         .route(
-            "/api/spaces/:id/items/reorder",
-            put(api::reorder_space_items_handler),
+            "/api/notebooks/:id/items/reorder",
+            put(api::reorder_notebook_items_handler),
         )
         // Namespaces API
         .route("/api/namespaces", get(api::list_namespaces_handler))

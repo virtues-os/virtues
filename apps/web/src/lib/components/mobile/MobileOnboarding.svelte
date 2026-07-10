@@ -68,6 +68,15 @@
 			statusCmd: "plugin:finance|status",
 			state: "off",
 		},
+		{
+			key: "audio",
+			title: "Audio",
+			icon: "ri:mic-line",
+			why: "Ambient sound of your day — conversations, places, atmosphere — recorded and transcribed on your box.",
+			enableCmd: "plugin:audio|enable",
+			statusCmd: "plugin:audio|status",
+			state: "off",
+		},
 	]);
 
 	const anyOn = $derived(streams.some((s) => s.state === "on"));

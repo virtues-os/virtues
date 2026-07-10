@@ -7,12 +7,13 @@
  *
  * The sidebar is a "contents page", not a mode-switching rail: a stable
  * directory of top-level destinations. Deep navigation lives inside each
- * room (and is curated via Pins / Spaces), never in this panel.
+ * room (and is curated via Pins / Notebooks), never in this panel.
  *
- * Destinations split along the two axes of the LifeOS, separated by a blank gap
- * (no text headers):
- *   - Reflect (time / self) — Today (the day) and You (the self-model).
- *   - Work    (space)       — Spaces, Pages, Wiki, Drive, Actions, Chats.
+ * Destinations split into three gap-separated clusters (no text headers):
+ *   - Rhythm    — Home, Today.
+ *   - Create    — Chats, Pages, Notebooks (where you work).
+ *   - Substrate — Wiki (the life-graph: entities + time + narrative), Drive,
+ *                 Actions (the layers underneath).
  */
 
 export interface SystemSectionItem {
@@ -64,13 +65,8 @@ const TODAY: SystemSection = {
 	href: '/day',
 };
 
-const YOU: SystemSection = {
-	id: 'sys_you',
-	name: 'Narrative',
-	icon: 'ri:quill-pen-line',
-	type: 'link',
-	href: '/narrative-identity',
-};
+// Narrative folded into Wiki (the life-graph's throughline). Still reachable at
+// /narrative-identity via Wiki + search; no longer a top-level sidebar entry.
 
 const CHATS: SystemSection = {
 	id: 'sys_chat',
@@ -97,12 +93,12 @@ const WIKI: SystemSection = {
 	href: '/entities',
 };
 
-const SPACES: SystemSection = {
-	id: 'sys_spaces',
-	name: 'Spaces',
-	icon: 'ri:box-3-line',
+const NOTEBOOKS: SystemSection = {
+	id: 'sys_notebooks',
+	name: 'Notebooks',
+	icon: 'ri:booklet-line',
 	type: 'link',
-	href: '/spaces',
+	href: '/notebooks',
 };
 
 const DRIVE: SystemSection = {
@@ -122,9 +118,10 @@ const ACTIONS: SystemSection = {
 };
 
 export const SECTION_GROUPS: SectionGroup[] = [
-	// Reflect (time / self) — then a blank gap — then Work (space / domains).
-	{ id: 'grp_reflect', label: null, items: [HOME, TODAY, YOU] },
-	{ id: 'grp_work', label: null, items: [CHATS, PAGES, SPACES, WIKI, DRIVE, ACTIONS] },
+	// Rhythm — Create — Substrate, each separated by a blank gap (no headers).
+	{ id: 'grp_rhythm', label: null, items: [HOME, TODAY] },
+	{ id: 'grp_create', label: null, items: [CHATS, PAGES, NOTEBOOKS] },
+	{ id: 'grp_substrate', label: null, items: [WIKI, DRIVE, ACTIONS] },
 ];
 
 /** Map old DB view IDs → new constant IDs (for localStorage migration) */
@@ -137,6 +134,8 @@ export const LEGACY_ID_MAP: Record<string, string> = {
 	'view_sys_sec_developer': '',
 	'sys_chats': 'sys_chat',
 	'sys_files': 'sys_drive',
-	'sys_projects': 'sys_spaces',
-	'sys_things': 'sys_spaces',
+	'sys_projects': 'sys_notebooks',
+	'sys_things': 'sys_notebooks',
+	'sys_spaces': 'sys_notebooks',
+	'sys_you': '',
 };

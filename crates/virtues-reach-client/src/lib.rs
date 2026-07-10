@@ -23,4 +23,4 @@ pub use store::BoxStore;
 
 // Re-export the iroh client so consumers (upload coordinator) can name it
 // without a direct virtues-iroh dep.
-pub use virtues_iroh::VirtuesIrohClient;
+pub use virtues_iroh::{PathKind, VirtuesIrohClient};

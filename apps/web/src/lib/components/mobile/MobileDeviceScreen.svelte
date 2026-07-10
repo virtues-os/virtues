@@ -29,6 +29,8 @@
 		paired: boolean;
 		session: string; // authed | rejected | unknown | unpaired
 		loopbackUrl: string;
+		reachable: boolean; // live: box actually answered a probe just now
+		path: string; // live: direct | relay | offline
 	}
 
 	interface OutboxStats {
@@ -43,6 +45,11 @@
 	}
 	// Same shape for the other opt-in collectors.
 	type StreamStatus = HealthStatus;
+
+	interface AudioStatus {
+		authorized: boolean;
+		recording: boolean;
+	}
 
 	/** A collapsed run of consecutive near-identical fixes. */
 	interface LogRun {
@@ -65,6 +72,9 @@
 	let contactsSync = $state<OutboxStats | null>(null);
 	let finance = $state<StreamStatus | null>(null);
 	let financeSync = $state<OutboxStats | null>(null);
+	let audio = $state<AudioStatus | null>(null);
+	let audioSync = $state<OutboxStats | null>(null);
+	let togglingAudio = $state(false);
 	let version = $state<string>("");
 	let loading = $state(true);
 	let starting = $state(false);
@@ -77,13 +87,25 @@
 	const enabled = $derived(rows.length > 0);
 	const lastTs = $derived(rows[0]?.ts ?? null);
 
-	// Connection verdict from reach status.
+	// Connection verdict from LIVE reach status (probe + iroh path), not just the
+	// stored "paired" flag — so it can't claim "connected" when the box is
+	// actually unreachable.
 	const conn = $derived.by(() => {
-		if (!reach) return { label: "Checking…", tone: "idle" };
-		if (!reach.paired) return { label: "Not paired", tone: "off" };
-		if (reach.session === "authed") return { label: "Connected to your box", tone: "on" };
-		if (reach.session === "rejected") return { label: "Access rejected — re-pair", tone: "off" };
-		return { label: "Reconnecting…", tone: "idle" };
+		if (!reach) return { label: "Checking…", sub: "", tone: "idle" };
+		if (!reach.paired)
+			return { label: "Not paired", sub: "Pair this phone to your box to sync", tone: "off" };
+		if (reach.session === "rejected")
+			return { label: "Access rejected", sub: "Re-pair this phone", tone: "off" };
+		if (!reach.reachable)
+			return { label: "Can’t reach your box", sub: "Paired, but offline right now", tone: "off" };
+		// Reachable — show HOW we're connected.
+		const via =
+			reach.path === "direct"
+				? "Direct · on your network"
+				: reach.path === "relay"
+					? "Via relay"
+					: "Connected";
+		return { label: "Connected to your box", sub: via, tone: "on" };
 	});
 
 	// Collapse consecutive fixes at the same rounded coord + state into one run,
@@ -133,6 +155,8 @@
 				contactsSyncResp,
 				financeResp,
 				financeSyncResp,
+				audioResp,
+				audioSyncResp,
 				ver,
 			] = await Promise.all([
 					invoke<{ rows: ProbeRow[] }>("plugin:location-probe|read_rows", {
@@ -148,6 +172,8 @@
 					invoke<OutboxStats>("plugin:reach|outbox_stats", { stream: "contacts" }).catch(() => null),
 					invoke<StreamStatus>("plugin:finance|status").catch(() => null),
 					invoke<OutboxStats>("plugin:reach|outbox_stats", { stream: "financekit" }).catch(() => null),
+					invoke<AudioStatus>("plugin:audio|status").catch(() => null),
+					invoke<OutboxStats>("plugin:reach|outbox_stats", { stream: "microphone" }).catch(() => null),
 					getVersion().catch(() => ""),
 				]);
 			rows = (rowsResp.rows ?? []).slice().reverse(); // newest first
@@ -161,6 +187,8 @@
 			contactsSync = contactsSyncResp;
 			finance = financeResp;
 			financeSync = financeSyncResp;
+			audio = audioResp;
+			audioSync = audioSyncResp;
 			version = ver;
 		} catch (e) {
 			error = String(e);
@@ -236,6 +264,25 @@
 		}
 	}
 
+	/// Audio is toggleable (its toggle doubles as the pause control): Enable
+	/// prompts + starts; once authorized the button stops/resumes recording.
+	async function toggleAudio() {
+		togglingAudio = true;
+		error = null;
+		try {
+			if (audio?.recording) {
+				audio = await invoke<AudioStatus>("plugin:audio|disable");
+			} else {
+				audio = await invoke<AudioStatus>("plugin:audio|enable");
+			}
+			setTimeout(load, 2000);
+		} catch (e) {
+			error = String(e);
+		} finally {
+			togglingAudio = false;
+		}
+	}
+
 	let syncingNow = $state(false);
 	async function syncNow() {
 		syncingNow = true;
@@ -284,7 +331,7 @@
 			<div class="s-body">
 				<div class="s-title">{conn.label}</div>
 				<div class="s-sub">
-					{#if reach?.paired}This phone is paired{:else}Pair this phone to your box to sync{/if}
+					{conn.sub}
 				</div>
 			</div>
 			<span class="dot" class:on={conn.tone === "on"} class:off={conn.tone === "off"}></span>
@@ -389,6 +436,28 @@
 			{:else}
 				<span class="dot on"></span>
 			{/if}
+		</div>
+		<div class="stream">
+			<div class="s-icon" class:on={audio?.recording}>
+				<Icon icon="ri:mic-line" width={18} />
+			</div>
+			<div class="s-body">
+				<div class="s-title">Audio</div>
+				<div class="s-sub">
+					{#if audio?.recording}
+						Recording{#if audioSync && audioSync.queued > 0} · {audioSync.queued} syncing{:else} · synced{/if}
+					{:else if audio?.authorized}
+						Paused
+					{:else}Ambient sound &amp; transcripts{/if}
+				</div>
+			</div>
+			<button
+				class="s-action"
+				onclick={toggleAudio}
+				disabled={togglingAudio}
+			>
+				{#if togglingAudio}…{:else if audio?.recording}Stop{:else if audio?.authorized}Resume{:else}Enable{/if}
+			</button>
 		</div>
 	</div>
 

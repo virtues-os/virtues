@@ -48,8 +48,8 @@ pub struct ToolContext {
     pub page_id: Option<String>,
     /// User ID
     pub user_id: Option<String>,
-    /// Space ID
-    pub space_id: Option<String>,
+    /// Notebook ID
+    pub notebook_id: Option<String>,
     /// Chat ID (for permission checking)
     pub chat_id: Option<String>,
     /// Action ID (set when running as an action — for action memory tool)
@@ -70,7 +70,7 @@ impl Default for ToolContext {
         Self {
             page_id: None,
             user_id: None,
-            space_id: None,
+            notebook_id: None,
             chat_id: None,
             action_id: None,
             subagent_tx: None,
@@ -579,20 +579,20 @@ impl ToolExecutor {
                 }))),
                 Err(e) => Ok(ToolResult::error(format!("Failed to fetch thing: {}", e))),
             }
-        } else if let Some(space_id) = item_url.strip_prefix("/space/") {
-            match crate::api::spaces::get_space(pool, space_id).await {
+        } else if let Some(notebook_id) = item_url.strip_prefix("/notebook/") {
+            match crate::api::notebooks::get_notebook(pool, notebook_id).await {
                 Ok(detail) => {
                     let members: Vec<&str> =
                         detail.items.iter().map(|i| i.url.as_str()).collect();
                     Ok(ToolResult::success(serde_json::json!({
-                        "type": "space",
-                        "id": detail.space.id,
-                        "name": detail.space.name,
-                        "status": detail.space.current_status,
+                        "type": "notebook",
+                        "id": detail.notebook.id,
+                        "name": detail.notebook.name,
+                        "status": detail.notebook.current_status,
                         "members": members,
                     })))
                 }
-                Err(e) => Ok(ToolResult::error(format!("Failed to fetch space: {}", e))),
+                Err(e) => Ok(ToolResult::error(format!("Failed to fetch notebook: {}", e))),
             }
         } else if item_url.starts_with("http://") || item_url.starts_with("https://") {
             // External URL — content lives outside Virtues. Return guidance to use web tools.
@@ -603,7 +603,7 @@ impl ToolExecutor {
             })))
         } else {
             Ok(ToolResult::error(format!(
-                "Unsupported item URL type: {}. Supported: /page/, /chat/, /space/, /person/, /place/, /org/, /thing/, or https://",
+                "Unsupported item URL type: {}. Supported: /page/, /chat/, /notebook/, /person/, /place/, /org/, /thing/, or https://",
                 item_url
             )))
         }

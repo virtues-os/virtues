@@ -212,36 +212,70 @@ impl ReachState {
         match upload::drain(&client, &rec).await {
           Ok(n) if n > 0 => tracing::info!("uploaded {n} records"),
           Ok(_) => {}
-          Err(e) => tracing::warn!(error = %format!("{e:#}"), "outbox drain failed"),
+          Err(e) => {
+            tracing::warn!(error = %format!("{e:#}"), "outbox drain failed");
+            // Drop the (possibly wedged, post-network-switch) connection so the
+            // next tick re-dials fresh instead of reusing a dead one forever.
+            client.drop_conn().await;
+          }
         }
       }
     });
     Ok(())
   }
 
-  /// Probe `/auth/session` over the warm client.
+  /// Probe `/auth/session` over the warm client, bounded so a dead connection
+  /// reports quickly (Unknown) instead of hanging the status call.
   async fn session(&self) -> SessionState {
-    match self.client().await {
-      Some(c) => virtues_reach_client::probe_session(&c).await,
-      None => SessionState::Unknown,
+    let Some(c) = self.client().await else {
+      return SessionState::Unknown;
+    };
+    match tokio::time::timeout(
+      std::time::Duration::from_secs(6),
+      virtues_reach_client::probe_session(&c),
+    )
+    .await
+    {
+      Ok(s) => s,
+      Err(_) => SessionState::Unknown, // timed out → treat as unreachable
     }
   }
 
   pub async fn status(&self) -> ReachStatus {
     let paired = self.is_paired();
+    // The probe both diagnoses auth AND (re)connects, so read the live path
+    // AFTER it so `path` reflects the current route rather than a cold cache.
+    let session_state = if paired {
+      self.session().await
+    } else {
+      SessionState::Unknown
+    };
     let session = if !paired {
       "unpaired"
     } else {
-      match self.session().await {
+      match session_state {
         SessionState::Authed => "authed",
         SessionState::Rejected => "rejected",
         SessionState::Unknown => "unknown",
       }
     };
+    // Reachable = the box actually answered (authed or rejected are both "we
+    // reached it"); Unknown/timeout = offline/unreachable.
+    let reachable = matches!(session_state, SessionState::Authed | SessionState::Rejected);
+    let path = if reachable {
+      match self.client().await {
+        Some(c) => c.path_kind().await.as_str().to_string(),
+        None => "offline".into(),
+      }
+    } else {
+      "offline".into()
+    };
     ReachStatus {
       paired,
       session: session.into(),
       loopback_url: self.loopback_url(),
+      reachable,
+      path,
     }
   }
 

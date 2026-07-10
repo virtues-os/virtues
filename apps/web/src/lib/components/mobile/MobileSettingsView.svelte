@@ -26,7 +26,7 @@
 	const pages: Row[] = [
 		{ label: "Chats", icon: "ri:chat-1-line", route: "/chat-history" },
 		{ label: "Narrative", icon: "ri:quill-pen-line", route: "/narrative-identity" },
-		{ label: "Spaces", icon: "ri:box-3-line", route: "/spaces" },
+		{ label: "Notebooks", icon: "ri:booklet-line", route: "/notebooks" },
 		{ label: "Wiki", icon: "ri:book-open-line", route: "/entities" },
 		{ label: "Drive", icon: "ri:cloud-line", route: "/drive" },
 		{ label: "Actions", icon: "ri:flashlight-line", route: "/actions" },
@@ -84,7 +84,7 @@
 					</button>
 				{/if}
 
-				<div class="group-label">Pages &amp; spaces</div>
+				<div class="group-label">Pages &amp; notebooks</div>
 				<div class="card">
 					{#each pages as row (row.route)}
 						<button class="row" onclick={() => open(row.route, row.label)}>
