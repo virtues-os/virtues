@@ -63,6 +63,7 @@
 		person: "Person", place: "Place", org: "Organization", thing: "Thing",
 		page: "Page", chat: "Chat", space: "Space", file: "File",
 		day: "Day", year: "Year", source: "Source", link: "Link",
+		record: "Record",
 	};
 	const typeLabel = $derived((type && TYPE_LABEL[type]) || "Reference");
 

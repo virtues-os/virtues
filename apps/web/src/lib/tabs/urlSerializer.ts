@@ -20,7 +20,6 @@ const KNOWN_TYPES: TabType[] = [
 	// Then regular types
 	'chat',
 	'page',
-	'project',
 	'person',
 	'place',
 	'org',
@@ -33,6 +32,7 @@ const KNOWN_TYPES: TabType[] = [
 	'actions',
 	'tools',
 	'ontology',
+	'record',
 	'wiki',
 	'entities',
 	'drive',

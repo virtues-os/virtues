@@ -41,6 +41,7 @@ pub mod things;
 pub mod places;
 pub mod profile;
 pub mod notebooks;
+pub mod records;
 pub mod seed_testing;
 pub mod source_auth;
 pub mod storage;
