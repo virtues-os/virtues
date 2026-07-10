@@ -80,6 +80,10 @@ impl SemanticSearchTool {
                     "preview": r.preview,
                     "author": r.author,
                     "timestamp": r.timestamp,
+                    // Viewable route for this source, when it resolves to a
+                    // life-graph entity. Cite it inline (see the tool-usage
+                    // prompt); absent when the record has no navigable source.
+                    "ref": r.ref_url,
                 })
             })
             .collect();

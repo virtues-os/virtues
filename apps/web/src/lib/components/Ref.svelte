@@ -32,19 +32,17 @@
 	function handleClick(e: MouseEvent) {
 		e.preventDefault();
 		e.stopPropagation();
-		// Click model: ⌘/Ctrl-click opens; plain click peeks (never yanks you away).
-		if (e.metaKey || e.ctrlKey) {
-			open();
-		} else {
-			hover.pin(e.currentTarget as HTMLElement);
-		}
+		// Rendered refs/citations: plain click opens the source beside you (hover
+		// already peeks, so a click means "take me there"). This is the flip of
+		// the editor's peek-on-click model — see the Phase C citation decision.
+		open();
 	}
 
 	const hover = createRefHover();
 </script>
 
 <button
-	class="ref-pill"
+	class="ref-link"
 	onclick={handleClick}
 	title="View {displayName}"
 	onmouseenter={(e) => hover.enter(e.currentTarget)}
@@ -67,11 +65,6 @@
 	/>
 {/if}
 
-<style>
-	.ref-pill :global(.ref-pill-icon) {
-		display: inline-block;
-		vertical-align: -0.13em;
-		margin-right: 1px;
-		opacity: 0.85;
-	}
-</style>
+<!-- Appearance lives in the shared ref-badge.css (.ref-link) so the pill/link
+     treatments stay a single source of truth. -->
+
