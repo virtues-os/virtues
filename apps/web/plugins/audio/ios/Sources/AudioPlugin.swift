@@ -39,3 +39,11 @@ class AudioPlugin: Plugin {
 func initPlugin() -> Plugin {
   return AudioPlugin()
 }
+
+/// C-ABI so the always-on location plugin can re-arm audio on a background
+/// location update (the piggyback: location keeps the process alive and gives us
+/// a heartbeat to retry the mic). No-op unless enabled + authorized; idempotent.
+@_cdecl("virtues_ensure_recording")
+func virtues_ensure_recording() {
+  AudioRecorder.shared.ensureRecording(reason: "location")
+}

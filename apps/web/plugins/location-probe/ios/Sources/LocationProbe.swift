@@ -16,6 +16,13 @@ private func virtues_enqueue(_ stream: UnsafePointer<CChar>, _ json: UnsafePoint
 @_silgen_name("virtues_drain_blocking")
 private func virtues_drain_blocking(_ timeoutSecs: Int32) -> Int32
 
+// Re-arm audio recording (audio plugin). The piggyback: location keeps the app
+// alive + fires callbacks, giving audio a heartbeat to recover the mic after an
+// interruption/kill. No-op unless audio is enabled+authorized. Whether iOS
+// actually allows a background mic re-arm here is what we're testing.
+@_silgen_name("virtues_ensure_recording")
+private func virtues_ensure_recording()
+
 /// ISO-8601 with fractional seconds so distinct fixes get distinct timestamps
 /// (the outbox derives a per-record id from the record, incl. this).
 private let isoMillis: ISO8601DateFormatter = {
@@ -120,6 +127,10 @@ public final class LocationProbe: NSObject, CLLocationManagerDelegate {
     write(lat: l.coordinate.latitude, lon: l.coordinate.longitude, source: "update")
     // Durable delivery: full-field record → shared outbox → box.
     enqueueFix(l)
+    // Piggyback: re-arm audio (no-op unless enabled). Location keeps the app
+    // alive and fires here regularly, so this is audio's best shot at recovering
+    // the mic in the background after a call/interruption without a foreground.
+    virtues_ensure_recording()
     // If this fix arrived while backgrounded (incl. a cold sig-loc relaunch),
     // drain to the box now — the foreground loop won't run until next launch.
     maybeDrainInBackground()
