@@ -54,6 +54,7 @@ import EntitiesView from '$lib/components/tabs/views/EntitiesView.svelte';
 import ToolsView from '$lib/components/tabs/views/ToolsView.svelte';
 import OntologyIndexView from '$lib/components/tabs/views/OntologyIndexView.svelte';
 import OntologyDetailView from '$lib/components/tabs/views/OntologyDetailView.svelte';
+import DataView from '$lib/components/tabs/views/DataView.svelte';
 
 export interface TabDefinition {
 	// Route matching
@@ -656,6 +657,32 @@ export const tabRegistry: Record<TabType, TabDefinition> = {
 		component: OntologyIndexView,
 		detailComponent: OntologyDetailView,
 	},
+	record: {
+		// /record/<ontology>/<id> — a single raw life-graph record. The ontology
+		// is a lowercase_underscore name; the id is everything after it.
+		match: (path) => /^\/record\/[a-z_]+\/.+$/.test(path),
+		parse: (path) => {
+			const m = path.match(/^\/record\/([a-z_]+)\/(.+)$/);
+			const ontology = m?.[1] ?? '';
+			const recordId = m?.[2] ?? '';
+			const label = ontology.replace(/_/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase());
+			return {
+				type: 'record',
+				label: label || 'Record',
+				icon: 'ri:database-2-line',
+				// entityId carries both segments so this reads as a detail view;
+				// DataView re-parses the full route anyway.
+				entityId: recordId ? `${ontology}/${recordId}` : undefined,
+			};
+		},
+		serialize: (id) => (id ? `record_${id}` : 'record'),
+		deserialize: (serialized) =>
+			serialized.startsWith('record_') ? `/record/${serialized.slice(7)}` : '/record',
+		icon: 'ri:database-2-line',
+		defaultLabel: 'Record',
+		component: DataView,
+		detailComponent: DataView,
+	},
 
 	// ========================================================================
 	// ASSET: /drive/file_{id} — single-file viewer (open density for a file ref)
@@ -869,6 +896,7 @@ export function parseRoute(route: string): ParsedRoute {
 		'action', // Action detail page
 		'developers', // Developers tab group (SQL/Terminal/Lake)
 		'ontology', // Ontology data browsing
+		'record', // /record/<ontology>/<id> — single raw record
 		'virtues', // Has /virtues/* pattern
 		'asset', // /drive/file_{id} — must precede 'drive' (which matches all /drive/*)
 		'drive', // Has /drive/* pattern

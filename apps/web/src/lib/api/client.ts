@@ -755,6 +755,29 @@ export async function getDriveFile(fileId: string): Promise<DriveFile> {
 	return res.json();
 }
 
+/** One raw life-graph record (the data viewer / citation target). */
+export interface OntologyRecord {
+	ontology: string;
+	record_id: string;
+	display_name: string;
+	table_name: string;
+	timestamp_column: string;
+	/** The full row as a plain object (all columns). */
+	row: Record<string, unknown>;
+}
+
+/** Fetch a single raw record by ontology + id — backs the data viewer. */
+export async function getRecord(ontology: string, recordId: string): Promise<OntologyRecord> {
+	const res = await fetch(
+		`${API_BASE}/records/${encodeURIComponent(ontology)}/${encodeURIComponent(recordId)}`
+	);
+	if (!res.ok) {
+		const error = await res.json().catch(() => ({ error: res.statusText }));
+		throw new Error(error.error || `Failed to get record: ${res.statusText}`);
+	}
+	return res.json();
+}
+
 /**
  * Upload a file to drive
  * @param path - Target folder path

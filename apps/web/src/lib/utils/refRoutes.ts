@@ -32,6 +32,7 @@ const ROUTE_TO_TYPE: Record<string, string> = {
 	'/notebook': 'notebook',
 	'/sources': 'source',
 	'/source': 'source',
+	'/record': 'record',
 };
 
 // Entity types to route bases
@@ -61,6 +62,7 @@ const TYPE_TO_ICON: Record<string, string> = {
 	day: 'ri:calendar-line',
 	year: 'ri:calendar-line',
 	source: 'ri:at-line',
+	record: 'ri:database-2-line',
 };
 
 /** Icon name for an entity type (falls back to the generic @ icon). */

@@ -80,10 +80,10 @@ impl SemanticSearchTool {
                     "preview": r.preview,
                     "author": r.author,
                     "timestamp": r.timestamp,
-                    // Viewable route for this source, when it resolves to a
-                    // life-graph entity. Cite it inline (see the tool-usage
-                    // prompt); absent when the record has no navigable source.
-                    "ref": r.ref_url,
+                    // Viewable route for this exact source record — opens the raw
+                    // record in the data viewer. Cite it inline (see the
+                    // tool-usage prompt). Every retrieved record is viewable.
+                    "ref": format!("/record/{}/{}", r.ontology, r.record_id),
                 })
             })
             .collect();

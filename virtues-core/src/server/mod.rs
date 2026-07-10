@@ -635,6 +635,11 @@ pub async fn run(client: Virtues, host: &str, port: u16) -> Result<()> {
                 .put(api::update_page_handler)
                 .delete(api::delete_page_handler),
         )
+        // Raw record viewer — one life-graph row by (ontology, id)
+        .route(
+            "/api/records/:ontology/:record_id",
+            get(api::get_record_handler),
+        )
         // Page References (backlinks) API
         .route(
             "/api/pages/:id/backlinks",

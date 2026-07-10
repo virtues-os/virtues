@@ -2628,6 +2628,14 @@ pub async fn get_page_handler(State(state): State<AppState>, Path(id): Path<Stri
     api_response(crate::api::get_page(state.db.pool(), &id).await)
 }
 
+/// GET /api/records/:ontology/:record_id - fetch one raw life-graph record.
+pub async fn get_record_handler(
+    State(state): State<AppState>,
+    Path((ontology, record_id)): Path<(String, String)>,
+) -> Response {
+    api_response(crate::api::records::get_record(state.db.pool(), &ontology, &record_id).await)
+}
+
 /// POST /api/pages - Create a new page
 pub async fn create_page_handler(
     State(state): State<AppState>,

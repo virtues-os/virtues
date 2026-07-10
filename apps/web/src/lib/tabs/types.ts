@@ -31,6 +31,7 @@ export type TabType =
 	| 'action' // Action detail: /action/action_{id}
 	| 'developers' // Developers tools (SQL/Terminal/Lake): /developers
 	| 'ontology' // Ontology data: /ontologies, /ontologies/{name}
+	| 'record' // Single raw record viewer: /record/{ontology}/{id}
 	// Storage namespaces
 	| 'drive' // Personal files: /drive, /drive/{path}
 	| 'asset' // Single file viewer (open density): /drive/file_{id}
