@@ -346,33 +346,50 @@ room this chat lives in") — it's the documented internal design language. Only
 
 ---
 
-## Phase C — Citations (make grounding visible)  ← NEXT
+## Phase C — Citations (source-anchored, Ref-native)  ← NEXT
 
-**Goal:** when the model answers inside a notebook, each claim carries a clickable pill that opens the *actual* cited source (a page, a person, a day, an uploaded doc), not a generic "5 matches" blob. This is the payoff of the notebook-scoped retrieval already built — it makes the grounding *legible and verifiable*, which is the whole NotebookLM feeling. No new extraction needed; it works on internal members today.
+**Goal:** when the model answers, a load-bearing claim carries a **named source chip** (the source's own name + icon) that **opens the real source** — the page, person, day, notebook source, or uploaded doc it rests on. Not a generic "5 matches" blob, not an opaque `[1]`.
 
-### What already exists (do not rebuild)
-The full pipe is wired end-to-end — we are *upgrading one node*, not laying pipe:
-- Backend streams tool results verbatim: `AgentEvent::ToolCallResult` → `StreamEvent::ToolOutputAvailable { tool_call_id, output }` (`virtues-core/src/api/chat.rs:1454-1472`). The frontend already receives the full `semantic_search` results array.
-- `semantic_search` returns per-record `{ ontology, record_id, title, preview, author, timestamp, score }` (`virtues-core/src/tools/semantic_search.rs:72-91`).
-- Frontend builder maps tool calls → `Citation[]`, and **already expands `web_search` into one citation per result** (`apps/web/src/lib/citations/builder.ts:264-298`). `CitedMarkdown` parses `[n]` markers, `InlineCitation` renders the pill, `CitationPanel` shows detail, `Ref` deep-links `/page/<id>` etc.
+**Decided (2026-07-10):** named source chips · click opens the real source (split-pane) · cite load-bearing claims only · applies everywhere retrieval runs (not just notebooks).
 
-### The one real gap
-`semantic_search` is collapsed into a **single** citation whose preview is `"N matches"` (`builder.ts:102-108`). So `[1]` in the model's text points at "the search", not at a specific page. Two things to fix: (1) expand search hits into per-record citations, (2) make the model reference them stably.
+### Ref/citation unification (decided 2026-07-10)
+**A citation is a ref — the same primitive, not a parallel system.** There is already one shared style contract (`ref-badge.css`) consumed by `Ref.svelte` (rendered chat markdown), `ChatInput.svelte` (composer), and CodeMirror `.cm-entity-link` (page editor). A cited source renders through that same `Ref` — one hover-preview, one open-beside, one look.
+
+**Two densities, split by surface (not by page-vs-chat):**
+- **Rendered output → Wikipedia-style link.** Accent-colored source name, hairline underline, tiny leading type icon, *no fill*. Used wherever markdown is rendered for reading — chat answers, embeds, previews (`Ref.svelte`). Load-bearing citations recur in prose, so they must disappear into the text.
+- **Editable surface → filled pill (status quo).** The tinted rounded `@Name` pill stays in the composer and the CodeMirror editor, where a ref is a *token you inserted* and wants tangible chrome.
+- Implementable boundary: **is this an editable surface (pill) or rendered output (link)?** Pages are an always-live CodeMirror editor, so their refs stay pills; a future read-only page render would use the link treatment.
+
+**Click model for citations:** plain click **opens beside** (`windowShellStore.openRouteBeside`, splits the pane) — flip of today's peek-on-plain / open-on-⌘. Hover still peeks.
+
+### The key realization: citations *are* Ref pills
+Those four choices collapse the design. The app **already** renders `[text](/page/<id>)` / `/person/<id>` links inside `CitedMarkdown` as `<Ref>` pills — named chip, hover preview, click-to-source (the `link` snippet, `CitedMarkdown.svelte:153-166`; routes in `refRoutes.ts`). So the model doesn't need a bespoke citation syntax at all: **it cites by emitting a normal markdown link to the source's ref route**, and the existing `Ref` system does the chip, the preview, and the navigation for free. The numeric `[1]` / `InlineCitation` / `CitationPanel` stack is **not used for internal sources** — it stays only for `web_search` (external URLs have no Ref).
+
+### Honest state of the current citation system (audited 2026-07-10)
+- **Dormant for our case.** The main chat prompts (`prompt.rs` BASE / TOOL_USAGE / AGENT_MODE) never instruct the model to cite. Only deep-research/subagent modes do. So in normal chat the whole pill stack renders nothing.
+- **Fragile by construction.** A citation `id` is a frontend positional counter (`1,2,3…`) the model never sees — it can't reliably map a claim to a source. Works for `web_search` only by coincidence of ordering. `semantic_search` collapses to one "N matches" pill.
+- **Cruft to delete in this pass:** `buildCitationsFromGrounding` + `mergeCitationContexts` (Google-grounding path, ~90 lines) are exported but **never called** — dead. The `web_search` expansion is **duplicated** (`citationForSource` + inline loop, `builder.ts:187-299`). `buildPreview` has cases for tools that may no longer exist (`virtues_query_narratives`, `query_location_map`).
+
+### The one hard problem: not every hit has a viewer
+Ref routes exist for `page / day / person / place / org / thing / source / chat / notebook / file`. But a `semantic_search` hit is often a **raw ontology record** — an email, calendar event, transaction — which has **no viewer route**. "Open the real source" can't point at those. Resolution for v1:
+- **Cite only hits that resolve to a viewable route.** Map each hit `(ontology, record_id)` → a ref URL where one exists (a page, the entity it's about via `wiki_entity_refs`, the ELT `source` it came from, an uploaded doc).
+- **In a notebook, fall back to the owning member** (which is always viewable — that's what a member *is*).
+- **Raw, unviewable hits still inform the answer but get no chip.** Better silent than a dead link. This keeps "open the source" a real promise, not a sometimes-404.
 
 ### Steps
-1. **Stable per-record cite ids (backend).** In `semantic_search.rs`, add a short stable `cite` key per result (e.g. `s1`, `s2`… scoped to the call, or reuse `record_id`). Return it in each result object. Cheap, additive.
-2. **Instruct the model to cite (backend prompt).** In the chat system-prompt assembly (`virtues-core/src/agent/prompt.rs` / `api/chat.rs` context build), add a short contract: *"When a claim rests on a retrieved source, append its `[cite]` id. Cite the specific source, not the search."* Keep it one paragraph; the deep-research prompt already has cited-report language to borrow tone from (`prompt.rs:86-99`).
-3. **Expand search citations (frontend).** In `builder.ts`, mirror the `web_search` expansion for `virtues_semantic_search`: one `Citation` per result, `id` = the backend `cite` key, `title`/`preview` from the record, `source_type: 'ontology'`, icon/color via existing `mapping.ts` ontology table, and **`url` = the ref route for that record** (`/page/<id>`, `/person/<id>`, `/day/<id>`, `/source/<id>`) so the pill is deep-linkable.
-4. **Deep-link the panel (frontend).** In `CitationPanel.svelte`, when a citation has an entity/page `url`, render it through `Ref`/`RefPreview` (reuse existing) and make "open" navigate/split-pane to the real source — not just show preview text. This is the "click the pill → land on the page" moment.
-5. **Grounded-answer affordance (notebook chat).** When a chat is notebook-bound, the answer's citations are its members. Optional: a small "N sources" footer under the answer listing the distinct cited members (dedupe by `record_id`). Low effort, high legibility.
+1. **Emit a `ref` per result (backend).** In `semantic_search.rs`, add `ref: Option<String>` to each result — the viewable route for the hit or its owning member. Reuse the record→entity resolution already behind `wiki_entity_refs` / `resolve_notebook_scope`. Omit when nothing is viewable.
+2. **Prompt contract (backend, global).** One paragraph in `TOOL_USAGE_PROMPT`: *"When a claim rests on a retrieved source, cite it inline as a markdown link to the `ref` the tool returned — e.g. `[Kyoto Notes](/page/…)`. Cite load-bearing claims only, never every sentence. Only ever cite a `ref` a tool actually returned; never invent one."* Applies everywhere, matching the deep-research doctrine's "load-bearing" tone (`prompt.rs:108`).
+3. **Frontend is mostly free.** `Ref` rendering already handles named chip + hover + open. Confirm `/day` and `/source` chips resolve a name via `getRefSummary` (both are in `ROUTE_TO_TYPE`). Decide one small thing: for a citation chip, should **plain click** open the source (vs. today's cmd-click)? — lean yes for chips inside answers; keep hover-preview.
+4. **Cleanup in the same pass.** Delete the dead grounding helpers + their re-exports; de-duplicate the `web_search` expansion; prune `buildPreview` dead cases. Leave the numeric `InlineCitation`/`CitationPanel` path intact **for `web_search` only**.
+5. **Optional: per-answer "Sources" footer.** Dedupe the distinct cited refs under the answer. Low effort; the inline chips already carry the weight, so treat as nice-to-have.
 
 ### Cut / deferred
-- Char-precise span highlights (already deferred). Pill-per-claim is enough.
-- No new schema. Citations are ephemeral in `message.parts` as they are today; persistence rides on the existing message store.
-- Don't touch the `web_search` / `dispatch_subagents` citation paths — they already work.
+- Char-precise span highlights (already deferred). Named chip per load-bearing claim is enough.
+- No new schema. Citations ride in the markdown itself (a ref link) + `message.parts` as today.
+- No new inline-citation UI. We're *removing* machinery, not adding it.
 
 ### Done when
-Ask a notebook a question → answer shows inline pills → clicking a pill opens the exact page/person/day it cited, filtered to that notebook's members.
+Ask any question that retrieves → load-bearing claims show named source chips → clicking one opens the exact page / person / day / source it rests on. Raw records with no viewer inform the answer without a dead chip.
 
 ---
 
