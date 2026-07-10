@@ -32,5 +32,9 @@ class LocationProbePlugin: Plugin {
 
 @_cdecl("init_plugin_location_probe")
 func initPlugin() -> Plugin {
+  // Start the reach recovery watchdog at launch (runs inside didFinishLaunching):
+  // heals the iroh socket on every network-path change + app foreground so the
+  // box is reachable whenever it's up — no force-quit.
+  ReachMonitor.shared.start()
   return LocationProbePlugin()
 }

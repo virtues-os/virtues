@@ -98,6 +98,15 @@ impl VirtuesIrohClient {
         self.drop_connection().await;
     }
 
+    /// Poke iroh to re-check the network — rebind UDP sockets, re-run net-report,
+    /// reconnect the relay. iroh detects most changes itself, but on iOS the
+    /// socket can silently die on suspend/network-switch and iroh's one-shot
+    /// rebind can fail (iroh#4289); calling this on every NWPathMonitor / foreground
+    /// event heals the common case. Idempotent — safe to call liberally.
+    pub async fn network_change(&self) {
+        self.endpoint.network_change().await;
+    }
+
     /// Snapshot which path the connection to the box is using *right now*, from
     /// live iroh state. `Offline` if nothing is connected — call after a request
     /// (which dials) for a fresh reading. Prefers `Direct` when both are live

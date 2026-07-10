@@ -81,6 +81,7 @@ export class NotebookStore {
 			icon?: string | null;
 			accent_color?: string | null;
 			current_status?: string | null;
+			instructions?: string | null;
 			sort_order?: number;
 		}
 	): Promise<Notebook> {

@@ -5,7 +5,7 @@
 	import { pagesStore } from "$lib/stores/pages.svelte";
 	import { contextMenu } from "$lib/stores/contextMenu.svelte";
 	import type { ContextMenuItem } from "$lib/stores/contextMenu.svelte";
-	import { getWorkspaceMenuItems } from "$lib/utils/contextMenuItems";
+	import { getNotebookMenuItems } from "$lib/utils/contextMenuItems";
 	import { Page, Button } from "$lib";
 	import { onMount } from "svelte";
 	import Icon from "$lib/components/Icon.svelte";
@@ -82,7 +82,7 @@
 					});
 				},
 			},
-			...getWorkspaceMenuItems(`/page/${page.id}`),
+			...getNotebookMenuItems(`/page/${page.id}`),
 			{
 				id: "delete",
 				label: "Delete",

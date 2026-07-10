@@ -5,6 +5,121 @@ Audio is the **hardest** collector, not because of the recording API, but becaus
 audio-session lifecycle and the fact that audio is the only *continuous, high-volume, binary*
 stream. This doc scopes the port before any code.
 
+## Phase B (EXPANDED 2026-07-10) — background continuity & resurrection
+
+Background recording now *works* (the `audio` `UIBackgroundMode` was silently dropped by Tauri's
+`Info.ios.plist` merge — fixed). Phase B makes it **bulletproof**: recording that survives, and
+resurrects itself from, every interruption/suspension/kill — with no user action.
+
+### B.0 Mental model — the two keepalives + one idempotent entry point
+The app stays alive in the background via **audio recording OR location updates** (both are
+`UIBackgroundModes`). Audio is fragile (any interruption stops it); **location is the durable
+backbone** — CLLocationManager fires callbacks continuously while moving, and significant-location
+**relaunches a *terminated* app**. iOS will NOT relaunch/wake an app *for audio*, but it will for
+*location* — so location is how audio comes back from the dead.
+
+Therefore the whole design collapses to: **one desire flag + one idempotent restart, fired by every
+"we're awake" signal.**
+- **Desire flag:** `shouldRecord = authorized && enabled` (the persisted `enabledKey`). Single truth.
+- **`ensureRecording()`:** idempotent — start only if `shouldRecord && !recording`. Safe to spam.
+- **Phase B = wire every wake/alive signal to `ensureRecording()`.**
+
+### B.1 The resurrection/sustain vectors (the piggyback list)
+Every one of these calls `ensureRecording()`:
+| Vector | When it fires | Covers |
+|---|---|---|
+| Interruption `.ended` | call/Siri ends | resume after a call (the reported bug) |
+| **Location `didUpdateLocations`** | continuously while moving (app alive) | the workhorse — restarts audio seconds after any stop, while alive |
+| **Significant-location relaunch** | movement after the app was killed/suspended | resurrection from *terminated* (cold `setup()` → resume) |
+| `BGProcessingTask` (`com.virtues.ios.sync`) | iOS periodic (charging/idle) | movement-independent resurrection |
+| App foreground (`didBecomeActive`) | user reopens | guaranteed restart (has it) |
+| Route change `.ended`/device change | headphones connect/disconnect | already rolls chunk; add ensure |
+| Self-heal timer (~30s, while alive) | periodic while process alive | catches any silent stop |
+
+Cross-plugin mechanism: audio exposes **`@_cdecl("virtues_ensure_recording")`**; location-probe +
+health `BackgroundSync` call it via `@_silgen_name` (same pattern as reach's
+`virtues_recover_connection`). This is the "any other hardening we can piggyback off of" — the
+location + BGTask wakes already exist for the other collectors; audio just hooks the same events.
+
+### B.2 Fix the interruption resume (the call bug)
+- On `.ended`: **always** `ensureRecording()` — drop the `.shouldResume` gate (after a call iOS often
+  omits it; an always-on recorder always wants back).
+- **Wrap the restart in `beginBackgroundTask`** so we have execution time to reactivate the session +
+  start the recorder in the background (see B.4 — this is likely what lets a bg restart succeed).
+- On `.began`: finalize the current chunk (already do). Keep the desire flag set.
+
+### B.3 mediaServicesWereReset + robustness
+- Observe **`AVAudioSession.mediaServicesWereResetNotification`** → rebuild session + recorder + restart
+  (full audio-subsystem reset; rare but total).
+- **Wall-clock chunk rotation:** don't trust a 5-min `DispatchSourceTimer` in the background (jitter /
+  coalescing). Reconcile the boundary against `Date` inside the handler.
+
+### B.4 The two HARD iOS unknowns — RESOLVED by research (2026-07-10), and they reshape the plan
+Both were answered definitively (sourced), and the answers are strict:
+
+1. **You can NEVER start the mic from the background.** Confirmed by Apple (error `561145187
+   cannotStartRecording`, DTS: background audio "only allows you to *continue* a session created in
+   the foreground"). NOT enabled by `beginBackgroundTask`, NOT by being alive via continuous
+   location, NOT by a significant-location cold relaunch. iOS gates on *why* the process is awake;
+   "location" is not a mic grant. ⇒ **After a call or a kill, the mic resumes only on next
+   FOREGROUND.** The location-wake→ensureRecording piggyback **does not work for audio** (it still
+   helps the other collectors). Apple DTS on post-call: "don't resume in the background; resume when
+   you return to foreground."
+2. **`AVAudioRecorder` stop→start rotation DIES at the first background chunk boundary** — a
+   boundary stop→start *is* a background start (same `cannotStartRecording`). Bonus: a known ~90-min
+   silent-death in the restart-loop pattern. ⇒ **The current approach is unshippable for >5 min bg.**
+
+### B.4′ DECIDED architecture: never-stopped capture graph (the "splice, don't restart" rewrite)
+Replace `AVAudioRecorder` chunk-restart with a graph that is **armed once in the foreground and never
+stopped**; rotate only the OUTPUT.
+- **`AVAudioEngine` + `installTap(onBus:0)` on `inputNode` → rotating `AVAudioFile`.** At a boundary,
+  release the old `AVAudioFile` (dealloc finalizes the moov atom — the #1 corruption bug is forgetting
+  this) and point at a new one, **inside the tap block**. No stop, no gap, no background-start. Each
+  rotated file is a **standalone `.m4a`** → box pipeline unchanged. (Alt: `AVAssetWriter` +
+  `preferredOutputSegmentInterval` gives gapless segments as `Data`, but they're fMP4 — needs box
+  changes; rejected for now.)
+- **Format:** the tap runs at the hardware rate (~48 kHz). `AVAudioFile` encodes AAC directly but does
+  NOT resample → either write **48 kHz mono AAC** (simplest; Gemini downsamples to 16 kHz anyway; ~3×
+  storage) or add an `AVAudioConverter`/mixer for **16 kHz** (3× smaller — matters for the 4 GB cap).
+  Decision pending; default 48 kHz for v1 simplicity, revisit if storage/bandwidth bites.
+- **Residual fragility:** `AVAudioEngineConfigurationChangeNotification` (route change / calls /
+  media-services-reset) **stops the engine** → restart + reinstall tap. Restarting in the background
+  hits the same cannot-start wall → so a route change while backgrounded may pause until foreground.
+  Net win: trades a *guaranteed every-5-min* start for a *rare, route-change-only* one. Handle
+  interruption + config-change + `mediaServicesWereReset` together with guard flags; resume into a NEW
+  file per resume.
+
+### B.4″ Honest capability statement (set expectations)
+Not true 24/7. Delivered: **continuous background recording for hours once armed in the foreground;
+gaps only after a call or kill, until the app is next foregrounded.** The market leaders (Limitless,
+Bee, Omi/Friend) avoid this ceiling entirely with **BLE pendant hardware + on-device buffering** —
+the only real path to bulletproof 24/7, and a hardware decision, not software. Flag for product.
+
+### B.5 Observability (so we can SEE it, per this session's pain)
+This-device surfaces: recording live? last-chunk time, chunk count, queued audio bytes. Turns "is it
+running?" from a guess into a readout. NSLog breadcrumbs already in place.
+
+### B.6 The general "wake → do everything" coordinator (benefits ALL streams)
+The location wake + BGProcessingTask already fan out to *some* collectors. Generalize: one background
+wake → `ensureRecording()` + health collect + drain. Audio is just another subscriber; every stream
+gets more resilient for free. (Don't over-fire: guard each with its own throttle/desire check.)
+
+### B.7 App Store note
+Always-on ambient mic is a Guideline **2.5.4** rejection pattern. Ship a clear user-visible recording
+control + Review Notes justification before submission. (Tracked, not a Phase-B blocker.)
+
+### Phase B build order (revised after B.4 research)
+1. **The `AVAudioEngine` rotating-file rewrite (B.4′)** — the big one; replaces AVAudioRecorder.
+   Never-stopped tap + rotating standalone `.m4a`. Kills the 5-min-boundary death. *(most of the work)*
+2. **Interruption + config-change + mediaServicesWereReset handling** — re-arm on **foreground**
+   (the only place the mic can start); new file per resume; guard flags.
+3. **Test on-device** — 30-min background run (multiple boundaries), a call (expect resume on
+   foreground), a route change (headphones), Spotify-mix, force-quit→reopen.
+4. **B.5 observability** + honest UI copy ("records while the app's been active recently").
+5. *(Note: B.1's location/BGTask piggyback stays for OTHER collectors; it CANNOT restart the mic.)*
+
+---
+
 ## 0. The one mechanic that changes everything
 
 **A recording audio session is itself the background-keepalive.** With `UIBackgroundModes: audio`

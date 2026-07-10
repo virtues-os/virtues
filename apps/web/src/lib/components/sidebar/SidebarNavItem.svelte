@@ -7,7 +7,7 @@
 	import { pagesStore } from "$lib/stores/pages.svelte";
 	import { chatSessions } from "$lib/stores/chatSessions.svelte";
 	import { iconPickerStore } from "$lib/stores/iconPicker.svelte";
-	import { getWorkspaceMenuItems } from "$lib/utils/contextMenuItems";
+	import { getNotebookMenuItems } from "$lib/utils/contextMenuItems";
 	import { isEmoji } from "$lib/utils/iconHelpers";
 	import type { ContextMenuItem } from "$lib/stores/contextMenu.svelte";
 	import type { SidebarNavItemData } from "./types";
@@ -180,8 +180,8 @@
 			});
 		}
 
-		// Add "Add to Space" submenu
-		items.push(...getWorkspaceMenuItems(href));
+		// Add "Add to Notebook" submenu
+		items.push(...getNotebookMenuItems(href));
 
 		// Add "Delete" option for deletable entities (pages, chats)
 		// Always available if the entity is a page or chat, regardless of isSystemItem

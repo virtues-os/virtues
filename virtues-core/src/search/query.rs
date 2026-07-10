@@ -50,6 +50,12 @@ pub struct SemanticSearchEngine {
 /// 200; the fused top-`recall_limit` feed the reranker.
 const CANDIDATE_POOL: i64 = 200;
 
+/// Notebook-scoped retrieval (lean v1): additive bonus, in z-score space, for a
+/// candidate chunk that belongs to the active notebook's members. z-scores can be
+/// negative, so we ADD a bonus (≈ one std-dev) rather than multiply — a boost, not
+/// a hard filter (recall is unchanged; only ranking shifts toward the notebook).
+const NOTEBOOK_BOOST: f64 = 1.0;
+
 /// Cap each reranker candidate so a (query, doc) pair fits the rerank model's
 /// window (~512 tok for the cross-encoder, 256 for ColBERT). A document's lead
 /// carries the relevance signal, so truncating to ~1000 chars (~256 tok) is
@@ -166,6 +172,9 @@ impl SemanticSearchEngine {
         // Resolved entity IDs (person/place/org/thing). When set, only rows whose
         // source record references one of these entities are returned.
         entities: Option<&[String]>,
+        // Active notebook: its members' chunks get an additive ranking boost
+        // (lean v1 = boost-by-default, not a hard filter).
+        notebook_id: Option<&str>,
         limit: Option<i64>,
     ) -> Result<Vec<SearchResult>> {
         let embedder = get_embedder().await?;
@@ -180,6 +189,16 @@ impl SemanticSearchEngine {
         let (alpha, n_docs, avg_len) = self.fusion_alpha(&terms).await?;
         let w_dense = 1.0 - alpha;
         let w_lex = alpha;
+
+        // Notebook scoping: resolve the active notebook's members into a set of
+        // record_ids (page/day/source/chat) and entity_ids (person/place/org/thing)
+        // that get an additive ranking bonus below. External/file/notebook members
+        // aren't indexed yet, so they're skipped (v1.1).
+        let (nb_records, nb_entities): (Vec<String>, Vec<String>) = match notebook_id {
+            Some(nb) => self.resolve_notebook_scope(nb).await?,
+            None => (Vec::new(), Vec::new()),
+        };
+        let notebook_boost = !nb_records.is_empty() || !nb_entities.is_empty();
 
         // Shared filters (applied to both arms). $1 = query vector, $2 = query
         // terms; filter placeholders start at $3; the final placeholder is the
@@ -210,6 +229,28 @@ impl SemanticSearchEngine {
             ));
             next += 1;
         }
+        // Notebook boost placeholders ($record_ids, $entity_ids), bound after the
+        // filters and before the recall limit.
+        let (p_nb_rec, p_nb_ent) = if notebook_boost {
+            let a = next;
+            let b = next + 1;
+            next += 2;
+            (a, b)
+        } else {
+            (0, 0)
+        };
+        let boost_sql = if notebook_boost {
+            format!(
+                " + CASE WHEN se.record_id = ANY(${r}) OR EXISTS (SELECT 1 FROM wiki_entity_refs er2 \
+                  WHERE er2.source_table = se.source_table AND er2.source_id = se.record_id \
+                  AND er2.entity_id = ANY(${e})) THEN {boost} ELSE 0 END",
+                r = p_nb_rec,
+                e = p_nb_ent,
+                boost = NOTEBOOK_BOOST,
+            )
+        } else {
+            String::new()
+        };
         let lim = next; // recall_limit placeholder
 
         // Hybrid: dense (halfvec `<=>`) ⊕ BM25 (inline df), unioned, z-fused with
@@ -248,7 +289,7 @@ impl SemanticSearchEngine {
                SELECT DISTINCT ON (se.record_id) \
                       se.ontology, se.record_id, se.title, se.preview, se.author, \
                       to_char(se.timestamp AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS\"Z\"') as ts, \
-                      se.content, ({wd}*z.dz + {wl}*z.bz)::float8 AS s \
+                      se.content, ({wd}*z.dz + {wl}*z.bz{boost})::float8 AS s \
                FROM z JOIN search_embeddings se ON se.id = z.id \
                ORDER BY se.record_id, s DESC, se.id \
              ) \
@@ -264,6 +305,7 @@ impl SemanticSearchEngine {
             b = bm25::B,
             wd = w_dense,
             wl = w_lex,
+            boost = boost_sql,
             lim = lim,
         );
 
@@ -304,6 +346,10 @@ impl SemanticSearchEngine {
         }
         if entity_filter {
             db_query = db_query.bind(entities.unwrap().to_vec());
+        }
+        if notebook_boost {
+            db_query = db_query.bind(nb_records);
+            db_query = db_query.bind(nb_entities);
         }
         db_query = db_query.bind(recall_limit);
 
@@ -352,6 +398,44 @@ impl SemanticSearchEngine {
         normalize_scores(&mut candidates);
         candidates.truncate(limit as usize);
         Ok(candidates)
+    }
+
+    /// Resolve an active notebook's members into the two buckets the search
+    /// boost understands: direct record_ids (page/day/source/chat — already
+    /// indexed by ontology+record_id) and entity_ids (person/place/org/thing —
+    /// matched via `wiki_entity_refs`). Members that aren't indexed yet (external
+    /// URLs, uploaded files, nested notebooks) are skipped — they become
+    /// retrievable in v1.1 once extraction lands. Uses ALL members (the
+    /// library/pin `role` split isn't wired yet).
+    async fn resolve_notebook_scope(&self, notebook_id: &str) -> Result<(Vec<String>, Vec<String>)> {
+        let urls: Vec<String> =
+            sqlx::query_scalar("SELECT url FROM app_notebook_items WHERE notebook_id = $1")
+                .bind(notebook_id)
+                .fetch_all(self.pool.as_ref())
+                .await?;
+        let mut records = Vec::new();
+        let mut entities = Vec::new();
+        for url in urls {
+            if let Some(id) = url.strip_prefix("/page/") {
+                records.push(id.to_string());
+            } else if let Some(id) = url.strip_prefix("/day/") {
+                records.push(id.to_string());
+            } else if let Some(id) = url.strip_prefix("/source/") {
+                records.push(id.to_string());
+            } else if let Some(id) = url.strip_prefix("/chat/") {
+                records.push(id.to_string());
+            } else if let Some(id) = url.strip_prefix("/person/") {
+                entities.push(id.to_string());
+            } else if let Some(id) = url.strip_prefix("/place/") {
+                entities.push(id.to_string());
+            } else if let Some(id) = url.strip_prefix("/org/") {
+                entities.push(id.to_string());
+            } else if let Some(id) = url.strip_prefix("/thing/") {
+                entities.push(id.to_string());
+            }
+            // external https://, /notebook/, /drive/file_ → not indexed (v1.1)
+        }
+        Ok((records, entities))
     }
 
     /// Rerank candidates over the matched **chunk** text. Returns `true` if it

@@ -257,7 +257,11 @@ impl ToolExecutor {
             "set_user_name" => self.execute_set_user_name(arguments).await,
             "set_assistant_name" => self.execute_set_assistant_name(arguments).await,
             "web_search" => self.web_search.execute(arguments).await,
-            "semantic_search" => self.semantic_search.execute(arguments).await,
+            "semantic_search" => {
+                self.semantic_search
+                    .execute(arguments, context.notebook_id.as_deref())
+                    .await
+            }
             "sql_query" => self.sql_query.execute(arguments).await,
             "code_interpreter" => self.execute_code_interpreter(arguments).await,
             // Deep Research fan-out: spawn read-only research workers in parallel.
