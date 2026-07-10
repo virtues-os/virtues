@@ -39,6 +39,17 @@ pub struct SearchResult {
     /// record). `None` only for legacy rows without `content`.
     #[serde(skip)]
     pub content: Option<String>,
+    /// A viewable route for the hit's real source — its linked life-graph entity
+    /// (`/person/…`, `/place/…`, `/org/…`, `/thing/…`), resolved via
+    /// `wiki_entity_refs`. `None` when the record maps to no navigable node; the
+    /// caller then cites nothing rather than a dead link. Serialized as `ref` for
+    /// the model to cite (see `resolve_refs`).
+    #[serde(rename = "ref", skip_serializing_if = "Option::is_none")]
+    pub ref_url: Option<String>,
+    /// The data table this chunk came from (`data_communication_email`, …). Used
+    /// only to resolve `ref_url` against `wiki_entity_refs`; not surfaced.
+    #[serde(skip)]
+    pub source_table: Option<String>,
 }
 
 /// Semantic search engine
@@ -82,6 +93,20 @@ fn rerank_gap_threshold() -> f64 {
         .and_then(|s| s.trim().parse::<f64>().ok())
         .filter(|v| *v >= 0.0)
         .unwrap_or(1.5)
+}
+
+/// Map a `wiki_entity_refs.entity_type` to its front-end route base, or `None`
+/// for a type with no viewable page. Mirrors the web `refRoutes` table
+/// (`organization` → `/org`); kept here as the single backend source of truth for
+/// citable entity routes.
+fn entity_route_base(entity_type: &str) -> Option<&'static str> {
+    match entity_type {
+        "person" => Some("/person"),
+        "place" => Some("/place"),
+        "organization" => Some("/org"),
+        "thing" => Some("/thing"),
+        _ => None,
+    }
 }
 
 /// Min-max rescale candidate scores into [0, 1] in place, preserving order.
@@ -287,13 +312,13 @@ impl SemanticSearchEngine {
                FROM sc \
              ), best AS ( \
                SELECT DISTINCT ON (se.record_id) \
-                      se.ontology, se.record_id, se.title, se.preview, se.author, \
+                      se.ontology, se.record_id, se.title, se.preview, se.author, se.source_table, \
                       to_char(se.timestamp AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS\"Z\"') as ts, \
                       se.content, ({wd}*z.dz + {wl}*z.bz{boost})::float8 AS s \
                FROM z JOIN search_embeddings se ON se.id = z.id \
                ORDER BY se.record_id, s DESC, se.id \
              ) \
-             SELECT ontology, record_id, title, preview, author, ts, content, s \
+             SELECT ontology, record_id, title, preview, author, source_table, ts, content, s \
              FROM best ORDER BY s DESC, record_id LIMIT ${lim}",
             f = filter_sql,
             pool = CANDIDATE_POOL,
@@ -317,7 +342,8 @@ impl SemanticSearchEngine {
                 Option<String>,
                 Option<String>,
                 Option<String>,
-                Option<String>,
+                Option<String>, // source_table
+                Option<String>, // ts
                 Option<String>, // content (chunk text)
                 f64,             // fused score
             ),
@@ -363,9 +389,11 @@ impl SemanticSearchEngine {
                 title: row.2,
                 preview: row.3,
                 author: row.4,
-                timestamp: row.5,
-                content: row.6,
-                score: row.7, // fused score; reranked or normalized below
+                source_table: row.5,
+                timestamp: row.6,
+                content: row.7,
+                score: row.8, // fused score; reranked or normalized below
+                ref_url: None, // filled by resolve_refs after truncation
             })
             .collect();
 
@@ -397,7 +425,58 @@ impl SemanticSearchEngine {
         // if it ran, else by the fused SQL).
         normalize_scores(&mut candidates);
         candidates.truncate(limit as usize);
+
+        // Attach a citable `ref` to each surviving hit (its linked entity's
+        // route). Best-effort: a resolution failure must not fail the search —
+        // the answer is still correct, it just loses its clickable sources.
+        if let Err(e) = self.resolve_refs(&mut candidates).await {
+            tracing::warn!("citation ref resolution failed (results still returned): {}", e);
+        }
+
         Ok(candidates)
+    }
+
+    /// Attach a viewable `ref` to each result: the route of the life-graph entity
+    /// the record is linked to (`wiki_entity_refs`), preferring the highest-
+    /// confidence link. Records with no entity link keep `ref = None` — the model
+    /// then cites nothing for them rather than a route that goes nowhere. One
+    /// batched query keyed on (`source_table`, `record_id`).
+    async fn resolve_refs(&self, results: &mut [SearchResult]) -> Result<()> {
+        if results.is_empty() {
+            return Ok(());
+        }
+        let tables: Vec<String> = results
+            .iter()
+            .map(|r| r.source_table.clone().unwrap_or_default())
+            .collect();
+        let ids: Vec<String> = results.iter().map(|r| r.record_id.clone()).collect();
+
+        // One row per (source_table, source_id): the highest-confidence entity.
+        let rows: Vec<(String, String, String, String)> = sqlx::query_as(
+            "SELECT DISTINCT ON (er.source_table, er.source_id) \
+                    er.source_table, er.source_id, er.entity_type, er.entity_id \
+             FROM wiki_entity_refs er \
+             JOIN unnest($1::text[], $2::text[]) AS k(st, sid) \
+               ON k.st = er.source_table AND k.sid = er.source_id \
+             ORDER BY er.source_table, er.source_id, er.confidence DESC",
+        )
+        .bind(&tables)
+        .bind(&ids)
+        .fetch_all(self.pool.as_ref())
+        .await?;
+
+        let mut by_key: HashMap<(String, String), String> = HashMap::new();
+        for (st, sid, etype, eid) in rows {
+            if let Some(base) = entity_route_base(&etype) {
+                by_key.insert((st, sid), format!("{}/{}", base, eid));
+            }
+        }
+        for r in results.iter_mut() {
+            if let Some(st) = r.source_table.as_ref() {
+                r.ref_url = by_key.get(&(st.clone(), r.record_id.clone())).cloned();
+            }
+        }
+        Ok(())
     }
 
     /// Resolve an active notebook's members into the two buckets the search

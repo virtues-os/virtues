@@ -1,14 +1,16 @@
 /**
- * Reference pill — unified styles
+ * Reference styles — two densities, one primitive.
  *
- * The single source of truth for what a "@" reference pill looks like, shared by
- * every ref renderer:
- * - Ref.svelte (.ref-pill)                    — chat assistant markdown
- * - ChatInput.svelte (.ref-pill)              — composer contenteditable
- * - CodeMirror (.cm-entity-link, theme.css)   — page editor (own layout, same tokens)
+ * A ref (and a citation, which is just a ref) has two treatments, chosen by
+ * surface: a filled PILL on editable surfaces, where a ref is a token you
+ * inserted, and a Wikipedia-style LINK in rendered output, where load-bearing
+ * citations recur in prose and must disappear into the text.
  *
- * The appearance tokens below are the contract; the CodeMirror rules in
- * codemirror/theme.css consume the same variables so the pill never drifts.
+ * - Ref.svelte (.ref-link)                    — rendered output: chat answers, previews
+ * - ChatInput.svelte (.ref-pill)              — composer contenteditable (editable)
+ * - CodeMirror (.cm-entity-link, theme.css)   — page editor (editable, own layout)
+ *
+ * Both share the accent color token, so the two treatments read as one family.
  */
 
 :root {
@@ -48,4 +50,34 @@
 	vertical-align: -0.13em;
 	margin-right: 1px;
 	opacity: 0.85;
+}
+
+/*
+ * Rendered-output treatment — reads as prose, not a token. Accent-colored name,
+ * a hairline underline that firms up on hover, and a small leading type icon.
+ * No fill, prose font-size: at citation density, a run of these must sit quietly
+ * inside a sentence.
+ */
+.ref-link {
+	display: inline;
+	padding: 0;
+	border: none;
+	border-bottom: 1px solid color-mix(in srgb, var(--color-primary) 30%, transparent);
+	background: none;
+	color: var(--ref-pill-color);
+	font: inherit;
+	text-decoration: none;
+	cursor: pointer;
+	transition: border-color 0.15s ease;
+}
+
+.ref-link:hover {
+	border-bottom-color: var(--color-primary);
+}
+
+.ref-link .ref-pill-icon {
+	display: inline-block;
+	vertical-align: -0.13em;
+	margin-right: 1px;
+	opacity: 0.7;
 }

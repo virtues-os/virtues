@@ -58,6 +58,12 @@ pub const TOOL_USAGE_PROMPT: &str = r#"
 - For page edits, read content first with get_page_content, then make targeted changes
 - If edit_page returns permission_needed, briefly ask the user to grant permission. The UI shows an approval button — just acknowledge you're waiting.
 - If a query is ambiguous, ask for clarification before searching
+
+<citations>
+- When a claim rests on a retrieved source, cite it inline as a markdown link to the `ref` that the tool returned for that result — e.g. `[Sarah Chen](/person/person_ab12)`. The link text is the source's name.
+- Cite load-bearing claims only — the evidence behind a finding — not every sentence, and never the same source twice in a row.
+- Only ever cite a `ref` a tool actually returned. If a result has no `ref`, use it to inform your answer but do not fabricate a link or cite it.
+</citations>
 </tool_usage>
 "#;
 
