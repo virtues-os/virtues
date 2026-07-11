@@ -36,8 +36,18 @@ pub struct OntologyRecord {
 
 /// Fetch one record. `ontology` is validated against the registry; `record_id`
 /// is bound as a parameter. Missing ontology or row → `NotFound`.
+///
+/// `ontology` may be either the ontology **name** (`calendar_event`, what
+/// `semantic_search` cites) or the **table name** (`data_calendar_event`, what
+/// the day/ontology data tables carry) — we accept both so every caller can link
+/// with whatever it has on hand.
 pub async fn get_record(pool: &PgPool, ontology: &str, record_id: &str) -> Result<OntologyRecord> {
     let desc = virtues_registry::ontologies::get_ontology(ontology)
+        .or_else(|| {
+            virtues_registry::ontologies::registered_ontologies()
+                .into_iter()
+                .find(|o| o.table_name == ontology)
+        })
         .ok_or_else(|| Error::NotFound(format!("Unknown ontology: {}", ontology)))?;
 
     // `table_name` is a compile-time constant from the registry, never user
@@ -54,7 +64,7 @@ pub async fn get_record(pool: &PgPool, ontology: &str, record_id: &str) -> Resul
         .ok_or_else(|| Error::NotFound(format!("Record not found: {}/{}", ontology, record_id)))?;
 
     Ok(OntologyRecord {
-        ontology: ontology.to_string(),
+        ontology: desc.name.to_string(),
         record_id: record_id.to_string(),
         display_name: desc.display_name.to_string(),
         table_name: desc.table_name.to_string(),

@@ -8,7 +8,7 @@
 	// Route: /record/<ontology>/<record_id>. The id may itself contain slashes in
 	// theory; ontology is the first segment, the rest is the id.
 	const parsed = $derived.by(() => {
-		const m = tab.route.match(/^\/record\/([a-z_]+)\/(.+)$/);
+		const m = tab.route.match(/^\/record\/([a-z0-9_]+)\/(.+)$/);
 		return { ontology: m?.[1] ?? "", recordId: m?.[2] ?? "" };
 	});
 

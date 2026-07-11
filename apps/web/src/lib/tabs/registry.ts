@@ -660,9 +660,9 @@ export const tabRegistry: Record<TabType, TabDefinition> = {
 	record: {
 		// /record/<ontology>/<id> — a single raw life-graph record. The ontology
 		// is a lowercase_underscore name; the id is everything after it.
-		match: (path) => /^\/record\/[a-z_]+\/.+$/.test(path),
+		match: (path) => /^\/record\/[a-z0-9_]+\/.+$/.test(path),
 		parse: (path) => {
-			const m = path.match(/^\/record\/([a-z_]+)\/(.+)$/);
+			const m = path.match(/^\/record\/([a-z0-9_]+)\/(.+)$/);
 			const ontology = m?.[1] ?? '';
 			const recordId = m?.[2] ?? '';
 			const label = ontology.replace(/_/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase());
