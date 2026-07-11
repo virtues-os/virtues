@@ -385,7 +385,7 @@ Ref routes exist for `page / day / person / place / org / thing / source / chat 
 
 **Still to verify (runtime, not compile):** end-to-end citation render (model emits `[title](/record/…)` → chip → click opens `DataView`); `DataView` field rendering across a few ontologies (email/calendar/transaction); the `id` column assumption (indexer keys record_id on `t.id`, so it should hold); and the notebook-scoped boost (separately untested).
 
-**Natural follow-on:** wire the Day/Today ontology table rows (`OntologyDataTable` / `OntologyDetailView`) to open `/record/<ontology>/<id>` on click — the drill-down the data viewer was built for.
+**Follow-on ✅ (done):** `OntologyDataTable` rows now open `/record/<ontology>/<id>` beside on click (`onItemClick`), so the Day/Today page *and* the ontology detail page drill into the data viewer. `get_record` accepts the table name too (the table carries `data_calendar_event`, not `calendar_event`).
 
 ### Cut / deferred
 - Char-precise span highlights (already deferred). Named chip per load-bearing claim is enough.

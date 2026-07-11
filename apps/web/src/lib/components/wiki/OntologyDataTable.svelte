@@ -14,6 +14,7 @@
 	import { browser } from '$app/environment';
 	import { queryOntologyData, type OntologyDataResponse, type OntologyColumnInfo } from '$lib/api/client';
 	import UniversalDataGrid, { type Column } from '$lib/components/datagrid/UniversalDataGrid.svelte';
+	import { windowShellStore } from '$lib/stores/window-shell.svelte';
 
 	interface Props {
 		ontologyName: string;
@@ -213,6 +214,14 @@
 		}
 		currentOffset = 0;
 	}
+
+	// Open the raw record beside the current view. `ontologyName` is a table name
+	// here (e.g. data_calendar_event); the record endpoint accepts that as well as
+	// the ontology name, so the link works either way.
+	function openRecord(item: OntologyRow) {
+		if (!item.id) return;
+		windowShellStore.openRouteBeside(`/record/${ontologyName}/${item.id}`);
+	}
 </script>
 
 <div class="ontology-table-wrapper">
@@ -255,6 +264,7 @@
 		loadingMessage="Loading data..."
 		searchPlaceholder="Search..."
 		pageSize={pageSize}
+		onItemClick={openRecord}
 		onRetry={loadData}
 	/>
 
