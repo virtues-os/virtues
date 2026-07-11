@@ -54,4 +54,12 @@ impl<R: Runtime> Audio<R> {
       .run_mobile_plugin("status", EmptyRequest {})
       .map_err(Into::into)
   }
+
+  /// Toggle the "notify me if recording stops" gap-nudge.
+  pub fn set_notify(&self, enabled: bool) -> crate::Result<AudioStatus> {
+    self
+      .0
+      .run_mobile_plugin("setNotify", SetNotifyRequest { enabled })
+      .map_err(Into::into)
+  }
 }

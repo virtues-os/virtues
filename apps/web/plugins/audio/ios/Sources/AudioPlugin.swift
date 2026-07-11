@@ -5,7 +5,11 @@ class AudioPlugin: Plugin {
   /// Explicit "Enable": prompt for microphone access, then start recording.
   @objc public func enable(_ invoke: Invoke) throws {
     AudioRecorder.shared.enable { granted in
-      invoke.resolve(["authorized": granted, "recording": AudioRecorder.shared.recording])
+      invoke.resolve([
+        "authorized": granted,
+        "recording": AudioRecorder.shared.recording,
+        "notify": AudioRecorder.shared.notifyEnabled(),
+      ])
     }
   }
 
@@ -15,6 +19,7 @@ class AudioPlugin: Plugin {
     invoke.resolve([
       "authorized": AudioRecorder.shared.authorized(),
       "recording": AudioRecorder.shared.recording,
+      "notify": AudioRecorder.shared.notifyEnabled(),
     ])
   }
 
@@ -24,6 +29,7 @@ class AudioPlugin: Plugin {
     invoke.resolve([
       "authorized": AudioRecorder.shared.authorized(),
       "recording": AudioRecorder.shared.recording,
+      "notify": AudioRecorder.shared.notifyEnabled(),
     ])
   }
 
@@ -31,8 +37,20 @@ class AudioPlugin: Plugin {
     invoke.resolve([
       "authorized": AudioRecorder.shared.authorized(),
       "recording": AudioRecorder.shared.recording,
+      "notify": AudioRecorder.shared.notifyEnabled(),
     ])
   }
+
+  /// Toggle the "notify me if recording stops" gap-nudge (default on).
+  @objc public func setNotify(_ invoke: Invoke) throws {
+    let on = (try? invoke.parseArgs(NotifyArgs.self))?.enabled ?? true
+    AudioRecorder.shared.setNotifyEnabled(on)
+    invoke.resolve(["notify": on])
+  }
+}
+
+struct NotifyArgs: Decodable {
+  let enabled: Bool
 }
 
 @_cdecl("init_plugin_audio")

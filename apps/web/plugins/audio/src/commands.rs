@@ -29,3 +29,12 @@ pub(crate) async fn resume<R: Runtime>(app: AppHandle<R>) -> Result<AudioStatus>
 pub(crate) async fn status<R: Runtime>(app: AppHandle<R>) -> Result<AudioStatus> {
   app.audio().status()
 }
+
+/// Toggle the "notify me if recording stops" gap-nudge (default on).
+#[command]
+pub(crate) async fn set_notify<R: Runtime>(
+  app: AppHandle<R>,
+  enabled: bool,
+) -> Result<AudioStatus> {
+  app.audio().set_notify(enabled)
+}

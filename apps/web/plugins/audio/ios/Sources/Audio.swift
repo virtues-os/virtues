@@ -1,6 +1,8 @@
 import AVFoundation
+import CallKit
 import Foundation
 import UIKit
+import UserNotifications
 
 // Shared outbox enqueue (defined in the reach plugin's ffi.rs). The whole app
 // links one static lib, so this resolves by symbol name — no bridging header.
@@ -40,6 +42,17 @@ public final class AudioRecorder: NSObject {
   private let enabledKey = "virtues.audio.enabled"
   private let targetSampleRate = 16000.0
   private let targetBitRate = 24000  // ~24 kbps mono AAC
+
+  // Gap-nudge: notify the user if recording is meant to be on but has been silently
+  // down for a while (the cases the watchdog can't self-heal — app killed, exotic
+  // takeovers). Default ON; user-toggleable. Suppressed during phone calls.
+  private let notifyKey = "virtues.audio.notifyOnStop"        // user toggle (default true)
+  private let lastGoodKey = "virtues.audio.lastGoodCapture"   // persisted across launches
+  private let gapThreshold: TimeInterval = 300                // 5 min sustained gap
+  private let nudgeId = "virtues.audio.gap"                   // fixed id → dedupe + auto-clear
+  private let callObserver = CXCallObserver()
+  private var nudgeFired = false
+  private var lastGoodPersistAt: Date?
 
   private let session = AVAudioSession.sharedInstance()
   private let engine = AVAudioEngine()
@@ -109,6 +122,9 @@ public final class AudioRecorder: NSObject {
       guard let self = self else { completion(false); return }
       if granted {
         UserDefaults.standard.set(true, forKey: self.enabledKey)
+        // Ask for notification permission in context (they just opted into the
+        // feature the gap-nudge protects). Denial just no-ops the nudge.
+        UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound]) { _, _ in }
         self.armEngine(reason: "enable")
       }
       completion(granted)
@@ -141,8 +157,66 @@ public final class AudioRecorder: NSObject {
             Date().timeIntervalSince(last), reason)
       recording = false
     }
-    if recording { return }  // already live — don't churn a bg-task assertion (watchdog)
+    if recording {
+      checkGapAndNudge()  // healthy, but still evaluate (clears a stale nudge fast)
+      return  // already live — don't churn a bg-task assertion (watchdog)
+    }
     armEngine(reason: reason)
+    // Evaluate the gap AFTER attempting recovery: if the arm just succeeded a buffer
+    // will land and clear things; if it failed (killed / bg-start wall / exotic
+    // takeover), this is where we decide to nudge.
+    checkGapAndNudge()
+  }
+
+  // MARK: - Gap nudge
+
+  public func notifyEnabled() -> Bool {
+    // Default ON: treat "unset" as true.
+    if UserDefaults.standard.object(forKey: notifyKey) == nil { return true }
+    return UserDefaults.standard.bool(forKey: notifyKey)
+  }
+
+  public func setNotifyEnabled(_ on: Bool) {
+    UserDefaults.standard.set(on, forKey: notifyKey)
+    if !on { clearNudge(); nudgeFired = false }
+  }
+
+  private func callActive() -> Bool {
+    callObserver.calls.contains { !$0.hasEnded }
+  }
+
+  /// Decide whether to surface "Recording paused — tap to resume". Fires once per
+  /// gap episode (reset when a buffer flows again, in `process`). Suppressed while a
+  /// call owns the mic (that gap is expected + self-heals on hang-up).
+  private func checkGapAndNudge() {
+    guard UserDefaults.standard.bool(forKey: enabledKey), notifyEnabled() else { return }
+    if nudgeFired { return }              // already showing — once-and-done per episode
+    if callActive() { return }            // legit call gap — never nudge
+    // Gap measured from the persisted last-good-capture (survives kill→relaunch), so
+    // a nudge fires ~gapThreshold after recording ACTUALLY died, not after relaunch.
+    let lastGood = UserDefaults.standard.double(forKey: lastGoodKey)
+    guard lastGood > 0 else { return }    // never captured yet → nothing to nudge about
+    if Date().timeIntervalSince1970 - lastGood > gapThreshold {
+      fireNudge()
+    }
+  }
+
+  private func fireNudge() {
+    nudgeFired = true
+    let content = UNMutableNotificationContent()
+    content.title = "Recording paused"
+    content.body = "Tap to resume recording."
+    // `.active` (polite, no Focus break-through) is already the default interruption
+    // level, so we don't set it — avoids the iOS 15 availability gate.
+    let req = UNNotificationRequest(identifier: nudgeId, content: content, trigger: nil)
+    UNUserNotificationCenter.current().add(req)
+    NSLog("[Audio] gap nudge fired (down >%.0fs)", gapThreshold)
+  }
+
+  private func clearNudge() {
+    let c = UNUserNotificationCenter.current()
+    c.removePendingNotificationRequests(withIdentifiers: [nudgeId])
+    c.removeDeliveredNotifications(withIdentifiers: [nudgeId])
   }
 
   /// Repeating liveness probe: fires even when foregrounded + stationary (when
@@ -281,7 +355,19 @@ public final class AudioRecorder: NSObject {
 
   /// Called on the realtime tap thread for every input buffer.
   private func process(_ input: AVAudioPCMBuffer) {
-    lastBufferAt = Date()  // liveness heartbeat (watchdog reads this)
+    let now = Date()
+    lastBufferAt = now  // liveness heartbeat (watchdog reads this)
+    // Persist "last good capture" (throttled) so a kill→relaunch measures the REAL
+    // gap (from when recording actually died, not from relaunch). And if a nudge was
+    // showing, we've recovered — clear it so no stale "paused" lie lingers.
+    if lastGoodPersistAt == nil || now.timeIntervalSince(lastGoodPersistAt!) > 60 {
+      lastGoodPersistAt = now
+      UserDefaults.standard.set(now.timeIntervalSince1970, forKey: lastGoodKey)
+    }
+    if nudgeFired {
+      nudgeFired = false
+      DispatchQueue.main.async { [weak self] in self?.clearNudge() }
+    }
     guard let converter = converter else { return }
     let ratio = targetSampleRate / (hwFormat?.sampleRate ?? targetSampleRate)
     let cap = AVAudioFrameCount(Double(input.frameLength) * ratio) + 32
@@ -317,17 +403,24 @@ public final class AudioRecorder: NSObject {
   /// Close the current file (→ finalized on dealloc), enqueue it, open a fresh one.
   /// Runs on the tap thread at a boundary, or on `q` for stop/teardown.
   private func rotate(restart: Bool) {
-    guard let done = outFile, let start = chunkStart, sampleCount > 0 else {
+    guard outFile != nil, let start = chunkStart, sampleCount > 0 else {
       if restart { try? openChunk() }
       return
     }
-    let url = done.url
+    let url = outFile!.url
     let end = Date()
     let rms = sqrt(sumSq / sampleCount)
     let avgDb = rms > 0 ? 20 * log10(Float(rms)) : -160
     let peakDb = peak > 0 ? 20 * log10(peak) : -160
-    // Reassign/close BEFORE reading so the moov atom is finalized (the classic
-    // AVAudioFile "corrupt m4a" bug is forgetting to release the old file).
+    // Drop the writer's ONLY strong reference so ARC deallocates it RIGHT NOW — its
+    // destructor is what writes the `moov` atom (codec config + sample tables) that
+    // makes the .m4a a valid, decodable file. CRITICAL: do NOT bind `let done =
+    // outFile` and read via that — a lingering strong local keeps the file alive
+    // past `outFile = nil`, so the destructor never runs before the async read
+    // below, and we ship an unfinalized chunk (ftyp + raw AAC, no moov). That is
+    // exactly the corruption that made every chunk unplayable + Gemini hallucinate.
+    // Reading `outFile!.url` into a value first, then nil-ing, guarantees no
+    // surviving reference → synchronous dealloc → finalized file → safe to read.
     outFile = nil
     if restart { try? openChunk() }
 

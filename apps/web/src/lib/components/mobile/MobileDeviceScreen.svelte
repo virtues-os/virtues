@@ -49,6 +49,7 @@
 	interface AudioStatus {
 		authorized: boolean;
 		recording: boolean;
+		notify: boolean;
 	}
 
 	/** A collapsed run of consecutive near-identical fixes. */
@@ -283,6 +284,18 @@
 		}
 	}
 
+	/// Toggle the "notify me if recording stops" gap-nudge (default on).
+	async function toggleAudioNotify() {
+		if (!audio) return;
+		try {
+			audio = await invoke<AudioStatus>("plugin:audio|set_notify", {
+				enabled: !audio.notify,
+			});
+		} catch (e) {
+			error = String(e);
+		}
+	}
+
 	let syncingNow = $state(false);
 	async function syncNow() {
 		syncingNow = true;
@@ -459,6 +472,12 @@
 				{#if togglingAudio}…{:else if audio?.recording}Stop{:else if audio?.authorized}Resume{:else}Enable{/if}
 			</button>
 		</div>
+		{#if audio?.authorized}
+			<button class="s-subrow" onclick={toggleAudioNotify} type="button">
+				<span class="s-subrow-label">Notify me if recording stops</span>
+				<span class="switch" class:on={audio?.notify} aria-hidden="true"></span>
+			</button>
+		{/if}
 	</div>
 
 	<div class="group-label">Sync</div>
@@ -608,6 +627,52 @@
 	}
 	.s-action:disabled {
 		opacity: 0.5;
+	}
+	/* Secondary toggle row beneath a stream (e.g. audio gap-nudge). */
+	.s-subrow {
+		display: flex;
+		align-items: center;
+		justify-content: space-between;
+		width: 100%;
+		gap: 12px;
+		padding: 11px 14px 11px 48px;
+		border: none;
+		border-top: 1px solid var(--color-border);
+		background: transparent;
+		cursor: pointer;
+		text-align: left;
+	}
+	.s-subrow-label {
+		font-size: 13px;
+		color: var(--color-foreground-muted);
+	}
+	.switch {
+		flex: none;
+		width: 38px;
+		height: 22px;
+		border-radius: 11px;
+		background: var(--color-foreground-muted);
+		opacity: 0.4;
+		position: relative;
+		transition: background 0.15s, opacity 0.15s;
+	}
+	.switch::after {
+		content: "";
+		position: absolute;
+		top: 2px;
+		left: 2px;
+		width: 18px;
+		height: 18px;
+		border-radius: 50%;
+		background: #fff;
+		transition: transform 0.15s;
+	}
+	.switch.on {
+		background: #34c759;
+		opacity: 1;
+	}
+	.switch.on::after {
+		transform: translateX(16px);
 	}
 	.dot {
 		width: 8px;
