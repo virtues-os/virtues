@@ -4,6 +4,12 @@ use serde::{Deserialize, Serialize};
 #[derive(Debug, Clone, Default, Deserialize, Serialize)]
 pub struct EmptyRequest {}
 
+/// Toggle the "notify me if recording stops" gap-nudge.
+#[derive(Debug, Clone, Default, Deserialize, Serialize)]
+pub struct SetNotifyRequest {
+  pub enabled: bool,
+}
+
 #[derive(Debug, Clone, Default, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AudioStatus {
@@ -11,4 +17,7 @@ pub struct AudioStatus {
   pub authorized: bool,
   /// The recorder is running (a chunk is actively being captured).
   pub recording: bool,
+  /// The gap-nudge notification is enabled (default true).
+  #[serde(default)]
+  pub notify: bool,
 }

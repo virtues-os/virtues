@@ -26,4 +26,7 @@ impl<R: Runtime> Audio<R> {
   pub fn status(&self) -> crate::Result<AudioStatus> {
     Ok(AudioStatus::default())
   }
+  pub fn set_notify(&self, _enabled: bool) -> crate::Result<AudioStatus> {
+    Ok(AudioStatus::default())
+  }
 }

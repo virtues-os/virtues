@@ -8,6 +8,7 @@ Default permissions for the audio plugin
 - `allow-disable`
 - `allow-resume`
 - `allow-status`
+- `allow-set-notify`
 
 ## Permission Table
 
@@ -92,6 +93,32 @@ Enables the resume command without any pre-configured scope.
 <td>
 
 Denies the resume command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`audio:allow-set-notify`
+
+</td>
+<td>
+
+Enables the set_notify command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`audio:deny-set-notify`
+
+</td>
+<td>
+
+Denies the set_notify command without any pre-configured scope.
 
 </td>
 </tr>
