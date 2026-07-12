@@ -33,7 +33,12 @@ let package = Package(
                 .linkedFramework("Security"),
                 .linkedFramework("IOKit"),
                 // Required by the iroh/quinn networking stack in VirtuesIrohMac.
-                .linkedFramework("SystemConfiguration")
+                .linkedFramework("SystemConfiguration"),
+                // iroh's macOS network monitor uses CoreWLAN (`CWWiFiClient`) to
+                // watch WiFi changes; without this the Obj-C class isn't found at
+                // runtime and every upload panics ("class CWWiFiClient could not be
+                // found").
+                .linkedFramework("CoreWLAN")
             ]
         )
     ]
