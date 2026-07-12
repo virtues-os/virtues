@@ -124,8 +124,18 @@ class Monitor {
         if bundleId == "com.virtues.collector" || appName == "virtues-collector" {
             return
         }
-        
-        let event = Event(eventType: eventType, appName: appName, bundleId: bundleId)
+
+        // Capture the focused window title — the difference between "used Chrome
+        // for 40 min" and "read <page>". Only on focus/launch: on unfocus/quit the
+        // window is gone or the app is tearing down, so the read would be stale or
+        // block. nil when Accessibility isn't granted (degrades to app-name-only).
+        let windowTitle: String? =
+            (eventType == Event.EventType.focus || eventType == Event.EventType.launch)
+            ? WindowTitle.focused(pid: app.processIdentifier)
+            : nil
+
+        let event = Event(
+            eventType: eventType, appName: appName, bundleId: bundleId, windowTitle: windowTitle)
 
         // Add event asynchronously (non-blocking)
         queue.addEvent(event) { result in

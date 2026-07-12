@@ -38,16 +38,23 @@ class Queue {
                 event_type TEXT NOT NULL,
                 app_name TEXT NOT NULL,
                 bundle_id TEXT,
+                window_title TEXT,
                 uploaded INTEGER DEFAULT 0,
                 created_at TEXT DEFAULT CURRENT_TIMESTAMP
             );
             CREATE INDEX IF NOT EXISTS idx_events_uploaded ON events(uploaded);
             CREATE INDEX IF NOT EXISTS idx_events_timestamp ON events(timestamp);
         """
-        
+
         if sqlite3_exec(db, createEventsTableSQL, nil, nil, nil) != SQLITE_OK {
             throw QueueError.cannotCreateTable
         }
+
+        // Migration: `window_title` was added after the first releases, and
+        // CREATE TABLE IF NOT EXISTS won't touch an existing activity.db. ALTER
+        // fails harmlessly with "duplicate column" once it's already there, so
+        // ignore the result rather than gate on a schema probe.
+        sqlite3_exec(db, "ALTER TABLE events ADD COLUMN window_title TEXT", nil, nil, nil)
         
         // Create messages table
         let createMessagesTableSQL = """
@@ -89,8 +96,8 @@ class Queue {
         queue.async {
             do {
                 let insertSQL = """
-                    INSERT INTO events (timestamp, event_type, app_name, bundle_id, uploaded)
-                    VALUES (?, ?, ?, ?, 0)
+                    INSERT INTO events (timestamp, event_type, app_name, bundle_id, window_title, uploaded)
+                    VALUES (?, ?, ?, ?, ?, 0)
                 """
 
                 var statement: OpaquePointer?
@@ -118,6 +125,13 @@ class Queue {
                     sqlite3_bind_null(statement, 4)
                 }
 
+                if let windowTitle = event.windowTitle {
+                    let windowTitleNS = windowTitle as NSString
+                    sqlite3_bind_text(statement, 5, windowTitleNS.utf8String, -1, SQLITE_TRANSIENT)
+                } else {
+                    sqlite3_bind_null(statement, 5)
+                }
+
                 guard sqlite3_step(statement) == SQLITE_DONE else {
                     throw QueueError.cannotInsertEvent
                 }
@@ -132,7 +146,7 @@ class Queue {
     func getPendingEvents(limit: Int = 500) throws -> [(id: Int64, event: Event)] {
         try queue.sync {
             let querySQL = """
-                SELECT id, timestamp, event_type, app_name, bundle_id
+                SELECT id, timestamp, event_type, app_name, bundle_id, window_title
                 FROM events
                 WHERE uploaded = 0
                 ORDER BY timestamp ASC
@@ -173,8 +187,16 @@ class Queue {
                     nil
                 }
 
+                let windowTitle: String? = if sqlite3_column_type(statement, 5) != SQLITE_NULL {
+                    String(cString: sqlite3_column_text(statement, 5))
+                } else {
+                    nil
+                }
+
                 // Create event with original timestamp from database
-                let event = Event(timestamp: timestamp, eventType: eventType, appName: appName, bundleId: bundleId)
+                let event = Event(
+                    timestamp: timestamp, eventType: eventType, appName: appName,
+                    bundleId: bundleId, windowTitle: windowTitle)
                 events.append((id: id, event: event))
             }
             
