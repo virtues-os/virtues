@@ -76,6 +76,7 @@
 	let audio = $state<AudioStatus | null>(null);
 	let audioSync = $state<OutboxStats | null>(null);
 	let togglingAudio = $state(false);
+	let forgetting = $state(false);
 	let version = $state<string>("");
 	let loading = $state(true);
 	let starting = $state(false);
@@ -293,6 +294,28 @@
 			});
 		} catch (e) {
 			error = String(e);
+		}
+	}
+
+	/// Unpair this device: clear the Keychain-stored pairing (seed + box info), so
+	/// the app forgets the box entirely. Since the pairing survives app deletion
+	/// (Keychain), this is the only way to fully reset — useful for switching boxes
+	/// or a clean re-pair. Reloads into the pairing flow afterward.
+	async function unpairDevice() {
+		if (
+			!confirm(
+				"Unpair this device? This clears the saved connection to your box. You'll need to pair again to reconnect. Your data on the box is untouched.",
+			)
+		)
+			return;
+		forgetting = true;
+		error = null;
+		try {
+			await invoke("plugin:reach|forget");
+			window.location.reload();
+		} catch (e) {
+			error = String(e);
+			forgetting = false;
 		}
 	}
 
@@ -544,6 +567,9 @@
 		<div class="about">
 			<span>Recorded points</span><span class="v">{rows.length}</span>
 		</div>
+		<button class="danger-row" onclick={unpairDevice} disabled={forgetting} type="button">
+			{forgetting ? "Unpairing…" : "Unpair this device"}
+		</button>
 	</div>
 
 </div>
@@ -747,6 +773,22 @@
 	.about .v {
 		color: var(--color-foreground-muted);
 		font-variant-numeric: tabular-nums;
+	}
+	.danger-row {
+		display: block;
+		width: 100%;
+		padding: 12px 14px;
+		border: none;
+		border-top: 1px solid var(--color-border);
+		background: transparent;
+		color: #ff453a;
+		font-size: 14px;
+		font-weight: 600;
+		text-align: left;
+		cursor: pointer;
+	}
+	.danger-row:disabled {
+		opacity: 0.5;
 	}
 
 	.empty {

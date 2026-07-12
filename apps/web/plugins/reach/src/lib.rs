@@ -49,6 +49,12 @@ pub(crate) fn warm_client() -> Option<Arc<VirtuesIrohClient>> {
   WARM_CLIENT.lock().ok().and_then(|g| g.clone())
 }
 
+pub(crate) fn clear_warm_client() {
+  if let Ok(mut g) = WARM_CLIENT.lock() {
+    *g = None;
+  }
+}
+
 /// One recovery at a time — NWPathMonitor + foreground can fire nearly together.
 static RECOVERING: AtomicBool = AtomicBool::new(false);
 
@@ -141,6 +147,52 @@ fn init_outbox(store: &FileStore) {
   let _ = outbox::reset_stale();
 }
 
+/// iOS Keychain bridge (Swift `@_cdecl` in location-probe's Keychain.swift). The
+/// pairing (seed + box info) lives in the Keychain so it SURVIVES app deletion —
+/// a reinstalled app stays paired — and is cleared only by `forget`.
+#[cfg(target_os = "ios")]
+mod keychain {
+  use std::ffi::{CStr, CString};
+  use std::os::raw::c_char;
+
+  extern "C" {
+    fn virtues_keychain_save(json: *const c_char) -> i32;
+    fn virtues_keychain_load() -> *mut c_char;
+    fn virtues_keychain_delete() -> i32;
+    fn virtues_keychain_free(ptr: *mut c_char);
+  }
+
+  pub fn save(json: &str) -> anyhow::Result<()> {
+    let c = CString::new(json)?;
+    let rc = unsafe { virtues_keychain_save(c.as_ptr()) };
+    if rc != 0 {
+      anyhow::bail!("keychain save failed (OSStatus {rc})");
+    }
+    Ok(())
+  }
+
+  pub fn load() -> anyhow::Result<Option<String>> {
+    let ptr = unsafe { virtues_keychain_load() };
+    if ptr.is_null() {
+      return Ok(None);
+    }
+    let s = unsafe { CStr::from_ptr(ptr) }.to_string_lossy().into_owned();
+    unsafe { virtues_keychain_free(ptr) };
+    Ok(Some(s))
+  }
+
+  pub fn delete() -> anyhow::Result<()> {
+    let rc = unsafe { virtues_keychain_delete() };
+    if rc != 0 {
+      anyhow::bail!("keychain delete failed (OSStatus {rc})");
+    }
+    Ok(())
+  }
+}
+
+/// Persists the `PairedBox`. On iOS this is Keychain-backed (survives app
+/// deletion); elsewhere it's a `0600` JSON file. `path` is still used on iOS for
+/// the one-time migration of a pre-Keychain `box.json` and as the desktop sink.
 struct FileStore {
   path: PathBuf,
 }
@@ -155,37 +207,70 @@ impl FileStore {
 
 impl BoxStore for FileStore {
   fn load(&self) -> anyhow::Result<Option<PairedBox>> {
-    match std::fs::read_to_string(&self.path) {
-      Ok(json) => Ok(Some(serde_json::from_str(&json)?)),
-      Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
-      Err(e) => Err(e.into()),
+    #[cfg(target_os = "ios")]
+    {
+      if let Some(json) = keychain::load()? {
+        return Ok(Some(serde_json::from_str(&json)?));
+      }
+      // One-time migration: older builds wrote a plaintext box.json. Move it into
+      // the Keychain and delete the file so the seed no longer sits on disk.
+      match std::fs::read_to_string(&self.path) {
+        Ok(json) => {
+          keychain::save(&json)?;
+          let _ = std::fs::remove_file(&self.path);
+          Ok(Some(serde_json::from_str(&json)?))
+        }
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        Err(e) => Err(e.into()),
+      }
+    }
+    #[cfg(not(target_os = "ios"))]
+    {
+      match std::fs::read_to_string(&self.path) {
+        Ok(json) => Ok(Some(serde_json::from_str(&json)?)),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        Err(e) => Err(e.into()),
+      }
     }
   }
 
   fn save(&self, rec: &PairedBox) -> anyhow::Result<()> {
-    if let Some(dir) = self.path.parent() {
-      std::fs::create_dir_all(dir)?;
-    }
     let json = serde_json::to_string(rec)?;
-    let tmp = self.path.with_extension("tmp");
+    #[cfg(target_os = "ios")]
     {
-      use std::io::Write as _;
-      let mut opts = std::fs::OpenOptions::new();
-      opts.write(true).create(true).truncate(true);
-      #[cfg(unix)]
-      {
-        use std::os::unix::fs::OpenOptionsExt;
-        opts.mode(0o600);
-      }
-      let mut f = opts.open(&tmp)?;
-      f.write_all(json.as_bytes())?;
-      f.sync_all().ok();
+      keychain::save(&json)?;
+      return Ok(());
     }
-    std::fs::rename(&tmp, &self.path)?;
-    Ok(())
+    #[cfg(not(target_os = "ios"))]
+    {
+      if let Some(dir) = self.path.parent() {
+        std::fs::create_dir_all(dir)?;
+      }
+      let tmp = self.path.with_extension("tmp");
+      {
+        use std::io::Write as _;
+        let mut opts = std::fs::OpenOptions::new();
+        opts.write(true).create(true).truncate(true);
+        #[cfg(unix)]
+        {
+          use std::os::unix::fs::OpenOptionsExt;
+          opts.mode(0o600);
+        }
+        let mut f = opts.open(&tmp)?;
+        f.write_all(json.as_bytes())?;
+        f.sync_all().ok();
+      }
+      std::fs::rename(&tmp, &self.path)?;
+      Ok(())
+    }
   }
 
   fn delete(&self) -> anyhow::Result<()> {
+    #[cfg(target_os = "ios")]
+    {
+      keychain::delete()?;
+    }
+    // Also remove any on-disk copy (legacy iOS file, or the desktop sink).
     match std::fs::remove_file(&self.path) {
       Ok(()) => Ok(()),
       Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
@@ -199,6 +284,10 @@ impl BoxStore for FileStore {
 pub struct ReachState {
   store: Arc<FileStore>,
   serving: AtomicBool,
+  /// The loopback + drain tasks spawned by `ensure_serving`, so `forget` can abort
+  /// them (freeing the loopback port + dropping the old client) and let a re-pair
+  /// serve fresh without an app restart.
+  tasks: std::sync::Mutex<Vec<tauri::async_runtime::JoinHandle<()>>>,
 }
 
 impl ReachState {
@@ -206,6 +295,7 @@ impl ReachState {
     ReachState {
       store: Arc::new(FileStore::new()),
       serving: AtomicBool::new(false),
+      tasks: std::sync::Mutex::new(Vec::new()),
     }
   }
 
@@ -250,13 +340,13 @@ impl ReachState {
     // WARM_CLIENT is the single source of truth — the loopback, upload path, and
     // FFI background drain all read it, so a network-change rebuild (which swaps
     // it) is picked up everywhere without restarting anything.
-    set_warm_client(client.clone());
+    set_warm_client(client);
 
     // Serve the loopback (webview → box). Reads the *current* warm client per
     // connection, so a rebuilt client (recovery from an iOS socket wedge) routes
     // new pages/chat/uploads through the fresh endpoint with no listener restart.
     let listener = tokio::net::TcpListener::from_std(std_listener)?;
-    tauri::async_runtime::spawn(async move {
+    let loopback = tauri::async_runtime::spawn(async move {
       if let Err(e) = virtues_reach_client::serve_on_provider(listener, warm_client).await {
         tracing::warn!(error = %format!("{e:#}"), "reach loopback ended");
       }
@@ -265,10 +355,13 @@ impl ReachState {
     // Foreground upload loop: drain the shared outbox to the box.
     // (Background sync via BGTaskScheduler + sig-loc wake is wired separately.)
     let store = self.store.clone();
-    tauri::async_runtime::spawn(async move {
+    let drain = tauri::async_runtime::spawn(async move {
       loop {
         tokio::time::sleep(std::time::Duration::from_secs(20)).await;
         let Ok(Some(rec)) = store.load() else { continue };
+        // Read the CURRENT warm client each tick, so a network-change rebuild OR a
+        // re-pair to a different box is picked up without restarting this loop.
+        let Some(client) = warm_client() else { continue };
         match upload::drain(&client, &rec).await {
           Ok(n) if n > 0 => tracing::info!("uploaded {n} records"),
           Ok(_) => {}
@@ -281,6 +374,11 @@ impl ReachState {
         }
       }
     });
+
+    if let Ok(mut t) = self.tasks.lock() {
+      t.push(loopback);
+      t.push(drain);
+    }
     Ok(())
   }
 
@@ -370,9 +468,18 @@ impl ReachState {
   }
 
   pub fn forget(&self) -> Result<()> {
-    // Clears creds. A loopback task already running lingers harmlessly until the
-    // next launch (it holds the old client; nothing new dials it). Stopping it
-    // mid-flight is a follow-up.
+    // Full teardown so a re-pair (even to a different box) serves fresh WITHOUT an
+    // app restart: abort the loopback + drain tasks (frees the loopback port),
+    // clear the warm client, reset the serving flag, then delete the creds. The
+    // pairing lives in the Keychain (survives app deletion), so this is the only
+    // way to truly forget a box.
+    if let Ok(mut t) = self.tasks.lock() {
+      for h in t.drain(..) {
+        h.abort();
+      }
+    }
+    clear_warm_client();
+    self.serving.store(false, Ordering::SeqCst);
     self.store.delete()?;
     Ok(())
   }
