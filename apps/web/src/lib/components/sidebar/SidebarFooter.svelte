@@ -5,6 +5,7 @@
 	import SidebarNavItem from "./SidebarNavItem.svelte";
 	import SidebarTooltip from "./SidebarTooltip.svelte";
 	import type { SidebarNavItemData } from "./types";
+	import { isMacOS } from "$lib/utils/platform";
 
 	interface Props {
 		collapsed?: boolean;
@@ -50,6 +51,10 @@
 		{ id: 'settings-tools', type: 'link', label: 'Tools', icon: 'ri:tools-line', href: '/tools' },
 		{ id: 'settings-profile', type: 'link', label: 'Profile', icon: 'ri:user-3-line', href: '/virtues/account' },
 		{ id: 'settings-devices', type: 'link', label: 'Devices', icon: 'ri:device-line', href: '/virtues/devices' },
+		// This Mac's own collector health/permissions/streams — desktop app only.
+		...(isMacOS
+			? [{ id: 'settings-this-mac', type: 'link' as const, label: 'This Mac', icon: 'ri:macbook-line', href: '/virtues/this-mac' }]
+			: []),
 		{ id: 'settings-activity', type: 'link', label: 'Activity', icon: 'ri:history-line', href: '/virtues/activity' },
 		{ id: 'settings-assistant', type: 'link', label: 'Assistant', icon: 'ri:robot-line', href: '/virtues/assistant' },
 		{ id: 'settings-billing', type: 'link', label: 'Billing', icon: 'ri:bank-card-line', href: '/virtues/billing' },

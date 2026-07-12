@@ -41,6 +41,7 @@ import DevicesView from '$lib/components/tabs/views/DevicesView.svelte';
 import ActivityView from '$lib/components/tabs/views/ActivityView.svelte';
 import ByoKeyView from '$lib/components/tabs/views/ByoKeyView.svelte';
 import SystemInfoView from '$lib/components/tabs/views/SystemInfoView.svelte';
+import ThisMacView from '$lib/components/tabs/views/ThisMacView.svelte';
 import ConwayView from '$lib/components/tabs/views/ConwayView.svelte';
 import DogJumpView from '$lib/components/tabs/views/DogJumpView.svelte';
 import PagesView from '$lib/components/tabs/views/PagesView.svelte';
@@ -785,6 +786,7 @@ export const tabRegistry: Record<TabType, TabDefinition> = {
 				terminal: { label: 'Terminal', icon: 'ri:terminal-box-line' },
 				sitemap: { label: 'Sitemap', icon: 'ri:road-map-line' },
 				system: { label: 'System', icon: 'ri:computer-line' },
+				'this-mac': { label: 'This Mac', icon: 'ri:macbook-line' },
 			};
 
 			const config = pageConfig[page] || { label: 'Virtues', icon: 'ri:compass-3-line' };
@@ -871,6 +873,7 @@ export function getVirtuesComponent(page: string): Component<any> {
 		terminal: DeveloperTerminalView,
 		sitemap: DeveloperSitemapView,
 		system: SystemInfoView,
+		'this-mac': ThisMacView,
 	};
 	return componentMap[page] || ProfileView;
 }
