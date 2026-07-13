@@ -41,6 +41,17 @@ pub struct SurfaceGroup {
     pub surface: String,
     pub mention_type: String,
     pub count: i64,
+    /// How many DISTINCT records this surface appears in.
+    ///
+    /// The recurrence signal, and the one the badge is gated on — not `count`.
+    /// A name said three times in one rambling voice memo is one event; a name
+    /// that turns up in three separate records is a fixture of the user's life.
+    ///
+    /// This is what lets the badge reach zero. Badging every floating surface
+    /// means a permanently non-zero count — every one-off name anyone ever says
+    /// — and a count that never clears becomes wallpaper within a week. Then the
+    /// queue is dead no matter how good the page is.
+    pub sources: i64,
     /// The sentences it was found in. THE reason this page is answerable: a bare
     /// name is not reviewable, a quotation is.
     pub snippets: Vec<String>,
@@ -76,6 +87,7 @@ pub async fn list_floating_surfaces(db: &PgPool, limit: i64) -> Result<Vec<Surfa
             normalized,
             mention_type,
             COUNT(*)                                        AS count,
+            COUNT(DISTINCT source_id)                       AS sources,
             MODE() WITHIN GROUP (ORDER BY surface)          AS surface,
             MIN(created_at)                                 AS first_seen,
             MAX(created_at)                                 AS last_seen,
@@ -103,6 +115,7 @@ pub async fn list_floating_surfaces(db: &PgPool, limit: i64) -> Result<Vec<Surfa
         out.push(SurfaceGroup {
             surface: row.get("surface"),
             count: row.get("count"),
+            sources: row.get("sources"),
             first_seen: row.get("first_seen"),
             last_seen: row.get("last_seen"),
             snippets: row
