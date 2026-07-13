@@ -132,13 +132,20 @@ pub async fn archive(
     let metadata = json!({ "replay": envelope.replay_spec(), "residual": residual });
 
     // ON CONFLICT is the race backstop only; the SELECT above is the real gate.
+    //
+    // The `WHERE kind = 'raw_stream'` is NOT decorative: the sha256 unique index is
+    // PARTIAL (media is keyed by storage_key, not by content — see 0035), and
+    // Postgres will not infer a partial index unless the statement repeats its
+    // predicate. Without it every archive fails with "no unique or exclusion
+    // constraint matching the ON CONFLICT specification", which 500s the webhook and
+    // takes down ALL ingest.
     let inserted: Option<(String,)> = sqlx::query_as(
         "INSERT INTO lake_objects (
              id, kind, storage_key, provider, source_id, stream_name,
              record_count, size_bytes, sha256, content_encoding,
              min_timestamp, max_timestamp, metadata
          ) VALUES ($1, 'raw_stream', $2, $3, $4, $5, $6, $7, $8, 'none', $9, $10, $11)
-         ON CONFLICT (sha256) DO NOTHING
+         ON CONFLICT (sha256) WHERE kind = 'raw_stream' DO NOTHING
          RETURNING id",
     )
     .bind(&id)
