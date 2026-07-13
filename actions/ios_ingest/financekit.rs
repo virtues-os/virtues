@@ -54,7 +54,10 @@ pub async fn write_accounts(db: &PgPool, wrapper_records: &[Value]) -> Result<us
                 .get("institutionName")
                 .and_then(|v| v.as_str())
                 .unwrap_or("Apple");
-            let acct_type = account.get("type").and_then(|v| v.as_str()).unwrap_or("other");
+            let acct_type = account
+                .get("type")
+                .and_then(|v| v.as_str())
+                .unwrap_or("other");
             let balance = account
                 .get("currentBalance")
                 .and_then(|v| v.as_f64())
@@ -198,7 +201,10 @@ pub async fn write_transactions(db: &PgPool, wrapper_records: &[Value]) -> Resul
                 .and_then(|v| v.as_str())
                 .map(|s| serde_json::json!([s]))
                 .unwrap_or_else(|| serde_json::json!([]));
-            let status = tx.get("status").and_then(|v| v.as_str()).unwrap_or("posted");
+            let status = tx
+                .get("status")
+                .and_then(|v| v.as_str())
+                .unwrap_or("posted");
             let description = tx
                 .get("description")
                 .and_then(|v| v.as_str())
@@ -280,7 +286,20 @@ async fn flush_transactions(db: &PgPool, records: &[TransactionRow]) -> Result<u
     );
 
     let mut query = sqlx::query(&query_str);
-    for (id, account_id, transaction_id, amount, merchant, cat, desc, pending, ts, stream_id, meta) in records {
+    for (
+        id,
+        account_id,
+        transaction_id,
+        amount,
+        merchant,
+        cat,
+        desc,
+        pending,
+        ts,
+        stream_id,
+        meta,
+    ) in records
+    {
         query = query
             .bind(id)
             .bind(account_id)

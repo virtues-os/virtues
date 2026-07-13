@@ -188,24 +188,22 @@ fn normalize_phone(phone: &str) -> String {
     if let Some(stripped) = trimmed.strip_prefix('+') {
         format!(
             "+{}",
-            stripped.chars().filter(|c| c.is_ascii_digit()).collect::<String>()
+            stripped
+                .chars()
+                .filter(|c| c.is_ascii_digit())
+                .collect::<String>()
         )
     } else {
         trimmed.chars().filter(|c| c.is_ascii_digit()).collect()
     }
 }
 
-async fn merge_into_person(
-    db: &PgPool,
-    person_id: &str,
-    contact: &ContactRecord,
-) -> Result<()> {
-    let row = sqlx::query(
-        r#"SELECT emails, phones, birthday, metadata FROM wiki_people WHERE id = $1"#,
-    )
-    .bind(person_id)
-    .fetch_one(db)
-    .await?;
+async fn merge_into_person(db: &PgPool, person_id: &str, contact: &ContactRecord) -> Result<()> {
+    let row =
+        sqlx::query(r#"SELECT emails, phones, birthday, metadata FROM wiki_people WHERE id = $1"#)
+            .bind(person_id)
+            .fetch_one(db)
+            .await?;
 
     // These columns are JSONB / DATE — read them as native types, not String.
     // (try_get::<String> on a JSONB/DATE column fails, so the prior code silently
