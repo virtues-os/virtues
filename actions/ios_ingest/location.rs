@@ -10,7 +10,9 @@ use serde_json::Value;
 use sqlx::PgPool;
 use uuid::Uuid;
 use virtues_helpers::dedup::{build_batch_insert_query, BATCH_SIZE};
-use virtues_helpers::ios::{parse_timestamp, stream_id_or_hash, IOS_PROVIDER, LOCATION_STREAM_TABLE};
+use virtues_helpers::ios::{
+    parse_timestamp, stream_id_or_hash, IOS_PROVIDER, LOCATION_STREAM_TABLE,
+};
 
 #[allow(clippy::type_complexity)]
 type LocationRow = (

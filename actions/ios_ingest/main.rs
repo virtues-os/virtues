@@ -44,21 +44,49 @@ async fn main() -> Result<()> {
 
     let summary = match stream.as_str() {
         "healthkit" => {
-            let recs = archive(&db, &storage, "healthkit", records(payload, "healthkit")?).await?;
+            let recs = archive(
+                &db,
+                &storage,
+                "healthkit",
+                payload,
+                records(payload, "healthkit")?,
+            )
+            .await?;
             healthkit_ingest(&db, &recs).await?
         }
         "location" => {
-            let recs = archive(&db, &storage, "location", records(payload, "location")?).await?;
+            let recs = archive(
+                &db,
+                &storage,
+                "location",
+                payload,
+                records(payload, "location")?,
+            )
+            .await?;
             let written = location::write_locations(&db, &recs).await?;
             format!("locations: {}/{}", written, recs.len())
         }
         "eventkit" => {
-            let recs = archive(&db, &storage, "eventkit", records(payload, "eventkit")?).await?;
+            let recs = archive(
+                &db,
+                &storage,
+                "eventkit",
+                payload,
+                records(payload, "eventkit")?,
+            )
+            .await?;
             let written = eventkit::write_events(&db, &recs).await?;
             format!("events: {} written", written)
         }
         "contacts" => {
-            let recs = archive(&db, &storage, "contacts", records(payload, "contacts")?).await?;
+            let recs = archive(
+                &db,
+                &storage,
+                "contacts",
+                payload,
+                records(payload, "contacts")?,
+            )
+            .await?;
             let (resolved, failed) = contacts::resolve_contacts(&db, &recs).await?;
             format!("contacts: {} resolved, {} failed", resolved, failed)
         }
@@ -68,12 +96,19 @@ async fn main() -> Result<()> {
             // at a blob that doesn't exist.
             let recs = records(payload, "microphone")?;
             let recs = microphone::externalize_blobs(&db, &storage, recs).await?;
-            let recs = archive(&db, &storage, "microphone", &recs).await?;
+            let recs = archive(&db, &storage, "microphone", payload, &recs).await?;
             let (written, failed) = microphone::ingest_all(&db, &recs).await?;
             format!("audio recordings: {} written, {} failed", written, failed)
         }
         "financekit" => {
-            let recs = archive(&db, &storage, "financekit", records(payload, "financekit")?).await?;
+            let recs = archive(
+                &db,
+                &storage,
+                "financekit",
+                payload,
+                records(payload, "financekit")?,
+            )
+            .await?;
             let accounts = financekit::write_accounts(&db, &recs).await?;
             let transactions = financekit::write_transactions(&db, &recs).await?;
             format!("accounts: {}, transactions: {}", accounts, transactions)
@@ -101,6 +136,7 @@ async fn archive(
     db: &PgPool,
     storage: &virtues::storage::Storage,
     stream: &str,
+    payload: Option<&Value>,
     records: &[Value],
 ) -> Result<Vec<Value>> {
     lake::archive(
@@ -110,10 +146,25 @@ async fn archive(
         PROVIDER,
         Envelope::IosStream(stream),
         records,
-        Value::Object(Default::default()),
+        residual_envelope(payload),
     )
     .await?;
     Ok(records.to_vec())
+}
+
+/// Every top-level key of the body that isn't the records themselves — `device_id`,
+/// `sent_at`, whatever the client adds next. Preserved on the lake object because
+/// this is exactly the class of field that gets silently dropped on arrival and is
+/// unrecoverable once the payload is gone.
+fn residual_envelope(payload: Option<&Value>) -> Value {
+    let Some(obj) = payload.and_then(|p| p.as_object()) else {
+        return Value::Object(Default::default());
+    };
+    obj.iter()
+        .filter(|(k, _)| k.as_str() != "records" && k.as_str() != "stream")
+        .map(|(k, v)| (k.clone(), v.clone()))
+        .collect::<serde_json::Map<String, Value>>()
+        .into()
 }
 
 /// Resolve which iOS stream this invocation handles. The production source is

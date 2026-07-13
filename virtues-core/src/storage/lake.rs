@@ -102,10 +102,11 @@ pub async fn archive(
     let sha256 = hex_digest(&bytes);
 
     // Check before writing, so a duplicate doesn't leave an orphan file behind.
-    let existing: Option<(String,)> = sqlx::query_as("SELECT id FROM lake_objects WHERE sha256 = $1")
-        .bind(&sha256)
-        .fetch_optional(pool)
-        .await?;
+    let existing: Option<(String,)> =
+        sqlx::query_as("SELECT id FROM lake_objects WHERE sha256 = $1")
+            .bind(&sha256)
+            .fetch_optional(pool)
+            .await?;
     if existing.is_some() {
         return Ok(None);
     }
@@ -113,8 +114,17 @@ pub async fn archive(
     let now = Utc::now();
     let (min_ts, max_ts) = time_window(records);
 
-    let storage_key = StreamKeyBuilder::new(provider, source_id, stream, now.date_naive())
-        .build_with_timestamp(now.timestamp_micros());
+    // CONTENT-ADDRESSED, not timestamped. If the upload lands but the INSERT below
+    // fails (Postgres out of connections, statement timeout), the action 500s and
+    // the device retries — and a timestamped key would mint a NEW path every 5 min,
+    // leaking an untracked copy of the same bytes on every attempt. Keying on the
+    // digest means a retry rewrites the identical path instead.
+    let date = StreamKeyBuilder::new(provider, source_id, stream, now.date_naive());
+    let storage_key = format!(
+        "{}records_{}.jsonl",
+        date.build_date_prefix(),
+        &sha256[..16]
+    );
 
     storage.upload(&storage_key, bytes.clone()).await?;
 
@@ -169,8 +179,10 @@ pub async fn put_media(
     let storage_key = format!("media/{provider}/{stream}/{filename}");
     let sha256 = hex_digest(bytes);
 
+    // Scoped to media: a digest match against some *raw_stream* object's JSONL would
+    // otherwise hand this recording that object's storage_key as its audio_url.
     let existing: Option<(String,)> =
-        sqlx::query_as("SELECT storage_key FROM lake_objects WHERE sha256 = $1")
+        sqlx::query_as("SELECT storage_key FROM lake_objects WHERE sha256 = $1 AND kind = 'media'")
             .bind(&sha256)
             .fetch_optional(pool)
             .await?;
@@ -207,21 +219,55 @@ fn hex_digest(bytes: &[u8]) -> String {
 
 /// The object's time window, used by re-projection to scope its delete. An object
 /// with no window can never be safely re-projected, so cast a wide net over the
-/// timestamp keys the various collectors actually emit.
+/// timestamp keys the collectors actually emit — they do NOT agree on one:
+///
+///   location / healthkit / mac  →  `timestamp`
+///   microphone                  →  `timestamp_start`   (no bare `timestamp` at all)
+///   eventkit (Tauri)            →  `startDate`
+///   financekit, legacy eventkit →  a WRAPPER: {"transactions": [{…, "date": …}]},
+///                                  so the timestamps are one level down
+///
+/// Getting this wrong is silent: the object lands, looks fine, and simply can never
+/// be re-projected. Microphone — the largest stream on the box — archived four
+/// objects with a NULL window before this was caught.
 fn time_window(records: &[Value]) -> (Option<DateTime<Utc>>, Option<DateTime<Utc>>) {
-    const KEYS: [&str; 5] = ["timestamp", "date", "start_time", "startDate", "start_date"];
+    const KEYS: [&str; 7] = [
+        "timestamp",
+        "timestamp_start",
+        "date",
+        "start_time",
+        "startDate",
+        "start_date",
+        "timestamp_end",
+    ];
 
     let mut min: Option<DateTime<Utc>> = None;
     let mut max: Option<DateTime<Utc>> = None;
 
+    let mut observe = |record: &Value| {
+        for key in KEYS {
+            // Try every key, not just the first present one: a key that exists but
+            // doesn't parse must not shadow a later key that would have.
+            let Some(ts) = record
+                .get(key)
+                .and_then(|v| v.as_str())
+                .and_then(|s| s.parse::<DateTime<Utc>>().ok())
+            else {
+                continue;
+            };
+            min = Some(min.map_or(ts, |m: DateTime<Utc>| m.min(ts)));
+            max = Some(max.map_or(ts, |m: DateTime<Utc>| m.max(ts)));
+        }
+    };
+
     for record in records {
-        let ts = KEYS
-            .iter()
-            .find_map(|k| record.get(*k).and_then(|v| v.as_str()))
-            .and_then(|s| s.parse::<DateTime<Utc>>().ok());
-        if let Some(ts) = ts {
-            min = Some(min.map_or(ts, |m| m.min(ts)));
-            max = Some(max.map_or(ts, |m| m.max(ts)));
+        observe(record);
+        // Wrapper records (financekit, legacy eventkit) carry their timestamps in
+        // nested arrays; without this they archive with no window at all.
+        if let Some(obj) = record.as_object() {
+            for nested in obj.values().filter_map(|v| v.as_array()).flatten() {
+                observe(nested);
+            }
         }
     }
 
