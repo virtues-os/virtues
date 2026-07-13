@@ -276,7 +276,6 @@ pub async fn write_imessages(db: &PgPool, messages: &[Value]) -> Result<usize> {
         String,
         String,
         String,
-        String,
         Option<String>,
         DateTime<Utc>,
         String,
@@ -303,7 +302,11 @@ pub async fn write_imessages(db: &PgPool, messages: &[Value]) -> Result<usize> {
             .get("is_from_me")
             .and_then(|v| v.as_bool())
             .unwrap_or(false);
-        let direction = if is_from_me { "sent" } else { "received" };
+        // NOTE: `direction` ('sent'/'received') is a column on
+        // data_communication_*EMAIL*, NOT on data_communication_message — inserting
+        // it here failed every iMessage batch with "column \"direction\" ... does not
+        // exist" (and, because app_events ride the same webhook batch, took those
+        // down too). Sent-vs-received is preserved in `metadata.is_from_me` below.
         let chat_guid = m
             .get("chat_guid")
             .and_then(|v| v.as_str())
@@ -324,7 +327,6 @@ pub async fn write_imessages(db: &PgPool, messages: &[Value]) -> Result<usize> {
             id,
             text,
             from_handle,
-            direction.to_string(),
             chat_guid,
             ts,
             guid.to_string(),
@@ -348,7 +350,6 @@ async fn flush_imessage(
         String,
         String,
         String,
-        String,
         Option<String>,
         DateTime<Utc>,
         String,
@@ -364,7 +365,9 @@ async fn flush_imessage(
             "id",
             "body",
             "from_identifier",
-            "direction",
+            // `channel` is what the registry reads for a message's source_type
+            // ("message:" || channel), so name it rather than leaving it "unknown".
+            "channel",
             "thread_id",
             "timestamp",
             "source_stream_id",
@@ -381,13 +384,13 @@ async fn flush_imessage(
             .bind(&r.0)
             .bind(&r.1)
             .bind(&r.2)
+            .bind("imessage")
             .bind(&r.3)
-            .bind(&r.4)
-            .bind(r.5)
-            .bind(&r.6)
+            .bind(r.4)
+            .bind(&r.5)
             .bind("mac_imessage")
             .bind(PROVIDER)
-            .bind(&r.7);
+            .bind(&r.6);
     }
     Ok(q.execute(db).await?.rows_affected() as usize)
 }
