@@ -45,6 +45,18 @@ const STREAM: &str = "microphone";
 /// Runs BEFORE the raw records are archived, so an archived object never
 /// references a blob that isn't there yet — otherwise a transform failure would
 /// leave behind an object that can't be replayed.
+///
+/// A record whose base64 will not decode is passed through UNTOUCHED rather than
+/// failing the call. That distinction is the whole ballgame: one corrupt chunk
+/// used to be tolerated (`ingest_all` counted it failed and the batch still
+/// returned 200), and briefly wasn't — a single bad chunk 500'd the entire push,
+/// so the device retried the same poisoned batch every 5 minutes and the *nine
+/// good chunks beside it* never landed either. Bad data is per-record and
+/// survivable; only infrastructure failures (upload, DB) are fatal here.
+///
+/// The undecodable record keeps its `audio_data`, so the bytes we could not parse
+/// are still archived verbatim and can be examined later — which is the entire
+/// point of a raw lake.
 pub async fn externalize_blobs(
     db: &PgPool,
     storage: &Storage,
@@ -62,10 +74,22 @@ pub async fn externalize_blobs(
 
         let stream_id = stream_id_of(record);
         let format = audio_format_of(record);
-        let bytes = base64::engine::general_purpose::STANDARD
-            .decode(audio_b64)
-            .with_context(|| format!("failed to decode base64 audio for {stream_id}"))?;
 
+        let bytes = match base64::engine::general_purpose::STANDARD.decode(audio_b64) {
+            Ok(b) => b,
+            Err(e) => {
+                tracing::warn!(
+                    stream_id = %stream_id,
+                    error = %e,
+                    "undecodable base64 audio — archiving the record as-is and skipping the blob"
+                );
+                out.push(record.clone());
+                continue;
+            }
+        };
+
+        // Upload/DB errors are NOT per-record: they mean the box is broken, and the
+        // right answer is to fail loudly so the device holds the batch and retries.
         let key = lake::put_media(
             db,
             storage,
@@ -74,12 +98,17 @@ pub async fn externalize_blobs(
             &format!("{stream_id}.{format}"),
             &bytes,
         )
-        .await?;
+        .await
+        .with_context(|| format!("failed to store audio blob for {stream_id}"))?;
 
         let mut sanitized = record.clone();
         if let Some(obj) = sanitized.as_object_mut() {
             obj.remove("audio_data");
             obj.insert("audio_ref".into(), Value::String(key));
+            // Pin the id we just used. `stream_id_of` mints a fresh UUID when the
+            // record has none, so without this the blob's filename and the row's
+            // source_stream_id would be two different UUIDs.
+            obj.insert("id".into(), Value::String(stream_id));
         }
         out.push(sanitized);
     }

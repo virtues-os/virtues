@@ -8,7 +8,7 @@ use anyhow::{anyhow, Context, Result};
 use chrono::{DateTime, Utc};
 use serde::Deserialize;
 use serde_json::Value;
-use sqlx::{Row, PgPool};
+use sqlx::{PgPool, Row};
 use uuid::Uuid;
 use virtues::virtues_api::client::{BearerClient, Purpose};
 
@@ -93,27 +93,32 @@ struct PendingRecording {
     is_silent: bool,
 }
 
-/// Decode one queried row into a `PendingRecording`, surfacing a column-decode
-/// failure as an `Err` instead of panicking — `Row::get` unwraps internally, so
-/// any schema/type drift would otherwise abort the whole drain. Callers count a
-/// failure here as a failed record and move on.
 /// Resolve `audio_url` against both the lake and the legacy layout.
 ///
-/// New rows store a lake `storage_key` (relative to STORAGE_PATH). Rows written
-/// before the lake landed store a path relative to the server's cwd — the old
-/// `data/lake/ios_microphone/…`, which ignored STORAGE_PATH and parked the audio
-/// outside the configured lake entirely. Try the lake first, then fall back, so
-/// the ~858 existing recordings keep transcribing without a data migration.
+/// New rows store a lake `storage_key` (relative to the storage root). Rows
+/// written before the lake landed store a path relative to the server's cwd — the
+/// old `data/lake/ios_microphone/…`, which ignored STORAGE_PATH and parked the
+/// audio outside the configured lake entirely. Try the lake first, then fall back,
+/// so the ~858 existing recordings keep transcribing without a data migration.
+///
+/// The root MUST be resolved exactly as the writer does (`storage::lake`): default
+/// included. If the reader skipped the default while the writer used it, then on
+/// any box without STORAGE_PATH set every new recording would be written to the
+/// lake and then looked for relative to cwd — never found, "audio file missing",
+/// and silently never transcribed.
 fn read_audio(audio_url: &str) -> std::io::Result<Vec<u8>> {
-    if let Ok(root) = std::env::var("STORAGE_PATH") {
-        let in_lake = std::path::Path::new(&root).join(audio_url);
-        if in_lake.exists() {
-            return std::fs::read(in_lake);
-        }
+    let root = std::env::var("STORAGE_PATH").unwrap_or_else(|_| "./data/lake".to_string());
+    let in_lake = std::path::Path::new(&root).join(audio_url);
+    if in_lake.exists() {
+        return std::fs::read(in_lake);
     }
     std::fs::read(audio_url)
 }
 
+/// Decode one queried row into a `PendingRecording`, surfacing a column-decode
+/// failure as an `Err` instead of panicking — `Row::get` unwraps internally, so
+/// any schema/type drift would otherwise abort the whole drain. Callers count a
+/// failure here as a failed record and move on.
 fn decode_pending(row: &sqlx::postgres::PgRow) -> Result<PendingRecording> {
     Ok(PendingRecording {
         source_stream_id: row.try_get("source_stream_id")?,
@@ -385,10 +390,7 @@ async fn insert_transcription(
         .as_ref()
         .map(|tags| serde_json::json!(tags))
         .unwrap_or_else(|| serde_json::json!([]));
-    let entities_json = t
-        .entities
-        .clone()
-        .unwrap_or_else(|| serde_json::json!({}));
+    let entities_json = t.entities.clone().unwrap_or_else(|| serde_json::json!({}));
     // Persist the audio scene (sounds/music/mood/setting) in metadata so the
     // non-speech "essence" is queryable alongside the transcript.
     let metadata_json = serde_json::json!({
@@ -642,4 +644,3 @@ fn audio_mime_type(format: &str) -> &'static str {
         _ => "audio/mp4",
     }
 }
-

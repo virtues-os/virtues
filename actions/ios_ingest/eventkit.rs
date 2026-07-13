@@ -74,7 +74,10 @@ pub async fn write_events(db: &PgPool, records: &[Value]) -> Result<usize> {
             .get("location")
             .and_then(|v| v.as_str())
             .map(String::from);
-        let description = record.get("notes").and_then(|v| v.as_str()).map(String::from);
+        let description = record
+            .get("notes")
+            .and_then(|v| v.as_str())
+            .map(String::from);
 
         let start_time = record
             .get("startDate")
@@ -88,7 +91,10 @@ pub async fn write_events(db: &PgPool, records: &[Value]) -> Result<usize> {
             .and_then(|s| s.parse::<DateTime<Utc>>().ok())
             .unwrap_or_else(Utc::now);
 
-        let is_all_day = record.get("isAllDay").and_then(|v| v.as_bool()).unwrap_or(false);
+        let is_all_day = record
+            .get("isAllDay")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false);
         let external_id = record.get("id").and_then(|v| v.as_str()).map(String::from);
         let external_url = record.get("url").and_then(|v| v.as_str()).map(String::from);
         let stream_id = stream_id_or_new(record);
