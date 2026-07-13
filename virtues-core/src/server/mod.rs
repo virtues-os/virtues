@@ -505,6 +505,11 @@ pub async fn run(client: Virtues, host: &str, port: u16) -> Result<()> {
         // Wiki API
         .route("/api/wiki/resolve/:id", get(api::wiki_resolve_id_handler))
         // Wiki - Person
+        // Mention review queue (entity resolution HITL)
+        .route("/api/mentions/queue", get(api::list_floating_surfaces_handler))
+        .route("/api/mentions/link", post(api::link_surface_handler))
+        .route("/api/mentions/create", post(api::create_from_surface_handler))
+        .route("/api/mentions/dismiss", post(api::dismiss_surface_handler))
         .route("/api/wiki/people", get(api::wiki_list_people_handler))
         .route(
             "/api/wiki/person/:id",

@@ -1684,6 +1684,41 @@ pub async fn wiki_get_person_handler(
     api_response(crate::api::get_person(state.db.pool(), id).await)
 }
 
+// =============================================================================
+// Mention review queue — where a prose name becomes a person
+// =============================================================================
+
+/// The queue: floating surfaces, most frequent first.
+pub async fn list_floating_surfaces_handler(State(state): State<AppState>) -> Response {
+    api_response(crate::api::mentions::list_floating_surfaces(state.db.pool(), 200).await)
+}
+
+/// Link a surface to an existing entity. Writes the alias, backfills the
+/// history, and resolves every future occurrence — one decision, permanently.
+pub async fn link_surface_handler(
+    State(state): State<AppState>,
+    Json(request): Json<crate::api::mentions::LinkSurfaceRequest>,
+) -> Response {
+    api_response(crate::api::mentions::link_surface(&state.db, request).await)
+}
+
+/// Mint an entity from a surface, then link it.
+pub async fn create_from_surface_handler(
+    State(state): State<AppState>,
+    Json(request): Json<crate::api::mentions::CreateFromSurfaceRequest>,
+) -> Response {
+    api_response(crate::api::mentions::create_from_surface(&state.db, request).await)
+}
+
+/// Dismiss a surface — it names nothing. Never asked about again. The mentions
+/// are NOT deleted; they stay searchable as dust.
+pub async fn dismiss_surface_handler(
+    State(state): State<AppState>,
+    Json(request): Json<crate::api::mentions::DismissSurfaceRequest>,
+) -> Response {
+    api_response(crate::api::mentions::dismiss_surface(&state.db, request).await)
+}
+
 /// List all people
 pub async fn wiki_list_people_handler(State(state): State<AppState>) -> Response {
     api_response(crate::api::list_people(state.db.pool()).await)

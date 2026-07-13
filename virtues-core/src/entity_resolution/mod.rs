@@ -20,6 +20,8 @@
 //! let stats = entity_resolution::resolve_entities(db, window).await?;
 //! ```
 
+pub mod extract;
+pub mod mentions;
 pub mod people;
 pub mod places;
 
@@ -52,8 +54,19 @@ impl TimeWindow {
 pub struct ResolutionStats {
     pub places_resolved: usize,
     pub people_resolved: usize,
+    /// Mentions drained out of prose into `er_mentions` (the evidence layer).
+    pub mentions_extracted: usize,
+    /// Mentions that matched exactly one entity and are now linked.
+    pub mentions_linked: usize,
+    /// Mentions still floating — nothing matched, or the surface is ambiguous.
+    /// These are the review queue. They are dust, not failures.
+    pub mentions_floating: usize,
     pub duration_ms: u128,
 }
+
+/// How many un-extracted source records one sweep will read. Bounds a cold
+/// start over years of backlog; the next tick continues where this stopped.
+const EXTRACT_BATCH: i64 = 500;
 
 /// Main entry point: Resolve all entities in time window
 ///
@@ -71,14 +84,33 @@ pub async fn resolve_entities(db: &Database, window: TimeWindow) -> Result<Resol
     // 1. Resolve places (location clustering)
     let places_resolved = places::resolve_places(db, window).await?;
 
-    // 2. Resolve people (calendar attendees)
+    // 2. Resolve people (calendar attendees, email senders)
     let people_resolved = people::resolve_people(db, window).await?;
+
+    // 3. Drain prose mentions into the evidence layer. Steps 1-2 read STRUCTURED
+    //    columns — an email's From: header is already an identity, a GPS fix is
+    //    already a place. Those are joins, and they are where most links come
+    //    from. This step handles what only appears as prose: a name spoken in a
+    //    transcript. Different problem, different guarantees.
+    //
+    //    Not time-windowed, deliberately. A mention floats until a human writes
+    //    the alias that resolves it, and that can happen months after the
+    //    recording — so the sweep must be able to reach the whole backlog.
+    let extracted = extract::extract_from_transcriptions(db, EXTRACT_BATCH).await?;
+
+    // 4. Resolve those mentions — but ONLY on an exact, unambiguous match
+    //    (canonical name, nickname, or a human-written alias). One candidate
+    //    links; zero or many stay floating. The machine never picks which Sarah.
+    let mention_stats = mentions::resolve_mentions(db).await?;
 
     let duration_ms = start.elapsed().as_millis();
 
     tracing::info!(
         places_resolved,
         people_resolved,
+        mentions_extracted = extracted.mentions,
+        mentions_linked = mention_stats.linked,
+        mentions_floating = mention_stats.unmatched + mention_stats.ambiguous,
         duration_ms,
         "Entity resolution completed"
     );
@@ -86,6 +118,9 @@ pub async fn resolve_entities(db: &Database, window: TimeWindow) -> Result<Resol
     Ok(ResolutionStats {
         places_resolved,
         people_resolved,
+        mentions_extracted: extracted.mentions,
+        mentions_linked: mention_stats.linked,
+        mentions_floating: mention_stats.unmatched + mention_stats.ambiguous,
         duration_ms,
     })
 }
