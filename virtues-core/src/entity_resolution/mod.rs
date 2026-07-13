@@ -22,6 +22,7 @@
 
 pub mod extract;
 pub mod mentions;
+pub mod prose;
 pub mod people;
 pub mod places;
 
@@ -98,6 +99,20 @@ pub async fn resolve_entities(db: &Database, window: TimeWindow) -> Result<Resol
     //    recording — so the sweep must be able to reach the whole backlog.
     let extracted = extract::extract_from_transcriptions(db, EXTRACT_BATCH).await?;
 
+    //    ...and out of the four ontologies that carry prose but have no
+    //    extraction of their own (email, messages, documents, AI chats). One
+    //    component, driven by the ontology registry — never a per-source branch.
+    //    A new source (Slack, Fastmail) normalizes into an existing ontology and
+    //    is extracted with no code change. Best-effort: an LLM hiccup must not
+    //    take down the deterministic resolvers above it.
+    let prose = match prose::extract_from_prose(db).await {
+        Ok(p) => p,
+        Err(e) => {
+            tracing::warn!("prose extraction failed (deterministic resolution unaffected): {e}");
+            prose::ProseStats::default()
+        }
+    };
+
     // 4. Resolve those mentions — but ONLY on an exact, unambiguous match
     //    (canonical name, nickname, or a human-written alias). One candidate
     //    links; zero or many stay floating. The machine never picks which Sarah.
@@ -108,7 +123,7 @@ pub async fn resolve_entities(db: &Database, window: TimeWindow) -> Result<Resol
     tracing::info!(
         places_resolved,
         people_resolved,
-        mentions_extracted = extracted.mentions,
+        mentions_extracted = extracted.mentions + prose.mentions,
         mentions_linked = mention_stats.linked,
         mentions_floating = mention_stats.unmatched + mention_stats.ambiguous,
         duration_ms,
@@ -118,7 +133,7 @@ pub async fn resolve_entities(db: &Database, window: TimeWindow) -> Result<Resol
     Ok(ResolutionStats {
         places_resolved,
         people_resolved,
-        mentions_extracted: extracted.mentions,
+        mentions_extracted: extracted.mentions + prose.mentions,
         mentions_linked: mention_stats.linked,
         mentions_floating: mention_stats.unmatched + mention_stats.ambiguous,
         duration_ms,
