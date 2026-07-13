@@ -327,6 +327,11 @@ pub enum Commands {
     #[command(hide = true)]
     ComputeAutonomic,
 
+    /// Annotate events from their own time windows: avg_hr, entities,
+    /// source_ontologies. Backfills history; safe to re-run (idempotent).
+    #[command(hide = true)]
+    AnnotateEvents,
+
     /// Generate the day summary (autobiography + 24h event timeline) for a date.
     ///
     /// Calls `api::day_summary::generate_day_summary`, which gathers the day's

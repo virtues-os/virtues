@@ -5,6 +5,7 @@
 //! - **Novelty (local)** (LOF): density-relative unusualness — "off-pattern for its kind"
 //! - **Autonomic** (Stress ↑ / Recovery ↓): embedding-weighted HR comparison, physiological response
 
+pub mod annotate;
 pub mod autonomic_scoring;
 pub mod context;
 pub mod embedding_ops;
