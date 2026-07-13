@@ -161,9 +161,9 @@ pub async fn get_background_model(db: &PgPool) -> Result<String> {
     Ok(profile
         .lite_model_id
         .or(profile.background_model_id)
-        .unwrap_or_else(|| virtues_registry::models::default_model_for_slot(
+        .unwrap_or_else(|| crate::api::model_catalog::model_for_slot(
             virtues_registry::models::ModelSlot::Lite
-        ).to_string()))
+        )))
 }
 
 /// Helper to get the chat model (default for conversations)
@@ -173,9 +173,9 @@ pub async fn get_chat_model(db: &PgPool) -> Result<String> {
     Ok(profile
         .chat_model_id
         .or(profile.default_model_id)
-        .unwrap_or_else(|| virtues_registry::models::default_model_for_slot(
+        .unwrap_or_else(|| crate::api::model_catalog::model_for_slot(
             virtues_registry::models::ModelSlot::Chat
-        ).to_string()))
+        )))
 }
 
 /// Helper to get the coding model (code generation)
@@ -184,9 +184,9 @@ pub async fn get_coding_model(db: &PgPool) -> Result<String> {
 
     Ok(profile
         .coding_model_id
-        .unwrap_or_else(|| virtues_registry::models::default_model_for_slot(
+        .unwrap_or_else(|| crate::api::model_catalog::model_for_slot(
             virtues_registry::models::ModelSlot::Coding
-        ).to_string()))
+        )))
 }
 
 /// Helper to get the image model (text-to-image generation)
@@ -195,9 +195,9 @@ pub async fn get_image_model(db: &PgPool) -> Result<String> {
 
     Ok(profile
         .image_model_id
-        .unwrap_or_else(|| virtues_registry::models::default_model_for_slot(
+        .unwrap_or_else(|| crate::api::model_catalog::model_for_slot(
             virtues_registry::models::ModelSlot::Image
-        ).to_string()))
+        )))
 }
 
 /// Helper to get the AI persona for system prompts

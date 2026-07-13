@@ -62,9 +62,9 @@ pub async fn run_agent_loop(
         m.clone()
     } else {
         crate::api::assistant_profile::get_background_model(pool).await
-            .unwrap_or_else(|_| virtues_registry::models::default_model_for_slot(
+            .unwrap_or_else(|_| crate::api::model_catalog::model_for_slot(
                 virtues_registry::models::ModelSlot::Lite
-            ).to_string())
+            ))
     };
 
     // 5. Create and run AgentLoop (egress via BearerClient — no api config needed)

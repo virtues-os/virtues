@@ -31,6 +31,7 @@ pub mod internal;
 pub mod lake;
 pub mod media;
 pub mod metrics;
+pub mod model_catalog;
 pub mod models;
 pub mod namespaces;
 pub mod narrative_identity_gen;
@@ -116,7 +117,7 @@ pub use metrics::{
     StreamStats, TimeWindowMetrics,
 };
 pub use models::{
-    get_model, list_models, list_recommended_models, ModelInfo, RecommendedModelsResponse,
+    get_model, list_models, list_models_with_slots, ModelInfo, ModelsResponse,
 };
 pub use unsplash::{
     search as unsplash_search, SearchRequest as UnsplashSearchRequest,
@@ -200,7 +201,7 @@ pub use notebooks::{
 };
 
 pub use chat_usage::{
-    calculate_cost as calculate_token_cost, check_compaction_needed, get_chat_usage,
+    check_compaction_needed, get_chat_usage,
     record_chat_usage, ChatUsageInfo, CompactionStatus, UsageData,
 };
 pub use developer::{execute_sql, list_tables, ExecuteSqlRequest};

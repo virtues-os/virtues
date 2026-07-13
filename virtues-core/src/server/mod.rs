@@ -117,6 +117,12 @@ pub async fn run(client: Virtues, host: &str, port: u16) -> Result<()> {
         supervisor
     };
 
+    // Model facts (prices, context windows, which ids still exist) are fetched
+    // from virtues-api, never compiled in. Refreshes on boot and 6-hourly; an
+    // unreachable cloud keeps the last snapshot rather than emptying the
+    // picker. See api::model_catalog.
+    crate::api::model_catalog::spawn(client.database.pool().clone());
+
     // Start the scheduler in the background
     let db_pool = client.database.pool().clone();
     let scheduler_yjs = yjs_state.clone();
@@ -397,7 +403,7 @@ pub async fn run(client: Virtues, host: &str, port: u16) -> Result<()> {
         .route("/api/models", get(api::list_models_handler))
         .route(
             "/api/models/recommended",
-            get(api::list_recommended_models_handler),
+            get(api::list_models_with_slots_handler),
         )
         .route("/api/models/:id", get(api::get_model_handler))
         // Agents API
