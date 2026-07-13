@@ -2,7 +2,7 @@
 //!
 //! A Notebook is a manual collection the user returns to: a project, pet, hobby,
 //! goal, or topic. It gathers entities, chats, and pages as URL-native members
-//! (`app_notebook_items`) and carries a single accent tint plus a catch-up memo
+//! (`wiki_story_members`) and carries a single accent tint plus a catch-up memo
 //! (`current_status`) shown when you re-enter the room.
 //!
 //! A chat lives in at most one Notebook (`app_chats.notebook_id`). Entering a Notebook
@@ -116,10 +116,10 @@ pub async fn list_notebooks(pool: &PgPool) -> Result<NotebookListResponse> {
         SELECT
             s.id, s.name, s.icon, s.accent_color,
             s.current_status, s.current_status_at, s.instructions, s.sort_order,
-            COALESCE((SELECT COUNT(*) FROM app_notebook_items WHERE notebook_id = s.id), 0) AS item_count,
+            COALESCE((SELECT COUNT(*) FROM wiki_story_members WHERE notebook_id = s.id), 0) AS item_count,
             COALESCE((SELECT COUNT(*) FROM app_chats       WHERE notebook_id = s.id), 0) AS chat_count,
             s.created_at, s.updated_at
-        FROM app_notebooks s
+        FROM wiki_stories s
         ORDER BY s.sort_order ASC, s.updated_at DESC
         "#,
     )
@@ -136,7 +136,7 @@ pub async fn get_notebook(pool: &PgPool, id: &str) -> Result<NotebookDetail> {
         r#"
         SELECT id, name, icon, accent_color, current_status, current_status_at,
                instructions, sort_order, created_at, updated_at
-        FROM app_notebooks
+        FROM wiki_stories
         WHERE id = $1
         "#,
     )
@@ -149,7 +149,7 @@ pub async fn get_notebook(pool: &PgPool, id: &str) -> Result<NotebookDetail> {
     let items = sqlx::query_as::<_, NotebookItem>(
         r#"
         SELECT url, sort_order, added_at
-        FROM app_notebook_items
+        FROM wiki_story_members
         WHERE notebook_id = $1
         ORDER BY sort_order ASC, added_at ASC
         "#,
@@ -174,7 +174,7 @@ pub async fn create_notebook(pool: &PgPool, req: CreateNotebookRequest) -> Resul
 
     let notebook = sqlx::query_as::<_, Notebook>(
         r#"
-        INSERT INTO app_notebooks (id, name, icon, accent_color)
+        INSERT INTO wiki_stories (id, name, icon, accent_color)
         VALUES ($1, $2, $3, $4)
         RETURNING id, name, icon, accent_color, current_status, current_status_at,
                   instructions, sort_order, created_at, updated_at
@@ -198,7 +198,7 @@ pub async fn update_notebook(pool: &PgPool, id: &str, req: UpdateNotebookRequest
         r#"
         SELECT id, name, icon, accent_color, current_status, current_status_at,
                instructions, sort_order, created_at, updated_at
-        FROM app_notebooks WHERE id = $1
+        FROM wiki_stories WHERE id = $1
         "#,
     )
     .bind(id)
@@ -233,7 +233,7 @@ pub async fn update_notebook(pool: &PgPool, id: &str, req: UpdateNotebookRequest
 
     let notebook = sqlx::query_as::<_, Notebook>(
         r#"
-        UPDATE app_notebooks
+        UPDATE wiki_stories
         SET name = $2,
             icon = $3,
             accent_color = $4,
@@ -263,7 +263,7 @@ pub async fn update_notebook(pool: &PgPool, id: &str, req: UpdateNotebookRequest
 
 /// Delete a Notebook. Members cascade; chats in it have `notebook_id` set to NULL.
 pub async fn delete_notebook(pool: &PgPool, id: &str) -> Result<()> {
-    let result = sqlx::query(r#"DELETE FROM app_notebooks WHERE id = $1"#)
+    let result = sqlx::query(r#"DELETE FROM wiki_stories WHERE id = $1"#)
         .bind(id)
         .execute(pool)
         .await
@@ -277,7 +277,7 @@ pub async fn delete_notebook(pool: &PgPool, id: &str) -> Result<()> {
 
 /// Touch a Notebook's updated_at to reflect activity.
 pub async fn touch_notebook(pool: &PgPool, id: &str) -> Result<()> {
-    sqlx::query(r#"UPDATE app_notebooks SET updated_at = now() WHERE id = $1"#)
+    sqlx::query(r#"UPDATE wiki_stories SET updated_at = now() WHERE id = $1"#)
         .bind(id)
         .execute(pool)
         .await
@@ -296,7 +296,7 @@ pub async fn add_notebook_item(pool: &PgPool, notebook_id: &str, req: AddNoteboo
         return Err(Error::InvalidInput("Member url cannot be empty".into()));
     }
 
-    let exists: Option<String> = sqlx::query_scalar(r#"SELECT id FROM app_notebooks WHERE id = $1"#)
+    let exists: Option<String> = sqlx::query_scalar(r#"SELECT id FROM wiki_stories WHERE id = $1"#)
         .bind(notebook_id)
         .fetch_optional(pool)
         .await
@@ -307,10 +307,10 @@ pub async fn add_notebook_item(pool: &PgPool, notebook_id: &str, req: AddNoteboo
 
     let item = sqlx::query_as::<_, NotebookItem>(
         r#"
-        INSERT INTO app_notebook_items (notebook_id, url, sort_order)
+        INSERT INTO wiki_story_members (notebook_id, url, sort_order)
         VALUES (
             $1, $2,
-            (SELECT COALESCE(MAX(sort_order), -1) + 1 FROM app_notebook_items WHERE notebook_id = $1)
+            (SELECT COALESCE(MAX(sort_order), -1) + 1 FROM wiki_story_members WHERE notebook_id = $1)
         )
         ON CONFLICT (notebook_id, url) DO UPDATE SET url = EXCLUDED.url
         RETURNING url, sort_order, added_at
@@ -328,7 +328,7 @@ pub async fn add_notebook_item(pool: &PgPool, notebook_id: &str, req: AddNoteboo
 
 /// Remove a member URL from a Notebook.
 pub async fn remove_notebook_item(pool: &PgPool, notebook_id: &str, url: &str) -> Result<()> {
-    let result = sqlx::query(r#"DELETE FROM app_notebook_items WHERE notebook_id = $1 AND url = $2"#)
+    let result = sqlx::query(r#"DELETE FROM wiki_story_members WHERE notebook_id = $1 AND url = $2"#)
         .bind(notebook_id)
         .bind(url)
         .execute(pool)
@@ -349,7 +349,7 @@ pub async fn remove_notebook_item(pool: &PgPool, notebook_id: &str, url: &str) -
 /// Remove all membership entries for a given URL across every Notebook.
 /// Called when the underlying entity (chat/page/...) is deleted.
 pub async fn remove_items_by_url(pool: &PgPool, url: &str) -> Result<i64> {
-    let result = sqlx::query(r#"DELETE FROM app_notebook_items WHERE url = $1"#)
+    let result = sqlx::query(r#"DELETE FROM wiki_story_members WHERE url = $1"#)
         .bind(url)
         .execute(pool)
         .await
@@ -371,7 +371,7 @@ pub async fn reorder_notebook_items(
 
     for (idx, url) in req.urls.iter().enumerate() {
         sqlx::query(
-            r#"UPDATE app_notebook_items SET sort_order = $1 WHERE notebook_id = $2 AND url = $3"#,
+            r#"UPDATE wiki_story_members SET sort_order = $1 WHERE notebook_id = $2 AND url = $3"#,
         )
         .bind(idx as i64)
         .bind(notebook_id)
@@ -381,7 +381,7 @@ pub async fn reorder_notebook_items(
         .map_err(|e| Error::Database(format!("Failed to reorder notebook items: {}", e)))?;
     }
 
-    sqlx::query(r#"UPDATE app_notebooks SET updated_at = now() WHERE id = $1"#)
+    sqlx::query(r#"UPDATE wiki_stories SET updated_at = now() WHERE id = $1"#)
         .bind(notebook_id)
         .execute(&mut *tx)
         .await
@@ -418,10 +418,10 @@ pub async fn set_chat_notebook(pool: &PgPool, chat_id: &str, notebook_id: Option
     if let Some(notebook_id) = notebook_id {
         sqlx::query(
             r#"
-            INSERT INTO app_notebook_items (notebook_id, url, sort_order)
+            INSERT INTO wiki_story_members (notebook_id, url, sort_order)
             VALUES (
                 $1, $2,
-                (SELECT COALESCE(MAX(sort_order), -1) + 1 FROM app_notebook_items WHERE notebook_id = $1)
+                (SELECT COALESCE(MAX(sort_order), -1) + 1 FROM wiki_story_members WHERE notebook_id = $1)
             )
             ON CONFLICT (notebook_id, url) DO NOTHING
             "#,
@@ -432,7 +432,7 @@ pub async fn set_chat_notebook(pool: &PgPool, chat_id: &str, notebook_id: Option
         .await
         .map_err(|e| Error::Database(format!("Failed to fold chat into notebook: {}", e)))?;
 
-        sqlx::query(r#"UPDATE app_notebooks SET updated_at = now() WHERE id = $1"#)
+        sqlx::query(r#"UPDATE wiki_stories SET updated_at = now() WHERE id = $1"#)
             .bind(notebook_id)
             .execute(&mut *tx)
             .await
