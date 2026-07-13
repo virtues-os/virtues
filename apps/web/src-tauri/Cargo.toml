@@ -41,6 +41,12 @@ tauri-plugin-notification = "2"
 dirs = "5"
 keyring = "3"
 
+# iOS-only: raw objc for the appearance bridge (set_appearance flips the UIKit
+# windows' overrideUserInterfaceStyle so the status bar / keyboard track the
+# app theme's darkness — tao's set_theme is a no-op on iOS).
+[target.'cfg(target_os = "ios")'.dependencies]
+objc2 = "0.6"
+
 # Mobile-only: the native collectors plugin (CLLocationManager + SQLite) and the
 # in-process reach plugin (pair + iroh loopback).
 [target.'cfg(any(target_os = "ios", target_os = "android"))'.dependencies]

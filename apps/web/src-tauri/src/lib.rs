@@ -9,6 +9,35 @@
 // reach + location plugins and picks the launch URL the same way desktop does:
 // paired → the box UI over the loopback; not paired → the bundled connect shell.
 
+// Appearance bridge: the SPA's themes are user-picked (not system-driven), so
+// the iOS status bar can't ride the system light/dark mode — a dark theme on a
+// light-mode phone gets an invisible clock. tao's window.set_theme() is a no-op
+// on iOS, so flip UIWindow.overrideUserInterfaceStyle ourselves; the status
+// bar, keyboard, and native sheets then all resolve from the app theme's
+// darkness. Called by the SPA on startup and on every theme change.
+#[cfg(target_os = "ios")]
+#[tauri::command]
+fn set_appearance(app: tauri::AppHandle, dark: bool) {
+  let _ = app.run_on_main_thread(move || unsafe {
+    use objc2::{class, msg_send, runtime::AnyObject};
+    let ui_app: *mut AnyObject = msg_send![class!(UIApplication), sharedApplication];
+    let windows: *mut AnyObject = msg_send![ui_app, windows];
+    let count: usize = msg_send![windows, count];
+    // UIUserInterfaceStyle: 1 = light, 2 = dark.
+    let style: isize = if dark { 2 } else { 1 };
+    for i in 0..count {
+      let w: *mut AnyObject = msg_send![windows, objectAtIndex: i];
+      let _: () = msg_send![w, setOverrideUserInterfaceStyle: style];
+    }
+  });
+}
+
+// Android resolves the theme through the webview alone; accept and ignore so
+// the SPA can call unconditionally on mobile.
+#[cfg(all(mobile, not(target_os = "ios")))]
+#[tauri::command]
+fn set_appearance(_dark: bool) {}
+
 #[cfg(mobile)]
 #[tauri::mobile_entry_point]
 pub fn run() {
@@ -29,6 +58,7 @@ pub fn run() {
     .plugin(tauri_plugin_contacts::init())
     .plugin(tauri_plugin_finance::init())
     .plugin(tauri_plugin_audio::init())
+    .invoke_handler(tauri::generate_handler![set_appearance])
     .setup(|app| {
       // Background location: install the CLLocationManager delegate as early as
       // Tauri lets us (runs on every launch, incl. cold background relaunch).

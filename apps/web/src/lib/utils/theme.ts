@@ -166,6 +166,21 @@ export function isValidTheme(theme: string): theme is Theme {
 
 
 /**
+ * Whether a theme reads as dark (its background luminance is below mid-gray).
+ * Used by the native mobile shell to pick status-bar / keyboard appearance —
+ * themes are user-picked, so darkness can't be inferred from the OS setting.
+ */
+export function isThemeDark(theme: Theme): boolean {
+	const hex = themePreviewColors[theme]?.background ?? '#ffffff';
+	const n = parseInt(hex.slice(1), 16);
+	const r = (n >> 16) & 0xff;
+	const g = (n >> 8) & 0xff;
+	const b = n & 0xff;
+	// Perceived luminance (ITU-R BT.601), 0–255.
+	return 0.299 * r + 0.587 * g + 0.114 * b < 128;
+}
+
+/**
  * Get all available themes
  */
 export function getAvailableThemes(): Theme[] {
