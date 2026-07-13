@@ -197,8 +197,11 @@ pub async fn run(cli: Cli, virtues: Virtues) -> Result<(), Box<dyn std::error::E
 
             let pool = virtues.database.pool();
 
-            // Get all dates that have events with summaries
-            let dates: Vec<String> = sqlx::query_scalar(
+            // `wiki_days.date` is DATE, not TEXT. Decoding it as String made
+            // this backfill fail on its very first row with a ColumnDecode
+            // error — so the one manual escape hatch from the cron's
+            // delete-then-score bug had itself never run.
+            let dates: Vec<chrono::NaiveDate> = sqlx::query_scalar(
                 "SELECT DISTINCT d.date FROM wiki_days d \
                  JOIN wiki_events e ON e.day_id = d.id \
                  WHERE e.event_summary IS NOT NULL AND e.event_summary != '' \
@@ -210,19 +213,18 @@ pub async fn run(cli: Cli, virtues: Virtues) -> Result<(), Box<dyn std::error::E
             println!("Found {} days with events to score", dates.len());
 
             let mut total_scored = 0u32;
-            for (i, date_str) in dates.iter().enumerate() {
-                let date = date_str.parse::<chrono::NaiveDate>()
-                    .map_err(|e| format!("Bad date {}: {}", date_str, e))?;
+            for (i, date) in dates.iter().enumerate() {
+                let date = *date;
 
                 match crate::dayline::novelty::compute_novelty_for_day(pool, date).await {
                     Ok(scored) => {
                         total_scored += scored;
                         if scored > 0 || (i + 1) % 10 == 0 {
-                            println!("  {} — {} events scored ({}/{})", date_str, scored, i + 1, dates.len());
+                            println!("  {} — {} events scored ({}/{})", date, scored, i + 1, dates.len());
                         }
                     }
                     Err(e) => {
-                        eprintln!("  {} — error: {}", date_str, e);
+                        eprintln!("  {} — error: {}", date, e);
                     }
                 }
             }
@@ -232,9 +234,8 @@ pub async fn run(cli: Cli, virtues: Virtues) -> Result<(), Box<dyn std::error::E
             // Topic/entity novelty
             println!("Computing topic/entity novelty...");
             let mut total_te = 0u32;
-            for (i, date_str) in dates.iter().enumerate() {
-                let date = date_str.parse::<chrono::NaiveDate>()
-                    .map_err(|e| format!("Bad date {}: {}", date_str, e))?;
+            for (i, date) in dates.iter().enumerate() {
+                let date = *date;
 
                 match crate::dayline::topic_entity_novelty::compute_topic_entity_novelty(pool, date).await {
                     Ok(updated) => {
@@ -244,12 +245,35 @@ pub async fn run(cli: Cli, virtues: Virtues) -> Result<(), Box<dyn std::error::E
                         }
                     }
                     Err(e) => {
-                        eprintln!("  {} — topic/entity error: {}", date_str, e);
+                        eprintln!("  {} — topic/entity error: {}", date, e);
                     }
                 }
             }
 
             println!("Topic/entity novelty: {} events updated.", total_te);
+        }
+
+        Commands::AnnotateEvents => {
+            println!("Running migrations...");
+            virtues.database.initialize().await?;
+            println!("Annotating events (avg_hr, entities, source_ontologies)...");
+
+            let pool = virtues.database.pool();
+            let dates: Vec<chrono::NaiveDate> = sqlx::query_scalar(
+                "SELECT DISTINCT d.date FROM wiki_days d \
+                 JOIN wiki_events e ON e.day_id = d.id ORDER BY d.date"
+            )
+            .fetch_all(pool)
+            .await?;
+
+            let mut total = 0u32;
+            for date in &dates {
+                match crate::dayline::annotate::annotate_events_for_day(pool, *date).await {
+                    Ok(n) => total += n,
+                    Err(e) => eprintln!("  {} — error: {}", date, e),
+                }
+            }
+            println!("Annotated {} events across {} days.", total, dates.len());
         }
 
         Commands::DaySummary { date } => {
@@ -346,7 +370,7 @@ pub async fn run(cli: Cli, virtues: Virtues) -> Result<(), Box<dyn std::error::E
 
             let pool = virtues.database.pool();
 
-            let dates: Vec<String> = sqlx::query_scalar(
+            let dates: Vec<chrono::NaiveDate> = sqlx::query_scalar(
                 "SELECT DISTINCT d.date FROM wiki_days d \
                  JOIN wiki_events e ON e.day_id = d.id \
                  WHERE e.avg_hr IS NOT NULL \
@@ -358,19 +382,19 @@ pub async fn run(cli: Cli, virtues: Virtues) -> Result<(), Box<dyn std::error::E
             println!("Found {} days with HR data to score", dates.len());
 
             let mut total_scored = 0u32;
-            for (i, date_str) in dates.iter().enumerate() {
-                let date = date_str.parse::<chrono::NaiveDate>()
-                    .map_err(|e| format!("Bad date {}: {}", date_str, e))?;
+            for (i, date) in dates.iter().enumerate() {
+                let date = *date;
+
 
                 match crate::dayline::autonomic_scoring::compute_autonomic_for_day(pool, date).await {
                     Ok(scored) => {
                         total_scored += scored;
                         if scored > 0 || (i + 1) % 10 == 0 {
-                            println!("  {} — {} events scored ({}/{})", date_str, scored, i + 1, dates.len());
+                            println!("  {} — {} events scored ({}/{})", date, scored, i + 1, dates.len());
                         }
                     }
                     Err(e) => {
-                        eprintln!("  {} — error: {}", date_str, e);
+                        eprintln!("  {} — error: {}", date, e);
                     }
                 }
             }
