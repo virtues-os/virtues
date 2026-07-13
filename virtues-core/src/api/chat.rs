@@ -1554,13 +1554,16 @@ fn create_agent_stream(
                 tracing::error!("Failed to save assistant message: {}", e);
             }
 
-            // Record token usage
+            // Record token usage. `cost_micros` is the gateway's authoritative
+            // figure — the same one recorded in app_ai_calls below, and the one
+            // the wallet was actually debited for. No estimating.
             let usage_data = UsageData {
                 input_tokens: total_input_tokens as i64,
                 output_tokens: total_output_tokens as i64,
                 reasoning_tokens: 0,
                 cache_read_tokens: 0,
                 cache_write_tokens: 0,
+                cost_micros: Some(total_cost_micros),
             };
 
             if let Err(e) = record_chat_usage(&pool, chat_id.clone(), &model, usage_data).await {

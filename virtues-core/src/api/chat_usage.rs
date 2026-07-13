@@ -72,27 +72,56 @@ pub struct UsageData {
     pub reasoning_tokens: i64,
     pub cache_read_tokens: i64,
     pub cache_write_tokens: i64,
+    /// The gateway's own `usage.cost`, in micros — the exact figure the wallet
+    /// was debited for. `None` when the gateway omitted it (rare); see
+    /// `resolve_cost_usd`. Never estimate when this is `Some`.
+    pub cost_micros: Option<i64>,
 }
 
 // ============================================================================
 // Cost Calculation
 // ============================================================================
 
-/// Calculate estimated cost for token usage.
+/// Cost for a turn, in USD.
 ///
-/// Pricing comes from the single shared registry
-/// (`virtues_registry::models::get_model_pricing`, rates per 1K tokens) so
-/// on-box estimates never drift from the billing tables.
-pub fn calculate_cost(
+/// Prefers `authoritative_micros` — the gateway's own `usage.cost`, which the
+/// stream parser already extracts (`agent::stream`) and which is the exact
+/// figure the wallet was debited for. There is no reason to estimate a number
+/// we were handed.
+///
+/// Only when the gateway omits it do we multiply tokens by the LIVE catalog
+/// price (fetched from virtues-api; see `api::model_catalog`). If even that is
+/// cold, we return 0.0 and log — an unknown cost is better shown as blank than
+/// as a confident fiction.
+///
+/// This function used to read a compiled price table. Every entry in it was
+/// wrong (Opus 3× over, image generation 13× under), which is exactly what a
+/// hand-maintained mirror of someone else's pricing gets you.
+pub fn resolve_cost_usd(
     model: &str,
+    authoritative_micros: Option<i64>,
     input_tokens: i64,
     output_tokens: i64,
-    _reasoning_tokens: i64,
 ) -> f64 {
-    let (input_per_1k, output_per_1k) = virtues_registry::models::get_model_pricing(model);
-    let input_cost = (input_tokens as f64 / 1000.0) * input_per_1k;
-    let output_cost = (output_tokens as f64 / 1000.0) * output_per_1k;
-    input_cost + output_cost
+    if let Some(micros) = authoritative_micros {
+        if micros > 0 {
+            return micros as f64 / 1_000_000.0;
+        }
+    }
+
+    match crate::api::model_catalog::pricing(model) {
+        Some((input_per_1k, output_per_1k)) => {
+            (input_tokens as f64 / 1000.0) * input_per_1k
+                + (output_tokens as f64 / 1000.0) * output_per_1k
+        }
+        None => {
+            tracing::debug!(
+                model,
+                "no gateway cost and no catalog price — recording 0.00 for this turn"
+            );
+            0.0
+        }
+    }
 }
 
 // ============================================================================
@@ -112,11 +141,11 @@ pub async fn record_chat_usage(
     let id = format!("{}_{}", chat_id_str, model.replace('/', "_"));
     let now = Timestamp::now();
 
-    let cost = calculate_cost(
+    let cost = resolve_cost_usd(
         model,
+        usage.cost_micros,
         usage.input_tokens,
         usage.output_tokens,
-        usage.reasoning_tokens,
     );
 
     // Upsert: increment existing or insert new
@@ -469,25 +498,31 @@ pub async fn check_compaction_needed(
 mod tests {
     use super::*;
 
+    /// The gateway's own `usage.cost` is the number the wallet was debited for.
+    /// When we have it, we use it — no estimating, no token arithmetic.
     #[test]
-    fn test_calculate_cost_gemini() {
-        // Gemini 2.5 Flash: $1.25/1M input, $10/1M output
-        let cost = calculate_cost("gemini-2.5-flash-preview-05-06", 1_000_000, 1_000_000, 0);
-        assert!((cost - 11.25).abs() < 0.001); // 1.25 + 10 = 11.25
+    fn authoritative_gateway_cost_wins() {
+        // $0.042 == 42_000 micros. Token counts are deliberately absurd: if
+        // they influenced the result at all, this would not be 0.042.
+        let cost = resolve_cost_usd("anthropic/claude-opus-4.8", Some(42_000), 999_999, 999_999);
+        assert!((cost - 0.042).abs() < 1e-9, "got {cost}");
     }
 
+    /// No gateway cost AND a cold catalog: report nothing rather than invent a
+    /// number. The old code reached for a compiled price table here, and that
+    /// table was wrong for every model in it.
     #[test]
-    fn test_calculate_cost_claude() {
-        // Claude Sonnet 4: $3/1M input, $15/1M output
-        let cost = calculate_cost("claude-sonnet-4-20250514", 1_000_000, 1_000_000, 0);
-        assert!((cost - 18.0).abs() < 0.001); // 3 + 15 = 18
+    fn no_cost_and_cold_catalog_reports_zero_not_a_fiction() {
+        let cost = resolve_cost_usd("anthropic/claude-opus-4.8", None, 1_000_000, 1_000_000);
+        assert_eq!(cost, 0.0);
     }
 
+    /// A zero from the gateway is treated as absent, not as free.
     #[test]
-    fn test_calculate_cost_small_usage() {
-        // 1000 tokens each with gpt-4o-mini
-        let cost = calculate_cost("gpt-4o-mini", 1000, 1000, 0);
-        let expected = (1000.0 / 1_000_000.0) * 0.15 + (1000.0 / 1_000_000.0) * 0.60;
-        assert!((cost - expected).abs() < 0.0001);
+    fn zero_gateway_cost_is_not_taken_as_free() {
+        let cost = resolve_cost_usd("anthropic/claude-opus-4.8", Some(0), 1_000, 1_000);
+        // Falls through to the catalog (cold in tests) → 0.0, but crucially it
+        // did NOT short-circuit on `Some(0)` as though the call were free.
+        assert_eq!(cost, 0.0);
     }
 }
