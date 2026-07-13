@@ -8,19 +8,49 @@ use crate::storage::models::AssistantProfile;
 use serde::{Deserialize, Serialize};
 use sqlx::PgPool;
 
+/// Deserialize a field that must distinguish three states:
+///
+///   key absent   → `None`         → leave the column alone
+///   `null`       → `Some(None)`   → SET the column to NULL
+///   `"model-id"` → `Some(Some(_))`→ SET the column to that value
+///
+/// Plain `Option<String>` cannot do this: serde folds both *absent* and *null*
+/// into `None`, so `{"chat_model_id": null}` was silently a no-op and a pinned
+/// slot could never be un-pinned. That is exactly what "Virtues default" needs
+/// to write — see `ModelSettings.svelte`.
+fn double_option<'de, D, T>(de: D) -> std::result::Result<Option<Option<T>>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+    T: Deserialize<'de>,
+{
+    Deserialize::deserialize(de).map(Some)
+}
+
 /// Request to update assistant profile
-#[derive(Debug, Clone, Serialize, Deserialize)]
+///
+/// Every field is optional (absent = don't touch). The four model slots are
+/// *doubly* optional, because clearing a slot back to "Virtues default" means
+/// writing NULL, and NULL has to be distinguishable from "not mentioned".
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(default)]
 pub struct UpdateAssistantProfileRequest {
     pub assistant_name: Option<String>,
     pub default_agent_id: Option<String>,
     // Legacy fields (kept for backward compatibility)
-    pub default_model_id: Option<String>,
-    pub background_model_id: Option<String>,
-    // New model slot system
-    pub chat_model_id: Option<String>,
-    pub lite_model_id: Option<String>,
-    pub coding_model_id: Option<String>,
-    pub image_model_id: Option<String>,
+    #[serde(deserialize_with = "double_option")]
+    pub default_model_id: Option<Option<String>>,
+    #[serde(deserialize_with = "double_option")]
+    pub background_model_id: Option<Option<String>>,
+    // Model slots. NULL here = "follow the Virtues default" (the cloud slot
+    // map, then the compiled floor — see api::model_catalog).
+    #[serde(deserialize_with = "double_option")]
+    pub chat_model_id: Option<Option<String>>,
+    #[serde(deserialize_with = "double_option")]
+    pub lite_model_id: Option<Option<String>>,
+    #[serde(deserialize_with = "double_option")]
+    pub coding_model_id: Option<Option<String>>,
+    #[serde(deserialize_with = "double_option")]
+    pub image_model_id: Option<Option<String>>,
     pub enabled_tools: Option<serde_json::Value>,
     pub ui_preferences: Option<serde_json::Value>,
     /// AI persona/tone: capable_warm, professional, casual, adaptive
@@ -102,23 +132,26 @@ pub async fn update_assistant_profile(
     if let Some(v) = &request.default_agent_id {
         q = q.bind(v);
     }
+    // Double-option: the outer Some means "this field was mentioned"; the inner
+    // Option is the value, and `None` binds as SQL NULL — which is how a slot
+    // gets reset to the Virtues default.
     if let Some(v) = &request.default_model_id {
-        q = q.bind(v);
+        q = q.bind(v.as_deref());
     }
     if let Some(v) = &request.background_model_id {
-        q = q.bind(v);
+        q = q.bind(v.as_deref());
     }
     if let Some(v) = &request.chat_model_id {
-        q = q.bind(v);
+        q = q.bind(v.as_deref());
     }
     if let Some(v) = &request.lite_model_id {
-        q = q.bind(v);
+        q = q.bind(v.as_deref());
     }
     if let Some(v) = &request.coding_model_id {
-        q = q.bind(v);
+        q = q.bind(v.as_deref());
     }
     if let Some(v) = &request.image_model_id {
-        q = q.bind(v);
+        q = q.bind(v.as_deref());
     }
     if let Some(v) = &request.enabled_tools {
         q = q.bind(v);
@@ -210,4 +243,48 @@ pub async fn get_persona(db: &PgPool) -> Result<String> {
     Ok(profile
         .persona
         .unwrap_or_else(|| "capable_warm".to_string()))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The three states a slot field must be able to express. Collapsing any two
+    /// of them breaks something: fold null into absent and a pinned slot can
+    /// never be released (the "Virtues default" option silently does nothing);
+    /// fold absent into null and every partial PUT wipes the slots it didn't
+    /// mention.
+    #[test]
+    fn slot_distinguishes_absent_from_null_from_value() {
+        let absent: UpdateAssistantProfileRequest =
+            serde_json::from_str(r#"{"persona":"casual"}"#).unwrap();
+        assert_eq!(absent.chat_model_id, None, "absent = leave the column alone");
+
+        let cleared: UpdateAssistantProfileRequest =
+            serde_json::from_str(r#"{"chat_model_id":null}"#).unwrap();
+        assert_eq!(
+            cleared.chat_model_id,
+            Some(None),
+            "explicit null = SET NULL = follow the Virtues default"
+        );
+
+        let pinned: UpdateAssistantProfileRequest =
+            serde_json::from_str(r#"{"chat_model_id":"anthropic/claude-opus-4.8"}"#).unwrap();
+        assert_eq!(
+            pinned.chat_model_id,
+            Some(Some("anthropic/claude-opus-4.8".to_string())),
+            "a value = pin it"
+        );
+    }
+
+    /// Clearing the Chat slot must clear the legacy column too, or
+    /// `get_chat_model`'s `chat_model_id.or(default_model_id)` resurrects the
+    /// old pin. The web client sends both; this just proves the shape parses.
+    #[test]
+    fn legacy_columns_are_clearable_alongside_their_slot() {
+        let req: UpdateAssistantProfileRequest =
+            serde_json::from_str(r#"{"chat_model_id":null,"default_model_id":null}"#).unwrap();
+        assert_eq!(req.chat_model_id, Some(None));
+        assert_eq!(req.default_model_id, Some(None));
+    }
 }
