@@ -6,6 +6,7 @@ import Foundation
 private var globalMonitor: Monitor?
 private var globalUploader: Uploader?
 private var globalMessageMonitor: MessageMonitor?
+private var globalBrowserMonitor: BrowserMonitor?
 
 struct StartCommand: ParsableCommand {
     static let configuration = CommandConfiguration(
@@ -17,6 +18,14 @@ struct StartCommand: ParsableCommand {
     var verbose = false
     
     func run() throws {
+        // Line-buffer stdout. Under launchd our stdout is a FILE, not a tty, so libc
+        // block-buffers it (4 KB) — which means the log lags reality by however long
+        // it takes to fill a buffer. Every diagnosis in this daemon starts by reading
+        // that log, and a log that reports the past is worse than no log: it produced
+        // several confident misdiagnoses (waiting on lines that had already scrolled,
+        // "nothing is happening" when plenty was). Cheap to make it honest.
+        setvbuf(stdout, nil, _IOLBF, 0)
+
         // Load config
         guard let config = Config.load() else {
             throw ConfigError.notConfigured
@@ -56,16 +65,19 @@ struct StartCommand: ParsableCommand {
         // up in System Settings), so the message collector never actually ran and
         // `data_communication_message` stayed empty no matter what the user granted.
         let messageMonitor = MessageMonitor(queue: queue)
+        let browserMonitor = BrowserMonitor(queue: queue)
         let uploader = Uploader(queue: queue, config: config)
 
         // Store globally for signal handlers
         globalMonitor = monitor
         globalMessageMonitor = messageMonitor
+        globalBrowserMonitor = browserMonitor
         globalUploader = uploader
 
         // Start monitoring and uploading
         monitor.start()
         messageMonitor.start()
+        browserMonitor.start()
         uploader.start()
         
         // Set up signal handlers for graceful shutdown
@@ -73,6 +85,7 @@ struct StartCommand: ParsableCommand {
             print("\nShutting down...")
             globalMonitor?.stop()
             globalMessageMonitor?.stop()
+            globalBrowserMonitor?.stop()
             globalUploader?.stop()
             Foundation.exit(0)
         }
@@ -81,6 +94,7 @@ struct StartCommand: ParsableCommand {
             print("\nShutting down...")
             globalMonitor?.stop()
             globalMessageMonitor?.stop()
+            globalBrowserMonitor?.stop()
             globalUploader?.stop()
             Foundation.exit(0)
         }

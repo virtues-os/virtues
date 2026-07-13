@@ -133,7 +133,8 @@ class Uploader {
         do {
             let eventsWithIds = try queue.getPendingEvents()
             let messagesWithIds = try queue.getPendingMessages()
-            let pending = eventsWithIds.count + messagesWithIds.count
+            let visitsWithIds = try queue.getPendingBrowserVisits()
+            let pending = eventsWithIds.count + messagesWithIds.count + visitsWithIds.count
             if pending == 0 {
                 return (0, 0)
             }
@@ -145,16 +146,20 @@ class Uploader {
                 return (0, pending)
             }
 
-            print("Uploading \(eventsWithIds.count) app events + \(messagesWithIds.count) messages…")
+            print(
+                "Uploading \(eventsWithIds.count) app events + \(visitsWithIds.count) visits "
+                    + "+ \(messagesWithIds.count) messages…")
 
             // Map records to the action's field contract. app_events already
             // match (`timestamp`, `bundle_id`, `app_name`); iMessages need
-            // `message_id`→`guid` and `handle_id`→`from_handle`.
+            // `message_id`→`guid` and `handle_id`→`from_handle`. Browser visits
+            // already match (`url`, `title`, `timestamp`, `browser`).
             let appEvents = eventsWithIds.map { $0.event.toDictionary }
             let imessages = messagesWithIds.map { mapMessageForWebhook($0.message.toDictionary) }
+            let browserHistory = visitsWithIds.map { $0.visit.toDictionary() }
             let payload: [String: Any] = [
                 "app_events": appEvents,
-                "browser_history": [],   // no browser collector in mac-source yet
+                "browser_history": browserHistory,
                 "imessages": imessages,
             ]
 
@@ -175,10 +180,14 @@ class Uploader {
             if httpResponse.statusCode == 200 {
                 try queue.markEventsAsUploaded(eventsWithIds.map { $0.id })
                 try queue.markMessagesAsUploaded(messagesWithIds.map { $0.id })
+                try queue.markBrowserVisitsUploaded(ids: visitsWithIds.map { $0.id })
                 try queue.cleanupOldEvents()
                 try queue.cleanupOldMessages()
+                try queue.cleanupOldBrowserVisits()
 
-                print("✓ Uploaded \(eventsWithIds.count) events + \(messagesWithIds.count) messages")
+                print(
+                    "✓ Uploaded \(eventsWithIds.count) events + \(visitsWithIds.count) visits "
+                        + "+ \(messagesWithIds.count) messages")
                 retryDelay = 60
                 consecutive401Errors = 0
                 if isAuthPaused {
