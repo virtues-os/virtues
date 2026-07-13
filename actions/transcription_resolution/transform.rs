@@ -97,6 +97,23 @@ struct PendingRecording {
 /// failure as an `Err` instead of panicking — `Row::get` unwraps internally, so
 /// any schema/type drift would otherwise abort the whole drain. Callers count a
 /// failure here as a failed record and move on.
+/// Resolve `audio_url` against both the lake and the legacy layout.
+///
+/// New rows store a lake `storage_key` (relative to STORAGE_PATH). Rows written
+/// before the lake landed store a path relative to the server's cwd — the old
+/// `data/lake/ios_microphone/…`, which ignored STORAGE_PATH and parked the audio
+/// outside the configured lake entirely. Try the lake first, then fall back, so
+/// the ~858 existing recordings keep transcribing without a data migration.
+fn read_audio(audio_url: &str) -> std::io::Result<Vec<u8>> {
+    if let Ok(root) = std::env::var("STORAGE_PATH") {
+        let in_lake = std::path::Path::new(&root).join(audio_url);
+        if in_lake.exists() {
+            return std::fs::read(in_lake);
+        }
+    }
+    std::fs::read(audio_url)
+}
+
 fn decode_pending(row: &sqlx::postgres::PgRow) -> Result<PendingRecording> {
     Ok(PendingRecording {
         source_stream_id: row.try_get("source_stream_id")?,
@@ -203,8 +220,8 @@ pub async fn drain(db: &PgPool, batch_size: i64) -> Result<(usize, usize, usize)
         }
         let client = virtues_api.as_ref().unwrap();
 
-        // Read the audio file from disk
-        let audio_bytes = match std::fs::read(&rec.audio_url) {
+        // Read the audio file from disk.
+        let audio_bytes = match read_audio(&rec.audio_url) {
             Ok(b) => b,
             Err(e) => {
                 tracing::warn!(
