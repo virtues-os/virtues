@@ -31,6 +31,25 @@ if (typeof window !== 'undefined' && (window as unknown as { __VIRTUES_MOBILE__?
 		'content',
 		'width=device-width, initial-scale=1, maximum-scale=1, minimum-scale=1, user-scalable=no, viewport-fit=cover'
 	);
+
+	// Native appearance bridge: themes are user-picked, so the iOS status bar
+	// can't follow the system light/dark mode — tell the shell the active
+	// theme's darkness (it flips UIWindow.overrideUserInterfaceStyle, which the
+	// status bar, keyboard, and native sheets all resolve from). Fire once for
+	// the cached theme and again on every theme change.
+	const syncAppearance = async () => {
+		try {
+			const [{ invoke }, { getTheme, isThemeDark }] = await Promise.all([
+				import('@tauri-apps/api/core'),
+				import('$lib/utils/theme')
+			]);
+			await invoke('set_appearance', { dark: isThemeDark(getTheme()) });
+		} catch {
+			// Not running in the Tauri shell (or command missing) — cosmetic only.
+		}
+	};
+	syncAppearance();
+	window.addEventListener('themechange', syncAppearance);
 }
 
 export {};

@@ -6725,6 +6725,7 @@ dependencies = [
  "chrono",
  "dirs 5.0.1",
  "keyring",
+ "objc2",
  "serde",
  "serde_json",
  "tauri",
