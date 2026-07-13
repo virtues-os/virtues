@@ -13,7 +13,9 @@ use serde_json::Value;
 use sqlx::PgPool;
 use uuid::Uuid;
 use virtues_helpers::dedup::{build_batch_insert_query, BATCH_SIZE};
-use virtues_helpers::ios::{parse_timestamp, stream_id_or_hash, HEALTHKIT_STREAM_TABLE, IOS_PROVIDER};
+use virtues_helpers::ios::{
+    parse_timestamp, stream_id_or_hash, HEALTHKIT_STREAM_TABLE, IOS_PROVIDER,
+};
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Heart Rate
@@ -447,14 +449,14 @@ async fn flush_distance(
 
 #[allow(clippy::type_complexity)]
 type SleepRow = (
-    String,              // id
-    Option<Value>,       // sleep_stages
-    i32,                 // duration_minutes
-    Option<f64>,         // sleep_quality_score
-    DateTime<Utc>,       // start_time
-    DateTime<Utc>,       // end_time
-    String,              // source_stream_id
-    Value,               // metadata
+    String,        // id
+    Option<Value>, // sleep_stages
+    i32,           // duration_minutes
+    Option<f64>,   // sleep_quality_score
+    DateTime<Utc>, // start_time
+    DateTime<Utc>, // end_time
+    String,        // source_stream_id
+    Value,         // metadata
 );
 
 pub async fn write_sleep(db: &PgPool, records: &[Value]) -> Result<usize> {
@@ -569,17 +571,17 @@ async fn flush_sleep(db: &PgPool, records: &[SleepRow]) -> Result<usize> {
 
 #[allow(clippy::type_complexity)]
 type WorkoutRow = (
-    String,              // id
-    String,              // workout_type
-    Option<i32>,         // duration_minutes
-    Option<i32>,         // calories_burned
-    Option<i32>,         // avg_heart_rate
-    Option<i32>,         // max_heart_rate
-    Option<f64>,         // distance_km
-    DateTime<Utc>,       // start_time
-    DateTime<Utc>,       // end_time
-    String,              // source_stream_id
-    Value,               // metadata
+    String,        // id
+    String,        // workout_type
+    Option<i32>,   // duration_minutes
+    Option<i32>,   // calories_burned
+    Option<i32>,   // avg_heart_rate
+    Option<i32>,   // max_heart_rate
+    Option<f64>,   // distance_km
+    DateTime<Utc>, // start_time
+    DateTime<Utc>, // end_time
+    String,        // source_stream_id
+    Value,         // metadata
 );
 
 pub async fn write_workout(db: &PgPool, records: &[Value]) -> Result<usize> {
