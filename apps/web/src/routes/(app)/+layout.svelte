@@ -15,7 +15,6 @@
 	import { iconPickerStore } from "$lib/stores/iconPicker.svelte";
 	import { chatSessions } from "$lib/stores/chatSessions.svelte";
 	import { windowShellStore } from "$lib/stores/window-shell.svelte";
-	import { thingsStore } from "$lib/stores/things.svelte";
 	import { pinsStore } from "$lib/stores/pins.svelte";
 	import { notebookStore } from "$lib/stores/notebook.svelte";
 	import { subscriptionStore } from "$lib/stores/subscription.svelte";
@@ -71,7 +70,6 @@
 
 		// Load global data
 		chatSessions.load();
-		thingsStore.load('project');
 		pinsStore.load();
 		notebookStore.load();
 		initTheme();
@@ -194,8 +192,8 @@
 		if (trialToastShownForDay === days) return;
 
 		const openBilling = () =>
-			windowShellStore.openTabFromRoute("/virtues/billing", {
-				label: "Billing",
+			windowShellStore.openTabFromRoute("/virtues/account/billing", {
+				label: "Account",
 				preferEmptyPane: true,
 			});
 
@@ -239,8 +237,8 @@
 				action: {
 					label: "Subscribe",
 					onClick: () =>
-						windowShellStore.openTabFromRoute("/virtues/billing", {
-							label: "Billing",
+						windowShellStore.openTabFromRoute("/virtues/account/billing", {
+							label: "Account",
 							preferEmptyPane: true,
 						}),
 				},
@@ -345,9 +343,13 @@
 		view-transition-name: main-content;
 	}
 
-	/* Mobile shell: edge-to-edge, and reserve the bottom-tab bar's height so
-	   scrollable content ends above it (the bar is position:fixed). */
+	/* Mobile shell: edge-to-edge (viewport-fit=cover), so the shell itself pads
+	   for the status bar / Dynamic Island, and reserves the bottom-tab bar's
+	   height so scrollable content ends above it (the bar is position:fixed).
+	   The padded zones show the themed shell background instead of the bare
+	   native window. */
 	main.is-mobile {
+		padding-top: env(safe-area-inset-top);
 		padding-bottom: calc(50px + env(safe-area-inset-bottom));
 	}
 

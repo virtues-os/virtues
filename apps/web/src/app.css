@@ -108,6 +108,15 @@
 	font-display: swap;
 }
 
+/* Themed root background. On the mobile shell the page paints edge-to-edge
+   (viewport-fit=cover), so this is what shows behind translucent chrome, in
+   the safe-area zones during transitions, and before the app shell mounts —
+   without it those read as the bare (black/white) native window. */
+html,
+body {
+	background-color: var(--color-background);
+}
+
 /* Serif font defaults to 400 weight */
 .font-serif {
 	font-weight: 400;
