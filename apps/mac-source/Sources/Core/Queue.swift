@@ -56,6 +56,31 @@ class Queue {
         // ignore the result rather than gate on a schema probe.
         sqlite3_exec(db, "ALTER TABLE events ADD COLUMN window_title TEXT", nil, nil, nil)
         
+        // Browser visits. UNIQUE(url, visit_time) is the dedup key and it matters:
+        // each sync re-reads an overlapping window out of the browser's own history
+        // DB (cursors are per-browser and we re-scan from the last visit we saw), so
+        // without it every overlap would re-queue the same visits. It also matches
+        // how the box dedups (`source_stream_id = url:timestamp`), so the two layers
+        // agree on what "the same visit" means.
+        let createBrowserTableSQL = """
+            CREATE TABLE IF NOT EXISTS browser_visits (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                url TEXT NOT NULL,
+                title TEXT,
+                visit_time TEXT NOT NULL,
+                browser TEXT NOT NULL,
+                uploaded INTEGER DEFAULT 0,
+                created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE(url, visit_time)
+            );
+            CREATE INDEX IF NOT EXISTS idx_browser_uploaded ON browser_visits(uploaded);
+            CREATE INDEX IF NOT EXISTS idx_browser_time ON browser_visits(visit_time);
+        """
+
+        if sqlite3_exec(db, createBrowserTableSQL, nil, nil, nil) != SQLITE_OK {
+            throw QueueError.cannotCreateTable
+        }
+
         // Create messages table
         let createMessagesTableSQL = """
             CREATE TABLE IF NOT EXISTS messages (
@@ -248,6 +273,118 @@ class Queue {
         }
     }
     
+    // MARK: - Browser visits
+
+    /// Queue a batch of visits. `INSERT OR IGNORE` leans on UNIQUE(url, visit_time)
+    /// so a re-scanned overlap is a no-op rather than a duplicate.
+    func addBrowserVisits(_ visits: [BrowserVisit]) throws -> Int {
+        try queue.sync {
+            guard sqlite3_exec(db, "BEGIN TRANSACTION", nil, nil, nil) == SQLITE_OK else {
+                throw QueueError.cannotPrepareStatement
+            }
+            var committed = false
+            defer { if !committed { sqlite3_exec(db, "ROLLBACK", nil, nil, nil) } }
+
+            let sql = """
+                INSERT OR IGNORE INTO browser_visits (url, title, visit_time, browser)
+                VALUES (?, ?, ?, ?)
+            """
+            var statement: OpaquePointer?
+            defer { if statement != nil { sqlite3_finalize(statement) } }
+            guard sqlite3_prepare_v2(db, sql, -1, &statement, nil) == SQLITE_OK else {
+                throw QueueError.cannotPrepareStatement
+            }
+
+            var inserted = 0
+            for visit in visits {
+                sqlite3_reset(statement)
+                sqlite3_clear_bindings(statement)
+                sqlite3_bind_text(statement, 1, (visit.url as NSString).utf8String, -1, SQLITE_TRANSIENT)
+                if let title = visit.title {
+                    sqlite3_bind_text(statement, 2, (title as NSString).utf8String, -1, SQLITE_TRANSIENT)
+                } else {
+                    sqlite3_bind_null(statement, 2)
+                }
+                sqlite3_bind_text(statement, 3, (visit.timestamp as NSString).utf8String, -1, SQLITE_TRANSIENT)
+                sqlite3_bind_text(statement, 4, (visit.browser as NSString).utf8String, -1, SQLITE_TRANSIENT)
+
+                guard sqlite3_step(statement) == SQLITE_DONE else {
+                    throw QueueError.cannotInsertEvent
+                }
+                inserted += sqlite3_changes(db) > 0 ? 1 : 0
+            }
+
+            guard sqlite3_exec(db, "COMMIT", nil, nil, nil) == SQLITE_OK else {
+                throw QueueError.cannotPrepareStatement
+            }
+            committed = true
+            return inserted
+        }
+    }
+
+    func getPendingBrowserVisits(limit: Int = 500) throws -> [(id: Int64, visit: BrowserVisit)] {
+        try queue.sync {
+            let sql = """
+                SELECT id, url, title, visit_time, browser FROM browser_visits
+                WHERE uploaded = 0 ORDER BY visit_time ASC LIMIT ?
+            """
+            var statement: OpaquePointer?
+            defer { if statement != nil { sqlite3_finalize(statement) } }
+            guard sqlite3_prepare_v2(db, sql, -1, &statement, nil) == SQLITE_OK else {
+                throw QueueError.cannotPrepareStatement
+            }
+            sqlite3_bind_int(statement, 1, Int32(limit))
+
+            var out: [(id: Int64, visit: BrowserVisit)] = []
+            while sqlite3_step(statement) == SQLITE_ROW {
+                let id = sqlite3_column_int64(statement, 0)
+                let url = String(cString: sqlite3_column_text(statement, 1))
+                let title: String? = sqlite3_column_type(statement, 2) != SQLITE_NULL
+                    ? String(cString: sqlite3_column_text(statement, 2)) : nil
+                let time = String(cString: sqlite3_column_text(statement, 3))
+                let browser = String(cString: sqlite3_column_text(statement, 4))
+                out.append((id, BrowserVisit(url: url, title: title, timestamp: time, browser: browser)))
+            }
+            return out
+        }
+    }
+
+    func markBrowserVisitsUploaded(ids: [Int64]) throws {
+        guard !ids.isEmpty else { return }
+        try queue.sync {
+            let placeholders = ids.map { _ in "?" }.joined(separator: ",")
+            let sql = "UPDATE browser_visits SET uploaded = 1 WHERE id IN (\(placeholders))"
+            var statement: OpaquePointer?
+            defer { if statement != nil { sqlite3_finalize(statement) } }
+            guard sqlite3_prepare_v2(db, sql, -1, &statement, nil) == SQLITE_OK else {
+                throw QueueError.cannotPrepareStatement
+            }
+            for (i, id) in ids.enumerated() {
+                sqlite3_bind_int64(statement, Int32(i + 1), id)
+            }
+            guard sqlite3_step(statement) == SQLITE_DONE else {
+                throw QueueError.cannotUpdateEvent
+            }
+        }
+    }
+
+    func cleanupOldBrowserVisits(olderThanHours: Int = 168) throws {
+        try queue.sync {
+            let cutoff = Date().addingTimeInterval(TimeInterval(-olderThanHours * 3600))
+            let cutoffString = ISO8601DateFormatter().string(from: cutoff)
+            var statement: OpaquePointer?
+            defer { if statement != nil { sqlite3_finalize(statement) } }
+            guard sqlite3_prepare_v2(
+                db, "DELETE FROM browser_visits WHERE uploaded = 1 AND created_at < ?",
+                -1, &statement, nil) == SQLITE_OK
+            else { throw QueueError.cannotPrepareStatement }
+            sqlite3_bind_text(statement, 1, (cutoffString as NSString).utf8String, -1, SQLITE_TRANSIENT)
+            guard sqlite3_step(statement) == SQLITE_DONE else {
+                throw QueueError.cannotDeleteEvents
+            }
+        }
+    }
+
     func cleanupOldEvents(olderThanHours: Int = 168) throws {
         try queue.sync {
             // Calculate cutoff date in Swift to avoid string interpolation in SQL
