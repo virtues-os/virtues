@@ -33,8 +33,8 @@ use base64::Engine;
 use chrono::{DateTime, Utc};
 use serde_json::Value;
 use sqlx::PgPool;
-use uuid::Uuid;
 use virtues::storage::{lake, Storage};
+use virtues_helpers::ios::{row_id, stream_id_or_hash, MICROPHONE_STREAM_TABLE};
 
 const PROVIDER: &str = "ios";
 const STREAM: &str = "microphone";
@@ -105,9 +105,10 @@ pub async fn externalize_blobs(
         if let Some(obj) = sanitized.as_object_mut() {
             obj.remove("audio_data");
             obj.insert("audio_ref".into(), Value::String(key));
-            // Pin the id we just used. `stream_id_of` mints a fresh UUID when the
-            // record has none, so without this the blob's filename and the row's
-            // source_stream_id would be two different UUIDs.
+            // Pin the id we derived. The blob's filename is built from it, and
+            // stripping audio_data changes the record's content — so an id-less
+            // chunk would otherwise hash to a DIFFERENT dedup key downstream than
+            // the one naming its own audio file.
             obj.insert("id".into(), Value::String(stream_id));
         }
         out.push(sanitized);
@@ -116,12 +117,10 @@ pub async fn externalize_blobs(
     Ok(out)
 }
 
+/// Deterministic: an `id`-less chunk hashes to the same dedup key every time, so a
+/// retry collapses instead of writing a second copy of the same audio.
 fn stream_id_of(record: &Value) -> String {
-    record
-        .get("id")
-        .and_then(|v| v.as_str())
-        .map(String::from)
-        .unwrap_or_else(|| Uuid::new_v4().to_string())
+    stream_id_or_hash(record, MICROPHONE_STREAM_TABLE)
 }
 
 fn audio_format_of(record: &Value) -> String {
@@ -188,7 +187,7 @@ async fn ingest_one(db: &PgPool, record: &Value) -> Result<bool> {
         .unwrap_or(false);
     let average_db_level = record.get("average_db_level").and_then(|v| v.as_f64());
 
-    let id = Uuid::new_v4().to_string();
+    let id = row_id(MICROPHONE_STREAM_TABLE, &stream_id);
 
     let result = sqlx::query(
         r#"INSERT INTO data_audio_recording (

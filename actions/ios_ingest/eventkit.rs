@@ -9,7 +9,7 @@ use serde_json::Value;
 use sqlx::PgPool;
 use uuid::Uuid;
 use virtues_helpers::dedup::{build_batch_insert_query, BATCH_SIZE};
-use virtues_helpers::ios::{stream_id_or_new, EVENTKIT_STREAM_TABLE, IOS_PROVIDER};
+use virtues_helpers::ios::{row_id, stream_id_or_hash, EVENTKIT_STREAM_TABLE, IOS_PROVIDER};
 
 struct CalendarRow {
     id: String,
@@ -97,7 +97,7 @@ pub async fn write_events(db: &PgPool, records: &[Value]) -> Result<usize> {
             .unwrap_or(false);
         let external_id = record.get("id").and_then(|v| v.as_str()).map(String::from);
         let external_url = record.get("url").and_then(|v| v.as_str()).map(String::from);
-        let stream_id = stream_id_or_new(record);
+        let stream_id = stream_id_or_hash(record, EVENTKIT_STREAM_TABLE);
 
         let metadata = serde_json::json!({
             "calendar_id": record.get("calendarId"),
@@ -105,7 +105,7 @@ pub async fn write_events(db: &PgPool, records: &[Value]) -> Result<usize> {
         });
 
         pending.push(CalendarRow {
-            id: Uuid::new_v4().to_string(),
+            id: row_id(EVENTKIT_STREAM_TABLE, &stream_id),
             title,
             description,
             calendar_name,
