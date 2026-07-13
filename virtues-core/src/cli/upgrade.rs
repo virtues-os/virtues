@@ -135,9 +135,13 @@ pub async fn run(
     // stop→swap→start ordering is what makes the new bytes take effect.
     ui::step("stopping virtues.service…");
     service_stop("virtues");
-    if new_llama.is_some() {
-        service_stop("virtues-embed");
-        service_stop("virtues-rerank");
+    let sidecars = if new_llama.is_some() {
+        installed_inference_units()
+    } else {
+        Vec::new()
+    };
+    for unit in &sidecars {
+        service_stop(unit);
     }
 
     // Bring the sidecars we stopped back up. Called on every abort path below
@@ -145,11 +149,10 @@ pub async fn run(
     // stopping `virtues-embed`/`-rerank` early then returning on a migrate or
     // start failure left them down until a manual `systemctl start`. Idempotent
     // and best-effort.
-    let revive_llama = new_llama.is_some();
+    let to_revive = sidecars.clone();
     let revive_sidecars = move || {
-        if revive_llama {
-            let _ = service_start("virtues-embed");
-            let _ = service_start("virtues-rerank");
+        for unit in &to_revive {
+            let _ = service_start(unit);
         }
     };
 
@@ -238,13 +241,11 @@ pub async fn run(
             return Err(crate::Error::Other(format!("invoke systemctl: {e}")));
         }
     }
-    if new_llama.is_some() {
-        for unit in ["virtues-embed", "virtues-rerank"] {
-            if let Ok(false) | Err(_) = service_start(unit) {
-                ui::warn(&format!(
-                    "{unit} did not start — search/embeddings degraded; check `systemctl status {unit}`"
-                ));
-            }
+    for unit in &sidecars {
+        if let Ok(false) | Err(_) = service_start(unit) {
+            ui::warn(&format!(
+                "{unit} did not start — search/embeddings degraded; check `systemctl status {unit}`"
+            ));
         }
     }
 
@@ -380,6 +381,20 @@ fn refresh_named(label: &str, src: &Path, dst: &Path) {
 }
 
 /// `systemctl stop <unit>` — best-effort (a not-yet-running unit is fine).
+/// The inference sidecars actually installed on THIS box.
+///
+/// We ship two backends: the llama.cpp sidecars (`virtues-embed` + `virtues-rerank`,
+/// on Jetson/DIY) and the QNN NPU daemon (`virtues-qnnd`, on Q6A). Hardcoding either
+/// set is wrong for the other — assuming llama.cpp made a healthy Q6A box print
+/// "Unit virtues-embed.service not loaded" and a false "search/embeddings degraded"
+/// on every upgrade. So ask the filesystem instead of guessing.
+fn installed_inference_units() -> Vec<&'static str> {
+    ["virtues-embed", "virtues-rerank", "virtues-qnnd"]
+        .into_iter()
+        .filter(|u| Path::new(&format!("/etc/systemd/system/{u}.service")).exists())
+        .collect()
+}
+
 fn service_stop(unit: &str) {
     let _ = Command::new("systemctl").arg("stop").arg(unit).status();
 }
