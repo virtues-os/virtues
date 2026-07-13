@@ -32,6 +32,16 @@ final class BrowserMonitor {
     private let queue: Queue
     private var timer: DispatchSourceTimer?
 
+    /// Warn once per browser, not once per visit.
+    private var warnedImplausible: Set<String> = []
+
+    /// The window a real page visit can fall in. The web is younger than this floor,
+    /// and a visit cannot be from tomorrow.
+    private static func plausible(_ date: Date) -> Bool {
+        let floor = Date(timeIntervalSince1970: 788_918_400)  // 1995-01-01
+        return date > floor && date < Date().addingTimeInterval(86_400)
+    }
+
     /// Re-scan every 5 minutes, matching the uploader's cadence.
     private let syncInterval: TimeInterval = 300
 
@@ -120,6 +130,21 @@ final class BrowserMonitor {
             let native = sqlite3_column_double(statement, 2)
             let when = source.kind.toDate(native)
 
+            // EPOCH GUARD. Three browsers, three epochs (1601 µs / 2001 s / 1970 µs),
+            // and getting one wrong doesn't throw — it just files your browsing in the
+            // 17th century, or 56,000 years from now, and nothing ever tells you. Any
+            // visit outside a plausible window means the conversion is wrong, not that
+            // the data is weird, so say so loudly instead of writing it.
+            guard Self.plausible(when) else {
+                if !warnedImplausible.contains(source.id) {
+                    warnedImplausible.insert(source.id)
+                    print(
+                        "⚠️ browser[\(source.id)]: visit converts to \(when) — implausible, "
+                            + "so the epoch for this browser is wrong. Skipping its visits.")
+                }
+                continue
+            }
+
             // A visit strictly at the cursor was already queued; `>` in SQL would be
             // brittle across float rounding, so filter here too.
             if let since, when <= since { continue }
@@ -177,9 +202,20 @@ struct BrowserSource {
     let path: URL
     let kind: BrowserKind
 
-    /// Chromium keeps history per profile (`Default`, `Profile 1`, …). Everything
-    /// here is discovered, not assumed: a browser that isn't installed simply
-    /// contributes nothing.
+    /// Everything here is DISCOVERED, not asserted. A browser that isn't installed
+    /// contributes nothing; a browser that lays its profiles out differently than we
+    /// expected still gets found.
+    ///
+    /// That matters because the Chromium layout is not uniform on macOS. `User Data`
+    /// is the *Windows* convention, and only some ports keep it:
+    ///
+    ///   Dia, Arc     ~/Library/Application Support/Dia/User Data/Default/History
+    ///   Chrome       ~/Library/Application Support/Google/Chrome/Default/History
+    ///   Brave, Edge  …/BraveSoftware/Brave-Browser/Default/History   (no User Data)
+    ///
+    /// Hardcoding `User Data` therefore finds Dia and Arc and silently reports Chrome,
+    /// Brave and Edge as "not installed" — a stream that contributes zero rows forever
+    /// and never errors. So probe both layouts and take whichever exists.
     static func installed() -> [BrowserSource] {
         let fm = FileManager.default
         let home = fm.homeDirectoryForCurrentUser
@@ -187,24 +223,55 @@ struct BrowserSource {
 
         var found: [BrowserSource] = []
 
-        // (display id, Application Support subdirectory)
+        // (id, Application Support subdirectory)
         let chromium: [(String, String)] = [
             ("dia", "Dia"),
             ("chrome", "Google/Chrome"),
+            ("chrome-beta", "Google/Chrome Beta"),
+            ("chrome-canary", "Google/Chrome Canary"),
             ("arc", "Arc"),
             ("brave", "BraveSoftware/Brave-Browser"),
             ("edge", "Microsoft Edge"),
+            ("vivaldi", "Vivaldi"),
+            ("opera", "com.operasoftware.Opera"),
             ("chromium", "Chromium"),
         ]
 
         for (id, dir) in chromium {
-            let userData = appSupport.appendingPathComponent(dir).appendingPathComponent("User Data")
-            guard let profiles = try? fm.contentsOfDirectory(atPath: userData.path) else { continue }
-            for profile in profiles where profile == "Default" || profile.hasPrefix("Profile ") {
-                let history = userData.appendingPathComponent(profile).appendingPathComponent("History")
-                guard fm.fileExists(atPath: history.path) else { continue }
-                let sourceId = profile == "Default" ? id : "\(id):\(profile.lowercased())"
-                found.append(BrowserSource(id: sourceId, path: history, kind: .chromium))
+            let root = appSupport.appendingPathComponent(dir)
+            // Both layouts: <root>/<profile>/History and <root>/User Data/<profile>/History.
+            for base in [root, root.appendingPathComponent("User Data")] {
+                guard let entries = try? fm.contentsOfDirectory(atPath: base.path) else { continue }
+                for profile in entries where profile == "Default" || profile.hasPrefix("Profile ") {
+                    let history = base.appendingPathComponent(profile)
+                        .appendingPathComponent("History")
+                    guard fm.fileExists(atPath: history.path) else { continue }
+                    let sourceId = profile == "Default" ? id : "\(id):\(profile.lowercased())"
+                    found.append(BrowserSource(id: sourceId, path: history, kind: .chromium))
+                }
+            }
+        }
+
+        // Firefox family: profiles are hash-named (`abc123.default-release`), so the
+        // profile directory has to be enumerated rather than guessed.
+        // Deliberately NOT Tor Browser: it exists to not remember, and collecting the
+        // history it tries hard not to keep is the wrong default.
+        let firefox: [(String, String)] = [
+            ("firefox", "Firefox"),
+            ("zen", "zen"),
+            ("librewolf", "LibreWolf"),
+        ]
+
+        for (id, dir) in firefox {
+            let profiles = appSupport.appendingPathComponent(dir)
+                .appendingPathComponent("Profiles")
+            guard let entries = try? fm.contentsOfDirectory(atPath: profiles.path) else { continue }
+            for profile in entries {
+                let places = profiles.appendingPathComponent(profile)
+                    .appendingPathComponent("places.sqlite")
+                guard fm.fileExists(atPath: places.path) else { continue }
+                let sourceId = entries.count > 1 ? "\(id):\(profile)" : id
+                found.append(BrowserSource(id: sourceId, path: places, kind: .firefox))
             }
         }
 
@@ -217,12 +284,21 @@ struct BrowserSource {
     }
 }
 
+/// The three history schemas that exist on a Mac. They agree on nothing — not the
+/// table names, not the column names, and not even the epoch:
+///
+///   Chromium  MICROSECONDS since 1601-01-01  (WebKit/Windows FILETIME epoch)
+///   Safari    SECONDS      since 2001-01-01  (Core Data epoch)
+///   Firefox   MICROSECONDS since 1970-01-01  (Unix epoch, but in µs)
+///
+/// A wrong epoch does not fail — it just files your browsing history in 1601, or
+/// 2001, or 56,000 years from now. So the conversions live here, together, where
+/// they can be compared, and each is checked against real data before shipping.
 enum BrowserKind {
     case chromium
     case safari
+    case firefox
 
-    /// Seconds between the Unix epoch and each browser's epoch.
-    /// Chromium counts MICROSECONDS from 1601-01-01; Safari SECONDS from 2001-01-01.
     private static let webkitEpochOffset: Double = 11_644_473_600  // 1601 → 1970
     private static let coreDataEpochOffset: Double = 978_307_200  // 2001 → 1970
 
@@ -244,6 +320,14 @@ enum BrowserKind {
                 ORDER BY v.visit_time ASC
                 LIMIT 2000
                 """
+        case .firefox:
+            return """
+                SELECT p.url, p.title, v.visit_date
+                FROM moz_historyvisits v JOIN moz_places p ON p.id = v.place_id
+                WHERE v.visit_date > ?
+                ORDER BY v.visit_date ASC
+                LIMIT 2000
+                """
         }
     }
 
@@ -253,6 +337,8 @@ enum BrowserKind {
             return Date(timeIntervalSince1970: native / 1_000_000 - Self.webkitEpochOffset)
         case .safari:
             return Date(timeIntervalSince1970: native + Self.coreDataEpochOffset)
+        case .firefox:
+            return Date(timeIntervalSince1970: native / 1_000_000)
         }
     }
 
@@ -262,6 +348,8 @@ enum BrowserKind {
             return (date.timeIntervalSince1970 + Self.webkitEpochOffset) * 1_000_000
         case .safari:
             return date.timeIntervalSince1970 - Self.coreDataEpochOffset
+        case .firefox:
+            return date.timeIntervalSince1970 * 1_000_000
         }
     }
 }
