@@ -35,6 +35,13 @@ pub async fn build_endpoint(
     relay_url: Option<RelayUrl>,
     bind_port: Option<u16>,
 ) -> Result<Endpoint> {
+    // iroh pins its own QUIC TLS to ring (presets::Minimal), but its relay HTTP
+    // client (reqwest built with `rustls-no-provider`) resolves the *process
+    // default* CryptoProvider and panics if none is installed. Install ring as
+    // that default here — the one choke point every consumer passes through.
+    // Err = someone already installed a provider, which is exactly as good.
+    let _ = rustls::crypto::ring::default_provider().install_default();
+
     let mut builder = Endpoint::builder(presets::Minimal).secret_key(secret);
     builder = match relay_url {
         Some(url) => builder.relay_mode(RelayMode::Custom(url.into())),
