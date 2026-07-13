@@ -490,6 +490,20 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     }
 
+    // ─── `virtues lake-adopt` ───────────────────────────────────────────────
+    // Pull the recordings that predate the lake into it. Needs only a pool (and
+    // STORAGE_PATH from the box env), so it runs here rather than paying for the
+    // whole client stack.
+    if let Some(Commands::LakeAdopt { dry_run }) = &cli.command {
+        match virtues::cli::lake_adopt::run(*dry_run).await {
+            Ok(()) => return Ok(()),
+            Err(e) => {
+                eprintln!("error: lake-adopt failed: {e}");
+                std::process::exit(1);
+            }
+        }
+    }
+
     // ─── `virtues upgrade` ──────────────────────────────────────────────────
     // Self-update from the latest GitHub Release (or a pinned --version
     // tag). Stops the service, swaps the binary, applies migrations,

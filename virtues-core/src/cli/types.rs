@@ -302,6 +302,16 @@ pub enum Commands {
         yes: bool,
     },
 
+    /// Adopt orphaned media into the lake: recordings written before the lake
+    /// existed live outside it (a cwd-relative path bug), so they are invisible to
+    /// lake accounting and to any GC. Copies them in, registers them, rewrites the
+    /// pointers. Idempotent; leaves the originals in place for you to verify first.
+    LakeAdopt {
+        /// Report what would be adopted without copying or rewriting anything.
+        #[arg(long)]
+        dry_run: bool,
+    },
+
     /// Rebuild the derived search index from source with the current model.
     /// Wipes the vector + BM25 index (source data is untouched), resizes the
     /// vector columns to match the model, and re-embeds. Use after an index
