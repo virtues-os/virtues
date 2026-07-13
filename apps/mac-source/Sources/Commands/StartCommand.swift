@@ -5,6 +5,7 @@ import Foundation
 // Global references for signal handlers
 private var globalMonitor: Monitor?
 private var globalUploader: Uploader?
+private var globalMessageMonitor: MessageMonitor?
 
 struct StartCommand: ParsableCommand {
     static let configuration = CommandConfiguration(
@@ -50,20 +51,28 @@ struct StartCommand: ParsableCommand {
         // Initialize components
         let queue = try Queue()
         let monitor = Monitor(queue: queue)
+        // Messages. This was BUILT but never wired up — StartCommand only called the
+        // static `canReadMessagesDB()` (which exists to trip TCC so the binary shows
+        // up in System Settings), so the message collector never actually ran and
+        // `data_communication_message` stayed empty no matter what the user granted.
+        let messageMonitor = MessageMonitor(queue: queue)
         let uploader = Uploader(queue: queue, config: config)
-        
+
         // Store globally for signal handlers
         globalMonitor = monitor
+        globalMessageMonitor = messageMonitor
         globalUploader = uploader
-        
+
         // Start monitoring and uploading
         monitor.start()
+        messageMonitor.start()
         uploader.start()
         
         // Set up signal handlers for graceful shutdown
         signal(SIGINT) { _ in
             print("\nShutting down...")
             globalMonitor?.stop()
+            globalMessageMonitor?.stop()
             globalUploader?.stop()
             Foundation.exit(0)
         }
@@ -71,6 +80,7 @@ struct StartCommand: ParsableCommand {
         signal(SIGTERM) { _ in
             print("\nShutting down...")
             globalMonitor?.stop()
+            globalMessageMonitor?.stop()
             globalUploader?.stop()
             Foundation.exit(0)
         }
