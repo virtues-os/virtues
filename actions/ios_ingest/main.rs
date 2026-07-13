@@ -27,7 +27,10 @@ mod microphone;
 use anyhow::{anyhow, Result};
 use serde_json::Value;
 use sqlx::PgPool;
+use virtues::storage::lake::{self, Envelope};
 use virtues_helpers::{connect_from_env, output, read_input, ActionInput};
+
+const PROVIDER: &str = "ios";
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -37,33 +40,42 @@ async fn main() -> Result<()> {
     let stream = resolve_stream(&input)?;
     let db = connect_from_env("virtues-action-ios_ingest").await?;
     let payload = input.payload.as_ref();
+    let storage = lake::storage_from_env()?;
 
     let summary = match stream.as_str() {
-        "healthkit" => healthkit_ingest(&db, records(payload, "healthkit")?).await?,
+        "healthkit" => {
+            let recs = archive(&db, &storage, "healthkit", records(payload, "healthkit")?).await?;
+            healthkit_ingest(&db, &recs).await?
+        }
         "location" => {
-            let recs = records(payload, "location")?;
-            let written = location::write_locations(&db, recs).await?;
+            let recs = archive(&db, &storage, "location", records(payload, "location")?).await?;
+            let written = location::write_locations(&db, &recs).await?;
             format!("locations: {}/{}", written, recs.len())
         }
         "eventkit" => {
-            let recs = records(payload, "eventkit")?;
-            let written = eventkit::write_events(&db, recs).await?;
+            let recs = archive(&db, &storage, "eventkit", records(payload, "eventkit")?).await?;
+            let written = eventkit::write_events(&db, &recs).await?;
             format!("events: {} written", written)
         }
         "contacts" => {
-            let recs = records(payload, "contacts")?;
-            let (resolved, failed) = contacts::resolve_contacts(&db, recs).await?;
+            let recs = archive(&db, &storage, "contacts", records(payload, "contacts")?).await?;
+            let (resolved, failed) = contacts::resolve_contacts(&db, &recs).await?;
             format!("contacts: {} resolved, {} failed", resolved, failed)
         }
         "microphone" => {
+            // Blobs FIRST: the audio is externalized to the lake before the records
+            // that reference it are archived, so an archived object can never point
+            // at a blob that doesn't exist.
             let recs = records(payload, "microphone")?;
-            let (written, failed) = microphone::ingest_all(&db, recs).await?;
+            let recs = microphone::externalize_blobs(&db, &storage, recs).await?;
+            let recs = archive(&db, &storage, "microphone", &recs).await?;
+            let (written, failed) = microphone::ingest_all(&db, &recs).await?;
             format!("audio recordings: {} written, {} failed", written, failed)
         }
         "financekit" => {
-            let recs = records(payload, "financekit")?;
-            let accounts = financekit::write_accounts(&db, recs).await?;
-            let transactions = financekit::write_transactions(&db, recs).await?;
+            let recs = archive(&db, &storage, "financekit", records(payload, "financekit")?).await?;
+            let accounts = financekit::write_accounts(&db, &recs).await?;
+            let transactions = financekit::write_transactions(&db, &recs).await?;
             format!("accounts: {}, transactions: {}", accounts, transactions)
         }
         other => {
@@ -76,6 +88,32 @@ async fn main() -> Result<()> {
 
     output(&summary, &input.config)?;
     Ok(())
+}
+
+/// Land the raw records BEFORE transforming them, and hand them straight back so
+/// the caller transforms exactly what was archived.
+///
+/// A failing transform below still returns 500 and the device still retries — but
+/// the bytes are already durable, so a bad transform becomes a `virtues replay`
+/// rather than data we can never get back (a webhook push has no upstream to
+/// re-fetch from).
+async fn archive(
+    db: &PgPool,
+    storage: &virtues::storage::Storage,
+    stream: &str,
+    records: &[Value],
+) -> Result<Vec<Value>> {
+    lake::archive(
+        db,
+        storage,
+        PROVIDER,
+        PROVIDER,
+        Envelope::IosStream(stream),
+        records,
+        Value::Object(Default::default()),
+    )
+    .await?;
+    Ok(records.to_vec())
 }
 
 /// Resolve which iOS stream this invocation handles. The production source is
