@@ -293,15 +293,17 @@ pub async fn write_imessages(db: &PgPool, messages: &[Value]) -> Result<usize> {
             .and_then(|v| v.as_str())
             .unwrap_or("")
             .to_string();
-        let from_handle = m
-            .get("from_handle")
-            .and_then(|v| v.as_str())
-            .unwrap_or("")
-            .to_string();
         let is_from_me = m
             .get("is_from_me")
             .and_then(|v| v.as_bool())
             .unwrap_or(false);
+        // from_identifier is NOT NULL. Outgoing messages have no handle in chat.db
+        // (the handle column identifies the *other* party), so name ourselves.
+        let from_handle = match m.get("from_handle").and_then(|v| v.as_str()) {
+            Some(h) if !h.is_empty() => h.to_string(),
+            _ if is_from_me => "me".to_string(),
+            _ => String::new(),
+        };
         // NOTE: `direction` ('sent'/'received') is a column on
         // data_communication_*EMAIL*, NOT on data_communication_message — inserting
         // it here failed every iMessage batch with "column \"direction\" ... does not
@@ -363,6 +365,9 @@ async fn flush_imessage(
         "data_communication_message",
         &[
             "id",
+            // The provider's native message id (the iMessage GUID). NOT NULL — omitting
+            // it is what broke ingest after the `direction` fix.
+            "message_id",
             "body",
             "from_identifier",
             // `channel` is what the registry reads for a message's source_type
@@ -380,8 +385,10 @@ async fn flush_imessage(
     );
     let mut q = sqlx::query(&sql);
     for r in rows {
+        // r.5 is the GUID: it serves as both the native message_id and the dedup key.
         q = q
             .bind(&r.0)
+            .bind(&r.5)
             .bind(&r.1)
             .bind(&r.2)
             .bind("imessage")
