@@ -1,4 +1,5 @@
 import ArgumentParser
+import CoreWLAN
 import Foundation
 
 // Global references for signal handlers
@@ -30,7 +31,16 @@ struct StartCommand: ParsableCommand {
         // Access, so the user gets a "virtues-collector" row to toggle on even
         // before anything is granted. (A stat would not trip TCC.)
         _ = MessageMonitor.canReadMessagesDB()
-        
+
+        // Realize CoreWLAN's ObjC classes BEFORE iroh starts. iroh's macOS network
+        // monitor looks up `CWWiFiClient` by name and PANICS if the ObjC runtime
+        // hasn't realized it ("class CWWiFiClient could not be found") — which kills
+        // every upload. Linking the framework (`-framework CoreWLAN`) is necessary
+        // but NOT sufficient on its own; a direct Swift reference is what guarantees
+        // the class is actually registered. Verified: NSClassFromString("CWWiFiClient")
+        // is nil without this and resolves with it.
+        _ = CWWiFiClient.shared()
+
         // Wire the box reach ticket + iroh seed into the transport so uploads
         // dial the box over iroh (authenticated by this device's key).
         let semaphore = DispatchSemaphore(value: 0)
