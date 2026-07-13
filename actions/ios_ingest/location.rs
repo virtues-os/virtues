@@ -11,7 +11,7 @@ use sqlx::PgPool;
 use uuid::Uuid;
 use virtues_helpers::dedup::{build_batch_insert_query, BATCH_SIZE};
 use virtues_helpers::ios::{
-    parse_timestamp, stream_id_or_hash, IOS_PROVIDER, LOCATION_STREAM_TABLE,
+    parse_timestamp, row_id, stream_id_or_hash, IOS_PROVIDER, LOCATION_STREAM_TABLE,
 };
 
 #[allow(clippy::type_complexity)]
@@ -79,7 +79,7 @@ pub async fn write_locations(db: &PgPool, records: &[Value]) -> Result<usize> {
         });
 
         pending.push((
-            Uuid::new_v4().to_string(),
+            row_id(LOCATION_STREAM_TABLE, &stream_id),
             latitude,
             longitude,
             altitude,

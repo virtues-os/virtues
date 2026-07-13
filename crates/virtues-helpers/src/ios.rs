@@ -21,21 +21,24 @@ pub fn parse_timestamp(record: &Value, field: &str) -> DateTime<Utc> {
         .unwrap_or_else(Utc::now)
 }
 
-/// Extract the stream ID from a record's `id` field, generating a new UUID if absent.
-///
-/// This is the deterministic dedup key — the iOS app sends a stable identifier per record
-/// so replays don't create duplicates.
-pub fn stream_id_or_new(record: &Value) -> String {
-    record
-        .get("id")
-        .and_then(|v| v.as_str())
-        .map(String::from)
-        .unwrap_or_else(|| Uuid::new_v4().to_string())
-}
-
 /// Fixed namespace for deterministic iOS stream ids (UUIDv5), domain-separating
 /// them from any other UUIDv5 used in the system.
 const IOS_STREAM_NS: Uuid = Uuid::from_u128(0x1f9a3c7e_4b2d_5e8f_a1c6_9d0b2e4f6a8c);
+
+/// The ontology row's primary key, derived deterministically from its dedup key.
+///
+/// A random `Uuid::new_v4()` here means the same logical record gets a different
+/// primary key every time it is written. `ON CONFLICT (source_stream_id) DO
+/// NOTHING` hides that today — the second write is simply skipped — but it makes
+/// the row's identity accidental: anything that references it by id
+/// (`search_embeddings.record_id`, `wiki_entity_refs.source_id`) is orphaned the
+/// moment the row is ever rewritten. Deriving the id from the stream id makes a
+/// record's identity a function of the record, which is what it always should
+/// have been.
+pub fn row_id(stream: &str, stream_id: &str) -> String {
+    let name = format!("{stream}\u{1f}{stream_id}");
+    Uuid::new_v5(&IOS_STREAM_NS, name.as_bytes()).to_string()
+}
 
 /// Stable dedup id for an iOS stream record. Prefers a client-supplied `id`;
 /// otherwise derives a **deterministic** id from the record's content so a retry

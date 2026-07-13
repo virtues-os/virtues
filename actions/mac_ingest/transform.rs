@@ -24,6 +24,21 @@ use virtues_helpers::dedup::{build_batch_insert_query, BATCH_SIZE};
 
 const PROVIDER: &str = "mac";
 
+/// A record's timestamp, or `None` if it has none we can parse.
+///
+/// Deliberately NOT `unwrap_or_else(Utc::now)`. Every one of these transforms folds
+/// the timestamp into either its dedup key or the row's place in the timeline, so a
+/// wall-clock fallback doesn't "recover" a bad record — it silently mints a new
+/// identity on every retry (duplicating the row) or files the record at ingest time
+/// (wrong forever, since ON CONFLICT DO NOTHING never corrects it). Callers skip
+/// records this returns `None` for; the raw record is still in the lake either way.
+fn event_time(record: &Value) -> Option<DateTime<Utc>> {
+    record
+        .get("timestamp")
+        .and_then(|v| v.as_str())
+        .and_then(|s| s.parse::<DateTime<Utc>>().ok())
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // App usage — aggregate raw activate/deactivate events into sessions
 // ─────────────────────────────────────────────────────────────────────────────
@@ -36,14 +51,11 @@ pub async fn write_app_events(db: &PgPool, events: &[Value]) -> Result<usize> {
         return Ok(0);
     }
 
-    // Sort by timestamp.
+    // Sort by timestamp. An unparseable timestamp sorts LAST (not to "now", which
+    // would shuffle position with the wall clock) — and the aggregation loop below
+    // skips those records outright, so this only decides ordering.
     let mut sorted: Vec<&Value> = events.iter().collect();
-    sorted.sort_by_key(|e| {
-        e.get("timestamp")
-            .and_then(|v| v.as_str())
-            .and_then(|s| s.parse::<DateTime<Utc>>().ok())
-            .unwrap_or_else(Utc::now)
-    });
+    sorted.sort_by_key(|e| event_time(e).unwrap_or(DateTime::<Utc>::MAX_UTC));
 
     #[derive(Default)]
     struct Session {
@@ -188,11 +200,15 @@ pub async fn write_browser_history(db: &PgPool, visits: &[Value]) -> Result<usiz
             .get("title")
             .and_then(|v| v.as_str())
             .map(String::from);
-        let ts = visit
-            .get("timestamp")
-            .and_then(|v| v.as_str())
-            .and_then(|s| s.parse::<DateTime<Utc>>().ok())
-            .unwrap_or_else(Utc::now);
+        // NO Utc::now() fallback. The timestamp goes straight into the dedup key
+        // below, so defaulting to the wall clock means a retry of the SAME visit
+        // computes a DIFFERENT source_stream_id and inserts a duplicate — every
+        // 5 minutes, for as long as the device keeps retrying. A visit we cannot
+        // place in time is not a visit we can dedup; skip it.
+        let Some(ts) = event_time(visit) else {
+            tracing::warn!(url, "browser visit has no parseable timestamp — skipping");
+            continue;
+        };
 
         let stream_id = format!("{}:{}", url, ts.timestamp_millis());
         let id = Uuid::new_v5(
@@ -317,11 +333,15 @@ pub async fn write_imessages(db: &PgPool, messages: &[Value]) -> Result<usize> {
             .get("chat_guid")
             .and_then(|v| v.as_str())
             .map(String::from);
-        let ts = m
-            .get("timestamp")
-            .and_then(|v| v.as_str())
-            .and_then(|s| s.parse::<DateTime<Utc>>().ok())
-            .unwrap_or_else(Utc::now);
+        // The GUID keys the dedup, so an unparseable timestamp wouldn't duplicate the
+        // row — it would silently file the message at INGEST time instead, landing a
+        // months-old message in today's timeline and then never correcting it
+        // (ON CONFLICT DO NOTHING). A message we can't place in time is worse than
+        // no message.
+        let Some(ts) = event_time(m) else {
+            tracing::warn!(guid, "iMessage has no parseable timestamp — skipping");
+            continue;
+        };
 
         let id = Uuid::new_v5(
             &Uuid::NAMESPACE_OID,

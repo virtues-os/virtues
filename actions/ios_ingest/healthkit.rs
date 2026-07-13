@@ -14,7 +14,7 @@ use sqlx::PgPool;
 use uuid::Uuid;
 use virtues_helpers::dedup::{build_batch_insert_query, BATCH_SIZE};
 use virtues_helpers::ios::{
-    parse_timestamp, stream_id_or_hash, HEALTHKIT_STREAM_TABLE, IOS_PROVIDER,
+    parse_timestamp, row_id, stream_id_or_hash, HEALTHKIT_STREAM_TABLE, IOS_PROVIDER,
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -54,7 +54,7 @@ pub async fn write_heart_rate(db: &PgPool, records: &[Value]) -> Result<usize> {
         });
 
         pending.push((
-            Uuid::new_v4().to_string(),
+            row_id(HEALTHKIT_STREAM_TABLE, &stream_id),
             bpm as i32,
             timestamp,
             stream_id,
@@ -145,7 +145,7 @@ pub async fn write_hrv(db: &PgPool, records: &[Value]) -> Result<usize> {
         });
 
         pending.push((
-            Uuid::new_v4().to_string(),
+            row_id(HEALTHKIT_STREAM_TABLE, &stream_id),
             hrv_ms,
             timestamp,
             stream_id,
@@ -227,7 +227,7 @@ pub async fn write_steps(db: &PgPool, records: &[Value]) -> Result<usize> {
         let metadata = serde_json::json!({ "healthkit_raw": raw_data });
 
         pending.push((
-            Uuid::new_v4().to_string(),
+            row_id(HEALTHKIT_STREAM_TABLE, &stream_id),
             step_count as i32,
             timestamp,
             stream_id,
@@ -308,7 +308,7 @@ pub async fn write_active_energy(db: &PgPool, records: &[Value]) -> Result<usize
         let metadata = serde_json::json!({ "healthkit_raw": raw_data });
 
         pending.push((
-            Uuid::new_v4().to_string(),
+            row_id(HEALTHKIT_STREAM_TABLE, &stream_id),
             kcal,
             timestamp,
             stream_id,
@@ -389,7 +389,7 @@ pub async fn write_distance(db: &PgPool, records: &[Value]) -> Result<usize> {
         let metadata = serde_json::json!({ "healthkit_raw": raw_data });
 
         pending.push((
-            Uuid::new_v4().to_string(),
+            row_id(HEALTHKIT_STREAM_TABLE, &stream_id),
             meters,
             timestamp,
             stream_id,
@@ -505,7 +505,7 @@ pub async fn write_sleep(db: &PgPool, records: &[Value]) -> Result<usize> {
         let metadata = serde_json::json!({ "healthkit_raw": raw_data });
 
         pending.push((
-            Uuid::new_v4().to_string(),
+            row_id(HEALTHKIT_STREAM_TABLE, &stream_id),
             sleep_stages,
             sleep_duration as i32,
             None,
@@ -635,7 +635,7 @@ pub async fn write_workout(db: &PgPool, records: &[Value]) -> Result<usize> {
         });
 
         pending.push((
-            Uuid::new_v4().to_string(),
+            row_id(HEALTHKIT_STREAM_TABLE, &stream_id),
             workout_type.to_string(),
             workout_duration,
             active_energy.map(|e| e as i32),
