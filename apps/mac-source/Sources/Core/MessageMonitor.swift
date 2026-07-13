@@ -154,7 +154,10 @@ class MessageMonitor {
             SELECT
                 m.guid as message_id,
                 c.guid as chat_id,
-                m.handle_id,
+                -- `m.handle_id` is a ROWID into `handle`, not an address. Selecting it
+                -- raw shipped every message with from_identifier="173" instead of a
+                -- phone number or email, so resolve it here.
+                h.id as handle,
                 m.text,
                 m.attributedBody,
                 m.service,
@@ -174,6 +177,7 @@ class MessageMonitor {
             FROM message m
             LEFT JOIN chat_message_join cmj ON m.ROWID = cmj.message_id
             LEFT JOIN chat c ON cmj.chat_id = c.ROWID
+            LEFT JOIN handle h ON m.handle_id = h.ROWID
             WHERE m.date > ?
             ORDER BY m.date ASC
             LIMIT ?
@@ -333,32 +337,61 @@ class MessageMonitor {
         )
     }
 
-    /// Extract plain text from NSAttributedString blob stored in Messages database
-    /// The attributedBody field contains an archived NSAttributedString
+    /// Extract plain text from the `attributedBody` blob in chat.db.
+    ///
+    /// Modern Messages leaves `message.text` NULL and puts the body here, so this is
+    /// the ONLY path for the large majority of messages — when it fails they arrive
+    /// blank (it was failing for ~94% of them).
+    ///
+    /// The blob is NOT an NSKeyedArchiver plist: it's a legacy **typedstream**
+    /// (`NSArchiver`, header "streamtyped"), which NSKeyedUnarchiver cannot decode at
+    /// all — so both the secure and the "legacy" NSKeyedUnarchiver paths simply threw.
+    /// NSUnarchiver, which could read it, is unavailable in Swift. So we parse out the
+    /// string ourselves: find the NSString marker, then read the length-prefixed UTF-8
+    /// payload that follows.
     private func extractTextFromAttributedBody(_ data: Data) -> String? {
         guard !data.isEmpty else { return nil }
 
-        do {
-            // Try to unarchive the NSAttributedString from the blob
-            if let attributedString = try NSKeyedUnarchiver.unarchivedObject(ofClass: NSAttributedString.self, from: data) {
-                let text = attributedString.string
-                // Only return non-empty strings
-                return text.isEmpty ? nil : text
-            }
-        } catch {
-            // If decoding fails, try legacy unarchiver (for older macOS versions)
-            do {
-                if let attributedString = try NSKeyedUnarchiver.unarchiveTopLevelObjectWithData(data) as? NSAttributedString {
-                    let text = attributedString.string
-                    return text.isEmpty ? nil : text
-                }
-            } catch {
-                // Silently fail - some messages may have unsupported formats
-                return nil
-            }
+        // Keep the keyed path first: harmless, and covers any blob that *is* keyed.
+        if let s = try? NSKeyedUnarchiver.unarchivedObject(
+            ofClass: NSAttributedString.self, from: data), !s.string.isEmpty {
+            return s.string
         }
 
-        return nil
+        return Self.parseTypedStreamString(data)
+    }
+
+    /// Pull the message body out of a typedstream archive.
+    ///
+    /// Layout after the class name: `NSString` ... `+` (0x2B) then a length, then the
+    /// UTF-8 bytes. Lengths < 0x80 are a single byte; 0x81/0x82 introduce a 2- or
+    /// 3-byte little-endian length (that's how anything longer than 127 chars encodes).
+    static func parseTypedStreamString(_ data: Data) -> String? {
+        guard let marker = data.range(of: Data("NSString".utf8)) else { return nil }
+        let bytes = [UInt8](data)
+
+        // The body is introduced by '+' shortly after the class name.
+        let searchFrom = data.distance(from: data.startIndex, to: marker.upperBound)
+        guard let plus = bytes[searchFrom...].firstIndex(of: 0x2B) else { return nil }
+        var i = plus + 1
+        guard i < bytes.count else { return nil }
+
+        var length = Int(bytes[i])
+        i += 1
+        if length == 0x81 {
+            guard i + 1 < bytes.count else { return nil }
+            length = Int(bytes[i]) | (Int(bytes[i + 1]) << 8)
+            i += 2
+        } else if length == 0x82 {
+            guard i + 2 < bytes.count else { return nil }
+            length = Int(bytes[i]) | (Int(bytes[i + 1]) << 8) | (Int(bytes[i + 2]) << 16)
+            i += 3
+        }
+
+        guard length > 0, i + length <= bytes.count else { return nil }
+        let text = String(decoding: bytes[i..<(i + length)], as: UTF8.self)
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? nil : trimmed
     }
 
     private func dateToCoreDateTimestamp(_ date: Date) -> Double {

@@ -297,12 +297,16 @@ pub async fn write_imessages(db: &PgPool, messages: &[Value]) -> Result<usize> {
             .get("is_from_me")
             .and_then(|v| v.as_bool())
             .unwrap_or(false);
-        // from_identifier is NOT NULL. Outgoing messages have no handle in chat.db
-        // (the handle column identifies the *other* party), so name ourselves.
-        let from_handle = match m.get("from_handle").and_then(|v| v.as_str()) {
-            Some(h) if !h.is_empty() => h.to_string(),
-            _ if is_from_me => "me".to_string(),
-            _ => String::new(),
+        // from_identifier is NOT NULL. In chat.db the handle identifies the *other*
+        // party even on messages we sent, so is_from_me has to win — otherwise our
+        // own messages get attributed to the recipient.
+        let from_handle = if is_from_me {
+            "me".to_string()
+        } else {
+            m.get("from_handle")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string()
         };
         // NOTE: `direction` ('sent'/'received') is a column on
         // data_communication_*EMAIL*, NOT on data_communication_message — inserting
