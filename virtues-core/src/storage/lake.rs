@@ -168,6 +168,14 @@ pub async fn archive(
 /// verbatim would store the box's single largest data class a second time, at
 /// 1.33× for the base64. Instead the blob lands here and the raw record keeps an
 /// `audio_ref` pointing at this key.
+///
+/// Media is keyed by its STORAGE KEY, not its digest — a blob's identity is the
+/// recording it belongs to, not its bytes. Two genuinely different recordings can
+/// encode identically (a pair of silent chunks; the transcription drainer exists
+/// partly to handle empty AAC containers), and digest-keying would silently hand
+/// one recording the other's audio. `filename` is derived from the record's stream
+/// id, so the key is already unique per recording, and a retry of the same chunk
+/// rewrites the same path — idempotent without content-addressing.
 pub async fn put_media(
     pool: &PgPool,
     storage: &Storage,
@@ -177,13 +185,10 @@ pub async fn put_media(
     bytes: &[u8],
 ) -> Result<String> {
     let storage_key = format!("media/{provider}/{stream}/{filename}");
-    let sha256 = hex_digest(bytes);
 
-    // Scoped to media: a digest match against some *raw_stream* object's JSONL would
-    // otherwise hand this recording that object's storage_key as its audio_url.
     let existing: Option<(String,)> =
-        sqlx::query_as("SELECT storage_key FROM lake_objects WHERE sha256 = $1 AND kind = 'media'")
-            .bind(&sha256)
+        sqlx::query_as("SELECT storage_key FROM lake_objects WHERE storage_key = $1")
+            .bind(&storage_key)
             .fetch_optional(pool)
             .await?;
     if let Some((key,)) = existing {
@@ -197,14 +202,14 @@ pub async fn put_media(
              id, kind, storage_key, provider, source_id, stream_name,
              record_count, size_bytes, sha256, content_encoding
          ) VALUES ($1, 'media', $2, $3, $3, $4, 0, $5, $6, 'none')
-         ON CONFLICT (sha256) DO NOTHING",
+         ON CONFLICT (storage_key) DO NOTHING",
     )
     .bind(Uuid::new_v4().to_string())
     .bind(&storage_key)
     .bind(provider)
     .bind(stream)
     .bind(bytes.len() as i64)
-    .bind(&sha256)
+    .bind(hex_digest(bytes))
     .execute(pool)
     .await?;
 

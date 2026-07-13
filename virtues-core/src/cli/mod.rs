@@ -5,6 +5,7 @@ pub mod commands;
 pub mod configure_inference;
 pub mod diag;
 pub mod doctor;
+pub mod lake_adopt;
 pub mod link;
 pub mod reindex;
 pub mod report_crash;
@@ -84,6 +85,11 @@ pub async fn run(cli: Cli, virtues: Virtues) -> Result<(), Box<dyn std::error::E
             // Same — runs before the normal init path, whose ensure_embedding_dims
             // would refuse the width change on the still-populated index.
             unreachable!("Reindex command should be handled in main.rs");
+        }
+        Commands::LakeAdopt { .. } => {
+            // Needs only a pool + STORAGE_PATH, so main.rs runs it before the client
+            // stack is built.
+            unreachable!("LakeAdopt command should be handled in main.rs");
         }
 
         Commands::Migrate => {
