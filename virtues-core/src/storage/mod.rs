@@ -1,5 +1,6 @@
 //! Storage module — local filesystem backend.
 
+pub mod lake;
 pub mod models;
 
 use std::path::PathBuf;
