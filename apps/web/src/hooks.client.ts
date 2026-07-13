@@ -15,9 +15,11 @@ initBackendFromShell();
 // On the native phone shell, lock the viewport so it behaves like an app:
 // no pinch-to-zoom, and no auto-zoom when a text input (< 16px) is focused
 // (WKWebView honours maximum-scale=1 for both). Scoped to mobile so the
-// desktop browser keeps normal zoom/accessibility. Not viewport-fit=cover —
-// we rely on iOS's automatic safe-area inset, which keeps the bars clear of
-// the Dynamic Island / home indicator.
+// desktop browser keeps normal zoom/accessibility. viewport-fit=cover makes
+// the page paint edge-to-edge (behind the Dynamic Island / home indicator) —
+// without it iOS letterboxes the webview and the bands show the bare native
+// window, not the theme. It also activates env(safe-area-inset-*), which the
+// tab bar / layout / settings sheet already use to keep content clear.
 if (typeof window !== 'undefined' && (window as unknown as { __VIRTUES_MOBILE__?: boolean }).__VIRTUES_MOBILE__) {
 	let vp = document.querySelector('meta[name="viewport"]');
 	if (!vp) {
@@ -27,7 +29,7 @@ if (typeof window !== 'undefined' && (window as unknown as { __VIRTUES_MOBILE__?
 	}
 	vp.setAttribute(
 		'content',
-		'width=device-width, initial-scale=1, maximum-scale=1, minimum-scale=1, user-scalable=no'
+		'width=device-width, initial-scale=1, maximum-scale=1, minimum-scale=1, user-scalable=no, viewport-fit=cover'
 	);
 }
 
