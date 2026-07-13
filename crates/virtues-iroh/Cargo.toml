@@ -15,6 +15,11 @@ license.workspace = true
 
 [dependencies]
 iroh = { version = "1", default-features = false, features = ["tls-ring", "portmapper"] }
+# Only to install ring as the process-default rustls CryptoProvider (see
+# build_endpoint). iroh's internal reqwest is built `rustls-no-provider`, so
+# without a process default the first relay HTTP client panics at runtime.
+# default-features = false keeps aws-lc-rs (cmake/C toolchain) out of the tree.
+rustls = { version = "0.23", default-features = false, features = ["ring", "std"] }
 
 # Serve the existing axum Router over an iroh bi-stream: iroh streams implement
 # tokio AsyncRead/AsyncWrite, so we bridge them to hyper 1.x directly.
