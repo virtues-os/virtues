@@ -1,12 +1,24 @@
-//! iOS microphone audio → file + `data_audio_recording` row.
+//! iOS microphone audio → media lake object + `data_audio_recording` row.
 //!
 //! This is the FAST receive path. The action does NOT transcribe audio inline
 //! — that would block the iOS request long enough to time out. Instead:
 //!
-//! 1. Decode the base64 audio bytes from the iOS payload
-//! 2. Write the bytes to `data/lake/ios_microphone/{stream_id}.{ext}` (cwd-relative)
-//! 3. INSERT a row into `data_audio_recording` with `audio_url` pointing at that file
-//! 4. Return success in well under 1s per chunk
+//! 1. [`externalize_blobs`] decodes the base64 audio out of each record and
+//!    stores it ONCE as a `kind='media'` lake object, replacing `audio_data`
+//!    with an `audio_ref` pointing at it
+//! 2. INSERT a row into `data_audio_recording` with `audio_url` = that ref
+//! 3. Return success in well under 1s per chunk
+//!
+//! Why the split: this stream's payload *is* the audio, and audio is by far the
+//! box's largest data class (763 MB against 65 MB for every ontology table put
+//! together). Archiving the raw payload verbatim would store all of it a second
+//! time, at 1.33× for the base64 — so the blob goes to the lake once and the
+//! archived record references it. That keeps the archived object replayable
+//! without doubling the only thing here that actually costs anything.
+//!
+//! This also retires the old cwd-relative `data/lake/ios_microphone` path, which
+//! ignored STORAGE_PATH and therefore parked ~763 MB *outside* the configured
+//! lake, invisible to every accounting and GC pass.
 //!
 //! Transcription happens asynchronously via the device-agnostic
 //! `transcription_resolution` cron action, which LEFT JOINs
@@ -21,28 +33,86 @@ use base64::Engine;
 use chrono::{DateTime, Utc};
 use serde_json::Value;
 use sqlx::PgPool;
-use std::path::PathBuf;
 use uuid::Uuid;
+use virtues::storage::{lake, Storage};
 
-/// Where audio files live on local disk. Relative to the server's cwd
-/// (which is also the subprocess's cwd, since we don't override `current_dir`).
-const AUDIO_DIR: &str = "data/lake/ios_microphone";
+const PROVIDER: &str = "ios";
+const STREAM: &str = "microphone";
+
+/// Pull each record's base64 audio out into a media lake object, returning the
+/// records with `audio_data` replaced by `audio_ref`.
+///
+/// Runs BEFORE the raw records are archived, so an archived object never
+/// references a blob that isn't there yet — otherwise a transform failure would
+/// leave behind an object that can't be replayed.
+pub async fn externalize_blobs(
+    db: &PgPool,
+    storage: &Storage,
+    records: &[Value],
+) -> Result<Vec<Value>> {
+    let mut out = Vec::with_capacity(records.len());
+
+    for record in records {
+        let Some(audio_b64) = record.get("audio_data").and_then(|v| v.as_str()) else {
+            // Already externalized (a replay) or malformed — pass through untouched
+            // and let ingest_one decide.
+            out.push(record.clone());
+            continue;
+        };
+
+        let stream_id = stream_id_of(record);
+        let format = audio_format_of(record);
+        let bytes = base64::engine::general_purpose::STANDARD
+            .decode(audio_b64)
+            .with_context(|| format!("failed to decode base64 audio for {stream_id}"))?;
+
+        let key = lake::put_media(
+            db,
+            storage,
+            PROVIDER,
+            STREAM,
+            &format!("{stream_id}.{format}"),
+            &bytes,
+        )
+        .await?;
+
+        let mut sanitized = record.clone();
+        if let Some(obj) = sanitized.as_object_mut() {
+            obj.remove("audio_data");
+            obj.insert("audio_ref".into(), Value::String(key));
+        }
+        out.push(sanitized);
+    }
+
+    Ok(out)
+}
+
+fn stream_id_of(record: &Value) -> String {
+    record
+        .get("id")
+        .and_then(|v| v.as_str())
+        .map(String::from)
+        .unwrap_or_else(|| Uuid::new_v4().to_string())
+}
+
+fn audio_format_of(record: &Value) -> String {
+    record
+        .get("audio_format")
+        .and_then(|v| v.as_str())
+        .unwrap_or("m4a")
+        .to_string()
+}
 
 pub async fn ingest_all(db: &PgPool, records: &[Value]) -> Result<(usize, usize)> {
     if records.is_empty() {
         return Ok((0, 0));
     }
 
-    // Ensure the audio directory exists once per invocation
-    let audio_dir = PathBuf::from(AUDIO_DIR);
-    std::fs::create_dir_all(&audio_dir)
-        .with_context(|| format!("failed to create audio dir {}", audio_dir.display()))?;
-
     let mut written = 0;
     let mut failed = 0;
 
     for record in records {
-        match ingest_one(db, &audio_dir, record).await {
+        match ingest_one(db, record).await {
             Ok(true) => written += 1,
             Ok(false) => {
                 // Conflict (UNIQUE source_stream_id) — already ingested. Not a failure.
@@ -59,22 +129,17 @@ pub async fn ingest_all(db: &PgPool, records: &[Value]) -> Result<(usize, usize)
 
 /// Ingest a single audio record. Returns `Ok(true)` if a new row was inserted,
 /// `Ok(false)` if the record was a duplicate.
-async fn ingest_one(db: &PgPool, audio_dir: &PathBuf, record: &Value) -> Result<bool> {
-    let stream_id = record
-        .get("id")
-        .and_then(|v| v.as_str())
-        .map(String::from)
-        .unwrap_or_else(|| Uuid::new_v4().to_string());
+async fn ingest_one(db: &PgPool, record: &Value) -> Result<bool> {
+    let stream_id = stream_id_of(record);
 
-    let audio_b64 = record
-        .get("audio_data")
+    // The bytes were already stored by `externalize_blobs`; we only record where.
+    let audio_url = record
+        .get("audio_ref")
         .and_then(|v| v.as_str())
-        .ok_or_else(|| anyhow!("record missing audio_data"))?;
+        .ok_or_else(|| anyhow!("record missing audio_ref (externalize_blobs must run first)"))?
+        .to_string();
 
-    let audio_format = record
-        .get("audio_format")
-        .and_then(|v| v.as_str())
-        .unwrap_or("m4a");
+    let audio_format = audio_format_of(record);
 
     let start_time = record
         .get("timestamp_start")
@@ -93,21 +158,6 @@ async fn ingest_one(db: &PgPool, audio_dir: &PathBuf, record: &Value) -> Result<
         .and_then(|v| v.as_bool())
         .unwrap_or(false);
     let average_db_level = record.get("average_db_level").and_then(|v| v.as_f64());
-
-    // Decode and write the audio bytes to disk first. If this fails, we
-    // never insert a row — keeps the ontology consistent.
-    let audio_bytes = base64::engine::general_purpose::STANDARD
-        .decode(audio_b64)
-        .with_context(|| format!("failed to decode base64 audio for {stream_id}"))?;
-
-    let filename = format!("{stream_id}.{audio_format}");
-    let audio_path = audio_dir.join(&filename);
-    std::fs::write(&audio_path, &audio_bytes)
-        .with_context(|| format!("failed to write audio file {}", audio_path.display()))?;
-
-    // Store path as a relative string so it survives moves between dev/prod.
-    // The transcribe action resolves it relative to its own cwd (same as ours).
-    let audio_url = format!("{AUDIO_DIR}/{filename}");
 
     let id = Uuid::new_v4().to_string();
 
