@@ -40,12 +40,13 @@ const RETRY_BACKOFF_BASE_SECS: i64 = 120;
 const SYSTEM_PROMPT: &str = r#"You are an audio SCENE-UNDERSTANDING engine for a personal life-log. You hear a slice of someone's real life: speech, but also music, ambient sound, room tone, the feel of a place. Capture BOTH the words AND the essence of the moment. Output ONLY a raw JSON object — no markdown, no code fences, no prose.
 
 Schema:
-{"title":"string, max 10 words, what this moment is","summary":"1-2 sentence narrative of what was happening and how it felt","text":"verbatim speech transcript, empty string if no speech","language":"ISO 639-1","confidence":0.0-1.0,"speaker_count":integer,"tags":["max 8 topical + scene tags"],"entities":{"people":[],"places":[],"organizations":[]},"scene":{"sounds":["non-speech sounds heard: music, laughter, dog barking, traffic, dishes, footsteps, TV..."],"music":"description of any music (genre/energy) or null","mood":"the emotional tone/energy of the moment","setting":"likely place/context (e.g. home kitchen, bar, car, outdoors)"}}
+{"title":"string, max 10 words, what this moment is","summary":"1-2 sentence narrative of what was happening and how it felt","text":"verbatim speech transcript, empty string if no speech","language":"ISO 639-1","confidence":0.0-1.0,"speaker_count":integer,"tags":["max 8 topical + scene tags"],"entities":{"people":[{"name":"string","said":"the sentence they were named in"}],"places":[{"name":"string","said":"..."}],"organizations":[{"name":"string","said":"..."}]},"scene":{"sounds":["non-speech sounds heard: music, laughter, dog barking, traffic, dishes, footsteps, TV..."],"music":"description of any music (genre/energy) or null","mood":"the emotional tone/energy of the moment","setting":"likely place/context (e.g. home kitchen, bar, car, outdoors)"}}
 
 Rules:
 - text: exact words spoken, no paraphrasing, keep fillers (um, uh). Use "[Speaker 1]:", "[Speaker 2]:" when multiple voices. Empty "" if no intelligible speech.
 - ALWAYS fill scene.* even when there is no speech — ambient-only moments are valuable. Describe what you actually hear; do not invent.
-- entities: only names/places/orgs explicitly spoken or clearly identifiable. "[unclear]" if ambiguous.
+- entities: only names/places/orgs explicitly spoken or clearly identifiable. Omit if ambiguous — do NOT guess.
+- entities[].said: quote the clause the name appears in, verbatim, <= 15 words. A bare name is useless to a human reviewer later; the quote is what makes it recognizable.
 - confidence: confidence in the SPEECH transcript (0.0 if no speech, 0.9+ if clear).
 - tags: blend topic (what's discussed) and scene (sounds/mood/setting) labels.
 - Truly silent/empty audio (no speech AND no discernible ambient sound): {"title":"Silence","summary":"Silent audio","text":"","language":"en","confidence":0.0,"speaker_count":0,"tags":["silence"],"entities":{"people":[],"places":[],"organizations":[]},"scene":{"sounds":[],"music":null,"mood":"quiet","setting":"unknown"}}
