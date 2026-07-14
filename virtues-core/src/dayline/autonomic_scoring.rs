@@ -38,10 +38,12 @@ const SIMILARITY_BANDWIDTH: f64 = 0.5;
 ///
 /// Returns the number of events scored.
 pub async fn compute_autonomic_for_day(pool: &PgPool, date: NaiveDate) -> anyhow::Result<u32> {
+    // Bind DATEs as DATEs. Binding a formatted String against the `date` column
+    // fails with "operator does not exist: date = text" — the same error that
+    // had kept `topic_entity_novelty` from ever completing a call. `date_str` is
+    // still needed by the resting-HR helpers, which take &str.
     let date_str = date.format("%Y-%m-%d").to_string();
-    let baseline_start = (date - chrono::Duration::days(84))
-        .format("%Y-%m-%d")
-        .to_string();
+    let baseline_start = date - chrono::Duration::days(84);
 
     // 1. Load today's events that need scoring (have avg_hr but no autonomic_z)
     let today_events: Vec<(String, f64, Option<Vec<u8>>, bool)> = sqlx::query_as(
@@ -55,7 +57,7 @@ pub async fn compute_autonomic_for_day(pool: &PgPool, date: NaiveDate) -> anyhow
           AND e.user_hidden = FALSE
         "#,
     )
-    .bind(&date_str)
+    .bind(date)
     .fetch_all(pool)
     .await?;
 
@@ -64,7 +66,7 @@ pub async fn compute_autonomic_for_day(pool: &PgPool, date: NaiveDate) -> anyhow
     }
 
     // 2. Load baseline events (past 12 weeks) with embeddings + avg_hr
-    let baseline: Vec<(Vec<u8>, f64, String)> = sqlx::query_as(
+    let baseline: Vec<(Vec<u8>, f64, NaiveDate)> = sqlx::query_as(
         r#"
         SELECT e.embedding, e.avg_hr, d.date
         FROM wiki_events e
@@ -77,8 +79,8 @@ pub async fn compute_autonomic_for_day(pool: &PgPool, date: NaiveDate) -> anyhow
           AND e.user_hidden = FALSE
         "#,
     )
-    .bind(&baseline_start)
-    .bind(&date_str)
+    .bind(baseline_start)
+    .bind(date)
     .fetch_all(pool)
     .await?;
 
@@ -95,7 +97,8 @@ pub async fn compute_autonomic_for_day(pool: &PgPool, date: NaiveDate) -> anyhow
             if emb.is_empty() {
                 return None;
             }
-            let days_ago = days_between_dates(d, &date_str);
+            // Both are real dates now — no string parsing round-trip.
+            let days_ago = (date - *d).num_days().max(0) as f64;
             Some((emb, *hr, days_ago))
         })
         .collect();

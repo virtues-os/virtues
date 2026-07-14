@@ -90,6 +90,7 @@ pub struct StreamingRequest {
 pub async fn create_streaming_response<F, Fut>(
     client: &reqwest::Client,
     config: &Config,
+    catalog: &crate::catalog::Catalog,
     request: StreamingRequest,
     on_complete: F,
 ) -> Result<Response, ProxyError>
@@ -155,6 +156,9 @@ where
     }
 
     let model = request.model.clone();
+    // Owned handle: the fallback price is resolved inside the spawned stream
+    // task, long after this fn returns. Cheap — it's an Arc.
+    let catalog = catalog.clone();
     let bytes_stream = response.bytes_stream();
 
     // Create channel for SSE events
@@ -198,14 +202,18 @@ where
                         let _ = tx.send(Ok(SseEvent::default().data("[DONE]"))).await;
 
                         // Resolve cost: Vercel-reported (authoritative) or
-                        // token × registry pricing (fallback).
+                        // token × live catalog pricing (fallback).
                         let cost_micros = match final_usage.take() {
                             Some(u) => {
                                 if let Some(cost_usd) = u.cost {
                                     (cost_usd * 1_000_000.0).round() as i64
                                 } else if u.prompt_tokens + u.completion_tokens > 0 {
-                                    let cost_usd =
-                                        calculate_cost(&model, u.prompt_tokens, u.completion_tokens);
+                                    let cost_usd = calculate_cost(
+                                        &catalog,
+                                        &model,
+                                        u.prompt_tokens,
+                                        u.completion_tokens,
+                                    );
                                     (cost_usd * 1_000_000.0).round() as i64
                                 } else {
                                     0
