@@ -205,3 +205,50 @@ async fn full_pipeline_persists_every_score() {
     .expect("user events");
     let _ = user_events; // asserted by surviving the wipe above; kept explicit.
 }
+
+/// Whatever INVALIDATES scores must RESTORE them.
+///
+/// The second time this pipeline destroyed its own output, it wore a different
+/// hat. `virtues reindex` nulls `wiki_events.embedding` and every score standing
+/// on it — novelty, autonomic, topic, entity — and it is *right* to: a new
+/// embedding model puts vectors in a different geometry, and the old numbers mean
+/// nothing there.
+///
+/// But it then rebuilt only the SEARCH index and stopped. The nightly cron scores
+/// exactly one day, the one it runs for. So a reindex quietly wiped the scores of
+/// every past day and nothing ever put them back — 82 of 83 days on the dev box,
+/// gone, no error, no mention. It was found by auditing, not by anything failing.
+///
+/// Same shape as `segmentation_runs_before_scoring`: one step silently destroying
+/// what another produced. So it gets the same kind of guard — source-level, no
+/// database, runs on every commit.
+#[test]
+fn whatever_nulls_the_scores_must_rescore() {
+    let src = std::fs::read_to_string(
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("src/cli/reindex.rs"),
+    )
+    .expect("read cli/reindex.rs");
+
+    let code: String = src
+        .lines()
+        .filter(|l| !l.trim_start().starts_with("//"))
+        .collect::<Vec<_>>()
+        .join("\n");
+
+    // It nulls the scores...
+    assert!(
+        code.contains("novelty_z = NULL"),
+        "reindex no longer nulls event scores — if that is deliberate, this guard \
+         is obsolete; if it is an accident, search and novelty now disagree about \
+         which model's geometry they live in"
+    );
+
+    // ...so it must put them back. For EVERY day, not just today: the cron only
+    // ever revisits the day it runs for.
+    assert!(
+        code.contains("rescore_all_days"),
+        "reindex nulls every event score but does not rescore. The nightly cron \
+         scores ONE day, so every past day stays at zero forever — silently, which \
+         is exactly how this pipeline lost months of work the first time."
+    );
+}

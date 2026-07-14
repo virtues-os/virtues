@@ -69,8 +69,26 @@ pub async fn run(yes: bool) -> Result<()> {
         .await
         .map_err(|e| Error::Other(format!("re-embed: {e}")))?;
 
+    // 4. Put the event scores back.
+    //
+    // The wipe above nulls `wiki_events.embedding` and every score standing on it
+    // — novelty, autonomic, topic, entity — and it is right to: a new model puts
+    // vectors in a different geometry, where the old numbers mean nothing.
+    //
+    // But it used to stop there. The nightly cron scores exactly ONE day, the one
+    // it runs for, so a reindex quietly destroyed the scores of every PAST day and
+    // nothing ever restored them: 82 of 83 days on the dev box, gone, with no
+    // error and no mention. The same shape as the bug that made this pipeline
+    // useless for months — one step destroying what another produced, silently.
+    //
+    // Whatever invalidates scores restores them.
+    println!("→ rescoring events (novelty, autonomic, topic, entity)…");
+    let (days, scored) = crate::dayline::rescore_all_days(db.pool())
+        .await
+        .map_err(|e| Error::Other(format!("rescore: {e}")))?;
+
     println!();
-    println!("✓ Reindex complete — {embedded} records embedded.");
+    println!("✓ Reindex complete — {embedded} records embedded, {scored} events rescored across {days} days.");
     Ok(())
 }
 
