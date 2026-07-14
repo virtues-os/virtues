@@ -35,6 +35,23 @@ struct StartCommand: ParsableCommand {
         print("Starting Virtues Mac Monitor...")
         print("Device ID: \(config.deviceId)")
         print("API Endpoint: \(config.apiEndpoint)")
+
+        // Report the permissions THIS PROCESS actually has, not what System Settings
+        // claims. The two diverge: a stale TCC entry shows an enabled toggle while
+        // AXIsProcessTrusted() returns false, and `status` run from a terminal is
+        // attributed to the terminal, so it can't answer this either. Window titles
+        // silently degrade to nothing when Accessibility is missing — no error, no
+        // warning, just an empty column — so the daemon has to say so itself.
+        //
+        // REQUEST Accessibility, don't just check it. For a bare executable, adding
+        // the binary in System Settings creates an entry that reads as enabled while
+        // AXIsProcessTrusted() still returns false — the process must ask, so TCC
+        // binds its identity to the entry. Checking alone left the toggle on and the
+        // permission off, and window titles silently empty.
+        WindowTitle.request()
+
+        print("Full Disk Access: \(MessageMonitor.canReadMessagesDB() ? "granted" : "DENIED")")
+        print("Accessibility:    \(WindowTitle.isTrusted ? "granted" : "DENIED (window titles will be empty)")")
         print("Press Ctrl+C to stop\n")
 
         // Touch the Messages DB with a real read-open right at startup. A denied

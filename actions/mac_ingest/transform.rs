@@ -164,16 +164,25 @@ async fn flush_browser(
 // iMessage → data_communication_message
 // ─────────────────────────────────────────────────────────────────────────────
 
+/// One message, ready to insert. A struct rather than a tuple because this grew to
+/// eleven fields and a mis-ordered bind is exactly the kind of bug that ships
+/// silently — the columns all take text.
+struct Msg {
+    id: String,
+    body: String,
+    from_identifier: String,
+    thread_id: Option<String>,
+    timestamp: DateTime<Utc>,
+    guid: String,
+    metadata: Value,
+    is_read: bool,
+    has_attachments: bool,
+    is_group: bool,
+    reply_to: Option<String>,
+}
+
 pub async fn write_imessages(db: &PgPool, messages: &[Value]) -> Result<usize> {
-    let mut pending: Vec<(
-        String,
-        String,
-        String,
-        Option<String>,
-        DateTime<Utc>,
-        String,
-        Value,
-    )> = Vec::new();
+    let mut pending: Vec<Msg> = Vec::new();
     let mut written = 0;
 
     for m in messages {
@@ -206,10 +215,42 @@ pub async fn write_imessages(db: &PgPool, messages: &[Value]) -> Result<usize> {
         // it here failed every iMessage batch with "column \"direction\" ... does not
         // exist" (and, because app_events ride the same webhook batch, took those
         // down too). Sent-vs-received is preserved in `metadata.is_from_me` below.
+
+        // The collector sends `chat_id`; this read `chat_guid`. They never matched, so
+        // thread_id was NULL on EVERY message ever ingested — no conversation grouping
+        // at all, and no way to ask "what did I talk about with X". Accept both.
         let chat_guid = m
-            .get("chat_guid")
+            .get("chat_id")
+            .or_else(|| m.get("chat_guid"))
             .and_then(|v| v.as_str())
+            .filter(|s| !s.is_empty())
             .map(String::from);
+
+        // Everything below was already on the wire and being thrown away on arrival:
+        // every tapback, every read receipt, every "they sent a photo".
+        let is_read = m.get("is_read").and_then(|v| v.as_bool()).unwrap_or(false);
+        let has_attachments = m
+            .get("cache_has_attachments")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false)
+            || m.get("attachment_count")
+                .and_then(|v| v.as_i64())
+                .is_some_and(|n| n > 0);
+        let group_title = m.get("group_title").and_then(|v| v.as_str());
+        // A group chat has a name, or a chat guid that isn't a bare 1:1 handle.
+        let is_group = group_title.is_some_and(|t| !t.is_empty());
+
+        // A tapback IS a message row in chat.db: `associated_message_type` says which
+        // reaction (2000-3005), and `associated_message_guid` points at the message it
+        // reacts TO. That target is exactly what reply_to_message_id is for.
+        let reaction_type = m.get("associated_message_type").and_then(|v| v.as_i64());
+        let reply_to = m
+            .get("associated_message_guid")
+            .and_then(|v| v.as_str())
+            .filter(|s| !s.is_empty())
+            // chat.db prefixes these ("p:0/GUID", "bp:GUID") — the bare guid is the
+            // one that joins back to message_id.
+            .map(|s| s.rsplit('/').next().unwrap_or(s).to_string());
         // The GUID keys the dedup, so an unparseable timestamp wouldn't duplicate the
         // row — it would silently file the message at INGEST time instead, landing a
         // months-old message in today's timeline and then never correcting it
@@ -226,15 +267,29 @@ pub async fn write_imessages(db: &PgPool, messages: &[Value]) -> Result<usize> {
         )
         .to_string();
 
-        pending.push((
+        pending.push(Msg {
             id,
-            text,
-            from_handle,
-            chat_guid,
-            ts,
-            guid.to_string(),
-            serde_json::json!({"is_from_me": is_from_me}),
-        ));
+            body: text,
+            from_identifier: from_handle,
+            thread_id: chat_guid,
+            timestamp: ts,
+            guid: guid.to_string(),
+            metadata: serde_json::json!({
+                "is_from_me": is_from_me,
+                "service": m.get("service"),
+                "group_title": group_title,
+                "attachment_count": m.get("attachment_count"),
+                "date_read": m.get("date_read"),
+                // The reaction KIND (liked/loved/laughed/…) — reply_to_message_id says
+                // what it reacted to, this says what it was.
+                "reaction_type": reaction_type,
+                "expressive_send_style": m.get("expressive_send_style_id"),
+            }),
+            is_read,
+            has_attachments,
+            is_group,
+            reply_to,
+        });
 
         if pending.len() >= BATCH_SIZE {
             written += flush_imessage(db, &pending).await?;
@@ -247,18 +302,7 @@ pub async fn write_imessages(db: &PgPool, messages: &[Value]) -> Result<usize> {
     Ok(written)
 }
 
-async fn flush_imessage(
-    db: &PgPool,
-    rows: &[(
-        String,
-        String,
-        String,
-        Option<String>,
-        DateTime<Utc>,
-        String,
-        Value,
-    )],
-) -> Result<usize> {
+async fn flush_imessage(db: &PgPool, rows: &[Msg]) -> Result<usize> {
     if rows.is_empty() {
         return Ok(0);
     }
@@ -276,6 +320,12 @@ async fn flush_imessage(
             "channel",
             "thread_id",
             "timestamp",
+            // These four were on the wire and thrown away on arrival — every tapback,
+            // every read receipt, every "they sent a photo", and every group chat.
+            "is_read",
+            "has_attachments",
+            "is_group_message",
+            "reply_to_message_id",
             "source_stream_id",
             "source_table",
             "source_provider",
@@ -286,19 +336,23 @@ async fn flush_imessage(
     );
     let mut q = sqlx::query(&sql);
     for r in rows {
-        // r.5 is the GUID: it serves as both the native message_id and the dedup key.
+        // The GUID serves as both the native message_id and the dedup key.
         q = q
-            .bind(&r.0)
-            .bind(&r.5)
-            .bind(&r.1)
-            .bind(&r.2)
+            .bind(&r.id)
+            .bind(&r.guid)
+            .bind(&r.body)
+            .bind(&r.from_identifier)
             .bind("imessage")
-            .bind(&r.3)
-            .bind(r.4)
-            .bind(&r.5)
+            .bind(&r.thread_id)
+            .bind(r.timestamp)
+            .bind(r.is_read)
+            .bind(r.has_attachments)
+            .bind(r.is_group)
+            .bind(&r.reply_to)
+            .bind(&r.guid)
             .bind("mac_imessage")
             .bind(PROVIDER)
-            .bind(&r.6);
+            .bind(&r.metadata);
     }
     Ok(q.execute(db).await?.rows_affected() as usize)
 }

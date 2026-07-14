@@ -9,8 +9,18 @@ class MessageMonitor {
     private let syncInterval: TimeInterval = 300 // 5 minutes
     
     // Configuration
-    private let initialSyncDays = 7 // Default: sync last 7 days on initial sync
-    private let batchSize = 500
+    //
+    // Backfill ALL of it. chat.db holds years — often the single richest record a
+    // person has of their own relationships — and we were taking the last week, which
+    // meant the most valuable stream in the system had an 8-day memory. There is no
+    // reason for the floor: the messages are already on this disk, we are not
+    // re-fetching them from anyone, and the box dedups on GUID so a re-read is free.
+    //
+    // It grinds rather than gulps: `batchSize` per 5-minute tick, cursor advancing, so
+    // a decade of history lands over a day or so of background sync without ever
+    // blocking a live message. Bumped to 1000 so the catch-up isn't glacial.
+    private let initialSyncDays = 365 * 20
+    private let batchSize = 1000
     
     // Full Disk Access detection
     private var hasFullDiskAccess = false
