@@ -74,7 +74,20 @@ pub async fn write_browser_history(db: &PgPool, visits: &[Value]) -> Result<usiz
             continue;
         };
 
-        let stream_id = format!("{}:{}", url, ts.timestamp_millis());
+        // HASH the dedup key rather than embedding the URL in it.
+        //
+        // `{url}:{ts}` looks fine until someone visits a URL with a page of tracking
+        // parameters (or a `data:` URI). source_stream_id is UNIQUE, and a btree
+        // index row cannot exceed ~2704 bytes — so one long URL doesn't just drop
+        // that visit, it fails the INSERT, which 500s the webhook, which poisons the
+        // whole batch: app sessions and iMessages die with it, and the device retries
+        // the same doomed payload every 5 minutes. A UUIDv5 is 36 bytes no matter how
+        // deranged the URL, and it is just as deterministic.
+        let stream_id = Uuid::new_v5(
+            &Uuid::NAMESPACE_OID,
+            format!("mac:browse:{}:{}", url, ts.timestamp_millis()).as_bytes(),
+        )
+        .to_string();
         let id = Uuid::new_v5(
             &Uuid::NAMESPACE_OID,
             format!("mac:browse:{stream_id}").as_bytes(),
