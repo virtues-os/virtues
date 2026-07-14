@@ -286,10 +286,9 @@ pub async fn attach(pool: &PgPool, t: Target, owner_id: &str) -> Result<u32> {
         // the conversation back into the notebook and the centroid drifts into
         // its own echo. This is not a nicety; on the first live run it was the
         // single highest-scoring candidate in the entire corpus.
-        "AND NOT (e.ontology = 'app_chat_message' AND EXISTS (
-             SELECT 1 FROM app_chat_messages cm
-             JOIN app_chats c ON c.id = cm.chat_id
-             WHERE cm.id = e.record_id AND c.notebook_id = $1))"
+        "AND NOT (e.ontology = 'app_chat' AND EXISTS (
+             SELECT 1 FROM app_chats c
+             WHERE c.id = e.record_id AND c.notebook_id = $1))"
     } else {
         ""
     };
@@ -396,9 +395,8 @@ pub async fn attach(pool: &PgPool, t: Target, owner_id: &str) -> Result<u32> {
 
     if t.exclude_own_chat {
         let own: Vec<String> = sqlx::query_scalar(
-            "SELECT '/record/app_chat_message/' || cm.id
-             FROM app_chat_messages cm
-             JOIN app_chats c ON c.id = cm.chat_id
+            "SELECT '/record/app_chat/' || c.id
+             FROM app_chats c
              WHERE c.notebook_id = $1",
         )
         .bind(owner_id)

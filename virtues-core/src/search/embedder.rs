@@ -19,21 +19,35 @@
 //! silently-swapped model can't corrupt the vector index (see
 //! `verify_fingerprint`).
 //!
-//! ## Model
+//! ## Model — there isn't one. There are three paths.
 //!
-//! **Dragon** runs `EmbeddingGemma-300M` (QAT Q8_0): a Gemma-3-lineage
-//! bidirectional encoder, mean-pooled, **768-dim native** which we
-//! Matryoshka-truncate to 256 and re-normalize — a 4× lighter HNSW index. The
-//! sidecar must emit 768-dim vectors (`validate_native_dim`); run it on CPU —
-//! its activations require bf16/fp32, so fp16 GPU paths force fp32 and end up
-//! slower than CPU.
+//! No model is hardcoded anywhere, and none should be: the box must embed with
+//! whatever its owner points it at. Which model produced a vector is *recorded*
+//! (`search_embeddings.model`, from `model_id()`), never assumed.
 //!
-//! **Manual** runs whatever model the user pointed us at: the stored width is
-//! its native dims (no truncation — most models aren't Matryoshka-trained),
-//! resolved from `VIRTUES_EMBED_DIMS`, and the vector column is sized to match
-//! at bringup (`database::ensure_embedding_dims`). Asymmetric query/document
-//! prompt prefixes are configurable (`VIRTUES_EMBED_QUERY_PROMPT` / `_DOC_PROMPT`,
-//! resolved by the installer); Dragon defaults to EmbeddingGemma's formats.
+//! **Dragon (NPU)** does not use this file's HTTP path at all — it runs the QNN
+//! daemon, which serves **gte-small (384-d, native, untruncated)**. See
+//! `qnn_client`. That module owns the model's identity because its context binary
+//! is compiled for exactly that model and can serve no other.
+//!
+//! **Sidecar (default DIY/dev)** is the HTTP path below, and the installer's
+//! current GGUF is EmbeddingGemma-300M (QAT Q8_0) — a Gemma-3-lineage
+//! bidirectional encoder, mean-pooled, 768-d native, Matryoshka-truncated to 256
+//! and renormalized for a 4× lighter HNSW index. Run it on CPU: its activations
+//! want bf16/fp32, so fp16 GPU paths force fp32 and end up slower. **This is a
+//! default, not a commitment** — swap the GGUF and the only thing that must
+//! follow is the stored width.
+//!
+//! **BYO (manual)** is any OpenAI-compatible endpoint. Stored width is the
+//! model's native dims (no truncation — most models aren't Matryoshka-trained),
+//! resolved from `VIRTUES_EMBED_DIMS`; the vector column is sized to match at
+//! bringup (`database::ensure_embedding_dims`). Prompt prefixes come from
+//! `VIRTUES_EMBED_QUERY_PROMPT` / `_DOC_PROMPT`. A fingerprint is pinned at setup
+//! and re-checked at boot, so a silently-swapped model cannot corrupt the index.
+//!
+//! Mixing two models in one index is silent corruption — their vectors live in
+//! different geometries and the cosine between them means nothing. Changing model
+//! therefore requires a full re-embed (`virtues reindex`), never a shrug.
 
 use anyhow::{anyhow, Context, Result};
 use serde::Deserialize;
@@ -60,15 +74,22 @@ pub(super) fn qnnd_models_dir() -> PathBuf {
         .unwrap_or_else(|| PathBuf::from("/var/lib/virtues/models/qnn"))
 }
 
-/// EmbeddingGemma's native output is 768-dim; on Dragon we keep only the first
-/// `DRAGON_STORED_DIM` (Matryoshka truncation) and re-normalize — a 3× storage/
-/// RAM cut on the index for ~minimal quality loss. A manual endpoint stores its
-/// **native** dims (no truncation — most models aren't Matryoshka-trained), so
-/// the stored width is model-dependent and resolved from `VIRTUES_EMBED_DIMS`
-/// at boot (see `configured_embed_dim`); the vector column is sized to match at
-/// bringup (`database::embedding_dims`).
-const NATIVE_DIM: usize = 768;
-const DRAGON_STORED_DIM: usize = 256;
+/// The SIDECAR's default GGUF (EmbeddingGemma-300M) emits 768-d; we keep the
+/// first `SIDECAR_STORED_DIM` (Matryoshka truncation) and re-normalize — a 3×
+/// storage/RAM cut on the index for ~minimal quality loss.
+///
+/// These were called `DRAGON_*`, which was simply wrong: **Dragon does not use
+/// this path at all.** Dragon runs the NPU daemon (`qnn_client`) serving
+/// gte-small at 384-d, untruncated. These are the *sidecar* defaults — the DIY
+/// and dev route — and a default is not a commitment: swap the GGUF and only the
+/// stored width has to follow.
+///
+/// A BYO endpoint stores its **native** dims (no truncation — most models are not
+/// Matryoshka-trained), resolved from `VIRTUES_EMBED_DIMS` at boot (see
+/// `configured_embed_dim`); the vector column is sized to match at bringup
+/// (`database::embedding_dims`).
+const SIDECAR_NATIVE_DIM: usize = 768;
+const SIDECAR_STORED_DIM: usize = 256;
 /// pgvector's HNSW index tops out at 2000 dims for the `vector` type. Larger
 /// models would need `halfvec` (≤4000) or truncation — not in this build.
 pub const MAX_INDEXED_DIM: usize = 2000;
@@ -100,9 +121,9 @@ pub fn configured_embed_dim() -> usize {
             // Installer writes DIMS alongside the fingerprint; a missing value
             // means a hand-edited env — fall back to native (no truncation)
             // rather than silently truncating the user's model.
-            .unwrap_or(NATIVE_DIM)
+            .unwrap_or(SIDECAR_NATIVE_DIM)
     } else {
-        DRAGON_STORED_DIM
+        SIDECAR_STORED_DIM
     }
 }
 
@@ -141,6 +162,47 @@ fn fingerprint_vectors(vectors: &[Vec<f32>]) -> String {
         }
     }
     hex::encode(h.finalize())
+}
+
+/// Ask an OpenAI-compatible endpoint what it is actually serving.
+///
+/// Model-agnostic on purpose: the box must work with whatever embedder its owner
+/// points it at. `/v1/models` is the one thing llama.cpp, Ollama, TEI, vLLM and
+/// OpenAI all answer, and they disagree about the shape of the answer — so try
+/// both spellings and give up quietly rather than guess.
+///
+/// Best-effort by design. A model we cannot name is recorded as unnamed; it is
+/// never *assumed*. The hard guards elsewhere (native-dim validation, and the
+/// fingerprint for pinned endpoints) are what actually protect the index — this
+/// is the label on the jar.
+async fn probe_served_model(client: &reqwest::Client, base_url: &str) -> Option<String> {
+    let body: serde_json::Value = client
+        .get(format!("{base_url}/v1/models"))
+        .send()
+        .await
+        .ok()?
+        .json()
+        .await
+        .ok()?;
+
+    let pick = |v: &serde_json::Value| -> Option<String> {
+        v.get("id")
+            .or_else(|| v.get("model"))
+            .or_else(|| v.get("name"))
+            .and_then(|s| s.as_str())
+            .map(str::to_string)
+            .filter(|s| !s.is_empty())
+    };
+
+    // OpenAI / vLLM / TEI: {"data":[{"id":…}]}.  llama.cpp / Ollama: {"models":[{"name":…}]}.
+    for key in ["data", "models"] {
+        if let Some(first) = body.get(key).and_then(|a| a.as_array()).and_then(|a| a.first()) {
+            if let Some(name) = pick(first) {
+                return Some(name);
+            }
+        }
+    }
+    None
 }
 
 /// Truncate a native embedding to `dim` and L2-renormalize (Matryoshka).
@@ -183,6 +245,11 @@ struct HttpEmbedder {
     /// setup-time probes sent, or the boot fingerprint check would compare
     /// vectors from different requests.
     model: String,
+    /// What the endpoint says it is actually serving (probed once, at init). NOT
+    /// the same as `model` above, which is a routing key we send and llama.cpp
+    /// ignores — this is the GGUF it loaded. Stamped on every indexed row so the
+    /// index can say which model's geometry it lives in.
+    served_model: String,
     /// Asymmetric prompt prefixes prepended to queries / documents before
     /// embedding. Dragon → EmbeddingGemma's official formats; manual → whatever
     /// the installer resolved for the user's model (possibly empty). Empty
@@ -247,10 +314,25 @@ impl HttpEmbedder {
         let doc_prompt = std::env::var("VIRTUES_EMBED_DOC_PROMPT")
             .ok()
             .unwrap_or_else(|| if is_pinned { String::new() } else { DOC_PROMPT.to_string() });
+        // What the endpoint is actually SERVING, as opposed to the routing key we
+        // send it. llama-server answers `/v1/models` with the loaded GGUF; a
+        // user-run endpoint may answer with anything, or nothing.
+        //
+        // This is stamped on every indexed row. It used to be the literal
+        // 'embeddinggemma', hardcoded into an INSERT and read by nobody — so a BYO
+        // model of the same width could be swapped in and the index would fill with
+        // vectors from a second geometry, cosine between them meaning nothing, and
+        // no error anywhere. A best-effort probe: if the endpoint will not say,
+        // record that it would not say.
+        let served_model = probe_served_model(&client, &base_url)
+            .await
+            .unwrap_or_else(|| "unreported".to_string());
+
         let embedder = Self {
             client,
             base_url,
             model,
+            served_model,
             query_prompt,
             doc_prompt,
             // Manual endpoints store native dims (no truncation); Dragon
@@ -293,6 +375,11 @@ impl HttpEmbedder {
     pub async fn embed_query_async(self: &Arc<Self>, text: &str) -> Result<Vec<f32>> {
         let mut vecs = self.request(vec![format!("{}{text}", self.query_prompt)]).await?;
         vecs.pop().ok_or_else(|| anyhow!("embedding sidecar returned no embedding"))
+    }
+
+    /// The model this endpoint is serving — stamped on every indexed row.
+    pub fn model_id(&self) -> String {
+        self.served_model.clone()
     }
 
     /// Embed a single **document/content** string (document prompt).
@@ -437,6 +524,25 @@ impl LocalEmbedder {
         self.stored_dim
     }
 
+    /// Which model actually produced these vectors — stamped onto every row it
+    /// writes (`search_embeddings.model`).
+    ///
+    /// That column used to hold the literal `'embeddinggemma'`, written by the
+    /// indexer and read by nobody. The only real guard against a model swap is
+    /// dimensional, so a BYO embedder of the SAME width could be swapped in
+    /// silently: its vectors land in a different geometry from their neighbours,
+    /// cosine between them means nothing, and the index degrades with no error
+    /// anywhere. Recording the truth is what makes that detectable — and it is
+    /// what lets a user bring their own model at all.
+    pub fn model_id(&self) -> String {
+        match &self.backend {
+            Backend::Http(h) => h.model_id(),
+            // The NPU serves exactly one model — its context binary is compiled
+            // for it and cannot serve another.
+            Backend::Qnn(_) => super::qnn_client::GTE_MODEL.to_string(),
+        }
+    }
+
     fn backend_label(&self) -> &'static str {
         match &self.backend {
             Backend::Http(_) => "http-sidecar",
@@ -452,9 +558,9 @@ impl Embedder for LocalEmbedder {
 }
 
 fn validate_native_dim(v: &[f32]) -> Result<()> {
-    if v.len() != NATIVE_DIM {
+    if v.len() != SIDECAR_NATIVE_DIM {
         return Err(anyhow!(
-            "embedding dim {} != expected native {NATIVE_DIM} — check the sidecar's GGUF is EmbeddingGemma-300M",
+            "embedding dim {} != expected native {SIDECAR_NATIVE_DIM} — check the sidecar's GGUF is EmbeddingGemma-300M",
             v.len()
         ));
     }

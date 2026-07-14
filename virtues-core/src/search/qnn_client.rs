@@ -57,6 +57,12 @@ const COLBERT_QLEN: usize = 32; // rerank query length (MASK-augmented)
 /// gte-small dense embedding width (native; stored untruncated — gte is not
 /// Matryoshka-trained).
 pub const GTE_DIM: usize = 384;
+
+/// The embed model this daemon serves, stamped onto every vector it produces
+/// (`search_embeddings.model`). Named here rather than in `embedder.rs` because
+/// this is the module that knows: the NPU context binary is compiled for exactly
+/// this model, and it cannot serve another.
+pub const GTE_MODEL: &str = "gte-small";
 /// ColBERT per-token embedding width.
 const COLBERT_TOK_DIM: usize = 96;
 
