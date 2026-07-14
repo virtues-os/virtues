@@ -15,6 +15,12 @@
         "disconnected" | "connecting" | "reconnecting" | "connected"
     >("disconnected");
 
+    // Paste/drop upload state. Reported in the header, never written into the
+    // terminal: a TUI owns that screen, and a status line printed under it would
+    // be painted over — or worse, shift its layout.
+    let uploading = $state(false);
+    let uploadError = $state<string | null>(null);
+
     // Reconnect state. The shell lives in tmux on the box, so a dropped socket
     // is a detach, not a death: reconnecting reattaches to the same session with
     // whatever was running still running. Worth retrying hard.
@@ -202,6 +208,13 @@
             });
             resizeObserver.observe(terminalContainer);
 
+            // Paste and drop of files. xterm's own paste handler only ever reads
+            // `text/plain`, so image items fall through untouched and we can take
+            // them in the capture phase before it runs.
+            terminal.textarea?.addEventListener("paste", handlePaste, true);
+            terminalContainer.addEventListener("dragover", handleDragOver);
+            terminalContainer.addEventListener("drop", handleDrop);
+
             // Watch for theme changes (data-theme attribute on html element)
             themeObserver = new MutationObserver((mutations) => {
                 for (const mutation of mutations) {
@@ -226,6 +239,9 @@
         return () => {
             if (resizeObserver) resizeObserver.disconnect();
             if (themeObserver) themeObserver.disconnect();
+            terminal?.textarea?.removeEventListener("paste", handlePaste, true);
+            terminalContainer?.removeEventListener("dragover", handleDragOver);
+            terminalContainer?.removeEventListener("drop", handleDrop);
         };
     });
 
@@ -286,6 +302,90 @@
         }
     }
 
+    // -----------------------------------------------------------------------
+    // Paste / drop -> a file on the box, whose path we type at the cursor.
+    //
+    // The clipboard is here in the browser; the shell is on the box. stdin has
+    // never carried an image between the two — so the blob goes up as a file and
+    // what lands in the terminal is its path, exactly as if the user had typed
+    // it. `claude`, `vim`, `cat` all already know what to do with a path.
+    // -----------------------------------------------------------------------
+
+    /// Single-quote for the shell. Uploaded names are hash-based so they can't
+    /// actually contain a quote, but a path that reaches a command line gets
+    /// quoted properly regardless of what we believe about it.
+    function shellQuote(path: string): string {
+        return `'${path.replaceAll("'", `'\\''`)}'`;
+    }
+
+    async function uploadFile(file: File): Promise<string | null> {
+        const resp = await fetch("/api/terminal/paste", {
+            method: "POST",
+            headers: {
+                "Content-Type": file.type || "application/octet-stream",
+            },
+            body: file,
+        });
+        if (!resp.ok) {
+            throw new Error(`${resp.status} ${await resp.text()}`);
+        }
+        const { path } = await resp.json();
+        return path ?? null;
+    }
+
+    /// Upload each file and type its path into the terminal. Paths go in as
+    /// ordinary input, so they land wherever the cursor is — including inside a
+    /// running TUI's prompt.
+    async function sendFiles(files: File[]) {
+        if (!files.length || webSocket?.readyState !== WebSocket.OPEN) return;
+        uploading = true;
+        try {
+            for (const file of files) {
+                const path = await uploadFile(file);
+                if (!path) continue;
+                webSocket?.send(
+                    JSON.stringify({
+                        type: "input",
+                        data: `${shellQuote(path)} `,
+                    }),
+                );
+            }
+        } catch (err) {
+            console.error("[terminal] upload failed", err);
+            uploadError = err instanceof Error ? err.message : "upload failed";
+            setTimeout(() => (uploadError = null), 4000);
+        } finally {
+            uploading = false;
+        }
+    }
+
+    function handlePaste(event: ClipboardEvent) {
+        const files = Array.from(event.clipboardData?.items ?? [])
+            .filter((item) => item.kind === "file")
+            .map((item) => item.getAsFile())
+            .filter((f): f is File => f !== null);
+        if (!files.length) return; // plain text: let xterm paste it as usual
+
+        // Stop xterm seeing it — otherwise it pastes the empty text/plain half of
+        // the clipboard payload on top of our path.
+        event.preventDefault();
+        event.stopPropagation();
+        void sendFiles(files);
+    }
+
+    function handleDragOver(event: DragEvent) {
+        if (!event.dataTransfer?.types.includes("Files")) return;
+        event.preventDefault();
+        event.dataTransfer.dropEffect = "copy";
+    }
+
+    function handleDrop(event: DragEvent) {
+        const files = Array.from(event.dataTransfer?.files ?? []);
+        if (!files.length) return;
+        event.preventDefault();
+        void sendFiles(files);
+    }
+
     function scheduleReconnect() {
         if (disposed || reconnectTimer) return;
         connectionStatus = "reconnecting";
@@ -318,8 +418,23 @@
         <div class="header-left">
             <Icon icon="ri:terminal-box-line"/>
             <span class="terminal-title">Terminal</span>
+            <!-- The wheel now scrolls tmux's history, which means the mouse
+                 belongs to the terminal and click-drag no longer selects text.
+                 Shift is the standard escape hatch, and nobody discovers it. -->
+            <span class="hint">⇧ drag to select</span>
         </div>
         <div class="header-right">
+            {#if uploadError}
+                <span class="connection-badge error" title={uploadError}>
+                    <Icon icon="ri:error-warning-line"/>
+                    Upload failed
+                </span>
+            {:else if uploading}
+                <span class="connection-badge">
+                    <Icon icon="ri:loader-4-line" class="animate-spin"/>
+                    Uploading
+                </span>
+            {/if}
             <span
                 class="connection-badge"
                 class:connected={connectionStatus === "connected"}
@@ -378,9 +493,15 @@
         font-weight: 500;
     }
 
+    .hint {
+        font-size: 11px;
+        color: var(--color-foreground-subtle);
+    }
+
     .header-right {
         display: flex;
         align-items: center;
+        gap: 8px;
     }
 
     .connection-badge {
