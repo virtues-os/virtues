@@ -22,6 +22,24 @@ use sqlx::PgPool;
 
 use crate::search::embedder::get_embedder;
 
+/// Read a JSONB `["a","b"]` column into a Vec<String>.
+///
+/// `topics` and `entities` are JSONB, but this module used to decode them as
+/// `Option<String>` and then `serde_json::from_str` the result — which fails at
+/// the sqlx layer with "Rust type Option<String> (as SQL type TEXT) is not
+/// compatible with SQL type JSONB", on every row. One of several type errors
+/// that had kept this function from ever completing a single call.
+fn as_strings(v: &Option<serde_json::Value>) -> Vec<String> {
+    v.as_ref()
+        .and_then(|v| v.as_array())
+        .map(|a| {
+            a.iter()
+                .filter_map(|x| x.as_str().map(str::to_string))
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
 /// Baseline window: 12 weeks (84 days), same as event novelty.
 const BASELINE_WINDOW_DAYS: i64 = 84;
 
@@ -41,13 +59,18 @@ pub async fn compute_topic_entity_novelty(
     pool: &PgPool,
     date: NaiveDate,
 ) -> anyhow::Result<u32> {
-    let date_str = date.format("%Y-%m-%d").to_string();
-    let baseline_start = (date - chrono::Duration::days(BASELINE_WINDOW_DAYS))
-        .format("%Y-%m-%d")
-        .to_string();
+    // Bind DATEs as DATEs.
+    //
+    // This function used to bind `date.format("%Y-%m-%d")` — a String — against
+    // the `date` column. Postgres has no `date = text` operator, so EVERY call
+    // failed with "operator does not exist: date = text" and the function had
+    // never once scored a single event, on any day, for any user. The caller
+    // swallowed the error in a `match` and the cron reported a cheerful
+    // non-zero count of events *seen*. cf. novelty.rs:87, which binds correctly.
+    let baseline_start = date - chrono::Duration::days(BASELINE_WINDOW_DAYS);
 
     // 1. Load today's events (id, topics JSON, entities JSON)
-    let today_events: Vec<(String, Option<String>, Option<String>)> = sqlx::query_as(
+    let today_events: Vec<(String, Option<serde_json::Value>, Option<serde_json::Value>)> = sqlx::query_as(
         r#"
         SELECT e.id, e.topics, e.entities
         FROM wiki_events e
@@ -57,7 +80,7 @@ pub async fn compute_topic_entity_novelty(
           AND e.user_hidden = FALSE
         "#,
     )
-    .bind(&date_str)
+    .bind(date)
     .fetch_all(pool)
     .await?;
 
@@ -70,20 +93,12 @@ pub async fn compute_topic_entity_novelty(
     let mut all_entities: HashSet<String> = HashSet::new();
 
     for (_, topics_json, entities_json) in &today_events {
-        if let Some(tj) = topics_json {
-            if let Ok(topics) = serde_json::from_str::<Vec<String>>(tj) {
-                all_topics.extend(topics);
-            }
-        }
-        if let Some(ej) = entities_json {
-            if let Ok(entities) = serde_json::from_str::<Vec<String>>(ej) {
-                all_entities.extend(entities);
-            }
-        }
+        all_topics.extend(as_strings(topics_json));
+        all_entities.extend(as_strings(entities_json));
     }
 
     // 3. Load baseline data
-    let baseline_rows: Vec<(String, Option<String>, Option<String>)> = sqlx::query_as(
+    let baseline_rows: Vec<(NaiveDate, Option<serde_json::Value>, Option<serde_json::Value>)> = sqlx::query_as(
         r#"
         SELECT d.date, e.topics, e.entities
         FROM wiki_events e
@@ -94,41 +109,51 @@ pub async fn compute_topic_entity_novelty(
           AND e.user_hidden = FALSE
         "#,
     )
-    .bind(&baseline_start)
-    .bind(&date_str)
+    .bind(baseline_start)
+    .bind(date)
     .fetch_all(pool)
     .await?;
 
     // Count distinct baseline days
     let total_baseline_days: usize = {
-        let mut dates: HashSet<&str> = HashSet::new();
+        let mut dates: HashSet<NaiveDate> = HashSet::new();
         for (d, _, _) in &baseline_rows {
-            dates.insert(d.as_str());
+            dates.insert(*d);
         }
         dates.len()
     };
 
     // 4a. TOPIC SCORING — embedding centroid distance
-    let topic_scores = if !all_topics.is_empty() && total_baseline_days >= MIN_BASELINE_DAYS {
-        score_topics_by_embedding(pool, &all_topics, &baseline_rows).await?
-    } else {
-        // Not enough baseline or no topics → max novelty for all
-        all_topics.iter().map(|t| (t.clone(), Z_MAX)).collect()
-    };
+    let topic_scores: HashMap<String, f64> =
+        if !all_topics.is_empty() && total_baseline_days >= MIN_BASELINE_DAYS {
+            score_topics_by_embedding(pool, &all_topics, &baseline_rows).await?
+        } else {
+            // NOT max novelty. Score nothing.
+            //
+            // This used to assign Z_MAX (3.0) to every topic when the baseline
+            // was thin — so a brand-new box declared everything it saw maximally
+            // novel, and week one of someone's life came out as one long peak.
+            // "I have no baseline" and "this is unprecedented" are opposite
+            // claims and must never produce the same number.
+            //
+            // An empty map leaves `topic_novelty` NULL, which reads as
+            // "calibrating" everywhere downstream. Absence of a measurement is
+            // not a measurement.
+            tracing::debug!(
+                baseline_days = total_baseline_days,
+                min = MIN_BASELINE_DAYS,
+                topics = all_topics.len(),
+                "baseline too thin for topic novelty — leaving NULL, not Z_MAX"
+            );
+            HashMap::new()
+        };
 
     // 4b. ENTITY SCORING — frequency z-score (unchanged)
     let entity_scores = {
-        let mut entity_days: HashMap<String, HashSet<String>> = HashMap::new();
+        let mut entity_days: HashMap<String, HashSet<NaiveDate>> = HashMap::new();
         for (day_date, _, entities_json) in &baseline_rows {
-            if let Some(ej) = entities_json {
-                if let Ok(entities) = serde_json::from_str::<Vec<String>>(ej) {
-                    for e in entities {
-                        entity_days
-                            .entry(e)
-                            .or_default()
-                            .insert(day_date.clone());
-                    }
-                }
+            for e in as_strings(entities_json) {
+                entity_days.entry(e).or_default().insert(*day_date);
             }
         }
         score_entities_by_frequency(&all_entities, &entity_days, total_baseline_days)
@@ -137,15 +162,8 @@ pub async fn compute_topic_entity_novelty(
     // 5. Write back per-event
     let mut updated = 0u32;
     for (event_id, topics_json, entities_json) in &today_events {
-        let event_topics: Vec<String> = topics_json
-            .as_ref()
-            .and_then(|tj| serde_json::from_str(tj).ok())
-            .unwrap_or_default();
-
-        let event_entities: Vec<String> = entities_json
-            .as_ref()
-            .and_then(|ej| serde_json::from_str(ej).ok())
-            .unwrap_or_default();
+        let event_topics = as_strings(topics_json);
+        let event_entities = as_strings(entities_json);
 
         let raw_topic_novelty: HashMap<&str, f64> = event_topics
             .iter()
@@ -173,15 +191,19 @@ pub async fn compute_topic_entity_novelty(
         let topic_json = if event_topic_novelty.is_empty() {
             None
         } else {
-            Some(serde_json::to_string(&event_topic_novelty).unwrap_or_default())
+            Some(serde_json::json!(event_topic_novelty))
         };
 
         let entity_json = if event_entity_novelty.is_empty() {
             None
         } else {
-            Some(serde_json::to_string(&event_entity_novelty).unwrap_or_default())
+            Some(serde_json::json!(event_entity_novelty))
         };
 
+        // JSONB columns take a Value, not a serialized String. Binding a String
+        // gets you "column topic_novelty is of type jsonb but expression is of
+        // type text" — the last of six distinct type errors that stood between
+        // this function and ever writing a single row.
         sqlx::query(
             "UPDATE wiki_events SET topic_novelty = $1, entity_novelty = $2 WHERE id = $3",
         )
@@ -219,18 +241,14 @@ pub async fn compute_topic_entity_novelty(
 async fn score_topics_by_embedding(
     pool: &PgPool,
     today_topics: &HashSet<String>,
-    baseline_rows: &[(String, Option<String>, Option<String>)],
+    baseline_rows: &[(NaiveDate, Option<serde_json::Value>, Option<serde_json::Value>)],
 ) -> anyhow::Result<HashMap<String, f64>> {
     let embedder = get_embedder().await?;
 
     // Collect all unique baseline topic strings
     let mut baseline_topics: HashSet<String> = HashSet::new();
     for (_, topics_json, _) in baseline_rows {
-        if let Some(tj) = topics_json {
-            if let Ok(topics) = serde_json::from_str::<Vec<String>>(tj) {
-                baseline_topics.extend(topics);
-            }
-        }
+        baseline_topics.extend(as_strings(topics_json));
     }
 
     // Merge with today's topics for a complete set to embed
@@ -251,13 +269,9 @@ async fn score_topics_by_embedding(
     // Weight by how often each topic appeared in the baseline
     let mut baseline_embeddings: Vec<&[f32]> = Vec::new();
     for (_, topics_json, _) in baseline_rows {
-        if let Some(tj) = topics_json {
-            if let Ok(topics) = serde_json::from_str::<Vec<String>>(tj) {
-                for t in &topics {
-                    if let Some(emb) = embeddings.get(t.as_str()) {
-                        baseline_embeddings.push(emb.as_slice());
-                    }
-                }
+        for t in as_strings(topics_json) {
+            if let Some(emb) = embeddings.get(t.as_str()) {
+                baseline_embeddings.push(emb.as_slice());
             }
         }
     }
@@ -331,10 +345,14 @@ async fn ensure_topic_embeddings(
     embedder: &std::sync::Arc<crate::search::embedder::LocalEmbedder>,
     topics: &[String],
 ) -> anyhow::Result<HashMap<String, Vec<f32>>> {
-    // Load existing from cache (search_topic_cache.embedding is pgvector::Vector now)
+    // `search_topic_cache.embedding` is `halfvec` (migration 0030 moved the
+    // whole vector store to fp16). It was still being read and written as
+    // `vector`, which sqlx rejects outright — yet another reason this function
+    // had never completed a call. Cast at the boundary, exactly as
+    // `search/query.rs` does with `$1::halfvec`.
     let mut cached: HashMap<String, Vec<f32>> = HashMap::new();
     let rows: Vec<(String, pgvector::Vector)> = sqlx::query_as(
-        "SELECT topic, embedding FROM search_topic_cache",
+        "SELECT topic, embedding::vector FROM search_topic_cache",
     )
     .fetch_all(pool)
     .await?;
@@ -356,7 +374,7 @@ async fn ensure_topic_embeddings(
 
         for (topic, embedding) in need_embedding.iter().zip(new_embeddings.iter()) {
             sqlx::query(
-                "INSERT INTO search_topic_cache (topic, embedding) VALUES ($1, $2) \
+                "INSERT INTO search_topic_cache (topic, embedding) VALUES ($1, $2::halfvec) \
                  ON CONFLICT (topic) DO NOTHING",
             )
             .bind(topic)
@@ -378,7 +396,7 @@ async fn ensure_topic_embeddings(
 /// Score entities by binary presence frequency over the baseline.
 fn score_entities_by_frequency(
     today_entities: &HashSet<String>,
-    entity_days: &HashMap<String, HashSet<String>>,
+    entity_days: &HashMap<String, HashSet<NaiveDate>>,
     total_baseline_days: usize,
 ) -> HashMap<String, f64> {
     let n = total_baseline_days as f64;
@@ -461,7 +479,7 @@ mod tests {
         let mut days = HashMap::new();
         let mut maya_days = HashSet::new();
         for i in 0..60 {
-            maya_days.insert(format!("day-{i}"));
+            maya_days.insert(NaiveDate::from_ymd_opt(2026, 1, 1).unwrap() + chrono::Duration::days(i));
         }
         days.insert("maya".to_string(), maya_days);
 
@@ -477,8 +495,8 @@ mod tests {
 
         let mut days = HashMap::new();
         let mut rare = HashSet::new();
-        rare.insert("day-1".to_string());
-        rare.insert("day-2".to_string());
+        rare.insert(NaiveDate::from_ymd_opt(2026, 1, 1).unwrap());
+        rare.insert(NaiveDate::from_ymd_opt(2026, 1, 2).unwrap());
         days.insert("rachel".to_string(), rare);
 
         let scores = score_entities_by_frequency(&today, &days, 84);
@@ -490,7 +508,7 @@ mod tests {
     fn test_entity_scoring_brand_new() {
         let mut today = HashSet::new();
         today.insert("new-person".to_string());
-        let days: HashMap<String, HashSet<String>> = HashMap::new();
+        let days: HashMap<String, HashSet<NaiveDate>> = HashMap::new();
         let scores = score_entities_by_frequency(&today, &days, 84);
         assert!((scores["new-person"] - 3.0).abs() < 0.01);
     }

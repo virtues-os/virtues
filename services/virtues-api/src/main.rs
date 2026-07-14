@@ -15,6 +15,7 @@
 mod auth;
 mod bearer_auth;
 mod blocklist;
+mod catalog;
 mod config;
 mod db;
 mod dev_seed;
@@ -43,6 +44,9 @@ pub struct AppState {
     pub db: sqlx::PgPool,
     /// Behavioral abuse blocklist (in-memory hot path, DB-snapshotted).
     pub blocklist: Blocklist,
+    /// Live model facts from the gateway (prices, context windows, existence),
+    /// refreshed hourly. The ONLY source of model pricing — see `catalog.rs`.
+    pub catalog: catalog::Catalog,
 }
 
 #[tokio::main]
@@ -125,11 +129,17 @@ async fn main() -> Result<()> {
     }
 
     // Build shared state
+    // Model facts (prices, context windows, which ids actually exist) come from
+    // the gateway, never from a table we maintain. Fetched now, refreshed
+    // hourly. A failed fetch is logged, not fatal — see catalog.rs.
+    let catalog = catalog::spawn(http_client.clone(), config.ai_gateway_url.clone()).await;
+
     let state = Arc::new(AppState {
         config,
         http_client,
         db,
         blocklist,
+        catalog,
     });
 
     // Build router

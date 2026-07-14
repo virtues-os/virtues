@@ -440,10 +440,11 @@ fn build_council_voice_prompt(objective: &str) -> String {
 
 /// Fallback model id for a tier when the profile can't be read.
 fn default_tier_model(tier: &str) -> String {
-    use virtues_registry::models::{default_model_for_slot, ModelSlot};
+    use virtues_registry::models::ModelSlot;
     let slot = match tier {
         "fast" => ModelSlot::Lite,
         _ => ModelSlot::Chat,
     };
-    default_model_for_slot(slot).to_string()
+    // Cloud slot map, else the compiled floor — never a literal model id.
+    crate::api::model_catalog::model_for_slot(slot)
 }

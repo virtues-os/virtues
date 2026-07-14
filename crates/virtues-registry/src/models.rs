@@ -1,11 +1,45 @@
-//! Model registry - LLM providers and their capabilities
+//! Model registry — the models we *choose*, not the models that *exist*.
 //!
-//! Models are static configuration - users cannot add new LLM providers.
-//! They can only enable/disable models via user preferences.
+//! # The line
+//!
+//!   FACTS come from the gateway.   Does this model exist? What does it cost?
+//!                                  Context window, max output. These change
+//!                                  without us and we must never mirror them.
+//!                                  → `GET {gateway}/v1/models`, refreshed
+//!                                    hourly by virtues-api (`catalog.rs`).
+//!
+//!   TASTE comes from here.         Which models we surface in the picker,
+//!                                  which one fills each slot, and the
+//!                                  capability caveats we learned the hard way
+//!                                  (see the Gemini-3 note below — the
+//!                                  gateway's own tags won't tell you that).
+//!
+//!   MONEY comes from `usage.cost`. The gateway reports the authoritative cost
+//!                                  of every call. We bill that, plus markup.
+//!                                  The catalog is only the fallback when the
+//!                                  field is absent; `FALLBACK_PRICING` below
+//!                                  is the last resort when even that is cold.
+//!
+//! The rule that falls out: **never store a fact you can fetch.** This file
+//! previously carried a hand-copied price table, and every entry in it had
+//! drifted — Opus was 3× over, the image model 13× *under*, and two models in
+//! the picker (`google/gemini-3-pro`, `openai/gpt-5.1`) did not exist on the
+//! gateway at all. That failure mode is now structurally impossible: we don't
+//! store prices, and `curated ⊆ catalog` is enforced at refresh and in CI.
+//!
+//! Vercel publishes no deprecation notice — a model id can simply stop
+//! existing (precedent: Cohere Command R/R+). The intersection check is the
+//! only warning we get, so it is a *runtime* invariant, not just a test.
 
 use serde::{Deserialize, Serialize};
 
-/// Model configuration
+/// A model we have chosen to surface, and what we know about it that the
+/// gateway's catalog does not say.
+///
+/// Deliberately carries NO pricing. Prices live in the gateway catalog; see
+/// the module docs. Capability flags stay here because they encode our own
+/// testing (e.g. "works via the gateway's OpenAI-compatible endpoint"), which
+/// is a different claim than the provider's marketing.
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct ModelConfig {
     /// Unique model identifier (e.g., "google/gemini-3-flash")
@@ -36,12 +70,6 @@ pub struct ModelConfig {
     /// Whether this is the default model
     #[serde(default)]
     pub is_default: bool,
-    /// Pricing per 1K input tokens (for virtues-api billing)
-    #[serde(default)]
-    pub input_cost_per_1k: Option<f64>,
-    /// Pricing per 1K output tokens (for virtues-api billing)
-    #[serde(default)]
-    pub output_cost_per_1k: Option<f64>,
 }
 
 /// Model slot types for user preferences
@@ -69,20 +97,32 @@ impl ModelSlot {
     }
 }
 
-/// Get default model configurations
-/// These are the 4 slot defaults available via Vercel AI Gateway
+/// The curated picker — the models we have actually tried, in the order we
+/// want them seen. Not a catalog: the gateway lists 300+ models, and this is
+/// the handful we vouch for.
+///
+/// Invariant: every `model_id` here MUST exist in the gateway catalog. It is
+/// checked at each catalog refresh (virtues-api drops + logs any that vanish)
+/// and asserted in CI. Two entries once rotted here unnoticed —
+/// `google/gemini-3-pro` (real id is `-preview`) and `openai/gpt-5.1` (never
+/// existed; only `-codex`/`-instant`/`-thinking` ever did) — both 404'd for
+/// anyone who selected them.
+///
+/// No pricing lives here. See the module docs.
 pub fn default_models() -> Vec<ModelConfig> {
     vec![
-        // CHAT: Default conversational model.
+        // CHAT + CODING: Default conversational model.
         // Claude Opus over GLM-5: GLM-5 is a reasoning model that runs a
         // (non-streamed, ~6s) chain-of-thought before every turn, which stacks
         // across the agent's tool-call rounds into 20s+ stalls in chat. Opus
         // answers directly — no reasoning pass, streams immediately — and
-        // handles parallel tool calls cleanly. (Gemini 3 stays out: via the
-        // gateway's OpenAI-compatible endpoint it 400s on parallel tool calls,
-        // needing a thought_signature the gateway doesn't pass through; see
-        // vercel/ai #11590/#10344. GLM 5 / 5.1 remain selectable models, and
-        // GLM-4.7-flash is the Lite-slot default.)
+        // handles parallel tool calls cleanly.
+        //
+        // Gemini 3 stays OUT of the picker entirely: via the gateway's
+        // OpenAI-compatible endpoint it 400s on parallel tool calls, needing a
+        // thought_signature the gateway doesn't pass through (vercel/ai
+        // #11590/#10344). Gemini 2.5 Pro covers Google multimodal — including
+        // audio — and its tool calls actually work.
         ModelConfig {
             model_id: "anthropic/claude-opus-4.8".to_string(),
             display_name: "Claude Opus 4.8".to_string(),
@@ -96,12 +136,8 @@ pub fn default_models() -> Vec<ModelConfig> {
             supports_pdf: true,
             supports_audio: false,
             is_default: true,
-            // Advisory only — Vercel AI Gateway's `usage.cost` is authoritative
-            // for billing (see virtues-api's ai.rs). Kept for picker display.
-            input_cost_per_1k: Some(0.015),
-            output_cost_per_1k: Some(0.075),
         },
-        // LITE: Fast model for background tasks (titles, summaries)
+        // LITE: Fast model for background tasks (titles, summaries, extraction).
         ModelConfig {
             model_id: "zai/glm-4.7-flash".to_string(),
             display_name: "GLM 4.7 Flash".to_string(),
@@ -115,10 +151,8 @@ pub fn default_models() -> Vec<ModelConfig> {
             supports_pdf: false,
             supports_audio: false,
             is_default: false,
-            input_cost_per_1k: Some(0.0003),
-            output_cost_per_1k: Some(0.001),
         },
-        // REASONING: Complex analysis and thinking
+        // Selectable, not a slot default. Reasoning-heavy; slow first token.
         ModelConfig {
             model_id: "zai/glm-5.1".to_string(),
             display_name: "GLM 5.1".to_string(),
@@ -132,27 +166,13 @@ pub fn default_models() -> Vec<ModelConfig> {
             supports_pdf: false,
             supports_audio: false,
             is_default: false,
-            input_cost_per_1k: Some(0.0012),
-            output_cost_per_1k: Some(0.0035),
         },
-        // (CODING slot also defaults to Opus 4.8 — see default_model_for_slot();
-        // no separate catalog entry, since the picker is a flat list of distinct
-        // models and a duplicate model_id breaks its keyed render.)
-        // ───────────────────────────────────────────────────────────────────
-        // Additional curated models (selectable in the picker; not slot defaults).
-        // Capability flags are hand-maintained here — the long-term plan is to
-        // enrich these from the Vercel AI Gateway model catalog (which carries
-        // modality + pricing metadata) so they stay current without a release.
-        //
-        // NOTE: model_ids must match the gateway's catalog exactly or requests
-        // 404 — verify any newly added id against the live gateway.
-        // ───────────────────────────────────────────────────────────────────
         // Anthropic Sonnet — faster / cheaper than Opus, same vision + PDF.
         ModelConfig {
             model_id: "anthropic/claude-sonnet-4.6".to_string(),
             display_name: "Claude Sonnet 4.6".to_string(),
             provider: "Anthropic".to_string(),
-            sort_order: 5,
+            sort_order: 4,
             enabled: true,
             context_window: 200000,
             max_output_tokens: 64000,
@@ -161,14 +181,27 @@ pub fn default_models() -> Vec<ModelConfig> {
             supports_pdf: true,
             supports_audio: false,
             is_default: false,
-            input_cost_per_1k: Some(0.003),
-            output_cost_per_1k: Some(0.015),
         },
         // Gemini 2.5 Pro — full multimodal in (image + PDF + AUDIO); tool calls
-        // work via the gateway (unlike Gemini 3, below). Closes the audio gap.
+        // work via the gateway (unlike Gemini 3). This is the audio path.
         ModelConfig {
             model_id: "google/gemini-2.5-pro".to_string(),
             display_name: "Gemini 2.5 Pro".to_string(),
+            provider: "Google".to_string(),
+            sort_order: 5,
+            enabled: true,
+            context_window: 1000000,
+            max_output_tokens: 65000,
+            supports_tools: true,
+            supports_vision: true,
+            supports_pdf: true,
+            supports_audio: true,
+            is_default: false,
+        },
+        // Gemini 2.5 Flash — fast, cheap, full multimodal in.
+        ModelConfig {
+            model_id: "google/gemini-2.5-flash".to_string(),
+            display_name: "Gemini 2.5 Flash".to_string(),
             provider: "Google".to_string(),
             sort_order: 6,
             enabled: true,
@@ -179,64 +212,6 @@ pub fn default_models() -> Vec<ModelConfig> {
             supports_pdf: true,
             supports_audio: true,
             is_default: false,
-            input_cost_per_1k: Some(0.00125),
-            output_cost_per_1k: Some(0.01),
-        },
-        // Gemini 2.5 Flash — fast, cheap, full multimodal in.
-        ModelConfig {
-            model_id: "google/gemini-2.5-flash".to_string(),
-            display_name: "Gemini 2.5 Flash".to_string(),
-            provider: "Google".to_string(),
-            sort_order: 7,
-            enabled: true,
-            context_window: 1000000,
-            max_output_tokens: 65000,
-            supports_tools: true,
-            supports_vision: true,
-            supports_pdf: true,
-            supports_audio: true,
-            is_default: false,
-            input_cost_per_1k: Some(0.0003),
-            output_cost_per_1k: Some(0.0025),
-        },
-        // Gemini 3 Pro — newest Google flagship, full multimodal in. CAVEAT: via
-        // the gateway's OpenAI-compatible endpoint it 400s on parallel tool calls
-        // (needs a thought_signature the gateway doesn't pass; vercel/ai
-        // #11590/#10344) — fine for multimodal Q&A, shaky for tool-heavy agent
-        // turns. Enabled but not a slot default.
-        ModelConfig {
-            model_id: "google/gemini-3-pro".to_string(),
-            display_name: "Gemini 3 Pro".to_string(),
-            provider: "Google".to_string(),
-            sort_order: 8,
-            enabled: true,
-            context_window: 1000000,
-            max_output_tokens: 65000,
-            supports_tools: true,
-            supports_vision: true,
-            supports_pdf: true,
-            supports_audio: true,
-            is_default: false,
-            input_cost_per_1k: Some(0.002),
-            output_cost_per_1k: Some(0.012),
-        },
-        // OpenAI GPT-5.1 — strong general model, vision + PDF in. (Audio input is
-        // a separate realtime surface, not this chat path.)
-        ModelConfig {
-            model_id: "openai/gpt-5.1".to_string(),
-            display_name: "GPT-5.1".to_string(),
-            provider: "OpenAI".to_string(),
-            sort_order: 9,
-            enabled: true,
-            context_window: 400000,
-            max_output_tokens: 128000,
-            supports_tools: true,
-            supports_vision: true,
-            supports_pdf: true,
-            supports_audio: false,
-            is_default: false,
-            input_cost_per_1k: Some(0.00125),
-            output_cost_per_1k: Some(0.01),
         },
     ]
 }
@@ -251,56 +226,42 @@ pub fn default_model_for_slot(slot: ModelSlot) -> &'static str {
     }
 }
 
-/// Pricing for a model by ID, as `(input_cost_per_1k, output_cost_per_1k)` USD.
+/// Every model id this build depends on: the curated picker plus the slot
+/// defaults (which include ids the picker never shows, e.g. the Image slot).
 ///
-/// THE single source of model pricing across the system:
-///   - `virtues-api` uses it as the billing fallback when the Vercel AI Gateway
-///     omits the authoritative `usage.cost` field (see `providers::calculate_cost`).
-///   - the box uses it for on-box cost estimation (`chat_usage`, `rate_limit`).
-///
-/// Resolution order: exact match on a curated default model (its displayed
-/// price) → per-family pattern match (most-specific first) → conservative
-/// fallback ($5/$15 per 1M, i.e. never under-charge on an unknown model).
-pub fn get_model_pricing(model_id: &str) -> (f64, f64) {
-    // 1. Curated default models keep their exact (displayed) price.
-    if let Some(model) = default_models().iter().find(|m| m.model_id == model_id) {
-        return (
-            model.input_cost_per_1k.unwrap_or(0.005),
-            model.output_cost_per_1k.unwrap_or(0.015),
-        );
+/// This is the set that must exist in the gateway catalog. virtues-api checks
+/// it on every refresh; CI checks it against the live gateway.
+pub fn required_model_ids() -> Vec<String> {
+    let mut ids: Vec<String> = default_models().into_iter().map(|m| m.model_id).collect();
+    for slot in [
+        ModelSlot::Chat,
+        ModelSlot::Lite,
+        ModelSlot::Coding,
+        ModelSlot::Image,
+    ] {
+        let id = default_model_for_slot(slot).to_string();
+        if !ids.contains(&id) {
+            ids.push(id);
+        }
     }
-
-    // 2. Per-family pattern table. Rates per 1K tokens; most-specific first
-    //    (e.g. gpt-4o-mini before gpt-4o before gpt-4).
-    let m = model_id.to_lowercase();
-    if m.contains("gemini-2.5") {
-        (0.00125, 0.010) // Gemini 2.5 Pro
-    } else if m.contains("gemini-3-flash") || m.contains("gemini-3.5") {
-        (0.000075, 0.0003) // Gemini 3/3.5 Flash
-    } else if m.contains("gemini") {
-        (0.00015, 0.0006) // other Gemini
-    } else if m.contains("claude-opus") {
-        (0.015, 0.075) // Claude Opus
-    } else if m.contains("claude-3-5-haiku") || m.contains("claude-haiku") {
-        (0.0008, 0.004) // Claude Haiku
-    } else if m.contains("claude") {
-        (0.003, 0.015) // Claude Sonnet / other Claude
-    } else if m.contains("gpt-4o-mini") {
-        (0.00015, 0.0006)
-    } else if m.contains("gpt-4o") {
-        (0.0025, 0.010)
-    } else if m.contains("gpt-4-turbo") {
-        (0.010, 0.030)
-    } else if m.contains("gpt-4") {
-        (0.030, 0.060)
-    } else if m.contains("o1") {
-        (0.015, 0.060) // o1 reasoning
-    } else if m.contains("gpt-3.5") {
-        (0.0005, 0.0015)
-    } else {
-        (0.005, 0.015) // conservative fallback ($5/$15 per 1M)
-    }
+    ids
 }
+
+/// Last-resort pricing, as `(input_cost_per_1k, output_cost_per_1k)` USD.
+///
+/// This is NOT a price table — it is a floor, and it is deliberately
+/// expensive. It applies only when BOTH authoritative sources are unavailable:
+/// the gateway omitted `usage.cost` on the response *and* the cached catalog
+/// is cold (a fresh virtues-api that has never reached the gateway).
+///
+/// Set high on purpose: in that blind spot we would rather over-charge a user
+/// by a few cents — visible, refundable — than silently under-charge and eat
+/// unbounded cost. The old per-family pattern table that lived here did the
+/// opposite: it under-charged image generation by 13× because nobody
+/// remembered to add a row for the image model.
+///
+/// $5 / $15 per 1M tokens.
+pub const FALLBACK_PRICING: (f64, f64) = (0.005, 0.015);
 
 #[cfg(test)]
 mod tests {
@@ -330,42 +291,67 @@ mod tests {
         assert_eq!(default_count, 1, "Should have exactly one default model");
     }
 
+    /// Every slot default must be reachable — including ids the picker never
+    /// shows (the Image slot has no ModelConfig entry, which is exactly how it
+    /// went unpriced and under-billed by 13× for so long).
     #[test]
-    fn test_all_models_have_pricing() {
-        let models = default_models();
-        for model in &models {
+    fn required_ids_cover_every_slot() {
+        let required = required_model_ids();
+        for slot in [
+            ModelSlot::Chat,
+            ModelSlot::Lite,
+            ModelSlot::Coding,
+            ModelSlot::Image,
+        ] {
+            let id = default_model_for_slot(slot);
             assert!(
-                model.input_cost_per_1k.is_some(),
-                "Model {} should have input pricing",
-                model.model_id
-            );
-            assert!(
-                model.output_cost_per_1k.is_some(),
-                "Model {} should have output pricing",
-                model.model_id
+                required.contains(&id.to_string()),
+                "slot {} default `{id}` missing from required_model_ids()",
+                slot.as_str()
             );
         }
     }
 
     #[test]
-    fn test_get_model_pricing() {
-        // Curated default model — exact match wins (displayed price).
-        assert_eq!(get_model_pricing("google/gemini-3-flash"), (0.0001, 0.0004));
-
-        // Unknown model — conservative fallback.
-        assert_eq!(get_model_pricing("unknown/model"), (0.005, 0.015));
+    fn fallback_pricing_never_undercharges() {
+        // The floor must sit at or above the most expensive model we curate,
+        // so a cold-catalog blind spot can only ever over-charge.
+        let (input, output) = FALLBACK_PRICING;
+        assert!(input >= 0.005 && output >= 0.015);
     }
 
+    /// The `curated ⊆ catalog` invariant — the one that would have caught
+    /// `google/gemini-3-pro` and `openai/gpt-5.1` sitting in the picker,
+    /// 404ing, for who knows how long — needs an HTTP client, and this crate is
+    /// deliberately serde-only. It lives with the fetcher instead:
+    /// `services/virtues-api/src/catalog.rs::curated_models_all_exist_on_the_gateway`.
+    /// virtues-api also enforces it at runtime on every hourly refresh, which
+    /// matters because Vercel ships no deprecation notice at all.
     #[test]
-    fn test_get_model_pricing_patterns() {
-        // Per-family pattern table (rates per 1K tokens), most-specific first.
-        assert_eq!(get_model_pricing("google/gemini-2.5-pro"), (0.00125, 0.010));
-        assert_eq!(get_model_pricing("anthropic/claude-opus-4.1"), (0.015, 0.075));
-        assert_eq!(get_model_pricing("anthropic/claude-3-5-haiku"), (0.0008, 0.004));
-        assert_eq!(get_model_pricing("anthropic/claude-sonnet-4"), (0.003, 0.015));
-        // gpt-4o-mini must win over gpt-4o / gpt-4.
-        assert_eq!(get_model_pricing("openai/gpt-4o-mini"), (0.00015, 0.0006));
-        assert_eq!(get_model_pricing("openai/gpt-4o"), (0.0025, 0.010));
-        assert_eq!(get_model_pricing("openai/gpt-4-turbo"), (0.010, 0.030));
+    fn no_pricing_is_stored_in_this_crate() {
+        // A guard against the mirror growing back. If you find yourself wanting
+        // to add a price here: don't. Fetch it. See the module docs.
+        //
+        // The needle is assembled at runtime so this test does not match its
+        // own source, and only `default_models()` is scanned so `FALLBACK_PRICING`
+        // (a floor, not a price) is exempt.
+        let needle = format!("cost_per_1k{}", ": Some(");
+        let src = include_str!("models.rs");
+        let body = src
+            .split("pub fn default_models()")
+            .nth(1)
+            .and_then(|s| s.split("pub fn required_model_ids()").next())
+            .expect("default_models() not found");
+
+        let offenders: Vec<&str> = body
+            .lines()
+            .filter(|l| !l.trim_start().starts_with("//"))
+            .filter(|l| l.contains(&needle))
+            .collect();
+
+        assert!(
+            offenders.is_empty(),
+            "hardcoded model pricing reintroduced into default_models(): {offenders:?}"
+        );
     }
 }

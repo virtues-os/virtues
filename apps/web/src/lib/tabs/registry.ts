@@ -176,13 +176,13 @@ export const tabRegistry: Record<TabType, TabDefinition> = {
 	},
 
 	// ========================================================================
-	// WIKI: /wiki, /wiki/{entities|people|places|orgs}
+	// WIKI: /wiki, /wiki/{entities|people|places|orgs|unlinked}
 	// (/entities is a legacy alias — the unified list now lives at /wiki/entities)
 	// ========================================================================
 	wiki: {
 		match: (path) =>
 			path === '/wiki' ||
-			/^\/wiki\/(entities|people|places|orgs)$/.test(path) ||
+			/^\/wiki\/(entities|people|places|orgs|unlinked)$/.test(path) ||
 			path === '/entities',
 		parse: () => ({
 			type: 'wiki',
