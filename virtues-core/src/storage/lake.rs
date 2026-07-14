@@ -62,8 +62,49 @@ pub struct LakeRef {
 /// else ./data/lake). Actions are separate processes that inherit the box's env
 /// but never build a `Virtues` client, so they need this to reach the lake.
 pub fn storage_from_env() -> Result<Storage> {
-    let path = std::env::var("STORAGE_PATH").unwrap_or_else(|_| "./data/lake".to_string());
-    Storage::file(path)
+    Storage::file(storage_root())
+}
+
+fn storage_root() -> String {
+    std::env::var("STORAGE_PATH").unwrap_or_else(|_| "./data/lake".to_string())
+}
+
+/// Below this much free disk, the lake stops accepting new raw-stream archives.
+///
+/// `archive()` runs BEFORE the transform, on every stream, from every device. That
+/// ordering is what makes the lake worth having — but it also means a failure here
+/// fails the action, which 500s the webhook, which stops *that device's entire
+/// upload*. So a full disk would not merely stop audio: it would stop location,
+/// health, messages, and browsing, from every device, at once. Adding raw retention
+/// quietly put every collector behind one shared point of failure.
+///
+/// Under pressure we therefore degrade instead of dying: skip the archive, say so
+/// loudly, and let the transform run. Those batches lose replayability — genuinely
+/// bad, and precisely what the retention sweeper exists to prevent — but the ontology
+/// data still lands, which is far less bad than collecting nothing at all.
+///
+/// 2 GiB, not zero, because the floor has to be crossed *before* the disk is actually
+/// full: Postgres, the WAL, and the transform's own writes all need room to keep
+/// working, and a lake that stops only once there is no space left has already taken
+/// the database down with it.
+const MIN_FREE_BYTES: u64 = 2 * 1024 * 1024 * 1024;
+
+/// Free bytes on the filesystem holding the lake, or `None` if we cannot tell.
+///
+/// `None` means proceed. A guard that cannot read the disk must not be the reason
+/// ingest stops — that would trade a rare failure for a certain one.
+fn free_bytes() -> Option<u64> {
+    free_bytes_at(&std::fs::canonicalize(storage_root()).ok()?)
+}
+
+fn free_bytes_at(root: &std::path::Path) -> Option<u64> {
+    sysinfo::Disks::new_with_refreshed_list()
+        .iter()
+        .filter(|d| root.starts_with(d.mount_point()))
+        // The path can sit under several nested mounts ("/" and "/var" both match
+        // "/var/lib/virtues"); the one that actually holds it is the LONGEST match.
+        .max_by_key(|d| d.mount_point().as_os_str().len())
+        .map(|d| d.available_space())
 }
 
 /// Archive one stream's records as a replayable object.
@@ -87,6 +128,24 @@ pub async fn archive(
     }
 
     let stream = envelope.stream_name();
+
+    // Degrade, don't die. See MIN_FREE_BYTES: skipping the archive costs us the ability
+    // to replay these records; failing here would cost us the records themselves, and
+    // every other stream on the device with them.
+    if let Some(free) = free_bytes() {
+        if free < MIN_FREE_BYTES {
+            tracing::error!(
+                free_mb = free / 1024 / 1024,
+                floor_mb = MIN_FREE_BYTES / 1024 / 1024,
+                provider,
+                stream,
+                records = records.len(),
+                "DISK FULL — skipping lake archive to keep ingest alive. These records \
+                 are NOT replayable. Free space or run retention."
+            );
+            return Ok(None);
+        }
+    }
 
     // JSONL, uncompressed for now: at this volume (all data_* tables together are
     // 65 MB, against 763 MB of audio) compression buys nothing, and plain text
@@ -183,6 +242,18 @@ pub async fn archive(
 /// one recording the other's audio. `filename` is derived from the record's stream
 /// id, so the key is already unique per recording, and a retry of the same chunk
 /// rewrites the same path — idempotent without content-addressing.
+///
+/// # Deliberately NOT disk-pressure guarded
+///
+/// `archive()` skips itself when the disk is nearly full, because the records it holds
+/// are *also* landing in `data_*` — skipping costs replayability, not the data.
+///
+/// Media is the opposite. The blob IS the content, and the box holds the only copy:
+/// the device deletes its chunk once we acknowledge it. Skipping the write here would
+/// return a happy 200 while silently destroying the recording. So this fails loudly,
+/// the action 500s, and the device keeps the audio and retries — which is exactly what
+/// we want it to do. A full disk should stop us accepting audio; it must never make us
+/// pretend we accepted it.
 pub async fn put_media(
     pool: &PgPool,
     storage: &Storage,
@@ -284,4 +355,46 @@ fn time_window(records: &[Value]) -> (Option<DateTime<Utc>>, Option<DateTime<Utc
     }
 
     (min, max)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The guard is only worth having if it can actually read the disk. If mount
+    /// matching silently fails, `free_bytes` returns None, the guard never fires, and
+    /// we ship a no-op that looks like protection — the worst possible outcome for a
+    /// safety net.
+    #[test]
+    fn we_can_actually_read_free_space() {
+        let free = free_bytes_at(std::path::Path::new("/"))
+            .expect("no disk matched '/' — the pressure guard would never fire");
+        assert!(free > 0, "reported zero free bytes on /, which cannot be right");
+    }
+
+    /// A nested mount must win over its parent, or we'd read the free space of the
+    /// wrong filesystem — reporting "plenty of room" on `/` while the volume actually
+    /// holding the lake is full.
+    #[test]
+    fn the_deepest_mount_wins() {
+        let disks = sysinfo::Disks::new_with_refreshed_list();
+        let deepest = disks
+            .iter()
+            .max_by_key(|d| d.mount_point().as_os_str().len())
+            .map(|d| d.mount_point().to_path_buf());
+        let Some(mount) = deepest else { return };
+        if mount == std::path::Path::new("/") {
+            return; // single-filesystem machine; nothing to disambiguate
+        }
+        // Asking about a path INSIDE the deepest mount must not answer with `/`.
+        let root_free = free_bytes_at(std::path::Path::new("/"));
+        let mount_free = free_bytes_at(&mount);
+        assert!(mount_free.is_some());
+        if root_free != mount_free {
+            assert_ne!(
+                mount_free, root_free,
+                "a nested mount resolved to the root filesystem's free space"
+            );
+        }
+    }
 }
