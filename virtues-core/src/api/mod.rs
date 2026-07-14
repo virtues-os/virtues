@@ -82,6 +82,7 @@ pub use drive::{
     init_drive_quota,
     is_lake_object_id,
     list_files as list_drive_files,
+    list_media as list_drive_media,
     list_trash as list_drive_trash,
     move_file as move_drive_file,
     purge_file as purge_drive_file,

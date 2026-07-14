@@ -486,6 +486,7 @@ pub async fn run(client: Virtues, host: &str, port: u16) -> Result<()> {
             post(api::reconcile_drive_usage_handler),
         )
         // Drive trash endpoints
+        .route("/api/drive/media", get(api::list_drive_media_handler))
         .route("/api/drive/trash", get(api::list_drive_trash_handler))
         .route(
             "/api/drive/trash/empty",

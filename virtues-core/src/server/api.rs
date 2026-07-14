@@ -2429,6 +2429,11 @@ pub async fn reconcile_drive_usage_handler(State(state): State<AppState>) -> Res
 // =============================================================================
 
 /// GET /api/drive/trash - List files in trash
+/// GET /api/drive/media — the app's internal assets (.media/). Read-only.
+pub async fn list_drive_media_handler(State(state): State<AppState>) -> Response {
+    api_response(crate::api::list_drive_media(state.db.pool()).await)
+}
+
 pub async fn list_drive_trash_handler(State(state): State<AppState>) -> Response {
     api_response(crate::api::list_drive_trash(state.db.pool()).await)
 }
