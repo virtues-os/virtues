@@ -40,12 +40,111 @@ pub async fn resolve_people(db: &Database, window: TimeWindow) -> Result<usize> 
     // 2. Resolve from email senders
     total_resolved += resolve_email_senders(db, window).await?;
 
+    // 3. Resolve from message senders — the one that was never wired up.
+    total_resolved += resolve_message_senders(db, window).await?;
+
     tracing::info!(
         people_resolved = total_resolved,
         "People resolution completed"
     );
 
     Ok(total_resolved)
+}
+
+/// Turn `+16304608847` into Nick.
+///
+/// Email senders resolved. Calendar attendees resolved. Message senders never did —
+/// there was no resolver for `data_communication_message` at all. So the box knew
+/// 525 people, held thousands of messages, and connected none of them: every message
+/// said a phone number and not one said a name.
+///
+/// That is the difference between a log and a memory. "Sucks you're going to have to
+/// cancel — +16304608847" is a line of data. The same sentence with "Nick" on it is a
+/// life, and it is what makes the rest of the system worth querying.
+///
+/// Unlike the email path, this one deliberately does NOT create a person when the
+/// handle is unknown. An unrecognized email address at least carries a display name;
+/// a bare phone number carries nothing, and inventing a nameless person per unknown
+/// number would fill the graph with hundreds of ghosts called "+18334160379". Unknown
+/// numbers simply stay unresolved until a contact turns up — the honest state.
+async fn resolve_message_senders(db: &Database, window: TimeWindow) -> Result<usize> {
+    let rows = sqlx::query!(
+        r#"
+        SELECT m.id, m.from_identifier
+        FROM data_communication_message m
+        LEFT JOIN wiki_entity_refs r
+               ON r.source_table = 'data_communication_message'
+              AND r.source_id = m.id
+              AND r.role = 'sender'
+        WHERE m.timestamp >= $1 AND m.timestamp <= $2
+          AND r.id IS NULL
+          AND m.from_identifier <> 'me'
+        LIMIT 5000
+        "#,
+        window.start,
+        window.end
+    )
+    .fetch_all(db.pool())
+    .await?;
+
+    if rows.is_empty() {
+        return Ok(0);
+    }
+
+    let mut resolved = 0;
+    for row in rows {
+        // One normal form on both sides — this is the whole fix. Contacts store what
+        // you typed ("(952) 292-1126"); chat.db stores E.164 ("+19522921126").
+        let Some(handle) = virtues_helpers::handles::normalize_handle(&row.from_identifier) else {
+            continue; // short code — a bank's robot, not a person
+        };
+
+        let person = sqlx::query!(
+            r#"SELECT id, canonical_name FROM wiki_people WHERE handles ? $1 LIMIT 2"#,
+            handle
+        )
+        .fetch_all(db.pool())
+        .await?;
+
+        // Two people answering to one handle means the contact data is wrong, not
+        // that we should guess. Decline, exactly as the alias resolver does.
+        if person.len() != 1 {
+            continue;
+        }
+        let person_id = person[0].id.clone();
+        let name = person[0].canonical_name.clone();
+
+        let ref_id = ids::generate_id("eref", &[&row.id, &person_id, "sender"]);
+        sqlx::query!(
+            r#"
+            INSERT INTO wiki_entity_refs (id, entity_type, entity_id, source_table, source_id, role, timestamp)
+            SELECT $1, 'person', $2, 'data_communication_message', $3, 'sender', timestamp
+            FROM data_communication_message WHERE id = $3
+            ON CONFLICT (entity_id, source_table, source_id, role) DO NOTHING
+            "#,
+            ref_id,
+            person_id,
+            row.id
+        )
+        .execute(db.pool())
+        .await?;
+
+        // Denormalize the name onto the message too. The REF is the real artifact —
+        // it's what lets you traverse to everything else about them — but from_name is
+        // what a day summary or a chat prompt reads without a join.
+        sqlx::query!(
+            r#"UPDATE data_communication_message SET from_name = $1 WHERE id = $2 AND from_name IS NULL"#,
+            name,
+            row.id
+        )
+        .execute(db.pool())
+        .await?;
+
+        resolved += 1;
+    }
+
+    tracing::info!(resolved, "Message senders resolved to people");
+    Ok(resolved)
 }
 
 /// Resolve people from calendar attendees in time window

@@ -289,6 +289,19 @@ async fn create_person(db: &PgPool, contact: &ContactRecord) -> Result<String> {
 
     let emails_json = serde_json::json!(contact.emails);
     let phones_json = serde_json::json!(contact.phones);
+
+    // The normal form of everything this person answers to — E.164 phones, lowercased
+    // emails — indexed so a message from "+19522921126" can find the contact you
+    // typed as "(952) 292-1126". `emails`/`phones` keep the raw strings: what the
+    // human wrote is worth keeping, and a normal form is not a replacement for it.
+    //
+    // Without this, resolution is impossible: 525 contacts, thousands of messages, and
+    // not one connection, because the two sides spell the same person differently.
+    let handles_json = serde_json::json!(virtues_helpers::handles::normalized_handles(
+        contact.emails.iter().map(String::as_str),
+        contact.phones.iter().map(String::as_str),
+    ));
+
     let birthday = contact.birthday.as_deref().and_then(parse_birthday);
 
     let metadata = serde_json::json!({
@@ -298,11 +311,12 @@ async fn create_person(db: &PgPool, contact: &ContactRecord) -> Result<String> {
     });
 
     sqlx::query(
-        r#"INSERT INTO wiki_people (id, canonical_name, emails, phones, birthday, metadata)
-           VALUES ($1, $2, $3, $4, $5, $6)
+        r#"INSERT INTO wiki_people (id, canonical_name, emails, phones, handles, birthday, metadata)
+           VALUES ($1, $2, $3, $4, $5, $6, $7)
            ON CONFLICT (id) DO UPDATE SET
                emails = EXCLUDED.emails,
                phones = EXCLUDED.phones,
+               handles = EXCLUDED.handles,
                birthday = COALESCE(EXCLUDED.birthday, wiki_people.birthday),
                metadata = EXCLUDED.metadata,
                updated_at = now()"#,
@@ -311,6 +325,7 @@ async fn create_person(db: &PgPool, contact: &ContactRecord) -> Result<String> {
     .bind(&canonical_name)
     .bind(&emails_json)
     .bind(&phones_json)
+    .bind(&handles_json)
     .bind(&birthday)
     .bind(&metadata)
     .execute(db)
