@@ -374,7 +374,7 @@ pub fn registered_ontologies() -> Vec<OntologyDescriptor> {
         OntologyDescriptor {
             name: "activity_app_usage",
             display_name: "App Usage",
-            description: "Application focus events from macOS",
+            description: "Attended, focused time in an app — bounded by idle, lock and sleep",
             domain: "activity",
             table_name: "data_activity_app_usage",
             source_streams: vec!["stream_mac_apps"],
@@ -388,12 +388,44 @@ pub fn registered_ontologies() -> Vec<OntologyDescriptor> {
                 label_sql: "COALESCE(t.app_name, 'Unknown app')",
                 preview_sql: "t.window_title",
                 id_sql: "t.id",
-                extra_where: None,
+                // An open session's end_time is provisional (it walks forward with
+                // each heartbeat), so it would otherwise show up in a day's timeline
+                // as a zero-length blip until it closes.
+                extra_where: Some("t.is_open = false"),
                 use_date_filter: false,
             }),
             continuous_agg: None,
             //                    who  whom what when where why  how
             is_activation_signal: true,
+        },
+        // Where the human was — the counterpart to app usage, and the reason app
+        // usage can finally be honest. Without it, absence is invisible: walking
+        // away with an app focused looked identical to using it, and `loginwindow`
+        // (the lock screen) arrived as though it were an app, becoming the box's
+        // most-used "application" at 211 of 429 hours.
+        OntologyDescriptor {
+            name: "activity_presence",
+            display_name: "Presence",
+            description: "Whether you were at the machine: active, watching, idle, locked, asleep",
+            domain: "activity",
+            table_name: "data_activity_presence",
+            source_streams: vec!["stream_mac_presence"],
+            timestamp_column: "started_at",
+            end_timestamp_column: Some("ended_at"),
+            embedding: None,
+            temporal_type: TemporalType::Discrete,
+            day_source: Some(DaySourceConfig {
+                source_type: "presence",
+                source_type_sql: None,
+                label_sql: "t.state",
+                preview_sql: "NULL",
+                id_sql: "t.id",
+                extra_where: Some("t.is_open = false"),
+                use_date_filter: false,
+            }),
+            continuous_agg: None,
+            //                    who  whom what when where why  how
+            is_activation_signal: false,
         },
         OntologyDescriptor {
             name: "activity_web_browsing",

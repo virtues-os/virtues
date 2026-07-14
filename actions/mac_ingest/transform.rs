@@ -16,7 +16,7 @@
 //! ```
 
 use anyhow::Result;
-use chrono::{DateTime, Duration, Utc};
+use chrono::{DateTime, Utc};
 use serde_json::Value;
 use sqlx::PgPool;
 use uuid::Uuid;
@@ -39,147 +39,11 @@ fn event_time(record: &Value) -> Option<DateTime<Utc>> {
         .and_then(|s| s.parse::<DateTime<Utc>>().ok())
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// App usage — aggregate raw activate/deactivate events into sessions
-// ─────────────────────────────────────────────────────────────────────────────
-
-/// Aggregate raw app focus events into sessions and write to data_activity_app_usage.
-/// Each consecutive run of events with the same bundle_id becomes one session
-/// (start = first event ts, end = last event ts).
-pub async fn write_app_events(db: &PgPool, events: &[Value]) -> Result<usize> {
-    if events.is_empty() {
-        return Ok(0);
-    }
-
-    // Sort by timestamp. An unparseable timestamp sorts LAST (not to "now", which
-    // would shuffle position with the wall clock) — and the aggregation loop below
-    // skips those records outright, so this only decides ordering.
-    let mut sorted: Vec<&Value> = events.iter().collect();
-    sorted.sort_by_key(|e| event_time(e).unwrap_or(DateTime::<Utc>::MAX_UTC));
-
-    #[derive(Default)]
-    struct Session {
-        start: Option<DateTime<Utc>>,
-        end: Option<DateTime<Utc>>,
-        bundle_id: String,
-        app_name: String,
-        window_title: Option<String>,
-    }
-
-    let mut sessions: Vec<Session> = Vec::new();
-    let mut cur = Session::default();
-
-    for ev in sorted {
-        let ts = ev
-            .get("timestamp")
-            .and_then(|v| v.as_str())
-            .and_then(|s| s.parse::<DateTime<Utc>>().ok());
-        let bundle = ev
-            .get("bundle_id")
-            .and_then(|v| v.as_str())
-            .unwrap_or("")
-            .to_string();
-        let name = ev
-            .get("app_name")
-            .and_then(|v| v.as_str())
-            .unwrap_or(&bundle)
-            .to_string();
-        let title = ev
-            .get("window_title")
-            .and_then(|v| v.as_str())
-            .map(String::from);
-
-        match ts {
-            Some(t) if !bundle.is_empty() => {
-                if cur.bundle_id != bundle {
-                    if cur.start.is_some() {
-                        sessions.push(std::mem::take(&mut cur));
-                    }
-                    cur.start = Some(t);
-                    cur.bundle_id = bundle;
-                    cur.app_name = name;
-                    cur.window_title = title.clone();
-                }
-                cur.end = Some(t);
-                if title.is_some() && cur.window_title.is_none() {
-                    cur.window_title = title;
-                }
-            }
-            _ => continue,
-        }
-    }
-    if cur.start.is_some() {
-        sessions.push(cur);
-    }
-
-    // Filter sessions shorter than 1 second (noise).
-    let rows: Vec<_> = sessions
-        .into_iter()
-        .filter_map(|s| {
-            let start = s.start?;
-            let end = s.end?;
-            if end - start < Duration::seconds(1) {
-                return None;
-            }
-            let stream_id = format!("{}:{}", s.bundle_id, start.timestamp());
-            let id = Uuid::new_v5(
-                &Uuid::NAMESPACE_OID,
-                format!("mac:app_session:{stream_id}").as_bytes(),
-            )
-            .to_string();
-            Some((
-                id,
-                s.app_name.clone(),
-                s.bundle_id.clone(),
-                start,
-                end,
-                s.window_title.clone(),
-                stream_id,
-                serde_json::json!({"bundle_id": s.bundle_id}),
-            ))
-        })
-        .collect();
-
-    let mut written = 0;
-    for chunk in rows.chunks(BATCH_SIZE) {
-        if chunk.is_empty() {
-            continue;
-        }
-        let sql = build_batch_insert_query(
-            "data_activity_app_usage",
-            &[
-                "id",
-                "app_name",
-                "app_bundle_id",
-                "start_time",
-                "end_time",
-                "window_title",
-                "source_stream_id",
-                "source_table",
-                "source_provider",
-                "metadata",
-            ],
-            "source_stream_id",
-            chunk.len(),
-        );
-        let mut q = sqlx::query(&sql);
-        for r in chunk {
-            q = q
-                .bind(&r.0)
-                .bind(&r.1)
-                .bind(&r.2)
-                .bind(r.3)
-                .bind(r.4)
-                .bind(&r.5)
-                .bind(&r.6)
-                .bind("mac_apps")
-                .bind(PROVIDER)
-                .bind(&r.7);
-        }
-        written += q.execute(db).await?.rows_affected() as usize;
-    }
-    Ok(written)
-}
+// NOTE: app-event aggregation used to live here. It grouped events into sessions
+// WITHIN a single upload batch, which is structurally incapable of recording a
+// session longer than the upload interval — a 40-minute focus produced no row at
+// all, while backlog batches fabricated enormous ones. It now lives in
+// `sessionize.rs`, which holds sessions open across batches against the DB.
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Browser history → data_activity_web_browsing
