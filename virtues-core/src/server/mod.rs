@@ -750,6 +750,13 @@ pub async fn run(client: Virtues, host: &str, port: u16) -> Result<()> {
             "/ws/terminal",
             get(crate::api::terminal::terminal_ws_handler),
         )
+        // Paste/drop a file into the terminal: writes it under the user's home
+        // and returns the path, which the frontend types at the cursor.
+        .route(
+            "/api/terminal/paste",
+            post(crate::api::terminal::terminal_paste_handler)
+                .layer(DefaultBodyLimit::max(25 * 1024 * 1024)),
+        )
         // Yjs WebSocket (real-time collaborative editing)
         .route("/ws/yjs/:page_id", get(yjs_websocket_handler))
         // Blanket auth: all routes in this group require a resolved AuthUser

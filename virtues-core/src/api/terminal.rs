@@ -7,9 +7,9 @@ use axum::{
     response::{IntoResponse, Response},
 };
 use portable_pty::{native_pty_system, CommandBuilder, PtySize};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use std::io::{Read, Write};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use crate::server::webhook::AppState;
 
@@ -116,6 +116,135 @@ fn check_same_origin(headers: &HeaderMap) -> Option<Response> {
     }
 }
 
+// ---------------------------------------------------------------------------
+// Paste / drop -> a file on the box
+//
+// The clipboard lives in the browser, on the user's laptop; the shell runs here.
+// stdin can't carry an image between them — a terminal has never moved pictures
+// that way, and a native `claude` only manages it by reading the *local* OS
+// clipboard, which this box doesn't have. So the paste becomes a file on disk
+// and the terminal gets its path typed in at the cursor, exactly as if the user
+// had typed it. Every CLI already knows what to do with a path.
+//
+// These land in the user's home, not the drive's media store: `media` is
+// app-level content (page embeds, notebook sources), while this is a scratch
+// file belonging to a shell session.
+// ---------------------------------------------------------------------------
+
+/// Where pasted files land, under $HOME.
+const PASTE_DIR: &str = ".virtues/pastes";
+
+/// Big enough for any screenshot, small enough that a stray paste can't fill the
+/// disk. Enforced again as a body limit on the route.
+const PASTE_MAX_BYTES: usize = 25 * 1024 * 1024;
+
+/// Pastes are scratch. Sweep anything older than this on the next paste.
+const PASTE_TTL: std::time::Duration = std::time::Duration::from_secs(7 * 24 * 60 * 60);
+
+#[derive(Serialize)]
+pub struct PasteResponse {
+    /// Absolute, so it resolves no matter what the shell's cwd is.
+    path: String,
+}
+
+/// Map the client-declared content type to an extension.
+///
+/// A whitelist of literals, not a sanitised passthrough: the content type is
+/// attacker-controlled, and the return value becomes part of a filename. Nothing
+/// here can carry a `/` or a `..`, so the path is safe by construction rather
+/// than by validation.
+fn paste_extension(content_type: Option<&str>) -> &'static str {
+    let ct = content_type.unwrap_or("").split(';').next().unwrap_or("").trim();
+    match ct {
+        "image/png" => "png",
+        "image/jpeg" => "jpg",
+        "image/gif" => "gif",
+        "image/webp" => "webp",
+        "image/svg+xml" => "svg",
+        "application/pdf" => "pdf",
+        "text/plain" => "txt",
+        _ => "bin",
+    }
+}
+
+/// Delete pastes past their TTL. Best-effort: a paste that works but doesn't
+/// tidy up is better than one that fails because tidying up did.
+fn sweep_old_pastes(dir: &Path) {
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let stale = entry
+            .metadata()
+            .and_then(|m| m.modified())
+            .map(|t| t.elapsed().map(|age| age > PASTE_TTL).unwrap_or(false))
+            .unwrap_or(false);
+        if stale {
+            let _ = std::fs::remove_file(entry.path());
+        }
+    }
+}
+
+/// Write a pasted blob under `home` and return its absolute path.
+///
+/// Content-addressed: pasting the same screenshot twice costs one file and
+/// yields one stable path, which is also what makes the write idempotent.
+fn store_paste(home: &Path, content_type: Option<&str>, body: &[u8]) -> std::io::Result<PathBuf> {
+    let ext = paste_extension(content_type);
+    let digest = <sha2::Sha256 as sha2::Digest>::digest(body);
+    let name = format!("paste-{}.{ext}", &hex::encode(digest)[..16]);
+
+    let dir = home.join(PASTE_DIR);
+    std::fs::create_dir_all(&dir)?;
+    sweep_old_pastes(&dir);
+
+    let path = dir.join(name);
+    if !path.exists() {
+        std::fs::write(&path, body)?;
+    }
+    Ok(path)
+}
+
+/// Take a pasted or dropped blob, write it under $HOME, and hand back the path
+/// for the frontend to type into the terminal.
+pub async fn terminal_paste_handler(
+    State(_state): State<AppState>,
+    headers: HeaderMap,
+    body: axum::body::Bytes,
+) -> Response {
+    if body.is_empty() {
+        return (StatusCode::BAD_REQUEST, "empty paste").into_response();
+    }
+    if body.len() > PASTE_MAX_BYTES {
+        return (StatusCode::PAYLOAD_TOO_LARGE, "paste too large").into_response();
+    }
+
+    let Ok(home) = std::env::var("HOME") else {
+        tracing::error!("terminal paste: no HOME to write into");
+        return (StatusCode::INTERNAL_SERVER_ERROR, "no home directory").into_response();
+    };
+    let content_type = headers
+        .get(header::CONTENT_TYPE)
+        .and_then(|v| v.to_str().ok());
+
+    match store_paste(Path::new(&home), content_type, &body) {
+        Ok(path) => {
+            tracing::debug!("terminal paste: {} ({} bytes)", path.display(), body.len());
+            (
+                StatusCode::CREATED,
+                axum::Json(PasteResponse {
+                    path: path.to_string_lossy().into_owned(),
+                }),
+            )
+                .into_response()
+        }
+        Err(e) => {
+            tracing::error!("terminal paste: {e}");
+            (StatusCode::INTERNAL_SERVER_ERROR, "cannot store paste").into_response()
+        }
+    }
+}
+
 /// Handle the established WebSocket connection.
 async fn handle_socket(mut socket: WebSocket, size: PtySize) {
     if let Err(e) = pty_bridge(&mut socket, size).await {
@@ -170,50 +299,137 @@ fn find_tmux(path: &str) -> Option<PathBuf> {
         .find(|candidate| candidate.is_file())
 }
 
+/// The tmux server options we want, as one `;`-separated command list.
+///
+/// The shape depends on whether the session already exists, because tmux is
+/// unforgiving in both directions:
+///
+/// - Creating: the list must `start-server` first (a bare `set-option` against a
+///   socket with no server fails), and must *end* by creating the session. A
+///   tmux server with no sessions exits immediately, so configuring one and
+///   leaving would take the options down with it — verified, `mouse` came back
+///   unset on the next client. Creating last also means the options are already
+///   set when the pane is born, which matters: `default-terminal` and
+///   `history-limit` are read at pane creation, so setting them afterwards would
+///   strand the first pane on `screen` with 2000 lines of history forever.
+/// - Reattaching: no `new-session` at all. Both `-A -d` and a bare `-d` *fail*
+///   against an existing session ("open terminal failed" / "duplicate session"),
+///   and a failing command aborts the rest of the list. The server is already up,
+///   so the options just get re-asserted.
+///
+/// - `default-terminal` is the $TERM programs inside tmux see, and `Tc` is what
+///   tells tmux the outer terminal — xterm.js — takes 24-bit colour, which it
+///   does. Neither is inferable: verified on tmux 3.4 that COLORTERM=truecolor
+///   alone does *not* get RGB into the client's terminal features.
+///   `screen-256color` over `tmux-256color` because the latter's terminfo entry
+///   is missing on minimal images.
+/// - `mouse` makes the wheel scroll tmux's history. Without it the wheel does
+///   nothing at all: tmux owns the screen, so xterm's own scrollback never
+///   fills and there is nothing under the viewport to scroll to.
+/// - `history-limit` defaults to 2000 lines, which would silently truncate well
+///   before the 10k scrollback the frontend advertises.
+/// - Right-click otherwise opens tmux's own context menu, which inside a browser
+///   reads as the page being broken; unbinding it gives the browser's menu back.
+///   `unbind-key` on an already-unbound key is a no-op, so this stays idempotent.
+///
+/// Every set is `-g`, never `-ga`: this runs on *every* connect and appending is
+/// not idempotent — three connects would leave three copies of `*:Tc` in the
+/// option. Overwriting is safe because the server on this socket is ours alone.
+fn tmux_config_args(session_exists: bool) -> Vec<&'static str> {
+    let mut args = vec!["-L", TMUX_SOCKET];
+    if !session_exists {
+        args.extend(["start-server", ";"]);
+    }
+    args.extend([
+        // The pane is born from *this* command, not from the PTY's client, so it
+        // inherits this process's environment. tmux overrides TERM from
+        // `default-terminal`, but nothing would otherwise put COLORTERM inside
+        // the pane — and that's what programs read to decide they may emit
+        // 24-bit colour. Without it tmux can render RGB while the app inside
+        // never tries. (PATH gets in the same way: see `configure_tmux`.)
+        "set-environment",
+        "-g",
+        "COLORTERM",
+        "truecolor",
+        ";",
+        "set-option",
+        "-g",
+        "default-terminal",
+        "screen-256color",
+        ";",
+        "set-option",
+        "-g",
+        "terminal-overrides",
+        ",*:Tc",
+        ";",
+        "set-option",
+        "-g",
+        "mouse",
+        "on",
+        ";",
+        "set-option",
+        "-g",
+        "history-limit",
+        "10000",
+        ";",
+        "unbind-key",
+        "-n",
+        "MouseDown3Pane",
+    ]);
+    if !session_exists {
+        args.extend([";", "new-session", "-d", "-s", TMUX_SESSION]);
+    }
+    args
+}
+
+/// Apply the server options and make sure the session exists. Best-effort *on
+/// purpose*, and deliberately not part of the PTY's own command list: tmux aborts
+/// a `;`-separated list at the first command that errors, so an option this tmux
+/// build doesn't recognise would take `new-session` down with it and leave the
+/// tab with no shell at all. Run separately, a failure here costs duller colours
+/// and no mouse — the PTY still attaches, creating the session itself if this
+/// never got that far.
+async fn configure_tmux(tmux: &Path, path: &str) {
+    let exists = tokio::process::Command::new(tmux)
+        .args(["-L", TMUX_SOCKET, "has-session", "-t", TMUX_SESSION])
+        .env("PATH", path)
+        .output()
+        .await
+        .map(|out| out.status.success())
+        .unwrap_or(false);
+
+    // This call is what creates the session, so the shell in it inherits *this*
+    // environment — not the PTY client's. PATH matters most: it's how a `claude`
+    // installed into ~/.local/bin is on PATH at all (see `session_path`).
+    let result = tokio::process::Command::new(tmux)
+        .args(tmux_config_args(exists))
+        .env("PATH", path)
+        .env("COLORTERM", "truecolor")
+        .output()
+        .await;
+    match result {
+        Ok(out) if !out.status.success() => tracing::warn!(
+            "tmux options rejected ({}): {}",
+            out.status,
+            String::from_utf8_lossy(&out.stderr).trim()
+        ),
+        Err(e) => tracing::warn!("could not configure tmux: {e}"),
+        Ok(_) => {}
+    }
+}
+
 /// Build the command the PTY runs: a tmux client attached to the shared
 /// session, or a plain login shell if tmux isn't installed.
-fn session_command(path: &str, home: Option<&str>) -> CommandBuilder {
+fn session_command(tmux: Option<&Path>, path: &str, home: Option<&str>) -> CommandBuilder {
     let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/bash".to_string());
 
-    let mut cmd = match find_tmux(path) {
+    let mut cmd = match tmux {
         Some(tmux) => {
             let mut cmd = CommandBuilder::new(tmux);
             // `new-session -A` is attach-or-create: the first tab starts the
-            // session, every later one reattaches to it.
-            //
-            // The two `set-option`s run before it (tmux executes a `;`-separated
-            // command list in order, starting the server on demand) and exist
-            // because tmux otherwise advertises a colour-poor terminal to the
-            // programs inside it: `default-terminal` is what they see in $TERM,
-            // and `Tc` is what tells tmux the outer terminal — xterm.js — takes
-            // 24-bit colour, which it does. Neither is inferable: verified on
-            // tmux 3.4 that COLORTERM=truecolor alone does *not* get RGB into
-            // the client's terminal features. `screen-256color` over
-            // `tmux-256color` because the latter's terminfo entry is missing on
-            // minimal images.
-            //
-            // Both are plain `-g` sets, not `-ga` appends: this command list
-            // runs on *every* connect, and appending is not idempotent — three
-            // connects leave three copies of `*:Tc` in the option. Overwriting
-            // is safe because the server on this socket is ours alone.
-            cmd.args([
-                "-L",
-                TMUX_SOCKET,
-                "set-option",
-                "-g",
-                "default-terminal",
-                "screen-256color",
-                ";",
-                "set-option",
-                "-g",
-                "terminal-overrides",
-                ",*:Tc",
-                ";",
-                "new-session",
-                "-A",
-                "-s",
-                TMUX_SESSION,
-            ]);
+            // session, every later one reattaches to it. Nothing else rides in
+            // this list — see `configure_tmux` for why.
+            cmd.args(["-L", TMUX_SOCKET, "new-session", "-A", "-s", TMUX_SESSION]);
             cmd
         }
         None => {
@@ -248,7 +464,11 @@ async fn pty_bridge(
 
     let home = std::env::var("HOME").ok();
     let path = session_path(home.as_deref());
-    let cmd = session_command(&path, home.as_deref());
+    let tmux = find_tmux(&path);
+    if let Some(tmux) = &tmux {
+        configure_tmux(tmux, &path).await;
+    }
+    let cmd = session_command(tmux.as_deref(), &path, home.as_deref());
 
     let mut child = pty.slave.spawn_command(cmd)?;
     // Close our handle to the slave; only the child should hold it, so the
@@ -421,51 +641,143 @@ mod tests {
         assert!(find_tmux("::").is_none());
     }
 
-    #[test]
-    fn attaches_to_the_shared_tmux_session_when_tmux_exists() {
-        let dir = tempfile::tempdir().unwrap();
-        std::fs::write(dir.path().join("tmux"), b"#!/bin/sh\n").unwrap();
-        let path = dir.path().to_str().unwrap();
-
-        let cmd = session_command(path, Some("/home/virtues"));
-        let argv: Vec<String> = cmd
-            .get_argv()
+    fn argv_of(cmd: &CommandBuilder) -> Vec<String> {
+        cmd.get_argv()
             .iter()
             .map(|a| a.to_string_lossy().into_owned())
-            .collect();
+            .collect()
+    }
 
-        assert!(argv[0].ends_with("/tmux"));
-        let tail = argv.join(" ");
-        // attach-or-create against the one shared session — this is what makes a
-        // closed tab a detach instead of a kill.
-        assert!(tail.ends_with(&format!("new-session -A -s {TMUX_SESSION}")));
-        // ...on our own socket, so we don't mutate the user's tmux server.
-        assert!(tail.starts_with(&format!("{} -L {TMUX_SOCKET} ", argv[0])));
-        // ...and tmux must be told the outer terminal takes 24-bit colour.
-        assert!(tail.contains("terminal-overrides ,*:Tc"));
-        // The option sets must be idempotent: this runs on every connect, and
-        // `-ga` would leave a copy of `*:Tc` behind each time.
-        assert!(!tail.contains("-ga"));
+    #[test]
+    fn attaches_to_the_shared_tmux_session_when_tmux_exists() {
+        let tmux = PathBuf::from("/usr/bin/tmux");
+        let cmd = session_command(Some(&tmux), "/usr/bin", Some("/home/virtues"));
 
+        // Nothing but the attach rides in the PTY's command list: tmux aborts a
+        // list at the first erroring command, so an option this build didn't
+        // recognise would take `new-session` down with it and leave the tab with
+        // no shell at all. Options go through configure_tmux instead.
+        assert_eq!(
+            argv_of(&cmd),
+            vec![
+                "/usr/bin/tmux",
+                "-L",
+                TMUX_SOCKET,
+                "new-session",
+                "-A",
+                "-s",
+                TMUX_SESSION
+            ]
+        );
         assert_eq!(cmd.get_env("COLORTERM").unwrap(), "truecolor");
         assert_eq!(cmd.get_env("TERM").unwrap(), "xterm-256color");
     }
 
     #[test]
-    fn falls_back_to_a_login_shell_without_tmux() {
-        let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().to_str().unwrap();
+    fn tmux_options_are_idempotent_and_scoped_to_our_socket() {
+        for exists in [false, true] {
+            let args = tmux_config_args(exists).join(" ");
 
-        let cmd = session_command(path, None);
-        let argv: Vec<String> = cmd
-            .get_argv()
-            .iter()
-            .map(|a| a.to_string_lossy().into_owned())
-            .collect();
+            // Always our own socket, never the user's tmux server.
+            assert!(args.starts_with(&format!("-L {TMUX_SOCKET} ")));
+            // The wheel scrolls tmux's history; without this it does nothing at
+            // all, because tmux owns the screen and xterm's scrollback is empty.
+            assert!(args.contains("set-option -g mouse on"));
+            // ...as far back as the frontend's scrollback claims to go (tmux's
+            // own default is 2000 lines).
+            assert!(args.contains("set-option -g history-limit 10000"));
+            // xterm.js takes 24-bit colour and tmux can't infer it.
+            assert!(args.contains("terminal-overrides ,*:Tc"));
+            // This runs on every connect, so no `-ga`: appending is not
+            // idempotent and would stack another copy of `*:Tc` each time.
+            assert!(!args.contains("-ga"));
+        }
+    }
+
+    #[test]
+    fn tmux_config_creates_the_session_only_when_it_is_missing() {
+        // Cold: bring a server up first (a bare `set-option` against an empty
+        // socket fails), and create the session last — both because the options
+        // must be set before the pane is born to reach it, and because a tmux
+        // server with no sessions exits and takes the options with it.
+        let cold = tmux_config_args(false).join(" ");
+        assert!(cold.starts_with(&format!("-L {TMUX_SOCKET} start-server")));
+        assert!(cold.ends_with(&format!("new-session -d -s {TMUX_SESSION}")));
+
+        // Warm: no new-session at all. Against an existing session both `-A -d`
+        // and a bare `-d` fail, and a failed command aborts the rest of the list.
+        let warm = tmux_config_args(true).join(" ");
+        assert!(!warm.contains("new-session"));
+        assert!(!warm.contains("start-server"));
+    }
+
+    #[test]
+    fn falls_back_to_a_login_shell_without_tmux() {
+        let cmd = session_command(None, "/usr/bin", None);
+        let argv = argv_of(&cmd);
 
         assert_eq!(argv.len(), 2, "shell + -l, no tmux args: {argv:?}");
         assert_eq!(argv[1], "-l");
         assert_eq!(cmd.get_env("COLORTERM").unwrap(), "truecolor");
+    }
+
+    #[test]
+    fn paste_extension_cannot_escape_the_paste_dir() {
+        assert_eq!(paste_extension(Some("image/png")), "png");
+        assert_eq!(paste_extension(Some("image/jpeg; charset=binary")), "jpg");
+        assert_eq!(paste_extension(None), "bin");
+        // The content type is client-controlled and lands in a filename. The
+        // whitelist returns literals, so traversal can't survive it.
+        assert_eq!(paste_extension(Some("../../etc/passwd")), "bin");
+        assert_eq!(paste_extension(Some("image/png/../../x")), "bin");
+    }
+
+    #[test]
+    fn stores_pastes_content_addressed_under_home() {
+        let home = tempfile::tempdir().unwrap();
+        let png = b"\x89PNG\r\n\x1a\n fake";
+
+        let path = store_paste(home.path(), Some("image/png"), png).unwrap();
+
+        // Absolute, under $HOME/.virtues/pastes, and *not* in the drive's media
+        // store — this is a shell scratch file, not app-level content.
+        assert!(path.is_absolute());
+        assert_eq!(path.parent().unwrap(), home.path().join(PASTE_DIR));
+        assert_eq!(path.extension().unwrap(), "png");
+        assert_eq!(std::fs::read(&path).unwrap(), png);
+
+        // Same bytes -> same path, written once. Pasting a screenshot twice must
+        // not litter the directory.
+        let again = store_paste(home.path(), Some("image/png"), png).unwrap();
+        assert_eq!(again, path);
+        assert_eq!(std::fs::read_dir(home.path().join(PASTE_DIR)).unwrap().count(), 1);
+
+        // Different bytes -> different path.
+        let other = store_paste(home.path(), Some("image/png"), b"other").unwrap();
+        assert_ne!(other, path);
+    }
+
+    #[test]
+    fn sweep_removes_only_expired_pastes() {
+        let dir = tempfile::tempdir().unwrap();
+        let fresh = dir.path().join("paste-fresh.png");
+        let stale = dir.path().join("paste-stale.png");
+        std::fs::write(&fresh, b"x").unwrap();
+        std::fs::write(&stale, b"x").unwrap();
+
+        // Backdate one past the TTL.
+        let old = std::time::SystemTime::now() - PASTE_TTL - std::time::Duration::from_secs(60);
+        std::fs::File::options()
+            .write(true)
+            .open(&stale)
+            .unwrap()
+            .set_modified(old)
+            .unwrap();
+
+        sweep_old_pastes(dir.path());
+
+        assert!(fresh.exists(), "a fresh paste must survive the sweep");
+        assert!(!stale.exists(), "an expired paste must be swept");
     }
 
     /// The PTY must be born at the client's size: a full-screen TUI reads the
