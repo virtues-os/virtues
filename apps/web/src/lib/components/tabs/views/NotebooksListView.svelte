@@ -3,6 +3,8 @@
 	import Icon from '$lib/components/Icon.svelte';
 	import { notebookStore } from '$lib/stores/notebook.svelte';
 	import { windowShellStore } from '$lib/stores/window-shell.svelte';
+	import UniversalDataGrid, { type Column } from '$lib/components/datagrid/UniversalDataGrid.svelte';
+	import type { NotebookSummary } from '$lib/api/client';
 
 	let { active: _active }: { tab?: unknown; active?: boolean } = $props();
 
@@ -17,6 +19,57 @@
 	});
 
 	const notebooks = $derived(notebookStore.notebooks);
+
+	const columns: Column<NotebookSummary>[] = [
+		{
+			key: 'name',
+			label: 'Name',
+			icon: 'ri:layout-masonry-line',
+			width: '35%',
+			minWidth: '180px'
+		},
+		{
+			key: 'current_status',
+			label: 'Memo',
+			icon: 'ri:sticky-note-line',
+			width: '35%',
+			minWidth: '160px'
+		},
+		{
+			key: 'chat_count',
+			label: 'Chats',
+			icon: 'ri:chat-3-line',
+			width: '10%',
+			minWidth: '70px',
+			format: 'number',
+			hideOnMobile: true
+		},
+		{
+			key: 'updated_at',
+			label: 'Updated',
+			icon: 'ri:time-line',
+			width: '20%',
+			minWidth: '120px',
+			hideOnMobile: true,
+			getValue: (item) => formatRelativeDate(item.updated_at)
+		}
+	];
+
+	function formatRelativeDate(dateStr?: string | null): string | null {
+		if (!dateStr) return null;
+		const date = new Date(dateStr);
+		if (Number.isNaN(date.getTime())) return null;
+		const diffMs = Date.now() - date.getTime();
+		if (diffMs < 0) return 'Upcoming';
+		const diffDays = Math.floor(diffMs / (1000 * 60 * 60 * 24));
+
+		if (diffDays === 0) return 'Today';
+		if (diffDays === 1) return 'Yesterday';
+		if (diffDays < 7) return `${diffDays} days ago`;
+		if (diffDays < 30) return `${Math.floor(diffDays / 7)} weeks ago`;
+		if (diffDays < 365) return `${Math.floor(diffDays / 30)} months ago`;
+		return `${Math.floor(diffDays / 365)} years ago`;
+	}
 
 	function open(id: string) {
 		windowShellStore.openTabFromRoute(`/notebook/${id}`);
@@ -81,7 +134,7 @@
 		{/if}
 	</header>
 
-	{#if notebooks.length === 0}
+	{#if notebooks.length === 0 && !notebookStore.loading && !notebookStore.error}
 		<div class="empty">
 			<Icon icon="ri:layout-masonry-line" width="28" />
 			<p>No Notebooks yet.</p>
@@ -90,32 +143,77 @@
 			{/if}
 		</div>
 	{:else}
-		<div class="grid">
-			{#each notebooks as s (s.id)}
-				<button
-					class="card"
-					class:tinted={!!s.accent_color}
-					style={s.accent_color ? `--room-accent: ${s.accent_color}` : ''}
-					onclick={() => open(s.id)}
-				>
-					<div class="card-icon"><Icon icon={s.icon || 'ri:layout-masonry-line'} width="20" /></div>
-					<div class="card-name">{s.name}</div>
-					{#if s.current_status}
-						<div class="card-memo">{s.current_status}</div>
-					{/if}
-					<div class="card-meta">
-						<span>{s.chat_count} {s.chat_count === 1 ? 'chat' : 'chats'}</span>
-						<span class="dot-sep">·</span>
-						<span>{s.item_count} pinned</span>
+		<UniversalDataGrid
+			items={notebooks}
+			{columns}
+			entityType="notebook"
+			loading={notebookStore.loading}
+			error={notebookStore.error}
+			emptyIcon="ri:layout-masonry-line"
+			emptyMessage="No Notebooks yet"
+			loadingMessage="Loading Notebooks..."
+			searchPlaceholder="Search Notebooks..."
+			defaultViewMode="grid"
+			gridMinWidth="200px"
+			onItemClick={(nb) => open(nb.id)}
+			onRetry={() => notebookStore.load()}
+		>
+			{#snippet tableRow(nb: NotebookSummary)}
+				<td class="col-name">
+					<div class="name-cell">
+						<span
+							class="row-icon"
+							class:tinted={!!nb.accent_color}
+							style={nb.accent_color ? `--room-accent: ${nb.accent_color}` : ''}
+						>
+							<Icon icon={nb.icon || 'ri:layout-masonry-line'} width="15" />
+						</span>
+						<span class="name-text">{nb.name}</span>
 					</div>
-				</button>
-			{/each}
-		</div>
+				</td>
+				<td class="col-memo">
+					{#if nb.current_status}
+						<span class="memo-text">{nb.current_status}</span>
+					{:else}
+						<span class="empty-cell">—</span>
+					{/if}
+				</td>
+				<td class="col-chats hide-mobile">
+					<span class="count-text">{nb.chat_count}</span>
+				</td>
+				<td class="col-updated hide-mobile">
+					{#if formatRelativeDate(nb.updated_at)}
+						<span class="date-text">{formatRelativeDate(nb.updated_at)}</span>
+					{:else}
+						<span class="empty-cell">—</span>
+					{/if}
+				</td>
+			{/snippet}
+
+			{#snippet card(nb: NotebookSummary)}
+				<div
+					class="nb-card"
+					class:tinted={!!nb.accent_color}
+					style={nb.accent_color ? `--room-accent: ${nb.accent_color}` : ''}
+				>
+					<div class="nb-card-icon"><Icon icon={nb.icon || 'ri:layout-masonry-line'} width="20" /></div>
+					<div class="nb-card-name">{nb.name}</div>
+					{#if nb.current_status}
+						<div class="nb-card-memo">{nb.current_status}</div>
+					{/if}
+					<div class="nb-card-meta">
+						<span>{nb.chat_count} {nb.chat_count === 1 ? 'chat' : 'chats'}</span>
+						<span class="dot-sep">·</span>
+						<span>{nb.item_count} pinned</span>
+					</div>
+				</div>
+			{/snippet}
+		</UniversalDataGrid>
 	{/if}
 </div>
 
 <style>
-	.notebooks-list { height: 100%; overflow-y: auto; padding: 28px 32px 48px; max-width: 920px; margin: 0 auto; }
+	.notebooks-list { height: 100%; overflow-y: auto; padding: 28px 32px 48px; max-width: 72rem; margin: 0 auto; }
 	.head { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; margin-bottom: 22px; }
 	h1 { font-size: 24px; font-weight: 680; margin: 0; color: var(--color-foreground); }
 	.sub { margin: 4px 0 0; font-size: 13px; color: var(--color-foreground-muted); max-width: 48ch; }
@@ -134,30 +232,62 @@
 	}
 	.name-input:focus { border-color: var(--color-primary, var(--color-foreground-muted)); }
 
-	.grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 12px; }
-	.card {
+	/* Card (grid view) — fills the grid's unstyled card button */
+	.nb-card {
 		display: flex; flex-direction: column; gap: 6px;
 		padding: 14px; border: 1px solid var(--color-border); border-radius: 12px;
-		background: var(--color-surface); text-align: left; cursor: pointer;
+		background: var(--color-surface);
+		width: 100%; height: 100%;
 		transition: border-color 0.12s ease, background 0.12s ease;
 	}
-	.card:hover { background: var(--color-surface-elevated); }
-	.card.tinted { box-shadow: inset 3px 0 0 var(--room-accent); border-color: color-mix(in srgb, var(--room-accent) 30%, var(--color-border)); }
-	.card-icon {
+	.nb-card:hover { background: var(--color-surface-elevated); }
+	.nb-card.tinted { box-shadow: inset 3px 0 0 var(--room-accent); border-color: color-mix(in srgb, var(--room-accent) 30%, var(--color-border)); }
+	.nb-card-icon {
 		display: grid; place-items: center; width: 36px; height: 36px;
 		border-radius: 9px; background: var(--color-surface-elevated); color: var(--color-foreground); margin-bottom: 2px;
 	}
-	.card.tinted .card-icon {
+	.nb-card.tinted .nb-card-icon {
 		background: color-mix(in srgb, var(--room-accent) 16%, transparent);
 		color: color-mix(in srgb, var(--room-accent) 78%, var(--color-foreground));
 	}
-	.card-name { font-size: 14.5px; font-weight: 600; color: var(--color-foreground); }
-	.card-memo {
+	.nb-card-name { font-size: 14.5px; font-weight: 600; color: var(--color-foreground); }
+	.nb-card-memo {
 		font-size: 12.5px; color: var(--color-foreground-muted); line-height: 1.4;
 		display: -webkit-box; -webkit-line-clamp: 2; line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
 	}
-	.card-meta { display: flex; align-items: center; gap: 6px; font-size: 11.5px; color: var(--color-foreground-subtle, #9ca3af); margin-top: 2px; }
+	.nb-card-meta { display: flex; align-items: center; gap: 6px; font-size: 11.5px; color: var(--color-foreground-subtle, #9ca3af); margin-top: 2px; }
 	.dot-sep { opacity: 0.5; }
+
+	/* Table row styles */
+	.name-cell { display: flex; align-items: center; gap: 0.5rem; }
+	.row-icon {
+		display: grid; place-items: center; width: 24px; height: 24px;
+		border-radius: 6px; background: var(--color-surface-elevated);
+		color: var(--color-foreground); flex-shrink: 0;
+	}
+	.row-icon.tinted {
+		background: color-mix(in srgb, var(--room-accent) 16%, transparent);
+		color: color-mix(in srgb, var(--room-accent) 78%, var(--color-foreground));
+	}
+	.name-text { font-weight: 500; color: var(--color-foreground); }
+	.memo-text {
+		color: var(--color-foreground-muted); font-size: 0.8125rem;
+		display: -webkit-box; -webkit-line-clamp: 1; line-clamp: 1; -webkit-box-orient: vertical; overflow: hidden;
+	}
+	.count-text { color: var(--color-foreground-muted); font-size: 0.8125rem; font-variant-numeric: tabular-nums; }
+	.date-text { color: var(--color-foreground-muted); font-size: 0.8125rem; }
+	.empty-cell { color: var(--color-foreground-subtle); }
+
+	.col-name { width: 35%; min-width: 180px; padding: 0.625rem 0.75rem; padding-left: 0; }
+	.col-memo { width: 35%; min-width: 160px; padding: 0.625rem 0.75rem; }
+	.col-chats { width: 10%; min-width: 70px; padding: 0.625rem 0.75rem; }
+	.col-updated { width: 20%; min-width: 120px; padding: 0.625rem 0.75rem; padding-right: 0; }
+
+	@media (max-width: 768px) {
+		.hide-mobile { display: none; }
+		.col-name { width: 55%; }
+		.col-memo { width: 45%; }
+	}
 
 	.empty { display: flex; flex-direction: column; align-items: center; gap: 6px; padding: 64px 0; color: var(--color-foreground-muted); }
 	.empty p { margin: 0; font-size: 14px; }

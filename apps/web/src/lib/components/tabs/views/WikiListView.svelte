@@ -1,7 +1,7 @@
 <script lang="ts">
 	import type { Tab } from '$lib/tabs/types';
 	import { Page } from '$lib';
-	import { PersonTable, PlaceTable, OrganizationTable, ThingTable } from '$lib/components/wiki';
+	import { PersonTable, PlaceTable, OrganizationTable } from '$lib/components/wiki';
 
 	let { tab, active }: { tab: Tab; active: boolean } = $props();
 
@@ -14,7 +14,6 @@
 		person: 'People',
 		place: 'Places',
 		org: 'Organizations',
-		thing: 'Things',
 	};
 </script>
 
@@ -25,8 +24,6 @@
 		<PlaceTable />
 	{:else if entityType === 'org'}
 		<OrganizationTable />
-	{:else if entityType === 'thing'}
-		<ThingTable />
 	{:else}
 		<div class="placeholder">
 			<p>Unknown entity type: {entityType}</p>

@@ -10,7 +10,6 @@ import type {
 	WikiPersonApi,
 	WikiPlaceApi,
 	WikiOrganizationApi,
-	WikiThingApi,
 	WikiDayApi,
 	WikiActApi,
 	WikiChapterApi,
@@ -21,7 +20,6 @@ import type {
 import type { PersonPage } from "./types/person";
 import type { PlacePage, PlaceType } from "./types/place";
 import type { OrganizationPage, OrganizationType } from "./types/organization";
-import type { ThingPage } from "./types/thing";
 import type { DayPage, DayEvent, LinkedEntities, LinkedTemporal } from "./types/day";
 import type { ActPage } from "./types/act";
 import type { ChapterPage } from "./types/chapter";
@@ -182,33 +180,6 @@ export function apiToOrganizationPage(api: WikiOrganizationApi): OrganizationPag
 	};
 }
 
-// ============================================================================
-// Thing Converter
-// ============================================================================
-
-export function apiToThingPage(api: WikiThingApi): ThingPage {
-	return {
-		type: "thing",
-		id: api.id,
-		title: api.name,
-		cover: api.cover_image ?? undefined,
-
-		// Thing-specific fields
-		category: api.category ?? undefined,
-		description: api.description ?? undefined,
-
-		// Content
-		content: api.content ?? "",
-
-		// Metadata
-		citations: [],
-		linkedPages: [],
-		tags: [],
-		createdAt: new Date(api.created_at),
-		updatedAt: new Date(api.updated_at),
-		lastEditedBy: "ai",
-	};
-}
 
 // ============================================================================
 // Day Converter

@@ -26,7 +26,7 @@ import RefPreview from '$lib/components/RefPreview.svelte';
 // =============================================================================
 
 const ENTITY_PREFIXES = [
-	'/person/', '/page/', '/org/', '/place/', '/thing/',
+	'/person/', '/page/', '/org/', '/place/',
 	'/day/', '/year/', '/source/', '/chat/', '/drive/', '/space/',
 ] as const;
 

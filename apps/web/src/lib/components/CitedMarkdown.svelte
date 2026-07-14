@@ -7,6 +7,7 @@
 	import LinkChip from './LinkChip.svelte';
 	import MarkdownCodeBlock from './MarkdownCodeBlock.svelte';
 	import { parseEntityRoute } from '$lib/utils/refRoutes';
+	import { preprocessMarkdown } from '$lib/utils/markdownPreprocess';
 	import type { BundledTheme } from 'shiki';
 
 	interface Props {
@@ -45,23 +46,7 @@
 	const processedContent = $derived.by(() => {
 		if (!content) return '';
 		// Fix adjacent citations [1][2] -> [1] [2]
-		let out = content.replace(/\](\[\d+\])/g, '] $1');
-		// Neutralize a lone "~" — the model uses it for "approximately"
-		// ("~10k stars", "~5ms"). Streamdown renders ~text~ as subscript, so
-		// an unintended pair drops a whole phrase below the baseline. Escaping
-		// keeps a literal tilde while leaving ~~strikethrough~~ (doubled) intact.
-		// Skip code spans/fences: backslash escapes are literal inside code,
-		// so escaping there would render a stray "\" (e.g. `rm ~/.cache`).
-		// Gate on the presence of a tilde first: this alternation-with-lookbehind
-		// re-runs on every streamed token (processedContent is $derived), so a
-		// full-body scan per delta is O(n^2) over a stream — and most messages
-		// have no tilde at all.
-		if (out.includes('~')) {
-			out = out.replace(/(```[\s\S]*?```|`[^`\n]+`)|(?<!~)~(?!~)/g, (m, code) =>
-				code ? m : '\\~'
-			);
-		}
-		return out;
+		return preprocessMarkdown(content.replace(/\](\[\d+\])/g, '] $1'));
 	});
 
 	// Convert CitationContext to Streamdown's sources format

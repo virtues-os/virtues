@@ -1,11 +1,12 @@
 <script lang="ts">
 	import type { Tab } from '$lib/tabs/types';
-	import { Page } from '$lib';
+	import { Page, Button, Input, Badge, SudoModal } from '$lib';
 	import { subscriptionStore } from '$lib/stores/subscription.svelte';
 	import { windowShellStore } from '$lib/stores/window-shell.svelte';
 	import { openExternal } from '$lib/tauri/bridge';
 	import { formatMicrosUSD, formatMicrosPrecise } from '$lib/utils/currency';
 	import Icon from '$lib/components/Icon.svelte';
+	import { toast } from 'svelte-sonner';
 
 	let { tab, active }: { tab: Tab; active: boolean } = $props();
 
@@ -125,11 +126,7 @@
 	}
 
 	function openUsage() {
-		windowShellStore.openTabFromRoute('/virtues/usage', { label: 'Usage', preferEmptyPane: true });
-	}
-
-	function openByoKey() {
-		windowShellStore.openTabFromRoute('/virtues/byo-key', { label: 'AI Provider Key', preferEmptyPane: true });
+		windowShellStore.openTabFromRoute('/virtues/account/usage', { label: 'Account', preferEmptyPane: true });
 	}
 
 	// ─── Local billing-state (auto-top-up + BYO) ──────────────────────────
@@ -169,6 +166,118 @@
 	}
 
 	$effect(() => { void loadLocal(); });
+
+	// ─── BYO AI provider key (inline management, formerly ByoKeyView) ──────
+	// The escape hatch from the Virtues wallet. When a key is set here, every
+	// chat call routes box → provider directly, bypassing virtues-api entirely.
+	// Save and Delete are both sudo-gated (`change_byo_key` is one of the four
+	// locked sensitive actions); the SudoModal handles the prompt + CLI
+	// approval round-trip.
+	type ByoStatus = {
+		configured: boolean;
+		provider: string | null;
+		default_model: string | null;
+		endpoint_url: string | null;
+		created_at: string | null;
+	};
+
+	let byoOpen = $state(false);
+	let byoStatus = $state<ByoStatus | null>(null);
+	let byoLoading = $state(false);
+	let byoLoadError = $state<string | null>(null);
+
+	// Form state
+	let byoProvider = $state<'openai' | 'anthropic' | 'xai' | 'google' | 'custom'>('openai');
+	let byoApiKey = $state('');
+	let byoEndpointUrl = $state('');
+	let byoDefaultModel = $state('');
+
+	// Sudo modal coordination — we mint a sudo request, then on approval we
+	// fire the actual save/delete with the approved request id.
+	let showSudoSave = $state(false);
+	let showSudoDelete = $state(false);
+
+	async function loadByo() {
+		byoLoading = true;
+		byoLoadError = null;
+		try {
+			const resp = await fetch('/api/settings/byo-key');
+			if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+			byoStatus = (await resp.json()) as ByoStatus;
+		} catch (e) {
+			byoLoadError = e instanceof Error ? e.message : 'Failed to load BYO status';
+		} finally {
+			byoLoading = false;
+		}
+	}
+
+	function toggleByo() {
+		byoOpen = !byoOpen;
+		if (byoOpen && !byoStatus && !byoLoading) void loadByo();
+	}
+
+	function startByoSave() {
+		if (!byoApiKey.trim()) {
+			toast.error('Paste an API key first');
+			return;
+		}
+		if (byoProvider === 'custom' && !byoEndpointUrl.trim()) {
+			toast.error('Custom provider requires an endpoint URL');
+			return;
+		}
+		showSudoSave = true;
+	}
+
+	async function performByoSave(sudoRequestId: string) {
+		try {
+			const resp = await fetch('/api/settings/byo-key', {
+				method: 'POST',
+				headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify({
+					sudo_request_id: sudoRequestId,
+					provider: byoProvider,
+					api_key: byoApiKey,
+					endpoint_url: byoEndpointUrl || null,
+					default_model: byoDefaultModel || null,
+				}),
+			});
+			if (!resp.ok) {
+				const data = await resp.json().catch(() => ({}));
+				throw new Error(data.error ?? `HTTP ${resp.status}`);
+			}
+			toast.success('BYO key saved');
+			byoApiKey = '';
+			await Promise.all([loadByo(), loadLocal()]);
+		} catch (e) {
+			toast.error('Save failed', {
+				description: e instanceof Error ? e.message : 'Unknown error',
+			});
+		}
+	}
+
+	function startByoDelete() {
+		showSudoDelete = true;
+	}
+
+	async function performByoDelete(sudoRequestId: string) {
+		try {
+			const resp = await fetch('/api/settings/byo-key', {
+				method: 'DELETE',
+				headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify({ sudo_request_id: sudoRequestId }),
+			});
+			if (!resp.ok) {
+				const data = await resp.json().catch(() => ({}));
+				throw new Error(data.error ?? `HTTP ${resp.status}`);
+			}
+			toast.success('BYO key removed — chat is back on your Virtues wallet');
+			await Promise.all([loadByo(), loadLocal()]);
+		} catch (e) {
+			toast.error('Delete failed', {
+				description: e instanceof Error ? e.message : 'Unknown error',
+			});
+		}
+	}
 
 	// ─── Wallet balance + recent ledger (proxied from virtues-api) ─────────
 	type LedgerEntry = { ts: string; micros: number; kind: string; real_micros: number | null };
@@ -430,12 +539,86 @@
 							</div>
 						</div>
 						<button
-							onclick={openByoKey}
+							onclick={toggleByo}
 							class="px-3 py-1.5 rounded-md text-xs font-medium bg-surface-alt border border-border text-foreground hover:bg-surface"
 						>
-							{local.byo.configured ? 'Manage' : 'Set up'}
+							{byoOpen ? 'Close' : local.byo.configured ? 'Manage' : 'Set up'}
 						</button>
 					</div>
+
+					{#if byoOpen}
+						<div class="mt-4 pt-4 border-t border-border-subtle">
+							<p class="text-xs text-foreground-muted mb-4">
+								Bring your own OpenAI / Anthropic / xAI / Google / custom key. When
+								set, every chat call goes from your box directly to the provider —
+								the Virtues cloud is out of the path entirely. The Virtues
+								subscription still works in the background; you can switch back
+								anytime by deleting the key here.
+							</p>
+
+							{#if byoLoading}
+								<p class="text-sm text-foreground-muted">Loading…</p>
+							{:else if byoLoadError}
+								<p class="text-error text-sm">{byoLoadError}</p>
+							{:else if byoStatus?.configured}
+								<div class="rounded-lg border border-border bg-surface p-5 mb-4">
+									<div class="flex items-start gap-3">
+										<div class="flex-shrink-0 w-10 h-10 rounded-lg bg-success/10 border border-success/30 flex items-center justify-center">
+											<Icon icon="ri:key-line" class="text-success" />
+										</div>
+										<div class="flex-1 min-w-0">
+											<div class="font-medium">BYO key active</div>
+											<div class="text-xs text-foreground-muted mt-1 flex flex-wrap gap-x-3 gap-y-1">
+												<span>Provider: <Badge>{byoStatus.provider ?? '?'}</Badge></span>
+												{#if byoStatus.default_model}
+													<span>Model: <code class="text-xs">{byoStatus.default_model}</code></span>
+												{/if}
+												{#if byoStatus.endpoint_url}
+													<span>Endpoint: <code class="text-xs">{byoStatus.endpoint_url}</code></span>
+												{/if}
+											</div>
+											<p class="text-xs text-foreground-muted mt-2">
+												Virtues is not in your inference path. Wallet & top-up are
+												inactive while this key is set.
+											</p>
+										</div>
+										<Button variant="ghost" onclick={startByoDelete}>
+											<Icon icon="ri:close-circle-line" />
+											Remove
+										</Button>
+									</div>
+								</div>
+
+								<div class="rounded-lg border border-border bg-surface p-5">
+									<div class="font-medium mb-3">Replace the key</div>
+									{@render byoKeyForm()}
+									<div class="flex justify-end mt-4">
+										<Button variant="primary" onclick={startByoSave}>Save new key</Button>
+									</div>
+								</div>
+							{:else}
+								<div class="rounded-lg border border-border bg-surface p-5">
+									<div class="font-medium mb-1">No BYO key set</div>
+									<p class="text-xs text-foreground-muted mb-4">
+										Currently routing through the Virtues wallet ($20/mo subscription
+										+ usage). Paste a provider key below to swap.
+									</p>
+									{@render byoKeyForm()}
+									<div class="flex justify-end mt-4">
+										<Button variant="primary" onclick={startByoSave}>Save key</Button>
+									</div>
+								</div>
+							{/if}
+
+							<div class="text-xs text-foreground-muted mt-4">
+								<strong>v1 supports OpenAI-compatible APIs.</strong> For Anthropic-native
+								or Google-native shapes, point BYO at a translation proxy like
+								LiteLLM or OpenRouter and choose
+								<code class="bg-surface-alt px-1 rounded">custom</code> with their
+								endpoint URL.
+							</div>
+						</div>
+					{/if}
 				</div>
 			</div>
 		{/if}
@@ -473,3 +656,74 @@
 			</div>
 		</div>
 </Page>
+
+{#snippet byoKeyForm()}
+	<div class="space-y-3">
+		<div>
+			<label class="block text-xs text-foreground-muted mb-1" for="byo-provider"
+				>Provider</label
+			>
+			<select
+				id="byo-provider"
+				bind:value={byoProvider}
+				class="w-full rounded border border-border bg-surface px-3 py-2 text-sm"
+			>
+				<option value="openai">OpenAI</option>
+				<option value="anthropic">Anthropic (via translation proxy)</option>
+				<option value="xai">xAI</option>
+				<option value="google">Google (via translation proxy)</option>
+				<option value="custom">Custom (OpenAI-compatible)</option>
+			</select>
+		</div>
+		<div>
+			<label class="block text-xs text-foreground-muted mb-1" for="byo-key"
+				>API key</label
+			>
+			<Input
+				id="byo-key"
+				type="password"
+				bind:value={byoApiKey}
+				placeholder="sk-…"
+			/>
+		</div>
+		{#if byoProvider === 'custom'}
+			<div>
+				<label class="block text-xs text-foreground-muted mb-1" for="byo-url"
+					>Endpoint URL</label
+				>
+				<Input
+					id="byo-url"
+					bind:value={byoEndpointUrl}
+					placeholder="https://api.example.com/v1/chat/completions"
+				/>
+			</div>
+		{/if}
+		<div>
+			<label
+				class="block text-xs text-foreground-muted mb-1"
+				for="byo-model">Default model (optional)</label
+			>
+			<Input
+				id="byo-model"
+				bind:value={byoDefaultModel}
+				placeholder="gpt-4o, claude-3-5-sonnet-latest, …"
+			/>
+		</div>
+	</div>
+{/snippet}
+
+<SudoModal
+	bind:show={showSudoSave}
+	action="change_byo_key"
+	title="Save BYO AI key"
+	description="Sensitive action — every future chat call will route through this key. Confirm at the box CLI."
+	onApproved={performByoSave}
+/>
+
+<SudoModal
+	bind:show={showSudoDelete}
+	action="change_byo_key"
+	title="Remove BYO AI key"
+	description="Sensitive action — chat will switch back to the Virtues wallet. Confirm at the box CLI."
+	onApproved={performByoDelete}
+/>

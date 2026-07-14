@@ -71,59 +71,52 @@
 	}
 </script>
 
-<Page>
-	<div class="px-6 py-6 max-w-3xl mx-auto w-full">
-		<div class="mb-6">
-			<h1 class="text-2xl font-semibold tracking-tight">Activity</h1>
-			<p class="text-sm text-foreground-muted mt-1">
-				Recent pairings, revocations, and sensitive-action confirmations on
-				this box. If something here doesn't look like you, revoke the relevant
-				device.
-			</p>
-		</div>
-
-		{#if loading}
-			<LoadingState />
-		{:else if errorMessage}
-			<ErrorState message={errorMessage} />
-		{:else if events.length === 0}
-			<EmptyState
-				icon="ri:history-line"
-				title="No activity yet"
-				message="Pair a device or run a sensitive action to see entries here."
-			/>
-		{:else}
-			<ul class="divide-y divide-border rounded-lg border border-border bg-surface">
-				{#each events as ev (ev.id)}
-					<li class="p-3 flex items-start gap-3">
-						<div
-							class="flex-shrink-0 w-8 h-8 rounded-md bg-surface-alt border border-border flex items-center justify-center"
-						>
-							<Icon icon={iconFor(ev.event_type)} class="text-foreground-muted" />
+<Page
+	title="Activity"
+	description="Recent pairings, revocations, and sensitive-action confirmations on this box. If something here doesn't look like you, revoke the relevant device."
+	maxWidth="prose"
+>
+	{#if loading}
+		<LoadingState />
+	{:else if errorMessage}
+		<ErrorState message={errorMessage} />
+	{:else if events.length === 0}
+		<EmptyState
+			icon="ri:history-line"
+			title="No activity yet"
+			message="Pair a device or run a sensitive action to see entries here."
+		/>
+	{:else}
+		<ul class="divide-y divide-border rounded-lg border border-border bg-surface">
+			{#each events as ev (ev.id)}
+				<li class="p-3 flex items-start gap-3">
+					<div
+						class="flex-shrink-0 w-8 h-8 rounded-md bg-surface-alt border border-border flex items-center justify-center"
+					>
+						<Icon icon={iconFor(ev.event_type)} class="text-foreground-muted" />
+					</div>
+					<div class="flex-1 min-w-0">
+						<div class="text-sm">
+							<span class="font-medium text-foreground">{humanType(ev.event_type)}</span>
+							<span class="text-foreground-muted">· {timeAgo(ev.occurred_at)}</span>
 						</div>
-						<div class="flex-1 min-w-0">
-							<div class="text-sm">
-								<span class="font-medium text-foreground">{humanType(ev.event_type)}</span>
-								<span class="text-foreground-muted">· {timeAgo(ev.occurred_at)}</span>
-							</div>
-							<div class="text-xs text-foreground-muted mt-0.5 flex flex-wrap gap-x-3 gap-y-0.5">
-								{#if ev.ip}<span>IP: {ev.ip}</span>{/if}
-								{#if ev.device_id}<span class="font-mono">{ev.device_id.slice(0, 12)}…</span>{/if}
-							</div>
-							{#if Object.keys(ev.detail).length > 0}
-								<details class="text-xs mt-1">
-									<summary class="cursor-pointer text-foreground-muted hover:text-foreground">
-										Details
-									</summary>
-									<pre class="mt-1 p-2 bg-surface-alt rounded text-[10px] overflow-x-auto">
+						<div class="text-xs text-foreground-muted mt-0.5 flex flex-wrap gap-x-3 gap-y-0.5">
+							{#if ev.ip}<span>IP: {ev.ip}</span>{/if}
+							{#if ev.device_id}<span class="font-mono">{ev.device_id.slice(0, 12)}…</span>{/if}
+						</div>
+						{#if Object.keys(ev.detail).length > 0}
+							<details class="text-xs mt-1">
+								<summary class="cursor-pointer text-foreground-muted hover:text-foreground">
+									Details
+								</summary>
+								<pre class="mt-1 p-2 bg-surface-alt rounded text-[10px] overflow-x-auto">
 {JSON.stringify(ev.detail, null, 2)}
-									</pre>
-								</details>
-							{/if}
-						</div>
-					</li>
-				{/each}
-			</ul>
-		{/if}
-	</div>
+								</pre>
+							</details>
+						{/if}
+					</div>
+				</li>
+			{/each}
+		</ul>
+	{/if}
 </Page>

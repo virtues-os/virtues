@@ -65,16 +65,6 @@ export interface WikiOrganizationApi {
 	updated_at: string;
 }
 
-export interface WikiThingApi {
-	id: string;
-	name: string;
-	category: string | null;
-	description: string | null;
-	content: string | null;
-	cover_image: string | null;
-	created_at: string;
-	updated_at: string;
-}
 
 export interface WikiDayApi {
 	id: string;
@@ -185,12 +175,6 @@ export interface WikiOrganizationListItem {
 	relationship_type: string | null;
 }
 
-export interface WikiThingListItem {
-	id: string;
-	name: string;
-	category: string | null;
-	description: string | null;
-}
 
 // ============================================================================
 // API Functions
@@ -298,41 +282,6 @@ export async function updateOrganization(
 	fetchFn: FetchFn = fetch
 ): Promise<WikiOrganizationApi | null> {
 	const res = await fetchFn(`/api/wiki/organization/${id}`, {
-		method: "PUT",
-		headers: { "Content-Type": "application/json" },
-		body: JSON.stringify(data),
-	});
-	if (!res.ok) return null;
-	return res.json();
-}
-
-// --- Thing ---
-
-// Things are served by the single `/api/things` API (over wiki_things); the
-// `/api/wiki/thing*` duplicates were retired. The Thing response is a superset
-// of WikiThingApi (it also carries `icon`), so these shapes stay compatible.
-export async function getThingById(
-	id: string,
-	fetchFn: FetchFn = fetch
-): Promise<WikiThingApi | null> {
-	const res = await fetchFn(`/api/things/${encodeURIComponent(id)}`);
-	if (!res.ok) return null;
-	return res.json();
-}
-
-export async function listThings(fetchFn: FetchFn = fetch): Promise<WikiThingListItem[]> {
-	const res = await fetchFn("/api/things");
-	if (!res.ok) return [];
-	const data = await res.json();
-	return data.things ?? [];
-}
-
-export async function updateThing(
-	id: string,
-	data: Partial<WikiThingApi>,
-	fetchFn: FetchFn = fetch
-): Promise<WikiThingApi | null> {
-	const res = await fetchFn(`/api/things/${id}`, {
 		method: "PUT",
 		headers: { "Content-Type": "application/json" },
 		body: JSON.stringify(data),
@@ -544,7 +493,7 @@ export interface UpdateTemporalEventRequest {
 
 /**
  * Get citations for a wiki page.
- * @param sourceType - The type of wiki page (person, place, organization, thing, telos, act, chapter, day)
+ * @param sourceType - The type of wiki page (person, place, organization, telos, act, chapter, day)
  * @param sourceId - The UUID of the wiki page
  */
 export async function getCitations(
