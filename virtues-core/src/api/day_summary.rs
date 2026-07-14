@@ -157,6 +157,19 @@ pub fn day_boundaries_utc(date: NaiveDate, timezone: Option<&str>) -> (String, S
 // ── Public API ───────────────────────────────────────────────────────────────
 
 /// Generate a daily summary from the day's data and save it as the autobiography.
+/// How many things you actually DID before a day is worth narrating.
+///
+/// Not a cost knob — a truth condition. You cannot segment a day into 8–16 events
+/// from two records, and asking a model to try produces a plausible story about a
+/// day that did not happen. Three is the floor at which the day has a shape of its
+/// own rather than one the model supplies.
+///
+/// The right long-run measure is COVERAGE — how much of the waking day the events
+/// actually account for — but coverage is computed from events, and events come
+/// from this call. Counting what you did is the honest thing available before the
+/// model runs.
+const MIN_ACTIVATION_SOURCES: usize = 3;
+
 pub async fn generate_day_summary(pool: &PgPool, date: NaiveDate) -> Result<WikiDay> {
     // 1. Gather structured sources (calendar, locations, transactions, chats, pages, etc.)
     let sources = get_day_sources(pool, date, None).await?;
@@ -172,10 +185,52 @@ pub async fn generate_day_summary(pool: &PgPool, date: NaiveDate) -> Result<Wiki
     let (start_str, end_str) = day_boundaries_utc(date, Some(&day_tz));
     let timezone: Option<String> = Some(day_tz);
 
-    // 2b. Early exit if zero ontology data exists for this day
-    let ontology_presence = detect_ontology_presence(pool, &start_str, &end_str).await;
-    if !ontology_presence.iter().any(|(_, present)| *present) {
-        tracing::debug!(date = %date, "No ontology data for this day, skipping summary generation");
+    // 2b. Is this a day that HAPPENED, or a day you wore a watch?
+    //
+    // The old gate asked whether ANY ontology had data — and heart rate counts. So
+    // a day whose only record was your pulse passed, and an LLM was asked to
+    // narrate it. On a real box, 449 of 533 days hold nothing but passive data.
+    // Every one of them was an Opus call away from a confident account of a day
+    // nobody lived. That is not a cost bug; it is the same sin as building a day
+    // around a broken query: FABRICATION.
+    //
+    // `is_activation_signal` has been declared on every ontology since the
+    // beginning and read by nobody — its doc comment describes exactly this. A day
+    // needs things you DID (a visit, a call, a meeting, a message) — not a sensor
+    // noticing that you exist.
+    let activation: Vec<&str> = virtues_registry::ontologies::activation_source_types();
+    let spans: Vec<&str> = virtues_registry::ontologies::span_source_types();
+
+    let acted = sources
+        .iter()
+        .filter(|s| activation.contains(&s.source_type.as_str()))
+        .count();
+    // Shape: something with a beginning and an end. An event IS a span, and you
+    // cannot cut a day into spans using things that have no duration — a thousand
+    // text messages never say when anything started. Asked to segment a day of pure
+    // moments, the model invents the boundaries, and the boundaries are the one
+    // thing it must not invent.
+    let shaped = sources
+        .iter()
+        .filter(|s| spans.contains(&s.source_type.as_str()))
+        .count();
+
+    if acted < MIN_ACTIVATION_SOURCES || shaped == 0 {
+        tracing::info!(
+            date = %date,
+            did = acted,
+            spans = shaped,
+            total_sources = sources.len(),
+            "not enough of a day to narrate — skipping summary (no LLM call)"
+        );
+        return get_or_create_day(pool, date).await;
+    }
+
+    // Never narrate a day that has not happened. 146 calendar events on the real
+    // box are dated into the future, out to 2029; a day summary is an account of a
+    // life LIVED, and tomorrow is not evidence.
+    if date >= chrono::Utc::now().date_naive() {
+        tracing::info!(date = %date, "day is not over — nothing to summarise yet");
         return get_or_create_day(pool, date).await;
     }
 

@@ -908,6 +908,48 @@ pub fn get_extractable_ontologies() -> Vec<OntologyDescriptor> {
         .collect()
 }
 
+/// The `source_type`s that mean YOU DID SOMETHING — as opposed to a sensor
+/// noticing that you exist.
+///
+/// This is `is_activation_signal`, which has been declared on all 22 ontologies
+/// since the beginning, describes exactly this in its own doc comment, and was
+/// read by nobody. A dormant field with no reader, like `avg_hr` and
+/// `significance` before it.
+///
+/// It matters because the day summary asks an LLM to narrate a day, and a day
+/// where the only record is your heart beating is not a day that happened — it is
+/// a day you wore a watch. Narrating it invents a life. On a real box, **449 of
+/// 533 days** hold nothing but passive data, and each one was an Opus call away
+/// from a confident account of a day nobody lived.
+pub fn activation_source_types() -> Vec<&'static str> {
+    registered_ontologies()
+        .into_iter()
+        .filter(|o| o.is_activation_signal)
+        .filter_map(|o| o.day_source.map(|d| d.source_type))
+        .collect()
+}
+
+/// The source types that have a beginning and an END — and so can give a day its
+/// SHAPE.
+///
+/// A `wiki_event` is a span. You cannot cut a day into 8–16 of them out of things
+/// that have no duration: a text message is a *moment*, and a thousand moments
+/// still do not tell you when anything started or stopped. A day of nothing but
+/// messages is not a day the machine can segment; asked to try, it invents the
+/// boundaries, and the boundaries are the one thing it must not invent.
+///
+/// This is why the gate is about shape rather than volume. On a real box, 678 days
+/// carry some activity and only **91** carry a single span — because the location
+/// and audio collectors are days old and the message history goes back to 2017.
+/// Narrating the other 587 would be an LLM writing the day it assumes you had.
+pub fn span_source_types() -> Vec<&'static str> {
+    registered_ontologies()
+        .into_iter()
+        .filter(|o| o.is_activation_signal && o.end_timestamp_column.is_some())
+        .filter_map(|o| o.day_source.map(|d| d.source_type))
+        .collect()
+}
+
 pub fn get_searchable_ontologies() -> Vec<OntologyDescriptor> {
     registered_ontologies()
         .into_iter()
@@ -1067,6 +1109,52 @@ mod tests {
     /// The template lives in `api::wiki::get_day_sources`. This test is the only
     /// thing standing between that convention and the next person who writes a
     /// filter that reads perfectly well in isolation.
+    /// `is_activation_signal` sat on all 22 ontologies, read by nobody, while the
+    /// day summary asked an LLM to narrate 449 days that contained nothing but a
+    /// heartbeat. A field with no reader is not a design; it is a comment that
+    /// compiles.
+    ///
+    /// This pins the two halves of the distinction it exists to make, so the gate
+    /// cannot quietly rot back into decoration.
+    #[test]
+    fn activation_signals_separate_doing_from_merely_existing() {
+        let acts = activation_source_types();
+
+        // Things you DID. A day made of these is a day that happened.
+        for t in ["location", "calendar", "transcription", "message", "app_usage"] {
+            assert!(acts.contains(&t), "{t} is something you did — it makes a day");
+        }
+
+        // Things a sensor noticed while you existed. A day made only of these is
+        // not a day; it is a day you wore a watch, and narrating it invents a life.
+        for t in ["heart_rate", "hrv", "steps"] {
+            assert!(
+                !acts.contains(&t),
+                "{t} is a sensor noticing you exist — it cannot make a day"
+            );
+        }
+    }
+
+    /// A day is cut into EVENTS, and an event is a span. So a day needs at least
+    /// one thing with a beginning and an end before it can be segmented at all.
+    #[test]
+    fn only_spans_can_give_a_day_its_shape() {
+        let spans = span_source_types();
+
+        // These have duration. They can bound an event.
+        for t in ["location", "calendar", "transcription", "app_usage"] {
+            assert!(spans.contains(&t), "{t} has a start and an end — it shapes a day");
+        }
+
+        // A message is a MOMENT. A thousand of them still never say when anything
+        // started or stopped, and a model asked to segment a day of pure moments
+        // invents the boundaries — the one thing it must not invent.
+        assert!(
+            !spans.contains(&"message"),
+            "a message is a moment, not a span — it happens INSIDE an event, it cannot define one"
+        );
+    }
+
     #[test]
     fn extra_where_carries_its_own_and() {
         for o in registered_ontologies() {
