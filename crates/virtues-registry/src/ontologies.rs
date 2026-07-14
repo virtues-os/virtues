@@ -316,7 +316,12 @@ pub fn registered_ontologies() -> Vec<OntologyDescriptor> {
                 source_type_sql: None,
                 label_sql: "COALESCE(t.place_name, 'Unknown location')",
                 preview_sql: "CASE WHEN t.duration_minutes IS NOT NULL THEN CAST(t.duration_minutes AS TEXT) || ' min' ELSE NULL END",
-                id_sql: "encode(t.id, 'hex')",
+                // `t.id` is TEXT. `encode(t.id, 'hex')` — which lived here — takes
+                // bytea, so this query raised `function encode(text, unknown) does
+                // not exist` on EVERY day, for every user, since it was written.
+                // It failed as a `warn!`, not an error, so the day simply had no
+                // location sources and the cron reported success.
+                id_sql: "t.id",
                 extra_where: None,
                 use_date_filter: false,
             }),
@@ -463,7 +468,11 @@ pub fn registered_ontologies() -> Vec<OntologyDescriptor> {
                 // An open session's end_time is provisional (it walks forward with
                 // each heartbeat), so it would otherwise show up in a day's timeline
                 // as a zero-length blip until it closes.
-                extra_where: Some("t.is_open = false"),
+                // The `AND` is not decoration: `extra_where` is spliced raw after
+                // the WHERE clause. Without it this read `... <= $2 t.is_open =
+                // false`, so Postgres said `syntax error at or near "t"` and app
+                // sessions vanished from every day — as a warning, not an error.
+                extra_where: Some("AND t.is_open = false"),
                 use_date_filter: false,
             }),
             continuous_agg: None,
@@ -1045,6 +1054,34 @@ mod tests {
     /// cross-encoder had nothing to judge and hedged at +0.91 — a hair under a real
     /// street address at +0.99. A fragment cannot be judged, and no amount of
     /// reranking rescues a corpus made of them.
+    #[test]
+    /// `extra_where` is spliced RAW after the WHERE clause, so it must carry its
+    /// own `AND`. Forget it, and Postgres says `syntax error at or near "t"` — at
+    /// runtime, on the box, where the caller logs a warning and carries on.
+    ///
+    /// That is not hypothetical. `activity_app_session` shipped without the `AND`,
+    /// so app sessions vanished from every day the moment they were added, and the
+    /// nightly cron reported success throughout. A day assembled from a hole is a
+    /// day the LLM then writes a confident account of.
+    ///
+    /// The template lives in `api::wiki::get_day_sources`. This test is the only
+    /// thing standing between that convention and the next person who writes a
+    /// filter that reads perfectly well in isolation.
+    #[test]
+    fn extra_where_carries_its_own_and() {
+        for o in registered_ontologies() {
+            let Some(ds) = &o.day_source else { continue };
+            let Some(w) = ds.extra_where else { continue };
+            let t = w.trim_start();
+            assert!(
+                t.starts_with("AND ") || t.starts_with("AND("),
+                "{}: extra_where is spliced straight after the WHERE clause, so it must \
+                 begin with AND. Got: {w:?}",
+                o.name
+            );
+        }
+    }
+
     #[test]
     fn the_indexed_unit_is_a_document() {
         let indexed: Vec<&str> = get_searchable_ontologies()
