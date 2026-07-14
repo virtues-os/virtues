@@ -409,7 +409,7 @@ impl SemanticSearchEngine {
     /// library/pin `role` split isn't wired yet).
     async fn resolve_notebook_scope(&self, notebook_id: &str) -> Result<(Vec<String>, Vec<String>)> {
         let urls: Vec<String> =
-            sqlx::query_scalar("SELECT url FROM wiki_story_members WHERE notebook_id = $1")
+            sqlx::query_scalar("SELECT url FROM app_notebook_items WHERE notebook_id = $1")
                 .bind(notebook_id)
                 .fetch_all(self.pool.as_ref())
                 .await?;

@@ -616,7 +616,7 @@ pub async fn search_refs(pool: &PgPool, query: &str) -> Result<RefSearchResponse
                CASE WHEN icon LIKE 'ri:%' THEN icon ELSE 'ri:folder-line' END as icon,
                NULL as mime_type, updated_at,
                CASE WHEN name ILIKE $2 THEN 0 ELSE 1 END as relevance
-        FROM wiki_stories
+        FROM app_notebooks
         WHERE name ILIKE $1
         ORDER BY relevance ASC, updated_at DESC
         LIMIT $3
