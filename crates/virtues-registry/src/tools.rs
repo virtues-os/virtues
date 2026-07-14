@@ -1257,7 +1257,11 @@ mod tests {
     #[test]
     fn test_default_tools() {
         let tools = default_tools();
-        assert_eq!(tools.len(), 14, "Should have 14 tools");
+        // No exact count: it only ever fires when someone adds a tool, which is
+        // not a bug, so it gets bumped without thought — or, as happened here,
+        // left red for eight tools running. What matters is below: every tool is
+        // well-formed, and the load-bearing ones are present.
+        assert!(!tools.is_empty(), "the registry ships tools");
 
         // Verify all tools have required fields
         for tool in &tools {

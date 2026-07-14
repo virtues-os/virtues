@@ -485,6 +485,9 @@ pub fn registered_ontologies() -> Vec<OntologyDescriptor> {
             timestamp_column: "started_at",
             end_timestamp_column: Some("ended_at"),
             embedding: None,
+            // No prose: presence is a state machine (active/idle/locked), and a
+            // state name is not a mention of anyone.
+            extraction: None,
             temporal_type: TemporalType::Discrete,
             day_source: Some(DaySourceConfig {
                 source_type: "presence",
