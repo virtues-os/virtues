@@ -9,8 +9,10 @@ mod transform;
 
 use anyhow::{Context, Result};
 use serde_json::{json, Value};
+use virtues::storage::lake;
 use virtues_helpers::{connect_from_env, output, read_input};
 
+const ACTION: &str = "notion_pages_sync";
 const NOTION_SEARCH: &str = "https://api.notion.com/v1/search";
 const NOTION_VERSION: &str = "2022-06-28";
 const PAGE_SIZE: u32 = 100;
@@ -26,6 +28,7 @@ async fn main() -> Result<()> {
     let access_token = virtues_actions::secret(&input, "access_token")?
         .to_string();
 
+    let storage = lake::storage_from_env()?;
     let client = reqwest::Client::new();
     let mut total_written = 0usize;
     let mut cursor: Option<String> = None;
@@ -61,6 +64,10 @@ async fn main() -> Result<()> {
         if pages.is_empty() {
             break;
         }
+
+        // The whole response, not just `results` — `has_more`/`next_cursor` are part of
+        // the evidence of what Notion actually said.
+        lake::archive_cloud(&pool, &storage, "notion", ACTION, "pages", &[resp.clone()]).await?;
 
         let written = transform::write_pages(&pool, pages).await?;
         total_written += written;

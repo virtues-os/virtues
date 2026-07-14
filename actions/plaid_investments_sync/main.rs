@@ -8,8 +8,10 @@ mod transform;
 
 use anyhow::{Context, Result};
 use serde_json::{json, Value};
+use virtues::storage::lake;
 use virtues_helpers::{connect_from_env, output, read_input};
 
+const ACTION: &str = "plaid_investments_sync";
 const PLAID_HOLDINGS: &str = "https://production.plaid.com/investments/holdings/get";
 
 #[tokio::main]
@@ -50,6 +52,9 @@ async fn main() -> Result<()> {
         .and_then(|v| v.as_array())
         .cloned()
         .unwrap_or_default();
+
+    let storage = lake::storage_from_env()?;
+    lake::archive_cloud(&pool, &storage, "plaid", ACTION, "investments", &[resp.clone()]).await?;
 
     let written = transform::write_holdings(&pool, &holdings, &securities).await?;
     let summary = format!("synced {written} Plaid holdings");

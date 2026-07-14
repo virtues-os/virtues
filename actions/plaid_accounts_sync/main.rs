@@ -7,8 +7,10 @@ mod transform;
 
 use anyhow::{Context, Result};
 use serde_json::{json, Value};
+use virtues::storage::lake;
 use virtues_helpers::{connect_from_env, output, read_input};
 
+const ACTION: &str = "plaid_accounts_sync";
 const PLAID_ACCOUNTS_GET: &str = "https://production.plaid.com/accounts/get";
 
 #[tokio::main]
@@ -63,6 +65,9 @@ async fn main() -> Result<()> {
         .and_then(|v| v.as_array())
         .cloned()
         .unwrap_or_default();
+
+    let storage = lake::storage_from_env()?;
+    lake::archive_cloud(&pool, &storage, "plaid", ACTION, "accounts", &[resp.clone()]).await?;
 
     let written = transform::write_accounts(&pool, item_id, institution, &accounts).await?;
     let summary = format!("synced {written} Plaid accounts");
