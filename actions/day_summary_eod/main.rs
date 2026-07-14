@@ -36,23 +36,35 @@ async fn main() -> Result<()> {
     // maintenance hour (profile.update_check_hour, default 8am) so we only
     // actually do the work once per day, aligned to the user's timezone.
     // Running without a date → this is a cron / scheduled invocation.
-    if explicit_date.is_none() {
-        let (tz, hour) = load_user_maintenance(&pool).await;
-        let now_local = chrono::Utc::now().with_timezone(&tz);
-        if now_local.hour() as i32 != hour {
-            tracing::info!(
-                now_local = %now_local.format("%Y-%m-%d %H:%M %Z"),
-                maintenance_hour = hour,
-                "outside maintenance hour, skipping"
-            );
-            let summary = format!("skipped: local hour {}, maintenance {}", now_local.hour(), hour);
-            return output(&summary, &input.config);
+    // The cron ticks HOURLY, and it used to throw away 23 of every 24 ticks —
+    // returning "skipped: local hour 19, maintenance 8" and reporting success.
+    //
+    // It threw them away because one Opus call produced BOTH the events and the
+    // autobiography, so re-segmenting as data arrived would have meant re-writing
+    // the day's prose every hour. Now they are two calls with two models:
+    //
+    //   EVERY HOUR       segment today into events (Lite), then score them. Cheap,
+    //                    factual, idempotent — if no new sources landed, it does
+    //                    nothing at all and spends nothing.
+    //
+    //   ONCE A DAY       narrate yesterday (Chat), and only if the day earned it.
+    //                    Prose about what it MEANT, standing on the events.
+    //
+    // That is the hourly cron the plan asked for and the code never had.
+    let (narrate, date) = match explicit_date {
+        // A date was named: the caller means it. Do both halves for that day.
+        Some(d) => (true, d),
+        None => {
+            let (tz, hour) = load_user_maintenance(&pool).await;
+            let now_local = chrono::Utc::now().with_timezone(&tz);
+            if now_local.hour() as i32 == hour {
+                // The maintenance hour: yesterday is complete. Write it up.
+                (true, resolve_user_yesterday(&pool).await)
+            } else {
+                // Any other hour: keep TODAY's events current as the day happens.
+                (false, now_local.date_naive())
+            }
         }
-    }
-
-    let date = match explicit_date {
-        Some(d) => d,
-        None => resolve_user_yesterday(&pool).await,
     };
 
     tracing::info!(date = %date, "day_summary_eod starting");
@@ -82,11 +94,12 @@ async fn main() -> Result<()> {
     // that test fails.
     // ─────────────────────────────────────────────────────────────────────
 
-    // 1. Segment the day (LLM): diary + epigraph + data_quality + the events
-    //    themselves. DESTRUCTIVE — replaces all auto events.
-    virtues::api::day_summary::generate_day_summary(&pool, date)
+    // 1. Segment the day into events (LLM, Lite slot). DESTRUCTIVE — replaces all
+    //    auto events. Idempotent: if the day's sources are unchanged since the last
+    //    cut, this returns 0 immediately and makes no model call.
+    let events = virtues::api::day_summary::segment_day_events(&pool, date)
         .await
-        .context("autobiography generation failed")?;
+        .context("day segmentation failed")?;
 
     // 2. Sleep resolution. Must follow the segmentation: a sleep event has
     //    `is_user_added = false`, so the delete in step 1 eats it too.
@@ -120,6 +133,20 @@ async fn main() -> Result<()> {
             .await
             .context("topic/entity novelty scoring failed")?;
 
+    // 7. Narrate the day (LLM, Chat slot) — ONLY at the maintenance hour, and only
+    //    if the day earned it. This is the one call left that costs narrative money,
+    //    and it now reads the EVENTS rather than the raw sources: the prompt always
+    //    claimed it did ("the event timeline already does that") while being handed
+    //    the sources anyway.
+    let narrated = if narrate {
+        virtues::api::day_summary::narrate_day(&pool, date)
+            .await
+            .context("day narration failed")?
+            .is_some()
+    } else {
+        false
+    };
+
     // Stash the last processed date in config so subsequent cron runs can
     // short-circuit in a condition or observe progress. Also strip any
     // `date` override that the caller passed in — the runner persists the
@@ -138,9 +165,9 @@ async fn main() -> Result<()> {
     // failure mode as avg_hr, in production, undetected. A metric that can't
     // go to zero can't tell you anything.
     let summary = format!(
-        "{date}: annotated={annotated} novelty={novelty_count} \
-         autonomic={autonomic_count} topic_entity={topic_entity_count}, \
-         autobiography generated"
+        "{date}: events={events} annotated={annotated} novelty={novelty_count} \
+         autonomic={autonomic_count} topic_entity={topic_entity_count} \
+         narrated={narrated}"
     );
     output(&summary, &config)
 }

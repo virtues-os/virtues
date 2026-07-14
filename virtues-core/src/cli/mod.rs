@@ -325,8 +325,19 @@ pub async fn run(cli: Cli, virtues: Virtues) -> Result<(), Box<dyn std::error::E
                 .flatten()
                 .and_then(|s| s.parse().ok());
 
-            println!("Generating day summary for {target_date}...");
-            let day = crate::api::day_summary::generate_day_summary(pool, target_date).await?;
+            // The two halves, in order. Segmenting is cheap and factual (Lite);
+            // narrating is prose about what the day MEANT (Chat) and only happens
+            // if the day earned it.
+            println!("Segmenting {target_date} into events...");
+            let n = crate::api::day_summary::segment_day_events(pool, target_date).await?;
+            println!("  {n} events");
+
+            println!("Narrating {target_date}...");
+            let Some(day) = crate::api::day_summary::narrate_day(pool, target_date).await? else {
+                println!();
+                println!("· Not enough of a day to write about — no narrative, and no LLM call.");
+                return Ok(());
+            };
 
             println!();
             println!("✅ Day summary written to wiki_days id={}", day.id);
