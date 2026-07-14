@@ -20,6 +20,7 @@ export type TabType =
 	| 'place' // Wiki places: /place, /place/place_{id}
 	| 'org' // Wiki organizations: /org, /org/org_{id}
 	| 'notebook' // Notebooks (rooms a chat lives in): /notebooks, /notebook/{id}
+	| 'story' // Stories (a claim, gathered from across time): /stories — PLACEHOLDER
 	| 'day' // Wiki days: /day, /day/day_{date}
 	| 'year' // Wiki years: /year, /year/{year}
 	| 'narrative-identity' // Wiki narrative identity: /narrative-identity
@@ -86,9 +87,9 @@ export function isOrgTab(tab: Tab): tab is Tab & { type: 'org' } {
 	return tab.type === 'org';
 }
 
-export function isThingTab(tab: Tab): tab is Tab & { type: 'thing' } {
-	return tab.type === 'thing';
-}
+// `isThingTab` lived here — a type guard for a type that no longer exists.
+// Things were retired (a container masquerading as an entity); the guard outlived
+// them, comparing TabType against a string it can never equal.
 
 export function isDayTab(tab: Tab): tab is Tab & { type: 'day' } {
 	return tab.type === 'day';
