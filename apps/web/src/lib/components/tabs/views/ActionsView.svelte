@@ -54,7 +54,7 @@
 		flex: 1;
 		overflow-y: auto;
 		padding: 1.25rem 1.5rem 2rem;
-		max-width: 1100px;
+		max-width: 72rem;
 		width: 100%;
 		margin: 0 auto;
 	}

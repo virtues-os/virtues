@@ -52,16 +52,8 @@
 		{ id: 'settings-profile', type: 'link', label: 'Profile', icon: 'ri:user-3-line', href: '/virtues/account' },
 		{ id: 'settings-devices', type: 'link', label: 'Devices', icon: 'ri:device-line', href: '/virtues/devices' },
 		// This Mac's own collector health/permissions/streams — desktop app only.
-		...(isMacOS
-			? [{ id: 'settings-this-mac', type: 'link' as const, label: 'This Mac', icon: 'ri:macbook-line', href: '/virtues/this-mac' }]
-			: []),
-		{ id: 'settings-activity', type: 'link', label: 'Activity', icon: 'ri:history-line', href: '/virtues/activity' },
-		{ id: 'settings-assistant', type: 'link', label: 'Assistant', icon: 'ri:robot-line', href: '/virtues/assistant' },
-		{ id: 'settings-billing', type: 'link', label: 'Billing', icon: 'ri:bank-card-line', href: '/virtues/billing' },
-		{ id: 'settings-byo-key', type: 'link', label: 'AI Provider Key', icon: 'ri:key-line', href: '/virtues/byo-key' },
 		{ id: 'settings-system', type: 'link', label: 'System', icon: 'ri:computer-line', href: '/virtues/system' },
 		{ id: 'settings-developers', type: 'link', label: 'Developers', icon: 'ri:code-s-slash-line', href: '/developers' },
-		{ id: 'dev-sitemap', type: 'link', label: 'Sitemap', icon: 'ri:road-map-line', href: '/virtues/sitemap' },
 	];
 
 	const signOutItem: SidebarNavItemData = {

@@ -27,7 +27,7 @@
 		{ label: "Chats", icon: "ri:chat-1-line", route: "/chat-history" },
 		{ label: "Narrative", icon: "ri:quill-pen-line", route: "/narrative-identity" },
 		{ label: "Notebooks", icon: "ri:booklet-line", route: "/notebooks" },
-		{ label: "Wiki", icon: "ri:book-open-line", route: "/entities" },
+		{ label: "Wiki", icon: "ri:book-open-line", route: "/wiki" },
 		{ label: "Drive", icon: "ri:cloud-line", route: "/drive" },
 		{ label: "Actions", icon: "ri:flashlight-line", route: "/actions" },
 	];
@@ -35,12 +35,7 @@
 	const settings: Row[] = [
 		{ label: "Sources", icon: "ri:plug-line", route: "/sources" },
 		{ label: "Tools", icon: "ri:tools-line", route: "/tools" },
-		{ label: "Profile", icon: "ri:user-3-line", route: "/virtues/account" },
-		{ label: "Devices", icon: "ri:device-line", route: "/virtues/devices" },
-		{ label: "Activity", icon: "ri:history-line", route: "/virtues/activity" },
-		{ label: "Assistant", icon: "ri:robot-line", route: "/virtues/assistant" },
-		{ label: "Billing", icon: "ri:bank-card-line", route: "/virtues/billing" },
-		{ label: "AI Provider Key", icon: "ri:key-line", route: "/virtues/byo-key" },
+		{ label: "Account", icon: "ri:user-settings-line", route: "/virtues/account" },
 		{ label: "System", icon: "ri:computer-line", route: "/virtues/system" },
 	];
 

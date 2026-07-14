@@ -12,6 +12,9 @@
 	} from "$lib/api/client";
 	import Icon from "$lib/components/Icon.svelte";
 	import Modal from "$lib/components/Modal.svelte";
+	import UniversalDataGrid, {
+		type Column,
+	} from "$lib/components/datagrid/UniversalDataGrid.svelte";
 	import { onMount } from "svelte";
 	import { windowShellStore } from "$lib/stores/window-shell.svelte";
 	import { contextMenu } from "$lib/stores/contextMenu.svelte";
@@ -417,6 +420,46 @@
 		renameValue = "";
 	}
 
+	// Column definitions
+	const columns: Column<DriveFile>[] = [
+		{
+			key: "filename",
+			label: "Name",
+			icon: "ri:file-line",
+			width: "55%",
+			minWidth: "240px",
+		},
+		{
+			key: "size_bytes",
+			label: "Size",
+			icon: "ri:hard-drive-2-line",
+			width: "15%",
+			minWidth: "90px",
+			getValue: (file) =>
+				file.is_folder ? null : formatBytes(file.size_bytes),
+		},
+		{
+			key: "updated_at",
+			label: "Modified",
+			icon: "ri:time-line",
+			width: "25%",
+			minWidth: "120px",
+			hideOnMobile: true,
+			getValue: (file) => formatDate(file.updated_at),
+		},
+		{
+			key: "id",
+			label: "",
+			width: "48px",
+			sortable: false,
+		},
+	];
+
+	function handleItemClick(file: DriveFile) {
+		if (renamingFile) return;
+		handleFileClick(file);
+	}
+
 	// Svelte action to auto-focus an input element
 	function autofocus(node: HTMLInputElement) {
 		node.focus();
@@ -430,7 +473,7 @@
 	}
 </script>
 
-<Page title="Drive" description="Your personal file storage" maxWidth="full">
+<Page title="Drive" description="Your personal file storage" maxWidth="wide">
 
 		<!-- Usage Bar -->
 		{#if usage}
@@ -485,7 +528,7 @@
 						Drive ({formatBytes(usage.drive_bytes)})
 					</span>
 					<a
-						href="/virtues/lake"
+						href="/developers/lake"
 						class="flex items-center gap-1.5 hover:text-foreground transition-colors"
 					>
 						<span class="w-2.5 h-2.5 bg-secondary rounded-sm"
@@ -608,10 +651,10 @@
 			</div>
 		{/if}
 
-		<!-- Files Table -->
+		<!-- Files Grid (drop zone) -->
 		<div
-			class="border rounded-lg overflow-hidden transition-colors"
-			class:border-border={!dragOver}
+			class="border rounded-lg transition-colors"
+			class:border-transparent={!dragOver}
 			class:border-primary={dragOver}
 			style:background-color={dragOver
 				? "rgba(59, 130, 246, 0.05)"
@@ -622,11 +665,7 @@
 			role="region"
 			aria-label="File drop zone"
 		>
-			{#if loading}
-				<div class="flex items-center justify-center p-12">
-					<Icon icon="ri:loader-4-line" width="20" class="spin" />
-				</div>
-			{:else if files.length === 0}
+			{#if !loading && files.length === 0}
 				<div class="p-12 text-center">
 					<Icon
 						icon="ri:folder-open-line"
@@ -647,102 +686,97 @@
 					</button>
 				</div>
 			{:else}
-				<table class="w-full">
-					<thead class="bg-surface-elevated border-b border-border">
-						<tr>
-							<th
-								class="px-4 py-3 text-left text-xs font-medium text-foreground-subtle uppercase tracking-wide"
-							>
-								Name
-							</th>
-							<th
-								class="px-4 py-3 text-right text-xs font-medium text-foreground-subtle uppercase tracking-wide"
-							>
-								Size
-							</th>
-							<th
-								class="px-4 py-3 text-right text-xs font-medium text-foreground-subtle uppercase tracking-wide"
-							>
-								Modified
-							</th>
-							<th class="px-4 py-3 w-12"></th>
-						</tr>
-					</thead>
-					<tbody class="divide-y divide-border">
-						{#each files as file}
-							<tr
-								class="group hover:bg-surface-elevated transition-colors cursor-pointer"
-								onclick={() =>
-									!renamingFile && handleFileClick(file)}
-								onkeydown={(e) =>
-									e.key === "Enter" &&
-									!renamingFile &&
-									handleFileClick(file)}
-								oncontextmenu={(e) =>
-									showFileContextMenu(e, file)}
-							>
-								<td class="px-4 py-3">
-									<div class="flex items-center gap-3">
-										<Icon
-											icon={getFileIcon(file)}
-											class="text-xl {getFileIconColor(
-												file,
-											)}"
-										/>
-										{#if renamingFile?.id === file.id}
-											<input
-												type="text"
-												bind:value={renameValue}
-												use:autofocus
-												class="text-sm text-foreground bg-transparent border border-border rounded px-1.5 py-0.5 outline-none focus:border-primary w-full max-w-xs"
-												onclick={(e) =>
-													e.stopPropagation()}
-												onkeydown={(e) => {
-													e.stopPropagation();
-													if (e.key === "Enter")
-														handleRename();
-													if (e.key === "Escape")
-														cancelRename();
-												}}
-												onblur={cancelRename}
-												disabled={renaming}
-											/>
-										{:else}
-											<span
-												class="text-sm text-foreground"
-												>{file.filename}</span
-											>
-										{/if}
-									</div>
-								</td>
-								<td
-									class="px-4 py-3 text-right text-sm text-foreground-muted"
-								>
-									{file.is_folder
-										? "-"
-										: formatBytes(file.size_bytes)}
-								</td>
-								<td
-									class="px-4 py-3 text-right text-sm text-foreground-muted"
-								>
-									{formatDate(file.updated_at)}
-								</td>
-								<td class="px-4 py-3 text-right">
-									<button
-										class="opacity-0 group-hover:opacity-100 p-1 text-foreground-subtle hover:text-foreground transition-all"
-										onclick={(e) => {
+				<UniversalDataGrid
+					items={files}
+					{columns}
+					entityType="drive"
+					{loading}
+					emptyIcon="ri:folder-open-line"
+					emptyMessage={currentPath
+						? "This folder is empty"
+						: "No files yet"}
+					loadingMessage="Loading files..."
+					searchPlaceholder="Search files..."
+					onItemClick={handleItemClick}
+					onItemContextMenu={(file, e) =>
+						showFileContextMenu(e, file)}
+					onRefresh={loadData}
+				>
+					{#snippet tableRow(file: DriveFile)}
+						<td class="px-3 py-2.5">
+							<div class="flex items-center gap-3">
+								<Icon
+									icon={getFileIcon(file)}
+									class="text-xl {getFileIconColor(file)}"
+								/>
+								{#if renamingFile?.id === file.id}
+									<input
+										type="text"
+										bind:value={renameValue}
+										use:autofocus
+										class="text-sm text-foreground bg-transparent border border-border rounded px-1.5 py-0.5 outline-none focus:border-primary w-full max-w-xs"
+										onclick={(e) => e.stopPropagation()}
+										onkeydown={(e) => {
 											e.stopPropagation();
-											showFileContextMenu(e, file);
+											if (e.key === "Enter")
+												handleRename();
+											if (e.key === "Escape")
+												cancelRename();
 										}}
-										aria-label="Actions for {file.filename}"
+										onblur={cancelRename}
+										disabled={renaming}
+									/>
+								{:else}
+									<span class="text-sm text-foreground"
+										>{file.filename}</span
 									>
-										<Icon icon="ri:more-2-fill" />
-									</button>
-								</td>
-							</tr>
-						{/each}
-					</tbody>
-				</table>
+								{/if}
+							</div>
+						</td>
+						<td class="px-3 py-2.5 text-sm text-foreground-muted">
+							{file.is_folder
+								? "—"
+								: formatBytes(file.size_bytes)}
+						</td>
+						<td
+							class="px-3 py-2.5 text-sm text-foreground-muted hide-mobile"
+						>
+							{formatDate(file.updated_at)}
+						</td>
+						<td class="px-3 py-2.5 text-right">
+							<button
+								class="p-1 text-foreground-subtle hover:text-foreground transition-colors"
+								onclick={(e) => {
+									e.stopPropagation();
+									showFileContextMenu(e, file);
+								}}
+								aria-label="Actions for {file.filename}"
+							>
+								<Icon icon="ri:more-2-fill" />
+							</button>
+						</td>
+					{/snippet}
+
+					{#snippet card(file: DriveFile)}
+						<div
+							class="flex flex-col items-center gap-2 text-center"
+						>
+							<Icon
+								icon={getFileIcon(file)}
+								class="text-3xl {getFileIconColor(file)}"
+							/>
+							<span
+								class="text-sm font-medium text-foreground break-all"
+								>{file.filename}</span
+							>
+							<span class="text-xs text-foreground-muted">
+								{file.is_folder
+									? "Folder"
+									: formatBytes(file.size_bytes)}
+							</span>
+						</div>
+					{/snippet}
+				</UniversalDataGrid>
 			{/if}
 		</div>
 </Page>
@@ -829,3 +863,11 @@
 		</button>
 	{/snippet}
 </Modal>
+
+<style>
+	@media (max-width: 768px) {
+		.hide-mobile {
+			display: none;
+		}
+	}
+</style>

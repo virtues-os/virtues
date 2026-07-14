@@ -12,20 +12,6 @@
 	import Icon from "$lib/components/Icon.svelte";
 	import { onMount } from "svelte";
 	import { toast } from "svelte-sonner";
-	import { isTauri } from "$lib/utils/platform";
-	import { forgetPairing, restartApp } from "$lib/tauri/bridge";
-
-	// "Disconnect this Mac" — the deliberate reset (switch boxes / hand off this
-	// laptop). Desktop-app only; clears the pairing then relaunches into the
-	// connect screen. The common "box was reset / unreachable" cases are handled
-	// automatically by the app's launch decision, not here.
-	let disconnectArmed = $state(false);
-	let disconnecting = $state(false);
-	async function disconnectThisMac() {
-		disconnecting = true;
-		await forgetPairing();
-		await restartApp();
-	}
 
 	let { tab, active }: { tab: Tab; active: boolean } = $props();
 
@@ -320,29 +306,6 @@
 					</li>
 				{/each}
 			</ul>
-		{/if}
-
-		{#if isTauri}
-			<div class="mt-8 pt-4 border-t border-border">
-				{#if !disconnectArmed}
-					<button
-						class="text-sm text-foreground-muted hover:text-error transition-colors"
-						onclick={() => (disconnectArmed = true)}
-					>
-						Disconnect this Mac
-					</button>
-				{:else}
-					<div class="flex flex-wrap items-center gap-3 text-sm">
-						<span class="text-foreground-muted">
-							Disconnect this Mac? You'll need a code to connect it again.
-						</span>
-						<Button variant="ghost" onclick={() => (disconnectArmed = false)}>Cancel</Button>
-						<Button variant="primary" onclick={disconnectThisMac} disabled={disconnecting}>
-							{disconnecting ? "Disconnecting…" : "Disconnect"}
-						</Button>
-					</div>
-				{/if}
-			</div>
 		{/if}
 	</div>
 </Page>

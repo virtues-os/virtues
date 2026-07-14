@@ -3,6 +3,7 @@
 	import { Streamdown } from 'svelte-streamdown';
 	import type { BundledTheme } from 'shiki';
 	import MarkdownCodeBlock from './MarkdownCodeBlock.svelte';
+	import { preprocessMarkdown } from '$lib/utils/markdownPreprocess';
 
 	interface Props {
 		content: string;
@@ -10,6 +11,8 @@
 	}
 
 	let { content, isStreaming = false }: Props = $props();
+
+	const processedContent = $derived(preprocessMarkdown(content));
 
 	// Read Shiki theme from CSS variable (defined in themes.css)
 	function getShikiTheme(): BundledTheme {
@@ -56,7 +59,7 @@
 {#if browser}
 	<div class="markdown">
 		<Streamdown
-			{content}
+			content={processedContent}
 			class="streamdown-content"
 			shikiTheme={currentShikiTheme}
 			parseIncompleteMarkdown={isStreaming}
