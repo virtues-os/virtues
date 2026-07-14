@@ -190,19 +190,26 @@ fn attachment_label(att: &Value) -> String {
         return "[Sticker]".to_string();
     }
 
-    let kind = match mime {
-        "image/gif" => "GIF",
-        "text/vcard" | "text/x-vcard" => "Contact",
-        "application/pdf" => "PDF",
-        _ => match mime.split('/').next().unwrap_or("") {
-            "image" => "Photo",
-            "video" => "Video",
-            "audio" => "Audio message",
-            // A named file says more than its MIME type does: "[File: lease.pdf]" beats
-            // "[Attachment]" every time.
-            _ if !name.is_empty() => return format!("[File: {name}]"),
-            _ => "Attachment",
-        },
+    let kind = match mime.split('/').next().unwrap_or("") {
+        // Media is named by its TYPE. Its filename is camera noise ("IMG_4821.HEIC")
+        // and tells a reader nothing they don't already get from "[Photo]".
+        "image" if mime == "image/gif" => "GIF",
+        "image" => "Photo",
+        "video" => "Video",
+        "audio" => "Audio message",
+        _ => {
+            // Documents are the other way round: the NAME is the signal.
+            // "[File: Cars.com.pdf]" says they sent you a car listing. "[PDF]" says
+            // nothing at all, and this is a real message from the archive.
+            if !name.is_empty() {
+                return format!("[File: {name}]");
+            }
+            match mime {
+                "text/vcard" | "text/x-vcard" => "Contact",
+                "application/pdf" => "PDF",
+                _ => "Attachment",
+            }
+        }
     };
     format!("[{kind}]")
 }
@@ -552,6 +559,14 @@ mod tests {
     fn a_named_file_says_more_than_its_type() {
         let doc = json!({"mime_type": "application/vnd.ms-excel", "filename": "rent.xlsx"});
         assert_eq!(render_attachments("\u{FFFC}", &[doc]), "[File: rent.xlsx]");
+        // A REAL message from the archive: the whole body was one invisible box, and the
+        // attachment was a car listing. "[PDF]" would have thrown away the only part of
+        // it that means anything.
+        let pdf = json!({"mime_type": "application/pdf", "filename": "Cars.com.pdf"});
+        assert_eq!(render_attachments("\u{FFFC}", &[pdf]), "[File: Cars.com.pdf]");
+        // ...but a photo is named by its type: IMG_4821.HEIC tells a reader nothing.
+        let photo = json!({"mime_type": "image/heic", "filename": "IMG_4821.HEIC"});
+        assert_eq!(render_attachments("\u{FFFC}", &[photo]), "[Photo]");
     }
 
     #[test]
