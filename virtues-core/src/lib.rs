@@ -21,6 +21,7 @@ pub mod geo;
 pub mod http_client;
 pub mod ids;
 pub mod inference_report;
+pub mod magnet;
 pub mod maintenance;
 pub mod mcp;
 pub mod middleware;
