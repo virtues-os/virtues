@@ -3,7 +3,7 @@
 //! The lexical retrieval arm is real BM25 (not Postgres `ts_rank`, which has no
 //! IDF): term frequencies live in `search_bm25_postings`, document lengths in
 //! `search_embeddings.bm25_len`, and the corpus stats (N, Σlen) in the
-//! single-row `search_bm25_stats`. Document-frequency is derived inline per
+//! single-row `search_index_meta`. Document-frequency is derived inline per
 //! query — no stale global df table.
 //!
 //! This module owns the one thing that MUST be byte-identical on both sides of

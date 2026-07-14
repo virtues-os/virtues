@@ -99,6 +99,10 @@ path = "echo_app/main.rs"
 [dependencies]
 virtues = { path = "../virtues-core" }
 virtues-helpers = { path = "../crates/virtues-helpers" }
+# Actions must see the same box environment the server does — model width and
+# prompt formats live there, and an action that cannot read them embeds into a
+# different geometry. See `init_tracing`.
+dotenv = "0.15"
 sqlx = { version = "0.8", features = ["postgres", "runtime-tokio", "chrono", "json", "macros", "uuid"] }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"

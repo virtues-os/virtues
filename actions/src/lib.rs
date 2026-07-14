@@ -9,9 +9,26 @@ use serde::de::DeserializeOwned;
 use std::time::Duration;
 use virtues_helpers::ActionInput;
 
-/// Initialize stderr tracing with an `info` default (overridable via `RUST_LOG`).
-/// Replaces the identical 8-line block every action binary used to carry.
+/// Initialize stderr tracing with an `info` default (overridable via `RUST_LOG`),
+/// and load the box environment — the same files, in the same order, as the
+/// server (`main.rs`).
+///
+/// Actions used to load NOTHING. On a box that was invisible, because systemd
+/// hands them an `EnvironmentFile`; in dev they simply ran with different
+/// configuration than the server, and nobody noticed because nothing important
+/// depended on it.
+///
+/// Something does now. The embedding model's width and prompt formats live in the
+/// environment (they are facts about a model, not about Virtues), so an action
+/// that cannot see them computes a different vector geometry than the server —
+/// and the index guard, correctly, refuses to let it write. The config drift was
+/// always there; embeddings are just the first thing sharp enough to cut on it.
 pub fn init_tracing() {
+    let _ = dotenv::from_path("/var/lib/virtues/virtues.env");
+    if dotenv::dotenv().is_err() {
+        let _ = dotenv::from_path("../.env");
+    }
+
     tracing_subscriber::fmt()
         .with_env_filter(
             tracing_subscriber::EnvFilter::try_from_default_env()

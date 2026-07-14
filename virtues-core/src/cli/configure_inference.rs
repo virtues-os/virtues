@@ -30,7 +30,14 @@ pub async fn run(reembed: bool, yes: bool) -> Result<()> {
         println!("`configure-inference` is for manual endpoints (VIRTUES_INFERENCE=manual).");
         return Ok(());
     };
-    let stored_dim = crate::search::embedder::configured_embed_dim();
+    // The width the index was actually BUILT at, read from the database — not a
+    // constant, not the env. The index is the thing that remembers. `None` means
+    // it has never been built, so there is no width to disagree with.
+    let pool = PgPool::connect(&database_url)
+        .await
+        .map_err(|e| Error::Database(format!("connecting: {e}")))?;
+    let stored_dim = crate::search::embedder::index_dim(&pool).await;
+    let dim_label = stored_dim.map(|d| d.to_string()).unwrap_or_else(|| "—".into());
 
     println!("→ probing the configured embedding endpoint…");
     let (new_fp, new_dim) = crate::search::embedder::probe_current_endpoint()
@@ -39,15 +46,15 @@ pub async fn run(reembed: bool, yes: bool) -> Result<()> {
 
     if new_fp.eq_ignore_ascii_case(&stored_fp) {
         println!("✓ The endpoint serves the same model your index was built with.");
-        println!("  Fingerprint {}… · {stored_dim} dims. Nothing to do.", short(&new_fp));
+        println!("  Fingerprint {}… · {dim_label} dims. Nothing to do.", short(&new_fp));
         return Ok(());
     }
 
     println!();
     println!("⚠  The model behind your embedding endpoint has changed:");
     println!("     fingerprint  {}…  →  {}…", short(&stored_fp), short(&new_fp));
-    if new_dim != stored_dim {
-        println!("     dimensions   {stored_dim}  →  {new_dim}");
+    if Some(new_dim) != stored_dim {
+        println!("     dimensions   {dim_label}  →  {new_dim}");
     }
     println!();
     println!("   Embeddings are a derived cache — your source data is safe. Recovering");
@@ -95,7 +102,7 @@ pub async fn run(reembed: bool, yes: bool) -> Result<()> {
     // 3. Resize the (now-empty) vector columns to the new width + rebuild index.
     //    initialize() re-runs migrations (idempotent) then ensure_embedding_dims,
     //    which resizes because the tables are empty after the wipe.
-    if new_dim != stored_dim {
+    if Some(new_dim) != stored_dim {
         println!("→ sizing the vector index to {new_dim} dims…");
     }
     crate::database::Database::new(&database_url)?
@@ -118,6 +125,11 @@ async fn wipe_derived(pool: &PgPool) -> Result<()> {
         "TRUNCATE search_embeddings CASCADE",
         "TRUNCATE search_topic_cache",
         "TRUNCATE search_embedding_progress",
+        // The geometry goes with the vectors. The indexer refuses to write vectors
+        // from a model the index was not built with — and adopting the new model is
+        // the entire point of this command, so the old geometry must not survive it.
+        "UPDATE search_index_meta SET n_docs = 0, sum_len = 0, \
+             model = NULL, dim = NULL, fingerprint = NULL, built_at = NULL",
         // wiki_events carries its own embedding blob + derived novelty/autonomic
         // scores; null them so each scoring pass recomputes with the new model.
         "UPDATE wiki_events SET \
