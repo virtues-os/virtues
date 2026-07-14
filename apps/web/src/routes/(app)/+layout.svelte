@@ -251,8 +251,12 @@
 	});
 </script>
 
+<!-- offset clears the notch/Dynamic Island on the edge-to-edge mobile shell
+     (env() is 0 on desktop, so this is the stock 16px gap there). -->
 <Toaster
 	position="top-center"
+	offset="max(16px, env(safe-area-inset-top))"
+	mobileOffset="max(16px, env(safe-area-inset-top))"
 	toastOptions={{
 		style: `
 			background: var(--surface);
@@ -371,8 +375,8 @@
 	/* Focus-mode exit button — appears top-right when chrome is hidden. */
 	.focus-exit {
 		position: fixed;
-		top: 1rem;
-		right: 1rem;
+		top: max(1rem, env(safe-area-inset-top));
+		right: max(1rem, env(safe-area-inset-right));
 		z-index: 9999;
 		display: flex;
 		align-items: center;
