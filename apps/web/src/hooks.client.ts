@@ -50,6 +50,10 @@ if (typeof window !== 'undefined' && (window as unknown as { __VIRTUES_MOBILE__?
 	};
 	syncAppearance();
 	window.addEventListener('themechange', syncAppearance);
+
+	// Marks the native phone shell for global CSS (e.g. suppressing the iOS
+	// long-press callout so it doesn't fight the app's own context menus).
+	document.documentElement.classList.add('native-mobile');
 }
 
 export {};
