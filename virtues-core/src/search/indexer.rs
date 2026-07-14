@@ -263,6 +263,65 @@ pub async fn run_embedding_job(pool: &PgPool) -> Result<u64> {
     Ok(total_embedded)
 }
 
+/// Chunks handed to the embedder per HTTP call.
+///
+/// The indexer used to embed **one chunk per request**, sequentially. Every chunk
+/// paid a full round-trip, so throughput was bounded by latency rather than by
+/// the model: a real mailbox is tens of thousands of chunks, and a reindex became
+/// hours of waiting for a job that is minutes of compute.
+///
+/// 32 is a deliberate middle: large enough that per-request overhead disappears,
+/// small enough that a single oversized input cannot fail a huge group, and that
+/// the sidecar's memory stays bounded on a box with no GPU.
+const EMBED_BATCH: usize = 32;
+
+/// Embed every chunk, in groups, preserving order.
+///
+/// `None` marks a chunk the embedder refused — the caller skips it, which is the
+/// behaviour the one-at-a-time loop had. The subtlety batching introduces: a
+/// single bad input would otherwise fail its 31 innocent neighbours, so a failed
+/// group is retried one at a time. The slow path costs latency exactly where
+/// something is already wrong, and nowhere else.
+async fn embed_all(
+    embedder: &std::sync::Arc<super::embedder::LocalEmbedder>,
+    texts: Vec<String>,
+) -> Vec<Option<Vec<f32>>> {
+    let mut out: Vec<Option<Vec<f32>>> = Vec::with_capacity(texts.len());
+
+    for group in texts.chunks(EMBED_BATCH) {
+        match embedder.embed_batch_async(group.to_vec()).await {
+            Ok(vs) if vs.len() == group.len() => out.extend(vs.into_iter().map(Some)),
+            // A short/long response means the endpoint is not honouring input
+            // order or count. Trust nothing about the mapping; redo it singly.
+            Ok(vs) => {
+                tracing::warn!(
+                    expected = group.len(),
+                    got = vs.len(),
+                    "embedder returned the wrong number of vectors — retrying the group singly"
+                );
+                for t in group {
+                    out.push(embedder.embed_async(t).await.ok());
+                }
+            }
+            Err(e) => {
+                tracing::warn!(error = %e, n = group.len(), "batch embed failed — retrying singly");
+                for t in group {
+                    match embedder.embed_async(t).await {
+                        Ok(v) => out.push(Some(v)),
+                        Err(e) => {
+                            tracing::warn!(error = %e, "chunk could not be embedded; skipping");
+                            out.push(None);
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    debug_assert_eq!(out.len(), texts.len(), "embed_all must preserve length");
+    out
+}
+
 /// Fetch and embed one batch for one ontology. Returns `(records fetched,
 /// chunks embedded)` — the caller uses the fetch count to decide whether the
 /// backlog likely has more (a full batch) and the chunk count for progress
@@ -288,6 +347,24 @@ async fn embed_one_batch(
     tracing::info!("Embedding {} records from {}", rows.len(), ont_name);
 
     let mut batch_count = 0u64;
+
+    // ---- Phase 1: chunk everything, and settle the empties ------------------
+    //
+    // Embedding used to happen inside this loop, ONE HTTP CALL PER CHUNK, one
+    // chunk at a time. On a dev corpus of a few hundred that is invisible; on a
+    // real mailbox it is tens of thousands of sequential round-trips, and a
+    // reindex takes hours of latency rather than minutes of compute. So: work out
+    // all the work first, do it in batches, then write.
+    struct Doc<'a> {
+        record_id: &'a str,
+        title: &'a Option<String>,
+        preview: &'a Option<String>,
+        author: &'a Option<String>,
+        doc_hash: &'a Option<String>,
+        ts: Option<chrono::DateTime<chrono::Utc>>,
+        chunks: Vec<String>,
+    }
+    let mut docs: Vec<Doc> = Vec::with_capacity(rows.len());
 
     for (record_id, embed_text, title, preview, author, timestamp, doc_hash) in &rows {
         let text = match embed_text {
@@ -326,10 +403,30 @@ async fn embed_one_batch(
 
         // Split long records into ~128-token windows (see chunk_text); short
         // records stay a single chunk. Each chunk is its own embedded +
-        // lexically-indexed row (chunk_index 0,1,2…). The selection LEFT JOIN
-        // above keys on record_id, so a record with any chunk is considered
-        // done.
-        let chunks = chunk_text(text);
+        // lexically-indexed row (chunk_index 0,1,2…).
+        docs.push(Doc {
+            record_id,
+            title,
+            preview,
+            author,
+            doc_hash,
+            ts: ts_parsed,
+            chunks: chunk_text(text),
+        });
+    }
+
+    if docs.is_empty() {
+        return Ok((rows.len(), 0));
+    }
+
+    // ---- Phase 2: embed every chunk in the batch, in groups -----------------
+    let flat: Vec<String> = docs.iter().flat_map(|d| d.chunks.iter().cloned()).collect();
+    let mut vectors = embed_all(embedder, flat).await;
+    let mut next = 0usize;
+
+    // ---- Phase 3: write ----------------------------------------------------
+    for doc in &docs {
+        let Doc { record_id, title, preview, author, doc_hash, ts: ts_parsed, chunks } = doc;
         let mut tx = pool.begin().await?;
 
         // A re-indexed document may be SHORTER than it was — an edited page, a
@@ -367,12 +464,14 @@ async fn embed_one_batch(
             .await?;
         }
         for (ci, chunk) in chunks.iter().enumerate() {
-            let embedding = match embedder.embed_async(chunk).await {
-                Ok(v) => v,
-                Err(e) => {
-                    tracing::warn!("Failed to embed {}/{} chunk {}: {}", ont_name, record_id, ci, e);
-                    continue;
-                }
+            // Phase 2 embedded these in order; `next` walks the flat list in
+            // lockstep with the nested one. A `None` is a chunk the embedder
+            // refused — warned about there, skipped here, exactly as before.
+            let slot = next;
+            next += 1;
+            let Some(embedding) = vectors[slot].take() else {
+                tracing::warn!("skipping unembeddable chunk {}/{} #{}", ont_name, record_id, ci);
+                continue;
             };
             let text_hash = {
                 let mut hasher = Sha256::new();
