@@ -18,7 +18,49 @@ use virtues_registry::ontologies::registered_ontologies;
 
 // ── Constants ────────────────────────────────────────────────────────────────
 
-const SYSTEM_PROMPT: &str = r#"You are writing a brief second-person autobiography for a personal day page. Your job is to surface the meaning layer — what connected, what was unusual, what the cross-domain data reveals — not to log what happened when (the event timeline already does that).
+/// SEGMENTATION — the Lite slot. Structured, factual, no prose.
+///
+/// This half used to be welded to the autobiography in one Opus call. Cutting a
+/// day into spans is grunt work: read the sources, name the blocks, ground each
+/// in the data, and say "Unknown" when the data does not support a name. It needs
+/// a careful model, not an expensive one — and it needs to run hourly, which an
+/// Opus call producing 180 words of prose never could.
+const SEGMENT_PROMPT: &str = r#"You cut a day into events for a personal life-log. Output ONLY a raw JSON array — no markdown, no code fences, no prose, no commentary.
+
+Output format:
+[{"start": "HH:MM", "end": "HH:MM", "label": "Brief label", "summary": "1-3 factual sentences about what the source data shows.", "topics": ["2-4 lowercase topical tags"]}]
+
+WHAT AN EVENT IS:
+An event is a contiguous block of time that the source data lets you classify. There are exactly two valid classifications:
+
+1. **A definitively understood block** — the sources for this time window evidence a specific, nameable activity. The `label` is a short noun phrase (2-5 words) naming what the data shows. The `summary` is 1-3 plain factual sentences grounded in the actual data points (who/where/what was logged, durations, message counts, heart rate during the block, etc.). No inference, no mood, no motivation.
+
+2. **Unknown** — the sources for this time window do not support a specific classification. The `label` is exactly "Unknown" and the `summary` is omitted (or empty). Do not invent a label like "Morning routine", "Rest", "Quiet time", "Sleep" to fill an unknown block.
+
+Every event you emit must fall into one of these two buckets. There is no third "probably this" category.
+
+SALIENCE FLOOR — what actually deserves to be an event:
+An event must represent meaningful continuous activity, not scattered pings. Specifically:
+- An event should cover a recognisable block — a calendar meeting, a workout, a commute leg, a sleep cycle, a phone call, a meal, an extended conversation — or a continuous stretch of activity (roughly ≥15 minutes of correlated source data: a voice recording, sustained app usage, a location dwell, a real back-and-forth messaging thread, etc.).
+- A handful of sparse data points is NOT an event. A few text messages spread over an hour, one AI chat query, an isolated web visit, a single transaction, a lone notification — these are signals that exist *within* Unknown blocks. They should NOT be promoted to their own labeled event.
+- When in doubt, prefer Unknown. A day with one or two clear events and the rest Unknown is more truthful than a day with five speculative event labels stretched over thin data. Truthful sparseness beats pleasant fabrication.
+
+EVENTS rules:
+- Events MUST cover the full 24 hours: first event starts at "00:00", last event ends at "24:00". No gaps, no overlaps.
+- Use 24-hour time format (HH:MM). Events are contiguous — each event's end time equals the next event's start time.
+- A label like "Morning routine", "Wake up", "Sleep", "Commute", "Work", "Relaxing", "Dinner" is only valid if the sources within that exact window evidence it (a sleep tracker logged a sleep cycle there, a calendar event covers it, location/transit data shows the commute, etc.). Otherwise the block is "Unknown".
+- "Sleep" specifically requires sleep-tracking data (Apple Health, Oura, etc.) inside the window. Never infer sleep from absence of other data, and never guess wake-up times — clip the sleep event at the last sleep data point and mark the rest as "Unknown".
+- It is perfectly fine — and common — for a sparse day to be mostly "Unknown" with only 1-3 understood events. That is the right answer.
+- Event count scales with evidence. A rich day might have 10-16 events; a sparse day might have 3-5 events. Do not pad to reach a minimum.
+- The `summary` field is the single most useful thing about an event. For understood events, it must reference the actual data points: "Three iMessages with Sarah about dinner plans, sent between 12:34 and 12:51. Heart rate stayed in the mid-70s." Not: "A pleasant exchange about dinner.""#;
+
+/// NARRATION — the Chat slot. Prose about what the day MEANT.
+///
+/// It reads the EVENTS, not the raw sources. The prompt always claimed as much
+/// ("not to log what happened when — the event timeline already does that") while
+/// being handed the raw sources anyway. Feeding it the segmentation makes the
+/// prompt smaller, cheaper, and actually grounded in the day's own shape.
+const NARRATE_PROMPT: &str = r#"You are writing a brief second-person autobiography for a personal day page. Your job is to surface the meaning layer — what connected, what was unusual, what the cross-domain data reveals — not to log what happened when (the event timeline already does that).
 
 LENGTH — scale to data density:
 - Sparse day (a handful of data points, a few hours of coverage): 1-3 sentences. Often a single sentence is the right answer.
@@ -77,39 +119,16 @@ Score each 1-5:
 The "overall" score is your holistic judgment — NOT an average. A day with 5/5 Where but 1/1 everything else is still a 2.
 The "note" is one sentence: what's strong, what's missing.
 
-After data quality, output a JSON block with the day's events as a perfect 24-hour calendar. Use this exact output format:
+You are given the day's EVENTS — already segmented, already grounded in the data.
+Do not re-list them. Say what the day was.
 
+Output format:
 [diary]
 ---EPIGRAPH---
 [one-line epigraph]
 ---DATA_QUALITY---
 {"coverage":{"who":3,"whom":2,"what":4,"when":5,"where":4,"why":1,"how":2},"overall":3,"note":"One sentence about coverage."}
----EVENTS---
-[{"start": "HH:MM", "end": "HH:MM", "label": "Brief label", "summary": "1-3 factual sentences about what the source data shows.", "topics": ["2-4 lowercase topical tags"]}]
-
-WHAT AN EVENT IS:
-An event is a contiguous block of time that the source data lets you classify. There are exactly two valid classifications:
-
-1. **A definitively understood block** — the sources for this time window evidence a specific, nameable activity. The `label` is a short noun phrase (2-5 words) naming what the data shows. The `summary` is 1-3 plain factual sentences grounded in the actual data points (who/where/what was logged, durations, message counts, heart rate during the block, etc.). No inference, no mood, no motivation.
-
-2. **Unknown** — the sources for this time window do not support a specific classification. The `label` is exactly "Unknown" and the `summary` is omitted (or empty). Do not invent a label like "Morning routine", "Rest", "Quiet time", "Sleep" to fill an unknown block.
-
-Every event you emit must fall into one of these two buckets. There is no third "probably this" category.
-
-SALIENCE FLOOR — what actually deserves to be an event:
-An event must represent meaningful continuous activity, not scattered pings. Specifically:
-- An event should cover a recognisable block — a calendar meeting, a workout, a commute leg, a sleep cycle, a phone call, a meal, an extended conversation — or a continuous stretch of activity (roughly ≥15 minutes of correlated source data: a voice recording, sustained app usage, a location dwell, a real back-and-forth messaging thread, etc.).
-- A handful of sparse data points is NOT an event. A few text messages spread over an hour, one AI chat query, an isolated web visit, a single transaction, a lone notification — these are signals that exist *within* Unknown blocks. They should NOT be promoted to their own labeled event.
-- When in doubt, prefer Unknown. A day with one or two clear events and the rest Unknown is more truthful than a day with five speculative event labels stretched over thin data. Truthful sparseness beats pleasant fabrication.
-
-EVENTS rules:
-- Events MUST cover the full 24 hours: first event starts at "00:00", last event ends at "24:00". No gaps, no overlaps.
-- Use 24-hour time format (HH:MM). Events are contiguous — each event's end time equals the next event's start time.
-- A label like "Morning routine", "Wake up", "Sleep", "Commute", "Work", "Relaxing", "Dinner" is only valid if the sources within that exact window evidence it (a sleep tracker logged a sleep cycle there, a calendar event covers it, location/transit data shows the commute, etc.). Otherwise the block is "Unknown".
-- "Sleep" specifically requires sleep-tracking data (Apple Health, Oura, etc.) inside the window. Never infer sleep from absence of other data, and never guess wake-up times — clip the sleep event at the last sleep data point and mark the rest as "Unknown".
-- It is perfectly fine — and common — for a sparse day to be mostly "Unknown" with only 1-3 understood events. That is the right answer.
-- Event count scales with evidence. A rich day might have 10-16 events; a sparse day might have 3-5 events. Do not pad to reach a minimum.
-- The `summary` field is the single most useful thing about an event. For understood events, it must reference the actual data points: "Three iMessages with Sarah about dinner plans, sent between 12:34 and 12:51. Heart rate stayed in the mid-70s." Not: "A pleasant exchange about dinner.""#;
+"#;
 
 /// Max characters per prompt section before truncation
 const MAX_SECTION_CHARS: usize = 1500;
@@ -170,7 +189,28 @@ pub fn day_boundaries_utc(date: NaiveDate, timezone: Option<&str>) -> (String, S
 /// model runs.
 const MIN_ACTIVATION_SOURCES: usize = 3;
 
-pub async fn generate_day_summary(pool: &PgPool, date: NaiveDate) -> Result<WikiDay> {
+/// How many SPANS a day needs before it has a shape of its own.
+///
+/// A `wiki_event` is a span, and the doctrine wants 8–16 of them in a day. You
+/// cannot cut that out of one thing — and one thing is what most of history holds.
+/// Measured on the real box, the distribution is not a gradient, it is a cliff:
+///
+/// ```text
+///   13–373 spans   7 days    ← transcripts + visits: the week the collectors ran
+///        2 spans   6 days    ← a couple of calendar entries
+///        1 span   84 days    ← one calendar entry, sometimes an all-day one
+/// ```
+///
+/// An all-day calendar event is 24 hours long and bounds nothing. A day with one
+/// meeting in it is a day the model would have to invent 15 waking hours of.
+///
+/// Three separates the days that happened from the days we merely have a receipt
+/// for. It is deliberately strict: the cost of skipping a real day is that it stays
+/// unwritten until the collectors fill it in; the cost of narrating an empty one is
+/// a confident, permanent, searchable account of a life nobody lived.
+const MIN_SPANS: usize = 3;
+
+pub async fn segment_day_events(pool: &PgPool, date: NaiveDate) -> Result<u32> {
     // 1. Gather structured sources (calendar, locations, transactions, chats, pages, etc.)
     let sources = get_day_sources(pool, date, None).await?;
 
@@ -223,7 +263,7 @@ pub async fn generate_day_summary(pool: &PgPool, date: NaiveDate) -> Result<Wiki
             total_sources = sources.len(),
             "not enough of a day to narrate — skipping summary (no LLM call)"
         );
-        return get_or_create_day(pool, date).await;
+        return Ok(0);
     }
 
     // Never narrate a day that has not happened. 146 calendar events on the real
@@ -231,7 +271,7 @@ pub async fn generate_day_summary(pool: &PgPool, date: NaiveDate) -> Result<Wiki
     // life LIVED, and tomorrow is not evidence.
     if date >= chrono::Utc::now().date_naive() {
         tracing::info!(date = %date, "day is not over — nothing to summarise yet");
-        return get_or_create_day(pool, date).await;
+        return Ok(0);
     }
 
     // 3. Inline health aggregations
@@ -302,26 +342,150 @@ pub async fn generate_day_summary(pool: &PgPool, date: NaiveDate) -> Result<Wiki
         prompt.push_str("\n\n(data truncated)");
     }
 
+    // Idempotence, and it is what makes hourly safe.
+    //
+    // Re-segmenting DELETES and re-creates every auto event, and an event's id is
+    // content-addressed from its boundaries — so a re-cut mints new ids, strands
+    // their index chunks, and throws away their scores. Doing that every hour to a
+    // day in which nothing has happened would be vandalism, and it would spend a
+    // model call to achieve it.
+    //
+    // The fingerprint is the day's source set. Unchanged means untouched.
+    let fingerprint = fingerprint_sources(&sources);
+    let prior: Option<Option<String>> =
+        sqlx::query_scalar("SELECT sources_fingerprint FROM wiki_days WHERE date = $1")
+            .bind(date)
+            .fetch_optional(pool)
+            .await?;
+    if prior.flatten().as_deref() == Some(fingerprint.as_str()) {
+        tracing::debug!(date = %date, "sources unchanged since last segmentation — nothing to re-cut");
+        return Ok(0);
+    }
+
     tracing::info!(
         date = %date,
         prompt_chars = prompt.len(),
         source_count = sources.len(),
-        "Generating daily summary"
+        "segmenting day into events"
     );
 
-    // 6. Call virtues-api
-    let raw_response = call_virtues_api(pool, &prompt).await?;
+    // Lite slot: this is structured extraction, not prose. It used to be billed at
+    // the narrative rate because it shared a call with the autobiography.
+    let model = crate::api::assistant_profile::get_background_model(pool).await?;
+    let raw_response = call_virtues_api(pool, SEGMENT_PROMPT, &model, &prompt).await?;
 
-    // 7. Parse response: extract diary text, epigraph, data quality, and structured events
-    let parsed = parse_virtues_api_response(&raw_response);
+    let events = parse_events_salvaging(&raw_response).unwrap_or_default();
+    let n = events.len() as u32;
 
-    // 8. Store structured events (event creation + location extraction)
     let day_stub = get_or_create_day(pool, date).await?;
-    if let Some(events) = parsed.events {
-        store_structured_events(pool, &day_stub, date, timezone.as_deref(), &events).await;
+    store_structured_events(pool, &day_stub, date, timezone.as_deref(), &events).await;
+
+    sqlx::query(
+        "UPDATE wiki_days SET sources_fingerprint = $1, segmented_at = now(), \
+         start_timezone = COALESCE(start_timezone, $2) WHERE date = $3",
+    )
+    .bind(&fingerprint)
+    .bind(timezone.as_deref())
+    .bind(date)
+    .execute(pool)
+    .await?;
+
+    tracing::info!(date = %date, events = n, "day segmented");
+    Ok(n)
+}
+
+/// What the day's sources looked like, so we can tell whether anything changed.
+///
+/// Count and latest timestamp per source type — enough to notice a new visit, a
+/// new transcript, another hour of messages; cheap enough to compute every hour.
+fn fingerprint_sources(sources: &[DaySource]) -> String {
+    use std::collections::BTreeMap;
+    let mut by_type: BTreeMap<&str, (usize, i64)> = BTreeMap::new();
+    for s in sources {
+        let e = by_type.entry(s.source_type.as_str()).or_insert((0, 0));
+        e.0 += 1;
+        e.1 = e.1.max(s.timestamp.timestamp());
+    }
+    let mut h = <sha2::Sha256 as sha2::Digest>::new();
+    for (k, (n, ts)) in by_type {
+        sha2::Digest::update(&mut h, format!("{k}:{n}:{ts};").as_bytes());
+    }
+    format!("{:x}", sha2::Digest::finalize(h))
+}
+
+/// How many events a day needs before it is worth WRITING about.
+///
+/// Your rule, and it was unstatable until now: the events did not exist until the
+/// narration ran, so "narrate a day that has enough events" was a circle. Split
+/// the call and it becomes a sentence.
+///
+/// A day the segmenter could only cut into two or three blocks — most of them
+/// "Unknown" — has nothing for prose to be about. Asked to write it up anyway, the
+/// model fills the silence, and what it fills it with is invention.
+const MIN_EVENTS_TO_NARRATE: usize = 4;
+
+/// NIGHTLY. Say what the day was.
+///
+/// Reads the EVENTS — not the raw sources. The prompt always claimed it did ("the
+/// event timeline already does that") while being handed the sources anyway. Now
+/// it is true: the narrative stands on the segmentation, which stands on the data.
+///
+/// Returns `None` when the day did not earn a story.
+pub async fn narrate_day(pool: &PgPool, date: NaiveDate) -> Result<Option<WikiDay>> {
+    let day = get_or_create_day(pool, date).await?;
+
+    let events: Vec<(String, Option<String>, chrono::DateTime<chrono::Utc>, chrono::DateTime<chrono::Utc>)> =
+        sqlx::query_as(
+            "SELECT COALESCE(user_label, auto_label), event_summary, start_time, end_time \
+             FROM wiki_events \
+             WHERE day_id = $1 AND NOT is_unknown AND NOT user_hidden \
+             ORDER BY start_time",
+        )
+        .bind(&day.id)
+        .fetch_all(pool)
+        .await?;
+
+    if events.len() < MIN_EVENTS_TO_NARRATE {
+        tracing::info!(
+            date = %date,
+            events = events.len(),
+            "not enough of a day to write about — skipping narration (no LLM call)"
+        );
+        return Ok(None);
     }
 
-    // 9. Save autobiography + epigraph + data quality to wiki_days
+    let home_tz = super::profile::get_timezone(pool)
+        .await
+        .unwrap_or(None)
+        .unwrap_or_else(|| "UTC".to_string());
+    let day_tz = crate::timezone::resolve_day_timezone(pool, date, &home_tz).await;
+    let tz: Option<Tz> = day_tz.parse().ok();
+    let (start_str, end_str) = day_boundaries_utc(date, Some(&day_tz));
+
+    // The day, as it was actually cut. Small, grounded, and a fraction of the
+    // tokens the raw sources cost.
+    let mut prompt = format!("# {}\n\n## The day's events\n\n", date.format("%A, %B %-d, %Y"));
+    for (label, summary, start, end) in &events {
+        let fmt = |t: &chrono::DateTime<chrono::Utc>| match tz {
+            Some(z) => t.with_timezone(&z).format("%H:%M").to_string(),
+            None => t.format("%H:%M").to_string(),
+        };
+        prompt.push_str(&format!("- {}–{} **{}**", fmt(start), fmt(end), label));
+        if let Some(s) = summary.as_deref().filter(|s| !s.trim().is_empty()) {
+            prompt.push_str(&format!(": {s}"));
+        }
+        prompt.push('\n');
+    }
+
+    if let Some(h) = build_health_snapshot(pool, &start_str, &end_str).await {
+        append_section(&mut prompt, &h);
+    }
+
+    // Chat slot: this is the narrative call, and the only one left that earns it.
+    let model = crate::api::assistant_profile::get_chat_model(pool).await?;
+    let raw = call_virtues_api(pool, NARRATE_PROMPT, &model, &prompt).await?;
+    let parsed = parse_virtues_api_response(&raw);
+
     let day = update_day(
         pool,
         date,
@@ -331,7 +495,7 @@ pub async fn generate_day_summary(pool: &PgPool, date: NaiveDate) -> Result<Wiki
             epigraph: parsed.epigraph,
             last_edited_by: Some("ai".to_string()),
             cover_image: None,
-            start_timezone: timezone.clone(),
+            start_timezone: Some(day_tz),
             data_quality: parsed
                 .data_quality
                 .as_deref()
@@ -341,7 +505,12 @@ pub async fn generate_day_summary(pool: &PgPool, date: NaiveDate) -> Result<Wiki
     )
     .await?;
 
-    Ok(day)
+    sqlx::query("UPDATE wiki_days SET narrated_at = now() WHERE date = $1")
+        .bind(date)
+        .execute(pool)
+        .await?;
+
+    Ok(Some(day))
 }
 
 // ── Section builders ─────────────────────────────────────────────────────────
@@ -959,9 +1128,22 @@ async fn detect_ontology_presence(
 // ── virtues-api call ───────────────────────────────────────────────────────────
 
 /// Call virtues-api for the summary generation
-async fn call_virtues_api(pool: &PgPool, user_prompt: &str) -> Result<String> {
-    let chat_model = crate::api::assistant_profile::get_chat_model(pool).await?;
-
+/// One call, two jobs — so the caller says which model and which instructions.
+///
+/// Segmenting a day is structured extraction: cut it into spans, name them, ground
+/// each in the data. That is grunt work, and it belongs on the Lite slot. Writing
+/// the day up is prose about what it MEANT, and that is the Chat slot.
+///
+/// They used to be a single Opus call producing both, which is why events cost
+/// narrative prices, why "only narrate a day with enough events" was circular
+/// (the events did not exist until the narration ran), and why there could be no
+/// hourly cron.
+async fn call_virtues_api(
+    pool: &PgPool,
+    system_prompt: &str,
+    model: &str,
+    user_prompt: &str,
+) -> Result<String> {
     // api_key-auth path: the device's own key funds this background call,
     // with one auto-top-up-and-retry on a 402 wallet_empty.
     let client = crate::virtues_api::client::BearerClient::from_env(pool.clone())
@@ -971,9 +1153,9 @@ async fn call_virtues_api(pool: &PgPool, user_prompt: &str) -> Result<String> {
         .post_json(
             "/v1/ai/chat/completions",
             &serde_json::json!({
-                "model": chat_model,
+                "model": model,
                 "messages": [
-                    {"role": "system", "content": SYSTEM_PROMPT},
+                    {"role": "system", "content": system_prompt},
                     {"role": "user", "content": user_prompt}
                 ],
                 // 16 events x ~60-90 tokens is 960-1440 for the events ALONE,

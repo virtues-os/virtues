@@ -5,10 +5,10 @@
 //! `day_summary_eod` used to run:
 //!
 //! ```text
-//!   sleep → novelty → autonomic → topic/entity → generate_day_summary
+//!   sleep → novelty → autonomic → topic/entity → segment_day_events
 //! ```
 //!
-//! and `generate_day_summary` SEGMENTS the day: it deletes every auto event
+//! and `segment_day_events` SEGMENTS the day: it deletes every auto event
 //! (`DELETE FROM wiki_events WHERE is_user_added = false`) and re-inserts fresh
 //! rows carrying 14 columns — `id, day_id, start_time, end_time, auto_label,
 //! auto_location, user_label, user_location, user_notes, source_ontologies,
@@ -41,7 +41,7 @@ use std::path::Path;
 
 /// The invariant, checked against the source itself: **segment, then score.**
 ///
-/// Any scoring step placed above `generate_day_summary` writes to rows that are
+/// Any scoring step placed above `segment_day_events` writes to rows that are
 /// about to be deleted. This assertion is deliberately crude — it greps the
 /// cron — because the property it protects is a plain ordering fact, and a
 /// crude test that runs on every commit beats an elegant one that needs a
@@ -63,11 +63,11 @@ fn segmentation_runs_before_scoring() {
             .unwrap_or_else(|| panic!("no call to `{needle}` in day_summary_eod"))
     };
 
-    let segment = pos("generate_day_summary(");
+    let segment = pos("segment_day_events(");
 
     for (label, scorer) in [
         // Sleep, too: a sleep event has `is_user_added = false`, so the delete
-        // inside generate_day_summary eats it like any other auto event.
+        // inside segment_day_events eats it like any other auto event.
         ("sleep resolution", "resolve_sleep_events("),
         ("event annotation", "annotate_events_for_day("),
         ("novelty scoring", "compute_novelty_for_day("),
@@ -76,7 +76,7 @@ fn segmentation_runs_before_scoring() {
     ] {
         assert!(
             pos(scorer) > segment,
-            "{label} runs BEFORE generate_day_summary, which deletes and \
+            "{label} runs BEFORE segment_day_events, which deletes and \
              re-creates every auto event — so everything it writes is destroyed. \
              This is the exact bug this test exists to prevent. Segment first, \
              then score."
@@ -179,7 +179,7 @@ async fn full_pipeline_persists_every_score() {
         embedded, events,
         "{embedded}/{events} events have an embedding on {date}. Every score \
          downstream depends on this, and a scoring step has probably been moved \
-         above generate_day_summary again."
+         above segment_day_events again."
     );
 
     assert!(
@@ -250,5 +250,71 @@ fn whatever_nulls_the_scores_must_rescore() {
         "reindex nulls every event score but does not rescore. The nightly cron \
          scores ONE day, so every past day stays at zero forever — silently, which \
          is exactly how this pipeline lost months of work the first time."
+    );
+}
+
+/// Segmenting a day and narrating it are different jobs, and must stay on
+/// different models.
+///
+/// They used to be ONE Opus call producing the events AND the autobiography. That
+/// fusion caused three separate problems, and only one of them was money:
+///
+///   * Cutting a day into spans is structured extraction — grunt work — and it was
+///     billed at the narrative rate.
+///   * "Only narrate a day with enough good events" was UNSTATABLE, because the
+///     events did not exist until the narration ran. A circle.
+///   * There could be no hourly cron: re-segmenting as data landed would have
+///     meant re-writing the day's prose every hour.
+///
+/// If someone moves segmentation onto the Chat slot, none of that fails — it just
+/// gets expensive again, quietly, which is exactly how it happened the first time.
+#[test]
+fn segmenting_is_not_narrating() {
+    let src = std::fs::read_to_string(
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("src/api/day_summary.rs"),
+    )
+    .expect("read day_summary.rs");
+
+    let after = |anchor: &str, needle: &str| -> bool {
+        let Some(i) = src.find(anchor) else { return false };
+        let tail = &src[i..];
+        let end = tail[1..].find("\npub async fn ").map(|e| e + 1).unwrap_or(tail.len());
+        tail[..end].contains(needle)
+    };
+
+    assert!(
+        after("pub async fn segment_day_events", "get_background_model"),
+        "segmentation must use the LITE slot — it is structured extraction, not prose"
+    );
+    assert!(
+        after("pub async fn narrate_day", "get_chat_model"),
+        "narration is the narrative call; it is the one that earns the Chat slot"
+    );
+    assert!(
+        !after("pub async fn segment_day_events", "get_chat_model"),
+        "segmentation on the Chat slot is how events came to cost Opus prices"
+    );
+}
+
+/// Narration reads the EVENTS. So the events have to exist first.
+#[test]
+fn narration_comes_after_the_day_is_cut() {
+    let src = std::fs::read_to_string(
+        Path::new(env!("CARGO_MANIFEST_DIR"))
+            .parent()
+            .expect("repo root")
+            .join("actions/day_summary_eod/main.rs"),
+    )
+    .expect("read day_summary_eod/main.rs");
+
+    let pos = |needle: &str| {
+        src.lines()
+            .position(|l| l.contains(needle) && !l.trim_start().starts_with("//"))
+            .unwrap_or_else(|| panic!("no call to `{needle}` in day_summary_eod"))
+    };
+
+    assert!(
+        pos("narrate_day(") > pos("segment_day_events("),
+        "narrate_day reads the day's events — it cannot run before they are cut"
     );
 }
