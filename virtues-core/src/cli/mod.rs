@@ -196,6 +196,18 @@ pub async fn run(cli: Cli, virtues: Virtues) -> Result<(), Box<dyn std::error::E
             unreachable!("Doctor command should be handled in main.rs");
         }
 
+        Commands::Magnet => {
+            virtues.database.initialize().await?;
+            let pool = virtues.database.pool();
+
+            use crate::magnet::{self, NOTEBOOK, STORY};
+            let notebooks = magnet::run_all(pool, NOTEBOOK).await?;
+            let stories = magnet::run_all(pool, STORY).await?;
+
+            println!("magnet · notebooks attached {notebooks} · stories attached {stories}");
+            return Ok(());
+        }
+
         Commands::ComputeNovelty => {
             println!("Running migrations...");
             virtues.database.initialize().await?;
