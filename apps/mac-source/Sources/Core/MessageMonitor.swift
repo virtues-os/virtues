@@ -183,7 +183,9 @@ class MessageMonitor {
                 m.associated_message_guid,
                 m.associated_message_type,
                 m.expressive_send_style_id,
-                (SELECT COUNT(*) FROM message_attachment_join WHERE message_id = m.ROWID) as attachment_count
+                (SELECT COUNT(*) FROM message_attachment_join WHERE message_id = m.ROWID) as attachment_count,
+                -- Needed to join attachments on afterwards. Local to chat.db; never uploaded.
+                m.ROWID as row_id
             FROM message m
             LEFT JOIN chat_message_join cmj ON m.ROWID = cmj.message_id
             LEFT JOIN chat c ON cmj.chat_id = c.ROWID
@@ -210,21 +212,23 @@ class MessageMonitor {
         sqlite3_bind_int(statement, 2, Int32(batchSize))
         
         var messages: [Message] = []
+        var rowIds: [Int64] = []   // parallel to `messages`; chat.db-local, never uploaded
         var latestMessageDate: Date?
-        
+
         // Execute query and collect results
         var rowCount = 0
         while sqlite3_step(statement) == SQLITE_ROW {
             guard let stmt = statement else { continue }
-            
+
             rowCount += 1
             if rowCount % 100 == 0 {
                 print("Processing message \(rowCount)...")
             }
-            
+
             let message = parseMessageRow(statement: stmt)
             messages.append(message)
-            
+            rowIds.append(sqlite3_column_int64(stmt, 19))
+
             // Track the latest message date for next sync (only if valid)
             let calendar = Calendar.current
             let year = calendar.component(.year, from: message.date)
@@ -241,7 +245,19 @@ class MessageMonitor {
             print("No new messages to sync")
         } else {
             print("Found \(messages.count) messages to sync")
-            
+
+            // Enrich with attachment metadata. A message whose only content is a photo
+            // arrives as a single U+FFFC — an invisible box — so without this, 7% of the
+            // thread is literally blank.
+            let attachmentsByRow = fetchAttachments(db: db, rowIds: rowIds)
+            if !attachmentsByRow.isEmpty {
+                for i in messages.indices {
+                    messages[i].attachmentInfo = attachmentsByRow[rowIds[i]]
+                }
+                let enriched = messages.filter { $0.attachmentInfo != nil }.count
+                print("  Attachments: \(attachmentsByRow.count) found, \(enriched) attached to messages")
+            }
+
             // Add messages to queue for upload
             for message in messages {
                 queue.addMessage(message)
@@ -255,6 +271,87 @@ class MessageMonitor {
         }
     }
     
+    /// Attachment metadata for a batch of messages, keyed by message ROWID.
+    ///
+    /// # Why this is a separate query and not a join
+    ///
+    /// The `attachment` table's columns have drifted across macOS releases, and one
+    /// unknown column name fails `sqlite3_prepare_v2` for the ENTIRE statement. Folded
+    /// into the message SELECT, a column that doesn't exist on someone's older Mac
+    /// would stop *message sync itself* — taking down the most valuable stream we have
+    /// in order to add a nicety. Enrichment must never be able to kill the thing it
+    /// enriches, so this fails on its own: log, return empty, messages still sync.
+    ///
+    /// # Metadata only — no bytes
+    ///
+    /// We take the filename, type, size, and the on-disk path. The path is the
+    /// load-bearing field: chat.db keeps the file forever under
+    /// `~/Library/Messages/Attachments/`, so recording where it lives makes a future
+    /// image backfill a *backfill*, rather than archaeology against a thread we can no
+    /// longer interpret.
+    private func fetchAttachments(db: OpaquePointer?, rowIds: [Int64]) -> [Int64: [[String: Any]]] {
+        guard let db, !rowIds.isEmpty else { return [:] }
+
+        var out: [Int64: [[String: Any]]] = [:]
+
+        // Chunked: SQLITE_MAX_VARIABLE_NUMBER is 999 on older SQLite, and `batchSize` is
+        // 1000 — one over the line, which would have failed on exactly the older Macs
+        // this fallback exists for.
+        for chunk in stride(from: 0, to: rowIds.count, by: 500).map({
+            Array(rowIds[$0..<min($0 + 500, rowIds.count)])
+        }) {
+            let placeholders = chunk.map { _ in "?" }.joined(separator: ",")
+            // NOTE the naming, which is genuinely backwards in chat.db:
+            //   attachment.filename      → the full PATH on disk
+            //   attachment.transfer_name → the display filename ("IMG_4821.HEIC")
+            let sql = """
+                SELECT maj.message_id, a.guid, a.mime_type, a.transfer_name,
+                       a.total_bytes, a.uti, a.is_sticker, a.filename
+                FROM message_attachment_join maj
+                JOIN attachment a ON a.ROWID = maj.attachment_id
+                WHERE maj.message_id IN (\(placeholders))
+                ORDER BY maj.ROWID
+            """
+
+            var stmt: OpaquePointer?
+            guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else {
+                print("⚠️ Attachment metadata unavailable (messages still syncing): \(String(cString: sqlite3_errmsg(db)))")
+                sqlite3_finalize(stmt)
+                return [:]
+            }
+            defer { sqlite3_finalize(stmt) }
+
+            for (i, rowId) in chunk.enumerated() {
+                sqlite3_bind_int64(stmt, Int32(i + 1), rowId)
+            }
+
+            while sqlite3_step(stmt) == SQLITE_ROW {
+                guard let s = stmt else { continue }
+                let messageRowId = sqlite3_column_int64(s, 0)
+
+                var info: [String: Any] = [:]
+                func text(_ col: Int32) -> String? {
+                    sqlite3_column_type(s, col) != SQLITE_NULL
+                        ? String(cString: sqlite3_column_text(s, col))
+                        : nil
+                }
+                if let v = text(1) { info["guid"] = v }
+                if let v = text(2) { info["mime_type"] = v }
+                if let v = text(3) { info["filename"] = v }
+                if sqlite3_column_type(s, 4) != SQLITE_NULL {
+                    info["size_bytes"] = sqlite3_column_int64(s, 4)
+                }
+                if let v = text(5) { info["uti"] = v }
+                info["is_sticker"] = sqlite3_column_int(s, 6) != 0
+                if let v = text(7) { info["path"] = v }   // the pointer for a v2 backfill
+
+                out[messageRowId, default: []].append(info)
+            }
+        }
+
+        return out
+    }
+
     private func parseMessageRow(statement: OpaquePointer) -> Message {
         // Extract all fields from the query result
         let messageId = sqlite3_column_type(statement, 0) != SQLITE_NULL

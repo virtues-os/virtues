@@ -20,7 +20,7 @@ use chrono::{DateTime, Utc};
 use serde_json::Value;
 use sqlx::PgPool;
 use uuid::Uuid;
-use virtues_helpers::dedup::{build_batch_insert_query, BATCH_SIZE};
+use virtues_helpers::dedup::{build_batch_insert_query, build_batch_upsert_query, BATCH_SIZE};
 
 const PROVIDER: &str = "mac";
 
@@ -164,6 +164,89 @@ async fn flush_browser(
 // iMessage → data_communication_message
 // ─────────────────────────────────────────────────────────────────────────────
 
+/// iMessage's stand-in for an attachment: U+FFFC, OBJECT REPLACEMENT CHARACTER.
+///
+/// It renders as an invisible box. A message whose whole content is a photo therefore
+/// arrives as a message that appears to say nothing at all — which is why 614 of the
+/// first 9,000 messages synced were blank, and why a thread reads as though someone
+/// went quiet mid-conversation when in fact they sent you a picture.
+const OBJECT_REPLACEMENT: char = '\u{FFFC}';
+
+/// What to call an attachment inside the body text.
+///
+/// Not an attempt to be clever — the point is that "[Photo]" is legible to a person,
+/// to search, and to a model reading the thread back, and an invisible control
+/// character is legible to none of them. We store no bytes; this is the whole of what
+/// a reader gets, so it has to carry its own weight.
+fn attachment_label(att: &Value) -> String {
+    let mime = att.get("mime_type").and_then(|v| v.as_str()).unwrap_or("");
+    let name = att.get("filename").and_then(|v| v.as_str()).unwrap_or("");
+    let is_sticker = att
+        .get("is_sticker")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
+
+    if is_sticker {
+        return "[Sticker]".to_string();
+    }
+
+    let kind = match mime {
+        "image/gif" => "GIF",
+        "text/vcard" | "text/x-vcard" => "Contact",
+        "application/pdf" => "PDF",
+        _ => match mime.split('/').next().unwrap_or("") {
+            "image" => "Photo",
+            "video" => "Video",
+            "audio" => "Audio message",
+            // A named file says more than its MIME type does: "[File: lease.pdf]" beats
+            // "[Attachment]" every time.
+            _ if !name.is_empty() => return format!("[File: {name}]"),
+            _ => "Attachment",
+        },
+    };
+    format!("[{kind}]")
+}
+
+/// Replace each U+FFFC in the body with a label for the attachment it stands for.
+///
+/// The placeholders are positional: the Nth U+FFFC is the Nth attachment. Messages
+/// that are *only* an attachment usually carry no text at all — no placeholder either —
+/// so any attachments left over are appended, otherwise the body stays empty and the
+/// message still reads as if nothing was sent.
+///
+/// This edits the *projection*, not the evidence: the raw payload, U+FFFC and all, is
+/// already in the lake. `data_*` is what people and models read, and it should read.
+fn render_attachments(body: &str, attachments: &[Value]) -> String {
+    if attachments.is_empty() {
+        return body.to_string();
+    }
+
+    let mut next = 0usize;
+    let mut out = String::with_capacity(body.len() + attachments.len() * 8);
+    for ch in body.chars() {
+        if ch == OBJECT_REPLACEMENT {
+            out.push_str(
+                &attachments
+                    .get(next)
+                    .map(attachment_label)
+                    .unwrap_or_else(|| "[Attachment]".to_string()),
+            );
+            next += 1;
+        } else {
+            out.push(ch);
+        }
+    }
+
+    for att in attachments.iter().skip(next) {
+        if !out.is_empty() && !out.ends_with(' ') {
+            out.push(' ');
+        }
+        out.push_str(&attachment_label(att));
+    }
+
+    out.trim().to_string()
+}
+
 /// One message, ready to insert. A struct rather than a tuple because this grew to
 /// eleven fields and a mis-ordered bind is exactly the kind of bug that ships
 /// silently — the columns all take text.
@@ -171,6 +254,11 @@ struct Msg {
     id: String,
     body: String,
     from_identifier: String,
+    /// The same identifier in the one normal form (see `virtues_helpers::handles`),
+    /// so the sender can be *joined* to `wiki_people.handles` instead of looked up one
+    /// message at a time. `""` means "not a person" — a short code, or ourselves —
+    /// and is what stops the resolver re-asking about every 2FA robot forever.
+    from_handle: String,
     thread_id: Option<String>,
     timestamp: DateTime<Utc>,
     guid: String,
@@ -229,10 +317,21 @@ pub async fn write_imessages(db: &PgPool, messages: &[Value]) -> Result<usize> {
         // Everything below was already on the wire and being thrown away on arrival:
         // every tapback, every read receipt, every "they sent a photo".
         let is_read = m.get("is_read").and_then(|v| v.as_bool()).unwrap_or(false);
-        let has_attachments = m
-            .get("cache_has_attachments")
-            .and_then(|v| v.as_bool())
-            .unwrap_or(false)
+
+        // Metadata only, by design — no image bytes. What we keep is enough to *say*
+        // what was sent, plus the on-disk `path`, which is what makes a v2 backfill of
+        // the images themselves a backfill rather than archaeology.
+        let attachments: Vec<Value> = m
+            .get("attachment_info")
+            .and_then(|v| v.as_array())
+            .cloned()
+            .unwrap_or_default();
+        let text = render_attachments(&text, &attachments);
+
+        let has_attachments = !attachments.is_empty()
+            || m.get("cache_has_attachments")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false)
             || m.get("attachment_count")
                 .and_then(|v| v.as_i64())
                 .is_some_and(|n| n > 0);
@@ -283,6 +382,8 @@ pub async fn write_imessages(db: &PgPool, messages: &[Value]) -> Result<usize> {
         pending.push(Msg {
             id,
             body: text,
+            from_handle: virtues_helpers::handles::normalize_handle(&from_handle)
+                .unwrap_or_default(),
             from_identifier: from_handle,
             thread_id: chat_guid,
             timestamp: ts,
@@ -297,6 +398,11 @@ pub async fn write_imessages(db: &PgPool, messages: &[Value]) -> Result<usize> {
                 // what it reacted to, this says what it was.
                 "reaction_type": reaction_type,
                 "expressive_send_style": m.get("expressive_send_style_id"),
+                // guid / mime_type / filename / size_bytes / uti / is_sticker / path.
+                // `path` is the pointer: chat.db keeps the file under
+                // ~/Library/Messages/Attachments/ indefinitely, so v2 can fetch the
+                // bytes later without needing the message thread to still make sense.
+                "attachments": attachments,
             }),
             is_read,
             has_attachments,
@@ -319,15 +425,26 @@ async fn flush_imessage(db: &PgPool, rows: &[Msg]) -> Result<usize> {
     if rows.is_empty() {
         return Ok(0);
     }
-    let sql = build_batch_insert_query(
-        "data_communication_message",
-        &[
+    // UPSERT, not DO NOTHING — the one stream where that matters.
+    //
+    // There is no upstream to re-fetch a message from: chat.db is the only copy, and a
+    // transform bug therefore has to be corrected on the rows we already hold. Under
+    // DO NOTHING, adding attachment metadata would have rendered "[Photo]" on new
+    // messages and left 845 historical ones as a blank invisible box forever.
+    //
+    // Note what is NOT in `update`: `from_name` (owned by the entity resolver — the
+    // transform doesn't know who anyone is and must not overwrite an answer it didn't
+    // compute), `timestamp` and `message_id` (identity), and `metadata`, which is
+    // merged rather than replaced by the builder.
+    let columns: &[&str] = &[
             "id",
             // The provider's native message id (the iMessage GUID). NOT NULL — omitting
             // it is what broke ingest after the `direction` fix.
             "message_id",
             "body",
             "from_identifier",
+            // The normal form of the above, so resolution is a join, not an N+1.
+            "from_handle",
             // `channel` is what the registry reads for a message's source_type
             // ("message:" || channel), so name it rather than leaving it "unknown".
             "channel",
@@ -341,13 +458,29 @@ async fn flush_imessage(db: &PgPool, rows: &[Msg]) -> Result<usize> {
             "reply_to_message_id",
             "source_stream_id",
             "source_table",
-            "source_provider",
+        "source_provider",
+        "metadata",
+    ];
+    let sql = build_batch_upsert_query(
+        "data_communication_message",
+        columns,
+        "source_stream_id",
+        // Everything a fixed transform can legitimately correct on a message we already
+        // have. All of these are pure functions of the chat.db row, so re-deriving them
+        // can only make an existing row more right.
+        &[
+            "body",
+            "from_handle",
+            "thread_id",
+            "is_read",
+            "has_attachments",
+            "is_group_message",
+            "reply_to_message_id",
             "metadata",
         ],
-        "source_stream_id",
         rows.len(),
     );
-    let mut q = sqlx::query(&sql);
+    let mut q = sqlx::query_as::<_, (Option<bool>,)>(&sql);
     for r in rows {
         // The GUID serves as both the native message_id and the dedup key.
         q = q
@@ -355,6 +488,7 @@ async fn flush_imessage(db: &PgPool, rows: &[Msg]) -> Result<usize> {
             .bind(&r.guid)
             .bind(&r.body)
             .bind(&r.from_identifier)
+            .bind(&r.from_handle)
             .bind("imessage")
             .bind(&r.thread_id)
             .bind(r.timestamp)
@@ -367,5 +501,72 @@ async fn flush_imessage(db: &PgPool, rows: &[Msg]) -> Result<usize> {
             .bind(PROVIDER)
             .bind(&r.metadata);
     }
-    Ok(q.execute(db).await?.rows_affected() as usize)
+
+    // `xmax = 0` distinguishes a genuinely new row from a corrected one. Without it a
+    // backfill reports "845 written" whether it fixed 845 messages or zero.
+    let results = q.fetch_all(db).await?;
+    let inserted = results
+        .iter()
+        .filter(|(is_insert,)| is_insert.unwrap_or(true))
+        .count();
+    let corrected = results.len() - inserted;
+    if corrected > 0 {
+        tracing::info!(inserted, corrected, "iMessages written");
+    }
+    Ok(results.len())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    fn photo() -> Value {
+        json!({"mime_type": "image/heic", "filename": "IMG_4821.HEIC"})
+    }
+
+    #[test]
+    fn a_photo_only_message_is_no_longer_blank() {
+        // The 614-message case: chat.db gives us a body that is one invisible box.
+        assert_eq!(render_attachments("\u{FFFC}", &[photo()]), "[Photo]");
+    }
+
+    #[test]
+    fn placeholders_are_positional() {
+        let atts = vec![photo(), json!({"mime_type": "video/quicktime"})];
+        assert_eq!(
+            render_attachments("look \u{FFFC} and \u{FFFC}", &atts),
+            "look [Photo] and [Video]"
+        );
+    }
+
+    #[test]
+    fn attachments_without_a_placeholder_are_still_named() {
+        // A bare photo often carries no text and no U+FFFC at all. Appending is the
+        // difference between "[Photo]" and a message that reads as if nothing was sent.
+        assert_eq!(render_attachments("", &[photo()]), "[Photo]");
+        assert_eq!(render_attachments("here", &[photo()]), "here [Photo]");
+    }
+
+    #[test]
+    fn a_named_file_says_more_than_its_type() {
+        let doc = json!({"mime_type": "application/vnd.ms-excel", "filename": "rent.xlsx"});
+        assert_eq!(render_attachments("\u{FFFC}", &[doc]), "[File: rent.xlsx]");
+    }
+
+    #[test]
+    fn stickers_and_gifs_are_not_photos() {
+        let sticker = json!({"mime_type": "image/png", "is_sticker": true});
+        assert_eq!(render_attachments("\u{FFFC}", &[sticker]), "[Sticker]");
+        let gif = json!({"mime_type": "image/gif"});
+        assert_eq!(render_attachments("\u{FFFC}", &[gif]), "[GIF]");
+    }
+
+    #[test]
+    fn a_message_with_no_attachments_is_untouched() {
+        assert_eq!(render_attachments("hello", &[]), "hello");
+        // Including one that somehow still holds a placeholder — we must not invent an
+        // attachment that the metadata does not vouch for.
+        assert_eq!(render_attachments("hi \u{FFFC}", &[]), "hi \u{FFFC}");
+    }
 }
