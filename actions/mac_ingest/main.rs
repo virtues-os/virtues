@@ -77,13 +77,12 @@ async fn main() -> Result<()> {
         .and_then(|v| v.as_str())
         .unwrap_or("mac");
 
-    let (app_written, spans) = sessionize::ingest(&pool, device_id, &app_events).await?;
+    let app_written = sessionize::ingest(&pool, device_id, &app_events).await?;
     let browser_written = transform::write_browser_history(&pool, &browser).await?;
     let imessage_written = transform::write_imessages(&pool, &imessages).await?;
 
     let summary = format!(
-        "apps: {app_written} sessions, presence: {spans} spans, \
-         browser: {browser_written} visits, imessages: {imessage_written}"
+        "apps: {app_written} sessions, browser: {browser_written} visits, imessages: {imessage_written}"
     );
     output(&summary, &input.config)
 }
