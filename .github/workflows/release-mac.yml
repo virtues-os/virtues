@@ -96,7 +96,11 @@ jobs:
 
       - uses: actions/setup-node@v4
         with:
-          node-version: '20'
+          # 22, not 20: @ai-sdk/svelte declares engines.node >=22, so pnpm hard-fails
+          # the install (ERR_PNPM_UNSUPPORTED_ENGINE). release-linux.yml was moved to 22
+          # and this was left behind — which is why no Mac release has built since the
+          # dependency landed, and why three weeks of collector work never shipped.
+          node-version: '22'
 
       # ── Stage both sidecars for the universal build ───────────────────────
       # `tauri build --target universal-apple-darwin` compiles EACH arch as its
