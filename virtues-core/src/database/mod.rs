@@ -267,7 +267,12 @@ impl Database {
 
     /// Run database migrations
     async fn run_migrations(&self) -> Result<()> {
-        sqlx::migrate!("./migrations")
+        let mut migrator = sqlx::migrate!("./migrations");
+        // One dev database serves many branches: a migration applied on a
+        // feature branch must not brick `make dev` on branches that don't
+        // carry its file. Skip applied-but-unknown versions instead.
+        migrator.set_ignore_missing(true);
+        migrator
             .run(&self.pool)
             .await
             .map_err(|e| Error::Database(format!("Failed to run migrations: {e}")))?;
