@@ -529,7 +529,27 @@ pub fn registered_ontologies() -> Vec<OntologyDescriptor> {
             source_streams: vec!["stream_ios_microphone"],
             timestamp_column: "start_time",
             end_timestamp_column: Some("end_time"),
-            embedding: None,
+            // What you actually SAID — and until now, the one thing search could
+            // not find. A row here is not an audio chunk: `transcription_resolution`
+            // has already assembled the whole conversation (durations run to 6300s)
+            // and given it a title, a summary and speaker-labelled text. It was a
+            // finished document sitting outside the corpus.
+            //
+            // Title and summary lead, because they are the part a retriever can
+            // match against a question; the verbatim follows as the evidence.
+            embedding: Some(EmbeddingConfig {
+                embed_text_sql: "COALESCE(t.title, '') || E'\n' || COALESCE(t.summary, '') \
+                                 || E'\n\n' || COALESCE(t.text, '')",
+                content_type: "transcription",
+                title_sql: Some("t.title"),
+                preview_sql: "COALESCE(SUBSTR(t.summary, 1, 200), SUBSTR(t.text, 1, 200), '')",
+                author_sql: None,
+                timestamp_sql: "t.start_time",
+            }),
+            // No ExtractionConfig, deliberately: the transcription action's own LLM
+            // call already emits `entities`, and `entity_resolution::extract` drains
+            // that column. Paying a second model to re-read the same words would be
+            // absurd.
             extraction: None,
             temporal_type: TemporalType::Discrete,
             day_source: Some(DaySourceConfig {
@@ -584,34 +604,61 @@ pub fn registered_ontologies() -> Vec<OntologyDescriptor> {
             //                    who  whom what when where why  how
             is_activation_signal: false,
         },
+        // `content_conversation` lived here — zero rows, ever. Its own comment said
+        // it was for "messages created directly by chat API", which is what
+        // `app_chat` does, and its description called it a "search artifact" too.
+        // A duplicate ontology over an empty table that would have double-indexed
+        // every conversation the day anything wrote to it.
+        //
+        // ===== The narrative layer =====
+        // An event is a document — and the best-written one the system produces.
+        // 657 of them, and search could not return a single one.
+        //
+        // What is indexed is the SUMMARY, which is a paraphrase, so no words are
+        // duplicated from the records beneath it. The event is the coarse handle
+        // ("when did I talk to Rachel"); the records underneath remain the evidence
+        // ("what did she say"). Small-to-big, and both are wanted.
+        //
+        // Not a `data_*` table: it is derived, re-derivable, and re-segmented
+        // nightly. Event ids are content-addressed from their boundaries, so a
+        // re-cut day mints new ids and strands the old chunks — the indexer prunes
+        // records that no longer exist (see `search::indexer`).
         OntologyDescriptor {
-            name: "content_conversation",
-            display_name: "AI Conversations",
-            description: "Chat sessions from Virtues AI assistant (search artifact)",
-            domain: "content",
-            table_name: "data_content_conversation",
-            source_streams: vec![], // Messages created directly by chat API
-            timestamp_column: "timestamp",
-            end_timestamp_column: None,
+            name: "wiki_event",
+            display_name: "Events",
+            description: "Segmented narrative events — the day as it was lived",
+            domain: "narrative",
+            table_name: "wiki_events",
+            source_streams: vec![],
+            timestamp_column: "start_time",
+            end_timestamp_column: Some("end_time"),
             embedding: Some(EmbeddingConfig {
-                embed_text_sql: "t.content",
-                content_type: "ai_conversation",
-                title_sql: None,
-                preview_sql: "SUBSTR(t.content, 1, 200)",
-                author_sql: Some("t.role"),
-                timestamp_sql: "t.timestamp",
+                // The user's own label wins over the machine's: autonomy over
+                // tidiness, everywhere.
+                //
+                // NULL for gap-fill and hidden events — an "Unknown" event with no
+                // summary is a placeholder for time we could not account for, and
+                // embedding the word "Unknown" 84 times teaches the index nothing.
+                // A NULL embed text makes the indexer skip the row rather than
+                // reconsider it forever.
+                embed_text_sql: "CASE WHEN t.event_summary IS NULL OR t.is_unknown OR t.user_hidden \
+                                 THEN NULL ELSE \
+                                 COALESCE(t.user_label, t.auto_label, '') || E'\n' \
+                                 || t.event_summary || E'\n' \
+                                 || COALESCE(t.user_notes, '') END",
+                content_type: "event",
+                title_sql: Some("COALESCE(t.user_label, t.auto_label)"),
+                preview_sql: "SUBSTR(COALESCE(t.event_summary, ''), 1, 200)",
+                author_sql: None,
+                timestamp_sql: "t.start_time",
             }),
-            extraction: Some(ExtractionConfig {
-                text_sql: "COALESCE(t.content, '')",
-                // The user's own turns only. Names in the ASSISTANT's replies are
-                // the model paraphrasing the user back at them — extracting from
-                // those manufactures evidence for things the user never said, and
-                // inflates every mention count with its own echo.
-                filter_sql: Some("t.role = 'user'"),
-                max_chars: 4000,
-            }),
+            // Entities are already resolved onto events by the day pipeline
+            // (`dayline::annotate`). Re-reading the summary for names would build a
+            // second, worse path to the same people.
+            extraction: None,
             temporal_type: TemporalType::Discrete,
-            day_source: None, // Individual messages not useful as day sources
+            // It IS the day's narrative; it is not a source for it.
+            day_source: None,
             continuous_agg: None,
             //                    who  whom what when where why  how
             is_activation_signal: false,
@@ -713,8 +760,54 @@ pub fn registered_ontologies() -> Vec<OntologyDescriptor> {
             source_streams: vec![],
             timestamp_column: "created_at",
             end_timestamp_column: Some("updated_at"),
-            embedding: None,
-            extraction: None,
+            // THE CONVERSATION IS THE DOCUMENT. Not the turn.
+            //
+            // We used to index each message as its own document, and it is why
+            // search was poor: a turn is a fragment, and a fragment cannot be
+            // judged. Asked whether the message "theme" was about buying a house,
+            // the cross-encoder had nothing to go on and hedged at +0.91 — 0.08
+            // beneath an actual street address. Indexed as its conversation, the
+            // same words become a two-message exchange about bold text formatting,
+            // and the answer is obviously no.
+            //
+            // `string_agg` is safe here: `embed_text_sql` is interpolated raw
+            // (indexer.rs), so a subquery needs no indexer change. The chunker
+            // splits long conversations into 96-word windows on its own.
+            //
+            // Checkpoints and onboarding triggers are skipped — they are machinery,
+            // not talk.
+            embedding: Some(EmbeddingConfig {
+                embed_text_sql: "COALESCE(t.title, '') || E'\n\n' || COALESCE((\
+                     SELECT string_agg(m.role || ': ' || m.content, E'\n\n' ORDER BY m.sequence_num) \
+                     FROM app_chat_messages m \
+                     WHERE m.chat_id = t.id \
+                       AND m.role <> 'checkpoint' \
+                       AND COALESCE(m.subject, '') <> 'onboarding_synthetic' \
+                       AND m.content IS NOT NULL), '')",
+                content_type: "chat",
+                title_sql: Some("t.title"),
+                preview_sql: "COALESCE(SUBSTR(t.conversation_summary, 1, 200), SUBSTR(t.title, 1, 200), '')",
+                author_sql: None,
+                // The document changes as the conversation grows, so its time is
+                // when it last did.
+                timestamp_sql: "t.updated_at",
+            }),
+            // Entity extraction on the same unit as retrieval. Chats carried NO
+            // entity refs before, so a conversation about Rachel was unreachable
+            // from Rachel — and if ER and IR disagreed about what a chat *is*, the
+            // entity filter (query.rs joins on source_table + record_id) would
+            // silently return nothing.
+            //
+            // User turns only: the assistant's replies are the model paraphrasing
+            // the user back, and extracting names from them would count the same
+            // mention twice.
+            extraction: Some(ExtractionConfig {
+                text_sql: "COALESCE((SELECT string_agg(m.content, E'\n' ORDER BY m.sequence_num) \
+                           FROM app_chat_messages m \
+                           WHERE m.chat_id = t.id AND m.role = 'user' AND m.content IS NOT NULL), '')",
+                filter_sql: None,
+                max_chars: 8000,
+            }),
             temporal_type: TemporalType::Discrete,
             day_source: Some(DaySourceConfig {
                 source_type: "chat",
@@ -729,33 +822,16 @@ pub fn registered_ontologies() -> Vec<OntologyDescriptor> {
             //                    who  whom what when where why  how
             is_activation_signal: false,
         },
-        OntologyDescriptor {
-            name: "app_chat_message",
-            display_name: "Chat Messages",
-            description: "Individual messages from Virtues AI conversations (search artifact)",
-            domain: "app",
-            table_name: "app_chat_messages",
-            source_streams: vec![],
-            timestamp_column: "created_at",
-            end_timestamp_column: None,
-            embedding: Some(EmbeddingConfig {
-                // Skip compaction checkpoints and onboarding triggers: NULL embed
-                // text makes the indexer insert a skip placeholder instead of
-                // embedding them. User + assistant turns are both embedded.
-                embed_text_sql: "CASE WHEN t.role = 'checkpoint' OR t.subject = 'onboarding_synthetic' THEN NULL ELSE t.content END",
-                content_type: "chat_message",
-                title_sql: None,
-                preview_sql: "SUBSTR(t.content, 1, 200)",
-                author_sql: Some("t.role"),
-                timestamp_sql: "t.created_at",
-            }),
-            extraction: None,
-            temporal_type: TemporalType::Discrete,
-            day_source: None,
-            continuous_agg: None,
-            //                    who  whom what when where why  how
-            is_activation_signal: false,
-        },
+        // `app_chat_message` lived here, and its own description called it a
+        // "search artifact" — an ontology that existed for no reason but to be
+        // indexed. It indexed each TURN as a standalone document, which is what
+        // made 98 of the corpus's 110 chunks chat fragments, and what put the
+        // one-word message "theme" within 0.08 of a street address when the
+        // reranker was asked which of them concerned a house.
+        //
+        // The conversation is the document. See `app_chat` above. The messages
+        // remain, of course — they are facts, and facts are kept at source
+        // granularity. Nothing semantic reads them one row at a time any more.
         OntologyDescriptor {
             name: "app_page",
             display_name: "Page Edits",
@@ -765,7 +841,20 @@ pub fn registered_ontologies() -> Vec<OntologyDescriptor> {
             source_streams: vec![],
             timestamp_column: "updated_at",
             end_timestamp_column: None,
-            embedding: None,
+            // Your own writing — and it was not searchable. A page is already a
+            // document; there is nothing to assemble.
+            //
+            // Pages are LIVE (Yjs), so this is the ontology that most needs the
+            // re-embed-on-change guard: without it an edit never reaches the index
+            // and search answers with the version you wrote first.
+            embedding: Some(EmbeddingConfig {
+                embed_text_sql: "COALESCE(t.title, '') || E'\n\n' || COALESCE(t.content, '')",
+                content_type: "page",
+                title_sql: Some("t.title"),
+                preview_sql: "SUBSTR(COALESCE(t.content, ''), 1, 200)",
+                author_sql: None,
+                timestamp_sql: "t.updated_at",
+            }),
             extraction: None,
             temporal_type: TemporalType::Discrete,
             day_source: Some(DaySourceConfig {
@@ -880,7 +969,17 @@ mod tests {
         assert!(names.contains(&"data_communication_email"));
         assert!(names.contains(&"data_communication_message"));
         assert!(names.contains(&"data_content_document"));
-        assert!(names.contains(&"data_content_conversation"));
+
+        // Chat extraction runs on the CONVERSATION, not the turn — the same unit
+        // retrieval indexes. If ER wrote refs on messages while IR indexed chats,
+        // the entity filter (source_table + record_id) would silently return
+        // nothing, and "everything I discussed with Rachel" would come back empty.
+        // One unit for meaning.
+        assert!(names.contains(&"app_chats"));
+        assert!(
+            !names.contains(&"app_chat_messages"),
+            "extraction must run on the conversation, not the turn"
+        );
 
         // Transcriptions carry prose but are NOT here: the transcription action
         // already extracts their entities in a call we're paying for anyway, so
@@ -917,17 +1016,79 @@ mod tests {
         // AI chats: the user's turns only. The assistant's replies are the model
         // paraphrasing the user back; extracting names from them manufactures
         // evidence for things the user never said.
-        let convo = by("data_content_conversation");
-        assert_eq!(convo.filter_sql, Some("t.role = 'user'"));
+        //
+        // The unit is the conversation, so this is now a WHERE inside the
+        // aggregate rather than a row filter — but the line it holds is the same,
+        // and it must stay held.
+        let chat = by("app_chats");
+        assert!(
+            chat.text_sql.contains("m.role = 'user'"),
+            "chat extraction must read the user's turns only, not the assistant's echo"
+        );
     }
 
     #[test]
     fn test_searchable_ontologies() {
         let searchable = get_searchable_ontologies();
-        // Should have: email, message, calendar_event, document, conversation, financial_transaction, content_bookmark
         assert!(searchable.len() >= 7);
         for o in &searchable {
             assert!(o.embedding.is_some());
+        }
+    }
+
+    /// The indexed unit is a DOCUMENT — the thing a human would call "a thing".
+    /// Never a piece of one, and never a measurement.
+    ///
+    /// This is the guard for the bug that made search bad: we indexed each chat
+    /// TURN as its own document, so 98 of the corpus's 110 chunks were fragments.
+    /// Asked whether the one-word message "theme" concerned buying a house, the
+    /// cross-encoder had nothing to judge and hedged at +0.91 — a hair under a real
+    /// street address at +0.99. A fragment cannot be judged, and no amount of
+    /// reranking rescues a corpus made of them.
+    #[test]
+    fn the_indexed_unit_is_a_document() {
+        let indexed: Vec<&str> = get_searchable_ontologies()
+            .iter()
+            .map(|o| o.table_name)
+            .collect();
+
+        // SIGNALS are samples in a stream. They are lossy by design and mean
+        // nothing alone: a heart-rate reading is not a document, it is the
+        // integrand. A signal becomes an ANNOTATION on the event it overlaps —
+        // never a row in the corpus.
+        for t in [
+            "data_health_heart_rate",
+            "data_health_hrv",
+            "data_health_steps",
+            "data_location_point",
+        ] {
+            assert!(
+                !indexed.contains(&t),
+                "{t} is a signal — it must never enter the search corpus"
+            );
+        }
+
+        // FRAGMENTS are real facts that cannot stand alone. They stay in the
+        // database as facts; the document is their container.
+        for (fragment, container) in [("app_chat_messages", "app_chats")] {
+            assert!(
+                !indexed.contains(&fragment),
+                "{fragment} is a fragment — index {container} instead"
+            );
+            assert!(
+                indexed.contains(&container),
+                "{container} is the document {fragment} belongs to"
+            );
+        }
+
+        // The documents we own and, for a long time, did not index: what you said,
+        // what you wrote, and what the day was.
+        for t in [
+            "data_communication_transcription", // whole conversations, LLM-titled
+            "app_pages",                        // your own writing
+            "wiki_events",                      // 657 event summaries
+        ] {
+            assert!(indexed.contains(&t), "{t} is a document and must be indexed");
         }
     }
 

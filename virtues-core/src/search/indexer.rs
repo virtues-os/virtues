@@ -85,16 +85,34 @@ pub async fn run_embedding_job(pool: &PgPool) -> Result<u64> {
             .author_sql
             .map(prefix_col)
             .unwrap_or_else(|| "NULL".to_string());
+        // The backlog is "never indexed OR indexed from different text".
+        //
+        // It used to be only the former — `WHERE se.id IS NULL` — which meant a
+        // record was embedded once and never reconsidered. Edit a page and search
+        // answered with the version you first wrote; add a message to a chat and
+        // the chat's document froze at whatever it said the first time. That second
+        // one is fatal now that a chat IS a document: its text is its messages, and
+        // messages arrive.
+        //
+        // `doc_hash` is computed by Postgres from the same expression that produces
+        // the text, so the freshness check and the writer cannot disagree about
+        // what the document said. `md5` is change-detection, not security.
+        //
+        // The join pins `chunk_index = 0` so a multi-chunk record is one row here,
+        // not N.
         let sql = format!(
             "SELECT t.id, \
              {embed_text} as embed_text, \
              {title} as title, \
              {preview} as preview, \
              {author} as author, \
-             {timestamp}::text as ts \
+             {timestamp}::text as ts, \
+             md5(COALESCE({embed_text}, '')) as doc_hash \
              FROM {table} t \
-             LEFT JOIN search_embeddings se ON se.ontology = $1 AND se.record_id = t.id \
+             LEFT JOIN search_embeddings se \
+                    ON se.ontology = $1 AND se.record_id = t.id AND se.chunk_index = 0 \
              WHERE se.id IS NULL \
+                OR se.doc_hash IS DISTINCT FROM md5(COALESCE({embed_text}, '')) \
              ORDER BY t.id ASC \
              LIMIT $2",
             embed_text = config.embed_text_sql,
@@ -174,7 +192,8 @@ async fn embed_one_batch(
     ont_name: &str,
     table: &str,
 ) -> Result<(usize, u64)> {
-    let rows = sqlx::query_as::<_, (String, Option<String>, Option<String>, Option<String>, Option<String>, Option<String>)>(sql)
+    #[allow(clippy::type_complexity)]
+    let rows = sqlx::query_as::<_, (String, Option<String>, Option<String>, Option<String>, Option<String>, Option<String>, Option<String>)>(sql)
         .bind(ont_name)
         .bind(BATCH_SIZE)
         .fetch_all(pool)
@@ -188,20 +207,27 @@ async fn embed_one_batch(
 
     let mut batch_count = 0u64;
 
-    for (record_id, embed_text, title, preview, author, timestamp) in &rows {
+    for (record_id, embed_text, title, preview, author, timestamp, doc_hash) in &rows {
         let text = match embed_text {
             Some(t) if !t.trim().is_empty() => t.as_str(),
             _ => {
-                // Insert a placeholder row so LEFT JOIN skips this record next run.
+                // A placeholder, so the backlog stops reconsidering this record.
+                //
+                // `doc_hash` MUST be set here, not left NULL: the freshness check is
+                // `doc_hash IS DISTINCT FROM md5(text)`, and NULL is distinct from
+                // everything — including md5(''). A NULL here would make every empty
+                // record eternally stale, and the indexer would spin on it forever.
                 sqlx::query(
                     "INSERT INTO search_embeddings \
-                     (id, ontology, record_id, text_hash, model, chunk_index) \
-                     VALUES ($1, $2, $3, 'empty', 'skip', 0) \
-                     ON CONFLICT (ontology, record_id, chunk_index) DO NOTHING",
+                     (id, ontology, record_id, text_hash, model, chunk_index, doc_hash) \
+                     VALUES ($1, $2, $3, 'empty', 'skip', 0, $4) \
+                     ON CONFLICT (ontology, record_id, chunk_index) DO UPDATE SET \
+                       doc_hash = EXCLUDED.doc_hash",
                 )
                 .bind(format!("{}:{}", ont_name, record_id))
                 .bind(ont_name)
                 .bind(record_id)
+                .bind(doc_hash)
                 .execute(pool)
                 .await?;
                 continue;
@@ -223,6 +249,41 @@ async fn embed_one_batch(
         // done.
         let chunks = chunk_text(text);
         let mut tx = pool.begin().await?;
+
+        // A re-indexed document may be SHORTER than it was — an edited page, a
+        // re-cut event. Nothing deleted stale chunks before, so the tail of the old
+        // version survived as orphans: still embedded, still searchable, still
+        // citable, describing text that no longer exists. Drop them, and correct
+        // the corpus stats by what we drop (0030 admits deletes were never
+        // accounted for; this is where that gets paid).
+        let stale: Vec<(String, Option<i64>)> = sqlx::query_as(
+            "SELECT id, bm25_len FROM search_embeddings \
+             WHERE ontology = $1 AND record_id = $2 AND chunk_index >= $3",
+        )
+        .bind(ont_name)
+        .bind(record_id)
+        .bind(chunks.len() as i32)
+        .fetch_all(&mut *tx)
+        .await?;
+
+        if !stale.is_empty() {
+            let dropped_len: i64 = stale.iter().filter_map(|(_, l)| *l).sum();
+            let ids: Vec<String> = stale.iter().map(|(id, _)| id.clone()).collect();
+            // CASCADE takes search_vectors and search_bm25_postings with it.
+            sqlx::query("DELETE FROM search_embeddings WHERE id = ANY($1)")
+                .bind(&ids)
+                .execute(&mut *tx)
+                .await?;
+            sqlx::query(
+                "UPDATE search_bm25_stats \
+                 SET n_docs = GREATEST(n_docs - $1, 0), sum_len = GREATEST(sum_len - $2, 0) \
+                 WHERE singleton",
+            )
+            .bind(ids.len() as i64)
+            .bind(dropped_len)
+            .execute(&mut *tx)
+            .await?;
+        }
         for (ci, chunk) in chunks.iter().enumerate() {
             let embedding = match embedder.embed_async(chunk).await {
                 Ok(v) => v,
@@ -254,8 +315,8 @@ async fn embed_one_batch(
 
             sqlx::query(
                 "INSERT INTO search_embeddings \
-                 (id, ontology, record_id, text_hash, model, chunk_index, title, preview, author, timestamp, content, source_table, bm25_len) \
-                 VALUES ($1, $2, $3, $4, 'embeddinggemma', $10, $5, $6, $7, $8, $9, $11, $12) \
+                 (id, ontology, record_id, text_hash, model, chunk_index, title, preview, author, timestamp, content, source_table, bm25_len, doc_hash) \
+                 VALUES ($1, $2, $3, $4, $13, $10, $5, $6, $7, $8, $9, $11, $12, $14) \
                  ON CONFLICT (ontology, record_id, chunk_index) DO UPDATE SET \
                    text_hash = EXCLUDED.text_hash, \
                    model = EXCLUDED.model, \
@@ -265,7 +326,8 @@ async fn embed_one_batch(
                    timestamp = EXCLUDED.timestamp, \
                    content = EXCLUDED.content, \
                    source_table = EXCLUDED.source_table, \
-                   bm25_len = EXCLUDED.bm25_len",
+                   bm25_len = EXCLUDED.bm25_len, \
+                   doc_hash = EXCLUDED.doc_hash",
             )
             .bind(&embedding_id)
             .bind(ont_name)
@@ -279,6 +341,14 @@ async fn embed_one_batch(
             .bind(ci as i32)
             .bind(table) // source_table — for the wiki_entity_refs join (entity filtering)
             .bind(bm_len)
+            // The model that ACTUALLY produced this vector, not a literal. Two
+            // models of the same width put their vectors in different geometries,
+            // and cosine between them is meaningless — so the index has to be able
+            // to say which one it was built with.
+            .bind(embedder.model_id())
+            // Computed by Postgres from the same expression that produced the text,
+            // so the freshness check can never disagree with what was indexed.
+            .bind(doc_hash)
             .execute(&mut *tx)
             .await?;
 

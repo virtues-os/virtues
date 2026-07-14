@@ -40,8 +40,8 @@ pub async fn resolve_people(db: &Database, window: TimeWindow) -> Result<usize> 
     // 2. Resolve from email senders
     total_resolved += resolve_email_senders(db, window).await?;
 
-    // 3. Resolve from message senders — the one that was never wired up.
-    total_resolved += resolve_message_senders(db, window).await?;
+    // 3. Resolve from message senders. Deliberately NOT window-bounded — see below.
+    total_resolved += resolve_message_senders(db).await?;
 
     tracing::info!(
         people_resolved = total_resolved,
@@ -50,6 +50,11 @@ pub async fn resolve_people(db: &Database, window: TimeWindow) -> Result<usize> 
 
     Ok(total_resolved)
 }
+
+/// How many rows a single pass of the message resolver claims at a time. Both loops
+/// below drain — they keep going while batches come back full — so this bounds
+/// memory and statement size, not total throughput.
+const MESSAGE_BATCH: i64 = 5_000;
 
 /// Turn `+16304608847` into Nick.
 ///
@@ -62,89 +67,209 @@ pub async fn resolve_people(db: &Database, window: TimeWindow) -> Result<usize> 
 /// cancel — +16304608847" is a line of data. The same sentence with "Nick" on it is a
 /// life, and it is what makes the rest of the system worth querying.
 ///
-/// Unlike the email path, this one deliberately does NOT create a person when the
-/// handle is unknown. An unrecognized email address at least carries a display name;
-/// a bare phone number carries nothing, and inventing a nameless person per unknown
-/// number would fill the graph with hundreds of ghosts called "+18334160379". Unknown
-/// numbers simply stay unresolved until a contact turns up — the honest state.
-async fn resolve_message_senders(db: &Database, window: TimeWindow) -> Result<usize> {
-    let rows = sqlx::query!(
-        r#"
-        SELECT m.id, m.from_identifier
-        FROM data_communication_message m
-        LEFT JOIN wiki_entity_refs r
-               ON r.source_table = 'data_communication_message'
-              AND r.source_id = m.id
-              AND r.role = 'sender'
-        WHERE m.timestamp >= $1 AND m.timestamp <= $2
-          AND r.id IS NULL
-          AND m.from_identifier <> 'me'
-        LIMIT 5000
-        "#,
-        window.start,
-        window.end
-    )
-    .fetch_all(db.pool())
-    .await?;
+/// # Why this one takes no `TimeWindow`
+///
+/// Every other resolver here is driven by a rolling window over the *event's*
+/// timestamp — "re-resolve the last 30 hours". That works for GPS, where a point is
+/// collected moments after it happens, so event time and arrival time agree.
+///
+/// It is exactly wrong for messages. The chat.db backfill walks twenty years of
+/// history, so a message that lands *right now* carries `timestamp = 2018-04-11` and
+/// falls outside a window anchored to `now()` — permanently. A window asks "what
+/// happened recently?" when the question that needs answering is "what have I not
+/// done yet?", and those two agree only when data arrives in the order it occurred.
+///
+/// So this is driven by the *absence of its own output*: a message is work if it has
+/// no sender ref yet. No cursor to rewind, no window to fall outside of, nothing to
+/// keep in sync. Delete the refs and they are rebuilt; crash mid-pass and the next
+/// tick resumes exactly where it stopped; land a message from 2018 and it is picked
+/// up on the next tick like any other. The same shape `search::indexer` already uses
+/// (`LEFT JOIN search_embeddings … WHERE se.id IS NULL`).
+///
+/// # The trap in that, and the way out
+///
+/// A naive "no ref yet" anti-join never terminates here. Unlike email — which mints a
+/// person for any unknown address, so a ref always appears — an unknown *number* gets
+/// no person, deliberately (below). So the ~1,200 numbers with no contact would have
+/// no ref, forever, and would be re-examined every fifteen minutes until the heat
+/// death of the box.
+///
+/// The fix falls out of the data model rather than being bolted onto it: **inner-join
+/// the known handles**. A message is only work if its sender is someone we could
+/// resolve *and* haven't. An unknown number matches no person, so it is not work and
+/// costs nothing — and on the day you save that contact it becomes work again, on its
+/// own. Self-healing in both directions, with no bookkeeping.
+///
+/// # Why an unknown number does not become a person
+///
+/// An unrecognized email address at least carries a display name. A bare phone number
+/// carries nothing, so minting a person per unknown number would fill the graph with
+/// hundreds of ghosts called "+18334160379". They stay unresolved until a contact
+/// turns up — the honest state.
+async fn resolve_message_senders(db: &Database) -> Result<usize> {
+    normalize_pending_handles(db).await?;
 
-    if rows.is_empty() {
-        return Ok(0);
-    }
-
-    let mut resolved = 0;
-    for row in rows {
-        // One normal form on both sides — this is the whole fix. Contacts store what
-        // you typed ("(952) 292-1126"); chat.db stores E.164 ("+19522921126").
-        let Some(handle) = virtues_helpers::handles::normalize_handle(&row.from_identifier) else {
-            continue; // short code — a bank's robot, not a person
-        };
-
-        let person = sqlx::query!(
-            r#"SELECT id, canonical_name FROM wiki_people WHERE handles ? $1 LIMIT 2"#,
-            handle
+    let mut resolved = 0usize;
+    loop {
+        // One handle must mean one person. If two contacts claim the same number the
+        // contact data is wrong, and guessing which of them said something is worse
+        // than admitting we don't know — so an ambiguous handle owns nobody and its
+        // messages simply stay unresolved.
+        let rows = sqlx::query!(
+            r#"
+            WITH handle_owner AS (
+                SELECT h.handle,
+                       min(p.id)             AS person_id,
+                       min(p.canonical_name) AS canonical_name
+                FROM wiki_people p
+                CROSS JOIN LATERAL jsonb_array_elements_text(p.handles) AS h(handle)
+                GROUP BY h.handle
+                HAVING count(DISTINCT p.id) = 1
+            )
+            SELECT m.id            AS "msg_id!",
+                   o.person_id     AS "person_id!",
+                   o.canonical_name AS "canonical_name!"
+            FROM data_communication_message m
+            JOIN handle_owner o ON o.handle = m.from_handle
+            LEFT JOIN wiki_entity_refs r
+                   ON r.source_table = 'data_communication_message'
+                  AND r.source_id = m.id
+                  AND r.role = 'sender'
+            WHERE m.from_handle <> ''
+              AND r.id IS NULL
+            LIMIT $1
+            "#,
+            MESSAGE_BATCH
         )
         .fetch_all(db.pool())
         .await?;
 
-        // Two people answering to one handle means the contact data is wrong, not
-        // that we should guess. Decline, exactly as the alias resolver does.
-        if person.len() != 1 {
-            continue;
+        if rows.is_empty() {
+            break;
         }
-        let person_id = person[0].id.clone();
-        let name = person[0].canonical_name.clone();
+        let batch = rows.len();
 
-        let ref_id = ids::generate_id("eref", &[&row.id, &person_id, "sender"]);
+        let msg_ids: Vec<String> = rows.iter().map(|r| r.msg_id.clone()).collect();
+        let person_ids: Vec<String> = rows.iter().map(|r| r.person_id.clone()).collect();
+        let names: Vec<String> = rows.iter().map(|r| r.canonical_name.clone()).collect();
+        let ref_ids: Vec<String> = rows
+            .iter()
+            .map(|r| ids::generate_id("eref", &[&r.msg_id, &r.person_id, "sender"]))
+            .collect();
+
+        // The ref is the real artifact: it is what lets you traverse from a message to
+        // everything else about the person who sent it.
         sqlx::query!(
             r#"
             INSERT INTO wiki_entity_refs (id, entity_type, entity_id, source_table, source_id, role, timestamp)
-            SELECT $1, 'person', $2, 'data_communication_message', $3, 'sender', timestamp
-            FROM data_communication_message WHERE id = $3
+            SELECT u.ref_id, 'person', u.person_id, 'data_communication_message', u.msg_id, 'sender', m.timestamp
+            FROM UNNEST($1::text[], $2::text[], $3::text[]) AS u(ref_id, person_id, msg_id)
+            JOIN data_communication_message m ON m.id = u.msg_id
             ON CONFLICT (entity_id, source_table, source_id, role) DO NOTHING
             "#,
-            ref_id,
-            person_id,
-            row.id
+            &ref_ids,
+            &person_ids,
+            &msg_ids
         )
         .execute(db.pool())
         .await?;
 
-        // Denormalize the name onto the message too. The REF is the real artifact —
-        // it's what lets you traverse to everything else about them — but from_name is
-        // what a day summary or a chat prompt reads without a join.
+        // `from_name` is the convenience copy — what a day summary or a chat prompt can
+        // read without a join. Only fill it in where it's empty; a name a human set by
+        // hand outranks one we inferred.
         sqlx::query!(
-            r#"UPDATE data_communication_message SET from_name = $1 WHERE id = $2 AND from_name IS NULL"#,
-            name,
-            row.id
+            r#"
+            UPDATE data_communication_message m
+            SET from_name = u.name
+            FROM UNNEST($1::text[], $2::text[]) AS u(id, name)
+            WHERE m.id = u.id AND m.from_name IS NULL
+            "#,
+            &msg_ids,
+            &names
         )
         .execute(db.pool())
         .await?;
 
-        resolved += 1;
+        resolved += batch;
+        if (batch as i64) < MESSAGE_BATCH {
+            break;
+        }
     }
 
-    tracing::info!(resolved, "Message senders resolved to people");
+    if resolved > 0 {
+        tracing::info!(resolved, "Message senders resolved to people");
+    }
     Ok(resolved)
+}
+
+/// Fill `from_handle` for messages that predate it (or that some future collector
+/// forgets to set). The transform normalizes at write time, so in the steady state
+/// this drains to nothing on the first tick and costs an empty index scan thereafter.
+///
+/// Normalization stays in Rust — one implementation, in `virtues_helpers::handles`,
+/// shared with the transform and with contact ingest. A second copy of the E.164 rules
+/// written in SQL would drift, and the two halves of a join silently disagreeing about
+/// what a phone number *is* was the original bug.
+async fn normalize_pending_handles(db: &Database) -> Result<()> {
+    loop {
+        let rows = sqlx::query!(
+            r#"
+            SELECT id, from_identifier
+            FROM data_communication_message
+            WHERE from_handle IS NULL
+            LIMIT $1
+            "#,
+            MESSAGE_BATCH
+        )
+        .fetch_all(db.pool())
+        .await?;
+
+        if rows.is_empty() {
+            return Ok(());
+        }
+        let batch = rows.len();
+
+        let mut ids: Vec<String> = Vec::with_capacity(batch);
+        let mut handles: Vec<String> = Vec::with_capacity(batch);
+        for row in rows {
+            ids.push(row.id);
+            // `None` — a short code, or ourselves — is stored as '', which means
+            // "asked, and the answer is nobody". That is what keeps it out of the work
+            // queue for good; leaving it NULL would re-offer it forever.
+            handles.push(
+                virtues_helpers::handles::normalize_handle(&row.from_identifier)
+                    .unwrap_or_default(),
+            );
+        }
+
+        let updated = sqlx::query!(
+            r#"
+            UPDATE data_communication_message m
+            SET from_handle = u.handle
+            FROM UNNEST($1::text[], $2::text[]) AS u(id, handle)
+            WHERE m.id = u.id
+            "#,
+            &ids,
+            &handles
+        )
+        .execute(db.pool())
+        .await?
+        .rows_affected();
+
+        // Claimed rows but changed none: the loop would spin on the same batch forever.
+        // Bail loudly rather than pin a core for the life of the daemon.
+        if updated == 0 {
+            tracing::error!(
+                batch,
+                "from_handle backfill selected rows but updated none — aborting drain"
+            );
+            return Ok(());
+        }
+
+        if (batch as i64) < MESSAGE_BATCH {
+            return Ok(());
+        }
+    }
 }
 
 /// Resolve people from calendar attendees in time window
