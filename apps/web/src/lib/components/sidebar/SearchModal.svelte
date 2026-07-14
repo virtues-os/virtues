@@ -6,7 +6,6 @@
 	import { chatSessions } from "$lib/stores/chatSessions.svelte";
 	import { askVirtues } from "$lib/stores/pendingPrompt.svelte";
 	import { pagesStore } from "$lib/stores/pages.svelte";
-	import { thingsStore } from "$lib/stores/things.svelte";
 	import { notebookStore } from "$lib/stores/notebook.svelte";
 	import {
 		getAvailableThemes,
@@ -143,15 +142,14 @@
 		},
 	];
 
-	// Type scope — a leading `#chats` / `#pages` / `#actions` / `#things` / `#notebooks`
+	// Type scope — a leading `#chats` / `#pages` / `#actions` / `#notebooks`
 	// token narrows results to one kind. Singular and plural both work (`#chat` ==
 	// `#chats`). The token is stripped from the text that's actually matched.
-	type Scope = "chats" | "pages" | "actions" | "things" | "notebooks";
+	type Scope = "chats" | "pages" | "actions" | "notebooks";
 	const SCOPE_ALIASES: Record<string, Scope> = {
 		chat: "chats", chats: "chats",
 		page: "pages", pages: "pages",
 		action: "actions", actions: "actions",
-		thing: "things", things: "things",
 		notebook: "notebooks", notebooks: "notebooks",
 	};
 	const scope = $derived.by<Scope | null>(() => {
@@ -187,9 +185,6 @@
 				!scope || scope === "pages"
 					? pagesStore.pages.filter((p) => match(p.title)).slice(0, limit)
 					: [],
-			things: inScope("things")
-				? thingsStore.things.filter((t) => match(t.name)).slice(0, limit)
-				: [],
 			notebooks: inScope("notebooks")
 				? notebookStore.notebooks.filter((s) => match(s.name)).slice(0, limit)
 				: [],
@@ -208,14 +203,12 @@
 		| { kind: "action"; item: (typeof quickActions)[number] }
 		| { kind: "chat"; item: (typeof chatSessions.sessions)[number] }
 		| { kind: "page"; item: (typeof pagesStore.pages)[number] }
-		| { kind: "thing"; item: (typeof thingsStore.things)[number] }
 		| { kind: "notebook"; item: (typeof notebookStore.notebooks)[number] };
 	const orderedRows = $derived.by<Row[]>(() => [
 		...(showAsk ? [{ kind: "ask" } as Row] : []),
 		...filteredResults.actions.map((item) => ({ kind: "action", item }) as Row),
 		...filteredResults.chats.map((item) => ({ kind: "chat", item }) as Row),
 		...filteredResults.pages.map((item) => ({ kind: "page", item }) as Row),
-		...filteredResults.things.map((item) => ({ kind: "thing", item }) as Row),
 		...filteredResults.notebooks.map((item) => ({ kind: "notebook", item }) as Row),
 	]);
 	const totalResults = $derived(orderedRows.length);
@@ -284,12 +277,6 @@
 				});
 				onClose();
 				break;
-			case "thing":
-				windowShellStore.openTabFromRoute(`/thing/${row.item.id}`, {
-					label: row.item.name || "Untitled",
-				});
-				onClose();
-				break;
 			case "notebook":
 				windowShellStore.openTabFromRoute(`/notebook/${row.item.id}`, {
 					label: row.item.name || "Untitled",
@@ -321,10 +308,7 @@
 			if (chatSessions.sessions.length === 0 && !chatSessions.isLoading) {
 				chatSessions.load();
 			}
-			// Same for things and notebooks so their scopes have data to match.
-			if (thingsStore.things.length === 0 && !thingsStore.loading) {
-				thingsStore.load();
-			}
+			// Same for notebooks so its scope has data to match.
 			if (notebookStore.notebooks.length === 0 && !notebookStore.loading) {
 				notebookStore.load();
 			}
@@ -430,7 +414,7 @@
 						bind:this={inputEl}
 						bind:value={searchQuery}
 						type="text"
-						placeholder="Search… (try #chats, #pages, #things, #notebooks)"
+						placeholder="Search… (try #chats, #pages, #notebooks)"
 						class="search-input"
 					/>
 					<kbd class="escape-hint">Esc</kbd>
@@ -550,35 +534,6 @@
 					</div>
 				{/if}
 
-				{#if filteredResults.things.length > 0}
-					<div class="result-group">
-						<span class="group-label">Things</span>
-						{#each filteredResults.things as thing, i}
-							{@const index =
-								askOffset +
-								filteredResults.actions.length +
-								filteredResults.chats.length +
-								filteredResults.pages.length +
-								i}
-							<button
-								class="result-item"
-								class:selected={selectedIndex === index}
-								data-result-index={index}
-								onclick={() => {
-									windowShellStore.openTabFromRoute(`/thing/${thing.id}`, {
-										label: thing.name || "Untitled",
-									});
-									onClose();
-								}}
-								onmouseenter={() => (selectedIndex = index)}
-							>
-								<Icon icon={thing.icon || "ri:shapes-line"} width="16" class="result-icon" />
-								<span class="result-label">{thing.name || "Untitled"}</span>
-							</button>
-						{/each}
-					</div>
-				{/if}
-
 				{#if filteredResults.notebooks.length > 0}
 					<div class="result-group">
 						<span class="group-label">Notebooks</span>
@@ -588,7 +543,6 @@
 								filteredResults.actions.length +
 								filteredResults.chats.length +
 								filteredResults.pages.length +
-								filteredResults.things.length +
 								i}
 							<button
 								class="result-item"
@@ -630,7 +584,9 @@
 		display: flex;
 		align-items: flex-start;
 		justify-content: center;
-		padding-top: 15vh;
+		/* Bottom inset keeps tall result lists above the home indicator. */
+		padding-top: max(15vh, env(safe-area-inset-top));
+		padding-bottom: max(16px, env(safe-area-inset-bottom));
 		z-index: 9999;
 	}
 

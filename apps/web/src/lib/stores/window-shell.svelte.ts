@@ -26,6 +26,7 @@ import {
 } from '$lib/tabs/types';
 import { parseRoute } from '$lib/tabs/registry';
 import { pushState, replaceState } from '$app/navigation';
+import { mobileLayout } from '$lib/stores/mobileLayout.svelte';
 
 // Re-export types for convenience
 export type { Tab, TabType, PaneState };
@@ -257,7 +258,11 @@ class WindowShellStore {
 				this.openTabFromRoute(path, { forceNew: false });
 			}
 
-			if (rightRoute) {
+			if (rightRoute && mobileLayout.isMobile) {
+				// No split on the phone shell — a ?right= deep link opens the
+				// right-hand route as a normal tab instead.
+				this.openTabFromRoute(rightRoute, { forceNew: false });
+			} else if (rightRoute) {
 				if (!this.isSplit) {
 					this.enableSplit();
 				}
@@ -401,7 +406,7 @@ class WindowShellStore {
 
 	private openDefaultTab(): void {
 		// Fresh sessions land on Home (the "Return" surface), not an empty chat.
-		this.openTab({ type: 'home', label: 'Home', route: '/home', icon: 'ri:sparkling-2-line' });
+		this.openTab({ type: 'home', label: 'Home', route: '/home', icon: 'ri:home-5-line' });
 	}
 
 	/**
@@ -828,6 +833,9 @@ class WindowShellStore {
 	// ============================================================================
 
 	enableSplit(): void {
+		// The phone shell shows a single pane; split has no touch affordances
+		// there (resize handle is hover/mouse-only), so refuse to enter it.
+		if (mobileLayout.isMobile) return;
 		if (this.isSplit) return;
 
 		const currentPane = this.panes[0];
@@ -957,6 +965,11 @@ class WindowShellStore {
 		if (existing) {
 			this.setActiveTab(existing.tab.id);
 			return existing.tab.id;
+		}
+
+		// No split on the phone shell — "beside" degrades to a normal tab.
+		if (mobileLayout.isMobile) {
+			return this.openTab(input, this.activePaneId);
 		}
 
 		// Target the *other* pane from the currently active one.

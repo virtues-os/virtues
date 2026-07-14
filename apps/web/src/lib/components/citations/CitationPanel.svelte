@@ -340,6 +340,10 @@
 		height: 100%;
 		background: var(--color-surface);
 		border-left: 1px solid var(--color-border);
+		/* Full-height drawer on an edge-to-edge phone: keep the header below
+		   the Dynamic Island and the footer above the home indicator. */
+		padding-top: env(safe-area-inset-top);
+		padding-bottom: env(safe-area-inset-bottom);
 		display: flex;
 		flex-direction: column;
 		animation: panel-slide-in 0.25s ease-out;
