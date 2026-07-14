@@ -1360,6 +1360,11 @@ pub struct CreateTemporalEventRequest {
     /// 1-3 sentence factual description of the event. Renders in the day page
     /// timeline as the expandable detail under the label. Optional.
     pub event_summary: Option<String>,
+    /// Topical tags emitted by the segmenting LLM. Written on INSERT rather
+    /// than a follow-up UPDATE, because this row is about to be read by
+    /// `topic_entity_novelty` — which, until topics were emitted at all, scored
+    /// an empty array on every cron-generated event.
+    pub topics: Option<serde_json::Value>,
 }
 
 /// Request to update a temporal event
@@ -1522,8 +1527,9 @@ pub async fn create_temporal_event(
         INSERT INTO wiki_events (
             id, day_id, start_time, end_time,
             auto_label, auto_location, user_label, user_location, user_notes,
-            source_ontologies, is_unknown, is_transit, is_user_added, event_summary
-        ) VALUES ($1, $2, $3::timestamptz, $4::timestamptz, $5, $6, $7, $8, $9, $10::jsonb, $11, $12, $13, $14)
+            source_ontologies, is_unknown, is_transit, is_user_added, event_summary,
+            topics
+        ) VALUES ($1, $2, $3::timestamptz, $4::timestamptz, $5, $6, $7, $8, $9, $10::jsonb, $11, $12, $13, $14, $15::jsonb)
         RETURNING
             id, is_user_edited, created_at, updated_at
         "#,
@@ -1542,6 +1548,7 @@ pub async fn create_temporal_event(
     .bind(req.is_transit)
     .bind(req.is_user_added)
     .bind(&req.event_summary)
+    .bind(req.topics.clone().unwrap_or_else(|| serde_json::json!([])))
     .fetch_one(pool)
     .await
     .map_err(|e| Error::Database(format!("Failed to create temporal event: {}", e)))?;

@@ -12,6 +12,7 @@
 	import { Page } from '$lib';
 	import { PersonTable, PlaceTable, OrganizationTable, ThingTable } from '$lib/components/wiki';
 	import Icon from '$lib/components/Icon.svelte';
+	import { MentionQueue } from '$lib/components/wiki';
 	import { windowShellStore } from '$lib/stores/window-shell.svelte';
 	import {
 		listPeople,
@@ -26,7 +27,7 @@
 
 	let { tab, active }: { tab: Tab; active: boolean } = $props();
 
-	type EntityFilter = 'overview' | 'person' | 'place' | 'org' | 'thing';
+	type EntityFilter = 'overview' | 'person' | 'place' | 'org' | 'thing' | 'unlinked';
 
 	let activeFilter = $state<EntityFilter>('overview');
 	let searchQuery = $state('');
@@ -37,7 +38,13 @@
 		{ key: 'place', label: 'Places' },
 		{ key: 'org', label: 'Organizations' },
 		{ key: 'thing', label: 'Things' },
+		{ key: 'unlinked', label: 'Unlinked' },
 	];
+
+	// Names we found in your records but could not place. Badged on RECURRENCE,
+	// not existence — a name said once is dust and shouldn't demand a decision.
+	// See MentionQueue.svelte.
+	let unlinkedCount = $state(0);
 
 	// --- Overview data ---
 
@@ -152,7 +159,9 @@
 					class:active={activeFilter === filter.key}
 					onclick={() => activeFilter = filter.key}
 				>
-					{filter.label}
+					{filter.label}{#if filter.key === 'unlinked' && unlinkedCount > 0}
+						<span class="badge">{unlinkedCount}</span>
+					{/if}
 				</button>
 			{/each}
 		</nav>
@@ -231,11 +240,19 @@
 			<OrganizationTable />
 		{:else if activeFilter === 'thing'}
 			<ThingTable />
+		{:else if activeFilter === 'unlinked'}
+			<MentionQueue oncount={(n) => (unlinkedCount = n)} />
 		{/if}
 	</div>
 </Page>
 
 <style>
+	.badge {
+		margin-left: 0.35em;
+		font-size: 0.75em;
+		opacity: 0.7;
+	}
+
 	.entities-view {
 		width: 100%;
 		height: 100%;

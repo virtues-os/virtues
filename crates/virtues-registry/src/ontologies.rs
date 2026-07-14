@@ -5,6 +5,44 @@
 
 use serde::{Deserialize, Serialize};
 
+/// Entity-extraction configuration — which ontologies carry PROSE.
+///
+/// Keyed on the **ontology**, not the source, and that is the whole point:
+/// Gmail, Fastmail and an mbox import all normalize into
+/// `data_communication_email`, so entity extraction is configured once and
+/// every present and future source inherits it. Slack lands in
+/// `data_communication_message` and works with no new code at all.
+///
+/// Of 23 ontologies, five carry prose. The other eighteen — every health,
+/// location, financial and activity table — have no free text and never enter
+/// extraction. That is the real size of this problem.
+///
+/// `data_communication_transcription` deliberately has NO config here: its
+/// entities are already extracted by the transcription action's own LLM call,
+/// so it is drained for free rather than re-extracted (see
+/// `entity_resolution::extract`). Paying twice for the same names would be
+/// absurd.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ExtractionConfig {
+    /// SQL expression for the prose to read (`t.` prefix; the query aliases the
+    /// table as `t`). Usually the same text we embed — it is the same text.
+    pub text_sql: &'static str,
+    /// SQL predicate that excludes records not worth reading (`t.` prefix).
+    ///
+    /// This is where money is saved and precision is bought, and for email it
+    /// is not a heuristic: Gmail's own `labelIds` are stored verbatim, so
+    /// Google's classifier — the one that fills your Promotions tab — does the
+    /// work. Excluded records are NOT deleted; they remain as dust, searchable,
+    /// merely never read for names.
+    pub filter_sql: Option<&'static str>,
+    /// Hard cap on prose sent to the model, in characters.
+    ///
+    /// Email and documents are where token mass hides: a newsletter is mostly
+    /// boilerplate, a reply chain is mostly the quoted reply. Names appear
+    /// early. Truncation costs almost no recall and bounds the bill.
+    pub max_chars: usize,
+}
+
 /// Embedding configuration for semantic search
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct EmbeddingConfig {
@@ -83,6 +121,10 @@ pub struct OntologyDescriptor {
     pub end_timestamp_column: Option<&'static str>,
     /// Embedding configuration for semantic search (None if not searchable)
     pub embedding: Option<EmbeddingConfig>,
+    /// Entity-extraction configuration (None = this ontology carries no prose,
+    /// which is true of 18 of the 23 — every health, location, financial and
+    /// activity table). See `ExtractionConfig`.
+    pub extraction: Option<ExtractionConfig>,
     /// Whether this ontology produces discrete events or continuous measurements
     pub temporal_type: TemporalType,
     /// How discrete ontologies contribute to day sources (None for continuous/non-event ontologies)
@@ -109,6 +151,7 @@ pub fn registered_ontologies() -> Vec<OntologyDescriptor> {
             timestamp_column: "timestamp",
             end_timestamp_column: None,
             embedding: None,
+            extraction: None,
             temporal_type: TemporalType::Continuous,
             // Continuous streams surface as individual day-source rows too, so the
             // day page can list every data point. They are high-frequency, so the
@@ -140,6 +183,7 @@ pub fn registered_ontologies() -> Vec<OntologyDescriptor> {
             timestamp_column: "timestamp",
             end_timestamp_column: None,
             embedding: None,
+            extraction: None,
             temporal_type: TemporalType::Continuous,
             day_source: Some(DaySourceConfig {
                 source_type: "hrv",
@@ -168,6 +212,7 @@ pub fn registered_ontologies() -> Vec<OntologyDescriptor> {
             timestamp_column: "timestamp",
             end_timestamp_column: None,
             embedding: None,
+            extraction: None,
             temporal_type: TemporalType::Continuous,
             day_source: Some(DaySourceConfig {
                 source_type: "steps",
@@ -196,6 +241,7 @@ pub fn registered_ontologies() -> Vec<OntologyDescriptor> {
             timestamp_column: "start_time",
             end_timestamp_column: Some("end_time"),
             embedding: None,
+            extraction: None,
             temporal_type: TemporalType::Discrete,
             day_source: Some(DaySourceConfig {
                 source_type: "sleep",
@@ -220,6 +266,7 @@ pub fn registered_ontologies() -> Vec<OntologyDescriptor> {
             timestamp_column: "start_time",
             end_timestamp_column: Some("end_time"),
             embedding: None,
+            extraction: None,
             temporal_type: TemporalType::Discrete,
             day_source: Some(DaySourceConfig {
                 source_type: "workout",
@@ -245,6 +292,7 @@ pub fn registered_ontologies() -> Vec<OntologyDescriptor> {
             timestamp_column: "timestamp",
             end_timestamp_column: None,
             embedding: None,
+            extraction: None,
             temporal_type: TemporalType::Continuous,
             day_source: None,
             continuous_agg: None, // Spatial data — not a numeric aggregate
@@ -261,6 +309,7 @@ pub fn registered_ontologies() -> Vec<OntologyDescriptor> {
             timestamp_column: "arrival_time",
             end_timestamp_column: Some("departure_time"),
             embedding: None,
+            extraction: None,
             temporal_type: TemporalType::Discrete,
             day_source: Some(DaySourceConfig {
                 source_type: "location",
@@ -293,6 +342,22 @@ pub fn registered_ontologies() -> Vec<OntologyDescriptor> {
                 author_sql: Some("t.from_name"),
                 timestamp_sql: "t.timestamp",
             }),
+            // Bodies only. The From:/To: headers are ALREADY resolved
+            // structurally (entity_resolution::people) — that is a join, not a
+            // guess. Re-extracting the sender's name out of a signature block
+            // would build a second, worse path to the same person.
+            extraction: Some(ExtractionConfig {
+                text_sql: "COALESCE(t.subject, '') || E'\n\n' || COALESCE(t.body, '')",
+                // Google already sorted the junk. Its labelIds are stored
+                // verbatim, so this is its classifier, not our heuristic.
+                // CATEGORY_UPDATES is deliberately KEPT: flight confirmations,
+                // bookings and receipts look like noise and are some of the
+                // densest real places, orgs and future dates in the mailbox.
+                filter_sql: Some(
+                    "NOT (t.labels ?| array['CATEGORY_PROMOTIONS','CATEGORY_SOCIAL','CATEGORY_FORUMS','SPAM'])",
+                ),
+                max_chars: 6000,
+            }),
             temporal_type: TemporalType::Discrete,
             day_source: Some(DaySourceConfig {
                 source_type: "email",
@@ -323,6 +388,11 @@ pub fn registered_ontologies() -> Vec<OntologyDescriptor> {
                 preview_sql: "SUBSTR(t.body, 1, 200)",
                 author_sql: Some("t.from_name"),
                 timestamp_sql: "t.timestamp",
+            }),
+            extraction: Some(ExtractionConfig {
+                text_sql: "COALESCE(t.body, '')",
+                filter_sql: None,
+                max_chars: 2000,
             }),
             temporal_type: TemporalType::Discrete,
             day_source: Some(DaySourceConfig {
@@ -356,6 +426,7 @@ pub fn registered_ontologies() -> Vec<OntologyDescriptor> {
                 author_sql: None,
                 timestamp_sql: "t.start_time",
             }),
+            extraction: None,
             temporal_type: TemporalType::Discrete,
             day_source: Some(DaySourceConfig {
                 source_type: "calendar",
@@ -381,6 +452,7 @@ pub fn registered_ontologies() -> Vec<OntologyDescriptor> {
             timestamp_column: "start_time",
             end_timestamp_column: Some("end_time"),
             embedding: None,
+            extraction: None,
             temporal_type: TemporalType::Discrete,
             day_source: Some(DaySourceConfig {
                 source_type: "app_usage",
@@ -405,6 +477,7 @@ pub fn registered_ontologies() -> Vec<OntologyDescriptor> {
             timestamp_column: "timestamp",
             end_timestamp_column: None,
             embedding: None,
+            extraction: None,
             temporal_type: TemporalType::Discrete,
             day_source: Some(DaySourceConfig {
                 source_type: "web_browsing",
@@ -429,6 +502,7 @@ pub fn registered_ontologies() -> Vec<OntologyDescriptor> {
             timestamp_column: "played_at",
             end_timestamp_column: None,
             embedding: None,
+            extraction: None,
             temporal_type: TemporalType::Discrete,
             day_source: Some(DaySourceConfig {
                 source_type: "listening",
@@ -453,6 +527,7 @@ pub fn registered_ontologies() -> Vec<OntologyDescriptor> {
             timestamp_column: "start_time",
             end_timestamp_column: Some("end_time"),
             embedding: None,
+            extraction: None,
             temporal_type: TemporalType::Discrete,
             day_source: Some(DaySourceConfig {
                 source_type: "transcription",
@@ -485,6 +560,13 @@ pub fn registered_ontologies() -> Vec<OntologyDescriptor> {
                 author_sql: Some("t.source_provider"),
                 timestamp_sql: "COALESCE(t.last_modified_time, t.created_at)",
             }),
+            extraction: Some(ExtractionConfig {
+                text_sql: "COALESCE(t.title, '') || E'\n\n' || COALESCE(t.content, '')",
+                filter_sql: None,
+                // Documents run long, and names cluster at the top. The tail is
+                // mostly body text that names nobody new.
+                max_chars: 8000,
+            }),
             temporal_type: TemporalType::Discrete,
             day_source: Some(DaySourceConfig {
                 source_type: "document",
@@ -516,6 +598,15 @@ pub fn registered_ontologies() -> Vec<OntologyDescriptor> {
                 author_sql: Some("t.role"),
                 timestamp_sql: "t.timestamp",
             }),
+            extraction: Some(ExtractionConfig {
+                text_sql: "COALESCE(t.content, '')",
+                // The user's own turns only. Names in the ASSISTANT's replies are
+                // the model paraphrasing the user back at them — extracting from
+                // those manufactures evidence for things the user never said, and
+                // inflates every mention count with its own echo.
+                filter_sql: Some("t.role = 'user'"),
+                max_chars: 4000,
+            }),
             temporal_type: TemporalType::Discrete,
             day_source: None, // Individual messages not useful as day sources
             continuous_agg: None,
@@ -533,6 +624,7 @@ pub fn registered_ontologies() -> Vec<OntologyDescriptor> {
             timestamp_column: "created_at",
             end_timestamp_column: None,
             embedding: None,
+            extraction: None,
             temporal_type: TemporalType::Discrete,
             day_source: None, // Not events
             continuous_agg: None,
@@ -559,6 +651,7 @@ pub fn registered_ontologies() -> Vec<OntologyDescriptor> {
                 author_sql: None,
                 timestamp_sql: "t.timestamp",
             }),
+            extraction: None,
             temporal_type: TemporalType::Discrete,
             day_source: Some(DaySourceConfig {
                 source_type: "transaction",
@@ -590,6 +683,7 @@ pub fn registered_ontologies() -> Vec<OntologyDescriptor> {
                 author_sql: Some("t.author"),
                 timestamp_sql: "t.timestamp",
             }),
+            extraction: None,
             temporal_type: TemporalType::Discrete,
             day_source: Some(DaySourceConfig {
                 source_type: "bookmark",
@@ -617,6 +711,7 @@ pub fn registered_ontologies() -> Vec<OntologyDescriptor> {
             timestamp_column: "created_at",
             end_timestamp_column: Some("updated_at"),
             embedding: None,
+            extraction: None,
             temporal_type: TemporalType::Discrete,
             day_source: Some(DaySourceConfig {
                 source_type: "chat",
@@ -651,6 +746,7 @@ pub fn registered_ontologies() -> Vec<OntologyDescriptor> {
                 author_sql: Some("t.role"),
                 timestamp_sql: "t.created_at",
             }),
+            extraction: None,
             temporal_type: TemporalType::Discrete,
             day_source: None,
             continuous_agg: None,
@@ -667,6 +763,7 @@ pub fn registered_ontologies() -> Vec<OntologyDescriptor> {
             timestamp_column: "updated_at",
             end_timestamp_column: None,
             embedding: None,
+            extraction: None,
             temporal_type: TemporalType::Discrete,
             day_source: Some(DaySourceConfig {
                 source_type: "page",
@@ -698,6 +795,18 @@ pub fn get_ontologies_by_domain(domain: &str) -> Vec<OntologyDescriptor> {
 }
 
 /// Get ontologies that have semantic search enabled
+/// The ontologies that carry prose worth reading for names.
+///
+/// The extractor walks THIS, not a hardcoded list of tables. A new source
+/// (Slack, Fastmail, an mbox import) normalizes into an existing ontology and
+/// inherits extraction for free — there is nothing to add.
+pub fn get_extractable_ontologies() -> Vec<OntologyDescriptor> {
+    registered_ontologies()
+        .into_iter()
+        .filter(|o| o.extraction.is_some())
+        .collect()
+}
+
 pub fn get_searchable_ontologies() -> Vec<OntologyDescriptor> {
     registered_ontologies()
         .into_iter()
@@ -755,6 +864,58 @@ mod tests {
         assert_eq!(s.domain, "health");
         assert_eq!(s.timestamp_column, "start_time");
         assert_eq!(s.end_timestamp_column, Some("end_time"));
+    }
+
+    #[test]
+    fn extractable_ontologies_are_exactly_the_prose_ones() {
+        let names: Vec<&str> = get_extractable_ontologies()
+            .iter()
+            .map(|o| o.table_name)
+            .collect();
+
+        // Prose. These four get their own LLM call.
+        assert!(names.contains(&"data_communication_email"));
+        assert!(names.contains(&"data_communication_message"));
+        assert!(names.contains(&"data_content_document"));
+        assert!(names.contains(&"data_content_conversation"));
+
+        // Transcriptions carry prose but are NOT here: the transcription action
+        // already extracts their entities in a call we're paying for anyway, so
+        // they're drained for free. Adding them here would double-bill the same
+        // names.
+        assert!(!names.contains(&"data_communication_transcription"));
+
+        // Everything else has no free text at all. If this number grows, someone
+        // pointed an LLM at heart-rate samples.
+        assert_eq!(names.len(), 4, "unexpected extractable ontologies: {names:?}");
+    }
+
+    /// The two filters that are load-bearing, not cosmetic.
+    #[test]
+    fn prose_filters_hold_the_line() {
+        let by = |t: &str| {
+            registered_ontologies()
+                .into_iter()
+                .find(|o| o.table_name == t)
+                .and_then(|o| o.extraction)
+                .expect("has extraction config")
+        };
+
+        // Email: Google's own junk classification, not ours. UPDATES stays in —
+        // receipts and confirmations are dense with real orgs and future dates.
+        let email = by("data_communication_email");
+        let f = email.filter_sql.expect("email must filter junk");
+        assert!(f.contains("CATEGORY_PROMOTIONS") && f.contains("SPAM"));
+        assert!(
+            !f.contains("CATEGORY_UPDATES"),
+            "UPDATES must NOT be filtered — it is the best structured signal in the mailbox"
+        );
+
+        // AI chats: the user's turns only. The assistant's replies are the model
+        // paraphrasing the user back; extracting names from them manufactures
+        // evidence for things the user never said.
+        let convo = by("data_content_conversation");
+        assert_eq!(convo.filter_sql, Some("t.role = 'user'"));
     }
 
     #[test]
