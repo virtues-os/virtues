@@ -158,6 +158,12 @@ class Uploader {
             let imessages = messagesWithIds.map { mapMessageForWebhook($0.message.toDictionary) }
             let browserHistory = visitsWithIds.map { $0.visit.toDictionary() }
             let payload: [String: Any] = [
+                // Sessions are stateful on the box: it holds an app's session open
+                // across batches and closes it when the matching unfocus arrives. So
+                // it has to know WHOSE session — two Macs (a laptop and a desktop)
+                // would otherwise close each other's and produce nonsense. The action
+                // receives no device identity of its own, so we send it.
+                "device_id": config.deviceId,
                 "app_events": appEvents,
                 "browser_history": browserHistory,
                 "imessages": imessages,

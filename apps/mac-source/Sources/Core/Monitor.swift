@@ -5,6 +5,11 @@ class Monitor {
     private let queue: Queue
     private var frontmostApp: NSRunningApplication?
     private var timer: DispatchSourceTimer?
+    private var heartbeat: DispatchSourceTimer?
+
+    /// How stale an interrupted session can be. One minute of slop is nothing
+    /// against a session that would otherwise be lost entirely.
+    private let heartbeatInterval: TimeInterval = 60
 
     init(queue: Queue) {
         self.queue = queue
@@ -54,12 +59,35 @@ class Monitor {
         pollTimer.resume()
         self.timer = pollTimer
 
+        // Heartbeat: "the focused app is STILL focused".
+        //
+        // Sessions are opened by a focus event and closed by the matching unfocus.
+        // If this process dies in between — a crash, a power cut, or simply an
+        // update swapping the binary — that unfocus never arrives, and the box can
+        // only clamp the orphaned session back to the last thing it heard about:
+        // its own start. Duration zero. Dropped. That is *precisely* the bug this
+        // rewrite exists to fix (a real 40-minute session recording nothing),
+        // reintroduced by a different route.
+        //
+        // A heartbeat is the last thing the box heard, so an interrupted session is
+        // clamped to within one interval of the truth instead of to nothing.
+        let beat = DispatchSource.makeTimerSource(queue: .main)
+        beat.schedule(deadline: .now() + heartbeatInterval, repeating: heartbeatInterval)
+        beat.setEventHandler { [weak self] in
+            guard let self, let app = NSWorkspace.shared.frontmostApplication else { return }
+            self.recordEvent(app: app, eventType: Event.EventType.heartbeat)
+        }
+        beat.resume()
+        self.heartbeat = beat
+
         print("Activity monitor started")
     }
-    
+
     func stop() {
         timer?.cancel()
         timer = nil
+        heartbeat?.cancel()
+        heartbeat = nil
         NSWorkspace.shared.notificationCenter.removeObserver(self)
         print("Activity monitor stopped")
     }
@@ -126,19 +154,35 @@ class Monitor {
         }
 
         // Capture the focused window title — the difference between "used Chrome
-        // for 40 min" and "read <page>". Only on focus/launch: on unfocus/quit the
-        // window is gone or the app is tearing down, so the read would be stale or
-        // block. nil when Accessibility isn't granted (degrades to app-name-only).
+        // for 40 min" and "read <page>". On focus/launch, and on each heartbeat:
+        // within one 40-minute Cursor session you touch six files, and the
+        // heartbeats are what let the box keep that as a title timeline on ONE
+        // session instead of fragmenting it into six.
+        //
+        // NOT on unfocus/quit: the window is already gone or the app is tearing
+        // down, so the read is stale or blocks. nil when Accessibility isn't
+        // granted (degrades to app-name-only).
         let windowTitle: String? =
-            (eventType == Event.EventType.focus || eventType == Event.EventType.launch)
+            (eventType == Event.EventType.focus || eventType == Event.EventType.launch
+                || eventType == Event.EventType.heartbeat)
             ? WindowTitle.focused(pid: app.processIdentifier)
             : nil
 
         let event = Event(
             eventType: eventType, appName: appName, bundleId: bundleId, windowTitle: windowTitle)
 
+        // Heartbeats fire every 60s and would drown the log; they're only
+        // interesting when they fail.
+        let quiet = eventType == Event.EventType.heartbeat
+
         // Add event asynchronously (non-blocking)
         queue.addEvent(event) { result in
+            if quiet {
+                if case .failure(let error) = result {
+                    print("⚠️ Error recording heartbeat: \(error)")
+                }
+                return
+            }
             switch result {
             case .success:
                 print("✓ [\(Date())] \(eventType): \(appName)")

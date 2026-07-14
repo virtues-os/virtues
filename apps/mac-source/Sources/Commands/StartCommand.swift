@@ -7,6 +7,7 @@ private var globalMonitor: Monitor?
 private var globalUploader: Uploader?
 private var globalMessageMonitor: MessageMonitor?
 private var globalBrowserMonitor: BrowserMonitor?
+private var globalPresenceMonitor: PresenceMonitor?
 
 struct StartCommand: ParsableCommand {
     static let configuration = CommandConfiguration(
@@ -66,18 +67,23 @@ struct StartCommand: ParsableCommand {
         // `data_communication_message` stayed empty no matter what the user granted.
         let messageMonitor = MessageMonitor(queue: queue)
         let browserMonitor = BrowserMonitor(queue: queue)
+        // Presence: without this, walking away with an app focused is
+        // indistinguishable from using it.
+        let presenceMonitor = PresenceMonitor(queue: queue)
         let uploader = Uploader(queue: queue, config: config)
 
         // Store globally for signal handlers
         globalMonitor = monitor
         globalMessageMonitor = messageMonitor
         globalBrowserMonitor = browserMonitor
+        globalPresenceMonitor = presenceMonitor
         globalUploader = uploader
 
         // Start monitoring and uploading
         monitor.start()
         messageMonitor.start()
         browserMonitor.start()
+        presenceMonitor.start()
         uploader.start()
         
         // Set up signal handlers for graceful shutdown
@@ -86,6 +92,7 @@ struct StartCommand: ParsableCommand {
             globalMonitor?.stop()
             globalMessageMonitor?.stop()
             globalBrowserMonitor?.stop()
+            globalPresenceMonitor?.stop()
             globalUploader?.stop()
             Foundation.exit(0)
         }
@@ -95,6 +102,7 @@ struct StartCommand: ParsableCommand {
             globalMonitor?.stop()
             globalMessageMonitor?.stop()
             globalBrowserMonitor?.stop()
+            globalPresenceMonitor?.stop()
             globalUploader?.stop()
             Foundation.exit(0)
         }

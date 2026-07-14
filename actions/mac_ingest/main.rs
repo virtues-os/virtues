@@ -4,6 +4,7 @@
 //! containing app events, browser history, and iMessages. This binary
 //! dispatches each kind to the appropriate transform.
 
+mod sessionize;
 mod transform;
 
 use anyhow::Result;
@@ -69,12 +70,20 @@ async fn main() -> Result<()> {
         .await?;
     }
 
-    let app_written = transform::write_app_events(&pool, &app_events).await?;
+    // Sessions are held OPEN across batches, so the sessionizer must know whose
+    // machine this is: two Macs would otherwise close each other's sessions.
+    let device_id = payload
+        .get("device_id")
+        .and_then(|v| v.as_str())
+        .unwrap_or("mac");
+
+    let (app_written, spans) = sessionize::ingest(&pool, device_id, &app_events).await?;
     let browser_written = transform::write_browser_history(&pool, &browser).await?;
     let imessage_written = transform::write_imessages(&pool, &imessages).await?;
 
     let summary = format!(
-        "apps: {app_written} sessions, browser: {browser_written} visits, imessages: {imessage_written}"
+        "apps: {app_written} sessions, presence: {spans} spans, \
+         browser: {browser_written} visits, imessages: {imessage_written}"
     );
     output(&summary, &input.config)
 }
