@@ -46,6 +46,10 @@ async fn install_deps_apt(target: &Target) -> Result<()> {
     apt_install("Postgres 18 + pgvector", &["postgresql-18", "postgresql-18-pgvector"]).await?;
     apt_install("Avahi (mDNS)", &["avahi-daemon", "avahi-utils", "libnss-mdns"]).await?;
     apt_install("ca-certificates + curl", &["ca-certificates", "curl"]).await?;
+    // The web terminal runs its shell inside tmux so a closed tab or a dropped
+    // connection detaches instead of killing whatever is running. Without tmux
+    // it degrades to a bare shell that dies with the websocket.
+    apt_install("tmux (terminal sessions)", &["tmux"]).await?;
 
     systemctl(&["enable", "--now", "postgresql"], "Enable postgresql").await?;
     systemctl(&["enable", "--now", "avahi-daemon"], "Enable avahi-daemon").await?;
@@ -56,6 +60,9 @@ async fn install_deps_dnf() -> Result<()> {
     dnf_install("Postgres + pgvector", &["postgresql-server", "postgresql-contrib", "pgvector"]).await?;
     dnf_install("Avahi (mDNS)", &["avahi", "nss-mdns"]).await?;
     dnf_install("ca-certificates + curl", &["ca-certificates", "curl"]).await?;
+    // See the apt path: tmux is what makes web-terminal sessions survive a
+    // dropped connection.
+    dnf_install("tmux (terminal sessions)", &["tmux"]).await?;
 
     if !Path::new("/var/lib/pgsql/data/base").exists() {
         let mut cmd = Command::new("postgresql-setup");
