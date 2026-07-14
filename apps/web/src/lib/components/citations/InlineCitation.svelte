@@ -131,21 +131,22 @@
 		cursor: default;
 	}
 
-	/* Color classes from Tailwind - applied via the color prop */
+	/* Color classes applied via the color prop. Semantic hues route through
+	   the theme so they read correctly on all 16 themes. */
 	:global(.text-red-500) {
-		color: #ef4444;
+		color: var(--color-error);
 	}
 	:global(.text-red-600) {
-		color: #dc2626;
+		color: var(--color-error);
 	}
 	:global(.text-blue-500) {
-		color: #3b82f6;
+		color: var(--color-info);
 	}
 	:global(.text-blue-600) {
-		color: #2563eb;
+		color: var(--color-info);
 	}
 	:global(.text-green-500) {
-		color: #22c55e;
+		color: var(--color-success);
 	}
 	:global(.text-purple-500) {
 		color: #a855f7;
@@ -157,7 +158,7 @@
 		color: #6366f1;
 	}
 	:global(.text-amber-500) {
-		color: #f59e0b;
+		color: var(--color-warning);
 	}
 	:global(.text-orange-500) {
 		color: #f97316;

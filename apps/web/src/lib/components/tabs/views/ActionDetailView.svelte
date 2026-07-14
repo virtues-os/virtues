@@ -399,7 +399,7 @@
 		opacity: 0.5;
 	}
 	.muted-inline {
-		color: #b45309;
+		color: var(--color-warning);
 	}
 	.hero-actions {
 		display: flex;
@@ -410,8 +410,8 @@
 		margin-top: 0.75rem;
 		padding: 0.5rem 0.75rem;
 		border-radius: 6px;
-		background: #fee2e2;
-		color: #991b1b;
+		background: var(--color-error-subtle);
+		color: var(--color-error);
 		font-size: 0.8125rem;
 	}
 
