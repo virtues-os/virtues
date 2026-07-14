@@ -117,6 +117,14 @@ body {
 	background-color: var(--color-background);
 }
 
+/* Native phone shell (class set by hooks.client.ts): suppress the iOS
+   long-press callout — the app synthesizes its own context menus on
+   long-press (ContextMenuProvider), and the system bubble fights them.
+   Text selection itself is unaffected. */
+html.native-mobile * {
+	-webkit-touch-callout: none;
+}
+
 /* Serif font defaults to 400 weight */
 .font-serif {
 	font-weight: 400;

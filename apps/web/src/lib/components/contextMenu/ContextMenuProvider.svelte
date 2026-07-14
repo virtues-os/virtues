@@ -112,13 +112,90 @@
 		}
 	}
 
+	// ---- Long-press → context menu (touch) -------------------------------
+	// iOS WKWebView never fires `contextmenu` for touch, so every row action
+	// gated behind right-click is unreachable on the phone. Synthesize one
+	// after a still-press; it bubbles to the views' existing oncontextmenu
+	// handlers, so this one hook covers Pages/Drive/Notebooks/etc. at once.
+	const LONG_PRESS_MS = 450;
+	const MOVE_TOLERANCE_PX = 10;
+	let lpTimer: ReturnType<typeof setTimeout> | null = null;
+	let lpTarget: EventTarget | null = null;
+	let lpX = 0;
+	let lpY = 0;
+
+	function cancelLongPress() {
+		if (lpTimer) {
+			clearTimeout(lpTimer);
+			lpTimer = null;
+		}
+		lpTarget = null;
+	}
+
+	function onPointerDown(e: PointerEvent) {
+		if (e.pointerType !== 'touch' || !e.isPrimary || contextMenu.visible) return;
+		// Don't fight iOS text selection / editor long-press behavior.
+		const el = e.target as HTMLElement | null;
+		if (el?.closest('input, textarea, [contenteditable="true"], .cm-editor')) return;
+		lpTarget = e.target;
+		lpX = e.clientX;
+		lpY = e.clientY;
+		lpTimer = setTimeout(() => {
+			lpTimer = null;
+			const target = lpTarget as HTMLElement | null;
+			lpTarget = null;
+			if (!target?.isConnected) return;
+			const evt = new MouseEvent('contextmenu', {
+				bubbles: true,
+				cancelable: true,
+				clientX: lpX,
+				clientY: lpY
+			});
+			// preventDefault() from a handler (or the menu becoming visible)
+			// means someone owned it — then eat the click that fires when the
+			// finger lifts, or it would instantly close the menu via backdrop.
+			const owned = !target.dispatchEvent(evt) || contextMenu.visible;
+			if (owned) suppressNextClick();
+		}, LONG_PRESS_MS);
+	}
+
+	function onPointerMove(e: PointerEvent) {
+		if (!lpTimer) return;
+		if (Math.hypot(e.clientX - lpX, e.clientY - lpY) > MOVE_TOLERANCE_PX) {
+			cancelLongPress();
+		}
+	}
+
+	function suppressNextClick() {
+		const stop = (ce: MouseEvent) => {
+			ce.preventDefault();
+			ce.stopPropagation();
+			cleanup();
+		};
+		const cleanup = () => window.removeEventListener('click', stop, true);
+		window.addEventListener('click', stop, true);
+		// The lift-click arrives within a frame or two; don't linger.
+		setTimeout(cleanup, 700);
+	}
+
 	onMount(() => {
 		window.addEventListener('keydown', handleKeydown);
+		window.addEventListener('pointerdown', onPointerDown, true);
+		window.addEventListener('pointermove', onPointerMove, { passive: true });
+		window.addEventListener('pointerup', cancelLongPress, true);
+		window.addEventListener('pointercancel', cancelLongPress, true);
+		window.addEventListener('scroll', cancelLongPress, true);
 	});
 
 	onDestroy(() => {
 		if (typeof window !== 'undefined') {
 			window.removeEventListener('keydown', handleKeydown);
+			window.removeEventListener('pointerdown', onPointerDown, true);
+			window.removeEventListener('pointermove', onPointerMove);
+			window.removeEventListener('pointerup', cancelLongPress, true);
+			window.removeEventListener('pointercancel', cancelLongPress, true);
+			window.removeEventListener('scroll', cancelLongPress, true);
+			cancelLongPress();
 		}
 	});
 
@@ -205,7 +282,10 @@
 		padding: 4px;
 		min-width: 180px;
 		max-width: 280px;
-		max-height: calc(100vh - 32px);
+		/* Keep clear of the Dynamic Island / home indicator on the phone. */
+		max-height: calc(
+			100dvh - max(16px, env(safe-area-inset-top)) - max(16px, env(safe-area-inset-bottom))
+		);
 		overflow-y: auto;
 		animation: menu-fade-in 100ms ease-out;
 	}
