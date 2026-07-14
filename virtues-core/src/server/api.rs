@@ -1032,9 +1032,13 @@ pub async fn get_model_handler(Path(model_id): Path<String>) -> Response {
     api_response(crate::api::get_model(&model_id).await)
 }
 
-/// List recommended models with slot assignments
-pub async fn list_recommended_models_handler() -> Response {
-    api_response(crate::api::list_recommended_models().await)
+/// The picker plus the live slot map — what "Virtues default · <model>" needs.
+///
+/// `/api/models` stays a bare array (the picker's existing contract); this
+/// route adds `slots`, so the settings UI can name the model a slot currently
+/// resolves to without a second round trip.
+pub async fn list_models_with_slots_handler() -> Response {
+    api_response(crate::api::list_models_with_slots().await)
 }
 
 // =============================================================================
