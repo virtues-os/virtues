@@ -31,6 +31,7 @@ pub mod internal;
 pub mod lake;
 pub mod media;
 pub mod metrics;
+pub mod mentions;
 pub mod model_catalog;
 pub mod models;
 pub mod namespaces;

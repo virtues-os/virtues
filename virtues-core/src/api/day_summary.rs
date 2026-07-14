@@ -85,7 +85,7 @@ After data quality, output a JSON block with the day's events as a perfect 24-ho
 ---DATA_QUALITY---
 {"coverage":{"who":3,"whom":2,"what":4,"when":5,"where":4,"why":1,"how":2},"overall":3,"note":"One sentence about coverage."}
 ---EVENTS---
-[{"start": "HH:MM", "end": "HH:MM", "label": "Brief label", "summary": "1-3 factual sentences about what the source data shows."}]
+[{"start": "HH:MM", "end": "HH:MM", "label": "Brief label", "summary": "1-3 factual sentences about what the source data shows.", "topics": ["2-4 lowercase topical tags"]}]
 
 WHAT AN EVENT IS:
 An event is a contiguous block of time that the source data lets you classify. There are exactly two valid classifications:
@@ -921,7 +921,12 @@ async fn call_virtues_api(pool: &PgPool, user_prompt: &str) -> Result<String> {
                     {"role": "system", "content": SYSTEM_PROMPT},
                     {"role": "user", "content": user_prompt}
                 ],
-                "max_tokens": 1000,
+                // 16 events x ~60-90 tokens is 960-1440 for the events ALONE,
+                // before the 180-word diary, the epigraph and the data_quality
+                // JSON. At 1000 a rich day truncated mid-array — and since the
+                // parse was all-or-nothing, that day lost EVERY event with only
+                // a warn!. Raised, and the parse now salvages besides.
+                "max_tokens": 4000,
                 "temperature": 0.3
             }),
         )
@@ -971,6 +976,81 @@ struct LlmEvent {
     /// because the model may omit it for Unknown blocks.
     #[serde(default)]
     summary: Option<String>,
+    /// 2-4 lowercase topical tags. Free: the model is already reading the
+    /// window to write the summary. Feeds `topic_entity_novelty`, which until
+    /// now scored empty arrays on every cron-generated event because nothing
+    /// but the chat tool ever wrote this column.
+    #[serde(default)]
+    topics: Vec<String>,
+}
+
+/// Parse the events array, salvaging complete objects from a truncated one.
+///
+/// The strict path first: a well-formed array parses whole, which is the
+/// overwhelmingly common case.
+///
+/// If that fails, we do NOT throw the day away. The previous behaviour ran
+/// `serde_json::from_str::<Vec<LlmEvent>>` over the entire array, so a response
+/// clipped by `max_tokens` mid-event was invalid JSON — the day got ZERO events
+/// and a `warn!` nobody read. Losing sixteen real events because the
+/// seventeenth was cut in half is the worst possible trade.
+///
+/// So: scan top-level `{...}` objects, decode each independently, keep the ones
+/// that are whole. A truncated tail costs you the truncated event and nothing
+/// else.
+fn parse_events_salvaging(raw: &str) -> Option<Vec<LlmEvent>> {
+    if let Ok(events) = serde_json::from_str::<Vec<LlmEvent>>(raw) {
+        return Some(events);
+    }
+
+    let mut events = Vec::new();
+    let mut depth = 0usize;
+    let mut start = None;
+    let mut in_string = false;
+    let mut escaped = false;
+
+    for (i, c) in raw.char_indices() {
+        if in_string {
+            match c {
+                _ if escaped => escaped = false,
+                '\\' => escaped = true,
+                '"' => in_string = false,
+                _ => {}
+            }
+            continue;
+        }
+        match c {
+            '"' => in_string = true,
+            '{' => {
+                if depth == 0 {
+                    start = Some(i);
+                }
+                depth += 1;
+            }
+            '}' => {
+                depth = depth.saturating_sub(1);
+                if depth == 0 {
+                    if let Some(s0) = start.take() {
+                        if let Ok(ev) = serde_json::from_str::<LlmEvent>(&raw[s0..=i]) {
+                            events.push(ev);
+                        }
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+
+    if events.is_empty() {
+        tracing::warn!(raw, "no salvageable events in LLM response");
+        return None;
+    }
+
+    tracing::warn!(
+        salvaged = events.len(),
+        "events array was malformed (likely truncated) — salvaged complete events"
+    );
+    Some(events)
 }
 
 /// Parsed day summary from LLM response
@@ -1002,12 +1082,7 @@ fn parse_virtues_api_response(response: &str) -> ParsedDaySummary {
             .trim_start_matches("```")
             .trim_end_matches("```")
             .trim();
-        let parsed: Option<Vec<LlmEvent>> = serde_json::from_str(events_str)
-            .map_err(|e| {
-                tracing::warn!(error = %e, raw = events_str, "Failed to parse structured events from LLM");
-                e
-            })
-            .ok();
+        let parsed = parse_events_salvaging(events_str);
         (before, parsed)
     } else {
         (response, None)
@@ -1103,11 +1178,16 @@ async fn store_structured_events(
                 user_label: None,
                 user_location: None,
                 user_notes: None,
+                // `source_ontologies` and `entities` are stamped afterwards by
+                // `dayline::annotate` from the event's own time window — they
+                // are facts about what the window contains, not about what the
+                // model said.
                 source_ontologies: None,
                 is_unknown: Some(event.is_unknown),
                 is_transit: Some(false),
                 is_user_added: Some(false),
                 event_summary: event.summary.clone(),
+                topics: Some(serde_json::json!(event.topics)),
             },
         )
         .await;
@@ -1165,6 +1245,7 @@ struct ResolvedEvent {
     label: String,
     summary: Option<String>,
     is_unknown: bool,
+    topics: Vec<String>,
 }
 
 /// Take LLM events and produce a perfect 24h timeline (00:00–24:00) by filling gaps
@@ -1196,6 +1277,7 @@ fn backfill_24h_events(
                 label: e.label.clone(),
                 summary: e.summary.clone().filter(|s| !s.trim().is_empty()),
                 is_unknown,
+                topics: e.topics.clone(),
             })
         })
         .collect();
@@ -1230,6 +1312,7 @@ fn backfill_24h_events(
                 label: "Unknown".to_string(),
                 summary: None,
                 is_unknown: true,
+                topics: Vec::new(),
             });
         }
         cursor = event.end_utc;
@@ -1244,6 +1327,7 @@ fn backfill_24h_events(
             label: "Unknown".to_string(),
             summary: None,
             is_unknown: true,
+            topics: Vec::new(),
         });
     }
 

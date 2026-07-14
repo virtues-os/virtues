@@ -28,4 +28,4 @@ export { default as PlaceTable } from './PlaceTable.svelte';
 export { default as OrganizationTable } from './OrganizationTable.svelte';
 export { default as ThingTable } from './ThingTable.svelte';
 export { default as OntologyDataTable } from './OntologyDataTable.svelte';
-
+export { default as MentionQueue } from './MentionQueue.svelte';

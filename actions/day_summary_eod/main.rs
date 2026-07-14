@@ -57,30 +57,68 @@ async fn main() -> Result<()> {
 
     tracing::info!(date = %date, "day_summary_eod starting");
 
-    // 1. Sleep resolution (side-effects; doesn't return counts)
+    // ─────────────────────────────────────────────────────────────────────
+    // ORDER IS LOad-BEARING. Do not move a scoring step above step 1.
+    //
+    // `generate_day_summary` SEGMENTS the day: it deletes every auto event
+    // (`delete_auto_events_for_day` — `WHERE is_user_added = false`) and
+    // re-inserts fresh rows carrying only 14 columns, none of which is a
+    // score. So anything computed before it is written to rows that are about
+    // to be dropped.
+    //
+    // This is exactly what used to happen: sleep → novelty → autonomic →
+    // topic/entity all ran FIRST, and the summary then deleted the rows
+    // holding every value they had just computed. The result was that
+    // `embedding`, `novelty_z`, `local_novelty_z`, `lof_raw`, `avg_hr`,
+    // `hr_z`, `autonomic_z`, `topic_novelty` and `entity_novelty` were NULL
+    // after every single cron run — and because `novelty::load_baseline`
+    // requires `embedding IS NOT NULL` on PAST events, the baseline could
+    // never accumulate either. The scoring subsystem had never persisted a
+    // value. Seed data hand-populates these columns, which is why nobody
+    // noticed.
+    //
+    // Segment first. Then score what actually exists.
+    // Guarded by `virtues-core/tests/day_pipeline.rs` — if you reorder this,
+    // that test fails.
+    // ─────────────────────────────────────────────────────────────────────
+
+    // 1. Segment the day (LLM): diary + epigraph + data_quality + the events
+    //    themselves. DESTRUCTIVE — replaces all auto events.
+    virtues::api::day_summary::generate_day_summary(&pool, date)
+        .await
+        .context("autobiography generation failed")?;
+
+    // 2. Sleep resolution. Must follow the segmentation: a sleep event has
+    //    `is_user_added = false`, so the delete in step 1 eats it too.
     virtues::dayline::sleep::resolve_sleep_events(&pool, date).await;
 
-    // 2. Novelty scoring
+    // 3. Annotate the surviving events from their own time windows: avg_hr
+    //    (the input autonomic scoring has always lacked), the entity refs
+    //    that overlap them, and which ontologies actually had data.
+    let annotated = virtues::dayline::annotate::annotate_events_for_day(&pool, date)
+        .await
+        .context("event annotation failed")?;
+
+    // 4. Novelty scoring — writes `embedding`, which everything downstream
+    //    (autonomic's similarity baseline, class-by-neighbourhood, the W5
+    //    story magnet) depends on.
     let novelty_count = virtues::dayline::novelty::compute_novelty_for_day(&pool, date)
         .await
         .context("novelty scoring failed")?;
 
-    // 3. Autonomic scoring (HR/HRV against contextual baseline)
+    // 5. Autonomic scoring (HR against a contextual baseline). Needs step 3's
+    //    avg_hr and step 4's embeddings; before this reorder it had neither.
     let autonomic_count =
         virtues::dayline::autonomic_scoring::compute_autonomic_for_day(&pool, date)
             .await
             .context("autonomic scoring failed")?;
 
-    // 4. Topic/entity novelty
+    // 6. Topic/entity novelty. Needs the topics step 1 now emits and the
+    //    entities step 3 attaches; before this it scored empty arrays.
     let topic_entity_count =
         virtues::dayline::topic_entity_novelty::compute_topic_entity_novelty(&pool, date)
             .await
             .context("topic/entity novelty scoring failed")?;
-
-    // 5. Autobiography generation via LLM
-    virtues::api::day_summary::generate_day_summary(&pool, date)
-        .await
-        .context("autobiography generation failed")?;
 
     // Stash the last processed date in config so subsequent cron runs can
     // short-circuit in a condition or observe progress. Also strip any
@@ -94,9 +132,15 @@ async fn main() -> Result<()> {
     }
     config["last_date"] = json!(date.format("%Y-%m-%d").to_string());
 
+    // Every count here must be "rows actually written", never "rows seen".
+    // The old `topic_entity=N` reported events *considered*, so it stayed
+    // cheerfully non-zero while the function scored nothing at all — the same
+    // failure mode as avg_hr, in production, undetected. A metric that can't
+    // go to zero can't tell you anything.
     let summary = format!(
-        "{}: novelty={} autonomic={} topic_entity={}, autobiography generated",
-        date, novelty_count, autonomic_count, topic_entity_count
+        "{date}: annotated={annotated} novelty={novelty_count} \
+         autonomic={autonomic_count} topic_entity={topic_entity_count}, \
+         autobiography generated"
     );
     output(&summary, &config)
 }
