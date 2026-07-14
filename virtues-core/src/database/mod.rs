@@ -109,20 +109,28 @@ impl Database {
         Ok(())
     }
 
-    /// Ensure the pgvector embedding columns match the configured model's stored
-    /// width (`search::embedder::configured_embed_dim`). No-op when they already
-    /// match (Dragon's 256 = the migration default). Safe only on an empty index
-    /// (fresh install, or just after a `configure-inference` wipe); refuses to
-    /// silently drop a populated index — resizing a live index is a re-embed,
-    /// which `virtues configure-inference` owns.
+    /// Size the pgvector columns to the width the index was BUILT at, read from
+    /// `search_index_meta` — never from a constant, and never from the network.
+    ///
+    /// Bringup runs on boxes whose embedder is not running (`virtues migrate`, most
+    /// of the CLI), so it cannot go asking a sidecar how wide its vectors are. The
+    /// database remembers; the embedder's job at runtime is to *verify* that memory
+    /// (see `search::indexer`), not to supply it.
+    ///
+    /// No recorded width means the index has never been built — leave the column at
+    /// its migration default and let the first embed record the truth. Refuses to
+    /// resize a populated index: that is a re-embed, and `virtues reindex` owns it.
     async fn ensure_embedding_dims(&self) -> Result<()> {
-        let target = crate::search::embedder::configured_embed_dim();
+        let Some(target) = crate::search::embedder::index_dim(&self.pool).await else {
+            // Never embedded. Nothing to match yet.
+            return Ok(());
+        };
         let max = crate::search::embedder::MAX_INDEXED_DIM;
         if target > max {
             return Err(Error::Database(format!(
-                "configured embedding width {target} exceeds pgvector's {max}-dim HNSW \
-                 limit; this build supports vector({max}) at most — use a model with \
-                 ≤{max} dims (or one that supports Matryoshka truncation)"
+                "the index records a {target}-dim model, above pgvector's {max}-dim HNSW \
+                 ceiling for halfvec — use a narrower model, or set VIRTUES_EMBED_DIMS to \
+                 truncate (only safe if the model is Matryoshka-trained)"
             )));
         }
 

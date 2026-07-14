@@ -4,8 +4,10 @@
 //! `data_communication_message` holds thousands of messages, and NONE of them are
 //! connected — because the two sides spell the same person differently:
 //!
-//!     iOS Contacts →  "(512) 555-0171"     (however you typed it)
-//!     chat.db      →  "+15125550171"       (E.164)
+//! ```text
+//! iOS Contacts →  "(512) 555-0171"     (however you typed it)
+//! chat.db      →  "+15125550171"       (E.164)
+//! ```
 //!
 //! As strings those never match, so every message says `+15125550173` and none say
 //! "Nick". Contacts were stored RAW, and the only matcher was a `LIKE '%digits%'`

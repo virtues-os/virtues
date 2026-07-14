@@ -121,7 +121,7 @@ impl SemanticSearchEngine {
             return Ok((0.0, 0, 1.0));
         }
         let (n_docs, sum_len): (i64, i64) =
-            sqlx::query_as("SELECT n_docs, sum_len FROM search_bm25_stats WHERE singleton")
+            sqlx::query_as("SELECT n_docs, sum_len FROM search_index_meta WHERE singleton")
                 .fetch_optional(self.pool.as_ref())
                 .await?
                 .unwrap_or((0, 0));

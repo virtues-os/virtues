@@ -77,7 +77,7 @@ pub async fn run(yes: bool) -> Result<()> {
 /// Truncate the derived index tables (source rows untouched — embeddings rebuild
 /// from them) and reset the BM25 corpus stats. `TRUNCATE ... CASCADE` on
 /// `search_embeddings` also clears `search_vectors` and `search_bm25_postings`
-/// (both FK-reference it). The single-row `search_bm25_stats` isn't FK'd, so it
+/// (both FK-reference it). The single-row `search_index_meta` isn't FK'd, so it
 /// is reset explicitly — guarded with `to_regclass` in case reindex runs before
 /// the BM25 migration has ever been applied on this box.
 async fn wipe(pool: &PgPool) -> Result<()> {
@@ -85,8 +85,15 @@ async fn wipe(pool: &PgPool) -> Result<()> {
         "TRUNCATE search_embeddings CASCADE",
         "TRUNCATE search_topic_cache",
         "TRUNCATE search_embedding_progress",
-        "DO $$ BEGIN IF to_regclass('search_bm25_stats') IS NOT NULL THEN \
-             UPDATE search_bm25_stats SET n_docs = 0, sum_len = 0; END IF; END $$",
+        // Corpus stats AND geometry. Clearing the geometry is what makes a model
+        // swap possible at all: the indexer refuses to write vectors from a model
+        // the index was not built with, and `reindex` is precisely the act of
+        // saying "build it with this one instead". Leave the geometry behind and
+        // the wipe would be blocked by the very guard it exists to clear.
+        "DO $$ BEGIN IF to_regclass('search_index_meta') IS NOT NULL THEN \
+             UPDATE search_index_meta SET n_docs = 0, sum_len = 0, \
+                 model = NULL, dim = NULL, fingerprint = NULL, built_at = NULL; \
+           END IF; END $$",
         // wiki_events carries its own embedding blob + derived scores; null them
         // so each scoring pass recomputes with the current model.
         "UPDATE wiki_events SET \

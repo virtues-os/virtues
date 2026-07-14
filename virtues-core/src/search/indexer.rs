@@ -28,6 +28,78 @@ const MAX_DRAIN_DURATION: std::time::Duration = std::time::Duration::from_secs(2
 /// cron tick and double-index.
 const INDEXER_LOCK_KEY: i64 = 0x656d_6269_6478_3031;
 
+/// Establish, or verify, the geometry the index lives in.
+///
+/// **Empty index** → it has no geometry yet. Record what the endpoint is actually
+/// serving and size the vector column to it. This is the only moment a model may
+/// be adopted, and it is safe precisely because there is nothing to contradict.
+///
+/// **Populated index** → the geometry is already decided, and the endpoint must
+/// still agree with it. A different width or a different model means every new
+/// vector would land in a space the existing ones do not share; cosine between
+/// them means nothing, and search would degrade with no error anywhere. Refuse,
+/// and say what to do about it.
+///
+/// This is what makes "bring your own model" true rather than merely claimed.
+async fn reconcile_index_geometry(
+    pool: &PgPool,
+    embedder: &std::sync::Arc<super::embedder::LocalEmbedder>,
+) -> Result<()> {
+    let model = embedder.model_id();
+    let dim = embedder.dimension() as i32;
+
+    let recorded: Option<(Option<String>, Option<i32>)> =
+        sqlx::query_as("SELECT model, dim FROM search_index_meta WHERE singleton")
+            .fetch_optional(pool)
+            .await?;
+
+    match recorded {
+        // Geometry established. It must not move under us.
+        Some((Some(prev_model), Some(prev_dim))) => {
+            if prev_dim != dim || prev_model != model {
+                return Err(anyhow::anyhow!(
+                    "the search index was built with {prev_model} at {prev_dim}-d, but the \
+                     embedding endpoint now serves {model} at {dim}-d.\n\n\
+                     Vectors from two models live in different geometries — the distance \
+                     between them is meaningless, so mixing them would quietly rot every \
+                     search result rather than fail loudly.\n\n\
+                     Run `virtues reindex` to rebuild the index with the new model \
+                     (your source data is untouched — embeddings are a cache)."
+                )
+                .into());
+            }
+        }
+        // No geometry yet: a fresh box, or the first run after a reindex. Adopt the
+        // endpoint we actually have, and record the truth about it.
+        _ => {
+            let empty: i64 = sqlx::query_scalar("SELECT count(*) FROM search_vectors")
+                .fetch_one(pool)
+                .await?;
+            if empty > 0 {
+                // Vectors with no recorded geometry: they predate this bookkeeping
+                // (built by the old hardcoded path). Adopt rather than destroy —
+                // the width is whatever the column says, and it has not changed.
+                tracing::warn!(
+                    %model, dim,
+                    "index has vectors but no recorded geometry (pre-existing); adopting"
+                );
+            }
+            sqlx::query(
+                "INSERT INTO search_index_meta (singleton, model, dim, built_at) \
+                 VALUES (TRUE, $1, $2, now()) \
+                 ON CONFLICT (singleton) DO UPDATE SET \
+                   model = EXCLUDED.model, dim = EXCLUDED.dim, built_at = EXCLUDED.built_at",
+            )
+            .bind(&model)
+            .bind(dim)
+            .execute(pool)
+            .await?;
+            tracing::info!(%model, dim, "search index geometry recorded");
+        }
+    }
+    Ok(())
+}
+
 /// Run one cycle of the embedding indexer.
 ///
 /// Drain semantics: for each searchable ontology we loop batches back-to-back
@@ -52,6 +124,16 @@ pub async fn run_embedding_job(pool: &PgPool) -> Result<u64> {
     }
 
     let embedder = get_embedder().await?;
+
+    // Before writing a single vector: is this the model the index was built with?
+    //
+    // Two models can share a width and mean entirely different things by it. Mixing
+    // them is silent corruption — the vectors land in different geometries, cosine
+    // between them is noise, and nothing anywhere errors. The old code could not
+    // even ask: `search_embeddings.model` was the literal 'embeddinggemma', written
+    // by this function and read by nobody.
+    reconcile_index_geometry(pool, &embedder).await?;
+
     let searchable = virtues_registry::ontologies::registered_ontologies()
         .into_iter()
         .filter(|o| o.embedding.is_some())
@@ -275,7 +357,7 @@ async fn embed_one_batch(
                 .execute(&mut *tx)
                 .await?;
             sqlx::query(
-                "UPDATE search_bm25_stats \
+                "UPDATE search_index_meta \
                  SET n_docs = GREATEST(n_docs - $1, 0), sum_len = GREATEST(sum_len - $2, 0) \
                  WHERE singleton",
             )
@@ -383,7 +465,7 @@ async fn embed_one_batch(
             match prior_len {
                 None => {
                     sqlx::query(
-                        "UPDATE search_bm25_stats \
+                        "UPDATE search_index_meta \
                          SET n_docs = n_docs + 1, sum_len = sum_len + $1 WHERE singleton",
                     )
                     .bind(bm_len)
@@ -392,7 +474,7 @@ async fn embed_one_batch(
                 }
                 Some(old) => {
                     sqlx::query(
-                        "UPDATE search_bm25_stats SET sum_len = sum_len + $1 WHERE singleton",
+                        "UPDATE search_index_meta SET sum_len = sum_len + $1 WHERE singleton",
                     )
                     .bind(bm_len - old.unwrap_or(0))
                     .execute(&mut *tx)

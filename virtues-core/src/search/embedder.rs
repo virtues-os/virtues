@@ -74,25 +74,19 @@ pub(super) fn qnnd_models_dir() -> PathBuf {
         .unwrap_or_else(|| PathBuf::from("/var/lib/virtues/models/qnn"))
 }
 
-/// The SIDECAR's default GGUF (EmbeddingGemma-300M) emits 768-d; we keep the
-/// first `SIDECAR_STORED_DIM` (Matryoshka truncation) and re-normalize — a 3×
-/// storage/RAM cut on the index for ~minimal quality loss.
-///
-/// These were called `DRAGON_*`, which was simply wrong: **Dragon does not use
-/// this path at all.** Dragon runs the NPU daemon (`qnn_client`) serving
-/// gte-small at 384-d, untruncated. These are the *sidecar* defaults — the DIY
-/// and dev route — and a default is not a commitment: swap the GGUF and only the
-/// stored width has to follow.
-///
-/// A BYO endpoint stores its **native** dims (no truncation — most models are not
-/// Matryoshka-trained), resolved from `VIRTUES_EMBED_DIMS` at boot (see
-/// `configured_embed_dim`); the vector column is sized to match at bringup
-/// (`database::embedding_dims`).
-const SIDECAR_NATIVE_DIM: usize = 768;
-const SIDECAR_STORED_DIM: usize = 256;
-/// pgvector's HNSW index tops out at 2000 dims for the `vector` type. Larger
-/// models would need `halfvec` (≤4000) or truncation — not in this build.
-pub const MAX_INDEXED_DIM: usize = 2000;
+// `SIDECAR_NATIVE_DIM = 768` and `SIDECAR_STORED_DIM = 256` lived here (named
+// `DRAGON_*`, which was doubly wrong — Dragon does not even use this path; it
+// runs the NPU daemon serving gte-small at 384-d).
+//
+// A width is a property of a MODEL. Hardcoding one meant the box could only ever
+// run the model those numbers described. Both are gone: the width is probed at
+// startup and recorded in `search_index_meta`, and truncation is one opt-in env
+// var (`VIRTUES_EMBED_DIMS`) rather than a constant baked into the binary.
+
+/// pgvector's HNSW index tops out at 4000 dims for `halfvec`, which is what the
+/// vector column is. That covers every embedding model in common use (the widest
+/// mainstream models are 3072-d).
+pub const MAX_INDEXED_DIM: usize = 4000;
 const DEFAULT_URL: &str = "http://127.0.0.1:18181";
 
 /// Is a model fingerprint pinned? True in manual inference mode — the installer
@@ -103,41 +97,53 @@ fn fingerprint_pinned_env() -> bool {
         .is_some_and(|s| !s.trim().is_empty())
 }
 
-/// The stored vector width the index must use — the single source of truth for
-/// both the runtime embedder and the bringup column-sizing step. Manual: the
-/// probed native dims (`VIRTUES_EMBED_DIMS`, no truncation). Dragon/dev: 256
-/// (Matryoshka truncation of EmbeddingGemma's 768).
-pub fn configured_embed_dim() -> usize {
-    // Dragon NPU path: gte-small's native 384, stored untruncated (not
-    // Matryoshka-trained). Takes precedence over the HTTP-mode logic below.
-    if qnnd_addr().is_some() {
-        return GTE_DIM;
-    }
-    if fingerprint_pinned_env() {
-        std::env::var("VIRTUES_EMBED_DIMS")
-            .ok()
-            .and_then(|s| s.trim().parse::<usize>().ok())
-            .filter(|d| *d > 0)
-            // Installer writes DIMS alongside the fingerprint; a missing value
-            // means a hand-edited env — fall back to native (no truncation)
-            // rather than silently truncating the user's model.
-            .unwrap_or(SIDECAR_NATIVE_DIM)
-    } else {
-        SIDECAR_STORED_DIM
-    }
+/// An explicit width the operator wants vectors stored at, if any.
+///
+/// Set → **truncate to this** (Matryoshka) and store at this width. Unset → store
+/// whatever the model natively emits, which is the only safe default: most models
+/// are not Matryoshka-trained, and lopping dimensions off one that isn't destroys
+/// it.
+///
+/// This is the *whole* of the width configuration. There is no
+/// `SIDECAR_STORED_DIM`, no per-board constant, no "Dragon does 256". A width is
+/// a property of a model, and the model is asked, not assumed.
+pub fn requested_embed_dim() -> Option<usize> {
+    std::env::var("VIRTUES_EMBED_DIMS")
+        .ok()
+        .and_then(|s| s.trim().parse::<usize>().ok())
+        .filter(|d| *d > 0)
 }
 
-/// EmbeddingGemma is asymmetric — queries and documents get different prompt
-/// prefixes (official Gemma formats). On personal data, where queries
-/// ("why have I felt off?") look nothing like passages (event records), this
-/// is free recall. These are the **Dragon defaults**; in manual mode the
-/// installer resolves the right prefixes for the user's model (from its
-/// HuggingFace `config_sentence_transformers.json`, a known-family table, or
-/// none) and pins them via `VIRTUES_EMBED_QUERY_PROMPT` / `_DOC_PROMPT`. Prompt
-/// prefixes never touch the fingerprint (probes are embedded raw), so changing
-/// them can't trip the boot guard.
-const QUERY_PROMPT: &str = "task: search result | query: ";
-const DOC_PROMPT: &str = "title: none | text: ";
+/// The width the index is CURRENTLY built at — read from the database, never
+/// from a constant and never from the network.
+///
+/// Bringup has to size the vector column before anything embeds, and it must do
+/// so on a box whose sidecar is not running (`virtues migrate`, most of the CLI).
+/// So the geometry lives in `search_index_meta` and the embedder's job at runtime
+/// is to *verify* it, not to supply it.
+///
+/// `None` means the index has never been built and has no geometry yet — which is
+/// the truth, and better than asserting a model we never ran.
+pub async fn index_dim(pool: &sqlx::PgPool) -> Option<usize> {
+    sqlx::query_scalar::<_, Option<i32>>("SELECT dim FROM search_index_meta WHERE singleton")
+        .fetch_optional(pool)
+        .await
+        .ok()
+        .flatten()
+        .flatten()
+        .map(|d| d as usize)
+}
+
+// EmbeddingGemma's prompt formats were consts HERE, and — worse — the DEFAULT for
+// any endpoint without a pinned fingerprint. So a box running a different GGUF
+// quietly embedded `"title: none | text: <your email>"` through a model that had
+// never seen that string in training. A foreign prompt is not a harmless string;
+// it is noise prepended to every vector in the index.
+//
+// A prompt format is a property of a MODEL, so it lives where models are
+// configured (`VIRTUES_EMBED_QUERY_PROMPT` / `_DOC_PROMPT`, written by the
+// installer for the model it ships). The default here is NO PREFIX — correct for
+// symmetric models, and the only safe assumption about an unknown one.
 
 /// Fixed probe strings for the endpoint fingerprint. Embedded RAW (no
 /// query/doc prompt prefix) so setup time and boot time hash the exact same
@@ -250,19 +256,18 @@ struct HttpEmbedder {
     /// ignores — this is the GGUF it loaded. Stamped on every indexed row so the
     /// index can say which model's geometry it lives in.
     served_model: String,
-    /// Asymmetric prompt prefixes prepended to queries / documents before
-    /// embedding. Dragon → EmbeddingGemma's official formats; manual → whatever
-    /// the installer resolved for the user's model (possibly empty). Empty
-    /// string = no prefix.
+    /// Prefixes prepended to queries / documents before embedding — a property of
+    /// the MODEL, so there is no default. Empty = none, which is right for
+    /// symmetric models and the only safe assumption about an unknown one.
     query_prompt: String,
     doc_prompt: String,
-    /// The width vectors are stored at (= the vector column's dims). Dragon:
-    /// 256 (truncated). Manual: the model's native dims.
+    /// What the model natively emits. **Probed, never assumed.** This used to be
+    /// the constant 768 with a hard rejection of anything else — the single line
+    /// that made "bring your own model" untrue.
+    native_dim: usize,
+    /// The width vectors are STORED at. Equals `native_dim` unless the operator
+    /// asked for truncation (`VIRTUES_EMBED_DIMS`).
     stored_dim: usize,
-    /// Whether to Matryoshka-truncate native vectors down to `stored_dim`.
-    /// Only Dragon's EmbeddingGemma is Matryoshka-trained; manual endpoints
-    /// store native vectors untouched.
-    truncate: bool,
 }
 
 impl HttpEmbedder {
@@ -303,30 +308,65 @@ impl HttpEmbedder {
             .filter(|s| !s.trim().is_empty())
             .map(|s| s.trim().to_string())
             .unwrap_or_else(|| "default".to_string());
-        let is_pinned = pinned.is_some();
-        // Prompt prefixes: an explicitly-set env var wins (installer-resolved or
-        // power-user), honoring even an empty value ("no prefix"). Unset falls
-        // back to the EmbeddingGemma defaults for Dragon, and to no prefix for a
-        // pinned (manual) endpoint whose model we couldn't identify.
-        let query_prompt = std::env::var("VIRTUES_EMBED_QUERY_PROMPT")
-            .ok()
-            .unwrap_or_else(|| if is_pinned { String::new() } else { QUERY_PROMPT.to_string() });
-        let doc_prompt = std::env::var("VIRTUES_EMBED_DOC_PROMPT")
-            .ok()
-            .unwrap_or_else(|| if is_pinned { String::new() } else { DOC_PROMPT.to_string() });
+        // Prefixes: a property of the model, so there is NO default. An unset var
+        // means no prefix — correct for symmetric models, and the only safe
+        // assumption about a model we have not been told about. Setting the wrong
+        // prefix is not a missed optimisation; it is noise prepended to every
+        // vector in the index.
+        let query_prompt = std::env::var("VIRTUES_EMBED_QUERY_PROMPT").unwrap_or_default();
+        let doc_prompt = std::env::var("VIRTUES_EMBED_DOC_PROMPT").unwrap_or_default();
+
         // What the endpoint is actually SERVING, as opposed to the routing key we
-        // send it. llama-server answers `/v1/models` with the loaded GGUF; a
-        // user-run endpoint may answer with anything, or nothing.
-        //
-        // This is stamped on every indexed row. It used to be the literal
-        // 'embeddinggemma', hardcoded into an INSERT and read by nobody — so a BYO
-        // model of the same width could be swapped in and the index would fill with
-        // vectors from a second geometry, cosine between them meaning nothing, and
-        // no error anywhere. A best-effort probe: if the endpoint will not say,
-        // record that it would not say.
+        // send it. Best-effort: if it will not say, record that it would not say.
         let served_model = probe_served_model(&client, &base_url)
             .await
             .unwrap_or_else(|| "unreported".to_string());
+
+        // ASK THE MODEL. Embed one probe string and count what comes back.
+        //
+        // This replaces `validate_native_dim`, which rejected anything that was not
+        // 768-d and told the user to "check the sidecar's GGUF is
+        // EmbeddingGemma-300M". That one line is what made BYO a claim rather than
+        // a fact: you could not change model without editing Rust.
+        let mut probe = Self::embed_raw(&client, &base_url, &model, vec!["dim probe".into()])
+            .await
+            .context(
+                "embedding endpoint accepted /health but would not embed — cannot \
+                 determine its vector width",
+            )?;
+        let native_dim = probe.pop().map(|v| v.len()).filter(|d| *d > 0).ok_or_else(|| {
+            anyhow!("embedding endpoint returned no vector for the width probe")
+        })?;
+
+        // Truncation is opt-in and must be honest: asking for a width WIDER than
+        // the model emits is a configuration error, not something to paper over
+        // with zero-padding.
+        let stored_dim = match requested_embed_dim() {
+            Some(d) if d > native_dim => {
+                return Err(anyhow!(
+                    "VIRTUES_EMBED_DIMS={d} but {served_model} emits only {native_dim} \
+                     dimensions — a vector cannot be widened, only truncated"
+                ))
+            }
+            Some(d) => d,
+            None => native_dim,
+        };
+
+        if stored_dim > MAX_INDEXED_DIM {
+            return Err(anyhow!(
+                "{served_model} emits {native_dim}-d vectors, above the {MAX_INDEXED_DIM} \
+                 ceiling pgvector's HNSW index supports — set VIRTUES_EMBED_DIMS to \
+                 truncate (only safe if the model is Matryoshka-trained)"
+            ));
+        }
+
+        tracing::info!(
+            model = %served_model,
+            native = native_dim,
+            stored = stored_dim,
+            truncating = stored_dim < native_dim,
+            "embedding endpoint identified"
+        );
 
         let embedder = Self {
             client,
@@ -335,10 +375,8 @@ impl HttpEmbedder {
             served_model,
             query_prompt,
             doc_prompt,
-            // Manual endpoints store native dims (no truncation); Dragon
-            // Matryoshka-truncates EmbeddingGemma's 768 to 256.
-            stored_dim: configured_embed_dim(),
-            truncate: !is_pinned,
+            native_dim,
+            stored_dim,
         };
         if let Some(expected) = pinned {
             embedder.verify_fingerprint(expected.trim()).await?;
@@ -433,26 +471,53 @@ impl HttpEmbedder {
         let rows = self.request_native(input).await?;
         let mut out = Vec::with_capacity(rows.len());
         for mut v in rows {
-            if self.truncate {
-                // Dragon: EmbeddingGemma is the contract — assert its native
-                // dim, then Matryoshka-truncate to the stored width.
-                validate_native_dim(&v)?;
-                matryoshka_truncate(&mut v, self.stored_dim);
-            } else if v.len() != self.stored_dim {
-                // Manual: vectors are stored native. A width other than what
-                // the index was sized for can't be inserted; fail with a clear
-                // message rather than a raw pgvector dimension error. (A model
-                // swap that changes dims is already caught by the fingerprint.)
+            // The width is checked against what THIS endpoint proved it emits at
+            // startup, not against a constant. An endpoint that changes width
+            // mid-run has been swapped underneath us, and its vectors do not
+            // belong in this index.
+            if v.len() != self.native_dim {
                 return Err(anyhow!(
-                    "embedding endpoint returned {}-dim vectors but the index is sized \
-                     for {} — run `virtues configure-inference` to re-validate the model",
+                    "embedding endpoint returned {}-d vectors but emitted {}-d at startup \
+                     — the model behind {} changed. Its vectors live in a different \
+                     geometry than everything already indexed; run `virtues reindex`.",
                     v.len(),
-                    self.stored_dim
+                    self.native_dim,
+                    self.base_url
                 ));
+            }
+            // Truncate only when asked to. Matryoshka is a property of the model,
+            // not of the box, and lopping dimensions off a model that was not
+            // trained for it destroys the vector.
+            if self.stored_dim < self.native_dim {
+                matryoshka_truncate(&mut v, self.stored_dim);
             }
             out.push(v);
         }
         Ok(out)
+    }
+
+    /// Embed without a constructed `HttpEmbedder` — the width probe has to run
+    /// before the struct exists, since the struct's width is what it discovers.
+    async fn embed_raw(
+        client: &reqwest::Client,
+        base_url: &str,
+        model: &str,
+        input: Vec<String>,
+    ) -> Result<Vec<Vec<f32>>> {
+        let resp = client
+            .post(format!("{base_url}/v1/embeddings"))
+            .json(&serde_json::json!({ "input": input, "model": model }))
+            .send()
+            .await
+            .map_err(|e| anyhow!("embed request failed: {e}"))?
+            .error_for_status()
+            .map_err(|e| anyhow!("embed request failed: {e}"))?;
+
+        let body: EmbeddingsResponse =
+            resp.json().await.context("parsing /v1/embeddings response")?;
+        let mut rows = body.data;
+        rows.sort_by_key(|r| r.index);
+        Ok(rows.into_iter().map(|r| r.embedding).collect())
     }
 }
 
@@ -557,15 +622,10 @@ impl Embedder for LocalEmbedder {
     }
 }
 
-fn validate_native_dim(v: &[f32]) -> Result<()> {
-    if v.len() != SIDECAR_NATIVE_DIM {
-        return Err(anyhow!(
-            "embedding dim {} != expected native {SIDECAR_NATIVE_DIM} — check the sidecar's GGUF is EmbeddingGemma-300M",
-            v.len()
-        ));
-    }
-    Ok(())
-}
+// `validate_native_dim` lived here. It rejected any vector that wasn't 768-d,
+// with the message "check the sidecar's GGUF is EmbeddingGemma-300M" — a single
+// function that made "bring your own model" false. The width is now PROBED at
+// startup and checked against itself; see `HttpEmbedder::new`.
 
 fn resolve_base_url() -> String {
     std::env::var("VIRTUES_EMBED_URL")

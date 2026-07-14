@@ -712,6 +712,13 @@ async fn psql_exists(sql: &str) -> Result<bool> {
 /// The inference-related env keys, per mode.
 ///
 /// Dragon: mode marker + the loopback sidecar defaults. Manual: mode marker,
+/// EmbeddingGemma-300M's official asymmetric prompt formats. Facts about a
+/// MODEL, so they live where models are configured — not inside the box's binary,
+/// where they used to be the fallback for *every* endpoint, silently prefixing a
+/// foreign model's inputs with Gemma's format.
+const GEMMA_QUERY_PROMPT: &str = "task: search result | query: ";
+const GEMMA_DOC_PROMPT: &str = "title: none | text: ";
+
 /// the user's endpoint URLs, plus the fingerprint + dims recorded by
 /// `mode::validate_manual` — the runtime re-embeds the probe strings at boot
 /// and refuses to serve search against a silently-swapped model.
@@ -734,11 +741,30 @@ fn inference_env_keys(
             ),
         ],
         // Bundled: the portable CPU llama-server sidecars on loopback (the
-        // throwaway-trial path). EmbeddingGemma defaults, no fingerprint pin.
+        // throwaway-trial path), serving EmbeddingGemma-300M.
+        //
+        // Its settings are written HERE, as configuration, because they are facts
+        // about a model — not about Virtues. They used to be constants inside the
+        // binary (`DRAGON_STORED_DIM = 256`, Gemma's prompt formats as the
+        // fallback for every endpoint), which meant the box could only ever run
+        // the one model those constants described, and any other model silently
+        // got Gemma's prompt glued onto its inputs.
+        //
+        //   DIMS 256      EmbeddingGemma is Matryoshka-trained: its 768-d output
+        //                 truncates to 256 with minimal loss, for a 3× lighter
+        //                 index. Truncating a model that is NOT Matryoshka-trained
+        //                 destroys it — so this is opt-in, per model, never a
+        //                 default.
+        //   PROMPTS       Gemma is asymmetric; queries and documents take
+        //                 different prefixes. The right prefix is a property of
+        //                 the model, so it is named alongside the model.
         InferenceMode::Bundled => vec![
             ("VIRTUES_INFERENCE", "bundled".to_string()),
             ("VIRTUES_EMBED_URL", "http://127.0.0.1:18181".to_string()),
             ("VIRTUES_RERANK_URL", "http://127.0.0.1:18182".to_string()),
+            ("VIRTUES_EMBED_DIMS", "256".to_string()),
+            ("VIRTUES_EMBED_QUERY_PROMPT", quote_env_value(GEMMA_QUERY_PROMPT)),
+            ("VIRTUES_EMBED_DOC_PROMPT", quote_env_value(GEMMA_DOC_PROMPT)),
         ],
         InferenceMode::Manual { embed_url, embed_model, rerank_url, .. } => {
             let mut keys = vec![
