@@ -12,8 +12,10 @@ mod transform;
 
 use anyhow::{Context, Result};
 use serde_json::Value;
+use virtues::storage::lake;
 use virtues_helpers::{connect_from_env, output, read_input};
 
+const ACTION: &str = "google_gmail_sync";
 const PROFILE: &str = "https://gmail.googleapis.com/gmail/v1/users/me/profile";
 const LIST: &str = "https://gmail.googleapis.com/gmail/v1/users/me/messages";
 const GET_BASE: &str = "https://gmail.googleapis.com/gmail/v1/users/me/messages";
@@ -30,6 +32,7 @@ async fn main() -> Result<()> {
     let access_token = virtues_actions::secret(&input, "access_token")?
         .to_string();
 
+    let storage = lake::storage_from_env()?;
     let client = reqwest::Client::new();
 
     let user_email = fetch_user_email(&client, &access_token).await?;
@@ -109,6 +112,11 @@ async fn main() -> Result<()> {
             }
             messages.push(m);
         }
+
+        // Raw Gmail message objects, exactly as the API returned them — headers,
+        // labels and MIME parts included. The transform reads a handful of those
+        // fields; the rest is the part that would be gone forever.
+        lake::archive_cloud(&pool, &storage, "google", ACTION, "gmail", &messages).await?;
 
         let written = transform::write_messages(&pool, &user_email, &messages).await?;
         total_written += written;

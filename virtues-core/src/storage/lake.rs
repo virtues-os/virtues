@@ -33,6 +33,17 @@ pub enum Envelope<'a> {
     MacKey(&'a str),
     /// ios_ingest: `{"stream": …, "records": […]}`.
     IosStream(&'a str),
+    /// A cloud sync (`google_gmail_sync`, `plaid_transactions_sync`, …).
+    ///
+    /// These PULL rather than receive, so there is no webhook body to archive — what
+    /// we keep is the raw API response, one record per page. See [`archive_cloud`].
+    Cloud {
+        /// The action that fetched it, e.g. `plaid_transactions_sync`. Replay, when it
+        /// exists, has to hand these pages back to the action that understands them.
+        action: &'a str,
+        /// The logical stream, e.g. `transactions`.
+        stream: &'a str,
+    },
 }
 
 impl Envelope<'_> {
@@ -40,6 +51,7 @@ impl Envelope<'_> {
         match self {
             Envelope::MacKey(k) => k,
             Envelope::IosStream(s) => s,
+            Envelope::Cloud { stream, .. } => stream,
         }
     }
 
@@ -47,6 +59,9 @@ impl Envelope<'_> {
         match self {
             Envelope::MacKey(k) => json!({"provider": "mac", "key": k}),
             Envelope::IosStream(s) => json!({"provider": "ios", "stream": s}),
+            Envelope::Cloud { action, stream } => {
+                json!({"provider": "cloud", "action": action, "stream": stream, "pages": true})
+            }
         }
     }
 }
@@ -226,6 +241,59 @@ pub async fn archive(
         storage_key,
         record_count: records.len(),
     }))
+}
+
+/// Archive a cloud sync's RAW API responses, before anything parses them.
+///
+/// # Archive the response, not the records you extracted from it
+///
+/// The tempting thing is to hand this the `Vec<Value>` the action already built on its
+/// way to the transform. Don't. That is a cache of today's schema, not evidence: it
+/// keeps exactly the fields the current transform happens to read, so the lake could
+/// only ever tell us what we already understood. The whole premise — you can
+/// re-integrate new stories from evidence, but never evidence from stories — dies at
+/// that line.
+///
+/// What the raw response carries that our parsers currently drop is not hypothetical:
+/// Gmail's headers, labels and MIME structure; Notion's block tree; and Plaid's
+/// `removed` list, which today is read by nobody and thrown away on arrival.
+///
+/// So `pages` is one entry per API response body, verbatim.
+///
+/// # Cloud syncs pull, so there is no payload to preserve
+///
+/// Device streams archive the webhook body and get replay for free — the object IS the
+/// payload. A cloud sync has no such thing; it has a cursor and a network call. Making
+/// these objects replayable means teaching each action to accept its pages back instead
+/// of fetching, and that is deliberately NOT done yet. Storing the bytes is the
+/// irreversible half; replaying them is not, and can be built any time. There is no
+/// reason to hold the evidence hostage to the machinery that reads it.
+///
+/// # Known gap: `min_timestamp` / `max_timestamp` may be NULL here
+///
+/// [`time_window`] recognises the timestamp keys our *collectors* emit. Cloud providers
+/// use their own (`internalDate` in epoch millis, `last_edited_time`, nested
+/// `start.dateTime`), so some cloud objects will land with no window. That costs
+/// nothing today — a window is only needed to scope a re-projection's delete — but it
+/// must be closed before replay ships, and it is silent, so it is written down here.
+pub async fn archive_cloud(
+    pool: &PgPool,
+    storage: &Storage,
+    provider: &str,
+    action: &str,
+    stream: &str,
+    pages: &[Value],
+) -> Result<Option<LakeRef>> {
+    archive(
+        pool,
+        storage,
+        provider,
+        action,
+        Envelope::Cloud { action, stream },
+        pages,
+        json!({}),
+    )
+    .await
 }
 
 /// Store a blob once and reference it, rather than inline in a raw payload.
