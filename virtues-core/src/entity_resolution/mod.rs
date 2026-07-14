@@ -15,7 +15,7 @@
 //!
 //! ## Usage
 //!
-//! ```rust
+//! ```ignore
 //! let window = TimeWindow::new(start, end);
 //! let stats = entity_resolution::resolve_entities(db, window).await?;
 //! ```

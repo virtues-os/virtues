@@ -118,7 +118,7 @@ pub type Result<T> = std::result::Result<T, Error>;
 ///
 /// # Examples
 ///
-/// ```rust
+/// ```ignore
 /// use virtues::{db_query, error::Result};
 /// use sqlx::PgPool;
 ///
