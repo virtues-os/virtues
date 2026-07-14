@@ -1,4 +1,5 @@
 import AppKit
+import CoreAudio
 import Foundation
 import IOKit.pwr_mgt
 
@@ -13,11 +14,16 @@ import IOKit.pwr_mgt
 ///
 /// Five states, and the interesting one is `watching`:
 ///
-///     input recently                          → active
-///     no input, focused app holds the display → watching   (a video, a call)
-///     no input, nothing holding the display   → idle
-///     screen locked / screensaver / switched  → locked
-///     machine suspended (lid closed)          → suspended
+///     input recently                              → active
+///     no input, focused app holds the display
+///                AND sound is coming out          → watching   (a video, a call)
+///     no input otherwise                          → idle
+///     screen locked / screensaver / switched      → locked
+///     machine suspended (lid closed)              → suspended
+///
+/// The audio conjunct is not decoration: the display assertion alone false-positived
+/// on day one, because Cursor holds one while indexing and Cursor was the focused
+/// app. Silence is what tells an indexing editor apart from a lecture.
 ///
 /// `watching` counts as usage; `idle` does not. A naive HID-idle check would call
 /// a 40-minute lecture "away" and delete it.
@@ -146,7 +152,7 @@ final class PresenceMonitor {
         if idleNow, !isIdle, !isWatching {
             // Is the focused app holding the display awake? Then this isn't absence,
             // it's a video or a call.
-            if focusedAppIsHoldingDisplayAwake() {
+            if focusedAppIsWatchable() {
                 isWatching = true
                 emit(Event.EventType.watchStart, at: idleSince)
             } else {
@@ -158,7 +164,7 @@ final class PresenceMonitor {
 
         // A watcher that stopped holding the display (video ended) but still isn't
         // touching anything has become genuinely idle.
-        if isWatching, idleNow, !focusedAppIsHoldingDisplayAwake() {
+        if isWatching, idleNow, !focusedAppIsWatchable() {
             isWatching = false
             emit(Event.EventType.watchEnd, at: now)
             isIdle = true
@@ -190,13 +196,31 @@ final class PresenceMonitor {
         return CGEventSource.secondsSinceLastEventType(.hidSystemState, eventType: anyInput)
     }
 
-    /// Is the FOCUSED app preventing display sleep?
+    /// Is the focused app playing something you're actually watching?
     ///
-    /// Scoping to the focused app's own pid is what keeps `watching` honest. Plenty
-    /// of things hold a display-sleep assertion — a long build, screen sharing,
-    /// `caffeinate`, a background download — and crediting any of them would mean
-    /// walking away from a compiling Cursor counted as forty minutes of attention.
-    /// Only the app you are actually looking at can earn `watching`.
+    /// TWO conditions, and the second one is here because the first was not enough.
+    ///
+    /// I originally trusted the display-sleep assertion alone, scoped to the focused
+    /// app's pid — reasoning that a background build couldn't then steal credit. It
+    /// false-positived on the first day: **Cursor** (Electron) holds a display
+    /// assertion while indexing, and Cursor was the focused app, so walking away from
+    /// it was recorded as `watching` rather than `idle`. Scoping to the foreground
+    /// does not help when the *foreground* app is the liar.
+    ///
+    /// So also require that audio is actually coming out of the machine. An indexing
+    /// Electron app is silent; a lecture, a film and a call are not. The conjunction
+    /// is what makes `watching` mean something — and `watching` is the ONLY state
+    /// that can inflate app usage, so it has to be the one we're strictest about.
+    ///
+    /// Known gap, stated rather than hidden: a silent video, or music playing in
+    /// Spotify while you idle in a display-asserting app, can still fool this. If it
+    /// proves noisy in practice the honest move is to delete `watching` and call
+    /// no-input `idle` — the raw events are in the lake, so that decision is
+    /// reversible.
+    private func focusedAppIsWatchable() -> Bool {
+        focusedAppIsHoldingDisplayAwake() && systemIsPlayingAudio()
+    }
+
     private func focusedAppIsHoldingDisplayAwake() -> Bool {
         guard let pid = NSWorkspace.shared.frontmostApplication?.processIdentifier else {
             return false
@@ -215,6 +239,38 @@ final class PresenceMonitor {
             return type == kIOPMAssertionTypePreventUserIdleDisplaySleep as String
                 || type == kIOPMAssertionTypeNoDisplaySleep as String
         }
+    }
+
+    /// Is the default output device actually running — i.e. is sound coming out?
+    ///
+    /// `kAudioDevicePropertyDeviceIsRunningSomewhere` is true whenever any process is
+    /// driving the device. It doesn't tell us WHICH process, which is why it's a
+    /// conjunct and not the whole test.
+    private func systemIsPlayingAudio() -> Bool {
+        var deviceAddress = AudioObjectPropertyAddress(
+            mSelector: kAudioHardwarePropertyDefaultOutputDevice,
+            mScope: kAudioObjectPropertyScopeGlobal,
+            mElement: kAudioObjectPropertyElementMain)
+
+        var device = AudioDeviceID(0)
+        var size = UInt32(MemoryLayout<AudioDeviceID>.size)
+        guard AudioObjectGetPropertyData(
+            AudioObjectID(kAudioObjectSystemObject), &deviceAddress, 0, nil, &size, &device)
+            == noErr, device != kAudioObjectUnknown
+        else { return false }
+
+        var runningAddress = AudioObjectPropertyAddress(
+            mSelector: kAudioDevicePropertyDeviceIsRunningSomewhere,
+            mScope: kAudioObjectPropertyScopeGlobal,
+            mElement: kAudioObjectPropertyElementMain)
+
+        var running = UInt32(0)
+        var runningSize = UInt32(MemoryLayout<UInt32>.size)
+        guard AudioObjectGetPropertyData(
+            device, &runningAddress, 0, nil, &runningSize, &running) == noErr
+        else { return false }
+
+        return running != 0
     }
 
     // MARK: - Plumbing
