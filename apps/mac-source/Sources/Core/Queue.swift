@@ -531,14 +531,36 @@ class Queue {
                 return
             }
             
+            // UPSERT, not `INSERT OR IGNORE`.
+            //
+            // `OR IGNORE` made this queue write-once: 40,572 messages were already staged
+            // here, so when the collector learned to read attachment metadata and re-walked
+            // chat.db, every one of those rows was silently discarded on arrival. The
+            // correction could be *computed* and never *accepted* — the fix reached only
+            // messages that happened to be new.
+            //
+            // A queue that cannot take a correction is a queue that permanently encodes
+            // whatever bug shipped first.
+            //
+            // `uploaded = 0` re-queues the row for upload, but only via the WHERE below —
+            // if nothing actually changed we leave it alone, so an ordinary re-walk doesn't
+            // re-send tens of thousands of identical messages.
             let insertSQL = """
-                INSERT OR IGNORE INTO messages (
+                INSERT INTO messages (
                         message_id, chat_id, handle_id, text, service, is_from_me,
                         date, date_read, date_delivered, is_read, is_delivered, is_sent,
                         cache_has_attachments, attachment_count, attachment_info,
                         group_title, associated_message_guid, associated_message_type,
                         expressive_send_style_id, uploaded
                     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0)
+                ON CONFLICT(message_id) DO UPDATE SET
+                        text = excluded.text,
+                        attachment_info = excluded.attachment_info,
+                        attachment_count = excluded.attachment_count,
+                        cache_has_attachments = excluded.cache_has_attachments,
+                        uploaded = 0
+                    WHERE messages.attachment_info IS NOT excluded.attachment_info
+                       OR messages.text IS NOT excluded.text
                 """
                 
                 var statement: OpaquePointer?
@@ -603,11 +625,16 @@ class Queue {
                 }
                 
                 if let attachmentInfo = message.attachmentInfo {
-                    if let jsonData = try? JSONSerialization.data(withJSONObject: attachmentInfo),
-                       let jsonString = String(data: jsonData, encoding: .utf8) {
+                    // A silent `try?` here would bind NULL on failure and look exactly like
+                    // "this message has no attachments" — indistinguishable, and therefore
+                    // undebuggable. If we cannot serialize what we collected, say so.
+                    do {
+                        let jsonData = try JSONSerialization.data(withJSONObject: attachmentInfo)
+                        let jsonString = String(data: jsonData, encoding: .utf8)!
                         let jsonNS = jsonString as NSString
                         sqlite3_bind_text(statement, 15, jsonNS.utf8String, -1, SQLITE_TRANSIENT)
-                    } else {
+                    } catch {
+                        print("⚠️ Could not serialize attachment metadata: \(error)")
                         sqlite3_bind_null(statement, 15)
                     }
                 } else {
@@ -660,7 +687,16 @@ class Queue {
                        expressive_send_style_id
                 FROM messages
                 WHERE uploaded = 0
-                ORDER BY date ASC
+                -- NEWEST FIRST. The backfill now reaches back twenty years, and
+                -- oldest-first meant the box spent hours knowing only 2017 while
+                -- today's conversation sat in the queue behind two decades of
+                -- history — which is exactly backwards for a life-log, where the
+                -- recent past is what anything actually asks about.
+                --
+                -- Freshness first, history filling in behind it. Correctness is
+                -- unaffected (the box dedups on GUID), only the order in which the
+                -- box becomes useful.
+                ORDER BY date DESC
                 LIMIT ?
             """
             

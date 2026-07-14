@@ -16,7 +16,10 @@ struct Message {
     let isSent: Bool
     let cacheHasAttachments: Bool
     let attachmentCount: Int?
-    let attachmentInfo: [[String: Any]]?
+    /// Metadata only — filename, type, size, and the on-disk path. Never the bytes.
+    /// Filled in after the message row is read, by a separate query (see
+    /// `MessageMonitor.fetchAttachments`), which is why this is `var`.
+    var attachmentInfo: [[String: Any]]?
     let groupTitle: String?
     let associatedMessageGuid: String?
     let associatedMessageType: Int?

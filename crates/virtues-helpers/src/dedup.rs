@@ -51,6 +51,129 @@ pub fn build_batch_insert_query(
     query
 }
 
+/// Build a multi-row `INSERT ... ON CONFLICT ({conflict}) DO UPDATE`, correcting the
+/// listed `update_columns` on rows that already exist.
+///
+/// # Why this exists alongside `build_batch_insert_query`
+///
+/// `DO NOTHING` makes re-ingest a no-op, which is exactly right for a *cloud* sync: if
+/// Gmail's transform was wrong, we re-fetch from Gmail. It is exactly wrong for a
+/// *device* stream, where there is no upstream to re-fetch from and the fix has to
+/// land on the rows we already have.
+///
+/// The case that forced it: 845 iMessages hold a bare U+FFFC — the invisible
+/// placeholder for a photo — because the collector never sent attachment metadata.
+/// Under `DO NOTHING`, teaching it to send that metadata would fix *new* messages and
+/// leave nine years of history permanently blank. The correction can only reach them
+/// through the conflict.
+///
+/// # The two rules encoded here
+///
+/// **`metadata` is merged, never replaced** (`metadata || EXCLUDED.metadata`). It is
+/// live mutable state that things *other than the transform* write to — the
+/// transcription action keeps its `transcribe_attempts` give-up counter there — so
+/// overwriting it wholesale would reset that counter and revive a runaway.
+///
+/// **The caller names the columns it means to correct.** A deny-list would silently
+/// start updating any column added later; an allow-list makes each call site state its
+/// intent, so a column like `from_name` — owned by the *resolver*, not the transform —
+/// simply never appears and cannot be clobbered.
+///
+/// Emits `RETURNING (xmax = 0) AS inserted` so callers can tell a genuinely new row
+/// from a corrected one. `rows_affected()` counts both identically, which would leave
+/// a backfill unable to report whether it actually fixed anything.
+pub fn build_batch_upsert_query(
+    table: &str,
+    columns: &[&str],
+    conflict_column: &str,
+    update_columns: &[&str],
+    num_rows: usize,
+) -> String {
+    debug_assert!(
+        update_columns.iter().all(|c| columns.contains(c)),
+        "update_columns must be a subset of columns"
+    );
+    debug_assert!(
+        !update_columns
+            .iter()
+            .any(|c| *c == "id" || *c == "created_at" || *c == conflict_column),
+        "identity columns (id / created_at / the conflict key) must never be updated"
+    );
+
+    let mut query = build_batch_insert_query(table, columns, conflict_column, num_rows);
+    // Swap the DO NOTHING tail for a DO UPDATE.
+    let do_nothing = format!(" ON CONFLICT ({}) DO NOTHING", conflict_column);
+    query.truncate(query.len() - do_nothing.len());
+
+    let assignments: Vec<String> = update_columns
+        .iter()
+        .map(|c| {
+            if *c == "metadata" {
+                format!("{c} = {table}.{c} || EXCLUDED.{c}")
+            } else {
+                format!("{c} = EXCLUDED.{c}")
+            }
+        })
+        .chain(std::iter::once("updated_at = now()".to_string()))
+        .collect();
+
+    query.push_str(&format!(
+        " ON CONFLICT ({}) DO UPDATE SET {} RETURNING (xmax = 0) AS inserted",
+        conflict_column,
+        assignments.join(", ")
+    ));
+
+    query
+}
+
 /// Default batch size for bulk inserts. iOS payloads are typically smaller than
 /// this, but HealthKit initial sync (90 days) can send thousands of records per stream.
 pub const BATCH_SIZE: usize = 500;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn upsert_merges_metadata_and_replaces_the_rest() {
+        let sql = build_batch_upsert_query(
+            "data_communication_message",
+            &["id", "body", "metadata", "source_stream_id"],
+            "source_stream_id",
+            &["body", "metadata"],
+            1,
+        );
+        // The correction lands on the existing row...
+        assert!(sql.contains("ON CONFLICT (source_stream_id) DO UPDATE SET"));
+        assert!(sql.contains("body = EXCLUDED.body"));
+        // ...but metadata is MERGED, or the transcription give-up counter resets.
+        assert!(sql.contains("metadata = data_communication_message.metadata || EXCLUDED.metadata"));
+        assert!(!sql.contains("metadata = EXCLUDED.metadata"));
+        // And a corrected row must be distinguishable from a new one.
+        assert!(sql.contains("RETURNING (xmax = 0) AS inserted"));
+        assert!(!sql.contains("DO NOTHING"));
+    }
+
+    #[test]
+    fn unlisted_columns_are_never_touched() {
+        // `from_name` is written by the entity resolver, not the transform. It is in the
+        // INSERT's blast radius only if someone lists it — and it must not be.
+        let sql = build_batch_upsert_query(
+            "data_communication_message",
+            &["id", "body", "from_name", "source_stream_id"],
+            "source_stream_id",
+            &["body"],
+            1,
+        );
+        assert!(!sql.contains("from_name = EXCLUDED"));
+    }
+
+    #[test]
+    fn insert_builder_is_unchanged() {
+        let sql = build_batch_insert_query("t", &["a", "b"], "b", 2);
+        assert_eq!(
+            sql,
+            "INSERT INTO t (a, b) VALUES ($1, $2), ($3, $4) ON CONFLICT (b) DO NOTHING"
+        );
+    }
+}
