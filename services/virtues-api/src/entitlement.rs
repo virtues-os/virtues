@@ -549,8 +549,9 @@ mod tests {
 
         // balance projection == SUM(ledger).
         let acct = get_by_account_id(&pool, "acct-low").await.unwrap().unwrap();
+        // SUM(int8) is NUMERIC in Postgres; cast so it decodes as i64.
         let (sum,): (Option<i64>,) =
-            sqlx::query_as("SELECT SUM(micros) FROM ledger WHERE account_id = $1")
+            sqlx::query_as("SELECT SUM(micros)::bigint FROM ledger WHERE account_id = $1")
                 .bind("acct-low")
                 .fetch_one(&pool)
                 .await
