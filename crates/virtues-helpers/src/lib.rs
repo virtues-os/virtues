@@ -30,6 +30,7 @@ pub mod contract;
 pub mod crypto;
 pub mod db;
 pub mod dedup;
+pub mod handles;
 pub mod error;
 pub mod ids;
 pub mod input;
