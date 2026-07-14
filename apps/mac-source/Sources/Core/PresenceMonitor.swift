@@ -17,10 +17,18 @@ import IOKit.pwr_mgt
 ///     no input, focused app holds the display → watching   (a video, a call)
 ///     no input, nothing holding the display   → idle
 ///     screen locked / screensaver / switched  → locked
-///     machine asleep                          → asleep
+///     machine suspended (lid closed)          → suspended
 ///
 /// `watching` counts as usage; `idle` does not. A naive HID-idle check would call
 /// a 40-minute lecture "away" and delete it.
+///
+/// SUSPENDED, not "asleep". A Mac can observe its own lid closing; it cannot
+/// observe you sleeping. Human sleep already has a table — data_health_sleep, fed
+/// by a watch that can actually measure it — and letting this collector emit
+/// "asleep" would turn closing the lid at lunch into a nap in your life story.
+/// Everything here is what the MACHINE saw; whether you were present, working, or
+/// asleep is an inference for the narrative layer to make by fusing devices, with
+/// the evidence still there to overrule it.
 final class PresenceMonitor {
     private let queue: Queue
     private var timer: DispatchSourceTimer?
@@ -113,11 +121,11 @@ final class PresenceMonitor {
     /// synchronous — enqueue and do nothing else.
     @objc private func willSleep() {
         clearIdleAndWatching(at: Date())
-        emit(Event.EventType.sleep, at: Date())
+        emit(Event.EventType.suspend, at: Date())
     }
 
     @objc private func didWake() {
-        emit(Event.EventType.wake, at: Date())
+        emit(Event.EventType.resume, at: Date())
     }
 
     // MARK: - Idle / watching

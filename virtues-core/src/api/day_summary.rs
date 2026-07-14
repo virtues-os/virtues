@@ -577,7 +577,7 @@ async fn build_app_usage_section(
                CAST(SUM(
                    EXTRACT(EPOCH FROM (end_time - start_time))
                ) AS BIGINT) as total_seconds
-        FROM data_activity_app_usage
+        FROM data_activity_app_session
         WHERE start_time >= $1::timestamptz AND start_time <= $2::timestamptz
           AND app_name IS NOT NULL
         GROUP BY app_name
