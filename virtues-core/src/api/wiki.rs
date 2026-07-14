@@ -1864,13 +1864,30 @@ pub async fn get_day_sources(
                 .await
         };
 
-        let rows = match rows {
-            Ok(r) => r,
-            Err(e) => {
-                tracing::warn!(ontology = ont.name, error = %e, "Failed to query day sources");
-                continue;
-            }
-        };
+        // A day-source query that fails is not a warning. It means the day is being
+        // assembled with a HOLE in it — and then an LLM writes a confident account
+        // of a day it was never shown.
+        //
+        // Two of these were broken on the box for as long as they have existed:
+        //
+        //   location_visit       `encode(t.id,'hex')` on a TEXT id
+        //   activity_app_session `extra_where` missing its leading AND
+        //
+        // Both raised here, both were swallowed with `warn!` + `continue`, and the
+        // cron reported SUCCESS every single night. The result: 103 days of a real
+        // life produced 2 events and zero autobiographies, and nothing anywhere said
+        // a word about it.
+        //
+        // A missing source is a broken query, and a broken query is a bug to fix —
+        // never a day to fabricate around it.
+        let rows = rows.map_err(|e| {
+            Error::Database(format!(
+                "day source query failed for ontology `{}` — the day cannot be \
+                 assembled without it, and generating a narrative from the gap would \
+                 invent a day you did not live: {e}",
+                ont.name
+            ))
+        })?;
 
         // Sanity check
         if rows.len() > 5000 {
