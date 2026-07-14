@@ -237,13 +237,26 @@ pub async fn write_imessages(db: &PgPool, messages: &[Value]) -> Result<usize> {
                 .and_then(|v| v.as_i64())
                 .is_some_and(|n| n > 0);
         let group_title = m.get("group_title").and_then(|v| v.as_str());
-        // A group chat has a name, or a chat guid that isn't a bare 1:1 handle.
-        let is_group = group_title.is_some_and(|t| !t.is_empty());
+
+        // The chat GUID encodes group-ness, and it's the only reliable signal:
+        // `group_title` is empty for most group chats (people don't name them), so
+        // keying on it found zero groups.
+        //
+        //   any;-;+16025778741            1:1
+        //   any;+;chat646103172830255689  group
+        let is_group = chat_guid.as_deref().is_some_and(|g| g.contains(";+;"));
 
         // A tapback IS a message row in chat.db: `associated_message_type` says which
         // reaction (2000-3005), and `associated_message_guid` points at the message it
         // reacts TO. That target is exactly what reply_to_message_id is for.
-        let reaction_type = m.get("associated_message_type").and_then(|v| v.as_i64());
+        //
+        // ZERO means "not a reaction" — it is not NULL. Storing it verbatim tagged
+        // every ordinary message as a reaction of type 0, which is how you end up with
+        // "500 of 500 messages have reactions".
+        let reaction_type = m
+            .get("associated_message_type")
+            .and_then(|v| v.as_i64())
+            .filter(|t| *t > 0);
         let reply_to = m
             .get("associated_message_guid")
             .and_then(|v| v.as_str())
