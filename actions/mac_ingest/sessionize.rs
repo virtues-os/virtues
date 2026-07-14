@@ -1,4 +1,4 @@
-//! Stateful sessionization: attended app sessions + device state.
+//! Stateful sessionization: attended app sessions.
 //!
 //! The old aggregator grouped events into sessions WITHIN a single upload batch.
 //! That cannot work, and it wasn't a tuning problem. The collector emits events
@@ -10,17 +10,19 @@
 //! 326 of 429 recorded hours came from sessions longer than the upload interval,
 //! which steady-state collection cannot produce.
 //!
-//! So state lives in Postgres, not in a 5-minute window. One state machine, one
-//! ordered event stream, writing two tables that cannot disagree because the same
-//! pass writes both:
+//! So state lives in Postgres, not in a 5-minute window. A session is opened by
+//! focus, kept alive by heartbeats, and closed by the device event that ended it —
+//! a switch, a lock, going idle, the lid closing. `closed_by` records WHICH, and
+//! that is why there is no second "presence" table: the reason you stopped lives on
+//! the session, so the gap that follows already explains itself. (`stale` means the
+//! collector died mid-session, which is what distinguishes "we weren't watching"
+//! from "you walked away".) The raw device events are archived in the lake, so a
+//! full attention timeline can be DERIVED later if anyone ever wants one — no need
+//! to model a question nobody has asked.
 //!
-//!   data_activity_app_session   what you DID — attended time in an app
-//!   data_activity_device_state  what the MACHINE saw — active/watching/idle/
-//!                               locked/suspended. Tiles the timeline.
-//!
-//! `suspended`, not "asleep": a Mac can observe its lid closing, not your sleeping.
-//! Human sleep belongs to the Watch (data_health_sleep). Letting the Mac claim
-//! "asleep" would turn closing the lid at lunch into a nap.
+//! `suspend` means the MACHINE slept. It says nothing about whether you did: a Mac
+//! can observe its lid closing, not your sleeping. Human sleep is data_health_sleep,
+//! from a watch that can actually measure it.
 //!
 //! A session left open at the end of a batch STAYS open. The next batch — minutes
 //! or hours later — closes it. That is the whole fix.
@@ -33,7 +35,6 @@ use uuid::Uuid;
 
 const PROVIDER: &str = "mac";
 const SESSION_TABLE: &str = "mac_apps";
-const STATE_TABLE: &str = "mac_device_state";
 
 /// A flick through the app switcher isn't a session.
 const MIN_SESSION: Duration = Duration::seconds(1);
@@ -63,8 +64,8 @@ struct Ev {
 
 /// Ingest one batch of interleaved focus + device events.
 ///
-/// Returns `(sessions_opened, state_spans_opened)`.
-pub async fn ingest(db: &PgPool, device_id: &str, events: &[Value]) -> Result<(usize, usize)> {
+/// Returns the number of sessions opened.
+pub async fn ingest(db: &PgPool, device_id: &str, events: &[Value]) -> Result<usize> {
     // True time order across BOTH kinds of event. Sessionizing means interleaving
     // "you switched to Cursor" with "you walked away" — order IS the semantics. An
     // unparseable timestamp is skipped rather than defaulting to the wall clock,
@@ -99,22 +100,13 @@ pub async fn ingest(db: &PgPool, device_id: &str, events: &[Value]) -> Result<(u
     evs.sort_by_key(|e| e.at);
 
     let mut sessions = 0usize;
-    let mut spans = 0usize;
 
     for ev in &evs {
-        // Device state must TILE. Any event at all is proof the machine was up and
-        // the collector was running, so if nothing is open we're `active` from here.
-        // Without this, "active" would be the GAP between other states — and a gap
-        // is also what a stopped collector looks like, so downtime would silently
-        // render as you sitting at the machine. That is the loginwindow mistake in
-        // a new costume: absence of signal read as presence of fact.
-        spans += ensure_state(db, device_id, "active", ev.at).await?;
-
         match ev.kind.as_str() {
             "focus_gained" | "launch" => {
+                // The lock screen is not an app. Focusing it means you left.
                 if is_absence_proxy(&ev.bundle) {
                     close_session(db, device_id, ev.at, "lock").await?;
-                    spans += open_state(db, device_id, "locked", ev.at).await?;
                     continue;
                 }
                 sessions += open_session(db, device_id, ev).await?;
@@ -132,36 +124,19 @@ pub async fn ingest(db: &PgPool, device_id: &str, events: &[Value]) -> Result<(u
             }
             "idle_start" => {
                 close_session(db, device_id, ev.at, "idle").await?;
-                spans += open_state(db, device_id, "idle", ev.at).await?;
             }
-            // A video is attention — it just isn't typing. The session stays OPEN;
-            // only the device state changes.
-            "watch_start" => {
-                mark_attention(db, device_id, "watching").await?;
-                spans += open_state(db, device_id, "watching", ev.at).await?;
-            }
-            "watch_end" => {
-                mark_attention(db, device_id, "active").await?;
-                spans += open_state(db, device_id, "active", ev.at).await?;
-            }
-            "idle_end" | "unlock" | "resume" => {
-                spans += open_state(db, device_id, "active", ev.at).await?;
-            }
-            "lock" => {
-                close_session(db, device_id, ev.at, "lock").await?;
-                spans += open_state(db, device_id, "locked", ev.at).await?;
-            }
+            // A video IS attention — it just isn't typing. The session stays OPEN.
+            "watch_start" => mark_attention(db, device_id, "watching").await?,
+            "watch_end" => mark_attention(db, device_id, "active").await?,
+            "lock" => close_session(db, device_id, ev.at, "lock").await?,
             // The MACHINE slept. Says nothing about whether you did.
-            "suspend" => {
-                close_session(db, device_id, ev.at, "suspend").await?;
-                spans += open_state(db, device_id, "suspended", ev.at).await?;
-            }
+            "suspend" => close_session(db, device_id, ev.at, "suspend").await?,
             _ => {}
         }
     }
 
     reap_stale(db, device_id).await?;
-    Ok((sessions, spans))
+    Ok(sessions)
 }
 
 // ── app sessions ────────────────────────────────────────────────────────────
@@ -313,100 +288,10 @@ async fn close_session(
     Ok(())
 }
 
-// ── device state ────────────────────────────────────────────────────────────
-
-/// Open `state` only if it isn't already the current one — states are maximal
-/// intervals, so re-opening the same state would shred the timeline into slivers.
-async fn open_state(
-    db: &PgPool,
-    device_id: &str,
-    state: &str,
-    at: DateTime<Utc>,
-) -> Result<usize> {
-    if current_state(db, device_id).await?.as_deref() == Some(state) {
-        return Ok(0);
-    }
-    close_state(db, device_id, at).await?;
-
-    let stream_id = format!("{device_id}:{state}:{}", at.timestamp());
-    let id = Uuid::new_v5(
-        &Uuid::NAMESPACE_OID,
-        format!("mac:device_state:{stream_id}").as_bytes(),
-    )
-    .to_string();
-
-    sqlx::query(
-        "INSERT INTO data_activity_device_state (
-             id, device_id, state, started_at, ended_at, is_open,
-             source_stream_id, source_table, source_provider
-         ) VALUES ($1, $2, $3, $4, $4, true, $5, $6, $7)
-         ON CONFLICT (source_stream_id) DO NOTHING",
-    )
-    .bind(&id)
-    .bind(device_id)
-    .bind(state)
-    .bind(at)
-    .bind(&stream_id)
-    .bind(STATE_TABLE)
-    .bind(PROVIDER)
-    .execute(db)
-    .await?;
-
-    Ok(1)
-}
-
-/// Open `state` only if NOTHING is open — used to establish `active` from any event
-/// at all, without clobbering a real state we're already in.
-async fn ensure_state(
-    db: &PgPool,
-    device_id: &str,
-    state: &str,
-    at: DateTime<Utc>,
-) -> Result<usize> {
-    if current_state(db, device_id).await?.is_some() {
-        // Keep the open state's end walking forward, so the timeline stays tiled
-        // even through a long idle.
-        sqlx::query(
-            "UPDATE data_activity_device_state
-                SET ended_at = greatest(ended_at, $1), updated_at = now()
-              WHERE device_id = $2 AND is_open",
-        )
-        .bind(at)
-        .bind(device_id)
-        .execute(db)
-        .await?;
-        return Ok(0);
-    }
-    open_state(db, device_id, state, at).await
-}
-
-async fn current_state(db: &PgPool, device_id: &str) -> Result<Option<String>> {
-    let row = sqlx::query(
-        "SELECT state FROM data_activity_device_state
-          WHERE device_id = $1 AND is_open
-          ORDER BY started_at DESC LIMIT 1",
-    )
-    .bind(device_id)
-    .fetch_optional(db)
-    .await?;
-    Ok(row.map(|r| r.get::<String, _>("state")))
-}
-
-async fn close_state(db: &PgPool, device_id: &str, at: DateTime<Utc>) -> Result<()> {
-    sqlx::query(
-        "UPDATE data_activity_device_state
-            SET ended_at = greatest(ended_at, $1), is_open = false, updated_at = now()
-          WHERE device_id = $2 AND is_open",
-    )
-    .bind(at)
-    .bind(device_id)
-    .execute(db)
-    .await?;
-    Ok(())
-}
-
-/// Intervals whose close never arrived (power cut, panic, killed process). Clamp
-/// them where we last knew they were alive.
+/// A session whose close never arrived — a power cut, a panic, a killed process, an
+/// update swapping the binary. Clamp it where we last knew it was alive (its final
+/// heartbeat) and mark it `stale`, so a gap caused by the COLLECTOR dying can be
+/// told apart from a gap caused by you walking away.
 async fn reap_stale(db: &PgPool, device_id: &str) -> Result<()> {
     sqlx::query(
         "UPDATE data_activity_app_session
@@ -417,17 +302,6 @@ async fn reap_stale(db: &PgPool, device_id: &str) -> Result<()> {
     .bind(MAX_OPEN)
     .execute(db)
     .await?;
-
-    sqlx::query(
-        "UPDATE data_activity_device_state
-            SET is_open = false, updated_at = now()
-          WHERE device_id = $1 AND is_open AND now() - started_at > $2",
-    )
-    .bind(device_id)
-    .bind(MAX_OPEN)
-    .execute(db)
-    .await?;
-
     Ok(())
 }
 

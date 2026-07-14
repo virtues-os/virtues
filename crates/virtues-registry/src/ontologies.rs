@@ -470,44 +470,6 @@ pub fn registered_ontologies() -> Vec<OntologyDescriptor> {
             //                    who  whom what when where why  how
             is_activation_signal: true,
         },
-        // What the MACHINE saw — and only that. It is the counterpart that lets app
-        // usage be honest: without it, absence is invisible, walking away with an app
-        // focused looks exactly like using it, and `loginwindow` arrives as though it
-        // were an app (which is how the lock screen became the box's most-used
-        // "application", at 211 of 429 hours).
-        //
-        // Deliberately NOT called sleep, and the state is `suspended`: a Mac can
-        // observe its lid closing, not you sleeping. Human sleep is data_health_sleep,
-        // from a watch that can measure it. Whether you were present, working, or
-        // asleep is an INFERENCE for the narrative layer to make by fusing devices —
-        // a column that has already declared "asleep" can never be taken back.
-        OntologyDescriptor {
-            name: "activity_device_state",
-            display_name: "Device State",
-            description: "What the machine observed: active, watching, idle, locked, suspended",
-            domain: "activity",
-            table_name: "data_activity_device_state",
-            source_streams: vec!["stream_mac_device_state"],
-            timestamp_column: "started_at",
-            end_timestamp_column: Some("ended_at"),
-            embedding: None,
-            // No prose: presence is a state machine (active/idle/locked), and a
-            // state name is not a mention of anyone.
-            extraction: None,
-            temporal_type: TemporalType::Discrete,
-            day_source: Some(DaySourceConfig {
-                source_type: "presence",
-                source_type_sql: None,
-                label_sql: "t.state",
-                preview_sql: "NULL",
-                id_sql: "t.id",
-                extra_where: Some("t.is_open = false"),
-                use_date_filter: false,
-            }),
-            continuous_agg: None,
-            //                    who  whom what when where why  how
-            is_activation_signal: false,
-        },
         OntologyDescriptor {
             name: "activity_web_browsing",
             display_name: "Web Browsing",
