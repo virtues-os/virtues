@@ -75,7 +75,12 @@ async fn bearer_client_calls_with_api_key() {
         resp.status,
         resp.body.as_object().map(|o| o.keys().collect::<Vec<_>>())
     );
-    assert!(resp.is_success(), "expected 2xx, got {}: {}", resp.status, resp.body);
+    assert!(
+        resp.is_success(),
+        "expected 2xx, got {}: {}",
+        resp.status,
+        resp.body
+    );
     assert!(
         resp.body["choices"][0]["message"]["content"].is_string(),
         "expected a chat completion"
