@@ -63,8 +63,10 @@ struct Event: Codable {
         static let watchEnd = "watch_end"
         static let lock = "lock"
         static let unlock = "unlock"
-        static let sleep = "sleep"
-        static let wake = "wake"
+        /// The MACHINE suspended (lid closed). Says nothing about whether the human
+        /// slept — that is data_health_sleep, from a device that can measure it.
+        static let suspend = "suspend"
+        static let resume = "resume"
     }
     
     var toDictionary: [String: Any] {

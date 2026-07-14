@@ -129,7 +129,7 @@ fn get_table_metadata() -> HashMap<&'static str, TableMetadata> {
     // ============================================================================
     // DATA TABLES - Activity
     // ============================================================================
-    m.insert("data_activity_app_usage", TableMetadata {
+    m.insert("data_activity_app_session", TableMetadata {
         description: "Desktop/mobile app usage sessions",
         category: "activity",
         key_columns: &["app_name", "app_bundle_id", "app_category", "start_time", "end_time", "window_title", "url"],

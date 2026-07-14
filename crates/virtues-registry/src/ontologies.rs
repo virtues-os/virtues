@@ -443,11 +443,11 @@ pub fn registered_ontologies() -> Vec<OntologyDescriptor> {
         },
         // ===== Activity Ontologies =====
         OntologyDescriptor {
-            name: "activity_app_usage",
+            name: "activity_app_session",
             display_name: "App Usage",
-            description: "Attended, focused time in an app — bounded by idle, lock and sleep",
+            description: "Attended time in an app — bounded by idle, lock and machine suspend",
             domain: "activity",
-            table_name: "data_activity_app_usage",
+            table_name: "data_activity_app_session",
             source_streams: vec!["stream_mac_apps"],
             timestamp_column: "start_time",
             end_timestamp_column: Some("end_time"),
@@ -470,18 +470,24 @@ pub fn registered_ontologies() -> Vec<OntologyDescriptor> {
             //                    who  whom what when where why  how
             is_activation_signal: true,
         },
-        // Where the human was — the counterpart to app usage, and the reason app
-        // usage can finally be honest. Without it, absence is invisible: walking
-        // away with an app focused looked identical to using it, and `loginwindow`
-        // (the lock screen) arrived as though it were an app, becoming the box's
-        // most-used "application" at 211 of 429 hours.
+        // What the MACHINE saw — and only that. It is the counterpart that lets app
+        // usage be honest: without it, absence is invisible, walking away with an app
+        // focused looks exactly like using it, and `loginwindow` arrives as though it
+        // were an app (which is how the lock screen became the box's most-used
+        // "application", at 211 of 429 hours).
+        //
+        // Deliberately NOT called sleep, and the state is `suspended`: a Mac can
+        // observe its lid closing, not you sleeping. Human sleep is data_health_sleep,
+        // from a watch that can measure it. Whether you were present, working, or
+        // asleep is an INFERENCE for the narrative layer to make by fusing devices —
+        // a column that has already declared "asleep" can never be taken back.
         OntologyDescriptor {
-            name: "activity_presence",
-            display_name: "Presence",
-            description: "Whether you were at the machine: active, watching, idle, locked, asleep",
+            name: "activity_device_state",
+            display_name: "Device State",
+            description: "What the machine observed: active, watching, idle, locked, suspended",
             domain: "activity",
-            table_name: "data_activity_presence",
-            source_streams: vec!["stream_mac_presence"],
+            table_name: "data_activity_device_state",
+            source_streams: vec!["stream_mac_device_state"],
             timestamp_column: "started_at",
             end_timestamp_column: Some("ended_at"),
             embedding: None,

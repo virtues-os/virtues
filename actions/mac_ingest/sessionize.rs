@@ -1,24 +1,26 @@
-//! Stateful sessionization: app usage + presence.
+//! Stateful sessionization: attended app sessions + device state.
 //!
 //! The old aggregator grouped events into sessions WITHIN a single upload batch.
 //! That cannot work, and it wasn't a tuning problem. The collector emits events
 //! only when something changes — focus(Cursor) at 12:00, unfocus(Cursor) at 12:40 —
-//! so a real 40-minute session puts its focus in one 5-minute batch (start == end →
+//! so a real 40-minute session put its focus in one 5-minute batch (start == end →
 //! dropped as noise) and its unfocus in a batch 40 minutes later (also dropped).
-//! **A deep-work session recorded nothing.** Meanwhile backlog batches (a collector
-//! restart, upload backoff, sleep/wake) delivered hours of events at once and the
-//! consecutive-run merge fabricated enormous spans out of them: 326 of 429 recorded
-//! hours came from sessions longer than the upload interval, which steady-state
-//! collection is structurally incapable of producing. The box's most-used "app" was
-//! the lock screen, at 211 hours.
+//! **A deep-work session recorded nothing.** Meanwhile backlog batches delivered
+//! hours of events at once and the consecutive-run merge fabricated enormous spans:
+//! 326 of 429 recorded hours came from sessions longer than the upload interval,
+//! which steady-state collection cannot produce.
 //!
-//! So state lives in Postgres, not in a 5-minute window:
+//! So state lives in Postgres, not in a 5-minute window. One state machine, one
+//! ordered event stream, writing two tables that cannot disagree because the same
+//! pass writes both:
 //!
-//!   focus/launch     → open a session (or keep the current one)
-//!   heartbeat        → the app is STILL focused; advance its provisional end
-//!   unfocus/quit     → close it
-//!   idle/lock/sleep  → close it, and open a presence span
-//!   watch            → NOT a close: a video is attention, just not typing
+//!   data_activity_app_session   what you DID — attended time in an app
+//!   data_activity_device_state  what the MACHINE saw — active/watching/idle/
+//!                               locked/suspended. Tiles the timeline.
+//!
+//! `suspended`, not "asleep": a Mac can observe its lid closing, not your sleeping.
+//! Human sleep belongs to the Watch (data_health_sleep). Letting the Mac claim
+//! "asleep" would turn closing the lid at lunch into a nap.
 //!
 //! A session left open at the end of a batch STAYS open. The next batch — minutes
 //! or hours later — closes it. That is the whole fix.
@@ -31,21 +33,20 @@ use uuid::Uuid;
 
 const PROVIDER: &str = "mac";
 const SESSION_TABLE: &str = "mac_apps";
-const PRESENCE_TABLE: &str = "mac_presence";
+const STATE_TABLE: &str = "mac_device_state";
 
-/// Sessions shorter than this are noise (a flick through the app switcher).
+/// A flick through the app switcher isn't a session.
 const MIN_SESSION: Duration = Duration::seconds(1);
 
-/// A session open longer than this lost its close event — a hard power-off, a
-/// kernel panic, a battery that died. Clamp it to the last moment we actually knew
-/// it was alive (its heartbeat) rather than letting it run forever.
+/// An interval open longer than this lost its close event — a power cut, a panic,
+/// a killed process. Clamp it to the last moment we knew it was alive rather than
+/// letting it run forever and re-inventing the 665-minute session.
 const MAX_OPEN: Duration = Duration::hours(8);
 
-/// `loginwindow` is the lock screen and `ScreenSaverEngine` is the screensaver.
-/// They are not apps you used; they are the machine telling you nobody is there.
-/// Recording them as app usage is how "the lock screen" became the most-used
-/// application on the box.
-fn is_presence_proxy(bundle: &str) -> bool {
+/// `loginwindow` is the lock screen; `ScreenSaverEngine` is the screensaver. They
+/// are not apps you used — they are the machine saying nobody is there. Recording
+/// them as app usage is how the lock screen became the box's most-used application.
+fn is_absence_proxy(bundle: &str) -> bool {
     matches!(
         bundle,
         "com.apple.loginwindow" | "com.apple.ScreenSaver.Engine" | "com.apple.SecurityAgent"
@@ -60,15 +61,14 @@ struct Ev {
     title: Option<String>,
 }
 
-/// Ingest one batch of interleaved focus + presence events.
+/// Ingest one batch of interleaved focus + device events.
 ///
-/// Returns `(sessions_touched, presence_spans_touched)`.
+/// Returns `(sessions_opened, state_spans_opened)`.
 pub async fn ingest(db: &PgPool, device_id: &str, events: &[Value]) -> Result<(usize, usize)> {
     // True time order across BOTH kinds of event. Sessionizing means interleaving
-    // "you switched to Cursor" with "you walked away" — order is the whole
-    // semantics. An unparseable timestamp sorts last and is then skipped, rather
-    // than defaulting to the wall clock (which would make a record's identity
-    // depend on when it happened to be ingested).
+    // "you switched to Cursor" with "you walked away" — order IS the semantics. An
+    // unparseable timestamp is skipped rather than defaulting to the wall clock,
+    // which would make a record's identity depend on when it was ingested.
     let mut evs: Vec<Ev> = events
         .iter()
         .filter_map(|e| {
@@ -102,78 +102,83 @@ pub async fn ingest(db: &PgPool, device_id: &str, events: &[Value]) -> Result<(u
     let mut spans = 0usize;
 
     for ev in &evs {
+        // Device state must TILE. Any event at all is proof the machine was up and
+        // the collector was running, so if nothing is open we're `active` from here.
+        // Without this, "active" would be the GAP between other states — and a gap
+        // is also what a stopped collector looks like, so downtime would silently
+        // render as you sitting at the machine. That is the loginwindow mistake in
+        // a new costume: absence of signal read as presence of fact.
+        spans += ensure_state(db, device_id, "active", ev.at).await?;
+
         match ev.kind.as_str() {
             "focus_gained" | "launch" => {
-                // The lock screen is not an app. Focusing it means you left.
-                if is_presence_proxy(&ev.bundle) {
-                    close_open_session(db, device_id, ev.at, "lock").await?;
-                    open_span(db, device_id, "locked", ev.at).await?;
-                    spans += 1;
+                if is_absence_proxy(&ev.bundle) {
+                    close_session(db, device_id, ev.at, "lock").await?;
+                    spans += open_state(db, device_id, "locked", ev.at).await?;
                     continue;
                 }
-                close_open_span(db, device_id, ev.at).await?;
                 sessions += open_session(db, device_id, ev).await?;
             }
-            // "Still focused." Advances the provisional end so an interrupted
-            // session is clamped to within a heartbeat of the truth, not to nothing.
+            // "Still focused." Advances the provisional end, so a session
+            // interrupted by a crash or an update is clamped to within a heartbeat
+            // of the truth instead of to nothing.
             "heartbeat" => {
-                if is_presence_proxy(&ev.bundle) {
-                    continue;
+                if !is_absence_proxy(&ev.bundle) {
+                    touch_session(db, device_id, ev).await?;
                 }
-                touch_open_session(db, device_id, ev).await?;
             }
             "focus_lost" | "quit" => {
-                close_open_session(db, device_id, ev.at, "switch").await?;
+                close_session(db, device_id, ev.at, "switch").await?;
             }
             "idle_start" => {
-                close_open_session(db, device_id, ev.at, "idle").await?;
-                open_span(db, device_id, "idle", ev.at).await?;
-                spans += 1;
+                close_session(db, device_id, ev.at, "idle").await?;
+                spans += open_state(db, device_id, "idle", ev.at).await?;
             }
-            // Watching a video IS attention — it just isn't typing. The session
-            // stays open; we only note the presence state.
+            // A video is attention — it just isn't typing. The session stays OPEN;
+            // only the device state changes.
             "watch_start" => {
-                open_span(db, device_id, "watching", ev.at).await?;
-                spans += 1;
+                mark_attention(db, device_id, "watching").await?;
+                spans += open_state(db, device_id, "watching", ev.at).await?;
             }
-            "idle_end" | "watch_end" | "unlock" | "wake" => {
-                close_open_span(db, device_id, ev.at).await?;
+            "watch_end" => {
+                mark_attention(db, device_id, "active").await?;
+                spans += open_state(db, device_id, "active", ev.at).await?;
+            }
+            "idle_end" | "unlock" | "resume" => {
+                spans += open_state(db, device_id, "active", ev.at).await?;
             }
             "lock" => {
-                close_open_session(db, device_id, ev.at, "lock").await?;
-                open_span(db, device_id, "locked", ev.at).await?;
-                spans += 1;
+                close_session(db, device_id, ev.at, "lock").await?;
+                spans += open_state(db, device_id, "locked", ev.at).await?;
             }
-            "sleep" => {
-                close_open_session(db, device_id, ev.at, "sleep").await?;
-                open_span(db, device_id, "asleep", ev.at).await?;
-                spans += 1;
+            // The MACHINE slept. Says nothing about whether you did.
+            "suspend" => {
+                close_session(db, device_id, ev.at, "suspend").await?;
+                spans += open_state(db, device_id, "suspended", ev.at).await?;
             }
             _ => {}
         }
     }
 
-    // Anything still open from a session whose close event never arrived.
     reap_stale(db, device_id).await?;
-
     Ok((sessions, spans))
 }
 
-// ── sessions ────────────────────────────────────────────────────────────────
+// ── app sessions ────────────────────────────────────────────────────────────
 
 async fn open_session(db: &PgPool, device_id: &str, ev: &Ev) -> Result<usize> {
     if ev.bundle.is_empty() {
         return Ok(0);
     }
 
-    // Already focused? Then this is a duplicate focus (the 1s poll and the
-    // workspace notification both fire), not a new session.
-    if let Some((_, bundle)) = current_open(db, device_id).await? {
+    // Already focused? Then this is a duplicate focus — the 1s poll and the
+    // workspace notification both fire — not a new session.
+    if let Some(bundle) = open_session_bundle(db, device_id).await? {
         if bundle == ev.bundle {
-            touch_open_session(db, device_id, ev).await?;
+            touch_session(db, device_id, ev).await?;
             return Ok(0);
         }
-        close_open_session(db, device_id, ev.at, "switch").await?;
+        close_session(db, device_id, ev.at, "switch").await?;
     }
 
     let stream_id = format!("{}:{}:{}", device_id, ev.bundle, ev.at.timestamp());
@@ -183,13 +188,11 @@ async fn open_session(db: &PgPool, device_id: &str, ev: &Ev) -> Result<usize> {
     )
     .to_string();
 
-    // end_time is NOT NULL, so an open session's end is PROVISIONAL: it starts
-    // equal to start_time and walks forward with each heartbeat.
     sqlx::query(
-        "INSERT INTO data_activity_app_usage (
+        "INSERT INTO data_activity_app_session (
              id, device_id, app_name, app_bundle_id, start_time, end_time, window_title,
-             is_open, source_stream_id, source_table, source_provider, metadata
-         ) VALUES ($1, $2, $3, $4, $5, $5, $6, true, $7, $8, $9, $10)
+             attention, is_open, source_stream_id, source_table, source_provider, metadata
+         ) VALUES ($1, $2, $3, $4, $5, $5, $6, 'active', true, $7, $8, $9, $10)
          ON CONFLICT (source_stream_id) DO NOTHING",
     )
     .bind(&id)
@@ -201,23 +204,23 @@ async fn open_session(db: &PgPool, device_id: &str, ev: &Ev) -> Result<usize> {
     .bind(&stream_id)
     .bind(SESSION_TABLE)
     .bind(PROVIDER)
-    .bind(json!({ "titles": title_entry(ev) }))
+    .bind(json!({ "titles": titles_of(ev) }))
     .execute(db)
     .await?;
 
     Ok(1)
 }
 
-/// Advance the open session's provisional end, and record a title change.
+/// Advance the open session's provisional end, and accumulate title changes.
 ///
-/// Within one 40-minute Cursor session you touch six files. Splitting on each
-/// title change would just recreate the fragmentation this rewrite exists to fix,
-/// so the titles accumulate as a timeline on ONE session.
-async fn touch_open_session(db: &PgPool, device_id: &str, ev: &Ev) -> Result<()> {
+/// Within one 40-minute Cursor session you touch six files. Splitting on each title
+/// change would recreate the fragmentation this rewrite exists to fix, so titles
+/// accumulate as a timeline on ONE session.
+async fn touch_session(db: &PgPool, device_id: &str, ev: &Ev) -> Result<()> {
     let Some(title) = &ev.title else {
         sqlx::query(
-            "UPDATE data_activity_app_usage
-                SET end_time = $1, updated_at = now()
+            "UPDATE data_activity_app_session
+                SET end_time = greatest(end_time, $1), updated_at = now()
               WHERE device_id = $2 AND app_bundle_id = $3 AND is_open",
         )
         .bind(ev.at)
@@ -229,15 +232,13 @@ async fn touch_open_session(db: &PgPool, device_id: &str, ev: &Ev) -> Result<()>
     };
 
     sqlx::query(
-        "UPDATE data_activity_app_usage
-            SET end_time = $1,
+        "UPDATE data_activity_app_session
+            SET end_time = greatest(end_time, $1),
                 window_title = coalesce(window_title, $4),
                 metadata = jsonb_set(
                     metadata, '{titles}',
-                    CASE
-                      WHEN metadata->'titles' @> $5::jsonb THEN metadata->'titles'
-                      ELSE coalesce(metadata->'titles', '[]'::jsonb) || $5::jsonb
-                    END),
+                    CASE WHEN metadata->'titles' @> $5::jsonb THEN metadata->'titles'
+                         ELSE coalesce(metadata->'titles', '[]'::jsonb) || $5::jsonb END),
                 updated_at = now()
           WHERE device_id = $2 AND app_bundle_id = $3 AND is_open",
     )
@@ -252,25 +253,34 @@ async fn touch_open_session(db: &PgPool, device_id: &str, ev: &Ev) -> Result<()>
     Ok(())
 }
 
-async fn current_open(db: &PgPool, device_id: &str) -> Result<Option<(String, String)>> {
+/// The open session's attention: `watching` while the focused app holds the display
+/// awake, `active` otherwise. Both count as usage.
+async fn mark_attention(db: &PgPool, device_id: &str, attention: &str) -> Result<()> {
+    sqlx::query(
+        "UPDATE data_activity_app_session
+            SET attention = $1, updated_at = now()
+          WHERE device_id = $2 AND is_open",
+    )
+    .bind(attention)
+    .bind(device_id)
+    .execute(db)
+    .await?;
+    Ok(())
+}
+
+async fn open_session_bundle(db: &PgPool, device_id: &str) -> Result<Option<String>> {
     let row = sqlx::query(
-        "SELECT id, app_bundle_id FROM data_activity_app_usage
+        "SELECT app_bundle_id FROM data_activity_app_session
           WHERE device_id = $1 AND is_open
           ORDER BY start_time DESC LIMIT 1",
     )
     .bind(device_id)
     .fetch_optional(db)
     .await?;
-
-    Ok(row.map(|r| {
-        (
-            r.get::<String, _>("id"),
-            r.get::<String, _>("app_bundle_id"),
-        )
-    }))
+    Ok(row.map(|r| r.get::<String, _>("app_bundle_id")))
 }
 
-async fn close_open_session(
+async fn close_session(
     db: &PgPool,
     device_id: &str,
     at: DateTime<Utc>,
@@ -278,9 +288,9 @@ async fn close_open_session(
 ) -> Result<()> {
     // `greatest(end_time, $1)` so a close can never move the end BACKWARDS: idle is
     // back-dated to when input actually stopped, which may precede the last
-    // heartbeat, and a negative-duration session would be worse than a wrong one.
+    // heartbeat, and a negative-duration session is worse than a wrong one.
     sqlx::query(
-        "UPDATE data_activity_app_usage
+        "UPDATE data_activity_app_session
             SET end_time = greatest(end_time, $1), is_open = false, closed_by = $2,
                 updated_at = now()
           WHERE device_id = $3 AND is_open",
@@ -291,9 +301,8 @@ async fn close_open_session(
     .execute(db)
     .await?;
 
-    // Drop the noise: a flick through the app switcher isn't a session.
     sqlx::query(
-        "DELETE FROM data_activity_app_usage
+        "DELETE FROM data_activity_app_session
           WHERE device_id = $1 AND NOT is_open AND end_time - start_time < $2",
     )
     .bind(device_id)
@@ -304,13 +313,103 @@ async fn close_open_session(
     Ok(())
 }
 
-/// A session whose close never arrived (power cut, panic, killed process).
-///
-/// Clamp it to its last heartbeat — the last moment we actually knew it was alive —
-/// rather than letting it run forever and re-inventing the 665-minute session.
+// ── device state ────────────────────────────────────────────────────────────
+
+/// Open `state` only if it isn't already the current one — states are maximal
+/// intervals, so re-opening the same state would shred the timeline into slivers.
+async fn open_state(
+    db: &PgPool,
+    device_id: &str,
+    state: &str,
+    at: DateTime<Utc>,
+) -> Result<usize> {
+    if current_state(db, device_id).await?.as_deref() == Some(state) {
+        return Ok(0);
+    }
+    close_state(db, device_id, at).await?;
+
+    let stream_id = format!("{device_id}:{state}:{}", at.timestamp());
+    let id = Uuid::new_v5(
+        &Uuid::NAMESPACE_OID,
+        format!("mac:device_state:{stream_id}").as_bytes(),
+    )
+    .to_string();
+
+    sqlx::query(
+        "INSERT INTO data_activity_device_state (
+             id, device_id, state, started_at, ended_at, is_open,
+             source_stream_id, source_table, source_provider
+         ) VALUES ($1, $2, $3, $4, $4, true, $5, $6, $7)
+         ON CONFLICT (source_stream_id) DO NOTHING",
+    )
+    .bind(&id)
+    .bind(device_id)
+    .bind(state)
+    .bind(at)
+    .bind(&stream_id)
+    .bind(STATE_TABLE)
+    .bind(PROVIDER)
+    .execute(db)
+    .await?;
+
+    Ok(1)
+}
+
+/// Open `state` only if NOTHING is open — used to establish `active` from any event
+/// at all, without clobbering a real state we're already in.
+async fn ensure_state(
+    db: &PgPool,
+    device_id: &str,
+    state: &str,
+    at: DateTime<Utc>,
+) -> Result<usize> {
+    if current_state(db, device_id).await?.is_some() {
+        // Keep the open state's end walking forward, so the timeline stays tiled
+        // even through a long idle.
+        sqlx::query(
+            "UPDATE data_activity_device_state
+                SET ended_at = greatest(ended_at, $1), updated_at = now()
+              WHERE device_id = $2 AND is_open",
+        )
+        .bind(at)
+        .bind(device_id)
+        .execute(db)
+        .await?;
+        return Ok(0);
+    }
+    open_state(db, device_id, state, at).await
+}
+
+async fn current_state(db: &PgPool, device_id: &str) -> Result<Option<String>> {
+    let row = sqlx::query(
+        "SELECT state FROM data_activity_device_state
+          WHERE device_id = $1 AND is_open
+          ORDER BY started_at DESC LIMIT 1",
+    )
+    .bind(device_id)
+    .fetch_optional(db)
+    .await?;
+    Ok(row.map(|r| r.get::<String, _>("state")))
+}
+
+async fn close_state(db: &PgPool, device_id: &str, at: DateTime<Utc>) -> Result<()> {
+    sqlx::query(
+        "UPDATE data_activity_device_state
+            SET ended_at = greatest(ended_at, $1), is_open = false, updated_at = now()
+          WHERE device_id = $2 AND is_open",
+    )
+    .bind(at)
+    .bind(device_id)
+    .execute(db)
+    .await?;
+    Ok(())
+}
+
+/// Intervals whose close never arrived (power cut, panic, killed process). Clamp
+/// them where we last knew they were alive.
 async fn reap_stale(db: &PgPool, device_id: &str) -> Result<()> {
     sqlx::query(
-        "UPDATE data_activity_app_usage
+        "UPDATE data_activity_app_session
             SET is_open = false, closed_by = 'stale', updated_at = now()
           WHERE device_id = $1 AND is_open AND now() - start_time > $2",
     )
@@ -320,7 +419,7 @@ async fn reap_stale(db: &PgPool, device_id: &str) -> Result<()> {
     .await?;
 
     sqlx::query(
-        "UPDATE data_activity_presence
+        "UPDATE data_activity_device_state
             SET is_open = false, updated_at = now()
           WHERE device_id = $1 AND is_open AND now() - started_at > $2",
     )
@@ -332,53 +431,7 @@ async fn reap_stale(db: &PgPool, device_id: &str) -> Result<()> {
     Ok(())
 }
 
-// ── presence ────────────────────────────────────────────────────────────────
-
-async fn open_span(db: &PgPool, device_id: &str, state: &str, at: DateTime<Utc>) -> Result<()> {
-    close_open_span(db, device_id, at).await?;
-
-    let stream_id = format!("{device_id}:{state}:{}", at.timestamp());
-    let id = Uuid::new_v5(
-        &Uuid::NAMESPACE_OID,
-        format!("mac:presence:{stream_id}").as_bytes(),
-    )
-    .to_string();
-
-    sqlx::query(
-        "INSERT INTO data_activity_presence (
-             id, device_id, state, started_at, ended_at, is_open,
-             source_stream_id, source_table, source_provider
-         ) VALUES ($1, $2, $3, $4, $4, true, $5, $6, $7)
-         ON CONFLICT (source_stream_id) DO NOTHING",
-    )
-    .bind(&id)
-    .bind(device_id)
-    .bind(state)
-    .bind(at)
-    .bind(&stream_id)
-    .bind(PRESENCE_TABLE)
-    .bind(PROVIDER)
-    .execute(db)
-    .await?;
-
-    Ok(())
-}
-
-async fn close_open_span(db: &PgPool, device_id: &str, at: DateTime<Utc>) -> Result<()> {
-    sqlx::query(
-        "UPDATE data_activity_presence
-            SET ended_at = greatest(ended_at, $1), is_open = false, updated_at = now()
-          WHERE device_id = $2 AND is_open",
-    )
-    .bind(at)
-    .bind(device_id)
-    .execute(db)
-    .await?;
-
-    Ok(())
-}
-
-fn title_entry(ev: &Ev) -> Value {
+fn titles_of(ev: &Ev) -> Value {
     match &ev.title {
         Some(t) => json!([{ "t": t }]),
         None => json!([]),

@@ -103,7 +103,7 @@ pub async fn build_hourly_context(
     // App usage
     if let Ok(rows) = sqlx::query(
         r#"SELECT app_name, duration_minutes, window_title
-           FROM data_activity_app_usage
+           FROM data_activity_app_session
            WHERE start_time >= $1 AND start_time < $2
            ORDER BY duration_minutes DESC
            LIMIT 10"#,

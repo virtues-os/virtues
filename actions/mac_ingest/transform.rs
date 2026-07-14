@@ -1,7 +1,7 @@
 //! Mac activity → ontology transforms.
 //!
 //! The Mac client app posts batches of three record kinds in one webhook:
-//!   - `app_events` → aggregated into app sessions in `data_activity_app_usage`
+//!   - `app_events` → aggregated into app sessions in `data_activity_app_session`
 //!   - `browser_history` → `data_activity_web_browsing`
 //!   - `imessages` → `data_communication_message`
 //!
