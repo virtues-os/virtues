@@ -65,8 +65,65 @@ pub struct MentionStats {
 /// When it does, this sweep is what backfills the mention's whole history —
 /// which is why linking one surface once retroactively links all 47 of its
 /// past occurrences.
+/// Teach the resolver who owns the box.
+///
+/// On real data the single loudest name in the mention queue was the user's own —
+/// "Adam", floating across 42 separate records, waiting for a human to answer
+/// "who is this?" about himself. The box has always known: `app_user_profile`
+/// carries his name. Nothing ever told entity resolution.
+///
+/// The fix needs no new machinery. The owner is a person like any other, and the
+/// alias table already exists — so give him his own names as aliases and the
+/// ordinary resolver links them. If a SECOND Adam ever appears in the graph, the
+/// surface becomes ambiguous and floats again, which is exactly right: the machine
+/// stops guessing the moment guessing becomes possible.
+///
+/// Idempotent: aliases are a set, and the profile can change.
+async fn ensure_owner_is_known(db: &Database) -> Result<()> {
+    let owner: Option<(Option<String>, Option<String>)> =
+        sqlx::query_as("SELECT full_name, preferred_name FROM app_user_profile LIMIT 1")
+            .fetch_optional(db.pool())
+            .await?;
+
+    let Some((full_name, preferred)) = owner else { return Ok(()) };
+    let Some(full_name) = full_name.filter(|s| !s.trim().is_empty()) else {
+        return Ok(());
+    };
+
+    // The names he is actually called: his given name, and whatever he goes by.
+    let mut names: Vec<String> = vec![full_name.trim().to_string()];
+    if let Some(first) = full_name.split_whitespace().next() {
+        names.push(first.to_string());
+    }
+    if let Some(p) = preferred.filter(|s| !s.trim().is_empty()) {
+        names.push(p.trim().to_string());
+    }
+
+    // Attach them to the person record that IS him — matched on his full name,
+    // which is how he was created. Never invent a person here: if he is not in the
+    // graph yet, there is nothing to be the owner of.
+    for name in names {
+        sqlx::query(
+            "UPDATE wiki_people \
+             SET aliases = CASE WHEN aliases ? $1 THEN aliases ELSE aliases || to_jsonb($1::text) END, \
+                 relationship_category = COALESCE(relationship_category, 'self') \
+             WHERE canonical_name = $2",
+        )
+        .bind(&name)
+        .bind(&full_name)
+        .execute(db.pool())
+        .await?;
+    }
+
+    Ok(())
+}
+
 pub async fn resolve_mentions(db: &Database) -> Result<MentionStats> {
     let mut stats = MentionStats::default();
+
+    // Before asking a human who anyone is, make sure we are not about to ask them
+    // who THEY are.
+    ensure_owner_is_known(db).await?;
 
     // Group by surface: every mention of "sarah" shares one answer, so we do
     // one lookup per distinct surface rather than per mention. This is also
