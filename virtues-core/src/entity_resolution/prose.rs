@@ -72,7 +72,9 @@ Rules:
 - surface: copy the name EXACTLY as written. Do not correct, expand, or normalize it.
 - Only SPECIFIC named things. "my dentist" is not a person; "Dr. Nguyen" is. "the office" is not a place; "Blue Bottle" is. A generic noun is not an entity.
 - If you are not sure something is a name, LEAVE IT OUT. A missed name costs nothing; a wrong one corrupts someone's records.
-- No pronouns. No email addresses, phone numbers, or URLs — those are handled elsewhere.
+- No pronouns. Not "he", "she", "they", "you", "everyone". A pronoun names nobody without the sentence around it, and you will not be given that sentence.
+- A PLACE is somewhere you could walk into: a venue, a business, a building, a home. "Blue Bottle" is a place. "Zilker Park" is a place. A city, state, or country is NOT — "Austin", "Norway" and "Texas" are where things happen, not things that happen. Leave them out.
+- No email addresses, phone numbers, or URLs — those are handled elsewhere.
 - said: the quote is what lets a human recognize the mention later. A bare name is useless to them.
 - when: ONLY if the text refers to a specific time ("next Saturday", "last night", "on the 14th"). Resolve it against that record's timestamp. Otherwise null. Do not guess.
 - A record with no names gets an empty mentions array. This is common and correct.
@@ -363,12 +365,87 @@ fn clean(surface: &str, kind: &str) -> Option<(String, &'static str)> {
         return None;
     }
 
+    // A prompt is a request. This is a rule.
+    //
+    // The prompt already says "No pronouns" and "a generic noun is not an entity",
+    // and the model obeys it on transcriptions — which are whole conversations —
+    // and breaks it on text messages, which are five words long. Asked to find the
+    // proper noun naming a person in "he said he'd be there", a model with no
+    // context reaches for `he`. Zero pronouns came out of transcriptions; 22 came
+    // out of messages.
+    //
+    // The real cure is to extract from the conversation rather than the message —
+    // the same lesson as indexing a chat turn as if it were a document. Until then,
+    // a fragment cannot be judged, so the fragments that survive get rejected here
+    // where refusal is deterministic and free.
+    //
+    // NOT on this list, deliberately: `dad`, `mom`, `grandma`. Those DO name a
+    // specific person, and they are exactly what the alias system is for — you link
+    // "dad" once and every past and future mention resolves. They float; they are
+    // not discarded.
+    if PRONOUNS_AND_GRAMMAR.contains(&lower.as_str()) {
+        return None;
+    }
+
     Some((s.to_string(), kind))
 }
+
+/// Words that can never name a particular, however confidently a model asserts
+/// they do. Pronouns, articles, and bare quantifiers over people.
+const PRONOUNS_AND_GRAMMAR: &[&str] = &[
+    // Personal pronouns and possessives — the whole reason coreference resolution
+    // is a research field, and precisely what we refuse to attempt.
+    "i", "me", "my", "mine", "myself", //
+    "you", "your", "yours", "yourself", //
+    "he", "him", "his", "himself", //
+    "she", "her", "hers", "herself", //
+    "it", "its", "itself", //
+    "we", "us", "our", "ours", "ourselves", //
+    "they", "them", "their", "theirs", "themselves", //
+    // Articles and determiners a model sometimes emits alone.
+    "the", "a", "an", "this", "that", "these", "those", //
+    // Bare quantifiers over people: a crowd is not a person.
+    "everyone", "everybody", "someone", "somebody", "anyone", "anybody", //
+    "no one", "nobody", "people", "guys", "folks", "them all", "all",
+];
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The junk the extractor actually emitted on a real box — and the things it
+    /// must NOT mistake for junk.
+    ///
+    /// Every pronoun below came out of `data_communication_message`, where a text
+    /// message is five words long and a model asked to name the person in "he said
+    /// he'd be there" reaches for `he`. Transcriptions — whole conversations —
+    /// produced not one. A fragment cannot be judged; that is the same lesson the
+    /// search index learned the hard way.
+    #[test]
+    fn grammar_is_not_an_entity_but_kinship_is() {
+        // Pronouns name nobody without the sentence around them, and we refuse to
+        // do coreference resolution — so we refuse the pronoun.
+        for junk in ["he", "She", "his", "HER", "you", "they", "the", "everyone", "guys"] {
+            assert!(
+                clean(junk, "person").is_none(),
+                "{junk:?} is grammar, not a person"
+            );
+        }
+
+        // But these DO name a particular person, and they are exactly what aliases
+        // are for: link "dad" once and every past and future mention resolves. They
+        // must float — never be discarded.
+        for real in ["dad", "Mom", "grandma", "Uncle Pete"] {
+            assert!(
+                clean(real, "person").is_some(),
+                "{real:?} names someone specific — it belongs in the queue, not the bin"
+            );
+        }
+
+        // A name that merely *contains* a pronoun is a name.
+        assert!(clean("Heath", "person").is_some());
+        assert!(clean("Shelly", "person").is_some());
+    }
 
     #[test]
     fn every_extractable_ontology_is_reachable_from_the_registry() {
