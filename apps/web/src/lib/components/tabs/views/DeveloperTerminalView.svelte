@@ -12,10 +12,25 @@
     let fitAddon: any = null;
     let webSocket: WebSocket | null = null;
     let connectionStatus = $state<
-        "disconnected" | "connecting" | "connected" | "error"
+        "disconnected" | "connecting" | "reconnecting" | "connected"
     >("disconnected");
-    let errorMessage = $state<string | null>(null);
-    let inputBuffer = $state("");
+
+    // Reconnect state. The shell lives in tmux on the box, so a dropped socket
+    // is a detach, not a death: reconnecting reattaches to the same session with
+    // whatever was running still running. Worth retrying hard.
+    let reconnectAttempts = 0;
+    let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+    let hasAttached = false;
+    let disposed = false;
+
+    const RECONNECT_BASE_MS = 500;
+    const RECONNECT_MAX_MS = 10_000;
+
+    // Coalesce the ResizeObserver's per-frame firing during a window drag. Each
+    // resize is an ioctl on the PTY plus a SIGWINCH, and a full-screen TUI
+    // repaints its whole viewport on every one — unthrottled, dragging the
+    // window edge is a redraw storm.
+    const RESIZE_DEBOUNCE_MS = 100;
 
     // WebSocket URL — protocol-aware (matches Yjs pattern in document.ts)
     const wsProtocol = browser && location.protocol === 'https:' ? 'wss:' : 'ws:';
@@ -69,6 +84,8 @@
             const { Terminal } = await import("@xterm/xterm");
             const { FitAddon } = await import("@xterm/addon-fit");
             const { WebLinksAddon } = await import("@xterm/addon-web-links");
+            const { WebglAddon } = await import("@xterm/addon-webgl");
+            const { Unicode11Addon } = await import("@xterm/addon-unicode11");
 
             // Import xterm CSS
             await import("@xterm/xterm/css/xterm.css");
@@ -89,8 +106,32 @@
             terminal.loadAddon(fitAddon);
             terminal.loadAddon(new WebLinksAddon());
 
+            // Unicode 11 widths. xterm defaults to the Unicode 6 tables, which
+            // disagree with every modern terminal about how many cells an emoji
+            // or a CJK glyph occupies. A TUI that draws a box, prints an emoji,
+            // and draws the closing edge computes its own width from the modern
+            // tables — so under Unicode 6 the box seams tear and the cursor
+            // drifts a column per glyph.
+            terminal.loadAddon(new Unicode11Addon());
+            terminal.unicode.activeVersion = "11";
+
             // Open terminal in container
             terminal.open(terminalContainer);
+
+            // WebGL renderer. The DOM renderer can't keep up with a full-screen
+            // TUI repainting its viewport every frame — that's the laggy typing
+            // and the tearing. Must load *after* open() (it needs the canvas),
+            // and it's best-effort: no WebGL2 (a locked-down browser, a software
+            // GL blocklist) or a lost context and we fall back to the DOM
+            // renderer, which is slow but correct.
+            try {
+                const webglAddon = new WebglAddon();
+                webglAddon.onContextLoss(() => webglAddon.dispose());
+                terminal.loadAddon(webglAddon);
+            } catch (err) {
+                console.warn("[terminal] WebGL unavailable, using DOM renderer", err);
+            }
+
             fitAddon.fit();
 
             // Welcome message — serif "Virtues" wordmark (matches the CLI banner)
@@ -123,25 +164,32 @@
             terminal.writeln("\x1b[1mTerminal\x1b[0m");
             terminal.writeln("");
 
-            // Connect to WebSocket
+            // Connect to WebSocket. Only now that fit() has run do we know the
+            // real size to open the PTY at.
             connectWebSocket();
 
-            // Handle terminal input
+            // Handle terminal input. onData is already the encoded byte stream —
+            // control chars, escape sequences, bracketed paste and mouse reports
+            // all pass through untouched. Input while disconnected is dropped:
+            // there is no local shell to echo it to, and the reconnect will
+            // repaint the real one in a moment.
             terminal.onData((data: string) => {
-                if (webSocket && webSocket.readyState === WebSocket.OPEN) {
+                if (webSocket?.readyState === WebSocket.OPEN) {
                     webSocket.send(JSON.stringify({ type: "input", data }));
-                } else {
-                    // Local echo mode when not connected
-                    handleLocalInput(data);
                 }
             });
 
-            // Handle window resize
+            // Handle window resize (debounced — see RESIZE_DEBOUNCE_MS)
+            let resizeTimer: ReturnType<typeof setTimeout> | null = null;
             resizeObserver = new ResizeObserver(() => {
-                if (fitAddon) {
+                if (resizeTimer) clearTimeout(resizeTimer);
+                resizeTimer = setTimeout(() => {
+                    // `disposed` guards a timer that survives teardown: the
+                    // terminal object outlives dispose(), so a null check isn't
+                    // enough — fit() on a disposed terminal throws.
+                    if (disposed || !fitAddon || !terminal) return;
                     fitAddon.fit();
-                    // Send resize event to backend
-                    if (webSocket && webSocket.readyState === WebSocket.OPEN) {
+                    if (webSocket?.readyState === WebSocket.OPEN) {
                         webSocket.send(
                             JSON.stringify({
                                 type: "resize",
@@ -150,7 +198,7 @@
                             }),
                         );
                     }
-                }
+                }, RESIZE_DEBOUNCE_MS);
             });
             resizeObserver.observe(terminalContainer);
 
@@ -182,19 +230,25 @@
     });
 
     onDestroy(() => {
-        if (webSocket) {
-            webSocket.close();
-        }
-        if (terminal) {
-            terminal.dispose();
-        }
+        // Stop the reconnect loop before tearing down, or it resurrects the
+        // socket after the terminal it writes into is gone.
+        disposed = true;
+        if (reconnectTimer) clearTimeout(reconnectTimer);
+        webSocket?.close();
+        terminal?.dispose();
     });
 
     function connectWebSocket() {
-        connectionStatus = "connecting";
+        if (disposed || !terminal) return;
+        connectionStatus = reconnectAttempts > 0 ? "reconnecting" : "connecting";
+
+        // Open the PTY at the size we're actually showing. A TUI reads the
+        // winsize once at startup, so a PTY born at 80x24 and resized a beat
+        // later paints its first frame into the wrong box.
+        const url = `${WS_URL}?cols=${terminal.cols}&rows=${terminal.rows}`;
 
         try {
-            webSocket = new WebSocket(WS_URL);
+            webSocket = new WebSocket(url);
             // Receive PTY output as raw bytes so xterm.js decodes UTF-8 itself
             // (a multibyte glyph can straddle two frames; decoding per-frame
             // would corrupt it).
@@ -202,6 +256,13 @@
 
             webSocket.onopen = () => {
                 connectionStatus = "connected";
+                reconnectAttempts = 0;
+                // On a reattach the box's tmux repaints the full screen for us,
+                // so clear first: what's on screen is a frozen snapshot from
+                // before the drop, and anything left under the repaint shows
+                // through as garbage.
+                if (hasAttached) terminal?.reset();
+                hasAttached = true;
             };
 
             webSocket.onmessage = (event) => {
@@ -215,106 +276,39 @@
                 }
             };
 
-            webSocket.onclose = () => {
-                connectionStatus = "disconnected";
-            };
-
-            webSocket.onerror = () => {
-                connectionStatus = "error";
-                errorMessage = "Failed to connect";
-                terminal?.writeln(
-                    "\x1b[90mBackend not available. Running locally.\x1b[0m",
-                );
-                terminal?.writeln('\x1b[90mType "help" for commands.\x1b[0m');
-                terminal?.writeln("");
-                showPrompt();
-            };
+            // onerror always precedes onclose, so schedule the retry from
+            // onclose alone and there's exactly one per drop.
+            webSocket.onerror = () => {};
+            webSocket.onclose = () => scheduleReconnect();
         } catch (err) {
-            connectionStatus = "error";
-            errorMessage = "WebSocket not supported";
-            showPrompt();
+            console.error("[terminal] WebSocket failed to open", err);
+            scheduleReconnect();
         }
     }
 
-    function showPrompt() {
-        terminal?.write("\x1b[36mvirtues\x1b[0m $ ");
-    }
+    function scheduleReconnect() {
+        if (disposed || reconnectTimer) return;
+        connectionStatus = "reconnecting";
 
-    function handleLocalInput(data: string) {
-        // Handle special keys
-        if (data === "\r") {
-            // Enter key
-            terminal?.writeln("");
-            processCommand(inputBuffer);
-            inputBuffer = "";
-            showPrompt();
-        } else if (data === "\x7f") {
-            // Backspace
-            if (inputBuffer.length > 0) {
-                inputBuffer = inputBuffer.slice(0, -1);
-                terminal?.write("\b \b");
-            }
-        } else if (data === "\x03") {
-            // Ctrl+C
-            terminal?.writeln("^C");
-            inputBuffer = "";
-            showPrompt();
-        } else if (data >= " " && data <= "~") {
-            // Printable characters
-            inputBuffer += data;
-            terminal?.write(data);
+        const delay = Math.min(
+            RECONNECT_BASE_MS * 2 ** reconnectAttempts,
+            RECONNECT_MAX_MS,
+        );
+        reconnectAttempts += 1;
+
+        // Say it once, on the first drop. The session is still alive on the box;
+        // this is a lost connection, not a lost shell — and repeating the notice
+        // on every backoff tick would scroll the screen we're about to restore.
+        if (reconnectAttempts === 1) {
+            terminal?.writeln(
+                "\r\n\x1b[90m[disconnected — reconnecting…]\x1b[0m",
+            );
         }
-    }
 
-    function processCommand(cmd: string) {
-        const trimmed = cmd.trim();
-        if (!trimmed) return;
-
-        const [command, ...args] = trimmed.split(" ");
-
-        switch (command.toLowerCase()) {
-            case "help":
-                terminal?.writeln("");
-                terminal?.writeln("\x1b[1mCommands:\x1b[0m");
-                terminal?.writeln("  help        Show this message");
-                terminal?.writeln("  clear       Clear terminal");
-                terminal?.writeln("  status      Connection status");
-                terminal?.writeln("  reconnect   Retry connection");
-                terminal?.writeln("  echo [msg]  Echo text");
-                terminal?.writeln("");
-                break;
-
-            case "clear":
-                terminal?.clear();
-                break;
-
-            case "status":
-                const statusColor =
-                    connectionStatus === "connected"
-                        ? "32"
-                        : connectionStatus === "connecting"
-                          ? "33"
-                          : "90";
-                terminal?.writeln(
-                    `Status: \x1b[${statusColor}m${connectionStatus}\x1b[0m`,
-                );
-                break;
-
-            case "reconnect":
-                terminal?.writeln("Reconnecting...");
-                if (webSocket) {
-                    webSocket.close();
-                }
-                connectWebSocket();
-                break;
-
-            case "echo":
-                terminal?.writeln(args.join(" "));
-                break;
-
-            default:
-                terminal?.writeln(`\x1b[90mUnknown: ${command}\x1b[0m`);
-        }
+        reconnectTimer = setTimeout(() => {
+            reconnectTimer = null;
+            connectWebSocket();
+        }, delay);
     }
 </script>
 
@@ -329,18 +323,20 @@
             <span
                 class="connection-badge"
                 class:connected={connectionStatus === "connected"}
-                class:error={connectionStatus === "error"}
+                class:error={connectionStatus === "disconnected"}
             >
                 {#if connectionStatus === "connected"}
                     <Icon icon="ri:wifi-line"/>
                     Connected
                 {:else if connectionStatus === "connecting"}
-                    <Icon icon="ri:loader-4-line" class="animate-spin"
-                    />
+                    <Icon icon="ri:loader-4-line" class="animate-spin"/>
                     Connecting
+                {:else if connectionStatus === "reconnecting"}
+                    <Icon icon="ri:loader-4-line" class="animate-spin"/>
+                    Reconnecting
                 {:else}
-                    <Icon icon="ri:computer-line"/>
-                    Local
+                    <Icon icon="ri:wifi-off-line"/>
+                    Disconnected
                 {/if}
             </span>
         </div>
