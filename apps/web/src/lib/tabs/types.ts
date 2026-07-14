@@ -15,12 +15,10 @@ export type TabType =
 	| 'chat' // Chat conversations: /, /chat, /chat/chat_{id}
 	| 'chat-history' // Chat history list: /chat-history
 	| 'page' // User documents: /page, /page/page_{id}
-	| 'wiki' // Wiki overview: /wiki
-	| 'entities' // All entities: /entities
+	| 'wiki' // Wiki room (overview + entity sections): /wiki, /wiki/{section}
 	| 'person' // Wiki people: /person, /person/person_{id}
 	| 'place' // Wiki places: /place, /place/place_{id}
 	| 'org' // Wiki organizations: /org, /org/org_{id}
-	| 'thing' // Wiki things (reference entities: pets, cars, concepts, ...): /things, /thing/thg_{id}
 	| 'notebook' // Notebooks (rooms a chat lives in): /notebooks, /notebook/{id}
 	| 'day' // Wiki days: /day, /day/day_{date}
 	| 'year' // Wiki years: /year, /year/{year}
@@ -33,11 +31,12 @@ export type TabType =
 	| 'ontology' // Ontology data: /ontologies, /ontologies/{name}
 	| 'record' // Single raw record viewer: /record/{ontology}/{id}
 	// Storage namespaces
-	| 'drive' // Personal files: /drive, /drive/{path}
+	| 'storage' // Drive | Streams | App Media | Trash: /storage, /storage/{tab}, /storage/drive/{path}
+	| 'drive' // LEGACY alias of /storage (kept so old links resolve): /drive, /drive/{path}
 	| 'asset' // Single file viewer (open density): /drive/file_{id}
-	| 'trash' // Drive trash: /trash
+	| 'trash' // LEGACY alias of /storage/trash: /trash
 	// System namespace
-	| 'virtues' // System pages: /virtues/{account|assistant|usage|jobs|sql|terminal|sitemap}
+	| 'virtues' // System pages: /virtues/{account|assistant|usage|jobs|sql|terminal}
 	// Easter eggs
 	| 'conway'
 	| 'dog-jump';

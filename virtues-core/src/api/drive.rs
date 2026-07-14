@@ -1211,6 +1211,34 @@ async fn hard_delete_folder_recursive(
 // =============================================================================
 
 /// List files in trash (deleted within last 30 days)
+/// List the app's internal media — the `.media/` system folder.
+///
+/// These are assets the app itself made or uses (pasted pictures, generated
+/// images), not files the user filed in Drive. `list_files` hides them on purpose
+/// (`filename NOT LIKE '.%'`), which is right for the Drive browser and wrong for
+/// the App Media tab, whose entire job is to show them.
+///
+/// Read-only by design: nothing here is user-authored, and deleting an asset the
+/// app is still referencing breaks the thing that references it.
+pub async fn list_media(pool: &PgPool) -> Result<Vec<DriveFile>> {
+    let files = sqlx::query_as::<_, DriveFile>(
+        r#"
+        SELECT id, path, filename, mime_type, size_bytes,
+               is_folder, parent_id, sha256_hash, deleted_at, created_at, updated_at
+        FROM app_drive_files
+        WHERE deleted_at IS NULL
+          AND is_folder = false
+          AND path LIKE '.media/%'
+        ORDER BY created_at DESC
+        "#,
+    )
+    .fetch_all(pool)
+    .await
+    .map_err(|e| Error::Database(format!("Failed to list media: {e}")))?;
+
+    Ok(files)
+}
+
 pub async fn list_trash(pool: &PgPool) -> Result<Vec<DriveFile>> {
     let files = sqlx::query_as::<_, DriveFile>(
         r#"

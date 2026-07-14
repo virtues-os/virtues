@@ -90,7 +90,7 @@ const WIKI: SystemSection = {
 	name: 'Wiki',
 	icon: 'ri:book-open-line',
 	type: 'link',
-	href: '/entities',
+	href: '/wiki',
 };
 
 const NOTEBOOKS: SystemSection = {
@@ -106,7 +106,7 @@ const DRIVE: SystemSection = {
 	name: 'Drive',
 	icon: 'ri:cloud-line',
 	type: 'link',
-	href: '/drive',
+	href: '/storage',
 };
 
 const ACTIONS: SystemSection = {
