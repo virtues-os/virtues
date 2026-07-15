@@ -163,8 +163,8 @@
 		display: inline-block;
 		width: 6px;
 		height: 6px;
-		border-radius: 999px;
-		background: #ef4444;
+		border-radius: var(--radius-full);
+		background: var(--color-error);
 		margin-left: 0.25rem;
 	}
 
@@ -176,29 +176,29 @@
 	.dot {
 		width: 6px;
 		height: 6px;
-		border-radius: 999px;
+		border-radius: var(--radius-full);
 		background: var(--color-surface-elevated, #f3f4f6);
 		border: 1px solid var(--color-border, #e5e7eb);
 	}
 	.dot[data-status='success'] {
-		background: #22c55e;
-		border-color: #16a34a;
+		background: var(--color-success);
+		border-color: color-mix(in srgb, var(--color-success) 75%, #000);
 	}
 	.dot[data-status='error'] {
-		background: #ef4444;
-		border-color: #b91c1c;
+		background: var(--color-error);
+		border-color: color-mix(in srgb, var(--color-error) 75%, #000);
 	}
 	.dot[data-status='skipped'] {
-		background: #d1d5db;
-		border-color: #9ca3af;
+		background: var(--color-border);
+		border-color: var(--color-foreground-subtle);
 	}
 	.dot[data-status='running'] {
-		background: #fbbf24;
-		border-color: #d97706;
+		background: var(--color-warning);
+		border-color: color-mix(in srgb, var(--color-warning) 75%, #000);
 	}
 	.dot[data-status='cancelled'] {
-		background: #fef3c7;
-		border-color: #d97706;
+		background: var(--color-warning-subtle);
+		border-color: var(--color-warning);
 	}
 	.dot[data-status='empty'] {
 		background: transparent;

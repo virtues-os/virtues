@@ -112,7 +112,7 @@
 	.probe {
 		position: fixed;
 		inset: 0;
-		z-index: 80;
+		z-index: var(--z-overlay);
 		display: flex;
 		flex-direction: column;
 		gap: 10px;

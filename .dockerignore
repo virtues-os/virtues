@@ -13,12 +13,21 @@ docs/
 .env.*
 !.env.example
 
-# Build artifacts
+# Build artifacts (patterns without a leading path only match at the context
+# root, so nested crate/app build dirs like apps/web/src-tauri/target must be
+# globbed explicitly — otherwise they leak into the context on local builds,
+# ballooning it to tens of GB. The Dockerfile builds target/ inside the
+# container, so none of these are ever needed in the context.)
 target/
+**/target/
 node_modules/
+**/node_modules/
 .svelte-kit/
+**/.svelte-kit/
 build/
+**/build/
 dist/
+**/dist/
 
 # Runtime state (.sqlx kept — sqlx::query! offline cache, copied by Dockerfile)
 .data/

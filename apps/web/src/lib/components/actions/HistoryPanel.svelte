@@ -247,8 +247,8 @@
 		overflow-y: auto;
 	}
 	.error-block pre {
-		color: #991b1b;
-		background: #fef2f2;
+		color: color-mix(in srgb, var(--color-error) 75%, #000);
+		background: var(--color-error-subtle);
 	}
 	.detail-meta {
 		display: flex;
@@ -308,6 +308,6 @@
 		overflow: hidden;
 	}
 	.run-card-summary.error {
-		color: #991b1b;
+		color: color-mix(in srgb, var(--color-error) 75%, #000);
 	}
 </style>

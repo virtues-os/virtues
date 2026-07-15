@@ -7,7 +7,10 @@
 	// Streams). Read-only: nothing here is user-authored, and deleting an asset
 	// something still references just breaks the thing referencing it.
 	import Icon from "$lib/components/Icon.svelte";
-	import { onMount } from "svelte";
+	import { EmptyState, LoadingState, ErrorState } from "$lib";
+	import { getDriveMedia } from "$lib/api/client";
+	import { createResource } from "$lib/utils/resource.svelte";
+	import { formatDate } from "$lib/utils/dateUtils";
 
 	interface DriveFile {
 		id: string;
@@ -18,27 +21,9 @@
 		created_at: string;
 	}
 
-	let files: DriveFile[] = $state([]);
-	let loading = $state(true);
-	let error: string | null = $state(null);
-
+	const res = createResource(() => getDriveMedia<DriveFile[]>());
+	const files = $derived(res.data ?? []);
 	const totalBytes = $derived(files.reduce((n, f) => n + (f.size_bytes ?? 0), 0));
-
-	onMount(load);
-
-	async function load() {
-		loading = true;
-		error = null;
-		try {
-			const res = await fetch("/api/drive/media");
-			if (!res.ok) throw new Error(`Failed to load app media: ${res.statusText}`);
-			files = await res.json();
-		} catch (e: any) {
-			error = e.message;
-		} finally {
-			loading = false;
-		}
-	}
 
 	function formatBytes(bytes: number | null): string {
 		if (!bytes) return "—";
@@ -48,40 +33,27 @@
 		return `${parseFloat((bytes / Math.pow(k, i)).toFixed(1))} ${sizes[i]}`;
 	}
 
-	function formatDate(d: string): string {
-		return new Date(d).toLocaleDateString(undefined, {
-			month: "short",
-			day: "numeric",
-			year: "numeric",
-		});
-	}
-
 	function isImage(f: DriveFile): boolean {
 		return (f.mime_type ?? "").startsWith("image/");
 	}
 </script>
 
 <div class="flex h-full w-full flex-col overflow-auto p-6">
-	{#if loading}
-		<div class="flex h-full items-center justify-center">
-			<Icon icon="ri:loader-4-line" width="20" class="animate-spin text-foreground-muted" />
-		</div>
-	{:else if error}
-		<div class="rounded-md border border-destructive/20 bg-destructive/10 p-4 text-destructive">
-			<div class="flex items-center gap-2 font-medium">
-				<Icon icon="ri:error-warning-line" />
-				Failed to load app media
-			</div>
-			<p class="mt-1 text-xs">{error}</p>
-		</div>
+	{#if res.loading}
+		<LoadingState class="h-full" />
+	{:else if res.error}
+		<ErrorState
+			title="Failed to load app media"
+			message={res.error}
+			onRetry={res.reload}
+		/>
 	{:else if files.length === 0}
-		<div class="flex h-full flex-col items-center justify-center gap-2 text-foreground-muted">
-			<Icon icon="ri:image-2-line" width="28" />
-			<p class="text-sm">No app media yet</p>
-			<p class="max-w-sm text-center text-xs">
-				Images the app generates or you paste into pages and chats are kept here.
-			</p>
-		</div>
+		<EmptyState
+			icon="ri:image-2-line"
+			title="No app media yet"
+			message="Images the app generates or you paste into pages and chats are kept here."
+			class="h-full"
+		/>
 	{:else}
 		<div class="mb-4 flex items-baseline justify-between">
 			<div class="flex items-baseline gap-2">

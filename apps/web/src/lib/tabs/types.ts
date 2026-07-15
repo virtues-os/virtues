@@ -25,7 +25,6 @@ export type TabType =
 	| 'year' // Wiki years: /year, /year/{year}
 	| 'narrative-identity' // Wiki narrative identity: /narrative-identity
 	| 'source' // Data sources: /source, /source/source_{id}
-	| 'tools' // Tools management: /tools
 	| 'actions' // Actions list: /actions
 	| 'action' // Action detail: /action/action_{id}
 	| 'developers' // Developers tools (SQL/Terminal/Lake): /developers
@@ -55,6 +54,11 @@ export interface Tab {
 	route: string; // URL-native: '/chat/chat_abc123', '/page/page_xyz'
 	icon?: string;
 	pinned?: boolean;
+
+	// Per-tab navigation history (browser model). `route` is a denormalized
+	// mirror of `history[historyIndex]`, always written together with them.
+	history: string[]; // routes, oldest → newest
+	historyIndex: number; // pointer into history
 
 	// Storage path (for drive/lake namespaces)
 	storagePath?: string; // e.g., 'photos/2024/vacation.jpg'

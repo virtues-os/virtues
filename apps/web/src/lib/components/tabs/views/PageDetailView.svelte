@@ -14,7 +14,7 @@
 	let { tab, active }: { tab: Tab; active: boolean } = $props();
 
 	// Extract pageId from route (e.g., '/page/page_xyz' → 'page_xyz')
-	const pageId = $derived(routeToEntityId(tab.route));
+	const pageId = $derived(routeToEntityId(tab.route) ?? undefined);
 
 	function handleLabelChange(label: string) {
 		windowShellStore.updateTab(tab.id, { label });

@@ -1,6 +1,11 @@
 <script lang="ts">
 	import { onMount } from "svelte";
 	import UniversalPicker from "./UniversalPicker.svelte";
+	import {
+		getRecommendedModels,
+		getAssistantProfile,
+		updateAssistantProfile,
+	} from "$lib/api/client";
 
 	interface Model {
 		id?: string;
@@ -80,19 +85,15 @@
 		error = null;
 		try {
 			// /recommended carries both the picker list and the live slot map.
-			const [modelsRes, profileRes] = await Promise.all([
-				fetch("/api/models/recommended"),
-				fetch("/api/assistant-profile"),
+			const [data, profile] = await Promise.all([
+				getRecommendedModels<any>(),
+				getAssistantProfile<any>().catch(() => null),
 			]);
 
-			if (!modelsRes.ok) throw new Error("Failed to load models");
-
-			const data = await modelsRes.json();
 			models = Array.isArray(data) ? data : data.data || [];
 			slotDefaults = data.slots || {};
 
-			if (profileRes.ok) {
-				const profile = await profileRes.json();
+			if (profile) {
 				// NULL (or a legacy NULL) means unpinned → Virtues default.
 				slotValues = {
 					chat:
@@ -160,12 +161,7 @@
 		if (slot.legacyField && id === DEFAULT) body[slot.legacyField] = null;
 
 		try {
-			const res = await fetch("/api/assistant-profile", {
-				method: "PUT",
-				headers: { "Content-Type": "application/json" },
-				body: JSON.stringify(body),
-			});
-			if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
+			await updateAssistantProfile(body);
 		} catch (e) {
 			// Roll the optimistic update back — showing a value that was never
 			// saved is worse than showing the old one.

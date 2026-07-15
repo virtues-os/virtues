@@ -842,7 +842,7 @@
 		line-height: 1;
 		color: white;
 		background: var(--color-primary);
-		border-radius: 999px;
+		border-radius: var(--radius-full);
 		box-sizing: border-box;
 		aspect-ratio: 1;
 		box-shadow: 0 0 0 1.5px var(--color-background, #fff);

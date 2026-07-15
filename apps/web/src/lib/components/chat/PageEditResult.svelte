@@ -146,7 +146,7 @@
 		padding: 0.375rem 0.625rem;
 		background: transparent;
 		border: none;
-		border-radius: 9999px;
+		border-radius: var(--radius-full);
 		font-size: 0.75rem;
 		font-weight: 500;
 		color: var(--color-foreground-muted);

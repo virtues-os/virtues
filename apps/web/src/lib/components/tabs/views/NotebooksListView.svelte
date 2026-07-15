@@ -3,6 +3,7 @@
 	import Icon from '$lib/components/Icon.svelte';
 	import { notebookStore } from '$lib/stores/notebook.svelte';
 	import { windowShellStore } from '$lib/stores/window-shell.svelte';
+	import { Page } from '$lib';
 	import UniversalDataGrid, { type Column } from '$lib/components/datagrid/UniversalDataGrid.svelte';
 	import type { NotebookSummary } from '$lib/api/client';
 
@@ -111,12 +112,12 @@
 	}
 </script>
 
-<div class="notebooks-list">
-	<header class="head">
-		<div>
-			<h1>Notebooks</h1>
-			<p class="sub">Notebooks you return to — a project, pet, hobby, or goal. Each chat lives in one.</p>
-		</div>
+<Page
+	title="Notebooks"
+	description="Notebooks you return to — a project, pet, hobby, or goal. Each chat lives in one."
+	maxWidth="wide"
+>
+	{#snippet actions()}
 		{#if drafting}
 			<input
 				bind:this={inputEl}
@@ -132,7 +133,7 @@
 				<Icon icon="ri:add-line" width="16" /> New Notebook
 			</button>
 		{/if}
-	</header>
+	{/snippet}
 
 	{#if notebooks.length === 0 && !notebookStore.loading && !notebookStore.error}
 		<div class="empty">
@@ -210,13 +211,9 @@
 			{/snippet}
 		</UniversalDataGrid>
 	{/if}
-</div>
+</Page>
 
 <style>
-	.notebooks-list { height: 100%; overflow-y: auto; padding: 28px 32px 48px; max-width: 72rem; margin: 0 auto; }
-	.head { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; margin-bottom: 22px; }
-	h1 { font-size: 24px; font-weight: 680; margin: 0; color: var(--color-foreground); }
-	.sub { margin: 4px 0 0; font-size: 13px; color: var(--color-foreground-muted); max-width: 48ch; }
 	.new-btn {
 		display: inline-flex; align-items: center; gap: 5px;
 		padding: 7px 12px; border: 1px solid var(--color-border); border-radius: 8px;

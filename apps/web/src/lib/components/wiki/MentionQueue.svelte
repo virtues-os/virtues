@@ -1,4 +1,5 @@
 <script lang="ts" module>
+	import { getMentionQueue } from '$lib/api/client';
 	/**
 	 * A surface only *asks* for a decision once it recurs across separate records.
 	 * A name said once is dust and should not demand attention; a name that keeps
@@ -14,9 +15,7 @@
 	 */
 	export async function fetchRecurringCount(): Promise<number> {
 		try {
-			const res = await fetch('/api/mentions/queue');
-			if (!res.ok) return 0;
-			const groups: { sources: number }[] = await res.json();
+			const groups = await getMentionQueue<{ sources: number }[]>();
 			return groups.filter((g) => g.sources >= RECURRING).length;
 		} catch {
 			return 0;
@@ -42,6 +41,7 @@
 	 */
 	import { onMount } from 'svelte';
 	import Icon from '$lib/components/Icon.svelte';
+	import { resolveMention } from '$lib/api/client';
 
 	interface Candidate {
 		entity_type: string;
@@ -91,9 +91,7 @@
 		loading = true;
 		error = null;
 		try {
-			const res = await fetch('/api/mentions/queue');
-			if (!res.ok) throw new Error(`Failed to load queue (${res.status})`);
-			groups = await res.json();
+			groups = await getMentionQueue<SurfaceGroup[]>();
 		} catch (e) {
 			error = e instanceof Error ? e.message : 'Failed to load the review queue';
 		} finally {
@@ -108,16 +106,11 @@
 	async function act(g: SurfaceGroup, path: string, body: Record<string, unknown>) {
 		busy = key(g);
 		try {
-			const res = await fetch(`/api/mentions/${path}`, {
-				method: 'POST',
-				headers: { 'Content-Type': 'application/json' },
-				body: JSON.stringify({
-					normalized: g.normalized,
-					mention_type: g.mention_type,
-					...body
-				})
+			await resolveMention(path, {
+				normalized: g.normalized,
+				mention_type: g.mention_type,
+				...body
 			});
-			if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
 			// Drop it locally rather than refetching — the row is resolved either
 			// way, and the whole list re-sorting under the cursor is disorienting
 			// when you're working down a list.

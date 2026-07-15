@@ -9,6 +9,7 @@
 import { Chat } from '@ai-sdk/svelte';
 import { DefaultChatTransport, type ChatTransport } from 'ai';
 import { subscriptionStore } from '$lib/stores/subscription.svelte';
+import type { CheckpointMessage } from '$lib/types/chat';
 
 // --- Streaming reactivity helpers (see replaceMessage override below) ---------
 //
@@ -236,9 +237,9 @@ class ChatInstanceStore {
                             summary: string;
                             timestamp: string;
                         };
-                        const checkpointMessage = {
+                        const checkpointMessage: CheckpointMessage = {
                             id: dataPart.id || `checkpoint_${Date.now()}`,
-                            role: 'checkpoint' as const,
+                            role: 'checkpoint',
                             parts: [{
                                 type: 'checkpoint',
                                 version: data.version,
@@ -247,8 +248,13 @@ class ChatInstanceStore {
                                 timestamp: data.timestamp,
                             }],
                         };
-                        // Insert checkpoint message into chat for immediate display
-                        entry.chat.messages = [...entry.chat.messages, checkpointMessage];
+                        // Insert checkpoint message into chat for immediate display.
+                        // The SDK types `messages` as UIMessage[]; a checkpoint is a
+                        // synthetic render-only message, so cast at this boundary.
+                        entry.chat.messages = [
+                            ...entry.chat.messages,
+                            checkpointMessage as unknown as (typeof entry.chat.messages)[number],
+                        ];
                     }
                 }
             },

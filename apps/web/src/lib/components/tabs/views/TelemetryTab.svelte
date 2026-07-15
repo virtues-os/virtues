@@ -3,6 +3,7 @@
 	import { Page } from "$lib";
 	import Icon from "$lib/components/Icon.svelte";
 	import { formatMicrosPrecise } from "$lib/utils/currency";
+	import { apiGet, getMetricsActivity, getAiCalls } from "$lib/api/client";
 	import { onMount, onDestroy } from "svelte";
 
 	let { tab, active }: { tab: Tab; active: boolean } = $props();
@@ -67,9 +68,9 @@
 
 	async function load() {
 		const [h, m, a] = await Promise.allSettled([
-			fetch("/api/system/history?since_secs=86400").then((r) => r.json()),
-			fetch("/api/metrics/activity").then((r) => r.json()),
-			fetch("/api/telemetry/ai-calls").then((r) => r.json()),
+			apiGet<Sample[]>("/system/history", { since_secs: 86400 }),
+			getMetricsActivity<Metrics>(),
+			getAiCalls<AiCall[]>(),
 		]);
 		if (h.status === "fulfilled" && Array.isArray(h.value)) history = h.value;
 		if (m.status === "fulfilled") metrics = m.value;

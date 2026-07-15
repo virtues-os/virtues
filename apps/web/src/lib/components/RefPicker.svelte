@@ -22,6 +22,7 @@
 	import { fade } from 'svelte/transition';
 	import { FloatingContent, useClickOutside, useEscapeKey } from '$lib/floating';
 	import type { VirtualAnchor } from '$lib/floating';
+	import { searchRefs } from '$lib/api/client';
 
 	/** Entity result from the API */
 	export interface EntityResult {
@@ -117,24 +118,21 @@
 	async function fetchResults(q: string) {
 		isLoading = true;
 		try {
-			const response = await fetch(`/api/pages/search/refs?q=${encodeURIComponent(q)}`);
-			if (response.ok) {
-				const data = await response.json();
-				let items: EntityResult[] = data.results || [];
+			const data = await searchRefs(q);
+			let items: EntityResult[] = (data.results as EntityResult[]) || [];
 
-				// Filter by entity types if specified
-				if (entityTypes && entityTypes.length > 0) {
-					items = items.filter((item) => entityTypes.includes(item.entity_type));
-				}
-
-				// Exclude already selected items
-				if (excludeIds.length > 0) {
-					items = items.filter((item) => !excludeIds.includes(item.id));
-				}
-
-				results = items;
-				selectedIndex = 0;
+			// Filter by entity types if specified
+			if (entityTypes && entityTypes.length > 0) {
+				items = items.filter((item) => entityTypes.includes(item.entity_type));
 			}
+
+			// Exclude already selected items
+			if (excludeIds.length > 0) {
+				items = items.filter((item) => !excludeIds.includes(item.id));
+			}
+
+			results = items;
+			selectedIndex = 0;
 		} catch (e) {
 			console.error('RefPicker fetch error:', e);
 		} finally {
@@ -368,7 +366,7 @@
 		border: 1px solid var(--color-border);
 		border-radius: 8px;
 		box-shadow: 0 4px 20px rgba(0, 0, 0, 0.15);
-		z-index: 101;
+		z-index: var(--z-overlay);
 		overflow: hidden;
 	}
 

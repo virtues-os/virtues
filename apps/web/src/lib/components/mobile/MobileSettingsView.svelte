@@ -15,7 +15,6 @@
 	import { windowShellStore } from "$lib/stores/window-shell.svelte";
 	import { mobileLayout } from "$lib/stores/mobileLayout.svelte";
 	import MobileDeviceScreen from "./MobileDeviceScreen.svelte";
-	import { goto } from "$app/navigation";
 
 	interface Row {
 		label: string;
@@ -32,22 +31,20 @@
 		{ label: "Actions", icon: "ri:flashlight-line", route: "/actions" },
 	];
 
+	// One Settings room, flat sections — mirrors the desktop sidebar's single door.
 	const settings: Row[] = [
-		{ label: "Sources", icon: "ri:plug-line", route: "/sources" },
-		{ label: "Tools", icon: "ri:tools-line", route: "/tools" },
-		{ label: "Account", icon: "ri:user-settings-line", route: "/virtues/account" },
-		{ label: "System", icon: "ri:computer-line", route: "/virtues/system" },
+		{ label: "You", icon: "ri:user-3-line", route: "/virtues/you" },
+		{ label: "Assistant", icon: "ri:sparkling-line", route: "/virtues/assistant" },
+		{ label: "Sources", icon: "ri:plug-line", route: "/virtues/sources" },
+		{ label: "Billing", icon: "ri:bank-card-line", route: "/virtues/billing" },
+		{ label: "Box", icon: "ri:computer-line", route: "/virtues/box" },
+		{ label: "Devices", icon: "ri:device-line", route: "/virtues/devices" },
+		{ label: "Developer", icon: "ri:code-s-slash-line", route: "/virtues/developer" },
 	];
 
 	function open(route: string, label: string) {
 		windowShellStore.openTabFromRoute(route, { label });
 		mobileLayout.closeMenu();
-	}
-
-	async function signOut() {
-		mobileLayout.closeMenu();
-		windowShellStore.closeAllTabs();
-		await goto("/pair");
 	}
 </script>
 
@@ -101,10 +98,6 @@
 					{/each}
 				</div>
 
-				<button class="signout" onclick={signOut}>
-					<Icon icon="ri:logout-box-r-line" width={18} />
-					<span>Sign out</span>
-				</button>
 			{/if}
 		</div>
 	</section>
@@ -120,7 +113,7 @@
 		left: 0;
 		right: 0;
 		bottom: calc(50px + env(safe-area-inset-bottom));
-		z-index: 45;
+		z-index: var(--z-sticky);
 		display: flex;
 		flex-direction: column;
 		/* Match the content pages (surface) so the iOS status-bar strip above the
@@ -237,23 +230,6 @@
 	}
 	.device-entry :global(svg:last-child) {
 		color: var(--color-foreground-muted);
-	}
-
-	.signout {
-		display: flex;
-		align-items: center;
-		justify-content: center;
-		gap: 8px;
-		width: 100%;
-		margin: 22px 0 8px;
-		padding: 14px;
-		border: 1px solid var(--color-border);
-		border-radius: 12px;
-		background: transparent;
-		color: var(--color-danger, #e5484d);
-		font-size: 15px;
-		font-weight: 550;
-		cursor: pointer;
 	}
 
 	/* Gentle rise + fade on enter — a view swap, not a modal slide. */

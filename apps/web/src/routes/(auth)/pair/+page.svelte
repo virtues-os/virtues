@@ -18,6 +18,7 @@
 	import { goto } from "$app/navigation";
 	import Icon from "$lib/components/Icon.svelte";
 	import { onMount } from "svelte";
+	import { pairConsume, getSetupState, ApiError } from "$lib/api/client";
 
 	type Mode = "idle" | "exchanging" | "error";
 	let mode = $state<Mode>("idle");
@@ -49,47 +50,41 @@
 	async function consume(token: string) {
 		mode = "exchanging";
 		try {
-			const resp = await fetch("/api/pair/consume", {
-				method: "POST",
-				headers: { "Content-Type": "application/json" },
-				body: JSON.stringify({
-					token,
-					kind: "browser",
-					device_info: buildDeviceInfo(),
-				}),
+			const data = await pairConsume<{ redirect?: string }>({
+				token,
+				kind: "browser",
+				device_info: buildDeviceInfo(),
 			});
-			if (resp.ok) {
-				const data = await resp.json();
-				// Wipe the fragment so a back-button or copy/paste can't leak the
-				// already-consumed token. `replaceState` keeps the navigation
-				// stack clean.
-				history.replaceState(null, "", "/pair");
-				// Fresh box → the setup wizard owns the next steps (account,
-				// name). Set-up box → wherever the server pointed us. The state
-				// is derived server-side, so this is safe to probe every time.
-				try {
-					const s = await fetch("/api/setup/state");
-					if (s.ok) {
-						const setup = await s.json();
-						if (!setup.setup_complete) {
-							await goto("/setup", { replaceState: true });
-							return;
-						}
-					}
-				} catch (_e) {
-					/* fall through to the normal redirect */
+			// Wipe the fragment so a back-button or copy/paste can't leak the
+			// already-consumed token. `replaceState` keeps the navigation
+			// stack clean.
+			history.replaceState(null, "", "/pair");
+			// Fresh box → the setup wizard owns the next steps (account,
+			// name). Set-up box → wherever the server pointed us. The state
+			// is derived server-side, so this is safe to probe every time.
+			try {
+				const setup = await getSetupState();
+				if (!setup.setup_complete) {
+					await goto("/setup", { replaceState: true });
+					return;
 				}
-				await goto(data.redirect ?? "/", { replaceState: true });
-				return;
+			} catch (_e) {
+				/* fall through to the normal redirect */
 			}
-			const data = await resp.json().catch(() => ({}));
-			errorMessage =
-				data.error === "invalid_or_expired_token"
-					? "This link is invalid or already used. Run `virtues pair` on the box to get a new one."
-					: "Could not complete pairing. Try again with a fresh link.";
-			mode = "error";
-		} catch (_e) {
-			errorMessage = "Could not reach the box. Make sure you're on the same network.";
+			await goto(data.redirect ?? "/", { replaceState: true });
+			return;
+		} catch (e) {
+			// An HTTP error (ApiError) carries the box's error body; a network
+			// failure (anything else) means we couldn't reach the box at all.
+			if (e instanceof ApiError) {
+				const body = e.body as { error?: string } | undefined;
+				errorMessage =
+					body?.error === "invalid_or_expired_token"
+						? "This link is invalid or already used. Run `virtues pair` on the box to get a new one."
+						: "Could not complete pairing. Try again with a fresh link.";
+			} else {
+				errorMessage = "Could not reach the box. Make sure you're on the same network.";
+			}
 			mode = "error";
 		}
 	}
@@ -145,7 +140,7 @@
 				</li>
 				<li>
 					<span class="text-foreground">From an already-paired device:</span>
-					open Settings → Devices → <span class="text-foreground">Add device</span>,
+					open Settings → Box → Devices → <span class="text-foreground">Add device</span>,
 					and scan the QR with this device's camera (or paste the URL).
 				</li>
 			</ol>

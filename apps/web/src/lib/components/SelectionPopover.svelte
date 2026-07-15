@@ -65,7 +65,7 @@
 <style>
 	.vref-bar {
 		position: fixed;
-		z-index: 60;
+		z-index: var(--z-popover);
 		display: flex;
 		align-items: center;
 		padding: 0.1875rem;

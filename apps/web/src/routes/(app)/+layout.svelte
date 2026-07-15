@@ -112,8 +112,8 @@
 					action: {
 						label: "Details",
 						onClick: () =>
-							windowShellStore.openTabFromRoute("/virtues/system", {
-								label: "System",
+							windowShellStore.openTabFromRoute("/virtues/box", {
+								label: "Settings",
 								preferEmptyPane: true,
 							}),
 					},
@@ -192,8 +192,8 @@
 		if (trialToastShownForDay === days) return;
 
 		const openBilling = () =>
-			windowShellStore.openTabFromRoute("/virtues/account/billing", {
-				label: "Account",
+			windowShellStore.openTabFromRoute("/virtues/billing", {
+				label: "Settings",
 				preferEmptyPane: true,
 			});
 
@@ -237,8 +237,8 @@
 				action: {
 					label: "Subscribe",
 					onClick: () =>
-						windowShellStore.openTabFromRoute("/virtues/account/billing", {
-							label: "Account",
+						windowShellStore.openTabFromRoute("/virtues/billing", {
+							label: "Settings",
 							preferEmptyPane: true,
 						}),
 				},
@@ -377,7 +377,7 @@
 		position: fixed;
 		top: max(1rem, env(safe-area-inset-top));
 		right: max(1rem, env(safe-area-inset-right));
-		z-index: 9999;
+		z-index: var(--z-modal);
 		display: flex;
 		align-items: center;
 		justify-content: center;

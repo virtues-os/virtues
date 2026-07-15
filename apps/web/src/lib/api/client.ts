@@ -10,6 +10,94 @@ import { sanitizeUrl } from '$lib/utils/urlUtils';
 const API_BASE = '/api';
 
 // ============================================================================
+// Shared request layer
+// ============================================================================
+
+/**
+ * Error thrown by the shared `request()` helper when a response is not ok.
+ * Carries the HTTP `status` so callers can branch on it (e.g. 402 = wallet
+ * expired / subscription lapsed, 401 = unknown key) instead of parsing a
+ * stringified statusText. `body` holds the parsed JSON error payload when the
+ * server returned one.
+ */
+export class ApiError extends Error {
+	readonly status: number;
+	readonly body: unknown;
+	constructor(status: number, message: string, body?: unknown) {
+		super(message);
+		this.name = 'ApiError';
+		this.status = status;
+		this.body = body;
+	}
+}
+
+type QueryValue = string | number | boolean | null | undefined;
+
+/**
+ * Core fetch wrapper for JSON endpoints under `/api`. Serializes an optional
+ * query object, throws {@link ApiError} (with status) on non-2xx, and returns
+ * the parsed JSON body (or `undefined` for empty/204 responses).
+ *
+ * Not for binary/blob endpoints or progress-tracked uploads — those keep their
+ * own `fetch`/XHR (see uploadMedia, downloadDriveFile).
+ */
+export async function request<T>(
+	path: string,
+	init?: RequestInit & { query?: Record<string, QueryValue> },
+): Promise<T> {
+	let url = `${API_BASE}${path}`;
+	if (init?.query) {
+		const qs = new URLSearchParams();
+		for (const [key, value] of Object.entries(init.query)) {
+			if (value !== undefined && value !== null) qs.set(key, String(value));
+		}
+		const q = qs.toString();
+		if (q) url += `?${q}`;
+	}
+
+	const res = await fetch(url, init);
+
+	if (!res.ok) {
+		let body: unknown;
+		let message = res.statusText || `HTTP ${res.status}`;
+		try {
+			const text = await res.text();
+			if (text) {
+				try {
+					body = JSON.parse(text);
+					const parsed = body as { error?: string; message?: string };
+					message = parsed?.error || parsed?.message || message;
+				} catch {
+					body = text;
+					message = text;
+				}
+			}
+		} catch {
+			/* keep statusText fallback */
+		}
+		throw new ApiError(res.status, message, body);
+	}
+
+	if (res.status === 204) return undefined as T;
+	const text = await res.text();
+	return (text ? JSON.parse(text) : undefined) as T;
+}
+
+/** GET a JSON endpoint, with an optional query object. */
+export function apiGet<T>(path: string, query?: Record<string, QueryValue>): Promise<T> {
+	return request<T>(path, { query });
+}
+
+/** Send a JSON body (POST/PUT/PATCH/DELETE) and parse the JSON response. */
+export function apiSend<T>(method: string, path: string, jsonBody?: unknown): Promise<T> {
+	return request<T>(path, {
+		method,
+		headers: jsonBody !== undefined ? { 'Content-Type': 'application/json' } : undefined,
+		body: jsonBody !== undefined ? JSON.stringify(jsonBody) : undefined,
+	});
+}
+
+// ============================================================================
 // Actions — new schema (post cutover + PR 2 endpoints)
 // ============================================================================
 
@@ -663,6 +751,7 @@ export interface Profile {
 	home_place_id?: string | null;
 	home_city?: string | null;
 	home_country?: string | null;
+	onboarding_status?: string | null;
 }
 
 export async function getProfile(): Promise<Profile> {
@@ -1576,3 +1665,243 @@ export async function getSetupState(): Promise<SetupState> {
 	return res.json();
 }
 
+
+// ============================================================================
+// Tier 2 wrappers — routed through the shared request() layer (ApiError + status).
+// Inputs are typed precisely; outputs use a generic passthrough (<T = unknown>)
+// so each call site reuses the response type it already declares locally.
+// ============================================================================
+
+// ── Assistant profile ────────────────────────────────────────────────────────
+export function getAssistantProfile<T = unknown>(): Promise<T> {
+	return apiGet<T>('/assistant-profile');
+}
+export function updateAssistantProfile<T = unknown>(patch: Record<string, unknown>): Promise<T> {
+	return apiSend<T>('PUT', '/assistant-profile', patch);
+}
+
+// ── Billing / wallet ─────────────────────────────────────────────────────────
+export function getBillingLinkStatus<T = unknown>(): Promise<T> {
+	return apiGet<T>('/billing/link/status');
+}
+export function startBillingLink<T = unknown>(): Promise<T> {
+	return apiSend<T>('POST', '/billing/link/start');
+}
+export function openBillingPortal<T = unknown>(): Promise<T> {
+	return apiSend<T>('POST', '/billing/portal');
+}
+export function getBillingState<T = unknown>(): Promise<T> {
+	return apiGet<T>('/billing/state');
+}
+export function setBillingAutoTopup<T = unknown>(enabled: boolean): Promise<T> {
+	return apiSend<T>('POST', '/billing/auto-topup', { enabled });
+}
+export function getBillingUsage<T = unknown>(): Promise<T> {
+	return apiGet<T>('/billing/usage');
+}
+export function getByoKey<T = unknown>(): Promise<T> {
+	return apiGet<T>('/settings/byo-key');
+}
+export function setByoKey<T = unknown>(body: Record<string, unknown>): Promise<T> {
+	return apiSend<T>('POST', '/settings/byo-key', body);
+}
+export function deleteByoKey<T = unknown>(sudoRequestId?: string): Promise<T> {
+	return apiSend<T>('DELETE', '/settings/byo-key', { sudo_request_id: sudoRequestId });
+}
+
+// ── MCP / tools ──────────────────────────────────────────────────────────────
+export function listTools<T = unknown>(): Promise<T> {
+	return apiGet<T>('/tools');
+}
+export function listMcpServers<T = unknown>(): Promise<T> {
+	return apiGet<T>('/mcp/servers');
+}
+export function getMcpServer<T = unknown>(id: string): Promise<T> {
+	return apiGet<T>(`/mcp/servers/${encodeURIComponent(id)}`);
+}
+export function createMcpServer<T = unknown>(body: Record<string, unknown>): Promise<T> {
+	return apiSend<T>('POST', '/mcp/servers', body);
+}
+export function deleteMcpServer<T = unknown>(id: string): Promise<T> {
+	return apiSend<T>('DELETE', `/mcp/servers/${encodeURIComponent(id)}`);
+}
+export function connectMcpServer<T = unknown>(id: string): Promise<T> {
+	return apiSend<T>('POST', `/mcp/servers/${encodeURIComponent(id)}/connect`);
+}
+export function disconnectMcpServer<T = unknown>(id: string): Promise<T> {
+	return apiSend<T>('POST', `/mcp/servers/${encodeURIComponent(id)}/disconnect`);
+}
+export function toggleMcpTool<T = unknown>(toolId: string): Promise<T> {
+	return apiSend<T>('PATCH', `/mcp/tools/${encodeURIComponent(toolId)}/toggle`);
+}
+
+// ── Personas ─────────────────────────────────────────────────────────────────
+export function listPersonas<T = unknown>(): Promise<T> {
+	return apiGet<T>('/personas');
+}
+export function createPersona<T = unknown>(body: { title: string; content: string }): Promise<T> {
+	return apiSend<T>('POST', '/personas', body);
+}
+export function updatePersona<T = unknown>(id: string, updates: object): Promise<T> {
+	return apiSend<T>('PUT', `/personas/${encodeURIComponent(id)}`, updates);
+}
+export function deletePersona<T = unknown>(id: string): Promise<T> {
+	return apiSend<T>('DELETE', `/personas/${encodeURIComponent(id)}`);
+}
+export function unhidePersona<T = unknown>(id: string): Promise<T> {
+	return apiSend<T>('POST', `/personas/${encodeURIComponent(id)}/unhide`);
+}
+export function resetPersonas<T = unknown>(): Promise<T> {
+	return apiSend<T>('POST', '/personas/reset');
+}
+
+// ── Chats (extras beyond createChat/updateChat/deleteChat above) ──────────────
+export function listChats<T = unknown>(): Promise<T> {
+	return apiGet<T>('/chats');
+}
+export function getChat<T = unknown>(id: string): Promise<T> {
+	return apiGet<T>(`/chats/${encodeURIComponent(id)}`);
+}
+export function getChatUsage<T = unknown>(id: string): Promise<T> {
+	return apiGet<T>(`/chats/${encodeURIComponent(id)}/usage`);
+}
+export function setChatTitle<T = unknown>(body: Record<string, unknown>): Promise<T> {
+	return apiSend<T>('POST', '/chats/title', body);
+}
+export function cancelChat<T = unknown>(chatId: string): Promise<T> {
+	return apiSend<T>('POST', '/chat/cancel', { chatId });
+}
+export function compactChat<T = unknown>(id: string, force = true): Promise<T> {
+	return apiSend<T>('POST', `/chats/${encodeURIComponent(id)}/compact`, { force });
+}
+export function getChatPermissions<T = unknown>(id: string): Promise<T> {
+	return apiGet<T>(`/chats/${encodeURIComponent(id)}/permissions`);
+}
+export function addChatPermission<T = unknown>(id: string, body: Record<string, unknown>): Promise<T> {
+	return apiSend<T>('POST', `/chats/${encodeURIComponent(id)}/permissions`, body);
+}
+export function removeChatPermission<T = unknown>(id: string, entityId: string): Promise<T> {
+	return apiSend<T>(
+		'DELETE',
+		`/chats/${encodeURIComponent(id)}/permissions/${encodeURIComponent(entityId)}`,
+	);
+}
+
+// ── Models ───────────────────────────────────────────────────────────────────
+export function listModels<T = unknown>(): Promise<T> {
+	return apiGet<T>('/models');
+}
+export function getModel<T = unknown>(id: string): Promise<T> {
+	return apiGet<T>(`/models/${encodeURIComponent(id)}`);
+}
+export function getRecommendedModels<T = unknown>(): Promise<T> {
+	return apiGet<T>('/models/recommended');
+}
+
+// ── Page versions (yjs history) ──────────────────────────────────────────────
+export function createPageVersion<T = unknown>(pageId: string, body: Record<string, unknown>): Promise<T> {
+	return apiSend<T>('POST', `/pages/${encodeURIComponent(pageId)}/versions`, body);
+}
+export function listPageVersions<T = unknown>(pageId: string, limit?: number): Promise<T> {
+	return apiGet<T>(`/pages/${encodeURIComponent(pageId)}/versions`, { limit });
+}
+export function getPageVersion<T = unknown>(versionId: string): Promise<T> {
+	return apiGet<T>(`/pages/versions/${encodeURIComponent(versionId)}`);
+}
+
+// ── Setup (extras beyond getSetupState) ──────────────────────────────────────
+export function setupLinkPoll<T = unknown>(): Promise<T> {
+	return apiSend<T>('POST', '/setup/link/poll');
+}
+export function setupSubscribeStart<T = unknown>(): Promise<T> {
+	return apiSend<T>('POST', '/setup/subscribe/start');
+}
+export function setupLoginStart<T = unknown>(email: string): Promise<T> {
+	return apiSend<T>('POST', '/setup/login/start', { email });
+}
+
+// ── Sudo (privilege elevation) ───────────────────────────────────────────────
+export function requestSudo<T = unknown>(action: string, actionPayload?: unknown): Promise<T> {
+	return apiSend<T>('POST', '/sudo/request', { action, action_payload: actionPayload });
+}
+export function getSudoStatus<T = unknown>(id: string): Promise<T> {
+	return apiGet<T>(`/sudo/status/${encodeURIComponent(id)}`);
+}
+
+// ── Mentions queue ───────────────────────────────────────────────────────────
+export function getMentionQueue<T = unknown>(): Promise<T> {
+	return apiGet<T>('/mentions/queue');
+}
+export function resolveMention<T = unknown>(path: string, body: Record<string, unknown>): Promise<T> {
+	return apiSend<T>('POST', `/mentions/${encodeURIComponent(path)}`, body);
+}
+
+// ── Data lake ────────────────────────────────────────────────────────────────
+export function getLakeSummary<T = unknown>(): Promise<T> {
+	return apiGet<T>('/lake/summary');
+}
+export function getLakeStreams<T = unknown>(): Promise<T> {
+	return apiGet<T>('/lake/streams');
+}
+
+// ── System / telemetry / usage ───────────────────────────────────────────────
+export function getSystemTelemetry<T = unknown>(): Promise<T> {
+	return apiGet<T>('/system/telemetry');
+}
+export function getSystemHistory<T = unknown>(): Promise<T> {
+	return apiGet<T>('/system/history');
+}
+export function getMetricsActivity<T = unknown>(): Promise<T> {
+	return apiGet<T>('/metrics/activity');
+}
+export function getAiCalls<T = unknown>(): Promise<T> {
+	return apiGet<T>('/telemetry/ai-calls');
+}
+export function getAuthAudit<T = unknown>(): Promise<T> {
+	return apiGet<T>('/audit/auth');
+}
+export function getUsageSummary<T = unknown>(): Promise<T> {
+	return apiGet<T>('/usage/summary');
+}
+export function getSubscription<T = unknown>(): Promise<T> {
+	return apiGet<T>('/subscription');
+}
+
+// ── Narrative identity (wiki) ────────────────────────────────────────────────
+export function getNarrativeIdentity<T = unknown>(): Promise<T> {
+	return apiGet<T>('/wiki/narrative-identity');
+}
+export function updateNarrativeIdentity<T = unknown>(body: Record<string, unknown>): Promise<T> {
+	return apiSend<T>('PUT', '/wiki/narrative-identity', body);
+}
+
+// ── Devices / pairing (extras beyond pairMint/pairDeny/pairStatus) ────────────
+export function listDevices<T = unknown>(): Promise<T> {
+	return apiGet<T>('/devices');
+}
+export function pairConfirm<T = unknown>(id: string): Promise<T> {
+	return apiSend<T>('POST', `/pair/confirm/${encodeURIComponent(id)}`);
+}
+export function pairConsume<T = unknown>(body?: Record<string, unknown>): Promise<T> {
+	return apiSend<T>('POST', '/pair/consume', body);
+}
+
+// ── Misc singletons ──────────────────────────────────────────────────────────
+export function getDeveloperTables<T = unknown>(): Promise<T> {
+	return apiGet<T>('/developer/tables');
+}
+export function getDriveMedia<T = unknown>(): Promise<T> {
+	return apiGet<T>('/drive/media');
+}
+export function searchUnsplash<T = unknown>(body: Record<string, unknown>): Promise<T> {
+	return apiSend<T>('POST', '/unsplash/search', body);
+}
+export function getServerInfo<T = unknown>(): Promise<T> {
+	return apiGet<T>('/app/server-info');
+}
+export function triggerAction<T = unknown>(id: string): Promise<T> {
+	return apiSend<T>('POST', `/actions/${encodeURIComponent(id)}/trigger`);
+}
+export function aiComplete<T = unknown>(req: Record<string, unknown>): Promise<T> {
+	return apiSend<T>('POST', '/ai/complete', req);
+}

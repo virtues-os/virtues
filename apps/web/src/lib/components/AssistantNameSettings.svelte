@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
+	import { getAssistantProfile, updateAssistantProfile } from '$lib/api/client';
 
 	let name = $state('');
 	let savedName = $state('');
@@ -10,12 +11,9 @@
 
 	async function load() {
 		try {
-			const res = await fetch('/api/assistant-profile');
-			if (res.ok) {
-				const profile = await res.json();
-				savedName = profile.assistant_name || 'Ari';
-				name = savedName;
-			}
+			const profile = await getAssistantProfile<{ assistant_name?: string | null }>();
+			savedName = profile.assistant_name || 'Ari';
+			name = savedName;
 		} catch (error) {
 			console.error('Failed to load assistant name:', error);
 		} finally {
@@ -32,16 +30,7 @@
 		savedName = trimmed; // optimistic
 
 		try {
-			const res = await fetch('/api/assistant-profile', {
-				method: 'PUT',
-				headers: { 'Content-Type': 'application/json' },
-				body: JSON.stringify({ assistant_name: trimmed })
-			});
-			if (!res.ok) {
-				savedName = previous;
-				name = previous;
-				console.error('Failed to save assistant name');
-			}
+			await updateAssistantProfile({ assistant_name: trimmed });
 		} catch (error) {
 			savedName = previous;
 			name = previous;

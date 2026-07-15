@@ -115,7 +115,7 @@
 		left: 0;
 		right: 0;
 		bottom: 0;
-		z-index: 50;
+		z-index: var(--z-sticky);
 		display: flex;
 		align-items: flex-start;
 		justify-content: space-around;

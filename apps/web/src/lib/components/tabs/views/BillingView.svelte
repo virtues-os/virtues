@@ -2,9 +2,21 @@
 	import type { Tab } from '$lib/tabs/types';
 	import { Page, Button, Input, Badge, SudoModal } from '$lib';
 	import { subscriptionStore } from '$lib/stores/subscription.svelte';
-	import { windowShellStore } from '$lib/stores/window-shell.svelte';
 	import { openExternal } from '$lib/tauri/bridge';
 	import { formatMicrosUSD, formatMicrosPrecise } from '$lib/utils/currency';
+	import { formatDate } from '$lib/utils/dateUtils';
+	import {
+		getBillingLinkStatus,
+		startBillingLink,
+		openBillingPortal as requestBillingPortal,
+		getBillingState,
+		setBillingAutoTopup,
+		getBillingUsage,
+		getByoKey,
+		setByoKey,
+		deleteByoKey,
+		ApiError,
+	} from '$lib/api/client';
 	import Icon from '$lib/components/Icon.svelte';
 	import { toast } from 'svelte-sonner';
 
@@ -45,8 +57,7 @@
 		stopPolling();
 		pollTimer = setInterval(async () => {
 			try {
-				const res = await fetch('/api/billing/link/status');
-				const data = await res.json();
+				const data = await getBillingLinkStatus<{ status: string }>();
 				if (data.status === 'ready') {
 					stopPolling();
 					linkPolling = false;
@@ -83,8 +94,7 @@
 		linkError = null;
 		linkDone = false;
 		try {
-			const res = await fetch('/api/billing/link/start', { method: 'POST' });
-			const data = await res.json();
+			const data = await startBillingLink<LinkInfo & { error?: unknown }>();
 			if (data.error) {
 				linkError = typeof data.error === 'string' ? data.error : 'Failed to start subscription link';
 				return;
@@ -93,8 +103,10 @@
 			// Poll from now on: covers both the "continue" button and the manual
 			// enter-the-code path. The link self-expires (15 min) if unused.
 			startPolling(Math.max((data.interval || 5) * 1000, 2000));
-		} catch {
-			linkError = 'Failed to connect to billing service';
+		} catch (e) {
+			// Surface any server-provided error body (ApiError.message extracts it),
+			// mirroring the old code that read data.error even on non-2xx.
+			linkError = e instanceof ApiError ? e.message : 'Failed to connect to billing service';
 		} finally {
 			linkLoading = false;
 		}
@@ -111,22 +123,17 @@
 		portalLoading = true;
 		portalError = null;
 		try {
-			const res = await fetch('/api/billing/portal', { method: 'POST' });
-			const data = await res.json();
+			const data = await requestBillingPortal<{ url?: string; error?: { message?: string } | string }>();
 			if (data.url) {
 				openExternal(data.url);
 			} else if (data.error) {
 				portalError = typeof data.error === 'string' ? data.error : data.error.message || 'Failed to open billing portal';
 			}
 		} catch (e) {
-			portalError = 'Failed to connect to billing service';
+			portalError = e instanceof ApiError ? e.message : 'Failed to connect to billing service';
 		} finally {
 			portalLoading = false;
 		}
-	}
-
-	function openUsage() {
-		windowShellStore.openTabFromRoute('/virtues/account/usage', { label: 'Account', preferEmptyPane: true });
 	}
 
 	// ─── Local billing-state (auto-top-up + BYO) ──────────────────────────
@@ -148,20 +155,15 @@
 	async function loadLocal() {
 		localLoading = true;
 		try {
-			const r = await fetch('/api/billing/state');
-			if (r.ok) local = await r.json();
+			local = await getBillingState<LocalBillingState>();
 		} catch { /* swallow */ }
 		localLoading = false;
 	}
 
 	async function setAutoTopup(enabled: boolean) {
 		try {
-			const r = await fetch('/api/billing/auto-topup', {
-				method: 'POST',
-				headers: { 'Content-Type': 'application/json' },
-				body: JSON.stringify({ enabled })
-			});
-			if (r.ok) await loadLocal();
+			await setBillingAutoTopup(enabled);
+			await loadLocal();
 		} catch { /* swallow */ }
 	}
 
@@ -201,9 +203,7 @@
 		byoLoading = true;
 		byoLoadError = null;
 		try {
-			const resp = await fetch('/api/settings/byo-key');
-			if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
-			byoStatus = (await resp.json()) as ByoStatus;
+			byoStatus = await getByoKey<ByoStatus>();
 		} catch (e) {
 			byoLoadError = e instanceof Error ? e.message : 'Failed to load BYO status';
 		} finally {
@@ -230,21 +230,13 @@
 
 	async function performByoSave(sudoRequestId: string) {
 		try {
-			const resp = await fetch('/api/settings/byo-key', {
-				method: 'POST',
-				headers: { 'Content-Type': 'application/json' },
-				body: JSON.stringify({
-					sudo_request_id: sudoRequestId,
-					provider: byoProvider,
-					api_key: byoApiKey,
-					endpoint_url: byoEndpointUrl || null,
-					default_model: byoDefaultModel || null,
-				}),
+			await setByoKey({
+				sudo_request_id: sudoRequestId,
+				provider: byoProvider,
+				api_key: byoApiKey,
+				endpoint_url: byoEndpointUrl || null,
+				default_model: byoDefaultModel || null,
 			});
-			if (!resp.ok) {
-				const data = await resp.json().catch(() => ({}));
-				throw new Error(data.error ?? `HTTP ${resp.status}`);
-			}
 			toast.success('BYO key saved');
 			byoApiKey = '';
 			await Promise.all([loadByo(), loadLocal()]);
@@ -261,15 +253,7 @@
 
 	async function performByoDelete(sudoRequestId: string) {
 		try {
-			const resp = await fetch('/api/settings/byo-key', {
-				method: 'DELETE',
-				headers: { 'Content-Type': 'application/json' },
-				body: JSON.stringify({ sudo_request_id: sudoRequestId }),
-			});
-			if (!resp.ok) {
-				const data = await resp.json().catch(() => ({}));
-				throw new Error(data.error ?? `HTTP ${resp.status}`);
-			}
+			await deleteByoKey(sudoRequestId);
 			toast.success('BYO key removed — chat is back on your Virtues wallet');
 			await Promise.all([loadByo(), loadLocal()]);
 		} catch (e) {
@@ -292,12 +276,9 @@
 
 	async function loadUsage() {
 		try {
-			const r = await fetch('/api/billing/usage');
-			if (r.ok) {
-				const data = await r.json();
-				// Ignore error payloads; never trust `entries` to be present.
-				usage = data.error ? null : { ...data, entries: data.entries ?? [] };
-			}
+			const data = await getBillingUsage<Usage>();
+			// Ignore error payloads; never trust `entries` to be present.
+			usage = data.error ? null : { ...data, entries: data.entries ?? [] };
 		} catch { /* swallow — balance panel just hides */ }
 	}
 
@@ -321,7 +302,7 @@
 	// Human "renews" date from expiry.
 	const renewsLabel = $derived(
 		usage?.expires_at
-			? new Date(usage.expires_at).toLocaleDateString(undefined, { month: 'long', day: 'numeric' })
+			? formatDate(usage.expires_at, { month: 'long', day: 'numeric' })
 			: null
 	);
 	function entryDate(ts: string): string {
@@ -330,7 +311,7 @@
 		const sameDay = d.toDateString() === today.toDateString();
 		return sameDay
 			? d.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' })
-			: d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+			: formatDate(ts, { month: 'short', day: 'numeric' });
 	}
 
 	const statusLabel: Record<string, string> = {
@@ -374,7 +355,7 @@
 					<div class="flex justify-between items-center">
 						<span class="text-foreground-muted">Expiry date</span>
 						<span class="text-foreground">
-							{new Date(subscriptionStore.trialExpiresAt).toLocaleDateString(undefined, { year: 'numeric', month: 'long', day: 'numeric' })}
+							{formatDate(subscriptionStore.trialExpiresAt, { year: 'numeric', month: 'long', day: 'numeric' })}
 						</span>
 					</div>
 				{/if}
@@ -641,19 +622,6 @@
 			>
 				{portalLoading ? 'Opening...' : 'Manage Subscription'}
 			</button>
-		</div>
-
-		<!-- Quick Links -->
-		<div class="border border-border rounded-lg p-6">
-			<h2 class="text-lg font-medium text-foreground mb-4">Related</h2>
-			<div class="space-y-2">
-				<button
-					onclick={openUsage}
-					class="text-sm text-accent hover:underline"
-				>
-					View usage limits and quotas
-				</button>
-			</div>
 		</div>
 </Page>
 

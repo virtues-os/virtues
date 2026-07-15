@@ -28,9 +28,9 @@
 			case 'healthy':
 				return 'var(--color-primary)';
 			case 'warning':
-				return '#f97316'; // orange
+				return 'var(--color-warning)';
 			case 'critical':
-				return '#ef4444'; // red
+				return 'var(--color-error)';
 		}
 	}
 

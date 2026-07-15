@@ -2,6 +2,8 @@
 	import type { Tab } from "$lib/tabs/types";
 	import { Page } from "$lib";
 	import Icon from "$lib/components/Icon.svelte";
+	import { apiGet } from "$lib/api/client";
+	import { formatDate } from "$lib/utils/dateUtils";
 	import { onMount, onDestroy } from "svelte";
 
 	// @ts-ignore — Vite compile-time constant (see vite.config.ts + app.d.ts)
@@ -41,9 +43,7 @@
 	}
 
 	function formatBuildTime(iso: string): string {
-		if (!iso) return "";
-		const date = new Date(iso);
-		return date.toLocaleDateString([], {
+		return formatDate(iso, {
 			year: "numeric",
 			month: "long",
 			day: "numeric",
@@ -137,12 +137,10 @@
 		try {
 			// Ask for the process table only while the Detail panel is open —
 			// process enumeration is the heaviest sample, so the default poll skips it.
-			const r = await fetch(`/api/system/telemetry${detail ? "?processes=1" : ""}`);
-			if (!r.ok) {
-				live = false;
-				return;
-			}
-			const d = await r.json();
+			const d = await apiGet<Telemetry>(
+				"/system/telemetry",
+				detail ? { processes: 1 } : undefined,
+			);
 			t = d;
 			live = true;
 			cpuHist = push(cpuHist, Math.round(d.cpu?.usage_pct ?? 0));

@@ -138,7 +138,7 @@
 			id: "settings",
 			label: "Open Settings",
 			icon: "ri:settings-4-line",
-			action: () => windowShellStore.openTabFromRoute("/virtues/account"),
+			action: () => windowShellStore.openTabFromRoute("/virtues/you"),
 		},
 	];
 
@@ -587,7 +587,7 @@
 		/* Bottom inset keeps tall result lists above the home indicator. */
 		padding-top: max(15vh, env(safe-area-inset-top));
 		padding-bottom: max(16px, env(safe-area-inset-bottom));
-		z-index: 9999;
+		z-index: var(--z-modal);
 	}
 
 	.modal {

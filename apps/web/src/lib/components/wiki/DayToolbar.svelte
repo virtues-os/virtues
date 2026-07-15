@@ -253,7 +253,7 @@
 		color: var(--color-foreground-subtle);
 		background: color-mix(in srgb, var(--color-foreground) 6%, transparent);
 		padding: 1px 6px;
-		border-radius: 9999px;
+		border-radius: var(--radius-full);
 		letter-spacing: 0.02em;
 		cursor: default;
 	}

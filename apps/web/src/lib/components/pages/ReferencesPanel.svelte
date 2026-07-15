@@ -113,7 +113,7 @@
 		min-width: 1.125rem;
 		height: 1.125rem;
 		padding: 0 0.3125rem;
-		border-radius: 999px;
+		border-radius: var(--radius-full);
 		background: var(--color-surface-elevated);
 		color: var(--color-foreground-muted);
 		font-size: 0.6875rem;

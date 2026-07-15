@@ -43,8 +43,25 @@ pub struct Config {
 
     /// Unsplash API key (for cover image search)
     pub unsplash_access_key: Option<String>,
-    // Plaid/OAuth provider credentials are read directly from the environment
-    // in `routes/oauth.rs` (the OAuth proxy), not carried on this struct.
+
+    // =========================================================================
+    // Plaid (bank data). The MASTER Plaid app credentials live ONLY here so the
+    // home box never holds them — the box sends per-user `access_token`s and the
+    // `/v1/services/plaid/*` proxy injects `client_id`+`secret` server-side.
+    // =========================================================================
+    /// Plaid app client id (master credential).
+    pub plaid_client_id: Option<String>,
+
+    /// Plaid app secret (master credential).
+    pub plaid_secret: Option<String>,
+
+    /// Plaid API base URL, selected by `PLAID_ENV` (sandbox | development |
+    /// production). Default: production. Used by both the `/v1/services/plaid/*`
+    /// data proxy and the OAuth link/exchange calls in `routes/oauth.rs`.
+    pub plaid_base_url: String,
+
+    // Other OAuth provider credentials (google/notion/strava client_id/secret)
+    // are read directly from the environment in `routes/oauth.rs`.
 }
 
 impl Config {
@@ -80,11 +97,29 @@ impl Config {
             exa_api_key: std::env::var("EXA_API_KEY").ok(),
             google_api_key: std::env::var("GOOGLE_API_KEY").ok(),
             unsplash_access_key: std::env::var("UNSPLASH_ACCESS_KEY").ok(),
+
+            // Plaid master credentials + environment-selected base URL.
+            plaid_client_id: std::env::var("PLAID_CLIENT_ID").ok(),
+            plaid_secret: std::env::var("PLAID_SECRET").ok(),
+            plaid_base_url: plaid_base_url_from_env()?,
         })
     }
 
     /// Check if LLM provider (AI Gateway) is configured
     pub fn has_llm_provider(&self) -> bool {
         !self.ai_gateway_api_key.is_empty()
+    }
+}
+
+/// Resolve the Plaid API base URL from `PLAID_ENV`. Unset → production. An
+/// unrecognized non-empty value is a hard error rather than a silent fallback:
+/// this var gates real-money bank calls, so a typo (`sandbox\n`, `Sandbox`,
+/// `dev`) must fail boot instead of quietly routing to production.
+fn plaid_base_url_from_env() -> Result<String> {
+    match std::env::var("PLAID_ENV").ok().as_deref().map(str::trim) {
+        None | Some("") | Some("production") => Ok("https://production.plaid.com".to_string()),
+        Some("sandbox") => Ok("https://sandbox.plaid.com".to_string()),
+        Some("development") => Ok("https://development.plaid.com".to_string()),
+        Some(other) => bail!("PLAID_ENV must be sandbox|development|production, got '{other}'"),
     }
 }

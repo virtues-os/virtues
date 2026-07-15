@@ -1,8 +1,9 @@
 <script lang="ts">
 	import type { Tab } from "$lib/tabs/types";
 	import { Page, Input } from "$lib";
-	import Icon from "$lib/components/Icon.svelte";
+	import LoadingState from "$lib/components/LoadingState.svelte";
 	import ThemePicker from "$lib/components/ThemePicker.svelte";
+	import { getProfile, updateProfile, type Profile } from "$lib/api/client";
 	import { onMount } from "svelte";
 	import {
 		getTheme,
@@ -33,11 +34,7 @@
 
 		try {
 			setTheme(newTheme);
-			await fetch("/api/profile", {
-				method: "PUT",
-				headers: { "Content-Type": "application/json" },
-				body: JSON.stringify({ theme: newTheme }),
-			});
+			await updateProfile({ theme: newTheme });
 			invalidate("/api/profile");
 		} catch (error) {
 			console.error("Failed to save theme preference:", error);
@@ -51,25 +48,22 @@
 	async function loadProfile() {
 		loading = true;
 		try {
-			const response = await fetch("/api/profile");
-			if (response.ok) {
-				const profile = await response.json();
+			const profile = (await getProfile()) as Record<string, any>;
 
-				fullName = profile.full_name || "";
-				preferredName = profile.preferred_name || "";
-				birthDate = profile.birth_date
-					? profile.birth_date.split("T")[0]
-					: "";
-				heightCm = profile.height_cm || "";
-				weightKg = profile.weight_kg || "";
-				ethnicity = profile.ethnicity || "";
-				occupation = profile.occupation || "";
-				employer = profile.employer || "";
-				timezone = profile.home_timezone || "";
+			fullName = profile.full_name || "";
+			preferredName = profile.preferred_name || "";
+			birthDate = profile.birth_date
+				? profile.birth_date.split("T")[0]
+				: "";
+			heightCm = profile.height_cm || "";
+			weightKg = profile.weight_kg || "";
+			ethnicity = profile.ethnicity || "";
+			occupation = profile.occupation || "";
+			employer = profile.employer || "";
+			timezone = profile.home_timezone || "";
 
-				if (profile.theme && isValidTheme(profile.theme)) {
-					currentTheme = profile.theme as Theme;
-				}
+			if (profile.theme && isValidTheme(profile.theme)) {
+				currentTheme = profile.theme as Theme;
 			}
 		} catch (error) {
 			console.error("Failed to load profile:", error);
@@ -80,16 +74,7 @@
 
 	async function saveField(field: string, value: string | number | null) {
 		try {
-			const response = await fetch("/api/profile", {
-				method: "PUT",
-				headers: { "Content-Type": "application/json" },
-				body: JSON.stringify({ [field]: value }),
-			});
-
-			if (!response.ok) {
-				throw new Error(`Failed to save ${field}`);
-			}
-
+			await updateProfile({ [field]: value } as Partial<Profile>);
 			invalidate("/api/profile");
 		} catch (error) {
 			console.error(`Failed to save ${field}:`, error);
@@ -105,9 +90,7 @@
 >
 
 		{#if loading}
-			<div class="flex items-center justify-center h-64">
-				<Icon icon="ri:loader-4-line" width="20" class="spin" />
-			</div>
+			<LoadingState />
 		{:else}
 			<div class="space-y-8">
 				<!-- Appearance -->

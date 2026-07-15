@@ -65,6 +65,25 @@
 	);
 	const isSplitMode = $derived(windowShellStore.isSplit);
 
+	// Per-tab history (browser model): back/forward act on this pane's active tab.
+	const canGoBack = $derived(windowShellStore.canGoBack(paneId));
+	const canGoForward = $derived(windowShellStore.canGoForward(paneId));
+
+	function handleBack() {
+		windowShellStore.goBack(paneId);
+	}
+
+	function handleForward() {
+		windowShellStore.goForward(paneId);
+	}
+
+	function handleNewTab() {
+		windowShellStore.openTab(
+			{ type: "home", label: "Home", route: "/home", icon: "ri:home-5-line" },
+			paneId,
+		);
+	}
+
 	// Build DnD items from tabs with source information
 	function buildDndItems(): DndTabItem[] {
 		return tabs.map((tab) => ({
@@ -168,7 +187,7 @@
 						try {
 							if (tabEntityType === 'page') {
 								await updatePage(tabEntityId, { icon });
-								await pagesStore.load();
+								await pagesStore.refresh();
 							} else if (tabEntityType === 'chat') {
 								await updateChat(tabEntityId, { icon });
 								chatSessions.updateSessionIcon(tabEntityId, icon);
@@ -358,6 +377,27 @@
 		</button>
 	{/if}
 
+	<div class="nav-cluster">
+		<button
+			class="nav-btn"
+			onclick={handleBack}
+			disabled={!canGoBack}
+			aria-label="Back"
+			title="Back"
+		>
+			<Icon icon="ri:arrow-left-s-line" />
+		</button>
+		<button
+			class="nav-btn"
+			onclick={handleForward}
+			disabled={!canGoForward}
+			aria-label="Forward"
+			title="Forward"
+		>
+			<Icon icon="ri:arrow-right-s-line" />
+		</button>
+	</div>
+
 	<div
 		class="tabs-scroll"
 		role="tablist"
@@ -429,6 +469,15 @@
 		{/each}
 	</div>
 
+	<button
+		class="new-tab-btn"
+		onclick={handleNewTab}
+		aria-label="New tab"
+		title="New tab"
+	>
+		<Icon icon="ri:add-line" />
+	</button>
+
 	{#if !paneId && !mobileLayout.isMobile}
 		<button
 			class="split-toggle"
@@ -462,7 +511,7 @@
 		background: var(--color-surface);
 		flex-shrink: 0;
 		position: relative;
-		z-index: 110; /* Above global drag overlays */
+		z-index: var(--z-overlay); /* Above global drag overlays */
 	}
 
 	/* Card top rounding in split mode */
@@ -630,7 +679,9 @@
 
 	.sidebar-toggle,
 	.split-toggle,
-	.merge-toggle {
+	.merge-toggle,
+	.nav-btn,
+	.new-tab-btn {
 		display: flex;
 		align-items: center;
 		justify-content: center;
@@ -655,9 +706,32 @@
 
 	.sidebar-toggle:hover,
 	.split-toggle:hover,
-	.merge-toggle:hover {
+	.merge-toggle:hover,
+	.nav-btn:hover:not(:disabled),
+	.new-tab-btn:hover {
 		background: var(--color-surface-elevated);
 		color: var(--color-foreground);
+	}
+
+	/* Back/forward cluster: tight grouping, muted, disabled at stack ends */
+	.nav-cluster {
+		display: flex;
+		align-items: center;
+		gap: 0;
+		flex-shrink: 0;
+	}
+
+	.nav-btn {
+		width: 20px;
+	}
+
+	.nav-btn:disabled {
+		opacity: 0.3;
+		cursor: default;
+	}
+
+	.new-tab-btn {
+		margin-left: 2px;
 	}
 
 	/* svelte-dnd-action drop indicator */

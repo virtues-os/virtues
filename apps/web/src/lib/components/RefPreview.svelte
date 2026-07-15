@@ -92,7 +92,7 @@
 <style>
 	.ref-preview {
 		position: fixed;
-		z-index: 60;
+		z-index: var(--z-popover);
 		display: flex;
 		flex-direction: column;
 		width: 260px;

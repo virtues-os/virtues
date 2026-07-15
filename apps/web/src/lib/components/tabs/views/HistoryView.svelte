@@ -7,6 +7,7 @@
 	} from "$lib/components/datagrid/UniversalDataGrid.svelte";
 	import { onMount } from "svelte";
 	import { formatRelativeTimestamp } from "$lib/utils/dateUtils";
+	import { listChats } from "$lib/api/client";
 
 	let { tab, active }: { tab: Tab; active: boolean } = $props();
 
@@ -36,9 +37,7 @@
 		loading = true;
 		error = null;
 		try {
-			const response = await fetch("/api/chats");
-			if (!response.ok) throw new Error("Failed to load sessions");
-			const data = await response.json();
+			const data = await listChats<{ conversations?: Session[] }>();
 			sessions = data.conversations || [];
 		} catch (e) {
 			error = e instanceof Error ? e.message : "Failed to load sessions";

@@ -6,13 +6,12 @@
 
 mod transform;
 
-use anyhow::{Context, Result};
+use anyhow::Result;
 use serde_json::{json, Value};
 use virtues::storage::lake;
 use virtues_helpers::{connect_from_env, output, read_input};
 
 const ACTION: &str = "plaid_investments_sync";
-const PLAID_HOLDINGS: &str = "https://production.plaid.com/investments/holdings/get";
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -23,24 +22,15 @@ async fn main() -> Result<()> {
 
     let access_token = virtues_actions::secret(&input, "access_token")?;
 
-    let client_id = std::env::var("PLAID_CLIENT_ID").context("PLAID_CLIENT_ID not set")?;
-    let secret = std::env::var("PLAID_SECRET").context("PLAID_SECRET not set")?;
-
-    let resp: Value = reqwest::Client::new()
-        .post(PLAID_HOLDINGS)
-        .json(&json!({
-            "client_id": client_id,
-            "secret": secret,
-            "access_token": access_token,
-        }))
-        .send()
-        .await
-        .context("plaid holdings/get failed")?
-        .error_for_status()
-        .context("plaid non-2xx (some accounts don't support investments — error is benign)")?
-        .json()
-        .await
-        .context("plaid non-JSON")?;
+    // Proxied through virtues-api: the box sends only the per-user access_token;
+    // the master Plaid secret stays server-side. (A non-2xx — e.g. accounts that
+    // don't support investments — surfaces as an error here, as before.)
+    let resp: Value = virtues_actions::plaid_proxy(
+        &pool,
+        "investments/holdings/get",
+        &json!({ "access_token": access_token }),
+    )
+    .await?;
 
     let holdings = resp
         .get("holdings")

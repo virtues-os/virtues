@@ -31,8 +31,8 @@
 		onClose();
 	}
 
-	async function submit(e: SubmitEvent) {
-		e.preventDefault();
+	async function submit(e?: Event) {
+		e?.preventDefault();
 		if (!url.trim()) return;
 		importing = true;
 		error = null;

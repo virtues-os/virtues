@@ -31,7 +31,16 @@
 	import { pendingPrompt } from "$lib/stores/pendingPrompt.svelte";
 	import { notebookStore } from "$lib/stores/notebook.svelte";
 	import ChatNotebookBreadcrumb from "$lib/components/chat/ChatNotebookBreadcrumb.svelte";
-	import { updateChat, deleteChat } from "$lib/api/client";
+	import {
+		updateChat,
+		deleteChat,
+		getChat,
+		getChatUsage,
+		getAssistantProfile,
+		getProfile,
+		setChatTitle,
+		cancelChat,
+	} from "$lib/api/client";
 	import { contextMenu, type ContextMenuItem } from "$lib/stores/contextMenu.svelte";
 	import type { Chat } from "@ai-sdk/svelte";
 	// Active page editing imports
@@ -58,7 +67,7 @@
 	interface ToolResultPart {
 		type: string;
 		state?: string;
-		toolCallId?: string;
+		toolCallId: string;
 		output?: {
 			page_id?: string;
 			title?: string;
@@ -556,10 +565,8 @@
 		// which races with the server's Y.Text initialization.
 		editAllowListStore.addPage(pageId, title);
 
-		if (!windowShellStore.isSplit) {
-			windowShellStore.enableSplit();
-		}
-		windowShellStore.openTabFromRoute(`/page/${pageId}`, { paneId: 'right' });
+		// Open the page BESIDE the chat (Category A) — never navigate the chat in place.
+		windowShellStore.openRouteBeside(`/page/${pageId}`);
 	}
 
 	// Effect to handle create_page side effects (auto-open new pages)
@@ -596,7 +603,7 @@
 				if (part.type === 'tool-create_page' && part.state === 'output-available') {
 					const output = part.output;
 					if (output?.page_id && !initialCompletedToolCalls.has(part.toolCallId)) {
-						handlePageCreated(output.page_id, output.title);
+						handlePageCreated(output.page_id, output.title ?? "");
 						initialCompletedToolCalls.add(part.toolCallId); // Mark as handled
 					}
 				}
@@ -655,10 +662,11 @@
 		if (!conversationId || isNewChat(tab.route)) return;
 
 		try {
-			const res = await fetch(`/api/chats/${conversationId}/usage`);
-			if (!res.ok) return;
-
-			const data = await res.json();
+			const data = await getChatUsage<{
+				usage_percentage: number;
+				total_tokens: number;
+				context_window: number;
+			}>(conversationId);
 			const status: "healthy" | "warning" | "critical" =
 				data.usage_percentage >= 85
 					? "critical"
@@ -688,15 +696,16 @@
 	// Handle compaction completion from ContextViewPanel - refresh messages
 	async function handleCompacted() {
 		if (!conversationId) return;
-		const messagesRes = await fetch(`/api/chats/${conversationId}`);
-		if (messagesRes.ok) {
-			const data = await messagesRes.json();
+		try {
+			const data = await getChat<{ messages?: any[] }>(conversationId);
 			loadedMessages = data.messages || [];
 			chat.messages = deduplicateMessages(loadedMessages).map((msg: any) => ({
 				id: msg.id,
 				role: msg.role as "user" | "assistant" | "checkpoint",
 				parts: convertMessageToParts(msg),
-			}));
+			})) as unknown as typeof chat.messages;
+		} catch {
+			// Non-critical refresh — leave the current messages in place on failure.
 		}
 	}
 
@@ -871,6 +880,9 @@
 				isLoading = true;
 				(async () => {
 					try {
+						// Raw fetch (not getChat): this load carries an AbortSignal so
+						// switching tabs mid-load cancels it. The client wrapper has no
+						// signal channel, so this site stays on fetch by design.
 						const response = await fetch(
 							`/api/chats/${currentTabConversationId}`,
 							{ signal },
@@ -886,7 +898,7 @@
 								id: msg.id,
 								role: msg.role as "user" | "assistant" | "checkpoint",
 								parts: convertMessageToParts(msg),
-							}));
+							})) as unknown as typeof chat.messages;
 							if (data.conversation?.model) {
 								initializeSelectedModel(
 									data.conversation.model,
@@ -951,15 +963,17 @@
 
 			const profilePromise = (async () => {
 				try {
-					const profileResponse = await fetch("/api/assistant-profile");
-					if (profileResponse.ok) {
-						const profile = await profileResponse.json();
-						if (profile.ui_preferences) {
-							uiPreferences = profile.ui_preferences;
-						}
-						profileDefaultModelId = profile.chat_model_id || profile.default_model_id;
-						profileDefaultPersona = profile.persona;
+					const profile = await getAssistantProfile<{
+						ui_preferences?: Record<string, unknown>;
+						chat_model_id?: string;
+						default_model_id?: string;
+						persona?: string;
+					}>();
+					if (profile.ui_preferences) {
+						uiPreferences = profile.ui_preferences;
 					}
+					profileDefaultModelId = profile.chat_model_id || profile.default_model_id;
+					profileDefaultPersona = profile.persona;
 				} catch (error) {
 					console.error("Failed to load assistant profile:", error);
 				}
@@ -967,12 +981,9 @@
 
 			const namePromise = (async () => {
 				try {
-					const response = await fetch("/api/profile");
-					if (response.ok) {
-						const profile = await response.json();
-						preferredName = profile.preferred_name;
-						onboardingStatus = profile.onboarding_status || 'active';
-					}
+					const profile = await getProfile();
+					preferredName = profile.preferred_name ?? undefined;
+					onboardingStatus = profile.onboarding_status || 'active';
 				} catch {
 					// Non-critical, continue without preferred name
 				}
@@ -980,20 +991,20 @@
 
 			const conversationPromise = tabConversationId ? (async () => {
 				try {
-					const response = await fetch(`/api/chats/${tabConversationId}`);
-					if (response.ok) {
-						const data = await response.json();
-						loadedMessages = data.messages || [];
-						chat.messages = deduplicateMessages(loadedMessages).map(
-							(msg: any) => ({
-								id: msg.id,
-								role: msg.role as "user" | "assistant" | "checkpoint",
-								parts: convertMessageToParts(msg),
-							}),
-						);
-						if (data.conversation?.model) {
-							initializeSelectedModel(data.conversation.model);
-						}
+					const data = await getChat<{
+						messages?: any[];
+						conversation?: { model?: string };
+					}>(tabConversationId);
+					loadedMessages = data.messages || [];
+					chat.messages = deduplicateMessages(loadedMessages).map(
+						(msg: any) => ({
+							id: msg.id,
+							role: msg.role as "user" | "assistant" | "checkpoint",
+							parts: convertMessageToParts(msg),
+						}),
+					) as unknown as typeof chat.messages;
+					if (data.conversation?.model) {
+						initializeSelectedModel(data.conversation.model);
 					}
 				} catch (error) {
 					console.error("[ChatView] Error loading conversation:", error);
@@ -1264,31 +1275,23 @@
 		if (titleGenerated || chat.messages.length < 2) return;
 
 		try {
-			const response = await fetch("/api/chats/title", {
-				method: "POST",
-				headers: { "Content-Type": "application/json" },
-				body: JSON.stringify({
-					chatId: conversationId,
-					messages: chat.messages.map((m) => ({
-						role: m.role,
-						content:
-							m.parts.find((p) => p.type === "text")?.text || "",
-					})),
-				}),
+			const data = await setChatTitle<{ title?: string }>({
+				chatId: conversationId,
+				messages: chat.messages.map((m) => ({
+					role: m.role,
+					content: m.parts.find((p) => p.type === "text")?.text || "",
+				})),
 			});
 
-			if (response.ok) {
-				const data = await response.json();
-				// Only mark done once we actually have a title, so an ok-but-empty
-				// response retries on the next turn instead of giving up silently.
-				if (data.title) {
-					titleGenerated = true;
-					windowShellStore.updateTab(tab.id, { label: data.title });
-					// Optimistically seed the shared session store so the header
-					// breadcrumb (and any store-bound surface) updates immediately,
-					// without waiting on the server-persist → refetch round-trip.
-					chatSessions.applyTitle(conversationId, data.title);
-				}
+			// Only mark done once we actually have a title, so an ok-but-empty
+			// response retries on the next turn instead of giving up silently.
+			if (data.title) {
+				titleGenerated = true;
+				windowShellStore.updateTab(tab.id, { label: data.title });
+				// Optimistically seed the shared session store so the header
+				// breadcrumb (and any store-bound surface) updates immediately,
+				// without waiting on the server-persist → refetch round-trip.
+				chatSessions.applyTitle(conversationId, data.title);
 			}
 		} catch (error) {
 			// Title generation is non-critical
@@ -1320,11 +1323,7 @@
 
 		// Also notify the backend to cancel the agent loop
 		try {
-			await fetch('/api/chat/cancel', {
-				method: 'POST',
-				headers: { 'Content-Type': 'application/json' },
-				body: JSON.stringify({ chatId: conversationId })
-			});
+			await cancelChat(conversationId);
 		} catch (e) {
 			console.error('[ChatView] Failed to cancel chat:', e);
 		}
@@ -1424,14 +1423,6 @@
 					// from treating this as a tab change and resetting state
 					const newRoute = `/chat/${conversationId}`;
 					previousTabRoute = newRoute;
-					console.log(
-						"[ChatView] Updating tab with route:",
-						{
-							tabId: tab.id,
-							conversationId,
-							newRoute,
-						},
-					);
 					windowShellStore.updateTab(tab.id, {
 						route: newRoute,
 					});
@@ -1648,7 +1639,7 @@
 										data-loading={message.role ===
 											"assistant" &&
 											!message.parts.some(
-												(p) =>
+												(p: any) =>
 													p.type === "text" && p.text,
 											)}
 									>
@@ -1759,13 +1750,10 @@
 														title={output.title}
 														pageId={output.page_id}
 														onOpenPage={(id) => {
-													if (!windowShellStore.isSplit) {
-														windowShellStore.enableSplit();
-													}
-													windowShellStore.openTabFromRoute(`/page/${id}`, { paneId: 'right' });
+													// Open the created page beside the chat (Category A).
+													windowShellStore.openRouteBeside(`/page/${id}`);
 												}}
-														onBindPage={handlePageSelect}
-													/>
+														/>
 												{/if}
 											{:else if part.type === "tool-edit_page" && (part as any).state === "output-available"}
 												{@const output = (part as any).output}
@@ -1785,10 +1773,8 @@
 														replace={output.edit.replace || ''}
 														isFullReplace={!output.edit.find}
 														onViewPage={editPageId ? () => {
-															if (!windowShellStore.isSplit) {
-																windowShellStore.enableSplit();
-															}
-															windowShellStore.openTabFromRoute(`/page/${editPageId}`, { paneId: 'right', forceNew: true });
+															// View the edited page beside the chat (Category A).
+															windowShellStore.openRouteBeside(`/page/${editPageId}`);
 														} : undefined}
 													/>
 												{/if}
@@ -1853,8 +1839,8 @@
 												</div>
 											{/if}
 											{@const userText = message.parts
-												.filter((p) => p.type === "text")
-												.map((p) => p.text)
+												.filter((p: any) => p.type === "text")
+												.map((p: any) => p.text)
 												.join("")}
 											{#if userText.trim()}
 												<UserMessage text={userText} />
@@ -1882,7 +1868,7 @@
 								</div>
 							{/if}
 
-							<ChatError error={chat.error} onRetry={() => chat.regenerate()} />
+							<ChatError error={chat.error ?? null} onRetry={() => chat.regenerate()} />
 						</div>
 					</div>
 
@@ -2013,8 +1999,8 @@
 							isStreaming={chat.status === "streaming"}
 							maxWidth="max-w-3xl"
 							placeholder={isGhost ? "Write a message (temporary)…" : "Write a message..."}
-							on:submit={(e) => handleChatSubmit(e.detail)}
-							on:stop={() => handleChatStop()}
+							onSubmit={(text) => handleChatSubmit(text)}
+							onStop={() => handleChatStop()}
 						/>
 
 					</div>
@@ -2612,7 +2598,7 @@
 		align-items: center;
 		gap: 0.4rem;
 		padding: 0.3rem 0.7rem;
-		border-radius: 999px;
+		border-radius: var(--radius-full);
 		background: var(--color-primary);
 		color: var(--color-on-primary, #fff);
 		font-size: 0.75rem;

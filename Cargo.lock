@@ -7566,6 +7566,7 @@ dependencies = [
  "base64 0.22.1",
  "chrono",
  "chrono-tz",
+ "dotenv",
  "reqwest 0.12.28",
  "serde",
  "serde_json",

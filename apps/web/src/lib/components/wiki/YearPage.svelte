@@ -403,7 +403,7 @@
 		color: var(--color-foreground-muted);
 		background: color-mix(in srgb, var(--color-foreground) 5%, transparent);
 		padding: 0.25rem 0.625rem;
-		border-radius: 9999px;
+		border-radius: var(--radius-full);
 	}
 
 	/* Citations */

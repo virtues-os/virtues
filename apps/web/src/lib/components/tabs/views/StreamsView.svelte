@@ -8,7 +8,10 @@
 	// deliberately no upload, no rename, no delete here — a floor you can edit
 	// isn't a floor. Removal happens only through a retention policy.
 	import Icon from "$lib/components/Icon.svelte";
-	import { onMount } from "svelte";
+	import { LoadingState, ErrorState } from "$lib";
+	import { getLakeSummary, getLakeStreams } from "$lib/api/client";
+	import { createResource } from "$lib/utils/resource.svelte";
+	import { formatDate } from "$lib/utils/dateUtils";
 
 	interface LakeSummary {
 		total_bytes: number;
@@ -30,35 +33,20 @@
 		latest_at: string | null;
 	}
 
-	let summary: LakeSummary | null = $state(null);
-	let streams: LakeStream[] = $state([]);
-	let loading = $state(true);
-	let error: string | null = $state(null);
+	const res = createResource(
+		() =>
+			Promise.all([
+				getLakeSummary<LakeSummary>(),
+				getLakeStreams<LakeStream[]>(),
+			]).then(([summary, streams]) => ({ summary, streams })),
+		{ errorMessage: "Failed to load the lake" },
+	);
+
+	const summary = $derived(res.data?.summary ?? null);
+	const streams = $derived(res.data?.streams ?? []);
 
 	const archives = $derived(streams.filter((s) => s.source_type === "raw_stream"));
 	const blobs = $derived(streams.filter((s) => s.source_type === "media"));
-
-	onMount(loadData);
-
-	async function loadData() {
-		loading = true;
-		error = null;
-		try {
-			const [summaryRes, streamsRes] = await Promise.all([
-				fetch("/api/lake/summary"),
-				fetch("/api/lake/streams"),
-			]);
-			if (!summaryRes.ok || !streamsRes.ok) {
-				throw new Error("Failed to load the lake");
-			}
-			summary = await summaryRes.json();
-			streams = await streamsRes.json();
-		} catch (e: any) {
-			error = e.message;
-		} finally {
-			loading = false;
-		}
-	}
 
 	function formatBytes(bytes: number): string {
 		if (!bytes) return "0 B";
@@ -70,8 +58,7 @@
 
 	function formatRange(earliest: string | null, latest: string | null): string {
 		if (!earliest && !latest) return "—";
-		const fmt = (d: string) =>
-			new Date(d).toLocaleDateString(undefined, { month: "short", day: "numeric" });
+		const fmt = (d: string) => formatDate(d, { month: "short", day: "numeric" });
 		const start = earliest ? fmt(earliest) : "—";
 		const end = latest ? fmt(latest) : "—";
 		return start === end ? start : `${start} → ${end}`;
@@ -80,18 +67,14 @@
 
 <div class="flex h-full w-full flex-col">
 	<div class="flex flex-1 flex-col overflow-auto p-6">
-		{#if loading}
-			<div class="flex h-full items-center justify-center">
-				<Icon icon="ri:loader-4-line" width="20" class="animate-spin text-foreground-muted" />
-			</div>
-		{:else if error}
-			<div class="rounded-md border border-destructive/20 bg-destructive/10 p-4 text-destructive">
-				<div class="flex items-center gap-2 font-medium">
-					<Icon icon="ri:error-warning-line" />
-					Failed to load the lake
-				</div>
-				<p class="mt-1 text-xs">{error}</p>
-			</div>
+		{#if res.loading}
+			<LoadingState class="h-full" />
+		{:else if res.error}
+			<ErrorState
+				title="Failed to load the lake"
+				message={res.error}
+				onRetry={res.reload}
+			/>
 		{:else if summary}
 			<div class="mb-6 grid grid-cols-3 gap-4">
 				<div class="rounded-lg border border-border bg-surface p-4">

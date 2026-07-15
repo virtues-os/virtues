@@ -11,7 +11,6 @@ use virtues::storage::lake;
 use virtues_helpers::{connect_from_env, output, read_input};
 
 const ACTION: &str = "plaid_accounts_sync";
-const PLAID_ACCOUNTS_GET: &str = "https://production.plaid.com/accounts/get";
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -41,24 +40,14 @@ async fn main() -> Result<()> {
         .and_then(|v| v.as_str())
         .unwrap_or("Unknown");
 
-    let client_id = std::env::var("PLAID_CLIENT_ID").context("PLAID_CLIENT_ID not set")?;
-    let secret = std::env::var("PLAID_SECRET").context("PLAID_SECRET not set")?;
-
-    let resp: Value = reqwest::Client::new()
-        .post(PLAID_ACCOUNTS_GET)
-        .json(&json!({
-            "client_id": client_id,
-            "secret": secret,
-            "access_token": access_token,
-        }))
-        .send()
-        .await
-        .context("plaid accounts/get failed")?
-        .error_for_status()
-        .context("plaid non-2xx")?
-        .json()
-        .await
-        .context("plaid response non-JSON")?;
+    // Proxied through virtues-api: the box sends only the per-user access_token;
+    // the master Plaid secret stays server-side.
+    let resp: Value = virtues_actions::plaid_proxy(
+        &pool,
+        "accounts/get",
+        &json!({ "access_token": access_token }),
+    )
+    .await?;
 
     let accounts = resp
         .get("accounts")

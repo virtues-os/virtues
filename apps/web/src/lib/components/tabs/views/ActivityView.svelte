@@ -8,6 +8,8 @@
 	import type { Tab } from "$lib/tabs/types";
 	import { Page, EmptyState, LoadingState, ErrorState } from "$lib";
 	import Icon from "$lib/components/Icon.svelte";
+	import { getAuthAudit } from "$lib/api/client";
+	import { formatTimeAgo } from "$lib/utils/dateUtils";
 	import { onMount } from "svelte";
 
 	let { tab, active }: { tab: Tab; active: boolean } = $props();
@@ -32,9 +34,7 @@
 		loading = true;
 		errorMessage = null;
 		try {
-			const resp = await fetch("/api/audit/auth");
-			if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
-			const data = await resp.json();
+			const data = await getAuthAudit<{ events?: Event[] }>();
 			events = data.events ?? [];
 		} catch (e) {
 			errorMessage = e instanceof Error ? e.message : "Failed to load activity";
@@ -56,18 +56,6 @@
 
 	function humanType(t: string): string {
 		return t.replace(/_/g, " ");
-	}
-
-	function timeAgo(iso: string): string {
-		const then = new Date(iso).getTime();
-		const sec = Math.max(0, Math.floor((Date.now() - then) / 1000));
-		if (sec < 60) return "just now";
-		const min = Math.floor(sec / 60);
-		if (min < 60) return `${min}m ago`;
-		const hr = Math.floor(min / 60);
-		if (hr < 24) return `${hr}h ago`;
-		const d = Math.floor(hr / 24);
-		return `${d}d ago`;
 	}
 </script>
 
@@ -98,7 +86,7 @@
 					<div class="flex-1 min-w-0">
 						<div class="text-sm">
 							<span class="font-medium text-foreground">{humanType(ev.event_type)}</span>
-							<span class="text-foreground-muted">· {timeAgo(ev.occurred_at)}</span>
+							<span class="text-foreground-muted">· {formatTimeAgo(ev.occurred_at)}</span>
 						</div>
 						<div class="text-xs text-foreground-muted mt-0.5 flex flex-wrap gap-x-3 gap-y-0.5">
 							{#if ev.ip}<span>IP: {ev.ip}</span>{/if}

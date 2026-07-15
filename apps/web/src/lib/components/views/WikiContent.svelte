@@ -201,12 +201,6 @@
 	let lastLoadedId = $state<string | null>(null);
 
 	onMount(() => {
-		console.log(
-			"[WikiContent] onMount, entityId:",
-			entityId,
-			"active:",
-			active,
-		);
 		if (entityId && entityId !== lastLoadedId) {
 			lastLoadedId = entityId;
 			loadPage();
@@ -223,10 +217,6 @@
 		if (currentId && isActive) {
 			untrack(() => {
 				if (currentId !== lastLoadedId) {
-					console.log(
-						"[WikiContent] entityId changed, reloading:",
-						currentId,
-					);
 					lastLoadedId = currentId;
 					loadPage();
 				}

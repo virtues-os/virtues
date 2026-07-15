@@ -170,6 +170,6 @@
 	}
 	.fail {
 		margin-left: 0.375rem;
-		color: #b91c1c;
+		color: color-mix(in srgb, var(--color-error) 75%, #000);
 	}
 </style>

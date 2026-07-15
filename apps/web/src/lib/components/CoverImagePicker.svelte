@@ -6,7 +6,13 @@
 	 * Use inside a Popover primitive for proper positioning and dismiss behavior.
 	 */
 	import Icon from './Icon.svelte';
-	import { listDriveFiles, uploadMedia, type DriveFile } from '$lib/api/client';
+	import {
+		listDriveFiles,
+		uploadMedia,
+		searchUnsplash as searchUnsplashApi,
+		ApiError,
+		type DriveFile
+	} from '$lib/api/client';
 
 	interface Props {
 		/** Current cover URL */
@@ -162,23 +168,27 @@
 		unsplashLoading = true;
 		unsplashError = null;
 		try {
-			const res = await fetch('/api/unsplash/search', {
-				method: 'POST',
-				headers: { 'Content-Type': 'application/json' },
-				body: JSON.stringify({ query: query.trim(), per_page: 16 }),
+			const data = await searchUnsplashApi<{ results?: UnsplashPhoto[] }>({
+				query: query.trim(),
+				per_page: 16
 			});
-			if (!res.ok) {
-				const err = await res.json().catch(() => ({ error: res.statusText }));
-				// Don't leak backend config errors — show a friendly, actionable line.
-				if (err.error?.code === 'service_not_configured' || res.status === 503) {
-					throw new Error('Image search is temporarily unavailable.');
-				}
-				throw new Error(err.error?.message || err.error || 'Search failed');
-			}
-			const data = await res.json();
 			unsplashResults = data.results || [];
 		} catch (e) {
-			unsplashError = e instanceof Error ? e.message : 'Search failed';
+			if (e instanceof ApiError) {
+				const err = e.body as { error?: { code?: string; message?: string } | string } | undefined;
+				const errObj = err && typeof err.error === 'object' ? err.error : null;
+				// Don't leak backend config errors — show a friendly, actionable line.
+				if (errObj?.code === 'service_not_configured' || e.status === 503) {
+					unsplashError = 'Image search is temporarily unavailable.';
+				} else {
+					unsplashError =
+						errObj?.message ||
+						(typeof err?.error === 'string' ? err.error : null) ||
+						'Search failed';
+				}
+			} else {
+				unsplashError = e instanceof Error ? e.message : 'Search failed';
+			}
 			unsplashResults = [];
 		} finally {
 			unsplashLoading = false;

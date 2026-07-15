@@ -341,14 +341,18 @@ async fn plaid_start(
         "client_name": "Virtues",
         "user": { "client_user_id": "virtues-user" },
         "products": ["transactions"],
-        "optional_products": ["investments", "liabilities"],
+        // NOTE: `optional_products: ["investments", "liabilities"]` was removed
+        // because the Plaid account isn't enabled for those products — Plaid
+        // rejects the whole `link/token/create` with INVALID_PRODUCT, breaking
+        // every connect. Re-add once the account is enabled for them (and then
+        // the plaid_investments_sync / plaid_liabilities_sync actions light up).
         "country_codes": ["US"],
         "language": "en",
         "redirect_uri": cfg.redirect_uri,
     });
     let resp = state
         .http_client
-        .post("https://production.plaid.com/link/token/create")
+        .post(format!("{}/link/token/create", state.config.plaid_base_url))
         .json(&body)
         .send()
         .await;
@@ -505,7 +509,10 @@ async fn exchange_plaid_public_token(
     });
     let resp = state
         .http_client
-        .post("https://production.plaid.com/item/public_token/exchange")
+        .post(format!(
+            "{}/item/public_token/exchange",
+            state.config.plaid_base_url
+        ))
         .json(&body)
         .send()
         .await;

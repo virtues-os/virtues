@@ -5,6 +5,8 @@
  * Themes are applied via data-theme attribute on <html> and CSS custom properties.
  */
 
+import { getAssistantProfile, updateAssistantProfile } from '$lib/api/client';
+
 export type Theme =
 	| 'pemberley'
 	| 'caladan'
@@ -76,22 +78,16 @@ export async function setTheme(theme: Theme): Promise<void> {
 
 	// Persist to database
 	try {
-		const profileRes = await fetch('/api/assistant-profile');
-		let existingPrefs = {};
-		if (profileRes.ok) {
-			const profile = await profileRes.json();
-			existingPrefs = profile.ui_preferences || {};
-		}
+		const profile = await getAssistantProfile<{ ui_preferences?: Record<string, unknown> }>().catch(
+			() => null
+		);
+		const existingPrefs = profile?.ui_preferences || {};
 
-		await fetch('/api/assistant-profile', {
-			method: 'PUT',
-			headers: { 'Content-Type': 'application/json' },
-			body: JSON.stringify({
-				ui_preferences: {
-					...existingPrefs,
-					theme
-				}
-			})
+		await updateAssistantProfile({
+			ui_preferences: {
+				...existingPrefs,
+				theme
+			}
 		});
 	} catch (error) {
 		console.error('Failed to save theme to database:', error);
@@ -106,14 +102,11 @@ export async function loadThemeFromDB(): Promise<Theme> {
 	if (typeof window === 'undefined') return FALLBACK_THEME;
 
 	try {
-		const response = await fetch('/api/assistant-profile');
-		if (response.ok) {
-			const profile = await response.json();
-			const theme = profile.ui_preferences?.theme as Theme;
-			if (theme && isValidTheme(theme)) {
-				applyTheme(theme);
-				return theme;
-			}
+		const profile = await getAssistantProfile<{ ui_preferences?: { theme?: string } }>();
+		const theme = profile.ui_preferences?.theme as Theme;
+		if (theme && isValidTheme(theme)) {
+			applyTheme(theme);
+			return theme;
 		}
 	} catch (error) {
 		console.error('Failed to load theme from database:', error);

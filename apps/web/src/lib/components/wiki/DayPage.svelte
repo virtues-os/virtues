@@ -804,7 +804,7 @@
 		color: var(--color-foreground-muted);
 		background: color-mix(in srgb, var(--color-foreground) 6%, transparent);
 		padding: 1px 8px;
-		border-radius: 9999px;
+		border-radius: var(--radius-full);
 	}
 
 	/* Lead paragraph (autobiography without heading) */
@@ -987,7 +987,7 @@
 		font-size: 0.6875rem;
 		font-weight: 500;
 		padding: 1px 6px;
-		border-radius: 9999px;
+		border-radius: var(--radius-full);
 		background: color-mix(in srgb, var(--color-foreground) 8%, transparent);
 		color: var(--color-foreground-muted);
 		margin-right: 0.25rem;
@@ -1053,7 +1053,7 @@
 		font-weight: 500;
 		line-height: 1.4;
 		border: 1px solid color-mix(in srgb, var(--color-foreground) 12%, transparent);
-		border-radius: 9999px;
+		border-radius: var(--radius-full);
 		background: transparent;
 		color: var(--color-foreground-muted);
 		cursor: pointer;

@@ -7,6 +7,8 @@
  * Pauses polling when the browser tab is hidden.
  */
 
+import { getSubscription } from '$lib/api/client';
+
 const POLL_INTERVAL = 60_000; // 60 seconds
 
 class SubscriptionStore {
@@ -56,16 +58,19 @@ class SubscriptionStore {
 	/** Fetch subscription status (also callable externally to force refresh) */
 	async check() {
 		try {
-			const res = await fetch('/api/subscription');
-			if (!res.ok) return;
-			const data = await res.json();
+			const data = await getSubscription<{
+				status?: string;
+				trial_expires_at?: string | null;
+				days_remaining?: number | null;
+				is_active?: boolean;
+			}>();
 
 			this.status = data.status ?? 'active';
 			this.trialExpiresAt = data.trial_expires_at ?? null;
 			this.daysRemaining = data.days_remaining ?? null;
 			this.isActive = data.is_active ?? true;
 		} catch {
-			// Network error - ignore, will retry next interval
+			// Non-2xx (incl. 402/401) or network error - ignore, will retry next interval
 		}
 	}
 }
