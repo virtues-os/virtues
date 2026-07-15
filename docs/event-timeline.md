@@ -37,6 +37,13 @@ the *complete* day, with late uploads settled and sleep resolved — can always
 reconstruct the timeline better than any provisional intra-day pass. Anything an
 hourly agent writes, the nightly pass would overwrite with a more-informed cut.
 
+And there is a second, deeper reason the synthesis must wait for the whole day:
+**meaning is relative, so it is retrospective.** You cannot know whether the last
+hour was novel, calm, weird, or ordinary without the rest of the day to measure it
+against — a z-score needs the whole distribution. An hour has no *relative* meaning
+until the day it belongs to exists. So the nightly pass waits not only for complete
+*evidence* but for the complete *distribution*.
+
 So the hourly agent produces **no durable data**. Its only possible value is
 showing the user something live during the day — and that does not require an
 LLM at all.
@@ -50,6 +57,29 @@ Two clean pieces, no reconciliation between them:
 2. **The live "today so far" view** — deterministic, zero-LLM, disposable. Just
    renders what is already known as the day happens.
 
+## Two clocks, and that is the whole orchestration
+
+It looks like a fragile pipeline — "step A must finish before step B or we are
+broken." It is not. Every transformation is **idempotent, backlog-driven, and
+self-healing** (the visit rollup was proven so: run it three times, get 13/13/13).
+So nothing waits on anything. Each step runs on its own clock, does whatever work
+is ready, and if its inputs are not there yet it does nothing and picks them up the
+next tick. The lattice **converges**; it is not orchestrated.
+
+**Fast clock (~15 min, all day): resolve raw → derived.**
+Transcription as recordings land; visits as points land. Independent, idempotent,
+order-free. This feeds the live view.
+
+**Slow clock (nightly): make meaning, on complete and comparable data.**
+Sessionize audio → label sessions → the detective → score → narrate. One
+authoritative pass.
+
+You do not build a precise sequence. You run a couple of cheap self-healing
+refreshers frequently, and one smart synthesis nightly. The latency between them is
+not mess — it is the honest shape of meaning accreting: a visit is not a visit
+until you leave, a session is not done until it ends, a day is not a day until it
+is over. Each layer settles only once the one beneath it has.
+
 ## The live view (intra-day, zero-AI)
 
 During the day, the user sees a timeline built **only from source rows that bound
@@ -59,21 +89,15 @@ in the loop:
 - **location visits** — labelled by place name
 - **calendar events** — labelled by title
 - **sleep** — labelled by itself
-- **conversation sessions** — labelled by their session title ("Call with Maya")
 
-The last one qualifies **only because transcription is now a session, not a
-chunk** (see the rollup section). A conversation session bounds and labels itself
-exactly like a visit — and its title was computed upstream by the sessionizer, so
-rendering it keeps the live view zero-LLM. A raw 5-minute transcription chunk
-would *not* qualify (271 of them is not a timeline), which is precisely why the
-sessionizer is a prerequisite for showing audio here at all.
-
-That is the whole list. Workouts, app-sessions, messages, heart rate remain
-**texture, not blocks**: they colour an event but cannot bound one on their own,
-and inferring a block from them needs the detective — the nightly pass's job. The
-live view never guesses. It shows the skeleton it can prove ("Home, 00:04–03:07 ·
-Blue Bottle, 09:00–now · Call with Maya, 14:00–14:45") and leaves the rest blank
-until morning.
+That is the whole list. Conversation sessions are **not** here, deliberately:
+audio sessionization is a *nightly* step (it needs closed sessions and resolved
+visits, both complete only by nightfall), so conversation-blocks land in the
+settled day, not the live strip. Workouts, app-sessions, messages, heart rate
+remain **texture, not blocks** — they colour an event but cannot bound one on
+their own, and inferring a block from them needs the detective. The live view
+never guesses. It shows the skeleton it can prove ("Home, 00:04–03:07 · Blue
+Bottle, 09:00–now") and leaves the rest blank until morning.
 
 This view cannot hallucinate, cannot drift, and costs nothing, because there is
 no model in it. The polished, fused, narrated day arrives the next morning — the
@@ -146,6 +170,47 @@ the timeline explains its reasoning: *"Meeting, ~2–3pm — your calendar, your
 arrival at the office, and the audio all agree."* The user sees *why*, and can
 correct it — and a user's correction is the highest-value evidence there is.
 
+## Audio sessions: the detective's ears
+
+Raw audio arrives as 5-minute recorder chunks — hundreds a day, each transcribed
+and titled in isolation. That granularity is a recorder artifact, not a unit of
+life, and it must roll up into **sessions** (`data_communication_transcription`
+becomes the session, mirroring `location_point → location_visit`) before the
+detective reads it. This is a **nightly** step.
+
+**Boundaries come from acoustic context, never topic.** The tempting signal —
+embedding/topic distance between chunks — is exactly wrong: topic drifts wildly
+*within* a single context ("HDMI screens → shipping → lunch → your date", all at
+one desk with one colleague, is one session). What actually marks a context change
+is **who is around and how loud it is**, and both are already measured:
+
+- **`average_db_level`** (on `data_audio_recording`) — a car, a quiet room, a loud
+  restaurant, a lull all read differently.
+- **`speaker_count`** (on the transcription) — bucketed to {silent 0, solo 1, dyad
+  2, group 3+}, because raw diarization is noisy (it will claim 40 speakers).
+
+Run **PELT changepoint detection** (offline, deterministic, O(n), no LLM) over the
+`(db, speaker-bucket)` series, speaker-weighted. Verified on a real day: it cut 271
+chunks into ~24 coherent context blocks — writing, a restaurant, a car with music,
+~10 hours of sleep-with-a-fan as *one* block, a bus ride, a meal, distinct
+conversations. Topic drift stayed inside its session; a real shift got its own. No
+embeddings, no rerank, no topics — just db + speakers + PELT.
+
+**Bias toward MORE sessions, not fewer.** These are *clues for the detective, not
+verdicts*. The detective can merge boundaries it was handed; it can never split one
+it was never told about. So over-segmentation is recoverable and under-segmentation
+is lost information — tune the penalty toward recall, stopping only where a boundary
+becomes noise (a single-chunk diarization blip).
+
+**Labels are context-aware, not per-chunk.** A 5-minute fan recording is correctly
+titled "Steady Engine Hum" — with no context. No better transcription model fixes
+that; it still just *hears a fan*. The fix is to label at the **session** level with
+the facts the audio cannot contain: local time, duration, speaker profile, and
+**place from the (now clean) visits**. `[quiet, no speakers, 10h, at home,
+overnight]` becomes "Sleeping", not "Engine Hum". Give the AI the facts it cannot
+hear. The raw chunk titles stay as detective *clues* (it interprets them); the
+context-aware session label is what a human sees.
+
 ## Ordering: novelty comes after the summary
 
 There are two distinct kinds of novelty, and both sit **after** the events have
@@ -158,14 +223,32 @@ summaries:
    agentically** by the nightly agent, because it holds the last 14 days in
    context and notices the deviation itself.
 
-The nightly chain, in order:
+The full shape, both clocks:
 
 ```
-segment events        (dossier + 14-day context → the gapless timeline)
-  → annotate          (stamp avg_hr, entities, source_ontologies per event window)
-  → compute scores    (novelty / autonomic / topic-entity — embeds event summaries)
-  → narrate           (prose; notices narrative novelty from the week it can see)
+FAST CLOCK (all day, ~15 min):  transcribe chunks · resolve visits
+                                → feeds the live view (visits + calendar + sleep)
+
+NIGHTLY (the authority):
+  1  sessionize    PELT over db + speaker-count (audio) · gap-based (iMessage).
+                   Purely MECHANICAL — boundaries + stitched chunk summaries +
+                   speaker profile. No LLM. No titles, no per-session summary:
+                   all labelling is the detective's job in step 2.
+  2  detective     a dossier of FEATURES (session summaries, visit labels, message
+                   counts) + agentic drill-down into raw text only where a boundary
+                   is ambiguous → 8-16 gapless events, Unknown for real gaps.
+                   This is where meaning is made: "quiet, no speakers, 10h, at home,
+                   overnight" becomes "Sleeping".
+  3  score         novelty / autonomic / topic-entity. Embeds event summaries, so
+                   it runs after step 2. Baseline is an 84-DAY (12-week) rolling
+                   window — relative measures need statistical power.
+  4  narrate       events + scores + a 14-DAY case file → prose.
 ```
+
+**Two windows, two jobs — do not conflate them.** Scoring (step 3) looks back
+**84 days** for a statistical baseline. The narrative case file (step 4) is
+**14 days** of recent event summaries for pattern-awareness. Long history for the
+z-scores; recent history for the story.
 
 ## The one hard dependency: clean rollups
 
@@ -205,9 +288,13 @@ detective reading echoes.
 
 ## Summary
 
-> **Nightly is the timeline** — one pass over the complete day, reading a
-> compressed dossier plus the last 14 days, fusing candidate changepoints into a
-> gapless sequence (with `Unknown` for real gaps), drilling into raw evidence on
-> demand, and showing its reasoning. **The live view is a deterministic, zero-LLM
-> "today so far"** built only from visits, calendar, and sleep. **Clean session
-> rollups feed both**, and are the one thing that must be fixed first.
+> **Two clocks.** All day, a fast clock resolves raw → derived (transcription,
+> visits) — idempotent, self-healing, order-free — and feeds a deterministic,
+> zero-LLM live view (visits + calendar + sleep). At night, one authoritative pass
+> makes meaning on complete and comparable data: **sessionize** (mechanical PELT +
+> stitch, no LLM) → **the detective** (a dossier of features + drill-down → gapless
+> 8-16 events, `Unknown` for real gaps, all labelling here) → **score** (84-day
+> relative baseline) → **narrate** (with a 14-day case file). Nightly is
+> authoritative because evidence *and the distribution it is measured against* are
+> only complete once the day is over. **Clean session rollups are the one
+> prerequisite** — the detective is only as good as its witnesses.
