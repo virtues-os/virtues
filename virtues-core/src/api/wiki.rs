@@ -1513,10 +1513,18 @@ pub async fn create_temporal_event(
     let day_id_str = req.day_id.to_string();
     let start_time_str = req.start_time.to_rfc3339();
     let end_time_str = req.end_time.to_rfc3339();
-    let source_ontologies_str = req
-        .source_ontologies
-        .as_ref()
-        .map(|v| serde_json::to_string(v).unwrap_or_else(|_| "null".to_string()));
+    // `source_ontologies` is NOT NULL with a `'[]'` default, and the segmentation
+    // path deliberately passes None — it is stamped afterwards by `annotate`. But
+    // naming the column in the INSERT and binding None sends SQL NULL, which
+    // OVERRIDES the default and violates the constraint, so EVERY event insert on
+    // that path failed and no day could be segmented. Default None to an empty
+    // array, which is what the column would have used had we omitted it.
+    let source_ontologies_str = Some(
+        req.source_ontologies
+            .as_ref()
+            .map(|v| serde_json::to_string(v).unwrap_or_else(|_| "[]".to_string()))
+            .unwrap_or_else(|| "[]".to_string()),
+    );
 
     let event_id = ids::generate_id(ids::WIKI_EVENT_PREFIX, &[&req.day_id, &start_time_str, &end_time_str]);
 
