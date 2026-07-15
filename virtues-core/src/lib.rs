@@ -31,6 +31,7 @@ pub mod relay;
 pub mod scheduler;
 pub mod search;
 pub mod seeding;
+pub mod sessionize;
 pub mod server;
 pub mod setup;
 pub mod storage;
