@@ -312,7 +312,7 @@
 		color: var(--color-foreground-muted);
 		background: color-mix(in srgb, var(--color-foreground) 8%, transparent);
 		padding: 2px 8px;
-		border-radius: 9999px;
+		border-radius: var(--radius-full);
 		text-transform: capitalize;
 	}
 
@@ -339,7 +339,7 @@
 		color: var(--color-foreground-muted);
 		background: color-mix(in srgb, var(--color-foreground) 4%, transparent);
 		border: 1px solid var(--color-border);
-		border-radius: 9999px;
+		border-radius: var(--radius-full);
 		cursor: pointer;
 		transition: all 0.1s ease;
 	}

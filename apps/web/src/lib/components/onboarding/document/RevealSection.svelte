@@ -14,6 +14,8 @@
 	import Icon from "$lib/components/Icon.svelte";
 	import { Button } from "$lib";
 	import Markdown from "$lib/components/Markdown.svelte";
+	import { triggerAction, getNarrativeIdentity } from "$lib/api/client";
+	import { formatDate } from "$lib/utils/dateUtils";
 
 	interface Props {
 		/** A non-empty portrait exists (from /api/setup/state). */
@@ -30,23 +32,18 @@
 	let triggered = false;
 	let triggerFailed = $state(false);
 
-	const today = new Intl.DateTimeFormat(undefined, {
+	const today = formatDate(new Date(), {
 		day: "numeric",
 		month: "long",
 		year: "numeric",
-	}).format(new Date());
+	});
 
 	async function triggerDraft() {
 		if (triggered) return;
 		triggered = true;
 		triggerFailed = false;
 		try {
-			const r = await fetch("/api/actions/action_narrative_identity_draft/trigger", {
-				method: "POST",
-				headers: { "Content-Type": "application/json" },
-				body: "{}",
-			});
-			if (!r.ok) triggerFailed = true;
+			await triggerAction("action_narrative_identity_draft");
 		} catch {
 			triggerFailed = true;
 		}
@@ -54,11 +51,8 @@
 
 	async function loadContent() {
 		try {
-			const r = await fetch("/api/wiki/narrative-identity");
-			if (r.ok) {
-				const d = await r.json();
-				content = (d.content ?? "").trim();
-			}
+			const d = await getNarrativeIdentity<{ content?: string }>();
+			content = (d.content ?? "").trim();
 		} catch {
 			/* keep waiting */
 		}

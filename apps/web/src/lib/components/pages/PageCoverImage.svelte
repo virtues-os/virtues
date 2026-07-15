@@ -121,6 +121,6 @@
 	}
 
 	.cover-overlay-btn-danger:hover {
-		background: rgba(220, 38, 38, 0.8);
+		background: color-mix(in srgb, var(--color-error) 80%, transparent);
 	}
 </style>

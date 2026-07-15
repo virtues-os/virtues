@@ -607,7 +607,7 @@
 	.run-error {
 		margin: 0.375rem 0 0;
 		font-size: 0.75rem;
-		color: #991b1b;
+		color: color-mix(in srgb, var(--color-error) 75%, #000);
 		font-family: var(--font-mono, monospace);
 	}
 
@@ -616,6 +616,6 @@
 		font-style: italic;
 	}
 	.error-msg {
-		color: #991b1b;
+		color: color-mix(in srgb, var(--color-error) 75%, #000);
 	}
 </style>

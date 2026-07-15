@@ -29,7 +29,6 @@ const KNOWN_TYPES: TabType[] = [
 	'source',
 	'action',
 	'actions',
-	'tools',
 	'ontology',
 	'record',
 	'wiki',
@@ -122,6 +121,8 @@ export function createTabFromRoute(route: string): Tab {
 		icon: parsed.icon,
 		storagePath: parsed.storagePath,
 		virtuesPage: parsed.virtuesPage,
+		history: [route],
+		historyIndex: 0,
 		createdAt: Date.now(),
 	};
 }

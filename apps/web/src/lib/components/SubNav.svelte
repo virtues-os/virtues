@@ -47,7 +47,13 @@
 	const active = $derived.by(() => {
 		if (route === base) return defaultId;
 		const rest = route.startsWith(base + "/") ? route.slice(base.length + 1) : "";
-		return validIds.has(rest) ? rest : defaultId;
+		// Match on the FIRST segment only, so a nested route (`${base}/x/y`) still
+		// highlights `x`. This lets a primary sub-nav sit above a secondary one:
+		// the primary reads segment 1, the secondary (with a deeper `base`) reads
+		// segment 2. For single-level rooms `rest` has no slash, so behaviour is
+		// unchanged.
+		const seg = rest.split("/")[0];
+		return validIds.has(seg) ? seg : defaultId;
 	});
 
 	function switchTo(id: string) {
@@ -162,7 +168,7 @@
 		font-weight: 500;
 		line-height: 1;
 		padding: 0.125rem 0.3125rem;
-		border-radius: 999px;
+		border-radius: var(--radius-full);
 		background: color-mix(in srgb, var(--color-foreground) 8%, transparent);
 		color: var(--color-foreground-muted);
 	}

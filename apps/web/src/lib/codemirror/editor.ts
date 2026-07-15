@@ -54,7 +54,6 @@ export function createCodeMirrorEditor(options: CodeMirrorEditorOptions): Editor
 		yCollab(ytext, awareness),
 
 		// Markdown language support (GFM = Strikethrough + Table + TaskList)
-		// @ts-expect-error — @lezer/common version mismatch between hoisted and pnpm copies
 		markdown({ codeLanguages: languages, extensions: GFM }),
 
 		// Basic editing features
@@ -134,7 +133,6 @@ export function createReadOnlyEditor(options: ReadOnlyEditorOptions): EditorView
 		state: EditorState.create({
 			doc: content,
 			extensions: [
-				// @ts-expect-error — @lezer/common version mismatch
 				markdown({ codeLanguages: languages, extensions: GFM }),
 				EditorView.lineWrapping,
 				virtuesTheme,

@@ -101,27 +101,12 @@ const NOTEBOOKS: SystemSection = {
 	href: '/notebooks',
 };
 
-/**
- * PLACEHOLDER. The route exists so the destination has a home; the feature does
- * not yet.
- *
- * A notebook is a CONTAINER — you put things in it and you know what is in it.
- * A story is a CLAIM: "I got fat", "I act differently on rainy days". You do not
- * know what is in it, and that is the point — it gathers evidence scattered
- * across years and renders an account of it. Peers, not variants, which is why
- * they sit side by side.
- *
- * `wiki_stories` and the magnet that fills it are built (0038/0039). What is
- * missing is the rendering, and that waits until the layer beneath it — events,
- * entities, days — is verified.
- */
-const STORIES: SystemSection = {
-	id: 'sys_stories',
-	name: 'Stories',
-	icon: 'ri:git-branch-line',
-	type: 'link',
-	href: '/stories',
-};
+// STORIES — deferred. `wiki_stories` and its magnet are built (0038/0039) but
+// the rendering isn't, so there is no sidebar link yet (the /stories route
+// still resolves for deep links). A notebook is a CONTAINER; a story is a
+// CLAIM ("I got fat", "I act differently on rainy days") that gathers evidence
+// across years — peers, not variants. It returns to the Create cluster once the
+// layer beneath it (events, entities, days) is verified.
 
 const DRIVE: SystemSection = {
 	id: 'sys_drive',
@@ -142,7 +127,7 @@ const ACTIONS: SystemSection = {
 export const SECTION_GROUPS: SectionGroup[] = [
 	// Rhythm — Create — Substrate, each separated by a blank gap (no headers).
 	{ id: 'grp_rhythm', label: null, items: [HOME, TODAY] },
-	{ id: 'grp_create', label: null, items: [CHATS, PAGES, NOTEBOOKS, STORIES] },
+	{ id: 'grp_create', label: null, items: [CHATS, PAGES, NOTEBOOKS] },
 	{ id: 'grp_substrate', label: null, items: [WIKI, DRIVE, ACTIONS] },
 ];
 

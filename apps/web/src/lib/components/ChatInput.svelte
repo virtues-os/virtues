@@ -1,6 +1,6 @@
 <script lang="ts">
 	import Icon from "$lib/components/Icon.svelte";
-	import { createEventDispatcher, onMount } from "svelte";
+	import { onMount } from "svelte";
 	import { Spring } from "svelte/motion";
 	import type { ModelOption } from "$lib/config/models";
 	import { createEntityBadgeElement } from "$lib/utils/refBadge";
@@ -17,6 +17,8 @@
 		selectedModel = $bindable<ModelOption | undefined>(undefined),
 		placeholder = "Write a message...",
 		onAttach = undefined as ((files: File[]) => void) | undefined,
+		onSubmit = undefined as ((content: string) => void) | undefined,
+		onStop = undefined as (() => void) | undefined,
 	}: {
 		value?: string;
 		disabled?: boolean;
@@ -28,6 +30,8 @@
 		selectedModel?: ModelOption;
 		placeholder?: string;
 		onAttach?: (files: File[]) => void;
+		onSubmit?: (content: string) => void;
+		onStop?: () => void;
 	} = $props();
 
 	let fileInputEl: HTMLInputElement | null = $state(null);
@@ -43,8 +47,6 @@
 		}
 		input.value = ""; // allow re-picking the same file
 	}
-
-	const dispatch = createEventDispatcher<{ submit: string; stop: null }>();
 
 	let inputEl: HTMLDivElement;
 	let isFocused = $state(false);
@@ -303,7 +305,7 @@
 		const content = getExpandedContent().trim();
 		if ((!content && !allowEmptySubmit) || disabled) return;
 
-		dispatch("submit", content);
+		onSubmit?.(content);
 
 		if (inputEl) {
 			inputEl.innerHTML = "";
@@ -315,7 +317,7 @@
 	}
 
 	function handleStop() {
-		dispatch("stop", null);
+		onStop?.();
 	}
 
 	function handleWrapperClick(e: MouseEvent) {
@@ -548,7 +550,7 @@
 		justify-content: center;
 		width: 2rem;
 		height: 2rem;
-		border-radius: 9999px;
+		border-radius: var(--radius-full);
 		cursor: pointer;
 		transition:
 			background-color 0.15s ease,

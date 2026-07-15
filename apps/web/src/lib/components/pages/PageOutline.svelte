@@ -109,7 +109,7 @@
 		left: 50%;
 		top: 50%;
 		transform: translate(-50%, -50%);
-		z-index: 42;
+		z-index: var(--z-sticky);
 		display: inline-flex;
 		align-items: center;
 		gap: 3px;
@@ -144,7 +144,7 @@
 		left: 0;
 		right: 0;
 		height: 100vh;
-		z-index: 39;
+		z-index: var(--z-sticky);
 		cursor: default;
 		background: rgba(2, 6, 23, 0.32);
 		backdrop-filter: blur(2px);
@@ -157,7 +157,7 @@
 		top: 100%;
 		left: 0;
 		right: 0;
-		z-index: 41;
+		z-index: var(--z-sticky);
 		display: flex;
 		flex-direction: column;
 		padding: 0.4rem 1.25rem 0.7rem;

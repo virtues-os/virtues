@@ -24,8 +24,7 @@ import CredentialDetailView from '$lib/components/tabs/views/CredentialDetailVie
 import ActionsView from '$lib/components/tabs/views/ActionsView.svelte';
 import ActionDetailView from '$lib/components/tabs/views/ActionDetailView.svelte';
 import DevelopersView from '$lib/components/tabs/views/DevelopersView.svelte';
-import AccountView from '$lib/components/tabs/views/AccountView.svelte';
-import SystemView from '$lib/components/tabs/views/SystemView.svelte';
+import SettingsView from '$lib/components/tabs/views/SettingsView.svelte';
 import DriveView from '$lib/components/tabs/views/DriveView.svelte';
 import StorageView from '$lib/components/tabs/views/StorageView.svelte';
 import AssetView from '$lib/components/tabs/views/AssetView.svelte';
@@ -38,7 +37,6 @@ import NotebooksListView from '$lib/components/tabs/views/NotebooksListView.svel
 import StoriesView from '$lib/components/tabs/views/StoriesView.svelte';
 import NotebookDetailView from '$lib/components/tabs/views/NotebookDetailView.svelte';
 import NarrativeIdentityView from '$lib/components/tabs/views/NarrativeIdentityView.svelte';
-import ToolsView from '$lib/components/tabs/views/ToolsView.svelte';
 import OntologyIndexView from '$lib/components/tabs/views/OntologyIndexView.svelte';
 import OntologyDetailView from '$lib/components/tabs/views/OntologyDetailView.svelte';
 import DataView from '$lib/components/tabs/views/DataView.svelte';
@@ -497,23 +495,6 @@ export const tabRegistry: Record<TabType, TabDefinition> = {
 	},
 
 	// ========================================================================
-	// TOOLS: /tools
-	// ========================================================================
-	tools: {
-		match: (path) => path === '/tools',
-		parse: () => ({
-			type: 'tools',
-			label: 'Tools',
-			icon: 'ri:tools-line',
-		}),
-		serialize: () => 'tools',
-		deserialize: () => '/tools',
-		icon: 'ri:tools-line',
-		defaultLabel: 'Tools',
-		component: ToolsView,
-	},
-
-	// ========================================================================
 	// ACTIONS: /actions, /actions/{actions|templates|history}
 	// ========================================================================
 	actions: {
@@ -763,29 +744,20 @@ export const tabRegistry: Record<TabType, TabDefinition> = {
 	},
 
 	// ========================================================================
-	// VIRTUES NAMESPACE: /virtues/{room}[/{section}]
-	// Two settings rooms: account (profile/assistant/billing/usage) and
-	// system (overview/history/devices/this-mac/activity). Legacy flat pages
-	// (/virtues/billing, /virtues/telemetry, ...) resolve to their room and
-	// self-heal to the new route inside the room shell.
+	// SETTINGS NAMESPACE: /virtues[/{section}[/{sub}]]
+	// One room (SettingsView) — You, Assistant, Connections, Billing, Box,
+	// Developer — as a two-level route-driven sub-nav. Legacy flat pages
+	// (/virtues/account, /virtues/system/*, /virtues/telemetry, ...) resolve
+	// here and self-heal to their new home inside the room shell.
 	// ========================================================================
 	virtues: {
-		match: (path) => path.startsWith('/virtues/'),
+		match: (path) => path === '/virtues' || path.startsWith('/virtues/'),
 		parse: (path) => {
-			const page = path.replace('/virtues/', '');
-			const base = page.split('/')[0];
-
-			const config = ACCOUNT_PAGES.has(base)
-				? { label: 'Account', icon: 'ri:user-settings-line' }
-				: SYSTEM_PAGES.has(base)
-					? { label: 'System', icon: 'ri:computer-line' }
-					: DEV_PAGES.has(base)
-						? { label: 'Developers', icon: 'ri:code-s-slash-line' }
-						: { label: 'Virtues', icon: 'ri:compass-3-line' };
+			const page = path === '/virtues' ? 'you' : path.replace('/virtues/', '');
 			return {
 				type: 'virtues',
-				label: config.label,
-				icon: config.icon,
+				label: 'Settings',
+				icon: 'ri:settings-4-line',
 				virtuesPage: page,
 			};
 		},
@@ -794,11 +766,11 @@ export const tabRegistry: Record<TabType, TabDefinition> = {
 			if (serialized.startsWith('virtues_')) {
 				return `/virtues/${serialized.slice(8)}`;
 			}
-			return '/virtues/account';
+			return '/virtues/you';
 		},
-		icon: 'ri:compass-3-line',
-		defaultLabel: 'Virtues',
-		component: AccountView, // Will dispatch to correct component based on virtuesPage
+		icon: 'ri:settings-4-line',
+		defaultLabel: 'Settings',
+		component: SettingsView,
 	},
 
 	// ========================================================================
@@ -845,23 +817,14 @@ export function getComponent(type: TabType, hasEntityId: boolean): Component<any
 	return def.component;
 }
 
-/** Which /virtues/* base segments belong to which settings room. */
-const ACCOUNT_PAGES = new Set(['account', 'assistant', 'billing', 'byo-key', 'usage']);
-const SYSTEM_PAGES = new Set(['system', 'telemetry', 'devices', 'activity', 'this-mac']);
-const DEV_PAGES = new Set(['sql', 'terminal', 'lake']);
-
 /**
- * Get the component for virtues pages (settings rooms).
- * Legacy flat pages map to the room that absorbed them; the room shells
- * rewrite the route to its new home on mount.
+ * Get the component for /virtues/* pages. There is now a single Settings room;
+ * it dispatches to the right section from the route and self-heals legacy
+ * flat paths on mount.
  */
 // biome-ignore lint/suspicious/noExplicitAny: Component props vary by page
-export function getVirtuesComponent(page: string): Component<any> {
-	const base = page.split('/')[0];
-	if (ACCOUNT_PAGES.has(base)) return AccountView;
-	if (SYSTEM_PAGES.has(base)) return SystemView;
-	if (DEV_PAGES.has(base)) return DevelopersView;
-	return AccountView;
+export function getVirtuesComponent(_page: string): Component<any> {
+	return SettingsView;
 }
 
 
@@ -880,7 +843,6 @@ export function parseRoute(route: string): ParsedRoute {
 		'home',
 		// Specific patterns first
 		'source', // Source list and detail views
-		'tools', // Tools management page
 		'actions', // Actions list page (must come before singular 'action')
 		'action', // Action detail page
 		'developers', // Developers tab group (SQL/Terminal/Lake)

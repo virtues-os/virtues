@@ -2,7 +2,7 @@
 	import Icon from "$lib/components/Icon.svelte";
 	import { windowShellStore } from "$lib/stores/window-shell.svelte";
 	import { pagesStore } from "$lib/stores/pages.svelte";
-	import { listPages, type ViewEntity } from "$lib/api/client";
+	import { listPages, listChats, type ViewEntity } from "$lib/api/client";
 	import { chatSessions } from "$lib/stores/chatSessions.svelte";
 	import type { SystemSection } from "$lib/sidebar/sections";
 	import SidebarNavItem from "./SidebarNavItem.svelte";
@@ -103,8 +103,7 @@
 			let entities: ViewEntity[] = [];
 
 			if (section.namespace === 'chat') {
-				const res = await fetch('/api/chats');
-				const data = await res.json();
+				const data = await listChats<{ conversations?: Array<{ conversation_id: string; title: string; icon?: string; last_updated?: string }> }>();
 				entities = (data.conversations || [])
 					.slice(0, section.limit ?? 8)
 					.map((c: { conversation_id: string; title: string; icon?: string; last_updated?: string }) => ({

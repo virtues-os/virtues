@@ -128,7 +128,7 @@
 			100dvh - max(16px, env(safe-area-inset-top)) - max(16px, env(safe-area-inset-bottom))
 		);
 		overflow-y: auto;
-		z-index: 10001;
+		z-index: var(--z-context-submenu);
 		animation: submenu-fade-in 100ms ease-out;
 	}
 

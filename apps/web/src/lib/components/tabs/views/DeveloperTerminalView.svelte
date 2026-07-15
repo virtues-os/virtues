@@ -3,6 +3,7 @@
     import Icon from "$lib/components/Icon.svelte";
     import { onMount, onDestroy } from "svelte";
     import { browser } from "$app/environment";
+    import { getWsUrl } from "$lib/config/backend";
 
     let { tab, active }: { tab: Tab; active: boolean } = $props();
 
@@ -38,10 +39,11 @@
     // window edge is a redraw storm.
     const RESIZE_DEBOUNCE_MS = 100;
 
-    // WebSocket URL — protocol-aware (matches Yjs pattern in document.ts)
-    const wsProtocol = browser && location.protocol === 'https:' ? 'wss:' : 'ws:';
-    const wsHost = browser ? location.host : 'localhost:8000';
-    const WS_URL = browser ? `${wsProtocol}//${wsHost}/ws/terminal` : "";
+    // WebSocket URL. getWsUrl() resolves same-origin on desktop (box-served) and
+    // routes to the iroh loopback on mobile (bundled SPA at a tauri:// origin) —
+    // the tauri:// scheme can't carry a WS upgrade, so location.host is wrong
+    // there. Matches the Yjs path (see lib/config/backend.ts).
+    const WS_URL = browser ? getWsUrl('/ws/terminal') : "";
 
     // Theme-aware colors (will be read from CSS vars at runtime)
     function getTerminalTheme() {

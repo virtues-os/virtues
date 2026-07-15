@@ -23,6 +23,8 @@
 		getPageShare,
 		deletePageShare,
 		getPageBacklinks,
+		request,
+		ApiError,
 		type Backlink,
 	} from "$lib/api/client";
 	import { pagesStore } from "$lib/stores/pages.svelte";
@@ -247,12 +249,6 @@
 		window.addEventListener("beforeunload", handleBeforeUnload);
 		document.addEventListener("visibilitychange", handleVisibilityChange);
 
-		console.log(
-			"[PageContent] onMount, pageId:",
-			pageId,
-			"active:",
-			active,
-		);
 		if (pageId && pageId !== lastLoadedPageId) {
 			lastLoadedPageId = pageId;
 			await loadPage();
@@ -297,10 +293,6 @@
 		if (currentPageId && isActive) {
 			untrack(() => {
 				if (currentPageId !== lastLoadedPageId) {
-					console.log(
-						"[PageContent] pageId changed, reloading:",
-						currentPageId,
-					);
 					lastLoadedPageId = currentPageId;
 					loadPage();
 				}
@@ -341,18 +333,11 @@
 		if (showReferences) loadBacklinks();
 
 		try {
-			const response = await fetch(`/api/pages/${pageId}`, {
+			// Uses the underlying typed `request` (not the getPage wrapper) so we
+			// can carry the abort signal that cancels a stale load on page switch.
+			const data = await request<PageData>(`/pages/${encodeURIComponent(pageId)}`, {
 				signal: loadAbortController.signal,
 			});
-			if (!response.ok) {
-				if (response.status === 404) {
-					error = "Page not found";
-				} else {
-					throw new Error("Failed to load page");
-				}
-				return;
-			}
-			const data: PageData = await response.json();
 			pageData = data;
 			title = data.title;
 			// Content will be synced via Yjs, but we set it for initial display and word count
@@ -417,6 +402,10 @@
 		} catch (e) {
 			// Ignore aborted fetches (cancelled by a newer loadPage call)
 			if (e instanceof DOMException && e.name === "AbortError") return;
+			if (e instanceof ApiError && e.status === 404) {
+				error = "Page not found";
+				return;
+			}
 			error = e instanceof Error ? e.message : "Failed to load page";
 		} finally {
 			loading = false;
@@ -782,7 +771,7 @@
 		position: relative;
 		display: flex;
 		align-items: center;
-		z-index: 20;
+		z-index: var(--z-sticky);
 	}
 	.page-topbar :global(.page-toolbar) {
 		flex: 1;

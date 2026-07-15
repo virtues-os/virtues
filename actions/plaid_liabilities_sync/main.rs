@@ -7,13 +7,12 @@
 
 mod transform;
 
-use anyhow::{Context, Result};
+use anyhow::Result;
 use serde_json::{json, Value};
 use virtues::storage::lake;
 use virtues_helpers::{connect_from_env, output, read_input};
 
 const ACTION: &str = "plaid_liabilities_sync";
-const PLAID_LIABILITIES: &str = "https://production.plaid.com/liabilities/get";
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -24,31 +23,30 @@ async fn main() -> Result<()> {
 
     let access_token = virtues_actions::secret(&input, "access_token")?;
 
-    let client_id = std::env::var("PLAID_CLIENT_ID").context("PLAID_CLIENT_ID not set")?;
-    let secret = std::env::var("PLAID_SECRET").context("PLAID_SECRET not set")?;
+    // Proxied through virtues-api: the box sends only the per-user access_token;
+    // the master Plaid secret stays server-side. Use the raw variant so a benign
+    // non-2xx (accounts that don't support liabilities → 400) doesn't error.
+    let (status, body) = virtues_actions::plaid_proxy_raw(
+        &pool,
+        "liabilities/get",
+        &json!({ "access_token": access_token }),
+    )
+    .await?;
 
-    let resp = reqwest::Client::new()
-        .post(PLAID_LIABILITIES)
-        .json(&json!({
-            "client_id": client_id,
-            "secret": secret,
-            "access_token": access_token,
-        }))
-        .send()
-        .await
-        .context("plaid liabilities/get failed")?;
-
-    if !resp.status().is_success() {
-        // Many Plaid accounts (checking, savings, etc.) don't support
-        // liabilities — that returns 400. Don't error the run; just record 0.
-        let summary = format!(
-            "no liabilities for this credential (plaid {})",
-            resp.status().as_u16()
-        );
-        return output(&summary, &input.config);
+    if !(200..300).contains(&status) {
+        // Distinguish a genuine Plaid response from a proxy-layer failure.
+        // Plaid errors carry a top-level `error_code` (e.g. PRODUCTS_NOT_SUPPORTED
+        // for accounts that don't support liabilities → benign, record 0).
+        // Proxy errors are shaped `{"error":{"code":...}}` (wallet_empty,
+        // service_not_configured, unknown_key, upstream_error) — those are real
+        // failures and must NOT be silently reported as "no liabilities".
+        if let Some(code) = body.get("error_code").and_then(|v| v.as_str()) {
+            let summary = format!("no liabilities for this credential (plaid {code})");
+            return output(&summary, &input.config);
+        }
+        anyhow::bail!("plaid liabilities proxy error {status}: {body}");
     }
 
-    let body: Value = resp.json().await.context("plaid non-JSON")?;
     let liabilities = body
         .get("liabilities")
         .cloned()

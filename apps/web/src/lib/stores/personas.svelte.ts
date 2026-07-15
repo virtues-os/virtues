@@ -6,6 +6,14 @@
  */
 
 import { browser } from '$app/environment';
+import {
+	listPersonas,
+	createPersona,
+	updatePersona,
+	deletePersona,
+	unhidePersona,
+	resetPersonas
+} from '$lib/api/client';
 
 // ============================================================================
 // Types
@@ -71,11 +79,7 @@ class PersonaStore {
 		this._error = null;
 
 		try {
-			const res = await fetch('/api/personas');
-			if (!res.ok) {
-				throw new Error(`Failed to fetch personas: ${res.status}`);
-			}
-			this._personas = await res.json();
+			this._personas = await listPersonas<Persona[]>();
 			this._initialized = true;
 		} catch (e) {
 			this._error = e instanceof Error ? e.message : 'Unknown error';
@@ -100,17 +104,7 @@ class PersonaStore {
 		this._error = null;
 
 		try {
-			const res = await fetch('/api/personas', {
-				method: 'POST',
-				headers: { 'Content-Type': 'application/json' },
-				body: JSON.stringify({ title, content } satisfies CreatePersonaRequest)
-			});
-
-			if (!res.ok) {
-				throw new Error(`Failed to create persona: ${res.status}`);
-			}
-
-			const persona: Persona = await res.json();
+			const persona = await createPersona<Persona>({ title, content } satisfies CreatePersonaRequest);
 			this._personas = [...this._personas, persona];
 			return persona;
 		} catch (e) {
@@ -130,17 +124,7 @@ class PersonaStore {
 		this._error = null;
 
 		try {
-			const res = await fetch(`/api/personas/${id}`, {
-				method: 'PUT',
-				headers: { 'Content-Type': 'application/json' },
-				body: JSON.stringify(updates)
-			});
-
-			if (!res.ok) {
-				throw new Error(`Failed to update persona: ${res.status}`);
-			}
-
-			const updated: Persona = await res.json();
+			const updated = await updatePersona<Persona>(id, updates);
 			this._personas = this._personas.map((p) => (p.id === id ? updated : p));
 			return true;
 		} catch (e) {
@@ -160,13 +144,7 @@ class PersonaStore {
 		this._error = null;
 
 		try {
-			const res = await fetch(`/api/personas/${id}`, {
-				method: 'DELETE'
-			});
-
-			if (!res.ok) {
-				throw new Error(`Failed to hide persona: ${res.status}`);
-			}
+			await deletePersona(id);
 
 			// Track hidden status for system personas
 			const persona = this._personas.find((p) => p.id === id);
@@ -195,13 +173,7 @@ class PersonaStore {
 		this._error = null;
 
 		try {
-			const res = await fetch(`/api/personas/${id}/unhide`, {
-				method: 'POST'
-			});
-
-			if (!res.ok) {
-				throw new Error(`Failed to unhide persona: ${res.status}`);
-			}
+			await unhidePersona(id);
 
 			this._hidden = this._hidden.filter((h) => h !== id);
 			return true;
@@ -222,15 +194,7 @@ class PersonaStore {
 		this._error = null;
 
 		try {
-			const res = await fetch('/api/personas/reset', {
-				method: 'POST'
-			});
-
-			if (!res.ok) {
-				throw new Error(`Failed to reset personas: ${res.status}`);
-			}
-
-			this._personas = await res.json();
+			this._personas = await resetPersonas<Persona[]>();
 			this._hidden = [];
 			return true;
 		} catch (e) {

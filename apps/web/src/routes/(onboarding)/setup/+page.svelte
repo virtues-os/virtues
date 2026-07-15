@@ -26,7 +26,7 @@
 	import { fade } from "svelte/transition";
 	import { Button } from "$lib";
 	import Icon from "$lib/components/Icon.svelte";
-	import { getProfile, updateProfile } from "$lib/api/client";
+	import { getProfile, updateProfile, getSetupState } from "$lib/api/client";
 	import OnboardingToc from "$lib/components/onboarding/document/OnboardingToc.svelte";
 	import OnboardingSection from "$lib/components/onboarding/document/OnboardingSection.svelte";
 	import Marginalia from "$lib/components/onboarding/document/Marginalia.svelte";
@@ -94,8 +94,7 @@
 
 	async function refreshState() {
 		try {
-			const r = await fetch("/api/setup/state");
-			if (r.ok) state_ = await r.json();
+			state_ = await getSetupState();
 		} catch {
 			/* box briefly unreachable — keep last state */
 		} finally {
@@ -331,7 +330,7 @@
 		font-size: 0.75rem;
 		color: var(--color-foreground-subtle);
 		transition: color 0.15s ease;
-		z-index: 20;
+		z-index: var(--z-sticky);
 	}
 	.manual-link:hover {
 		color: var(--color-foreground);

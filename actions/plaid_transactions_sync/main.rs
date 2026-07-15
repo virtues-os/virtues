@@ -9,12 +9,11 @@
 
 mod transform;
 
-use anyhow::{Context, Result};
+use anyhow::Result;
 use serde_json::{json, Value};
 use virtues::storage::lake;
 use virtues_helpers::{connect_from_env, output, read_input};
 
-const PLAID_TX_SYNC: &str = "https://production.plaid.com/transactions/sync";
 const MAX_CHUNKS: u32 = 20;
 const ACTION: &str = "plaid_transactions_sync";
 
@@ -28,9 +27,6 @@ async fn main() -> Result<()> {
     let access_token = virtues_actions::secret(&input, "access_token")?
         .to_string();
 
-    let client_id = std::env::var("PLAID_CLIENT_ID").context("PLAID_CLIENT_ID not set")?;
-    let secret = std::env::var("PLAID_SECRET").context("PLAID_SECRET not set")?;
-
     let mut cursor = input
         .config
         .get("plaid_cursor")
@@ -39,27 +35,21 @@ async fn main() -> Result<()> {
         .to_string();
 
     let storage = lake::storage_from_env()?;
-    let client = reqwest::Client::new();
     let mut total_written = 0usize;
     let mut total_removed = 0usize;
 
     for _ in 0..MAX_CHUNKS {
-        let resp: Value = client
-            .post(PLAID_TX_SYNC)
-            .json(&json!({
-                "client_id": client_id,
-                "secret": secret,
+        // Proxied through virtues-api: the box sends only its per-user
+        // access_token; the master Plaid secret stays server-side.
+        let resp: Value = virtues_actions::plaid_proxy(
+            &pool,
+            "transactions/sync",
+            &json!({
                 "access_token": access_token,
                 "cursor": cursor,
-            }))
-            .send()
-            .await
-            .context("plaid /transactions/sync failed")?
-            .error_for_status()
-            .context("plaid non-2xx")?
-            .json()
-            .await
-            .context("plaid non-JSON")?;
+            }),
+        )
+        .await?;
 
         // Archive the WHOLE response before touching it. `removed` in particular is
         // read by nobody below and would otherwise be gone the moment this loop moves

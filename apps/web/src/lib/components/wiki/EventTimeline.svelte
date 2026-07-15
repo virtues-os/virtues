@@ -349,7 +349,7 @@
 		color: var(--color-primary);
 		background: color-mix(in srgb, var(--color-primary) 10%, transparent);
 		padding: 0.0625rem 0.5rem;
-		border-radius: 9999px;
+		border-radius: var(--radius-full);
 	}
 
 	/* ── Accordion (slide open/close) ──────────────────────────── */

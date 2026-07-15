@@ -17,14 +17,16 @@
 	import {
 		getReflectionsForDate,
 		createReflection,
+		getNarrativeIdentity,
 		type Page,
 	} from "$lib/api/client";
+	import { formatDate } from "$lib/utils/dateUtils";
 
 	let input = $state("");
 	let narrative = $state<string | undefined>(undefined);
 
 	const now = new Date();
-	const longDate = now.toLocaleDateString(undefined, {
+	const longDate = formatDate(now, {
 		weekday: "long",
 		month: "long",
 		day: "numeric",
@@ -83,8 +85,7 @@
 	}
 
 	onMount(() => {
-		fetch("/api/wiki/narrative-identity")
-			.then((r) => (r.ok ? r.json() : null))
+		getNarrativeIdentity<{ content?: string }>()
 			.then((d) => {
 				if (d?.content) narrative = d.content;
 			})
@@ -174,7 +175,7 @@
 				bind:value={input}
 				placeholder="Ask about today, or begin writing…"
 				maxWidth="max-w-none"
-				on:submit={(e) => askVirtues(e.detail)}
+				onSubmit={(text) => askVirtues(text)}
 			/>
 		</div>
 	</div>

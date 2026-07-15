@@ -4,6 +4,8 @@
  * Manages loading and refreshing chat session data from the API.
  */
 
+import { listChats } from '$lib/api/client';
+
 export interface ChatSession {
 	conversation_id: string;
 	title: string | null;
@@ -30,13 +32,7 @@ class ChatSessionStore {
 		this.error = null;
 
 		try {
-			const response = await fetch('/api/chats');
-
-			if (!response.ok) {
-				throw new Error(`Failed to load sessions: ${response.statusText}`);
-			}
-
-			const data = await response.json();
+			const data = await listChats<{ conversations?: ChatSession[] }>();
 			this.sessions = data.conversations || [];
 		} catch (err) {
 			console.error('Error loading chat sessions:', err);

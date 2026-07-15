@@ -4,6 +4,11 @@
  * This client handles the StreamableHTTP protocol with stateful sessions.
  */
 
+/** Connection-lifecycle logging — emitted in dev, silent in production builds. */
+const mcpLog = (...args: unknown[]): void => {
+	if (import.meta.env.DEV) console.log(...args);
+};
+
 export interface McpTool {
 	name: string;
 	description?: string;
@@ -399,7 +404,7 @@ export class McpClient {
 	 * Clears existing session state and re-initializes the connection
 	 */
 	async reconnect(): Promise<void> {
-		console.log('[MCP Client] Reconnecting...');
+		mcpLog('[MCP Client] Reconnecting...');
 
 		// Clear existing state
 		this.sessionId = null;
@@ -412,7 +417,7 @@ export class McpClient {
 		await this.listTools();
 		await this.listResources();
 
-		console.log('[MCP Client] Reconnection successful');
+		mcpLog('[MCP Client] Reconnection successful');
 	}
 
 	/**
@@ -447,28 +452,28 @@ export class McpClient {
 export async function createMcpClient(baseUrl: string): Promise<McpClient> {
 	const client = new McpClient(baseUrl);
 
-	console.log(`[MCP Client] Initializing connection to ${baseUrl}`);
+	mcpLog(`[MCP Client] Initializing connection to ${baseUrl}`);
 	try {
 		await client.initialize();
-		console.log('[MCP Client] Initialization successful');
+		mcpLog('[MCP Client] Initialization successful');
 	} catch (error) {
 		console.error('[MCP Client] Initialization failed:', error);
 		throw new Error(`Failed to initialize MCP client: ${error}`);
 	}
 
-	console.log('[MCP Client] Listing tools...');
+	mcpLog('[MCP Client] Listing tools...');
 	try {
 		const tools = await client.listTools();
-		console.log(`[MCP Client] Found ${tools.length} tools:`, tools.map((t) => t.name));
+		mcpLog(`[MCP Client] Found ${tools.length} tools:`, tools.map((t) => t.name));
 	} catch (error) {
 		console.error('[MCP Client] Failed to list tools:', error);
 		throw new Error(`Failed to list MCP tools: ${error}`);
 	}
 
-	console.log('[MCP Client] Listing resources...');
+	mcpLog('[MCP Client] Listing resources...');
 	try {
 		const resources = await client.listResources();
-		console.log(`[MCP Client] Found ${resources.length} resources:`, resources.map((r) => r.name));
+		mcpLog(`[MCP Client] Found ${resources.length} resources:`, resources.map((r) => r.name));
 	} catch (error) {
 		console.error('[MCP Client] Failed to list resources:', error);
 		// Don't throw - resources are optional

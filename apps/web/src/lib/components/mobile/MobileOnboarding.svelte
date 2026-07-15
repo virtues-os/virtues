@@ -204,7 +204,7 @@
 		transition: border-color 0.15s ease;
 	}
 	.card.on {
-		border-color: color-mix(in srgb, #34c759 55%, var(--color-border));
+		border-color: color-mix(in srgb, var(--color-success) 55%, var(--color-border));
 	}
 	.card.soon {
 		opacity: 0.6;
@@ -221,8 +221,8 @@
 		color: var(--color-foreground-muted);
 	}
 	.c-icon.on {
-		background: color-mix(in srgb, #34c759 18%, transparent);
-		color: #248a3d;
+		background: color-mix(in srgb, var(--color-success) 18%, transparent);
+		color: color-mix(in srgb, var(--color-success) 75%, #000);
 	}
 	.c-body {
 		flex: 1;
@@ -258,7 +258,7 @@
 		width: 28px;
 		height: 28px;
 		border-radius: 50%;
-		background: #34c759;
+		background: var(--color-success);
 		color: #fff;
 		flex: none;
 	}

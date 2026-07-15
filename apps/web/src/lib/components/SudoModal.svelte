@@ -27,6 +27,7 @@
 <script lang="ts">
 	import { Button, ErrorState, LoadingState } from "$lib";
 	import Icon from "$lib/components/Icon.svelte";
+	import { requestSudo, getSudoStatus } from "$lib/api/client";
 	import { toast } from "svelte-sonner";
 
 	type Props = {
@@ -87,18 +88,11 @@
 		requestId = null;
 		expiresAt = null;
 		try {
-			const resp = await fetch("/api/sudo/request", {
-				method: "POST",
-				headers: { "Content-Type": "application/json" },
-				body: JSON.stringify({ action, action_payload: actionPayload }),
-			});
-			if (!resp.ok) {
-				const data = await resp.json().catch(() => ({}));
-				errorMessage = data.error ?? `HTTP ${resp.status}`;
-				phase = "error";
-				return;
-			}
-			const data = await resp.json();
+			const data = await requestSudo<{
+				id: string;
+				expires_at: string;
+				cli_command?: string;
+			}>(action, actionPayload);
 			requestId = data.id;
 			expiresAt = data.expires_at;
 			// Server-controlled CLI command — varies by deployment.
@@ -128,9 +122,7 @@
 	async function pollStatus() {
 		if (!requestId) return;
 		try {
-			const resp = await fetch(`/api/sudo/status/${requestId}`);
-			if (!resp.ok) return;
-			const data = await resp.json();
+			const data = await getSudoStatus<{ status: string }>(requestId);
 			if (data.status === "approved") {
 				phase = "approved";
 				stop();

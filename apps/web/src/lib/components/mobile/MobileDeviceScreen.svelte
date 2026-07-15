@@ -704,7 +704,7 @@
 		transition: transform 0.15s;
 	}
 	.switch.on {
-		background: #34c759;
+		background: var(--color-success);
 		opacity: 1;
 	}
 	.switch.on::after {
@@ -717,7 +717,7 @@
 		background: var(--color-foreground-muted);
 	}
 	.dot.on {
-		background: #34c759;
+		background: var(--color-success);
 	}
 
 	.log {
@@ -754,8 +754,8 @@
 		color: var(--color-foreground-muted);
 	}
 	.l-badge.bg {
-		background: color-mix(in srgb, #34c759 20%, transparent);
-		color: #248a3d;
+		background: color-mix(in srgb, var(--color-success) 20%, transparent);
+		color: color-mix(in srgb, var(--color-success) 75%, #000);
 	}
 	.l-count {
 		font-size: 11px;
@@ -791,7 +791,7 @@
 		border: none;
 		border-top: 1px solid var(--color-border);
 		background: transparent;
-		color: #ff453a;
+		color: var(--color-error);
 		font-size: 14px;
 		font-weight: 600;
 		text-align: left;
@@ -820,7 +820,7 @@
 		line-height: 1.4;
 	}
 	.empty.err {
-		color: #e5484d;
+		color: var(--color-error);
 		font-variant-numeric: tabular-nums;
 	}
 </style>

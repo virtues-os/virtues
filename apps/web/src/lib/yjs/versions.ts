@@ -7,6 +7,7 @@
 
 import * as Y from 'yjs';
 import type { YjsDocument } from './document';
+import { request, listPageVersions, getPageVersion } from '$lib/api/client';
 
 /**
  * Page version metadata
@@ -45,7 +46,9 @@ export async function saveVersion(
 		// Encode as base64 for JSON transport
 		const stateBase64 = btoa(String.fromCharCode(...fullState));
 
-		const response = await fetch(`/api/pages/${pageId}/versions`, {
+		// Uses the underlying typed `request` (not the createPageVersion wrapper)
+		// so we can carry `keepalive` for the on-unload save path.
+		return await request<PageVersion>(`/pages/${encodeURIComponent(pageId)}/versions`, {
 			method: 'POST',
 			headers: { 'Content-Type': 'application/json' },
 			body: JSON.stringify({
@@ -56,12 +59,6 @@ export async function saveVersion(
 			}),
 			keepalive: options?.keepalive
 		});
-
-		if (!response.ok) {
-			throw new Error(`Failed to save version: ${response.status}`);
-		}
-
-		return await response.json();
 	} catch (err) {
 		console.error('Failed to save page version:', err);
 		return null;
@@ -73,11 +70,7 @@ export async function saveVersion(
  */
 export async function listVersions(pageId: string, limit = 20): Promise<PageVersion[]> {
 	try {
-		const response = await fetch(`/api/pages/${pageId}/versions?limit=${limit}`);
-		if (!response.ok) {
-			throw new Error(`Failed to list versions: ${response.status}`);
-		}
-		const data = await response.json();
+		const data = await listPageVersions<{ versions?: PageVersion[] }>(pageId, limit);
 		return data.versions || [];
 	} catch (err) {
 		console.error('Failed to list page versions:', err);
@@ -96,12 +89,7 @@ export async function restoreVersion(
 	versionId: string
 ): Promise<boolean> {
 	try {
-		const response = await fetch(`/api/pages/versions/${versionId}`);
-		if (!response.ok) {
-			throw new Error(`Failed to fetch version: ${response.status}`);
-		}
-
-		const data = await response.json();
+		const data = await getPageVersion<{ snapshot?: string }>(versionId);
 		if (!data.snapshot) {
 			throw new Error('Version has no snapshot data');
 		}

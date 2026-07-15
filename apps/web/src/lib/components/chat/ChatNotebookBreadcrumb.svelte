@@ -197,13 +197,13 @@
 	.menu-backdrop {
 		position: fixed;
 		inset: 0;
-		z-index: 40;
+		z-index: var(--z-sticky);
 	}
 	.menu {
 		position: absolute;
 		top: calc(100% + 6px);
 		left: 0;
-		z-index: 41;
+		z-index: var(--z-sticky);
 		width: 260px;
 		padding: 6px;
 		background: var(--color-surface);

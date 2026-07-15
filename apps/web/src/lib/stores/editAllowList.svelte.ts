@@ -12,6 +12,7 @@
  */
 
 import { type YjsDocument } from '$lib/yjs';
+import { getChatPermissions, addChatPermission, removeChatPermission } from '$lib/api/client';
 
 /**
  * Resource types that can be edited
@@ -82,12 +83,7 @@ function createEditAllowListStore() {
 	 */
 	async function fetchFromBackend(chatId: string): Promise<EditAllowListItem[]> {
 		try {
-			const response = await fetch(`/api/chats/${chatId}/permissions`);
-			if (!response.ok) {
-				console.warn('Failed to fetch permissions:', response.statusText);
-				return [];
-			}
-			const data = await response.json();
+			const data = await getChatPermissions<{ permissions?: BackendPermission[] }>(chatId);
 			const permissions: BackendPermission[] = data.permissions || [];
 
 			return permissions.map((p) => ({
@@ -109,16 +105,12 @@ function createEditAllowListStore() {
 		item: EditAllowListItem
 	): Promise<boolean> {
 		try {
-			const response = await fetch(`/api/chats/${chatId}/permissions`, {
-				method: 'POST',
-				headers: { 'Content-Type': 'application/json' },
-				body: JSON.stringify({
-					entity_id: item.id,
-					entity_type: item.type,
-					entity_title: item.title
-				})
+			await addChatPermission(chatId, {
+				entity_id: item.id,
+				entity_type: item.type,
+				entity_title: item.title
 			});
-			return response.ok;
+			return true;
 		} catch (error) {
 			console.warn('Error adding permission:', error);
 			return false;
@@ -130,10 +122,8 @@ function createEditAllowListStore() {
 	 */
 	async function removeFromBackend(chatId: string, entityId: string): Promise<boolean> {
 		try {
-			const response = await fetch(`/api/chats/${chatId}/permissions/${entityId}`, {
-				method: 'DELETE'
-			});
-			return response.ok;
+			await removeChatPermission(chatId, entityId);
+			return true;
 		} catch (error) {
 			console.warn('Error removing permission:', error);
 			return false;

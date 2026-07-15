@@ -6,6 +6,8 @@
 	import SubNav, { type SubNavItem } from "$lib/components/SubNav.svelte";
 	import { slide } from "svelte/transition";
 	import { onMount } from "svelte";
+	import { getNarrativeIdentity, updateNarrativeIdentity } from "$lib/api/client";
+	import { formatDate } from "$lib/utils/dateUtils";
 
 	let { tab, active }: { tab: Tab; active: boolean } = $props();
 
@@ -106,12 +108,9 @@
 	async function load() {
 		loading = true;
 		try {
-			const res = await fetch("/api/wiki/narrative-identity");
-			if (res.ok) {
-				const data = await res.json();
-				content = data.content || "";
-				updatedAt = data.updated_at;
-			}
+			const data = await getNarrativeIdentity<{ content?: string; updated_at?: string }>();
+			content = data.content || "";
+			updatedAt = data.updated_at ?? null;
 		} catch (err) {
 			console.error("Failed to load narrative identity:", err);
 		} finally {
@@ -120,17 +119,9 @@
 	}
 
 	async function save(value: string) {
-		const res = await fetch("/api/wiki/narrative-identity", {
-			method: "PUT",
-			headers: { "Content-Type": "application/json" },
-			body: JSON.stringify({ content: value }),
-		});
-		if (res.ok) {
-			const data = await res.json();
-			updatedAt = data.updated_at;
-		} else {
-			throw new Error("Failed to save");
-		}
+		// Throws (ApiError) on failure — propagates to the Textarea's autoSave.
+		const data = await updateNarrativeIdentity<{ updated_at?: string }>({ content: value });
+		updatedAt = data.updated_at ?? null;
 	}
 
 	function warningMessage(): string | false {
@@ -255,7 +246,7 @@
 				<div class="checkpoint-foot">
 					{#if updatedAt}
 						<span class="checkpoint-date">
-							Checkpoint · {new Date(updatedAt).toLocaleDateString(undefined, {
+							Checkpoint · {formatDate(updatedAt, {
 								month: "short",
 								day: "numeric",
 								year: "numeric",
@@ -494,7 +485,7 @@
 	}
 	.thread {
 		padding: 0.25rem 0.625rem;
-		border-radius: 999px;
+		border-radius: var(--radius-full);
 		border: 1px solid var(--color-border-subtle);
 		font-size: 0.8125rem;
 		color: var(--color-foreground-muted);

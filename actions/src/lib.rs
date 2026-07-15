@@ -69,3 +69,42 @@ pub async fn fetch_json<T: DeserializeOwned>(req: reqwest::RequestBuilder) -> Re
     let resp = resp.error_for_status().context("non-2xx response")?;
     resp.json::<T>().await.context("failed to parse JSON response")
 }
+
+/// Call a Plaid data endpoint through virtues-api's `/v1/services/plaid/*` proxy.
+///
+/// The box holds only the per-user `access_token`; virtues-api injects the
+/// master `client_id`+`secret` server-side and forwards to Plaid, so the Plaid
+/// app secret never lives on the box. `path` is the Plaid endpoint tail (e.g.
+/// `"transactions/sync"`); `body` carries `access_token` + any params (cursor,
+/// etc.) — NOT client_id/secret. Returns Plaid's response JSON verbatim, so
+/// callers archive/transform it exactly as a direct Plaid call.
+pub async fn plaid_proxy(
+    pool: &sqlx::PgPool,
+    path: &str,
+    body: &serde_json::Value,
+) -> Result<serde_json::Value> {
+    let (status, resp_body) = plaid_proxy_raw(pool, path, body).await?;
+    if !(200..300).contains(&status) {
+        anyhow::bail!("plaid proxy /v1/services/plaid/{path} returned {status}: {resp_body}");
+    }
+    Ok(resp_body)
+}
+
+/// Like [`plaid_proxy`] but returns the raw `(status, body)` without erroring on
+/// a non-2xx. For endpoints where a non-2xx is expected/benign (e.g.
+/// `liabilities/get` returns 400 for accounts that don't support liabilities).
+pub async fn plaid_proxy_raw(
+    pool: &sqlx::PgPool,
+    path: &str,
+    body: &serde_json::Value,
+) -> Result<(u16, serde_json::Value)> {
+    use virtues::virtues_api::client::{BearerClient, Purpose};
+
+    let route = format!("/v1/services/plaid/{path}");
+    let resp = BearerClient::from_env(pool.clone())
+        .with_purpose(Purpose::System)
+        .post_json(&route, body)
+        .await
+        .with_context(|| format!("plaid proxy call to {route} failed"))?;
+    Ok((resp.status, resp.body))
+}

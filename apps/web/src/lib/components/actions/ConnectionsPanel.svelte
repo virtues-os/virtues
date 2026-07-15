@@ -492,8 +492,8 @@
 	.error {
 		padding: 0.5rem 0.75rem;
 		border-radius: 6px;
-		background: #fee2e2;
-		color: #991b1b;
+		background: var(--color-error-subtle);
+		color: color-mix(in srgb, var(--color-error) 75%, #000);
 		font-size: 0.8125rem;
 	}
 
@@ -521,7 +521,7 @@
 		text-transform: uppercase;
 		letter-spacing: 0.03em;
 		padding: 0.125rem 0.5rem;
-		border-radius: 999px;
+		border-radius: var(--radius-full);
 		background: var(--color-success-subtle, #dcfce7);
 		color: var(--color-success, #166534);
 	}
@@ -615,13 +615,13 @@
 		color: var(--color-foreground-muted, #6b7280);
 	}
 	.btn-danger {
-		background: #dc2626;
+		background: var(--color-error);
 		color: #fff;
 	}
 	.btn-danger-outline {
 		background: transparent;
-		color: #b91c1c;
-		border-color: #fca5a5;
+		color: color-mix(in srgb, var(--color-error) 75%, #000);
+		border-color: var(--color-error);
 	}
 	.btn-secondary:disabled,
 	.btn-danger:disabled,

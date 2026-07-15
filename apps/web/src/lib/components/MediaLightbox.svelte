@@ -122,7 +122,7 @@
 	.lightbox {
 		position: fixed;
 		inset: 0;
-		z-index: 10000;
+		z-index: var(--z-lightbox);
 		display: flex;
 		align-items: center;
 		justify-content: center;
@@ -154,7 +154,7 @@
 		justify-content: center;
 		width: 2.25rem;
 		height: 2.25rem;
-		border-radius: 999px;
+		border-radius: var(--radius-full);
 		border: none;
 		background: color-mix(in srgb, var(--color-surface) 70%, transparent);
 		color: var(--color-foreground);

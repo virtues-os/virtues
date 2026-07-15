@@ -11,6 +11,7 @@
 	import { Button } from "$lib";
 	import Icon from "$lib/components/Icon.svelte";
 	import { openExternal } from "$lib/tauri/bridge";
+	import { setupLinkPoll, setupSubscribeStart, setupLoginStart } from "$lib/api/client";
 
 	interface Props {
 		done: boolean;
@@ -36,8 +37,7 @@
 		stopPolling();
 		pollTimer = setInterval(async () => {
 			try {
-				const r = await fetch("/api/setup/link/poll", { method: "POST" });
-				const data = await r.json();
+				const data = await setupLinkPoll<{ status: string }>();
 				if (data.status === "ready") {
 					stopPolling();
 					onLinked();
@@ -55,10 +55,11 @@
 	async function startSubscribe() {
 		accountError = null;
 		try {
-			const r = await fetch("/api/setup/subscribe/start", { method: "POST" });
-			if (!r.ok) throw new Error();
-			const data = await r.json();
-			checkoutUrl = data.verification_uri_complete || data.verification_uri;
+			const data = await setupSubscribeStart<{
+				verification_uri_complete?: string;
+				verification_uri?: string;
+			}>();
+			checkoutUrl = data.verification_uri_complete || data.verification_uri || null;
 			accountMode = "subscribe";
 			startPolling();
 		} catch {
@@ -73,13 +74,7 @@
 			return;
 		}
 		try {
-			const r = await fetch("/api/setup/login/start", {
-				method: "POST",
-				headers: { "Content-Type": "application/json" },
-				body: JSON.stringify({ email }),
-			});
-			if (!r.ok) throw new Error();
-			const data = await r.json();
+			const data = await setupLoginStart<{ status: string }>(email);
 			if (data.status === "sent") {
 				accountMode = "waiting";
 				startPolling();
@@ -151,7 +146,7 @@
 				rel="noopener"
 				onclick={(e) => {
 					e.preventDefault();
-					openExternal(checkoutUrl);
+					if (checkoutUrl) openExternal(checkoutUrl);
 				}}
 				class="inline-flex w-full items-center justify-center gap-2 rounded-lg bg-foreground px-4 py-2.5 text-sm font-medium text-surface transition-opacity hover:opacity-90"
 			>

@@ -94,7 +94,11 @@ export function getRouteFromEntityId(entityId: string): string {
 // ============================================================================
 
 const TAB_STORAGE_KEY_PREFIX = 'virtues-window-tabs';
-const TAB_STORAGE_VERSION = 9; // System sections moved from DB to frontend constants
+const TAB_STORAGE_VERSION = 10; // Per-tab navigation history (browser model)
+const HISTORY_CAP = 50; // Max routes kept in a single tab's history stack
+
+// Input shape for tab creation — history/historyIndex are seeded internally.
+type TabInput = Omit<Tab, 'id' | 'createdAt' | 'history' | 'historyIndex'>;
 const WORKSPACE_STORAGE_KEY = 'virtues-active-workspace'; // Legacy — only used by migration cleanup
 
 class WindowShellStore {
@@ -255,18 +259,20 @@ class WindowShellStore {
 
 		try {
 			if (path && path !== '/') {
-				this.openTabFromRoute(path, { forceNew: false });
+				// Walk per-tab history when the URL is an adjacent entry (OS back/forward
+				// mirrors the in-app buttons); otherwise focus-existing / restore.
+				this.reconcilePaneToRoute('left', path);
 			}
 
 			if (rightRoute && mobileLayout.isMobile) {
 				// No split on the phone shell — a ?right= deep link opens the
 				// right-hand route as a normal tab instead.
-				this.openTabFromRoute(rightRoute, { forceNew: false });
+				this.openTabFromRoute(rightRoute, { focusExisting: true });
 			} else if (rightRoute) {
 				if (!this.isSplit) {
 					this.enableSplit();
 				}
-				this.openTabFromRoute(rightRoute, { paneId: 'right', forceNew: false });
+				this.reconcilePaneToRoute('right', rightRoute);
 			} else if (this.isSplit) {
 				this.disableSplit();
 			}
@@ -369,24 +375,25 @@ class WindowShellStore {
 			if (stored) {
 				const data = JSON.parse(stored);
 
-				// Version 6+: namespace-based format
-				if (data.version >= TAB_STORAGE_VERSION && Array.isArray(data.panes)) {
-					// Deduplicate tabs within each pane to prevent "each_key_duplicate" errors
-					// This can happen if state gets corrupted somehow
-					const deduplicatedPanes = data.panes.map((pane: PaneState) => {
+				// v9 (no per-tab history) and v10 both migrate forward: dedup tab ids
+				// and seed each tab with a history stack. Only older formats clean-slate.
+				if (data.version >= 9 && Array.isArray(data.panes)) {
+					const migratedPanes = data.panes.map((pane: PaneState) => {
 						const seenIds = new Set<string>();
-						const uniqueTabs = pane.tabs.filter((tab: Tab) => {
-							if (seenIds.has(tab.id)) {
-								console.warn(`[WindowShellStore] Removing duplicate tab: ${tab.id}`);
-								return false;
-							}
-							seenIds.add(tab.id);
-							return true;
-						});
+						const uniqueTabs = pane.tabs
+							.filter((tab: Tab) => {
+								if (seenIds.has(tab.id)) {
+									console.warn(`[WindowShellStore] Removing duplicate tab: ${tab.id}`);
+									return false;
+								}
+								seenIds.add(tab.id);
+								return true;
+							})
+							.map((tab: Tab) => this.ensureHistory(tab));
 						return { ...pane, tabs: uniqueTabs };
 					});
 
-					this.panes = deduplicatedPanes;
+					this.panes = migratedPanes;
 					this.activePaneId = data.activePaneId || 'left';
 					return;
 				}
@@ -474,9 +481,16 @@ class WindowShellStore {
 	// Tab CRUD - Unified Implementation
 	// ============================================================================
 
-	openTab(input: Omit<Tab, 'id' | 'createdAt'>, paneId?: string): string {
+	openTab(input: TabInput, paneId?: string): string {
 		const id = crypto.randomUUID();
-		const tab: Tab = { ...input, id, createdAt: Date.now() };
+		// Seed the history stack with the tab's opening route.
+		const tab: Tab = {
+			...input,
+			id,
+			history: [input.route],
+			historyIndex: 0,
+			createdAt: Date.now()
+		};
 		const targetPaneId = paneId ?? this.activePaneId;
 
 		this.updatePane(targetPaneId, pane => ({
@@ -491,64 +505,237 @@ class WindowShellStore {
 		return id;
 	}
 
+	/**
+	 * Route → tab dispatcher. Behavior depends on options:
+	 * - default          → navigate the active tab IN PLACE (browser model)
+	 * - forceNew: true   → always create a new tab
+	 * - focusExisting    → focus an already-open matching tab, else create (IDE model;
+	 *                       used by deep-link / popstate restore)
+	 */
 	openTabFromRoute(route: string, options?: {
 		label?: string;
 		forceNew?: boolean;
+		focusExisting?: boolean;
 		preferEmptyPane?: boolean;
 		paneId?: 'left' | 'right';
 	}): string {
-		const parsed = parseRoute(route);
-		// Use normalized route if available (e.g., /day → /day/day_2026-01-25)
-		const effectiveRoute = parsed.normalizedRoute || route;
+		if (options?.forceNew) {
+			return this.createTabFromRoute(route, options);
+		}
 
-		// Find existing tab if not forcing new — focus it (IDE model)
-		if (!options?.forceNew) {
+		if (options?.focusExisting) {
+			const parsed = parseRoute(route);
+			const effectiveRoute = parsed.normalizedRoute || route;
+
 			let result: { tab: Tab; paneId: string } | undefined;
-
 			if (parsed.entityId) {
-				// Entity-based tabs: match by route (URL is the identity)
 				result = this.findTab((t) => t.route === effectiveRoute);
 			} else if (parsed.virtuesPage) {
-				// System pages: match by virtuesPage
 				result = this.findTab((t) => t.type === 'virtues' && t.virtuesPage === parsed.virtuesPage);
 			} else if (parsed.storagePath) {
-				// Storage pages: match by storagePath
 				result = this.findTab((t) => t.type === 'drive' && t.storagePath === parsed.storagePath);
 			} else {
-				// List views: match by type only (no entity, no virtues page, no storage path)
 				result = this.findTab((t) => t.type === parsed.type && !t.virtuesPage && !t.storagePath && !routeToEntityId(t.route));
 			}
 
 			if (result) {
-				// If the existing list-view tab has a sibling sub-route (e.g. /actions/templates
-				// vs. /actions), refresh its route so URL/state reflect the requested sub-tab.
 				if (result.tab.route !== effectiveRoute) {
 					this.updateTab(result.tab.id, { route: effectiveRoute });
 				}
 				this.setActiveTab(result.tab.id);
 				return result.tab.id;
 			}
+			return this.createTabFromRoute(route, options);
 		}
 
-		// Create new tab
-		const tabInput = {
-			type: parsed.type,
-			label: options?.label || parsed.label,
-			route: effectiveRoute,
-			icon: parsed.icon,
-			storagePath: parsed.storagePath,
-			virtuesPage: parsed.virtuesPage
-		};
+		// Default: navigate the active tab in place.
+		return this.navigate(route, {
+			label: options?.label,
+			paneId: options?.paneId,
+			preferEmptyPane: options?.preferEmptyPane
+		});
+	}
 
-		// Determine target pane
+	/**
+	 * Navigate the active tab of the target pane IN PLACE — swap its content and
+	 * push onto its history stack (browser model). Falls back to creating a tab
+	 * when the target pane has no active tab (e.g. an empty split pane).
+	 */
+	navigate(route: string, options?: {
+		label?: string;
+		paneId?: 'left' | 'right';
+		preferEmptyPane?: boolean;
+	}): string {
+		const { effectiveRoute, fields } = this.identityFromRoute(route, options?.label);
+
 		let targetPaneId = options?.paneId ?? this.activePaneId;
-
 		if (options?.preferEmptyPane && this.isSplit) {
 			if (this.panes[0].tabs.length === 0) targetPaneId = 'left';
 			else if (this.panes[1]?.tabs.length === 0) targetPaneId = 'right';
 		}
 
-		return this.openTab(tabInput, targetPaneId);
+		const pane = this.panes.find(p => p.id === targetPaneId);
+		const activeTab = pane?.tabs.find(t => t.id === pane.activeTabId);
+
+		// No tab to navigate — create one instead.
+		if (!pane || !activeTab) {
+			return this.createTabFromRoute(route, { label: options?.label, paneId: options?.paneId, preferEmptyPane: options?.preferEmptyPane });
+		}
+
+		// Truncate any forward history, push the new route, cap depth.
+		const base = activeTab.history.slice(0, activeTab.historyIndex + 1);
+		base.push(effectiveRoute);
+		const { history, index } = this.capHistory(base, base.length - 1);
+
+		this.updatePane(targetPaneId, p => ({
+			...p,
+			tabs: p.tabs.map(t => t.id === activeTab.id ? {
+				...t,
+				...fields,
+				route: effectiveRoute,
+				history,
+				historyIndex: index,
+				scrollPosition: 0
+			} : t)
+		}));
+
+		this.activePaneId = targetPaneId;
+		this.persistTabState();
+		this.syncActiveToUrl(true);
+		return activeTab.id;
+	}
+
+	/** Move the active tab of a pane back one step in its history. */
+	goBack(paneId?: string): void {
+		const targetPaneId = paneId ?? this.activePaneId;
+		const pane = this.panes.find(p => p.id === targetPaneId);
+		const tab = pane?.tabs.find(t => t.id === pane.activeTabId);
+		if (!tab) return;
+		this.applyHistoryIndex(targetPaneId, tab.id, tab.historyIndex - 1);
+	}
+
+	/** Move the active tab of a pane forward one step in its history. */
+	goForward(paneId?: string): void {
+		const targetPaneId = paneId ?? this.activePaneId;
+		const pane = this.panes.find(p => p.id === targetPaneId);
+		const tab = pane?.tabs.find(t => t.id === pane.activeTabId);
+		if (!tab) return;
+		this.applyHistoryIndex(targetPaneId, tab.id, tab.historyIndex + 1);
+	}
+
+	canGoBack(paneId?: string): boolean {
+		const targetPaneId = paneId ?? this.activePaneId;
+		const pane = this.panes.find(p => p.id === targetPaneId);
+		const tab = pane?.tabs.find(t => t.id === pane.activeTabId);
+		return !!tab && tab.historyIndex > 0;
+	}
+
+	canGoForward(paneId?: string): boolean {
+		const targetPaneId = paneId ?? this.activePaneId;
+		const pane = this.panes.find(p => p.id === targetPaneId);
+		const tab = pane?.tabs.find(t => t.id === pane.activeTabId);
+		return !!tab && tab.historyIndex < tab.history.length - 1;
+	}
+
+	// ── History helpers ──────────────────────────────────────────────────────
+
+	/** Parse a route into the identity fields a tab carries. */
+	private identityFromRoute(route: string, label?: string): {
+		effectiveRoute: string;
+		fields: Pick<Tab, 'type' | 'label' | 'icon' | 'storagePath' | 'virtuesPage'>;
+	} {
+		const parsed = parseRoute(route);
+		const effectiveRoute = parsed.normalizedRoute || route;
+		return {
+			effectiveRoute,
+			fields: {
+				type: parsed.type,
+				label: label || parsed.label,
+				icon: parsed.icon,
+				storagePath: parsed.storagePath,
+				virtuesPage: parsed.virtuesPage
+			}
+		};
+	}
+
+	/** Cap a history stack to HISTORY_CAP, dropping from the front. */
+	private capHistory(history: string[], index: number): { history: string[]; index: number } {
+		if (history.length <= HISTORY_CAP) return { history, index };
+		const overflow = history.length - HISTORY_CAP;
+		return { history: history.slice(overflow), index: Math.max(0, index - overflow) };
+	}
+
+	/** Create a brand-new tab from a route (honors preferEmptyPane in split). */
+	private createTabFromRoute(route: string, options?: {
+		label?: string;
+		preferEmptyPane?: boolean;
+		paneId?: 'left' | 'right';
+	}): string {
+		const { effectiveRoute, fields } = this.identityFromRoute(route, options?.label);
+		let targetPaneId = options?.paneId ?? this.activePaneId;
+		if (options?.preferEmptyPane && this.isSplit) {
+			if (this.panes[0].tabs.length === 0) targetPaneId = 'left';
+			else if (this.panes[1]?.tabs.length === 0) targetPaneId = 'right';
+		}
+		return this.openTab({ ...fields, route: effectiveRoute }, targetPaneId);
+	}
+
+	/** Move a specific tab to a history index, re-deriving its identity fields. */
+	private applyHistoryIndex(paneId: string, tabId: string, newIndex: number): void {
+		const pane = this.panes.find(p => p.id === paneId);
+		const tab = pane?.tabs.find(t => t.id === tabId);
+		if (!tab) return;
+		if (newIndex < 0 || newIndex >= tab.history.length) return;
+
+		const route = tab.history[newIndex];
+		const { fields } = this.identityFromRoute(route);
+
+		this.updatePane(paneId, p => ({
+			...p,
+			tabs: p.tabs.map(t => t.id === tabId ? {
+				...t,
+				...fields,
+				route,
+				historyIndex: newIndex,
+				scrollPosition: 0
+			} : t)
+		}));
+
+		this.persistTabState();
+		this.syncActiveToUrl(true);
+	}
+
+	/**
+	 * Reconcile a pane's active tab to a route arriving from the URL (popstate).
+	 * If the route is an adjacent history entry, walk the index (so OS back/forward
+	 * mirror the in-app buttons); otherwise focus-existing or create.
+	 */
+	private reconcilePaneToRoute(paneId: 'left' | 'right', route: string): void {
+		const pane = this.panes.find(p => p.id === paneId);
+		const tab = pane?.tabs.find(t => t.id === pane.activeTabId);
+		if (pane && tab) {
+			const parsed = parseRoute(route);
+			const effectiveRoute = parsed.normalizedRoute || route;
+			if (tab.route === effectiveRoute) return;
+			if (tab.history[tab.historyIndex - 1] === effectiveRoute) {
+				this.applyHistoryIndex(paneId, tab.id, tab.historyIndex - 1);
+				return;
+			}
+			if (tab.history[tab.historyIndex + 1] === effectiveRoute) {
+				this.applyHistoryIndex(paneId, tab.id, tab.historyIndex + 1);
+				return;
+			}
+		}
+		// Not adjacent (or no active tab) — restore by focusing/creating.
+		this.openTabFromRoute(route, { focusExisting: true, paneId });
+	}
+
+	/** Normalize a persisted tab so it always carries a valid history stack. */
+	private ensureHistory(tab: Tab): Tab {
+		const history = Array.isArray(tab.history) && tab.history.length > 0 ? tab.history : [tab.route];
+		let index = typeof tab.historyIndex === 'number' ? tab.historyIndex : history.length - 1;
+		index = Math.max(0, Math.min(index, history.length - 1));
+		return { ...tab, history, historyIndex: index, route: history[index] ?? tab.route };
 	}
 
 	openEntityTab(entityId: string, name?: string): string {
@@ -720,7 +907,20 @@ class WindowShellStore {
 
 		this.updatePane(pane.id, p => ({
 			...p,
-			tabs: p.tabs.map(t => t.id === tabId ? { ...t, ...updates } : t)
+			tabs: p.tabs.map(t => {
+				if (t.id !== tabId) return t;
+				const next = { ...t, ...updates };
+				// A route change here is an identity refinement of the SAME viewport
+				// (e.g. new chat "/" → "/chat/chat_xyz"), not a navigation. Replace the
+				// current history slot in place rather than pushing a new entry, so the
+				// back button never lands on the pre-refinement route.
+				if (routeChanged && updates.route) {
+					const history = [...t.history];
+					history[t.historyIndex] = updates.route;
+					next.history = history;
+				}
+				return next;
+			})
 		}));
 
 		this.persistTabState();
@@ -888,7 +1088,7 @@ class WindowShellStore {
 	}
 
 	// Backwards compatibility aliases
-	openTabInPane(input: Omit<Tab, 'id' | 'createdAt'>, paneId: 'left' | 'right'): string {
+	openTabInPane(input: TabInput, paneId: 'left' | 'right'): string {
 		return this.openTab(input, paneId);
 	}
 
@@ -959,7 +1159,7 @@ class WindowShellStore {
 	 * the "click something, see its detail beside the list" pattern.
 	 * Returns the tab id (new or existing).
 	 */
-	openAside(input: Omit<Tab, 'id' | 'createdAt'>): string {
+	openAside(input: TabInput): string {
 		// Dedupe: if a tab for this route is already open anywhere, activate it.
 		const existing = this.findTab((t) => t.route === input.route);
 		if (existing) {

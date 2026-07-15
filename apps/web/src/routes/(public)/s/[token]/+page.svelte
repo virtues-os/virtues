@@ -3,7 +3,7 @@
 	import { onMount } from "svelte";
 	import Icon from "$lib/components/Icon.svelte";
 	import PublicPageViewer from "$lib/components/pages/PublicPageViewer.svelte";
-	import type { SharedPage } from "$lib/api/client";
+	import { getSharedPage, ApiError, type SharedPage } from "$lib/api/client";
 
 	let loading = $state(true);
 	let error = $state<string | null>(null);
@@ -13,12 +13,7 @@
 
 	onMount(async () => {
 		try {
-			const res = await fetch(`/api/s/${token}`);
-			if (!res.ok) {
-				error = res.status === 404 ? "This page doesn't exist or is no longer shared." : "Failed to load page.";
-				return;
-			}
-			const data: SharedPage = await res.json();
+			const data: SharedPage = await getSharedPage(token);
 
 			// Rewrite media URLs: /api/drive/files/:id/download -> /api/s/:token/files/:id
 			data.content = data.content.replace(
@@ -33,8 +28,11 @@
 			}
 
 			sharedPage = data;
-		} catch {
-			error = "Failed to load page.";
+		} catch (e) {
+			error =
+				e instanceof ApiError && e.status === 404
+					? "This page doesn't exist or is no longer shared."
+					: "Failed to load page.";
 		} finally {
 			loading = false;
 		}

@@ -39,8 +39,8 @@
 
 	$effect(() => {
 		if (typeof window !== "undefined") {
-			fetch("/api/app/server-info")
-				.then((r) => r.json())
+			api
+				.getServerInfo<{ apiEndpoint: string }>()
 				.then((data) => {
 					apiEndpoint = data.apiEndpoint;
 					isLoadingEndpoint = false;

@@ -97,7 +97,7 @@
 		/* Bottom inset keeps tall modals above the home indicator on phones. */
 		padding-top: max(15vh, env(safe-area-inset-top));
 		padding-bottom: max(16px, env(safe-area-inset-bottom));
-		z-index: 9999;
+		z-index: var(--z-modal);
 		animation: backdrop-fade-in 150ms ease-out;
 	}
 

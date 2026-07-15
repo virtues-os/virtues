@@ -319,7 +319,7 @@
 		position: fixed;
 		inset: 0;
 		background: rgba(0, 0, 0, 0.3);
-		z-index: 100;
+		z-index: var(--z-overlay);
 		display: flex;
 		justify-content: flex-end;
 		animation: backdrop-fade-in 0.2s ease-out;

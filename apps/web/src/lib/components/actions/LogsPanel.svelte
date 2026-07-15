@@ -160,7 +160,7 @@
 		word-break: break-word;
 	}
 	.line.err {
-		color: #b91c1c;
+		color: color-mix(in srgb, var(--color-error) 75%, #000);
 	}
 	.line .t {
 		color: var(--color-foreground-subtle, #9ca3af);
@@ -172,7 +172,7 @@
 		font-weight: 600;
 	}
 	.line .s.stderr {
-		color: #b91c1c;
+		color: color-mix(in srgb, var(--color-error) 75%, #000);
 	}
 
 	.dim {
@@ -190,8 +190,8 @@
 	.error {
 		padding: 0.375rem 0.625rem;
 		border-radius: 6px;
-		background: #fee2e2;
-		color: #991b1b;
+		background: var(--color-error-subtle);
+		color: color-mix(in srgb, var(--color-error) 75%, #000);
 		font-size: 0.75rem;
 	}
 </style>

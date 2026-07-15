@@ -3,7 +3,11 @@
 	import { Page } from "$lib";
 	import Icon from "$lib/components/Icon.svelte";
 	import { formatMicrosUSD, formatMicrosPrecise } from "$lib/utils/currency";
-	import { onMount } from "svelte";
+	import { formatDate } from "$lib/utils/dateUtils";
+	import { getBillingUsage, getUsageSummary } from "$lib/api/client";
+	import { createResource } from "$lib/utils/resource.svelte";
+	import LoadingState from "$lib/components/LoadingState.svelte";
+	import EmptyState from "$lib/components/EmptyState.svelte";
 
 	let { tab, active }: { tab: Tab; active: boolean } = $props();
 
@@ -24,22 +28,20 @@
 	};
 	type Summary = { month_start: string; by_feature: Bucket[]; by_model: Bucket[] };
 
-	let wallet = $state<Wallet | null>(null);
-	let summary = $state<Summary | null>(null);
-	let loading = $state(true);
-
-	onMount(load);
-
-	async function load() {
-		loading = true;
+	// Both loads are independently tolerant — a failure just hides its panel,
+	// so we settle them together and never surface an error state.
+	const res = createResource(async () => {
 		const [w, s] = await Promise.allSettled([
-			fetch("/api/billing/usage").then((r) => r.json()),
-			fetch("/api/usage/summary").then((r) => r.json()),
+			getBillingUsage<Wallet>(),
+			getUsageSummary<Summary>(),
 		]);
-		if (w.status === "fulfilled" && !w.value.error) wallet = w.value;
-		if (s.status === "fulfilled") summary = s.value;
-		loading = false;
-	}
+		return {
+			wallet: w.status === "fulfilled" && !w.value.error ? w.value : null,
+			summary: s.status === "fulfilled" ? s.value : null,
+		};
+	});
+	const wallet = $derived(res.data?.wallet ?? null);
+	const summary = $derived(res.data?.summary ?? null);
 
 	// Friendly labels for the coarse feature buckets.
 	const featureLabel: Record<string, string> = {
@@ -64,10 +66,7 @@
 	);
 	const renewsLabel = $derived(
 		wallet?.expires_at
-			? new Date(wallet.expires_at).toLocaleDateString(undefined, {
-					month: "long",
-					day: "numeric",
-				})
+			? formatDate(wallet.expires_at, { month: "long", day: "numeric" })
 			: null,
 	);
 	function pct(part: number): number {
@@ -80,10 +79,8 @@
 	description="What your Virtues wallet paid for this month — all figures stay on your box."
 	maxWidth="full"
 >
-	{#if loading}
-		<div class="flex items-center justify-center h-40">
-			<Icon icon="ri:loader-4-line" width="20" class="spin" />
-		</div>
+	{#if res.loading}
+		<LoadingState message="Loading usage…" />
 	{:else}
 		<!-- Wallet headline -->
 		{#if wallet}
@@ -119,7 +116,7 @@
 				Where your money went
 			</div>
 			{#if (summary?.by_feature ?? []).length === 0}
-				<div class="text-sm text-foreground-subtle">No usage recorded yet this month.</div>
+				<EmptyState icon="ri:pie-chart-line" message="No usage recorded yet this month." />
 			{:else}
 				<div class="space-y-4">
 					{#each summary?.by_feature ?? [] as b (b.label)}

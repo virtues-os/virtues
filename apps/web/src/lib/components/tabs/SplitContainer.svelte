@@ -251,6 +251,8 @@
 					type: "chat",
 					label: "New Chat",
 					route: "/chat",
+					history: ["/chat"],
+					historyIndex: 0,
 					createdAt: Date.now(),
 				}}
 				active={true}
@@ -266,6 +268,8 @@
 					type: "chat",
 					label: "New Chat",
 					route: "/chat",
+					history: ["/chat"],
+					historyIndex: 0,
 					createdAt: Date.now(),
 				}}
 				active={true}
@@ -430,7 +434,7 @@
 		position: absolute;
 		inset: 0;
 		display: flex;
-		z-index: 100;
+		z-index: var(--z-overlay);
 		pointer-events: none;
 		opacity: 0;
 		visibility: hidden;

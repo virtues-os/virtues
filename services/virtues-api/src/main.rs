@@ -160,6 +160,9 @@ async fn main() -> Result<()> {
         .merge(routes::places::router())
         .merge(routes::exa::router())
         .merge(routes::unsplash::router())
+        // Plaid bank-data proxy (/v1/services/plaid/*): keeps the master Plaid
+        // secret server-side; the box sends only per-user access_tokens.
+        .merge(routes::plaid::router())
         .merge(routes::ai::router())
         // Middleware
         .layer(TraceLayer::new_for_http())

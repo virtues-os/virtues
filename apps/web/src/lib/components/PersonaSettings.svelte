@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
 	import { personaStore, type Persona } from '$lib/stores/personas.svelte';
+	import { getAssistantProfile, updateAssistantProfile } from '$lib/api/client';
 	import Icon from '$lib/components/Icon.svelte';
 	import Modal from '$lib/components/Modal.svelte';
 
@@ -24,11 +25,8 @@
 
 	async function loadActivePersona() {
 		try {
-			const res = await fetch('/api/assistant-profile');
-			if (res.ok) {
-				const profile = await res.json();
-				activePersonaId = profile.persona || null;
-			}
+			const profile = await getAssistantProfile<{ persona?: string | null }>();
+			activePersonaId = profile.persona || null;
 		} catch (error) {
 			console.error('Failed to load active persona:', error);
 		}
@@ -39,15 +37,7 @@
 		activePersonaId = personaId; // Optimistic update
 
 		try {
-			const res = await fetch('/api/assistant-profile', {
-				method: 'PUT',
-				headers: { 'Content-Type': 'application/json' },
-				body: JSON.stringify({ persona: personaId })
-			});
-			if (!res.ok) {
-				activePersonaId = previousId; // Rollback on error
-				console.error('Failed to set active persona');
-			}
+			await updateAssistantProfile({ persona: personaId });
 		} catch (error) {
 			activePersonaId = previousId; // Rollback on error
 			console.error('Failed to set active persona:', error);

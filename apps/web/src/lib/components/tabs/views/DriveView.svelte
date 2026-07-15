@@ -9,7 +9,9 @@
 		deleteDriveFile,
 		createDriveFolder,
 		moveDriveFile,
+		getDriveUsage,
 	} from "$lib/api/client";
+	import { formatDate } from "$lib/utils/dateUtils";
 	import Icon from "$lib/components/Icon.svelte";
 	import Modal from "$lib/components/Modal.svelte";
 	import UniversalDataGrid, {
@@ -70,13 +72,13 @@
 		loading = true;
 		error = null;
 		try {
-			const [filesData, usageResponse] = await Promise.all([
+			const [filesData, usageData] = await Promise.all([
 				listDriveFiles(currentPath),
-				fetch("/api/drive/usage"),
+				getDriveUsage().catch(() => null),
 			]);
 			files = filesData;
-			if (usageResponse.ok) {
-				usage = await usageResponse.json();
+			if (usageData) {
+				usage = usageData;
 			}
 		} catch (e) {
 			error =
@@ -106,16 +108,6 @@
 		if (bytes < 1024 * 1024 * 1024)
 			return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 		return `${(bytes / (1024 * 1024 * 1024)).toFixed(1)} GB`;
-	}
-
-	// Format date
-	function formatDate(dateStr: string): string {
-		const date = new Date(dateStr);
-		return date.toLocaleDateString(undefined, {
-			month: "short",
-			day: "numeric",
-			year: "numeric",
-		});
 	}
 
 	// Get icon for file type
@@ -241,8 +233,7 @@
 			const newFiles = await listDriveFiles(currentPath);
 			files = newFiles;
 			// Refresh usage
-			const res = await fetch("/api/drive/usage");
-			if (res.ok) usage = await res.json();
+			usage = await getDriveUsage().catch(() => usage);
 		} catch (e) {
 			error = e instanceof Error ? e.message : "Upload failed";
 		} finally {
@@ -303,8 +294,7 @@
 			const newFiles = await listDriveFiles(currentPath);
 			files = newFiles;
 			// Refresh usage
-			const res = await fetch("/api/drive/usage");
-			if (res.ok) usage = await res.json();
+			usage = await getDriveUsage().catch(() => usage);
 			showToast(`"${fileToDelete.filename}" moved to Trash`);
 			fileToDelete = null;
 		} catch (e) {
@@ -657,7 +647,7 @@
 			class:border-transparent={!dragOver}
 			class:border-primary={dragOver}
 			style:background-color={dragOver
-				? "rgba(59, 130, 246, 0.05)"
+				? "color-mix(in srgb, var(--color-primary) 5%, transparent)"
 				: undefined}
 			ondrop={handleDrop}
 			ondragover={handleDragOver}
