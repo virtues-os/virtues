@@ -294,6 +294,34 @@ pub async fn run(cli: Cli, virtues: Virtues) -> Result<(), Box<dyn std::error::E
             println!("Annotated {} events across {} days.", total, dates.len());
         }
 
+        Commands::SessionizeAudio { date } => {
+            virtues.database.initialize().await?;
+            let pool = virtues.database.pool();
+
+            let dates: Vec<chrono::NaiveDate> = if let Some(d) = date {
+                vec![d.parse().map_err(|e| format!("bad date: {e}"))?]
+            } else {
+                sqlx::query_scalar(
+                    "SELECT DISTINCT start_time::date FROM data_communication_transcription ORDER BY 1",
+                )
+                .fetch_all(pool)
+                .await?
+            };
+
+            let mut total = 0u32;
+            for d in &dates {
+                match crate::sessionize::audio::sessionize_day(pool, *d).await {
+                    Ok(n) => {
+                        total += n;
+                        println!("  {d}: {n} sessions");
+                    }
+                    Err(e) => eprintln!("  {d} — error: {e}"),
+                }
+            }
+            println!("Sessionized {} audio sessions across {} day(s).", total, dates.len());
+            return Ok(());
+        }
+
         Commands::DaySummary { date } => {
             println!("Running migrations...");
             virtues.database.initialize().await?;
