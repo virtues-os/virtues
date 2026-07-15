@@ -610,75 +610,140 @@ fn generate_visit_id(centroid_lat: f64, centroid_lon: f64, start_time: DateTime<
     Uuid::new_v5(&Uuid::NAMESPACE_OID, hash_input.as_bytes())
 }
 
-/// Write visit idempotently to database and link to place entity via wiki_entity_refs
+/// Write a visit as ONE row per stay — matching and extending an existing visit
+/// rather than minting a new one every time the clusterer re-runs.
+///
+/// The bug this fixes: the maintenance loop re-clusters a 30-hour window every 15
+/// minutes, and the visit id was `uuid_v5(lat, lon, start_time)`. Across re-runs
+/// the cluster's earliest point drifts, so the start — and therefore the id —
+/// changes, and `ON CONFLICT (id)` never fires. One 3-hour stay at home became a
+/// dozen overlapping rows (arriving 00:04, 00:19, 00:34…, all departing 03:07),
+/// which then drowned the day segmenter in phantom "visits".
+///
+/// The fix keys identity on WHERE + WHEN, not on a drifting start hash: a place
+/// (which `resolve_or_create_place` already collapses nearby coordinates into) and
+/// a time range. A candidate that overlaps an existing visit at the same place IS
+/// that visit, continued — so extend the existing row to the union span and absorb
+/// any duplicates it now covers. Idempotent no matter how the start drifts, and
+/// self-healing: re-running over the mess collapses it.
 async fn write_visit_and_link_place(db: &Database, visit: &Visit) -> Result<()> {
-    let visit_id = generate_visit_id(visit.centroid_lat, visit.centroid_lon, visit.start_time);
-
-    // Find or create place entity for this location
     let place_id = resolve_or_create_place(db, visit.centroid_lat, visit.centroid_lon).await?;
-
-    let duration_minutes = (visit.end_time - visit.start_time).num_minutes() as i32;
+    let pool = db.pool();
 
     let metadata = serde_json::json!({
         "point_count": visit.points.len(),
         "radius_meters": calculate_visit_radius(visit),
     });
 
-    // Write the location visit (without place_id FK)
-    sqlx::query!(
+    // Existing visits at THIS place whose span overlaps (or nearly touches) the
+    // candidate's. `resolve_or_create_place` is the spatial key; wiki_entity_refs
+    // is how a visit is linked to it. The ± gap merges re-clusters that a tiny
+    // backgrounding gap would otherwise leave adjacent rather than overlapping.
+    let overlapping: Vec<(String, chrono::DateTime<Utc>, chrono::DateTime<Utc>)> = sqlx::query_as(
         r#"
-        INSERT INTO data_location_visit (
-            id,
-            latitude,
-            longitude,
-            arrival_time,
-            departure_time,
-            duration_minutes,
-            source_stream_id,
-            source_table,
-            source_provider,
-            metadata
-        ) VALUES (
-            $1, $2, $3, $4, $5, $6, $7, $8, $9, $10
-        )
-        ON CONFLICT (id) DO UPDATE SET
-            departure_time = EXCLUDED.departure_time,
-            duration_minutes = EXCLUDED.duration_minutes,
-            latitude = EXCLUDED.latitude,
-            longitude = EXCLUDED.longitude,
-            metadata = EXCLUDED.metadata,
-            updated_at = now()
-        WHERE data_location_visit.departure_time < EXCLUDED.departure_time
+        SELECT v.id, v.arrival_time, v.departure_time
+        FROM data_location_visit v
+        JOIN wiki_entity_refs r
+          ON r.source_table = 'data_location_visit' AND r.source_id = v.id
+             AND r.entity_type = 'place' AND r.entity_id = $1
+        WHERE v.arrival_time   <= $3 + ($4 || ' minutes')::interval
+          AND v.departure_time >= $2 - ($4 || ' minutes')::interval
+        ORDER BY v.arrival_time
         "#,
-        visit_id.to_string(),
-        visit.centroid_lat,
-        visit.centroid_lon,
-        visit.start_time,
-        visit.end_time,
-        duration_minutes,
-        visit.points.first().unwrap().id.to_string(), // Use first point ID as source
-        "location_point",
-        "ios",
-        metadata,
     )
-    .execute(db.pool())
+    .bind(&place_id)
+    .bind(visit.start_time)
+    .bind(visit.end_time)
+    .bind(TEMPORAL_GAP_MINUTES.to_string())
+    .fetch_all(pool)
     .await?;
 
-    // Link visit to place entity via wiki_entity_refs
-    let visit_id_str = visit_id.to_string();
-    let ref_id = ids::generate_id("eref", &[&visit_id_str, &place_id, "location"]);
-    sqlx::query!(
-        r#"
-        INSERT INTO wiki_entity_refs (id, entity_type, entity_id, source_table, source_id, role, timestamp)
-        VALUES ($1, 'place', $2, 'data_location_visit', $3, 'location', $4)
-        ON CONFLICT (entity_id, source_table, source_id, role) DO NOTHING
-        "#,
-        ref_id,
-        place_id,
-        visit_id_str,
-        visit.start_time,
+    if let Some((keeper_id, _, _)) = overlapping.first() {
+        // Extend the earliest existing visit to span everything it now overlaps.
+        let union_start = overlapping
+            .iter()
+            .map(|(_, a, _)| *a)
+            .chain(std::iter::once(visit.start_time))
+            .min()
+            .unwrap();
+        let union_end = overlapping
+            .iter()
+            .map(|(_, _, d)| *d)
+            .chain(std::iter::once(visit.end_time))
+            .max()
+            .unwrap();
+        let duration = (union_end - union_start).num_minutes() as i32;
+
+        sqlx::query(
+            "UPDATE data_location_visit \
+             SET arrival_time = $2, departure_time = $3, duration_minutes = $4, \
+                 latitude = $5, longitude = $6, metadata = $7, updated_at = now() \
+             WHERE id = $1",
+        )
+        .bind(keeper_id)
+        .bind(union_start)
+        .bind(union_end)
+        .bind(duration)
+        .bind(visit.centroid_lat)
+        .bind(visit.centroid_lon)
+        .bind(&metadata)
+        .execute(pool)
+        .await?;
+
+        // Absorb the duplicates this stay now covers — the rows the drifting id
+        // already created. Their place refs go with them.
+        let absorbed: Vec<String> = overlapping.iter().skip(1).map(|(id, _, _)| id.clone()).collect();
+        if !absorbed.is_empty() {
+            sqlx::query(
+                "DELETE FROM wiki_entity_refs \
+                 WHERE source_table = 'data_location_visit' AND source_id = ANY($1)",
+            )
+            .bind(&absorbed)
+            .execute(pool)
+            .await?;
+            sqlx::query("DELETE FROM data_location_visit WHERE id = ANY($1)")
+                .bind(&absorbed)
+                .execute(pool)
+                .await?;
+            tracing::debug!(kept = %keeper_id, absorbed = absorbed.len(), "merged overlapping visits");
+        }
+        return Ok(());
+    }
+
+    // No existing stay here: a genuinely new visit.
+    let visit_id = generate_visit_id(visit.centroid_lat, visit.centroid_lon, visit.start_time)
+        .to_string();
+    let duration_minutes = (visit.end_time - visit.start_time).num_minutes() as i32;
+
+    sqlx::query(
+        "INSERT INTO data_location_visit \
+         (id, latitude, longitude, arrival_time, departure_time, duration_minutes, \
+          source_stream_id, source_table, source_provider, metadata) \
+         VALUES ($1, $2, $3, $4, $5, $6, $7, 'location_point', 'ios', $8) \
+         ON CONFLICT (id) DO NOTHING",
     )
-    .execute(db.pool())
+    .bind(&visit_id)
+    .bind(visit.centroid_lat)
+    .bind(visit.centroid_lon)
+    .bind(visit.start_time)
+    .bind(visit.end_time)
+    .bind(duration_minutes)
+    .bind(visit.points.first().unwrap().id.to_string())
+    .bind(&metadata)
+    .execute(pool)
+    .await?;
+
+    let ref_id = ids::generate_id("eref", &[&visit_id, &place_id, "location"]);
+    sqlx::query(
+        "INSERT INTO wiki_entity_refs (id, entity_type, entity_id, source_table, source_id, role, timestamp) \
+         VALUES ($1, 'place', $2, 'data_location_visit', $3, 'location', $4) \
+         ON CONFLICT (entity_id, source_table, source_id, role) DO NOTHING",
+    )
+    .bind(&ref_id)
+    .bind(&place_id)
+    .bind(&visit_id)
+    .bind(visit.start_time)
+    .execute(pool)
     .await?;
 
     Ok(())
