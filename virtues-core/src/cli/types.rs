@@ -358,12 +358,14 @@ pub enum Commands {
 
     /// Generate the day summary (autobiography + 24h event timeline) for a date.
     ///
-    /// Calls `api::day_summary::generate_day_summary`, which gathers the day's
-    /// ontology data, prompts the user's chat model via virtues-api, and writes
-    /// the results to `wiki_days` (autobiography/epigraph/data_quality) and
-    /// `wiki_events` (clearing existing auto events first; manual events are
-    /// preserved). Gaps in the LLM-emitted timeline are backfilled as "Unknown"
-    /// to guarantee 00:00–24:00 coverage.
+    /// Runs the full nightly chain locally, in production order: roll audio chunks
+    /// into sessions → the DETECTIVE (`segment_day_events`, best model) fuses the
+    /// dossier of clean rollups into a gapless timeline → scoring (sleep, annotate,
+    /// novelty, autonomic, topic) → the DAY SUMMARY (`narrate_day`, best model)
+    /// writes the autobiography and names the day's standout from the scores.
+    /// Writes to `wiki_days` (autobiography/epigraph/data_quality) and `wiki_events`
+    /// (clearing existing auto events first; manual events are preserved). Gaps are
+    /// backfilled as "Unknown" to guarantee 00:00–24:00 coverage.
     #[command(hide = true)]
     DaySummary {
         /// Date to summarize (YYYY-MM-DD). Defaults to today in the user's

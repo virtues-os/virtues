@@ -253,21 +253,21 @@ fn whatever_nulls_the_scores_must_rescore() {
     );
 }
 
-/// Segmenting a day and narrating it are different jobs, and must stay on
-/// different models.
+/// Segmenting a day and narrating it are different jobs, kept as two SEPARATE
+/// best-model calls with scoring in between.
 ///
-/// They used to be ONE Opus call producing the events AND the autobiography. That
-/// fusion caused three separate problems, and only one of them was money:
+/// They used to be ONE Opus call producing the events AND the autobiography. The
+/// fusion made "only narrate a day with enough good events" UNSTATABLE (the events
+/// did not exist until the narration ran) and — more importantly now — it made
+/// scoring impossible: novelty/autonomic/topic are RELATIVE measures that need the
+/// whole day's segmentation before they can run. Only by splitting the detective
+/// (events) from the day summary (prose) can scoring sit between them, so the
+/// narrative can name the day's most novel event.
 ///
-///   * Cutting a day into spans is structured extraction — grunt work — and it was
-///     billed at the narrative rate.
-///   * "Only narrate a day with enough good events" was UNSTATABLE, because the
-///     events did not exist until the narration ran. A circle.
-///   * There could be no hourly cron: re-segmenting as data landed would have
-///     meant re-writing the day's prose every hour.
-///
-/// If someone moves segmentation onto the Chat slot, none of that fails — it just
-/// gets expensive again, quietly, which is exactly how it happened the first time.
+/// Both are now the best model (Chat) — the detective is fusion/adjudication, not
+/// grunt extraction. What must NOT regress is the SEPARATION: two distinct
+/// functions, two distinct prompts, and the day summary must read a score column
+/// (proof the scores computed between them actually reach the narrative).
 #[test]
 fn segmenting_is_not_narrating() {
     let src = std::fs::read_to_string(
@@ -282,17 +282,39 @@ fn segmenting_is_not_narrating() {
         tail[..end].contains(needle)
     };
 
+    // Both are best-model: the detective fuses noisy witnesses (adjudication), the
+    // day summary writes prose. Neither is a Lite job.
     assert!(
-        after("pub async fn segment_day_events", "get_background_model"),
-        "segmentation must use the LITE slot — it is structured extraction, not prose"
+        after("pub async fn segment_day_events", "get_chat_model"),
+        "the detective fuses noisy witnesses into a gapless timeline — a best-model job"
     );
     assert!(
         after("pub async fn narrate_day", "get_chat_model"),
-        "narration is the narrative call; it is the one that earns the Chat slot"
+        "narration is the narrative call; it earns the Chat slot"
+    );
+
+    // They stay SEPARATE — two prompts, and neither function calls the other. A
+    // fused call would blind the narrative to the scores computed between them.
+    assert!(
+        after("pub async fn segment_day_events", "SEGMENT_PROMPT"),
+        "the detective must use its own detective prompt"
     );
     assert!(
-        !after("pub async fn segment_day_events", "get_chat_model"),
-        "segmentation on the Chat slot is how events came to cost Opus prices"
+        after("pub async fn narrate_day", "NARRATE_PROMPT"),
+        "narration must use its own narrative prompt"
+    );
+    assert!(
+        !after("pub async fn segment_day_events", "narrate_day("),
+        "segmentation must not narrate — they are two calls, with scoring between"
+    );
+
+    // The payoff of the split: the day summary reads a SCORE the detective could
+    // not have known, because scoring runs between them.
+    assert!(
+        after("pub async fn narrate_day", "novelty_z"),
+        "the day summary must read novelty_z — the whole point of scoring sitting \
+         between the detective and the narrative is that the prose can name the \
+         day's standout"
     );
 }
 
