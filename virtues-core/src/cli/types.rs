@@ -347,6 +347,15 @@ pub enum Commands {
     #[command(hide = true)]
     AnnotateEvents,
 
+    /// Roll a day's 5-minute audio chunks up into coherent context sessions
+    /// (changepoint on loudness + speaker count). Idempotent per day.
+    #[command(hide = true)]
+    SessionizeAudio {
+        /// Date to sessionize (YYYY-MM-DD). Omit for all days with audio.
+        #[arg(long)]
+        date: Option<String>,
+    },
+
     /// Generate the day summary (autobiography + 24h event timeline) for a date.
     ///
     /// Calls `api::day_summary::generate_day_summary`, which gathers the day's

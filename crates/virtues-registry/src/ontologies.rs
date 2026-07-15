@@ -561,13 +561,45 @@ pub fn registered_ontologies() -> Vec<OntologyDescriptor> {
             // absurd.
             extraction: None,
             temporal_type: TemporalType::Discrete,
+            // NOT a day source any more. A 5-minute transcription chunk is a
+            // recorder artifact — 271 a day drowned the detective. The day pipeline
+            // reads `audio_session` instead (the changepoint rollup below); the
+            // chunks stay here as the fine-grained citation + search layer.
+            day_source: None,
+            continuous_agg: None,
+            //                    who  whom what when where why  how
+            is_activation_signal: true,
+        },
+        // The audio SESSION — the coarse unit the day pipeline reads. One row per
+        // coherent context (a conversation, a drive, a stretch of sleep), rolled up
+        // from the 5-minute chunks by `sessionize::audio`. This is the "visit" of
+        // audio: raw recording → chunk transcript → session, mirroring
+        // point → visit. No embedding/extraction here yet — those stay on the chunk
+        // ontology until search is repurposed (docs/event-timeline.md).
+        OntologyDescriptor {
+            name: "audio_session",
+            display_name: "Audio Sessions",
+            description: "Coherent audio context sessions (changepoint rollup of transcription chunks)",
+            domain: "communication",
+            table_name: "data_audio_session",
+            source_streams: vec!["stream_ios_microphone"],
+            timestamp_column: "start_time",
+            end_timestamp_column: Some("end_time"),
+            embedding: None,
+            extraction: None,
+            temporal_type: TemporalType::Discrete,
             day_source: Some(DaySourceConfig {
-                source_type: "transcription",
+                source_type: "audio",
                 source_type_sql: None,
-                label_sql: "COALESCE(t.title, 'Transcription')",
-                preview_sql: "SUBSTR(COALESCE(t.text, ''), 1, 60)",
+                // No title exists — the sessionizer is mechanical. Label from the
+                // one classification the acoustic signal supports; the detective
+                // reads `content` (the preview) for what was actually said.
+                label_sql: "CASE t.speaker_mode \
+                            WHEN 0 THEN 'Ambient audio' WHEN 1 THEN 'Solo audio' \
+                            WHEN 2 THEN 'Conversation' ELSE 'Group conversation' END",
+                preview_sql: "SUBSTR(COALESCE(t.content, ''), 1, 120)",
                 id_sql: "t.id",
-                extra_where: Some("AND (t.confidence IS NULL OR t.confidence > 0.1)"),
+                extra_where: None,
                 use_date_filter: false,
             }),
             continuous_agg: None,
@@ -1121,7 +1153,7 @@ mod tests {
         let acts = activation_source_types();
 
         // Things you DID. A day made of these is a day that happened.
-        for t in ["location", "calendar", "transcription", "message", "app_usage"] {
+        for t in ["location", "calendar", "audio", "message", "app_usage"] {
             assert!(acts.contains(&t), "{t} is something you did — it makes a day");
         }
 
@@ -1142,7 +1174,7 @@ mod tests {
         let spans = span_source_types();
 
         // These have duration. They can bound an event.
-        for t in ["location", "calendar", "transcription", "app_usage"] {
+        for t in ["location", "calendar", "audio", "app_usage"] {
             assert!(spans.contains(&t), "{t} has a start and an end — it shapes a day");
         }
 

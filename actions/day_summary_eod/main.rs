@@ -94,6 +94,14 @@ async fn main() -> Result<()> {
     // that test fails.
     // ─────────────────────────────────────────────────────────────────────
 
+    // 0. Roll audio chunks up into context sessions BEFORE the detective reads
+    //    them. Mechanical (changepoint on loudness + speaker count, no LLM), so it
+    //    is cheap enough to run each pass; idempotent per day. Without this the
+    //    detective drowns in 271 five-minute chunks instead of ~20 sessions.
+    let audio_sessions = virtues::sessionize::audio::sessionize_day(&pool, date)
+        .await
+        .context("audio sessionization failed")?;
+
     // 1. Segment the day into events (LLM, Lite slot). DESTRUCTIVE — replaces all
     //    auto events. Idempotent: if the day's sources are unchanged since the last
     //    cut, this returns 0 immediately and makes no model call.
@@ -165,7 +173,7 @@ async fn main() -> Result<()> {
     // failure mode as avg_hr, in production, undetected. A metric that can't
     // go to zero can't tell you anything.
     let summary = format!(
-        "{date}: events={events} annotated={annotated} novelty={novelty_count} \
+        "{date}: audio_sessions={audio_sessions} events={events} annotated={annotated} novelty={novelty_count} \
          autonomic={autonomic_count} topic_entity={topic_entity_count} \
          narrated={narrated}"
     );
