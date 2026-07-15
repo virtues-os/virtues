@@ -145,4 +145,91 @@ async fn resolve_sleep_for_date(pool: &PgPool, date: NaiveDate) {
         .execute(pool)
         .await;
     }
+
+    // Sleep is AUTHORITATIVE for its window — it stands on real sleep-tracking
+    // data, not inference. The detective produces a gapless 00:00–24:00 timeline
+    // that necessarily covers the overnight too (as "Unknown"), so without this the
+    // authoritative sleep event OVERLAPS those backfilled blocks and the timeline
+    // stops being gapless-and-non-overlapping. Reconcile: clip the non-sleep auto
+    // events (never user events, never the sleep event itself) to the sleep window.
+    reconcile_overlaps(pool, &day_id, event_start, sleep_end).await;
+}
+
+/// Clip non-sleep AUTO events so none overlaps the authoritative sleep window
+/// `[start, end)`, keeping the timeline gapless. User events are sacred and never
+/// touched.
+///
+///   * spans the whole window → SPLIT into head `[·, start)` + tail `[end, ·)`
+///     (the overnight Unknown almost always wraps the sleep fragment this way —
+///     truncating it instead of splitting would punch a gap)
+///   * straddles the start → truncated to end at `start`
+///   * straddles the end   → pushed to begin at `end`
+///   * fully inside        → deleted (the sleep block replaces it)
+async fn reconcile_overlaps(
+    pool: &PgPool,
+    day_id: &str,
+    start: DateTime<Utc>,
+    end: DateTime<Utc>,
+) {
+    // Spanning events first: materialise the TAIL `[end, orig_end)` as a copy, then
+    // (below) truncate the head. Done before the other rules so the freshly-created
+    // tail (which begins exactly at `end`) is not itself re-clipped.
+    let _ = sqlx::query(
+        "INSERT INTO wiki_events \
+           (id, day_id, start_time, end_time, auto_label, auto_location, \
+            source_ontologies, is_unknown, is_transit, is_user_added, is_user_edited, \
+            is_sleep, user_hidden, user_created, topics, entities, event_summary) \
+         SELECT 'ev_' || replace(gen_random_uuid()::text, '-', ''), day_id, $3, end_time, \
+                auto_label, auto_location, source_ontologies, is_unknown, is_transit, \
+                FALSE, is_user_edited, FALSE, user_hidden, user_created, topics, entities, \
+                event_summary \
+         FROM wiki_events \
+         WHERE day_id = $1 AND is_sleep = FALSE AND is_user_added = FALSE \
+           AND start_time < $2 AND end_time > $3",
+    )
+    .bind(day_id)
+    .bind(start)
+    .bind(end)
+    .execute(pool)
+    .await;
+
+    // Straddles the start, OR the (now tail-copied) spanning head → end at `start`.
+    let _ = sqlx::query(
+        "UPDATE wiki_events SET end_time = $2 \
+         WHERE day_id = $1 AND is_sleep = FALSE AND is_user_added = FALSE \
+           AND start_time < $2 AND end_time > $2",
+    )
+    .bind(day_id)
+    .bind(start)
+    .bind(end)
+    .execute(pool)
+    .await;
+
+    // Straddles the end (starts within, ends after) → begin at `end`.
+    let _ = sqlx::query(
+        "UPDATE wiki_events SET start_time = $3 \
+         WHERE day_id = $1 AND is_sleep = FALSE AND is_user_added = FALSE \
+           AND start_time >= $2 AND start_time < $3 AND end_time > $3",
+    )
+    .bind(day_id)
+    .bind(start)
+    .bind(end)
+    .execute(pool)
+    .await;
+
+    // Fully inside → gone. Restricted to `is_unknown` backfill: that is the only
+    // thing sleep is meant to replace. A real LABELED auto event fully inside a
+    // tracked-sleep window is contradictory data (you were logged doing something
+    // AND asleep) — we keep it (it may briefly overlap the sleep block) rather than
+    // silently destroy a real, content-addressed event we cannot recover.
+    let _ = sqlx::query(
+        "DELETE FROM wiki_events \
+         WHERE day_id = $1 AND is_sleep = FALSE AND is_user_added = FALSE AND is_unknown = TRUE \
+           AND start_time >= $2 AND end_time <= $3",
+    )
+    .bind(day_id)
+    .bind(start)
+    .bind(end)
+    .execute(pool)
+    .await;
 }

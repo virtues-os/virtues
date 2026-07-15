@@ -32,38 +32,36 @@ async fn main() -> Result<()> {
         })
         .transpose()?;
 
-    // Cron-triggered runs arrive every hour. Gate to the user's local
-    // maintenance hour (profile.update_check_hour, default 8am) so we only
-    // actually do the work once per day, aligned to the user's timezone.
-    // Running without a date → this is a cron / scheduled invocation.
-    // The cron ticks HOURLY, and it used to throw away 23 of every 24 ticks —
-    // returning "skipped: local hour 19, maintenance 8" and reporting success.
+    // Cron-triggered runs arrive every hour. Gate to the user's local maintenance
+    // hour (DEFAULT_MAINTENANCE_HOUR = 4am, in the box's home_timezone) so the whole
+    // chain runs ONCE a day, on the COMPLETED prior day.
     //
-    // It threw them away because one Opus call produced BOTH the events and the
-    // autobiography, so re-segmenting as data arrived would have meant re-writing
-    // the day's prose every hour. Now they are two calls with two models:
-    //
-    //   EVERY HOUR       segment today into events (Lite), then score them. Cheap,
-    //                    factual, idempotent — if no new sources landed, it does
-    //                    nothing at all and spends nothing.
-    //
-    //   ONCE A DAY       narrate yesterday (Chat), and only if the day earned it.
-    //                    Prose about what it MEANT, standing on the events.
-    //
-    // That is the hourly cron the plan asked for and the code never had.
-    let (narrate, date) = match explicit_date {
-        // A date was named: the caller means it. Do both halves for that day.
-        Some(d) => (true, d),
+    // The chain is nightly, not hourly, because the detective is now a best-model
+    // Chat call. You cannot fuse a day that is not over — its distribution of
+    // novelty, its context boundaries, are only knowable once — and re-running a
+    // premium call 23×/day to rebuild a half-day it would discard tonight is pure
+    // waste. So every non-maintenance tick is a no-op. The live "today" view is a
+    // separate, deterministic, zero-LLM read of visits+calendar+sleep and needs
+    // nothing from this action.
+    let date = match explicit_date {
+        // A date was named: the caller means it. Run the chain for that day.
+        Some(d) => d,
         None => {
             let (tz, hour) = load_user_maintenance(&pool).await;
             let now_local = chrono::Utc::now().with_timezone(&tz);
-            if now_local.hour() as i32 == hour {
-                // The maintenance hour: yesterday is complete. Write it up.
-                (true, resolve_user_yesterday(&pool).await)
-            } else {
-                // Any other hour: keep TODAY's events current as the day happens.
-                (false, now_local.date_naive())
+            if now_local.hour() as i32 != hour {
+                // Any other hour: nothing to do. The chain only runs on a completed
+                // day, at the maintenance hour.
+                let skip = format!(
+                    "skipped: local hour {}, maintenance {}",
+                    now_local.hour(),
+                    hour
+                );
+                tracing::info!(%skip, "not the maintenance hour — no-op");
+                return output(&skip, &input.config);
             }
+            // The maintenance hour: yesterday is complete. Run the whole chain.
+            resolve_user_yesterday(&pool).await
         }
     };
 
@@ -102,9 +100,10 @@ async fn main() -> Result<()> {
         .await
         .context("audio sessionization failed")?;
 
-    // 1. Segment the day into events (LLM, Lite slot). DESTRUCTIVE — replaces all
-    //    auto events. Idempotent: if the day's sources are unchanged since the last
-    //    cut, this returns 0 immediately and makes no model call.
+    // 1. Segment the day into events — THE DETECTIVE (LLM, Chat slot). Fuses the
+    //    dossier of clean rollups into a gapless timeline. DESTRUCTIVE — replaces
+    //    all auto events. Idempotent: if the day's sources are unchanged since the
+    //    last cut, this returns 0 immediately and makes no model call.
     let events = virtues::api::day_summary::segment_day_events(&pool, date)
         .await
         .context("day segmentation failed")?;
@@ -141,19 +140,15 @@ async fn main() -> Result<()> {
             .await
             .context("topic/entity novelty scoring failed")?;
 
-    // 7. Narrate the day (LLM, Chat slot) — ONLY at the maintenance hour, and only
-    //    if the day earned it. This is the one call left that costs narrative money,
-    //    and it now reads the EVENTS rather than the raw sources: the prompt always
-    //    claimed it did ("the event timeline already does that") while being handed
-    //    the sources anyway.
-    let narrated = if narrate {
-        virtues::api::day_summary::narrate_day(&pool, date)
-            .await
-            .context("day narration failed")?
-            .is_some()
-    } else {
-        false
-    };
+    // 7. Narrate the day — THE DAY SUMMARY (LLM, Chat slot). Reads the scored
+    //    EVENTS (not raw sources) plus the 14-day case file, and names the day's
+    //    standout from novelty_z. The whole chain only reaches here at the
+    //    maintenance hour on a completed day, so this always runs (gated internally
+    //    to days that earned a story).
+    let narrated = virtues::api::day_summary::narrate_day(&pool, date)
+        .await
+        .context("day narration failed")?
+        .is_some();
 
     // Stash the last processed date in config so subsequent cron runs can
     // short-circuit in a condition or observe progress. Also strip any
@@ -187,20 +182,33 @@ async fn resolve_user_yesterday(pool: &sqlx::PgPool) -> NaiveDate {
     now_local.date_naive() - chrono::Duration::days(1)
 }
 
-/// Load the user's timezone and maintenance hour from `app_user_profile`.
-/// Defaults: UTC timezone, 8 for maintenance hour.
-async fn load_user_maintenance(pool: &sqlx::PgPool) -> (chrono_tz::Tz, i32) {
-    let row: Option<(Option<String>, Option<i32>)> = sqlx::query_as(
-        "SELECT home_timezone, update_check_hour FROM app_user_profile LIMIT 1",
-    )
-    .fetch_optional(pool)
-    .await
-    .ok()
-    .flatten();
+/// The local hour the nightly chain runs at. 4am: the day is definitively over,
+/// late collector data (audio chunks still transcribing, final visits) has
+/// settled, it is before the user wakes so the autobiography is ready for them,
+/// and the box is idle. A fixed default until a real per-user setting is migrated.
+const DEFAULT_MAINTENANCE_HOUR: i32 = 4;
 
-    let (tz_str, hour) = row.unwrap_or((None, None));
-    let tz = tz_str
+/// Load the user's timezone and maintenance hour from `app_user_profile`.
+/// Defaults: UTC timezone, 8am maintenance hour.
+///
+/// This used to `SELECT home_timezone, update_check_hour` — but `update_check_hour`
+/// ships in NO migration and does not exist on the box, so the whole query errored
+/// on the missing column and the `.ok()` swallowed it, silently dropping
+/// `home_timezone` too. The nightly then ran at 8am **UTC** for everyone, ignoring
+/// the user's timezone entirely (and near midnight, resolving the wrong
+/// "yesterday"). Read only the column that exists; the maintenance hour is a fixed
+/// default until a configurable setting is actually migrated + wired.
+async fn load_user_maintenance(pool: &sqlx::PgPool) -> (chrono_tz::Tz, i32) {
+    let row: Option<(Option<String>,)> =
+        sqlx::query_as("SELECT home_timezone FROM app_user_profile LIMIT 1")
+            .fetch_optional(pool)
+            .await
+            .ok()
+            .flatten();
+
+    let tz = row
+        .and_then(|(tz_str,)| tz_str)
         .and_then(|s| s.parse::<chrono_tz::Tz>().ok())
         .unwrap_or(chrono_tz::UTC);
-    (tz, hour.unwrap_or(8))
+    (tz, DEFAULT_MAINTENANCE_HOUR)
 }

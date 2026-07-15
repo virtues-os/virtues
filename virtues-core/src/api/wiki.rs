@@ -1182,16 +1182,16 @@ pub async fn update_day(
     // Get or create the day first
     let day = get_or_create_day(pool, date).await?;
     let day_id_str = day.id.to_string();
-    let autobiography_sections_json = req
-        .autobiography_sections
-        .as_ref()
-        .map(|v| serde_json::to_string(v).unwrap_or_else(|_| "{}".to_string()));
 
     sqlx::query(
         r#"
         UPDATE wiki_days
         SET
             autobiography = COALESCE($2, autobiography),
+            -- $3 is jsonb (bound as a Value). It was previously serialized to a
+            -- String and bound as TEXT, so Postgres rejected COALESCE(text, jsonb)
+            -- at plan time — even when NULL — which meant narration could NEVER
+            -- write a day (the box had 0 autobiographies as a direct result).
             autobiography_sections = COALESCE($3, autobiography_sections),
             epigraph = COALESCE($4, epigraph),
             last_edited_by = COALESCE($5, last_edited_by),
@@ -1205,7 +1205,7 @@ pub async fn update_day(
     )
     .bind(&day_id_str)
     .bind(&req.autobiography)
-    .bind(&autobiography_sections_json)
+    .bind(&req.autobiography_sections)
     .bind(&req.epigraph)
     .bind(&req.last_edited_by)
     .bind(&req.cover_image)

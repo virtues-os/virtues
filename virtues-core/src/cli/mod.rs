@@ -353,14 +353,38 @@ pub async fn run(cli: Cli, virtues: Virtues) -> Result<(), Box<dyn std::error::E
                 .flatten()
                 .and_then(|s| s.parse().ok());
 
-            // The two halves, in order. Segmenting is cheap and factual (Lite);
-            // narrating is prose about what the day MEANT (Chat) and only happens
-            // if the day earned it.
-            println!("Segmenting {target_date} into events...");
+            // The full nightly chain, in the SAME order the action runs it, so a
+            // local run is a faithful reproduction (and the narrative actually sees
+            // the scores). Order is load-bearing: segment DELETES and re-creates the
+            // auto events, so every scoring step must follow it (guarded by
+            // tests/day_pipeline.rs).
+            //
+            //   sessionize → DETECTIVE (Chat) → sleep → annotate → novelty →
+            //   autonomic → topic/entity → DAY SUMMARY (Chat)
+            println!("Rolling audio chunks into sessions...");
+            let sessions =
+                crate::sessionize::audio::sessionize_day(pool, target_date).await?;
+            println!("  {sessions} audio sessions");
+
+            println!("Segmenting {target_date} into events (detective)...");
             let n = crate::api::day_summary::segment_day_events(pool, target_date).await?;
             println!("  {n} events");
 
-            println!("Narrating {target_date}...");
+            // Scoring sits BETWEEN the two agents — it is what lets the narrative
+            // name the day's most novel event.
+            println!("Scoring events (sleep, annotate, novelty, autonomic, topic)...");
+            crate::dayline::sleep::resolve_sleep_events(pool, target_date).await;
+            crate::dayline::annotate::annotate_events_for_day(pool, target_date).await?;
+            crate::dayline::novelty::compute_novelty_for_day(pool, target_date).await?;
+            crate::dayline::autonomic_scoring::compute_autonomic_for_day(pool, target_date)
+                .await?;
+            crate::dayline::topic_entity_novelty::compute_topic_entity_novelty(
+                pool,
+                target_date,
+            )
+            .await?;
+
+            println!("Narrating {target_date} (day summary)...");
             let Some(day) = crate::api::day_summary::narrate_day(pool, target_date).await? else {
                 println!();
                 println!("· Not enough of a day to write about — no narrative, and no LLM call.");
