@@ -59,12 +59,21 @@ in the loop:
 - **location visits** — labelled by place name
 - **calendar events** — labelled by title
 - **sleep** — labelled by itself
+- **conversation sessions** — labelled by their session title ("Call with Maya")
 
-That is the whole list. Workouts, app-sessions, messages, audio, heart rate are
+The last one qualifies **only because transcription is now a session, not a
+chunk** (see the rollup section). A conversation session bounds and labels itself
+exactly like a visit — and its title was computed upstream by the sessionizer, so
+rendering it keeps the live view zero-LLM. A raw 5-minute transcription chunk
+would *not* qualify (271 of them is not a timeline), which is precisely why the
+sessionizer is a prerequisite for showing audio here at all.
+
+That is the whole list. Workouts, app-sessions, messages, heart rate remain
 **texture, not blocks**: they colour an event but cannot bound one on their own,
-and inferring a block from them needs the detective — which is the nightly pass's
-job. The live view never guesses. It shows the skeleton it can prove ("Home,
-00:04–03:07 · Blue Bottle, 09:00–now") and leaves the rest blank until morning.
+and inferring a block from them needs the detective — the nightly pass's job. The
+live view never guesses. It shows the skeleton it can prove ("Home, 00:04–03:07 ·
+Blue Bottle, 09:00–now · Call with Maya, 14:00–14:45") and leaves the rest blank
+until morning.
 
 This view cannot hallucinate, cannot drift, and costs nothing, because there is
 no model in it. The polished, fused, narrated day arrives the next morning — the
