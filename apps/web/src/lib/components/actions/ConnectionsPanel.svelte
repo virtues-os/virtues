@@ -380,7 +380,7 @@
 						<input
 							type="text"
 							bind:value={renameValue}
-							placeholder="e.g. Adam's iPhone"
+							placeholder="e.g. My iPhone"
 							disabled={manageBusy}
 						/>
 						<button

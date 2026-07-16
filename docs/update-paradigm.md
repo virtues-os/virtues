@@ -91,7 +91,7 @@ virtues upgrade                       # full release (binary + migrations + side
   that accept data loss to jump between unrelated branches.
 
 ## Dev-push path (lab box iteration)
-Given the lab *is* the box (`ssh dragon`), the inner loop should be:
+Given the lab *is* the box (`ssh <your-box>`), the inner loop should be:
 - **UI/actions change** → `virtues upgrade --only web` (or `web,actions`) — seconds, no risk.
 - **Rust/migration change** → rebuild `edge` tag → `virtues upgrade` (SHA differs → proceeds; Pillar 1)
   → preflight gates migration safety (Pillar 2) → atomic slot flip (Pillar 3).

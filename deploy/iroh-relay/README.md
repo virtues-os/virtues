@@ -1,7 +1,7 @@
 # Virtues iroh-relay — OVH deploy runbook
 
 Replaces the hand-rolled frp blind relay with **iroh-relay 1.0** on the existing
-OVH host (`ssh virtues-relay`, `15.204.248.171`). The relay is blind (moves
+your relay host (`ssh virtues-relay`, `203.0.113.10`). The relay is blind (moves
 QUIC/ciphertext only); access is gated by an atlas active-subscription callout.
 Boxes home on it and are reached by EndpointId — LAN-direct → hole-punched →
 relayed. This is the only public cert in the system (per-box ACME is gone).
@@ -22,7 +22,7 @@ Files here:
 ## 0. DNS (Route53)
 
 ```
-relay.virtues.ch  A  15.204.248.171
+relay.virtues.ch  A  203.0.113.10
 ```
 (v4-only host — no AAAA, matches the existing setup.)
 

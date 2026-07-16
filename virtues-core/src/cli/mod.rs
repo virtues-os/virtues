@@ -322,9 +322,14 @@ pub async fn run(cli: Cli, virtues: Virtues) -> Result<(), Box<dyn std::error::E
             return Ok(());
         }
 
-        Commands::DaySummary { date } => {
-            println!("Running migrations...");
-            virtues.database.initialize().await?;
+        Commands::DaySummary { date, narrate_only } => {
+            // `--narrate-only` reads an already-migrated DB (e.g. a box snapshot)
+            // and only re-runs the narrative — skip migrations so a snapshot whose
+            // `_sqlx_migrations` checksums differ from this branch still runs.
+            if !narrate_only {
+                println!("Running migrations...");
+                virtues.database.initialize().await?;
+            }
 
             let pool = virtues.database.pool();
 
@@ -361,32 +366,41 @@ pub async fn run(cli: Cli, virtues: Virtues) -> Result<(), Box<dyn std::error::E
             //
             //   sessionize → DETECTIVE (Chat) → sleep → annotate → novelty →
             //   autonomic → topic/entity → DAY SUMMARY (Chat)
-            println!("Rolling audio chunks into sessions...");
-            let sessions =
-                crate::sessionize::audio::sessionize_day(pool, target_date).await?;
-            println!("  {sessions} audio sessions");
+            //
+            // `--narrate-only` skips everything up to the narrative: it reads the
+            // day's EXISTING scored events and re-runs just `narrate_day`. For
+            // iterating on the narrate prompt without re-segmenting (no detective
+            // call) or re-scoring (no embedder / NPU).
+            if !narrate_only {
+                println!("Rolling audio chunks into sessions...");
+                let sessions =
+                    crate::sessionize::audio::sessionize_day(pool, target_date).await?;
+                println!("  {sessions} audio sessions");
 
-            println!("Segmenting {target_date} into events (detective)...");
-            let n = crate::api::day_summary::segment_day_events(pool, target_date).await?;
-            println!("  {n} events");
+                println!("Segmenting {target_date} into events (detective)...");
+                let n = crate::api::day_summary::segment_day_events(pool, target_date).await?;
+                println!("  {n} events");
 
-            // Scoring sits BETWEEN the two agents — it is what lets the narrative
-            // name the day's most novel event.
-            println!("Scoring events (sleep, gaps, annotate, novelty, autonomic, topic)...");
-            crate::dayline::sleep::resolve_sleep_events(pool, target_date).await;
-            // Settle the spine: absorb sub-15-min slivers, label transit. After
-            // sleep, before scoring — so transit is scored like any event.
-            let gap_ops = crate::dayline::gaps::classify_day_gaps(pool, target_date).await?;
-            println!("  {gap_ops} gap ops (slivers absorbed / transit labelled)");
-            crate::dayline::annotate::annotate_events_for_day(pool, target_date).await?;
-            crate::dayline::novelty::compute_novelty_for_day(pool, target_date).await?;
-            crate::dayline::autonomic_scoring::compute_autonomic_for_day(pool, target_date)
+                // Scoring sits BETWEEN the two agents — it is what lets the narrative
+                // name the day's most novel event.
+                println!("Scoring events (sleep, gaps, annotate, novelty, autonomic, topic)...");
+                crate::dayline::sleep::resolve_sleep_events(pool, target_date).await;
+                // Settle the spine: absorb sub-15-min slivers, label transit. After
+                // sleep, before scoring — so transit is scored like any event.
+                let gap_ops = crate::dayline::gaps::classify_day_gaps(pool, target_date).await?;
+                println!("  {gap_ops} gap ops (slivers absorbed / transit labelled)");
+                crate::dayline::annotate::annotate_events_for_day(pool, target_date).await?;
+                crate::dayline::novelty::compute_novelty_for_day(pool, target_date).await?;
+                crate::dayline::autonomic_scoring::compute_autonomic_for_day(pool, target_date)
+                    .await?;
+                crate::dayline::topic_entity_novelty::compute_topic_entity_novelty(
+                    pool,
+                    target_date,
+                )
                 .await?;
-            crate::dayline::topic_entity_novelty::compute_topic_entity_novelty(
-                pool,
-                target_date,
-            )
-            .await?;
+            } else {
+                println!("--narrate-only: skipping sessionize / detective / scoring");
+            }
 
             println!("Narrating {target_date} (day summary)...");
             let Some(day) = crate::api::day_summary::narrate_day(pool, target_date).await? else {

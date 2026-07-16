@@ -20,6 +20,11 @@
 *.bak.*
 *.swp
 *.orig
+
+# Postgres dumps — real box data must NEVER be committed (see `make dev-pull`).
+# The dump lands in $TMPDIR, not here, but ignore the patterns as belt-and-suspenders.
+*.dump
+*.pgdump
 *.rej
 
 # SvelteKit build output (per-package generated)
@@ -121,6 +126,8 @@ wheels/
 
 # Other
 /target/
+# Per-plugin Cargo build output (root `/target/` is anchored and misses these).
+apps/web/plugins/*/target/
 .data/
 # Runtime box data — the data lake (.media blobs), DB scratch, etc. Never
 # tracked: it's per-install state, not source. (The legacy `.data/` rule above

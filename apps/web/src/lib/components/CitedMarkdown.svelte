@@ -15,9 +15,13 @@
 		isStreaming?: boolean;
 		citations?: CitationContext;
 		onCitationClick?: (citation: Citation) => void;
+		// How inline entity refs render: "link" (default, chat answers) or "quiet"
+		// (dotted-underline prose links for flowing text like the day biography).
+		refVariant?: "link" | "quiet";
 	}
 
-	let { content, isStreaming = false, citations, onCitationClick }: Props = $props();
+	let { content, isStreaming = false, citations, onCitationClick, refVariant = "link" }: Props =
+		$props();
 
 	// Read Shiki theme from CSS variable (defined in themes.css)
 	function getShikiTheme(): BundledTheme {
@@ -140,7 +144,7 @@
 				{@const isEntity = url ? parseEntityRoute(url) !== null : false}
 				{@const isExternal = url ? /^https?:\/\//.test(url) : false}
 				{#if isEntity}
-					<Ref displayName={token.text} url={url} />
+					<Ref displayName={token.text} url={url} variant={refVariant} />
 				{:else if isExternal}
 					<LinkChip href={url} label={token.text} />
 				{:else if url}
@@ -158,7 +162,7 @@
 					<!-- `![@X](/entity/id)` — entities are always inline links now (no
 					     card), same as the editor. Streamdown parses it as an image;
 					     we render the inline ref instead. -->
-					<Ref displayName={label} {url} />
+					<Ref displayName={label} {url} variant={refVariant} />
 				{:else}
 					<img src={url} alt={token?.text ?? ''} loading="lazy" style="max-width: 100%; height: auto;" />
 				{/if}

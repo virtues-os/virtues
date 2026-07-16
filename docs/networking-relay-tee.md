@@ -182,7 +182,7 @@ there is no raw-browser path without a naming authority. So naming is **tiered**
 | Tier | Naming (phonebook) | Data path | Home IP public? | Operator-MITM? |
 |---|---|---|---|---|
 | **Default** `*.virtues.com` | Virtues runs DNS | relay | no | CT-detectable only |
-| **BYO domain** `adamjace.com` | **you** run DNS | relay | no | **no** (you hold DNS + cert) |
+| **BYO domain** `example.com` | **you** run DNS | relay | no | **no** (you hold DNS + cert) |
 | **App + pinning** | none (opaque ID) | relay | no | **no** (pinned at pairing) |
 | Direct-expose (BYO domain, no relay) | you | none | **yes** | no, but IP exposed + DDoS |
 

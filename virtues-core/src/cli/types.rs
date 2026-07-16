@@ -372,6 +372,12 @@ pub enum Commands {
         /// profile timezone (or local time if no timezone is set).
         #[arg(long)]
         date: Option<String>,
+        /// Re-run ONLY the narrative (`narrate_day`) against the day's existing
+        /// scored events — skip sessionize / detective / scoring. For iterating
+        /// on the narrate prompt without re-segmenting or re-embedding (no NPU /
+        /// embedder needed); the events must already exist for the day.
+        #[arg(long)]
+        narrate_only: bool,
     },
 
     /// Run entity resolution (places + people) over the last N hours.

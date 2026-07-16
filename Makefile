@@ -6,7 +6,7 @@
 
 .DEFAULT_GOAL := help
 .PHONY: help init dev seed dev-info dev-core dev-api dev-web dev-embed _embed-ensure _embed-run \
-        dev-link dev-reset dev-wipe-mac dev-clean db db-stop deploy-atlas deploy-virtues-api _ecr-push mac-app \
+        dev-link dev-reset dev-wipe-mac dev-clean dev-pull dev-real db db-stop deploy-atlas deploy-virtues-api _ecr-push mac-app \
         iroh-ffi-ios iroh-ffi-mac
 
 AWS_REGION ?= us-east-1
@@ -35,6 +35,17 @@ DEV_WEB_PORT ?= 5173
 VIRTUES_API_DATABASE_URL ?= postgres://virtues:virtues@localhost:5432/virtues_api
 VIRTUES_API_KEY ?= dev-local-key
 DEV_API_KEY := $(if $(filter http://localhost%,$(VIRTUES_API_URL)),$(VIRTUES_API_KEY),)
+
+# Which Postgres `dev-core` reads. Defaults to the local seeded dev db; `dev-real`
+# overrides it to a snapshot of your actual box (see `dev-pull` / `dev-real`).
+DEV_DB_URL ?= postgres://virtues:virtues@localhost:5432/virtues
+# Real-data dev: `dev-pull` snapshots the live box's Postgres into a THROWAWAY local
+# db so you can browse your own life-log in the dev UI. Media (photos/audio/video)
+# stays on the box — only the structured spine is copied. The box's encryption key
+# is NEVER pulled: bulk life-data is plaintext, so browsing needs no secret (only
+# credentialed actions, which you wouldn't run in a read-only browse, would want it).
+DEV_BOX_SSH    ?= virtues-box
+DEV_BOXCOPY_DB ?= virtues_boxcopy
 
 # Quiet dev logs: warnings/errors only. Override for a noisy session, e.g.
 #   make dev RUST_LOG=info        (or RUST_LOG=virtues=debug for targeted debug)
@@ -157,7 +168,7 @@ dev-core: ## Run virtues-core on the host (HTTP :8000, auto-migrates + prod-seed
 	SQLX_OFFLINE="$(SQLX_OFFLINE)" \
 	VIRTUES_DEV_SKIP_SETUP="$(VIRTUES_DEV_SKIP_SETUP)" \
 	ENVIRONMENT=dev \
-	DATABASE_URL=postgres://virtues:virtues@localhost:5432/virtues \
+	DATABASE_URL=$(DEV_DB_URL) \
 	VIRTUES_API_URL=$(VIRTUES_API_URL) \
 	VIRTUES_API_KEY=$(DEV_API_KEY) \
 	VIRTUES_ATLAS_URL=$(VIRTUES_ATLAS_URL) \
@@ -232,6 +243,42 @@ dev-reset: ## Drop + recreate the dev dbs (DESTRUCTIVE, dev only)
 	@$(PG_BIN)/createdb virtues_api
 	@$(PG_BIN)/psql -d virtues -c "CREATE EXTENSION IF NOT EXISTS vector" >/dev/null
 	@echo "✓ fresh dbs. Run 'make dev-core' (+ 'make dev-api') to migrate + seed."
+
+# ── Real-data dev (browse your actual box locally) ───────────────────────────
+# `dev-pull` snapshots the live box's Postgres into a THROWAWAY local db
+# ($(DEV_BOXCOPY_DB)); `dev-real` then runs the stack against it. The snapshot is
+# slow (network-bound), so pull occasionally and run `dev-real` freely between pulls.
+#
+# OSS-SAFETY: the raw dump lands OUTSIDE the repo (in $$TMPDIR) and is deleted the
+# instant the restore finishes — including on Ctrl-C — so no real data can ever be
+# staged into git. The restored db lives in Postgres's own data dir, not the repo.
+# `*.dump`/`*.pgdump` are also git-ignored as belt-and-suspenders.
+#
+# TODO(scale): today the whole box fits in one dump. When it outgrows that, add a
+# `SINCE=` window (e.g. last 90 days) — a per-table time filter with referential
+# integrity, so the pull stays ~constant regardless of total history. Media never
+# rides along (it's on-disk on the box); fetch it lazily over the box loopback.
+dev-pull: db ## Snapshot the live box's Postgres into a throwaway local db (~min, network-bound). Run occasionally.
+	@dump="$${TMPDIR:-/tmp}/virtues-box.$$$$.dump"; \
+	trap 'rm -f "$$dump"' EXIT INT TERM; \
+	echo "→ dumping box '$(DEV_BOX_SSH)' Postgres (structured spine only — media stays on the box)…"; \
+	ssh $(DEV_BOX_SSH) 'sudo -u postgres pg_dump -Fc virtues' > "$$dump" || { echo "✖ box dump failed (is 'ssh $(DEV_BOX_SSH)' reachable?)"; exit 1; }; \
+	echo "→ rebuilding local '$(DEV_BOXCOPY_DB)' from the snapshot…"; \
+	$(PG_BIN)/dropdb --if-exists $(DEV_BOXCOPY_DB); \
+	$(PG_BIN)/createdb $(DEV_BOXCOPY_DB); \
+	$(PG_BIN)/psql -d $(DEV_BOXCOPY_DB) -c "CREATE EXTENSION IF NOT EXISTS vector" >/dev/null; \
+	$(PG_BIN)/pg_restore --no-owner -d $(DEV_BOXCOPY_DB) "$$dump" || true; \
+	echo "✓ '$(DEV_BOXCOPY_DB)' refreshed ($$($(PG_BIN)/psql -d $(DEV_BOXCOPY_DB) -tAc "SELECT pg_size_pretty(pg_database_size('$(DEV_BOXCOPY_DB)'))")). Raw dump deleted. Run 'make dev-real'."
+
+dev-real: db ## Run dev-core + dev-web against your real-box snapshot (virtues_boxcopy). Auto-pulls on first use. Ctrl-C stops all.
+	@$(PG_BIN)/psql -d postgres -tAc "SELECT 1 FROM pg_database WHERE datname='$(DEV_BOXCOPY_DB)'" | grep -q 1 || { \
+	  echo "→ no '$(DEV_BOXCOPY_DB)' yet — pulling a fresh box snapshot first…"; $(MAKE) --no-print-directory dev-pull; }
+	@echo "→ core + web against REAL data ('$(DEV_BOXCOPY_DB)'). Credentialed actions won't decrypt (box key stays on the box); data browsing works. Ctrl-C stops all."
+	@trap 'kill 0' INT TERM; \
+	  export VIRTUES_SKIP_MIGRATIONS=1; \
+	  $(MAKE) --no-print-directory dev-core DEV_DB_URL="postgres://virtues:virtues@localhost:5432/$(DEV_BOXCOPY_DB)" & \
+	  $(MAKE) --no-print-directory dev-web & \
+	  wait
 
 dev-wipe-mac: ## Unpair this Mac (clear keychain bundle + ~/.virtues/bundle.json + proxy LaunchAgent) to restart pairing
 	@echo "→ unpairing this Mac from its box (keychain + bundle.json + LaunchAgent)"

@@ -47,7 +47,7 @@ Four rules everything else follows from:
 ```
 power on
   → splash (static image; covers Chromium warm-up)
-  → panel: a 6-digit code (rotating) + "open adam-jace.local from any device"
+  → panel: a 6-digit code (rotating) + "open my-box.local from any device"
   → on the phone/desktop: open the URL → setup wizard → type the code to pair
   → wizard: account → subscribe → name the box → done
   → panel ticks each step live, then flips to the ambient dashboard
@@ -105,7 +105,7 @@ off a screen and typing it, so digits beat a letter alphabet on a numeric pad.
 
 - **Setup = the wizard. It ends early.** Required core only:
   **claimed** (a device paired) → **account + subscription** → **named**
-  (`adam-jace.local`, sets the Avahi hostname) → **on your network ✓**.
+  (`my-box.local`, sets the Avahi hostname) → **on your network ✓**.
   Target: under 5 minutes of human time, minimal input, each step a visible
   win on the panel. The bge-m3 model pull (GBs) runs in the background and is
   shown as a step ("Downloading AI models — one-time"), never a silent hang.
@@ -226,7 +226,7 @@ survives re-installs, restores, and out-of-band changes.
    presented (box name? version? state?) — minimize to the claim screen.
 2. **Resume token:** phone↔box session continuity across network handoffs
    (hotspot → home wifi; AP-mode switchover) — wizard must resume, not
-   restart. Panel shows "Setup in progress on Adam's iPhone · [start over]".
+   restart. Panel shows "Setup in progress on your iPhone · [start over]".
 3. **Stripe on LAN:** the web wizard needs the checkout poll loop (today in
    the CLI's `handle_subscribe`); confirm success-URL→LAN-IP redirect or
    keep poll-only.
