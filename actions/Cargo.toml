@@ -99,6 +99,9 @@ path = "echo_app/main.rs"
 [dependencies]
 virtues = { path = "../virtues-core" }
 virtues-helpers = { path = "../crates/virtues-helpers" }
+# Model-slot resolution (the Omni slot for audio transcription) — actions pick
+# models from the same registry the server does, never a hardcoded id.
+virtues-registry = { path = "../crates/virtues-registry" }
 # Actions must see the same box environment the server does — model width and
 # prompt formats live there, and an action that cannot read them embeds into a
 # different geometry. See `init_tracing`.
@@ -117,5 +120,10 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls-no-provider"] }
 base64 = "0.22"
 urlencoding = "2.1"
+# On-box voice-activity gate (transcription_resolution): decode m4a → mel → run
+# NVIDIA MarbleNet VAD, all pure-Rust so nothing native ships in the appliance.
+tract-onnx = "0.21"
+realfft = "3"
+symphonia = { version = "0.5", default-features = false, features = ["isomp4", "aac"] }
 # axum: for `app`-runtime example (echo_app) and any other long-running HTTP app actions
 axum = { version = "0.7", features = ["json"] }

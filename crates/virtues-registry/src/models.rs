@@ -84,6 +84,13 @@ pub enum ModelSlot {
     Coding,
     /// Image model - text-to-image generation (the `generate_image` tool)
     Image,
+    /// Omni model — audio-native multimodal UNDERSTANDING (the transcription
+    /// pipeline): a verbatim transcript PLUS scene/mood/music/entities from raw
+    /// audio. This is NOT plain speech-to-text: Whisper and `*-transcribe`
+    /// endpoints emit words only and MUST NOT be assigned here — the model has
+    /// to accept audio input (`supports_audio`) and reason over it. Like Image,
+    /// it's a system slot, not a user-facing picker entry.
+    Omni,
 }
 
 impl ModelSlot {
@@ -93,6 +100,7 @@ impl ModelSlot {
             ModelSlot::Lite => "lite",
             ModelSlot::Coding => "coding",
             ModelSlot::Image => "image",
+            ModelSlot::Omni => "omni",
         }
     }
 }
@@ -223,6 +231,15 @@ pub fn default_model_for_slot(slot: ModelSlot) -> &'static str {
         ModelSlot::Lite => "zai/glm-4.7-flash",
         ModelSlot::Coding => "anthropic/claude-opus-4.8",
         ModelSlot::Image => "google/gemini-3-pro-image",
+        // gemini-3-flash: the audio-native model that won a controlled 5-clip
+        // bench — fastest + cheapest whose thinking budget the gateway actually
+        // honors (reasoning_effort:low → 0 thinking; 2.5-flash/3.5-flash/3.1-lite
+        // all overthink or run away, and 3.5-flash's reasoning_effort is broken
+        // on Vertex). Stays OUT of the user picker (Gemini 3 400s on parallel
+        // tool calls via the gateway) — irrelevant here: transcription uses no
+        // tools. Every audio-in model besides Gemini rejects audio on the
+        // gateway, so this slot is effectively Gemini-only.
+        ModelSlot::Omni => "google/gemini-3-flash",
     }
 }
 
@@ -238,6 +255,7 @@ pub fn required_model_ids() -> Vec<String> {
         ModelSlot::Lite,
         ModelSlot::Coding,
         ModelSlot::Image,
+        ModelSlot::Omni,
     ] {
         let id = default_model_for_slot(slot).to_string();
         if !ids.contains(&id) {
@@ -302,6 +320,7 @@ mod tests {
             ModelSlot::Lite,
             ModelSlot::Coding,
             ModelSlot::Image,
+            ModelSlot::Omni,
         ] {
             let id = default_model_for_slot(slot);
             assert!(

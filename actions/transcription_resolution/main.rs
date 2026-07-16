@@ -16,6 +16,7 @@
 //! no per-row retry cap yet (deliberately simple; we'll add it if needed).
 
 mod transform;
+mod vad;
 
 use anyhow::Result;
 use virtues_helpers::{connect_from_env, output_with_records, read_input};
