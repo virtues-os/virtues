@@ -269,7 +269,7 @@ async fn apply(pool: &PgPool, op: Op) {
         Op::MakeTransit { block_id, label, summary } => {
             let _ = sqlx::query(
                 "UPDATE wiki_events \
-                 SET is_unknown = FALSE, is_transit = TRUE, auto_label = $1, event_summary = $2 \
+                 SET kind = 'transit', auto_label = $1, event_summary = $2 \
                  WHERE id = $3 AND is_user_added = FALSE",
             )
             .bind(&label)
@@ -280,7 +280,7 @@ async fn apply(pool: &PgPool, op: Op) {
         }
         Op::FlagTransit { block_id } => {
             let _ = sqlx::query(
-                "UPDATE wiki_events SET is_transit = TRUE WHERE id = $1 AND is_user_added = FALSE",
+                "UPDATE wiki_events SET kind = 'transit' WHERE id = $1 AND is_user_added = FALSE",
             )
             .bind(&block_id)
             .execute(pool)

@@ -130,10 +130,10 @@ async fn resolve_sleep_for_date(pool: &PgPool, date: NaiveDate) {
         let _ = sqlx::query(
             r#"INSERT INTO wiki_events
                (id, day_id, start_time, end_time, auto_label, auto_location,
-                source_ontologies, is_sleep, event_summary, topics, entities,
-                agent_action, avg_hr)
+                source_ontologies, kind, event_summary, topics, entities,
+                agent_action, avg_hr, confidence)
                VALUES ($1, $2, $3, $4, 'Sleep', 'Home', '["sleep"]'::jsonb,
-                       TRUE, $5, '["sleep"]'::jsonb, '[]'::jsonb, 'NEW', $6)
+                       'sleep', $5, '["sleep"]'::jsonb, '[]'::jsonb, 'NEW', $6, 'high')
                ON CONFLICT (id) DO NOTHING"#,
         )
         .bind(&event_id)
@@ -177,12 +177,12 @@ async fn reconcile_overlaps(
     let _ = sqlx::query(
         "INSERT INTO wiki_events \
            (id, day_id, start_time, end_time, auto_label, auto_location, \
-            source_ontologies, is_unknown, is_transit, is_user_added, is_user_edited, \
-            is_sleep, user_hidden, user_created, topics, entities, event_summary) \
+            source_ontologies, kind, is_user_added, is_user_edited, \
+            user_hidden, user_created, topics, entities, event_summary, confidence) \
          SELECT 'ev_' || replace(gen_random_uuid()::text, '-', ''), day_id, $3, end_time, \
-                auto_label, auto_location, source_ontologies, is_unknown, is_transit, \
-                FALSE, is_user_edited, FALSE, user_hidden, user_created, topics, entities, \
-                event_summary \
+                auto_label, auto_location, source_ontologies, kind, \
+                FALSE, is_user_edited, user_hidden, user_created, topics, entities, \
+                event_summary, confidence \
          FROM wiki_events \
          WHERE day_id = $1 AND is_sleep = FALSE AND is_user_added = FALSE \
            AND start_time < $2 AND end_time > $3",
