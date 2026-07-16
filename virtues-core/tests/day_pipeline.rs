@@ -84,6 +84,43 @@ fn segmentation_runs_before_scoring() {
     }
 }
 
+/// Gap classification must run AFTER sleep and BEFORE scoring.
+///
+/// It settles the raw spine (absorbs sub-15-min Unknown slivers, labels
+/// location-change gaps as Transit). It runs *after* sleep so it also cleans the
+/// short Unknown tails sleep's split leaves behind, and *before* annotate/novelty so
+/// the transit blocks it creates are annotated and scored like any other event —
+/// mode is descriptive, salience is decisive. Move it after scoring and transit
+/// silently never gets a novelty score.
+#[test]
+fn gaps_run_after_sleep_before_scoring() {
+    let src = std::fs::read_to_string(
+        Path::new(env!("CARGO_MANIFEST_DIR"))
+            .parent()
+            .expect("repo root")
+            .join("actions/day_summary_eod/main.rs"),
+    )
+    .expect("read day_summary_eod/main.rs");
+
+    let pos = |needle: &str| {
+        src.lines()
+            .position(|l| l.contains(needle) && !l.trim_start().starts_with("//"))
+            .unwrap_or_else(|| panic!("no call to `{needle}` in day_summary_eod"))
+    };
+
+    let gaps = pos("classify_day_gaps(");
+    assert!(
+        gaps > pos("resolve_sleep_events("),
+        "gap classification must run AFTER sleep — it cleans up the short Unknown \
+         tails sleep's split leaves behind"
+    );
+    assert!(
+        gaps < pos("compute_novelty_for_day("),
+        "gap classification must run BEFORE scoring — transit blocks it creates must \
+         be scored like any event (mode descriptive, salience decisive)"
+    );
+}
+
 /// The full pipeline, against a real database: every score must SURVIVE.
 ///
 /// Requires Postgres and the embedder sidecar:
@@ -138,6 +175,9 @@ async fn full_pipeline_persists_every_score() {
 
     // The post-segmentation half of the cron, in the order the cron runs it.
     virtues::dayline::sleep::resolve_sleep_events(&pool, date).await;
+    virtues::dayline::gaps::classify_day_gaps(&pool, date)
+        .await
+        .expect("gap classification");
     virtues::dayline::annotate::annotate_events_for_day(&pool, date)
         .await
         .expect("annotate");
@@ -204,6 +244,37 @@ async fn full_pipeline_persists_every_score() {
     .await
     .expect("user events");
     let _ = user_events; // asserted by surviving the wipe above; kept explicit.
+
+    // The settled SHAPE, after gap classification: no sub-floor slivers survive, and
+    // the spine is still gapless. A block earns 15 minutes, a seam earns 3.
+    let (short_unknowns, short_transits): (i64, i64) = sqlx::query_as(
+        "SELECT
+           count(*) FILTER (WHERE e.is_unknown
+             AND e.end_time - e.start_time < interval '15 minutes'),
+           count(*) FILTER (WHERE e.is_transit
+             AND e.end_time - e.start_time < interval '3 minutes')
+         FROM wiki_events e JOIN wiki_days d ON d.id = e.day_id
+         WHERE d.date = $1 AND e.is_user_added = false AND e.is_sleep = false",
+    )
+    .bind(date)
+    .fetch_one(&pool)
+    .await
+    .expect("shape counts");
+    assert_eq!(short_unknowns, 0, "an Unknown block under 15 min survived — sliver absorption failed on {date}");
+    assert_eq!(short_transits, 0, "a Transit block under 3 min survived — the 3-min seam floor failed on {date}");
+
+    // Still gapless: every event's end equals the next event's start.
+    let gaps_or_overlaps: i64 = sqlx::query_scalar(
+        "WITH e AS (
+           SELECT end_time, lead(start_time) OVER (ORDER BY start_time) nxt
+           FROM wiki_events ev JOIN wiki_days d ON d.id = ev.day_id WHERE d.date = $1)
+         SELECT count(*) FILTER (WHERE nxt IS NOT NULL AND end_time <> nxt) FROM e",
+    )
+    .bind(date)
+    .fetch_one(&pool)
+    .await
+    .expect("gapless check");
+    assert_eq!(gaps_or_overlaps, 0, "timeline is no longer gapless after gap classification on {date}");
 }
 
 /// Whatever INVALIDATES scores must RESTORE them.
