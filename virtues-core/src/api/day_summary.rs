@@ -37,12 +37,17 @@ The dossier is a time-ordered list of the day's evidence, each item formatted fo
 - **Sleep** spans are hard boundaries, BUT DO NOT EMIT YOUR OWN "Sleep" EVENT. The system stamps the authoritative sleep block separately from deterministic sleep-tracking data. Treat the overnight sleep span as a boundary and leave that stretch as "Unknown" — do not label it "Sleep" yourself.
 - **Audio sessions** and **messages** COLOUR the day and are CANDIDATE boundaries — weigh them, do not obey them. An audio session's content tells you what a stretch actually was (a conversation, a drive, airport noise, quiet work, sickness in bed) even when there is no location or calendar to anchor it. This is how you name a day spent entirely at home, or entirely on the road, where location never changes.
 - **Health** (heart rate, steps) is texture, never a boundary on its own.
+- **Purchases** (`[purchase]` lines) are precise evidence of what a stretch was — a meal, a shop, a checkout; the merchant names the activity.
+- **Movement** (`[movement]` lines) tell you when, and how fast, the owner was actually travelling — see MOVEMENT AND TRANSIT.
 
 WHAT MAKES A BOUNDARY:
 A boundary is a change of CONTEXT — where you are, what is scheduled, who you are with — never a change of TOPIC. A single conversation at one desk that drifts from work to lunch to weekend plans is ONE event, not three. Do not split on what is being talked about; split on the situation changing.
 
 MOVEMENT AND TRANSIT:
-When you were moving between two places (a drive, a walk, a flight), headline that span by its CONTENT if there is any — "call with Tony about the lease, on the drive home" — with the movement as the setting, not the headline. Only when nothing else happened during the move do you leave that stretch as "Unknown"; the system labels genuinely empty movement as transit on its own afterward. So: a conversation-on-a-drive is a real named event; a silent commute is just an "Unknown" gap you leave for the system to mark.
+The dossier includes **[movement]** lines — each a stretch the owner was actually moving, with distance and average pace (km/h) computed from GPS. That is ALL you know about travel: distance and speed, nothing more. Hard rules:
+- NEVER name or infer a MODE of travel — not "walked", not "cycling", not "drove", not "tram"/"bus"/"train"/"flight"/"Uber", nothing. GPS pace cannot reliably tell a walk from a slow bike from a car in traffic, so ANY mode is a guess, and a guess is a fabrication. Describe travel ONLY by its distance and pace — "moved 1.3 km at ~18 km/h", "a 0.5 km trip" — and let the numbers stand.
+- If a stretch has NO [movement] line, they were NOT travelling. Do not call it "transit", "commute", "a drive", or "a ride". A stationary window — a checkout, a wait, a call at a desk — is a STOP, not a trip; a purchase or a conversation there is what it was. If you cannot otherwise name it, it is "Unknown".
+When a move has CONTENT (a conversation, a call), headline the span by that content, with the movement as the setting. Genuinely empty movement you may leave "Unknown"; the system marks it transit afterward.
 
 WHAT AN EVENT IS:
 Each event is one of exactly two kinds:
@@ -608,6 +613,115 @@ fn cap(s: &str, n: usize) -> String {
     out
 }
 
+/// Segment the day's GPS trace into MOVING stretches, computed from `speed` (never
+/// stored — movement is the negative space between stays). A stretch is a run of
+/// fixes above a walking-still threshold, coalescing brief pauses (a light, a
+/// checkout) so one trip is one stretch, and kept only if it actually covered
+/// ground. Keyed on the raw trace, NOT on visits, so a stretch with no clustered
+/// visit (a whole evening at an unrecognised home) still gets grounded — and,
+/// crucially, a mostly-stationary window (standing at a till) yields NO stretch, so
+/// the detective has no license to call it transit. Returns
+/// `(start, end, distance_km, avg_moving_kmh)`.
+async fn day_movement_segments(
+    pool: &PgPool,
+    start_str: &str,
+    end_str: &str,
+) -> Vec<(
+    chrono::DateTime<chrono::Utc>,
+    chrono::DateTime<chrono::Utc>,
+    f64,
+    Option<f64>,
+)> {
+    use sqlx::Row;
+    let rows = sqlx::query(
+        "SELECT timestamp, latitude, longitude, speed FROM data_location_point \
+         WHERE timestamp >= $1::timestamptz AND timestamp <= $2::timestamptz \
+         ORDER BY timestamp",
+    )
+    .bind(start_str)
+    .bind(end_str)
+    .fetch_all(pool)
+    .await
+    .unwrap_or_default();
+
+    let pts: Vec<(chrono::DateTime<chrono::Utc>, f64, f64, Option<f64>)> = rows
+        .iter()
+        .map(|r| {
+            (
+                r.get::<chrono::DateTime<chrono::Utc>, _>("timestamp"),
+                r.get::<f64, _>("latitude"),
+                r.get::<f64, _>("longitude"),
+                r.try_get::<Option<f64>, _>("speed").ok().flatten(),
+            )
+        })
+        .collect();
+
+    const MOVING_MPS: f64 = 1.0; // ~3.6 km/h — above GPS jitter, still catches a walk
+    const MERGE_GAP_S: i64 = 180; // fold still-pauses under 3 min into one trip
+    const MIN_DIST_M: f64 = 150.0; // discard jitter that never really went anywhere
+
+    let haversine = |a: (f64, f64), b: (f64, f64)| -> f64 {
+        let (lat1, lon1) = (a.0.to_radians(), a.1.to_radians());
+        let (lat2, lon2) = (b.0.to_radians(), b.1.to_radians());
+        let (dlat, dlon) = (lat2 - lat1, lon2 - lon1);
+        let h = (dlat / 2.0).sin().powi(2) + lat1.cos() * lat2.cos() * (dlon / 2.0).sin().powi(2);
+        6_371_000.0 * 2.0 * h.sqrt().asin()
+    };
+    let moving: Vec<bool> = pts
+        .iter()
+        .map(|p| p.3.map_or(false, |s| s > MOVING_MPS))
+        .collect();
+
+    let mut segs = Vec::new();
+    let mut i = 0;
+    while i < pts.len() {
+        if !moving[i] {
+            i += 1;
+            continue;
+        }
+        // Grow a run from i, bridging still-gaps shorter than MERGE_GAP_S.
+        let start = i;
+        let mut end = i;
+        let mut j = i + 1;
+        while j < pts.len() {
+            if moving[j] {
+                end = j;
+                j += 1;
+            } else {
+                let mut k = j;
+                while k < pts.len() && !moving[k] {
+                    k += 1;
+                }
+                if k < pts.len() && (pts[k].0 - pts[end].0).num_seconds() <= MERGE_GAP_S {
+                    j = k; // brief pause — same trip
+                } else {
+                    break;
+                }
+            }
+        }
+        // Distance over the run, and average speed of its moving fixes.
+        let mut dist = 0.0;
+        for w in start..end {
+            dist += haversine((pts[w].1, pts[w].2), (pts[w + 1].1, pts[w + 1].2));
+        }
+        let (mut sspeed, mut nspeed) = (0.0, 0usize);
+        for w in start..=end {
+            if let Some(s) = pts[w].3 {
+                if s > MOVING_MPS {
+                    sspeed += s;
+                    nspeed += 1;
+                }
+            }
+        }
+        if dist >= MIN_DIST_M {
+            let avg_kmh = (nspeed > 0).then(|| sspeed / nspeed as f64 * 3.6);
+            segs.push((pts[start].0, pts[end].0, dist / 1000.0, avg_kmh));
+        }
+        i = end + 1;
+    }
+    segs
+}
+
 /// Build the DOSSIER: one compact, time-ordered feature list of the day's
 /// evidence, drawn from the CLEAN rollups (visits, calendar, sleep, audio
 /// sessions) plus a messages roll-up and a health snapshot. Each item is capped
@@ -662,6 +776,26 @@ async fn build_dossier(
             None => format!("{}–?", fmt(&arr)),
         };
         spine.push((arr, format!("- [visit] {} — {}", span, cap(&place, 80))));
+    }
+
+    // Movement — MOVING stretches of the day's GPS trace, computed from `speed`
+    // (never stored). This is the ONLY evidence the detective may use for HOW the
+    // owner travelled; without it the model fabricates a mode (the "tram" over a real
+    // walk). Keyed on the raw trace, not visits, so movement is grounded even where
+    // no visit was clustered — and a mostly-stationary window yields NO stretch, so
+    // it can never be called transit.
+    for (s, e, km, avg_kmh) in day_movement_segments(pool, start_str, end_str).await {
+        let line = match avg_kmh {
+            Some(kmh) => format!(
+                "- [movement] {}–{} — {:.1} km at ~{:.0} km/h",
+                fmt(&s),
+                fmt(&e),
+                km,
+                kmh,
+            ),
+            None => format!("- [movement] {}–{} — {:.1} km, pace unknown", fmt(&s), fmt(&e), km),
+        };
+        spine.push((s, line));
     }
 
     // Calendar — title, start→end. All-day events bound nothing; flag them so the
@@ -775,6 +909,44 @@ async fn build_dossier(
         spine.push((
             s,
             format!("- [assistant chat] {} — \"{}\" ({mc} msgs)", fmt(&s), cap(&title, 80)),
+        ));
+    }
+
+    // Purchases — discrete, high-meaning events, passed INDIVIDUALLY (not aggregated:
+    // there are a handful a day and the merchant IS the signal). Each names what a
+    // stretch actually was — a meal, a shop, a checkout — grounding windows the audio
+    // alone leaves ambiguous.
+    let txns = sqlx::query(
+        "SELECT timestamp, amount, merchant_name, description \
+         FROM data_financial_transaction \
+         WHERE timestamp >= $1::timestamptz AND timestamp <= $2::timestamptz \
+           AND is_archived IS NOT TRUE \
+         ORDER BY timestamp",
+    )
+    .bind(start_str)
+    .bind(end_str)
+    .fetch_all(pool)
+    .await
+    .unwrap_or_default();
+    for r in &txns {
+        let ts: chrono::DateTime<chrono::Utc> = r.get("timestamp");
+        let cents: i64 = r.try_get("amount").unwrap_or(0);
+        let merchant = r
+            .try_get::<Option<String>, _>("merchant_name")
+            .ok()
+            .flatten()
+            .filter(|s| !s.trim().is_empty())
+            .or_else(|| r.try_get::<Option<String>, _>("description").ok().flatten())
+            .filter(|s| !s.trim().is_empty())
+            .unwrap_or_else(|| "unknown merchant".to_string());
+        spine.push((
+            ts,
+            format!(
+                "- [purchase] {} — ${:.2} at {}",
+                fmt(&ts),
+                cents as f64 / 100.0,
+                cap(&merchant, 60)
+            ),
         ));
     }
 

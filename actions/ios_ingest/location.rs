@@ -22,6 +22,8 @@ type LocationRow = (
     Option<f64>,   // altitude
     Option<f64>,   // horizontal_accuracy
     Option<f64>,   // vertical_accuracy
+    Option<f64>,   // speed
+    Option<f64>,   // course
     DateTime<Utc>, // timestamp
     String,        // source_stream_id
     Value,         // metadata
@@ -69,9 +71,9 @@ pub async fn write_locations(db: &PgPool, records: &[Value]) -> Result<usize> {
             .map(|v| v as i32);
         let raw_data = record.get("raw_data").cloned();
 
+        // `speed` and `course` are first-class columns (migration 0047); the rest
+        // stays in metadata (no consumer yet, or source-specific passthrough).
         let metadata = serde_json::json!({
-            "speed": speed,
-            "course": course,
             "activity_type": activity_type,
             "activity_confidence": activity_confidence,
             "floor_level": floor_level,
@@ -85,6 +87,8 @@ pub async fn write_locations(db: &PgPool, records: &[Value]) -> Result<usize> {
             altitude,
             horizontal_accuracy,
             vertical_accuracy,
+            speed,
+            course,
             timestamp,
             stream_id,
             metadata,
@@ -113,6 +117,8 @@ async fn flush_locations(db: &PgPool, records: &[LocationRow]) -> Result<usize> 
             "altitude",
             "horizontal_accuracy",
             "vertical_accuracy",
+            "speed",
+            "course",
             "timestamp",
             "source_stream_id",
             "source_table",
@@ -124,7 +130,7 @@ async fn flush_locations(db: &PgPool, records: &[LocationRow]) -> Result<usize> 
     );
 
     let mut q = sqlx::query(&sql);
-    for (id, lat, lon, alt, h_acc, v_acc, timestamp, stream_id, metadata) in records {
+    for (id, lat, lon, alt, h_acc, v_acc, speed, course, timestamp, stream_id, metadata) in records {
         q = q
             .bind(id)
             .bind(lat)
@@ -132,6 +138,8 @@ async fn flush_locations(db: &PgPool, records: &[LocationRow]) -> Result<usize> 
             .bind(alt)
             .bind(h_acc)
             .bind(v_acc)
+            .bind(speed)
+            .bind(course)
             .bind(timestamp)
             .bind(stream_id)
             .bind(LOCATION_STREAM_TABLE)
