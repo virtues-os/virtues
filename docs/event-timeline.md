@@ -170,6 +170,136 @@ the timeline explains its reasoning: *"Meeting, ~2–3pm — your calendar, your
 arrival at the office, and the audio all agree."* The user sees *why*, and can
 correct it — and a user's correction is the highest-value evidence there is.
 
+## The shape of a settled day: stays, transit, and honest unknowns
+
+The detective emits a gapless spine, and every block on it is exactly one **kind** —
+a single enum, so a block is exactly one thing and illegal combinations
+(`unknown AND transit`) cannot be represented:
+
+- **`stay`** — you were somewhere, doing something (a work session, lunch, reading).
+- **`transit`** — you were moving between somewheres (a drive, a walk, a flight).
+- **`sleep`** — the overnight block, owned by the deterministic sleep resolver, not
+  guessed by the model.
+- **`unknown`** — the evidence genuinely does not support a classification.
+
+That is the entire vocabulary. The day is these four, end to end, 00:00 → 24:00.
+The two core kinds are **stay** (a node — you stopped) and **transit** (an edge — you
+moved between nodes); the timeline is literally that topology — its flow and shape —
+not a log. `kind` replaces the old scatter of `is_unknown` / `is_transit` /
+`is_sleep` booleans; the *provenance* flags (`is_user_added`, `user_hidden`, …) are a
+separate axis — who touched the block, orthogonal to what kind it is — and stay.
+
+### Mode is descriptive; salience is decisive
+
+Stay-versus-transit is a *physical mode* and says nothing about importance. Every
+block is scored the **same way** (novelty / autonomic / topic), and the score — not
+the mode, not the duration — decides what becomes the day's headline and what
+recedes to a hairline connector. A silent commute and a two-hour
+conversation-in-the-car are both transit; salience is the only thing that separates
+them. Transit is a **container**: its meaning is whatever it holds, so a quiet drive
+scores low and a decide-the-lease phone call on the drive scores high, with no
+special-casing. **Never gate a block out of scoring for being "just transit" or
+"just short"** — that is exactly how a day's most important beats get suppressed.
+
+### The floor rules
+
+Duration is a filter on *noise*, not on *meaning*, so it applies differently by
+kind:
+
+- **Stay / Unknown → 15-minute floor.** A block of context has to earn a quarter
+  hour or it is absorbed into its neighbour. This is what removes the "insufficient
+  data" **slivers** — the 4–6 minute Unknowns that are really just the detective
+  drawing boundaries at exact data timestamps. *Sliver absorption* = do not emit the
+  tiny block; extend the adjacent event to swallow the gap so it disappears.
+- **Transit → 3-minute floor.** A seam between two genuinely different places is
+  real at any length, so it is exempt from the 15-minute rule — but below ~3 minutes
+  a "transit" is almost always visit-boundary noise or GPS drift, not a move, and it
+  is absorbed like any sliver. (The stronger guard is *"are these two actually
+  different places?"*, which the visit match-and-extend rollup already enforces; the
+  3-minute floor is just the backstop.)
+- **Salient sub-block moments → no row at all.** A three-minute important phone call
+  at your desk is not its own event; it is a **highlight inside** the work-session
+  block that contains it, surfaced by the summary and the scores. You lose nothing —
+  you simply stop fragmenting the spine for it.
+
+> **A block earns 15 minutes; a seam earns 3; a moment earns a mention, not a row.**
+
+### Label by the strongest evidence
+
+A block's title is its most salient content, with mode and place as context —
+"deciding the lease with Tony, on the drive home", not "Transit". Movement is the
+headline only when movement is genuinely all that happened; a location-change span
+that also holds a rich audio session is headlined by the *conversation*, and the
+drive becomes the setting.
+
+### The structured axes: kind, confidence, salience
+
+Beyond its content (label, summary, place, people) and provenance (who touched it),
+a block carries three orthogonal signals. Two are **enums**, not arbitrary numbers —
+a 1–5 scale invites false precision and, for anything a model judges, clustering and
+drift across models. Named buckets are self-anchoring and stable.
+
+- **`kind`** = `{ stay, transit, sleep, unknown }` — *what it was*. Deterministic.
+- **`confidence`** = `{ low, medium, high }` — *how sure we are*. The timeline today
+  presents every block as equally authoritative, but events are **inferred by fusion
+  from lying witnesses** — some are certain, some are guesses — and we throw that
+  away. Confidence is what lets the timeline admit what it's guessing at, which
+  unlocks two things the doc already asks for: **"show your work"** (a low-confidence
+  block renders softly — "*probably* gym"; a high one asserts) and the **correction
+  loop** (surface the *uncertain* blocks first, since a user's correction is the
+  highest-value evidence there is). Wherever possible confidence is **deterministic**,
+  which sidesteps cross-model variance entirely:
+  - **event confidence** = *witness agreement* (a count, model-independent):
+    **high** = three+ independent sources corroborate the window (calendar *and*
+    location *and* audio); **medium** = two agree; **low** = a lone signal or pure
+    inference.
+- **salience** (`novelty_z` / `autonomic_z` / topic) — *how much it mattered*. Shapes
+  the timeline: prominence tracks salience, not chronology. Per-event.
+
+**Confidence spans both scales, with one word and one 3-bucket scale.** The day has a
+confidence too — the existing `data_quality.overall` *is* it, reframed: *how much to
+trust this day's account*. It is the only judged one (a model reads coverage), so it
+leans on the W6H `coverage` breakdown as its backing detail and buckets to the same
+three: **high** = continuous, multi-source coverage across the waking day; **medium**
+= a typical weekday with some gaps; **low** = sparse, hours dark. (low ≈ old 1–2,
+medium ≈ 3, high ≈ 4–5 — a bucketing, not a redesign.) A **high**-confidence day is
+presented as *the* narrative; a **low** one is partial notes — captured and
+searchable, never dressed up as the definitive story.
+
+So: **kind = what, confidence = how sure, salience = how much it mattered** — the
+first two deterministic where they can be, all three the same vocabulary whether you
+are looking at one event or the whole day.
+
+### Rendering follows salience, not equal-weight chronology
+
+The timeline should have **relief**: the standout is a full card, routine stays are
+quieter, and empty transits are thin connectors between them — a day you can *read*,
+with peaks and valleys, not a uniform stack of rows. This is where `kind` earns its
+keep in the UI: `transit` drives *connector* styling and honest "time at place X"
+accounting. But it is a **styling hint, never a salience gate** — a loud transit (the
+conversation-drive) is still a full card, because salience, not kind, sets prominence.
+
+### Status
+
+Built: the gapless spine, stays, transit, deterministic sleep, `Unknown`, per-event
+salience, per-day completeness, narrative-with-standout, and the **floor rules +
+gap-classification pass** — a deterministic pass over the detective's output that
+absorbs sub-15-min Unknown slivers, labels location-change gaps as **Transit (A → B)**,
+and flags `is_transit` (on both its own conversions and movement the detective
+already named). Not yet built, in increasing size:
+
+1. **The `kind` + `confidence` model refactor** — collapse the mutually-exclusive
+   `is_unknown` / `is_transit` / `is_sleep` booleans into a single **`kind`** enum
+   (`stay` / `transit` / `sleep` / `unknown`), and add **`confidence`**
+   (`low` / `medium` / `high`) on both event (witness agreement, deterministic) and
+   day (reframing `data_quality.overall`). A cross-cutting change: a migration plus
+   every read/write site and the frontend converters — its own focused piece.
+2. **Salience-driven rendering** — cards vs. connectors by score + `kind` (depends on
+   the novelty baseline having matured; cold on a fresh box).
+3. **Place/route and time-of-day novelty** — today's scoring embeds the summary
+   *text*, so "first walk downtown in months" is caught only if the words say so.
+   True *where/when* novelty is the next layer of the salience engine.
+
 ## Audio sessions: the detective's ears
 
 Raw audio arrives as 5-minute recorder chunks — hundreds a day, each transcribed

@@ -112,6 +112,15 @@ async fn main() -> Result<()> {
     //    `is_user_added = false`, so the delete in step 1 eats it too.
     virtues::dayline::sleep::resolve_sleep_events(&pool, date).await;
 
+    // 2b. Settle the raw spine into its final shape: absorb sub-15-min Unknown
+    //     slivers into neighbours and label location-change gaps as Transit
+    //     (`is_transit`). AFTER sleep (so it also cleans the short Unknown tails
+    //     sleep's split leaves behind) and BEFORE scoring (so transit blocks are
+    //     annotated and scored like any event — mode descriptive, salience decisive).
+    let gap_ops = virtues::dayline::gaps::classify_day_gaps(&pool, date)
+        .await
+        .context("gap classification failed")?;
+
     // 3. Annotate the surviving events from their own time windows: avg_hr
     //    (the input autonomic scoring has always lacked), the entity refs
     //    that overlap them, and which ontologies actually had data.
@@ -168,8 +177,8 @@ async fn main() -> Result<()> {
     // failure mode as avg_hr, in production, undetected. A metric that can't
     // go to zero can't tell you anything.
     let summary = format!(
-        "{date}: audio_sessions={audio_sessions} events={events} annotated={annotated} novelty={novelty_count} \
-         autonomic={autonomic_count} topic_entity={topic_entity_count} \
+        "{date}: audio_sessions={audio_sessions} events={events} gap_ops={gap_ops} annotated={annotated} \
+         novelty={novelty_count} autonomic={autonomic_count} topic_entity={topic_entity_count} \
          narrated={narrated}"
     );
     output(&summary, &config)

@@ -41,6 +41,9 @@ The dossier is a time-ordered list of the day's evidence, each item formatted fo
 WHAT MAKES A BOUNDARY:
 A boundary is a change of CONTEXT — where you are, what is scheduled, who you are with — never a change of TOPIC. A single conversation at one desk that drifts from work to lunch to weekend plans is ONE event, not three. Do not split on what is being talked about; split on the situation changing.
 
+MOVEMENT AND TRANSIT:
+When you were moving between two places (a drive, a walk, a flight), headline that span by its CONTENT if there is any — "call with Tony about the lease, on the drive home" — with the movement as the setting, not the headline. Only when nothing else happened during the move do you leave that stretch as "Unknown"; the system labels genuinely empty movement as transit on its own afterward. So: a conversation-on-a-drive is a real named event; a silent commute is just an "Unknown" gap you leave for the system to mark.
+
 WHAT AN EVENT IS:
 Each event is one of exactly two kinds:
 1. **A definitively understood block** — the dossier evidences a specific, nameable activity. The `label` is a short noun phrase (2-5 words). The `summary` is 1-3 plain factual sentences grounded in the actual evidence (place, who, durations, message counts, what the audio content shows, heart rate). No mood, no motivation, no invention.
@@ -272,11 +275,19 @@ pub async fn segment_day_events(pool: &PgPool, date: NaiveDate) -> Result<u32> {
         return Ok(0);
     }
 
-    // Never narrate a day that has not happened. 146 calendar events on the real
-    // box are dated into the future, out to 2029; a day summary is an account of a
-    // life LIVED, and tomorrow is not evidence.
-    if date >= chrono::Utc::now().date_naive() {
-        tracing::info!(date = %date, "day is not over — nothing to summarise yet");
+    // Never narrate a day that has not happened — checked in the day's OWN timezone,
+    // not raw UTC. On a US box the UTC clock rolls to tomorrow at ~6–7pm local, so a
+    // raw-UTC check calls the current, still-in-progress day "over" — it did exactly
+    // that, running July 15 while it was still July 15 evening in Austin. Resolve
+    // "today" in the day's timezone so the gate tracks the owner's clock. (Also still
+    // rejects genuinely future dates — 146 calendar events on the box run out to 2029.)
+    let today_in_tz = timezone
+        .as_deref()
+        .and_then(|s| s.parse::<Tz>().ok())
+        .map(|tz| chrono::Utc::now().with_timezone(&tz).date_naive())
+        .unwrap_or_else(|| chrono::Utc::now().date_naive());
+    if date >= today_in_tz {
+        tracing::info!(date = %date, "day is not over in the owner's timezone — nothing to summarise yet");
         return Ok(0);
     }
 

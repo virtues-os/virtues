@@ -9,6 +9,7 @@ pub mod annotate;
 pub mod autonomic_scoring;
 pub mod context;
 pub mod embedding_ops;
+pub mod gaps;
 pub mod novelty;
 pub mod sleep;
 pub mod topic_entity_novelty;

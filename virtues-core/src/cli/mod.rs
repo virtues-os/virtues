@@ -372,8 +372,12 @@ pub async fn run(cli: Cli, virtues: Virtues) -> Result<(), Box<dyn std::error::E
 
             // Scoring sits BETWEEN the two agents — it is what lets the narrative
             // name the day's most novel event.
-            println!("Scoring events (sleep, annotate, novelty, autonomic, topic)...");
+            println!("Scoring events (sleep, gaps, annotate, novelty, autonomic, topic)...");
             crate::dayline::sleep::resolve_sleep_events(pool, target_date).await;
+            // Settle the spine: absorb sub-15-min slivers, label transit. After
+            // sleep, before scoring — so transit is scored like any event.
+            let gap_ops = crate::dayline::gaps::classify_day_gaps(pool, target_date).await?;
+            println!("  {gap_ops} gap ops (slivers absorbed / transit labelled)");
             crate::dayline::annotate::annotate_events_for_day(pool, target_date).await?;
             crate::dayline::novelty::compute_novelty_for_day(pool, target_date).await?;
             crate::dayline::autonomic_scoring::compute_autonomic_for_day(pool, target_date)
