@@ -8,13 +8,13 @@
 # installer's expected asset names with .sha256 sidecars, and uploads them to the
 # models tag with `gh`. It is idempotent (`gh release upload --clobber`).
 #
-# Usage:  MODELS_TAG=models-1 SRC=dragon:/home/radxa/npu ./tools/publish-qnn-models.sh
+# Usage:  MODELS_TAG=models-1 SRC=radxa-box:/home/radxa/npu ./tools/publish-qnn-models.sh
 #   SRC        scp source dir holding the .bins + tok_gte/ + tok_colbert/
 #   MODELS_TAG GitHub release tag the installer's VIRTUES_MODELS_BASE points at
 #   REPO       owner/repo (default virtues-os/virtues)
 set -euo pipefail
 
-SRC="${SRC:-dragon:/home/radxa/npu}"
+SRC="${SRC:-radxa-box:/home/radxa/npu}"
 MODELS_TAG="${MODELS_TAG:-models-1}"
 REPO="${REPO:-virtues-os/virtues}"
 

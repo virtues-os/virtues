@@ -82,14 +82,14 @@
       <span class="pill">holds: a device bearer + box_url (after pairing)</span>
     </div>
     <div class="node relay">
-      <div class="ttl c-relay">Relay</div><div class="loc">OVH · 15.204.248.171 · :443 browsers · :9443 boxes</div>
+      <div class="ttl c-relay">Relay</div><div class="loc">your relay · 203.0.113.10 · :443 browsers · :9443 boxes</div>
       <div class="role">A dumb, blind switchboard. Reads only the cleartext <b>name</b> (SNI) to route; splices encrypted bytes. Keeps an in-RAM list of which box is connected.</div>
       <span class="pill good">RAM-only · stateless · open-source</span>
     </div>
     <div class="node box">
       <div class="ttl c-box">Home box</div><div class="loc">Jetson, behind your router (Spectrum NAT)</div>
       <div class="role">Runs your dashboard on localhost, terminates TLS with <b>its own key</b>, and dials out to the relay. The source of truth — your data lives here.</div>
-      <span class="pill">SNI: <code>a4e65cc3…​.virtues.ch</code></span>
+      <span class="pill">SNI: <code>example1…​.virtues.ch</code></span>
     </div>
   </div>
   <div class="flowrow" style="margin-top:14px">
@@ -144,7 +144,7 @@
   <div class="steps">
     <div class="step"><div class="i">1</div><div class="who c-box">box</div><div class="what">Boots, runs the dashboard on localhost, generates/loads its own TLS cert.</div></div>
     <div class="step"><div class="i">2</div><div class="who c-box">box → <span class="c-atlas">atlas</span></div><div class="what">"Give me my relay config." (authenticated by <code>api_key</code>)<span class="note">atlas checks the subscription is active, derives <code>boxhash</code> from the account, mints the token for today's bucket.</span></div></div>
-    <div class="step"><div class="i">3</div><div class="who c-atlas">atlas → <span class="c-box">box</span></div><div class="what"><span class="msg">{ relay_addr, sni: a4e65cc3….virtues.ch, token }</span><span class="note">box stores these sealed in <code>box_secrets</code>. It now knows where to dial and how to prove itself.</span></div></div>
+    <div class="step"><div class="i">3</div><div class="who c-atlas">atlas → <span class="c-box">box</span></div><div class="what"><span class="msg">{ relay_addr, sni: example1….virtues.ch, token }</span><span class="note">box stores these sealed in <code>box_secrets</code>. It now knows where to dial and how to prove itself.</span></div></div>
     <div class="step"><div class="i">4</div><div class="who c-box">box → <span class="c-relay">relay :9443</span></div><div class="what">Dials OUT and sends <span class="msg">Register{ sni, token }</span><span class="note">Outbound 9443 — works through any NAT/firewall. No inbound port ever opened at home.</span></div></div>
     <div class="step"><div class="i">5</div><div class="who c-relay">relay</div><div class="what">Recomputes <code>HMAC(secret, sni:today)</code> (and yesterday), constant-time compares → match.<span class="note">Adds <code>sni → this connection</code> to its in-RAM registry. Replies <span class="msg">Registered ✓</span>. The box is now reachable.</span></div></div>
   </div>
@@ -158,9 +158,9 @@
 
   <h2><span class="n">05</span>The Mac reaches the box <span style="font-size:13px;color:var(--muted);font-weight:400">— from WeWork wifi, no install</span></h2>
   <div class="steps">
-    <div class="step"><div class="i">1</div><div class="who c-mac">browser</div><div class="what">Opens <code>https://a4e65cc3….virtues.ch</code>. DNS → <code>15.204.248.171</code> (the relay).</div></div>
+    <div class="step"><div class="i">1</div><div class="who c-mac">browser</div><div class="what">Opens <code>https://example1….virtues.ch</code>. DNS → <code>203.0.113.10</code> (the relay).</div></div>
     <div class="step"><div class="i">2</div><div class="who c-mac">browser → <span class="c-relay">relay :443</span></div><div class="what">Starts TLS. The first packet (ClientHello) carries the <b>SNI</b> in cleartext.<span class="note">The relay reads ONLY the name to route — like the address on a sealed envelope.</span></div></div>
-    <div class="step"><div class="i">3</div><div class="who c-relay">relay</div><div class="what">Looks up <code>a4e65cc3…</code> in its registry → finds your box's open control pipe → tells it: <span class="msg">OpenConn</span></div></div>
+    <div class="step"><div class="i">3</div><div class="who c-relay">relay</div><div class="what">Looks up <code>example1…</code> in its registry → finds your box's open control pipe → tells it: <span class="msg">OpenConn</span></div></div>
     <div class="step"><div class="i">4</div><div class="who c-box">box → <span class="c-relay">relay</span></div><div class="what">Dials a fresh <b>work connection</b> back out to the relay for this visitor.</div></div>
     <div class="step"><div class="i">5</div><div class="who c-relay">relay</div><div class="what">Replays the buffered ClientHello to the box, then <b>splices</b> bytes both ways — browser ⇄ box.<span class="note">From here the relay is a dumb pipe moving ciphertext. It has no TLS key; it can't see inside.</span></div></div>
     <div class="step"><div class="i">6</div><div class="who c-box">box</div><div class="what">Terminates TLS with <i>its own</i> cert, serves the dashboard. Your <code>device bearer</code> (inside the TLS) logs you in.<span class="note">End-to-end encrypted, browser ⇄ your box. The café, WeWork, and the relay all see only sealed bytes + the name.</span></div></div>
@@ -169,7 +169,7 @@
   <h2><span class="n">06</span>You unplug the box… then plug it back in</h2>
   <div class="steps">
     <div class="step"><div class="i">🔌</div><div class="who c-box">box</div><div class="what"><b>Power/network cut.</b> The control pipe goes silent.</div></div>
-    <div class="step"><div class="i">⏱</div><div class="who c-relay">relay</div><div class="what">Ping gets no Pong for ~35s → evicts <code>a4e65cc3…</code> from the registry.<span class="note">Because the relay holds NO durable state about your box, eviction is just forgetting one in-RAM entry. A browser hitting the name now gets "no box here" and the connection closes.</span></div></div>
+    <div class="step"><div class="i">⏱</div><div class="who c-relay">relay</div><div class="what">Ping gets no Pong for ~35s → evicts <code>example1…</code> from the registry.<span class="note">Because the relay holds NO durable state about your box, eviction is just forgetting one in-RAM entry. A browser hitting the name now gets "no box here" and the connection closes.</span></div></div>
     <div class="step"><div class="i">⚡</div><div class="who c-box">box</div><div class="what"><b>Plugged back in.</b> Boots, reads its stored relay config (or re-fetches), and re-dials — after a small random delay (jittered backoff + startup splay).<span class="note">The jitter matters at fleet scale: if the relay restarts and 10,000 boxes reboot at once, they don't all dial back in the same millisecond.</span></div></div>
     <div class="step"><div class="i">✓</div><div class="who c-relay">relay</div><div class="what">Verifies the token again, re-registers the box. <b>Reachable again — fully automatic, no human touch.</b><span class="note">Meanwhile your LAN never depended on any of this: at home you reach the box directly the whole time.</span></div></div>
   </div>
@@ -184,7 +184,7 @@
     <div class="card b-mac"><h4><span class="em">⚠️</span>The honest tradeoff: the relay is a SPOF</h4><p>If the relay is down, <span class="k">remote</span> reach is down (LAN keeps working; the box keeps collecting). That's the price of "reach from anywhere with no install." Mitigations: auto-reconnect, low-TTL DNS to repoint fast, and — later — multi-region.</p></div>
   </div>
 
-  <p class="foot">Concrete values are this deployment's: relay <code>15.204.248.171</code>, box SNI <code>a4e65cc3c92fc8882b6c.virtues.ch</code>. Companion to <code>docs/relay-control-plane.md</code> + <code>docs/networking-relay-tee.md</code>. Today: TLS cert is self-signed (browser warning) until ACME lands; relay is v4-only.</p>
+  <p class="foot">Concrete values are this deployment's: relay <code>203.0.113.10</code>, box SNI <code>example1234567890abcd.virtues.ch</code>. Companion to <code>docs/relay-control-plane.md</code> + <code>docs/networking-relay-tee.md</code>. Today: TLS cert is self-signed (browser warning) until ACME lands; relay is v4-only.</p>
 </div>
 </body>
 </html>

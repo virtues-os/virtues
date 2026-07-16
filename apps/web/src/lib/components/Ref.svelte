@@ -5,12 +5,17 @@
 	import { getEntityRoute, refIcon, getEntityTypeFromRoute } from "$lib/utils/refRoutes";
 	import { createRefHover } from "$lib/utils/refHover.svelte";
 
-	let { displayName, entityId, url, entityType, mimeType } = $props<{
+	let { displayName, entityId, url, entityType, mimeType, variant = "link" } = $props<{
 		displayName: string;
 		entityId?: string;
 		url?: string;
 		entityType?: string;
 		mimeType?: string;
+		// "link" (default): accent name + leading type icon + `@` — for chat answers,
+		// previews. "quiet": bare name with a dotted underline, inheriting the prose
+		// colour — for entities woven into flowing text (the day biography). See
+		// ref-badge.css (.ref-link--quiet) and the link-when-reading refs doctrine.
+		variant?: "link" | "quiet";
 	}>();
 
 	// Get the navigation URL
@@ -42,14 +47,18 @@
 </script>
 
 <button
-	class="ref-link"
+	class="ref-link {variant === 'quiet' ? 'ref-link--quiet' : ''}"
 	onclick={handleClick}
 	title="View {displayName}"
 	onmouseenter={(e) => hover.enter(e.currentTarget)}
 	onmouseleave={() => hover.leave()}
 	onfocus={(e) => hover.enter(e.currentTarget)}
 	onblur={() => hover.leave()}
-	><Icon icon={refIcon(resolvedType, { mimeType, filename: displayName })} width="11" class="ref-pill-icon" />@{displayName}</button
+	>{#if variant !== "quiet"}<Icon
+			icon={refIcon(resolvedType, { mimeType, filename: displayName })}
+			width="11"
+			class="ref-pill-icon"
+		/>@{/if}{displayName}</button
 >
 {#if hover.visible && hover.anchor}
 	<RefPreview

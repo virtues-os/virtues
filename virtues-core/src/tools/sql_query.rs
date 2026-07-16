@@ -494,15 +494,20 @@ impl SqlQueryTool {
             ));
         }
 
-        // Check for dangerous keywords
+        // Check for dangerous keywords. Match whole tokens only — a substring
+        // check falsely rejects common columns like `created_at` ("create") and
+        // `updated_at` ("update"). Splitting on non-alphanumeric chars (which
+        // includes `_`) tokenizes `created_at` into ["created", "at"], so only a
+        // standalone `create`/`update`/etc. statement keyword trips the guard.
         let forbidden = ["insert", "update", "delete", "drop", "create", "alter", "truncate"];
-        for keyword in &forbidden {
-            if sql_lower.contains(keyword) {
-                return Err(ToolError::InvalidParameters(format!(
-                    "Query contains forbidden keyword: {}",
-                    keyword
-                )));
-            }
+        if let Some(keyword) = sql_lower
+            .split(|c: char| !c.is_alphanumeric())
+            .find(|tok| forbidden.contains(tok))
+        {
+            return Err(ToolError::InvalidParameters(format!(
+                "Query contains forbidden keyword: {}",
+                keyword
+            )));
         }
 
         // Validate query length
@@ -559,22 +564,57 @@ pub fn convert_rows_to_json(rows: &[sqlx::postgres::PgRow]) -> Vec<serde_json::V
                     serde_json::Value::Number(v.into())
                 } else if let Ok(v) = row.try_get::<i32, _>(i) {
                     serde_json::Value::Number(v.into())
+                } else if let Ok(v) = row.try_get::<i16, _>(i) {
+                    serde_json::Value::Number(v.into())
                 }
                 // Float types
                 else if let Ok(v) = row.try_get::<f64, _>(i) {
+                    serde_json::json!(v)
+                } else if let Ok(v) = row.try_get::<f32, _>(i) {
                     serde_json::json!(v)
                 }
                 // Boolean
                 else if let Ok(v) = row.try_get::<bool, _>(i) {
                     serde_json::Value::Bool(v)
                 }
+                // Date/time types → strings (RFC3339 for tz-aware)
+                else if let Ok(v) = row.try_get::<sqlx::types::chrono::DateTime<sqlx::types::chrono::Utc>, _>(i) {
+                    serde_json::Value::String(v.to_rfc3339())
+                } else if let Ok(v) = row.try_get::<sqlx::types::chrono::DateTime<sqlx::types::chrono::FixedOffset>, _>(i) {
+                    serde_json::Value::String(v.to_rfc3339())
+                } else if let Ok(v) = row.try_get::<sqlx::types::chrono::NaiveDateTime, _>(i) {
+                    serde_json::Value::String(v.format("%Y-%m-%d %H:%M:%S%.f").to_string())
+                } else if let Ok(v) = row.try_get::<sqlx::types::chrono::NaiveDate, _>(i) {
+                    serde_json::Value::String(v.format("%Y-%m-%d").to_string())
+                }
+                // Interval → readable string (PgInterval has no Display)
+                else if let Ok(v) = row.try_get::<sqlx::postgres::types::PgInterval, _>(i) {
+                    let secs = v.microseconds / 1_000_000;
+                    let micros = (v.microseconds % 1_000_000).abs();
+                    serde_json::Value::String(format!(
+                        "{} months {} days {}.{:06} seconds",
+                        v.months, v.days, secs, micros
+                    ))
+                }
+                // Numeric/decimal → string (preserves precision)
+                else if let Ok(v) = row.try_get::<sqlx::types::Decimal, _>(i) {
+                    serde_json::Value::String(v.to_string())
+                }
                 // JSON
                 else if let Ok(v) = row.try_get::<serde_json::Value, _>(i) {
                     v
                 }
-                // Fallback
+                // UUID
+                else if let Ok(v) = row.try_get::<sqlx::types::Uuid, _>(i) {
+                    serde_json::Value::String(v.to_string())
+                }
+                // Fallback — log so unhandled types surface instead of silently masking
                 else {
                     let type_info = col.type_info().name();
+                    tracing::warn!(
+                        "SQL tool: column '{}' with Postgres type '{}' has no decoder — emitting placeholder",
+                        col_name, type_info
+                    );
                     serde_json::Value::String(format!("<{}>", type_info))
                 };
 

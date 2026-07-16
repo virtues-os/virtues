@@ -60,7 +60,7 @@ pub async fn resolve_people(db: &Database, window: TimeWindow) -> Result<usize> 
 /// memory and statement size, not total throughput.
 const MESSAGE_BATCH: i64 = 5_000;
 
-/// Turn `+16304608847` into Nick.
+/// Turn `+15125550100` into Nick.
 ///
 /// Email senders resolved. Calendar attendees resolved. Message senders never did —
 /// there was no resolver for `data_communication_message` at all. So the box knew
@@ -68,7 +68,7 @@ const MESSAGE_BATCH: i64 = 5_000;
 /// said a phone number and not one said a name.
 ///
 /// That is the difference between a log and a memory. "Sucks you're going to have to
-/// cancel — +16304608847" is a line of data. The same sentence with "Nick" on it is a
+/// cancel — +15125550100" is a line of data. The same sentence with "Nick" on it is a
 /// life, and it is what makes the rest of the system worth querying.
 ///
 /// # Why this one takes no `TimeWindow`

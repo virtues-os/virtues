@@ -98,8 +98,19 @@ impl Database {
     pub async fn initialize(&self) -> Result<()> {
         self.wait_for_postgres(std::time::Duration::from_secs(30)).await?;
 
-        // Run migrations
-        self.run_migrations().await?;
+        // Run migrations — unless pointed at an externally-managed DB (e.g. a live
+        // box snapshot restored for local dev via `make dev-real`), whose
+        // `_sqlx_migrations` checksums were written by a different build and would
+        // trip the modification guard. The snapshot is already at its schema; we
+        // only read it. Guarded by an explicit opt-in env so normal startup always
+        // migrates.
+        if std::env::var("VIRTUES_SKIP_MIGRATIONS").as_deref() == Ok("1") {
+            tracing::warn!(
+                "VIRTUES_SKIP_MIGRATIONS=1 — skipping migrations (externally-managed DB)"
+            );
+        } else {
+            self.run_migrations().await?;
+        }
 
         // Size the vector columns to the configured embedding model. Migrations
         // create them at the Dragon default (256); a manual endpoint with

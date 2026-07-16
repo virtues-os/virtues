@@ -81,3 +81,24 @@
 	margin-right: 1px;
 	opacity: 0.7;
 }
+
+/*
+ * Quiet reading treatment (`variant="quiet"`) — for entities woven into flowing
+ * prose (the day biography), where a run of accent-coloured, icon-led links reads
+ * as a link-farm and fights the sentence. Here the ref inherits the body colour and
+ * carries only a dotted hairline that firms + warms on hover: it reads as text, but
+ * is discoverable and clickable. No leading icon, no `@` (both dropped in Ref.svelte
+ * for this variant). This is the "link-when-reading" end of the refs doctrine.
+ */
+.ref-link.ref-link--quiet {
+	color: inherit;
+	border-bottom: 1px dotted color-mix(in srgb, currentColor 45%, transparent);
+	transition:
+		color 0.15s ease,
+		border-color 0.15s ease;
+}
+
+.ref-link.ref-link--quiet:hover {
+	color: var(--ref-pill-color);
+	border-bottom-color: color-mix(in srgb, var(--color-primary) 60%, transparent);
+}

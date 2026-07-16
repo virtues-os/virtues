@@ -2,13 +2,13 @@
 -- The identifiers a person answers to (docs/mac-presence-plan.md follow-on)
 --
 -- The box knows 525 people. It holds thousands of iMessages. NONE of them were
--- connected: every message said `+16304608847` and not one said "Nick".
+-- connected: every message said `+15125550100` and not one said "Nick".
 --
 -- The data was all there. The join was impossible, because the two sides spell the
 -- same person differently:
 --
---     iOS Contacts →  "(952) 292-1126"     stored RAW, exactly as typed
---     chat.db      →  "+19522921126"       E.164
+--     iOS Contacts →  "(512) 555-0142"     stored RAW, exactly as typed
+--     chat.db      →  "+15125550142"       E.164
 --
 -- As strings those never match. And the only matcher that existed was a
 -- `LIKE '%digits%'` substring scan over the `phones` JSONB — unindexed (a seq scan
@@ -32,7 +32,7 @@
 
 ALTER TABLE wiki_people ADD COLUMN handles JSONB NOT NULL DEFAULT '[]'::jsonb;
 
--- `handles ? '+19522921126'` is the resolver's hot path — once per distinct sender.
+-- `handles ? '+15125550142'` is the resolver's hot path — once per distinct sender.
 -- GIN with jsonb_ops supports the existence operator directly, same as 0037's
 -- aliases index.
 CREATE INDEX idx_wiki_people_handles ON wiki_people USING GIN (handles);

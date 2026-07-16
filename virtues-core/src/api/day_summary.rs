@@ -56,93 +56,35 @@ RULES:
 - RECENT CONTEXT (if provided) is the last few days' event labels — use it only to disambiguate a stretch the dossier leaves ambiguous ("Unknown 18:00-19:00" that lines up with a nightly gym pattern), never to invent evidence this day lacks.
 - The `summary` is the single most load-bearing field: the user reads it AND it is embedded to measure how novel the event was. Make it factual and specific — "Forty minutes at Blue Bottle on Hayes; six messages with Maya about the lease; heart rate mid-70s." Not "a pleasant coffee.""#;
 
-/// NARRATION — the Chat slot. Prose about what the day MEANT.
+/// THE BIOGRAPHY — the Chat slot. The short, readable memory of the day.
 ///
-/// It reads the EVENTS, not the raw sources. The prompt always claimed as much
-/// ("not to log what happened when — the event timeline already does that") while
-/// being handed the raw sources anyway. Feeding it the segmentation makes the
-/// prompt smaller, cheaper, and actually grounded in the day's own shape.
-const NARRATE_PROMPT: &str = r#"You are writing a brief second-person autobiography for a personal day page. Your job is to surface the meaning layer — what connected, what was unusual, what the cross-domain data reveals — not to log what happened when (the event timeline already does that).
+/// It reads the EVENTS, not the raw sources. It is NOT the log (the event timeline
+/// already lists what happened when) — it is the few sentences that, read back
+/// later, drop you straight into that day. Brevity does the selecting: you cannot
+/// fit fourteen events in four sentences, so only the parts that distinguished the
+/// day survive.
+///
+/// This deliberately dropped the old "elevated moves" (fabricated behavioural
+/// fingerprints, forced quantified closers), the literary epigraph, and the W6H
+/// data-quality block — all of which pushed the model to invent meaning the day did
+/// not carry. See docs/event-timeline.md and the essay "A Day, Well Written": the
+/// machine records what happened and hands the meaning back.
+const NARRATE_PROMPT: &str = r#"You write "the biography of the day" — a brief second-person recap for a personal day page. It is NOT a log (the event timeline already lists what happened, when). It is the short, readable memory of the day: the few sentences that, read back weeks later, drop the reader straight into that day.
 
-LENGTH — scale to data density:
-- Sparse day (a handful of data points, a few hours of coverage): 1-3 sentences. Often a single sentence is the right answer.
-- Moderate day (data across most of the waking hours, a few distinct activities): 3-6 sentences.
-- Rich day (continuous coverage, many distinct activities, multiple ontologies firing): up to 180 words.
-- Length follows evidence. Padding a sparse day with prose is the most common failure here — don't.
+WHAT TO WRITE:
+- A brief, natural recap that follows the day's shape, roughly start to end, grounded in real people and places by name.
+- LENGTH FOLLOWS THE DAY. A rich, eventful day earns up to ~4 sentences; an ordinary day, one or two; a thin day, a single line. Never pad. Brevity is the whole point: you cannot fit a day's fourteen events in four sentences, so only the parts that actually distinguished this day from every other one survive — the routine falls away, the distinctive thing remains. That is correct, not a loss.
+- A genuinely unremarkable day should say so plainly ("A day much like its neighbours — the office, home, the usual"), never be inflated into significance.
 
-GUIDELINES:
-- Lead with a pattern or insight, not a timestamp. "The routine held until 4:12 PM, when you broke your usual commute to visit the Seaholm Trader Joe's for the first time in your logged history."
-- Weave health/location/duration data into narrative context. Don't report metrics in isolation — connect them to what was happening.
-- Reference specific events, people, and places by name so the text stays grounded.
-- Plain text only — no markdown, no formatting, no bold, no italic.
-- Second person ("you"), past tense. Tone: warm but precise, like a perceptive friend reflecting the day back. Never clinical, never saccharine.
-- Never infer emotions, motivations, activities, or details that aren't in the source data. If the sources show heart rate and a few messages, write about heart rate and those messages — not about "an extended social outing" or "a productive morning" you imagined to fill space.
-- Absence of data is not data. If the morning has no sources, do not write about the morning.
+THE ONE HARD RULE — OBSERVE, NEVER INFER:
+- Write only what the evidence shows. Warmth comes from OBSERVED detail (the low sun, the quiet train, the water) — NEVER from asserting an inner state. Do not write that the reader was "content", "productive", "happy", or "tired" as a feeling; do not say they did something "because" of a motive you are guessing at. State a departure or a goodbye as a fact ("the last coffee before she moves"); do not narrate how it felt.
+- No inferred emotion, motive, meaning, or verdict. Never call a day good or bad, well-spent or wasted. Record what happened; hand the meaning back to the reader.
+- If given RECENT DAYS (the last two weeks), use them only to recognise a real recurrence or a genuine first ("the first kayak in months", "the same thread as Saturday") — never to manufacture a pattern that isn't plainly there. Empty means a cold start: just say what the day was.
 
-ELEVATED MOVES (use when the data supports them — required on rich days, optional on moderate days, skip on sparse days):
-1. A cross-ontology causal beat with timestamps. Tie a specific signal in one ontology to a specific signal in another, in the same sentence. ("Today you lingered in the aisles for 52 minutes and swiped for $328.50.") This is the synthesis only this system can write — no single source could.
-2. A dated temporal echo to a specific past moment. Not "your baseline" or "in recent weeks" — a specific date or named past event. ("The longest unscheduled stretch you've spent anywhere since the Friday before you signed the Holly Street lease in 2022.") Specific dates re-contextualize the present and prove memory.
-3. A behavioral fingerprint stated as a generalization. ("The pace you run when you're metabolizing a decision, not winding down from one.") This earns the synthesis: it should read as something only someone who's watched the user for a year could say. Only assert a fingerprint when the historical data actually shows the pattern.
-4. A quantified closer. End on a count or a date when you can. ("The first time in 184 days all three have been in the same twelve hours.") A number makes the synthesis falsifiable.
-
-After the diary, output a single-line EPIGRAPH — a literary subtitle for the day, in the voice of an observing third-person narrator (Jane Austen, George Eliot, middle Dickens register). This sits at the top of the day page as a chapter-heading flourish.
-
-EPIGRAPH rules:
-- 5-14 words. Sentence case. No ending punctuation. No quotation marks.
-- Draw concrete imagery from the day's actual events — a specific noun, place, or beat from the data.
-- Prefer parallelism, juxtaposition, or a small observed aphorism.
-- Gently ironic, implicit, observed from outside. Never saccharine, never explicit.
-- Never use "I", "me", "today", "the day was…". Never use first-person constructions.
-- Never a summary or list. It should feel like a line you'd remember.
-
-Good epigraphs:
-- sunlight on old tile has a way of proposing things
-- a morning led by questions, an afternoon led by a house
-- three cups of coffee, and then the hard conversation
-- a text at lunch, and the afternoon had other plans
-- the design review gave way to a backyard bigger than its photos
-- some afternoons arrive with questions of their own
-
-Bad epigraphs (do NOT produce anything like these):
-- "A productive Friday" (cliche)
-- "Today I worked and then saw a house" (explicit, first-person)
-- "A day of mixed emotions" (abstract, saccharine)
-- "Work in the morning, house viewing in the afternoon" (a summary, not an epigraph)
-
-After the epigraph, assess the DATA QUALITY of the source material using the W6H framework (Who, Whom, What, When, Where, Why, How). Think like a journalist: how well does today's data answer each dimension?
-
-Score each 1-5:
-- 1 = no signal (dimension completely absent from sources)
-- 2 = trace (a hint, but not enough to narrate)
-- 3 = routine (typical weekday coverage)
-- 4 = good (multiple corroborating sources)
-- 5 = unusually rich (deep, multi-faceted coverage)
-
-The "overall" score is your holistic judgment — NOT an average. A day with 5/5 Where but 1/1 everything else is still a 2.
-The "note" is one sentence: what's strong, what's missing.
-
-You are given the day's EVENTS — already segmented, already grounded in the data —
-each annotated with SCORES the system computed after segmentation:
-- `novelty` — how unusual this event was against the recent baseline (higher = more novel).
-- `calm` — the autonomic reading (higher = more physiologically activated than baseline).
-- `topic_novelty` — how new this event's subject matter was.
-Use the scores to find the day's STANDOUT — the single most novel event — and let the
-narrative turn on it ("the most out-of-pattern stretch of your day was …"). Do not
-print the numbers; let them tell you where to look.
-
-You may also be given RECENT DAYS — the last two weeks of events — for voice and for
-the dated temporal echoes below. If it is empty, this is a cold start: say what the
-day was without inventing a pattern.
-
-Do not re-list the events. Say what the day was.
-
-Output format:
-[diary]
----EPIGRAPH---
-[one-line epigraph]
----DATA_QUALITY---
-{"coverage":{"who":3,"whom":2,"what":4,"when":5,"where":4,"why":1,"how":2},"overall":3,"note":"One sentence about coverage."}
-"#;
+FORMAT:
+- Plain, warm prose — a perceptive friend reflecting the day back, not a novelist. No headings, no lists, no bullet points, no epigraph, no closing metric, no "data quality" note.
+- LINK entities: when you mention a person or place listed under "Entities you may link" below, link it by copying its exact markdown link, e.g. [Maya](/person/person_ab12). Link a given entity once, on first mention. Never invent a link or link anything not in that list.
+- Second person, past tense. Output ONLY the prose (markdown), nothing else."#;
 
 // ── Timezone helpers ─────────────────────────────────────────────────────────
 
@@ -416,7 +358,7 @@ pub async fn narrate_day(pool: &PgPool, date: NaiveDate) -> Result<Option<WikiDa
         // `COALESCE(..., '(unlabeled)')` so a NULL label can never fail the String
         // decode and abort narration for the whole day.
         "SELECT COALESCE(user_label, auto_label, '(unlabeled)') AS label, event_summary, \
-                start_time, end_time, novelty_z, autonomic_z, topic_novelty \
+                start_time, end_time, novelty_z \
          FROM wiki_events \
          WHERE day_id = $1 AND NOT is_unknown AND NOT user_hidden \
          ORDER BY start_time",
@@ -442,43 +384,35 @@ pub async fn narrate_day(pool: &PgPool, date: NaiveDate) -> Result<Option<WikiDa
     let tz: Option<Tz> = day_tz.parse().ok();
     let (start_str, end_str) = day_boundaries_utc(date, Some(&day_tz));
 
-    // The single most novel event — the standout the prompt asks the narrative to
-    // turn on. Highest novelty_z wins; NULLs (unscored) never beat a real score.
+    // The most-novel event, if scoring has run — a SOFT hint the model may lean on
+    // (cold until the baseline warms; brevity does the selection regardless). Kept
+    // because reading `novelty_z` here is what the day-pipeline guard asserts:
+    // scoring sits between the detective and the biography for a reason.
     let standout = events
         .iter()
         .enumerate()
         .filter_map(|(i, e)| e.novelty_z.map(|z| (i, z)))
         .max_by(|a, b| a.1.total_cmp(&b.1))
+        .filter(|(_, z)| *z > 0.5)
         .map(|(i, _)| i);
 
-    // The day, as it was actually cut. Small, grounded, and a fraction of the
-    // tokens the raw sources cost.
-    let mut prompt = format!("# {}\n\n## The day's events\n\n", date.format("%A, %B %-d, %Y"));
+    // The events, as the source material — a clean list. The biography does NOT
+    // re-list them; brevity forces it to keep only what distinguished the day.
+    let fmt = |t: &chrono::DateTime<chrono::Utc>| match tz {
+        Some(z) => t.with_timezone(&z).format("%H:%M").to_string(),
+        None => t.format("%H:%M").to_string(),
+    };
+    let mut prompt = format!(
+        "# {}\n\n## The day's events (already logged — do NOT re-list them; write the memory of the day)\n\n",
+        date.format("%A, %B %-d, %Y")
+    );
     for (i, e) in events.iter().enumerate() {
-        let fmt = |t: &chrono::DateTime<chrono::Utc>| match tz {
-            Some(z) => t.with_timezone(&z).format("%H:%M").to_string(),
-            None => t.format("%H:%M").to_string(),
-        };
-        prompt.push_str(&format!("- {}–{} **{}**", fmt(&e.start_time), fmt(&e.end_time), e.label));
+        prompt.push_str(&format!("- {}–{} {}", fmt(&e.start_time), fmt(&e.end_time), e.label));
         if let Some(s) = e.event_summary.as_deref().filter(|s| !s.trim().is_empty()) {
             prompt.push_str(&format!(": {s}"));
         }
-        // Attach the scores as compact tags the prompt already knows how to read.
-        let mut tags: Vec<String> = Vec::new();
         if Some(i) == standout {
-            tags.push("STANDOUT — most novel event of the day".to_string());
-        }
-        if let Some(z) = e.novelty_z {
-            tags.push(format!("novelty {z:+.1}"));
-        }
-        if let Some(z) = e.autonomic_z {
-            tags.push(format!("calm {z:+.1}"));
-        }
-        if let Some((topic, z)) = e.topic_novelty.as_ref().and_then(top_topic_novelty) {
-            tags.push(format!("newest topic '{topic}' {z:+.1}"));
-        }
-        if !tags.is_empty() {
-            prompt.push_str(&format!("  [{}]", tags.join("; ")));
+            prompt.push_str("  (the most unusual beat of the day)");
         }
         prompt.push('\n');
     }
@@ -487,12 +421,23 @@ pub async fn narrate_day(pool: &PgPool, date: NaiveDate) -> Result<Option<WikiDa
         append_section(&mut prompt, &h);
     }
 
-    // The full 14-day case file — label + summary per event — for voice and for the
-    // dated temporal echoes the prompt reaches for. Empty on a cold start.
+    // The last 14 days — only to recognise a real recurrence or a genuine first
+    // ("first kayak in months", "same thread as Saturday"), never to invent a
+    // pattern. Empty on a cold start.
     let case_file = recent_event_case_file(pool, date, tz.as_ref()).await;
     if !case_file.is_empty() {
         prompt.push_str("\n## Recent days (the last two weeks)\n\n");
         prompt.push_str(&case_file);
+    }
+
+    // The day's resolved people + places, each as its exact ref-link, so the
+    // biography can cite them the way chat/pages do — `[Name](/person/person_x)` —
+    // which the day page renders as an entity pill (link-when-reading).
+    let entities = day_entities_for_refs(pool, &start_str, &end_str).await;
+    if !entities.is_empty() {
+        prompt.push_str("\n## Entities you may link (copy the exact markdown link)\n");
+        prompt.push_str(&entities.join("\n"));
+        prompt.push('\n');
     }
 
     // Chat slot: this is the narrative call, and the only one left that earns it.
@@ -605,7 +550,8 @@ fn append_section(prompt: &mut String, section: &PromptSection) {
 
 // ── The dossier ────────────────────────────────────────────────────────────────
 
-/// An event row for narration, carrying the scores computed between the two agents.
+/// An event row for narration. `novelty_z` is a soft selection hint (and the
+/// scoring-reaches-the-biography guard); the biography leans on brevity, not scores.
 #[derive(sqlx::FromRow)]
 struct DayEventRow {
     label: String,
@@ -613,18 +559,41 @@ struct DayEventRow {
     start_time: chrono::DateTime<chrono::Utc>,
     end_time: chrono::DateTime<chrono::Utc>,
     novelty_z: Option<f64>,
-    autonomic_z: Option<f64>,
-    /// JSONB map `{topic: z_score}` — a per-topic breakdown, not a scalar. The
-    /// narrative surfaces the single most-novel topic from it.
-    topic_novelty: Option<serde_json::Value>,
 }
 
-/// The most-novel topic and its z-score from a `topic_novelty` JSONB map.
-fn top_topic_novelty(v: &serde_json::Value) -> Option<(String, f64)> {
-    v.as_object()?
-        .iter()
-        .filter_map(|(k, val)| val.as_f64().map(|z| (k.clone(), z)))
-        .max_by(|a, b| a.1.total_cmp(&b.1))
+/// The day's resolved people + places, each as its exact ref-link route, so the
+/// biography can cite them the way chat/pages do — `[Name](/person/person_x)` — and
+/// the day page renders them as entity pills.
+async fn day_entities_for_refs(pool: &PgPool, start_str: &str, end_str: &str) -> Vec<String> {
+    use sqlx::Row;
+    let rows = sqlx::query(
+        "SELECT 'person' AS kind, pe.id AS id, pe.canonical_name AS name \
+         FROM wiki_entity_refs er JOIN wiki_people pe ON pe.id = er.entity_id \
+         WHERE er.entity_type = 'person' \
+           AND er.timestamp >= $1::timestamptz AND er.timestamp <= $2::timestamptz \
+         UNION \
+         SELECT 'place', p.id, p.name \
+         FROM wiki_entity_refs er JOIN wiki_places p ON p.id = er.entity_id \
+         WHERE er.entity_type = 'place' \
+           AND er.timestamp >= $1::timestamptz AND er.timestamp <= $2::timestamptz",
+    )
+    .bind(start_str)
+    .bind(end_str)
+    .fetch_all(pool)
+    .await
+    .unwrap_or_default();
+    rows.iter()
+        .filter_map(|r| {
+            let kind: String = r.get("kind");
+            let id: String = r.get("id");
+            let name = r
+                .try_get::<Option<String>, _>("name")
+                .ok()
+                .flatten()
+                .filter(|s| !s.trim().is_empty())?;
+            Some(format!("- [{name}](/{kind}/{id})"))
+        })
+        .collect()
 }
 
 /// Cap a free-text field to `n` chars, appending an ellipsis when it was clipped.

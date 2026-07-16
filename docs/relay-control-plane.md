@@ -70,7 +70,7 @@ thing is the **relay control plane**.
   "re-point key, balance preserved" recovery doctrine (`project_box_theft_model`,
   `project_credential_billing_model`); it's private-ish and appears in CT logs at
   issuance (acceptable, not a secret). An optional **vanity alias**
-  (`adam.virtues.ch`) may be layered on top — atlas mints a token for it and
+  (`you.virtues.ch`) may be layered on top — atlas mints a token for it and
   the cert carries both names — but the hash stays the canonical routing/recovery
   anchor (a vanity registry adds squatting/impersonation/dispute governance, so
   treat it as a paid nicety, not the primary name). BYO custom domain

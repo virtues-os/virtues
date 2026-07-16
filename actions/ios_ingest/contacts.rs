@@ -291,8 +291,8 @@ async fn create_person(db: &PgPool, contact: &ContactRecord) -> Result<String> {
     let phones_json = serde_json::json!(contact.phones);
 
     // The normal form of everything this person answers to — E.164 phones, lowercased
-    // emails — indexed so a message from "+19522921126" can find the contact you
-    // typed as "(952) 292-1126". `emails`/`phones` keep the raw strings: what the
+    // emails — indexed so a message from "+15125550142" can find the contact you
+    // typed as "(512) 555-0142". `emails`/`phones` keep the raw strings: what the
     // human wrote is worth keeping, and a normal form is not a replacement for it.
     //
     // Without this, resolution is impossible: 525 contacts, thousands of messages, and

@@ -5,11 +5,11 @@
 //! connected — because the two sides spell the same person differently:
 //!
 //! ```text
-//! iOS Contacts →  "(952) 292-1126"     (however you typed it)
-//! chat.db      →  "+19522921126"       (E.164)
+//! iOS Contacts →  "(512) 555-0142"     (however you typed it)
+//! chat.db      →  "+15125550142"       (E.164)
 //! ```
 //!
-//! As strings those never match, so every message says `+16304608847` and none say
+//! As strings those never match, so every message says `+15125550100` and none say
 //! "Nick". Contacts were stored RAW, and the only matcher was a `LIKE '%digits%'`
 //! substring scan over JSONB — which is both unindexed and wrong: a 7-digit number
 //! matches inside a different country's 11-digit number.
@@ -32,7 +32,7 @@ pub fn normalize_handle(raw: &str) -> Option<String> {
     normalize_phone(trimmed)
 }
 
-/// A phone number in E.164 (`+19522921126`), or `None` if it isn't one.
+/// A phone number in E.164 (`+15125550142`), or `None` if it isn't one.
 ///
 /// The country-code inference is deliberately narrow: a bare 10-digit number is
 /// assumed North American, because that is what an iPhone in the US actually hands
@@ -50,9 +50,9 @@ pub fn normalize_phone(raw: &str) -> Option<String> {
     Some(match digits.len() {
         // Already international, or explicitly written as such.
         _ if had_plus => format!("+{digits}"),
-        // 19522921126 → +19522921126
+        // 15125550142 → +15125550142
         11 if digits.starts_with('1') => format!("+{digits}"),
-        // 9522921126 → +19522921126  (NANP, the common iPhone case)
+        // 5125550142 → +15125550142  (NANP, the common iPhone case)
         10 => format!("+1{digits}"),
         // Anything else: keep the digits, flagged international, rather than
         // guessing a country and inventing a match.
@@ -84,12 +84,12 @@ mod tests {
     fn the_join_that_never_happened() {
         // The exact pair that left 525 contacts and 0 resolved messages.
         assert_eq!(
-            normalize_handle("(952) 292-1126"),
-            normalize_handle("+19522921126")
+            normalize_handle("(512) 555-0142"),
+            normalize_handle("+15125550142")
         );
-        assert_eq!(normalize_handle("952-292-1126").unwrap(), "+19522921126");
-        assert_eq!(normalize_handle("+1 (952) 292-1126").unwrap(), "+19522921126");
-        assert_eq!(normalize_handle("19522921126").unwrap(), "+19522921126");
+        assert_eq!(normalize_handle("512-555-0142").unwrap(), "+15125550142");
+        assert_eq!(normalize_handle("+1 (512) 555-0142").unwrap(), "+15125550142");
+        assert_eq!(normalize_handle("15125550142").unwrap(), "+15125550142");
     }
 
     #[test]
@@ -108,8 +108,8 @@ mod tests {
     fn distinct_numbers_stay_distinct() {
         // The old matcher was a substring scan: a 7-digit number matched INSIDE an
         // 11-digit one, silently attributing messages to the wrong person.
-        let a = normalize_phone("+19522921126").unwrap();
-        let b = normalize_phone("+449522921126").unwrap();
+        let a = normalize_phone("+15125550142").unwrap();
+        let b = normalize_phone("+445125550142").unwrap();
         assert_ne!(a, b);
     }
 
