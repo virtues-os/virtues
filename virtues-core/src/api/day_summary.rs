@@ -812,15 +812,17 @@ async fn build_dossier(
     spine.sort_by_key(|(k, _)| *k);
 
     // Messages — participant names (via entity refs) and counts, not bare totals.
-    // COUNT(DISTINCT id) + role='sender' in the join: a message resolves to at most
-    // one sender, so a group message (or one that merely `mentioned` a person, or
-    // carries a duplicate ref) can no longer inflate a participant's count.
+    // role IN ('sender','recipient'): a message you *received* resolves via its
+    // sender, a message you *sent* via its recipient — so a thread counts toward the
+    // person on the other end regardless of direction (otherwise your own replies
+    // vanish from the tally). COUNT(DISTINCT id) still holds: a 1:1 message carries
+    // exactly one of the two roles, so no double-count.
     let msgs = sqlx::query(
         "SELECT COALESCE(pe.canonical_name, m.from_name) AS who, COUNT(DISTINCT m.id) AS n \
          FROM data_communication_message m \
          LEFT JOIN wiki_entity_refs er \
            ON er.source_table = 'data_communication_message' AND er.source_id = m.id \
-          AND er.entity_type = 'person' AND er.role = 'sender' \
+          AND er.entity_type = 'person' AND er.role IN ('sender', 'recipient') \
          LEFT JOIN wiki_people pe ON pe.id = er.entity_id \
          WHERE m.timestamp >= $1::timestamptz AND m.timestamp <= $2::timestamptz \
          GROUP BY who ORDER BY n DESC LIMIT 15",

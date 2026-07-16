@@ -85,7 +85,11 @@ fn get_table_metadata() -> HashMap<&'static str, TableMetadata> {
         description: "Chat messages (iMessage, SMS, etc.)",
         category: "communication",
         key_columns: &["body", "channel", "from_identifier", "from_name", "to_identifiers", "is_read", "is_group_message", "has_attachments", "thread_id", "timestamp"],
-        join_hint: None,
+        // A message links to the person on the other end via wiki_entity_refs:
+        // role='sender' for messages you received, role='recipient' for messages you
+        // sent. Filter both to get a full thread with someone; the message's own
+        // direction is in metadata->>'is_from_me'.
+        join_hint: Some("JOIN wiki_entity_refs er ON er.source_table = 'data_communication_message' AND er.source_id = data_communication_message.id AND er.entity_type = 'person' AND er.role IN ('sender','recipient') JOIN wiki_people ON er.entity_id = wiki_people.id"),
     });
 
     // ============================================================================
