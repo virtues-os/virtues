@@ -378,6 +378,12 @@ pub enum Commands {
         /// embedder needed); the events must already exist for the day.
         #[arg(long)]
         narrate_only: bool,
+        /// Force a re-cut of the event timeline (the DETECTIVE) and print it, then
+        /// stop — no scoring, no narrative, no embedder. Clears the day's sources
+        /// fingerprint so segmentation actually re-runs even if sources are
+        /// unchanged. For inspecting detective output / variance in isolation.
+        #[arg(long, conflicts_with = "narrate_only")]
+        segment_only: bool,
     },
 
     /// Run entity resolution (places + people) over the last N hours.

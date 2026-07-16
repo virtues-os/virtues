@@ -322,11 +322,12 @@ pub async fn run(cli: Cli, virtues: Virtues) -> Result<(), Box<dyn std::error::E
             return Ok(());
         }
 
-        Commands::DaySummary { date, narrate_only } => {
-            // `--narrate-only` reads an already-migrated DB (e.g. a box snapshot)
-            // and only re-runs the narrative — skip migrations so a snapshot whose
-            // `_sqlx_migrations` checksums differ from this branch still runs.
-            if !narrate_only {
+        Commands::DaySummary { date, narrate_only, segment_only } => {
+            // `--narrate-only` / `--segment-only` read an already-migrated DB (e.g.
+            // a box snapshot) and only re-run one stage — skip migrations so a
+            // snapshot whose `_sqlx_migrations` checksums differ from this branch
+            // still runs.
+            if !narrate_only && !segment_only {
                 println!("Running migrations...");
                 virtues.database.initialize().await?;
             }
@@ -357,6 +358,64 @@ pub async fn run(cli: Cli, virtues: Virtues) -> Result<(), Box<dyn std::error::E
                 .ok()
                 .flatten()
                 .and_then(|s| s.parse().ok());
+
+            // `--segment-only`: re-run just the DETECTIVE and print the timeline —
+            // no scoring, no narrative, no embedder. Clear the sources fingerprint
+            // first so segmentation actually re-cuts even when sources are
+            // unchanged (its idempotency check would otherwise no-op). For
+            // inspecting how the detective segments a day, and its run-to-run
+            // variance, in isolation.
+            if segment_only {
+                sqlx::query("UPDATE wiki_days SET sources_fingerprint = NULL WHERE date = $1")
+                    .bind(target_date)
+                    .execute(pool)
+                    .await?;
+                println!("Rolling audio chunks into sessions...");
+                let sessions = crate::sessionize::audio::sessionize_day(pool, target_date).await?;
+                println!("  {sessions} audio sessions");
+                println!("Segmenting {target_date} into events (detective, forced re-cut)...");
+                let n = crate::api::day_summary::segment_day_events(pool, target_date).await?;
+                println!("  {n} events");
+                crate::dayline::sleep::resolve_sleep_events(pool, target_date).await;
+                let gap_ops = crate::dayline::gaps::classify_day_gaps(pool, target_date).await?;
+                println!("  {gap_ops} gap ops (slivers absorbed / transit labelled)");
+
+                let day_id: Option<String> =
+                    sqlx::query_scalar("SELECT id FROM wiki_days WHERE date = $1")
+                        .bind(target_date)
+                        .fetch_optional(pool)
+                        .await?;
+                if let Some(day_id) = day_id {
+                    let events = crate::api::wiki::get_day_events(pool, day_id).await?;
+                    println!();
+                    println!("Event timeline ({}):", events.len());
+                    for ev in &events {
+                        let label = ev
+                            .auto_label
+                            .as_deref()
+                            .or(ev.user_label.as_deref())
+                            .unwrap_or("(no label)");
+                        let (start_fmt, end_fmt) = if let Some(tz) = tz_for_display {
+                            (
+                                ev.start_time.with_timezone(&tz).format("%H:%M").to_string(),
+                                ev.end_time.with_timezone(&tz).format("%H:%M").to_string(),
+                            )
+                        } else {
+                            (
+                                ev.start_time.format("%H:%M").to_string(),
+                                ev.end_time.format("%H:%M").to_string(),
+                            )
+                        };
+                        println!("  {start_fmt} → {end_fmt}  {label}");
+                        if let Some(summary) =
+                            ev.event_summary.as_ref().filter(|s| !s.trim().is_empty())
+                        {
+                            println!("                  {summary}");
+                        }
+                    }
+                }
+                return Ok(());
+            }
 
             // The full nightly chain, in the SAME order the action runs it, so a
             // local run is a faithful reproduction (and the narrative actually sees
