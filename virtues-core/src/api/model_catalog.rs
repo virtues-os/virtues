@@ -147,13 +147,17 @@ pub fn slots() -> SlotMap {
 /// Resolve a slot to a model id. This is layer 2 of the resolution order — the
 /// caller checks the user's override first.
 pub fn model_for_slot(slot: virtues_registry::models::ModelSlot) -> String {
-    use virtues_registry::models::ModelSlot;
+    use virtues_registry::models::{default_model_for_slot, ModelSlot};
     let s = slots();
     match slot {
         ModelSlot::Chat => s.chat,
         ModelSlot::Lite => s.lite,
         ModelSlot::Coding => s.coding,
         ModelSlot::Image => s.image,
+        // Omni (audio transcription) is a fixed system model, not cloud- or
+        // user-overridable — it must stay audio-capable — so it resolves from
+        // the compiled registry floor rather than the cloud SlotMap.
+        ModelSlot::Omni => default_model_for_slot(ModelSlot::Omni).to_string(),
     }
 }
 

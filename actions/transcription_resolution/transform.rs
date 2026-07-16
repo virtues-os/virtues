@@ -11,13 +11,16 @@ use serde_json::Value;
 use sqlx::{PgPool, Row};
 use uuid::Uuid;
 use virtues::virtues_api::client::{BearerClient, Purpose};
+use virtues_registry::models::{default_model_for_slot, ModelSlot};
 
-// gemini-2.5-flash: audio-capable (flash-lite is NOT — it returned empty on
-// every clip, which drove the retry/re-bill loop). 2.5-flash ingests audio as
-// native audio tokens (~25/sec, ~7.5K for a 5-min clip — cheap) and does full
-// scene understanding (speech + ambient sounds + music + mood + setting), which
-// is what a life-log wants, not bare ASR. Validated live via the Vercel gateway.
-const MODEL: &str = "google/gemini-2.5-flash";
+// The audio model is the registry's Omni slot (currently google/gemini-3-flash),
+// resolved at call time — never a hardcoded id here. "Omni" = an audio-native
+// model that ingests audio as native tokens (~25/sec, ~7.5K for a 5-min clip —
+// cheap) and does full scene understanding (speech + ambient + music + mood +
+// setting), which is what a life-log wants, NOT bare speech-to-text. gemini-3
+// won a controlled 5-clip bench on cost/speed/accuracy/JSON-validity; see
+// ModelSlot::Omni. Audio requires reasoning_effort:low (below) — it's the only
+// tier whose thinking budget the gateway honors.
 
 /// Below this, an audio file has no real content (an empty/glitch AAC container
 /// is ~28 bytes). Real speech recordings are hundreds of KB. Sub-kilobyte files
@@ -49,6 +52,9 @@ Rules:
 - entities[].said: quote the clause the name appears in, verbatim, <= 15 words. A bare name is useless to a human reviewer later; the quote is what makes it recognizable.
 - confidence: confidence in the SPEECH transcript (0.0 if no speech, 0.9+ if clear).
 - tags: blend topic (what's discussed) and scene (sounds/mood/setting) labels.
+- SUNG or hummed vocals ARE speech — transcribe the lyrics verbatim into "text". NEVER leave text empty just because words are sung or set to music.
+- Speakers often discuss technology and AI tools — prefer real names (Claude, Cursor, Codex, GPT, Gemini, terminal, repo, agent) over acoustically-similar non-words: write "Claude", not "claw"/"cloud".
+- Do NOT fabricate names (people, songs, places, orgs) you are unsure of — omit rather than guess a plausible-sounding one.
 - Truly silent/empty audio (no speech AND no discernible ambient sound): {"title":"Silence","summary":"Silent audio","text":"","language":"en","confidence":0.0,"speaker_count":0,"tags":["silence"],"entities":{"people":[],"places":[],"organizations":[]},"scene":{"sounds":[],"music":null,"mood":"quiet","setting":"unknown"}}
 "#;
 
@@ -197,6 +203,13 @@ pub async fn drain(db: &PgPool, batch_size: i64) -> Result<(usize, usize, usize)
     // non-silent recording to process.
     let mut virtues_api: Option<BearerClient> = None;
 
+    // On-box voice-activity gate, built lazily and reused across the batch. If
+    // it can't load we proceed WITHOUT gating (fail-open) rather than abort the
+    // drain — a missing gate just means we pay Gemini for no-speech chunks, not
+    // that we drop audio.
+    let mut vad: Option<crate::vad::Vad> = None;
+    let mut vad_init_failed = false;
+
     for rec in &pending {
         // Silent recordings: insert an empty transcript directly, no Gemini call
         if rec.is_silent {
@@ -263,6 +276,39 @@ pub async fn drain(db: &PgPool, batch_size: i64) -> Result<(usize, usize, usize)
                 }
             }
             continue;
+        }
+
+        // Voice-activity gate: ~65% of all-day audio has no speech (silence,
+        // traffic, music, room tone). Detect those on-box and record them
+        // silent instead of paying Gemini to transcribe nothing. The audio is
+        // still stored, so a skipped chunk stays re-runnable later. Fail-open:
+        // if the VAD can't load, transcribe everything as before.
+        if vad.is_none() && !vad_init_failed {
+            match crate::vad::Vad::new() {
+                Ok(v) => vad = Some(v),
+                Err(e) => {
+                    tracing::error!(error = %e, "VAD init failed; transcribing without speech-gate");
+                    vad_init_failed = true;
+                }
+            }
+        }
+        if let Some(v) = vad.as_ref() {
+            if !v.has_speech(&audio_bytes) {
+                tracing::info!(
+                    stream_id = %rec.source_stream_id,
+                    "no speech detected (VAD); recording silent, skipping Gemini"
+                );
+                match insert_silent_transcript(db, rec).await {
+                    Ok(_) => skipped += 1,
+                    Err(e) => {
+                        tracing::warn!(stream_id = %rec.source_stream_id, error = %e,
+                            "failed to insert silent transcript (VAD gate)");
+                        record_attempt_failure(db, &rec.source_stream_id).await;
+                        failed += 1;
+                    }
+                }
+                continue;
+            }
         }
 
         let audio_b64 =
@@ -445,7 +491,7 @@ async fn transcribe(
 ) -> std::result::Result<TranscriptionResponse, TranscribeError> {
     let mime_type = audio_mime_type(audio_format);
     let request_body = serde_json::json!({
-        "model": MODEL,
+        "model": default_model_for_slot(ModelSlot::Omni),
         "messages": [
             { "role": "system", "content": SYSTEM_PROMPT },
             {
