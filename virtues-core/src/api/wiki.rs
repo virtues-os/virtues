@@ -1528,6 +1528,17 @@ pub async fn create_temporal_event(
 
     let event_id = ids::generate_id(ids::WIKI_EVENT_PREFIX, &[&req.day_id, &start_time_str, &end_time_str]);
 
+    // `kind` is the source of truth; the is_unknown/is_transit booleans are generated
+    // from it, so we set kind here rather than the (unwritable) generated columns.
+    // create_temporal_event never mints sleep — that is `dayline::sleep`'s job.
+    let kind = if req.is_unknown == Some(true) {
+        "unknown"
+    } else if req.is_transit == Some(true) {
+        "transit"
+    } else {
+        "stay"
+    };
+
     // Runtime query (not the macro) so we can include `event_summary` without
     // regenerating the sqlx offline cache.
     let row = sqlx::query(
@@ -1535,9 +1546,9 @@ pub async fn create_temporal_event(
         INSERT INTO wiki_events (
             id, day_id, start_time, end_time,
             auto_label, auto_location, user_label, user_location, user_notes,
-            source_ontologies, is_unknown, is_transit, is_user_added, event_summary,
+            source_ontologies, kind, is_user_added, event_summary,
             topics
-        ) VALUES ($1, $2, $3::timestamptz, $4::timestamptz, $5, $6, $7, $8, $9, $10::jsonb, $11, $12, $13, $14, $15::jsonb)
+        ) VALUES ($1, $2, $3::timestamptz, $4::timestamptz, $5, $6, $7, $8, $9, $10::jsonb, $11, $12, $13, $14::jsonb)
         RETURNING
             id, is_user_edited, created_at, updated_at
         "#,
@@ -1552,8 +1563,7 @@ pub async fn create_temporal_event(
     .bind(&req.user_location)
     .bind(&req.user_notes)
     .bind(&source_ontologies_str)
-    .bind(req.is_unknown)
-    .bind(req.is_transit)
+    .bind(kind)
     .bind(req.is_user_added)
     .bind(&req.event_summary)
     .bind(req.topics.clone().unwrap_or_else(|| serde_json::json!([])))

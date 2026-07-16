@@ -49,7 +49,7 @@ use virtues_registry::ontologies::registered_ontologies;
 pub async fn annotate_events_for_day(pool: &PgPool, date: NaiveDate) -> Result<u32> {
     let events = sqlx::query(
         r#"
-        SELECT e.id, e.start_time, e.end_time
+        SELECT e.id, e.start_time, e.end_time, e.kind
         FROM wiki_events e
         JOIN wiki_days d ON d.id = e.day_id
         WHERE d.date = $1
@@ -66,10 +66,27 @@ pub async fn annotate_events_for_day(pool: &PgPool, date: NaiveDate) -> Result<u
         let id: String = row.get("id");
         let start: chrono::DateTime<chrono::Utc> = row.get("start_time");
         let end: chrono::DateTime<chrono::Utc> = row.get("end_time");
+        let kind: String = row.get("kind");
 
         let avg_hr = window_avg_hr(pool, start, end).await;
         let entities = window_entities(pool, start, end).await?;
         let ontologies = window_ontologies(pool, start, end).await;
+
+        // Confidence — how sure we are of the block. Deterministic, per the model in
+        // docs/event-timeline.md: `unknown` is low by definition (no signal); `sleep`
+        // is high (authoritative sleep data); `transit` is medium (a deterministic
+        // place-change, but thin); a `stay` scores by WITNESS AGREEMENT — how many
+        // independent source types corroborate its window (3+ high, 2 medium, else low).
+        let confidence = match kind.as_str() {
+            "unknown" => "low",
+            "sleep" => "high",
+            "transit" => "medium",
+            _ => match ontologies.len() {
+                n if n >= 3 => "high",
+                2 => "medium",
+                _ => "low",
+            },
+        };
 
         // COALESCE on avg_hr: `dayline::sleep` may already have written it for
         // the sleep event, and its window is the authoritative one. Don't
@@ -79,7 +96,8 @@ pub async fn annotate_events_for_day(pool: &PgPool, date: NaiveDate) -> Result<u
             UPDATE wiki_events
             SET avg_hr            = COALESCE($2, avg_hr),
                 entities          = $3,
-                source_ontologies = $4
+                source_ontologies = $4,
+                confidence        = $5
             WHERE id = $1
             "#,
         )
@@ -87,6 +105,7 @@ pub async fn annotate_events_for_day(pool: &PgPool, date: NaiveDate) -> Result<u
         .bind(avg_hr)
         .bind(json!(entities))
         .bind(json!(ontologies))
+        .bind(confidence)
         .execute(pool)
         .await?;
 

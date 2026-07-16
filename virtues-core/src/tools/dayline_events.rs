@@ -457,8 +457,8 @@ async fn mark_no_data(
         r#"
         INSERT INTO wiki_events (
             id, day_id, start_time, end_time,
-            auto_label, is_unknown, agent_action
-        ) VALUES ($1, $2, $3::timestamptz, $4::timestamptz, 'Unknown', TRUE, 'NO_DATA')
+            auto_label, kind, agent_action
+        ) VALUES ($1, $2, $3::timestamptz, $4::timestamptz, 'Unknown', 'unknown', 'NO_DATA')
         "#,
     )
     .bind(&event_id)
