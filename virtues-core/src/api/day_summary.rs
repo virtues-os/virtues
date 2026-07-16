@@ -37,7 +37,7 @@ The dossier is a time-ordered list of the day's evidence, each item formatted fo
 - **Sleep** spans are hard boundaries, BUT DO NOT EMIT YOUR OWN "Sleep" EVENT. The system stamps the authoritative sleep block separately from deterministic sleep-tracking data. Treat the overnight sleep span as a boundary and leave that stretch as "Unknown" — do not label it "Sleep" yourself.
 - **Audio sessions** and **messages** COLOUR the day and are CANDIDATE boundaries — weigh them, do not obey them. An audio session's content tells you what a stretch actually was (a conversation, a drive, airport noise, quiet work, sickness in bed) even when there is no location or calendar to anchor it. This is how you name a day spent entirely at home, or entirely on the road, where location never changes.
 - **Health** (heart rate, steps) is texture, never a boundary on its own.
-- **Purchases** (`[purchase]` lines) are precise evidence of what a stretch was — a meal, a shop, a checkout; the merchant names the activity.
+- **Purchases** (`[purchase]` / `[refund]` lines) are precise evidence of what a stretch was — a meal, a shop, a checkout; the merchant names the activity.
 - **Movement** (`[movement]` lines) tell you when, and how fast, the owner was actually travelling — see MOVEMENT AND TRANSIT.
 
 WHAT MAKES A BOUNDARY:
@@ -667,10 +667,23 @@ async fn day_movement_segments(
         let h = (dlat / 2.0).sin().powi(2) + lat1.cos() * lat2.cos() * (dlon / 2.0).sin().powi(2);
         6_371_000.0 * 2.0 * h.sqrt().asin()
     };
-    let moving: Vec<bool> = pts
-        .iter()
-        .map(|p| p.3.map_or(false, |s| s > MOVING_MPS))
+    // Effective speed per fix: the device's reported `speed` when present, else
+    // derived from the previous fix (distance / time). So movement is detected from
+    // the raw trace even when the `speed` column is absent — historical rows before
+    // migration 0047, or any source that doesn't report per-fix speed.
+    let eff: Vec<f64> = (0..pts.len())
+        .map(|i| {
+            pts[i].3.unwrap_or_else(|| {
+                if i == 0 {
+                    return 0.0;
+                }
+                let d = haversine((pts[i - 1].1, pts[i - 1].2), (pts[i].1, pts[i].2));
+                let dt = (pts[i].0 - pts[i - 1].0).num_seconds().max(1) as f64;
+                d / dt
+            })
+        })
         .collect();
+    let moving: Vec<bool> = eff.iter().map(|&s| s > MOVING_MPS).collect();
 
     let mut segs = Vec::new();
     let mut i = 0;
@@ -706,11 +719,9 @@ async fn day_movement_segments(
         }
         let (mut sspeed, mut nspeed) = (0.0, 0usize);
         for w in start..=end {
-            if let Some(s) = pts[w].3 {
-                if s > MOVING_MPS {
-                    sspeed += s;
-                    nspeed += 1;
-                }
+            if eff[w] > MOVING_MPS {
+                sspeed += eff[w];
+                nspeed += 1;
             }
         }
         if dist >= MIN_DIST_M {
@@ -917,7 +928,7 @@ async fn build_dossier(
     // stretch actually was — a meal, a shop, a checkout — grounding windows the audio
     // alone leaves ambiguous.
     let txns = sqlx::query(
-        "SELECT timestamp, amount, merchant_name, description \
+        "SELECT timestamp, amount, currency, merchant_name, description \
          FROM data_financial_transaction \
          WHERE timestamp >= $1::timestamptz AND timestamp <= $2::timestamptz \
            AND is_archived IS NOT TRUE \
@@ -931,6 +942,12 @@ async fn build_dossier(
     for r in &txns {
         let ts: chrono::DateTime<chrono::Utc> = r.get("timestamp");
         let cents: i64 = r.try_get("amount").unwrap_or(0);
+        let currency = r
+            .try_get::<Option<String>, _>("currency")
+            .ok()
+            .flatten()
+            .filter(|s| !s.trim().is_empty())
+            .unwrap_or_else(|| "USD".to_string());
         let merchant = r
             .try_get::<Option<String>, _>("merchant_name")
             .ok()
@@ -939,14 +956,19 @@ async fn build_dossier(
             .or_else(|| r.try_get::<Option<String>, _>("description").ok().flatten())
             .filter(|s| !s.trim().is_empty())
             .unwrap_or_else(|| "unknown merchant".to_string());
+        // Plaid signs amounts: positive = money out (a purchase), negative = money in
+        // (a refund / credit). Label by direction and show the magnitude in its own
+        // currency — never a bare "$" (which would misstate a EUR/GBP charge).
+        let kind = if cents < 0 { "refund" } else { "purchase" };
+        let magnitude = cents.unsigned_abs() as f64 / 100.0;
+        let amount = if currency == "USD" {
+            format!("${magnitude:.2}")
+        } else {
+            format!("{magnitude:.2} {currency}")
+        };
         spine.push((
             ts,
-            format!(
-                "- [purchase] {} — ${:.2} at {}",
-                fmt(&ts),
-                cents as f64 / 100.0,
-                cap(&merchant, 60)
-            ),
+            format!("- [{kind}] {} — {} at {}", fmt(&ts), amount, cap(&merchant, 60)),
         ));
     }
 
