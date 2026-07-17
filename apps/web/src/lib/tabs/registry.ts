@@ -355,7 +355,7 @@ export const tabRegistry: Record<TabType, TabDefinition> = {
 			icon: 'ri:git-branch-line',
 			normalizedRoute: '/stories',
 		}),
-		serialize: () => 'stories',
+		serialize: () => 'story', // token must equal registry key so it round-trips via KNOWN_TYPES
 		deserialize: () => '/stories',
 		icon: 'ri:git-branch-line',
 		defaultLabel: 'Stories',
@@ -635,9 +635,13 @@ export const tabRegistry: Record<TabType, TabDefinition> = {
 				entityId: match?.[1],
 			};
 		},
-		serialize: (id) => (id ? id : 'asset'),
-		deserialize: (serialized) =>
-			serialized.startsWith('file_') ? `/drive/${serialized}` : '/drive',
+		serialize: (id) => (id ? `asset_${id}` : 'asset'),
+		deserialize: (serialized) => {
+			// serialized arrives as `asset_file_{id}` (from KNOWN_TYPES dispatch) or a
+			// bare `file_{id}` legacy token; strip the type prefix and rebuild the route.
+			const fileId = serialized.startsWith('asset_') ? serialized.slice(6) : serialized;
+			return fileId.startsWith('file_') ? `/drive/${fileId}` : '/drive';
+		},
 		icon: 'ri:file-line',
 		defaultLabel: 'File',
 		component: AssetView,
@@ -849,6 +853,7 @@ export function parseRoute(route: string): ParsedRoute {
 		'ontology', // Ontology data browsing
 		'record', // /record/<ontology>/<id> — single raw record
 		'virtues', // Has /virtues/* pattern
+		'storage', // /storage — Drive surface (unified bytes view)
 		'asset', // /drive/file_{id} — must precede 'drive' (which matches all /drive/*)
 		'drive', // Has /drive/* pattern
 		'trash', // Drive trash
@@ -863,6 +868,7 @@ export function parseRoute(route: string): ParsedRoute {
 		'notebook',
 		'day',
 		'year',
+		'story', // Exact /stories | /story — deep-link resolves to StoriesView
 		'narrative-identity',
 		// Easter eggs last
 		'conway',
