@@ -32,8 +32,11 @@ const KNOWN_TYPES: TabType[] = [
 	'ontology',
 	'record',
 	'wiki',
+	'storage',
+	'asset',
 	'drive',
 	'trash',
+	'story',
 	'virtues',
 	'conway',
 ];
