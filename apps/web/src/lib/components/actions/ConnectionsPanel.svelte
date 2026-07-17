@@ -25,12 +25,12 @@
 	import {
 		listCredentials,
 		listSourceCatalog,
-		oauthStart,
 		renameCredential,
 		revokeCredential,
 		type Credential,
 		type SourceCatalogItem
 	} from '$lib/api/client';
+	import { startOAuth, reloadOnReturn } from '$lib/components/sources/connectDispatch';
 	import { relativeTime } from '$lib/actions/palette';
 
 	// ────────────────────────────────────────────────────────────────────────
@@ -112,10 +112,10 @@
 
 		if (source.auth_kind === 'via_proxy') {
 			try {
-				const { redirect_url } = await oauthStart(source.id, {
-					return_url: `${window.location.origin}/oauth/callback`
-				});
-				window.location.assign(redirect_url);
+				const { external } = await startOAuth(source.id);
+				// Tauri: the SPA stayed mounted (system browser handled the dance);
+				// refresh the credential list when the user switches back.
+				if (external) reloadOnReturn(load);
 			} catch (e) {
 				err = e instanceof Error ? e.message : String(e);
 			}

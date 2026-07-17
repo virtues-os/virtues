@@ -16,7 +16,7 @@
 	import ApiKeyConnectModal from "$lib/components/sources/ApiKeyConnectModal.svelte";
 	import ChatImportCard from "$lib/components/onboarding/ChatImportCard.svelte";
 	import CollectorPermissionCard from "$lib/components/onboarding/CollectorPermissionCard.svelte";
-	import { connectIntent } from "$lib/components/sources/connectDispatch";
+	import { connectIntent, reloadOnReturn } from "$lib/components/sources/connectDispatch";
 	import { listSourceCatalog, listCredentials, type SourceCatalogItem } from "$lib/api/client";
 	import { isTauri, isMacOS, isWindows, isLinux, thisComputerLabel } from "$lib/utils/platform";
 	import { copyFor, type Prominence } from "./sources-copy";
@@ -85,7 +85,10 @@
 				apikeyOpen = true;
 				break;
 			case "oauth":
-				break; // redirecting away
+				// Browser: redirecting away. Tauri: system browser handles it and
+				// the SPA stays mounted — refresh sources when the user returns.
+				if (intent.external) reloadOnReturn(load);
+				break;
 			case "error":
 				err = intent.message;
 				break;
