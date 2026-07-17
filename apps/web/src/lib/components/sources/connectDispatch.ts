@@ -6,13 +6,60 @@
  * `{ kind: 'oauth' }`.
  */
 import { oauthStart, type SourceCatalogItem } from '$lib/api/client';
+import { getBackendOrigin } from '$lib/config/backend';
+import { openExternal } from '$lib/tauri/bridge';
+import { isTauri } from '$lib/utils/platform';
 
 export type ConnectIntent =
 	| { kind: 'pair'; deviceType: 'ios' | 'mac'; displayName: string }
 	| { kind: 'chat_import' }
 	| { kind: 'api_key'; source: SourceCatalogItem }
-	| { kind: 'oauth' }
+	// `external` = the OAuth dance was handed off to the *system browser*
+	// (Tauri); the SPA stays mounted and should refresh on return. `false` =
+	// full-page redirect (browser tab), so the caller is navigating away.
+	| { kind: 'oauth'; external: boolean }
 	| { kind: 'error'; message: string };
+
+/**
+ * Start a via_proxy OAuth connect. Returns whether the flow was handed to the
+ * system browser (Tauri) rather than a full-page redirect (browser tab).
+ *
+ * Two shells, two behaviours:
+ *  - **Browser / box-served desktop:** same-origin. Navigate the tab to the
+ *    proxy; the callback returns to `<origin>/oauth/callback` on the box.
+ *  - **Tauri (mobile/Mac):** the SPA lives at a `tauri://` origin and the box
+ *    is reachable only at its loopback HTTP port. So (a) the callback must
+ *    return to the box's *real* origin — `getBackendOrigin()`, e.g.
+ *    `http://127.0.0.1:7117` — not `tauri://localhost`, and (b) we must NOT
+ *    call `window.location.assign` (that unmounts the whole app — the bug this
+ *    fixes). Open the system browser instead and leave the SPA mounted.
+ */
+export async function startOAuth(sourceId: string): Promise<{ external: boolean }> {
+	const origin = getBackendOrigin() || window.location.origin;
+	const { redirect_url } = await oauthStart(sourceId, {
+		return_url: `${origin}/oauth/callback`
+	});
+	if (isTauri) {
+		await openExternal(redirect_url);
+		return { external: true };
+	}
+	window.location.assign(redirect_url);
+	return { external: false };
+}
+
+/**
+ * After an external (system-browser) OAuth handoff, the box finalizes the
+ * credential server-side while the user is still in their browser. Re-fetch
+ * when they switch back to the app — one-shot on the next window focus.
+ */
+export function reloadOnReturn(reload: () => void): void {
+	if (typeof window === 'undefined') return;
+	const handler = () => {
+		window.removeEventListener('focus', handler);
+		void reload();
+	};
+	window.addEventListener('focus', handler);
+}
 
 export async function connectIntent(source: SourceCatalogItem): Promise<ConnectIntent> {
 	if (source.auth_kind === 'self_issued_bearer') {
@@ -31,11 +78,8 @@ export async function connectIntent(source: SourceCatalogItem): Promise<ConnectI
 
 	if (source.auth_kind === 'via_proxy') {
 		try {
-			const { redirect_url } = await oauthStart(source.id, {
-				return_url: `${window.location.origin}/oauth/callback`
-			});
-			window.location.assign(redirect_url);
-			return { kind: 'oauth' };
+			const { external } = await startOAuth(source.id);
+			return { kind: 'oauth', external };
 		} catch (e) {
 			return { kind: 'error', message: e instanceof Error ? e.message : String(e) };
 		}
