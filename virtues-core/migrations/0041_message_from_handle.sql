@@ -2,7 +2,7 @@
 -- The normal form of a message's sender.
 -- ─────────────────────────────────────────────────────────────────────────────
 --
--- `from_identifier` is whatever chat.db said: "+15125550142", "nick@me.com",
+-- `from_identifier` is whatever chat.db said: "+19522921126", "nick@me.com",
 -- "22395", "me". Migration 0040 gave `wiki_people` a `handles` column holding the
 -- normal form of everyone we know. This is the other half of that join — the same
 -- normal form, on the message — and without it resolution could not be a join at
