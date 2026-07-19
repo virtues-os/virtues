@@ -13,8 +13,9 @@
 //! `/v1/chat/*` route.
 //!
 //! Cost model: authoritative cost is Vercel AI Gateway's `usage.cost`
-//! (see `extract_cost_micros`); when absent we fall back to the per-model
-//! pricing in `crates/virtues-registry`. USD → micros → charge after success.
+//! (see `extract_cost_micros`); when absent we fall back to token counts ×
+//! the live gateway catalog price (`catalog.rs`), and only if THAT is cold to
+//! `FALLBACK_PRICING`. USD → micros → charge after success.
 //! Charge race window (between successful response and DB UPDATE) is
 //! tolerated; failed charges are logged but do not propagate back to
 //! the customer.
@@ -34,9 +35,23 @@ use serde_json::{json, Value};
 use std::sync::Arc;
 
 use crate::bearer_auth::BearerAuth;
-use crate::entitlement::{self, ChargeError};
+use crate::entitlement::{self, Account};
 use crate::providers::{calculate_cost, get_embeddings_config, get_provider_config};
 use crate::AppState;
+
+/// Pre-flight budget gate. AI cost is only known after the response, so we
+/// charge post-success — but we must still refuse to *start* a call when the
+/// wallet can't plausibly cover it, otherwise a $0 account chats for free
+/// (charges just get logged-and-dropped). BearerAuth already enforced expiry;
+/// here we gate empty balance so the box surfaces wallet_empty ("Add credits")
+/// before burning upstream spend. There is no per-day wall — the only ceiling
+/// is the monthly top-up cap enforced atlas-side.
+fn budget_gate(acct: &Account) -> Option<Response> {
+    if acct.balance_micros <= 0 {
+        return Some(err(StatusCode::PAYMENT_REQUIRED, "wallet_empty", "wallet empty — add credits"));
+    }
+    None
+}
 
 pub fn router() -> Router<Arc<AppState>> {
     Router::new()
@@ -60,6 +75,10 @@ struct ChatRequest {
     tools: Option<Vec<Value>>,
     #[serde(default)]
     tool_choice: Option<Value>,
+    /// Optional reasoning budget hint ("low" | "medium" | "high") forwarded to
+    /// the gateway. Lets callers (e.g. transcription) trim thinking-token cost.
+    #[serde(default)]
+    reasoning_effort: Option<String>,
 }
 
 async fn chat_completions(
@@ -68,17 +87,13 @@ async fn chat_completions(
     headers: HeaderMap,
     Json(request): Json<ChatRequest>,
 ) -> Response {
-    let Some(pool) = state.db.as_ref() else {
-        return err(
-            StatusCode::SERVICE_UNAVAILABLE,
-            "db_unavailable",
-            "entitlement DB not configured",
-        );
-    };
+    let pool = &state.db;
 
-    // A valid (non-expired) bearer can use AI — single $39/mo plan, no
-    // tier check. BearerAuth already enforced expiry; budget is enforced
-    // by charge() after the response.
+    // Pre-flight budget gate (empty wallet / daily cap). The actual charge
+    // happens after the response, since AI cost is only known then.
+    if let Some(resp) = budget_gate(&ent) {
+        return resp;
+    }
 
     let _ = &headers; // X-Virtues-Purpose accepted but ignored (v3 no-op)
 
@@ -93,18 +108,20 @@ async fn chat_completions(
             temperature: request.temperature,
             tools: request.tools.clone(),
             tool_choice: request.tool_choice.clone(),
+            reasoning_effort: request.reasoning_effort.clone(),
         };
         let pool_clone = pool.clone();
-        let bearer_hash = ent.bearer_hash.clone();
+        let account_id = ent.account_id.clone();
         let result = crate::routes::streaming::create_streaming_response(
             &state.http_client,
             &state.config,
+            &state.catalog,
             streaming_req,
             move |cost_micros| async move {
                 if let Err(e) =
-                    entitlement::charge(&pool_clone, &bearer_hash, cost_micros).await
+                    entitlement::settle(&pool_clone, &account_id, cost_micros).await
                 {
-                    tracing::warn!("ai stream charge failed: {e}");
+                    tracing::warn!("ai stream settle failed: {e}");
                 }
             },
         )
@@ -125,6 +142,9 @@ async fn chat_completions(
         "max_tokens": request.max_tokens.unwrap_or(4096),
         "temperature": request.temperature.unwrap_or(0.7),
     });
+    if let Some(ref effort) = request.reasoning_effort {
+        body["reasoning_effort"] = json!(effort);
+    }
     if let Some(ref tools) = request.tools {
         if !tools.is_empty() {
             body["tools"] = json!(tools);
@@ -155,22 +175,14 @@ async fn chat_completions(
     };
 
     if status.is_success() {
-        let cost_micros = extract_cost_micros(&body, &model);
+        let cost_micros = extract_cost_micros(&state.catalog, &body, &model);
         if cost_micros > 0 {
-            match entitlement::charge(pool, &ent.bearer_hash, cost_micros).await {
-                Ok(ok) => {
-                    tracing::debug!(
-                        model = %model,
-                        real_micros = ok.real_micros,
-                        billed_micros = ok.billed_micros,
-                        "ai chat charged"
-                    );
-                }
-                Err(e) => {
-                    // Don't fail the response; the customer already got it. Log
-                    // and let the next call be rejected by budget check.
-                    tracing::warn!("ai chat charge failed (response already returned): {e}");
-                }
+            // Post-paid settle: debit the true cost (the response already went
+            // out). The pre-flight gate refuses the next call if this puts the
+            // wallet in the red.
+            match entitlement::settle(pool, &ent.account_id, cost_micros).await {
+                Ok(balance) => tracing::debug!(model = %model, balance, "ai chat settled"),
+                Err(e) => tracing::warn!("ai chat settle failed (response already returned): {e}"),
             }
         }
     }
@@ -188,9 +200,11 @@ async fn completions(
     headers: HeaderMap,
     Json(request): Json<Value>,
 ) -> Response {
-    let Some(pool) = state.db.as_ref() else {
-        return err(StatusCode::SERVICE_UNAVAILABLE, "db_unavailable", "entitlement DB not configured");
-    };
+    let pool = &state.db;
+
+    if let Some(resp) = budget_gate(&ent) {
+        return resp;
+    }
 
     let model = request
         .get("model")
@@ -209,7 +223,7 @@ async fn completions(
         .send()
         .await;
 
-    forward_then_charge(pool, &ent.bearer_hash, &model, upstream).await
+    forward_then_charge(pool, &state.catalog, &ent.account_id, &model, upstream).await
 }
 
 async fn embeddings(
@@ -218,9 +232,11 @@ async fn embeddings(
     headers: HeaderMap,
     Json(request): Json<Value>,
 ) -> Response {
-    let Some(pool) = state.db.as_ref() else {
-        return err(StatusCode::SERVICE_UNAVAILABLE, "db_unavailable", "entitlement DB not configured");
-    };
+    let pool = &state.db;
+
+    if let Some(resp) = budget_gate(&ent) {
+        return resp;
+    }
 
     let provider = get_embeddings_config(&state.config);
     let _ = &headers;
@@ -243,17 +259,36 @@ async fn embeddings(
     let body: Value = resp.json().await.unwrap_or_else(|_| json!({}));
 
     if status.is_success() {
-        // Embedding cost: $0.0001 per 1K tokens (flat across models for now).
-        let total_tokens = body
+        // Gateway-reported cost first, exactly as on the chat path.
+        let cost_micros = if let Some(cost) = body
             .get("usage")
-            .and_then(|u| u.get("total_tokens"))
-            .and_then(|t| t.as_u64())
-            .unwrap_or(0);
-        let cost_usd = (total_tokens as f64 / 1000.0) * 0.0001;
-        let cost_micros = usd_to_micros(cost_usd);
+            .and_then(|u| u.get("cost"))
+            .and_then(|c| c.as_f64())
+        {
+            entitlement::usd_to_micros(cost)
+        } else {
+            // Fall back to the live catalog price for THIS embedding model.
+            // (This was a flat $0.0001/1K for every model — wrong in both
+            // directions; the catalog carries real per-model embedding rates.)
+            let total_tokens = body
+                .get("usage")
+                .and_then(|u| u.get("total_tokens"))
+                .and_then(|t| t.as_u64())
+                .unwrap_or(0);
+            let model = request
+                .get("model")
+                .and_then(|m| m.as_str())
+                .unwrap_or_default();
+            let (input_per_1k, _) = state
+                .catalog
+                .pricing(model)
+                .unwrap_or(virtues_registry::models::FALLBACK_PRICING);
+            let cost_usd = (total_tokens as f64 / 1000.0) * input_per_1k;
+            entitlement::usd_to_micros(cost_usd)
+        };
         if cost_micros > 0 {
-            if let Err(e) = entitlement::charge(pool, &ent.bearer_hash, cost_micros).await {
-                tracing::warn!("ai embeddings charge failed: {e}");
+            if let Err(e) = entitlement::settle(pool, &ent.account_id, cost_micros).await {
+                tracing::warn!("ai embeddings settle failed: {e}");
             }
         }
     }
@@ -265,24 +300,38 @@ async fn embeddings(
         .into_response()
 }
 
-async fn list_models(BearerAuth(_): BearerAuth) -> Response {
-    // Open the catalog to any authenticated bearer (free OR paid). No charge.
-    let models = virtues_registry::default_models();
+/// The models a box should offer, and which one fills each slot.
+///
+/// `data` is `curated ∩ catalog` — our taste, the gateway's facts, with any
+/// model the gateway no longer carries already removed (see `catalog.rs`).
+///
+/// `slots` is the live slot map. Boxes resolve a slot as:
+///
+///   1. the user's `app_assistant_profile` override — their choice always wins
+///   2. this map — so swapping the Lite model is a cloud change, not a release
+///   3. the box's compiled `default_model_for_slot` — the offline floor
+///
+/// That middle layer is the point: model ids churn faster than we ship boxes.
+///
+/// Open to any authenticated bearer (free OR paid). No charge.
+async fn list_models(
+    State(state): State<Arc<AppState>>,
+    BearerAuth(_): BearerAuth,
+) -> Response {
+    use virtues_registry::models::{default_model_for_slot, ModelSlot};
+
     let payload = json!({
         "object": "list",
-        "data": models.iter().map(|m| {
-            json!({
-                "id": m.model_id,
-                "display_name": m.display_name,
-                "provider": m.provider,
-                "object": "model",
-                "context_window": m.context_window,
-                "max_output_tokens": m.max_output_tokens,
-                "supports_tools": m.supports_tools,
-                "input_cost_per_1k": m.input_cost_per_1k,
-                "output_cost_per_1k": m.output_cost_per_1k,
-            })
-        }).collect::<Vec<_>>(),
+        "data": state.catalog.curated(),
+        "slots": {
+            "chat":   default_model_for_slot(ModelSlot::Chat),
+            "lite":   default_model_for_slot(ModelSlot::Lite),
+            "coding": default_model_for_slot(ModelSlot::Coding),
+            "image":  default_model_for_slot(ModelSlot::Image),
+        },
+        // Tells the box whether `input_cost_per_1k` is real or absent, so it can
+        // say "pricing unavailable" rather than render a confident zero.
+        "catalog_cold": state.catalog.is_cold(),
     });
     Json(payload).into_response()
 }
@@ -291,7 +340,8 @@ async fn list_models(BearerAuth(_): BearerAuth) -> Response {
 /// the response.
 async fn forward_then_charge(
     pool: &sqlx::PgPool,
-    bearer_hash: &[u8],
+    catalog: &crate::catalog::Catalog,
+    account_id: &str,
     model: &str,
     upstream: Result<reqwest::Response, reqwest::Error>,
 ) -> Response {
@@ -303,10 +353,10 @@ async fn forward_then_charge(
     let body: Value = resp.json().await.unwrap_or_else(|_| json!({}));
 
     if status.is_success() {
-        let cost_micros = extract_cost_micros(&body, model);
+        let cost_micros = extract_cost_micros(catalog, &body, model);
         if cost_micros > 0 {
-            if let Err(e) = entitlement::charge(pool, bearer_hash, cost_micros).await {
-                tracing::warn!("ai charge failed: {e}");
+            if let Err(e) = entitlement::settle(pool, account_id, cost_micros).await {
+                tracing::warn!("ai settle failed: {e}");
             }
         }
     }
@@ -329,17 +379,17 @@ async fn forward_then_charge(
 /// upstreams, embeddings) we compute from `prompt_tokens` +
 /// `completion_tokens` using the registry pricing in
 /// `crates/virtues-registry`.
-fn extract_cost_micros(body: &Value, model: &str) -> i64 {
+fn extract_cost_micros(catalog: &crate::catalog::Catalog, body: &Value, model: &str) -> i64 {
     // Authoritative: gateway-reported cost.
     if let Some(cost) = body
         .get("usage")
         .and_then(|u| u.get("cost"))
         .and_then(|c| c.as_f64())
     {
-        return usd_to_micros(cost);
+        return entitlement::usd_to_micros(cost);
     }
 
-    // Fallback: registry pricing × token usage.
+    // Fallback: live catalog pricing × token usage.
     let (prompt, completion) = body
         .get("usage")
         .map(|u| {
@@ -351,56 +401,9 @@ fn extract_cost_micros(body: &Value, model: &str) -> i64 {
             )
         })
         .unwrap_or((0, 0));
-    let cost_usd = calculate_cost(model, prompt, completion);
-    usd_to_micros(cost_usd)
-}
-
-fn usd_to_micros(usd: f64) -> i64 {
-    (usd * 1_000_000.0).round() as i64
-}
-
-#[allow(dead_code)]
-fn charge_err(e: ChargeError) -> Response {
-    // Currently unused: paid AI calls don't reject on charge failure (charge
-    // happens after a successful response). Kept so future migrations of
-    // pre-flight-charge AI flows can reuse it.
-    let (status, code, message) = match e {
-        ChargeError::Expired => (
-            StatusCode::PAYMENT_REQUIRED,
-            "bearer_expired",
-            "bearer expired — redeem a fresh voucher".to_string(),
-        ),
-        ChargeError::InsufficientBudget => (
-            StatusCode::PAYMENT_REQUIRED,
-            "insufficient_budget",
-            "today's budget exhausted".to_string(),
-        ),
-        ChargeError::NotFound => (
-            StatusCode::UNAUTHORIZED,
-            "unknown_bearer",
-            "bearer not recognized".to_string(),
-        ),
-        ChargeError::InvalidCost => (
-            StatusCode::BAD_REQUEST,
-            "invalid_cost",
-            "cost_micros must be > 0".to_string(),
-        ),
-        ChargeError::CallTooExpensive => (
-            StatusCode::BAD_REQUEST,
-            "call_too_expensive",
-            "single call exceeds per-call cap".to_string(),
-        ),
-        ChargeError::DailyCapReached => (
-            StatusCode::PAYMENT_REQUIRED,
-            "daily_cap_reached",
-            "daily spend ceiling reached".to_string(),
-        ),
-        ChargeError::Db(e) => {
-            tracing::warn!("ai charge db error: {e:#}");
-            (StatusCode::INTERNAL_SERVER_ERROR, "internal", "charge failed".to_string())
-        }
-    };
-    err(status, code, &message)
+    let cost_usd = calculate_cost(catalog, model, prompt, completion);
+    // Shared formula — no local duplicate (see entitlement::usd_to_micros).
+    entitlement::usd_to_micros(cost_usd)
 }
 
 fn err(status: StatusCode, code: &str, message: &str) -> Response {

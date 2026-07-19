@@ -22,13 +22,20 @@ hex = "0.4"
 sqlx = { version = "0.8", features = ["postgres", "runtime-tokio", "chrono", "json", "macros", "uuid"] }
 
 # HTTP
-reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls-no-provider"] }
+# `rustls-tls-webpki-roots-no-provider` is REQUIRED: the OAuth proxy calls
+# (auth::proxy) hit `https://auth.virtues.com` with a bare `reqwest::Client`.
+# Without a roots feature the trust store is EMPTY and every TLS handshake
+# fails with "error sending request for url". We bake the webpki (Mozilla)
+# roots rather than relying on the OS store so the appliance works even
+# without `ca-certificates` installed. `-no-provider` because the process
+# installs the ring CryptoProvider once at startup (see core `main.rs`).
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls-no-provider", "rustls-tls-webpki-roots-no-provider"] }
 
 # Async + utilities
 tokio = { version = "1.40", features = ["full"] }
 async-trait = "0.1"
 chrono = { version = "0.4", features = ["serde"] }
-uuid = { version = "1.10", features = ["v4", "serde"] }
+uuid = { version = "1.10", features = ["v4", "v5", "serde"] }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 anyhow = "1.0"

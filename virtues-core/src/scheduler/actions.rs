@@ -68,7 +68,11 @@ pub struct Action {
     pub condition: Option<String>,
     pub triggers: Vec<String>,
     pub memory: Option<String>,
+    /// Outbound OAuth/API-key actions anchor here (the secret they call with).
     pub credential_id: Option<String>,
+    /// Device-ingest (webhook) actions anchor here — the owning device whose
+    /// proven iroh key authorizes posts to this action.
+    pub device_id: Option<String>,
     pub runtime: String,
     pub command: Option<Vec<String>>,
     /// Manifest folder relative to the repo's `actions/` root.
@@ -234,7 +238,7 @@ pub async fn create_user_action(
     for attempt in 1u32..=MAX_ATTEMPTS {
         let result = sqlx::query(
             r#"INSERT INTO app_actions (id, name, owner, agent, cron_schedule, enabled, config, triggers)
-               VALUES ($1, $2, 'user', $3, $4, 1, $5, $6)"#,
+               VALUES ($1, $2, 'user', $3, $4, TRUE, $5::jsonb, $6::jsonb)"#,
         )
         .bind(&action_id)
         .bind(name)
@@ -339,39 +343,49 @@ pub async fn update_action(
 
     // Build the UPDATE statement. SQL has no "set only these keys" shortcut;
     // we use conditional per-field binds. The SET-clause loop and the bind
-    // loop walk the fields in the same fixed order so the `?` placeholders
-    // line up 1-to-1 with the bind values.
-    let mut sets: Vec<&str> = Vec::new();
-    let mut query = String::from("UPDATE app_actions SET ");
+    // loop walk the fields in the same fixed order so the `$N` placeholders
+    // line up 1-to-1 with the bind values. `config`/`triggers` are JSONB
+    // columns, so their placeholders are cast (`::jsonb`); the string we bind
+    // is a JSON document, mirroring the template upsert in `action_templates`.
+    let mut sets: Vec<String> = Vec::new();
+    let mut bind_idx = 0u32;
+    let mut next = || {
+        bind_idx += 1;
+        bind_idx
+    };
 
     if obj.contains_key("name") {
-        sets.push("name = ?");
+        sets.push(format!("name = ${}", next()));
     }
     if obj.contains_key("agent") {
-        sets.push("agent = ?");
+        sets.push(format!("agent = ${}", next()));
     }
     if obj.contains_key("cron_schedule") {
-        sets.push("cron_schedule = ?");
+        sets.push(format!("cron_schedule = ${}", next()));
     }
     if obj.contains_key("enabled") {
-        sets.push("enabled = ?");
+        sets.push(format!("enabled = ${}", next()));
     }
     if obj.contains_key("config") {
-        sets.push("config = ?");
+        sets.push(format!("config = ${}::jsonb", next()));
     }
     if obj.contains_key("condition") {
-        sets.push("condition = ?");
+        sets.push(format!("condition = ${}", next()));
     }
     if obj.contains_key("triggers") {
-        sets.push("triggers = ?");
+        sets.push(format!("triggers = ${}::jsonb", next()));
     }
     if obj.contains_key("memory") {
-        sets.push("memory = ?");
+        sets.push(format!("memory = ${}", next()));
     }
 
-    sets.push("updated_at = now()");
-    query.push_str(&sets.join(", "));
-    query.push_str(" WHERE id = $1");
+    sets.push("updated_at = now()".to_string());
+    let id_param = next();
+    let query = format!(
+        "UPDATE app_actions SET {} WHERE id = ${}",
+        sets.join(", "),
+        id_param
+    );
 
     // Now bind in the same order.
     let mut q = sqlx::query(&query);
@@ -406,7 +420,7 @@ pub async fn update_action(
         let b = v
             .as_bool()
             .ok_or_else(|| Error::InvalidInput("enabled must be a bool".into()))?;
-        q = q.bind(b as i64);
+        q = q.bind(b);
     }
     if let Some(v) = obj.get("config") {
         if !v.is_object() {
@@ -535,6 +549,21 @@ pub async fn create_run(
     .fetch_one(db)
     .await?;
 
+    // Onboarding (Tier 0/1): stamp the first init-sync start on the device this
+    // action collects for. No-op for cloud sources / transforms (the action has
+    // no credential, or the credential has no device_id → subquery is NULL).
+    if let Some(aid) = action_id {
+        let _ = sqlx::query(
+            "UPDATE app_device SET init_sync_started_at = now() \
+             WHERE id = (SELECT c.device_id FROM app_actions a \
+                         JOIN credentials c ON c.id = a.credential_id WHERE a.id = $1) \
+               AND init_sync_started_at IS NULL",
+        )
+        .bind(aid)
+        .execute(db)
+        .await;
+    }
+
     run_from_row(&row)
 }
 
@@ -595,15 +624,42 @@ pub async fn complete_run(
     .execute(db)
     .await?;
 
+    // Onboarding (Tier 0/1): a device's first successful run completes its
+    // init backfill. No-op for cloud/transform runs (device_id resolves NULL).
+    if status == "success" {
+        let _ = sqlx::query(
+            "UPDATE app_device SET init_sync_completed_at = now() \
+             WHERE id = (SELECT c.device_id FROM app_action_runs r \
+                         JOIN app_actions a ON a.id = r.action_id \
+                         JOIN credentials c ON c.id = a.credential_id WHERE r.id = $1) \
+               AND init_sync_completed_at IS NULL",
+        )
+        .bind(run_id)
+        .execute(db)
+        .await;
+    }
+
     Ok(())
 }
 
-/// Check if an action has an active (running) run.
+/// How long a run may sit in `running` before the concurrency gate treats it as
+/// dead. A run whose process crashed (or the box restarted mid-run) leaves a
+/// stale `running` row; without an age bound that row would block the action
+/// forever, since the only reaper (`cleanup_stale_runs`) runs at startup. This is
+/// safely larger than `SUBPROCESS_TIMEOUT` (300s), which actively kills + records
+/// `error` for hangs the box itself observes.
+const RUN_STALE_TTL_SECS: f64 = 600.0;
+
+/// Check if an action has an active (running) run, ignoring runs that have been
+/// `running` longer than [`RUN_STALE_TTL_SECS`] (treated as dead).
 pub async fn has_active_run(db: &PgPool, action_id: &str) -> Result<bool> {
     let result = sqlx::query_scalar::<_, bool>(
-        "SELECT EXISTS(SELECT 1 FROM app_action_runs WHERE action_id = $1 AND status = 'running')",
+        "SELECT EXISTS(SELECT 1 FROM app_action_runs \
+         WHERE action_id = $1 AND status = 'running' \
+         AND started_at > now() - make_interval(secs => $2))",
     )
     .bind(action_id)
+    .bind(RUN_STALE_TTL_SECS)
     .fetch_one(db)
     .await?;
 
@@ -741,6 +797,7 @@ pub fn action_from_row(row: &sqlx::postgres::PgRow) -> Result<Action> {
         triggers,
         memory: row.try_get("memory")?,
         credential_id: row.try_get("credential_id")?,
+        device_id: row.try_get("device_id")?,
         runtime,
         command,
         dir: row.try_get("dir").unwrap_or_default(),

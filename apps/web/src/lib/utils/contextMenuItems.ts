@@ -6,59 +6,63 @@
  */
 
 import type { ContextMenuItem } from '$lib/stores/contextMenu.svelte';
-import { thingsStore } from '$lib/stores/things.svelte';
+import { notebookStore } from '$lib/stores/notebook.svelte';
 import { toast } from 'svelte-sonner';
 
 /**
- * Get "Add to Thing" menu items — a submenu of all things plus a
- * "New Thing…" action that creates one and pins this URL immediately.
+ * Get "Add to Notebook" menu items — a submenu of all notebooks plus a "New Notebook…"
+ * action that creates one and adds this URL to it immediately.
+ *
+ * Organization moved from Things (folders) to Notebooks; the menu now binds the
+ * item as a Notebook member.
+ *
  * @param url - The URL of the item (e.g., '/page/page_xyz', 'https://...')
- * @param name - Optional display name for the item
+ * @param _name - Reserved for a future display label (membership is URL-native).
  */
-export function getAddToThingMenuItems(
+export function getAddToNotebookMenuItems(
 	url: string,
-	name?: string | null,
+	_name?: string | null,
 ): ContextMenuItem[] {
-	const things = thingsStore.things;
+	const notebooks = notebookStore.notebooks;
 
-	const submenu: ContextMenuItem[] = things.map((t) => ({
-		id: `thing-${t.id}`,
-		label: t.name,
-		icon: t.icon || 'ri:folder-open-line',
+	const submenu: ContextMenuItem[] = notebooks.map((s) => ({
+		id: `notebook-${s.id}`,
+		label: s.name,
+		icon: s.icon || 'ri:folder-open-line',
 		action: async () => {
 			try {
-				await thingsStore.addPin(t.id, url, { name });
-				toast(`Added to ${t.name}`);
+				await notebookStore.addItem(s.id, url);
+				toast(`Added to ${s.name}`);
 			} catch (e) {
-				console.error('[contextMenuItems] Failed to add to thing:', e);
-				toast.error('Failed to add to thing');
+				console.error('[contextMenuItems] Failed to add to notebook:', e);
+				toast.error('Failed to add to notebook');
 			}
 		},
 	}));
 
 	submenu.push({
-		id: 'new-thing-with-item',
-		label: things.length > 0 ? 'New Thing…' : 'Create First Thing…',
+		id: 'new-notebook-with-item',
+		label: notebooks.length > 0 ? 'New Notebook…' : 'Create First Notebook…',
 		icon: 'ri:add-line',
-		dividerBefore: things.length > 0,
+		dividerBefore: notebooks.length > 0,
 		action: async () => {
-			const thingName = prompt('Thing name:');
-			if (!thingName || !thingName.trim()) return;
+			const notebookName = prompt('Notebook name:');
+			if (!notebookName || !notebookName.trim()) return;
 			try {
-				const thing = await thingsStore.create(thingName.trim());
-				await thingsStore.addPin(thing.id, url, { name });
-				toast(`Created "${thing.name}" and added item`);
+				const notebook = await notebookStore.create(notebookName.trim());
+				await notebookStore.addItem(notebook.id, url);
+				toast(`Created "${notebook.name}" and added item`);
 			} catch (e) {
-				console.error('[contextMenuItems] Failed to create thing:', e);
-				toast.error('Failed to create thing');
+				console.error('[contextMenuItems] Failed to create notebook:', e);
+				toast.error('Failed to create notebook');
 			}
 		},
 	});
 
 	return [
 		{
-			id: 'add-to-thing',
-			label: 'Add to Thing',
+			id: 'add-to-notebook',
+			label: 'Add to Notebook',
 			icon: 'ri:folder-add-line',
 			dividerBefore: true,
 			submenu,
@@ -67,14 +71,14 @@ export function getAddToThingMenuItems(
 }
 
 /**
- * Get organization-related menu items (Add to Thing).
- * Used by tab context menus. "Move to Workspace" removed — single workspace.
+ * Get organization-related menu items (Add to Notebook).
+ * Used by tab/sidebar/page context menus.
  */
-export function getWorkspaceMenuItems(
+export function getNotebookMenuItems(
 	url: string,
 	name?: string | null,
 ): ContextMenuItem[] {
-	return getAddToThingMenuItems(url, name);
+	return getAddToNotebookMenuItems(url, name);
 }
 
 /**

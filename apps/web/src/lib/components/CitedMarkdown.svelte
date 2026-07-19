@@ -3,8 +3,11 @@
 	import { Streamdown } from 'svelte-streamdown';
 	import type { CitationContext, Citation } from '$lib/types/Citation';
 	import InlineCitation from './citations/InlineCitation.svelte';
-	import EntityChip from './EntityChip.svelte';
-	import { parseEntityRoute } from '$lib/utils/entityRoutes';
+	import Ref from './Ref.svelte';
+	import LinkChip from './LinkChip.svelte';
+	import MarkdownCodeBlock from './MarkdownCodeBlock.svelte';
+	import { parseEntityRoute } from '$lib/utils/refRoutes';
+	import { preprocessMarkdown } from '$lib/utils/markdownPreprocess';
 	import type { BundledTheme } from 'shiki';
 
 	interface Props {
@@ -12,9 +15,13 @@
 		isStreaming?: boolean;
 		citations?: CitationContext;
 		onCitationClick?: (citation: Citation) => void;
+		// How inline entity refs render: "link" (default, chat answers) or "quiet"
+		// (dotted-underline prose links for flowing text like the day biography).
+		refVariant?: "link" | "quiet";
 	}
 
-	let { content, isStreaming = false, citations, onCitationClick }: Props = $props();
+	let { content, isStreaming = false, citations, onCitationClick, refVariant = "link" }: Props =
+		$props();
 
 	// Read Shiki theme from CSS variable (defined in themes.css)
 	function getShikiTheme(): BundledTheme {
@@ -40,10 +47,10 @@
 		return citations?.byId.get(key);
 	}
 
-	// Preprocess content: fix adjacent citations [1][2] -> [1] [2]
 	const processedContent = $derived.by(() => {
 		if (!content) return '';
-		return content.replace(/\](\[\d+\])/g, '] $1');
+		// Fix adjacent citations [1][2] -> [1] [2]
+		return preprocessMarkdown(content.replace(/\](\[\d+\])/g, '] $1'));
 	});
 
 	// Convert CitationContext to Streamdown's sources format
@@ -76,7 +83,15 @@
 			skeleton: 'block text-foreground bg-transparent animate-none',
 			downloadButton: 'px-2 py-1 rounded hover:bg-border/50 transition-colors text-foreground-muted',
 			downloadIcon: 'w-4 h-4'
-		}
+		},
+		// Cells are rendered by streamdown's default td/th components (so inline
+		// markdown — **bold**, links, `code` — renders); we only style them here.
+		// The `table` snippet below supplies the scrolling wrapper.
+		thead: { base: 'bg-surface-elevated' },
+		tbody: { base: '' },
+		tr: { base: '' },
+		th: { base: 'px-3 py-2 text-left font-medium border-b border-border-subtle' },
+		td: { base: 'px-3 py-2 align-top border-b border-border-subtle/50' }
 	};
 </script>
 
@@ -90,7 +105,7 @@
 			shikiTheme={currentShikiTheme}
 			parseIncompleteMarkdown={isStreaming}
 			theme={customTheme}
-			controls={{ table: false }}
+			controls={{ table: true }}
 			defaultOrigin={origin}
 			allowedLinkPrefixes={['*']}
 			animation={{
@@ -114,15 +129,42 @@
 				<!-- Empty - we use CitationPanel at page level instead -->
 			{/snippet}
 
-			{#snippet link({ href, children, token }: { href: string; children: import('svelte').Snippet; token: any })}
-				{@const url = href || token?.href}
+			{#snippet table({ children }: { children: import('svelte').Snippet })}
+				<div class="my-4 w-full overflow-x-auto rounded-xl border border-border-subtle">
+					<table class="w-full border-collapse text-sm">{@render children()}</table>
+				</div>
+			{/snippet}
+
+			{#snippet code({ token }: { token: any })}
+				<MarkdownCodeBlock {token} {isStreaming} />
+			{/snippet}
+
+			{#snippet link({ children, token }: { children: import('svelte').Snippet; token: any })}
+				{@const url = token?.href}
 				{@const isEntity = url ? parseEntityRoute(url) !== null : false}
+				{@const isExternal = url ? /^https?:\/\//.test(url) : false}
 				{#if isEntity}
-					<EntityChip displayName={token.text} url={url} />
+					<Ref displayName={token.text} url={url} variant={refVariant} />
+				{:else if isExternal}
+					<LinkChip href={url} label={token.text} />
 				{:else if url}
 					<a href={url} target="_blank" rel="noopener noreferrer">{@render children()}</a>
 				{:else}
 					<span>{@render children()}</span>
+				{/if}
+			{/snippet}
+
+			{#snippet image({ token }: { token: any })}
+				{@const url = token?.href}
+				{@const label = (token?.text ?? '').replace(/^@/, '')}
+				{@const isEntity = url ? parseEntityRoute(url) !== null : false}
+				{#if isEntity}
+					<!-- `![@X](/entity/id)` — entities are always inline links now (no
+					     card), same as the editor. Streamdown parses it as an image;
+					     we render the inline ref instead. -->
+					<Ref displayName={label} {url} variant={refVariant} />
+				{:else}
+					<img src={url} alt={token?.text ?? ''} loading="lazy" style="max-width: 100%; height: auto;" />
 				{/if}
 			{/snippet}
 		</Streamdown>

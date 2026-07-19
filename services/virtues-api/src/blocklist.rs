@@ -1,6 +1,6 @@
 //! Behavioral abuse blocklist (WS-6b).
 //!
-//! Keyed on the anonymous `bearer_hash` — never a customer (this service has
+//! Keyed on the anonymous `key_hash` — never a customer (this service has
 //! no customer link, by construction). The in-memory map is the hot path; the
 //! `blocklist` table is a restart snapshot, reloaded on boot. Blocks are
 //! TTL'd: a block is a cooldown, not a permanent ban, because usage here is
@@ -55,11 +55,11 @@ struct Flag {
 }
 
 struct Inner {
-    /// bearer_hash → block expiry. Presence (with a future expiry) = blocked.
+    /// key_hash → block expiry. Presence (with a future expiry) = blocked.
     blocked: DashMap<Vec<u8>, DateTime<Utc>>,
-    /// bearer_hash → fixed-window request counter (auto rate-block input).
+    /// key_hash → fixed-window request counter (auto rate-block input).
     hits: DashMap<Vec<u8>, RateWindow>,
-    /// bearer_hash → over-ceiling watchlist (observability, even when
+    /// key_hash → over-ceiling watchlist (observability, even when
     /// enforcement is off).
     flagged: DashMap<Vec<u8>, Flag>,
     /// Max requests per `RATE_WINDOW` before a bearer is flagged (and, if
@@ -121,7 +121,7 @@ impl Blocklist {
     /// Load the non-expired block snapshot from the table on startup.
     pub async fn load_snapshot(&self, pool: &PgPool) {
         let rows: Vec<(Vec<u8>, DateTime<Utc>)> = match sqlx::query_as(
-            "SELECT bearer_hash, expires_at FROM blocklist WHERE expires_at > now()",
+            "SELECT key_hash, expires_at FROM blocklist WHERE expires_at > now()",
         )
         .fetch_all(pool)
         .await
@@ -213,7 +213,7 @@ impl Blocklist {
             .iter()
             .filter(|e| *e.value() > now)
             .map(|e| {
-                json!({ "bearer_hash": hex(e.key()), "expires_at": e.value() })
+                json!({ "key_hash": hex(e.key()), "expires_at": e.value() })
             })
             .collect();
         let flagged: Vec<Value> = self
@@ -223,7 +223,7 @@ impl Blocklist {
             .map(|e| {
                 let f = e.value();
                 json!({
-                    "bearer_hash": hex(e.key()),
+                    "key_hash": hex(e.key()),
                     "trips": f.trips,
                     "peak": f.peak,
                     "first_seen": f.first_seen,
@@ -251,9 +251,9 @@ impl Blocklist {
     ) {
         let expires_at = Utc::now() + ttl.unwrap_or(self.inner.block_ttl);
         if let Err(e) = sqlx::query(
-            "INSERT INTO blocklist (bearer_hash, reason_code, expires_at) \
+            "INSERT INTO blocklist (key_hash, reason_code, expires_at) \
              VALUES ($1, $2, $3) \
-             ON CONFLICT (bearer_hash) DO UPDATE \
+             ON CONFLICT (key_hash) DO UPDATE \
              SET reason_code = $2, blocked_at = now(), expires_at = $3",
         )
         .bind(hash)
@@ -269,7 +269,7 @@ impl Blocklist {
 
     /// Lift a block (manual unblock). Removes from table + memory.
     pub async fn unblock(&self, pool: &PgPool, hash: &[u8]) {
-        if let Err(e) = sqlx::query("DELETE FROM blocklist WHERE bearer_hash = $1")
+        if let Err(e) = sqlx::query("DELETE FROM blocklist WHERE key_hash = $1")
             .bind(hash)
             .execute(pool)
             .await

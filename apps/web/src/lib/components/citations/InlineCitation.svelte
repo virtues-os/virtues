@@ -96,7 +96,7 @@
 		color: var(--color-foreground-subtle);
 		background: var(--color-surface-elevated);
 		border: 1px solid var(--color-border);
-		border-radius: 9999px;
+		border-radius: var(--radius-full);
 		vertical-align: text-bottom;
 		position: relative;
 		top: -4px;
@@ -131,62 +131,63 @@
 		cursor: default;
 	}
 
-	/* Color classes from Tailwind - applied via the color prop */
+	/* Color classes applied via the color prop. Semantic hues route through
+	   the theme so they read correctly on all 16 themes. */
 	:global(.text-red-500) {
-		color: #ef4444;
+		color: var(--color-error);
 	}
 	:global(.text-red-600) {
-		color: #dc2626;
+		color: var(--color-error);
 	}
 	:global(.text-blue-500) {
-		color: #3b82f6;
+		color: var(--color-info);
 	}
 	:global(.text-blue-600) {
-		color: #2563eb;
+		color: var(--color-info);
 	}
 	:global(.text-green-500) {
-		color: #22c55e;
+		color: var(--color-success);
 	}
 	:global(.text-purple-500) {
-		color: #a855f7;
+		color: var(--cat-purple);
 	}
 	:global(.text-purple-400) {
-		color: #c084fc;
+		color: var(--cat-purple-light);
 	}
 	:global(.text-indigo-500) {
-		color: #6366f1;
+		color: var(--cat-indigo);
 	}
 	:global(.text-amber-500) {
-		color: #f59e0b;
+		color: var(--color-warning);
 	}
 	:global(.text-orange-500) {
-		color: #f97316;
+		color: var(--cat-orange);
 	}
 	:global(.text-pink-500) {
-		color: #ec4899;
+		color: var(--cat-pink);
 	}
 	:global(.text-cyan-500) {
-		color: #06b6d4;
+		color: var(--cat-cyan);
 	}
 	:global(.text-cyan-400) {
-		color: #22d3ee;
+		color: var(--cat-cyan-light);
 	}
 	:global(.text-emerald-500) {
-		color: #10b981;
+		color: var(--cat-emerald);
 	}
 	:global(.text-emerald-400) {
-		color: #34d399;
+		color: var(--cat-emerald-light);
 	}
 	:global(.text-violet-500) {
-		color: #8b5cf6;
+		color: var(--cat-violet);
 	}
 	:global(.text-rose-500) {
-		color: #f43f5e;
+		color: var(--cat-rose);
 	}
 	:global(.text-gray-500) {
-		color: #6b7280;
+		color: var(--color-foreground-muted);
 	}
 	:global(.text-gray-400) {
-		color: #9ca3af;
+		color: var(--color-foreground-subtle);
 	}
 </style>

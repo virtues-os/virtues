@@ -4,8 +4,9 @@
  * Detects `- [ ]` and `- [x]` patterns and renders interactive checkboxes.
  * Clicking a checkbox toggles the character in the document.
  *
- * On non-active lines: hides `- [ ] ` entirely and shows just the checkbox (GH-like).
- * On the active line: shows the raw `- ` but replaces `[ ]` with a checkbox.
+ * Always hides `- [ ] ` and shows just the checkbox (GitHub/Obsidian-like).
+ * The rendering is identical whether or not the cursor is on the line, so the
+ * line does NOT reflow as the caret enters/leaves it.
  */
 
 import type { Extension, Range } from '@codemirror/state';
@@ -55,9 +56,6 @@ function buildCheckboxDecorations(view: EditorView): DecorationSet {
 	const doc = view.state.doc;
 	const { from: vpFrom, to: vpTo } = view.viewport;
 
-	// Active-line detection for GH-like checkbox display
-	const cursorLine = doc.lineAt(view.state.selection.main.head).number;
-
 	const startLine = doc.lineAt(vpFrom).number;
 	const endLine = doc.lineAt(Math.min(vpTo, doc.length)).number;
 
@@ -68,35 +66,21 @@ function buildCheckboxDecorations(view: EditorView): DecorationSet {
 
 		const indent = match[1].length;
 		const checked = match[2].toLowerCase() === 'x';
-		const isActiveLine = lineNum === cursorLine;
 
-		if (isActiveLine) {
-			// Active line: keep `- ` visible, replace only `[ ]` with checkbox
-			const bracketFrom = line.from + indent + 2; // position of [
-			const bracketTo = bracketFrom + 3; // position after ]
-
-			builder.push(
-				Decoration.replace({
-					widget: new CheckboxWidget(checked),
-					inclusive: false,
-				}).range(bracketFrom, bracketTo)
-			);
-		} else {
-			// Non-active line: hide `- [ ] ` entirely, show just checkbox
-			const dashFrom = line.from + indent; // position of -
-			let hideEnd = line.from + match[0].length; // position after ]
-			// Also hide trailing space after ]
-			if (hideEnd < doc.length && view.state.sliceDoc(hideEnd, hideEnd + 1) === ' ') {
-				hideEnd += 1;
-			}
-
-			builder.push(
-				Decoration.replace({
-					widget: new CheckboxWidget(checked),
-					inclusive: false,
-				}).range(dashFrom, hideEnd)
-			);
+		// Hide `- [ ] ` (incl. one trailing space) and show just the checkbox.
+		// Identical on active and inactive lines so the line never reflows.
+		const dashFrom = line.from + indent; // position of -
+		let hideEnd = line.from + match[0].length; // position after ]
+		if (hideEnd < doc.length && view.state.sliceDoc(hideEnd, hideEnd + 1) === ' ') {
+			hideEnd += 1;
 		}
+
+		builder.push(
+			Decoration.replace({
+				widget: new CheckboxWidget(checked),
+				inclusive: false,
+			}).range(dashFrom, hideEnd)
+		);
 	}
 
 	builder.sort((a, b) => a.from - b.from);
@@ -112,7 +96,9 @@ const checkboxPlugin = ViewPlugin.fromClass(
 		}
 
 		update(update: ViewUpdate) {
-			if (update.docChanged || update.viewportChanged || update.selectionSet) {
+			// Rendering no longer depends on the cursor line, so we don't rebuild
+			// on selection changes — only when the doc or viewport changes.
+			if (update.docChanged || update.viewportChanged) {
 				this.decorations = buildCheckboxDecorations(update.view);
 			}
 		}

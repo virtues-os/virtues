@@ -14,107 +14,82 @@ use super::wiki::{
     create_temporal_event, delete_auto_events_for_day, get_day_sources, get_or_create_day,
     update_day, CreateTemporalEventRequest, DaySource, UpdateWikiDayRequest, WikiDay,
 };
-use virtues_registry::ontologies::registered_ontologies;
 
 // ── Constants ────────────────────────────────────────────────────────────────
 
-const SYSTEM_PROMPT: &str = r#"You are writing a brief second-person autobiography for a personal day page. Your job is to surface the meaning layer — what connected, what was unusual, what the cross-domain data reveals — not to log what happened when (the event timeline already does that).
+/// THE DETECTIVE — the Chat slot. Fuse the day's witnesses into events.
+///
+/// This is not grunt work and it is not prose. It is adjudication: every source
+/// lies a little (calendars run long, GPS drifts, diarization miscounts), the
+/// boundaries between events are latent, and the truth is the convergence of
+/// noisy signals. That is a best-model job, so it runs on Chat — once, nightly,
+/// on a completed day. It reads a compact DOSSIER (clean rollups: visits,
+/// calendar, sleep, audio sessions, messages, health) rather than a raw dump, and
+/// a few days of recent event labels to disambiguate the ambiguous stretches.
+const SEGMENT_PROMPT: &str = r#"You are the event detective for a personal life-log. You are handed a DOSSIER of a single day's evidence and must reconstruct the day as a clean, gapless timeline of events. Output ONLY a raw JSON array — no markdown, no code fences, no prose, no commentary.
 
-LENGTH — scale to data density:
-- Sparse day (a handful of data points, a few hours of coverage): 1-3 sentences. Often a single sentence is the right answer.
-- Moderate day (data across most of the waking hours, a few distinct activities): 3-6 sentences.
-- Rich day (continuous coverage, many distinct activities, multiple ontologies firing): up to 180 words.
-- Length follows evidence. Padding a sparse day with prose is the most common failure here — don't.
+Output format:
+[{"start": "HH:MM", "end": "HH:MM", "label": "Brief label", "summary": "1-3 factual sentences grounded in the dossier.", "topics": ["2-4 lowercase topical tags"]}]
 
-GUIDELINES:
-- Lead with a pattern or insight, not a timestamp. "The routine held until 4:12 PM, when you broke your usual commute to visit the Seaholm Trader Joe's for the first time in your logged history."
-- Weave health/location/duration data into narrative context. Don't report metrics in isolation — connect them to what was happening.
-- Reference specific events, people, and places by name so the text stays grounded.
-- Plain text only — no markdown, no formatting, no bold, no italic.
-- Second person ("you"), past tense. Tone: warm but precise, like a perceptive friend reflecting the day back. Never clinical, never saccharine.
-- Never infer emotions, motivations, activities, or details that aren't in the source data. If the sources show heart rate and a few messages, write about heart rate and those messages — not about "an extended social outing" or "a productive morning" you imagined to fill space.
-- Absence of data is not data. If the morning has no sources, do not write about the morning.
+HOW TO READ THE DOSSIER:
+The dossier is a time-ordered list of the day's evidence, each item formatted for its kind. The kinds play different roles:
+- **Location visits** and **calendar events** are your PRIMARY boundaries. A change of place, or the start/end of a scheduled block, is the strongest evidence that one event ended and another began.
+- **Sleep** spans are hard boundaries, BUT DO NOT EMIT YOUR OWN "Sleep" EVENT. The system stamps the authoritative sleep block separately from deterministic sleep-tracking data. Treat the overnight sleep span as a boundary and leave that stretch as "Unknown" — do not label it "Sleep" yourself.
+- **Audio sessions** and **messages** COLOUR the day and are CANDIDATE boundaries — weigh them, do not obey them. An audio session's content tells you what a stretch actually was (a conversation, a drive, airport noise, quiet work, sickness in bed) even when there is no location or calendar to anchor it. This is how you name a day spent entirely at home, or entirely on the road, where location never changes.
+- **Health** (heart rate, steps) is texture, never a boundary on its own.
+- **Purchases** (`[purchase]` / `[refund]` lines) are precise evidence of what a stretch was — a meal, a shop, a checkout; the merchant names the activity.
+- **Movement** (`[movement]` lines) tell you when, and how fast, the owner was actually travelling — see MOVEMENT AND TRANSIT.
 
-ELEVATED MOVES (use when the data supports them — required on rich days, optional on moderate days, skip on sparse days):
-1. A cross-ontology causal beat with timestamps. Tie a specific signal in one ontology to a specific signal in another, in the same sentence. ("Today you lingered in the aisles for 52 minutes and swiped for $328.50.") This is the synthesis only this system can write — no single source could.
-2. A dated temporal echo to a specific past moment. Not "your baseline" or "in recent weeks" — a specific date or named past event. ("The longest unscheduled stretch you've spent anywhere since the Friday before you signed the Holly Street lease in 2022.") Specific dates re-contextualize the present and prove memory.
-3. A behavioral fingerprint stated as a generalization. ("The pace you run when you're metabolizing a decision, not winding down from one.") This earns the synthesis: it should read as something only someone who's watched the user for a year could say. Only assert a fingerprint when the historical data actually shows the pattern.
-4. A quantified closer. End on a count or a date when you can. ("The first time in 184 days all three have been in the same twelve hours.") A number makes the synthesis falsifiable.
+WHAT MAKES A BOUNDARY:
+A boundary is a change of CONTEXT — where you are, what is scheduled, who you are with — never a change of TOPIC. A single conversation at one desk that drifts from work to lunch to weekend plans is ONE event, not three. Do not split on what is being talked about; split on the situation changing.
 
-After the diary, output a single-line EPIGRAPH — a literary subtitle for the day, in the voice of an observing third-person narrator (Jane Austen, George Eliot, middle Dickens register). This sits at the top of the day page as a chapter-heading flourish.
-
-EPIGRAPH rules:
-- 5-14 words. Sentence case. No ending punctuation. No quotation marks.
-- Draw concrete imagery from the day's actual events — a specific noun, place, or beat from the data.
-- Prefer parallelism, juxtaposition, or a small observed aphorism.
-- Gently ironic, implicit, observed from outside. Never saccharine, never explicit.
-- Never use "I", "me", "today", "the day was…". Never use first-person constructions.
-- Never a summary or list. It should feel like a line you'd remember.
-
-Good epigraphs:
-- sunlight on old tile has a way of proposing things
-- a morning led by questions, an afternoon led by a house
-- three cups of coffee, and then the hard conversation
-- a text at lunch, and the afternoon had other plans
-- the design review gave way to a backyard bigger than its photos
-- some afternoons arrive with questions of their own
-
-Bad epigraphs (do NOT produce anything like these):
-- "A productive Friday" (cliche)
-- "Today I worked and then saw a house" (explicit, first-person)
-- "A day of mixed emotions" (abstract, saccharine)
-- "Work in the morning, house viewing in the afternoon" (a summary, not an epigraph)
-
-After the epigraph, assess the DATA QUALITY of the source material using the W6H framework (Who, Whom, What, When, Where, Why, How). Think like a journalist: how well does today's data answer each dimension?
-
-Score each 1-5:
-- 1 = no signal (dimension completely absent from sources)
-- 2 = trace (a hint, but not enough to narrate)
-- 3 = routine (typical weekday coverage)
-- 4 = good (multiple corroborating sources)
-- 5 = unusually rich (deep, multi-faceted coverage)
-
-The "overall" score is your holistic judgment — NOT an average. A day with 5/5 Where but 1/1 everything else is still a 2.
-The "note" is one sentence: what's strong, what's missing.
-
-After data quality, output a JSON block with the day's events as a perfect 24-hour calendar. Use this exact output format:
-
-[diary]
----EPIGRAPH---
-[one-line epigraph]
----DATA_QUALITY---
-{"coverage":{"who":3,"whom":2,"what":4,"when":5,"where":4,"why":1,"how":2},"overall":3,"note":"One sentence about coverage."}
----EVENTS---
-[{"start": "HH:MM", "end": "HH:MM", "label": "Brief label", "summary": "1-3 factual sentences about what the source data shows."}]
+MOVEMENT AND TRANSIT:
+The dossier includes **[movement]** lines — each a stretch the owner was actually moving, with distance and average pace (km/h) computed from GPS. That is ALL you know about travel: distance and speed, nothing more. Hard rules:
+- NEVER name or infer a MODE of travel — not "walked", not "cycling", not "drove", not "tram"/"bus"/"train"/"flight"/"Uber", nothing. GPS pace cannot reliably tell a walk from a slow bike from a car in traffic, so ANY mode is a guess, and a guess is a fabrication. Describe travel ONLY by its distance and pace — "moved 1.3 km at ~18 km/h", "a 0.5 km trip" — and let the numbers stand.
+- If a stretch has NO [movement] line, they were NOT travelling. Do not call it "transit", "commute", "a drive", or "a ride". A stationary window — a checkout, a wait, a call at a desk — is a STOP, not a trip; a purchase or a conversation there is what it was. If you cannot otherwise name it, it is "Unknown".
+When a move has CONTENT (a conversation, a call), headline the span by that content, with the movement as the setting. Genuinely empty movement you may leave "Unknown"; the system marks it transit afterward.
 
 WHAT AN EVENT IS:
-An event is a contiguous block of time that the source data lets you classify. There are exactly two valid classifications:
+Each event is one of exactly two kinds:
+1. **A definitively understood block** — the dossier evidences a specific, nameable activity. The `label` is a short noun phrase (2-5 words). The `summary` is 1-3 plain factual sentences grounded in the actual evidence (place, who, durations, message counts, what the audio content shows, heart rate). No mood, no motivation, no invention.
+2. **Unknown** — the dossier does not support a specific classification for this stretch. The `label` is exactly "Unknown" and the `summary` is omitted. Do NOT invent "Morning routine" / "Rest" / "Quiet time" to fill it. A genuine gap is more truthful than a guess.
 
-1. **A definitively understood block** — the sources for this time window evidence a specific, nameable activity. The `label` is a short noun phrase (2-5 words) naming what the data shows. The `summary` is 1-3 plain factual sentences grounded in the actual data points (who/where/what was logged, durations, message counts, heart rate during the block, etc.). No inference, no mood, no motivation.
+RULES:
+- The timeline MUST cover the full 24 hours: first event starts "00:00", last ends "24:00", contiguous, no gaps, no overlaps. Fill any stretch the evidence cannot name with a single "Unknown" block.
+- Use 24-hour local time (HH:MM). Do not emit "Sleep" (the system owns it); leave overnight/rest stretches with no waking activity as "Unknown".
+- Event count scales with evidence. A rich, mobile, talkative day might have 10-16 events; a quiet day might have 3-5. Do not pad to a minimum, do not fragment a coherent context to inflate the count.
+- RECENT CONTEXT (if provided) is the last few days' event labels — use it only to disambiguate a stretch the dossier leaves ambiguous ("Unknown 18:00-19:00" that lines up with a nightly gym pattern), never to invent evidence this day lacks.
+- The `summary` is the single most load-bearing field: the user reads it AND it is embedded to measure how novel the event was. Make it factual and specific — "Forty minutes at Blue Bottle on Hayes; six messages with Maya about the lease; heart rate mid-70s." Not "a pleasant coffee.""#;
 
-2. **Unknown** — the sources for this time window do not support a specific classification. The `label` is exactly "Unknown" and the `summary` is omitted (or empty). Do not invent a label like "Morning routine", "Rest", "Quiet time", "Sleep" to fill an unknown block.
+/// THE BIOGRAPHY — the Chat slot. The short, readable memory of the day.
+///
+/// It reads the EVENTS, not the raw sources. It is NOT the log (the event timeline
+/// already lists what happened when) — it is the few sentences that, read back
+/// later, drop you straight into that day. Brevity does the selecting: you cannot
+/// fit fourteen events in four sentences, so only the parts that distinguished the
+/// day survive.
+///
+/// This deliberately dropped the old "elevated moves" (fabricated behavioural
+/// fingerprints, forced quantified closers), the literary epigraph, and the W6H
+/// data-quality block — all of which pushed the model to invent meaning the day did
+/// not carry. See docs/event-timeline.md and the essay "A Day, Well Written": the
+/// machine records what happened and hands the meaning back.
+const NARRATE_PROMPT: &str = r#"You write "the biography of the day" — a brief second-person recap for a personal day page. It is NOT a log (the event timeline already lists what happened, when). It is the short, readable memory of the day: the few sentences that, read back weeks later, drop the reader straight into that day.
 
-Every event you emit must fall into one of these two buckets. There is no third "probably this" category.
+WHAT TO WRITE:
+- A brief, natural recap that follows the day's shape, roughly start to end, grounded in real people and places by name.
+- LENGTH FOLLOWS THE DAY. A rich, eventful day earns up to ~4 sentences; an ordinary day, one or two; a thin day, a single line. Never pad. Brevity is the whole point: you cannot fit a day's fourteen events in four sentences, so only the parts that actually distinguished this day from every other one survive — the routine falls away, the distinctive thing remains. That is correct, not a loss.
+- A genuinely unremarkable day should say so plainly ("A day much like its neighbours — the office, home, the usual"), never be inflated into significance.
 
-SALIENCE FLOOR — what actually deserves to be an event:
-An event must represent meaningful continuous activity, not scattered pings. Specifically:
-- An event should cover a recognisable block — a calendar meeting, a workout, a commute leg, a sleep cycle, a phone call, a meal, an extended conversation — or a continuous stretch of activity (roughly ≥15 minutes of correlated source data: a voice recording, sustained app usage, a location dwell, a real back-and-forth messaging thread, etc.).
-- A handful of sparse data points is NOT an event. A few text messages spread over an hour, one AI chat query, an isolated web visit, a single transaction, a lone notification — these are signals that exist *within* Unknown blocks. They should NOT be promoted to their own labeled event.
-- When in doubt, prefer Unknown. A day with one or two clear events and the rest Unknown is more truthful than a day with five speculative event labels stretched over thin data. Truthful sparseness beats pleasant fabrication.
+THE ONE HARD RULE — OBSERVE, NEVER INFER:
+- Write only what the evidence shows. Warmth comes from OBSERVED detail (the low sun, the quiet train, the water) — NEVER from asserting an inner state. Do not write that the reader was "content", "productive", "happy", or "tired" as a feeling; do not say they did something "because" of a motive you are guessing at. State a departure or a goodbye as a fact ("the last coffee before she moves"); do not narrate how it felt.
+- No inferred emotion, motive, meaning, or verdict. Never call a day good or bad, well-spent or wasted. Record what happened; hand the meaning back to the reader.
+- If given RECENT DAYS (the last two weeks), use them only to recognise a real recurrence or a genuine first ("the first kayak in months", "the same thread as Saturday") — never to manufacture a pattern that isn't plainly there. Empty means a cold start: just say what the day was.
 
-EVENTS rules:
-- Events MUST cover the full 24 hours: first event starts at "00:00", last event ends at "24:00". No gaps, no overlaps.
-- Use 24-hour time format (HH:MM). Events are contiguous — each event's end time equals the next event's start time.
-- A label like "Morning routine", "Wake up", "Sleep", "Commute", "Work", "Relaxing", "Dinner" is only valid if the sources within that exact window evidence it (a sleep tracker logged a sleep cycle there, a calendar event covers it, location/transit data shows the commute, etc.). Otherwise the block is "Unknown".
-- "Sleep" specifically requires sleep-tracking data (Apple Health, Oura, etc.) inside the window. Never infer sleep from absence of other data, and never guess wake-up times — clip the sleep event at the last sleep data point and mark the rest as "Unknown".
-- It is perfectly fine — and common — for a sparse day to be mostly "Unknown" with only 1-3 understood events. That is the right answer.
-- Event count scales with evidence. A rich day might have 10-16 events; a sparse day might have 3-5 events. Do not pad to reach a minimum.
-- The `summary` field is the single most useful thing about an event. For understood events, it must reference the actual data points: "Three iMessages with Sarah about dinner plans, sent between 12:34 and 12:51. Heart rate stayed in the mid-70s." Not: "A pleasant exchange about dinner.""#;
-
-/// Max characters per prompt section before truncation
-const MAX_SECTION_CHARS: usize = 1500;
-/// Max total user prompt characters (~4000 tokens)
-const MAX_TOTAL_CHARS: usize = 16000;
+FORMAT:
+- Plain, warm prose — a perceptive friend reflecting the day back, not a novelist. No headings, no lists, no bullet points, no epigraph, no closing metric, no "data quality" note.
+- LINK entities: when you mention a person or place listed under "Entities you may link" below, link it by copying its exact markdown link, e.g. [Maya](/person/person_ab12). Link a given entity once, on first mention. Never invent a link or link anything not in that list.
+- Second person, past tense. Output ONLY the prose (markdown), nothing else."#;
 
 // ── Timezone helpers ─────────────────────────────────────────────────────────
 
@@ -141,12 +116,14 @@ pub fn day_boundaries_utc(date: NaiveDate, timezone: Option<&str>) -> (String, S
         }
     }
 
-    // Fallback: existing wide UTC window for backward compatibility
+    // Fallback: a true 24h UTC day when no/invalid timezone is available. (This
+    // should rarely execute — home_timezone is seeded from the server's own
+    // system clock; see docs/timezone-model.md.)
     let start = date.and_hms_opt(0, 0, 0).unwrap().and_utc();
     let end = date
         .succ_opt()
         .unwrap()
-        .and_hms_opt(12, 0, 0)
+        .and_hms_opt(0, 0, 0)
         .unwrap()
         .and_utc();
     (start.to_rfc3339(), end.to_rfc3339())
@@ -155,109 +132,324 @@ pub fn day_boundaries_utc(date: NaiveDate, timezone: Option<&str>) -> (String, S
 // ── Public API ───────────────────────────────────────────────────────────────
 
 /// Generate a daily summary from the day's data and save it as the autobiography.
-pub async fn generate_day_summary(pool: &PgPool, date: NaiveDate) -> Result<WikiDay> {
+/// How many things you actually DID before a day is worth narrating.
+///
+/// Not a cost knob — a truth condition. You cannot segment a day into 8–16 events
+/// from two records, and asking a model to try produces a plausible story about a
+/// day that did not happen. Three is the floor at which the day has a shape of its
+/// own rather than one the model supplies.
+///
+/// The right long-run measure is COVERAGE — how much of the waking day the events
+/// actually account for — but coverage is computed from events, and events come
+/// from this call. Counting what you did is the honest thing available before the
+/// model runs.
+const MIN_ACTIVATION_SOURCES: usize = 3;
+
+/// How many SPANS a day needs before it has a shape of its own.
+///
+/// A `wiki_event` is a span, and the doctrine wants 8–16 of them in a day. You
+/// cannot cut that out of one thing — and one thing is what most of history holds.
+/// Measured on the real box, the distribution is not a gradient, it is a cliff:
+///
+/// ```text
+///   13–373 spans   7 days    ← transcripts + visits: the week the collectors ran
+///        2 spans   6 days    ← a couple of calendar entries
+///        1 span   84 days    ← one calendar entry, sometimes an all-day one
+/// ```
+///
+/// An all-day calendar event is 24 hours long and bounds nothing. A day with one
+/// meeting in it is a day the model would have to invent 15 waking hours of.
+///
+/// Three separates the days that happened from the days we merely have a receipt
+/// for. It is deliberately strict: the cost of skipping a real day is that it stays
+/// unwritten until the collectors fill it in; the cost of narrating an empty one is
+/// a confident, permanent, searchable account of a life nobody lived.
+const MIN_SPANS: usize = 3;
+
+pub async fn segment_day_events(pool: &PgPool, date: NaiveDate) -> Result<u32> {
     // 1. Gather structured sources (calendar, locations, transactions, chats, pages, etc.)
-    let sources = get_day_sources(pool, date).await?;
+    let sources = get_day_sources(pool, date, None).await?;
 
-    // 2. Compute date boundaries using profile timezone
-    let timezone = super::profile::get_timezone(pool).await.unwrap_or(None);
-    let (start_str, end_str) = day_boundaries_utc(date, timezone.as_deref());
+    // 2. Compute date boundaries using the per-day "where the owner was" timezone
+    //    (fixed at the day's start), falling back to the box's home_timezone.
+    //    See docs/timezone-model.md.
+    let home_tz = super::profile::get_timezone(pool)
+        .await
+        .unwrap_or(None)
+        .unwrap_or_else(|| "UTC".to_string());
+    let day_tz = crate::timezone::resolve_day_timezone(pool, date, &home_tz).await;
+    let (start_str, end_str) = day_boundaries_utc(date, Some(&day_tz));
+    let timezone: Option<String> = Some(day_tz);
 
-    // 2b. Early exit if zero ontology data exists for this day
-    let ontology_presence = detect_ontology_presence(pool, &start_str, &end_str).await;
-    if !ontology_presence.iter().any(|(_, present)| *present) {
-        tracing::debug!(date = %date, "No ontology data for this day, skipping summary generation");
-        return get_or_create_day(pool, date).await;
+    // 2b. Is this a day that HAPPENED, or a day you wore a watch?
+    //
+    // The old gate asked whether ANY ontology had data — and heart rate counts. So
+    // a day whose only record was your pulse passed, and an LLM was asked to
+    // narrate it. On a real box, 449 of 533 days hold nothing but passive data.
+    // Every one of them was an Opus call away from a confident account of a day
+    // nobody lived. That is not a cost bug; it is the same sin as building a day
+    // around a broken query: FABRICATION.
+    //
+    // `is_activation_signal` has been declared on every ontology since the
+    // beginning and read by nobody — its doc comment describes exactly this. A day
+    // needs things you DID (a visit, a call, a meeting, a message) — not a sensor
+    // noticing that you exist.
+    let activation: Vec<&str> = virtues_registry::ontologies::activation_source_types();
+    let spans: Vec<&str> = virtues_registry::ontologies::span_source_types();
+
+    let acted = sources
+        .iter()
+        .filter(|s| activation.contains(&s.source_type.as_str()))
+        .count();
+    // Shape: something with a beginning and an end. An event IS a span, and you
+    // cannot cut a day into spans using things that have no duration — a thousand
+    // text messages never say when anything started. Asked to segment a day of pure
+    // moments, the model invents the boundaries, and the boundaries are the one
+    // thing it must not invent.
+    let shaped = sources
+        .iter()
+        .filter(|s| spans.contains(&s.source_type.as_str()))
+        .count();
+
+    if acted < MIN_ACTIVATION_SOURCES || shaped == 0 {
+        tracing::info!(
+            date = %date,
+            did = acted,
+            spans = shaped,
+            total_sources = sources.len(),
+            "not enough of a day to narrate — skipping summary (no LLM call)"
+        );
+        return Ok(0);
     }
 
-    // 3. Inline health aggregations
-    let health_snapshot = build_health_snapshot(pool, &start_str, &end_str).await;
+    // Never narrate a day that has not happened — checked in the day's OWN timezone,
+    // not raw UTC. On a US box the UTC clock rolls to tomorrow at ~6–7pm local, so a
+    // raw-UTC check calls the current, still-in-progress day "over" — it did exactly
+    // that, running July 15 while it was still July 15 evening in Austin. Resolve
+    // "today" in the day's timezone so the gate tracks the owner's clock. (Also still
+    // rejects genuinely future dates — 146 calendar events on the box run out to 2029.)
+    let today_in_tz = timezone
+        .as_deref()
+        .and_then(|s| s.parse::<Tz>().ok())
+        .map(|tz| chrono::Utc::now().with_timezone(&tz).date_naive())
+        .unwrap_or_else(|| chrono::Utc::now().date_naive());
+    if date >= today_in_tz {
+        tracing::info!(date = %date, "day is not over in the owner's timezone — nothing to summarise yet");
+        return Ok(0);
+    }
 
-    // 4. Fetch full social messages
-    let messages_section = build_messages_section(pool, &start_str, &end_str).await;
+    // Idempotence — the same guard that let this run repeatedly without harm.
+    //
+    // Re-segmenting DELETES and re-creates every auto event, and an event's id is
+    // content-addressed from its boundaries — so a re-cut mints new ids, strands
+    // their index chunks, and throws away their scores. The fingerprint is the
+    // day's source set; unchanged means untouched, and we return before spending a
+    // best-model call. Checked before building the dossier so a settled day costs
+    // nothing.
+    let fingerprint = fingerprint_sources(&sources);
+    let prior: Option<Option<String>> =
+        sqlx::query_scalar("SELECT sources_fingerprint FROM wiki_days WHERE date = $1")
+            .bind(date)
+            .fetch_optional(pool)
+            .await?;
+    if prior.flatten().as_deref() == Some(fingerprint.as_str()) {
+        tracing::debug!(date = %date, "sources unchanged since last segmentation — nothing to re-cut");
+        return Ok(0);
+    }
 
-    // 5. Assemble prompt from all sections
-    let day_of_week = date.format("%A").to_string();
-    let date_display = date.format("%B %e, %Y").to_string();
+    // 3. Build the dossier — one compact, time-ordered feature list from the clean
+    //    rollups (visits, calendar, sleep, audio sessions, chats, messages, health).
+    //    High-cardinality streams (messages, and later email) are folded into bounded
+    //    AGGREGATES (participant counts), never dumped row-by-row — that is what keeps
+    //    the whole thing bounded without a blunt total-length truncation.
     let tz_for_display: Option<Tz> = timezone.as_deref().and_then(|s| s.parse().ok());
+    let dossier = build_dossier(
+        pool,
+        date,
+        &start_str,
+        &end_str,
+        timezone.as_deref(),
+        tz_for_display.as_ref(),
+    )
+    .await;
 
-    let tz_label = timezone.as_deref().unwrap_or("UTC");
-    let mut prompt = format!(
-        "Date: {}, {} ({} local time)\n\
-         All timestamps in the source data below are in the user's local timezone ({}). \
-         Emit event start/end times in the same local timezone.\n",
-        day_of_week, date_display, tz_label, tz_label
-    );
+    // 4. A light recency signal — the last few days' event labels — to disambiguate
+    //    an ambiguous stretch. The detective's job is cutting, not remembering, so
+    //    this stays small.
+    let recent = recent_event_labels(pool, date, tz_for_display.as_ref()).await;
 
-    // Group sources by type and build sections
-    let grouped = group_sources_for_prompt(&sources, tz_for_display.as_ref());
-    for section in grouped {
-        append_section(&mut prompt, &section);
-    }
-
-    // Add health snapshot
-    if let Some(health) = health_snapshot {
-        append_section(&mut prompt, &health);
-    }
-
-    // Add messages
-    if let Some(msgs) = messages_section {
-        append_section(&mut prompt, &msgs);
-    }
-
-    // 5b. Supplemental sources (Phase 4: missing ontologies)
-    let transcription_section = build_transcription_section(pool, &start_str, &end_str).await;
-    let app_usage_section = build_app_usage_section(pool, &start_str, &end_str).await;
-    let web_browsing_section = build_web_browsing_section(pool, &start_str, &end_str).await;
-    let knowledge_section = build_content_section(pool, &start_str, &end_str).await;
-    let chat_section = build_chat_section(pool, &start_str, &end_str).await;
-    let page_section = build_page_section(pool, &start_str, &end_str).await;
-
-    if let Some(s) = transcription_section {
-        append_section(&mut prompt, &s);
-    }
-    if let Some(s) = app_usage_section {
-        append_section(&mut prompt, &s);
-    }
-    if let Some(s) = web_browsing_section {
-        append_section(&mut prompt, &s);
-    }
-    if let Some(s) = knowledge_section {
-        append_section(&mut prompt, &s);
-    }
-    if let Some(s) = chat_section {
-        append_section(&mut prompt, &s);
-    }
-    if let Some(s) = page_section {
-        append_section(&mut prompt, &s);
-    }
-
-    // Truncate total if needed
-    if prompt.len() > MAX_TOTAL_CHARS {
-        prompt.truncate(MAX_TOTAL_CHARS);
-        prompt.push_str("\n\n(data truncated)");
+    let mut prompt = dossier;
+    if !recent.is_empty() {
+        prompt.push_str("\n\n## Recent days (for disambiguation only)\n");
+        prompt.push_str(&recent);
     }
 
     tracing::info!(
         date = %date,
         prompt_chars = prompt.len(),
         source_count = sources.len(),
-        "Generating daily summary"
+        "segmenting day into events (detective)"
     );
 
-    // 6. Call virtues-api
-    let raw_response = call_virtues_api(pool, &prompt).await?;
+    // Chat slot: fusing noisy witnesses into a gapless timeline is adjudication,
+    // not extraction — a best-model job, run once nightly on a completed day.
+    let model = crate::api::assistant_profile::get_chat_model(pool).await?;
+    let raw_response = call_virtues_api(pool, SEGMENT_PROMPT, &model, &prompt).await?;
 
-    // 7. Parse response: extract diary text, epigraph, data quality, and structured events
-    let parsed = parse_virtues_api_response(&raw_response);
+    let events = parse_events_salvaging(&raw_response).unwrap_or_default();
+    let n = events.len() as u32;
 
-    // 8. Store structured events (event creation + location extraction)
     let day_stub = get_or_create_day(pool, date).await?;
-    if let Some(events) = parsed.events {
-        store_structured_events(pool, &day_stub, date, timezone.as_deref(), &events).await;
+    store_structured_events(pool, &day_stub, date, timezone.as_deref(), &events).await;
+
+    sqlx::query(
+        "UPDATE wiki_days SET sources_fingerprint = $1, segmented_at = now(), \
+         start_timezone = COALESCE(start_timezone, $2) WHERE date = $3",
+    )
+    .bind(&fingerprint)
+    .bind(timezone.as_deref())
+    .bind(date)
+    .execute(pool)
+    .await?;
+
+    tracing::info!(date = %date, events = n, "day segmented");
+    Ok(n)
+}
+
+/// What the day's sources looked like, so we can tell whether anything changed.
+///
+/// Count and latest timestamp per source type — enough to notice a new visit, a
+/// new transcript, another hour of messages; cheap enough to compute every hour.
+fn fingerprint_sources(sources: &[DaySource]) -> String {
+    use std::collections::BTreeMap;
+    let mut by_type: BTreeMap<&str, (usize, i64)> = BTreeMap::new();
+    for s in sources {
+        let e = by_type.entry(s.source_type.as_str()).or_insert((0, 0));
+        e.0 += 1;
+        e.1 = e.1.max(s.timestamp.timestamp());
+    }
+    let mut h = <sha2::Sha256 as sha2::Digest>::new();
+    for (k, (n, ts)) in by_type {
+        sha2::Digest::update(&mut h, format!("{k}:{n}:{ts};").as_bytes());
+    }
+    format!("{:x}", sha2::Digest::finalize(h))
+}
+
+/// How many events a day needs before it is worth WRITING about.
+///
+/// Your rule, and it was unstatable until now: the events did not exist until the
+/// narration ran, so "narrate a day that has enough events" was a circle. Split
+/// the call and it becomes a sentence.
+///
+/// A day the segmenter could only cut into two or three blocks — most of them
+/// "Unknown" — has nothing for prose to be about. Asked to write it up anyway, the
+/// model fills the silence, and what it fills it with is invention.
+const MIN_EVENTS_TO_NARRATE: usize = 4;
+
+/// NIGHTLY. Say what the day was.
+///
+/// Reads the EVENTS — not the raw sources. The prompt always claimed it did ("the
+/// event timeline already does that") while being handed the sources anyway. Now
+/// it is true: the narrative stands on the segmentation, which stands on the data.
+///
+/// Returns `None` when the day did not earn a story.
+pub async fn narrate_day(pool: &PgPool, date: NaiveDate) -> Result<Option<WikiDay>> {
+    let day = get_or_create_day(pool, date).await?;
+
+    // The events, now carrying the SCORES that scoring computed between the
+    // detective and here. `novelty_z` is what lets the narrative name the day's
+    // standout — the whole reason scoring sits between the two agents.
+    let events: Vec<DayEventRow> = sqlx::query_as(
+        // `COALESCE(..., '(unlabeled)')` so a NULL label can never fail the String
+        // decode and abort narration for the whole day.
+        "SELECT COALESCE(user_label, auto_label, '(unlabeled)') AS label, event_summary, \
+                start_time, end_time, novelty_z \
+         FROM wiki_events \
+         WHERE day_id = $1 AND NOT is_unknown AND NOT user_hidden \
+         ORDER BY start_time",
+    )
+    .bind(&day.id)
+    .fetch_all(pool)
+    .await?;
+
+    if events.len() < MIN_EVENTS_TO_NARRATE {
+        tracing::info!(
+            date = %date,
+            events = events.len(),
+            "not enough of a day to write about — skipping narration (no LLM call)"
+        );
+        return Ok(None);
     }
 
-    // 9. Save autobiography + epigraph + data quality to wiki_days
+    let home_tz = super::profile::get_timezone(pool)
+        .await
+        .unwrap_or(None)
+        .unwrap_or_else(|| "UTC".to_string());
+    let day_tz = crate::timezone::resolve_day_timezone(pool, date, &home_tz).await;
+    let tz: Option<Tz> = day_tz.parse().ok();
+    let (start_str, end_str) = day_boundaries_utc(date, Some(&day_tz));
+
+    // The most-novel event, if scoring has run — a SOFT hint the model may lean on
+    // (cold until the baseline warms; brevity does the selection regardless). Kept
+    // because reading `novelty_z` here is what the day-pipeline guard asserts:
+    // scoring sits between the detective and the biography for a reason.
+    let standout = events
+        .iter()
+        .enumerate()
+        .filter_map(|(i, e)| e.novelty_z.map(|z| (i, z)))
+        .max_by(|a, b| a.1.total_cmp(&b.1))
+        .filter(|(_, z)| *z > 0.5)
+        .map(|(i, _)| i);
+
+    // The events, as the source material — a clean list. The biography does NOT
+    // re-list them; brevity forces it to keep only what distinguished the day.
+    let fmt = |t: &chrono::DateTime<chrono::Utc>| match tz {
+        Some(z) => t.with_timezone(&z).format("%H:%M").to_string(),
+        None => t.format("%H:%M").to_string(),
+    };
+    let mut prompt = format!(
+        "# {}\n\n## The day's events (already logged — do NOT re-list them; write the memory of the day)\n\n",
+        date.format("%A, %B %-d, %Y")
+    );
+    for (i, e) in events.iter().enumerate() {
+        prompt.push_str(&format!("- {}–{} {}", fmt(&e.start_time), fmt(&e.end_time), e.label));
+        if let Some(s) = e.event_summary.as_deref().filter(|s| !s.trim().is_empty()) {
+            prompt.push_str(&format!(": {s}"));
+        }
+        if Some(i) == standout {
+            prompt.push_str("  (the most unusual beat of the day)");
+        }
+        prompt.push('\n');
+    }
+
+    if let Some(h) = build_health_snapshot(pool, &start_str, &end_str).await {
+        append_section(&mut prompt, &h);
+    }
+
+    // The last 14 days — only to recognise a real recurrence or a genuine first
+    // ("first kayak in months", "same thread as Saturday"), never to invent a
+    // pattern. Empty on a cold start.
+    let case_file = recent_event_case_file(pool, date, tz.as_ref()).await;
+    if !case_file.is_empty() {
+        prompt.push_str("\n## Recent days (the last two weeks)\n\n");
+        prompt.push_str(&case_file);
+    }
+
+    // The day's resolved people + places, each as its exact ref-link, so the
+    // biography can cite them the way chat/pages do — `[Name](/person/person_x)` —
+    // which the day page renders as an entity pill (link-when-reading).
+    let entities = day_entities_for_refs(pool, &start_str, &end_str).await;
+    if !entities.is_empty() {
+        prompt.push_str("\n## Entities you may link (copy the exact markdown link)\n");
+        prompt.push_str(&entities.join("\n"));
+        prompt.push('\n');
+    }
+
+    // Chat slot: this is the narrative call, and the only one left that earns it.
+    let model = crate::api::assistant_profile::get_chat_model(pool).await?;
+    let raw = call_virtues_api(pool, NARRATE_PROMPT, &model, &prompt).await?;
+    let parsed = parse_virtues_api_response(&raw);
+
     let day = update_day(
         pool,
         date,
@@ -267,7 +459,7 @@ pub async fn generate_day_summary(pool: &PgPool, date: NaiveDate) -> Result<Wiki
             epigraph: parsed.epigraph,
             last_edited_by: Some("ai".to_string()),
             cover_image: None,
-            start_timezone: timezone.clone(),
+            start_timezone: Some(day_tz),
             data_quality: parsed
                 .data_quality
                 .as_deref()
@@ -277,7 +469,12 @@ pub async fn generate_day_summary(pool: &PgPool, date: NaiveDate) -> Result<Wiki
     )
     .await?;
 
-    Ok(day)
+    sqlx::query("UPDATE wiki_days SET narrated_at = now() WHERE date = $1")
+        .bind(date)
+        .execute(pool)
+        .await?;
+
+    Ok(Some(day))
 }
 
 // ── Section builders ─────────────────────────────────────────────────────────
@@ -286,78 +483,6 @@ pub async fn generate_day_summary(pool: &PgPool, date: NaiveDate) -> Result<Wiki
 struct PromptSection {
     heading: String,
     body: String,
-}
-
-/// Group DaySources by type into prompt sections.
-///
-/// `tz` is the user's profile timezone — source timestamps are stored in UTC
-/// but must be rendered in local time so the LLM emits matching local HH:MM
-/// values (which `parse_hhmm_to_utc` will then re-localise on the way back in).
-fn group_sources_for_prompt(sources: &[DaySource], tz: Option<&Tz>) -> Vec<PromptSection> {
-    use std::collections::BTreeMap;
-
-    // Group by source_type, preserve order
-    let mut groups: BTreeMap<String, Vec<&DaySource>> = BTreeMap::new();
-    for source in sources {
-        groups
-            .entry(source_type_heading(&source.source_type))
-            .or_default()
-            .push(source);
-    }
-
-    let mut sections = Vec::new();
-    for (heading, items) in groups {
-        let mut lines = Vec::new();
-        let mut char_count = 0;
-
-        for item in &items {
-            let time = match tz {
-                Some(tz) => item.timestamp.with_timezone(tz).format("%H:%M").to_string(),
-                None => item.timestamp.format("%H:%M").to_string(),
-            };
-            let line = match &item.preview {
-                Some(preview) => format!("- {} {} — {}", time, item.label, preview),
-                None => format!("- {} {}", time, item.label),
-            };
-
-            char_count += line.len();
-            if char_count > MAX_SECTION_CHARS {
-                lines.push(format!("  ... and {} more", items.len() - lines.len()));
-                break;
-            }
-            lines.push(line);
-        }
-
-        if !lines.is_empty() {
-            sections.push(PromptSection {
-                heading,
-                body: lines.join("\n"),
-            });
-        }
-    }
-
-    sections
-}
-
-/// Map source_type to a readable heading for the prompt
-fn source_type_heading(source_type: &str) -> String {
-    match source_type {
-        "calendar" => "Schedule".to_string(),
-        "email" => "Emails".to_string(),
-        "location" => "Places".to_string(),
-        "workout" => "Workouts".to_string(),
-        "sleep" => "Sleep".to_string(),
-        "transaction" => "Transactions".to_string(),
-        "transcription" => "Voice Recordings".to_string(),
-        "chat" => "Chats".to_string(),
-        "page" => "Pages Updated".to_string(),
-        "steps" => "Steps".to_string(),
-        other if other.starts_with("message:") => {
-            let platform = other.strip_prefix("message:").unwrap_or("unknown");
-            format!("Messages ({})", platform)
-        }
-        other => other.to_string(),
-    }
 }
 
 /// Build health snapshot from aggregation queries
@@ -373,7 +498,7 @@ async fn build_health_snapshot(
         r#"
         SELECT MIN(bpm), MAX(bpm), ROUND(AVG(bpm)), COUNT(*)
         FROM data_health_heart_rate
-        WHERE timestamp >= $1 AND timestamp <= $2
+        WHERE timestamp >= $1::timestamptz AND timestamp <= $2::timestamptz
         "#,
     )
     .bind(start_str)
@@ -397,7 +522,7 @@ async fn build_health_snapshot(
         r#"
         SELECT SUM(step_count)
         FROM data_health_steps
-        WHERE timestamp >= $1 AND timestamp <= $2
+        WHERE timestamp >= $1::timestamptz AND timestamp <= $2::timestamptz
         "#,
     )
     .bind(start_str)
@@ -423,496 +548,610 @@ async fn build_health_snapshot(
     }
 }
 
-/// Build messages section with full body text (for semantic richness)
-async fn build_messages_section(
-    pool: &PgPool,
-    start_str: &str,
-    end_str: &str,
-) -> Option<PromptSection> {
-    use sqlx::Row;
-
-    let rows: Vec<sqlx::postgres::PgRow> = sqlx::query(
-        r#"
-        SELECT from_name, body, channel, timestamp
-        FROM data_communication_message
-        WHERE timestamp >= $1 AND timestamp <= $2
-        ORDER BY timestamp ASC
-        LIMIT 30
-        "#,
-    )
-    .bind(start_str)
-    .bind(end_str)
-    .fetch_all(pool)
-    .await
-    .ok()
-    .unwrap_or_default();
-
-    if rows.is_empty() {
-        return None;
-    }
-
-    let total_count = rows.len();
-    let mut lines = Vec::new();
-    let mut char_count = 0;
-
-    for row in &rows {
-        let from_name: String = row
-            .try_get("from_name")
-            .ok()
-            .flatten()
-            .unwrap_or_else(|| "Unknown".to_string());
-        let body: String = row
-            .try_get("body")
-            .ok()
-            .flatten()
-            .unwrap_or_default();
-
-        // Truncate individual message bodies
-        let body_preview: String = body.chars().take(120).collect();
-        let body_display = if body_preview.len() < body.len() {
-            format!("{}...", body_preview)
-        } else {
-            body_preview
-        };
-
-        let line = format!("- {}: \"{}\"", from_name, body_display);
-        char_count += line.len();
-        if char_count > MAX_SECTION_CHARS {
-            lines.push(format!("  ... and {} more messages", total_count - lines.len()));
-            break;
-        }
-        lines.push(line);
-    }
-
-    Some(PromptSection {
-        heading: format!("Messages ({} total)", total_count),
-        body: lines.join("\n"),
-    })
-}
-
-/// Build transcription section with full transcript text (truncated per-item)
-async fn build_transcription_section(
-    pool: &PgPool,
-    start_str: &str,
-    end_str: &str,
-) -> Option<PromptSection> {
-    use sqlx::Row;
-
-    let rows: Vec<sqlx::postgres::PgRow> = sqlx::query(
-        r#"
-        SELECT text, title, start_time
-        FROM data_communication_transcription
-        WHERE start_time >= $1 AND start_time <= $2
-        ORDER BY start_time ASC
-        LIMIT 20
-        "#,
-    )
-    .bind(start_str)
-    .bind(end_str)
-    .fetch_all(pool)
-    .await
-    .ok()
-    .unwrap_or_default();
-
-    if rows.is_empty() {
-        return None;
-    }
-
-    let mut lines = Vec::new();
-    let mut char_count = 0;
-
-    for row in &rows {
-        let title: Option<String> = row.try_get("title").ok().flatten();
-        let text: String = row.try_get("text").ok().flatten().unwrap_or_default();
-
-        // Truncate individual transcripts to ~500 chars
-        let preview: String = text.chars().take(500).collect();
-        let display = if preview.len() < text.len() {
-            format!("{}...", preview)
-        } else {
-            preview
-        };
-
-        let line = match title {
-            Some(t) => format!("- {}: \"{}\"", t, display),
-            None => format!("- \"{}\"", display),
-        };
-
-        char_count += line.len();
-        if char_count > MAX_SECTION_CHARS {
-            lines.push(format!("  ... and {} more transcriptions", rows.len() - lines.len()));
-            break;
-        }
-        lines.push(line);
-    }
-
-    Some(PromptSection {
-        heading: format!("Voice Transcriptions ({} recordings)", rows.len()),
-        body: lines.join("\n"),
-    })
-}
-
-/// Build app usage section grouped by app, showing top apps by duration
-async fn build_app_usage_section(
-    pool: &PgPool,
-    start_str: &str,
-    end_str: &str,
-) -> Option<PromptSection> {
-    use sqlx::Row;
-
-    // Group by app_name, sum duration (end_time - start_time in seconds)
-    let rows: Vec<sqlx::postgres::PgRow> = sqlx::query(
-        r#"
-        SELECT app_name,
-               COUNT(*) as sessions,
-               CAST(SUM(
-                   EXTRACT(EPOCH FROM (end_time - start_time))
-               ) AS BIGINT) as total_seconds
-        FROM data_activity_app_usage
-        WHERE start_time >= $1 AND start_time <= $2
-          AND app_name IS NOT NULL
-        GROUP BY app_name
-        ORDER BY total_seconds DESC
-        LIMIT 10
-        "#,
-    )
-    .bind(start_str)
-    .bind(end_str)
-    .fetch_all(pool)
-    .await
-    .ok()
-    .unwrap_or_default();
-
-    if rows.is_empty() {
-        return None;
-    }
-
-    let mut lines = Vec::new();
-    for row in &rows {
-        let app: String = row.try_get("app_name").ok().flatten().unwrap_or_default();
-        let seconds: i64 = row.try_get("total_seconds").ok().unwrap_or(0);
-        let minutes = seconds / 60;
-
-        if minutes > 0 {
-            lines.push(format!("- {} — {} min", app, minutes));
-        }
-    }
-
-    if lines.is_empty() {
-        return None;
-    }
-
-    Some(PromptSection {
-        heading: "App Usage (top by time)".to_string(),
-        body: lines.join("\n"),
-    })
-}
-
-/// Build web browsing section showing top pages by duration
-async fn build_web_browsing_section(
-    pool: &PgPool,
-    start_str: &str,
-    end_str: &str,
-) -> Option<PromptSection> {
-    use sqlx::Row;
-
-    let rows: Vec<sqlx::postgres::PgRow> = sqlx::query(
-        r#"
-        SELECT page_title, url, visit_duration_seconds
-        FROM data_activity_web_browsing
-        WHERE timestamp >= $1 AND timestamp <= $2
-          AND page_title IS NOT NULL
-        ORDER BY visit_duration_seconds DESC
-        LIMIT 10
-        "#,
-    )
-    .bind(start_str)
-    .bind(end_str)
-    .fetch_all(pool)
-    .await
-    .ok()
-    .unwrap_or_default();
-
-    if rows.is_empty() {
-        return None;
-    }
-
-    let mut lines = Vec::new();
-    let mut char_count = 0;
-
-    for row in &rows {
-        let title: String = row.try_get("page_title").ok().flatten().unwrap_or_default();
-        let duration: Option<i64> = row.try_get("visit_duration_seconds").ok().flatten();
-
-        let line = match duration {
-            Some(s) if s >= 60 => format!("- {} ({} min)", title, s / 60),
-            Some(s) if s > 0 => format!("- {} ({}s)", title, s),
-            _ => format!("- {}", title),
-        };
-
-        char_count += line.len();
-        if char_count > MAX_SECTION_CHARS {
-            break;
-        }
-        lines.push(line);
-    }
-
-    if lines.is_empty() {
-        return None;
-    }
-
-    Some(PromptSection {
-        heading: "Web Browsing".to_string(),
-        body: lines.join("\n"),
-    })
-}
-
-/// Build content section (documents + AI conversations)
-async fn build_content_section(
-    pool: &PgPool,
-    start_str: &str,
-    end_str: &str,
-) -> Option<PromptSection> {
-    use sqlx::Row;
-
-    let mut lines = Vec::new();
-
-    // Documents
-    let docs: Vec<sqlx::postgres::PgRow> = sqlx::query(
-        r#"
-        SELECT title, document_type
-        FROM data_content_document
-        WHERE created_time >= $1 AND created_time <= $2
-          AND title IS NOT NULL
-        ORDER BY created_time ASC
-        LIMIT 10
-        "#,
-    )
-    .bind(start_str)
-    .bind(end_str)
-    .fetch_all(pool)
-    .await
-    .ok()
-    .unwrap_or_default();
-
-    for row in &docs {
-        let title: String = row.try_get("title").ok().flatten().unwrap_or_default();
-        let doc_type: Option<String> = row.try_get("document_type").ok().flatten();
-        let line = match doc_type {
-            Some(t) => format!("- [{}] {}", t, title),
-            None => format!("- {}", title),
-        };
-        lines.push(line);
-    }
-
-    // AI conversations — group by conversation_id, show first user message as title
-    let convos: Vec<sqlx::postgres::PgRow> = sqlx::query(
-        r#"
-        SELECT conversation_id, model,
-               MIN(CASE WHEN role = 'user' THEN content END) as first_user_msg
-        FROM data_content_conversation
-        WHERE timestamp >= $1 AND timestamp <= $2
-        GROUP BY conversation_id
-        ORDER BY MIN(timestamp) ASC
-        LIMIT 10
-        "#,
-    )
-    .bind(start_str)
-    .bind(end_str)
-    .fetch_all(pool)
-    .await
-    .ok()
-    .unwrap_or_default();
-
-    for row in &convos {
-        let model: Option<String> = row.try_get("model").ok().flatten();
-        let first_msg: Option<String> = row.try_get("first_user_msg").ok().flatten();
-
-        let preview: String = first_msg
-            .unwrap_or_else(|| "(conversation)".to_string())
-            .chars()
-            .take(80)
-            .collect();
-
-        let line = match model {
-            Some(m) => format!("- AI chat ({}): \"{}\"", m, preview),
-            None => format!("- AI chat: \"{}\"", preview),
-        };
-        lines.push(line);
-    }
-
-    if lines.is_empty() {
-        return None;
-    }
-
-    Some(PromptSection {
-        heading: "Knowledge & Documents".to_string(),
-        body: lines.join("\n"),
-    })
-}
-
-/// Build Virtues chat sessions section — shows chat titles and first user message
-async fn build_chat_section(
-    pool: &PgPool,
-    start_str: &str,
-    end_str: &str,
-) -> Option<PromptSection> {
-    use sqlx::Row;
-
-    let rows: Vec<sqlx::postgres::PgRow> = sqlx::query(
-        r#"
-        SELECT c.title, c.message_count,
-               (SELECT content FROM app_chat_messages
-                WHERE chat_id = c.id AND role = 'user'
-                ORDER BY rowid ASC LIMIT 1) as first_msg
-        FROM app_chats c
-        WHERE c.created_at >= $1 AND c.created_at <= $2
-        ORDER BY c.created_at ASC
-        LIMIT 10
-        "#,
-    )
-    .bind(start_str)
-    .bind(end_str)
-    .fetch_all(pool)
-    .await
-    .ok()
-    .unwrap_or_default();
-
-    if rows.is_empty() {
-        return None;
-    }
-
-    let mut lines = Vec::new();
-    for row in &rows {
-        let title: String = row.try_get("title").ok().flatten().unwrap_or_default();
-        let msg_count: i64 = row.try_get("message_count").unwrap_or(0);
-        let first_msg: Option<String> = row.try_get("first_msg").ok().flatten();
-
-        let preview: String = first_msg
-            .unwrap_or_default()
-            .chars()
-            .take(80)
-            .collect();
-
-        if preview.is_empty() {
-            lines.push(format!("- {} ({} messages)", title, msg_count));
-        } else {
-            lines.push(format!("- {}: \"{}\" ({} messages)", title, preview, msg_count));
-        }
-    }
-
-    Some(PromptSection {
-        heading: format!("Virtues Chat Sessions ({} total)", rows.len()),
-        body: lines.join("\n"),
-    })
-}
-
-/// Build page edits section — shows pages created/edited this day
-async fn build_page_section(
-    pool: &PgPool,
-    start_str: &str,
-    end_str: &str,
-) -> Option<PromptSection> {
-    use sqlx::Row;
-
-    let rows: Vec<sqlx::postgres::PgRow> = sqlx::query(
-        r#"
-        SELECT title,
-               CASE WHEN created_at >= $1 AND created_at <= $2 THEN 'created' ELSE 'edited' END as action
-        FROM app_pages
-        WHERE updated_at >= $1 AND updated_at <= $2
-        ORDER BY updated_at ASC
-        LIMIT 15
-        "#,
-    )
-    .bind(start_str)
-    .bind(end_str)
-    .fetch_all(pool)
-    .await
-    .ok()
-    .unwrap_or_default();
-
-    if rows.is_empty() {
-        return None;
-    }
-
-    let lines: Vec<String> = rows
-        .iter()
-        .map(|row| {
-            let title: String = row.try_get("title").ok().flatten().unwrap_or_default();
-            let action: String = row.try_get("action").ok().flatten().unwrap_or_default();
-            format!("- {} ({})", title, action)
-        })
-        .collect();
-
-    Some(PromptSection {
-        heading: format!("Wiki Pages ({} edits)", rows.len()),
-        body: lines.join("\n"),
-    })
-}
-
 /// Append a section to the prompt string
 fn append_section(prompt: &mut String, section: &PromptSection) {
     prompt.push_str(&format!("\n## {}\n{}\n", section.heading, section.body));
 }
 
-// ── Context vector computation ───────────────────────────────────────────────
+// ── The dossier ────────────────────────────────────────────────────────────────
 
-/// Detect which ontologies have data for a given time window.
-/// Returns Vec<(ontology_name, has_data)> for all registered ontologies.
-async fn detect_ontology_presence(
+/// An event row for narration. `novelty_z` is a soft selection hint (and the
+/// scoring-reaches-the-biography guard); the biography leans on brevity, not scores.
+#[derive(sqlx::FromRow)]
+struct DayEventRow {
+    label: String,
+    event_summary: Option<String>,
+    start_time: chrono::DateTime<chrono::Utc>,
+    end_time: chrono::DateTime<chrono::Utc>,
+    novelty_z: Option<f64>,
+}
+
+/// The day's resolved people + places, each as its exact ref-link route, so the
+/// biography can cite them the way chat/pages do — `[Name](/person/person_x)` — and
+/// the day page renders them as entity pills.
+async fn day_entities_for_refs(pool: &PgPool, start_str: &str, end_str: &str) -> Vec<String> {
+    use sqlx::Row;
+    let rows = sqlx::query(
+        "SELECT 'person' AS kind, pe.id AS id, pe.canonical_name AS name \
+         FROM wiki_entity_refs er JOIN wiki_people pe ON pe.id = er.entity_id \
+         WHERE er.entity_type = 'person' \
+           AND er.timestamp >= $1::timestamptz AND er.timestamp <= $2::timestamptz \
+         UNION \
+         SELECT 'place', p.id, p.name \
+         FROM wiki_entity_refs er JOIN wiki_places p ON p.id = er.entity_id \
+         WHERE er.entity_type = 'place' \
+           AND er.timestamp >= $1::timestamptz AND er.timestamp <= $2::timestamptz",
+    )
+    .bind(start_str)
+    .bind(end_str)
+    .fetch_all(pool)
+    .await
+    .unwrap_or_default();
+    rows.iter()
+        .filter_map(|r| {
+            let kind: String = r.get("kind");
+            let id: String = r.get("id");
+            let name = r
+                .try_get::<Option<String>, _>("name")
+                .ok()
+                .flatten()
+                .filter(|s| !s.trim().is_empty())?;
+            Some(format!("- [{name}](/{kind}/{id})"))
+        })
+        .collect()
+}
+
+/// Cap a free-text field to `n` chars, appending an ellipsis when it was clipped.
+/// This is what bounds the dossier by construction — audio content especially.
+fn cap(s: &str, n: usize) -> String {
+    let t = s.trim();
+    if t.chars().count() <= n {
+        return t.to_string();
+    }
+    let mut out: String = t.chars().take(n).collect();
+    out.push('…');
+    out
+}
+
+/// Segment the day's GPS trace into MOVING stretches, computed from `speed` (never
+/// stored — movement is the negative space between stays). A stretch is a run of
+/// fixes above a walking-still threshold, coalescing brief pauses (a light, a
+/// checkout) so one trip is one stretch, and kept only if it actually covered
+/// ground. Keyed on the raw trace, NOT on visits, so a stretch with no clustered
+/// visit (a whole evening at an unrecognised home) still gets grounded — and,
+/// crucially, a mostly-stationary window (standing at a till) yields NO stretch, so
+/// the detective has no license to call it transit. Returns
+/// `(start, end, distance_km, avg_moving_kmh)`.
+async fn day_movement_segments(
     pool: &PgPool,
     start_str: &str,
     end_str: &str,
-) -> Vec<(String, bool)> {
-    let ontologies = registered_ontologies();
-    let mut presence = Vec::with_capacity(ontologies.len());
+) -> Vec<(
+    chrono::DateTime<chrono::Utc>,
+    chrono::DateTime<chrono::Utc>,
+    f64,
+    Option<f64>,
+)> {
+    use sqlx::Row;
+    let rows = sqlx::query(
+        "SELECT timestamp, latitude, longitude, speed FROM data_location_point \
+         WHERE timestamp >= $1::timestamptz AND timestamp <= $2::timestamptz \
+         ORDER BY timestamp",
+    )
+    .bind(start_str)
+    .bind(end_str)
+    .fetch_all(pool)
+    .await
+    .unwrap_or_default();
 
-    for ont in &ontologies {
-        let ts_col = ont.timestamp_column;
-        let table = ont.table_name;
-        let query = format!(
-            "SELECT COUNT(*) as cnt FROM {} WHERE {} >= $1 AND {} <= $2 LIMIT 1",
-            table, ts_col, ts_col
-        );
+    let pts: Vec<(chrono::DateTime<chrono::Utc>, f64, f64, Option<f64>)> = rows
+        .iter()
+        .map(|r| {
+            (
+                r.get::<chrono::DateTime<chrono::Utc>, _>("timestamp"),
+                r.get::<f64, _>("latitude"),
+                r.get::<f64, _>("longitude"),
+                r.try_get::<Option<f64>, _>("speed").ok().flatten(),
+            )
+        })
+        .collect();
 
-        let has_data: bool = sqlx::query_scalar::<_, i32>(&query)
-            .bind(start_str)
-            .bind(end_str)
-            .fetch_optional(pool)
-            .await
+    const MOVING_MPS: f64 = 1.0; // ~3.6 km/h — above GPS jitter, still catches a walk
+    const MERGE_GAP_S: i64 = 180; // fold still-pauses under 3 min into one trip
+    const MIN_DIST_M: f64 = 150.0; // discard jitter that never really went anywhere
+
+    let haversine = |a: (f64, f64), b: (f64, f64)| -> f64 {
+        let (lat1, lon1) = (a.0.to_radians(), a.1.to_radians());
+        let (lat2, lon2) = (b.0.to_radians(), b.1.to_radians());
+        let (dlat, dlon) = (lat2 - lat1, lon2 - lon1);
+        let h = (dlat / 2.0).sin().powi(2) + lat1.cos() * lat2.cos() * (dlon / 2.0).sin().powi(2);
+        6_371_000.0 * 2.0 * h.sqrt().asin()
+    };
+    // Effective speed per fix: the device's reported `speed` when present, else
+    // derived from the previous fix (distance / time). So movement is detected from
+    // the raw trace even when the `speed` column is absent — historical rows before
+    // migration 0047, or any source that doesn't report per-fix speed.
+    let eff: Vec<f64> = (0..pts.len())
+        .map(|i| {
+            pts[i].3.unwrap_or_else(|| {
+                if i == 0 {
+                    return 0.0;
+                }
+                let d = haversine((pts[i - 1].1, pts[i - 1].2), (pts[i].1, pts[i].2));
+                let dt = (pts[i].0 - pts[i - 1].0).num_seconds().max(1) as f64;
+                d / dt
+            })
+        })
+        .collect();
+    let moving: Vec<bool> = eff.iter().map(|&s| s > MOVING_MPS).collect();
+
+    let mut segs = Vec::new();
+    let mut i = 0;
+    while i < pts.len() {
+        if !moving[i] {
+            i += 1;
+            continue;
+        }
+        // Grow a run from i, bridging still-gaps shorter than MERGE_GAP_S.
+        let start = i;
+        let mut end = i;
+        let mut j = i + 1;
+        while j < pts.len() {
+            if moving[j] {
+                end = j;
+                j += 1;
+            } else {
+                let mut k = j;
+                while k < pts.len() && !moving[k] {
+                    k += 1;
+                }
+                if k < pts.len() && (pts[k].0 - pts[end].0).num_seconds() <= MERGE_GAP_S {
+                    j = k; // brief pause — same trip
+                } else {
+                    break;
+                }
+            }
+        }
+        // Distance over the run, and average speed of its moving fixes.
+        let mut dist = 0.0;
+        for w in start..end {
+            dist += haversine((pts[w].1, pts[w].2), (pts[w + 1].1, pts[w + 1].2));
+        }
+        let (mut sspeed, mut nspeed) = (0.0, 0usize);
+        for w in start..=end {
+            if eff[w] > MOVING_MPS {
+                sspeed += eff[w];
+                nspeed += 1;
+            }
+        }
+        if dist >= MIN_DIST_M {
+            let avg_kmh = (nspeed > 0).then(|| sspeed / nspeed as f64 * 3.6);
+            segs.push((pts[start].0, pts[end].0, dist / 1000.0, avg_kmh));
+        }
+        i = end + 1;
+    }
+    segs
+}
+
+/// Build the DOSSIER: one compact, time-ordered feature list of the day's
+/// evidence, drawn from the CLEAN rollups (visits, calendar, sleep, audio
+/// sessions) plus a messages roll-up and a health snapshot. Each item is capped
+/// per-type, so the whole dossier is bounded by construction — that is what lets
+/// the detective drop the old global truncation.
+async fn build_dossier(
+    pool: &PgPool,
+    date: NaiveDate,
+    start_str: &str,
+    end_str: &str,
+    tz_label: Option<&str>,
+    tz: Option<&Tz>,
+) -> String {
+    use sqlx::Row;
+
+    let fmt = |t: &chrono::DateTime<chrono::Utc>| match tz {
+        Some(z) => t.with_timezone(z).format("%H:%M").to_string(),
+        None => t.format("%H:%M").to_string(),
+    };
+
+    // The time-ordered spine — everything with a start (and usually an end).
+    let mut spine: Vec<(chrono::DateTime<chrono::Utc>, String)> = Vec::new();
+
+    // Visits — place resolved through wiki_places, arrival→departure.
+    let visits = sqlx::query(
+        "SELECT COALESCE(p.name, v.place_name) AS place, v.arrival_time, v.departure_time \
+         FROM data_location_visit v \
+         LEFT JOIN wiki_entity_refs er \
+           ON er.source_table = 'data_location_visit' AND er.source_id = v.id \
+          AND er.entity_type = 'place' \
+         LEFT JOIN wiki_places p ON p.id = er.entity_id \
+         WHERE v.arrival_time >= $1::timestamptz AND v.arrival_time <= $2::timestamptz \
+         ORDER BY v.arrival_time",
+    )
+    .bind(start_str)
+    .bind(end_str)
+    .fetch_all(pool)
+    .await
+    .unwrap_or_default();
+    for r in &visits {
+        let place = r
+            .try_get::<Option<String>, _>("place")
             .ok()
             .flatten()
-            .unwrap_or(0)
-            > 0;
-
-        presence.push((ont.name.to_string(), has_data));
+            .filter(|s| !s.trim().is_empty())
+            .unwrap_or_else(|| "Unknown place".to_string());
+        let arr: chrono::DateTime<chrono::Utc> = r.get("arrival_time");
+        let dep: Option<chrono::DateTime<chrono::Utc>> =
+            r.try_get("departure_time").ok().flatten();
+        let span = match dep {
+            Some(d) => format!("{}–{}", fmt(&arr), fmt(&d)),
+            None => format!("{}–?", fmt(&arr)),
+        };
+        spine.push((arr, format!("- [visit] {} — {}", span, cap(&place, 80))));
     }
 
-    presence
+    // Movement — MOVING stretches of the day's GPS trace, computed from `speed`
+    // (never stored). This is the ONLY evidence the detective may use for HOW the
+    // owner travelled; without it the model fabricates a mode (the "tram" over a real
+    // walk). Keyed on the raw trace, not visits, so movement is grounded even where
+    // no visit was clustered — and a mostly-stationary window yields NO stretch, so
+    // it can never be called transit.
+    for (s, e, km, avg_kmh) in day_movement_segments(pool, start_str, end_str).await {
+        let line = match avg_kmh {
+            Some(kmh) => format!(
+                "- [movement] {}–{} — {:.1} km at ~{:.0} km/h",
+                fmt(&s),
+                fmt(&e),
+                km,
+                kmh,
+            ),
+            None => format!("- [movement] {}–{} — {:.1} km, pace unknown", fmt(&s), fmt(&e), km),
+        };
+        spine.push((s, line));
+    }
+
+    // Calendar — title, start→end. All-day events bound nothing; flag them so the
+    // detective does not treat a 24h block as a boundary.
+    let cal = sqlx::query(
+        "SELECT title, start_time, end_time, is_all_day \
+         FROM data_calendar_event \
+         WHERE start_time >= $1::timestamptz AND start_time <= $2::timestamptz \
+           AND (status IS NULL OR status <> 'cancelled') \
+         ORDER BY start_time",
+    )
+    .bind(start_str)
+    .bind(end_str)
+    .fetch_all(pool)
+    .await
+    .unwrap_or_default();
+    for r in &cal {
+        let title: String = r.try_get("title").unwrap_or_default();
+        let s: chrono::DateTime<chrono::Utc> = r.get("start_time");
+        let e: chrono::DateTime<chrono::Utc> = r.get("end_time");
+        let all_day: bool = r.try_get("is_all_day").unwrap_or(false);
+        let line = if all_day {
+            format!("- [calendar, all-day, bounds nothing] {}", cap(&title, 100))
+        } else {
+            format!("- [calendar] {}–{} — {}", fmt(&s), fmt(&e), cap(&title, 100))
+        };
+        spine.push((s, line));
+    }
+
+    // Sleep — a hard boundary. Overlap the window (sleep starts the night before).
+    let sleep = sqlx::query(
+        "SELECT start_time, end_time, duration_minutes \
+         FROM data_health_sleep \
+         WHERE end_time >= $1::timestamptz AND start_time <= $2::timestamptz \
+         ORDER BY start_time",
+    )
+    .bind(start_str)
+    .bind(end_str)
+    .fetch_all(pool)
+    .await
+    .unwrap_or_default();
+    for r in &sleep {
+        let s: chrono::DateTime<chrono::Utc> = r.get("start_time");
+        let e: chrono::DateTime<chrono::Utc> = r.get("end_time");
+        let dur: Option<i32> = r.try_get("duration_minutes").ok().flatten();
+        let dur_str = dur
+            .map(|m| format!(" ({}h{:02}m)", m / 60, m % 60))
+            .unwrap_or_default();
+        spine.push((s, format!("- [sleep] {}–{}{}", fmt(&s), fmt(&e), dur_str)));
+    }
+
+    // Audio sessions — the coarse context rollup. Content (the stitched summaries)
+    // is the reasoning material that lets the detective name a location-less day,
+    // capped so a talkative day cannot bloat the prompt.
+    let audio = sqlx::query(
+        "SELECT start_time, end_time, speaker_mode, content \
+         FROM data_audio_session \
+         WHERE start_time >= $1::timestamptz AND start_time < $2::timestamptz \
+         ORDER BY start_time",
+    )
+    .bind(start_str)
+    .bind(end_str)
+    .fetch_all(pool)
+    .await
+    .unwrap_or_default();
+    for r in &audio {
+        let s: chrono::DateTime<chrono::Utc> = r.get("start_time");
+        let e: chrono::DateTime<chrono::Utc> = r.get("end_time");
+        let mode: i16 = r.try_get("speaker_mode").unwrap_or(0);
+        let who = match mode {
+            0 => "silent/ambient",
+            1 => "solo voice",
+            2 => "conversation",
+            _ => "group",
+        };
+        let content: Option<String> = r.try_get("content").ok().flatten();
+        let content_part = content
+            .as_deref()
+            .filter(|c| !c.trim().is_empty())
+            .map(|c| format!(" — {}", cap(c, 400)))
+            .unwrap_or_default();
+        spine.push((
+            s,
+            format!("- [audio, {}] {}–{}{}", who, fmt(&s), fmt(&e), content_part),
+        ));
+    }
+
+    // Assistant chats — the user's own conversations with Virtues that day. A weak
+    // boundary signal but real "what was I doing / thinking" context. Bounded by
+    // LIMIT and the title cap.
+    let chats = sqlx::query(
+        "SELECT title, message_count, created_at \
+         FROM app_chats \
+         WHERE created_at >= $1::timestamptz AND created_at <= $2::timestamptz \
+         ORDER BY created_at LIMIT 12",
+    )
+    .bind(start_str)
+    .bind(end_str)
+    .fetch_all(pool)
+    .await
+    .unwrap_or_default();
+    for r in &chats {
+        let title = r
+            .try_get::<Option<String>, _>("title")
+            .ok()
+            .flatten()
+            .filter(|s| !s.trim().is_empty())
+            .unwrap_or_else(|| "(untitled)".to_string());
+        let mc: i64 = r.try_get("message_count").unwrap_or(0);
+        let s: chrono::DateTime<chrono::Utc> = r.get("created_at");
+        spine.push((
+            s,
+            format!("- [assistant chat] {} — \"{}\" ({mc} msgs)", fmt(&s), cap(&title, 80)),
+        ));
+    }
+
+    // Purchases — discrete, high-meaning events, passed INDIVIDUALLY (not aggregated:
+    // there are a handful a day and the merchant IS the signal). Each names what a
+    // stretch actually was — a meal, a shop, a checkout — grounding windows the audio
+    // alone leaves ambiguous.
+    let txns = sqlx::query(
+        "SELECT timestamp, amount, currency, merchant_name, description \
+         FROM data_financial_transaction \
+         WHERE timestamp >= $1::timestamptz AND timestamp <= $2::timestamptz \
+           AND is_archived IS NOT TRUE \
+         ORDER BY timestamp",
+    )
+    .bind(start_str)
+    .bind(end_str)
+    .fetch_all(pool)
+    .await
+    .unwrap_or_default();
+    for r in &txns {
+        let ts: chrono::DateTime<chrono::Utc> = r.get("timestamp");
+        let cents: i64 = r.try_get("amount").unwrap_or(0);
+        let currency = r
+            .try_get::<Option<String>, _>("currency")
+            .ok()
+            .flatten()
+            .filter(|s| !s.trim().is_empty())
+            .unwrap_or_else(|| "USD".to_string());
+        let merchant = r
+            .try_get::<Option<String>, _>("merchant_name")
+            .ok()
+            .flatten()
+            .filter(|s| !s.trim().is_empty())
+            .or_else(|| r.try_get::<Option<String>, _>("description").ok().flatten())
+            .filter(|s| !s.trim().is_empty())
+            .unwrap_or_else(|| "unknown merchant".to_string());
+        // Plaid signs amounts: positive = money out (a purchase), negative = money in
+        // (a refund / credit). Label by direction and show the magnitude in its own
+        // currency — never a bare "$" (which would misstate a EUR/GBP charge).
+        let kind = if cents < 0 { "refund" } else { "purchase" };
+        let magnitude = cents.unsigned_abs() as f64 / 100.0;
+        let amount = if currency == "USD" {
+            format!("${magnitude:.2}")
+        } else {
+            format!("{magnitude:.2} {currency}")
+        };
+        spine.push((
+            ts,
+            format!("- [{kind}] {} — {} at {}", fmt(&ts), amount, cap(&merchant, 60)),
+        ));
+    }
+
+    spine.sort_by_key(|(k, _)| *k);
+
+    // Messages — participant names (via entity refs) and counts, not bare totals.
+    // role IN ('sender','recipient'): a message you *received* resolves via its
+    // sender, a message you *sent* via its recipient — so a thread counts toward the
+    // person on the other end regardless of direction (otherwise your own replies
+    // vanish from the tally). COUNT(DISTINCT id) still holds: a 1:1 message carries
+    // exactly one of the two roles, so no double-count.
+    let msgs = sqlx::query(
+        "SELECT COALESCE(pe.canonical_name, m.from_name) AS who, COUNT(DISTINCT m.id) AS n \
+         FROM data_communication_message m \
+         LEFT JOIN wiki_entity_refs er \
+           ON er.source_table = 'data_communication_message' AND er.source_id = m.id \
+          AND er.entity_type = 'person' AND er.role IN ('sender', 'recipient') \
+         LEFT JOIN wiki_people pe ON pe.id = er.entity_id \
+         WHERE m.timestamp >= $1::timestamptz AND m.timestamp <= $2::timestamptz \
+         GROUP BY who ORDER BY n DESC LIMIT 15",
+    )
+    .bind(start_str)
+    .bind(end_str)
+    .fetch_all(pool)
+    .await
+    .unwrap_or_default();
+    let msg_lines: Vec<String> = msgs
+        .iter()
+        .map(|r| {
+            let who = r
+                .try_get::<Option<String>, _>("who")
+                .ok()
+                .flatten()
+                .filter(|s| !s.trim().is_empty())
+                .unwrap_or_else(|| "unknown".to_string());
+            let n: i64 = r.try_get("n").unwrap_or(0);
+            format!("- {} with {}", n, cap(&who, 60))
+        })
+        .collect();
+
+    // ── Assemble ──
+    let day_of_week = date.format("%A").to_string();
+    let date_display = date.format("%B %e, %Y").to_string();
+    let tz_name = tz_label.unwrap_or("UTC");
+    let mut out = format!(
+        "Date: {}, {} ({} local time)\n\
+         All times below are the user's local timezone ({}). \
+         Emit event start/end times in the same local timezone.\n\n\
+         ## Timeline evidence\n",
+        day_of_week, date_display, tz_name, tz_name
+    );
+    if spine.is_empty() {
+        out.push_str("(no located visits, calendar blocks, sleep, or audio for this day)\n");
+    } else {
+        for (_, line) in &spine {
+            out.push_str(line);
+            out.push('\n');
+        }
+    }
+
+    if !msg_lines.is_empty() {
+        out.push_str("\n## Messages\n");
+        out.push_str(&msg_lines.join("\n"));
+        out.push('\n');
+    }
+
+    if let Some(h) = build_health_snapshot(pool, start_str, end_str).await {
+        append_section(&mut out, &h);
+    }
+
+    out
 }
+
+/// The detective's LIGHT recency signal — the last few days' event labels, grouped
+/// by day. Just enough to disambiguate an ambiguous stretch; the detective's job
+/// is cutting, not remembering. Empty string on a cold start.
+async fn recent_event_labels(pool: &PgPool, date: NaiveDate, tz: Option<&Tz>) -> String {
+    let _ = tz;
+    let rows = sqlx::query_as::<_, (NaiveDate, String)>(
+        "SELECT d.date, COALESCE(e.user_label, e.auto_label, '(unlabeled)') AS label \
+         FROM wiki_events e JOIN wiki_days d ON d.id = e.day_id \
+         WHERE d.date >= $1 AND d.date < $2 AND NOT e.is_unknown AND NOT e.user_hidden \
+         ORDER BY d.date, e.start_time",
+    )
+    .bind(date - chrono::Duration::days(3))
+    .bind(date)
+    .fetch_all(pool)
+    .await
+    .unwrap_or_default();
+
+    if rows.is_empty() {
+        return String::new();
+    }
+
+    use std::collections::BTreeMap;
+    let mut by_day: BTreeMap<NaiveDate, Vec<String>> = BTreeMap::new();
+    for (d, label) in rows {
+        by_day.entry(d).or_default().push(label);
+    }
+    by_day
+        .into_iter()
+        .map(|(d, labels)| format!("- {}: {}", d.format("%a %b %-d"), labels.join(", ")))
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+/// The day-summary's FULL case file — the last 14 days of events, label + summary,
+/// grouped by day. This is where recent context earns its keep, for voice and for
+/// dated temporal echoes. Empty string on a cold start.
+async fn recent_event_case_file(pool: &PgPool, date: NaiveDate, tz: Option<&Tz>) -> String {
+    let _ = tz;
+    let rows = sqlx::query_as::<_, (NaiveDate, String, Option<String>)>(
+        "SELECT d.date, COALESCE(e.user_label, e.auto_label, '(unlabeled)') AS label, e.event_summary \
+         FROM wiki_events e JOIN wiki_days d ON d.id = e.day_id \
+         WHERE d.date >= $1 AND d.date < $2 AND NOT e.is_unknown AND NOT e.user_hidden \
+         ORDER BY d.date, e.start_time",
+    )
+    .bind(date - chrono::Duration::days(14))
+    .bind(date)
+    .fetch_all(pool)
+    .await
+    .unwrap_or_default();
+
+    if rows.is_empty() {
+        return String::new();
+    }
+
+    use std::collections::BTreeMap;
+    let mut by_day: BTreeMap<NaiveDate, Vec<String>> = BTreeMap::new();
+    for (d, label, summary) in rows {
+        let line = match summary.as_deref().filter(|s| !s.trim().is_empty()) {
+            Some(s) => format!("  - {}: {}", label, cap(s, 200)),
+            None => format!("  - {}", label),
+        };
+        by_day.entry(d).or_default().push(line);
+    }
+    by_day
+        .into_iter()
+        .map(|(d, lines)| format!("{}\n{}", d.format("%A, %B %-d"), lines.join("\n")))
+        .collect::<Vec<_>>()
+        .join("\n\n")
+}
+
 
 // ── virtues-api call ───────────────────────────────────────────────────────────
 
 /// Call virtues-api for the summary generation
-async fn call_virtues_api(pool: &PgPool, user_prompt: &str) -> Result<String> {
-    let chat_model = crate::api::assistant_profile::get_chat_model(pool).await?;
-
-    // Bearer-auth path: the device's own bearer funds this background call,
-    // auto-renewing via the voucher dance on a 402 bearer_expired.
-    // System purpose — debits the OS reserve, not the user's chat budget.
+/// One call, two jobs — so the caller says which model and which instructions.
+///
+/// Segmenting a day is structured extraction: cut it into spans, name them, ground
+/// each in the data. That is grunt work, and it belongs on the Lite slot. Writing
+/// the day up is prose about what it MEANT, and that is the Chat slot.
+///
+/// They used to be a single Opus call producing both, which is why events cost
+/// narrative prices, why "only narrate a day with enough events" was circular
+/// (the events did not exist until the narration ran), and why there could be no
+/// hourly cron.
+async fn call_virtues_api(
+    pool: &PgPool,
+    system_prompt: &str,
+    model: &str,
+    user_prompt: &str,
+) -> Result<String> {
+    // api_key-auth path: the device's own key funds this background call,
+    // with one auto-top-up-and-retry on a 402 wallet_empty.
     let client = crate::virtues_api::client::BearerClient::from_env(pool.clone())
-        .with_purpose(crate::virtues_api::client::Purpose::System);
+        .with_purpose(crate::virtues_api::client::Purpose::System)
+        .with_feature("day_summary");
     let response = client
         .post_json(
             "/v1/ai/chat/completions",
             &serde_json::json!({
-                "model": chat_model,
+                "model": model,
                 "messages": [
-                    {"role": "system", "content": SYSTEM_PROMPT},
+                    {"role": "system", "content": system_prompt},
                     {"role": "user", "content": user_prompt}
                 ],
-                "max_tokens": 1000,
+                // 16 events x ~60-90 tokens is 960-1440 for the events ALONE,
+                // before the 180-word diary, the epigraph and the data_quality
+                // JSON. At 1000 a rich day truncated mid-array — and since the
+                // parse was all-or-nothing, that day lost EVERY event with only
+                // a warn!. Raised, and the parse now salvages besides.
+                "max_tokens": 4000,
                 "temperature": 0.3
             }),
         )
@@ -962,6 +1201,81 @@ struct LlmEvent {
     /// because the model may omit it for Unknown blocks.
     #[serde(default)]
     summary: Option<String>,
+    /// 2-4 lowercase topical tags. Free: the model is already reading the
+    /// window to write the summary. Feeds `topic_entity_novelty`, which until
+    /// now scored empty arrays on every cron-generated event because nothing
+    /// but the chat tool ever wrote this column.
+    #[serde(default)]
+    topics: Vec<String>,
+}
+
+/// Parse the events array, salvaging complete objects from a truncated one.
+///
+/// The strict path first: a well-formed array parses whole, which is the
+/// overwhelmingly common case.
+///
+/// If that fails, we do NOT throw the day away. The previous behaviour ran
+/// `serde_json::from_str::<Vec<LlmEvent>>` over the entire array, so a response
+/// clipped by `max_tokens` mid-event was invalid JSON — the day got ZERO events
+/// and a `warn!` nobody read. Losing sixteen real events because the
+/// seventeenth was cut in half is the worst possible trade.
+///
+/// So: scan top-level `{...}` objects, decode each independently, keep the ones
+/// that are whole. A truncated tail costs you the truncated event and nothing
+/// else.
+fn parse_events_salvaging(raw: &str) -> Option<Vec<LlmEvent>> {
+    if let Ok(events) = serde_json::from_str::<Vec<LlmEvent>>(raw) {
+        return Some(events);
+    }
+
+    let mut events = Vec::new();
+    let mut depth = 0usize;
+    let mut start = None;
+    let mut in_string = false;
+    let mut escaped = false;
+
+    for (i, c) in raw.char_indices() {
+        if in_string {
+            match c {
+                _ if escaped => escaped = false,
+                '\\' => escaped = true,
+                '"' => in_string = false,
+                _ => {}
+            }
+            continue;
+        }
+        match c {
+            '"' => in_string = true,
+            '{' => {
+                if depth == 0 {
+                    start = Some(i);
+                }
+                depth += 1;
+            }
+            '}' => {
+                depth = depth.saturating_sub(1);
+                if depth == 0 {
+                    if let Some(s0) = start.take() {
+                        if let Ok(ev) = serde_json::from_str::<LlmEvent>(&raw[s0..=i]) {
+                            events.push(ev);
+                        }
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+
+    if events.is_empty() {
+        tracing::warn!(raw, "no salvageable events in LLM response");
+        return None;
+    }
+
+    tracing::warn!(
+        salvaged = events.len(),
+        "events array was malformed (likely truncated) — salvaged complete events"
+    );
+    Some(events)
 }
 
 /// Parsed day summary from LLM response
@@ -993,12 +1307,7 @@ fn parse_virtues_api_response(response: &str) -> ParsedDaySummary {
             .trim_start_matches("```")
             .trim_end_matches("```")
             .trim();
-        let parsed: Option<Vec<LlmEvent>> = serde_json::from_str(events_str)
-            .map_err(|e| {
-                tracing::warn!(error = %e, raw = events_str, "Failed to parse structured events from LLM");
-                e
-            })
-            .ok();
+        let parsed = parse_events_salvaging(events_str);
         (before, parsed)
     } else {
         (response, None)
@@ -1094,11 +1403,16 @@ async fn store_structured_events(
                 user_label: None,
                 user_location: None,
                 user_notes: None,
+                // `source_ontologies` and `entities` are stamped afterwards by
+                // `dayline::annotate` from the event's own time window — they
+                // are facts about what the window contains, not about what the
+                // model said.
                 source_ontologies: None,
                 is_unknown: Some(event.is_unknown),
                 is_transit: Some(false),
                 is_user_added: Some(false),
                 event_summary: event.summary.clone(),
+                topics: Some(serde_json::json!(event.topics)),
             },
         )
         .await;
@@ -1123,10 +1437,20 @@ async fn store_structured_events(
 /// Returns the place name with the longest visit duration, or None if no location data.
 async fn extract_event_location(pool: &PgPool, start: &str, end: &str) -> Option<String> {
     use sqlx::Row;
+    // `data_location_visit.place_name` is never populated by entity resolution —
+    // the resolved name lives in `wiki_places`, linked via `wiki_entity_refs`
+    // (same shape the timeline reader uses). JOIN through to get the real name;
+    // selecting the visit's own `place_name` column always returned NULL.
     let row: Option<sqlx::postgres::PgRow> = sqlx::query(
-        "SELECT place_name FROM data_location_visit \
-         WHERE arrival_time >= $1 AND arrival_time <= $2 \
-         ORDER BY duration_minutes DESC LIMIT 1",
+        "SELECT p.name AS place_name \
+         FROM data_location_visit v \
+         JOIN wiki_entity_refs er \
+           ON er.source_table = 'data_location_visit' \
+          AND er.source_id = v.id \
+          AND er.entity_type = 'place' \
+         JOIN wiki_places p ON p.id = er.entity_id \
+         WHERE v.arrival_time >= $1::timestamptz AND v.arrival_time <= $2::timestamptz \
+         ORDER BY v.duration_minutes DESC LIMIT 1",
     )
     .bind(start)
     .bind(end)
@@ -1146,6 +1470,7 @@ struct ResolvedEvent {
     label: String,
     summary: Option<String>,
     is_unknown: bool,
+    topics: Vec<String>,
 }
 
 /// Take LLM events and produce a perfect 24h timeline (00:00–24:00) by filling gaps
@@ -1177,6 +1502,7 @@ fn backfill_24h_events(
                 label: e.label.clone(),
                 summary: e.summary.clone().filter(|s| !s.trim().is_empty()),
                 is_unknown,
+                topics: e.topics.clone(),
             })
         })
         .collect();
@@ -1211,6 +1537,7 @@ fn backfill_24h_events(
                 label: "Unknown".to_string(),
                 summary: None,
                 is_unknown: true,
+                topics: Vec::new(),
             });
         }
         cursor = event.end_utc;
@@ -1225,6 +1552,7 @@ fn backfill_24h_events(
             label: "Unknown".to_string(),
             summary: None,
             is_unknown: true,
+            topics: Vec::new(),
         });
     }
 

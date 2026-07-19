@@ -13,6 +13,7 @@ import type { TabType, ParsedRoute } from './types';
 import { getLocalDateSlug } from '$lib/utils/dateUtils';
 
 // Import all view components
+import HomeView from '$lib/components/tabs/views/HomeView.svelte';
 import ChatView from '$lib/components/tabs/views/ChatView.svelte';
 import HistoryView from '$lib/components/tabs/views/HistoryView.svelte';
 import WikiView from '$lib/components/tabs/views/WikiView.svelte';
@@ -20,36 +21,25 @@ import WikiDetailView from '$lib/components/tabs/views/WikiDetailView.svelte';
 import WikiListView from '$lib/components/tabs/views/WikiListView.svelte';
 import ConnectionsPanel from '$lib/components/actions/ConnectionsPanel.svelte';
 import CredentialDetailView from '$lib/components/tabs/views/CredentialDetailView.svelte';
-import UsageView from '$lib/components/tabs/views/UsageView.svelte';
 import ActionsView from '$lib/components/tabs/views/ActionsView.svelte';
 import ActionDetailView from '$lib/components/tabs/views/ActionDetailView.svelte';
 import DevelopersView from '$lib/components/tabs/views/DevelopersView.svelte';
-import ProfileView from '$lib/components/tabs/views/ProfileView.svelte';
-import AssistantView from '$lib/components/tabs/views/AssistantView.svelte';
+import SettingsView from '$lib/components/tabs/views/SettingsView.svelte';
 import DriveView from '$lib/components/tabs/views/DriveView.svelte';
+import StorageView from '$lib/components/tabs/views/StorageView.svelte';
+import AssetView from '$lib/components/tabs/views/AssetView.svelte';
 import TrashView from '$lib/components/tabs/views/TrashView.svelte';
-import DeveloperSqlView from '$lib/components/tabs/views/DeveloperSqlView.svelte';
-import DeveloperTerminalView from '$lib/components/tabs/views/DeveloperTerminalView.svelte';
-import DeveloperSitemapView from '$lib/components/tabs/views/DeveloperSitemapView.svelte';
-import DeveloperLakeView from '$lib/components/tabs/views/DeveloperLakeView.svelte';
-import BillingView from '$lib/components/tabs/views/BillingView.svelte';
-import ChangelogView from '$lib/components/tabs/views/ChangelogView.svelte';
-import DevicesView from '$lib/components/tabs/views/DevicesView.svelte';
-import ActivityView from '$lib/components/tabs/views/ActivityView.svelte';
-import ByoKeyView from '$lib/components/tabs/views/ByoKeyView.svelte';
-import SystemInfoView from '$lib/components/tabs/views/SystemInfoView.svelte';
 import ConwayView from '$lib/components/tabs/views/ConwayView.svelte';
 import DogJumpView from '$lib/components/tabs/views/DogJumpView.svelte';
 import PagesView from '$lib/components/tabs/views/PagesView.svelte';
 import PageDetailView from '$lib/components/tabs/views/PageDetailView.svelte';
-import ThingsView from '$lib/components/tabs/views/ThingsView.svelte';
-import ThingDetailView from '$lib/components/tabs/views/ThingDetailView.svelte';
-import FolderView from '$lib/components/tabs/views/FolderView.svelte';
+import NotebooksListView from '$lib/components/tabs/views/NotebooksListView.svelte';
+import StoriesView from '$lib/components/tabs/views/StoriesView.svelte';
+import NotebookDetailView from '$lib/components/tabs/views/NotebookDetailView.svelte';
 import NarrativeIdentityView from '$lib/components/tabs/views/NarrativeIdentityView.svelte';
-import EntitiesView from '$lib/components/tabs/views/EntitiesView.svelte';
-import ToolsView from '$lib/components/tabs/views/ToolsView.svelte';
 import OntologyIndexView from '$lib/components/tabs/views/OntologyIndexView.svelte';
 import OntologyDetailView from '$lib/components/tabs/views/OntologyDetailView.svelte';
+import DataView from '$lib/components/tabs/views/DataView.svelte';
 
 export interface TabDefinition {
 	// Route matching
@@ -76,18 +66,37 @@ export interface TabDefinition {
 // Complete tab registry with namespace-based URL patterns
 export const tabRegistry: Record<TabType, TabDefinition> = {
 	// ========================================================================
+	// HOME: /home — the default landing / "Return" page (synthesis surface)
+	// ========================================================================
+	home: {
+		match: (path) => path === '/home',
+		parse: () => ({
+			type: 'home',
+			label: 'Home',
+			icon: 'ri:home-5-line',
+		}),
+		serialize: () => 'home',
+		deserialize: () => '/home',
+		icon: 'ri:home-5-line',
+		defaultLabel: 'Home',
+		component: HomeView,
+	},
+
+	// ========================================================================
 	// CHAT NAMESPACE: /, /chat, /chat/chat_{id}
 	// ========================================================================
 	chat: {
 		match: (path) => path === '/' || path === '/chat' || /^\/chat\/chat_[^/]+$/.test(path),
-		parse: (path) => {
+		parse: (path, params) => {
 			// Root or /chat = new chat
 			if (path === '/' || path === '/chat') {
+				// Preserve the temporary/ghost flag so ChatView can start in ghost mode.
+				const temporary = params?.get('temporary') === '1';
 				return {
 					type: 'chat',
-					label: 'New Chat',
-					icon: 'ri:chat-1-line',
-					normalizedRoute: '/chat',
+					label: temporary ? 'Temporary Chat' : 'New Chat',
+					icon: temporary ? 'ri:ghost-line' : 'ri:chat-1-line',
+					normalizedRoute: temporary ? '/chat?temporary=1' : '/chat',
 				};
 			}
 			// Detail view
@@ -166,10 +175,14 @@ export const tabRegistry: Record<TabType, TabDefinition> = {
 	},
 
 	// ========================================================================
-	// WIKI OVERVIEW: /wiki
+	// WIKI: /wiki, /wiki/{entities|people|places|orgs|unlinked}
+	// (/entities is a legacy alias — the unified list now lives at /wiki/entities)
 	// ========================================================================
 	wiki: {
-		match: (path) => path === '/wiki',
+		match: (path) =>
+			path === '/wiki' ||
+			/^\/wiki\/(entities|people|places|orgs|unlinked)$/.test(path) ||
+			path === '/entities',
 		parse: () => ({
 			type: 'wiki',
 			label: 'Wiki',
@@ -180,23 +193,6 @@ export const tabRegistry: Record<TabType, TabDefinition> = {
 		icon: 'ri:book-2-line',
 		defaultLabel: 'Wiki',
 		component: WikiView,
-	},
-
-	// ========================================================================
-	// ENTITIES: /entities (unified entity list)
-	// ========================================================================
-	entities: {
-		match: (path) => path === '/entities',
-		parse: () => ({
-			type: 'entities',
-			label: 'Entities',
-			icon: 'ri:group-line',
-		}),
-		serialize: () => 'entities',
-		deserialize: () => '/entities',
-		icon: 'ri:group-line',
-		defaultLabel: 'Entities',
-		component: EntitiesView,
 	},
 
 	// ========================================================================
@@ -302,45 +298,68 @@ export const tabRegistry: Record<TabType, TabDefinition> = {
 	},
 
 	// ========================================================================
-	// THING NAMESPACE: /things (list), /thing/thg_{id} (detail)
+	// NOTEBOOK NAMESPACE: /notebooks (list), /notebook/{id} (detail)
 	//
-	// A "thing" is a folder you can re-enter — projects, pets, goals, topics.
-	// Sidebar "Things" links to `/things`. The DB has a `category` column for
-	// future use but it is not surfaced in v1 UX.
+	// A Notebook is the "room" a chat lives in — a workspace lens over the graph:
+	// a Library of materials, filed chats, entities, and pages. (id may be a
+	// legacy `space_…` or a new `nb_…` — both route the same.)
 	// ========================================================================
-	thing: {
+	notebook: {
 		match: (path) =>
-			path === '/things' ||
-			path === '/thing' ||
-			/^\/thing\/[^/]+$/.test(path),
+			path === '/notebooks' ||
+			path === '/notebook' ||
+			/^\/notebook\/[^/]+$/.test(path),
 		parse: (path) => {
-			if (path === '/things' || path === '/thing') {
+			if (path === '/notebooks' || path === '/notebook') {
 				return {
-					type: 'thing',
-					label: 'Things',
-					icon: 'ri:lightbulb-line',
-					normalizedRoute: '/things',
+					type: 'notebook',
+					label: 'Notebooks',
+					icon: 'ri:booklet-line',
+					normalizedRoute: '/notebooks',
 				};
 			}
-			const match = path.match(/^\/thing\/([^/]+)$/);
+			const match = path.match(/^\/notebook\/([^/]+)$/);
 			return {
-				type: 'thing',
-				label: 'Thing',
-				icon: 'ri:lightbulb-line',
+				type: 'notebook',
+				label: 'Notebook',
+				icon: 'ri:booklet-line',
 				entityId: match?.[1],
 			};
 		},
-		serialize: (id) => id || 'things',
+		serialize: (id) => id || 'notebooks',
 		deserialize: (serialized) => {
-			if (serialized && serialized !== 'things' && serialized !== 'thing') {
-				return `/thing/${serialized}`;
+			if (serialized && serialized !== 'notebooks' && serialized !== 'notebook') {
+				return `/notebook/${serialized}`;
 			}
-			return '/things';
+			return '/notebooks';
 		},
-		icon: 'ri:lightbulb-line',
-		defaultLabel: 'Things',
-		component: ThingsView,
-		detailComponent: ThingDetailView,
+		icon: 'ri:booklet-line',
+		defaultLabel: 'Notebooks',
+		component: NotebooksListView,
+		detailComponent: NotebookDetailView,
+	},
+
+	// ========================================================================
+	// STORY NAMESPACE: /stories — PLACEHOLDER route, no feature behind it yet.
+	//
+	// A story is a CLAIM ("how I act differently on rainy days"), where a notebook
+	// is a CONTAINER. The table and the magnet that gathers a story's evidence are
+	// built; the rendering is not, and waits until events/entities/days are
+	// verified — a story is an argument made out of them.
+	// ========================================================================
+	story: {
+		match: (path) => path === '/stories' || path === '/story',
+		parse: () => ({
+			type: 'story',
+			label: 'Stories',
+			icon: 'ri:git-branch-line',
+			normalizedRoute: '/stories',
+		}),
+		serialize: () => 'story', // token must equal registry key so it round-trips via KNOWN_TYPES
+		deserialize: () => '/stories',
+		icon: 'ri:git-branch-line',
+		defaultLabel: 'Stories',
+		component: StoriesView,
 	},
 
 	// ========================================================================
@@ -425,7 +444,9 @@ export const tabRegistry: Record<TabType, TabDefinition> = {
 	// NARRATIVE IDENTITY: /narrative-identity
 	// ========================================================================
 	'narrative-identity': {
-		match: (path) => path === '/narrative-identity',
+		match: (path) =>
+			path === '/narrative-identity' ||
+			/^\/narrative-identity\/(past|present|future)$/.test(path),
 		parse: () => ({
 			type: 'narrative-identity',
 			label: 'Narrative Identity',
@@ -471,23 +492,6 @@ export const tabRegistry: Record<TabType, TabDefinition> = {
 		defaultLabel: 'Sources',
 		component: ConnectionsPanel,
 		detailComponent: CredentialDetailView,
-	},
-
-	// ========================================================================
-	// TOOLS: /tools
-	// ========================================================================
-	tools: {
-		match: (path) => path === '/tools',
-		parse: () => ({
-			type: 'tools',
-			label: 'Tools',
-			icon: 'ri:tools-line',
-		}),
-		serialize: () => 'tools',
-		deserialize: () => '/tools',
-		icon: 'ri:tools-line',
-		defaultLabel: 'Tools',
-		component: ToolsView,
 	},
 
 	// ========================================================================
@@ -588,25 +592,131 @@ export const tabRegistry: Record<TabType, TabDefinition> = {
 		component: OntologyIndexView,
 		detailComponent: OntologyDetailView,
 	},
+	record: {
+		// /record/<ontology>/<id> — a single raw life-graph record. The ontology
+		// is a lowercase_underscore name; the id is everything after it.
+		match: (path) => /^\/record\/[a-z0-9_]+\/.+$/.test(path),
+		parse: (path) => {
+			const m = path.match(/^\/record\/([a-z0-9_]+)\/(.+)$/);
+			const ontology = m?.[1] ?? '';
+			const recordId = m?.[2] ?? '';
+			const label = ontology.replace(/_/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase());
+			return {
+				type: 'record',
+				label: label || 'Record',
+				icon: 'ri:database-2-line',
+				// entityId carries both segments so this reads as a detail view;
+				// DataView re-parses the full route anyway.
+				entityId: recordId ? `${ontology}/${recordId}` : undefined,
+			};
+		},
+		serialize: (id) => (id ? `record_${id}` : 'record'),
+		deserialize: (serialized) =>
+			serialized.startsWith('record_') ? `/record/${serialized.slice(7)}` : '/record',
+		icon: 'ri:database-2-line',
+		defaultLabel: 'Record',
+		component: DataView,
+		detailComponent: DataView,
+	},
 
 	// ========================================================================
-	// DRIVE NAMESPACE: /drive, /drive/{path}
+	// ASSET: /drive/file_{id} — single-file viewer (open density for a file ref)
+	// Matched before `drive` so an id-addressed file opens the viewer, while
+	// path-addressed routes (/drive/Documents/…) still open the browser.
+	// ========================================================================
+	asset: {
+		match: (path) => /^\/drive\/file_[^/]+$/.test(path),
+		parse: (path) => {
+			const match = path.match(/^\/drive\/(file_[^/]+)$/);
+			return {
+				type: 'asset',
+				label: 'File',
+				icon: 'ri:file-line',
+				entityId: match?.[1],
+			};
+		},
+		serialize: (id) => (id ? `asset_${id}` : 'asset'),
+		deserialize: (serialized) => {
+			// serialized arrives as `asset_file_{id}` (from KNOWN_TYPES dispatch) or a
+			// bare `file_{id}` legacy token; strip the type prefix and rebuild the route.
+			const fileId = serialized.startsWith('asset_') ? serialized.slice(6) : serialized;
+			return fileId.startsWith('file_') ? `/drive/${fileId}` : '/drive';
+		},
+		icon: 'ri:file-line',
+		defaultLabel: 'File',
+		component: AssetView,
+		detailComponent: AssetView,
+	},
+
+	// ========================================================================
+	// STORAGE NAMESPACE: /storage, /storage/{drive,streams,media,trash},
+	//                    /storage/drive/{path}
+	//
+	// One surface for the four kinds of bytes the box holds — files you filed,
+	// the raw evidence your devices sent, the assets the app made, and what you
+	// deleted. They used to be scattered (/drive, /trash, /developers/lake) and
+	// the lake was a stub rendering zeros.
+	//
+	// The base is /storage rather than /drive on purpose: Drive's sub-paths are
+	// USER FOLDER NAMES, so a tab at /drive/streams would be ambiguous with a
+	// folder someone actually named "streams" — and that folder would silently
+	// become unreachable. Under /storage, drive paths live at /storage/drive/…
+	// and can't collide with a tab.
+	//
+	// /drive and /trash still resolve (below) so existing links and bookmarks
+	// keep working.
+	// ========================================================================
+	storage: {
+		match: (path) => path === '/storage' || path.startsWith('/storage/'),
+		parse: (path) => {
+			const sub = path.match(/^\/storage\/(streams|media|trash)$/)?.[1];
+			if (sub === 'streams') {
+				return { type: 'storage', label: 'Streams', icon: 'ri:database-2-line' };
+			}
+			if (sub === 'media') {
+				return { type: 'storage', label: 'App Media', icon: 'ri:image-2-line' };
+			}
+			if (sub === 'trash') {
+				return { type: 'storage', label: 'Trash', icon: 'ri:delete-bin-line' };
+			}
+			// Drive, possibly deep inside a folder: /storage/drive/Documents/2026
+			const storagePath = path.replace(/^\/storage\/drive\/?/, '');
+			if (!storagePath) {
+				return { type: 'storage', label: 'Drive', icon: 'ri:hard-drive-2-line' };
+			}
+			return {
+				type: 'storage',
+				label: storagePath.split('/').pop() || 'File',
+				icon: 'ri:file-line',
+				storagePath,
+			};
+		},
+		serialize: (id) => (id ? `storage_${encodeURIComponent(id)}` : 'storage'),
+		deserialize: (serialized) => {
+			if (serialized.startsWith('storage_')) {
+				return `/storage/${decodeURIComponent(serialized.slice(8))}`;
+			}
+			return '/storage';
+		},
+		icon: 'ri:hard-drive-2-line',
+		defaultLabel: 'Drive',
+		component: StorageView,
+	},
+
+	// ========================================================================
+	// LEGACY: /drive, /drive/{path}, /trash — kept so old links resolve.
+	// Both now open the Storage surface on the right tab.
 	// ========================================================================
 	drive: {
 		match: (path) => path === '/drive' || path.startsWith('/drive/'),
 		parse: (path) => {
-			if (path === '/drive') {
-				return {
-					type: 'drive',
-					label: 'Drive',
-					icon: 'ri:hard-drive-2-line',
-				};
+			const storagePath = path.replace(/^\/drive\/?/, '');
+			if (!storagePath) {
+				return { type: 'drive', label: 'Drive', icon: 'ri:hard-drive-2-line' };
 			}
-			const storagePath = path.replace('/drive/', '');
-			const fileName = storagePath.split('/').pop() || 'File';
 			return {
 				type: 'drive',
-				label: fileName,
+				label: storagePath.split('/').pop() || 'File',
 				icon: 'ri:file-line',
 				storagePath,
 			};
@@ -614,19 +724,15 @@ export const tabRegistry: Record<TabType, TabDefinition> = {
 		serialize: (id) => (id ? `drive_${encodeURIComponent(id)}` : 'drive'),
 		deserialize: (serialized) => {
 			if (serialized.startsWith('drive_')) {
-				const path = decodeURIComponent(serialized.slice(6));
-				return `/drive/${path}`;
+				return `/storage/drive/${decodeURIComponent(serialized.slice(6))}`;
 			}
-			return '/drive';
+			return '/storage';
 		},
 		icon: 'ri:hard-drive-2-line',
 		defaultLabel: 'Drive',
-		component: DriveView,
+		component: StorageView,
 	},
 
-	// ========================================================================
-	// TRASH: /trash
-	// ========================================================================
 	trash: {
 		match: (path) => path === '/trash',
 		parse: () => ({
@@ -635,42 +741,27 @@ export const tabRegistry: Record<TabType, TabDefinition> = {
 			icon: 'ri:delete-bin-line',
 		}),
 		serialize: () => 'trash',
-		deserialize: () => '/trash',
+		deserialize: () => '/storage/trash',
 		icon: 'ri:delete-bin-line',
 		defaultLabel: 'Trash',
-		component: TrashView,
+		component: StorageView,
 	},
 
 	// ========================================================================
-	// VIRTUES NAMESPACE: /virtues/{page}
-	// System pages: account, assistant, usage, jobs, sql, terminal, sitemap
+	// SETTINGS NAMESPACE: /virtues[/{section}[/{sub}]]
+	// One room (SettingsView) — You, Assistant, Connections, Billing, Box,
+	// Developer — as a two-level route-driven sub-nav. Legacy flat pages
+	// (/virtues/account, /virtues/system/*, /virtues/telemetry, ...) resolve
+	// here and self-heal to their new home inside the room shell.
 	// ========================================================================
 	virtues: {
-		match: (path) => path.startsWith('/virtues/'),
+		match: (path) => path === '/virtues' || path.startsWith('/virtues/'),
 		parse: (path) => {
-			const page = path.replace('/virtues/', '');
-
-			const pageConfig: Record<string, { label: string; icon: string }> = {
-				account: { label: 'Account', icon: 'ri:user-settings-line' },
-				devices: { label: 'Devices', icon: 'ri:device-line' },
-				activity: { label: 'Activity', icon: 'ri:history-line' },
-				assistant: { label: 'Assistant', icon: 'ri:robot-line' },
-				billing: { label: 'Billing', icon: 'ri:bank-card-line' },
-				'byo-key': { label: 'AI Provider Key', icon: 'ri:key-line' },
-				changelog: { label: "What's New", icon: 'ri:megaphone-line' },
-				usage: { label: 'Usage', icon: 'ri:bar-chart-line' },
-				lake: { label: 'Lake', icon: 'ri:database-2-line' },
-				sql: { label: 'SQL', icon: 'ri:database-2-line' },
-				terminal: { label: 'Terminal', icon: 'ri:terminal-box-line' },
-				sitemap: { label: 'Sitemap', icon: 'ri:road-map-line' },
-				system: { label: 'System', icon: 'ri:computer-line' },
-			};
-
-			const config = pageConfig[page] || { label: 'Virtues', icon: 'ri:compass-3-line' };
+			const page = path === '/virtues' ? 'you' : path.replace('/virtues/', '');
 			return {
 				type: 'virtues',
-				label: config.label,
-				icon: config.icon,
+				label: 'Settings',
+				icon: 'ri:settings-4-line',
 				virtuesPage: page,
 			};
 		},
@@ -679,38 +770,11 @@ export const tabRegistry: Record<TabType, TabDefinition> = {
 			if (serialized.startsWith('virtues_')) {
 				return `/virtues/${serialized.slice(8)}`;
 			}
-			return '/virtues/account';
+			return '/virtues/you';
 		},
-		icon: 'ri:compass-3-line',
-		defaultLabel: 'Virtues',
-		component: ProfileView, // Will dispatch to correct component based on virtuesPage
-	},
-
-	// ========================================================================
-	// VIEW NAMESPACE: /view/view_{id}
-	// Folder/view pages (smart + manual folder detail views)
-	// ========================================================================
-	view: {
-		match: (path) => /^\/view\/view_[^/]+$/.test(path),
-		parse: (path) => {
-			const match = path.match(/^\/view\/(view_[^/]+)$/);
-			return {
-				type: 'view',
-				label: 'Folder',
-				icon: 'ri:folder-line',
-				entityId: match?.[1],
-			};
-		},
-		serialize: (id) => (id ? `view_${id}` : 'view'),
-		deserialize: (serialized) => {
-			if (serialized.startsWith('view_')) {
-				return `/view/${serialized}`;
-			}
-			return '/view';
-		},
-		icon: 'ri:folder-line',
-		defaultLabel: 'Folder',
-		component: FolderView,
+		icon: 'ri:settings-4-line',
+		defaultLabel: 'Settings',
+		component: SettingsView,
 	},
 
 	// ========================================================================
@@ -758,26 +822,13 @@ export function getComponent(type: TabType, hasEntityId: boolean): Component<any
 }
 
 /**
- * Get the component for virtues pages (system pages).
+ * Get the component for /virtues/* pages. There is now a single Settings room;
+ * it dispatches to the right section from the route and self-heals legacy
+ * flat paths on mount.
  */
 // biome-ignore lint/suspicious/noExplicitAny: Component props vary by page
-export function getVirtuesComponent(page: string): Component<any> {
-	const componentMap: Record<string, Component<any>> = {
-		account: ProfileView,
-		devices: DevicesView,
-		activity: ActivityView,
-		assistant: AssistantView,
-		'byo-key': ByoKeyView,
-		billing: BillingView,
-		changelog: ChangelogView,
-		usage: UsageView,
-		lake: DeveloperLakeView,
-		sql: DeveloperSqlView,
-		terminal: DeveloperTerminalView,
-		sitemap: DeveloperSitemapView,
-		system: SystemInfoView,
-	};
-	return componentMap[page] || ProfileView;
+export function getVirtuesComponent(_page: string): Component<any> {
+	return SettingsView;
 }
 
 
@@ -792,29 +843,32 @@ export function parseRoute(route: string): ParsedRoute {
 	// Try to match against registry in priority order
 	// Note: Order matters for overlapping patterns
 	const orderedTypes: TabType[] = [
+		// Landing surface (exact /home; no overlap with '/')
+		'home',
 		// Specific patterns first
 		'source', // Source list and detail views
-		'tools', // Tools management page
 		'actions', // Actions list page (must come before singular 'action')
 		'action', // Action detail page
 		'developers', // Developers tab group (SQL/Terminal/Lake)
 		'ontology', // Ontology data browsing
-		'view', // View/folder detail pages
+		'record', // /record/<ontology>/<id> — single raw record
 		'virtues', // Has /virtues/* pattern
+		'storage', // /storage — Drive surface (unified bytes view)
+		'asset', // /drive/file_{id} — must precede 'drive' (which matches all /drive/*)
 		'drive', // Has /drive/* pattern
 		'trash', // Drive trash
 		'chat-history', // Chat history list (before 'chat')
 		// Entity namespaces
 		'chat', // Also matches /
 		'page',
-		'wiki', // Wiki overview page
-		'entities', // Unified entity list
+		'wiki', // Wiki room (overview + entity sections; also legacy /entities)
 		'person',
 		'place',
 		'org',
-		'thing',
+		'notebook',
 		'day',
 		'year',
+		'story', // Exact /stories | /story — deep-link resolves to StoriesView
 		'narrative-identity',
 		// Easter eggs last
 		'conway',

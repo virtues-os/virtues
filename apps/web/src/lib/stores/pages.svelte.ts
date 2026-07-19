@@ -7,11 +7,11 @@
  * - Sidebar items computation (pinned first, then recent)
  * - Optimistic updates for responsive UI
  *
- * Coordinates with spaceStore for space-related operations.
+ * Coordinates with windowShellStore for space-related operations.
  */
 
 import { createPage, updatePage, deletePage, listPages, type PageSummary, type Page } from '$lib/api/client';
-import { spaceStore, type EntityMetadata } from './space.svelte';
+import { windowShellStore, type EntityMetadata } from './window-shell.svelte';
 
 const PINNED_STORAGE_KEY = 'virtues-pinned-pages';
 const RECENT_STORAGE_KEY = 'virtues-recent-pages';
@@ -112,20 +112,13 @@ class PagesStore {
 		return [...pinnedPages, ...recentPages.slice(0, remaining)];
 	}
 
-	/**
-	 * Get the views from the workspace store for the current workspace
-	 */
-	get views() {
-		return spaceStore.spaceViews;
-	}
-
 	async init() {
 		// Delegate to workspace store
-		await spaceStore.init();
+		await windowShellStore.init();
 	}
 
 	async refresh() {
-		await spaceStore.refreshViews();
+		// Folder/view listing removed — nothing to refresh here anymore.
 	}
 
 	/**
@@ -133,18 +126,13 @@ class PagesStore {
 	 */
 	async createNewPage(title: string = 'Untitled', spaceId?: string): Promise<Page> {
 		// Don't auto-add for system space
-		const sId = spaceStore.isSystemSpace
+		const sId = windowShellStore.isSystemSpace
 			? undefined
-			: (spaceId || spaceStore.activeSpaceId);
+			: (spaceId || windowShellStore.activeShellId);
 		const page = await createPage(title, '', sId);
 
 		// Invalidate the Pages view cache so the sidebar refreshes
-		spaceStore.invalidateViewCache('page');
-
-		// Refresh space items if added to a space
-		if (sId) {
-			await spaceStore.loadSpaceItems(sId);
-		}
+		windowShellStore.invalidateViewCache('page');
 
 		await this.refresh();
 		return page;
@@ -171,15 +159,12 @@ class PagesStore {
 			const metadataUpdates: Partial<EntityMetadata> = {};
 			if (updates.title) metadataUpdates.name = updates.title;
 			if ('icon' in updates) metadataUpdates.icon = updates.icon || 'ri:file-text-line';
-			spaceStore.updateEntityMetadata(pageId, metadataUpdates);
+			windowShellStore.updateEntityMetadata(pageId, metadataUpdates);
 		}
 
 		// Sidebar refresh (only if visible fields changed)
 		if (updates.title || 'icon' in updates) {
-			spaceStore.invalidateViewCache('page');
-			if (!spaceStore.isSystemSpace) {
-				await spaceStore.loadSpaceItems();
-			}
+			windowShellStore.invalidateViewCache('page');
 		}
 	}
 
@@ -196,7 +181,7 @@ class PagesStore {
 			metadataUpdates.icon = updates.icon || 'ri:file-text-line';
 		}
 		if (Object.keys(metadataUpdates).length > 0) {
-			spaceStore.updateEntityMetadata(pageId, metadataUpdates);
+			windowShellStore.updateEntityMetadata(pageId, metadataUpdates);
 		}
 	}
 
@@ -211,17 +196,13 @@ class PagesStore {
 	 */
 	async removePage(pageId: string): Promise<void> {
 		// Close any open tabs for this page
-		spaceStore.closeTabsByRoute(`/page/${pageId}`);
+		windowShellStore.closeTabsByRoute(`/page/${pageId}`);
 		// API call
 		await deletePage(pageId);
 		// Update local list
 		this.removePageFromList(pageId);
 		// Cache invalidation
-		spaceStore.invalidateViewCache('page');
-		// Sidebar refresh
-		if (!spaceStore.isSystemSpace) {
-			await spaceStore.loadSpaceItems();
-		}
+		windowShellStore.invalidateViewCache('page');
 		await this.refresh();
 
 		// Clean up IndexedDB (Yjs offline persistence)

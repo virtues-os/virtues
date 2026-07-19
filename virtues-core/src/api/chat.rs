@@ -121,9 +121,10 @@ pub struct ChatRequest {
     /// Optional client-generated message ID for idempotency
     #[serde(rename = "messageId")]
     pub message_id: Option<String>,
-    /// Optional space ID for auto-add to space_items (not stored on chat)
-    #[serde(rename = "spaceId")]
-    pub space_id: Option<String>,
+    /// The Notebook (room) this chat lives in. Stored on the chat and inlined into
+    /// the system prompt as a salience lens (name + memo + member URLs).
+    #[serde(rename = "notebookId", default)]
+    pub notebook_id: Option<String>,
     /// Optional active page context for AI page editing
     #[serde(rename = "activePage")]
     pub active_page: Option<ActivePageContext>,
@@ -139,11 +140,6 @@ pub struct ChatRequest {
     /// Agent mode controlling tool availability (agent, chat, research)
     #[serde(rename = "agentMode", default = "default_agent_mode")]
     pub agent_mode: String,
-    /// Attached thing IDs — each is expanded to its pinned-URL list and
-    /// inlined into the system prompt as a salience lens for the agent.
-    /// Things are long-running named anchors (projects, pets, goals, etc.).
-    #[serde(rename = "thingIds", alias = "projectIds", default)]
-    pub thing_ids: Vec<String>,
 }
 
 fn default_agent() -> String {
@@ -219,6 +215,17 @@ pub enum UIPart {
         summary: String,
         /// When the checkpoint was created
         timestamp: String,
+    },
+    /// File attachment (image / PDF / audio) — matches the AI SDK v6 file part.
+    /// `url` is a data URL (base64) so it round-trips to the provider and renders
+    /// on reload without a separate authenticated fetch.
+    #[serde(rename = "file")]
+    File {
+        #[serde(rename = "mediaType", default)]
+        media_type: String,
+        url: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        filename: Option<String>,
     },
     #[serde(other)]
     Unknown,
@@ -304,6 +311,19 @@ pub enum StreamEvent {
         signature: String,
     },
 
+    // Deep Research subagent status (data event for the live panel)
+    #[serde(rename = "subagent-status")]
+    SubagentStatus {
+        #[serde(rename = "dispatchId")]
+        dispatch_id: u64,
+        #[serde(rename = "subagentId")]
+        subagent_id: u32,
+        title: String,
+        model: String,
+        status: String,
+        tokens: u32,
+    },
+
     // Checkpoint event emitted after auto-compaction
     #[serde(rename = "checkpoint")]
     Checkpoint {
@@ -352,6 +372,20 @@ struct CheckpointData {
 #[derive(Debug, Serialize)]
 struct ThoughtSignatureData {
     signature: String,
+}
+
+/// Subagent status payload for AI SDK v6 data event (live Deep Research panel)
+#[derive(Debug, Serialize)]
+struct SubagentStatusData {
+    #[serde(rename = "dispatchId")]
+    dispatch_id: u64,
+    #[serde(rename = "subagentId")]
+    subagent_id: u32,
+    title: String,
+    model: String,
+    /// "thinking" | "done" | "failed"
+    status: String,
+    tokens: u32,
 }
 
 /// Chat error response
@@ -454,6 +488,26 @@ fn serialize_event(event: &StreamEvent) -> String {
             };
             serde_json::to_string(&wrapper).unwrap_or_else(|e| {
                 tracing::error!("Failed to serialize thought-signature event: {}", e);
+                r#"{"type":"error","errorText":"Serialization error"}"#.to_string()
+            })
+        }
+        // Wrap subagent status in AI SDK v6 data event format (transient — live panel only)
+        StreamEvent::SubagentStatus { dispatch_id, subagent_id, title, model, status, tokens } => {
+            let wrapper = DataEvent {
+                event_type: "data-subagent".to_string(),
+                id: None,
+                data: SubagentStatusData {
+                    dispatch_id: *dispatch_id,
+                    subagent_id: *subagent_id,
+                    title: title.clone(),
+                    model: model.clone(),
+                    status: status.clone(),
+                    tokens: *tokens,
+                },
+                transient: true,
+            };
+            serde_json::to_string(&wrapper).unwrap_or_else(|e| {
+                tracing::error!("Failed to serialize subagent event: {}", e);
                 r#"{"type":"error","errorText":"Serialization error"}"#.to_string()
             })
         }
@@ -584,7 +638,7 @@ async fn build_system_prompt(
     agent_mode: &str,
     persona_id: &str,
     is_new_user: bool,
-    thing_ids: &[String],
+    notebook_id: Option<&str>,
 ) -> String {
     use crate::agent::prompt::build_personalized_prompt;
     use crate::api::assistant_profile::get_assistant_name;
@@ -592,7 +646,7 @@ async fn build_system_prompt(
     use crate::api::profile::get_display_name;
 
     // Load personalization from profiles (with fallbacks)
-    let assistant_name = get_assistant_name(pool).await.unwrap_or_else(|_| "Assistant".to_string());
+    let assistant_name = get_assistant_name(pool).await.unwrap_or_else(|_| "Ari".to_string());
     let user_name = get_display_name(pool).await.unwrap_or_else(|_| "there".to_string());
 
     // Load persona content from database (or fallback to registry default)
@@ -660,11 +714,10 @@ async fn build_system_prompt(
         prompt.push_str(&user_context);
     }
 
-    // Inline attached thing context blocks. Each block lists the thing's
-    // pinned URLs (label, url) as salience hints. Full content is fetched on
-    // demand via the get_thing_pin tool.
-    if !thing_ids.is_empty() {
-        if let Some(block) = build_things_context(pool, thing_ids).await {
+    // Inline the active Notebook (room) as a salience lens: its name, catch-up
+    // memo, and member URLs. This is the room the chat lives in.
+    if let Some(notebook_id) = notebook_id {
+        if let Some(block) = build_notebook_context(pool, notebook_id).await {
             prompt.push_str(&block);
         }
     }
@@ -706,80 +759,55 @@ async fn build_system_prompt(
     prompt
 }
 
-/// Maximum pins to inline per thing before truncating.
-/// Things with more pins still work — the agent can page through via the
-/// get_thing_pin tool — but the metadata block stays bounded.
-const MAX_THING_PINS_INLINED: usize = 100;
+/// Maximum member URLs to inline for a Notebook before truncating.
+const MAX_NOTEBOOK_ITEMS_INLINED: usize = 100;
 
-/// Build a context block for all attached things. Returns None if no
-/// things are found (silently ignores missing/invalid IDs).
-async fn build_things_context(pool: &PgPool, thing_ids: &[String]) -> Option<String> {
+/// Build a context block for the active Notebook (room) the chat lives in.
+/// Returns None if the Notebook can't be loaded.
+async fn build_notebook_context(pool: &PgPool, notebook_id: &str) -> Option<String> {
+    let detail = match crate::api::notebooks::get_notebook(pool, notebook_id).await {
+        Ok(d) => d,
+        Err(e) => {
+            tracing::warn!("[chat] failed to load active notebook {}: {}", notebook_id, e);
+            return None;
+        }
+    };
+
     let mut out = String::new();
-    let mut any_rendered = false;
+    out.push_str(&format!(
+        "\n\n<active_notebook name=\"{}\">",
+        escape_attr(&detail.notebook.name),
+    ));
 
-    for thing_id in thing_ids {
-        let detail = match crate::api::things::get_thing(pool, thing_id).await {
-            Ok(d) => d,
-            Err(e) => {
-                tracing::warn!("[chat] failed to load attached thing {}: {}", thing_id, e);
-                continue;
-            }
-        };
+    if let Some(instr) = detail.notebook.instructions.as_deref() {
+        if !instr.is_empty() {
+            out.push_str(&format!(
+                "\n  <instructions>{}</instructions>",
+                escape_attr(instr)
+            ));
+        }
+    }
 
-        any_rendered = true;
+    if let Some(memo) = detail.notebook.current_status.as_deref() {
+        if !memo.is_empty() {
+            out.push_str(&format!("\n  <memo>{}</memo>", escape_attr(memo)));
+        }
+    }
 
-        let category_attr = detail
-            .thing
-            .category
-            .as_deref()
-            .map(|c| format!(" category=\"{}\"", escape_attr(c)))
-            .unwrap_or_default();
-        let description_attr = detail
-            .thing
-            .description
-            .as_deref()
-            .map(|d| format!(" description=\"{}\"", escape_attr(d)))
-            .unwrap_or_default();
-
+    let total = detail.items.len();
+    for item in detail.items.iter().take(MAX_NOTEBOOK_ITEMS_INLINED) {
+        out.push_str(&format!("\n  <member url=\"{}\"/>", escape_attr(&item.url)));
+    }
+    if total > MAX_NOTEBOOK_ITEMS_INLINED {
         out.push_str(&format!(
-            "\n\n<attached_thing id=\"{}\" name=\"{}\"{}{}>",
-            detail.thing.id,
-            escape_attr(&detail.thing.name),
-            category_attr,
-            description_attr,
+            "\n  <!-- {} more members not shown -->",
+            total - MAX_NOTEBOOK_ITEMS_INLINED
         ));
-
-        let total = detail.pins.len();
-        let inlined: Vec<_> = detail.pins.iter().take(MAX_THING_PINS_INLINED).collect();
-
-        for pin in &inlined {
-            let name = pin.name.as_deref().unwrap_or(&pin.url);
-            let desc_attr = pin.description.as_deref()
-                .map(|d| format!(" description=\"{}\"", escape_attr(d)))
-                .unwrap_or_default();
-            out.push_str(&format!(
-                "\n  <pin url=\"{}\" name=\"{}\"{}/>",
-                escape_attr(&pin.url),
-                escape_attr(name),
-                desc_attr,
-            ));
-        }
-
-        if total > MAX_THING_PINS_INLINED {
-            out.push_str(&format!(
-                "\n  <!-- {} more pins not shown; use get_thing_pin to page through -->",
-                total - MAX_THING_PINS_INLINED
-            ));
-        }
-
-        out.push_str("\n</attached_thing>");
     }
 
-    if !any_rendered {
-        return None;
-    }
+    out.push_str("\n</active_notebook>");
 
-    let preamble = "\n\n<attached_things_preamble>\nThe user has attached the following thing(s) as a context lens — long-running named anchors (projects, pets, goals, topics, ...). Treat the listed pins as high-salience: they are the user's actively curated focus. You may fetch a pin's full content on demand with the get_thing_pin tool.\n</attached_things_preamble>";
+    let preamble = "\n\n<active_notebook_preamble>\nThis chat lives in the Notebook (room) below — a collection the user returns to (a project, pet, hobby, goal, or topic). Treat its members as high-salience: they are the user's actively curated focus for this room. <instructions>, if present, are standing directions for how you should behave in this notebook — follow them. <memo>, if present, is a catch-up note about the notebook's current state. Members are also boosted in semantic search while this notebook is active.\n</active_notebook_preamble>";
 
     Some(format!("{}{}", preamble, out))
 }
@@ -902,15 +930,13 @@ pub async fn chat_handler(
         }
     };
 
-    // Auto-add to space_items if chat was just created and space_id provided (not system space)
+    // Bind the chat to its Notebook on first creation (stores notebook_id + folds
+    // the chat into the Notebook's membership).
     if chat_was_created {
-        if let Some(space_id) = &request.space_id {
-            if space_id != "space_system" {
-                let url = format!("/chat/{}", chat_id_str);
-                if let Err(e) = crate::api::views::add_space_item(&pool, space_id, &url).await {
-                    tracing::warn!("Failed to auto-add chat to space {}: {}", space_id, e);
-                }
-            }
+        if let Err(e) =
+            crate::api::notebooks::set_chat_notebook(&pool, &chat_id_str, request.notebook_id.as_deref()).await
+        {
+            tracing::warn!("Failed to set chat notebook: {}", e);
         }
     }
 
@@ -1064,9 +1090,21 @@ pub async fn chat_handler(
         })
         .collect();
 
+    // Resolve the chat's room from the persisted row (single source of truth) so
+    // the active-notebook context always matches the binding, even if a stale client
+    // sends a different per-message notebookId. The create path above already bound a
+    // new chat from request.notebook_id, so the row is current by now.
+    let effective_notebook_id: Option<String> =
+        sqlx::query_scalar(r#"SELECT notebook_id FROM app_chats WHERE id = $1"#)
+            .bind(&chat_id_str)
+            .fetch_optional(&pool)
+            .await
+            .ok()
+            .flatten();
+
     // Build system prompt with active page context, timezone, personalization, and agent mode
     // is_onboarding keeps the onboarding prompt active until set_user_name completes
-    let system_prompt = build_system_prompt(&pool, request.active_page.as_ref(), request.timezone.as_deref(), &request.agent_mode, &request.persona, is_onboarding, &request.thing_ids).await;
+    let system_prompt = build_system_prompt(&pool, request.active_page.as_ref(), request.timezone.as_deref(), &request.agent_mode, &request.persona, is_onboarding, effective_notebook_id.as_deref()).await;
 
     // Flip 'new' → 'onboarding' after the first synthetic message (NOT to 'active').
     // The onboarding prompt stays active. set_user_name flips 'onboarding' → 'active'.
@@ -1221,12 +1259,13 @@ fn create_agent_stream(
         }
 
         // Determine max_steps based on agent mode
-        // - agent: 20 (full access — edit, search, data)
-        // - research: 50 (read-only, needs more exploration)
-        // - chat: 20 (conversational, no tools but allows multi-turn)
+        // - deep_research: 50 (read-only, needs more exploration)
+        // - council: 40 (gate + 1-2 dispatch rounds + synthesis; bounded)
+        // - chat / default: 20 (conversational, full tool access, multi-turn)
         let max_steps = match request.agent_mode.as_str() {
             "deep_research" => 50,
-            _ => 20, // "chat" or default
+            "council" => 40, // gate + 1-2 dispatch rounds + synthesis; bounded
+            _ => 20,         // "chat" or default
         };
 
         // Create AgentLoop with YjsState for real-time page editing
@@ -1237,13 +1276,26 @@ fn create_agent_stream(
             parallel_tools: true,
         });
 
+        // Side-channel for live Deep Research subagent status. The dispatch_subagents tool sends
+        // worker updates on `subagent_tx`; the select! loop below drains `subagent_rx` and streams
+        // them to the panel while the tool is still executing.
+        let (subagent_tx, mut subagent_rx) =
+            tokio::sync::mpsc::channel::<crate::tools::SubagentUpdate>(64);
+
+        // Per-turn budget of Deep Research workers, shared across repeated dispatches so the
+        // orchestrator can't fan out without bound over its 50-step loop.
+        let worker_budget = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(12));
+
         // Build tool context from request
         let context = ToolContext {
             page_id: request.active_page.as_ref().and_then(|p| p.page_id.clone()),
             user_id: None,
-            space_id: request.space_id.clone(),
+            notebook_id: request.notebook_id.clone(),
             chat_id: Some(request.chat_id.clone()),
             action_id: None,
+            subagent_tx: Some(subagent_tx),
+            cancel_token: Some(cancel_token.clone()),
+            worker_budget: Some(worker_budget),
         };
 
         // Get tool definitions — onboarding restricts to naming/memory tools only.
@@ -1261,10 +1313,19 @@ fn create_agent_stream(
         let mut full_content = String::new();
         let mut reasoning_content = String::new();
         let mut in_reasoning = false;
+        // The whole turn streams as ONE text part (single TextStart/TextEnd), so
+        // text emitted across agent steps would otherwise concatenate with no
+        // separator ("…exact text.The earlier edit…"). When text resumes after a
+        // tool call, insert a paragraph break so each narration reads on its own.
+        let mut needs_text_break = false;
 
         // Token usage tracking
         let mut total_input_tokens: u32 = 0;
         let mut total_output_tokens: u32 = 0;
+        let mut total_reasoning_tokens: u32 = 0;
+        // Authoritative spend for this turn (sum of gateway-reported usage.cost
+        // across every step), captured into app_ai_calls for the Usage tab.
+        let mut total_cost_micros: i64 = 0;
 
         // Tool call tracking for persistence
         let mut all_tool_calls: Vec<ToolCall> = Vec::new();
@@ -1282,11 +1343,30 @@ fn create_agent_stream(
                     .next()
                     .map(|s| s.to_string())
             }),
-            Some(cancel_token),
+            Some(cancel_token.clone()),
         );
 
-        while let Some(event) = agent_stream.next().await {
-            match event {
+        loop {
+          tokio::select! {
+            biased;
+            // Live subagent status — drained even while dispatch_subagents is still executing.
+            Some(update) = subagent_rx.recv() => {
+                let ev = StreamEvent::SubagentStatus {
+                    dispatch_id: update.dispatch_id,
+                    subagent_id: update.id as u32,
+                    title: update.title,
+                    model: update.model,
+                    status: update.status.as_str().to_string(),
+                    tokens: update.tokens,
+                };
+                yield Ok(SseEvent::default().data(serialize_event(&ev)));
+            }
+            maybe_event = agent_stream.next() => {
+              let event = match maybe_event {
+                  Some(e) => e,
+                  None => break,
+              };
+              match event {
                 AgentEvent::TextDelta { content } => {
                     // End reasoning if we were in it
                     if in_reasoning {
@@ -1294,10 +1374,21 @@ fn create_agent_stream(
                         let event = StreamEvent::ReasoningEnd { id: msg_id.clone() };
                         yield Ok(SseEvent::default().data(serialize_event(&event)));
                     }
-                    full_content.push_str(&content);
+                    // Text resuming after a tool call: break the paragraph so it
+                    // doesn't butt against the previous segment's final sentence.
+                    let delta = if needs_text_break
+                        && !full_content.is_empty()
+                        && !full_content.ends_with('\n')
+                    {
+                        format!("\n\n{}", content)
+                    } else {
+                        content
+                    };
+                    needs_text_break = false;
+                    full_content.push_str(&delta);
                     let event = StreamEvent::TextDelta {
                         id: msg_id.clone(),
-                        delta: content,
+                        delta,
                     };
                     yield Ok(SseEvent::default().data(serialize_event(&event)));
                 }
@@ -1317,6 +1408,9 @@ fn create_agent_stream(
                 }
 
                 AgentEvent::ToolCallStart { id, name, args } => {
+                    // Any text that resumes after this tool call starts a new
+                    // paragraph (see needs_text_break).
+                    needs_text_break = true;
                     // Track tool call for persistence
                     all_tool_calls.push(ToolCall {
                         tool_name: name.clone(),
@@ -1362,6 +1456,13 @@ fn create_agent_stream(
                     if let Some(tc) = all_tool_calls.iter_mut().find(|tc| tc.tool_call_id.as_deref() == Some(&id)) {
                         tc.result = Some(result.clone());
                     }
+                    // Bill nested Deep Research worker tokens to this chat's usage. The dispatch
+                    // result carries aggregate worker token counts that the orchestrator's own
+                    // Usage events don't include.
+                    if let Some(usage) = result.get("usage") {
+                        total_input_tokens += usage.get("input_tokens").and_then(|v| v.as_u64()).unwrap_or(0) as u32;
+                        total_output_tokens += usage.get("output_tokens").and_then(|v| v.as_u64()).unwrap_or(0) as u32;
+                    }
                     // AI SDK v6: tool-output-available event
                     let event = StreamEvent::ToolOutputAvailable {
                         tool_call_id: id,
@@ -1370,9 +1471,15 @@ fn create_agent_stream(
                     yield Ok(SseEvent::default().data(serialize_event(&event)));
                 }
 
-                AgentEvent::Usage { prompt_tokens, completion_tokens, total_tokens: _ } => {
+                AgentEvent::Usage { prompt_tokens, completion_tokens, total_tokens: _, reasoning_tokens, cost_micros } => {
                     total_input_tokens += prompt_tokens;
                     total_output_tokens += completion_tokens;
+                    if let Some(r) = reasoning_tokens {
+                        total_reasoning_tokens += r;
+                    }
+                    if let Some(c) = cost_micros {
+                        total_cost_micros += c;
+                    }
                 }
 
                 AgentEvent::ThoughtSignature { signature } => {
@@ -1390,7 +1497,22 @@ fn create_agent_stream(
                 AgentEvent::StepComplete { .. } |
                 AgentEvent::MessageId { .. } |
                 AgentEvent::Done { .. } => {}
+              }
             }
+          }
+        }
+
+        // Drain any subagent updates buffered after the agent loop ended.
+        while let Ok(update) = subagent_rx.try_recv() {
+            let ev = StreamEvent::SubagentStatus {
+                dispatch_id: update.dispatch_id,
+                subagent_id: update.id as u32,
+                title: update.title,
+                model: update.model,
+                status: update.status.as_str().to_string(),
+                tokens: update.tokens,
+            };
+            yield Ok(SseEvent::default().data(serialize_event(&ev)));
         }
 
         // End reasoning if we were in it
@@ -1409,6 +1531,9 @@ fn create_agent_stream(
         // Save assistant message to chat
         if !full_content.is_empty() {
             let provider = model.split('/').next().unwrap_or("unknown").to_string();
+            // Mark the message as user-stopped so the UI can show a "Stopped"
+            // notice on reload (the partial content is kept either way).
+            let was_cancelled = cancel_token.is_cancelled();
             let assistant_message = ChatMessage {
                 id: None,
                 role: "assistant".to_string(),
@@ -1420,7 +1545,7 @@ fn create_agent_stream(
                 tool_calls: if all_tool_calls.is_empty() { None } else { Some(all_tool_calls.clone()) },
                 reasoning: if reasoning_content.is_empty() { None } else { Some(reasoning_content.clone()) },
                 intent: None,
-                subject: None,
+                subject: if was_cancelled { Some("cancelled".to_string()) } else { None },
                 thought_signature: None,
                 parts: None,
             };
@@ -1429,13 +1554,16 @@ fn create_agent_stream(
                 tracing::error!("Failed to save assistant message: {}", e);
             }
 
-            // Record token usage
+            // Record token usage. `cost_micros` is the gateway's authoritative
+            // figure — the same one recorded in app_ai_calls below, and the one
+            // the wallet was actually debited for. No estimating.
             let usage_data = UsageData {
                 input_tokens: total_input_tokens as i64,
                 output_tokens: total_output_tokens as i64,
                 reasoning_tokens: 0,
                 cache_read_tokens: 0,
                 cache_write_tokens: 0,
+                cost_micros: Some(total_cost_micros),
             };
 
             if let Err(e) = record_chat_usage(&pool, chat_id.clone(), &model, usage_data).await {
@@ -1444,6 +1572,28 @@ fn create_agent_stream(
                     error = %e,
                     "Failed to record chat usage"
                 );
+            }
+
+            // Box-local per-call cost log (authoritative gateway cost) for the
+            // Usage/Telemetry tabs. Best-effort — never break the response.
+            if let Err(e) = crate::api::ai_calls::record_ai_call(
+                &pool,
+                &crate::api::ai_calls::AiCall {
+                    // Real feature bucket: chat | council | deep_research (these
+                    // modes share this handler), so spend attributes correctly.
+                    feature: request.agent_mode.clone(),
+                    model: model.clone(),
+                    prompt_tokens: total_input_tokens as i64,
+                    completion_tokens: total_output_tokens as i64,
+                    reasoning_tokens: total_reasoning_tokens as i64,
+                    cost_micros: total_cost_micros,
+                    chat_id: Some(chat_id.clone()),
+                    action_run_id: None,
+                },
+            )
+            .await
+            {
+                tracing::warn!(chat_id = %chat_id, error = %e, "Failed to record ai_call");
             }
         }
 

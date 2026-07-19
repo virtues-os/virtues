@@ -17,6 +17,7 @@
 import { type EditorState, type Extension, type Range, StateField } from '@codemirror/state';
 import { Decoration, type DecorationSet, type EditorView, EditorView as EditorViewValue, WidgetType } from '@codemirror/view';
 import { contextMenu } from '$lib/stores/contextMenu.svelte';
+import { isEntityRoute } from '$lib/utils/refRoutes';
 
 const MEDIA_REGEX = /!\[([^\]]*)\]\(([^)]+)\)/g;
 
@@ -140,6 +141,23 @@ function showMediaContextMenu(
 // Widget Classes
 // =============================================================================
 
+// Images/video load async and grow AFTER CodeMirror measured the block, which
+// leaves every line below mispositioned (clicks + arrow up/down land on the
+// wrong line). Observe the widget and ask CodeMirror to re-measure when its size
+// settles. requestMeasure is batched, so this is cheap. The observer is stored
+// on the element so destroy() can disconnect it regardless of widget reuse.
+type MeasuredEl = HTMLElement & { _cmResizeObs?: ResizeObserver };
+
+function remeasureOnResize(view: EditorView, el: HTMLElement) {
+	const ro = new ResizeObserver(() => view.requestMeasure());
+	ro.observe(el);
+	(el as MeasuredEl)._cmResizeObs = ro;
+}
+
+function disconnectRemeasure(dom: HTMLElement) {
+	(dom as MeasuredEl)._cmResizeObs?.disconnect();
+}
+
 class ImageWidget extends WidgetType {
 	private displayAlt: string;
 	private width: number | null;
@@ -175,7 +193,12 @@ class ImageWidget extends WidgetType {
 			showMediaContextMenu(e, view, this.from, this.to, this.src);
 		});
 
+		remeasureOnResize(view, wrapper);
 		return wrapper;
+	}
+
+	destroy(dom: HTMLElement) {
+		disconnectRemeasure(dom);
 	}
 
 	eq(other: ImageWidget) {
@@ -247,7 +270,12 @@ class VideoWidget extends WidgetType {
 			showMediaContextMenu(e, view, this.from, this.to, this.src);
 		});
 
+		remeasureOnResize(view, wrapper);
 		return wrapper;
+	}
+
+	destroy(dom: HTMLElement) {
+		disconnectRemeasure(dom);
 	}
 
 	eq(other: VideoWidget) {
@@ -335,6 +363,9 @@ function buildMediaDecorations(state: EditorState): DecorationSet {
 		for (let match = MEDIA_REGEX.exec(line.text); match !== null; match = MEDIA_REGEX.exec(line.text)) {
 			const rawAlt = match[1];
 			const url = match[2];
+			// App refs (`![@X](/person/id)`, `![file](/drive/id)`) are ref embeds,
+			// rendered by ref-links; media widgets only handle direct/external urls.
+			if (isEntityRoute(url)) continue;
 			const from = line.from + match.index;
 			const to = from + match[0].length;
 			// Strip |width suffix for filename/type detection

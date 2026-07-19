@@ -1,0 +1,32 @@
+# iroh-relay for relay.virtues.ch  (see README.md in this dir)
+#
+# Schema: iroh-relay 1.0.1 `Config` (src/main.rs). This replaces the hand-rolled
+# frp relay. The relay is blind — it moves QUIC/ciphertext, never sees content,
+# volume, or timing. Access is gated by an atlas active-subscription callout.
+
+enable_relay = true
+# Plain-HTTP relay endpoint (also serves the LetsEncrypt HTTP path). HTTPS/QUIC
+# come from [tls] below.
+http_bind_addr = "[::]:80"
+# Let clients discover their reflexive QUIC address through us (hole-punching).
+enable_quic_addr_discovery = true
+
+[tls]
+# The relay's own hostname; LetsEncrypt issues this cert (TLS-ALPN-01). This is
+# the ONLY public cert in the system — boxes no longer run per-box ACME.
+hostname = "relay.virtues.ch"
+cert_mode = "LetsEncrypt"
+contact = "ops@virtues.com"
+cert_dir = "/var/lib/iroh-relay/certs"
+prod_tls = true
+# https_bind_addr defaults to [::]:443; quic_bind_addr defaults to [::]:7842.
+
+# Anti-freeloading gate: for every EndpointId that connects, POST to atlas, which
+# returns 200 "true" iff that EndpointId maps to an active-subscription account.
+# The relay sends the EndpointId in the `X-Iroh-NodeId` header (atlas reads it)
+# plus `Authorization: Bearer <IROH_RELAY_HTTP_BEARER_TOKEN>`.
+[access.http]
+url = "https://atlas.virtues.com/relay/authorize"
+# bearer_token is supplied via the IROH_RELAY_HTTP_BEARER_TOKEN env var (see the
+# systemd EnvironmentFile) and MUST equal atlas's VIRTUES_RELAY_AUTH_SECRET.
+# Never hardcode the secret in this file.

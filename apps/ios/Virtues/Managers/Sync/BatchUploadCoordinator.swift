@@ -21,6 +21,9 @@ class BatchUploadCoordinator: ObservableObject, HealthCheckable {
     @Published var lastSuccessfulSyncDate: Date?
     @Published var uploadStats: (pending: Int, failed: Int, total: Int) = (0, 0, 0)
     @Published var streamCounts: (healthkit: Int, location: Int, audio: Int, finance: Int, eventkit: Int, contacts: Int) = (0, 0, 0, 0, 0, 0)
+    /// Per-stream upload outcome (canonical stream key → state). Tells the
+    /// StreamInfo views whether each stream's last upload actually landed.
+    @Published var streamSync: [String: StreamSyncState] = [:]
 
     // MARK: - Dependencies
     private let configProvider: ConfigurationProvider
@@ -29,8 +32,25 @@ class BatchUploadCoordinator: ObservableObject, HealthCheckable {
     private let networkMonitor: NetworkMonitor
 
     private var uploadTimer: ReliableTimer?
-    private let uploadInterval: TimeInterval = 300 // 5 minutes
+    private let uploadInterval: TimeInterval = 900 // 15 minutes — fewer wakeups
+    // (battery), bigger batches, aligns with iOS's opportunistic background
+    // scheduling. Life-logging tolerates ~15-min freshness; data is durable in
+    // SQLite between cycles.
     private let backgroundTaskIdentifier = "com.virtues.ios.sync"
+
+    /// Max combined blob bytes per HTTP request. The adaptive batch caps the
+    /// event *count*, but bytes-per-event vary wildly (a HealthKit event is
+    /// tiny; a 30s AAC audio chunk is ~120KB; an initial 7-day HealthKit sync is
+    /// hundreds of events), so a single combined body can reach several MB. One
+    /// multi-MB body doesn't survive the iroh request-timeout / iOS background
+    /// budget over a slow path (e.g. Tailscale): the send stream is reset
+    /// mid-body and the box rejects the truncated body with a retryable 409,
+    /// which resends the SAME oversized batch forever. Splitting a stream's
+    /// events into sub-batches under this ceiling keeps every request small
+    /// enough to complete, and lets a large backlog drain incrementally (each
+    /// sub-batch that lands is marked complete). 512KB is well within budget on
+    /// any path while still amortizing per-request overhead.
+    private let maxUploadChunkBytes = 512 * 1024
 
     private var isPerformingUpload = false
     private let uploadLock = NSLock()
@@ -43,6 +63,7 @@ class BatchUploadCoordinator: ObservableObject, HealthCheckable {
 
     private let lastUploadKey = "com.virtues.lastUploadDate"
     private let lastSuccessfulSyncKey = "com.virtues.lastSuccessfulSyncDate"
+    private let streamSyncKey = "com.virtues.streamSyncState"
 
     // MARK: - Circuit Breaker
 
@@ -82,6 +103,7 @@ class BatchUploadCoordinator: ObservableObject, HealthCheckable {
 
         loadLastUploadDate()
         loadLastSuccessfulSyncDate()
+        loadStreamSync()
         registerBackgroundTasks()
         updateUploadStats()
         setupLowPowerModeObserver()
@@ -204,7 +226,13 @@ class BatchUploadCoordinator: ObservableObject, HealthCheckable {
 
     func performUpload() async -> Bool {
         guard tryBeginUpload() else { return false }
-        defer { endUpload() }
+        defer {
+            endUpload()
+            // iroh keeps a single warm connection in BoxTransport; there's no
+            // per-burst tunnel to tear down. iroh's own idle timers reclaim the
+            // path when nothing is in flight, and the next burst reuses (or
+            // transparently redials) the connection.
+        }
 
         #if DEBUG
         print("🚀 Starting upload process...")
@@ -306,6 +334,8 @@ class BatchUploadCoordinator: ObservableObject, HealthCheckable {
 
             // Record upload result for adaptive batching
             networkMonitor.recordUploadResult(success: success)
+            // Record the per-stream outcome for the StreamInfo views (2A).
+            recordStreamOutcome(streamName, success: success)
 
             if success {
                 anyUploadSucceeded = true
@@ -402,14 +432,16 @@ class BatchUploadCoordinator: ObservableObject, HealthCheckable {
     private func refetchActionIds() async -> Bool {
         guard let url = configProvider.actionIdsFetchURL else { return false }
 
+        // Over BoxTransport (iroh) — authenticated by this device's proven key.
         var request = URLRequest(url: url)
         request.httpMethod = "GET"
-        request.setValue("Bearer \(configProvider.deviceToken)", forHTTPHeaderField: "Authorization")
         request.timeoutInterval = 30
 
         do {
-            let (data, response) = try await URLSession.shared.data(for: request)
-            guard let http = response as? HTTPURLResponse, http.statusCode == 200 else {
+            // Route through BoxTransport so the refetch works off-LAN (via the
+            // tunnel) just like the uploads do.
+            let (data, http) = try await BoxTransport.shared.send(request, session: URLSession.shared)
+            guard http.statusCode == 200 else {
                 return false
             }
             struct ActionIdsResponse: Decodable {
@@ -430,8 +462,48 @@ class BatchUploadCoordinator: ObservableObject, HealthCheckable {
         }
     }
 
-    /// Generic upload method that works with any stream processor
+    /// Generic upload method that works with any stream processor.
+    ///
+    /// Events are uploaded in byte-bounded sub-batches (see `maxUploadChunkBytes`)
+    /// rather than one combined body: a single multi-MB request doesn't survive a
+    /// slow path's timeout budget and would get its whole batch stuck. Each
+    /// sub-batch is decoded → combined → POSTed independently, so a large backlog
+    /// drains incrementally and a failure only affects its own sub-batch. Returns
+    /// true if at least one sub-batch landed (so `lastSuccessfulSyncDate` still
+    /// advances on partial progress); events in failed sub-batches stay queued.
     private func uploadWithProcessor<P: StreamDataProcessor>(processor: P, events: [UploadEvent], to url: URL) async -> Bool {
+        var anySucceeded = false
+        for chunk in chunkedBySize(events) {
+            let ok = await uploadEventChunk(processor: processor, events: chunk, to: url)
+            if ok { anySucceeded = true }
+        }
+        return anySucceeded
+    }
+
+    /// Split events into contiguous sub-batches whose combined `dataBlob` bytes
+    /// stay under `maxUploadChunkBytes`. A single event larger than the ceiling
+    /// still goes out alone (it can't be split without decode-level chunking, and
+    /// its body is bounded by what the collector wrote).
+    private func chunkedBySize(_ events: [UploadEvent]) -> [[UploadEvent]] {
+        var chunks: [[UploadEvent]] = []
+        var current: [UploadEvent] = []
+        var runningBytes = 0
+        for event in events {
+            let size = event.dataBlob.count
+            if !current.isEmpty && runningBytes + size > maxUploadChunkBytes {
+                chunks.append(current)
+                current = []
+                runningBytes = 0
+            }
+            current.append(event)
+            runningBytes += size
+        }
+        if !current.isEmpty { chunks.append(current) }
+        return chunks
+    }
+
+    /// Upload one sub-batch of events as a single combined request.
+    private func uploadEventChunk<P: StreamDataProcessor>(processor: P, events: [UploadEvent], to url: URL) async -> Bool {
         do {
             var allItems: [P.DataType] = []
             var decodedEvents: [UploadEvent] = []
@@ -455,10 +527,9 @@ class BatchUploadCoordinator: ObservableObject, HealthCheckable {
 
             let combinedData = processor.combine(allItems, deviceId: configProvider.deviceId)
 
-            // Upload combined data
+            // Upload combined data (key-authed over BoxTransport).
             let response = try await networkManager.uploadData(
                 combinedData,
-                deviceToken: configProvider.deviceToken,
                 endpoint: url
             )
 
@@ -529,6 +600,17 @@ class BatchUploadCoordinator: ObservableObject, HealthCheckable {
                 storageProvider.incrementRetry(id: event.id)
                 #if DEBUG
                 print("⚠️ No connection - will retry when online")
+                #endif
+                return
+
+            case .notProcessed(let status):
+                // Box accepted the request but did NOT durably ingest the batch
+                // (skipped: previous run still active / falsy condition). Keep
+                // the data and retry; this is not a server fault, so it must not
+                // count toward the circuit breaker.
+                storageProvider.incrementRetry(id: event.id)
+                #if DEBUG
+                print("⚠️ Not processed (status: \(status)) - keeping data, will retry")
                 #endif
                 return
 
@@ -695,6 +777,47 @@ class BatchUploadCoordinator: ObservableObject, HealthCheckable {
             self?.lastSuccessfulSyncDate = date
         }
         UserDefaults.standard.set(date.timeIntervalSince1970, forKey: lastSuccessfulSyncKey)
+    }
+
+    // MARK: - Per-stream outcome (2A)
+
+    /// Update and persist the outcome for one stream after an upload attempt.
+    /// Keyed by the canonical stream name so it matches `actionIds` and the
+    /// StreamInfo views' lookups.
+    private func recordStreamOutcome(_ streamName: String, success: Bool, error: String? = nil) {
+        let key = DeviceConfiguration.canonicalStreamName(streamName)
+        let now = Date()
+        Task { @MainActor [weak self] in
+            guard let self = self else { return }
+            var state = self.streamSync[key] ?? StreamSyncState()
+            state.lastAttempt = now
+            state.appendOutcome(success)
+            if success {
+                state.lastSuccess = now
+                state.consecutiveFailures = 0
+                state.lastError = nil
+            } else {
+                state.consecutiveFailures += 1
+                state.lastError = error ?? "Upload failed — will retry"
+            }
+            self.streamSync[key] = state
+            self.persistStreamSync()
+        }
+    }
+
+    private func persistStreamSync() {
+        if let data = try? JSONEncoder().encode(streamSync) {
+            UserDefaults.standard.set(data, forKey: streamSyncKey)
+        }
+    }
+
+    private func loadStreamSync() {
+        guard let data = UserDefaults.standard.data(forKey: streamSyncKey),
+              let decoded = try? JSONDecoder().decode([String: StreamSyncState].self, from: data)
+        else { return }
+        Task { @MainActor [weak self] in
+            self?.streamSync = decoded
+        }
     }
     
     // MARK: - Low Power Mode Monitoring

@@ -19,21 +19,53 @@ pub struct Cli {
     pub command: Option<Commands>,
 }
 
+/// `virtues device <action>` — the allowlist as a CLI.
+#[derive(Subcommand)]
+pub enum DeviceCommands {
+    /// List the devices currently allowed to reach this box (non-revoked).
+    #[command(alias = "list")]
+    Ls,
+
+    /// Revoke a device by id — de-allowlists its iroh key so its next dial is
+    /// refused, and revokes any credential rows it owns.
+    #[command(alias = "revoke")]
+    Rm {
+        /// The device id (as shown by `virtues device ls`).
+        id: String,
+    },
+
+    /// Print a one-time pair code to bring a new device onto the allowlist.
+    /// Alias for `virtues pair` scoped to the allowlist framing.
+    Add,
+}
+
 #[derive(Subcommand)]
 pub enum Commands {
     /// Interactive setup wizard. Mostly historical — fresh hardware boots use
     /// `install.sh` which writes `.env` non-interactively. Kept for niche manual
     /// setups. Safe by default: backs up an existing `.env` to `.env.bak.<ts>`
     /// before overwriting.
+    #[command(hide = true)]
     Init,
 
-    /// Print a one-time URL for the human to open in their browser and land in
-    /// a logged-in web session. Mints a fresh pair token in the DB; no `.env`
-    /// touching, no prompts. Idempotent — run as often as needed.
+    /// Pair a device with your box: print a one-time code (+ URL/QR) to enter
+    /// in the desktop app or open in any browser, then wait until it's used.
+    ///
+    /// Mints a fresh pair token in the DB; no `.env` touching, no prompts.
+    /// Idempotent — run as often as needed. THE one human verb for connecting
+    /// a device to the box (docs/onboarding.md). `login` and `link` survive as
+    /// aliases (this used to be `virtues login`).
     ///
     /// Honors `ENVIRONMENT=dev` to print `http://localhost:<VIRTUES_WEB_PORT>/...`
-    /// instead of `https://virtues.local/...`.
-    Link,
+    /// (vite dev server) instead of `http://localhost:8000/...` (the production
+    /// HTTP server on the box).
+    #[command(alias = "login", alias = "link")]
+    Pair {
+        /// Print the code/URL and exit immediately instead of waiting for it
+        /// to be used (scripts, copy-paste workflows).
+        #[arg(long)]
+        no_wait: bool,
+    },
 
     /// Approve a pending sudo request from the box.
     ///
@@ -54,6 +86,17 @@ pub enum Commands {
         /// Deny instead of approve.
         #[arg(long, conflicts_with = "id")]
         deny: bool,
+    },
+
+    /// Manage the devices allowed to reach this box.
+    ///
+    /// A paired device = a row in `app_device` holding an allowlisted iroh
+    /// EndpointId. The allowlist IS the auth boundary: `ls` shows who can reach
+    /// the box, `rm` de-allowlists a device (its next dial is refused at the
+    /// handshake), and `add` prints a pair code to bring a new device on.
+    Device {
+        #[command(subcommand)]
+        action: DeviceCommands,
     },
 
     /// Run database migrations
@@ -95,6 +138,56 @@ pub enum Commands {
         force: bool,
     },
 
+    /// Remove Virtues from this machine (box installs; requires root).
+    ///
+    /// Probes for every artifact the installer creates and prints the exact
+    /// manifest before touching anything. Confirmation = typing this box's
+    /// hostname. Shared infra (Postgres server, Avahi) stays; the inference
+    /// sidecars (llama-server + units) are ours and go.
+    Uninstall {
+        /// Keep all data: /var/lib/virtues (env + ENCRYPTION KEY + lake),
+        /// the Postgres db/role, and the system user. A later reinstall
+        /// picks the box back up. This is the dev-loop tier.
+        #[arg(long)]
+        keep_data: bool,
+
+        /// Also remove the downloaded GGUF models (/var/lib/virtues/models)
+        /// when using --keep-data. They re-download on reinstall.
+        #[arg(long)]
+        purge_models: bool,
+
+        /// Skip the typed-hostname confirmation (scripts/CI). Root is
+        /// still required.
+        #[arg(long)]
+        force: bool,
+    },
+
+    /// Wipe this box back to a fresh state (HIDDEN; testing only).
+    ///
+    /// Default (full): drops all app tables — all data AND the box's identity
+    /// (CA, WireGuard keys, paired devices, subscription link) — re-runs
+    /// migrations, then clears the data lake. The encryption key + the `vector`
+    /// extension are kept. Refuses if the service is running (unless `--force`);
+    /// confirmation = typing this box's hostname (unless `--yes`).
+    ///
+    /// `--keep-data`: just RE-OPEN onboarding — revoke paired devices so the
+    /// setup wizard reappears and you re-pair. Keeps your indexed data, sources,
+    /// subscription, identity, and schema. Safe to run on a live box.
+    #[command(hide = true)]
+    Reset {
+        /// Re-open onboarding without deleting data: revoke devices only.
+        #[arg(long)]
+        keep_data: bool,
+
+        /// Skip the confirmation prompt (scripts/CI).
+        #[arg(long)]
+        yes: bool,
+
+        /// Bypass the "service is running" check (full reset only).
+        #[arg(long)]
+        force: bool,
+    },
+
     /// Self-update from the latest GitHub Release.
     ///
     /// Stops the service, swaps `/usr/local/bin/virtues` with the new binary
@@ -108,12 +201,28 @@ pub enum Commands {
         /// Pin to a specific tag (e.g. `v0.1.3`). Defaults to `latest`.
         #[arg(long)]
         version: Option<String>,
+
+        /// Track the staging channel: upgrade to the newest *prerelease* instead
+        /// of the latest stable. (Once staging tags are marked prerelease, the
+        /// default `latest` follows stable; `--pre` opts into staging.)
+        #[arg(long)]
+        pre: bool,
+
+        /// Allow installing a version older than the one currently running.
+        /// Without this, a downgrade is refused so a stale or tampered "latest"
+        /// can't roll the box back to a known-vulnerable build. (No effect with
+        /// `--pre`, where the prerelease channel is an explicit opt-in.)
+        #[arg(long)]
+        force: bool,
     },
 
     /// Start the HTTP server
+    #[command(hide = true)]
     Server {
-        /// Host to bind to
-        #[arg(long, default_value = "0.0.0.0")]
+        /// Host to bind to. Default `[::]` is dual-stack — it accepts IPv4 AND
+        /// IPv6, including the WG tunnel's ULA the pairing bundle advertises.
+        /// (`0.0.0.0` would be IPv4-only and unreachable over the tunnel.)
+        #[arg(long, default_value = "[::]")]
         host: String,
 
         /// Port to bind to (defaults to NOMAD_PORT_http env var, or 8000)
@@ -122,10 +231,11 @@ pub enum Commands {
     },
 
     /// Seed the database with demo data (people, places, events, etc.)
+    #[command(hide = true)]
     Seed,
 
-    /// Show box health: identity (CA / WG keypair / rendezvous), subscription,
-    /// and paired devices. The deployment substrate's status command.
+    /// Show box health: identity (WG keypair), subscription, and paired devices.
+    /// The deployment substrate's status command.
     ///
     /// `--json` emits a stable machine-readable summary instead of the human
     /// dashboard. Hand someone this output ("paste me `virtues status --json`")
@@ -146,10 +256,12 @@ pub enum Commands {
     /// post-stop.
     ///
     /// Never run this by hand. Service-internal hook.
+    #[command(hide = true)]
     ReportCrash,
 
     /// First-boot bringup (non-interactive): run migrations + ensure the box's
     /// identity exists. Idempotent; the appliance runs this headless, DIY too.
+    #[command(hide = true)]
     Bringup,
 
     /// Connect this box to a paid Virtues subscription (device-authorization
@@ -159,63 +271,119 @@ pub enum Commands {
     /// Most users want `virtues init` instead (full first-run wizard: config
     /// + subscribe + migrate). `subscribe` is the lower-level subscribe-only
     /// command for re-subscribing or dev iteration.
-    #[command(alias = "claim")]
+    #[command(alias = "claim", hide = true)]
     Subscribe,
 
+    /// Attach this box to an existing Virtues subscription via the
+    /// magic-link login flow. Pairs with `virtues init`'s [1] Log in
+    /// branch — same code path, just standalone for retries.
+    ///
+    /// Hidden power-user command: `virtues pair` is the device-pairing verb
+    /// (the pair code/URL); this is the *account* attach, which the web wizard
+    /// owns in the normal flow (docs/onboarding.md).
+    #[command(name = "account-login", hide = true)]
+    AccountLogin,
+
     /// Pre-download ML models (embedding, etc.) for offline/Docker use
+    #[command(hide = true)]
     WarmModels,
+
+    /// Re-validate the embedding endpoint after a model change and recover the
+    /// index. Run this when the box reports a fingerprint/dims mismatch (manual
+    /// inference mode): re-probes the endpoint and, on confirmation, wipes the
+    /// derived vector index and re-embeds from source with the new model.
+    #[command(name = "configure-inference")]
+    ConfigureInference {
+        /// Re-embed without the interactive confirmation if the model changed.
+        #[arg(long)]
+        reembed: bool,
+        /// Skip confirmation prompts (scripts/CI).
+        #[arg(long)]
+        yes: bool,
+    },
+
+    /// Adopt orphaned media into the lake: recordings written before the lake
+    /// existed live outside it (a cwd-relative path bug), so they are invisible to
+    /// lake accounting and to any GC. Copies them in, registers them, rewrites the
+    /// pointers. Idempotent; leaves the originals in place for you to verify first.
+    LakeAdopt {
+        /// Report what would be adopted without copying or rewriting anything.
+        #[arg(long)]
+        dry_run: bool,
+    },
+
+    /// Rebuild the derived search index from source with the current model.
+    /// Wipes the vector + BM25 index (source data is untouched), resizes the
+    /// vector columns to match the model, and re-embeds. Use after an index
+    /// schema change (e.g. the halfvec/BM25 upgrade) or to recover a stale index.
+    Reindex {
+        /// Skip the confirmation prompt (scripts/CI).
+        #[arg(long)]
+        yes: bool,
+    },
 
     /// Report the inference stack's hardware resolution without downloading:
     /// detected accelerator, whether this build links CUDA, the chosen ONNX
     /// precision, and whether each model is baked or would be downloaded. The
     /// DB-free composability check for appliance-vs-DIY (web status reads the
-    /// same `model_cache::resolution_report`).
+    /// same `inference_report::resolution_report`).
     Doctor,
 
+    /// Run the magnet: recompute centroids and attach matching material to
+    /// every notebook and story with `auto_add_materials` switched on.
+    #[command(hide = true)]
+    Magnet,
+
     /// Compute novelty scores for all days with events
+    #[command(hide = true)]
     ComputeNovelty,
 
     /// Compute autonomic z-scores for all days with avg_hr data
+    #[command(hide = true)]
     ComputeAutonomic,
 
-    /// Pair an iOS device manually (dev shortcut — bypasses the QR flow).
-    ///
-    /// Mints a `credentials` row with a **server-issued random bearer** (printed
-    /// for you to paste into the app's keychain) and fans out the per-device iOS
-    /// `app_actions`. The device id is stored only as a label, never as the
-    /// bearer.
-    PairIos {
-        /// Device label (e.g. the app's install id). Stored as metadata only —
-        /// NOT used as the auth token.
-        device_id: String,
+    /// Annotate events from their own time windows: avg_hr, entities,
+    /// source_ontologies. Backfills history; safe to re-run (idempotent).
+    #[command(hide = true)]
+    AnnotateEvents,
 
-        /// Friendly name for the device
-        #[arg(long, default_value = "iPhone")]
-        name: String,
-    },
-
-    /// Diagnose token encryption: pull stored device tokens, try to decrypt
-    /// them with the current `VIRTUES_ENCRYPTION_KEY`, and report what happens
-    /// for each. Pass an optional bearer token to compare against the
-    /// decrypted plaintext.
-    VerifyTokens {
-        /// Optional bearer token (raw, no "Bearer " prefix) to match against
-        bearer: Option<String>,
+    /// Roll a day's 5-minute audio chunks up into coherent context sessions
+    /// (changepoint on loudness + speaker count). Idempotent per day.
+    #[command(hide = true)]
+    SessionizeAudio {
+        /// Date to sessionize (YYYY-MM-DD). Omit for all days with audio.
+        #[arg(long)]
+        date: Option<String>,
     },
 
     /// Generate the day summary (autobiography + 24h event timeline) for a date.
     ///
-    /// Calls `api::day_summary::generate_day_summary`, which gathers the day's
-    /// ontology data, prompts the user's chat model via virtues-api, and writes
-    /// the results to `wiki_days` (autobiography/epigraph/data_quality) and
-    /// `wiki_events` (clearing existing auto events first; manual events are
-    /// preserved). Gaps in the LLM-emitted timeline are backfilled as "Unknown"
-    /// to guarantee 00:00–24:00 coverage.
+    /// Runs the full nightly chain locally, in production order: roll audio chunks
+    /// into sessions → the DETECTIVE (`segment_day_events`, best model) fuses the
+    /// dossier of clean rollups into a gapless timeline → scoring (sleep, annotate,
+    /// novelty, autonomic, topic) → the DAY SUMMARY (`narrate_day`, best model)
+    /// writes the autobiography and names the day's standout from the scores.
+    /// Writes to `wiki_days` (autobiography/epigraph/data_quality) and `wiki_events`
+    /// (clearing existing auto events first; manual events are preserved). Gaps are
+    /// backfilled as "Unknown" to guarantee 00:00–24:00 coverage.
+    #[command(hide = true)]
     DaySummary {
         /// Date to summarize (YYYY-MM-DD). Defaults to today in the user's
         /// profile timezone (or local time if no timezone is set).
         #[arg(long)]
         date: Option<String>,
+        /// Re-run ONLY the narrative (`narrate_day`) against the day's existing
+        /// scored events — skip sessionize / detective / scoring. For iterating
+        /// on the narrate prompt without re-segmenting or re-embedding (no NPU /
+        /// embedder needed); the events must already exist for the day.
+        #[arg(long)]
+        narrate_only: bool,
+        /// Force a re-cut of the event timeline (the DETECTIVE) and print it, then
+        /// stop — no scoring, no narrative, no embedder. Clears the day's sources
+        /// fingerprint so segmentation actually re-runs even if sources are
+        /// unchanged. For inspecting detective output / variance in isolation.
+        #[arg(long, conflicts_with = "narrate_only")]
+        segment_only: bool,
     },
 
     /// Run entity resolution (places + people) over the last N hours.
@@ -224,6 +392,7 @@ pub enum Commands {
     /// owns clustering. The new actions path (ios_location, etc.) writes
     /// `data_location_point` rows but doesn't chain into place resolution,
     /// so visits don't get created. Use this to manually backfill.
+    #[command(hide = true)]
     ResolveEntities {
         /// Lookback window in hours (default: 24)
         #[arg(long, default_value_t = 24)]

@@ -1,0 +1,41 @@
+[package]
+name = "virtues-iroh"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+
+# The shared iroh 1.x reach layer: build an Endpoint, serve the box's existing
+# axum app over iroh streams (via hyper), and dial the box from clients.
+# Reused by the box (virtues-core), the desktop helper, and — via C-FFI — iOS.
+#
+# iroh is pinned to the `ring` TLS backend (NOT the default-inclusive but also
+# available `tls-aws-lc-rs`) so the box/relay cross/musl builds need no cmake/C
+# toolchain and stay single-provider with the rest of the tree (rustls+ring).
+
+[dependencies]
+iroh = { version = "1", default-features = false, features = ["tls-ring", "portmapper"] }
+# Only to install ring as the process-default rustls CryptoProvider (see
+# build_endpoint). iroh's internal reqwest is built `rustls-no-provider`, so
+# without a process default the first relay HTTP client panics at runtime.
+# default-features = false keeps aws-lc-rs (cmake/C toolchain) out of the tree.
+rustls = { version = "0.23", default-features = false, features = ["ring", "std"] }
+
+# Serve the existing axum Router over an iroh bi-stream: iroh streams implement
+# tokio AsyncRead/AsyncWrite, so we bridge them to hyper 1.x directly.
+axum = { version = "0.7", default-features = false }
+hyper = { version = "1", features = ["http1", "server"] }
+hyper-util = { version = "0.1", features = ["tokio", "server", "service"] }
+# axum 0.7 uses tower 0.5 internally; match it so `ServiceExt::oneshot` on the
+# Router resolves. `util` provides `service_fn` + `ServiceExt`.
+tower = { version = "0.5", features = ["util"] }
+
+tokio = { version = "1", features = ["rt", "io-util", "sync", "macros"] }
+anyhow = "1"
+tracing = "0.1"
+
+[dev-dependencies]
+tokio = { version = "1", features = ["full"] }
+# Full axum (with routing/handler features) for the roundtrip test's dummy app.
+axum = "0.7"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }

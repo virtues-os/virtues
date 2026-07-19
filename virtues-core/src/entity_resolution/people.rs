@@ -40,12 +40,364 @@ pub async fn resolve_people(db: &Database, window: TimeWindow) -> Result<usize> 
     // 2. Resolve from email senders
     total_resolved += resolve_email_senders(db, window).await?;
 
+    // 3. Resolve from message senders. Deliberately NOT window-bounded — see below.
+    total_resolved += resolve_message_senders(db).await?;
+
+    // 4. Resolve the *recipient* of the messages you sent. Same anti-join shape as
+    //    (3), same reason it takes no window.
+    total_resolved += resolve_message_recipients(db).await?;
+
     tracing::info!(
         people_resolved = total_resolved,
         "People resolution completed"
     );
 
     Ok(total_resolved)
+}
+
+/// How many rows a single pass of the message resolver claims at a time. Both loops
+/// below drain — they keep going while batches come back full — so this bounds
+/// memory and statement size, not total throughput.
+const MESSAGE_BATCH: i64 = 5_000;
+
+/// Turn `+15125550100` into Nick.
+///
+/// Email senders resolved. Calendar attendees resolved. Message senders never did —
+/// there was no resolver for `data_communication_message` at all. So the box knew
+/// 525 people, held thousands of messages, and connected none of them: every message
+/// said a phone number and not one said a name.
+///
+/// That is the difference between a log and a memory. "Sucks you're going to have to
+/// cancel — +15125550100" is a line of data. The same sentence with "Nick" on it is a
+/// life, and it is what makes the rest of the system worth querying.
+///
+/// # Why this one takes no `TimeWindow`
+///
+/// Every other resolver here is driven by a rolling window over the *event's*
+/// timestamp — "re-resolve the last 30 hours". That works for GPS, where a point is
+/// collected moments after it happens, so event time and arrival time agree.
+///
+/// It is exactly wrong for messages. The chat.db backfill walks twenty years of
+/// history, so a message that lands *right now* carries `timestamp = 2018-04-11` and
+/// falls outside a window anchored to `now()` — permanently. A window asks "what
+/// happened recently?" when the question that needs answering is "what have I not
+/// done yet?", and those two agree only when data arrives in the order it occurred.
+///
+/// So this is driven by the *absence of its own output*: a message is work if it has
+/// no sender ref yet. No cursor to rewind, no window to fall outside of, nothing to
+/// keep in sync. Delete the refs and they are rebuilt; crash mid-pass and the next
+/// tick resumes exactly where it stopped; land a message from 2018 and it is picked
+/// up on the next tick like any other. The same shape `search::indexer` already uses
+/// (`LEFT JOIN search_embeddings … WHERE se.id IS NULL`).
+///
+/// # The trap in that, and the way out
+///
+/// A naive "no ref yet" anti-join never terminates here. Unlike email — which mints a
+/// person for any unknown address, so a ref always appears — an unknown *number* gets
+/// no person, deliberately (below). So the ~1,200 numbers with no contact would have
+/// no ref, forever, and would be re-examined every fifteen minutes until the heat
+/// death of the box.
+///
+/// The fix falls out of the data model rather than being bolted onto it: **inner-join
+/// the known handles**. A message is only work if its sender is someone we could
+/// resolve *and* haven't. An unknown number matches no person, so it is not work and
+/// costs nothing — and on the day you save that contact it becomes work again, on its
+/// own. Self-healing in both directions, with no bookkeeping.
+///
+/// # Why an unknown number does not become a person
+///
+/// An unrecognized email address at least carries a display name. A bare phone number
+/// carries nothing, so minting a person per unknown number would fill the graph with
+/// hundreds of ghosts called "+18334160379". They stay unresolved until a contact
+/// turns up — the honest state.
+async fn resolve_message_senders(db: &Database) -> Result<usize> {
+    normalize_pending_handles(db).await?;
+
+    let mut resolved = 0usize;
+    loop {
+        // One handle must mean one person. If two contacts claim the same number the
+        // contact data is wrong, and guessing which of them said something is worse
+        // than admitting we don't know — so an ambiguous handle owns nobody and its
+        // messages simply stay unresolved.
+        let rows = sqlx::query!(
+            r#"
+            WITH handle_owner AS (
+                SELECT h.handle,
+                       min(p.id)             AS person_id,
+                       min(p.canonical_name) AS canonical_name
+                FROM wiki_people p
+                CROSS JOIN LATERAL jsonb_array_elements_text(p.handles) AS h(handle)
+                GROUP BY h.handle
+                HAVING count(DISTINCT p.id) = 1
+            )
+            SELECT m.id            AS "msg_id!",
+                   o.person_id     AS "person_id!",
+                   o.canonical_name AS "canonical_name!"
+            FROM data_communication_message m
+            JOIN handle_owner o ON o.handle = m.from_handle
+            LEFT JOIN wiki_entity_refs r
+                   ON r.source_table = 'data_communication_message'
+                  AND r.source_id = m.id
+                  AND r.role = 'sender'
+            WHERE m.from_handle <> ''
+              AND r.id IS NULL
+            LIMIT $1
+            "#,
+            MESSAGE_BATCH
+        )
+        .fetch_all(db.pool())
+        .await?;
+
+        if rows.is_empty() {
+            break;
+        }
+        let batch = rows.len();
+
+        let msg_ids: Vec<String> = rows.iter().map(|r| r.msg_id.clone()).collect();
+        let person_ids: Vec<String> = rows.iter().map(|r| r.person_id.clone()).collect();
+        let names: Vec<String> = rows.iter().map(|r| r.canonical_name.clone()).collect();
+        let ref_ids: Vec<String> = rows
+            .iter()
+            .map(|r| ids::generate_id("eref", &[&r.msg_id, &r.person_id, "sender"]))
+            .collect();
+
+        // The ref is the real artifact: it is what lets you traverse from a message to
+        // everything else about the person who sent it.
+        sqlx::query!(
+            r#"
+            INSERT INTO wiki_entity_refs (id, entity_type, entity_id, source_table, source_id, role, timestamp)
+            SELECT u.ref_id, 'person', u.person_id, 'data_communication_message', u.msg_id, 'sender', m.timestamp
+            FROM UNNEST($1::text[], $2::text[], $3::text[]) AS u(ref_id, person_id, msg_id)
+            JOIN data_communication_message m ON m.id = u.msg_id
+            ON CONFLICT (entity_id, source_table, source_id, role) DO NOTHING
+            "#,
+            &ref_ids,
+            &person_ids,
+            &msg_ids
+        )
+        .execute(db.pool())
+        .await?;
+
+        // `from_name` is the convenience copy — what a day summary or a chat prompt can
+        // read without a join. Only fill it in where it's empty; a name a human set by
+        // hand outranks one we inferred.
+        sqlx::query!(
+            r#"
+            UPDATE data_communication_message m
+            SET from_name = u.name
+            FROM UNNEST($1::text[], $2::text[]) AS u(id, name)
+            WHERE m.id = u.id AND m.from_name IS NULL
+            "#,
+            &msg_ids,
+            &names
+        )
+        .execute(db.pool())
+        .await?;
+
+        resolved += batch;
+        if (batch as i64) < MESSAGE_BATCH {
+            break;
+        }
+    }
+
+    if resolved > 0 {
+        tracing::info!(resolved, "Message senders resolved to people");
+    }
+    Ok(resolved)
+}
+
+/// Link the messages *you* sent to the person you sent them to.
+///
+/// This is the other half of a conversation. The sender pass (above) resolves every
+/// *inbound* message — "+16786463049" → Almu — but says nothing about your replies,
+/// and so "did we ever text Almu?" returned only her side: her three messages, none
+/// of yours. The reason is structural, not a bug in the join. A message you sent has
+/// `is_from_me = true`, which the transform records as `from_identifier = "me"` and
+/// `from_handle = ""` — because the chat.db `handle` names the *other* party even on
+/// your own rows, so trusting it would attribute your message to its recipient. An
+/// empty handle matches no person, so a self-authored row gets no ref at all and is
+/// invisible to every person-scoped query. There is no owner entity to point it at,
+/// and inventing one would not help: the useful link is not "me", it is *who I was
+/// talking to*.
+///
+/// That party is recoverable without any new column. `thread_id` groups a
+/// conversation, and the counterparty is simply the one known person among the
+/// thread's *inbound* handles — which the sender side has already resolved. So each
+/// sent message gets a `recipient` ref to that person, mirroring how
+/// `data_communication_email` resolves both sender and recipient. A person query then
+/// asks for `role IN ('sender','recipient')` and gets **both** halves of the thread,
+/// direction-blind.
+///
+/// # Scope, and why the anti-join still terminates
+///
+/// Only unambiguous **1:1** threads (`is_group_message = false`, exactly one distinct
+/// known counterparty). A group's "recipient" is many people — a later `participant`
+/// pass, not this one — so group and unknown-counterparty threads simply produce no
+/// `thread_party` row, are never selected, and cost nothing. That is what keeps the
+/// `r.id IS NULL` drain from spinning on rows it can never resolve: exactly the same
+/// self-healing shape as the sender pass, which is only *work* for a handle we could
+/// resolve *and* haven't. Save the contact and the thread becomes resolvable on its
+/// own; until then it stays honestly unlinked.
+async fn resolve_message_recipients(db: &Database) -> Result<usize> {
+    let mut resolved = 0usize;
+    loop {
+        let rows = sqlx::query!(
+            r#"
+            WITH handle_owner AS (
+                SELECT h.handle,
+                       min(p.id)             AS person_id,
+                       min(p.canonical_name) AS canonical_name
+                FROM wiki_people p
+                CROSS JOIN LATERAL jsonb_array_elements_text(p.handles) AS h(handle)
+                GROUP BY h.handle
+                HAVING count(DISTINCT p.id) = 1
+            ),
+            -- The counterparty of each 1:1 thread: the single distinct known person
+            -- among its inbound handles. `HAVING count(DISTINCT …) = 1` drops any
+            -- thread whose inbound side resolves to two different people (bad contact
+            -- data) — guessing the recipient is worse than leaving it unresolved.
+            thread_party AS (
+                SELECT m.thread_id,
+                       min(o.person_id)      AS person_id,
+                       min(o.canonical_name) AS canonical_name
+                FROM data_communication_message m
+                JOIN handle_owner o ON o.handle = m.from_handle
+                WHERE m.from_handle <> ''
+                  AND m.is_group_message = FALSE
+                  AND m.thread_id IS NOT NULL
+                GROUP BY m.thread_id
+                HAVING count(DISTINCT o.person_id) = 1
+            )
+            SELECT m.id             AS "msg_id!",
+                   tp.person_id     AS "person_id!",
+                   tp.canonical_name AS "canonical_name!"
+            FROM data_communication_message m
+            JOIN thread_party tp ON tp.thread_id = m.thread_id
+            LEFT JOIN wiki_entity_refs r
+                   ON r.source_table = 'data_communication_message'
+                  AND r.source_id = m.id
+                  AND r.role = 'recipient'
+            WHERE (m.metadata->>'is_from_me')::boolean IS TRUE
+              AND r.id IS NULL
+            LIMIT $1
+            "#,
+            MESSAGE_BATCH
+        )
+        .fetch_all(db.pool())
+        .await?;
+
+        if rows.is_empty() {
+            break;
+        }
+        let batch = rows.len();
+
+        let msg_ids: Vec<String> = rows.iter().map(|r| r.msg_id.clone()).collect();
+        let person_ids: Vec<String> = rows.iter().map(|r| r.person_id.clone()).collect();
+        let ref_ids: Vec<String> = rows
+            .iter()
+            .map(|r| ids::generate_id("eref", &[&r.msg_id, &r.person_id, "recipient"]))
+            .collect();
+
+        sqlx::query!(
+            r#"
+            INSERT INTO wiki_entity_refs (id, entity_type, entity_id, source_table, source_id, role, timestamp)
+            SELECT u.ref_id, 'person', u.person_id, 'data_communication_message', u.msg_id, 'recipient', m.timestamp
+            FROM UNNEST($1::text[], $2::text[], $3::text[]) AS u(ref_id, person_id, msg_id)
+            JOIN data_communication_message m ON m.id = u.msg_id
+            ON CONFLICT (entity_id, source_table, source_id, role) DO NOTHING
+            "#,
+            &ref_ids,
+            &person_ids,
+            &msg_ids
+        )
+        .execute(db.pool())
+        .await?;
+
+        // `from_name` is deliberately NOT filled here. It names who *sent* the
+        // message — that is you — so writing the recipient's name onto your own row
+        // would render "Almu: <your reply>". The link lives in the ref; the plain
+        // column stays honest.
+
+        resolved += batch;
+        if (batch as i64) < MESSAGE_BATCH {
+            break;
+        }
+    }
+
+    if resolved > 0 {
+        tracing::info!(resolved, "Sent messages resolved to recipients");
+    }
+    Ok(resolved)
+}
+
+/// Fill `from_handle` for messages that predate it (or that some future collector
+/// forgets to set). The transform normalizes at write time, so in the steady state
+/// this drains to nothing on the first tick and costs an empty index scan thereafter.
+///
+/// Normalization stays in Rust — one implementation, in `virtues_helpers::handles`,
+/// shared with the transform and with contact ingest. A second copy of the E.164 rules
+/// written in SQL would drift, and the two halves of a join silently disagreeing about
+/// what a phone number *is* was the original bug.
+async fn normalize_pending_handles(db: &Database) -> Result<()> {
+    loop {
+        let rows = sqlx::query!(
+            r#"
+            SELECT id, from_identifier
+            FROM data_communication_message
+            WHERE from_handle IS NULL
+            LIMIT $1
+            "#,
+            MESSAGE_BATCH
+        )
+        .fetch_all(db.pool())
+        .await?;
+
+        if rows.is_empty() {
+            return Ok(());
+        }
+        let batch = rows.len();
+
+        let mut ids: Vec<String> = Vec::with_capacity(batch);
+        let mut handles: Vec<String> = Vec::with_capacity(batch);
+        for row in rows {
+            ids.push(row.id);
+            // `None` — a short code, or ourselves — is stored as '', which means
+            // "asked, and the answer is nobody". That is what keeps it out of the work
+            // queue for good; leaving it NULL would re-offer it forever.
+            handles.push(
+                virtues_helpers::handles::normalize_handle(&row.from_identifier)
+                    .unwrap_or_default(),
+            );
+        }
+
+        let updated = sqlx::query!(
+            r#"
+            UPDATE data_communication_message m
+            SET from_handle = u.handle
+            FROM UNNEST($1::text[], $2::text[]) AS u(id, handle)
+            WHERE m.id = u.id
+            "#,
+            &ids,
+            &handles
+        )
+        .execute(db.pool())
+        .await?
+        .rows_affected();
+
+        // Claimed rows but changed none: the loop would spin on the same batch forever.
+        // Bail loudly rather than pin a core for the life of the daemon.
+        if updated == 0 {
+            tracing::error!(
+                batch,
+                "from_handle backfill selected rows but updated none — aborting drain"
+            );
+            return Ok(());
+        }
+
+        if (batch as i64) < MESSAGE_BATCH {
+            return Ok(());
+        }
+    }
 }
 
 /// Resolve people from calendar attendees in time window
@@ -524,5 +876,139 @@ mod tests {
         assert_eq!(extract_name_from_email("john_doe@company.co"), "John Doe");
         assert_eq!(extract_name_from_email("user123@domain.com"), "user123");
         assert_eq!(extract_name_from_email("single@test.com"), "single");
+    }
+
+    /// The regression this whole change exists for: a two-sided thread — one message
+    /// you received, two you sent — must resolve to the same person on BOTH sides, so
+    /// "did we ever text X?" returns your replies and not only theirs.
+    ///
+    /// Seeds a self-contained thread (unique ids, cleaned up at both ends), runs the
+    /// real sender + recipient passes, and asserts:
+    ///   1. your sent messages gain a `recipient` ref to the contact (the fix);
+    ///   2. a `role IN ('sender','recipient')` query returns all three messages.
+    ///
+    /// `#[ignore]` by repo convention — needs Postgres:
+    ///   DATABASE_URL=postgres://virtues:virtues@localhost:5432/virtues \
+    ///     cargo test -p virtues entity_resolution::people -- --ignored --nocapture
+    #[tokio::test]
+    #[ignore = "needs Postgres (DATABASE_URL)"]
+    async fn sent_messages_resolve_to_the_recipient() {
+        let pool = virtues_helpers::connect_from_env("recipient-resolution-test")
+            .await
+            .expect("DATABASE_URL");
+        let db = Database::from_pool(pool);
+
+        // Namespaced so the seed can never collide with real rows and always cleans up.
+        const P: &str = "test_recipient_pass";
+        let person_id = format!("person_{P}");
+        let handle = "+16786463049";
+        let thread = format!("iMessage;-;{handle};{P}");
+
+        async fn cleanup(db: &Database, person_id: &str, thread: &str) {
+            let _ = sqlx::query(
+                "DELETE FROM wiki_entity_refs r
+                 USING data_communication_message m
+                 WHERE r.source_table='data_communication_message'
+                   AND r.source_id=m.id AND m.thread_id=$1",
+            )
+            .bind(thread)
+            .execute(db.pool())
+            .await;
+            let _ = sqlx::query("DELETE FROM data_communication_message WHERE thread_id=$1")
+                .bind(thread)
+                .execute(db.pool())
+                .await;
+            let _ = sqlx::query("DELETE FROM wiki_people WHERE id=$1")
+                .bind(person_id)
+                .execute(db.pool())
+                .await;
+        }
+
+        // One inbound (she texts you) + two outbound (you reply). Outbound rows carry
+        // is_from_me and an EMPTY from_handle — exactly what the transform writes, and
+        // exactly why they were invisible before this pass.
+        async fn seed_msg(
+            db: &Database,
+            thread: &str,
+            id: &str,
+            from_handle: &str,
+            from_ident: &str,
+            is_from_me: bool,
+        ) {
+            sqlx::query(
+                "INSERT INTO data_communication_message
+                   (id, message_id, thread_id, channel, body, from_identifier,
+                    from_handle, is_group_message, timestamp, source_stream_id,
+                    source_table, source_provider, metadata)
+                 VALUES ($1,$1,$2,'imessage','hi',$3,$4,false, now(), $1,
+                         'mac_imessage','mac', $5::jsonb)",
+            )
+            .bind(id)
+            .bind(thread)
+            .bind(from_ident)
+            .bind(from_handle)
+            .bind(serde_json::json!({ "is_from_me": is_from_me }))
+            .execute(db.pool())
+            .await
+            .expect("seed message");
+        }
+
+        cleanup(&db, &person_id, &thread).await; // in case a prior run died mid-way
+
+        sqlx::query(
+            "INSERT INTO wiki_people (id, canonical_name, handles)
+             VALUES ($1, 'Almu', $2::jsonb)",
+        )
+        .bind(&person_id)
+        .bind(serde_json::json!([handle]))
+        .execute(db.pool())
+        .await
+        .expect("seed person");
+
+        seed_msg(&db, &thread, &format!("{P}_in1"), handle, handle, false).await;
+        seed_msg(&db, &thread, &format!("{P}_out1"), "", "me", true).await;
+        seed_msg(&db, &thread, &format!("{P}_out2"), "", "me", true).await;
+
+        // The real passes, in the order resolve_people runs them.
+        resolve_message_senders(&db).await.expect("sender pass");
+        let n = resolve_message_recipients(&db)
+            .await
+            .expect("recipient pass");
+        assert_eq!(n, 2, "both sent messages should newly resolve to a recipient");
+
+        // 1. Each outbound message now points at the contact via a recipient ref.
+        let recipient_refs: i64 = sqlx::query_scalar(
+            "SELECT count(*) FROM wiki_entity_refs r
+             JOIN data_communication_message m ON m.id = r.source_id
+             WHERE m.thread_id=$1 AND r.role='recipient' AND r.entity_id=$2
+               AND (m.metadata->>'is_from_me')::bool",
+        )
+        .bind(&thread)
+        .bind(&person_id)
+        .fetch_one(db.pool())
+        .await
+        .expect("count recipient refs");
+        assert_eq!(recipient_refs, 2, "both your replies link to the contact");
+
+        // 2. The read-side shape "messages with this person" now returns BOTH halves.
+        let both_sides: i64 = sqlx::query_scalar(
+            "SELECT count(DISTINCT m.id)
+             FROM data_communication_message m
+             JOIN wiki_entity_refs r
+               ON r.source_table='data_communication_message' AND r.source_id=m.id
+              AND r.entity_type='person' AND r.role IN ('sender','recipient')
+             WHERE r.entity_id=$1",
+        )
+        .bind(&person_id)
+        .fetch_one(db.pool())
+        .await
+        .expect("count both sides");
+        assert_eq!(both_sides, 3, "one received + two sent, the whole thread");
+
+        // Idempotent: a second pass is a no-op (the anti-join is satisfied).
+        let again = resolve_message_recipients(&db).await.expect("second pass");
+        assert_eq!(again, 0, "recipient pass must be self-healing, not re-doing work");
+
+        cleanup(&db, &person_id, &thread).await;
     }
 }

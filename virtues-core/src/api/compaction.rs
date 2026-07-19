@@ -178,6 +178,7 @@ async fn generate_summary(
     // System purpose — chat compaction is automated background work.
     let response = BearerClient::from_env(pool.clone())
         .with_purpose(crate::virtues_api::client::Purpose::System)
+        .with_feature("compaction")
         .post_json("/v1/ai/chat/completions", &body)
         .await
         .map_err(|e| crate::Error::Other(format!("Summary generation failed: {}", e)))?;
@@ -540,6 +541,66 @@ pub fn build_context_for_llm(
                                 "type": "tool_result",
                                 "tool_call_id": tool_call_id,
                                 "content": res
+                            }));
+                        }
+                    }
+                    UIPart::File { media_type, url, filename } => {
+                        // Convert attachments to OpenAI-compatible content blocks
+                        // (the gateway translates these per provider).
+                        if media_type.starts_with("image/") {
+                            parts.push(serde_json::json!({
+                                "type": "image_url",
+                                "image_url": { "url": url }
+                            }));
+                        } else if media_type == "application/pdf" {
+                            // Vercel AI Gateway expects RAW base64 in `data` (no
+                            // data: prefix) + `media_type` + `filename`.
+                            let data = url.split_once(',').map(|(_, b)| b).unwrap_or(url.as_str());
+                            parts.push(serde_json::json!({
+                                "type": "file",
+                                "file": {
+                                    "data": data,
+                                    "media_type": media_type,
+                                    "filename": filename.clone().unwrap_or_else(|| "document.pdf".to_string())
+                                }
+                            }));
+                        } else if media_type.starts_with("audio/") {
+                            // input_audio wants raw base64 (no data: prefix) + a format token.
+                            let data = url.split_once(',').map(|(_, b)| b).unwrap_or(url.as_str());
+                            let format = match media_type.as_str() {
+                                "audio/wav" | "audio/x-wav" => "wav",
+                                "audio/ogg" => "ogg",
+                                "audio/flac" => "flac",
+                                "audio/aac" | "audio/x-m4a" | "audio/mp4" => "m4a",
+                                "audio/webm" => "webm",
+                                _ => "mp3",
+                            };
+                            parts.push(serde_json::json!({
+                                "type": "input_audio",
+                                "input_audio": { "data": data, "format": format }
+                            }));
+                        } else if media_type.starts_with("text/") || media_type == "application/json" {
+                            // Text/code/doc files (and long pasted text) ride inline as
+                            // a text block so any model can read them. The data URL holds
+                            // base64 UTF-8.
+                            let b64 = url.split_once(',').map(|(_, b)| b).unwrap_or(url.as_str());
+                            let content = base64::Engine::decode(
+                                &base64::engine::general_purpose::STANDARD,
+                                b64,
+                            )
+                            .ok()
+                            .and_then(|bytes| String::from_utf8(bytes).ok())
+                            .unwrap_or_default();
+                            let name = filename.clone().unwrap_or_else(|| "file.txt".to_string());
+                            parts.push(serde_json::json!({
+                                "type": "text",
+                                "text": format!("[File: {}]\n{}", name, content)
+                            }));
+                        } else {
+                            // Unknown type — at least make the model aware of it.
+                            parts.push(serde_json::json!({
+                                "type": "text",
+                                "text": format!("[Attached file: {}]", filename.clone().unwrap_or_else(|| media_type.clone()))
                             }));
                         }
                     }

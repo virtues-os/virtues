@@ -85,7 +85,11 @@ fn get_table_metadata() -> HashMap<&'static str, TableMetadata> {
         description: "Chat messages (iMessage, SMS, etc.)",
         category: "communication",
         key_columns: &["body", "channel", "from_identifier", "from_name", "to_identifiers", "is_read", "is_group_message", "has_attachments", "thread_id", "timestamp"],
-        join_hint: None,
+        // A message links to the person on the other end via wiki_entity_refs:
+        // role='sender' for messages you received, role='recipient' for messages you
+        // sent. Filter both to get a full thread with someone; the message's own
+        // direction is in metadata->>'is_from_me'.
+        join_hint: Some("JOIN wiki_entity_refs er ON er.source_table = 'data_communication_message' AND er.source_id = data_communication_message.id AND er.entity_type = 'person' AND er.role IN ('sender','recipient') JOIN wiki_people ON er.entity_id = wiki_people.id"),
     });
 
     // ============================================================================
@@ -129,7 +133,7 @@ fn get_table_metadata() -> HashMap<&'static str, TableMetadata> {
     // ============================================================================
     // DATA TABLES - Activity
     // ============================================================================
-    m.insert("data_activity_app_usage", TableMetadata {
+    m.insert("data_activity_app_session", TableMetadata {
         description: "Desktop/mobile app usage sessions",
         category: "activity",
         key_columns: &["app_name", "app_bundle_id", "app_category", "start_time", "end_time", "window_title", "url"],
@@ -208,7 +212,7 @@ fn get_table_metadata() -> HashMap<&'static str, TableMetadata> {
     m.insert("wiki_days", TableMetadata {
         description: "Day summaries with autobiography and context",
         category: "wiki_temporal",
-        key_columns: &["date", "start_timezone", "end_timezone", "autobiography", "last_edited_by"],
+        key_columns: &["date", "start_timezone", "autobiography", "last_edited_by"],
         join_hint: Some("JOIN wiki_acts ON act_id = wiki_acts.id"),
     });
     m.insert("wiki_years", TableMetadata {
@@ -490,15 +494,20 @@ impl SqlQueryTool {
             ));
         }
 
-        // Check for dangerous keywords
+        // Check for dangerous keywords. Match whole tokens only — a substring
+        // check falsely rejects common columns like `created_at` ("create") and
+        // `updated_at` ("update"). Splitting on non-alphanumeric chars (which
+        // includes `_`) tokenizes `created_at` into ["created", "at"], so only a
+        // standalone `create`/`update`/etc. statement keyword trips the guard.
         let forbidden = ["insert", "update", "delete", "drop", "create", "alter", "truncate"];
-        for keyword in &forbidden {
-            if sql_lower.contains(keyword) {
-                return Err(ToolError::InvalidParameters(format!(
-                    "Query contains forbidden keyword: {}",
-                    keyword
-                )));
-            }
+        if let Some(keyword) = sql_lower
+            .split(|c: char| !c.is_alphanumeric())
+            .find(|tok| forbidden.contains(tok))
+        {
+            return Err(ToolError::InvalidParameters(format!(
+                "Query contains forbidden keyword: {}",
+                keyword
+            )));
         }
 
         // Validate query length
@@ -555,22 +564,57 @@ pub fn convert_rows_to_json(rows: &[sqlx::postgres::PgRow]) -> Vec<serde_json::V
                     serde_json::Value::Number(v.into())
                 } else if let Ok(v) = row.try_get::<i32, _>(i) {
                     serde_json::Value::Number(v.into())
+                } else if let Ok(v) = row.try_get::<i16, _>(i) {
+                    serde_json::Value::Number(v.into())
                 }
                 // Float types
                 else if let Ok(v) = row.try_get::<f64, _>(i) {
+                    serde_json::json!(v)
+                } else if let Ok(v) = row.try_get::<f32, _>(i) {
                     serde_json::json!(v)
                 }
                 // Boolean
                 else if let Ok(v) = row.try_get::<bool, _>(i) {
                     serde_json::Value::Bool(v)
                 }
+                // Date/time types → strings (RFC3339 for tz-aware)
+                else if let Ok(v) = row.try_get::<sqlx::types::chrono::DateTime<sqlx::types::chrono::Utc>, _>(i) {
+                    serde_json::Value::String(v.to_rfc3339())
+                } else if let Ok(v) = row.try_get::<sqlx::types::chrono::DateTime<sqlx::types::chrono::FixedOffset>, _>(i) {
+                    serde_json::Value::String(v.to_rfc3339())
+                } else if let Ok(v) = row.try_get::<sqlx::types::chrono::NaiveDateTime, _>(i) {
+                    serde_json::Value::String(v.format("%Y-%m-%d %H:%M:%S%.f").to_string())
+                } else if let Ok(v) = row.try_get::<sqlx::types::chrono::NaiveDate, _>(i) {
+                    serde_json::Value::String(v.format("%Y-%m-%d").to_string())
+                }
+                // Interval → readable string (PgInterval has no Display)
+                else if let Ok(v) = row.try_get::<sqlx::postgres::types::PgInterval, _>(i) {
+                    let secs = v.microseconds / 1_000_000;
+                    let micros = (v.microseconds % 1_000_000).abs();
+                    serde_json::Value::String(format!(
+                        "{} months {} days {}.{:06} seconds",
+                        v.months, v.days, secs, micros
+                    ))
+                }
+                // Numeric/decimal → string (preserves precision)
+                else if let Ok(v) = row.try_get::<sqlx::types::Decimal, _>(i) {
+                    serde_json::Value::String(v.to_string())
+                }
                 // JSON
                 else if let Ok(v) = row.try_get::<serde_json::Value, _>(i) {
                     v
                 }
-                // Fallback
+                // UUID
+                else if let Ok(v) = row.try_get::<sqlx::types::Uuid, _>(i) {
+                    serde_json::Value::String(v.to_string())
+                }
+                // Fallback — log so unhandled types surface instead of silently masking
                 else {
                     let type_info = col.type_info().name();
+                    tracing::warn!(
+                        "SQL tool: column '{}' with Postgres type '{}' has no decoder — emitting placeholder",
+                        col_name, type_info
+                    );
                     serde_json::Value::String(format!("<{}>", type_info))
                 };
 

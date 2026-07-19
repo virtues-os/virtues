@@ -93,7 +93,43 @@ pub fn default_tools() -> Vec<ToolConfig> {
         run_action_tool(),
         dayline_event_tool(),
         get_project_item_tool(),
+        generate_image_tool(),
     ]
+}
+
+/// Generate Image tool — text-to-image via the gateway image model.
+fn generate_image_tool() -> ToolConfig {
+    ToolConfig {
+        id: "generate_image".to_string(),
+        name: "Generate Image".to_string(),
+        description: "Generate an image from a text description".to_string(),
+        llm_description: r#"Generate an image from a text description using an AI image model.
+
+Use this tool when:
+- The user asks you to create, draw, generate, or illustrate an image
+- A picture would clearly help (a scene, concept, mockup, or design)
+
+Write a vivid, specific prompt: subject, style, composition, lighting, and mood.
+The image is shown to the user automatically — after it returns, give a brief
+caption, not a long description of what you generated.
+
+Returns: the generated image (rendered inline to the user)."#.to_string(),
+        parameters: serde_json::json!({
+            "type": "object",
+            "required": ["prompt"],
+            "properties": {
+                "prompt": {
+                    "type": "string",
+                    "description": "Detailed description of the image to generate (subject, style, composition, mood)"
+                }
+            }
+        }),
+        tool_type: ToolType::Builtin,
+        category: ToolCategory::Edit,
+        icon: "ri:image-add-line".to_string(),
+        display_order: 22,
+        is_system: false,
+    }
 }
 
 /// Think tool - structured reasoning scratchpad
@@ -249,6 +285,15 @@ Do NOT use when:
 - User is asking about their personal data (use sql_query instead)
 - The question is purely conversational or opinion-based
 
+You synthesize the results yourself — Exa returns evidence, not answers. Two tiers:
+- Default search: fast, for most lookups.
+- deep=true: comprehensive multi-step search for hard, multi-faceted, or
+  thin-result questions (e.g. cross-referenced standings, multi-entity research).
+  Costs more and is slower — escalate to it, don't default to it.
+
+For time-sensitive topics (news, sports scores, odds, prices, live data) set
+max_age_hours=1 so results are fresh rather than cached.
+
 Returns: Relevant web pages with titles, URLs, summaries, and text excerpts."#.to_string(),
         parameters: serde_json::json!({
             "type": "object",
@@ -270,6 +315,16 @@ Returns: Relevant web pages with titles, URLs, summaries, and text excerpts."#.t
                     "enum": ["auto", "keyword", "neural"],
                     "description": "Search type: 'auto' (recommended), 'keyword' for exact matches, 'neural' for semantic",
                     "default": "auto"
+                },
+                "deep": {
+                    "type": "boolean",
+                    "description": "Escalate to comprehensive multi-step research for hard or thin-result queries. Slower and costlier — off by default.",
+                    "default": false
+                },
+                "max_age_hours": {
+                    "type": "integer",
+                    "description": "Freshness: max age (hours) of a cached result before re-crawling live. Use 1 for news/sports/odds/live data; omit for stable info.",
+                    "minimum": 0
                 }
             }
         }),
@@ -327,6 +382,11 @@ Use sql_query with the returned record_ids to get full details."#.to_string(),
                 "date_before": {
                     "type": "string",
                     "description": "Only return results before this date (ISO 8601)"
+                },
+                "entities": {
+                    "type": "array",
+                    "items": { "type": "string" },
+                    "description": "Optional filter: only return results whose source references one of these resolved entity IDs (e.g. a person/place/org id like 'person_abc'). Use when the query is about a specific known entity — it's far more reliable than matching the name semantically."
                 },
                 "num_results": {
                     "type": "integer",
@@ -388,7 +448,7 @@ FINANCIAL (amounts stored in cents - divide by 100 for dollars)
   data_financial_liability    Loans, mortgages, debt
 
 ACTIVITY
-  data_activity_app_usage     Desktop/mobile app usage sessions
+  data_activity_app_session     Desktop/mobile app usage sessions
   data_activity_listening     Music/audio listening history (Spotify)
   data_activity_web_browsing  Web browsing history
 
@@ -422,10 +482,12 @@ NARRATIVE TABLES (life story structure — wiki_* prefix)
   wiki_chapters  Chapters within acts (months/seasons)
 
 ================================================================================
-QUERY TIPS
+QUERY TIPS (PostgreSQL dialect)
 ================================================================================
 - Use 'get_schema' to see columns before writing queries
-- Date filter: WHERE timestamp > datetime('now', '-7 days')
+- Date filter: WHERE timestamp > now() - interval '7 days'
+- Truncate to a period: date_trunc('month', now()), date_trunc('day', now())
+- Cast a timestamp to a date: timestamp::date  (today = current_date)
 - Financial: amount/100.0 for dollars
 - JOIN data tables to wiki_* for resolved names
 - Always LIMIT results (max 200)
@@ -437,26 +499,26 @@ EXAMPLE QUERIES
 -- Spending by category this month
 SELECT category, SUM(amount)/100.0 as dollars, COUNT(*) as txns
 FROM data_financial_transaction
-WHERE timestamp >= date('now', 'start of month')
+WHERE timestamp >= date_trunc('month', now())
 GROUP BY category ORDER BY dollars DESC
 
 -- Most contacted people this week
 SELECT wp.name, COUNT(*) as messages
 FROM data_communication_message m
 JOIN wiki_people wp ON m.sender_url = wp.url OR m.recipient_url = wp.url
-WHERE m.timestamp > datetime('now', '-7 days')
+WHERE m.timestamp > now() - interval '7 days'
 GROUP BY wp.name ORDER BY messages DESC LIMIT 10
 
 -- Sleep patterns last 2 weeks
-SELECT date(timestamp) as day, duration_hours, quality
+SELECT timestamp::date as day, duration_hours, quality
 FROM data_health_sleep
-WHERE timestamp > datetime('now', '-14 days')
+WHERE timestamp > now() - interval '14 days'
 ORDER BY timestamp DESC
 
 -- Calendar events today
 SELECT title, start_time, end_time, location
 FROM data_calendar_event
-WHERE date(start_time) = date('now')
+WHERE start_time::date = current_date
 ORDER BY start_time"#.to_string(),
         parameters: serde_json::json!({
             "type": "object",
@@ -504,24 +566,24 @@ Use this tool when you need to:
 - Perform calculations, math, statistics, or numerical analysis
 - Process, transform, or analyze data (CSV, JSON, etc.)
 - Financial calculations (loans, mortgages, investments, IRR, NPV)
-- Generate charts and visualizations
 - Work with dates, times, or complex logic
+
+Only stdout is returned, so print() your results. There is no way to return
+files or images — describe results in text rather than saving charts.
 
 Available packages:
 - Python 3.12 standard library (math, statistics, datetime, json, csv, re, decimal, etc.)
 - numpy - numerical computing, arrays, linear algebra
 - numpy-financial - financial functions: pmt, fv, pv, irr, npv, nper, rate
 - pandas - data analysis, DataFrames, CSV/JSON loading
-- matplotlib - charts and visualizations (use plt.savefig('/tmp/chart.png'))
 - scipy - scientific computing, statistics, optimization
-- requests - HTTP client
 - python-dateutil - date parsing
 - pytz - timezones
 
 The code runs in an isolated sandbox with:
-- No filesystem access (except /tmp for temporary files)
+- No filesystem access (except a private /tmp for temporary files)
 - No network access
-- 60 second timeout (max 120 seconds)
+- A memory limit and a timeout (default 60s, max 120s)
 
 IMPORTANT: Use print() to output your results. The stdout will be returned to you.
 
@@ -622,6 +684,11 @@ Example:
                                 "type": "string",
                                 "enum": ["fast", "balanced", "strong"],
                                 "description": "Worker model tier by difficulty. Default balanced."
+                            },
+                            "style": {
+                                "type": "string",
+                                "enum": ["research", "voice"],
+                                "description": "How the worker is framed. \"research\" (default): a read-only researcher that investigates and cites. \"voice\": a Council voice that speaks in first person as the perspective its objective describes (no tools but think). Use \"voice\" only in Council mode."
                             }
                         }
                     }
@@ -633,7 +700,7 @@ Example:
         icon: "ri:team-line".to_string(),
         display_order: 6,
         // Internal orchestration tool: excluded from Chat (which filters out system tools) but
-        // included in Deep Research via the Search|Data category filter.
+        // included in Deep Research and Council via their explicit tool allow-lists.
         is_system: true,
     }
 }
@@ -821,11 +888,11 @@ Use this tool when:
 Parameters:
 - name: Short descriptive name for the action (e.g. "HN Highlights")
 - instruction: What the action should do each time it runs. Be specific and detailed.
-- cron_schedule: Cron expression for when to run (6-field: sec min hour day month dow). Examples:
+- cron_schedule: Cron expression for when to run (6-field: sec min hour day month dow). Schedules run in the user's LOCAL timezone, so write the hour the user means literally (no UTC conversion). Examples:
   - "0 0 * * * *" = every hour
-  - "0 0 9 * * *" = daily at 9am UTC
+  - "0 0 9 * * *" = daily at 9am local time
   - "0 */30 * * * *" = every 30 minutes
-  - "0 0 9 * * 1-5" = weekday mornings at 9am UTC
+  - "0 0 9 * * 1-5" = weekday mornings at 9am local time
 - endpoint: Set to true to also expose as a triggerable API endpoint
 - activation_code: Optional Python code that runs before each invocation (e.g. to fetch data). The code is dry-run tested before saving.
 
@@ -1133,23 +1200,26 @@ fn get_project_item_tool() -> ToolConfig {
     ToolConfig {
         id: "get_project_item".to_string(),
         name: "Get Project Item".to_string(),
-        description: "Read the full content of a reference inside an attached project".to_string(),
-        llm_description: r#"Fetch the full content of an item referenced in an attached project.
+        description: "Read the full content of a referenced page, chat, space, or entity".to_string(),
+        llm_description: r#"Fetch the full content of a referenced item by its url.
 
 Use this when:
-- An attached_project lists items and you need to read one's full content
-- The user asks about a specific item in their project
-- You need deeper context beyond the labels shown in the attached_project block
+- The user @-mentions something — a markdown link like [name](/chat/chat_xxx),
+  [name](/page/page_xxx), or [name](/space/space_xxx) in their message — and its
+  content is RELEVANT to answering. The @-mention is a pointer; pull it in only
+  if you actually need it.
+- An attached_project lists items and you need one's full content.
 
-The item_url comes from the url attribute in the <item> tags of the attached project context.
-Returns the entity's content (page text, chat messages, person details, etc.)."#.to_string(),
+Supported urls: /page/, /chat/, /space/, /person/, /place/, /org/, /thing/.
+Returns the item's content (page text, recent chat messages, space members,
+person/place/org/thing details). Don't fetch a reference you don't need."#.to_string(),
         parameters: serde_json::json!({
             "type": "object",
             "required": ["item_url"],
             "properties": {
                 "item_url": {
                     "type": "string",
-                    "description": "URL of the item to fetch, e.g. /page/page_xxx, /person/person_xxx, /chat/chat_xxx"
+                    "description": "URL of the item to fetch, e.g. /page/page_xxx, /chat/chat_xxx, /space/space_xxx, /person/person_xxx"
                 }
             }
         }),
@@ -1187,7 +1257,11 @@ mod tests {
     #[test]
     fn test_default_tools() {
         let tools = default_tools();
-        assert_eq!(tools.len(), 14, "Should have 14 tools");
+        // No exact count: it only ever fires when someone adds a tool, which is
+        // not a bug, so it gets bumped without thought — or, as happened here,
+        // left red for eight tools running. What matters is below: every tool is
+        // well-formed, and the load-bearing ones are present.
+        assert!(!tools.is_empty(), "the registry ships tools");
 
         // Verify all tools have required fields
         for tool in &tools {

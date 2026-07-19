@@ -16,7 +16,6 @@ pub struct HealthResponse {
 #[derive(Serialize)]
 pub struct ReadinessResponse {
     pub status: &'static str,
-    pub budgets_loaded: usize,
     pub ai_gateway_configured: bool,
 }
 
@@ -31,12 +30,10 @@ pub async fn health_check() -> Json<HealthResponse> {
 
 /// Readiness probe - is the service ready to handle requests?
 pub async fn readiness_check(State(state): State<Arc<AppState>>) -> (StatusCode, Json<ReadinessResponse>) {
-    let budgets_loaded = state.atlas.hydrated_count();
     let ai_gateway_configured = state.config.has_llm_provider();
 
     let response = ReadinessResponse {
         status: if ai_gateway_configured { "ready" } else { "degraded" },
-        budgets_loaded,
         ai_gateway_configured,
     };
 

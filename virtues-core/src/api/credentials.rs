@@ -6,17 +6,17 @@
 //! HTTP handlers in `core/src/api/source_auth.rs`.
 //!
 //! Functions here:
-//!   - `validate_device_token` — webhook bearer auth, O(1) HMAC lookup
-//!   - `update_last_seen` — touch `last_seen_at` after a webhook post
 //!   - `list_credentials` / `rename_credential` / `revoke_credential` —
 //!     management API
 //!   - `DeviceInfo` / `CredentialListItem` — response shapes
 //!   - `device_info_from_metadata` — parse `metadata` JSON into a typed shape
+//!
+//! Credentials are OUTBOUND secrets (OAuth / API keys). Inbound auth is the
+//! proven, allowlisted iroh key — there is no device bearer to validate here.
 
 use chrono::{DateTime, Utc};
 use sqlx::PgPool;
 
-use crate::crypto::TokenEncryptor;
 use crate::error::{Error, Result};
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -51,40 +51,6 @@ pub enum PairingStatus {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Webhook auth — O(1) bearer lookup
-// ─────────────────────────────────────────────────────────────────────────────
-
-/// Validate a device-supplied bearer token and return the credential id.
-///
-/// The token is HMAC'd with the master-key-derived pepper and looked up
-/// against the unique `secret_lookup_hash` index — O(1) regardless of the
-/// number of paired devices.
-pub async fn validate_device_token(db: &PgPool, token: &str) -> Result<String> {
-    let encryptor = TokenEncryptor::from_env()?;
-    let lookup_hash = encryptor.lookup_hash(token)?;
-
-    let row: Option<(String,)> = sqlx::query_as(
-        r#"SELECT id FROM credentials
-           WHERE secret_lookup_hash = $1 AND status = 'active'"#,
-    )
-    .bind(&lookup_hash)
-    .fetch_optional(db)
-    .await?;
-
-    row.map(|(id,)| id)
-        .ok_or_else(|| Error::Unauthorized("Invalid or revoked device token".to_string()))
-}
-
-/// Touch `last_seen_at` on a credential.
-pub async fn update_last_seen(db: &PgPool, credential_id: &str) -> Result<()> {
-    sqlx::query("UPDATE credentials SET last_seen_at = now() WHERE id = $1")
-        .bind(credential_id)
-        .execute(db)
-        .await?;
-    Ok(())
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
 // Credential list / rename / revoke (management API)
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -109,6 +75,11 @@ pub struct CredentialListItem {
     pub created_at: String,
     /// Number of `app_actions` rows linked to this credential.
     pub action_count: i64,
+    /// Derived initial-sync lifecycle for active credentials (Tier 2 UX):
+    /// `connected` (paired, no run yet) → `backfilling` (runs in flight, no
+    /// success) → `live` (≥1 successful run). `None` for pending/revoked rows.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub sync_state: Option<String>,
 }
 
 /// List credentials. Returns pending and revoked rows too so the UI can show
@@ -123,16 +94,22 @@ pub async fn list_credentials(db: &PgPool) -> Result<Vec<CredentialListItem>> {
         Option<String>,
         String,
         i64,
+        i64,
+        i64,
     )> = sqlx::query_as(
         r#"SELECT
               c.id,
               c.source_id,
               c.name,
               c.status,
-              c.metadata,
-              c.last_seen_at,
-              c.created_at,
-              (SELECT COUNT(*) FROM app_actions WHERE credential_id = c.id) AS action_count
+              c.metadata::text,
+              c.last_seen_at::text,
+              c.created_at::text,
+              (SELECT COUNT(*) FROM app_actions WHERE credential_id = c.id) AS action_count,
+              (SELECT COUNT(*) FROM app_action_runs r JOIN app_actions a ON a.id = r.action_id
+                 WHERE a.credential_id = c.id) AS total_runs,
+              (SELECT COUNT(*) FROM app_action_runs r JOIN app_actions a ON a.id = r.action_id
+                 WHERE a.credential_id = c.id AND r.status = 'success') AS success_runs
            FROM credentials c
            ORDER BY c.created_at DESC"#,
     )
@@ -142,24 +119,40 @@ pub async fn list_credentials(db: &PgPool) -> Result<Vec<CredentialListItem>> {
     Ok(rows
         .into_iter()
         .map(
-            |(id, source_id, name, status, metadata_raw, last_seen_at, created_at, action_count)| {
+            |(id, source_id, name, status, metadata_raw, last_seen_at, created_at, action_count, total_runs, success_runs)| {
                 let device_info = device_info_from_metadata(Some(&metadata_raw));
                 let auth_type = auth_type_for_source(&source_id).to_string();
+                let is_active = status == "active";
+                let sync_state = is_active.then(|| sync_state_for(total_runs, success_runs).to_string());
                 CredentialListItem {
                     id,
                     provider: source_id,
                     name,
                     auth_type,
-                    is_active: status == "active",
+                    is_active,
                     status,
                     device_info,
                     last_seen_at,
                     created_at,
                     action_count,
+                    sync_state,
                 }
             },
         )
         .collect())
+}
+
+/// Derive the Tier-2 sync lifecycle from an active credential's run history.
+/// Pure for unit-testing: `live` once anything succeeded, `backfilling` while
+/// runs are in flight with no success yet, else `connected`.
+fn sync_state_for(total_runs: i64, success_runs: i64) -> &'static str {
+    if success_runs > 0 {
+        "live"
+    } else if total_runs > 0 {
+        "backfilling"
+    } else {
+        "connected"
+    }
 }
 
 /// Map a source id to the legacy `auth_type` string the frontend expects.
@@ -196,10 +189,7 @@ pub async fn rename_credential(db: &PgPool, credential_id: &str, new_name: &str)
 /// Revoke a credential and delete its fan-out `app_actions` rows.
 ///
 /// Flow:
-/// 1. Set `status = 'revoked'` so `validate_device_token` rejects future
-///    webhook posts and template reconcile skips this credential. Also
-///    clear `secret_lookup_hash` so the unique partial index doesn't tie
-///    a future re-pair to this row.
+/// 1. Set `status = 'revoked'` so template reconcile skips this credential.
 /// 2. Nullify `action_id` on any historical runs for the credential's
 ///    fan-out actions (FK safety).
 /// 3. Delete the per-credential action rows. Reconcile won't re-create
@@ -211,8 +201,7 @@ pub async fn revoke_credential(db: &PgPool, credential_id: &str) -> Result<()> {
     let affected = sqlx::query(
         r#"UPDATE credentials
               SET status = 'revoked',
-                  status_reason = 'user_revoked',
-                  secret_lookup_hash = NULL
+                  status_reason = 'user_revoked'
             WHERE id = $1"#,
     )
     .bind(credential_id)
@@ -272,7 +261,7 @@ pub async fn check_pairing_status(
     credential_id: String,
 ) -> Result<PairingStatus> {
     let row: Option<(String, String)> =
-        sqlx::query_as("SELECT status, metadata FROM credentials WHERE id = $1")
+        sqlx::query_as("SELECT status, metadata::text FROM credentials WHERE id = $1")
             .bind(&credential_id)
             .fetch_optional(db)
             .await?;
@@ -321,4 +310,19 @@ pub async fn list_pending_pairings(db: &PgPool) -> Result<Vec<PendingPairing>> {
                 .unwrap_or_else(|_| chrono::Utc::now()),
         })
         .collect())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn sync_state_lifecycle() {
+        // No runs yet → just connected.
+        assert_eq!(sync_state_for(0, 0), "connected");
+        // Runs in flight, none succeeded → backfilling.
+        assert_eq!(sync_state_for(3, 0), "backfilling");
+        // Anything succeeded → live (data is flowing).
+        assert_eq!(sync_state_for(5, 1), "live");
+    }
 }

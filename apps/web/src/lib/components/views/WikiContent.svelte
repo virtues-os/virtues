@@ -5,7 +5,6 @@
 		getPersonById,
 		getPlaceById,
 		getOrganizationById,
-		getThingById,
 		getDayByDate,
 		getActById,
 		getChapterById,
@@ -15,7 +14,6 @@
 		apiToPersonPage,
 		apiToPlacePage,
 		apiToOrganizationPage,
-		apiToThingPage,
 		apiToDayPage,
 		apiToActPage,
 		apiToChapterPage,
@@ -28,7 +26,6 @@
 		PersonPage,
 		PlacePage,
 		OrganizationPage,
-		ThingPage,
 	} from "$lib/components/wiki";
 	import {
 		isDayPage,
@@ -36,7 +33,6 @@
 		isPersonPage,
 		isPlacePage,
 		isOrganizationPage,
-		isThingPage,
 	} from "$lib/wiki/types";
 	import type { WikiPage as WikiPageType } from "$lib/wiki/types";
 
@@ -156,16 +152,6 @@
 					break;
 				}
 
-				case "thing": {
-					const thing = await getThingById(entityId);
-					if (thing) {
-						wikiPage = apiToThingPage(thing);
-						updateLabel(thing.name);
-					} else {
-						error = `Thing "${entityId}" not found`;
-					}
-					break;
-				}
 
 				case "act": {
 					const act = await getActById(entityId);
@@ -215,12 +201,6 @@
 	let lastLoadedId = $state<string | null>(null);
 
 	onMount(() => {
-		console.log(
-			"[WikiContent] onMount, entityId:",
-			entityId,
-			"active:",
-			active,
-		);
 		if (entityId && entityId !== lastLoadedId) {
 			lastLoadedId = entityId;
 			loadPage();
@@ -237,10 +217,6 @@
 		if (currentId && isActive) {
 			untrack(() => {
 				if (currentId !== lastLoadedId) {
-					console.log(
-						"[WikiContent] entityId changed, reloading:",
-						currentId,
-					);
 					lastLoadedId = currentId;
 					loadPage();
 				}
@@ -271,8 +247,6 @@
 			<PlacePage page={wikiPage} />
 		{:else if isOrganizationPage(wikiPage)}
 			<OrganizationPage page={wikiPage} />
-		{:else if isThingPage(wikiPage)}
-			<ThingPage page={wikiPage} />
 		{:else}
 			<WikiPage page={wikiPage} />
 		{/if}

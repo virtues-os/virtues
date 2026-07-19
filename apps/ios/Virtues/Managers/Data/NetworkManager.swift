@@ -18,6 +18,7 @@ enum NetworkError: LocalizedError {
     case rateLimited(retryAfter: TimeInterval)  // 429 - back off, don't break circuit
     case badRequest(message: String)            // 400 - permanent fail, don't retry
     case forbidden                              // 403 - permanent fail, don't retry
+    case notProcessed(status: String)           // 2xx/409 but not a durable success - retry, keep data
     case unknown(Error)
 
     var errorDescription: String? {
@@ -40,6 +41,8 @@ enum NetworkError: LocalizedError {
             return "Bad request: \(message) (E005)"
         case .forbidden:
             return "Access forbidden (E006)"
+        case .notProcessed(let status):
+            return "Upload not processed (status: \(status)) — will retry"
         case .unknown(let error):
             return "Unknown error: \(error.localizedDescription)"
         }
@@ -64,27 +67,41 @@ class NetworkManager: ObservableObject {
     
     // MARK: - Data Upload
     
-    func uploadData<T: Encodable>(_ data: T, deviceToken: String, endpoint: URL) async throws -> UploadResponse {
+    func uploadData<T: Encodable>(_ data: T, endpoint: URL) async throws -> UploadResponse {
         var request = URLRequest(url: endpoint)
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        request.setValue("Bearer \(deviceToken)", forHTTPHeaderField: "Authorization")
-        
+        // No Authorization header: the upload goes over BoxTransport (iroh), so
+        // the box authenticates it by this device's proven, allowlisted key.
+
         // Encode data
         let encoder = JSONEncoder()
         encoder.dateEncodingStrategy = .iso8601
         request.httpBody = try encoder.encode(data)
         
         do {
-            let (data, response) = try await session.data(for: request)
-            
-            guard let httpResponse = response as? HTTPURLResponse else {
-                throw NetworkError.unknown(NSError(domain: "Invalid response", code: 0))
-            }
-            
+            // Direct on-LAN, tunnel fallback off-LAN. BoxTransport returns the
+            // HTTPURLResponse directly (no optional cast needed).
+            let (data, httpResponse) = try await BoxTransport.shared.send(request, session: session)
+
             switch httpResponse.statusCode {
             case 200...299:
-                return try JSONDecoder().decode(UploadResponse.self, from: data)
+                let resp = try JSONDecoder().decode(UploadResponse.self, from: data)
+                // A 2xx alone does NOT mean the batch was ingested. The box
+                // returns 200 only for status "success"; any other status that
+                // somehow arrives with a 2xx (e.g. "running", or a "skipped"
+                // from an older server) means the records were NOT durably
+                // written. Treat anything but "success" as retryable so the
+                // caller keeps the data in its queue instead of deleting it.
+                guard (resp.status ?? "") == "success" else {
+                    throw NetworkError.notProcessed(status: resp.status ?? "unknown")
+                }
+                return resp
+            case 409:
+                // Box skipped the run (concurrency gate / falsy condition).
+                // The payload was not ingested — retryable, keep the data.
+                let status = (try? JSONDecoder().decode(UploadResponse.self, from: data))?.status ?? "skipped"
+                throw NetworkError.notProcessed(status: status)
             case 401:
                 throw NetworkError.invalidToken
             case 400:
@@ -157,7 +174,8 @@ class NetworkManager: ObservableObject {
     func consumePairToken(
         endpoint: String,
         pairToken: String,
-        deviceId: String
+        deviceId: String,
+        expectedFingerprint: String? = nil
     ) async throws -> PairConsumeResponse {
         let baseURL = endpoint.hasSuffix("/") ? String(endpoint.dropLast()) : endpoint
         let root = baseURL.hasSuffix("/api") ? String(baseURL.dropLast(4)) : baseURL
@@ -181,20 +199,35 @@ class NetworkManager: ObservableObject {
             device_name: deviceName,
             device_model: Self.modelIdentifier,
             os_version: osVersion,
-            app_version: appVersion
+            app_version: appVersion,
+            timezone: TimeZone.current.identifier
         )
+
+        // iroh model: this device has its own iroh identity. Generate (or reuse) a
+        // 32-byte seed, derive its EndpointId, and submit it so the box allowlists
+        // this device for iroh reach. The seed stays in the Keychain; only the
+        // public EndpointId leaves the device.
+        let seed = Self.ensureIrohSeed()
+        let deviceNodeId = seed.flatMap { try? endpointIdFromSeed(deviceSeedHex: $0) }
 
         let body = PairConsumeRequest(
             token: pairToken,
             kind: "mobile_app",
             label: deviceName,
             device_info: deviceInfo,
-            wg_public_key: nil      // v1.1 will generate + send the WG pubkey here.
+            device_node_id: deviceNodeId
         )
         let encoder = JSONEncoder()
         request.httpBody = try encoder.encode(body)
 
-        let (data, response) = try await session.data(for: request)
+        // Retry ONCE on a transport error (lost response) with the same body →
+        // same idempotency key → the box re-returns the original bearer.
+        let (data, response): (Data, URLResponse)
+        do {
+            (data, response) = try await session.data(for: request)
+        } catch {
+            (data, response) = try await session.data(for: request)
+        }
 
         guard let httpResponse = response as? HTTPURLResponse else {
             throw NetworkError.unknown(NSError(domain: "Invalid response", code: 0))
@@ -205,12 +238,13 @@ class NetworkManager: ObservableObject {
             let decoder = JSONDecoder()
             decoder.keyDecodingStrategy = .convertFromSnakeCase
             let parsed = try decoder.decode(PairConsumeResponse.self, from: data)
-            // Park the bearer in the Keychain immediately — it's returned
-            // exactly once by the server and we never want it to live in
-            // process memory longer than this function.
-            if let bearer = parsed.bearer, !bearer.isEmpty {
-                try? KeychainStore.shared.saveBearer(bearer)
-            }
+            // No bearer to store — auth is this device's allowlisted iroh key.
+            // iroh model: the box's identity is its Ed25519 EndpointId, returned
+            // in the reach ticket (`box_node_id`) and dialed with mutual-key auth
+            // (no CA). There's no separate fingerprint to pin out-of-band, so
+            // `expectedFingerprint` is accepted for call-site compatibility but
+            // unused. The caller persists `boxNodeId`/`relayUrl` as the ticket.
+            _ = expectedFingerprint
             return parsed
         case 401:
             throw NetworkError.badRequest(message: "Pair token is invalid, expired, or already used. Get a fresh one from `virtues link` on the box.")
@@ -229,6 +263,82 @@ class NetworkManager: ObservableObject {
         }
     }
 
+    /// Best-effort: re-pull the box's CURRENT reach ticket and persist it, so a
+    /// device whose `relay_url` changed (or that paired before the box had relay
+    /// reach) self-heals without a re-pair. Uses the existing iroh transport, so
+    /// it only helps while the current ticket still reaches the box (e.g. the
+    /// relay URL rotated); a fully-broken ticket still needs a re-pair. Never
+    /// throws; never clears a good ticket if the box reports no reach.
+    func refreshReach() async {
+        guard let base = DeviceManager.shared.configuration.baseURL,
+              let url = URL(string: "\(base.absoluteString)/api/devices/self/reach")
+        else { return }
+        // `/self/reach` is anonymous (the reach ticket is public); over BoxTransport.
+        var request = URLRequest(url: url)
+        request.httpMethod = "GET"
+        request.timeoutInterval = 15
+        guard let (data, http) = try? await BoxTransport.shared.send(request, session: session),
+              http.statusCode == 200 else { return }
+        struct ReachResponse: Decodable { let boxNodeId: String?; let relayUrl: String?; let boxDirectAddrs: [String]? }
+        let decoder = JSONDecoder()
+        decoder.keyDecodingStrategy = .convertFromSnakeCase
+        guard let reach = try? decoder.decode(ReachResponse.self, from: data),
+              let node = reach.boxNodeId, !node.isEmpty else { return }
+        await MainActor.run {
+            DeviceManager.shared.updateReach(boxNodeId: node, relayUrl: reach.relayUrl, boxDirectAddrs: reach.boxDirectAddrs)
+        }
+    }
+
+    // MARK: - Action runs (server-side outcome, 2B)
+
+    /// Fetch recent server-side run history for one of this device's actions via
+    /// `GET /api/devices/actions/{id}/runs` (key-auth, ownership-scoped by
+    /// device_id on the box). Goes through `BoxTransport`, so it tunnels like
+    /// every other box call. On-demand only (StreamInfo view appear / refresh) —
+    /// never in the background upload loop.
+    func fetchActionRuns(actionId: String, limit: Int = 5) async throws -> [ActionRun] {
+        guard let base = DeviceManager.shared.configuration.baseURL else {
+            throw NetworkError.invalidURL
+        }
+        guard let url = URL(
+            string: "\(base.absoluteString)/api/devices/actions/\(actionId)/runs?limit=\(limit)"
+        ) else {
+            throw NetworkError.invalidURL
+        }
+
+        // Over BoxTransport (iroh) — authenticated by this device's proven key.
+        var request = URLRequest(url: url)
+        request.httpMethod = "GET"
+        request.timeoutInterval = 15
+
+        let (data, http) = try await BoxTransport.shared.send(request, session: session)
+        guard http.statusCode == 200 else {
+            if http.statusCode == 401 { throw NetworkError.invalidToken }
+            throw NetworkError.serverError(http.statusCode)
+        }
+        let decoder = JSONDecoder()
+        decoder.keyDecodingStrategy = .convertFromSnakeCase
+        return try decoder.decode([ActionRun].self, from: data)
+    }
+
+    // MARK: - iroh device identity
+
+    /// Return this device's iroh seed (hex), generating + persisting a fresh
+    /// 32-byte seed in the Keychain on first use so the EndpointId is stable
+    /// across launches. `nil` only if the Keychain write fails.
+    static func ensureIrohSeed() -> String? {
+        if let existing = KeychainStore.shared.loadIrohSeed(), !existing.isEmpty {
+            return existing
+        }
+        var bytes = [UInt8](repeating: 0, count: 32)
+        guard SecRandomCopyBytes(kSecRandomDefault, bytes.count, &bytes) == errSecSuccess else {
+            return nil
+        }
+        let hex = bytes.map { String(format: "%02x", $0) }.joined()
+        try? KeychainStore.shared.saveIrohSeed(hex)
+        return KeychainStore.shared.loadIrohSeed()
+    }
+
     /// Hardware model identifier (e.g. "iPhone16,1")
     private static var modelIdentifier: String {
         var systemInfo = utsname()
@@ -240,27 +350,6 @@ class NetworkManager: ObservableObject {
         }
     }
 
-    // MARK: - Connection Test
-
-    func testConnection(endpoint: String) async -> Bool {
-        guard let url = URL(string: endpoint) else { return false }
-        
-        var request = URLRequest(url: url)
-        request.httpMethod = "HEAD"
-        request.timeoutInterval = 5.0
-        
-        do {
-            let (_, response) = try await session.data(for: request)
-            if let httpResponse = response as? HTTPURLResponse {
-                return (200...499).contains(httpResponse.statusCode)
-            }
-        } catch {
-            // Log error but don't throw
-            print("Connection test failed: \(error)")
-        }
-        
-        return false
-    }
 }
 
 // MARK: - Request/Response Models
@@ -297,6 +386,10 @@ struct PairingDeviceInfo: Codable {
     let device_model: String
     let os_version: String
     let app_version: String?
+    /// IANA timezone of this device at pairing time (e.g. "America/Chicago").
+    /// Used by the box as a cross-check for `home_timezone` when its own system
+    /// clock reads UTC (cloud/datacenter deploys). See docs/timezone-model.md.
+    let timezone: String?
 }
 
 /// `POST /api/pair/consume` body — see `virtues-core/src/api/pair.rs`
@@ -311,24 +404,28 @@ struct PairConsumeRequest: Codable {
     /// the device's name (`UIDevice.current.name`) when nil.
     let label: String?
     let device_info: PairingDeviceInfo
-    /// Reserved for v1.1 — the iOS app will generate a WireGuard keypair
-    /// on-device and send the pubkey here so the box can hand back a
-    /// PairingBundle for tunnel setup.
-    let wg_public_key: String?
+    /// This device's iroh EndpointId (hex), derived from its locally-generated
+    /// seed. The box allowlists it — this IS the credential; no bearer.
+    let device_node_id: String?
 }
 
 /// `POST /api/pair/consume` response — see `virtues-core/src/api/pair.rs`
-/// `ConsumeResponse`. `actionIds` and `bearer` are the fields that matter
-/// to the iOS app today; `bundle` is the future WG provisioning blob.
+/// `ConsumeResponse`. Auth is the allowlisted iroh key, so no bearer is returned.
 struct PairConsumeResponse: Codable {
     let deviceId: String
     let redirect: String
-    /// Returned exactly once. Caller stores in Keychain; the in-memory
-    /// copy on this struct should be discarded immediately after.
-    let bearer: String?
     /// Backend `function_name → action_id` map the device persists and uses
     /// when posting each stream flush to `POST /webhook/{action_id}`.
     let actionIds: [String: String]
-    // `bundle` (WG provisioning) is deliberately omitted from the iOS-side
-    // type for v1 — the app doesn't yet drive a tunnel. Wire in v1.1.
+    /// The box's iroh EndpointId (hex) — the reach ticket the device dials over
+    /// iroh. `nil` on a dev/LAN box with no relay reach.
+    /// (`box_node_id` → `boxNodeId` via `.convertFromSnakeCase`.)
+    let boxNodeId: String?
+    /// The relay URL to reach `boxNodeId` through — the other half of the ticket.
+    /// (`relay_url` → `relayUrl` via `.convertFromSnakeCase`.) `nil` on an
+    /// unclaimed box, which is reached via `boxDirectAddrs` instead.
+    let relayUrl: String?
+    /// The box's direct iroh sockets (`IP:port`) — how an unclaimed box is
+    /// reached LAN-direct. (`box_direct_addrs` → `boxDirectAddrs`.)
+    let boxDirectAddrs: [String]?
 }

@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { dndzone } from "svelte-dnd-action";
 	import type { DndEvent } from "svelte-dnd-action";
-	import { spaceStore } from "$lib/stores/space.svelte";
+	import { windowShellStore } from "$lib/stores/window-shell.svelte";
 	import {
 		dndManager,
 		type DndTabItem,
@@ -26,35 +26,35 @@
 	const GUTTER_PX = 10; // gap between cards in split mode
 
 	// Derived state for split mode
-	const isSplitEnabled = $derived(spaceStore.isSplit);
+	const isSplitEnabled = $derived(windowShellStore.isSplit);
 
 	// Track isDragging reactively via direct session access
 	// Public session property enables Svelte 5 fine-grained reactivity
 	const isDragging = $derived(dndManager.session !== null);
 
 	// Direct pane access (unified model - tabs always live in panes)
-	const leftPaneTabs = $derived(spaceStore.panes[0]?.tabs ?? []);
+	const leftPaneTabs = $derived(windowShellStore.panes[0]?.tabs ?? []);
 	const leftPaneActiveTabId = $derived(
-		spaceStore.panes[0]?.activeTabId ?? null,
+		windowShellStore.panes[0]?.activeTabId ?? null,
 	);
 
 	// Right pane only used in split mode
-	const rightPaneTabs = $derived(spaceStore.panes[1]?.tabs ?? []);
+	const rightPaneTabs = $derived(windowShellStore.panes[1]?.tabs ?? []);
 	const rightPaneActiveTabId = $derived(
-		spaceStore.panes[1]?.activeTabId ?? null,
+		windowShellStore.panes[1]?.activeTabId ?? null,
 	);
 
 	// All tabs across all panes - single source for the unified {#each} loop
 	// Svelte 5 keyed {#each} preserves component identity when items stay in the array
-	const allTabs = $derived(spaceStore.getAllTabs());
+	const allTabs = $derived(windowShellStore.getAllTabs());
 
 	// Compute widths
 	const leftWidth = $derived(
-		isSplitEnabled ? spaceStore.leftPane?.width || 50 : 100,
+		isSplitEnabled ? windowShellStore.leftPane?.width || 50 : 100,
 	);
 
 	const rightWidth = $derived(
-		isSplitEnabled ? spaceStore.rightPane?.width || 50 : 0,
+		isSplitEnabled ? windowShellStore.rightPane?.width || 50 : 0,
 	);
 
 	function handleMouseDown(e: MouseEvent) {
@@ -73,7 +73,7 @@
 			Math.min(100 - MIN_WIDTH, newWidth),
 		);
 
-		spaceStore.setPaneWidth(clampedWidth);
+		windowShellStore.setPaneWidth(clampedWidth);
 	}
 
 	function handleMouseUp() {
@@ -82,7 +82,7 @@
 
 	function handlePaneClick(paneId: "left" | "right") {
 		if (!isSplitEnabled) return;
-		spaceStore.setActivePane(paneId);
+		windowShellStore.setActivePane(paneId);
 	}
 
 	// svelte-dnd-action handlers delegated to centralized dndManager
@@ -176,7 +176,7 @@
 	<!-- svelte-ignore a11y_no_noninteractive_tabindex a11y_no_noninteractive_element_interactions -->
 	<div
 		class="pane-shell left-pane"
-		class:active={!isSplitEnabled || spaceStore.activePaneId === "left"}
+		class:active={!isSplitEnabled || windowShellStore.activePaneId === "left"}
 		style:width={isSplitEnabled ? `calc(${leftWidth}% - ${GUTTER_PX / 2}px)` : '100%'}
 		onclick={() => handlePaneClick("left")}
 		onkeydown={(e) => e.key === "Enter" && handlePaneClick("left")}
@@ -205,7 +205,7 @@
 	<!-- svelte-ignore a11y_no_noninteractive_tabindex a11y_no_noninteractive_element_interactions -->
 	<div
 		class="pane-shell right-pane"
-		class:active={isSplitEnabled && spaceStore.activePaneId === "right"}
+		class:active={isSplitEnabled && windowShellStore.activePaneId === "right"}
 		class:collapsed={!isSplitEnabled}
 		style:width={isSplitEnabled ? `calc(${rightWidth}% - ${GUTTER_PX / 2}px)` : '0'}
 		onclick={() => handlePaneClick("right")}
@@ -226,7 +226,7 @@
 	     connections, chat streaming, undo history, and scroll position. -->
 	<!-- svelte-ignore a11y_no_static_element_interactions -->
 	{#each allTabs as tab (tab.id)}
-		{@const paneId = spaceStore.findTabPane(tab.id) ?? "left"}
+		{@const paneId = windowShellStore.findTabPane(tab.id) ?? "left"}
 		{@const isActive =
 			tab.id ===
 			(paneId === "left" ? leftPaneActiveTabId : rightPaneActiveTabId)}
@@ -251,6 +251,8 @@
 					type: "chat",
 					label: "New Chat",
 					route: "/chat",
+					history: ["/chat"],
+					historyIndex: 0,
 					createdAt: Date.now(),
 				}}
 				active={true}
@@ -266,6 +268,8 @@
 					type: "chat",
 					label: "New Chat",
 					route: "/chat",
+					history: ["/chat"],
+					historyIndex: 0,
 					createdAt: Date.now(),
 				}}
 				active={true}
@@ -430,7 +434,7 @@
 		position: absolute;
 		inset: 0;
 		display: flex;
-		z-index: 100;
+		z-index: var(--z-overlay);
 		pointer-events: none;
 		opacity: 0;
 		visibility: hidden;

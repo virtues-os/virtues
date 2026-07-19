@@ -10,6 +10,7 @@ pub mod api;
 pub mod services;
 pub mod cli;
 pub mod client;
+pub mod codename;
 pub mod credentials;
 pub mod crypto;
 pub mod database;
@@ -19,20 +20,25 @@ pub mod error;
 pub mod geo;
 pub mod http_client;
 pub mod ids;
+pub mod inference_report;
+pub mod magnet;
 pub mod maintenance;
 pub mod mcp;
 pub mod middleware;
-pub mod observability;
+pub mod box_secrets;
+pub mod net_check;
+pub mod relay;
 pub mod scheduler;
 pub mod search;
 pub mod seeding;
+pub mod sessionize;
 pub mod server;
 pub mod setup;
 pub mod storage;
+pub mod timezone;
 pub mod virtues_api;
 pub mod tools;
 pub mod types;
-pub mod wireguard;
 
 // Re-export main types
 pub use client::{Virtues, VirtuesBuilder};
@@ -50,8 +56,6 @@ pub use api::{
     // Credential management (post-Phase-6: pair flows live in source_auth.rs)
     check_pairing_status,
     list_pending_pairings,
-    update_last_seen,
-    validate_device_token,
     DeviceInfo,
     PairingStatus,
     PendingPairing,

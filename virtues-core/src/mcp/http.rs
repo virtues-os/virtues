@@ -21,7 +21,7 @@ use super::VirtuesMcpServer;
 /// - DELETE: Session cleanup
 ///
 /// # Example
-/// ```rust,no_run
+/// ```ignore
 /// use axum::Router;
 /// use virtues::mcp::{VirtuesMcpServer, http::add_mcp_routes};
 ///

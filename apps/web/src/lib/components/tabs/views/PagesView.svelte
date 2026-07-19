@@ -1,11 +1,11 @@
 <script lang="ts">
 	import type { Tab } from "$lib/tabs/types";
 	import type { PageSummary } from "$lib/api/client";
-	import { spaceStore } from "$lib/stores/space.svelte";
+	import { windowShellStore } from "$lib/stores/window-shell.svelte";
 	import { pagesStore } from "$lib/stores/pages.svelte";
 	import { contextMenu } from "$lib/stores/contextMenu.svelte";
 	import type { ContextMenuItem } from "$lib/stores/contextMenu.svelte";
-	import { getWorkspaceMenuItems } from "$lib/utils/contextMenuItems";
+	import { getNotebookMenuItems } from "$lib/utils/contextMenuItems";
 	import { Page, Button } from "$lib";
 	import { onMount } from "svelte";
 	import Icon from "$lib/components/Icon.svelte";
@@ -60,7 +60,7 @@
 	function handlePageClick(page: PageSummary, e?: MouseEvent) {
 		pagesStore.markAsRecent(page.id);
 		const forceNew = !!(e && (e.metaKey || e.ctrlKey));
-		spaceStore.openTabFromRoute(`/page/${page.id}`, {
+		windowShellStore.openTabFromRoute(`/page/${page.id}`, {
 			forceNew,
 			label: page.title,
 			preferEmptyPane: true,
@@ -75,14 +75,14 @@
 				label: "Open in New Tab",
 				icon: "ri:external-link-line",
 				action: () => {
-					spaceStore.openTabFromRoute(`/page/${page.id}`, {
+					windowShellStore.openTabFromRoute(`/page/${page.id}`, {
 						forceNew: true,
 						label: page.title,
 						preferEmptyPane: true,
 					});
 				},
 			},
-			...getWorkspaceMenuItems(`/page/${page.id}`),
+			...getNotebookMenuItems(`/page/${page.id}`),
 			{
 				id: "delete",
 				label: "Delete",
@@ -106,7 +106,7 @@
 			const page = await pagesStore.createNewPage("Untitled");
 			pagesStore.addPage(page);
 			pagesStore.markAsRecent(page.id);
-			spaceStore.openTabFromRoute(`/page/${page.id}`, {
+			windowShellStore.openTabFromRoute(`/page/${page.id}`, {
 				label: page.title,
 				preferEmptyPane: true,
 			});
@@ -146,10 +146,12 @@
 	>
 		{#snippet tableRow(page: PageSummary)}
 			{@const tags = parseTags(page.tags)}
-			<td class="col-icon">
-				<Icon icon={getPageIcon(page)} width="16" />
+			<td class="col-title">
+				<span class="title-cell">
+					<Icon icon={getPageIcon(page)} width="16" />
+					<span class="title-text">{page.title}</span>
+				</span>
 			</td>
-			<td class="col-title">{page.title}</td>
 			<td class="col-tags hide-mobile">
 				{#if tags.length > 0}
 					<div class="tags-row">
@@ -199,15 +201,24 @@
 </Page>
 
 <style>
-	.col-icon {
-		width: 36px;
-		text-align: center;
-		padding: 0.625rem 0.75rem;
-	}
 	.col-title {
 		font-weight: 500;
 		color: var(--color-foreground);
 		padding: 0.625rem 0.75rem;
+	}
+	.title-cell {
+		display: inline-flex;
+		align-items: center;
+		gap: 0.5rem;
+		min-width: 0;
+	}
+	.title-cell :global(svg) {
+		flex-shrink: 0;
+		color: var(--color-foreground-muted);
+	}
+	.title-text {
+		overflow: hidden;
+		text-overflow: ellipsis;
 	}
 	.col-tags {
 		padding: 0.625rem 0.75rem;
@@ -238,7 +249,7 @@
 		padding: 0.125rem 0.5rem;
 		font-size: 0.6875rem;
 		font-weight: 500;
-		border-radius: 9999px;
+		border-radius: var(--radius-full);
 		background: color-mix(in srgb, var(--color-foreground) 8%, transparent);
 		color: var(--color-foreground-muted);
 	}

@@ -15,12 +15,8 @@ export const ACTION_DESCRIPTIONS: Record<string, string> = {
 	embedding_index: 'Keeps your semantic index fresh so search finds what you meant.',
 	transcription_resolution: 'Cleans up dictated audio into readable prose when it arrives.',
 	credential_refresh: 'Refreshes expiring OAuth tokens ahead of time.',
-	ios_healthkit: 'Receives health metrics streamed from your paired iPhone.',
-	ios_location: 'Receives location events streamed from your paired iPhone.',
-	ios_eventkit: 'Receives calendar events streamed from your paired iPhone.',
-	ios_financekit: 'Receives financial transactions streamed from your paired iPhone.',
-	ios_contacts: 'Receives contact changes streamed from your paired iPhone.',
-	ios_microphone: 'Receives audio recordings streamed from your paired iPhone.'
+	ios_ingest:
+		'Receives every stream from your paired iPhone — health, location, calendar, contacts, audio, and finance.'
 };
 
 /**

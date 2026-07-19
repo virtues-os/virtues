@@ -22,6 +22,39 @@ export function getLocalDateSlug(date: Date = new Date()): string {
 }
 
 /**
+ * Format a date value as a local calendar date. Accepts a string, epoch number,
+ * Date, or nullish (returns '' — unlike raw `toLocaleDateString`, which renders
+ * "Invalid Date"). Default style: "Feb 10, 2026".
+ *
+ * This is the canonical replacement for inline `new Date(x).toLocaleDateString()`.
+ */
+export function formatDate(
+	value: string | number | Date | null | undefined,
+	opts: Intl.DateTimeFormatOptions = { year: 'numeric', month: 'short', day: 'numeric' },
+): string {
+	if (value == null) return '';
+	const date = value instanceof Date ? value : new Date(value);
+	if (isNaN(date.getTime())) return '';
+	return date.toLocaleDateString('en-US', opts);
+}
+
+/**
+ * Format a date value as a local date + time. Null-safe (returns '').
+ * Default style: medium date + short time, e.g. "Feb 10, 2026, 8:44 PM".
+ *
+ * Canonical replacement for inline `new Date(x).toLocaleString()`.
+ */
+export function formatDateTime(
+	value: string | number | Date | null | undefined,
+	opts: Intl.DateTimeFormatOptions = { dateStyle: 'medium', timeStyle: 'short' },
+): string {
+	if (value == null) return '';
+	const date = value instanceof Date ? value : new Date(value);
+	if (isNaN(date.getTime())) return '';
+	return date.toLocaleString('en-US', opts);
+}
+
+/**
  * Format a date as a human-readable string in the user's local timezone.
  * e.g. "Tuesday, February 10, 2026"
  */

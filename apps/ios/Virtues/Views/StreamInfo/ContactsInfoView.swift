@@ -108,6 +108,8 @@ struct ContactsInfoView: View {
             }
 
             InfoRow(label: "Contacts Synced", value: "\(contactsManager.contactCount)")
+
+            ActionLinkRow(streamKey: "ios_contacts")
         }
         .padding(16)
         .background(Color.warmSurfaceElevated)
@@ -128,7 +130,7 @@ struct ContactsInfoView: View {
 
     private var aboutSection: some View {
         InfoSection(title: "About", icon: "info.circle") {
-            Text("This stream syncs your contacts to help identify people mentioned in your conversations and recordings.")
+            Text("This stream syncs your contacts so your box can match people to your data.")
                 .font(.subheadline)
                 .foregroundColor(.warmForegroundMuted)
 

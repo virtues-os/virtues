@@ -730,7 +730,7 @@ pub async fn upload_file(
     sqlx::query(
         r#"
         INSERT INTO app_drive_files (id, path, filename, mime_type, size_bytes, parent_id, is_folder, sha256_hash)
-        VALUES ($1, $2, $3, $4, $5, $6, 0, $7)
+        VALUES ($1, $2, $3, $4, $5, $6, FALSE, $7)
         "#,
     )
     .bind(&file_id)
@@ -833,7 +833,7 @@ pub async fn upload_system_file(
     sqlx::query(
         r#"
         INSERT INTO app_drive_files (id, path, filename, mime_type, size_bytes, parent_id, is_folder, sha256_hash)
-        VALUES ($1, $2, $3, $4, $5, $6, 0, $7)
+        VALUES ($1, $2, $3, $4, $5, $6, FALSE, $7)
         "#,
     )
     .bind(&file_id)
@@ -898,7 +898,7 @@ async fn get_or_create_system_folder_record(
     sqlx::query(
         r#"
         INSERT INTO app_drive_files (id, path, filename, size_bytes, parent_id, is_folder)
-        VALUES ($1, $2, $3, 0, $4, 1)
+        VALUES ($1, $2, $3, 0, $4, TRUE)
         ON CONFLICT (path) DO NOTHING
         "#,
     )
@@ -1211,6 +1211,34 @@ async fn hard_delete_folder_recursive(
 // =============================================================================
 
 /// List files in trash (deleted within last 30 days)
+/// List the app's internal media — the `.media/` system folder.
+///
+/// These are assets the app itself made or uses (pasted pictures, generated
+/// images), not files the user filed in Drive. `list_files` hides them on purpose
+/// (`filename NOT LIKE '.%'`), which is right for the Drive browser and wrong for
+/// the App Media tab, whose entire job is to show them.
+///
+/// Read-only by design: nothing here is user-authored, and deleting an asset the
+/// app is still referencing breaks the thing that references it.
+pub async fn list_media(pool: &PgPool) -> Result<Vec<DriveFile>> {
+    let files = sqlx::query_as::<_, DriveFile>(
+        r#"
+        SELECT id, path, filename, mime_type, size_bytes,
+               is_folder, parent_id, sha256_hash, deleted_at, created_at, updated_at
+        FROM app_drive_files
+        WHERE deleted_at IS NULL
+          AND is_folder = false
+          AND path LIKE '.media/%'
+        ORDER BY created_at DESC
+        "#,
+    )
+    .fetch_all(pool)
+    .await
+    .map_err(|e| Error::Database(format!("Failed to list media: {e}")))?;
+
+    Ok(files)
+}
+
 pub async fn list_trash(pool: &PgPool) -> Result<Vec<DriveFile>> {
     let files = sqlx::query_as::<_, DriveFile>(
         r#"
@@ -1519,7 +1547,7 @@ pub async fn create_folder(
     sqlx::query(
         r#"
         INSERT INTO app_drive_files (id, path, filename, size_bytes, parent_id, is_folder)
-        VALUES ($1, $2, $3, 0, $4, 1)
+        VALUES ($1, $2, $3, 0, $4, TRUE)
         "#,
     )
     .bind(&folder_id)
@@ -1733,7 +1761,7 @@ async fn get_or_create_folder_record(pool: &PgPool, path: &str) -> Result<Option
     sqlx::query(
         r#"
         INSERT INTO app_drive_files (id, path, filename, size_bytes, parent_id, is_folder)
-        VALUES ($1, $2, $3, 0, $4, 1)
+        VALUES ($1, $2, $3, 0, $4, TRUE)
         ON CONFLICT (path) DO NOTHING
         "#,
     )

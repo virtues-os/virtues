@@ -5,7 +5,7 @@
 	 * Triggered by typing "/" in the CodeMirror editor.
 	 * Shows available commands filtered by query.
 	 *
-	 * Pattern follows EntityPicker - "dumb display" component
+	 * Pattern follows RefPicker - "dumb display" component
 	 * that receives state from the slash-commands plugin.
 	 *
 	 * Uses the floating UI system for smart positioning.
@@ -178,17 +178,16 @@
 	.slash-menu {
 		width: 280px;
 		background: var(--color-surface);
-		border: 1px solid var(--color-border);
-		border-radius: 8px;
-		box-shadow: 0 4px 20px rgba(0, 0, 0, 0.15);
-		z-index: 101;
+		border: 1px solid var(--color-border-subtle, var(--color-border));
+		border-radius: 10px;
+		box-shadow: 0 8px 30px rgba(0, 0, 0, 0.12);
+		z-index: var(--z-overlay);
 		overflow: hidden;
 	}
 
 	.menu-header {
 		padding: 8px 12px;
-		border-bottom: 1px solid var(--color-border);
-		background: var(--color-surface-elevated);
+		border-bottom: 1px solid var(--color-border-subtle, var(--color-border));
 	}
 
 	.query-label {
@@ -200,6 +199,7 @@
 	.commands {
 		max-height: 320px;
 		overflow-y: auto;
+		padding: 4px;
 	}
 
 	.empty {
@@ -210,19 +210,14 @@
 	}
 
 	.command-group {
-		border-bottom: 1px solid var(--color-border);
-	}
-
-	.command-group:last-child {
-		border-bottom: none;
+		padding-top: 2px;
 	}
 
 	.group-header {
-		padding: 6px 12px;
+		padding: 6px 8px 4px;
 		font-size: 11px;
 		font-weight: 500;
-		color: var(--color-foreground-muted);
-		background: var(--color-surface-elevated);
+		color: var(--color-foreground-subtle);
 		text-transform: uppercase;
 		letter-spacing: 0.5px;
 	}
@@ -232,12 +227,20 @@
 		align-items: center;
 		gap: 8px;
 		width: 100%;
-		padding: 5px 10px;
+		padding: 6px 8px;
 		border: none;
 		background: none;
 		text-align: left;
 		cursor: pointer;
 		color: var(--color-foreground);
+		border-radius: 6px;
+		transition:
+			color 0.12s ease,
+			background-color 0.12s ease;
+	}
+
+	.command-item:hover {
+		background: var(--color-surface-elevated);
 	}
 
 	.command-item.selected {
@@ -272,8 +275,7 @@
 		align-items: center;
 		gap: 12px;
 		padding: 8px 12px;
-		border-top: 1px solid var(--color-border);
-		background: var(--color-surface-elevated);
+		border-top: 1px solid var(--color-border-subtle, var(--color-border));
 	}
 
 	.hint {

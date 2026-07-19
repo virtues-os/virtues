@@ -1,0 +1,237 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Relay control plane — Option A</title>
+<style>
+  :root {
+    --bg: #0f1115;
+    --panel: #171a21;
+    --panel-2: #1d212b;
+    --ink: #e7ebf0;
+    --muted: #9aa4b2;
+    --line: #2a2f3a;
+    --box: #4f8cff;      /* the home box */
+    --atlas: #b07bff;    /* atlas / virtues-api (control plane) */
+    --relay: #34d399;    /* blind relay */
+    --client: #f6c453;   /* browser / phone */
+    --bad: #ff6b6b;
+    --good: #34d399;
+    --radius: 14px;
+    --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+    --sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: radial-gradient(1200px 700px at 70% -10%, #1a1f2b, var(--bg));
+    color: var(--ink); font-family: var(--sans); line-height: 1.5;
+    padding: 48px 24px 96px;
+  }
+  .wrap { max-width: 1040px; margin: 0 auto; }
+  h1 { font-size: 28px; margin: 0 0 6px; letter-spacing: -0.02em; }
+  .sub { color: var(--muted); margin: 0 0 32px; font-size: 15px; }
+  h2 { font-size: 18px; margin: 40px 0 14px; letter-spacing: -0.01em; }
+  .legend { display: flex; gap: 18px; flex-wrap: wrap; margin: 18px 0 28px; font-size: 13px; color: var(--muted); }
+  .legend .item { display: flex; align-items: center; gap: 7px; }
+  .dot { width: 11px; height: 11px; border-radius: 50%; display: inline-block; }
+
+  /* actors header row */
+  .actors { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; margin-bottom: 8px; }
+  .actor {
+    background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius);
+    padding: 14px 16px; position: relative; overflow: hidden;
+  }
+  .actor::before { content:""; position:absolute; left:0; top:0; bottom:0; width:4px; }
+  .actor.box::before { background: var(--box); }
+  .actor.atlas::before { background: var(--atlas); }
+  .actor.relay::before { background: var(--relay); }
+  .actor .name { font-weight: 650; font-size: 15px; }
+  .actor .role { color: var(--muted); font-size: 12.5px; margin-top: 2px; }
+  .tag { display:inline-block; font-size: 11px; padding: 2px 8px; border-radius: 999px; margin-top: 10px;
+         border:1px solid var(--line); color: var(--muted); }
+  .tag.good { color: var(--good); border-color: rgba(52,211,153,.4); background: rgba(52,211,153,.08); }
+
+  /* phases */
+  .phase {
+    background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius);
+    padding: 18px 20px; margin: 16px 0; position: relative;
+  }
+  .phase h3 { margin: 0 0 4px; font-size: 14px; letter-spacing: .04em; text-transform: uppercase; color: var(--muted); }
+  .phase .what { font-size: 13px; color: var(--muted); margin: 0 0 16px; }
+  .step { display: grid; grid-template-columns: 150px 1fr; gap: 14px; align-items: start; padding: 9px 0; border-top: 1px dashed var(--line); }
+  .step:first-of-type { border-top: none; }
+  .from { font-family: var(--mono); font-size: 12px; color: var(--muted); padding-top: 2px; }
+  .from b { color: var(--ink); font-weight: 600; }
+  .arrow { font-size: 13px; }
+  .arrow .msg { font-family: var(--mono); font-size: 12.5px; color: var(--ink);
+                background: var(--panel-2); border:1px solid var(--line); border-radius: 8px; padding: 6px 10px; display: inline-block; }
+  .arrow .note { display:block; color: var(--muted); font-size: 12px; margin-top: 5px; }
+  .swatch { font-weight: 700; }
+  .c-box { color: var(--box); } .c-atlas { color: var(--atlas); } .c-relay { color: var(--relay); } .c-client { color: var(--client); }
+
+  /* why panel */
+  .why { display:grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+  .card { background: var(--panel); border:1px solid var(--line); border-radius: var(--radius); padding: 16px 18px; }
+  .card h4 { margin: 0 0 10px; font-size: 14px; }
+  .card ul { margin: 0; padding-left: 18px; }
+  .card li { margin: 7px 0; font-size: 13.5px; }
+  .card li b { color: var(--ink); }
+  .pro::before { content:"＋ "; color: var(--good); font-weight: 700; }
+  .con::before { content:"− "; color: var(--bad); font-weight: 700; }
+  .pro, .con { list-style: none; margin-left: -18px; }
+
+  .keyprops { display:grid; grid-template-columns: repeat(3,1fr); gap: 14px; margin-top: 8px; }
+  .prop { background: var(--panel-2); border:1px solid var(--line); border-radius: 12px; padding: 14px; }
+  .prop .h { font-weight: 650; font-size: 13.5px; margin-bottom: 4px; }
+  .prop .b { color: var(--muted); font-size: 12.5px; }
+  .prop .h::before { content:"✓ "; color: var(--good); }
+
+  .compare { width:100%; border-collapse: collapse; margin-top: 8px; font-size: 13px; }
+  .compare th, .compare td { text-align:left; padding: 10px 12px; border-bottom:1px solid var(--line); vertical-align: top; }
+  .compare th { color: var(--muted); font-weight: 600; font-size: 12px; text-transform: uppercase; letter-spacing:.04em; }
+  .compare tr td:first-child { font-weight:600; }
+  .pick td { background: rgba(176,123,255,.08); }
+  .badge { font-size:11px; padding:2px 8px; border-radius:999px; background: rgba(176,123,255,.15); color: var(--atlas); border:1px solid rgba(176,123,255,.4); }
+  .yes { color: var(--good); } .no { color: var(--bad); }
+  .foot { color: var(--muted); font-size: 12px; margin-top: 36px; border-top:1px solid var(--line); padding-top: 16px; }
+  code { font-family: var(--mono); font-size: 12.5px; background: var(--panel-2); padding: 1px 6px; border-radius: 6px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>Relay control plane — Option&nbsp;A</h1>
+  <p class="sub">atlas/virtues-api mints each box's name + token; the relay stays stateless and blind. Why it's the pick.</p>
+
+  <div class="legend">
+    <span class="item"><span class="dot" style="background:var(--box)"></span> Home box (dials out)</span>
+    <span class="item"><span class="dot" style="background:var(--atlas)"></span> atlas / virtues-api (control plane + minter)</span>
+    <span class="item"><span class="dot" style="background:var(--relay)"></span> Blind relay (verifier, stateless)</span>
+    <span class="item"><span class="dot" style="background:var(--client)"></span> Browser / phone (any network)</span>
+  </div>
+
+  <div class="actors">
+    <div class="actor box">
+      <div class="name">Home box</div>
+      <div class="role">Holds its identity key + <code>api_key</code>. Dials out only.</div>
+      <span class="tag good">never holds RELAY_SECRET</span>
+    </div>
+    <div class="actor atlas">
+      <div class="name">atlas / virtues-api</div>
+      <div class="role">Already mints the <code>api_key</code> at link. Holds <code>RELAY_SECRET</code>.</div>
+      <span class="tag">assigns SNI · mints token · writes DNS/ACME TXT</span>
+    </div>
+    <div class="actor relay">
+      <div class="name">Blind relay</div>
+      <div class="role">L4 SNI passthrough. Sees only ciphertext.</div>
+      <span class="tag good">stateless · RAM-only · no per-box table</span>
+    </div>
+  </div>
+
+  <h2>The flow</h2>
+
+  <div class="phase">
+    <h3>1 · Link / relay-enable — minting</h3>
+    <p class="what">The box asks for its relay identity over the channel that already exists (authenticated by <code>api_key</code>). atlas is the only party that touches the secret.</p>
+    <div class="step">
+      <div class="from"><span class="swatch c-box">box</span> → <span class="swatch c-atlas">atlas</span></div>
+      <div class="arrow"><span class="msg">GET relay-config &nbsp;(auth: api_key)</span></div>
+    </div>
+    <div class="step">
+      <div class="from"><span class="swatch c-atlas">atlas</span> computes</div>
+      <div class="arrow">
+        <span class="msg">boxhash = H(box_identity_pubkey) → sni = "&lt;boxhash&gt;.virtues.ch"</span>
+        <span class="msg" style="margin-top:6px">token = derive_token(<b style="color:var(--atlas)">RELAY_SECRET</b>, sni)</span>
+        <span class="note">deterministic name (stable across reinstall) · dedicated box domain, isolated from virtues.com · ensures wildcard DNS <code>*.virtues.ch → relay</code> + ACME TXT</span>
+      </div>
+    </div>
+    <div class="step">
+      <div class="from"><span class="swatch c-atlas">atlas</span> → <span class="swatch c-box">box</span></div>
+      <div class="arrow">
+        <span class="msg">{ relay_addr, sni, token }</span>
+        <span class="note">box persists these in <code>box_secrets</code>. The master secret never leaves atlas.</span>
+      </div>
+    </div>
+  </div>
+
+  <div class="phase">
+    <h3>2 · Runtime — registration</h3>
+    <p class="what">The relay re-derives the expected token from the one secret it holds. No lookup, no state.</p>
+    <div class="step">
+      <div class="from"><span class="swatch c-box">box</span> → <span class="swatch c-relay">relay</span></div>
+      <div class="arrow"><span class="msg">dial out 443 · Register{ sni, token }</span>
+        <span class="note">box has no public inbound port (CGNAT-safe)</span></div>
+    </div>
+    <div class="step">
+      <div class="from"><span class="swatch c-relay">relay</span> verifies</div>
+      <div class="arrow">
+        <span class="msg">expected = derive_token(<b style="color:var(--relay)">RELAY_SECRET</b>, sni) · ct_eq(token, expected)</span>
+        <span class="note">same secret shared atlas↔relay out-of-band · constant-time compare</span>
+      </div>
+    </div>
+    <div class="step">
+      <div class="from"><span class="swatch c-relay">relay</span> → <span class="swatch c-box">box</span></div>
+      <div class="arrow"><span class="msg">Registered ✓</span>
+        <span class="note">box flips an in-process <code>REGISTERED</code> flag</span></div>
+    </div>
+  </div>
+
+  <div class="phase">
+    <h3>3 · Pairing — only advertise a reachable URL</h3>
+    <p class="what">Clients get the relay URL only once the box is actually registered, so they never persist a dead URL over a working LAN origin.</p>
+    <div class="step">
+      <div class="from"><span class="swatch c-client">client</span> → <span class="swatch c-box">box</span></div>
+      <div class="arrow"><span class="msg">pair / provision</span></div>
+    </div>
+    <div class="step">
+      <div class="from"><span class="swatch c-box">box</span> → <span class="swatch c-client">client</span></div>
+      <div class="arrow">
+        <span class="msg">box_url = REGISTERED ? "https://&lt;sni&gt;" : null</span>
+        <span class="note">carried on <b>both</b> ConsumeResponse and ProvisionResponse · client falls back to LAN origin when null</span>
+      </div>
+    </div>
+    <div class="step">
+      <div class="from"><span class="swatch c-client">client</span> ⇄ <span class="swatch c-relay">relay</span> ⇄ <span class="swatch c-box">box</span></div>
+      <div class="arrow"><span class="msg">E2E TLS — relay splices ciphertext, never decrypts</span></div>
+    </div>
+  </div>
+
+  <h2>Why Option A wins</h2>
+  <div class="keyprops">
+    <div class="prop"><div class="h">Relay stays blind &amp; stateless</div><div class="b">One secret, derives the expected per-SNI token on the fly. No per-box table → the RAM-only zero-knowledge property that is the privacy moat.</div></div>
+    <div class="prop"><div class="h">Box never holds the master secret</div><div class="b">A compromised box gets only its own derived token — it cannot mint another tenant's SNI. Preserves the fail-closed auth fix.</div></div>
+    <div class="prop"><div class="h">Reuses an existing channel</div><div class="b">Rides the api_key/link handshake atlas already runs. No new auth surface to design, secure, or rate-limit.</div></div>
+  </div>
+
+  <h2>Option A vs. the alternatives</h2>
+  <table class="compare">
+    <tr><th>Property</th><th>A · atlas mints (pick)</th><th>B · dedicated endpoint</th><th>C · per-box secrets in relay</th></tr>
+    <tr class="pick"><td>Relay state <span class="badge">key</span></td><td class="yes">stateless (1 secret)</td><td class="yes">stateless (1 secret)</td><td class="no">stateful (sni→token table)</td></tr>
+    <tr><td>Box holds master secret</td><td class="yes">no</td><td class="yes">no</td><td class="yes">no</td></tr>
+    <tr><td>New auth surface</td><td class="yes">none (rides api_key)</td><td class="no">new endpoint</td><td class="no">api↔relay sync path</td></tr>
+    <tr><td>On-demand re-provision</td><td>via refresh trigger</td><td class="yes">native</td><td class="yes">native</td></tr>
+    <tr><td>Blind / RAM-only intact</td><td class="yes">yes</td><td class="yes">yes</td><td class="no">eroded</td></tr>
+  </table>
+
+  <div class="why" style="margin-top:18px">
+    <div class="card">
+      <h4>Trade-offs accepted</h4>
+      <ul>
+        <li class="pro"><b>Lifecycle for free</b> — relay access tracks the subscription/link state already managed.</li>
+        <li class="con"><b>Cadence</b> — enablement could wait for a renew; fixed with a force-refresh on first relay-enable.</li>
+        <li class="con"><b>Secret rotation</b> — relay accepts <b>current + previous</b> secret during a grace window; atlas re-mints on next fetch.</li>
+      </ul>
+    </div>
+    <div class="card">
+      <h4>Why not B or C</h4>
+      <ul>
+        <li><b>B (dedicated endpoint)</b> — same payload that can ride the existing claim/link call, for an extra surface to secure. Kept only as a fallback if we later want relay fully decoupled from billing.</li>
+        <li><b>C (per-box secrets)</b> — makes the relay stateful and needs api↔relay sync + restart re-hydration. Sacrifices the exact blind/stateless property HMAC buys. <span class="no">Discouraged.</span></li>
+      </ul>
+    </div>
+  </div>
+
+  <p class="foot">Companion to <code>docs/relay-control-plane.md</code> and <code>docs/networking-relay-tee.md</code>. Naming is deterministic from the box identity key (stable across reinstall/recovery). Design — not built (2026-06-30).</p>
+</div>
+</body>
+</html>

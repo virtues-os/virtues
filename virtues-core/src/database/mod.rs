@@ -21,8 +21,15 @@ use crate::error::{Error, Result};
 /// callers — including action subprocesses — go through one consistent
 /// resolver. Postgres URLs are location-independent, so no rewriting needed.
 pub fn normalize_database_url() -> Result<String> {
-    std::env::var("DATABASE_URL")
-        .map_err(|_| Error::Configuration("DATABASE_URL env var not set".to_string()))
+    normalize_from(std::env::var("DATABASE_URL").ok())
+}
+
+/// Pure core of [`normalize_database_url`] — takes the env value instead of
+/// reading it, so tests never have to mutate the process-global env. (Env
+/// mutation in tests races the `#[sqlx::test]` suites, which read
+/// DATABASE_URL concurrently and panic on a mid-run change.)
+fn normalize_from(value: Option<String>) -> Result<String> {
+    value.ok_or_else(|| Error::Configuration("DATABASE_URL env var not set".to_string()))
 }
 
 /// Database connection and operations
@@ -91,20 +98,152 @@ impl Database {
     pub async fn initialize(&self) -> Result<()> {
         self.wait_for_postgres(std::time::Duration::from_secs(30)).await?;
 
-        // Run migrations
-        self.run_migrations().await?;
+        // Run migrations — unless pointed at an externally-managed DB (e.g. a live
+        // box snapshot restored for local dev via `make dev-real`), whose
+        // `_sqlx_migrations` checksums were written by a different build and would
+        // trip the modification guard. The snapshot is already at its schema; we
+        // only read it. Guarded by an explicit opt-in env so normal startup always
+        // migrates.
+        if std::env::var("VIRTUES_SKIP_MIGRATIONS").as_deref() == Ok("1") {
+            tracing::warn!(
+                "VIRTUES_SKIP_MIGRATIONS=1 — skipping migrations (externally-managed DB)"
+            );
+        } else {
+            self.run_migrations().await?;
+        }
 
-        // Post-migration hooks: anything that needs Rust-side state (e.g. the
-        // master encryption key) to finish what a SQL migration started.
-        // Idempotent — safe to run on every startup.
-        crate::credentials::migrate::run(&self.pool).await?;
+        // Size the vector columns to the configured embedding model. Migrations
+        // create them at the Dragon default (256); a manual endpoint with
+        // different native dims needs a resize before anything is indexed.
+        self.ensure_embedding_dims().await?;
 
         Ok(())
+    }
+
+    /// Size the pgvector columns to the width the index was BUILT at, read from
+    /// `search_index_meta` — never from a constant, and never from the network.
+    ///
+    /// Bringup runs on boxes whose embedder is not running (`virtues migrate`, most
+    /// of the CLI), so it cannot go asking a sidecar how wide its vectors are. The
+    /// database remembers; the embedder's job at runtime is to *verify* that memory
+    /// (see `search::indexer`), not to supply it.
+    ///
+    /// No recorded width means the index has never been built — leave the column at
+    /// its migration default and let the first embed record the truth. Refuses to
+    /// resize a populated index: that is a re-embed, and `virtues reindex` owns it.
+    async fn ensure_embedding_dims(&self) -> Result<()> {
+        let Some(target) = crate::search::embedder::index_dim(&self.pool).await else {
+            // Never embedded. Nothing to match yet.
+            return Ok(());
+        };
+        let max = crate::search::embedder::MAX_INDEXED_DIM;
+        if target > max {
+            return Err(Error::Database(format!(
+                "the index records a {target}-dim model, above pgvector's {max}-dim HNSW \
+                 ceiling for halfvec — use a narrower model, or set VIRTUES_EMBED_DIMS to \
+                 truncate (only safe if the model is Matryoshka-trained)"
+            )));
+        }
+
+        // The target column is `halfvec(target)` (fp16 — half the storage, ~3×
+        // faster query, recall within noise of fp32). We need both the width AND
+        // the type family: an already-`halfvec` column at the right width is a
+        // no-op; a legacy `vector` column at the right width still converts (a
+        // lossless-enough cast — no re-embed), and any width change needs a
+        // reindex.
+        let current_type = self.vector_column_type("search_vectors", "embedding").await?;
+        let current = current_type.as_deref().and_then(parse_vector_dim);
+        let is_halfvec = current_type
+            .as_deref()
+            .map(|t| t.trim_start().starts_with("halfvec"))
+            .unwrap_or(false);
+        if is_halfvec && current == Some(target) {
+            return Ok(());
+        }
+
+        // Only a WIDTH change drops the vectors' meaning and forces a re-embed;
+        // a same-width vector→halfvec cast preserves them. Guard on the former.
+        let dim_changed = current != Some(target);
+        if dim_changed {
+            let populated: i64 = sqlx::query_scalar(
+                "SELECT (SELECT count(*) FROM search_vectors) \
+                      + (SELECT count(*) FROM search_topic_cache)",
+            )
+            .fetch_one(&self.pool)
+            .await
+            .map_err(|e| Error::Database(format!("counting stored vectors: {e}")))?;
+            if populated > 0 {
+                let from = current.map(|d| d.to_string()).unwrap_or_else(|| "?".into());
+                return Err(Error::Database(format!(
+                    "embedding index is halfvec({from}) but the configured model needs \
+                     halfvec({target}), and {populated} vectors are already stored — run \
+                     `virtues reindex` to re-embed (wipes the derived vectors, keeps your data)"
+                )));
+            }
+        }
+
+        tracing::info!(
+            from = ?current_type, to = target, "sizing embedding columns (halfvec) to the configured model"
+        );
+        // target is a validated usize (≤ max), so the format! interpolation is
+        // injection-safe. Cast to halfvec and rebuild the HNSW index. Cosine ops
+        // (`<=>`) — matches the operator query.rs uses, and for our L2-normalized
+        // embeddings it ranks identically to inner product.
+        for stmt in [
+            "DROP INDEX IF EXISTS search_vectors_hnsw".to_string(),
+            format!(
+                "ALTER TABLE search_vectors ALTER COLUMN embedding \
+                 TYPE halfvec({target}) USING embedding::halfvec({target})"
+            ),
+            format!(
+                "ALTER TABLE search_topic_cache ALTER COLUMN embedding \
+                 TYPE halfvec({target}) USING embedding::halfvec({target})"
+            ),
+            "CREATE INDEX search_vectors_hnsw ON search_vectors \
+             USING hnsw (embedding halfvec_cosine_ops)"
+                .to_string(),
+        ] {
+            sqlx::query(&stmt)
+                .execute(&self.pool)
+                .await
+                .map_err(|e| Error::Database(format!("resizing embedding columns: {e}")))?;
+        }
+        Ok(())
+    }
+
+    /// The formatted SQL type of a column, e.g. `"vector(256)"` or
+    /// `"halfvec(384)"`. `None` if the column isn't found.
+    async fn vector_column_type(&self, table: &str, col: &str) -> Result<Option<String>> {
+        sqlx::query_scalar(
+            "SELECT format_type(a.atttypid, a.atttypmod) \
+             FROM pg_attribute a \
+             WHERE a.attrelid = $1::regclass AND a.attname = $2 AND NOT a.attisdropped",
+        )
+        .bind(table)
+        .bind(col)
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(|e| Error::Database(format!("reading {table}.{col} type: {e}")))
+    }
+
+    /// The declared dimension of a pgvector column, e.g. `vector(256)` → 256.
+    /// `None` if the column has no dimension modifier or isn't found.
+    #[allow(dead_code)]
+    async fn vector_column_dim(&self, table: &str, col: &str) -> Result<Option<usize>> {
+        Ok(self.vector_column_type(table, col).await?.as_deref().and_then(parse_vector_dim))
     }
 
     /// Poll `SELECT 1` until Postgres responds or we exhaust the budget.
     /// One log line per second so `journalctl -u virtues` shows progress
     /// instead of a wall of silence.
+    ///
+    /// Permanent errors fail IMMEDIATELY: auth/role/database errors don't fix
+    /// themselves by waiting, and burning the 30s budget on them used to bury
+    /// the real cause ("peer authentication failed for user adam") under a
+    /// misleading "did not accept connections within 30s" timeout. The classic
+    /// trigger is running a CLI command as the wrong OS user on a box install
+    /// (Unix socket + peer auth maps OS user → Postgres role), so the error
+    /// carries that hint.
     async fn wait_for_postgres(&self, budget: std::time::Duration) -> Result<()> {
         let start = std::time::Instant::now();
         let mut emitted_waiting = false;
@@ -112,6 +251,23 @@ impl Database {
             match sqlx::query("SELECT 1").execute(&self.pool).await {
                 Ok(_) => return Ok(()),
                 Err(e) => {
+                    let msg = e.to_string();
+                    // Auth/identity failures are permanent — retrying is noise.
+                    let permanent = [
+                        "peer authentication failed",
+                        "password authentication failed",
+                        "does not exist", // role "adam" / database "virtues" does not exist
+                        "no pg_hba.conf entry",
+                    ]
+                    .iter()
+                    .any(|p| msg.contains(p));
+                    if permanent {
+                        return Err(Error::Database(format!(
+                            "Postgres refused the connection: {msg}\n  \
+                             hint: on a box install, CLI commands must run as the \
+                             service user — try: sudo -u virtues virtues <command>"
+                        )));
+                    }
                     if start.elapsed() >= budget {
                         return Err(Error::Database(format!(
                             "Postgres did not accept connections within {}s: {e}",
@@ -130,7 +286,12 @@ impl Database {
 
     /// Run database migrations
     async fn run_migrations(&self) -> Result<()> {
-        sqlx::migrate!("./migrations")
+        let mut migrator = sqlx::migrate!("./migrations");
+        // One dev database serves many branches: a migration applied on a
+        // feature branch must not brick `make dev` on branches that don't
+        // carry its file. Skip applied-but-unknown versions instead.
+        migrator.set_ignore_missing(true);
+        migrator
             .run(&self.pool)
             .await
             .map_err(|e| Error::Database(format!("Failed to run migrations: {e}")))?;
@@ -205,24 +366,42 @@ pub struct HealthStatus {
     pub message: String,
 }
 
+/// Parse the dimension out of a pgvector `format_type` string, e.g.
+/// `vector(256)` → `Some(256)`, `halfvec(3072)` → `Some(3072)`, bare `vector`
+/// (no modifier) → `None`.
+fn parse_vector_dim(ty: &str) -> Option<usize> {
+    let open = ty.find('(')?;
+    let close = ty.find(')')?;
+    ty.get(open + 1..close)?.trim().parse().ok()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
-    use serial_test::serial;
 
     #[test]
-    #[serial]
+    fn parse_vector_dim_cases() {
+        assert_eq!(parse_vector_dim("vector(256)"), Some(256));
+        assert_eq!(parse_vector_dim("vector(768)"), Some(768));
+        assert_eq!(parse_vector_dim("halfvec(3072)"), Some(3072));
+        assert_eq!(parse_vector_dim("vector"), None);
+        assert_eq!(parse_vector_dim("text"), None);
+    }
+
+    // Tests go through the pure `normalize_from`, never the env: set_var/
+    // remove_var here raced the #[sqlx::test] suites (env is process-global,
+    // tests run concurrently across modules) — sqlx's tamper guard saw
+    // DATABASE_URL change mid-run and panicked.
+
+    #[test]
     fn test_normalize_returns_url() {
-        std::env::set_var("DATABASE_URL", "postgres://user:pass@localhost:5432/db");
-        let normalized = normalize_database_url().unwrap();
+        let normalized =
+            normalize_from(Some("postgres://user:pass@localhost:5432/db".to_string())).unwrap();
         assert_eq!(normalized, "postgres://user:pass@localhost:5432/db");
     }
 
     #[test]
-    #[serial]
     fn test_normalize_errors_when_unset() {
-        std::env::remove_var("DATABASE_URL");
-        let result = normalize_database_url();
-        assert!(result.is_err());
+        assert!(normalize_from(None).is_err());
     }
 }

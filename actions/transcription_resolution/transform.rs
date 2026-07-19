@@ -1,35 +1,74 @@
-//! Drain logic for the ios_microphone_transcribe cron action.
+//! Drain logic for the transcription_resolution cron action.
 //!
 //! Selects untranscribed recordings via LEFT JOIN, calls Gemini for each one,
 //! and INSERTs the result into `data_communication_transcription`. Silent
 //! recordings are inserted directly with empty text and never hit Gemini.
 
 use anyhow::{anyhow, Context, Result};
+use chrono::{DateTime, Utc};
 use serde::Deserialize;
 use serde_json::Value;
-use sqlx::{Row, PgPool};
+use sqlx::{PgPool, Row};
 use uuid::Uuid;
 use virtues::virtues_api::client::{BearerClient, Purpose};
+use virtues_registry::models::{default_model_for_slot, ModelSlot};
 
-const MODEL: &str = "google/gemini-2.5-flash-lite";
+// The audio model is the registry's Omni slot (currently google/gemini-3-flash),
+// resolved at call time — never a hardcoded id here. "Omni" = an audio-native
+// model that ingests audio as native tokens (~25/sec, ~7.5K for a 5-min clip —
+// cheap) and does full scene understanding (speech + ambient + music + mood +
+// setting), which is what a life-log wants, NOT bare speech-to-text. gemini-3
+// won a controlled 5-clip bench on cost/speed/accuracy/JSON-validity; see
+// ModelSlot::Omni. Audio requires reasoning_effort:low (below) — it's the only
+// tier whose thinking budget the gateway honors.
 
-const SYSTEM_PROMPT: &str = r#"You are a verbatim audio transcription system. Output ONLY a raw JSON object — no markdown, no code fences, no explanation.
+/// Below this, an audio file has no real content (an empty/glitch AAC container
+/// is ~28 bytes). Real speech recordings are hundreds of KB. Sub-kilobyte files
+/// are recorded as silent rather than sent to Gemini (which returns an empty
+/// body → an unrecoverable parse error that otherwise retries forever).
+const MIN_AUDIO_BYTES: usize = 1024;
+
+/// Give up on a recording after this many failed transcription attempts. Past
+/// this it's never re-selected, so a poison record can't loop-bill Gemini
+/// forever AND it stops wedging the head of the oldest-first queue. Counter
+/// lives in data_audio_recording.metadata (no schema migration).
+const MAX_TRANSCRIBE_ATTEMPTS: i64 = 4;
+
+/// Exponential backoff base: a failed recording isn't re-selected until
+/// base * 2^attempts seconds have passed (2m, 4m, 8m, 16m). Spaces retries so a
+/// transient failure recovers without re-billing every 2-min cron tick, and the
+/// backoff window also lets the queue flow past it to fresh records meanwhile.
+const RETRY_BACKOFF_BASE_SECS: i64 = 120;
+
+const SYSTEM_PROMPT: &str = r#"You are an audio SCENE-UNDERSTANDING engine for a personal life-log. You hear a slice of someone's real life: speech, but also music, ambient sound, room tone, the feel of a place. Capture BOTH the words AND the essence of the moment. Output ONLY a raw JSON object — no markdown, no code fences, no prose.
 
 Schema:
-{"title":"string max 10 words","summary":"string 1-2 sentences","text":"string verbatim transcript","language":"string ISO 639-1","confidence":0.0-1.0,"speaker_count":integer,"tags":["max 5 strings"],"entities":{"people":[],"places":[],"organizations":[]}}
+{"title":"string, max 10 words, what this moment is","summary":"1-2 sentence narrative of what was happening and how it felt","text":"verbatim speech transcript, empty string if no speech","language":"ISO 639-1","confidence":0.0-1.0,"speaker_count":integer,"tags":["max 8 topical + scene tags"],"entities":{"people":[{"name":"string","said":"the sentence they were named in"}],"places":[{"name":"string","said":"..."}],"organizations":[{"name":"string","said":"..."}]},"scene":{"sounds":["non-speech sounds heard: music, laughter, dog barking, traffic, dishes, footsteps, TV..."],"music":"description of any music (genre/energy) or null","mood":"the emotional tone/energy of the moment","setting":"likely place/context (e.g. home kitchen, bar, car, outdoors)"}}
 
 Rules:
-- text: Exact words spoken. No paraphrasing. Include filler words (um, uh, ah). Use "[Speaker 1]:", "[Speaker 2]:" if multiple speakers.
-- entities: Only extract names explicitly spoken. Use "[unclear]" if a name is ambiguous.
-- confidence: 0.0 for silence/unintelligible, 0.5+ for partial, 0.9+ for clear speech.
-- tags: 1-5 topic labels maximum.
-- Silence/noise: Return {"title":"Silence","summary":"No speech detected","text":"","language":"en","confidence":0.0,"speaker_count":0,"tags":[],"entities":{"people":[],"places":[],"organizations":[]}}
+- text: exact words spoken, no paraphrasing, keep fillers (um, uh). Use "[Speaker 1]:", "[Speaker 2]:" when multiple voices. Empty "" if no intelligible speech.
+- ALWAYS fill scene.* even when there is no speech — ambient-only moments are valuable. Describe what you actually hear; do not invent.
+- entities: only names/places/orgs explicitly spoken or clearly identifiable. Omit if ambiguous — do NOT guess.
+- entities[].said: quote the clause the name appears in, verbatim, <= 15 words. A bare name is useless to a human reviewer later; the quote is what makes it recognizable.
+- confidence: confidence in the SPEECH transcript (0.0 if no speech, 0.9+ if clear).
+- tags: blend topic (what's discussed) and scene (sounds/mood/setting) labels.
+- SUNG or hummed vocals ARE speech — transcribe the lyrics verbatim into "text". NEVER leave text empty just because words are sung or set to music.
+- Speakers often discuss technology and AI tools — prefer real names (Claude, Cursor, Codex, GPT, Gemini, terminal, repo, agent) over acoustically-similar non-words: write "Claude", not "claw"/"cloud".
+- Do NOT fabricate names (people, songs, places, orgs) you are unsure of — omit rather than guess a plausible-sounding one.
+- Truly silent/empty audio (no speech AND no discernible ambient sound): {"title":"Silence","summary":"Silent audio","text":"","language":"en","confidence":0.0,"speaker_count":0,"tags":["silence"],"entities":{"people":[],"places":[],"organizations":[]},"scene":{"sounds":[],"music":null,"mood":"quiet","setting":"unknown"}}
 "#;
 
 #[derive(Debug, thiserror::Error)]
 enum TranscribeError {
     #[error("virtues-api rate limited (429)")]
     RateLimited,
+    /// Gemini returned an empty response body — the recording has no
+    /// transcribable speech (silent/near-silent audio). Deterministic, NOT
+    /// transient, so the caller records it as a silent transcript and marks it
+    /// DONE rather than retrying it forever (which re-bills the audio input on
+    /// every cron tick — the cause of the runaway auto-top-up drain).
+    #[error("empty transcription response (silent audio)")]
+    EmptyResponse,
     #[error("{0}")]
     Other(#[from] anyhow::Error),
 }
@@ -45,17 +84,58 @@ struct TranscriptionResponse {
     speaker_count: Option<i32>,
     tags: Option<Vec<String>>,
     entities: Option<Value>,
+    /// Audio scene block (sounds/music/mood/setting) — the non-speech "essence"
+    /// of the moment. Stored in the transcription row's metadata JSONB.
+    scene: Option<Value>,
 }
 
 /// One row from the LEFT JOIN selecting untranscribed recordings.
 struct PendingRecording {
     source_stream_id: String,
-    started_at: String,
-    ended_at: Option<String>,
+    started_at: DateTime<Utc>,
+    ended_at: Option<DateTime<Utc>>,
     duration_seconds: Option<f64>,
     audio_url: String,
     audio_format: String,
     is_silent: bool,
+}
+
+/// Resolve `audio_url` against both the lake and the legacy layout.
+///
+/// New rows store a lake `storage_key` (relative to the storage root). Rows
+/// written before the lake landed store a path relative to the server's cwd — the
+/// old `data/lake/ios_microphone/…`, which ignored STORAGE_PATH and parked the
+/// audio outside the configured lake entirely. Try the lake first, then fall back,
+/// so the ~858 existing recordings keep transcribing without a data migration.
+///
+/// The root MUST be resolved exactly as the writer does (`storage::lake`): default
+/// included. If the reader skipped the default while the writer used it, then on
+/// any box without STORAGE_PATH set every new recording would be written to the
+/// lake and then looked for relative to cwd — never found, "audio file missing",
+/// and silently never transcribed.
+fn read_audio(audio_url: &str) -> std::io::Result<Vec<u8>> {
+    let root = std::env::var("STORAGE_PATH").unwrap_or_else(|_| "./data/lake".to_string());
+    let in_lake = std::path::Path::new(&root).join(audio_url);
+    if in_lake.exists() {
+        return std::fs::read(in_lake);
+    }
+    std::fs::read(audio_url)
+}
+
+/// Decode one queried row into a `PendingRecording`, surfacing a column-decode
+/// failure as an `Err` instead of panicking — `Row::get` unwraps internally, so
+/// any schema/type drift would otherwise abort the whole drain. Callers count a
+/// failure here as a failed record and move on.
+fn decode_pending(row: &sqlx::postgres::PgRow) -> Result<PendingRecording> {
+    Ok(PendingRecording {
+        source_stream_id: row.try_get("source_stream_id")?,
+        started_at: row.try_get("started_at")?,
+        ended_at: row.try_get("ended_at")?,
+        duration_seconds: row.try_get("duration_seconds")?,
+        audio_url: row.try_get("audio_url")?,
+        audio_format: row.try_get("audio_format")?,
+        is_silent: row.try_get("is_silent")?,
+    })
 }
 
 /// Drain up to `batch_size` untranscribed recordings.
@@ -70,11 +150,26 @@ pub async fn drain(db: &PgPool, batch_size: i64) -> Result<(usize, usize, usize)
         LEFT JOIN data_communication_transcription t
             ON t.source_stream_id = r.source_stream_id
         WHERE t.id IS NULL
+          -- Give-up cap: stop re-selecting (and re-billing) a recording after
+          -- $2 failures. Also unblocks head-of-line — a poison record at the
+          -- front no longer wedges the whole oldest-first queue.
+          AND COALESCE((r.metadata->>'transcribe_attempts')::int, 0) < $2
+          -- Exponential backoff: skip a recently-failed recording until
+          -- base * 2^attempts seconds have elapsed.
+          AND (
+            r.metadata->>'transcribe_last_attempt' IS NULL
+            OR (r.metadata->>'transcribe_last_attempt')::timestamptz
+               < now() - make_interval(secs =>
+                   $3::double precision
+                   * power(2, COALESCE((r.metadata->>'transcribe_attempts')::int, 0)))
+          )
         ORDER BY r.created_at ASC
         LIMIT $1
         "#,
     )
     .bind(batch_size)
+    .bind(MAX_TRANSCRIBE_ATTEMPTS)
+    .bind(RETRY_BACKOFF_BASE_SECS)
     .fetch_all(db)
     .await
     .context("failed to query pending recordings")?;
@@ -83,25 +178,37 @@ pub async fn drain(db: &PgPool, batch_size: i64) -> Result<(usize, usize, usize)
         return Ok((0, 0, 0));
     }
 
-    let pending: Vec<PendingRecording> = rows
-        .iter()
-        .map(|row| PendingRecording {
-            source_stream_id: row.get("source_stream_id"),
-            started_at: row.get("started_at"),
-            ended_at: row.get("ended_at"),
-            duration_seconds: row.get("duration_seconds"),
-            audio_url: row.get("audio_url"),
-            audio_format: row.get("audio_format"),
-            is_silent: row.get::<i64, _>("is_silent") != 0,
-        })
-        .collect();
+    let mut transcribed = 0usize;
+    let mut skipped = 0usize;
+    let mut failed = 0usize;
+
+    // Decode each queried row into a PendingRecording. A column-decode failure
+    // (a schema/type drift, like the stale `started_at: String` decoder after
+    // the SQLite→Postgres migration) used to panic via `Row::get` and take down
+    // the whole batch before a single record was processed — surfacing only as
+    // an opaque subprocess crash. `try_get` degrades the one bad row instead:
+    // log it, count it failed, and keep draining the rest.
+    let mut pending: Vec<PendingRecording> = Vec::with_capacity(rows.len());
+    for row in &rows {
+        match decode_pending(row) {
+            Ok(rec) => pending.push(rec),
+            Err(e) => {
+                tracing::warn!(error = %e, "skipping recording: failed to decode row");
+                failed += 1;
+            }
+        }
+    }
 
     // Build the virtues-api client lazily — only if we have at least one
     // non-silent recording to process.
     let mut virtues_api: Option<BearerClient> = None;
-    let mut transcribed = 0usize;
-    let mut skipped = 0usize;
-    let mut failed = 0usize;
+
+    // On-box voice-activity gate, built lazily and reused across the batch. If
+    // it can't load we proceed WITHOUT gating (fail-open) rather than abort the
+    // drain — a missing gate just means we pay Gemini for no-speech chunks, not
+    // that we drop audio.
+    let mut vad: Option<crate::vad::Vad> = None;
+    let mut vad_init_failed = false;
 
     for rec in &pending {
         // Silent recordings: insert an empty transcript directly, no Gemini call
@@ -114,22 +221,26 @@ pub async fn drain(db: &PgPool, batch_size: i64) -> Result<(usize, usize, usize)
                         error = %e,
                         "failed to insert silent transcript"
                     );
+                    record_attempt_failure(db, &rec.source_stream_id).await;
                     failed += 1;
                 }
             }
             continue;
         }
 
-        // Lazy-init the bearer client. System purpose → the device's own
-        // bearer funds this background call against the OS reserve, not the
-        // user's chat wallet (auto-renews on a 402 via the voucher dance).
+        // Lazy-init the api_key client. The device's own key funds this
+        // background call, with one auto-top-up-and-retry on a 402 wallet_empty.
         if virtues_api.is_none() {
-            virtues_api = Some(BearerClient::from_env(db.clone()).with_purpose(Purpose::System));
+            virtues_api = Some(
+                BearerClient::from_env(db.clone())
+                    .with_purpose(Purpose::System)
+                    .with_feature("transcription"),
+            );
         }
         let client = virtues_api.as_ref().unwrap();
 
-        // Read the audio file from disk
-        let audio_bytes = match std::fs::read(&rec.audio_url) {
+        // Read the audio file from disk.
+        let audio_bytes = match read_audio(&rec.audio_url) {
             Ok(b) => b,
             Err(e) => {
                 tracing::warn!(
@@ -138,14 +249,74 @@ pub async fn drain(db: &PgPool, batch_size: i64) -> Result<(usize, usize, usize)
                     error = %e,
                     "audio file missing or unreadable, skipping"
                 );
+                record_attempt_failure(db, &rec.source_stream_id).await;
                 failed += 1;
                 continue;
             }
         };
+        // Empty/glitch recordings (a few-byte AAC container with no samples)
+        // make Gemini return an empty body → "EOF while parsing ... raw:" →
+        // counted `failed` and retried every cron tick FOREVER, burning a paid
+        // Gemini call each time. Real speech audio is hundreds of KB; anything
+        // sub-kilobyte has no content. Record it as a silent transcript so it's
+        // marked done and never re-sent.
+        if audio_bytes.len() < MIN_AUDIO_BYTES {
+            tracing::info!(
+                stream_id = %rec.source_stream_id,
+                bytes = audio_bytes.len(),
+                "audio below minimum size; recording as silent (no Gemini call)"
+            );
+            match insert_silent_transcript(db, rec).await {
+                Ok(_) => skipped += 1,
+                Err(e) => {
+                    tracing::warn!(stream_id = %rec.source_stream_id, error = %e,
+                        "failed to insert silent transcript for tiny audio");
+                    record_attempt_failure(db, &rec.source_stream_id).await;
+                    failed += 1;
+                }
+            }
+            continue;
+        }
+
+        // Voice-activity gate: ~65% of all-day audio has no speech (silence,
+        // traffic, music, room tone). Detect those on-box and record them
+        // silent instead of paying Gemini to transcribe nothing. The audio is
+        // still stored, so a skipped chunk stays re-runnable later. Fail-open:
+        // if the VAD can't load, transcribe everything as before.
+        if vad.is_none() && !vad_init_failed {
+            match crate::vad::Vad::new() {
+                Ok(v) => vad = Some(v),
+                Err(e) => {
+                    tracing::error!(error = %e, "VAD init failed; transcribing without speech-gate");
+                    vad_init_failed = true;
+                }
+            }
+        }
+        if let Some(v) = vad.as_ref() {
+            if !v.has_speech(&audio_bytes) {
+                tracing::info!(
+                    stream_id = %rec.source_stream_id,
+                    "no speech detected (VAD); recording silent, skipping Gemini"
+                );
+                match insert_silent_transcript(db, rec).await {
+                    Ok(_) => skipped += 1,
+                    Err(e) => {
+                        tracing::warn!(stream_id = %rec.source_stream_id, error = %e,
+                            "failed to insert silent transcript (VAD gate)");
+                        record_attempt_failure(db, &rec.source_stream_id).await;
+                        failed += 1;
+                    }
+                }
+                continue;
+            }
+        }
+
         let audio_b64 =
             base64::Engine::encode(&base64::engine::general_purpose::STANDARD, &audio_bytes);
 
         match transcribe(client, &audio_b64, &rec.audio_format).await {
+            // Cost is captured at the BearerClient chokepoint (post_json records
+            // the gateway usage.cost into app_ai_calls, tagged "transcription").
             Ok(t) => match insert_transcription(db, rec, &t).await {
                 Ok(_) => transcribed += 1,
                 Err(e) => {
@@ -154,6 +325,7 @@ pub async fn drain(db: &PgPool, batch_size: i64) -> Result<(usize, usize, usize)
                         error = %e,
                         "failed to insert transcription"
                     );
+                    record_attempt_failure(db, &rec.source_stream_id).await;
                     failed += 1;
                 }
             },
@@ -165,18 +337,55 @@ pub async fn drain(db: &PgPool, batch_size: i64) -> Result<(usize, usize, usize)
                 );
                 return Ok((transcribed, skipped, failed));
             }
+            Err(TranscribeError::EmptyResponse) => {
+                // Silent/no-speech audio: record an empty transcript so it's
+                // marked DONE and never re-sent. Without this the same recording
+                // is re-billed to Gemini every cron tick forever.
+                match insert_silent_transcript(db, rec).await {
+                    Ok(_) => skipped += 1,
+                    Err(e) => {
+                        tracing::warn!(stream_id = %rec.source_stream_id, error = %e,
+                            "failed to insert silent transcript for empty response");
+                        record_attempt_failure(db, &rec.source_stream_id).await;
+                        failed += 1;
+                    }
+                }
+            }
             Err(TranscribeError::Other(e)) => {
                 tracing::warn!(
                     stream_id = %rec.source_stream_id,
                     error = %e,
-                    "transcription failed; will retry next cron tick"
+                    "transcription failed; will retry (capped + backed off)"
                 );
+                record_attempt_failure(db, &rec.source_stream_id).await;
                 failed += 1;
             }
         }
     }
 
     Ok((transcribed, skipped, failed))
+}
+
+/// Record a failed transcription attempt on the recording so the give-up cap +
+/// backoff in `drain`'s SELECT can see it. Best-effort: a write failure is
+/// logged, not propagated — bookkeeping must never abort the drain. Counters
+/// live in the existing metadata JSONB, so no schema migration is needed.
+async fn record_attempt_failure(db: &PgPool, stream_id: &str) {
+    let res = sqlx::query(
+        r#"UPDATE data_audio_recording
+           SET metadata = jsonb_set(
+                 jsonb_set(COALESCE(metadata, '{}'::jsonb),
+                   '{transcribe_attempts}',
+                   to_jsonb(COALESCE((metadata->>'transcribe_attempts')::int, 0) + 1)),
+                 '{transcribe_last_attempt}', to_jsonb(now()))
+           WHERE source_stream_id = $1"#,
+    )
+    .bind(stream_id)
+    .execute(db)
+    .await;
+    if let Err(e) = res {
+        tracing::warn!(stream_id, error = %e, "failed to record transcription attempt counter");
+    }
 }
 
 async fn insert_silent_transcript(db: &PgPool, rec: &PendingRecording) -> Result<()> {
@@ -201,16 +410,16 @@ async fn insert_silent_transcript(db: &PgPool, rec: &PendingRecording) -> Result
     .bind("No speech detected")
     .bind("en")
     .bind(rec.duration_seconds)
-    .bind(&rec.started_at)
-    .bind(rec.ended_at.as_deref())
+    .bind(rec.started_at)
+    .bind(rec.ended_at)
     .bind(0i32)
     .bind(0.0f64)
-    .bind("[]")
-    .bind("{}")
+    .bind(serde_json::json!([]))
+    .bind(serde_json::json!({}))
     .bind(&rec.source_stream_id)
     .bind("stream_ios_microphone")
     .bind("ios")
-    .bind("{}")
+    .bind(serde_json::json!({}))
     .execute(db)
     .await
     .context("insert silent transcript")?;
@@ -226,13 +435,14 @@ async fn insert_transcription(
     let tags_json = t
         .tags
         .as_ref()
-        .map(|tags| serde_json::to_string(tags).unwrap_or_else(|_| "[]".to_string()))
-        .unwrap_or_else(|| "[]".to_string());
-    let entities_json = t
-        .entities
-        .as_ref()
-        .map(|e| serde_json::to_string(e).unwrap_or_else(|_| "{}".to_string()))
-        .unwrap_or_else(|| "{}".to_string());
+        .map(|tags| serde_json::json!(tags))
+        .unwrap_or_else(|| serde_json::json!([]));
+    let entities_json = t.entities.clone().unwrap_or_else(|| serde_json::json!({}));
+    // Persist the audio scene (sounds/music/mood/setting) in metadata so the
+    // non-speech "essence" is queryable alongside the transcript.
+    let metadata_json = serde_json::json!({
+        "scene": t.scene.clone().unwrap_or(serde_json::Value::Null)
+    });
 
     sqlx::query(
         r#"INSERT INTO data_communication_transcription (
@@ -254,8 +464,8 @@ async fn insert_transcription(
     .bind(&t.summary)
     .bind(&t.language)
     .bind(rec.duration_seconds)
-    .bind(&rec.started_at)
-    .bind(rec.ended_at.as_deref())
+    .bind(rec.started_at)
+    .bind(rec.ended_at)
     .bind(t.speaker_count)
     .bind(t.confidence)
     .bind(&tags_json)
@@ -263,7 +473,7 @@ async fn insert_transcription(
     .bind(&rec.source_stream_id)
     .bind("stream_ios_microphone")
     .bind("ios")
-    .bind("{}")
+    .bind(&metadata_json)
     .execute(db)
     .await
     .context("insert transcription")?;
@@ -281,7 +491,7 @@ async fn transcribe(
 ) -> std::result::Result<TranscriptionResponse, TranscribeError> {
     let mime_type = audio_mime_type(audio_format);
     let request_body = serde_json::json!({
-        "model": MODEL,
+        "model": default_model_for_slot(ModelSlot::Omni),
         "messages": [
             { "role": "system", "content": SYSTEM_PROMPT },
             {
@@ -305,7 +515,14 @@ async fn transcribe(
         // by the salvage path below rather than by raising the cap.
         "max_tokens": 8192,
         "temperature": 0.0,
-        "response_format": { "type": "json_object" }
+        // Trim Gemini's thinking budget: scene-understanding transcription needs
+        // almost no chain-of-thought, and "low" cut reasoning tokens ~332→18 in
+        // live probes — a direct per-call cost saving with no quality loss here.
+        "reasoning_effort": "low"
+        // NOTE: no `response_format` — the Vercel gateway rejects it for Gemini
+        // (HTTP 400 "Invalid input" on param response_format). The system prompt
+        // enforces raw-JSON output, and the parse path below strips ```json
+        // fences and salvages partials, so JSON mode isn't needed.
     });
 
     let response = client
@@ -332,6 +549,14 @@ async fn transcribe(
         .and_then(|m| m.get("content"))
         .and_then(|c| c.as_str())
         .ok_or_else(|| TranscribeError::Other(anyhow!("missing choices[0].message.content")))?;
+
+    // Gemini returns an empty body for silent/no-speech audio. Parsing "" panics
+    // the strict parse with "EOF at column 0" → counted failed → retried every
+    // cron tick forever, re-billing the audio input each time. Treat empty as a
+    // deterministic "silent" signal so the caller can mark it done.
+    if content_str.trim().is_empty() {
+        return Err(TranscribeError::EmptyResponse);
+    }
 
     // Strip markdown code fencing if Gemini wraps in ```json ... ```
     let json_str = content_str.trim();
@@ -397,6 +622,7 @@ fn salvage_truncated_response(raw: &str) -> Option<TranscriptionResponse> {
         speaker_count: None,
         tags: None,
         entities: None,
+        scene: None,
     })
 }
 
@@ -465,4 +691,3 @@ fn audio_mime_type(format: &str) -> &'static str {
         _ => "audio/mp4",
     }
 }
-

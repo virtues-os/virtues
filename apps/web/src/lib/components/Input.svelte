@@ -43,7 +43,7 @@
 		required?: boolean;
 		delight?: boolean;
 		autoSave?: boolean;
-		onSave?: (value: string | number) => Promise<void>;
+		onSave?: (value: string | number) => void | Promise<void>;
 		label?: string;
 		helperText?: string;
 		warning?: boolean | string;

@@ -7,10 +7,13 @@ The Virtues iOS app has a single purpose: **Reliable raw data collection**.
 ### Architecture
 
 - **Direct SQLite writes** - No in-memory buffers, SQLite is the single queue
-- **Three data streams**: location, audio, healthkit
-- **Single API endpoint**: `/api/ingest`
-- **Batched uploads** - Groups SQLite entries by stream type (3 requests per sync)
-- **5-minute sync intervals** with background support
+- **Six data streams**: location, audio (microphone), healthkit, contacts, eventkit, financekit
+- **One backend action**: every stream POSTs to `/webhook/{action_id}` for the single `ios_ingest` action; the body's `stream` field tells the backend which ontology to fan the records into
+- **Batched uploads** - Groups SQLite entries by stream type (one request per stream that has pending data)
+- **15-minute upload cadence** (battery); HealthKit *collects* every 5 min. Data is
+  durable in SQLite between cycles. NOTE: iOS's ~30s background budget means an
+  upload started in the background may not finish — orphaned `uploading` rows are
+  reset to `pending` at the start of the next cycle (see SQLiteManager)
 - **Dependency injection** - All managers are unit testable
 - **Centralized health monitoring** - Automated recovery from failures
 - **Generic stream processing** - Extensible architecture for new data types
@@ -234,9 +237,15 @@ return await uploadWithProcessor(processor: processor, events: events)
 | Timer Implementations | 4 different | 1 unified | 75% |
 | Health Check Timers | 3 separate | 1 coordinated | 67% |
 | Stream Upload Code | 120 lines | 75 lines | 43% |
-| Unit Testability | 0% | 100% | ∞ |
-| Background Reliability | ~60% | 100% | +40% |
-| Silent Data Loss | Common | Zero | 100% |
+| Unit Testability | 0% | high (DI in place) | — |
+| Background Reliability | ~60% | improved (not 100% — 30s budget still bounds) | — |
+| Silent Data Loss | Common | reduced (orphaned-row reset; box dedupes retries) | — |
+
+> Honesty note: earlier revisions of this doc claimed "100% background reliability"
+> and "zero silent data loss". Those are aspirations, not guarantees — iOS's ~30s
+> background budget can interrupt an upload, and durability rests on the
+> orphaned-`uploading` reset + the box's idempotent `ON CONFLICT DO NOTHING` ingest.
+> The refactor's real wins are DI, one timer abstraction, and one health coordinator.
 
 ### File Structure
 
@@ -333,8 +342,8 @@ The iOS app evolved from using in-memory buffers to a simpler, more reliable SQL
 #### 3. Batched Uploads by Stream Type
 
 - Groups all pending SQLite entries by `stream_name`
-- Combines data arrays before upload
-- Reduces network requests by ~93% (45 → 3 requests per sync)
+- Combines record arrays before upload
+- Reduces network requests substantially vs per-record uploads (one POST per stream with pending data)
 
 #### 4. Incremental HealthKit Sync
 
@@ -352,7 +361,7 @@ The iOS app evolved from using in-memory buffers to a simpler, more reliable SQL
    ↓
 3. Every 5 minutes: Batch by stream type
    ↓
-4. Upload batches (3 requests total)
+4. Upload batches (one request per stream with pending data) to the ios_ingest webhook
    ↓
 5. Mark SQLite entries as complete
 ```
@@ -377,12 +386,13 @@ The iOS app evolved from using in-memory buffers to a simpler, more reliable SQL
 
 The app blocks all data collection until onboarding completes.
 
-### Step 1: Endpoint Configuration
+### Step 1: Pair with the box
 
-1. Enter API endpoint URL
-2. Enter API key (device token)
-3. Verify connection to backend
-4. **Blocks progression until verified**
+1. In Settings, scan the box's QR code **or** enter its pairing code + address
+2. The device generates an iroh keypair; pairing (`/api/pair/consume`) allowlists
+   its EndpointId on the box and returns the reach ticket + action-id map
+3. Auth is the device's iroh key — there is NO bearer token / API key
+4. **Uploads can't complete until paired** (no action-ids → no webhook URL)
 
 ### Step 2: Permissions
 
@@ -409,7 +419,14 @@ If any permission denied:
 
 ## Data Streams
 
-### 1. Location Stream (`apple_ios_core_location`)
+All six streams share the same upload path: each is queued in SQLite under its
+internal key (`ios_location`, `ios_mic`, `ios_healthkit`, `ios_contacts`,
+`ios_eventkit`, `ios_finance`), batched, and POSTed to the single `ios_ingest`
+webhook with a `stream` field in the body. The three streams below are the
+high-volume sensors; contacts/eventkit/financekit follow the same pattern with
+lower cadence.
+
+### 1. Location Stream (internal key `ios_location`, body `stream: "location"`)
 
 **Collection**: Every 10 seconds (written directly to SQLite)
 
@@ -435,7 +452,7 @@ locationManager.allowsBackgroundLocationUpdates = true
 locationManager.pausesLocationUpdatesAutomatically = false
 ```
 
-### 2. Audio Stream (`apple_ios_mic_audio`)
+### 2. Audio Stream (internal key `ios_mic`, body `stream: "microphone"`)
 
 **Collection**: 30-second chunks with 2-second overlap (written directly to SQLite)
 
@@ -487,7 +504,7 @@ The app automatically handles audio interruptions:
 - **Foreground Check**: Recording state verified and restored on app foreground
 - **Notification**: Logs interruption events for debugging
 
-### 3. HealthKit Stream (`apple_ios_healthkit`)
+### 3. HealthKit Stream (internal key `ios_healthkit`, body `stream: "healthkit"`)
 
 **Collection**: Every 5 minutes using incremental sync (aligned with upload timer)
 
@@ -531,6 +548,25 @@ Normalize values before upload to avoid excessive precision:
 - **HRV**: 1 decimal place (28.5 ms)
 - **Sleep**: Raw category value (0, 1, 2)
 
+### 4. Contacts Stream (internal key `ios_contacts`, body `stream: "contacts"`)
+
+**Collection**: On demand / periodic contact-graph sync. Records are the contact
+list (name, emails, phones, organization, birthday). The backend resolves each
+contact to a `wiki_people` entity by email then phone.
+
+### 5. EventKit Stream (internal key `ios_eventkit`, body `stream: "eventkit"`)
+
+**Collection**: Calendar events (and reminders). The push sends one wrapper
+record with `events[]` / `reminders[]`; the backend writes events to
+`data_calendar_event` (reminders are skipped for now).
+
+### 6. FinanceKit Stream (internal key `ios_finance`, body `stream: "financekit"`)
+
+**Collection**: Apple FinanceKit accounts and transactions, sent as one wrapper
+record with `accounts[]` / `transactions[]`. The backend writes
+`data_financial_account` and `data_financial_transaction` (amounts stored as
+integer cents, deterministic UUIDv5 ids for idempotent upserts).
+
 ## Upload & Sync
 
 ### Sync Strategy
@@ -541,38 +577,49 @@ Normalize values before upload to avoid excessive precision:
 
 ### Payload Structure
 
-All uploads to `/api/ingest` are batched by stream type:
+Each stream's pending records are batched and POSTed to the single `ios_ingest`
+webhook at `/webhook/{action_id}`. The body carries a `stream` field so one
+backend action can fan the records to the right ontology table:
 
 ```json
 {
-  "stream_name": "apple_ios_core_location",
+  "source": "ios",
+  "stream": "location",
   "device_id": "uuid",
-  "data": [
+  "records": [
     // 30 location samples from 5 minutes
     {"timestamp": "...", "latitude": 37.7749, "longitude": -122.4194, ...},
-    {"timestamp": "...", "latitude": 37.7750, "longitude": -122.4195, ...},
+    {"timestamp": "...", "latitude": 37.7750, "longitude": -122.4195, ...}
     // ... 28 more samples
   ],
-  "batch_metadata": {
-    "total_records": 30,
-    "app_version": "1.0"
-  }
+  "timestamp": "2026-06-23T10:00:00Z",
+  "checkpoint": "optional-cursor"
 }
 ```
+
+The `action_id` for `ios_ingest` is returned at pair time in the
+`function_name → action_id` map and persisted in the Keychain; it can be
+refetched via `GET /api/devices/action-ids`. (Previously each stream had its own
+action_id; they were unified into one `ios_ingest` action — the device now posts
+every stream to that one URL.)
 
 **Batching Strategy**:
 
 - Groups all pending SQLite entries by stream type
-- Combines data arrays before upload
-- Results in 3 POST requests per sync (one per stream)
-- ~93% reduction in network requests
+- Combines record arrays before upload
+- One POST per stream that has pending data (all to the same `ios_ingest` URL)
+- Large reduction in network requests vs per-record uploads
 
 ### Network Resilience
 
 - **Timeouts**: 30 seconds per request
 - **Retries**: Exponential backoff: 30s → 60s → 120s → 240s → 300s
-- **Batch size**: Unlimited (backend handles chunking)
-- **Auth**: `X-Device-Token` header on all requests
+- **Batch size**: byte-bounded sub-batches (~512KB) per request so a large backlog
+  drains incrementally and fits the request/background budget (see BatchUploadCoordinator)
+- **Auth**: none at the HTTP layer — the device's allowlisted **iroh key IS the
+  credential**. `BoxTransport` dials the box by its EndpointId; there is no bearer token
+- **Transport**: all requests ride `BoxTransport` (iroh/QUIC), which reaches the box
+  by EndpointId over LAN-direct / hole-punched / relay — works off-LAN, no typed URL
 
 ## Sync Monitoring
 
@@ -634,7 +681,7 @@ The app tracks sync health to help diagnose issues:
 | Audio format | AAC 16kbps | ~120KB per chunk |
 | HealthKit interval | 5 minutes | Incremental sync with anchors |
 | Sync interval | 5 minutes | Upload frequency |
-| Batch uploads | 3 requests | One per stream type |
+| Batch uploads | ≤6 requests | One per stream with pending data |
 | Network timeout | 30 seconds | Request timeout |
 | Max retries | 5 | Upload attempts |
 | Backoff max | 300 seconds | Network retry ceiling |

@@ -1,0 +1,39 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  iOS-only Info.plist keys. Tauri merges this on top of the generated iOS
+  Info.plist (this file is the iOS-specific source in the merge order). These
+  cannot be expressed in tauri.conf.json as of Tauri 2.x, so they live here.
+-->
+<plist version="1.0">
+<dict>
+	<key>NSLocationWhenInUseUsageDescription</key>
+	<string>Virtues records your location to build your personal timeline.</string>
+	<key>NSLocationAlwaysAndWhenInUseUsageDescription</key>
+	<string>Virtues records your location in the background to build your personal timeline, even when the app is closed.</string>
+	<key>NSLocationAlwaysUsageDescription</key>
+	<string>Virtues records your location in the background to build your personal timeline, even when the app is closed.</string>
+	<key>UIBackgroundModes</key>
+	<array>
+		<string>location</string>
+		<string>audio</string>
+		<string>processing</string>
+		<string>fetch</string>
+	</array>
+	<key>BGTaskSchedulerPermittedIdentifiers</key>
+	<array>
+		<string>com.virtues.ios.sync</string>
+	</array>
+	<key>NSAppTransportSecurity</key>
+	<dict>
+		<key>NSAllowsLocalNetworking</key>
+		<true/>
+	</dict>
+	<key>NSLocalNetworkUsageDescription</key>
+	<string>Virtues connects to your box on your local network to pair and sync your data.</string>
+	<key>NSBonjourServices</key>
+	<array>
+		<string>_http._tcp</string>
+	</array>
+</dict>
+</plist>

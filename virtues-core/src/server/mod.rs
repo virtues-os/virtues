@@ -37,28 +37,34 @@ pub async fn run(client: Virtues, host: &str, port: u16) -> Result<()> {
         tracing::warn!("Failed to initialize drive quota: {}", e);
     }
 
+    // Reap runs left in `running` by a crash/restart mid-execution, so a stale
+    // lock doesn't survive a reboot. (The concurrency gate also age-bounds stale
+    // runs at request time; this just keeps the runs table honest on boot.)
+    match crate::scheduler::actions::cleanup_stale_runs(client.database.pool()).await {
+        Ok(n) if n > 0 => tracing::info!("Reaped {} stale 'running' action run(s) on startup", n),
+        Ok(_) => {}
+        Err(e) => tracing::warn!("Failed to reap stale action runs: {}", e),
+    }
+
     // Auto-detect server readiness (skips setup screen if previously hydrated)
     if let Err(e) = crate::api::ensure_server_status(client.database.pool()).await {
         tracing::warn!("Failed to ensure server status: {}", e);
     }
 
-    // Eager identity bringup: mint the box's CA, rendezvous identity, and (on
-    // Linux) WG server keypair if absent, so a freshly-booted box reaches
-    // identity-ready without a manual `virtues bringup`. Idempotent and
-    // best-effort — a failure here must not stop the box from serving (e.g. a
-    // dev box that never uses remote access). Mirrors `handle_bringup`.
+    // Seed home_timezone from the box's own system clock once, before the
+    // scheduler resolves cron timezones. Idempotent. See docs/timezone-model.md.
+    if let Err(e) = crate::api::profile::ensure_home_timezone(client.database.pool()).await {
+        tracing::warn!("Failed to seed home_timezone: {}", e);
+    }
+
+    // Eager identity bringup: ensure the loopback console device exists so the
+    // box's own browser is authenticated. Best-effort — a failure here must not
+    // stop the box from serving. (The box's TLS identity is its own cert,
+    // obtained at relay spawn; no keypair to mint here.)
     {
-        use crate::wireguard::{ca, pairing};
         let pool = client.database.pool();
-        if let Err(e) = ca::ensure_ca(pool).await {
-            tracing::warn!("identity bringup: ensure_ca failed: {e}");
-        }
-        if let Err(e) = pairing::ensure_rendezvous_identity(pool).await {
-            tracing::warn!("identity bringup: ensure_rendezvous_identity failed: {e}");
-        }
-        #[cfg(target_os = "linux")]
-        if let Err(e) = crate::wireguard::reconcile::ensure_server_keypair(pool).await {
-            tracing::warn!("identity bringup: ensure_server_keypair failed: {e}");
+        if let Err(e) = crate::middleware::auth::ensure_console_device(pool).await {
+            tracing::warn!("identity bringup: ensure_console_device failed: {e}");
         }
     }
 
@@ -78,6 +84,12 @@ pub async fn run(client: Virtues, host: &str, port: u16) -> Result<()> {
     let yjs_state = yjs::YjsState::new(client.database.pool().clone());
     yjs_state.start_save_processor();
     tracing::info!("Yjs WebSocket server initialized");
+
+    // System telemetry: the Jetson GPU monitor (idle-gated tegrastats) and the
+    // box-local time-series sampler (1/min → app_system_samples) behind the
+    // System/Telemetry views. Both are no-ops/best-effort on non-Jetson hosts.
+    crate::api::system_telemetry::start_gpu_monitor();
+    crate::api::system_telemetry::start_system_sampler(client.database.pool().clone());
 
     // Reconcile action templates from per-folder manifests — creates/updates
     // system action rows. Safe to call on every startup (user-managed runtime
@@ -104,6 +116,12 @@ pub async fn run(client: Virtues, host: &str, port: u16) -> Result<()> {
         }
         supervisor
     };
+
+    // Model facts (prices, context windows, which ids still exist) are fetched
+    // from virtues-api, never compiled in. Refreshes on boot and 6-hourly; an
+    // unreachable cloud keeps the last snapshot rather than emptying the
+    // picker. See api::model_catalog.
+    crate::api::model_catalog::spawn(client.database.pool().clone());
 
     // Start the scheduler in the background
     let db_pool = client.database.pool().clone();
@@ -138,13 +156,17 @@ pub async fn run(client: Virtues, host: &str, port: u16) -> Result<()> {
     // ends. See `crate::maintenance::sweeper`.
     crate::maintenance::sweeper::spawn(client.database.pool().clone());
 
-    // Rendezvous publish loop: publish the box's current WG endpoint (recorded
-    // by the virtues-wireguard daemon) to the blind rendezvous on change, so
-    // paired phones can relearn it after an ISP prefix rotation. No-op on a
-    // core-only box (no WG daemon → no endpoint recorded).
-    let _publish_handle = tokio::spawn(crate::wireguard::publisher::run_publish_loop(
-        client.database.pool().clone(),
-    ));
+    // Pair-code rotator: keeps a fresh universal standing pair code alive at all
+    // times (with an overlap window) so the panel and `virtues pair` always have
+    // a valid code to display. See `crate::maintenance::pair_rotator`.
+    crate::maintenance::pair_rotator::spawn(client.database.pool().clone());
+
+    // Entity resolver: periodically turns raw lake primitives (location points,
+    // transactions, calendar attendees) into ontology surfaces (visits/places,
+    // merchant orgs, people) via `entity_resolution::resolve_entities`. Without
+    // this the resolution only ran from the CLI, so the day page / timeline had
+    // nothing to show even while the lake filled. See `maintenance::entity_resolver`.
+    crate::maintenance::entity_resolver::spawn(client.database.clone());
 
     // Create ToolExecutor (optional - fails gracefully if VIRTUES_API_INTERNAL_SECRET not set)
     let tool_executor = crate::tools::ToolExecutor::from_env(client.database.pool().clone())
@@ -179,11 +201,6 @@ pub async fn run(client: Virtues, host: &str, port: u16) -> Result<()> {
     let public_routes = Router::new()
         // Health check
         .route("/health", get(health))
-        // Per-box CA root cert (PEM). Public so a first-time visitor can
-        // download + trust it before any session exists. Pairs with the
-        // HTTPS listener on :443 which serves `virtues.local` with a leaf
-        // signed by this CA.
-        .route("/ca-cert", get(ca_cert))
         // App server info (for device pairing)
         .route("/api/app/server-info", get(server_info))
         // Public, LAN-reachable box health — boot gates + inference resolution.
@@ -194,7 +211,15 @@ pub async fn run(client: Virtues, host: &str, port: u16) -> Result<()> {
             "/api/box/health",
             get(crate::api::box_status::box_health_handler),
         )
-        // Auth — pair-only model. Public consume + session probe + signout.
+        // Setup/onboarding state machine (docs/onboarding.md) — public-on-LAN
+        // for the same reason as /api/box/health: the wizard + panel render it
+        // pre-auth, and it carries only booleans + step copy.
+        .route(
+            "/api/setup/state",
+            get(crate::api::box_status::setup_state_handler),
+        )
+        // Auth — pair-only model. Public consume + session probe (returns the
+        // AuthUser resolved from the request's proven iroh key, if any).
         // /api/pair/{mint,confirm,deny,status} are auth'd and live under the
         // protected_routes block below.
         .route(
@@ -202,7 +227,6 @@ pub async fn run(client: Virtues, host: &str, port: u16) -> Result<()> {
             post(crate::api::pair::consume_handler),
         )
         .route("/auth/session", get(api::auth_session_handler))
-        .route("/auth/signout", post(api::auth_signout_handler))
         // Internal API (virtues-api integration — has its own header-based auth)
         .route("/internal/hydrate", post(api::hydrate_profile_handler))
         .route(
@@ -216,11 +240,20 @@ pub async fn run(client: Virtues, host: &str, port: u16) -> Result<()> {
             "/api/s/:token/files/:file_id",
             get(api::shared_file_download_handler),
         )
-        // Webhook ingestion. Authenticated via Bearer device-token (looked up
-        // O(1) by HMAC against `credentials.secret_lookup_hash`), NOT via web
-        // session cookies. Lives in public_routes because the AuthUser
-        // extractor only knows how to read session cookies.
-        .route("/webhook/:action_id", post(webhook::webhook))
+        // Webhook ingestion. Authenticated primarily by the proven iroh key
+        // (Option<AuthUser>) — the owner's devices POST over iroh — with the
+        // legacy Bearer device-token kept only as a fallback for external,
+        // non-iroh callers. Lives in public_routes so the bearer fallback path
+        // isn't force-rejected by the AuthUser route_layer.
+        // Per-route body limit override (router-wide cap is 105MB): iOS audio
+        // batches are base64 AAC and can dwarf the other streams on backfill.
+        // A body over the cap is rejected by the Json extractor before the
+        // handler runs, which historically surfaced as a bogus "no stream
+        // selector" action error. See webhook.rs for the rejection handling.
+        .route(
+            "/webhook/:action_id",
+            post(webhook::webhook).layer(DefaultBodyLimit::max(512 * 1024 * 1024)),
+        )
         // Device re-fetch for stream → action_id map. Used by paired devices
         // whose Keychain entry predates the webhook unification, or after
         // templates.toml adds a new stream. Same device-token bearer auth as
@@ -228,6 +261,14 @@ pub async fn run(client: Virtues, host: &str, port: u16) -> Result<()> {
         .route(
             "/api/devices/action-ids",
             get(api::device_action_ids_handler),
+        )
+        // Device-scoped run history for one of the caller's own actions, so the
+        // app can show real server-side outcome per stream. Device-token bearer
+        // auth + credential-ownership check (see handler). Distinct from the
+        // session-authed /api/actions/:id/runs.
+        .route(
+            "/api/devices/actions/:id/runs",
+            get(api::device_action_runs_handler),
         );
 
     // ============================================================
@@ -236,13 +277,24 @@ pub async fn run(client: Virtues, host: &str, port: u16) -> Result<()> {
     let protected_routes = Router::new()
         // Timeline day (location chunks for movement map)
         .route("/api/timeline/day/:date", get(api::timeline_get_day_handler))
+        // Today streams — location/calendar/audio spans, pre-synthesis (homepage)
+        .route("/api/today/:date/streams", get(api::today_streams_handler))
+        // Map tiles — the Atlas: box-cached tiles (private + offline). docs/map-atlas-plan.md
+        .route("/api/map/tiles/:style/:z/:x/:y", get(api::map_tile_handler))
+        // Home-page loops — weather · upcoming calendar · unnamed-place backlog
+        .route("/api/weather/current", get(api::weather_now_handler))
+        .route("/api/calendar/upcoming", get(api::calendar_upcoming_handler))
+        .route("/api/places/unnamed", get(api::unnamed_places_handler))
         // ─── Pair-only auth: "+ Add device" from a paired session ─────
         .route("/api/pair/mint",          post(crate::api::pair::mint_handler))
+        .route("/api/pair/mint-collector", post(crate::api::pair::mint_collector_handler))
         .route("/api/pair/status/:id",    get(crate::api::pair::status_handler))
-        .route("/api/pair/confirm/:id",   post(crate::api::pair::confirm_handler))
         .route("/api/pair/deny/:id",      post(crate::api::pair::deny_handler))
         // ─── Devices: unified list + revoke ───────────────────────────
         .route("/api/devices",            get(crate::api::devices::list_handler))
+        .route("/api/devices/self/node-id", post(crate::api::devices::set_self_node_id))
+        .route("/api/devices/self/reach",   get(crate::api::devices::get_self_reach))
+        .route("/api/devices/enroll-peer",  post(crate::api::devices::enroll_peer))
         .route("/api/devices/:id",        axum::routing::delete(crate::api::devices::revoke_handler))
         // ─── Sudo: gate for high-sensitivity actions ──────────────────
         .route("/api/sudo/request",       post(crate::api::sudo::request_handler))
@@ -259,6 +311,11 @@ pub async fn run(client: Virtues, host: &str, port: u16) -> Result<()> {
         // ─── Billing-state aggregator (local view) ────────────────────
         .route("/api/billing/state",           get(crate::api::billing_state::state_handler))
         .route("/api/billing/auto-topup",      post(crate::api::billing_state::set_auto_topup_handler))
+        // Setup wizard transitions (docs/onboarding.md) — session-authed; the
+        // wizard reads progress from the public /api/setup/state.
+        .route("/api/setup/subscribe/start",   post(crate::api::setup::subscribe_start_handler))
+        .route("/api/setup/login/start",       post(crate::api::setup::login_start_handler))
+        .route("/api/setup/link/poll",         post(crate::api::setup::link_poll_handler))
         // ─── Source OAuth + API-key connect flows ────────────────────
         // Device pairing (iOS / Mac / sensor) lives at /api/pair/* (above).
         // The legacy /api/pairing/initiate + /api/pairing/complete routes
@@ -296,6 +353,13 @@ pub async fn run(client: Virtues, host: &str, port: u16) -> Result<()> {
                 .delete(api::delete_action_handler),
         )
         .route("/api/actions/:id/run", post(api::trigger_action_handler))
+        // Chat-export upload (Tier 3 one-time import). Per-route body limit
+        // overrides the router-wide 105MB cap — ChatGPT exports can be larger.
+        .route(
+            "/api/chat-import/upload",
+            post(api::chat_import_upload_handler)
+                .layer(DefaultBodyLimit::max(512 * 1024 * 1024)),
+        )
         .route("/api/actions/:id/runs", get(api::list_action_runs_handler))
         .route("/api/actions/runs/:id", get(api::get_action_run_handler))
         .route("/api/runs", get(api::list_runs_handler))
@@ -347,7 +411,7 @@ pub async fn run(client: Virtues, host: &str, port: u16) -> Result<()> {
         .route("/api/models", get(api::list_models_handler))
         .route(
             "/api/models/recommended",
-            get(api::list_recommended_models_handler),
+            get(api::list_models_with_slots_handler),
         )
         .route("/api/models/:id", get(api::get_model_handler))
         // Agents API
@@ -378,9 +442,6 @@ pub async fn run(client: Virtues, host: &str, port: u16) -> Result<()> {
             "/api/metrics/activity",
             get(api::get_activity_metrics_handler),
         )
-        // Usage API
-        .route("/api/usage", get(api::usage_handler))
-        .route("/api/usage/check", get(api::usage_check_handler))
         // Subscription & Billing API
         .route("/api/subscription", get(api::get_subscription_handler))
         .route(
@@ -388,6 +449,12 @@ pub async fn run(client: Virtues, host: &str, port: u16) -> Result<()> {
             post(api::create_billing_portal_handler),
         )
         .route("/api/billing/claim", post(api::claim_billing_handler))
+        // Wallet balance + recent ledger (proxied from virtues-api /v1/usage).
+        .route("/api/billing/usage", get(api::billing_usage_handler))
+        // Box-local AI spend breakdown (app_ai_calls) for the Usage tab.
+        .route("/api/usage/summary", get(api::usage_summary_handler))
+        // Recent individual AI calls (app_ai_calls) for the Telemetry tab log.
+        .route("/api/telemetry/ai-calls", get(api::ai_calls_handler))
         // Device-authorization link flow (web "Connect subscription").
         .route(
             "/api/billing/link/start",
@@ -433,6 +500,7 @@ pub async fn run(client: Virtues, host: &str, port: u16) -> Result<()> {
             post(api::reconcile_drive_usage_handler),
         )
         // Drive trash endpoints
+        .route("/api/drive/media", get(api::list_drive_media_handler))
         .route("/api/drive/trash", get(api::list_drive_trash_handler))
         .route(
             "/api/drive/trash/empty",
@@ -452,6 +520,11 @@ pub async fn run(client: Virtues, host: &str, port: u16) -> Result<()> {
         // Wiki API
         .route("/api/wiki/resolve/:id", get(api::wiki_resolve_id_handler))
         // Wiki - Person
+        // Mention review queue (entity resolution HITL)
+        .route("/api/mentions/queue", get(api::list_floating_surfaces_handler))
+        .route("/api/mentions/link", post(api::link_surface_handler))
+        .route("/api/mentions/create", post(api::create_from_surface_handler))
+        .route("/api/mentions/dismiss", post(api::dismiss_surface_handler))
         .route("/api/wiki/people", get(api::wiki_list_people_handler))
         .route(
             "/api/wiki/person/:id",
@@ -480,12 +553,7 @@ pub async fn run(client: Virtues, host: &str, port: u16) -> Result<()> {
             "/api/wiki/org/:id",
             get(api::wiki_get_organization_handler).put(api::wiki_update_organization_handler),
         )
-        // Wiki - Thing
-        .route("/api/wiki/things", get(api::wiki_list_things_handler))
-        .route(
-            "/api/wiki/thing/:id",
-            get(api::wiki_get_thing_handler).put(api::wiki_update_thing_handler),
-        )
+        // Wiki - Thing: retired; things live under /api/things (single source)
         // Wiki - Narrative Identity
         .route(
             "/api/wiki/narrative-identity",
@@ -512,10 +580,6 @@ pub async fn run(client: Virtues, host: &str, port: u16) -> Result<()> {
         .route(
             "/api/wiki/day/:date",
             get(api::wiki_get_day_handler).put(api::wiki_update_day_handler),
-        )
-        .route(
-            "/api/wiki/day/:date/illustration",
-            get(api::wiki_get_day_illustration_handler),
         )
         // Wiki - Temporal Events
         .route(
@@ -557,6 +621,15 @@ pub async fn run(client: Virtues, host: &str, port: u16) -> Result<()> {
         // System (operator surface — apps + logs)
         .route("/api/system/apps", get(api::list_system_apps_handler))
         .route("/api/actions/:id/logs", get(api::get_action_logs_handler))
+        // Live host snapshot + persisted history for the System/Telemetry views.
+        .route(
+            "/api/system/telemetry",
+            get(crate::api::system_telemetry::telemetry_handler),
+        )
+        .route(
+            "/api/system/history",
+            get(crate::api::system_telemetry::history_handler),
+        )
         // Developer API
         .route("/api/developer/sql", post(api::execute_sql_handler))
         .route("/api/developer/tables", get(api::list_tables_handler))
@@ -569,8 +642,8 @@ pub async fn run(client: Virtues, host: &str, port: u16) -> Result<()> {
             get(api::list_pages_handler).post(api::create_page_handler),
         )
         .route(
-            "/api/pages/search/entities",
-            get(api::search_entities_handler),
+            "/api/pages/search/refs",
+            get(api::search_refs_handler),
         )
         .route(
             "/api/pages/reflections/:date",
@@ -581,6 +654,16 @@ pub async fn run(client: Virtues, host: &str, port: u16) -> Result<()> {
             get(api::get_page_handler)
                 .put(api::update_page_handler)
                 .delete(api::delete_page_handler),
+        )
+        // Raw record viewer — one life-graph row by (ontology, id)
+        .route(
+            "/api/records/:ontology/:record_id",
+            get(api::get_record_handler),
+        )
+        // Page References (backlinks) API
+        .route(
+            "/api/pages/:id/backlinks",
+            get(api::get_page_backlinks_handler),
         )
         // Page Share API
         .route(
@@ -609,14 +692,6 @@ pub async fn run(client: Virtues, host: &str, port: u16) -> Result<()> {
                 .patch(api::update_thing_handler)
                 .delete(api::delete_thing_handler),
         )
-        .route(
-            "/api/things/:id/pins",
-            post(api::add_thing_pin_handler).delete(api::remove_thing_pin_handler),
-        )
-        .route(
-            "/api/things/:id/pins/reorder",
-            put(api::reorder_thing_pins_handler),
-        )
         // Sidebar pins API
         .route(
             "/api/pins",
@@ -627,50 +702,29 @@ pub async fn run(client: Virtues, host: &str, port: u16) -> Result<()> {
             "/api/pins/:id",
             patch(api::update_pin_handler).delete(api::delete_pin_handler),
         )
-        // Spaces API (single system workspace — create/delete/tabs removed)
+        // Notebooks API (the "room" a chat lives in)
         .route(
-            "/api/spaces",
-            get(api::list_spaces_handler),
+            "/api/notebooks",
+            get(api::list_notebooks_handler).post(api::create_notebook_handler),
         )
         .route(
-            "/api/spaces/:id",
-            get(api::get_space_handler)
-                .put(api::update_space_handler),
+            "/api/notebooks/:id",
+            get(api::get_notebook_handler)
+                .put(api::update_notebook_handler)
+                .delete(api::delete_notebook_handler),
         )
-        .route("/api/spaces/:id/views", get(api::list_space_views_handler))
-        // Space Items API (root-level items at space level, not in any folder)
+        // Notebook membership (items come back inside GET /api/notebooks/:id)
         .route(
-            "/api/spaces/:id/items",
-            get(api::list_space_items_handler)
-                .post(api::add_space_item_handler)
-                .delete(api::remove_space_item_handler),
+            "/api/notebooks/:id/items",
+            post(api::add_notebook_item_handler).delete(api::remove_notebook_item_handler),
         )
         .route(
-            "/api/spaces/:id/items/reorder",
-            put(api::reorder_space_items_handler),
+            "/api/notebooks/:id/items/reorder",
+            put(api::reorder_notebook_items_handler),
         )
         // Namespaces API
         .route("/api/namespaces", get(api::list_namespaces_handler))
         .route("/api/namespaces/:name", get(api::get_namespace_handler))
-        // Views API
-        .route("/api/views", post(api::create_view_handler))
-        .route(
-            "/api/views/:id",
-            get(api::get_view_handler)
-                .put(api::update_view_handler)
-                .delete(api::delete_view_handler),
-        )
-        .route("/api/views/:id/resolve", post(api::resolve_view_handler))
-        .route(
-            "/api/views/:id/items",
-            get(api::list_view_items_handler)
-                .post(api::add_view_item_handler)
-                .delete(api::remove_view_item_handler),
-        )
-        .route(
-            "/api/views/:id/items/reorder",
-            put(api::reorder_view_items_handler),
-        )
         // Chats API
         .route(
             "/api/chats",
@@ -689,6 +743,7 @@ pub async fn run(client: Virtues, host: &str, port: u16) -> Result<()> {
         // Chat API (streaming)
         .route("/api/chat", post(api::chat_handler))
         .route("/api/chat/cancel", post(api::cancel_chat_handler))
+        .route("/api/ai/complete", post(api::ai_complete_handler))
         // Chat Edit Permissions API
         .route(
             "/api/chats/:id/permissions",
@@ -703,17 +758,24 @@ pub async fn run(client: Virtues, host: &str, port: u16) -> Result<()> {
             "/ws/terminal",
             get(crate::api::terminal::terminal_ws_handler),
         )
+        // Paste/drop a file into the terminal: writes it under the user's home
+        // and returns the path, which the frontend types at the cursor.
+        .route(
+            "/api/terminal/paste",
+            post(crate::api::terminal::terminal_paste_handler)
+                .layer(DefaultBodyLimit::max(25 * 1024 * 1024)),
+        )
         // Yjs WebSocket (real-time collaborative editing)
         .route("/ws/yjs/:page_id", get(yjs_websocket_handler))
-        // Blanket auth: all routes in this group require a valid session cookie
+        // Blanket auth: all routes in this group require a resolved AuthUser
+        // (proven iroh key / loopback console / dev fallback).
         .route_layer(middleware::from_extractor_with_state::<AuthUser, _>(state.clone()));
 
     // Merge public + protected, apply shared state and body limits, then
-    // wrap in the security layers (CSRF gate + response headers).
+    // wrap in the security layers (response headers).
     let app = public_routes
         .merge(protected_routes)
         .with_state(state.clone())
-        .layer(middleware::from_fn(crate::middleware::security::csrf_layer))
         .layer(middleware::from_fn(crate::middleware::security::headers_layer))
         .layer(DefaultBodyLimit::max(105 * 1024 * 1024)); // 105MB (slightly above 100MB file limit for multipart overhead)
 
@@ -766,6 +828,24 @@ pub async fn run(client: Virtues, host: &str, port: u16) -> Result<()> {
         app
     };
 
+    // CORS: the mobile app is a bundled SPA at its own `tauri://` origin that
+    // calls this API cross-origin over the iroh loopback. Auth is the proven
+    // iroh key (not Origin/cookies), so a permissive CORS is safe — it only
+    // relaxes the browser's same-origin policy, never the transport allowlist.
+    // Same-origin (desktop/browser served by the box) is unaffected.
+    let app = app.layer(
+        tower_http::cors::CorsLayer::new()
+            .allow_origin(tower_http::cors::Any)
+            .allow_methods(tower_http::cors::Any)
+            .allow_headers(tower_http::cors::Any),
+    );
+
+    // iroh reach: the box is an iroh Endpoint that serves this same axum app
+    // (LAN-direct → hole-punch → our relay), reachable by EndpointId with no
+    // public inbound port. Serves a clone of `app`; the :8000 TCP listener below
+    // keeps serving LAN/loopback + the desktop :7117 helper. See `crate::relay`.
+    crate::relay::maybe_spawn(client.database.pool().clone(), app.clone());
+
     let transport = build_transport(host, port);
     let listener = transport.bind().await?;
 
@@ -795,32 +875,17 @@ pub async fn run(client: Virtues, host: &str, port: u16) -> Result<()> {
         tokio::time::sleep(tokio::time::Duration::from_secs(3)).await;
     };
 
-    // ── HTTPS sidecar on :443 (virtues.local via mDNS) ────────────────────
-    //
-    // We keep the plain-HTTP listener as the primary serve site (for dev
-    // workflows + the dashboard CLI). In parallel, if the box has access to
-    // CAP_NET_BIND_SERVICE and the cert is available, we also bind :443 with
-    // a per-box CA-signed leaf for `virtues.local`. Browsers on the LAN go
-    // through this listener; first-time visitors download the CA root from
-    // `/ca-cert` and trust it once.
-    //
-    // The HTTPS task is spawned and detached. Both listeners serve the same
-    // `app` router so every request hits identical handlers regardless of
-    // entry point.
-    let app_for_tls = app.clone();
-    let pool_for_tls = client.database.pool().clone();
-    tokio::spawn(async move {
-        if let Err(e) = serve_https_lan(app_for_tls, pool_for_tls).await {
-            // Non-fatal: HTTPS failure (no perms, cert mint error) shouldn't
-            // take down the HTTP listener. The operator sees the warning in
-            // logs and falls back to the printed http URL.
-            tracing::warn!("HTTPS listener disabled: {e:#}");
-        }
-    });
-
-    axum::serve(listener, app)
-        .with_graceful_shutdown(shutdown_signal)
-        .await?;
+    // Plain HTTP on :8000 is the only listener. The box has no TLS surface —
+    // paired daemons reach the box over a WG tunnel (which provides encryption
+    // + authentication), and the box's own browser hits localhost (Secure
+    // Context per W3C, no cert required). See [[localhost-daemon-trust]] in
+    // MEMORY.md for the architectural commitment.
+    axum::serve(
+        listener,
+        app.into_make_service_with_connect_info::<std::net::SocketAddr>(),
+    )
+    .with_graceful_shutdown(shutdown_signal)
+    .await?;
 
     // Note: No flush needed on shutdown - StreamWriter is in-memory only now.
     // Records are written directly to filesystem during sync/ingest.
@@ -910,93 +975,3 @@ async fn server_info() -> impl IntoResponse {
     }))
 }
 
-/// Serve the same axum app over HTTPS on :443 (or `VIRTUES_HTTPS_PORT` if set,
-/// useful for dev where binding :443 needs CAP_NET_BIND_SERVICE). The cert
-/// is the per-box LAN leaf signed by the box's self-issued CA — the user
-/// installs the CA root once on their device (see `/ca-cert` route) and
-/// `https://virtues.local` then loads without browser warnings.
-///
-/// Failure here is non-fatal: HTTP on the primary port still works and the
-/// caller logs a warning. Common failure modes: no CAP_NET_BIND_SERVICE on
-/// :443, cert mint failed (no DB yet during early bring-up), or port :443
-/// already taken.
-async fn serve_https_lan(
-    app: axum::Router,
-    pool: sqlx::PgPool,
-) -> anyhow::Result<()> {
-    use anyhow::Context;
-
-    let port: u16 = std::env::var("VIRTUES_HTTPS_PORT")
-        .ok()
-        .and_then(|s| s.parse().ok())
-        .unwrap_or(443);
-
-    // Mint or load the LAN leaf cert (signed by the per-box CA).
-    let leaf = crate::wireguard::ca::ensure_lan_leaf(&pool)
-        .await
-        .context("ensure_lan_leaf")?;
-
-    let tls_config = axum_server::tls_rustls::RustlsConfig::from_pem(
-        leaf.cert_pem.into_bytes(),
-        leaf.key_pem.into_bytes(),
-    )
-    .await
-    .context("build rustls config from per-box leaf")?;
-
-    let addr: std::net::SocketAddr = format!("0.0.0.0:{port}")
-        .parse()
-        .context("parse :{port} bind addr")?;
-    tracing::info!("HTTPS listening on https://virtues.local:{port}  (cert: per-box CA)");
-
-    axum_server::bind_rustls(addr, tls_config)
-        .serve(app.into_make_service())
-        .await
-        .context("axum_server::bind_rustls")?;
-
-    Ok(())
-}
-
-/// `GET /ca-cert` — serve the box's CA root certificate as `application/x-pem-file`.
-///
-/// The user downloads this once + installs it as a trusted root in their OS /
-/// browser. After that, `https://virtues.local` and `https://virtues.internal`
-/// load cleanly. The route lives at root, unauthenticated, because trust
-/// install necessarily happens before the user has a session.
-async fn ca_cert(
-    axum::extract::State(state): axum::extract::State<AppState>,
-) -> axum::response::Response {
-    use axum::http::{header, StatusCode};
-    use axum::response::IntoResponse;
-
-    match crate::wireguard::ca::ensure_ca(state.db.pool()).await {
-        Ok(ca) => {
-            let body = ca.cert_pem;
-            let filename = "virtues-ca.crt";
-            // `application/x-x509-ca-cert` is the type browsers + OS
-            // keychains recognize as "this is a CA certificate to trust"
-            // and surface in their import dialogs. `Content-Disposition:
-            // attachment` forces a download instead of inline rendering.
-            (
-                StatusCode::OK,
-                [
-                    (header::CONTENT_TYPE, "application/x-x509-ca-cert".to_string()),
-                    (
-                        header::CONTENT_DISPOSITION,
-                        format!("attachment; filename=\"{filename}\""),
-                    ),
-                    (header::CACHE_CONTROL, "no-store".to_string()),
-                ],
-                body,
-            )
-                .into_response()
-        }
-        Err(e) => {
-            tracing::warn!("ca_cert: ensure_ca failed: {e:#}");
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                "CA generation failed; check server logs.",
-            )
-                .into_response()
-        }
-    }
-}

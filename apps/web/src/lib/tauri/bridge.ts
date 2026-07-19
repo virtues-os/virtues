@@ -15,6 +15,31 @@ async function getInvoke() {
 }
 
 /**
+ * Open a URL in the user's default *system* browser.
+ *
+ * In a plain browser this is just `window.open(url, '_blank')`. But inside the
+ * Tauri desktop shell the webview **silently drops** `window.open`/`target=_blank`
+ * to external origins, so Stripe checkout, the billing portal, social links and
+ * citations never open — the user clicks and nothing happens. Route every
+ * external open through here: under Tauri it calls the opener plugin (granted by
+ * the `opener:default` capability), and falls back to `window.open` everywhere
+ * else (and if the plugin call ever throws).
+ */
+export async function openExternal(url: string): Promise<void> {
+	const invoke = await getInvoke();
+	if (!invoke) {
+		window.open(url, '_blank', 'noopener');
+		return;
+	}
+	try {
+		await invoke('plugin:opener|open_url', { url });
+	} catch (e) {
+		console.error('[tauri] openExternal failed; falling back to window.open', e);
+		window.open(url, '_blank', 'noopener');
+	}
+}
+
+/**
  * Collector daemon status
  */
 export interface CollectorStatus {
@@ -25,58 +50,6 @@ export interface CollectorStatus {
 	lastSync: string | null;
 	hasFullDiskAccess: boolean;
 	hasAccessibility: boolean;
-}
-
-// ============================================================================
-// Domain / Auth
-// ============================================================================
-
-/**
- * Get the stored user domain (e.g., "adam" for adam.virtues.com)
- */
-export async function getUserDomain(): Promise<string | null> {
-	const invoke = await getInvoke();
-	if (!invoke) return null;
-
-	try {
-		return await invoke<string | null>('get_user_domain');
-	} catch (e) {
-		console.error('[Tauri] Failed to get user domain:', e);
-		return null;
-	}
-}
-
-/**
- * Set the user's domain after authentication
- * This will also navigate the WebView to the user's instance
- */
-export async function setUserDomain(domain: string): Promise<boolean> {
-	const invoke = await getInvoke();
-	if (!invoke) return false;
-
-	try {
-		await invoke('set_user_domain', { domain });
-		return true;
-	} catch (e) {
-		console.error('[Tauri] Failed to set user domain:', e);
-		return false;
-	}
-}
-
-/**
- * Clear stored domain (logout)
- */
-export async function clearUserDomain(): Promise<boolean> {
-	const invoke = await getInvoke();
-	if (!invoke) return false;
-
-	try {
-		await invoke('clear_user_domain');
-		return true;
-	} catch (e) {
-		console.error('[Tauri] Failed to clear user domain:', e);
-		return false;
-	}
 }
 
 // ============================================================================
@@ -121,16 +94,52 @@ export async function getCollectorStatus(): Promise<CollectorStatus | null> {
  * Install the collector daemon as a LaunchAgent
  * This copies the binary to ~/.virtues/bin and creates a LaunchAgent plist
  */
-export async function installCollector(token: string): Promise<boolean> {
+export async function installCollector(token: string): Promise<void> {
 	const invoke = await getInvoke();
-	if (!invoke) return false;
+	if (!invoke) {
+		throw new Error("Desktop bridge unavailable — open this in the Virtues app, not a browser.");
+	}
 
 	try {
 		await invoke('install_collector', { token });
+	} catch (e) {
+		// The Tauri command returns the collector's real stderr as the error
+		// string (and "program not found" when the sidecar isn't bundled).
+		// Surface it instead of collapsing every cause into a bare `false` —
+		// "The collector failed to install" with no detail was undiagnosable.
+		console.error('[Tauri] Failed to install collector:', e);
+		const msg = e instanceof Error ? e.message : String(e);
+		throw new Error(msg?.trim() || "The collector failed to install.");
+	}
+}
+
+/**
+ * Disconnect this Mac from its box: clears the stored pairing (keychain +
+ * bundle) and the proxy LaunchAgent. Local-only — doesn't need the box
+ * reachable. Tauri-only (no-op/false in a browser). After this, reload to the
+ * pairing screen.
+ */
+export async function forgetPairing(): Promise<boolean> {
+	const invoke = await getInvoke();
+	if (!invoke) return false;
+	try {
+		await invoke('forget_pairing');
 		return true;
 	} catch (e) {
-		console.error('[Tauri] Failed to install collector:', e);
+		console.error('[Tauri] forget_pairing failed:', e);
 		return false;
+	}
+}
+
+/** Relaunch the desktop app (after disconnecting, so it comes back up on the
+ *  pairing screen). Tauri-only. */
+export async function restartApp(): Promise<void> {
+	const invoke = await getInvoke();
+	if (!invoke) return;
+	try {
+		await invoke('restart_app');
+	} catch (e) {
+		console.error('[Tauri] restart_app failed:', e);
 	}
 }
 

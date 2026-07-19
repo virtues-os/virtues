@@ -3,8 +3,8 @@
 	import { dndzone } from "svelte-dnd-action";
 	import type { DndEvent } from "svelte-dnd-action";
 	import Icon from "$lib/components/Icon.svelte";
-	import { spaceStore } from "$lib/stores/space.svelte";
-	import type { Tab } from "$lib/stores/space.svelte";
+	import { windowShellStore } from "$lib/stores/window-shell.svelte";
+	import type { Tab } from "$lib/stores/window-shell.svelte";
 	import {
 		dndManager,
 		type DndTabItem,
@@ -12,8 +12,9 @@
 	} from "$lib/stores/dndManager.svelte";
 	import { contextMenu } from "$lib/stores/contextMenu.svelte";
 	import { sidebarState } from "$lib/stores/sidebarState.svelte";
+	import { mobileLayout } from "$lib/stores/mobileLayout.svelte";
 	import { iconPickerStore } from "$lib/stores/iconPicker.svelte";
-	import { getWorkspaceMenuItems } from "$lib/utils/contextMenuItems";
+	import { getNotebookMenuItems } from "$lib/utils/contextMenuItems";
 	import { updatePage, updateChat } from "$lib/api/client";
 	import { pagesStore } from "$lib/stores/pages.svelte";
 	import { pinsStore } from "$lib/stores/pins.svelte";
@@ -46,23 +47,42 @@
 	const tabs = $derived(
 		paneId
 			? (paneId === "left"
-					? spaceStore.leftPane?.tabs
-					: spaceStore.rightPane?.tabs) || []
-			: spaceStore.tabs,
+					? windowShellStore.leftPane?.tabs
+					: windowShellStore.rightPane?.tabs) || []
+			: windowShellStore.tabs,
 	);
 
 	const activeTabId = $derived(
 		paneId
 			? paneId === "left"
-				? spaceStore.leftPane?.activeTabId
-				: spaceStore.rightPane?.activeTabId
-			: spaceStore.activeTabId,
+				? windowShellStore.leftPane?.activeTabId
+				: windowShellStore.rightPane?.activeTabId
+			: windowShellStore.activeTabId,
 	);
 
 	const isActivePane = $derived(
-		paneId ? spaceStore.activePaneId === paneId : true,
+		paneId ? windowShellStore.activePaneId === paneId : true,
 	);
-	const isSplitMode = $derived(spaceStore.isSplit);
+	const isSplitMode = $derived(windowShellStore.isSplit);
+
+	// Per-tab history (browser model): back/forward act on this pane's active tab.
+	const canGoBack = $derived(windowShellStore.canGoBack(paneId));
+	const canGoForward = $derived(windowShellStore.canGoForward(paneId));
+
+	function handleBack() {
+		windowShellStore.goBack(paneId);
+	}
+
+	function handleForward() {
+		windowShellStore.goForward(paneId);
+	}
+
+	function handleNewTab() {
+		windowShellStore.openTab(
+			{ type: "home", label: "Home", route: "/home", icon: "ri:home-5-line" },
+			paneId,
+		);
+	}
 
 	// Build DnD items from tabs with source information
 	function buildDndItems(): DndTabItem[] {
@@ -84,36 +104,36 @@
 
 	function handleTabClick(id: string) {
 		if (paneId) {
-			spaceStore.setActiveTabInPane(id, paneId);
+			windowShellStore.setActiveTabInPane(id, paneId);
 		} else {
-			spaceStore.setActiveTab(id);
+			windowShellStore.setActiveTab(id);
 		}
 	}
 
 	function handleTabClose(e: MouseEvent, id: string) {
 		e.stopPropagation();
 		if (paneId) {
-			spaceStore.closeTabInPane(id, paneId);
+			windowShellStore.closeTabInPane(id, paneId);
 		} else {
-			spaceStore.closeTab(id);
+			windowShellStore.closeTab(id);
 		}
 	}
 
 	function handleToggleSplit() {
-		spaceStore.toggleSplit();
+		windowShellStore.toggleSplit();
 	}
 
 	function handleMergePanes() {
-		spaceStore.disableSplit();
+		windowShellStore.disableSplit();
 	}
 
 	function handleMiddleClick(e: MouseEvent, id: string) {
 		if (e.button === 1) {
 			e.preventDefault();
 			if (paneId) {
-				spaceStore.closeTabInPane(id, paneId);
+				windowShellStore.closeTabInPane(id, paneId);
 			} else {
-				spaceStore.closeTab(id);
+				windowShellStore.closeTab(id);
 			}
 		}
 	}
@@ -142,7 +162,7 @@
 				icon: tab.pinned
 					? "ri:expand-left-right-line"
 					: "ri:contract-left-right-line",
-				action: () => spaceStore.togglePin(tabId),
+				action: () => windowShellStore.togglePin(tabId),
 			},
 			// Rename
 			{
@@ -167,12 +187,12 @@
 						try {
 							if (tabEntityType === 'page') {
 								await updatePage(tabEntityId, { icon });
-								await pagesStore.load();
+								await pagesStore.refresh();
 							} else if (tabEntityType === 'chat') {
 								await updateChat(tabEntityId, { icon });
 								chatSessions.updateSessionIcon(tabEntityId, icon);
 							}
-							spaceStore.invalidateViewCache();
+							windowShellStore.invalidateViewCache();
 						} catch (err) {
 							console.error("[WindowTabBar] Failed to change icon:", err);
 						}
@@ -211,9 +231,9 @@
 			dividerBefore: true,
 			action: () => {
 				if (paneId) {
-					spaceStore.closeTabInPane(tabId, paneId);
+					windowShellStore.closeTabInPane(tabId, paneId);
 				} else {
-					spaceStore.closeTab(tabId);
+					windowShellStore.closeTab(tabId);
 				}
 			},
 		});
@@ -223,7 +243,7 @@
 			items.push({
 				id: "close-others",
 				label: "Close Others",
-				action: () => spaceStore.closeOtherTabs(tabId, paneId),
+				action: () => windowShellStore.closeOtherTabs(tabId, paneId),
 			});
 		}
 
@@ -232,13 +252,13 @@
 			items.push({
 				id: "close-to-right",
 				label: "Close to the Right",
-				action: () => spaceStore.closeTabsToRight(tabId, paneId),
+				action: () => windowShellStore.closeTabsToRight(tabId, paneId),
 			});
 		}
 
 		// Add "Add to Folder" / "Move to Workspace" submenus if tab has a route
 		if (tab.route) {
-			items.push(...getWorkspaceMenuItems(tab.route));
+			items.push(...getNotebookMenuItems(tab.route));
 		}
 
 		contextMenu.show({ x: e.clientX, y: e.clientY }, items);
@@ -250,7 +270,7 @@
 			return;
 		}
 		const newLabel = renameValue.trim();
-		spaceStore.updateTab(renamingTabId, { label: newLabel });
+		windowShellStore.updateTab(renamingTabId, { label: newLabel });
 		renamingTabId = null;
 		renameValue = "";
 	}
@@ -298,8 +318,11 @@
 		});
 	}
 
-	// Show sidebar toggle on left pane (or non-split mode)
-	const showSidebarToggle = $derived(!paneId || paneId === "left");
+	// Show sidebar toggle on left pane (or non-split mode). Hidden on mobile —
+	// the sidebar is replaced by the bottom-tab bar, so there's nothing to toggle.
+	const showSidebarToggle = $derived(
+		!mobileLayout.isMobile && (!paneId || paneId === "left"),
+	);
 
 	// Icon changes based on sidebar state
 	const sidebarIcon = $derived(
@@ -353,6 +376,27 @@
 			<Icon icon={sidebarIcon} />
 		</button>
 	{/if}
+
+	<div class="nav-cluster">
+		<button
+			class="nav-btn"
+			onclick={handleBack}
+			disabled={!canGoBack}
+			aria-label="Back"
+			title="Back"
+		>
+			<Icon icon="ri:arrow-left-s-line" />
+		</button>
+		<button
+			class="nav-btn"
+			onclick={handleForward}
+			disabled={!canGoForward}
+			aria-label="Forward"
+			title="Forward"
+		>
+			<Icon icon="ri:arrow-right-s-line" />
+		</button>
+	</div>
 
 	<div
 		class="tabs-scroll"
@@ -425,7 +469,16 @@
 		{/each}
 	</div>
 
-	{#if !paneId}
+	<button
+		class="new-tab-btn"
+		onclick={handleNewTab}
+		aria-label="New tab"
+		title="New tab"
+	>
+		<Icon icon="ri:add-line" />
+	</button>
+
+	{#if !paneId && !mobileLayout.isMobile}
 		<button
 			class="split-toggle"
 			onclick={handleToggleSplit}
@@ -455,10 +508,10 @@
 		gap: 4px;
 		padding: 6px 8px;
 		border-bottom: 1px solid var(--color-border);
-		background: var(--color-surface);
+		background: var(--color-background);
 		flex-shrink: 0;
 		position: relative;
-		z-index: 110; /* Above global drag overlays */
+		z-index: var(--z-overlay); /* Above global drag overlays */
 	}
 
 	/* Card top rounding in split mode */
@@ -626,7 +679,9 @@
 
 	.sidebar-toggle,
 	.split-toggle,
-	.merge-toggle {
+	.merge-toggle,
+	.nav-btn,
+	.new-tab-btn {
 		display: flex;
 		align-items: center;
 		justify-content: center;
@@ -651,9 +706,32 @@
 
 	.sidebar-toggle:hover,
 	.split-toggle:hover,
-	.merge-toggle:hover {
+	.merge-toggle:hover,
+	.nav-btn:hover:not(:disabled),
+	.new-tab-btn:hover {
 		background: var(--color-surface-elevated);
 		color: var(--color-foreground);
+	}
+
+	/* Back/forward cluster: tight grouping, muted, disabled at stack ends */
+	.nav-cluster {
+		display: flex;
+		align-items: center;
+		gap: 0;
+		flex-shrink: 0;
+	}
+
+	.nav-btn {
+		width: 20px;
+	}
+
+	.nav-btn:disabled {
+		opacity: 0.3;
+		cursor: default;
+	}
+
+	.new-tab-btn {
+		margin-left: 2px;
 	}
 
 	/* svelte-dnd-action drop indicator */

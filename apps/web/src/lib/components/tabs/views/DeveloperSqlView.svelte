@@ -1,6 +1,7 @@
 <script lang="ts">
     import type { Tab } from "$lib/tabs/types";
     import Icon from "$lib/components/Icon.svelte";
+    import { getDeveloperTables, ApiError } from "$lib/api/client";
     import { onMount } from "svelte";
 
     let { tab, active }: { tab: Tab; active: boolean } = $props();
@@ -17,25 +18,20 @@
 
     onMount(async () => {
         try {
-            const res = await fetch("/api/developer/tables");
-            if (res.ok) {
-                tables = await res.json();
-            } else {
-                console.error(
-                    "Failed to load tables:",
-                    res.status,
-                    res.statusText,
-                );
-                if (res.status === 404) {
+            tables = await getDeveloperTables<string[]>();
+        } catch (e: any) {
+            if (e instanceof ApiError) {
+                console.error("Failed to load tables:", e.status, e.message);
+                if (e.status === 404) {
                     error =
                         "Backend endpoint not found. Please restart the implementation server.";
                 } else {
-                    error = `Failed to load tables: ${res.status} ${res.statusText}`;
+                    error = `Failed to load tables: ${e.status} ${e.message}`;
                 }
+            } else {
+                console.error("Failed to load tables", e);
+                error = `Network error loading tables: ${e.message}`;
             }
-        } catch (e: any) {
-            console.error("Failed to load tables", e);
-            error = `Network error loading tables: ${e.message}`;
         } finally {
             loadingTables = false;
         }
@@ -372,7 +368,7 @@
             opacity 150ms ease,
             transform 150ms ease,
             visibility 150ms ease;
-        z-index: 50;
+        z-index: var(--z-dropdown);
     }
 
     .info-wrapper:hover .info-popover,

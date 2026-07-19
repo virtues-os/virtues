@@ -1,8 +1,0 @@
-name = "iOS Microphone"
-description = "Ingest audio chunks from a paired iPhone for transcription."
-owner = "system"
-runtime = "function"
-command = ["ios_microphone"]
-triggers = ["webhook"]
-per_credential = true
-source = { id = "ios" }

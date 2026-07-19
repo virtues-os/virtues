@@ -1,0 +1,65 @@
+# Compile + test gate for staging/main pushes and PRs.
+#
+# Exists primarily to compile the Linux-only code paths (the getifaddrs
+# BYO-transport detection in net_check, the /proc SSH-ancestry walk in
+# cli/link, the kernel WG manager) that a macOS dev machine never builds —
+# release-linux.yml only fires on version tags, so without this workflow
+# nothing checks Linux until release time.
+
+name: CI
+
+on:
+  push:
+    branches: [main, staging]
+  pull_request:
+
+jobs:
+  rust:
+    runs-on: blacksmith-8vcpu-ubuntu-2204
+    # A real Postgres for the #[sqlx::test] tests (action_templates,
+    # scheduler) — sqlx spins up throwaway databases per test, so the user
+    # must be a superuser. pgvector image because migrations CREATE
+    # EXTENSION vector; pg18 matches what the installer provisions on boxes.
+    services:
+      postgres:
+        image: pgvector/pgvector:pg18
+        env:
+          POSTGRES_USER: virtues
+          POSTGRES_PASSWORD: virtues
+          POSTGRES_DB: virtues
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U virtues"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      # Sqlx queries are checked against the recorded schema under .sqlx/ —
+      # offline mode keeps the BUILD from needing a DB (same as
+      # release-linux); the live URL below is only for the test binaries.
+      SQLX_OFFLINE: 'true'
+      DATABASE_URL: postgres://virtues:virtues@localhost:5432/virtues
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: ci
+
+      - name: Build (debug — exercises the Linux cfg paths)
+        run: cargo build -p virtues -p virtues-installer -p virtues-client -p virtues-iroh
+
+      - name: Clippy
+        run: cargo clippy -p virtues -p virtues-installer
+
+      # api::code::tests::test_timeout needs the code-execution sandbox
+      # runtime, which isn't provisioned on a bare runner — it's an
+      # environment-dependent timing test, not a unit test. Everything else
+      # in --lib runs DB-free.
+      - name: Unit tests
+        run: cargo test -p virtues --lib -- --skip api::code::tests::test_timeout

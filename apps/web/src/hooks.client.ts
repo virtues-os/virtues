@@ -1,74 +1,59 @@
 // Client-side SvelteKit hooks.
 //
-// The only thing here today is the CSRF wrapper for `window.fetch`. Every
-// state-changing fetch (POST/PUT/PATCH/DELETE) to a same-origin or relative
-// URL gets the current `virtues.csrf-token` cookie copied into an
-// `X-CSRF-Token` header. The backend middleware refuses state-changing
-// session-bearing requests without this header — completing the double-submit
-// cookie pattern.
+// Auth is the device's proven, allowlisted iroh key (established by the
+// transport, not the app), so there is no CSRF token to attach and no session
+// cookie to guard — the old `window.fetch` CSRF wrapper that lived here was
+// removed with the cookie/CSRF layer.
 //
-// No-op when:
-//   - method is GET/HEAD/OPTIONS (server doesn't gate these)
-//   - URL is cross-origin (the cookie scope wouldn't apply anyway)
-//   - the caller already set `X-CSRF-Token` manually
-//   - no CSRF cookie exists yet (first paint before pairing — server will
-//     issue one on the next response, then it auto-applies on the one after)
+// The one startup task: on the mobile (bundled) build the shell injects the
+// box's loopback origin; wire `/api` + `/ws` to it. No-op on desktop, where the
+// box serves the app same-origin.
+import { initBackendFromShell } from '$lib/config/backend';
 
-const MUTATING_METHODS = new Set(["POST", "PUT", "PATCH", "DELETE"]);
-const CSRF_COOKIE_NAMES = ["__Host-virtues.csrf-token", "virtues.csrf-token"];
-const CSRF_HEADER = "X-CSRF-Token";
+initBackendFromShell();
 
-function readCsrfCookie(): string | null {
-	if (typeof document === "undefined") return null;
-	const entries = document.cookie.split(";").map((c) => c.trim());
-	for (const name of CSRF_COOKIE_NAMES) {
-		const prefix = `${name}=`;
-		const hit = entries.find((e) => e.startsWith(prefix));
-		if (hit) return decodeURIComponent(hit.slice(prefix.length));
+// On the native phone shell, lock the viewport so it behaves like an app:
+// no pinch-to-zoom, and no auto-zoom when a text input (< 16px) is focused
+// (WKWebView honours maximum-scale=1 for both). Scoped to mobile so the
+// desktop browser keeps normal zoom/accessibility. viewport-fit=cover makes
+// the page paint edge-to-edge (behind the Dynamic Island / home indicator) —
+// without it iOS letterboxes the webview and the bands show the bare native
+// window, not the theme. It also activates env(safe-area-inset-*), which the
+// tab bar / layout / settings sheet already use to keep content clear.
+if (typeof window !== 'undefined' && (window as unknown as { __VIRTUES_MOBILE__?: boolean }).__VIRTUES_MOBILE__) {
+	let vp = document.querySelector('meta[name="viewport"]');
+	if (!vp) {
+		vp = document.createElement('meta');
+		vp.setAttribute('name', 'viewport');
+		document.head.appendChild(vp);
 	}
-	return null;
-}
+	vp.setAttribute(
+		'content',
+		'width=device-width, initial-scale=1, maximum-scale=1, minimum-scale=1, user-scalable=no, viewport-fit=cover'
+	);
 
-function isSameOrigin(url: string): boolean {
-	// Relative URLs are same-origin.
-	if (!url.startsWith("http://") && !url.startsWith("https://")) return true;
-	try {
-		const u = new URL(url);
-		return u.origin === window.location.origin;
-	} catch {
-		return false;
-	}
-}
-
-if (typeof window !== "undefined") {
-	const originalFetch = window.fetch.bind(window);
-	window.fetch = async (input, init) => {
-		const method = (init?.method ?? (input instanceof Request ? input.method : "GET")).toUpperCase();
-		if (!MUTATING_METHODS.has(method)) {
-			return originalFetch(input, init);
+	// Native appearance bridge: themes are user-picked, so the iOS status bar
+	// can't follow the system light/dark mode — tell the shell the active
+	// theme's darkness (it flips UIWindow.overrideUserInterfaceStyle, which the
+	// status bar, keyboard, and native sheets all resolve from). Fire once for
+	// the cached theme and again on every theme change.
+	const syncAppearance = async () => {
+		try {
+			const [{ invoke }, { getTheme, isThemeDark }] = await Promise.all([
+				import('@tauri-apps/api/core'),
+				import('$lib/utils/theme')
+			]);
+			await invoke('set_appearance', { dark: isThemeDark(getTheme()) });
+		} catch {
+			// Not running in the Tauri shell (or command missing) — cosmetic only.
 		}
-		const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
-		if (!isSameOrigin(url)) {
-			return originalFetch(input, init);
-		}
-		const token = readCsrfCookie();
-		if (!token) {
-			// No cookie yet — let the request go; on a cold start the server
-			// mints a token on the first response and subsequent calls succeed.
-			return originalFetch(input, init);
-		}
-		// Build a new init with the CSRF header added, preserving anything
-		// the caller already set.
-		const headers = new Headers(init?.headers ?? (input instanceof Request ? input.headers : undefined));
-		if (!headers.has(CSRF_HEADER)) {
-			headers.set(CSRF_HEADER, token);
-		}
-		const merged: RequestInit = { ...(init ?? {}), headers };
-		// If `input` is a Request, we have to pass the URL string + merged
-		// init so the headers actually apply.
-		if (input instanceof Request) {
-			return originalFetch(input.url, { ...merged, method, body: init?.body ?? (await input.clone().blob()) });
-		}
-		return originalFetch(input, merged);
 	};
+	syncAppearance();
+	window.addEventListener('themechange', syncAppearance);
+
+	// Marks the native phone shell for global CSS (e.g. suppressing the iOS
+	// long-press callout so it doesn't fight the app's own context menus).
+	document.documentElement.classList.add('native-mobile');
 }
+
+export {};

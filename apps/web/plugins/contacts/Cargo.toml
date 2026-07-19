@@ -1,0 +1,17 @@
+[package]
+name = "tauri-plugin-contacts"
+version = "0.1.0"
+authors = ["Virtues"]
+description = "Native Contacts collector: snapshots the address book and enqueues records into the shared outbox."
+edition = "2021"
+rust-version = "1.77.2"
+exclude = ["/examples", "/dist-js", "/guest-js", "/node_modules"]
+links = "tauri-plugin-contacts"
+
+[dependencies]
+tauri = { version = "2.11.3" }
+serde = { version = "1.0", features = ["derive"] }
+thiserror = "2"
+
+[build-dependencies]
+tauri-plugin = { version = "2.6.3", features = ["build"] }

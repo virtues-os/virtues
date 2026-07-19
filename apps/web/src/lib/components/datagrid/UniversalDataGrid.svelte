@@ -32,6 +32,7 @@
 	import type { Snippet } from 'svelte';
 	import Icon from '$lib/components/Icon.svelte';
 	import { dataGridPrefs, type ViewMode, type Density } from '$lib/stores/dataGridPrefs.svelte';
+	import { mobileLayout } from '$lib/stores/mobileLayout.svelte';
 	import DataGridFilterRail from './DataGridFilterRail.svelte';
 	import Popover from '$lib/floating/primitives/Popover.svelte';
 	import type { FilterDef, FilterOption, FilterValue } from './types';
@@ -284,11 +285,19 @@
 	// init time captures the initial value, which is fine — the $effect below
 	// re-syncs on subsequent prop changes.
 	// ────────────────────────────────────────────────────────────────────────
+	// On the phone, cards are the default (tables need width); an explicit
+	// user preference still wins.
+	const fallbackViewMode = $derived<ViewMode>(
+		mobileLayout.isMobile ? 'grid' : defaultViewMode
+	);
+
 	// svelte-ignore state_referenced_locally
 	let viewMode = $state<ViewMode>(
 		dataGridPrefs.hasViewMode(entityType)
 			? dataGridPrefs.getViewMode(entityType)
-			: defaultViewMode
+			: mobileLayout.isMobile
+				? 'grid'
+				: defaultViewMode
 	);
 	// svelte-ignore state_referenced_locally
 	let density = $state<Density>(
@@ -298,7 +307,7 @@
 	$effect(() => {
 		viewMode = dataGridPrefs.hasViewMode(entityType)
 			? dataGridPrefs.getViewMode(entityType)
-			: defaultViewMode;
+			: fallbackViewMode;
 		density = dataGridPrefs.hasDensity(entityType)
 			? dataGridPrefs.getDensity(entityType)
 			: 'comfortable';
@@ -833,7 +842,7 @@
 		line-height: 1;
 		color: white;
 		background: var(--color-primary);
-		border-radius: 999px;
+		border-radius: var(--radius-full);
 		box-sizing: border-box;
 		aspect-ratio: 1;
 		box-shadow: 0 0 0 1.5px var(--color-background, #fff);
@@ -938,6 +947,11 @@
 	   ============================================ */
 	.table-view {
 		padding-top: 0.625rem;
+		/* The shell clips overflow (fixed, overflow:hidden); when the visible
+		   columns' min-widths exceed a phone viewport the table must scroll
+		   sideways within its own container, not get cut off. */
+		overflow-x: auto;
+		-webkit-overflow-scrolling: touch;
 	}
 
 	.data-table {

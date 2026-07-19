@@ -81,18 +81,6 @@ pub struct WikiOrganization {
 }
 
 /// A thing wiki page (catchall entity: pets, projects, concepts, etc.)
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct WikiThing {
-    pub id: String,
-    pub name: String,
-    pub category: Option<String>,
-    pub description: Option<String>,
-    pub content: Option<String>,
-    pub cover_image: Option<String>,
-    pub created_at: DateTime<Utc>,
-    pub updated_at: DateTime<Utc>,
-}
-
 // ============================================================================
 // Wiki Page Types - Narrative Views
 // ============================================================================
@@ -153,13 +141,9 @@ pub struct WikiDay {
     pub id: String,
     pub date: NaiveDate,
     pub start_timezone: Option<String>,
-    pub end_timezone: Option<String>,
     pub autobiography: Option<String>,
     pub autobiography_sections: Option<serde_json::Value>,
     pub epigraph: Option<String>,
-    /// True if this day has a generated illustration BLOB. The BLOB itself
-    /// is served separately via GET /api/wiki/day/:date/illustration.
-    pub has_illustration: bool,
     pub last_edited_by: Option<String>,
     pub cover_image: Option<String>,
     pub act_id: Option<String>,
@@ -227,15 +211,6 @@ pub struct WikiOrganizationListItem {
     pub relationship_type: Option<String>,
 }
 
-/// A thing list item
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct WikiThingListItem {
-    pub id: String,
-    pub name: String,
-    pub category: Option<String>,
-    pub description: Option<String>,
-}
-
 // ============================================================================
 // Update Request Types
 // ============================================================================
@@ -280,16 +255,6 @@ pub struct UpdateWikiOrganizationRequest {
     pub role_title: Option<String>,
     pub start_date: Option<NaiveDate>,
     pub end_date: Option<NaiveDate>,
-}
-
-/// Request to update a thing wiki page
-#[derive(Debug, Deserialize)]
-pub struct UpdateWikiThingRequest {
-    pub name: Option<String>,
-    pub category: Option<String>,
-    pub description: Option<String>,
-    pub content: Option<String>,
-    pub cover_image: Option<String>,
 }
 
 /// Request to update a day wiki page
@@ -639,90 +604,9 @@ pub async fn update_organization(
 // Thing CRUD Operations
 // ============================================================================
 
-/// Get a thing by ID
-pub async fn get_thing(pool: &PgPool, id: String) -> Result<WikiThing> {
-    let row = sqlx::query!(
-        r#"
-        SELECT
-            id, name, category, description, content, cover_image,
-            created_at, updated_at
-        FROM wiki_things
-        WHERE id = $1
-        "#,
-        id
-    )
-    .fetch_optional(pool)
-    .await
-    .map_err(|e| Error::Database(format!("Failed to get thing: {}", e)))?
-    .ok_or_else(|| Error::NotFound(format!("Thing not found: {}", id)))?;
-
-    Ok(WikiThing {
-        id: row.id,
-        name: row.name,
-        category: row.category,
-        description: row.description,
-        content: row.content,
-        cover_image: row.cover_image,
-        created_at: row.created_at,
-        updated_at: row.updated_at,
-    })
-}
-
-/// List all things
-pub async fn list_things(pool: &PgPool) -> Result<Vec<WikiThingListItem>> {
-    let rows = sqlx::query!(
-        r#"
-        SELECT id, name, category, description
-        FROM wiki_things
-        ORDER BY name ASC
-        "#
-    )
-    .fetch_all(pool)
-    .await
-    .map_err(|e| Error::Database(format!("Failed to list things: {}", e)))?;
-
-    Ok(rows
-        .into_iter()
-        .map(|row| WikiThingListItem {
-            id: row.id,
-            name: row.name,
-            category: row.category,
-            description: row.description,
-        })
-        .collect())
-}
-
-/// Update a thing
-pub async fn update_thing(
-    pool: &PgPool,
-    id: String,
-    req: UpdateWikiThingRequest,
-) -> Result<WikiThing> {
-    sqlx::query!(
-        r#"
-        UPDATE wiki_things
-        SET
-            name = COALESCE($2, name),
-            category = COALESCE($3, category),
-            description = COALESCE($4, description),
-            content = COALESCE($5, content),
-            cover_image = COALESCE($6, cover_image),
-            updated_at = now()
-        WHERE id = $1
-        "#,
-        id,
-        req.name,
-        req.category,
-        req.description,
-        req.content,
-        req.cover_image
-    )
-    .execute(pool)
-    .await
-    .map_err(|e| Error::Database(format!("Failed to update thing: {}", e)))?;
-
-    get_thing(pool, id).await
-}
+// Thing read/update moved to the single-source `api::things` module
+// (/api/things). The wiki thing endpoints were retired to avoid duplicating
+// queries over the same `wiki_things` table.
 
 // ============================================================================
 // Narrative Identity
@@ -737,24 +621,33 @@ pub struct NarrativeIdentity {
     pub created_at: DateTime<Utc>,
 }
 
-/// Get the narrative identity (singleton row, always exists).
+/// Get the narrative identity singleton. Before a draft is generated there is
+/// no row yet, so we return an empty placeholder (content = "") rather than
+/// 500ing — the clients treat empty content as "not authored yet".
 pub async fn get_narrative_identity(pool: &PgPool) -> Result<NarrativeIdentity> {
-    let row = sqlx::query_as::<_, (String, String, String, String)>(
+    let row = sqlx::query_as::<_, (String, String, DateTime<Utc>, DateTime<Utc>)>(
         "SELECT id, content, updated_at, created_at FROM wiki_narrative_identity LIMIT 1"
     )
-    .fetch_one(pool)
+    .fetch_optional(pool)
     .await
     .map_err(|e| Error::Database(format!("Failed to get narrative identity: {}", e)))?;
 
-    Ok(NarrativeIdentity {
-        id: row.0,
-        content: row.1,
-        updated_at: DateTime::parse_from_rfc3339(&row.2)
-            .map(|dt| dt.with_timezone(&Utc))
-            .unwrap_or_else(|_| Utc::now()),
-        created_at: DateTime::parse_from_rfc3339(&row.3)
-            .map(|dt| dt.with_timezone(&Utc))
-            .unwrap_or_else(|_| Utc::now()),
+    Ok(match row {
+        Some(r) => NarrativeIdentity {
+            id: r.0,
+            content: r.1,
+            updated_at: r.2,
+            created_at: r.3,
+        },
+        None => {
+            let now = Utc::now();
+            NarrativeIdentity {
+                id: String::new(),
+                content: String::new(),
+                updated_at: now,
+                created_at: now,
+            }
+        }
     })
 }
 
@@ -1004,8 +897,8 @@ pub async fn get_or_create_day(pool: &PgPool, date: NaiveDate) -> Result<WikiDay
     let existing: Option<sqlx::postgres::PgRow> = sqlx::query(
         r#"
         SELECT
-            id, date, start_timezone, end_timezone, autobiography, autobiography_sections,
-            epigraph, (illustration IS NOT NULL) as has_illustration,
+            id, date, start_timezone, autobiography, autobiography_sections,
+            epigraph,
             last_edited_by, cover_image, act_id, chapter_id, morning_baseline, battery_curve,
             data_quality, snapshot, readiness_score, readiness_details, created_at, updated_at
         FROM wiki_days
@@ -1031,8 +924,8 @@ pub async fn get_or_create_day(pool: &PgPool, date: NaiveDate) -> Result<WikiDay
         INSERT INTO wiki_days (id, date)
         VALUES ($1, $2)
         RETURNING
-            id, date, start_timezone, end_timezone, autobiography, autobiography_sections,
-            epigraph, (illustration IS NOT NULL) as has_illustration,
+            id, date, start_timezone, autobiography, autobiography_sections,
+            epigraph,
             last_edited_by, cover_image, act_id, chapter_id, morning_baseline, battery_curve,
             data_quality, snapshot, readiness_score, readiness_details, created_at, updated_at
         "#,
@@ -1061,11 +954,9 @@ fn wiki_day_from_row_with_counts(row: &sqlx::postgres::PgRow, date: NaiveDate, n
         id,
         date,
         start_timezone: row.try_get("start_timezone").ok().flatten(),
-        end_timezone: row.try_get("end_timezone").ok().flatten(),
         autobiography: row.try_get("autobiography").ok().flatten(),
         autobiography_sections: row.try_get("autobiography_sections").ok().flatten(),
         epigraph: row.try_get("epigraph").ok().flatten(),
-        has_illustration: row.try_get::<bool, _>("has_illustration").unwrap_or(false),
         last_edited_by: row.try_get("last_edited_by").ok().flatten(),
         cover_image: row.try_get("cover_image").ok().flatten(),
         act_id: row.try_get("act_id").ok().flatten(),
@@ -1247,12 +1138,12 @@ async fn get_day_novelty_counts(pool: &PgPool, date_str: &str) -> Result<(i64, i
     let new_entities: i64 = sqlx::query_scalar(
         r#"SELECT COUNT(DISTINCT r.entity_id)
            FROM wiki_entity_refs r
-           WHERE r.timestamp >= $1 || 'T00:00:00Z'
-             AND r.timestamp < $2 || 'T00:00:00Z'
+           WHERE r.timestamp >= ($1 || 'T00:00:00Z')::timestamptz
+             AND r.timestamp < ($2 || 'T00:00:00Z')::timestamptz
              AND NOT EXISTS (
                SELECT 1 FROM wiki_entity_refs r2
                WHERE r2.entity_id = r.entity_id
-                 AND r2.timestamp < $1 || 'T00:00:00Z'
+                 AND r2.timestamp < ($1 || 'T00:00:00Z')::timestamptz
              )"#,
     )
     .bind(date_str)
@@ -1291,16 +1182,16 @@ pub async fn update_day(
     // Get or create the day first
     let day = get_or_create_day(pool, date).await?;
     let day_id_str = day.id.to_string();
-    let autobiography_sections_json = req
-        .autobiography_sections
-        .as_ref()
-        .map(|v| serde_json::to_string(v).unwrap_or_else(|_| "{}".to_string()));
 
     sqlx::query(
         r#"
         UPDATE wiki_days
         SET
             autobiography = COALESCE($2, autobiography),
+            -- $3 is jsonb (bound as a Value). It was previously serialized to a
+            -- String and bound as TEXT, so Postgres rejected COALESCE(text, jsonb)
+            -- at plan time — even when NULL — which meant narration could NEVER
+            -- write a day (the box had 0 autobiographies as a direct result).
             autobiography_sections = COALESCE($3, autobiography_sections),
             epigraph = COALESCE($4, epigraph),
             last_edited_by = COALESCE($5, last_edited_by),
@@ -1314,7 +1205,7 @@ pub async fn update_day(
     )
     .bind(&day_id_str)
     .bind(&req.autobiography)
-    .bind(&autobiography_sections_json)
+    .bind(&req.autobiography_sections)
     .bind(&req.epigraph)
     .bind(&req.last_edited_by)
     .bind(&req.cover_image)
@@ -1339,8 +1230,8 @@ pub async fn list_days(
     let rows: Vec<sqlx::postgres::PgRow> = sqlx::query(
         r#"
         SELECT
-            id, date, start_timezone, end_timezone, autobiography, autobiography_sections,
-            epigraph, (illustration IS NOT NULL) as has_illustration,
+            id, date, start_timezone, autobiography, autobiography_sections,
+            epigraph,
             last_edited_by, cover_image, act_id, chapter_id, morning_baseline, battery_curve,
             data_quality, snapshot, readiness_score, readiness_details, created_at, updated_at
         FROM wiki_days
@@ -1364,31 +1255,6 @@ pub async fn list_days(
         .collect())
 }
 
-/// Fetch the raw illustration PNG bytes for a day. Returns None if no illustration.
-pub async fn get_day_illustration(pool: &PgPool, date: NaiveDate) -> Result<Option<Vec<u8>>> {
-    let date_str = date.format("%Y-%m-%d").to_string();
-    let row: Option<(Vec<u8>,)> = sqlx::query_as(
-        "SELECT illustration FROM wiki_days WHERE date = $1 AND illustration IS NOT NULL",
-    )
-    .bind(&date_str)
-    .fetch_optional(pool)
-    .await
-    .map_err(|e| Error::Database(format!("Failed to get illustration: {e}")))?;
-
-    Ok(row.map(|(blob,)| blob))
-}
-
-/// Save illustration PNG bytes to a day's BLOB column.
-pub async fn save_day_illustration(pool: &PgPool, date: NaiveDate, png_bytes: &[u8]) -> Result<()> {
-    let date_str = date.format("%Y-%m-%d").to_string();
-    sqlx::query("UPDATE wiki_days SET illustration = $1, updated_at = now() WHERE date = $2")
-        .bind(png_bytes)
-        .bind(&date_str)
-        .execute(pool)
-        .await
-        .map_err(|e| Error::Database(format!("Failed to save illustration: {e}")))?;
-    Ok(())
-}
 
 // ============================================================================
 // ID Resolution - Parse entity type from ID
@@ -1494,6 +1360,11 @@ pub struct CreateTemporalEventRequest {
     /// 1-3 sentence factual description of the event. Renders in the day page
     /// timeline as the expandable detail under the label. Optional.
     pub event_summary: Option<String>,
+    /// Topical tags emitted by the segmenting LLM. Written on INSERT rather
+    /// than a follow-up UPDATE, because this row is about to be read by
+    /// `topic_entity_novelty` — which, until topics were emitted at all, scored
+    /// an empty array on every cron-generated event.
+    pub topics: Option<serde_json::Value>,
 }
 
 /// Request to update a temporal event
@@ -1536,19 +1407,19 @@ pub async fn get_day_events(pool: &PgPool, day_id: String) -> Result<Vec<Tempora
 
     // Fetch entity timestamps for the day: for each event's window, the earliest
     // timestamp each entity appears in wiki_entity_refs.
-    let event_windows: Vec<(String, String, String)> = rows
+    let event_windows: Vec<(String, DateTime<Utc>, DateTime<Utc>)> = rows
         .iter()
         .filter_map(|row| {
             let id: String = row.try_get("id").ok()?;
-            let start: String = row.try_get("start_time").ok()?;
-            let end: String = row.try_get("end_time").ok()?;
+            let start: DateTime<Utc> = row.try_get("start_time").ok()?;
+            let end: DateTime<Utc> = row.try_get("end_time").ok()?;
             Some((id, start, end))
         })
         .collect();
 
     let mut entity_ts_by_event: HashMap<String, serde_json::Value> = HashMap::new();
     for (event_id, start, end) in &event_windows {
-        let ref_rows: Vec<(String, String)> = sqlx::query_as(
+        let ref_rows: Vec<(String, DateTime<Utc>)> = sqlx::query_as(
             r#"
             SELECT entity_id, MIN(timestamp) as earliest
             FROM wiki_entity_refs
@@ -1558,8 +1429,8 @@ pub async fn get_day_events(pool: &PgPool, day_id: String) -> Result<Vec<Tempora
             GROUP BY entity_id
             "#,
         )
-        .bind(start)
-        .bind(end)
+        .bind(*start)
+        .bind(*end)
         .fetch_all(pool)
         .await
         .unwrap_or_default();
@@ -1567,7 +1438,7 @@ pub async fn get_day_events(pool: &PgPool, day_id: String) -> Result<Vec<Tempora
         if !ref_rows.is_empty() {
             let map: serde_json::Map<String, serde_json::Value> = ref_rows
                 .into_iter()
-                .map(|(id, ts)| (id, serde_json::Value::String(ts)))
+                .map(|(id, ts)| (id, serde_json::Value::String(ts.to_rfc3339())))
                 .collect();
             entity_ts_by_event.insert(event_id.clone(), serde_json::Value::Object(map));
         }
@@ -1578,68 +1449,49 @@ pub async fn get_day_events(pool: &PgPool, day_id: String) -> Result<Vec<Tempora
         .filter_map(|row| {
             let id: String = row.try_get("id").ok()?;
             let day_id: String = row.try_get("day_id").ok()?;
-            let start_time: String = row.try_get("start_time").ok()?;
-            let end_time: String = row.try_get("end_time").ok()?;
-            let created_at: String = row.try_get("created_at").ok()?;
-            let updated_at: String = row.try_get("updated_at").ok()?;
+            // TIMESTAMPTZ columns decode directly into DateTime<Utc>; the prior
+            // `try_get::<String>` + parse_from_rfc3339 failed at the decode step
+            // (timestamptz is not text), so `.ok()?` dropped every row and the
+            // timeline came back empty. JSONB decodes into serde_json::Value and
+            // BOOLEAN into bool — no string round-trip, no `!= 0`.
+            let start_time: DateTime<Utc> = row.try_get("start_time").ok()?;
+            let end_time: DateTime<Utc> = row.try_get("end_time").ok()?;
+            let created_at: DateTime<Utc> = row.try_get("created_at").ok()?;
+            let updated_at: DateTime<Utc> = row.try_get("updated_at").ok()?;
             let entity_timestamps = entity_ts_by_event.get(&id).cloned();
 
             Some(TemporalEvent {
                 id,
                 day_id,
-                start_time: DateTime::parse_from_rfc3339(&start_time)
-                    .map(|dt| dt.with_timezone(&Utc))
-                    .unwrap_or_else(|_| Utc::now()),
-                end_time: DateTime::parse_from_rfc3339(&end_time)
-                    .map(|dt| dt.with_timezone(&Utc))
-                    .unwrap_or_else(|_| Utc::now()),
+                start_time,
+                end_time,
                 auto_label: row.try_get::<Option<String>, _>("auto_label").ok().flatten(),
                 auto_location: row.try_get::<Option<String>, _>("auto_location").ok().flatten(),
                 user_label: row.try_get::<Option<String>, _>("user_label").ok().flatten(),
                 user_location: row.try_get::<Option<String>, _>("user_location").ok().flatten(),
                 user_notes: row.try_get::<Option<String>, _>("user_notes").ok().flatten(),
-                source_ontologies: row
-                    .try_get::<Option<String>, _>("source_ontologies")
-                    .ok()
-                    .flatten()
-                    .and_then(|s| serde_json::from_str(&s).ok()),
-                is_unknown: row.try_get::<Option<i32>, _>("is_unknown").ok().flatten().map(|v| v != 0),
-                is_transit: row.try_get::<Option<i32>, _>("is_transit").ok().flatten().map(|v| v != 0),
-                is_user_added: row.try_get::<Option<i32>, _>("is_user_added").ok().flatten().map(|v| v != 0),
-                is_user_edited: row.try_get::<Option<i32>, _>("is_user_edited").ok().flatten().map(|v| v != 0),
+                source_ontologies: row.try_get::<Option<serde_json::Value>, _>("source_ontologies").ok().flatten(),
+                is_unknown: row.try_get::<Option<bool>, _>("is_unknown").ok().flatten(),
+                is_transit: row.try_get::<Option<bool>, _>("is_transit").ok().flatten(),
+                is_user_added: row.try_get::<Option<bool>, _>("is_user_added").ok().flatten(),
+                is_user_edited: row.try_get::<Option<bool>, _>("is_user_edited").ok().flatten(),
                 novelty_z: row.try_get::<Option<f64>, _>("novelty_z").ok().flatten(),
                 avg_hr: row.try_get::<Option<f64>, _>("avg_hr").ok().flatten(),
                 autonomic_z: row.try_get::<Option<f64>, _>("autonomic_z").ok().flatten(),
                 hr_z: row.try_get::<Option<f64>, _>("hr_z").ok().flatten(),
                 hrv_z: row.try_get::<Option<f64>, _>("hrv_z").ok().flatten(),
-                topics: row.try_get::<Option<String>, _>("topics")
-                    .ok()
-                    .flatten()
-                    .and_then(|s| serde_json::from_str(&s).ok()),
+                topics: row.try_get::<Option<serde_json::Value>, _>("topics").ok().flatten(),
                 event_summary: row.try_get::<Option<String>, _>("event_summary").ok().flatten(),
                 agent_action: row.try_get::<Option<String>, _>("agent_action").ok().flatten(),
-                is_sleep: row.try_get::<Option<i32>, _>("is_sleep").ok().flatten().map(|v| v != 0),
-                user_hidden: row.try_get::<Option<i32>, _>("user_hidden").ok().flatten().map(|v| v != 0),
-                user_created: row.try_get::<Option<i32>, _>("user_created").ok().flatten().map(|v| v != 0),
-                entities: row.try_get::<Option<String>, _>("entities")
-                    .ok()
-                    .flatten()
-                    .and_then(|s| serde_json::from_str(&s).ok()),
-                topic_novelty: row.try_get::<Option<String>, _>("topic_novelty")
-                    .ok()
-                    .flatten()
-                    .and_then(|s| serde_json::from_str(&s).ok()),
-                entity_novelty: row.try_get::<Option<String>, _>("entity_novelty")
-                    .ok()
-                    .flatten()
-                    .and_then(|s| serde_json::from_str(&s).ok()),
+                is_sleep: row.try_get::<Option<bool>, _>("is_sleep").ok().flatten(),
+                user_hidden: row.try_get::<Option<bool>, _>("user_hidden").ok().flatten(),
+                user_created: row.try_get::<Option<bool>, _>("user_created").ok().flatten(),
+                entities: row.try_get::<Option<serde_json::Value>, _>("entities").ok().flatten(),
+                topic_novelty: row.try_get::<Option<serde_json::Value>, _>("topic_novelty").ok().flatten(),
+                entity_novelty: row.try_get::<Option<serde_json::Value>, _>("entity_novelty").ok().flatten(),
                 entity_timestamps,
-                created_at: DateTime::parse_from_rfc3339(&created_at)
-                    .map(|dt| dt.with_timezone(&Utc))
-                    .unwrap_or_else(|_| Utc::now()),
-                updated_at: DateTime::parse_from_rfc3339(&updated_at)
-                    .map(|dt| dt.with_timezone(&Utc))
-                    .unwrap_or_else(|_| Utc::now()),
+                created_at,
+                updated_at,
             })
         })
         .collect())
@@ -1661,12 +1513,31 @@ pub async fn create_temporal_event(
     let day_id_str = req.day_id.to_string();
     let start_time_str = req.start_time.to_rfc3339();
     let end_time_str = req.end_time.to_rfc3339();
-    let source_ontologies_str = req
-        .source_ontologies
-        .as_ref()
-        .map(|v| serde_json::to_string(v).unwrap_or_else(|_| "null".to_string()));
+    // `source_ontologies` is NOT NULL with a `'[]'` default, and the segmentation
+    // path deliberately passes None — it is stamped afterwards by `annotate`. But
+    // naming the column in the INSERT and binding None sends SQL NULL, which
+    // OVERRIDES the default and violates the constraint, so EVERY event insert on
+    // that path failed and no day could be segmented. Default None to an empty
+    // array, which is what the column would have used had we omitted it.
+    let source_ontologies_str = Some(
+        req.source_ontologies
+            .as_ref()
+            .map(|v| serde_json::to_string(v).unwrap_or_else(|_| "[]".to_string()))
+            .unwrap_or_else(|| "[]".to_string()),
+    );
 
     let event_id = ids::generate_id(ids::WIKI_EVENT_PREFIX, &[&req.day_id, &start_time_str, &end_time_str]);
+
+    // `kind` is the source of truth; the is_unknown/is_transit booleans are generated
+    // from it, so we set kind here rather than the (unwritable) generated columns.
+    // create_temporal_event never mints sleep — that is `dayline::sleep`'s job.
+    let kind = if req.is_unknown == Some(true) {
+        "unknown"
+    } else if req.is_transit == Some(true) {
+        "transit"
+    } else {
+        "stay"
+    };
 
     // Runtime query (not the macro) so we can include `event_summary` without
     // regenerating the sqlx offline cache.
@@ -1675,8 +1546,9 @@ pub async fn create_temporal_event(
         INSERT INTO wiki_events (
             id, day_id, start_time, end_time,
             auto_label, auto_location, user_label, user_location, user_notes,
-            source_ontologies, is_unknown, is_transit, is_user_added, event_summary
-        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
+            source_ontologies, kind, is_user_added, event_summary,
+            topics
+        ) VALUES ($1, $2, $3::timestamptz, $4::timestamptz, $5, $6, $7, $8, $9, $10::jsonb, $11, $12, $13, $14::jsonb)
         RETURNING
             id, is_user_edited, created_at, updated_at
         "#,
@@ -1691,10 +1563,10 @@ pub async fn create_temporal_event(
     .bind(&req.user_location)
     .bind(&req.user_notes)
     .bind(&source_ontologies_str)
-    .bind(req.is_unknown)
-    .bind(req.is_transit)
+    .bind(kind)
     .bind(req.is_user_added)
     .bind(&req.event_summary)
+    .bind(req.topics.clone().unwrap_or_else(|| serde_json::json!([])))
     .fetch_one(pool)
     .await
     .map_err(|e| Error::Database(format!("Failed to create temporal event: {}", e)))?;
@@ -1702,11 +1574,11 @@ pub async fn create_temporal_event(
     let id: String = row
         .try_get("id")
         .map_err(|e| Error::Database(format!("Missing event ID: {}", e)))?;
-    let is_user_edited: Option<i32> = row.try_get("is_user_edited").ok().flatten();
-    let created_at: String = row
+    let is_user_edited: Option<bool> = row.try_get("is_user_edited").ok().flatten();
+    let created_at: DateTime<Utc> = row
         .try_get("created_at")
         .map_err(|e| Error::Database(format!("Missing created_at: {}", e)))?;
-    let updated_at: String = row
+    let updated_at: DateTime<Utc> = row
         .try_get("updated_at")
         .map_err(|e| Error::Database(format!("Missing updated_at: {}", e)))?;
 
@@ -1724,7 +1596,7 @@ pub async fn create_temporal_event(
         is_unknown: req.is_unknown,
         is_transit: req.is_transit,
         is_user_added: req.is_user_added,
-        is_user_edited: is_user_edited.map(|v| v != 0),
+        is_user_edited,
         novelty_z: None,
         avg_hr: None,
         autonomic_z: None,
@@ -1740,12 +1612,8 @@ pub async fn create_temporal_event(
         topic_novelty: None,
         entity_novelty: None,
         entity_timestamps: None,
-        created_at: DateTime::parse_from_rfc3339(&created_at)
-            .map(|dt| dt.with_timezone(&Utc))
-            .unwrap_or_else(|_| Utc::now()),
-        updated_at: DateTime::parse_from_rfc3339(&updated_at)
-            .map(|dt| dt.with_timezone(&Utc))
-            .unwrap_or_else(|_| Utc::now()),
+        created_at,
+        updated_at,
     })
 }
 
@@ -1864,6 +1732,71 @@ pub struct DaySource {
     pub timestamp: DateTime<Utc>,
     pub label: String,
     pub preview: Option<String>,
+    /// True for high-frequency measurement streams (heart rate, steps, HRV).
+    /// The day page hides these behind a filter by default since a single day
+    /// can hold thousands of them.
+    pub continuous: bool,
+}
+
+/// Resolve the timezone a given day should be rendered/windowed in —
+/// "the timezone you woke up in", fixed at the day's start:
+///   1. the locked `wiki_days.start_timezone` if a summary already ran (past days
+///      keep the zone they were lived in), else
+///   2. `tzf-rs(first located point of the day)` — the same "where you woke up"
+///      signal the EOD lock uses, so live-today and locked-history agree even on
+///      a travel day (a move surfaces as *tomorrow*, not a mid-day re-anchor), else
+///   3. the viewing device's zone, but ONLY for an in-progress today with no
+///      located points yet (web-only / location off), else
+///   4. `home_timezone`.
+/// See docs/timezone-model.md.
+async fn resolve_render_timezone(
+    pool: &PgPool,
+    date: NaiveDate,
+    client_tz: Option<&str>,
+) -> String {
+    use sqlx::Row;
+    // 1. Locked per-day zone from a prior summary.
+    if let Ok(Some(row)) =
+        sqlx::query("SELECT start_timezone FROM wiki_days WHERE date = $1")
+            .bind(date)
+            .fetch_optional(pool)
+            .await
+    {
+        if let Ok(Some(tz)) = row.try_get::<Option<String>, _>("start_timezone") {
+            if !tz.is_empty() {
+                return tz;
+            }
+        }
+    }
+
+    let home_tz = super::profile::get_timezone(pool)
+        .await
+        .unwrap_or(None)
+        .unwrap_or_else(|| "UTC".to_string());
+
+    // 2. Where the owner woke up that day (first located point). Authoritative and
+    //    consistent with the EOD lock — does NOT drift to where the viewer is now.
+    if let Some(tz) = crate::timezone::first_point_timezone(pool, date, &home_tz).await {
+        return tz;
+    }
+
+    // 3. No location for the day — for an in-progress *today* only, fall back to the
+    //    viewing device's zone (best available "where are you" for a web-only/
+    //    location-off owner). Never applied to a past day. "Today" is in home_tz.
+    let today_in_home = home_tz
+        .parse::<chrono_tz::Tz>()
+        .ok()
+        .map(|tz| Utc::now().with_timezone(&tz).date_naive());
+    if today_in_home == Some(date) {
+        if let Some(tz) = client_tz {
+            if !tz.is_empty() {
+                return tz.to_string();
+            }
+        }
+    }
+
+    // 4. Home.
+    home_tz
 }
 
 /// Get all ontology data sources for a specific date (registry-driven).
@@ -1871,18 +1804,23 @@ pub struct DaySource {
 /// Iterates over all registered ontologies that have a `DaySourceConfig` and builds
 /// dynamic SQL queries from the config. No arbitrary LIMITs — all data included
 /// with a sanity check for overflow.
-pub async fn get_day_sources(pool: &PgPool, date: NaiveDate) -> Result<Vec<DaySource>> {
+pub async fn get_day_sources(
+    pool: &PgPool,
+    date: NaiveDate,
+    client_tz: Option<&str>,
+) -> Result<Vec<DaySource>> {
     use sqlx::Row;
     use virtues_registry::ontologies::registered_ontologies;
 
-    // UTC bounds: midnight to noon next day (covers all timezones)
-    let start_of_day = date.and_hms_opt(0, 0, 0).unwrap().and_utc();
-    let end_of_day = date
-        .succ_opt()
-        .unwrap()
-        .and_hms_opt(12, 0, 0)
-        .unwrap()
-        .and_utc();
+    // Day window in the per-day "where the owner was" timezone, fixed at the
+    // day's start ("the timezone you woke up in"). Resolution order:
+    //   1. the locked wiki_days.start_timezone for this day (past days), else
+    //   2. the viewing device's zone for an in-progress today (client_tz), else
+    //   3. tzf-rs(first located point of the day) → home_timezone fallback.
+    // See docs/timezone-model.md.
+    let timezone = resolve_render_timezone(pool, date, client_tz).await;
+    let (start_str, end_str) =
+        super::day_summary::day_boundaries_utc(date, Some(&timezone));
     let mut sources: Vec<DaySource> = Vec::new();
 
     for ont in registered_ontologies() {
@@ -1917,7 +1855,7 @@ pub async fn get_day_sources(pool: &PgPool, date: NaiveDate) -> Result<Vec<DaySo
             format!(
                 "SELECT {id} as src_id, {ts} as src_ts, {label} as src_label, {preview} as src_preview, {st} \
                  FROM {table} t \
-                 WHERE t.{ts_col} >= $1 AND t.{ts_col} <= $2 \
+                 WHERE t.{ts_col} >= $1::timestamptz AND t.{ts_col} <= $2::timestamptz \
                  {extra} \
                  ORDER BY t.{ts_col} ASC",
                 id = cfg.id_sql,
@@ -1938,19 +1876,36 @@ pub async fn get_day_sources(pool: &PgPool, date: NaiveDate) -> Result<Vec<DaySo
                 .await
         } else {
             sqlx::query(&query)
-                .bind(start_of_day)
-                .bind(end_of_day)
+                .bind(&start_str)
+                .bind(&end_str)
                 .fetch_all(pool)
                 .await
         };
 
-        let rows = match rows {
-            Ok(r) => r,
-            Err(e) => {
-                tracing::warn!(ontology = ont.name, error = %e, "Failed to query day sources");
-                continue;
-            }
-        };
+        // A day-source query that fails is not a warning. It means the day is being
+        // assembled with a HOLE in it — and then an LLM writes a confident account
+        // of a day it was never shown.
+        //
+        // Two of these were broken on the box for as long as they have existed:
+        //
+        //   location_visit       `encode(t.id,'hex')` on a TEXT id
+        //   activity_app_session `extra_where` missing its leading AND
+        //
+        // Both raised here, both were swallowed with `warn!` + `continue`, and the
+        // cron reported SUCCESS every single night. The result: 103 days of a real
+        // life produced 2 events and zero autobiographies, and nothing anywhere said
+        // a word about it.
+        //
+        // A missing source is a broken query, and a broken query is a bug to fix —
+        // never a day to fabricate around it.
+        let rows = rows.map_err(|e| {
+            Error::Database(format!(
+                "day source query failed for ontology `{}` — the day cannot be \
+                 assembled without it, and generating a narrative from the gap would \
+                 invent a day you did not live: {e}",
+                ont.name
+            ))
+        })?;
 
         // Sanity check
         if rows.len() > 5000 {
@@ -1966,7 +1921,10 @@ pub async fn get_day_sources(pool: &PgPool, date: NaiveDate) -> Result<Vec<DaySo
                 Ok(v) => v,
                 Err(_) => continue,
             };
-            let ts_str: String = match row.try_get("src_ts") {
+            // `src_ts` aliases a TIMESTAMPTZ column — decode it directly. Reading
+            // it as String (then re-parsing) failed at the decode step and
+            // `continue`d past every row, so these ontologies never appeared.
+            let ts: DateTime<Utc> = match row.try_get("src_ts") {
                 Ok(v) => v,
                 Err(_) => continue,
             };
@@ -1974,23 +1932,14 @@ pub async fn get_day_sources(pool: &PgPool, date: NaiveDate) -> Result<Vec<DaySo
             let preview: Option<String> = row.try_get("src_preview").ok().flatten();
             let source_type: String = row.try_get("source_type_dyn").unwrap_or_else(|_| cfg.source_type.to_string());
 
-            // Parse timestamp: try RFC3339 first, fall back to "YYYY-MM-DD HH:MM:SS"
-            let ts = if let Ok(parsed) = DateTime::parse_from_rfc3339(&ts_str) {
-                parsed.with_timezone(&Utc)
-            } else if let Ok(naive) =
-                chrono::NaiveDateTime::parse_from_str(&ts_str, "%Y-%m-%d %H:%M:%S")
-            {
-                naive.and_utc()
-            } else {
-                continue;
-            };
-
             sources.push(DaySource {
                 source_type,
                 id,
                 timestamp: ts,
                 label,
                 preview,
+                continuous: ont.temporal_type
+                    == virtues_registry::ontologies::TemporalType::Continuous,
             });
         }
     }
@@ -2170,6 +2119,197 @@ pub async fn get_timeline_day(pool: &PgPool, date: NaiveDate) -> Result<Timeline
 }
 
 // ============================================================================
+// Today Streams - the three raw record streams, as spans, before synthesis
+// ============================================================================
+//
+// The homepage renders the day *before* the nightly synthesis has read it into
+// a biography. At that point the box does not have "events" — it has three
+// sensor streams, each with real start/end spans: where the phone was
+// (data_location_visit), what the calendar promised (data_calendar_event), and
+// when the microphone was open (data_audio_recording — the raw live chunks, NOT
+// the nightly `data_audio_session` rollup, which doesn't exist mid-day). This
+// endpoint returns exactly those three, tz-anchored, drawn as rectangles.
+
+/// A location visit span (where you were, and for how long).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TodayLocationSpan {
+    pub id: String,
+    pub start_time: String,
+    pub end_time: String,
+    pub place_name: Option<String>,
+    pub place_category: Option<String>,
+    pub duration_minutes: Option<i32>,
+}
+
+/// A calendar event span (the day as intended).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TodayCalendarSpan {
+    pub id: String,
+    pub start_time: String,
+    pub end_time: String,
+    pub title: String,
+    pub is_all_day: bool,
+    pub is_sacred: bool,
+    pub location_name: Option<String>,
+    pub calendar_name: Option<String>,
+}
+
+/// A raw audio recording chunk (~5 min each) — the live mic capture, before any
+/// sessionization. `is_silent` marks a chunk the box flagged as silence. The
+/// client merges contiguous chunks into "mic was open" blocks.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TodayAudioSpan {
+    pub id: String,
+    pub start_time: String,
+    pub end_time: String,
+    pub is_silent: bool,
+}
+
+/// The three raw streams for a day, before the nightly synthesis.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TodayStreamsView {
+    pub date: String,
+    /// The zone the spans are anchored to (see docs/timezone-model.md).
+    pub timezone: String,
+    pub location: Vec<TodayLocationSpan>,
+    pub calendar: Vec<TodayCalendarSpan>,
+    pub audio: Vec<TodayAudioSpan>,
+}
+
+/// Get the three raw record streams (location, calendar, audio) for a day as
+/// spans. Anchored to the day's effective timezone exactly like `get_day_sources`.
+pub async fn get_today_streams(
+    pool: &PgPool,
+    date: NaiveDate,
+    client_tz: Option<&str>,
+) -> Result<TodayStreamsView> {
+    use sqlx::Row;
+
+    let timezone = resolve_render_timezone(pool, date, client_tz).await;
+    let (start_str, end_str) = super::day_summary::day_boundaries_utc(date, Some(&timezone));
+
+    // --- Location: where the phone was ---
+    let loc_rows = sqlx::query(
+        r#"
+        SELECT
+            v.id               AS id,
+            v.arrival_time     AS arrival_time,
+            v.departure_time   AS departure_time,
+            v.duration_minutes AS duration_minutes,
+            p.name             AS place_name,
+            p.category         AS place_category
+        FROM data_location_visit v
+        LEFT JOIN wiki_entity_refs er
+            ON er.source_table = 'data_location_visit'
+           AND er.source_id    = v.id
+           AND er.entity_type  = 'place'
+        LEFT JOIN wiki_places p ON p.id = er.entity_id
+        WHERE v.arrival_time >= $1::timestamptz AND v.arrival_time < $2::timestamptz
+        ORDER BY v.arrival_time ASC
+        "#,
+    )
+    .bind(&start_str)
+    .bind(&end_str)
+    .fetch_all(pool)
+    .await
+    .map_err(|e| Error::Database(format!("today streams: location query failed: {e}")))?;
+
+    let location: Vec<TodayLocationSpan> = loc_rows
+        .iter()
+        .filter_map(|row| {
+            let arrival: DateTime<Utc> = row.try_get("arrival_time").ok()?;
+            let departure: Option<DateTime<Utc>> =
+                row.try_get::<Option<DateTime<Utc>>, _>("departure_time").ok().flatten();
+            Some(TodayLocationSpan {
+                id: row.try_get("id").ok()?,
+                start_time: arrival.to_rfc3339(),
+                end_time: departure.unwrap_or(arrival).to_rfc3339(),
+                place_name: row.try_get("place_name").ok().flatten(),
+                place_category: row.try_get("place_category").ok().flatten(),
+                duration_minutes: row.try_get("duration_minutes").ok(),
+            })
+        })
+        .collect();
+
+    // --- Calendar: the day as intended ---
+    let cal_rows = sqlx::query(
+        r#"
+        SELECT id, title, start_time, end_time, is_all_day,
+               COALESCE(is_sacred, FALSE) AS is_sacred, location_name, calendar_name
+        FROM data_calendar_event
+        WHERE start_time >= $1::timestamptz AND start_time < $2::timestamptz
+        ORDER BY start_time ASC
+        "#,
+    )
+    .bind(&start_str)
+    .bind(&end_str)
+    .fetch_all(pool)
+    .await
+    .map_err(|e| Error::Database(format!("today streams: calendar query failed: {e}")))?;
+
+    let calendar: Vec<TodayCalendarSpan> = cal_rows
+        .iter()
+        .filter_map(|row| {
+            let start: DateTime<Utc> = row.try_get("start_time").ok()?;
+            let end: DateTime<Utc> = row.try_get("end_time").ok()?;
+            Some(TodayCalendarSpan {
+                id: row.try_get("id").ok()?,
+                start_time: start.to_rfc3339(),
+                end_time: end.to_rfc3339(),
+                title: row.try_get("title").unwrap_or_else(|_| "(no title)".to_string()),
+                is_all_day: row.try_get("is_all_day").unwrap_or(false),
+                is_sacred: row.try_get("is_sacred").unwrap_or(false),
+                location_name: row.try_get("location_name").ok().flatten(),
+                calendar_name: row.try_get("calendar_name").ok().flatten(),
+            })
+        })
+        .collect();
+
+    // --- Audio: raw recording chunks (the live mic capture) ---
+    let aud_rows = sqlx::query(
+        r#"
+        SELECT id, started_at, ended_at, duration_seconds, COALESCE(is_silent, FALSE) AS is_silent
+        FROM data_audio_recording
+        WHERE started_at >= $1::timestamptz AND started_at < $2::timestamptz
+        ORDER BY started_at ASC
+        "#,
+    )
+    .bind(&start_str)
+    .bind(&end_str)
+    .fetch_all(pool)
+    .await
+    .map_err(|e| Error::Database(format!("today streams: audio query failed: {e}")))?;
+
+    let audio: Vec<TodayAudioSpan> = aud_rows
+        .iter()
+        .filter_map(|row| {
+            let start: DateTime<Utc> = row.try_get("started_at").ok()?;
+            let ended: Option<DateTime<Utc>> =
+                row.try_get::<Option<DateTime<Utc>>, _>("ended_at").ok().flatten();
+            let dur_s: Option<f64> = row.try_get("duration_seconds").ok().flatten();
+            // Fall back to the chunk's duration (or a nominal 5 min) when it has no end.
+            let end = ended.unwrap_or_else(|| {
+                start + chrono::Duration::milliseconds((dur_s.unwrap_or(300.0) * 1000.0) as i64)
+            });
+            Some(TodayAudioSpan {
+                id: row.try_get("id").ok()?,
+                start_time: start.to_rfc3339(),
+                end_time: end.to_rfc3339(),
+                is_silent: row.try_get("is_silent").unwrap_or(false),
+            })
+        })
+        .collect();
+
+    Ok(TodayStreamsView {
+        date: date.to_string(),
+        timezone,
+        location,
+        calendar,
+        audio,
+    })
+}
+
+// ============================================================================
 // Day Streams - Dynamic Ontology Queries
 // ============================================================================
 
@@ -2244,13 +2384,13 @@ pub async fn get_day_streams(pool: &PgPool, date: NaiveDate) -> Result<DayStream
             .map(|c| format!(", {} as end_ts", c))
             .unwrap_or_default();
 
-        // Encode bytea IDs as hex for tables with blob IDs (location_visit).
-        // Postgres uses `encode(bytea, 'hex')` — there is no scalar `hex()`.
-        let id_select = if ontology.name == "location_visit" {
-            "encode(id, 'hex') as id"
-        } else {
-            "id"
-        };
+        // All ontology tables (incl. location_visit) use TEXT UUID ids — see the
+        // `data_location_visit` join comment above. An earlier version assumed
+        // location_visit had blob ids and wrapped them in `encode(id, 'hex')`,
+        // but `encode()` only accepts `bytea`, so that query failed at runtime
+        // with "function encode(text, unknown) does not exist" — silently
+        // breaking the day page's location rendering. Select the id directly.
+        let id_select = "id";
 
         // Build dynamic query - select id, timestamps, and all other columns as JSON
         let sql = format!(
@@ -2294,19 +2434,15 @@ pub async fn get_day_streams(pool: &PgPool, date: NaiveDate) -> Result<DayStream
                 continue;
             }
 
-            // Get timestamp
-            let ts_str: String = row.try_get("ts").unwrap_or_default();
-            let timestamp = match DateTime::parse_from_rfc3339(&ts_str) {
-                Ok(ts) => ts.with_timezone(&Utc),
+            // Get timestamp — `ts` aliases a TIMESTAMPTZ column, decode directly.
+            let timestamp: DateTime<Utc> = match row.try_get("ts") {
+                Ok(ts) => ts,
                 Err(_) => continue,
             };
 
             // Get end timestamp if present
             let end_timestamp = if ontology.end_timestamp_column.is_some() {
-                row.try_get::<String, _>("end_ts")
-                    .ok()
-                    .and_then(|s| DateTime::parse_from_rfc3339(&s).ok())
-                    .map(|ts| ts.with_timezone(&Utc))
+                row.try_get::<Option<DateTime<Utc>>, _>("end_ts").ok().flatten()
             } else {
                 None
             };
@@ -2594,13 +2730,12 @@ pub async fn get_day_chats(pool: &PgPool, date: NaiveDate) -> Result<Vec<DayChat
         let role: String = row.try_get("role").unwrap_or_default();
         let content: String = row.try_get("content").unwrap_or_default();
         let provider: Option<String> = row.try_get("provider").ok();
-        let ts_str: String = match row.try_get("timestamp") {
+        // `timestamp` is a TIMESTAMPTZ column — decode directly. Reading it as
+        // String failed at decode and `continue`d past every message, so
+        // external AI conversations never showed up on the day page.
+        let ts: DateTime<Utc> = match row.try_get("timestamp") {
             Ok(v) => v,
             Err(_) => continue,
-        };
-        let ts = match parse_db_timestamp(&ts_str) {
-            Some(t) => t,
-            None => continue,
         };
 
         let entry = groups.entry(conv_id).or_insert(ExtAccum {
@@ -2646,17 +2781,6 @@ pub async fn get_day_chats(pool: &PgPool, date: NaiveDate) -> Result<Vec<DayChat
 
     chats.sort_by(|a, b| a.started_at.cmp(&b.started_at));
     Ok(chats)
-}
-
-/// Parse a timestamp stored as RFC3339 or "YYYY-MM-DD HH:MM:SS" (UTC).
-fn parse_db_timestamp(s: &str) -> Option<DateTime<Utc>> {
-    if let Ok(parsed) = DateTime::parse_from_rfc3339(s) {
-        return Some(parsed.with_timezone(&Utc));
-    }
-    if let Ok(naive) = chrono::NaiveDateTime::parse_from_str(s, "%Y-%m-%d %H:%M:%S") {
-        return Some(naive.and_utc());
-    }
-    None
 }
 
 /// Truncate the first user message to a short, single-line title.

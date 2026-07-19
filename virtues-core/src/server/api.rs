@@ -142,6 +142,79 @@ pub async fn trigger_action_handler(
         .into_response()
 }
 
+/// POST /api/chat-import/upload — multipart upload of a Claude / ChatGPT /
+/// Gemini conversation export (Tier 3 "one-time import"). The file is staged to
+/// a transient local path and the `chat_import` action is run synchronously
+/// (one-time imports are user-initiated and expected to take a moment), so the
+/// response carries the "Imported N messages" summary for the confirmation UI.
+///
+/// Mounted with a raised body limit (chat exports can exceed the 105MB default).
+pub async fn chat_import_upload_handler(
+    State(state): State<AppState>,
+    mut multipart: axum::extract::Multipart,
+) -> Response {
+    let mut provider = "unknown".to_string();
+    let mut data: Option<axum::body::Bytes> = None;
+
+    while let Ok(Some(field)) = multipart.next_field().await {
+        match field.name().unwrap_or("") {
+            "provider" => {
+                if let Ok(t) = field.text().await {
+                    provider = t;
+                }
+            }
+            "file" => {
+                if let Ok(b) = field.bytes().await {
+                    data = Some(b);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    let Some(bytes) = data else {
+        return error_response(crate::error::Error::InvalidInput(
+            "no file provided".into(),
+        ));
+    };
+
+    // Stage to a transient local path the action subprocess reads then deletes.
+    let unique = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_nanos())
+        .unwrap_or(0);
+    let file_path = std::env::temp_dir().join(format!("virtues_chat_import_{unique}.json"));
+    if let Err(e) = std::fs::write(&file_path, &bytes) {
+        return error_response(crate::error::Error::Other(format!(
+            "failed to stage upload: {e}"
+        )));
+    }
+
+    let deps = crate::action_runner::RunnerDeps {
+        db: state.db.pool().clone(),
+        yjs: state.yjs_state.clone(),
+    };
+    let payload = serde_json::json!({
+        "file_path": file_path.to_string_lossy(),
+        "provider": provider,
+    });
+
+    match crate::action_runner::run_action(&deps, "action_chat_import", "manual", Some(&payload))
+        .await
+    {
+        Ok(r) => (
+            StatusCode::OK,
+            Json(serde_json::json!({
+                "status": "ok",
+                "summary": r.summary,
+                "run_id": r.run_id,
+            })),
+        )
+            .into_response(),
+        Err(e) => error_response(crate::error::Error::Other(e.to_string())),
+    }
+}
+
 /// List all actions with their latest run status.
 pub async fn list_actions_handler(State(state): State<AppState>) -> Response {
     let pool = state.db.pool();
@@ -181,14 +254,16 @@ pub async fn list_actions_handler(State(state): State<AppState>) -> Response {
                     let agent: Option<String> = r.try_get("agent").unwrap_or(None);
                     let cron: Option<String> = r.try_get("cron_schedule").unwrap_or(None);
                     let enabled: bool = r.try_get("enabled").unwrap_or(false);
-                    let config_raw: String = r.try_get("config").unwrap_or_else(|_| "{}".into());
+                    // `config`/`triggers` are JSONB — decode straight to a Value
+                    // (decoding to String fails and the `unwrap_or` swallowed it,
+                    // so every action came back with empty config/triggers).
                     let config: serde_json::Value =
-                        serde_json::from_str(&config_raw).unwrap_or(serde_json::json!({}));
+                        r.try_get("config").unwrap_or_else(|_| serde_json::json!({}));
                     let condition: Option<String> = r.try_get("condition").unwrap_or(None);
-                    let triggers_raw: String =
-                        r.try_get("triggers").unwrap_or_else(|_| "[]".into());
+                    let triggers_val: serde_json::Value =
+                        r.try_get("triggers").unwrap_or_else(|_| serde_json::json!([]));
                     let triggers: Vec<String> =
-                        serde_json::from_str(&triggers_raw).unwrap_or_default();
+                        serde_json::from_value(triggers_val).unwrap_or_default();
                     let memory: Option<String> = r.try_get("memory").unwrap_or(None);
                     let credential_id: Option<String> = r.try_get("credential_id").unwrap_or(None);
                     let runtime: String = r
@@ -198,13 +273,18 @@ pub async fn list_actions_handler(State(state): State<AppState>) -> Response {
                     let command: Option<Vec<String>> = command_raw
                         .as_deref()
                         .and_then(|s| serde_json::from_str(s).ok());
-                    let created: String = r.try_get("created_at").unwrap_or_default();
-                    let updated: String = r.try_get("updated_at").unwrap_or_default();
+                    // TIMESTAMPTZ columns decode to DateTime<Utc>; serde emits
+                    // RFC3339 in the JSON. Reading them as String failed (empty).
+                    let created: chrono::DateTime<chrono::Utc> =
+                        r.try_get("created_at").unwrap_or_else(|_| chrono::Utc::now());
+                    let updated: chrono::DateTime<chrono::Utc> =
+                        r.try_get("updated_at").unwrap_or_else(|_| chrono::Utc::now());
 
                     let last_run_status: Option<String> =
                         r.try_get("last_run_status").unwrap_or(None);
                     let last_run = last_run_status.map(|s| {
-                        let at: Option<String> = r.try_get("last_run_at").unwrap_or(None);
+                        let at: Option<chrono::DateTime<chrono::Utc>> =
+                            r.try_get("last_run_at").unwrap_or(None);
                         let records: Option<i64> = r.try_get("last_run_records").unwrap_or(None);
                         let err: Option<String> = r.try_get("last_run_error").unwrap_or(None);
                         let sum: Option<String> = r.try_get("last_run_summary").unwrap_or(None);
@@ -792,43 +872,18 @@ pub async fn list_tables_handler(State(state): State<AppState>) -> Response {
 /// GET /api/devices/action-ids — devices refresh their action_id routing map.
 ///
 /// Used by paired devices when their local routing table goes stale (e.g. after
-/// templates.toml adds a new stream, or the device reinstalls and lost its
-/// Keychain). Auth is the same `Bearer <device_token>` as `/webhook/{action_id}`.
+/// templates.toml adds a new stream, or the device reinstalls). Authenticated by
+/// the proven iroh key (`AuthUser`, a hard extractor) — the map is the device's
+/// own ingest actions, keyed on its `device_id`.
 pub async fn device_action_ids_handler(
     State(state): State<AppState>,
-    headers: axum::http::HeaderMap,
+    user: crate::middleware::auth::AuthUser,
 ) -> Response {
-    let token = headers
-        .get(axum::http::header::AUTHORIZATION)
-        .and_then(|h| h.to_str().ok())
-        .and_then(|s| s.strip_prefix("Bearer "));
-
-    let Some(token) = token else {
-        return (
-            StatusCode::UNAUTHORIZED,
-            Json(serde_json::json!({ "error": "Missing bearer token" })),
-        )
-            .into_response();
-    };
-
-    let credential_id = match crate::api::credentials::validate_device_token(state.db.pool(), token)
-        .await
-    {
-        Ok(id) => id,
-        Err(_) => {
-            return (
-                StatusCode::UNAUTHORIZED,
-                Json(serde_json::json!({ "error": "Invalid or revoked device token" })),
-            )
-                .into_response();
-        }
-    };
-
-    match virtues_helpers::auth::fanout_action_ids(state.db.pool(), &credential_id).await {
+    match virtues_helpers::auth::fanout_action_ids(state.db.pool(), &user.device_id).await {
         Ok(action_ids) => (
             StatusCode::OK,
             Json(serde_json::json!({
-                "credential_id": credential_id,
+                "device_id": user.device_id,
                 "action_ids": action_ids,
             })),
         )
@@ -841,58 +896,72 @@ pub async fn device_action_ids_handler(
     }
 }
 
-/// Health check endpoint for devices to validate their authentication
+/// GET /api/devices/actions/:id/runs — a paired device reads the run history of
+/// one of ITS OWN actions, so the app can show real server-side outcome
+/// (success/failure/timing/error) per stream rather than just "did the POST
+/// return 2xx."
 ///
-/// This lightweight endpoint allows devices to verify their token is still valid
-/// without creating any side effects. Used for startup validation and periodic health checks.
-pub async fn device_health_check_handler(
+/// Authenticated by the proven iroh key. The action's `device_id` must match the
+/// caller's device or it's 403 — one device can't read another's run history.
+/// Device-scoped sibling of the session-authed `list_action_runs_handler`.
+pub async fn device_action_runs_handler(
     State(state): State<AppState>,
-    headers: axum::http::HeaderMap,
+    Path(action_id): Path<String>,
+    axum::extract::Query(q): axum::extract::Query<RunsQuery>,
+    user: crate::middleware::auth::AuthUser,
 ) -> Response {
-    // Extract device token from Authorization header or X-Device-Token header
-    let token = if let Some(value) = headers.get(axum::http::header::AUTHORIZATION) {
-        let auth_str = value.to_str().unwrap_or("");
-        if let Some(t) = auth_str.strip_prefix("Bearer ") {
-            t.to_string()
-        } else {
-            return (
-                StatusCode::UNAUTHORIZED,
-                Json(serde_json::json!({
-                    "error": "Invalid Authorization header format. Expected: Bearer <token>"
-                })),
-            )
-                .into_response();
-        }
-    } else if let Some(value) = headers.get("X-Device-Token") {
-        value.to_str().unwrap_or("").to_string()
-    } else {
+    // Ownership: the action must belong to this device. EXISTS returns a
+    // non-null bool, so a missing action and a foreign action both → false.
+    let owned: bool = sqlx::query_scalar(
+        "SELECT EXISTS(SELECT 1 FROM app_actions WHERE id = $1 AND device_id = $2)",
+    )
+    .bind(&action_id)
+    .bind(&user.device_id)
+    .fetch_one(state.db.pool())
+    .await
+    .unwrap_or(false);
+
+    if !owned {
         return (
-            StatusCode::UNAUTHORIZED,
-            Json(serde_json::json!({
-                "error": "Missing authentication header. Provide Authorization: Bearer <token> or X-Device-Token: <token>"
-            })),
+            StatusCode::FORBIDDEN,
+            Json(serde_json::json!({ "error": "Action not found for this device" })),
         )
             .into_response();
-    };
+    }
 
-    // Validate the device token
-    match crate::api::credentials::validate_device_token(state.db.pool(), &token).await {
-        Ok(source_id) => (
-            StatusCode::OK,
-            Json(serde_json::json!({
-                "status": "active",
-                "source_id": source_id,
-            })),
-        )
-            .into_response(),
-        Err(_) => (
-            StatusCode::UNAUTHORIZED,
-            Json(serde_json::json!({
-                "error": "Invalid or revoked device token"
-            })),
+    let limit = q.limit.unwrap_or(10).clamp(1, 50);
+    match crate::scheduler::actions::query_runs(
+        state.db.pool(),
+        Some(&action_id),
+        q.status.as_deref(),
+        limit,
+    )
+    .await
+    {
+        Ok(runs) => (StatusCode::OK, Json(runs)).into_response(),
+        Err(e) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({ "error": e.to_string() })),
         )
             .into_response(),
     }
+}
+
+/// Health check endpoint for devices to validate their authentication.
+///
+/// Lightweight, side-effect-free: a device confirms it can still reach + auth to
+/// the box before syncing. It lives behind the `AuthUser` route_layer, so simply
+/// reaching this handler means the proven iroh key (or loopback / dev) already
+/// authenticated — no bearer needed. Returns the resolved device identity.
+pub async fn device_health_check_handler(user: crate::middleware::auth::AuthUser) -> Response {
+    (
+        StatusCode::OK,
+        Json(serde_json::json!({
+            "status": "active",
+            "device_id": user.device_id,
+        })),
+    )
+        .into_response()
 }
 
 // =============================================================================
@@ -963,9 +1032,13 @@ pub async fn get_model_handler(Path(model_id): Path<String>) -> Response {
     api_response(crate::api::get_model(&model_id).await)
 }
 
-/// List recommended models with slot assignments
-pub async fn list_recommended_models_handler() -> Response {
-    api_response(crate::api::list_recommended_models().await)
+/// The picker plus the live slot map — what "Virtues default · <model>" needs.
+///
+/// `/api/models` stays a bare array (the picker's existing contract); this
+/// route adds `slots`, so the settings UI can name the model a slot currently
+/// resolves to without a second round trip.
+pub async fn list_models_with_slots_handler() -> Response {
+    api_response(crate::api::list_models_with_slots().await)
 }
 
 // =============================================================================
@@ -1191,68 +1264,12 @@ pub async fn places_details_handler(
 }
 
 // =============================================================================
-// Usage API Handlers
-// =============================================================================
-
-/// Get usage summary for all services
-pub async fn usage_handler(State(state): State<AppState>) -> Response {
-    match crate::api::get_all_usage(state.db.pool()).await {
-        Ok(summary) => (StatusCode::OK, Json(summary)).into_response(),
-        Err(e) => (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(serde_json::json!({ "error": format!("Failed to get usage: {}", e) })),
-        )
-            .into_response(),
-    }
-}
-
-/// Check remaining usage for a service
-#[derive(Debug, Deserialize)]
-pub struct UsageCheckQuery {
-    pub service: String,
-}
-
-pub async fn usage_check_handler(
-    State(state): State<AppState>,
-    Query(query): Query<UsageCheckQuery>,
-) -> Response {
-    let service = match query.service.as_str() {
-        "ai_gateway" => crate::api::Service::AiGateway,
-        "google_places" => crate::api::Service::GooglePlaces,
-        "exa" => crate::api::Service::Exa,
-        _ => {
-            return error_response(crate::error::Error::InvalidInput(format!(
-                "Invalid service: {}. Valid services: ai_gateway, google_places, exa",
-                query.service
-            )))
-        }
-    };
-
-    match crate::api::check_limit(state.db.pool(), service).await {
-        Ok(remaining) => (StatusCode::OK, Json(remaining)).into_response(),
-        Err(e) => (
-            StatusCode::TOO_MANY_REQUESTS,
-            Json(serde_json::json!({
-                "error": "usage_limit_exceeded",
-                "service": e.service,
-                "used": e.used,
-                "limit": e.limit,
-                "unit": e.unit,
-                "resets_at": e.resets_at,
-                "message": format!("Monthly {} limit reached. Resets at {}", e.service, e.resets_at)
-            })),
-        )
-            .into_response(),
-    }
-}
-
-// =============================================================================
 // Subscription & Billing API Handlers
 // =============================================================================
 
-/// GET /api/subscription - Local subscription signal (voucher model).
+/// GET /api/subscription - Local subscription signal (api_key present?).
 ///
-/// Derived from the credential vault: reports whether a billing token has
+/// Derived from the credential vault: reports whether an api_key has
 /// been claimed on this box. Gating itself is by bearer expiry, not this
 /// endpoint — see `crate::api::subscription`.
 pub async fn get_subscription_handler(State(pool): State<sqlx::PgPool>) -> Response {
@@ -1277,18 +1294,53 @@ pub async fn get_subscription_handler(State(pool): State<sqlx::PgPool>) -> Respo
 
 /// POST /api/billing/portal - Stripe billing portal.
 ///
-/// The portal belongs to Atlas (which holds the Stripe customer); the
-/// in-app entry point is not yet wired (entitlement.md §10). Returns a clean
-/// message the BillingView renders, rather than calling a route that no
-/// longer exists on virtues-api.
-pub async fn create_billing_portal_handler() -> Response {
-    (
-        StatusCode::OK,
-        Json(serde_json::json!({
-            "error": "Subscription is managed through Virtues billing. The in-app portal isn't available yet."
-        })),
-    )
-        .into_response()
+/// The portal belongs to Atlas (which holds the Stripe customer). We read the
+/// api_key from the local vault, ask Atlas to mint a Stripe-hosted
+/// Customer Portal session, and return its `url` for BillingView to open.
+/// Any failure (no api_key yet, inactive subscription, Stripe hiccup)
+/// returns a clean `{error}` string the button renders inline — never a 500.
+pub async fn create_billing_portal_handler(State(pool): State<sqlx::PgPool>) -> Response {
+    let api_key = match crate::virtues_api::renew::read_api_key(&pool).await {
+        Ok(Some(t)) => t,
+        Ok(None) => {
+            return (
+                StatusCode::OK,
+                Json(serde_json::json!({
+                    "error": "Connect your subscription first, then you can manage billing here."
+                })),
+            )
+                .into_response();
+        }
+        Err(e) => {
+            tracing::warn!("billing portal: vault read failed: {e}");
+            return (
+                StatusCode::OK,
+                Json(serde_json::json!({ "error": "Couldn't open the billing portal. Try again." })),
+            )
+                .into_response();
+        }
+    };
+
+    let atlas_url =
+        crate::virtues_api::atlas_url();
+    // The box has no stable public URL, so we don't supply a return_url —
+    // Atlas defaults it to its own public billing page (where Stripe sends the
+    // customer after they click "Return to Virtues").
+    let http = crate::http_client::virtues_api_client();
+
+    match crate::virtues_api::renew::fetch_portal_session(&http, &atlas_url, &api_key, "")
+        .await
+    {
+        Ok(url) => (StatusCode::OK, Json(serde_json::json!({ "url": url }))).into_response(),
+        Err(e) => {
+            tracing::warn!("billing portal session failed: {e}");
+            (
+                StatusCode::OK,
+                Json(serde_json::json!({ "error": "Couldn't open the billing portal. Try again." })),
+            )
+                .into_response()
+        }
+    }
 }
 
 #[derive(serde::Deserialize)]
@@ -1299,18 +1351,16 @@ pub struct ClaimRequest {
 
 /// POST /api/billing/claim — one-time onboarding step.
 ///
-/// Exchanges the Stripe checkout `session_id` for a long-lived billing token
-/// (via Atlas `/claim`) and stores it in the local credential vault. This is
-/// the only place the customer↔device link is established, and it lives only
-/// on this box. We then eagerly mint the first monthly bearer so AI works
-/// immediately; if that renewal fails it's non-fatal — the lazy
-/// `bearer_expired` → renew path will mint one on the first AI call.
+/// Exchanges the Stripe checkout `session_id` for the device api_key (via Atlas
+/// `/claim`) and stores it in the local credential vault. Atlas also registers
+/// the device + funds this period's wallet, so AI works immediately — no
+/// client-side bearer mint.
 pub async fn claim_billing_handler(
     State(pool): State<sqlx::PgPool>,
     Json(req): Json<ClaimRequest>,
 ) -> Response {
     let atlas_url =
-        std::env::var("VIRTUES_ATLAS_URL").unwrap_or_else(|_| "http://localhost:9100".to_string());
+        crate::virtues_api::atlas_url();
     let http = crate::http_client::virtues_api_client();
 
     let claim = match crate::virtues_api::renew::claim(&http, &atlas_url, &req.session_id).await {
@@ -1325,33 +1375,104 @@ pub async fn claim_billing_handler(
         }
     };
 
-    if let Err(e) = crate::virtues_api::renew::store_billing_token(&pool, &claim.billing_token).await
-    {
-        tracing::error!("failed to store billing token: {e}");
+    if let Err(e) = crate::virtues_api::renew::store_api_key(&pool, &claim.api_key).await {
+        tracing::error!("failed to store api_key: {e}");
         return (
             StatusCode::INTERNAL_SERVER_ERROR,
-            Json(serde_json::json!({ "error": "failed to store billing token" })),
+            Json(serde_json::json!({ "error": "failed to store api_key" })),
         )
             .into_response();
     }
 
-    // Eager first-bearer mint (best-effort).
-    let api_url =
-        std::env::var("VIRTUES_API_URL").unwrap_or_else(|_| "http://localhost:9002".to_string());
-    let bearer_ready =
-        match crate::virtues_api::renew::renew(&pool, &http, &atlas_url, &api_url).await {
-            Ok(_) => true,
-            Err(e) => {
-                tracing::warn!("eager bearer mint after claim failed (lazy renew will retry): {e}");
-                false
-            }
-        };
+    // Provision relay reachability (best-effort): atlas mints this box's per-SNI
+    // token; the box stores it for the relay subsystem. A failure (e.g. relay
+    // disabled → 503) just leaves the box reachable on LAN.
+    if let Err(e) =
+        crate::virtues_api::relay::fetch_and_store(&pool, &http, &atlas_url, &claim.api_key).await
+    {
+        tracing::warn!(error = %e, "relay config provisioning skipped (LAN-only reach)");
+    }
 
     (
         StatusCode::OK,
-        Json(serde_json::json!({ "claimed": true, "bearer_ready": bearer_ready })),
+        Json(serde_json::json!({ "claimed": true, "linked": true })),
     )
         .into_response()
+}
+
+/// GET /api/billing/usage — wallet balance + recent ledger for BillingView.
+///
+/// Proxies virtues-api `GET /v1/usage` (authenticated with the box's device
+/// api_key). Returns `{ balance_micros, month_to_date_micros, expires_at,
+/// entries: [{ ts, micros, kind, real_micros }] }`, or a clean `{error}`
+/// (never a 500) when not linked / the proxy is unreachable.
+pub async fn billing_usage_handler(State(pool): State<sqlx::PgPool>) -> Response {
+    if !crate::virtues_api::renew::has_api_key(&pool).await.unwrap_or(false) {
+        return (
+            StatusCode::OK,
+            Json(serde_json::json!({ "error": "Connect your subscription to see your balance." })),
+        )
+            .into_response();
+    }
+    let client = crate::virtues_api::client::BearerClient::from_env(pool);
+    match client.get_json("/v1/usage").await {
+        Ok(resp) if resp.is_success() => (StatusCode::OK, Json(resp.body)).into_response(),
+        Ok(resp) => {
+            tracing::warn!("billing usage: proxy returned {}", resp.status);
+            (StatusCode::OK, Json(serde_json::json!({ "error": "Couldn't load your balance. Try again." }))).into_response()
+        }
+        Err(e) => {
+            tracing::warn!("billing usage: proxy call failed: {e}");
+            (StatusCode::OK, Json(serde_json::json!({ "error": "Couldn't load your balance. Try again." }))).into_response()
+        }
+    }
+}
+
+/// GET /api/usage/summary — box-local AI spend breakdown for the Usage tab.
+///
+/// Reads `app_ai_calls` (the per-call cost log) and returns spend grouped by
+/// feature and by model since the start of the current UTC month, plus the
+/// month boundary. The wallet headline (balance/month-to-date) comes from the
+/// separate `/api/billing/usage` proxy — this endpoint is purely the local
+/// "where did my money go" detail. No egress.
+pub async fn usage_summary_handler(State(state): State<AppState>) -> Response {
+    use chrono::Datelike;
+    let now = chrono::Utc::now();
+    let month_start = chrono::NaiveDate::from_ymd_opt(now.year(), now.month(), 1)
+        .and_then(|d| d.and_hms_opt(0, 0, 0))
+        .map(|dt| dt.and_utc())
+        .unwrap_or(now);
+
+    let pool = state.db.pool();
+    let by_feature = crate::api::ai_calls::spend_by_feature(pool, month_start)
+        .await
+        .unwrap_or_default();
+    let by_model = crate::api::ai_calls::spend_by_model(pool, month_start)
+        .await
+        .unwrap_or_default();
+
+    (
+        StatusCode::OK,
+        Json(serde_json::json!({
+            "month_start": month_start,
+            "by_feature": by_feature,
+            "by_model": by_model,
+        })),
+    )
+        .into_response()
+}
+
+/// GET /api/telemetry/ai-calls — recent individual AI calls for the Telemetry
+/// tab's AI-call log (the window that was missing when the transcription runaway
+/// burned the wallet invisibly). Box-local `app_ai_calls`, newest first.
+pub async fn ai_calls_handler(State(state): State<AppState>) -> Response {
+    match crate::api::ai_calls::recent_calls(state.db.pool(), 100).await {
+        Ok(rows) => (StatusCode::OK, Json(rows)).into_response(),
+        Err(e) => {
+            tracing::warn!(error = %e, "ai_calls query failed");
+            (StatusCode::OK, Json(Vec::<crate::api::ai_calls::AiCallRow>::new())).into_response()
+        }
+    }
 }
 
 /// POST /api/billing/link/start — begin the device-authorization link flow.
@@ -1361,7 +1482,7 @@ pub async fn claim_billing_handler(
 /// stays box-side; only the user-facing bits are returned to the browser.
 pub async fn billing_link_start_handler(State(pool): State<sqlx::PgPool>) -> Response {
     let atlas_url =
-        std::env::var("VIRTUES_ATLAS_URL").unwrap_or_else(|_| "http://localhost:9100".to_string());
+        crate::virtues_api::atlas_url();
     let http = crate::http_client::virtues_api_client();
     match crate::virtues_api::link::start(&pool, &http, &atlas_url).await {
         Ok(s) => (StatusCode::OK, Json(serde_json::json!(s))).into_response(),
@@ -1377,14 +1498,12 @@ pub async fn billing_link_start_handler(State(pool): State<sqlx::PgPool>) -> Res
 }
 
 /// GET /api/billing/link/status — poll the in-flight link. On `ready` this
-/// stores the billing token and mints the first bearer as a side effect.
+/// stores the api_key (atlas registers the device + funds the wallet).
 pub async fn billing_link_status_handler(State(pool): State<sqlx::PgPool>) -> Response {
     let atlas_url =
-        std::env::var("VIRTUES_ATLAS_URL").unwrap_or_else(|_| "http://localhost:9100".to_string());
-    let api_url =
-        std::env::var("VIRTUES_API_URL").unwrap_or_else(|_| "http://localhost:9002".to_string());
+        crate::virtues_api::atlas_url();
     let http = crate::http_client::virtues_api_client();
-    match crate::virtues_api::link::poll(&pool, &http, &atlas_url, &api_url).await {
+    match crate::virtues_api::link::poll(&pool, &http, &atlas_url).await {
         Ok(status) => (StatusCode::OK, Json(serde_json::json!({ "status": status }))).into_response(),
         Err(e) => {
             tracing::warn!("billing link status failed: {e}");
@@ -1569,6 +1688,41 @@ pub async fn wiki_get_person_handler(
     api_response(crate::api::get_person(state.db.pool(), id).await)
 }
 
+// =============================================================================
+// Mention review queue — where a prose name becomes a person
+// =============================================================================
+
+/// The queue: floating surfaces, most frequent first.
+pub async fn list_floating_surfaces_handler(State(state): State<AppState>) -> Response {
+    api_response(crate::api::mentions::list_floating_surfaces(state.db.pool(), 200).await)
+}
+
+/// Link a surface to an existing entity. Writes the alias, backfills the
+/// history, and resolves every future occurrence — one decision, permanently.
+pub async fn link_surface_handler(
+    State(state): State<AppState>,
+    Json(request): Json<crate::api::mentions::LinkSurfaceRequest>,
+) -> Response {
+    api_response(crate::api::mentions::link_surface(&state.db, request).await)
+}
+
+/// Mint an entity from a surface, then link it.
+pub async fn create_from_surface_handler(
+    State(state): State<AppState>,
+    Json(request): Json<crate::api::mentions::CreateFromSurfaceRequest>,
+) -> Response {
+    api_response(crate::api::mentions::create_from_surface(&state.db, request).await)
+}
+
+/// Dismiss a surface — it names nothing. Never asked about again. The mentions
+/// are NOT deleted; they stay searchable as dust.
+pub async fn dismiss_surface_handler(
+    State(state): State<AppState>,
+    Json(request): Json<crate::api::mentions::DismissSurfaceRequest>,
+) -> Response {
+    api_response(crate::api::mentions::dismiss_surface(&state.db, request).await)
+}
+
 /// List all people
 pub async fn wiki_list_people_handler(State(state): State<AppState>) -> Response {
     api_response(crate::api::list_people(state.db.pool()).await)
@@ -1633,27 +1787,8 @@ pub async fn wiki_update_organization_handler(
 
 // --- Thing ---
 
-/// Get a thing by ID
-pub async fn wiki_get_thing_handler(
-    State(state): State<AppState>,
-    Path(id): Path<String>,
-) -> Response {
-    api_response(crate::api::get_thing(state.db.pool(), id).await)
-}
-
-/// List all things
-pub async fn wiki_list_things_handler(State(state): State<AppState>) -> Response {
-    api_response(crate::api::list_things(state.db.pool()).await)
-}
-
-/// Update a thing by ID
-pub async fn wiki_update_thing_handler(
-    State(state): State<AppState>,
-    Path(id): Path<String>,
-    Json(request): Json<crate::api::UpdateWikiThingRequest>,
-) -> Response {
-    api_response(crate::api::update_thing(state.db.pool(), id, request).await)
-}
+// Thing handlers retired — use /api/things (thing_*_handler) as the single
+// source over wiki_things.
 
 // --- Narrative Identity ---
 
@@ -1742,35 +1877,6 @@ pub async fn wiki_get_day_handler(
     }
 }
 
-/// Serve a day's illustration as a PNG image.
-/// Returns 200 with image/png body if the illustration exists, 404 otherwise.
-pub async fn wiki_get_day_illustration_handler(
-    State(state): State<AppState>,
-    Path(date): Path<String>,
-) -> Response {
-    let parsed = match date.parse::<chrono::NaiveDate>() {
-        Ok(d) => d,
-        Err(_) => {
-            return error_response(Error::InvalidInput(format!("Invalid date: {date}")));
-        }
-    };
-    match crate::api::wiki::get_day_illustration(state.db.pool(), parsed).await {
-        Ok(Some(bytes)) => {
-            use axum::http::header;
-            (
-                axum::http::StatusCode::OK,
-                [
-                    (header::CONTENT_TYPE, "image/png"),
-                    (header::CACHE_CONTROL, "public, max-age=86400, immutable"),
-                ],
-                bytes,
-            )
-                .into_response()
-        }
-        Ok(None) => (axum::http::StatusCode::NOT_FOUND, "no illustration").into_response(),
-        Err(e) => error_response(e),
-    }
-}
 
 /// Update a day by date
 pub async fn wiki_update_day_handler(
@@ -1885,15 +1991,153 @@ pub async fn timeline_get_day_handler(
     }
 }
 
+/// Optional `?tz=` query — the viewing device's IANA zone, used to anchor an
+/// in-progress "today" to where the owner currently is. See docs/timezone-model.md.
+#[derive(Debug, Deserialize, Default)]
+pub struct DaySourcesQuery {
+    pub tz: Option<String>,
+}
+
+/// Get the three raw record streams (location, calendar, audio) for a day, as
+/// spans — the homepage's "day before synthesis" view.
+pub async fn today_streams_handler(
+    State(state): State<AppState>,
+    Path(date): Path<String>,
+    Query(query): Query<DaySourcesQuery>,
+) -> Response {
+    match date.parse::<chrono::NaiveDate>() {
+        Ok(parsed_date) => api_response(
+            crate::api::get_today_streams(state.db.pool(), parsed_date, query.tz.as_deref()).await,
+        ),
+        Err(_) => error_response(Error::InvalidInput(format!(
+            "Invalid date format: {}",
+            date
+        ))),
+    }
+}
+
+// ============================================================================
+// Map tile cache (the Atlas) — serve map tiles from the box, caching upstream
+// tiles on first request so the browser never talks to a third-party tile
+// provider and cached areas keep working offline. See docs/map-atlas-plan.md.
+// ============================================================================
+
+/// Allowed styles → upstream tile URL template. The ONLY place the upstream
+/// provider is named, so it stays swappable (see the ToS note in the plan).
+const MAP_TILE_STYLES: &[(&str, &str)] = &[
+    ("light", "https://basemaps.cartocdn.com/light_all/{z}/{x}/{y}.png"),
+    ("dark", "https://basemaps.cartocdn.com/dark_all/{z}/{x}/{y}.png"),
+];
+
+fn map_tile_response(bytes: Vec<u8>) -> Response {
+    (
+        [
+            (axum::http::header::CONTENT_TYPE, "image/png".to_string()),
+            (
+                axum::http::header::CACHE_CONTROL,
+                "public, max-age=31536000, immutable".to_string(),
+            ),
+            (axum::http::header::CONTENT_LENGTH, bytes.len().to_string()),
+        ],
+        bytes,
+    )
+        .into_response()
+}
+
+async fn fetch_upstream_tile(url: &str) -> Result<Vec<u8>, Error> {
+    let client = crate::http_client::base_builder()
+        .timeout(std::time::Duration::from_secs(15))
+        .user_agent("virtues-box atlas (self-hosted personal map cache)")
+        .build()
+        .map_err(|e| Error::Other(format!("tile client: {e}")))?;
+    let resp = client
+        .get(url)
+        .send()
+        .await
+        .map_err(|e| Error::Other(format!("tile GET {url}: {e}")))?
+        .error_for_status()
+        .map_err(|e| Error::Other(format!("tile status {url}: {e}")))?;
+    let bytes = resp
+        .bytes()
+        .await
+        .map_err(|e| Error::Other(format!("tile body {url}: {e}")))?;
+    Ok(bytes.to_vec())
+}
+
+/// Serve a map tile, caching it from upstream on first request.
+pub async fn map_tile_handler(
+    State(state): State<AppState>,
+    Path((style, z, x, y)): Path<(String, u32, u32, u32)>,
+) -> Response {
+    let tmpl = match MAP_TILE_STYLES.iter().find(|(s, _)| *s == style) {
+        Some((_, t)) => *t,
+        None => return (axum::http::StatusCode::NOT_FOUND, "unknown map style").into_response(),
+    };
+    // Reject nonsense coordinates so nobody can drive arbitrary upstream URLs.
+    if z > 19 || x >= (1u32 << z) || y >= (1u32 << z) {
+        return (axum::http::StatusCode::BAD_REQUEST, "tile out of range").into_response();
+    }
+
+    let key = format!("map_tiles/{style}/{z}/{x}/{y}.png");
+
+    // Cache hit — served straight from the box, never leaves it.
+    if let Ok(bytes) = state.storage.download(&key).await {
+        return map_tile_response(bytes);
+    }
+
+    // Miss — fetch once from upstream, cache, serve.
+    let url = tmpl
+        .replace("{z}", &z.to_string())
+        .replace("{x}", &x.to_string())
+        .replace("{y}", &y.to_string());
+    match fetch_upstream_tile(&url).await {
+        Ok(bytes) => {
+            // Best-effort cache; still serve even if the write fails.
+            let _ = state.storage.upload(&key, bytes.clone()).await;
+            map_tile_response(bytes)
+        }
+        // Offline / upstream error: Leaflet's errorTileUrl renders a blank tile.
+        Err(_) => (axum::http::StatusCode::BAD_GATEWAY, "tile unavailable").into_response(),
+    }
+}
+
+/// `?limit=N` for the small home-page list endpoints.
+#[derive(Debug, Deserialize, Default)]
+pub struct LimitQuery {
+    pub limit: Option<i64>,
+}
+
+/// Current weather for the home masthead (null until the weather_sync cron runs).
+pub async fn weather_now_handler(State(state): State<AppState>) -> Response {
+    api_response(crate::api::get_current_weather(state.db.pool()).await)
+}
+
+/// The next few calendar events (holidays/birthdays filtered).
+pub async fn calendar_upcoming_handler(
+    State(state): State<AppState>,
+    Query(q): Query<LimitQuery>,
+) -> Response {
+    api_response(crate::api::get_calendar_upcoming(state.db.pool(), q.limit.unwrap_or(5)).await)
+}
+
+/// Places visited but never named — the home "name this place" ask.
+pub async fn unnamed_places_handler(
+    State(state): State<AppState>,
+    Query(q): Query<LimitQuery>,
+) -> Response {
+    api_response(crate::api::get_unnamed_places(state.db.pool(), q.limit.unwrap_or(3)).await)
+}
+
 /// Get data sources (ontology records) for a day
 pub async fn wiki_get_day_sources_handler(
     State(state): State<AppState>,
     Path(date): Path<String>,
+    Query(query): Query<DaySourcesQuery>,
 ) -> Response {
     match date.parse::<chrono::NaiveDate>() {
-        Ok(parsed_date) => {
-            api_response(crate::api::get_day_sources(state.db.pool(), parsed_date).await)
-        }
+        Ok(parsed_date) => api_response(
+            crate::api::get_day_sources(state.db.pool(), parsed_date, query.tz.as_deref()).await,
+        ),
         Err(_) => error_response(Error::InvalidInput(format!(
             "Invalid date format: {}",
             date
@@ -1941,8 +2185,8 @@ pub async fn wiki_get_day_streams_handler(
 /// Execute Python code in a sandboxed environment
 ///
 /// Used by the AI agent's code_interpreter tool.
-/// On Linux, uses nsjail for process isolation.
-/// On dev machines (macOS/Windows), runs Python directly.
+/// On the appliance (Linux), isolates each run in a transient systemd-run unit.
+/// On dev machines (macOS/Windows, debug builds), runs Python directly.
 pub async fn execute_code_handler(Json(request): Json<crate::api::ExecuteCodeRequest>) -> Response {
     let response = crate::api::execute_code(request).await;
     (StatusCode::OK, Json(response)).into_response()
@@ -2068,6 +2312,20 @@ pub async fn chat_handler(
     .await
 }
 
+/// POST /api/ai/complete - Lean inline AI completion (live AI cursor)
+pub async fn ai_complete_handler(
+    State(state): State<AppState>,
+    user: crate::middleware::auth::AuthUser,
+    Json(request): Json<crate::api::ai_complete::AiCompleteRequest>,
+) -> Response {
+    crate::api::ai_complete::ai_complete_handler(
+        axum::extract::State(state.db.pool().clone()),
+        user,
+        Json(request),
+    )
+    .await
+}
+
 /// POST /api/chat/cancel - Cancel an in-progress chat request
 pub async fn cancel_chat_handler(
     State(state): State<AppState>,
@@ -2122,24 +2380,11 @@ pub async fn remove_chat_permission_handler(
 // Auth API Handlers
 // =============================================================================
 
-/// POST /auth/signout — sign out of this tab; device row untouched.
-pub async fn auth_signout_handler(
-    State(state): State<AppState>,
-    jar: axum_extra::extract::cookie::CookieJar,
-) -> Response {
-    crate::api::auth::signout_handler(axum::extract::State(state.db.pool().clone()), jar)
-        .await
-        .into_response()
-}
-
-/// GET /auth/session — current paired-device session (or null if not paired).
-pub async fn auth_session_handler(
-    State(state): State<AppState>,
-    jar: axum_extra::extract::cookie::CookieJar,
-) -> Response {
-    crate::api::auth::session_handler(axum::extract::State(state.db.pool().clone()), jar)
-        .await
-        .into_response()
+/// GET /auth/session — current session (or null if not paired). Authenticated by
+/// the `AuthUser` extractor (proven iroh key / loopback console / dev fallback);
+/// there is no cookie/signout — the credential is the device's iroh key.
+pub async fn auth_session_handler(user: Option<crate::middleware::auth::AuthUser>) -> Response {
+    crate::api::auth::session_handler(user).await.into_response()
 }
 
 // =============================================================================
@@ -2353,6 +2598,11 @@ pub async fn reconcile_drive_usage_handler(State(state): State<AppState>) -> Res
 // =============================================================================
 
 /// GET /api/drive/trash - List files in trash
+/// GET /api/drive/media — the app's internal assets (.media/). Read-only.
+pub async fn list_drive_media_handler(State(state): State<AppState>) -> Response {
+    api_response(crate::api::list_drive_media(state.db.pool()).await)
+}
+
 pub async fn list_drive_trash_handler(State(state): State<AppState>) -> Response {
     api_response(crate::api::list_drive_trash(state.db.pool()).await)
 }
@@ -2483,8 +2733,10 @@ pub async fn hydrate_profile_handler(
         .and_then(|v| v.to_str().ok())
         .unwrap_or("");
 
-    // In production, require the secret; in dev, allow any request
-    let is_production = std::env::var("RUST_ENV")
+    // In production, require the secret; in dev, allow any request.
+    // Keyed off ENVIRONMENT (what the installer actually sets) — RUST_ENV was never
+    // set, which silently disabled this auth check in production.
+    let is_production = std::env::var("ENVIRONMENT")
         .map(|v| v == "production")
         .unwrap_or(false);
 
@@ -2550,6 +2802,14 @@ pub async fn get_page_handler(State(state): State<AppState>, Path(id): Path<Stri
     api_response(crate::api::get_page(state.db.pool(), &id).await)
 }
 
+/// GET /api/records/:ontology/:record_id - fetch one raw life-graph record.
+pub async fn get_record_handler(
+    State(state): State<AppState>,
+    Path((ontology, record_id)): Path<(String, String)>,
+) -> Response {
+    api_response(crate::api::records::get_record(state.db.pool(), &ontology, &record_id).await)
+}
+
 /// POST /api/pages - Create a new page
 pub async fn create_page_handler(
     State(state): State<AppState>,
@@ -2581,6 +2841,14 @@ pub async fn delete_page_handler(
     }
 }
 
+/// GET /api/pages/:id/backlinks - Get inbound references (pages linking here)
+pub async fn get_page_backlinks_handler(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> Response {
+    api_response(crate::api::get_page_backlinks(state.db.pool(), &id).await)
+}
+
 /// GET /api/pages/reflections/:date - Get all reflections for a date
 pub async fn get_reflections_handler(
     State(state): State<AppState>,
@@ -2606,12 +2874,12 @@ pub struct EntitySearchQuery {
     pub q: String,
 }
 
-/// GET /api/pages/search/entities - Search entities for autocomplete
-pub async fn search_entities_handler(
+/// GET /api/pages/search/refs - Search entities for autocomplete
+pub async fn search_refs_handler(
     State(state): State<AppState>,
     Query(query): Query<EntitySearchQuery>,
 ) -> Response {
-    api_response(crate::api::search_entities(state.db.pool(), &query.q).await)
+    api_response(crate::api::search_refs(state.db.pool(), &query.q).await)
 }
 
 // ============================================================================
@@ -2785,7 +3053,7 @@ pub async fn list_things_handler(
     )
 }
 
-/// GET /api/things/:id — single thing with pins.
+/// GET /api/things/:id — single thing.
 pub async fn get_thing_handler(
     State(state): State<AppState>,
     Path(id): Path<String>,
@@ -2820,47 +3088,6 @@ pub async fn delete_thing_handler(
 ) -> Response {
     match crate::api::things::delete_thing(state.db.pool(), &id).await {
         Ok(_) => success_message("Thing deleted"),
-        Err(e) => error_response(e),
-    }
-}
-
-/// POST /api/things/:id/pins — add a pin (dedupes on url).
-pub async fn add_thing_pin_handler(
-    State(state): State<AppState>,
-    Path(id): Path<String>,
-    Json(request): Json<crate::api::AddThingPinRequest>,
-) -> Response {
-    match crate::api::things::add_thing_pin(state.db.pool(), &id, request).await {
-        Ok(pin) => (StatusCode::CREATED, Json(pin)).into_response(),
-        Err(e) => error_response(e),
-    }
-}
-
-#[derive(Debug, Deserialize)]
-pub struct RemoveThingPinRequest {
-    pub url: String,
-}
-
-/// DELETE /api/things/:id/pins — remove a pin by url.
-pub async fn remove_thing_pin_handler(
-    State(state): State<AppState>,
-    Path(id): Path<String>,
-    Json(request): Json<RemoveThingPinRequest>,
-) -> Response {
-    match crate::api::things::remove_thing_pin(state.db.pool(), &id, &request.url).await {
-        Ok(_) => success_message("Pin removed from thing"),
-        Err(e) => error_response(e),
-    }
-}
-
-/// PUT /api/things/:id/pins/reorder — reorder pins.
-pub async fn reorder_thing_pins_handler(
-    State(state): State<AppState>,
-    Path(id): Path<String>,
-    Json(request): Json<crate::api::ReorderThingPinsRequest>,
-) -> Response {
-    match crate::api::things::reorder_thing_pins(state.db.pool(), &id, request).await {
-        Ok(_) => success_message("Thing pins reordered"),
         Err(e) => error_response(e),
     }
 }
@@ -2922,82 +3149,87 @@ pub async fn reorder_pins_handler(
 }
 
 // ============================================================================
-// Spaces Handlers
+// Notebooks Handlers
 // ============================================================================
 
-/// GET /api/spaces - List all spaces
-pub async fn list_spaces_handler(State(state): State<AppState>) -> Response {
-    api_response(crate::api::spaces::list_spaces(state.db.pool()).await)
+/// GET /api/notebooks - List all notebooks
+pub async fn list_notebooks_handler(State(state): State<AppState>) -> Response {
+    api_response(crate::api::notebooks::list_notebooks(state.db.pool()).await)
 }
 
-/// GET /api/spaces/:id - Get a single space
-pub async fn get_space_handler(State(state): State<AppState>, Path(id): Path<String>) -> Response {
-    api_response(crate::api::spaces::get_space(state.db.pool(), &id).await)
+/// GET /api/notebooks/:id - Get a single notebook with its members
+pub async fn get_notebook_handler(State(state): State<AppState>, Path(id): Path<String>) -> Response {
+    api_response(crate::api::notebooks::get_notebook(state.db.pool(), &id).await)
 }
 
-/// PUT /api/spaces/:id - Update a space
-pub async fn update_space_handler(
+/// POST /api/notebooks - Create a notebook
+pub async fn create_notebook_handler(
+    State(state): State<AppState>,
+    Json(request): Json<crate::api::notebooks::CreateNotebookRequest>,
+) -> Response {
+    match crate::api::notebooks::create_notebook(state.db.pool(), request).await {
+        Ok(notebook) => (StatusCode::CREATED, Json(notebook)).into_response(),
+        Err(e) => error_response(e),
+    }
+}
+
+/// PUT /api/notebooks/:id - Update a notebook
+pub async fn update_notebook_handler(
     State(state): State<AppState>,
     Path(id): Path<String>,
-    Json(request): Json<crate::api::spaces::UpdateSpaceRequest>,
+    Json(request): Json<crate::api::notebooks::UpdateNotebookRequest>,
 ) -> Response {
-    api_response(crate::api::spaces::update_space(state.db.pool(), &id, request).await)
+    api_response(crate::api::notebooks::update_notebook(state.db.pool(), &id, request).await)
 }
 
-/// GET /api/spaces/:id/views - Get views for a space
-pub async fn list_space_views_handler(
+/// DELETE /api/notebooks/:id - Delete a notebook
+pub async fn delete_notebook_handler(
     State(state): State<AppState>,
     Path(id): Path<String>,
 ) -> Response {
-    api_response(crate::api::views::list_views(state.db.pool(), &id).await)
+    match crate::api::notebooks::delete_notebook(state.db.pool(), &id).await {
+        Ok(_) => success_message("Notebook deleted"),
+        Err(e) => error_response(e),
+    }
 }
 
-/// GET /api/spaces/:id/items - Get root-level items for a space
-pub async fn list_space_items_handler(
+/// POST /api/notebooks/:id/items - Add a member URL to a notebook
+pub async fn add_notebook_item_handler(
     State(state): State<AppState>,
     Path(id): Path<String>,
+    Json(request): Json<crate::api::notebooks::AddNotebookItemRequest>,
 ) -> Response {
-    api_response(crate::api::views::resolve_space_items(state.db.pool(), &id).await)
-}
-
-/// POST /api/spaces/:id/items - Add item to space root level
-pub async fn add_space_item_handler(
-    State(state): State<AppState>,
-    Path(id): Path<String>,
-    Json(request): Json<ViewItemRequest>,
-) -> Response {
-    match crate::api::views::add_space_item(state.db.pool(), &id, &request.url).await {
+    match crate::api::notebooks::add_notebook_item(state.db.pool(), &id, request).await {
         Ok(item) => (StatusCode::CREATED, Json(item)).into_response(),
         Err(e) => error_response(e),
     }
 }
 
-/// DELETE /api/spaces/:id/items - Remove item from space root level
-pub async fn remove_space_item_handler(
+#[derive(Debug, Deserialize)]
+pub struct RemoveNotebookItemRequest {
+    pub url: String,
+}
+
+/// DELETE /api/notebooks/:id/items - Remove a member URL from a notebook
+pub async fn remove_notebook_item_handler(
     State(state): State<AppState>,
     Path(id): Path<String>,
-    Json(request): Json<ViewItemRequest>,
+    Json(request): Json<RemoveNotebookItemRequest>,
 ) -> Response {
-    match crate::api::views::remove_space_item(state.db.pool(), &id, &request.url).await {
-        Ok(_) => success_message("Item removed from space"),
+    match crate::api::notebooks::remove_notebook_item(state.db.pool(), &id, &request.url).await {
+        Ok(_) => success_message("Item removed from notebook"),
         Err(e) => error_response(e),
     }
 }
 
-/// Request to reorder space items with explicit sort_order values
-#[derive(serde::Deserialize)]
-pub struct ReorderSpaceItemsRequest {
-    pub items: Vec<crate::api::views::ItemSortOrder>,
-}
-
-/// PUT /api/spaces/:id/items/reorder - Reorder space root items
-pub async fn reorder_space_items_handler(
+/// PUT /api/notebooks/:id/items/reorder - Reorder notebook members
+pub async fn reorder_notebook_items_handler(
     State(state): State<AppState>,
     Path(id): Path<String>,
-    Json(request): Json<ReorderSpaceItemsRequest>,
+    Json(request): Json<crate::api::notebooks::ReorderNotebookItemsRequest>,
 ) -> Response {
-    match crate::api::views::reorder_space_items(state.db.pool(), &id, request.items).await {
-        Ok(_) => success_message("Space items reordered"),
+    match crate::api::notebooks::reorder_notebook_items(state.db.pool(), &id, request).await {
+        Ok(_) => success_message("Notebook items reordered"),
         Err(e) => error_response(e),
     }
 }
@@ -3017,113 +3249,6 @@ pub async fn get_namespace_handler(
     Path(name): Path<String>,
 ) -> Response {
     api_response(crate::api::namespaces::get_namespace(state.db.pool(), &name).await)
-}
-
-// ============================================================================
-// Views Handlers
-// ============================================================================
-
-/// POST /api/views - Create a new view
-pub async fn create_view_handler(
-    State(state): State<AppState>,
-    Json(request): Json<crate::api::views::CreateViewRequest>,
-) -> Response {
-    match crate::api::views::create_view(state.db.pool(), request).await {
-        Ok(view) => (StatusCode::CREATED, Json(view)).into_response(),
-        Err(e) => error_response(e),
-    }
-}
-
-/// GET /api/views/:id - Get a view
-pub async fn get_view_handler(State(state): State<AppState>, Path(id): Path<String>) -> Response {
-    api_response(crate::api::views::get_view(state.db.pool(), &id).await)
-}
-
-/// PUT /api/views/:id - Update a view
-pub async fn update_view_handler(
-    State(state): State<AppState>,
-    Path(id): Path<String>,
-    Json(request): Json<crate::api::views::UpdateViewRequest>,
-) -> Response {
-    api_response(crate::api::views::update_view(state.db.pool(), &id, request).await)
-}
-
-/// DELETE /api/views/:id - Delete a view
-pub async fn delete_view_handler(
-    State(state): State<AppState>,
-    Path(id): Path<String>,
-) -> Response {
-    match crate::api::views::delete_view(state.db.pool(), &id).await {
-        Ok(_) => success_message("View deleted successfully"),
-        Err(e) => error_response(e),
-    }
-}
-
-/// Request for resolve view with optional pagination
-#[derive(serde::Deserialize)]
-pub struct ResolveViewQuery {
-    pub limit: Option<i64>,
-    pub offset: Option<i64>,
-}
-
-/// POST /api/views/:id/resolve - Resolve a view to its entities
-pub async fn resolve_view_handler(
-    State(state): State<AppState>,
-    Path(id): Path<String>,
-    Query(query): Query<ResolveViewQuery>,
-) -> Response {
-    api_response(
-        crate::api::views::resolve_view(state.db.pool(), &id, query.limit, query.offset).await,
-    )
-}
-
-/// Request to add/remove item from view
-#[derive(serde::Deserialize)]
-pub struct ViewItemRequest {
-    pub url: String,
-}
-
-/// POST /api/views/:id/items - Add an item to a manual view
-pub async fn add_view_item_handler(
-    State(state): State<AppState>,
-    Path(id): Path<String>,
-    Json(request): Json<ViewItemRequest>,
-) -> Response {
-    api_response(crate::api::views::add_item_to_view(state.db.pool(), &id, &request.url).await)
-}
-
-/// DELETE /api/views/:id/items - Remove an item from a manual view
-pub async fn remove_view_item_handler(
-    State(state): State<AppState>,
-    Path(id): Path<String>,
-    Json(request): Json<ViewItemRequest>,
-) -> Response {
-    api_response(crate::api::views::remove_item_from_view(state.db.pool(), &id, &request.url).await)
-}
-
-/// GET /api/views/:id/items - List items in a manual view
-pub async fn list_view_items_handler(
-    State(state): State<AppState>,
-    Path(id): Path<String>,
-) -> Response {
-    api_response(crate::api::views::list_view_items(state.db.pool(), &id).await)
-}
-
-/// Request to reorder view items
-#[derive(serde::Deserialize)]
-pub struct ReorderViewItemsRequest {
-    pub url_order: Vec<String>,
-}
-
-/// PUT /api/views/:id/items/reorder - Reorder items in a manual view
-pub async fn reorder_view_items_handler(
-    State(state): State<AppState>,
-    Path(id): Path<String>,
-    Json(request): Json<ReorderViewItemsRequest>,
-) -> Response {
-    api_response(
-        crate::api::views::reorder_view_items(state.db.pool(), &id, request.url_order).await,
-    )
 }
 
 // ============================================================================

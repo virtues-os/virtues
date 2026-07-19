@@ -13,9 +13,22 @@
 	import PageCoverImage from "$lib/components/pages/PageCoverImage.svelte";
 	import PageStatusBar from "$lib/components/pages/PageStatusBar.svelte";
 	import PageToolbar from "$lib/components/pages/PageToolbar.svelte";
+	import PageOutline from "$lib/components/pages/PageOutline.svelte";
+	import ReferencesPanel from "$lib/components/pages/ReferencesPanel.svelte";
+	import type { PageHeading } from "$lib/codemirror/outline";
+	import type { EditorView } from "@codemirror/view";
 	import { Popover } from "$lib/floating";
-	import { createPageShare, getPageShare, deletePageShare } from "$lib/api/client";
+	import {
+		createPageShare,
+		getPageShare,
+		deletePageShare,
+		getPageBacklinks,
+		request,
+		ApiError,
+		type Backlink,
+	} from "$lib/api/client";
 	import { pagesStore } from "$lib/stores/pages.svelte";
+	import { pageDisplay } from "$lib/stores/pageDisplay.svelte";
 	import { createYjsDocument, type YjsDocument } from "$lib/yjs";
 	import { saveVersion } from "$lib/yjs/versions";
 	import { onDestroy, onMount, untrack } from "svelte";
@@ -58,9 +71,6 @@
 	let icon = $state<string | null>(null);
 	let coverUrl = $state<string | null>(null);
 	let showCoverPicker = $state(false);
-	type WidthMode = "small" | "medium" | "full";
-	let widthMode = $state<WidthMode>("medium");
-	let showDragHandles = $state(true);
 	let loading = $state(false);
 	let saving = $state(false);
 	let hasSaved = $state(false);
@@ -102,15 +112,49 @@
 	// content arrives via Y.Text sync.
 
 	// Editor ref for focusing
-	let editorContainerEl: HTMLDivElement;
+	let editorContainerEl = $state<HTMLDivElement>();
 
 	// Doc stats from CodeMirror (updated via onDocChange callback)
 	let wordCount = $state(0);
 	let charCount = $state(0);
 	let linkCount = $state(0);
 
-	// TODO: Fetch actual backlinks from API
-	const backlinks = $state(0);
+	// References (backlinks) — pages that link to this one. Loaded lazily; the
+	// panel is a quiet, summonable right-hand rail, not always-on chrome.
+	let showReferences = $state(false);
+	let outline = $state<PageHeading[]>([]);
+	let editorView = $state<EditorView | null>(null);
+	let backlinks = $state<Backlink[]>([]);
+	let backlinksLoading = $state(false);
+	let backlinksLoadedFor = $state<string | null>(null);
+
+	async function loadBacklinks() {
+		if (!pageId) return;
+		// Avoid refetching the same page's backlinks on repeat toggles.
+		if (backlinksLoadedFor === pageId) return;
+		backlinksLoading = true;
+		try {
+			const refs = await getPageBacklinks(pageId);
+			// Guard against a page switch mid-flight.
+			if (pageId === lastLoadedPageId) {
+				backlinks = refs;
+				backlinksLoadedFor = pageId;
+			}
+		} catch (e) {
+			console.error("Failed to load backlinks:", e);
+		} finally {
+			backlinksLoading = false;
+		}
+	}
+
+	function toggleReferences() {
+		showReferences = !showReferences;
+		if (showReferences) loadBacklinks();
+	}
+
+	function openReference(refPageId: string, title: string) {
+		onNavigate?.(`/page/${refPageId}`);
+	}
 
 	// Copy state
 	let copied = $state(false);
@@ -171,11 +215,21 @@
 	// Track the last loaded pageId to avoid reloading the same page
 	let lastLoadedPageId = $state<string | null>(null);
 
-	// Load drag handles preference from localStorage
-	const DRAG_HANDLES_KEY = "virtues-show-drag-handles";
+	// Flush a pending debounced save immediately (e.g. on unmount/unload).
+	// Without this, closing or switching the in-app tab within the 1s debounce
+	// window drops the title change and the recents list shows the stale title.
+	function flushSave() {
+		if (saveTimeout) {
+			clearTimeout(saveTimeout);
+			saveTimeout = null;
+			save();
+		}
+	}
 
 	// beforeunload: warn user about unsaved changes
 	function handleBeforeUnload(e: BeforeUnloadEvent) {
+		// Flush any pending title save before the page goes away.
+		flushSave();
 		if (hasUnsavedChanges) {
 			e.preventDefault();
 		}
@@ -184,42 +238,21 @@
 	// visibilitychange: flush pending saves + auto-snapshot when tab is backgrounded
 	function handleVisibilityChange() {
 		if (document.hidden) {
-			if (saveTimeout) {
-				clearTimeout(saveTimeout);
-				saveTimeout = null;
-				save();
-			}
+			flushSave();
 			// Auto-snapshot on blur with keepalive so the request survives tab switch
 			autoSnapshot('Auto-saved (background)', true);
 		}
 	}
 
 	onMount(async () => {
-		// Load drag handles preference
-		try {
-			const saved = localStorage.getItem(DRAG_HANDLES_KEY);
-			if (saved !== null) showDragHandles = JSON.parse(saved);
-		} catch {}
-
 		// Register global handlers for content protection
 		window.addEventListener("beforeunload", handleBeforeUnload);
 		document.addEventListener("visibilitychange", handleVisibilityChange);
 
-		console.log(
-			"[PageContent] onMount, pageId:",
-			pageId,
-			"active:",
-			active,
-		);
 		if (pageId && pageId !== lastLoadedPageId) {
 			lastLoadedPageId = pageId;
 			await loadPage();
 		}
-	});
-
-	// Persist drag handles preference
-	$effect(() => {
-		localStorage.setItem(DRAG_HANDLES_KEY, JSON.stringify(showDragHandles));
 	});
 
 	onDestroy(() => {
@@ -231,6 +264,9 @@
 		);
 		// Cancel in-flight fetch
 		loadAbortController?.abort();
+		// Flush any pending title save before tearing down (SPA tab switch/close).
+		// The app stays alive, so the fire-and-forget save() completes.
+		flushSave();
 		// Clear all pending timers
 		if (saveTimeout) clearTimeout(saveTimeout);
 		if (typingTimeout) clearTimeout(typingTimeout);
@@ -257,10 +293,6 @@
 		if (currentPageId && isActive) {
 			untrack(() => {
 				if (currentPageId !== lastLoadedPageId) {
-					console.log(
-						"[PageContent] pageId changed, reloading:",
-						currentPageId,
-					);
 					lastLoadedPageId = currentPageId;
 					loadPage();
 				}
@@ -295,19 +327,17 @@
 		isSynced = false;
 		isConnected = false;
 
+		// Reset references for the new page (refetched on next panel open)
+		backlinks = [];
+		backlinksLoadedFor = null;
+		if (showReferences) loadBacklinks();
+
 		try {
-			const response = await fetch(`/api/pages/${pageId}`, {
+			// Uses the underlying typed `request` (not the getPage wrapper) so we
+			// can carry the abort signal that cancels a stale load on page switch.
+			const data = await request<PageData>(`/pages/${encodeURIComponent(pageId)}`, {
 				signal: loadAbortController.signal,
 			});
-			if (!response.ok) {
-				if (response.status === 404) {
-					error = "Page not found";
-				} else {
-					throw new Error("Failed to load page");
-				}
-				return;
-			}
-			const data: PageData = await response.json();
 			pageData = data;
 			title = data.title;
 			// Content will be synced via Yjs, but we set it for initial display and word count
@@ -372,6 +402,10 @@
 		} catch (e) {
 			// Ignore aborted fetches (cancelled by a newer loadPage call)
 			if (e instanceof DOMException && e.name === "AbortError") return;
+			if (e instanceof ApiError && e.status === 404) {
+				error = "Page not found";
+				return;
+			}
 			error = e instanceof Error ? e.message : "Failed to load page";
 		} finally {
 			loading = false;
@@ -557,16 +591,19 @@
 		</div>
 	{:else if pageData}
 		<div class="page-layout">
-			<!-- Top Action Bar - flush to window -->
+			<!-- Top bar: TOC (left) + page actions (right), one classic row -->
+			<div class="page-topbar">
+			<PageOutline headings={outline} view={editorView} />
 			<PageToolbar
 				{icon}
 				{coverUrl}
-				{widthMode}
 				{copied}
 				{pageId}
 				{yjsDoc}
 				bind:showCoverPicker
 				isShared={!!shareToken}
+				referencesActive={showReferences}
+				onToggleReferences={toggleReferences}
 				onShare={handleShare}
 				onIconSelect={(value) => {
 					icon = value;
@@ -580,22 +617,25 @@
 					coverUrl = url;
 					save();
 				}}
-				onWidthCycle={() => {
-					const modes: WidthMode[] = ["small", "medium", "full"];
-					const currentIndex = modes.indexOf(widthMode);
-					widthMode = modes[(currentIndex + 1) % modes.length];
-				}}
 				onCopyMarkdown={copyMarkdown}
 				onDelete={deletePage}
 			/>
+			</div>
 
+			<!-- Body: scrollable editor + optional References rail -->
+			<div class="page-body">
 			<!-- Main Content Area -->
-			<div class="page-content">
+			<div
+				class="page-content"
+				style:--editor-font-family={pageDisplay.fontFamily}
+				style:--editor-font-size={pageDisplay.fontSize}
+				style:--editor-line-height={pageDisplay.lineHeight}
+			>
 				<!-- Cover Image - above title, full bleed -->
 				{#if coverUrl}
 					<PageCoverImage
 						{coverUrl}
-						{widthMode}
+						widthMode={pageDisplay.widthMode}
 						onChangeCover={() => (showCoverPicker = true)}
 						onRemoveCover={() => {
 							coverUrl = null;
@@ -606,10 +646,9 @@
 
 				<div
 					class="page-inner"
-					class:width-small={widthMode === "small"}
-					class:width-medium={widthMode === "medium"}
-					class:width-full={widthMode === "full"}
-					class:has-line-numbers={showDragHandles}
+					class:width-small={pageDisplay.widthMode === "small"}
+					class:width-medium={pageDisplay.widthMode === "medium"}
+					class:width-full={pageDisplay.widthMode === "full"}
 				>
 					<!-- Header -->
 					<div class="page-header">
@@ -675,17 +714,29 @@
 								<CodeMirrorEditor
 									initialContent={content}
 									onDocChange={handleDocChange}
-									placeholder="Type / for commands, @ for entities..."
+									onOutline={(h) => (outline = h)}
+									onViewReady={(v) => (editorView = v)}
+									placeholder="Start writing, or press / for commands…"
 									{yjsDoc}
 									{isConnected}
 									{isSynced}
-									{showDragHandles}
 									{pageId}
+									pageTitle={title}
 								/>
 							{/key}
 						{/if}
 					</div>
 				</div>
+			</div>
+
+			{#if showReferences}
+				<ReferencesPanel
+					{backlinks}
+					loading={backlinksLoading}
+					onOpen={openReference}
+					onClose={() => (showReferences = false)}
+				/>
+			{/if}
 			</div>
 
 			<!-- Bottom Status Bar -->
@@ -714,9 +765,30 @@
 		min-height: 0;
 	}
 
+	/* One classic top bar: TOC trigger (left) + page actions (right). Relative so
+	   the outline drawer anchors to it and spans the full width. */
+	.page-topbar {
+		position: relative;
+		display: flex;
+		align-items: center;
+		z-index: var(--z-sticky);
+	}
+	.page-topbar :global(.page-toolbar) {
+		flex: 1;
+	}
+
+	/* Body - editor + optional references rail, side by side */
+	.page-body {
+		flex: 1;
+		display: flex;
+		min-height: 0;
+		overflow: hidden;
+	}
+
 	/* Main Content Area - scrollable */
 	.page-content {
 		flex: 1;
+		min-width: 0;
 		overflow-y: auto;
 		padding: 2rem 1.5rem;
 		padding-bottom: 4rem;
@@ -739,18 +811,13 @@
 		max-width: 100%;
 	}
 
-	/* Page Header */
+	/* Page Header — title hugs the body so it reads as one document
+	   (the editor's own .cm-content adds ~8px on top of this). */
 	.page-header {
 		display: flex;
 		align-items: flex-start;
 		gap: 12px;
-		margin-bottom: 1.5rem;
-		transition: padding-left 0.15s ease;
-	}
-
-	/* Match header padding to editor gutter */
-	.has-line-numbers .page-header {
-		padding-left: 2rem;
+		margin-bottom: 0.5rem;
 	}
 
 	.page-title-input {

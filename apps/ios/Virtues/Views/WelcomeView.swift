@@ -31,11 +31,11 @@ struct WelcomeView: View {
                     iconColor: .warmPrimary,
                     title: "What is Virtues?"
                 ) {
-                    Text("Virtues collects personal data from your device to power AI-powered insights about your life.")
+                    Text("This app collects data from your iPhone and sends it to your Virtues box — a device you control.")
                         .font(.subheadline)
                         .foregroundColor(.warmForegroundMuted)
 
-                    Text("Use it standalone to track your day, or sync to a Virtues server for the full AI experience.")
+                    Text("The app collects; your box does the analysis. Your data lives on your box, not on our servers.")
                         .font(.subheadline)
                         .foregroundColor(.warmForegroundMuted)
                         .padding(.top, 4)
@@ -60,7 +60,7 @@ struct WelcomeView: View {
                     iconColor: .warmSuccess,
                     title: "Your Data Streams"
                 ) {
-                    Text("Enable sensors in the Data tab. Each unlocks new AI capabilities:")
+                    Text("Turn on sensors in the Data tab. Each adds to what your box can understand:")
                         .font(.subheadline)
                         .foregroundColor(.warmForegroundMuted)
                         .padding(.bottom, 8)
@@ -87,19 +87,19 @@ struct WelcomeView: View {
                     }
                 }
 
-                // Server Sync
+                // Pair with your box
                 WelcomeSection(
                     icon: "server.rack",
                     iconColor: .warmForegroundMuted,
-                    title: "Server Sync (Optional)"
+                    title: "Pair with your box"
                 ) {
                     VStack(alignment: .leading, spacing: 8) {
-                        BulletPoint(text: "Go to Settings → Connect to Server")
-                        BulletPoint(text: "Enter your Virtues server URL")
-                        BulletPoint(text: "Device ID is your identifier (no password needed)")
+                        BulletPoint(text: "Go to Settings and pair with your box")
+                        BulletPoint(text: "Scan its QR code, or enter the pairing code")
+                        BulletPoint(text: "No password — your device's key is its identity")
                     }
 
-                    Text("Not required for local tracking!")
+                    Text("Pairing is required: the app uploads to your box, it doesn't analyze on the phone.")
                         .font(.caption)
                         .foregroundColor(.warmForegroundMuted)
                         .italic()

@@ -154,13 +154,53 @@ pub async fn get_activity_metrics(db: &Database) -> Result<ActivityMetrics> {
         })
         .collect();
 
+    // Per-action throughput (the closest real "stream" dimension app_action_runs
+    // carries — one row per action by its display name).
+    let stream_rows = sqlx::query(
+        r#"
+        SELECT
+            COALESCE(t.name, '(deleted action)') as stream_name,
+            COUNT(*) as job_count,
+            SUM(CASE WHEN r.status = 'success' THEN 1 ELSE 0 END) as succeeded,
+            SUM(CASE WHEN r.status = 'error' THEN 1 ELSE 0 END) as failed,
+            MAX(r.completed_at) as last_sync_at,
+            CAST(COALESCE(SUM(r.records_processed), 0) AS BIGINT) as total_records
+        FROM app_action_runs r
+        LEFT JOIN app_actions t ON r.action_id = t.id
+        GROUP BY COALESCE(t.name, '(deleted action)')
+        ORDER BY job_count DESC
+        "#,
+    )
+    .fetch_all(db.pool())
+    .await?;
+
+    let by_stream: Vec<StreamStats> = stream_rows
+        .iter()
+        .map(|row| {
+            let succeeded: i64 = row.try_get("succeeded").unwrap_or(0);
+            let failed: i64 = row.try_get("failed").unwrap_or(0);
+            let rate = if (succeeded + failed) > 0 {
+                (succeeded as f64 / (succeeded + failed) as f64) * 100.0
+            } else {
+                0.0
+            };
+            StreamStats {
+                stream_name: row.try_get("stream_name").unwrap_or_default(),
+                job_count: row.try_get("job_count").unwrap_or(0),
+                success_rate_percent: rate,
+                last_sync_at: row.try_get("last_sync_at").ok(),
+                total_records: row.try_get("total_records").unwrap_or(0),
+            }
+        })
+        .collect();
+
     // Time window metrics
     let time_windows = get_time_window_metrics(db).await?;
 
     // Recent errors (last 10)
     let error_rows = sqlx::query(
         r#"
-        SELECT r.id, COALESCE(t.action_type, 'transform') as action_type,
+        SELECT r.id, COALESCE(t.runtime, 'transform') as action_type,
                r.transform_stage, r.error, r.completed_at
         FROM app_action_runs r
         LEFT JOIN app_actions t ON r.action_id = t.id
@@ -187,7 +227,7 @@ pub async fn get_activity_metrics(db: &Database) -> Result<ActivityMetrics> {
     Ok(ActivityMetrics {
         summary,
         by_job_type,
-        by_stream: vec![],
+        by_stream,
         time_windows,
         recent_errors,
     })

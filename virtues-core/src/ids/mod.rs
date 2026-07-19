@@ -83,14 +83,12 @@ pub const PAGE_SHARE_PREFIX: &str = "share";
 
 // Wiki Things — long-running named anchors (projects, pets, goals, topics, ...)
 pub const THING_PREFIX: &str = "thg";
-pub const THING_PIN_PREFIX: &str = "thgpin";
 
 // Sidebar pins (user's globally-pinned URLs, distinct from thing membership)
 pub const PIN_PREFIX: &str = "pin";
 
-// Space Layer (Organization system)
-pub const SPACE_PREFIX: &str = "space";
-pub const WORKSPACE_PREFIX: &str = "ws";  // Deprecated: use SPACE_PREFIX
+// Notebook Layer (Organization system)
+pub const NOTEBOOK_PREFIX: &str = "nb";
 
 // Chat Layer (Conversations)
 pub const CHAT_PREFIX: &str = "chat";

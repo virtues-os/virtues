@@ -3,9 +3,9 @@
 //! All secrets are injected via environment variables at runtime.
 //! The source code contains no secrets.
 //!
-//! virtues-api runs in two modes:
-//! - Standalone: RAM-only budget tracking, default budget for all users
-//! - Production: Hydrates from Atlas on startup, reports usage to Atlas
+//! Budget state lives in Postgres (accounts + ledger); the pool is required at
+//! boot. Atlas pushes credits + device registrations in via `/internal/*`;
+//! virtues-api never calls back — there is no hydration mode.
 
 use anyhow::{bail, Context, Result};
 
@@ -21,24 +21,6 @@ pub struct Config {
     /// Internal secret for validating requests from Core backend
     /// Sent via X-Internal-Secret header
     pub internal_secret: String,
-
-    // =========================================================================
-    // Atlas Integration (Optional - for production with orchestrator)
-    // =========================================================================
-    /// Atlas API URL for hydrating tiers/subscriptions on startup
-    /// If not set, runs in standalone mode
-    pub atlas_url: Option<String>,
-
-    /// Shared secret for authenticating with Atlas internal API
-    pub atlas_secret: Option<String>,
-
-    /// Subdomain identifying this tenant (used when calling Atlas endpoints)
-    pub subdomain: Option<String>,
-
-    /// Interval in seconds for re-hydrating tiers/subscriptions from Atlas (default: 900 = 15 min)
-    /// Catches subscription changes, trial expirations, balance top-ups, and plan upgrades
-    /// that happen while virtues-api is running.
-    pub atlas_rehydrate_interval_secs: u64,
 
     // =========================================================================
     // Vercel AI Gateway (Single unified LLM provider)
@@ -62,14 +44,24 @@ pub struct Config {
     /// Unsplash API key (for cover image search)
     pub unsplash_access_key: Option<String>,
 
-    /// Plaid Client ID
+    // =========================================================================
+    // Plaid (bank data). The MASTER Plaid app credentials live ONLY here so the
+    // home box never holds them — the box sends per-user `access_token`s and the
+    // `/v1/services/plaid/*` proxy injects `client_id`+`secret` server-side.
+    // =========================================================================
+    /// Plaid app client id (master credential).
     pub plaid_client_id: Option<String>,
 
-    /// Plaid Secret
+    /// Plaid app secret (master credential).
     pub plaid_secret: Option<String>,
 
-    /// Plaid Environment (sandbox, development, production)
-    pub plaid_env: String,
+    /// Plaid API base URL, selected by `PLAID_ENV` (sandbox | development |
+    /// production). Default: production. Used by both the `/v1/services/plaid/*`
+    /// data proxy and the OAuth link/exchange calls in `routes/oauth.rs`.
+    pub plaid_base_url: String,
+
+    // Other OAuth provider credentials (google/notion/strava client_id/secret)
+    // are read directly from the environment in `routes/oauth.rs`.
 }
 
 impl Config {
@@ -94,13 +86,6 @@ impl Config {
             },
 
             // Atlas integration (optional)
-            atlas_url: std::env::var("VIRTUES_ATLAS_URL").ok(),
-            atlas_secret: std::env::var("VIRTUES_ATLAS_SECRET").ok(),
-            subdomain: std::env::var("SUBDOMAIN").ok(),
-            atlas_rehydrate_interval_secs: std::env::var("VIRTUES_API_REHYDRATE_INTERVAL")
-                .unwrap_or_else(|_| "900".to_string())
-                .parse()
-                .context("Invalid VIRTUES_API_REHYDRATE_INTERVAL")?,
 
             // Vercel AI Gateway
             ai_gateway_api_key: std::env::var("AI_GATEWAY_API_KEY")
@@ -113,10 +98,10 @@ impl Config {
             google_api_key: std::env::var("GOOGLE_API_KEY").ok(),
             unsplash_access_key: std::env::var("UNSPLASH_ACCESS_KEY").ok(),
 
-            // Plaid
+            // Plaid master credentials + environment-selected base URL.
             plaid_client_id: std::env::var("PLAID_CLIENT_ID").ok(),
             plaid_secret: std::env::var("PLAID_SECRET").ok(),
-            plaid_env: std::env::var("PLAID_ENV").unwrap_or_else(|_| "sandbox".to_string()),
+            plaid_base_url: plaid_base_url_from_env()?,
         })
     }
 
@@ -124,14 +109,17 @@ impl Config {
     pub fn has_llm_provider(&self) -> bool {
         !self.ai_gateway_api_key.is_empty()
     }
+}
 
-    /// Check if Atlas integration is configured
-    pub fn has_atlas(&self) -> bool {
-        self.atlas_url.is_some() && self.atlas_secret.is_some()
-    }
-
-    /// Check if Plaid is configured
-    pub fn has_plaid(&self) -> bool {
-        self.plaid_client_id.is_some() && self.plaid_secret.is_some()
+/// Resolve the Plaid API base URL from `PLAID_ENV`. Unset → production. An
+/// unrecognized non-empty value is a hard error rather than a silent fallback:
+/// this var gates real-money bank calls, so a typo (`sandbox\n`, `Sandbox`,
+/// `dev`) must fail boot instead of quietly routing to production.
+fn plaid_base_url_from_env() -> Result<String> {
+    match std::env::var("PLAID_ENV").ok().as_deref().map(str::trim) {
+        None | Some("") | Some("production") => Ok("https://production.plaid.com".to_string()),
+        Some("sandbox") => Ok("https://sandbox.plaid.com".to_string()),
+        Some("development") => Ok("https://development.plaid.com".to_string()),
+        Some(other) => bail!("PLAID_ENV must be sandbox|development|production, got '{other}'"),
     }
 }

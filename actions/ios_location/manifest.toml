@@ -1,8 +1,0 @@
-name = "iOS Location"
-description = "Ingest GPS samples from a paired iPhone."
-owner = "system"
-runtime = "function"
-command = ["ios_location"]
-triggers = ["webhook"]
-per_credential = true
-source = { id = "ios" }

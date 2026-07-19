@@ -60,7 +60,7 @@
 
 <style>
 	.floating-content {
-		z-index: var(--z-floating, 100);
+		z-index: var(--z-floating, var(--z-overlay));
 		background: var(--color-surface);
 		border: 1px solid var(--color-border);
 		border-radius: 8px;

@@ -7,7 +7,6 @@ export { default as SearchModal } from './SearchModal.svelte';
 
 // Workspace components
 export { default as WorkspaceHeader } from './WorkspaceHeader.svelte';
-export { default as UnifiedFolder } from './UnifiedFolder.svelte';
 
 // Types
 export type { SidebarNavItemData, NavItemType } from './types';

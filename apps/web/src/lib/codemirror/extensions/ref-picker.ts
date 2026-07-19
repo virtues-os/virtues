@@ -1,0 +1,144 @@
+/**
+ * Entity Picker Extension
+ *
+ * Detects `@` after whitespace/line start by comparing cursor position
+ * before and after document changes. This naturally filters out remote
+ * Yjs sync (which doesn't move the local cursor to right after the insertion).
+ */
+
+import type { Extension } from '@codemirror/state';
+import { type EditorView, ViewPlugin, type ViewUpdate } from '@codemirror/view';
+
+export interface RefPickerCallbacks {
+	onOpen: (coords: { x: number; y: number }, from: number) => void;
+	onClose: () => void;
+	onQueryChange: (query: string) => void;
+}
+
+interface PickerState {
+	active: boolean;
+	from: number; // position of @
+	query: string;
+}
+
+/**
+ * Insert an entity reference at the picker position and close the picker.
+ *
+ * Drive files (entity_type === 'file') insert as MEDIA syntax `![Label](url)`
+ * with no `@`, so the media widgets render them as images/audio/video/file
+ * cards (type is detected from the label's extension, since the download URL
+ * has none). Real entities are always inline links `[@Label](url)` — there is
+ * no entity block card; richness lives on the entity's own page + the hover.
+ */
+export function insertRef(
+	view: EditorView,
+	from: number,
+	label: string,
+	href: string,
+	entityType?: string,
+): void {
+	const to = view.state.selection.main.head;
+	const line = view.state.doc.lineAt(from);
+	const before = view.state.doc.sliceString(line.from, from);
+	const after = view.state.doc.sliceString(to, line.to);
+	const alone = before.trim() === '' && after.trim() === '';
+
+	let insert: string;
+	if (entityType === 'file') {
+		// Media embed — no `@` marker; media widgets pick image/audio/video/file.
+		insert = alone ? `![${label}](${href})` : `![${label}](${href}) `;
+	} else {
+		// Entities are always inline links (no block card).
+		insert = alone ? `[@${label}](${href})` : `[@${label}](${href}) `;
+	}
+	view.dispatch({
+		changes: { from, to, insert },
+		selection: { anchor: from + insert.length },
+	});
+	view.focus();
+}
+
+/**
+ * Create the entity picker extension.
+ *
+ * Detection strategy: compare cursor position before/after each update.
+ * If head moved forward by exactly 1 and that character is `@`, the user
+ * just typed it locally. Remote Yjs changes don't move the local cursor
+ * to right after the insertion, so this naturally filters them out.
+ */
+export function createRefPicker(callbacks: RefPickerCallbacks): Extension {
+	let state: PickerState = { active: false, from: 0, query: '' };
+
+	function close() {
+		if (state.active) {
+			state = { active: false, from: 0, query: '' };
+			callbacks.onClose();
+		}
+	}
+
+	return ViewPlugin.fromClass(
+		class {
+			update(update: ViewUpdate) {
+				const { head } = update.state.selection.main;
+
+				if (!state.active) {
+					if (!update.docChanged) return;
+
+					// Detect: cursor moved forward by exactly 1 char, and that char is @
+					const oldHead = update.startState.selection.main.head;
+					if (head !== oldHead + 1) return;
+
+					const typed = update.state.sliceDoc(head - 1, head);
+					if (typed !== '@') return;
+
+					// Must be at line start or after whitespace
+					const atPos = head - 1;
+					if (atPos > 0) {
+						const charBefore = update.state.sliceDoc(atPos - 1, atPos);
+						if (charBefore && !/\s/.test(charBefore)) return;
+					}
+
+					state = { active: true, from: atPos, query: '' };
+					// coordsAtPos can't be called during update — defer to after layout
+					const v = update.view;
+					requestAnimationFrame(() => {
+						const coords = v.coordsAtPos(atPos);
+						if (coords) {
+							callbacks.onOpen({ x: coords.left, y: coords.bottom }, atPos);
+						}
+					});
+				} else {
+					if (!update.docChanged && !update.selectionSet) return;
+
+					const { from } = state;
+
+					if (head <= from) {
+						close();
+						return;
+					}
+
+					if (from >= update.state.doc.length || update.state.sliceDoc(from, from + 1) !== '@') {
+						close();
+						return;
+					}
+
+					const query = update.state.sliceDoc(from + 1, head);
+
+					if (/[\s\n]/.test(query)) {
+						close();
+						return;
+					}
+
+					if (query !== state.query) {
+						state.query = query;
+						callbacks.onQueryChange(query);
+					}
+				}
+			}
+
+			destroy() {
+				close();
+			}
+		},
+	);
+}

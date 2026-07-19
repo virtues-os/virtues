@@ -122,10 +122,10 @@ INSERT INTO data_location_visit (
 
 -- Primary day: Feb 13 (the detailed one)
 INSERT INTO wiki_days (
-    id, date, start_timezone, end_timezone,
+    id, date, start_timezone,
     autobiography, morning_baseline, epigraph
 ) VALUES (
-    'day_2026-02-13', '2026-02-13', 'America/Chicago', 'America/Chicago',
+    'day_2026-02-13', '2026-02-13', 'America/Chicago',
     'The routine held until 4:12 PM, when you broke your usual commute to visit the Seaholm Trader Joe''s for the first time in your logged history. Your baseline Friday grocery run takes 18 minutes and averages $45. Today you lingered in the aisles for 52 minutes and swiped for $328.50. On the drive home, you sent a voice memo to Maya: "I just bought enough snacks to survive a winter." Despite the heavy spend, your HRV that evening was 12% above your Friday baseline.',
     0.52,
     'The Trader Joe''s detour'
@@ -141,20 +141,20 @@ UPDATE wiki_days SET readiness_score = 59, readiness_details = '{"hrv":50,"rhr":
 
 -- Adjacent day: Feb 12 (routine Thursday — for cross-day comparison)
 INSERT INTO wiki_days (
-    id, date, start_timezone, end_timezone,
+    id, date, start_timezone,
     autobiography, morning_baseline
 ) VALUES (
-    'day_2026-02-12', '2026-02-12', 'America/Chicago', 'America/Chicago',
+    'day_2026-02-12', '2026-02-12', 'America/Chicago',
     'A quiet Thursday. Work from home in the morning, office in the afternoon. Design iteration on the settings page. Leftovers for dinner, read before bed.',
     0.48
 ) ON CONFLICT DO NOTHING;
 
 -- Adjacent day: Feb 14 (Valentine's Saturday — slightly different texture)
 INSERT INTO wiki_days (
-    id, date, start_timezone, end_timezone,
+    id, date, start_timezone,
     autobiography, morning_baseline
 ) VALUES (
-    'day_2026-02-14', '2026-02-14', 'America/Chicago', 'America/Chicago',
+    'day_2026-02-14', '2026-02-14', 'America/Chicago',
     'Saturday. Short day at the office — sprint demo in the morning, then an early afternoon. Walked Lady Bird Lake. Called Mom. Made pasta and watched a movie.',
     0.55
 ) ON CONFLICT DO NOTHING;

@@ -82,6 +82,8 @@ All of it runs on a single Rust server with a Postgres database and S3 storage. 
 
 **Core** handles data ingestion, entity resolution, the wiki, pages, chat, and serves the web UI. **virtues-api** is a sidecar proxy that mediates all external API calls — LLM requests, web search, bank connections — with budget tracking and key isolation. Core never touches API keys directly.
 
+**Remote access** is a blind relay: your box dials out and holds a connection open, so any browser can reach it from anywhere with no port opened at home — and the relay forwards only sealed, end-to-end-encrypted bytes it has no key to read. See **[Privacy &amp; security model](docs/privacy-model.md)** (who holds which secret, and who deliberately doesn't) and the [visual walkthrough](docs/relay-walkthrough.html).
+
 <a id="data-sources"></a>
 ## <picture><source media="(prefers-color-scheme: dark)" srcset=".github/images/headings/h2-data-sources-dark.svg"><img alt="Data Sources" src=".github/images/headings/h2-data-sources-light.svg" height="28"></picture>
 
@@ -135,14 +137,14 @@ Extensible: add a new source as an action in `actions/<name>/` with a `manifest.
 ### <picture><source media="(prefers-color-scheme: dark)" srcset=".github/images/headings/h3-install-in-one-command-dark.svg"><img alt="Install in one command" src=".github/images/headings/h3-install-in-one-command-light.svg" height="22"></picture>
 
 ```bash
-curl -sSL https://get.virtues.com | sudo sh
+curl -sSL https://virtues.com/sh | sudo sh
 ```
 
 That:
 - Downloads the latest `virtues` binary into `/usr/local/bin/`
 - Installs Postgres 18 + pgvector, Avahi (mDNS), and the rest of the system deps via your package manager
 - Configures `/etc/avahi/services/virtues.service` so the box advertises itself on the LAN as `virtues.local`
-- Mints the box's WG identity (its SPKI fingerprint) and rendezvous identity, and enables the `virtues.service` systemd unit
+- Mints the box's WG identity (its SPKI fingerprint) and enables the `virtues.service` systemd unit
 - Prints a one-time URL — open it in Chromium on the Jetson to land in a logged-in session
 
 ```bash
@@ -171,34 +173,32 @@ restore from backup, BYO key reset, and more.
 <a id="connect-from-another-machine-v02-preview"></a>
 ## <picture><source media="(prefers-color-scheme: dark)" srcset=".github/images/headings/h2-connect-from-another-machine-v0-2-preview-dark.svg"><img alt="Connect from another machine (v0.2 preview)" src=".github/images/headings/h2-connect-from-another-machine-v0-2-preview-light.svg" height="28"></picture>
 
-The desktop daemon (`virtues-client`) pairs a Linux laptop to your box over
-WireGuard and exposes the box's web UI on `http://localhost:8000` — a Secure
-Context origin with no cert warnings.
+Reach your box from **any browser, anywhere** — no app to install, no tunnel, no
+port forwarding — at its relay URL:
 
-```bash
-# On the laptop, one-time setup
-curl -L -o virtues-client \
-  https://github.com/virtues-os/virtues/releases/latest/download/virtues-client-$(uname -m)-linux
-chmod +x virtues-client && sudo mv virtues-client /usr/local/bin/
-sudo setcap cap_net_admin+ep /usr/local/bin/virtues-client
-
-# On the box, mint a pair URL
-sudo -u virtues virtues link    # copy the printed https://…/pair#t=… URL
-
-# On the laptop, pair + bring the tunnel up
-virtues-client pair "<paste-pair-url>"
-sudo virtues-client up          # → "proxy listening on http://localhost:8000"
+```
+https://<boxhash>.virtues.ch
 ```
 
-Open `http://localhost:8000` in any browser on the laptop and you're talking
-to the box.
+Your box **dials out** to a blind relay and holds the connection open, so a
+browser hitting that URL is spliced through to the box over end-to-end TLS the
+relay can't read. It works behind CGNAT, coworking/café wifi, and IPv6-only home
+ISPs — anywhere outbound 443 reaches, which is everywhere. The relay sees only
+the destination name and sealed bytes; it has no key to decrypt your traffic. See
+**[Privacy &amp; security model](docs/privacy-model.md)** and the
+[visual walkthrough](docs/relay-walkthrough.html).
 
-**Honest scope of the v0.2 preview:**
+The box is provisioned with its relay URL automatically once it's linked to a
+subscription (atlas mints a per-box name + token; the box dials the relay and
+registers). On your home network you can still reach the box directly, no relay.
 
-- Linux client only. macOS lands in v0.2.2.
-- The WireGuard server-side daemon (`virtues-wireguard`) is **v0.2.1 work** —
-  pair succeeds today, but the tunnel won't reach the box until that lands.
-- Strict-symmetric NAT (mostly enterprise) is not supported; cone NAT works.
+**Honest scope today:**
+
+- The box currently serves a **self-signed** cert, so browsers show a one-time
+  warning — per-box browser-trusted (ACME) certificates are the next step.
+- The relay is **single-region and IPv4-only** for now (IPv6 + multi-region later).
+- This replaces the earlier WireGuard desktop-tunnel preview, which has been
+  removed.
 
 <a id="development"></a>
 ## <picture><source media="(prefers-color-scheme: dark)" srcset=".github/images/headings/h2-development-dark.svg"><img alt="Development" src=".github/images/headings/h2-development-light.svg" height="28"></picture>
@@ -287,7 +287,7 @@ virtues/
 │   ├── ios/                 # iOS companion app (Swift)
 │   └── mac-source/          # macOS data source: HealthKit / EventKit / activity collector
 ├── deploy/                  # Model-fetch + sandbox scripts (cloud Docker lives under services/)
-├── tools/                   # bootstrap.sh + virtues-installer (get.virtues.com)
+├── tools/                   # bootstrap.sh + virtues-installer (virtues.com/sh)
 ├── docs/                    # Architecture + concept docs (flat)
 └── .data/                   # Gitignored runtime state (Postgres cluster, drive files)
 ```

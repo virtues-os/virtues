@@ -9,7 +9,7 @@
 	import type { YearPage as YearPageType } from "$lib/wiki/types";
 	import WikiRightRail from "./WikiRightRail.svelte";
 	import ActivityHeatmap from "./ActivityHeatmap.svelte";
-	import { spaceStore } from "$lib/stores/space.svelte";
+	import { windowShellStore } from "$lib/stores/window-shell.svelte";
 	import Icon from "$lib/components/Icon.svelte";
 
 	interface Props {
@@ -37,7 +37,7 @@
 	});
 
 	function handleDayClick(_date: Date, slug: string) {
-		spaceStore.openTabFromRoute(`/wiki/${slug}`);
+		windowShellStore.openTabFromRoute(`/wiki/${slug}`);
 	}
 
 	function formatPeriod(start: Date, end?: Date): string {
@@ -403,7 +403,7 @@
 		color: var(--color-foreground-muted);
 		background: color-mix(in srgb, var(--color-foreground) 5%, transparent);
 		padding: 0.25rem 0.625rem;
-		border-radius: 9999px;
+		border-radius: var(--radius-full);
 	}
 
 	/* Citations */

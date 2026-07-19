@@ -10,7 +10,7 @@
 //!   - Last applied schema migration ID
 //!   - Action subprocess health (running / errored / stopped per action)
 //!   - Last 10 `app_auth_event` rows (paired / revoked / sudo events)
-//!   - Voucher state (subscription active? bearer expiry?)
+//!   - Subscription link state (api_key present? account linked?)
 //!   - Wallet snapshot (read locally — full wallet balance lives in
 //!     virtues-api but we expose what we know from the last 402/200)
 //!   - BYO key status (provider + model — never the key itself)
@@ -40,13 +40,13 @@ struct StatusJson {
     pair: PairSection,
     billing: BillingSection,
     actions: ActionsSection,
+    network: NetworkSection,
     recent_events: Vec<EventRow>,
 }
 
 #[derive(Debug, Serialize)]
 struct AuthSection {
     devices_paired: i64,
-    sessions_active: i64,
 }
 
 #[derive(Debug, Serialize)]
@@ -79,6 +79,20 @@ struct ActionsSection {
 }
 
 #[derive(Debug, Serialize)]
+struct NetworkSection {
+    /// Reachability class: `ipv6_direct` / `ipv4_public` / `behind_nat` /
+    /// `unknown`. The IPv6-direct doctrine's "can a device reach this box?".
+    class: String,
+    /// Does the box have a globally-routable IPv6 (the direct path)?
+    has_global_ipv6: bool,
+    /// One-line verdict. No literal addresses — keep paste-into-chat safe.
+    headline: String,
+    /// Auto-noticed user-run overlay (Tailscale etc.) — interface name ONLY,
+    /// never its address (same paste-into-chat rule as above).
+    byo_ifname: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
 struct EventRow {
     event_type: String,
     occurred_at: String,
@@ -102,8 +116,20 @@ async fn collect(pool: &PgPool) -> Result<StatusJson> {
         pair: collect_pair(pool).await,
         billing: collect_billing(pool).await,
         actions: collect_actions(pool).await,
+        network: collect_network(),
         recent_events: collect_recent_events(pool).await,
     })
+}
+
+/// Reachability snapshot — class + a boolean, no literal addresses (paste-safe).
+fn collect_network() -> NetworkSection {
+    let s = crate::net_check::compute_net_status();
+    NetworkSection {
+        class: s.class.as_str().to_string(),
+        has_global_ipv6: s.ipv6_global.is_some(),
+        byo_ifname: s.byo.as_ref().map(|b| b.ifname.clone()),
+        headline: s.headline,
+    }
 }
 
 async fn schema_version(pool: &PgPool) -> String {
@@ -126,16 +152,8 @@ async fn collect_auth(pool: &PgPool) -> AuthSection {
     .await
     .ok()
     .flatten();
-    let sessions: Option<(i64,)> = sqlx::query_as(
-        "SELECT COUNT(*) FROM app_auth_session WHERE expires_at > now()",
-    )
-    .fetch_optional(pool)
-    .await
-    .ok()
-    .flatten();
     AuthSection {
         devices_paired: devices.map(|(n,)| n).unwrap_or(0),
-        sessions_active: sessions.map(|(n,)| n).unwrap_or(0),
     }
 }
 

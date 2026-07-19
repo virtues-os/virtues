@@ -1,24 +1,26 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "Virtues",
-  "version": "1.0.0",
-  "identifier": "com.virtues.app",
+  "version": "1.0.15",
+  "identifier": "com.virtues.desktop",
   "build": {
     "beforeBuildCommand": "",
-    "beforeDevCommand": ""
+    "beforeDevCommand": "",
+    "frontendDist": "ui"
   },
   "app": {
     "withGlobalTauri": true,
     "macOSPrivateApi": true,
     "windows": [],
     "security": {
-      "csp": "default-src 'self' https://virtues.com https://*.virtues.com; script-src 'self' 'unsafe-inline' https://virtues.com https://*.virtues.com; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; connect-src 'self' https://virtues.com https://*.virtues.com wss://*.virtues.com"
+      "csp": "default-src 'self' http://localhost:7117 http://*.virtues:8000; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self' http://localhost:7117 ws://localhost:7117 http://*.virtues:8000 ws://*.virtues:8000"
     }
   },
   "bundle": {
     "active": true,
+    "createUpdaterArtifacts": true,
     "targets": ["dmg", "app"],
-    "externalBin": ["binaries/virtues-collector"],
+    "externalBin": ["binaries/virtues-collector", "binaries/virtues-client"],
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",
@@ -29,6 +31,14 @@
       "minimumSystemVersion": "10.15",
       "entitlements": "entitlements.plist",
       "signingIdentity": null
+    }
+  },
+  "plugins": {
+    "updater": {
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDREQzdBMzVDNDVCN0ZCOEQKUldTTis3ZEZYS1BIVGRJRGk3R2hBMWU3TUZiR0FSQlZHVXdIWjNVYjRvUUt3Y3k3ZE9EM0RkS2wK",
+      "endpoints": [
+        "https://github.com/virtues-os/virtues/releases/download/mac-latest/latest.json"
+      ]
     }
   }
 }

@@ -19,8 +19,8 @@ struct SettingsView: View {
 
     @State private var showingResetAlert = false
     @State private var showingStorageDetails = false
-    @State private var showingEndpointEdit = false
     @State private var showQRScanner = false
+    @State private var showManualPair = false
     @State private var isCompletingPairing = false
     @State private var pairingError: String?
     @State private var showCopiedToast = false
@@ -30,9 +30,9 @@ struct SettingsView: View {
     var body: some View {
         NavigationView {
             Form {
-                // Server Section
-                Section(header: Text("Server")) {
-                    // Connection Status
+                // Box connection
+                Section(header: Text("Box")) {
+                    // Pairing status
                     HStack {
                         Text("Status")
                         Spacer()
@@ -40,22 +40,22 @@ struct SettingsView: View {
                             HStack(spacing: 4) {
                                 Image(systemName: "checkmark.circle.fill")
                                     .foregroundColor(.warmSuccess)
-                                Text("Connected")
+                                Text("Paired")
                                     .foregroundColor(.warmSuccess)
                             }
                         } else {
                             HStack(spacing: 4) {
                                 Image(systemName: "xmark.circle.fill")
                                     .foregroundColor(.warmError)
-                                Text("Not Connected")
+                                Text("Not paired")
                                     .foregroundColor(.warmError)
                             }
                         }
                     }
 
-                    // Server URL
+                    // Box address (used only to pair; data traffic runs over iroh)
                     HStack {
-                        Text("Server URL")
+                        Text("Box address")
                         Spacer()
                         if deviceManager.isConfigured {
                             Text(deviceManager.configuration.apiEndpoint)
@@ -69,7 +69,7 @@ struct SettingsView: View {
                         }
                     }
 
-                    // QR Scan to pair (primary action)
+                    // QR scan to pair (primary action)
                     Button(action: {
                         Haptics.light()
                         pairingError = nil
@@ -80,12 +80,25 @@ struct SettingsView: View {
                                 ProgressView()
                                     .progressViewStyle(CircularProgressViewStyle())
                                     .scaleEffect(0.8)
-                                Text("Connecting...")
+                                Text("Pairing…")
                             } else {
                                 Label("Scan QR Code to Pair", systemImage: "qrcode.viewfinder")
                             }
                         }
                         .foregroundColor(.warmPrimary)
+                    }
+                    .disabled(isCompletingPairing)
+
+                    // Enter the box's pairing code by hand — the box prints it (or
+                    // shows a QR) via `virtues pair`. Handy over Tailscale or when a
+                    // camera scan isn't. Same pairing as the QR.
+                    Button(action: {
+                        Haptics.light()
+                        pairingError = nil
+                        showManualPair = true
+                    }) {
+                        Label("Enter Code Manually", systemImage: "keyboard")
+                            .foregroundColor(.warmPrimary)
                     }
                     .disabled(isCompletingPairing)
 
@@ -97,19 +110,6 @@ struct SettingsView: View {
                                 .font(.caption)
                                 .foregroundColor(.warmError)
                         }
-                    }
-
-                    // Manual endpoint edit (secondary)
-                    Button(action: {
-                        Haptics.light()
-                        showingEndpointEdit = true
-                    }) {
-                        Label(
-                            deviceManager.isConfigured ? "Edit Server Manually" : "Manual Setup",
-                            systemImage: "link"
-                        )
-                        .foregroundColor(.warmForegroundMuted)
-                        .font(.subheadline)
                     }
                 }
                 
@@ -177,15 +177,38 @@ struct SettingsView: View {
                     HStack {
                         Text("Auto Sync")
                         Spacer()
-                        Text("Every 5 minutes")
+                        Text("Every 15 minutes")
                             .foregroundColor(.warmForegroundMuted)
                     }
 
-                    if let lastUpload = uploadCoordinator.lastUploadDate {
+                    // Last *successful* sync is the signal that matters — data
+                    // actually reached the box. Shown in green so it reads as the
+                    // health indicator.
+                    if let lastSuccess = uploadCoordinator.lastSuccessfulSyncDate {
                         HStack {
-                            Text("Last Upload")
+                            Text("Last Successful Sync")
                             Spacer()
-                            Text(lastUpload, style: .relative)
+                            Text(lastSuccess, style: .relative)
+                                .foregroundColor(.warmSuccess)
+                        }
+                    } else {
+                        HStack {
+                            Text("Last Successful Sync")
+                            Spacer()
+                            Text("Never")
+                                .foregroundColor(.warmForegroundMuted)
+                        }
+                    }
+
+                    // Last *attempt* is a separate, weaker signal — a recent
+                    // attempt can still have failed, so it is never shown as the
+                    // success line (that conflation is what hid broken syncs).
+                    if let lastAttempt = uploadCoordinator.lastUploadDate,
+                       lastAttempt != uploadCoordinator.lastSuccessfulSyncDate {
+                        HStack {
+                            Text("Last Attempt")
+                            Spacer()
+                            Text(lastAttempt, style: .relative)
                                 .foregroundColor(.warmForegroundMuted)
                         }
                     }
@@ -200,7 +223,7 @@ struct SettingsView: View {
                             let ok = await uploadCoordinator.forceUpload()
                             await MainActor.run {
                                 isForceSyncing = false
-                                forceSyncResult = ok ? "✓ Upload sent" : "✗ Upload failed (see logs)"
+                                forceSyncResult = ok ? "✓ Sent to box" : "✗ Upload failed (see logs)"
                                 Haptics.success()
                                 DispatchQueue.main.asyncAfter(deadline: .now() + 3) {
                                     forceSyncResult = nil
@@ -276,7 +299,7 @@ struct SettingsView: View {
                         Haptics.warning()
                         showingResetAlert = true
                     }) {
-                        Label("Reset App", systemImage: "exclamationmark.triangle")
+                        Label("Unpair & Reset", systemImage: "exclamationmark.triangle")
                             .foregroundColor(.warmError)
                     }
                 }
@@ -285,25 +308,28 @@ struct SettingsView: View {
             .background(Color.warmBackground)
             .navigationTitle("Settings")
             .navigationBarTitleDisplayMode(.inline)
-            .alert("Reset App?", isPresented: $showingResetAlert) {
+            .alert("Unpair & Reset?", isPresented: $showingResetAlert) {
                 Button("Cancel", role: .cancel) { }
-                Button("Reset", role: .destructive) {
+                Button("Unpair & Reset", role: .destructive) {
                     resetApp()
                 }
             } message: {
-                Text("This will clear all settings and require you to set up the app again. Pending uploads will be lost.")
+                Text("Fully disconnects this phone from your box: clears its pairing and all settings. You'll set it up again from scratch. Pending uploads will be lost.")
             }
             .sheet(isPresented: $showingStorageDetails) {
                 StorageDetailsView()
-            }
-            .sheet(isPresented: $showingEndpointEdit) {
-                EndpointEditView()
             }
             .fullScreenCover(isPresented: $showQRScanner) {
                 QRScannerView(
                     onScanned: handleQRScanResult,
                     onCancel: { showQRScanner = false }
                 )
+            }
+            .sheet(isPresented: $showManualPair) {
+                ManualPairView { endpoint, code in
+                    // Same consume path as a scanned QR — just typed in.
+                    handleQRScanResult(endpoint: endpoint, pairToken: code, fingerprint: nil)
+                }
             }
             .overlay(alignment: .bottom) {
                 if showCopiedToast {
@@ -329,7 +355,7 @@ struct SettingsView: View {
     /// `kind = "mobile_app"`, persist the server-issued bearer into the
     /// Keychain (done inside `consumePairToken`), and persist the endpoint
     /// + action_ids into `DeviceConfiguration`.
-    private func handleQRScanResult(endpoint: String, pairToken: String) {
+    private func handleQRScanResult(endpoint: String, pairToken: String, fingerprint: String?) {
         showQRScanner = false
         isCompletingPairing = true
         pairingError = nil
@@ -339,11 +365,18 @@ struct SettingsView: View {
                 let response = try await NetworkManager.shared.consumePairToken(
                     endpoint: endpoint,
                     pairToken: pairToken,
-                    deviceId: DeviceManager.shared.deviceId
+                    deviceId: DeviceManager.shared.deviceId,
+                    expectedFingerprint: fingerprint
                 )
 
+                // iroh model: keep the scanned origin as the path base
+                // (`apiEndpoint`); actual reach is over iroh via the ticket
+                // (`box_node_id` + `relay_url`) the box just returned, dialed by
+                // BoxTransport. The device seed was generated + stored in
+                // `consumePairToken`.
                 await MainActor.run {
                     deviceManager.updateConfiguration(apiEndpoint: endpoint)
+                    deviceManager.updateReach(boxNodeId: response.boxNodeId, relayUrl: response.relayUrl, boxDirectAddrs: response.boxDirectAddrs)
                     deviceManager.updateActionIds(response.actionIds)
                     deviceManager.isConfigured = true
                     deviceManager.configurationState = .configured
@@ -370,18 +403,23 @@ struct SettingsView: View {
         }
     }
     
+    /// Complete unpair: stop collection, tear down the tunnel, and wipe BOTH
+    /// stores — Keychain (bearer, WG bundle, WG private key, server pin) AND
+    /// UserDefaults (endpoint, action IDs, all settings). Previously this cleared
+    /// only UserDefaults, so a dead endpoint / stale tunnel credentials survived
+    /// a "reset" and the app kept dialing a ghost box. One action clears it all.
     private func resetApp() {
-        // Stop all services (this stops all data collection)
+        // Stop all data collection.
         uploadCoordinator.stopPeriodicUploads()
-
-        // Stop individual trackers
         locationManager.stopTracking()
         audioManager.stopRecording()
 
-        // Clear configuration (disconnects from server)
-        deviceManager.clearConfiguration()
+        // Drop the warm iroh connection + wipe all Keychain secrets.
+        Task { await BoxTransport.shared.reset() }
+        KeychainStore.shared.wipeAll()
 
-        // Clear UserDefaults
+        // Clear configuration (endpoint, action IDs) + every UserDefaults key.
+        deviceManager.clearConfiguration()
         if let bundleId = Bundle.main.bundleIdentifier {
             UserDefaults.standard.removePersistentDomain(forName: bundleId)
         }

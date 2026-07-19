@@ -45,7 +45,7 @@
 	let nowTime = $state(new Date());
 	let clockInterval: ReturnType<typeof setInterval> | null = null;
 
-	const isToday = $derived(() => {
+	const isToday = $derived.by(() => {
 		if (!pageDate || !browser) return false;
 		return getLocalDateSlug(pageDate) === getLocalDateSlug(new Date());
 	});
@@ -151,7 +151,7 @@
 		subDots: SubDot[];
 	}
 
-	const eventPoints = $derived<EventPoint[]>(() => {
+	const eventPoints = $derived.by<EventPoint[]>(() => {
 		// Exclude sleep and hidden from the novelty curve — sleep only appears on autonomic
 		const sorted = events
 			.filter((e) => !e.userHidden && !e.isSleep)
@@ -270,11 +270,11 @@
 		segments: ThreadSegment[];
 	}
 
-	const entityThreads = $derived((): EntityThread[] => {
+	const entityThreads = $derived.by((): EntityThread[] => {
 		const RELATIVE_SCALE = 0.4;
 		// Group entity-dot positions by entity_id across all events
 		const byEntity = new Map<string, { x: number; y: number }[]>();
-		for (const point of eventPoints()) {
+		for (const point of eventPoints) {
 			if (point.isUnknown) continue;
 			for (const dot of point.subDots) {
 				if (dot.kind !== "entity") continue;
@@ -319,19 +319,19 @@
 	});
 
 	// ── "Now" marker position ───────────────────────────────────
-	const nowHour = $derived(() => {
-		if (!isToday()) return null;
+	const nowHour = $derived.by(() => {
+		if (!isToday) return null;
 		return getHourOfDay(nowTime);
 	});
 
-	const nowX = $derived(() => {
-		const h = nowHour();
+	const nowX = $derived.by(() => {
+		const h = nowHour;
 		if (h === null) return null;
 		return hourToX(h);
 	});
 
-	const nowTimeLabel = $derived(() => {
-		if (!isToday()) return "";
+	const nowTimeLabel = $derived.by(() => {
+		if (!isToday) return "";
 		return nowTime.toLocaleTimeString("en-US", {
 			hour: "numeric",
 			minute: "2-digit",
@@ -343,12 +343,12 @@
 
 	// ── Curve helpers ──────────────────────────────────────────
 	// All chart points: readiness anchor at wake + event points
-	const chartPoints = $derived(() => {
-		const pts = eventPoints();
+	const chartPoints = $derived.by(() => {
+		const pts = eventPoints;
 		if (pts.length === 0) return [];
 
 		// Start from readiness at wake time (or baseline if no readiness/wake)
-		const wH = wakeHour();
+		const wH = wakeHour;
 		const rZ = readinessScore != null ? ((readinessScore - 50) / 50) * Y_MAX : 0;
 		const anchorX = wH !== null ? hourToX(wH) : hourToX(0);
 		const anchorY = wH !== null ? yToSvg(rZ) : yToSvg(0);
@@ -366,8 +366,8 @@
 
 	// Tangent at each chart point (central difference for interior,
 	// forward/backward for endpoints). Gives C1 continuity.
-	const chartTangents = $derived(() => {
-		const pts = chartPoints();
+	const chartTangents = $derived.by(() => {
+		const pts = chartPoints;
 		return pts.map((_, i) => {
 			if (pts.length < 2) return { tx: 0, ty: 0 };
 			if (i === 0) {
@@ -391,8 +391,8 @@
 
 	// Cubic bezier segment: control points placed at ±1/3 tangent
 	function cubicSegmentPath(segIndex: number): string {
-		const pts = chartPoints();
-		const tan = chartTangents();
+		const pts = chartPoints;
+		const tan = chartTangents;
 		const a = pts[segIndex];
 		const b = pts[segIndex + 1];
 		const TENSION = 1 / 3;
@@ -407,7 +407,7 @@
 	// The autonomic curve includes ALL events (sleep + waking) with autonomic data.
 	// It's an independent curve from novelty — sleep events only appear here.
 
-	const autonomicChartPoints = $derived(() => {
+	const autonomicChartPoints = $derived.by(() => {
 		// All events (sleep + waking) with autonomic data, one dot each
 		return events
 			.filter((e) => !e.userHidden && e.autonomicZ != null)
@@ -425,8 +425,8 @@
 			});
 	});
 
-	const autonomicTangents = $derived(() => {
-		const pts = autonomicChartPoints();
+	const autonomicTangents = $derived.by(() => {
+		const pts = autonomicChartPoints;
 		return pts.map((_, i) => {
 			if (pts.length < 2) return { tx: 0, ty: 0 };
 			if (i === 0) {
@@ -443,8 +443,8 @@
 	});
 
 	function autonomicCubicSegmentPath(segIndex: number): string {
-		const pts = autonomicChartPoints();
-		const tan = autonomicTangents();
+		const pts = autonomicChartPoints;
+		const tan = autonomicTangents;
 		const a = pts[segIndex];
 		const b = pts[segIndex + 1];
 		const TENSION = 1 / 3;
@@ -456,12 +456,12 @@
 	}
 
 	/** Whether any event has autonomic data */
-	const hasAutonomicData = $derived(() => {
+	const hasAutonomicData = $derived.by(() => {
 		return events.some((e) => !e.userHidden && e.autonomicZ != null);
 	});
 
 	// ── Readiness marker at wake time ───────────────────────────
-	const wakeHour = $derived(() => {
+	const wakeHour = $derived.by(() => {
 		// Find the last sleep mini-event's end time = wake time
 		const sleepEvents = events.filter((e) => e.isSleep);
 		if (sleepEvents.length === 0) return null;
@@ -471,8 +471,8 @@
 		return getHourOfDay(lastSleep.endTime);
 	});
 
-	const wakeX = $derived(() => {
-		const h = wakeHour();
+	const wakeX = $derived.by(() => {
+		const h = wakeHour;
 		return h !== null ? hourToX(h) : null;
 	});
 
@@ -540,11 +540,11 @@
 		curvePoint: EventPoint | null;
 	}
 
-	const allHoverEvents = $derived<HoverableEvent[]>(() => {
+	const allHoverEvents = $derived.by<HoverableEvent[]>(() => {
 		const sorted = events
 			.filter((e) => !e.userHidden)
 			.sort((a, b) => a.startTime.getTime() - b.startTime.getTime());
-		const pts = eventPoints();
+		const pts = eventPoints;
 		return sorted.map((e) => {
 			const startHour = getHourOfDay(e.startTime);
 			const endHour = getHourOfDay(e.endTime);
@@ -565,10 +565,10 @@
 	});
 
 	// Find the event whose time range contains the cursor hour
-	const hoverEvent = $derived(() => {
+	const hoverEvent = $derived.by(() => {
 		if (hoverX === null) return null;
 		const hour = xToHour(hoverX);
-		const evts = allHoverEvents();
+		const evts = allHoverEvents;
 		// Find event whose start-end range contains this hour
 		for (const e of evts) {
 			if (hour >= e.startHour && hour < e.endHour) return e;
@@ -588,7 +588,7 @@
 	});
 
 	// Format crosshair time label
-	const hoverTimeLabel = $derived(() => {
+	const hoverTimeLabel = $derived.by(() => {
 		if (hoverX === null) return "";
 		const hour = xToHour(hoverX);
 		const h = Math.floor(hour);
@@ -602,7 +602,7 @@
 	type MetricView = "dayline" | "location" | "sleep" | "autonomic" | "dimensions";
 	let activeMetric = $state<MetricView>("dayline");
 
-	const hasSleepData = $derived(() => sleepCycles.length > 0);
+	const hasSleepData = $derived.by(() => sleepCycles.length > 0);
 
 	const metrics = $derived<{ id: MetricView; label: string; ready: boolean }[]>([
 		{ id: "dayline", label: "Dayline", ready: true },
@@ -729,16 +729,16 @@
 		{/each}
 
 		<!-- Sleep region background tint -->
-		{#if wakeX() !== null}
-			{@const wx = wakeX()!}
+		{#if wakeX !== null}
+			{@const wx = wakeX!}
 			<rect x={MARGIN.left} y={MARGIN.top} width={wx - MARGIN.left} height={PLOT_H}
 				fill="var(--color-primary, #4f46e5)" fill-opacity="0.03" />
 		{/if}
 
 		<!-- Curved segments (solid for known, dotted for unknown) + hover targets -->
-		{#each chartPoints().slice(0, -1) as _, segIdx}
-			{@const a = chartPoints()[segIdx]}
-			{@const b = chartPoints()[segIdx + 1]}
+		{#each chartPoints.slice(0, -1) as _, segIdx}
+			{@const a = chartPoints[segIdx]}
+			{@const b = chartPoints[segIdx + 1]}
 			{@const isDotted = a.isUnknown || b.isUnknown}
 			{@const d = cubicSegmentPath(segIdx)}
 
@@ -765,10 +765,10 @@
 		{/each}
 
 		<!-- Autonomic curve (Stress ↑ / Recovery ↓) -->
-		{#if hasAutonomicData()}
-			{#each autonomicChartPoints().slice(0, -1) as _, segIdx}
-				{@const a = autonomicChartPoints()[segIdx]}
-				{@const b = autonomicChartPoints()[segIdx + 1]}
+		{#if hasAutonomicData}
+			{#each autonomicChartPoints.slice(0, -1) as _, segIdx}
+				{@const a = autonomicChartPoints[segIdx]}
+				{@const b = autonomicChartPoints[segIdx + 1]}
 				{@const isDotted = a.isUnknown || b.isUnknown}
 				<path
 					d={autonomicCubicSegmentPath(segIdx)}
@@ -784,15 +784,15 @@
 		{/if}
 
 		<!-- Readiness diamond at wake time (replaces midnight anchor) -->
-		{#if readinessScore != null && wakeX() !== null}
-			{@const wx = wakeX()!}
+		{#if readinessScore != null && wakeX !== null}
+			{@const wx = wakeX!}
 			{@const rZ = ((readinessScore - 50) / 50) * Y_MAX}
 			<g transform="translate({wx}, {yToSvg(rZ)})">
 				<polygon points="0,-6 5,0 0,6 -5,0"
 					fill="var(--color-primary, #4f46e5)"
 					stroke="var(--color-background, #fff)" stroke-width="1.5" />
 			</g>
-		{:else if eventPoints().length > 0}
+		{:else if eventPoints.length > 0}
 			<!-- Fallback: small dot at curve start -->
 			<circle
 				cx={hourToX(0)}
@@ -806,8 +806,8 @@
 		{/if}
 
 		<!-- Sleep dots on autonomic curve -->
-		{#if hasAutonomicData()}
-			{#each autonomicChartPoints() as point}
+		{#if hasAutonomicData}
+			{#each autonomicChartPoints as point}
 				{#if point.isSleep}
 					<circle
 						cx={point.x}
@@ -823,7 +823,7 @@
 		{/if}
 
 		<!-- Event changepoint dots (novelty) -->
-		{#each eventPoints() as point}
+		{#each eventPoints as point}
 			{#if point.isUnknown}
 				<circle
 					cx={point.x}
@@ -847,12 +847,12 @@
 		{/each}
 
 		<!-- Entity threading + topic/entity sub-dots (commented out for clarity while testing two-line chart)
-		{#each entityThreads() as thread (thread.entityId)}
+		{#each entityThreads as thread (thread.entityId)}
 			{#each thread.segments as seg}
 				<line x1={seg.x1} y1={seg.y1} x2={seg.x2} y2={seg.y2} class="entity-thread" />
 			{/each}
 		{/each}
-		{#each eventPoints() as point}
+		{#each eventPoints as point}
 			{#if !point.isUnknown && point.subDots.length > 0}
 				{@const RELATIVE_SCALE = 0.4}
 				{#each point.subDots as dot}
@@ -870,8 +870,8 @@
 		-->
 
 		<!-- "Now" marker (vertical line + time badge) -->
-		{#if nowX() !== null}
-			{@const x = nowX()}
+		{#if nowX !== null}
+			{@const x = nowX}
 			<line
 				x1={x}
 				y1={MARGIN.top}
@@ -893,7 +893,7 @@
 				text-anchor="middle"
 				class="now-label"
 			>
-				{nowTimeLabel()}
+				{nowTimeLabel}
 			</text>
 		{/if}
 
@@ -914,11 +914,11 @@
 		<!-- Y-axis semantic labels (inside plot, top-left / bottom-left) -->
 		<!-- Y-axis semantic labels (stacked vertically: novelty on top, autonomic below) -->
 		<text x={MARGIN.left + 6} y={MARGIN.top + 12} class="axis-semantic-label novelty-label">Novel</text>
-		{#if hasAutonomicData()}
+		{#if hasAutonomicData}
 			<text x={MARGIN.left + 6} y={MARGIN.top + 26} class="axis-semantic-label autonomic-label">Stress</text>
 		{/if}
 		<text x={MARGIN.left + 6} y={MARGIN.top + PLOT_H - 18} class="axis-semantic-label novelty-label">Routine</text>
-		{#if hasAutonomicData()}
+		{#if hasAutonomicData}
 			<text x={MARGIN.left + 6} y={MARGIN.top + PLOT_H - 4} class="axis-semantic-label autonomic-label">Recovery</text>
 		{/if}
 
@@ -927,7 +927,7 @@
 			<!-- Novelty line legend -->
 			<line x1="-52" y1="0" x2="-40" y2="0" stroke="var(--color-primary, #4f46e5)" stroke-width="1.5" />
 			<text x="-36" y="0" class="legend-label novelty-legend" dominant-baseline="middle">Novelty</text>
-			{#if hasAutonomicData()}
+			{#if hasAutonomicData}
 				<!-- Autonomic line legend -->
 				<line x1="-52" y1="16" x2="-40" y2="16" stroke="var(--color-foreground-muted, #888)" stroke-width="1.5" />
 				<text x="-36" y="16" class="legend-label autonomic-legend" dominant-baseline="middle">Autonomic</text>
@@ -936,7 +936,7 @@
 
 		<!-- Crosshair scrubber (follows mouse) -->
 		{#if hoverX !== null}
-			{@const evt = hoverEvent()}
+			{@const evt = hoverEvent}
 			<!-- Vertical dashed line -->
 			<line
 				x1={hoverX}

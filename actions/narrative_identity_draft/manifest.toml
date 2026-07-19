@@ -1,0 +1,6 @@
+name = "Narrative Identity Draft"
+description = "Drafts the first issue of the examined-self portrait — a grounded, second-person sketch of who you are — from early indexed entity and day data, via the local AI wallet. The onboarding reveal; recurs later."
+owner = "system"
+runtime = "function"
+command = ["narrative_identity_draft"]
+triggers = ["manual", "tool", "cron"]

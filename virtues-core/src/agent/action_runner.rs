@@ -57,23 +57,22 @@ pub async fn run_agent_loop(
     let llm_messages = build_context_for_llm(&messages, None, 0, Some(&system_prompt));
 
     // 4. Get tools and model
-    let tools = crate::tools::get_all_tool_definitions_for_llm();
+    let tools = crate::tools::get_tools_for_action();
     let model = if let Some(m) = &model_override {
         m.clone()
     } else {
         crate::api::assistant_profile::get_background_model(pool).await
-            .unwrap_or_else(|_| virtues_registry::models::default_model_for_slot(
+            .unwrap_or_else(|_| crate::api::model_catalog::model_for_slot(
                 virtues_registry::models::ModelSlot::Lite
-            ).to_string())
+            ))
     };
 
     // 5. Create and run AgentLoop (egress via BearerClient — no api config needed)
     let tool_context = crate::tools::ToolContext {
-        page_id: None,
         user_id: Some("system".to_string()),
-        space_id: None,
         chat_id: chat_id.clone(),
         action_id: Some(action_id.to_string()),
+        ..Default::default()
     };
 
     let agent_loop = crate::agent::AgentLoop::new_with_yjs(pool.clone(), yjs_state.clone());
@@ -232,7 +231,7 @@ async fn build_action_system_prompt(
 ) -> String {
     let assistant_name = crate::api::assistant_profile::get_assistant_name(pool)
         .await
-        .unwrap_or_else(|_| "Assistant".to_string());
+        .unwrap_or_else(|_| "Ari".to_string());
     let user_name = crate::api::profile::get_display_name(pool)
         .await
         .unwrap_or_else(|_| "there".to_string());

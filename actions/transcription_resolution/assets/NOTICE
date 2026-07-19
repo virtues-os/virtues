@@ -1,0 +1,21 @@
+Third-party assets bundled into the transcription_resolution action binary
+(embedded via include_bytes! in vad.rs) and redistributed with this software.
+
+------------------------------------------------------------------------------
+marblenet.onnx
+------------------------------------------------------------------------------
+NVIDIA Frame-VAD Multilingual MarbleNet v2.0 (voice-activity detection).
+
+Licensed by NVIDIA Corporation under the NVIDIA Open Model License.
+License: https://www.nvidia.com/en-us/agreements/enterprise-software/nvidia-open-model-license/
+Model:   https://huggingface.co/nvidia/Frame_VAD_Multilingual_MarbleNet_v2.0
+(ONNX export via https://huggingface.co/TigreGotico/frame-vad-marblenet-onnx)
+
+Commercial use and redistribution are permitted, royalty-free, under that
+license; this NOTICE satisfies its attribution requirement (§3.1).
+
+------------------------------------------------------------------------------
+mel_fb.f32, hann400.f32
+------------------------------------------------------------------------------
+Numeric constants (mel filterbank + Hann window) generated with librosa,
+which is distributed under the ISC License. https://librosa.org

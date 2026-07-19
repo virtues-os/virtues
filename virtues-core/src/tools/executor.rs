@@ -10,6 +10,37 @@ use std::sync::Arc;
 use super::{PageEditorTool, SemanticSearchTool, SqlQueryTool, WebSearchTool};
 use crate::server::yjs::YjsState;
 
+/// Lifecycle status of a Deep Research subagent (worker), for the live panel.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SubagentStatus {
+    Thinking,
+    Done,
+    Failed,
+}
+
+impl SubagentStatus {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            SubagentStatus::Thinking => "thinking",
+            SubagentStatus::Done => "done",
+            SubagentStatus::Failed => "failed",
+        }
+    }
+}
+
+/// A live update from a Deep Research worker, streamed out to the panel via the
+/// `subagent_tx` side-channel on [`ToolContext`].
+#[derive(Debug, Clone)]
+pub struct SubagentUpdate {
+    /// Unique per-dispatch id, so multiple dispatch rounds in one turn don't collide in the panel.
+    pub dispatch_id: u64,
+    pub id: usize,
+    pub title: String,
+    pub model: String,
+    pub status: SubagentStatus,
+    pub tokens: u32,
+}
+
 /// Context provided to tools during execution
 #[derive(Debug, Clone)]
 pub struct ToolContext {
@@ -17,12 +48,21 @@ pub struct ToolContext {
     pub page_id: Option<String>,
     /// User ID
     pub user_id: Option<String>,
-    /// Space ID
-    pub space_id: Option<String>,
+    /// Notebook ID
+    pub notebook_id: Option<String>,
     /// Chat ID (for permission checking)
     pub chat_id: Option<String>,
     /// Action ID (set when running as an action — for action memory tool)
     pub action_id: Option<String>,
+    /// Side-channel for streaming Deep Research subagent status to the live panel.
+    /// Set by the chat handler; `None` for headless/action runs.
+    pub subagent_tx: Option<tokio::sync::mpsc::Sender<SubagentUpdate>>,
+    /// Cancellation token for the turn, so long-running tools (Deep Research workers) can be
+    /// stopped when the user cancels or disconnects.
+    pub cancel_token: Option<tokio_util::sync::CancellationToken>,
+    /// Shared per-turn budget of subagent workers, so a Deep Research turn can't fan out without
+    /// bound across repeated dispatches. `None` = unbounded (non-chat callers).
+    pub worker_budget: Option<std::sync::Arc<std::sync::atomic::AtomicUsize>>,
 }
 
 impl Default for ToolContext {
@@ -30,9 +70,12 @@ impl Default for ToolContext {
         Self {
             page_id: None,
             user_id: None,
-            space_id: None,
+            notebook_id: None,
             chat_id: None,
             action_id: None,
+            subagent_tx: None,
+            cancel_token: None,
+            worker_budget: None,
         }
     }
 }
@@ -133,6 +176,62 @@ impl ToolExecutor {
         Ok(Self::new(pool))
     }
 
+    /// Tools that require an explicit "I allow" from the user before running, because they
+    /// destroy something or take a real-world / outbound action. Everything else runs freely
+    /// (reversible, local). The free/gated split is the whole permission model.
+    const PERMISSION_REQUIRED: &'static [&'static str] = &["run_action", "delete_action"];
+
+    /// If `tool_name` is gated and the user hasn't granted it for this chat, return a
+    /// `permission_needed` result (the frontend then shows an inline allow/deny prompt and
+    /// regenerates on approval). Returns `None` when the tool may run.
+    async fn check_tool_permission(
+        &self,
+        tool_name: &str,
+        arguments: &serde_json::Value,
+        context: &ToolContext,
+    ) -> Result<Option<ToolResult>, ToolError> {
+        if !Self::PERMISSION_REQUIRED.contains(&tool_name) {
+            return Ok(None);
+        }
+        // Only interactive chat is gated. Autonomous action runs set `action_id` (and may carry a
+        // linked `chat_id`) but have no user present to approve, so they must run ungated.
+        if context.action_id.is_some() {
+            return Ok(None);
+        }
+        // Headless calls with no chat aren't gated either.
+        let Some(chat_id) = context.chat_id.as_deref() else {
+            return Ok(None);
+        };
+        // The gated action tools all identify their target via `id`. If absent, let the tool
+        // surface its own validation error.
+        let Some(action_id) = arguments.get("id").and_then(|v| v.as_str()) else {
+            return Ok(None);
+        };
+
+        let granted =
+            crate::api::chat_permissions::has_permission(self._pool.as_ref(), chat_id, action_id)
+                .await
+                .unwrap_or(false);
+        if granted {
+            return Ok(None);
+        }
+
+        let title = crate::scheduler::actions::get_action(self._pool.as_ref(), action_id)
+            .await
+            .map(|a| a.name)
+            .unwrap_or_else(|_| "this action".to_string());
+
+        let verb = if tool_name == "delete_action" { "delete" } else { "run" };
+
+        Ok(Some(ToolResult::success(serde_json::json!({
+            "permission_needed": true,
+            "entity_id": action_id,
+            "entity_type": "action",
+            "entity_title": title,
+            "message": format!("AI wants to {verb} \"{title}\""),
+        }))))
+    }
+
     /// Execute a tool by name with given arguments
     pub async fn execute(
         &self,
@@ -141,6 +240,12 @@ impl ToolExecutor {
         context: &ToolContext,
     ) -> Result<ToolResult, ToolError> {
         tracing::info!(tool = tool_name, "Executing tool");
+
+        // Tool-based write permissions: destructive/outbound tools require an explicit
+        // "I allow" from the user before they run (see PERMISSION_REQUIRED).
+        if let Some(prompt) = self.check_tool_permission(tool_name, &arguments, context).await? {
+            return Ok(prompt);
+        }
 
         match tool_name {
             "think" => {
@@ -152,12 +257,16 @@ impl ToolExecutor {
             "set_user_name" => self.execute_set_user_name(arguments).await,
             "set_assistant_name" => self.execute_set_assistant_name(arguments).await,
             "web_search" => self.web_search.execute(arguments).await,
-            "semantic_search" => self.semantic_search.execute(arguments).await,
+            "semantic_search" => {
+                self.semantic_search
+                    .execute(arguments, context.notebook_id.as_deref())
+                    .await
+            }
             "sql_query" => self.sql_query.execute(arguments).await,
             "code_interpreter" => self.execute_code_interpreter(arguments).await,
             // Deep Research fan-out: spawn read-only research workers in parallel.
             "dispatch_subagents" => {
-                crate::agent::subagent::dispatch(self._pool.clone(), arguments).await
+                crate::agent::subagent::dispatch(self._pool.clone(), arguments, context).await
             }
             // Page editing tools - all routed to PageEditorTool
             "create_page" => self.page_editor.create_page(arguments).await,
@@ -184,8 +293,35 @@ impl ToolExecutor {
             "dayline_event" => super::dayline_events::execute(&self._pool, arguments, context).await,
             // Project item fetch (for attached project context lens)
             "get_project_item" => self.execute_get_project_item(arguments).await,
+            // Text-to-image generation (rendered inline to the user)
+            "generate_image" => self.execute_generate_image(arguments).await,
             _ => Err(ToolError::UnknownTool(tool_name.to_string())),
         }
+    }
+
+    /// Generate an image from a text prompt via the gateway image model, returned
+    /// as a base64 data URL the chat renders inline (and persists/reloads as-is).
+    async fn execute_generate_image(
+        &self,
+        arguments: serde_json::Value,
+    ) -> Result<ToolResult, ToolError> {
+        let prompt = arguments
+            .get("prompt")
+            .and_then(|v| v.as_str())
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .ok_or_else(|| ToolError::InvalidParameters("prompt is required".into()))?;
+
+        let png = crate::api::image_gen::generate_image_via_gateway(&self._pool, prompt)
+            .await
+            .map_err(|e| ToolError::ExecutionFailed(format!("Image generation failed: {e}")))?;
+
+        let b64 = base64::Engine::encode(&base64::engine::general_purpose::STANDARD, &png);
+
+        Ok(ToolResult::success(serde_json::json!({
+            "url": format!("data:image/png;base64,{b64}"),
+            "prompt": prompt,
+        })))
     }
 
     /// Execute Python code in sandboxed environment
@@ -437,7 +573,7 @@ impl ToolExecutor {
                 Err(e) => Ok(ToolResult::error(format!("Failed to fetch organization: {}", e))),
             }
         } else if let Some(thing_id) = item_url.strip_prefix("/thing/") {
-            match crate::api::get_thing(pool, thing_id.to_string()).await {
+            match crate::api::things::get_thing(pool, thing_id).await {
                 Ok(thing) => Ok(ToolResult::success(serde_json::json!({
                     "type": "thing",
                     "id": thing.id,
@@ -446,6 +582,21 @@ impl ToolExecutor {
                     "content": thing.content,
                 }))),
                 Err(e) => Ok(ToolResult::error(format!("Failed to fetch thing: {}", e))),
+            }
+        } else if let Some(notebook_id) = item_url.strip_prefix("/notebook/") {
+            match crate::api::notebooks::get_notebook(pool, notebook_id).await {
+                Ok(detail) => {
+                    let members: Vec<&str> =
+                        detail.items.iter().map(|i| i.url.as_str()).collect();
+                    Ok(ToolResult::success(serde_json::json!({
+                        "type": "notebook",
+                        "id": detail.notebook.id,
+                        "name": detail.notebook.name,
+                        "status": detail.notebook.current_status,
+                        "members": members,
+                    })))
+                }
+                Err(e) => Ok(ToolResult::error(format!("Failed to fetch notebook: {}", e))),
             }
         } else if item_url.starts_with("http://") || item_url.starts_with("https://") {
             // External URL — content lives outside Virtues. Return guidance to use web tools.
@@ -456,7 +607,7 @@ impl ToolExecutor {
             })))
         } else {
             Ok(ToolResult::error(format!(
-                "Unsupported item URL type: {}. Supported: /page/, /chat/, /person/, /place/, /org/, /thing/, or https://",
+                "Unsupported item URL type: {}. Supported: /page/, /chat/, /notebook/, /person/, /place/, /org/, /thing/, or https://",
                 item_url
             )))
         }

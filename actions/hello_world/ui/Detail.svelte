@@ -7,10 +7,10 @@
 -->
 
 <script lang="ts">
-	import { spaceStore } from '$lib/stores/space.svelte';
+	import { windowShellStore } from '$lib/stores/window-shell.svelte';
 
 	function back() {
-		spaceStore.openTabFromRoute('/actions');
+		windowShellStore.openTabFromRoute('/actions');
 	}
 
 	const sparkles = Array.from({ length: 24 }, (_, i) => ({

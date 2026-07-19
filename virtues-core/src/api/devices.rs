@@ -1,21 +1,18 @@
 //! Devices — the unified "+ paired things" surface.
 //!
-//! Lists every active paired device (browsers, mobile apps, sensors, the CLI)
-//! and supports revocation. Revoke is the single operation that ends all of
-//! a device's authority in one step:
+//! Lists every active paired device (mobile apps, sensors, the CLI) and supports
+//! revocation. A device's only credential is its allowlisted iroh key, so revoke
+//! is simply:
 //!
-//!   1. Mark `app_device.revoked_at = now()` — the middleware sees this on the
-//!      next request and refuses both cookies and bearers linked to the row.
-//!   2. Move any attached `credentials.status` to `'revoked'` and clear the
-//!      `secret_lookup_hash` so the bearer can no longer be matched O(1) at
-//!      `validate_device_token` time.
-//!   3. If the credential metadata carries a `wg_public_key`, call
-//!      `virtues_wg::manager::remove_peer(pubkey)` so the tunnel drops on the
-//!      kernel side immediately (Linux-only; no-op on the macOS dev host).
-//!   4. Append an `app_auth_event` row tagged `revoked`.
+//!   1. Mark `app_device.revoked_at = now()` — the reconciler drops the device's
+//!      iroh key from the allowlist, so its next dial is refused at the QUIC
+//!      handshake (existing connections aren't force-evicted; iroh has no
+//!      per-conn revoke — next dial is the boundary). The same reconcile GCs the
+//!      device's device-anchored ingest actions.
+//!   2. Append an `app_auth_event` row tagged `revoked`.
 //!
-//! Steps 1–2 happen in a single transaction; the WG step + event log are
-//! best-effort and logged on failure but don't block the revocation.
+//! The allowlist refresh + event log are best-effort and logged on failure but
+//! don't block the revocation.
 
 use axum::{
     extract::{Path, State},
@@ -83,6 +80,46 @@ pub async fn list_handler(State(pool): State<PgPool>, user: AuthUser) -> impl In
                 .into_response()
         }
     }
+}
+
+/// Bare-pool device list for the `virtues device ls` CLI. No `AuthUser` — the
+/// on-box operator is the owner (physical access = you). Non-revoked devices,
+/// newest-active first. Returns `(id, kind, label, node_id, last_seen_at)`.
+pub async fn list_devices_cli(
+    pool: &PgPool,
+) -> Result<Vec<(String, String, String, Option<String>, Option<DateTime<Utc>>)>, sqlx::Error> {
+    sqlx::query_as(
+        "SELECT id, kind, label, node_id, last_seen_at \
+         FROM app_device \
+         WHERE revoked_at IS NULL \
+         ORDER BY last_seen_at DESC NULLS LAST, paired_at DESC",
+    )
+    .fetch_all(pool)
+    .await
+}
+
+/// Bare-pool device revoke for the `virtues device rm` CLI. Mirrors the HTTP
+/// revoke's core in one transaction (mark the device revoked + revoke its
+/// credential rows), then kicks `after_pairing_change` so the de-allowlist +
+/// atlas re-report happen immediately. `Ok(false)` if no such active device.
+pub async fn revoke_device_cli(pool: &PgPool, device_id: &str) -> Result<bool, sqlx::Error> {
+    let mut tx = pool.begin().await?;
+    let affected = sqlx::query(
+        "UPDATE app_device SET revoked_at = now() WHERE id = $1 AND revoked_at IS NULL",
+    )
+    .bind(device_id)
+    .execute(&mut *tx)
+    .await?
+    .rows_affected();
+    if affected == 0 {
+        tx.rollback().await?;
+        return Ok(false);
+    }
+    tx.commit().await?;
+    // De-allowlist the device's iroh key (+ GC its device-anchored ingest actions
+    // on the next reconcile). Devices hold no credential row to revoke.
+    crate::relay::after_pairing_change(pool.clone());
+    Ok(true)
 }
 
 /// `DELETE /api/devices/:id` — revoke a paired device. Refuses if it's the
@@ -172,19 +209,6 @@ pub async fn revoke_handler(
             .into_response();
     }
 
-    // Capture the WG pubkey before clearing the credential's lookup hash.
-    let wg_pubkey: Option<String> = sqlx::query_scalar(
-        "SELECT metadata->>'wg_public_key' \
-         FROM credentials \
-         WHERE device_id = $1 AND status = 'active' \
-         LIMIT 1",
-    )
-    .bind(&device_id)
-    .fetch_optional(&mut *tx)
-    .await
-    .ok()
-    .flatten();
-
     // Apply the revoke.
     if let Err(e) = sqlx::query(
         "UPDATE app_device SET revoked_at = now() WHERE id = $1",
@@ -201,37 +225,10 @@ pub async fn revoke_handler(
             .into_response();
     }
 
-    // Revoke credential rows belonging to this device (apps/sensors). Browser
-    // sessions are deleted instead — they're cookies, not long-lived secrets.
-    if let Err(e) = sqlx::query(
-        "UPDATE credentials SET status = 'revoked', secret_lookup_hash = NULL, \
-                                status_reason = 'device_revoked', updated_at = now() \
-         WHERE device_id = $1",
-    )
-    .bind(&device_id)
-    .execute(&mut *tx)
-    .await
-    {
-        tracing::warn!("devices revoke: credential revoke failed: {e:#}");
-        return (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(json!({"error": "internal"})),
-        )
-            .into_response();
-    }
-    if let Err(e) = sqlx::query("DELETE FROM app_auth_session WHERE device_id = $1")
-        .bind(&device_id)
-        .execute(&mut *tx)
-        .await
-    {
-        tracing::warn!("devices revoke: session delete failed: {e:#}");
-        return (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(json!({"error": "internal"})),
-        )
-            .into_response();
-    }
-
+    // The device's iroh key is de-allowlisted by the `app_device.revoked_at`
+    // update above (the reconciler drops it from the allowlist), so the next dial
+    // is refused at the handshake. Devices hold no credential row to revoke, and
+    // their device-anchored ingest actions are GC'd by the next reconcile.
     if let Err(e) = tx.commit().await {
         tracing::warn!("devices revoke: tx commit failed: {e:#}");
         return (
@@ -241,10 +238,9 @@ pub async fn revoke_handler(
             .into_response();
     }
 
-    // WG eviction — best-effort, after commit so DB state is authoritative.
-    if let Some(pubkey) = wg_pubkey.as_deref() {
-        evict_wg_peer(pubkey);
-    }
+    // Drop the revoked device's EndpointId from the iroh transport allowlist
+    // (and re-report the shrunk set to atlas) so it can no longer reach the box.
+    crate::relay::after_pairing_change(pool.clone());
 
     // Event log.
     let _ = sqlx::query(
@@ -253,31 +249,237 @@ pub async fn revoke_handler(
     )
     .bind(&user.id)
     .bind(&device_id)
-    .bind(json!({"revoked_by_device": &user.device_id, "had_wg_peer": wg_pubkey.is_some()}))
+    .bind(json!({"revoked_by_device": &user.device_id}))
     .execute(&pool)
     .await;
 
     (StatusCode::OK, Json(json!({"ok": true}))).into_response()
 }
 
-// ─── WG peer eviction ───────────────────────────────────────────────────────
-// Linux-only. The macOS dev host has no kernel WG; revocation is still
-// authoritative in the DB and the WG daemon will simply have no peer to
-// reconcile when it next syncs.
+#[derive(serde::Deserialize)]
+pub struct SelfNodeIdRequest {
+    /// The calling device's iroh EndpointId (hex).
+    pub node_id: String,
+}
 
-#[cfg(target_os = "linux")]
-fn evict_wg_peer(public_key: &str) {
-    match virtues_wg::manager::remove_peer(public_key) {
-        Ok(()) => tracing::info!(public_key, "evicted wg peer on revoke"),
-        Err(e) => tracing::warn!("wg peer eviction failed (DB state is authoritative): {e:#}"),
+/// `POST /api/devices/self/node-id { node_id }` — the calling device (authed by
+/// its own bearer) reports its iroh EndpointId so the box allowlists it on its
+/// iroh transport. This is how a device provisioned off-LAN (QR/iOS), which
+/// wasn't present at consume time to submit `device_node_id`, becomes reachable.
+pub async fn set_self_node_id(
+    State(pool): State<PgPool>,
+    user: AuthUser,
+    Json(body): Json<SelfNodeIdRequest>,
+) -> impl IntoResponse {
+    let node_id = body.node_id.trim();
+    if node_id.is_empty() {
+        return (StatusCode::BAD_REQUEST, Json(json!({"error": "missing_node_id"}))).into_response();
+    }
+    match sqlx::query("UPDATE app_device SET node_id = $1 WHERE id = $2 AND revoked_at IS NULL")
+        .bind(node_id)
+        .bind(&user.device_id)
+        .execute(&pool)
+        .await
+    {
+        Ok(_) => {
+            // Hot-swap the allowlist + re-report to atlas so the device can reach
+            // the box immediately.
+            crate::relay::after_pairing_change(pool.clone());
+            (StatusCode::OK, Json(json!({"ok": true}))).into_response()
+        }
+        Err(e) => {
+            // Most likely a unique violation — another active device already
+            // holds this EndpointId.
+            tracing::warn!(error = %e, "set_self_node_id failed");
+            (StatusCode::CONFLICT, Json(json!({"error": "node_id_conflict"}))).into_response()
+        }
     }
 }
 
-#[cfg(not(target_os = "linux"))]
-fn evict_wg_peer(_public_key: &str) {
-    tracing::debug!("wg peer eviction skipped (non-Linux host)");
+/// `GET /api/devices/self/reach` — read the box's *current* iroh reach ticket
+/// `{box_node_id, relay_url}`. **Anonymous**: the reach ticket is the box's
+/// public address (its EndpointId + relay URL) — not a secret — and a device
+/// needs it precisely to bootstrap its first iroh dial (before which it has no
+/// key-authenticated channel). Connecting still requires an allowlisted key, so
+/// exposing the address grants nothing. Read-only; no state change.
+pub async fn get_self_reach(State(_pool): State<PgPool>) -> impl IntoResponse {
+    let (box_node_id, relay_url, box_direct_addrs) = crate::api::pair::box_reach_fields();
+    (
+        StatusCode::OK,
+        Json(json!({
+            "box_node_id": box_node_id,
+            "relay_url": relay_url,
+            "box_direct_addrs": box_direct_addrs,
+        })),
+    )
+        .into_response()
 }
 
-// Silence unused `Value` import if the file evolves.
-#[allow(dead_code)]
-fn _value_ref(_: &Value) {}
+#[derive(Debug, serde::Deserialize)]
+pub struct EnrollPeerRequest {
+    /// The new device's iroh EndpointId (hex), generated on that device and
+    /// handed to this (already-paired) device out-of-band.
+    pub peer_node_id: String,
+    /// The new device's kind: `mobile_app` | `desktop_app` | `sensor`.
+    pub kind: String,
+    /// Optional human label for the Devices page.
+    pub label: Option<String>,
+    /// Optional device metadata (name/model/os) for the Devices page.
+    pub device_info: Option<Value>,
+}
+
+/// `POST /api/devices/enroll-peer` — peer-vouched enrollment. An **already-paired**
+/// device (authed by its own bearer) vouches for a NEW device by its EndpointId:
+/// the box mints the new device's credential + allowlists its EndpointId, so the
+/// new device can reach the box over the relay *once it's registered* (no relay
+/// grace-pass, no chicken-egg). The returned bearer is relayed back to the new
+/// device by the vouching device over a trusted out-of-band channel.
+///
+/// This is the iroh-native replacement for the off-LAN "provision" QR: the new
+/// device generates its own key first, so its EndpointId is known at enrollment.
+pub async fn enroll_peer(
+    State(pool): State<PgPool>,
+    _user: AuthUser,
+    Json(body): Json<EnrollPeerRequest>,
+) -> impl IntoResponse {
+    match enroll_peer_core(
+        &pool,
+        &body.peer_node_id,
+        &body.kind,
+        body.label.as_deref(),
+        body.device_info.as_ref(),
+    )
+    .await
+    {
+        Ok(p) => {
+            let (box_node_id, relay_url, box_direct_addrs) =
+                crate::api::pair::box_reach_fields();
+            (
+                StatusCode::OK,
+                Json(json!({
+                    "device_id": p.device_id,
+                    "action_ids": p.action_ids,
+                    "box_node_id": box_node_id,
+                    "relay_url": relay_url,
+                    "box_direct_addrs": box_direct_addrs,
+                })),
+            )
+                .into_response()
+        }
+        Err(e) => e.into_response(),
+    }
+}
+
+/// The result of enrolling a peer device: the device row + its ingest action
+/// map. No bearer — the peer authenticates by its allowlisted iroh key.
+pub(crate) struct EnrolledPeer {
+    pub device_id: String,
+    pub action_ids: std::collections::HashMap<String, String>,
+}
+
+pub(crate) enum EnrollError {
+    MissingPeer,
+    InvalidKind,
+    UnknownSource,
+    /// The EndpointId is already an active device (unique-index violation).
+    Conflict,
+    Internal,
+}
+
+impl EnrollError {
+    pub(crate) fn into_response(self) -> axum::response::Response {
+        match self {
+            EnrollError::MissingPeer => {
+                (StatusCode::BAD_REQUEST, Json(json!({"error": "missing_peer_node_id"}))).into_response()
+            }
+            EnrollError::InvalidKind => {
+                (StatusCode::BAD_REQUEST, Json(json!({"error": "invalid_kind"}))).into_response()
+            }
+            EnrollError::UnknownSource => {
+                (StatusCode::BAD_REQUEST, Json(json!({"error": "unknown_source"}))).into_response()
+            }
+            EnrollError::Conflict => {
+                (StatusCode::CONFLICT, Json(json!({"error": "peer_already_enrolled"}))).into_response()
+            }
+            EnrollError::Internal => {
+                (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({"error": "internal"}))).into_response()
+            }
+        }
+    }
+}
+
+/// Core peer enrollment shared by `enroll_peer` (HTTP) and the link-a-device
+/// approve step: insert `app_device{node_id=peer, source_id}`, allowlist +
+/// register the EndpointId with atlas, then fan out the device's ingest actions.
+/// No bearer changes hands — the peer's proven key is its credential.
+pub(crate) async fn enroll_peer_core(
+    pool: &PgPool,
+    peer_node_id: &str,
+    kind: &str,
+    label: Option<&str>,
+    device_info: Option<&Value>,
+) -> Result<EnrolledPeer, EnrollError> {
+    let peer_node_id = peer_node_id.trim();
+    if peer_node_id.is_empty() {
+        return Err(EnrollError::MissingPeer);
+    }
+    let kind = kind.trim();
+    if !matches!(kind, "mobile_app" | "desktop_app" | "sensor") {
+        return Err(EnrollError::InvalidKind);
+    }
+    let source_id = crate::api::pair::resolve_source_id(kind, None).map_err(|()| EnrollError::UnknownSource)?;
+    let label = label
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+        .unwrap_or_else(|| kind.to_string());
+
+    let device_info_val = device_info.cloned().unwrap_or_else(|| json!({}));
+    let device_id = crate::ids::generate_id(
+        crate::ids::DEVICE_PREFIX,
+        &[peer_node_id, &Utc::now().to_rfc3339()],
+    );
+
+    let mut tx = pool.begin().await.map_err(|e| {
+        tracing::warn!(error = %e, "enroll_peer_core: begin tx failed");
+        EnrollError::Internal
+    })?;
+    // Idempotent on node_id: re-enrolling the same peer UPDATEs its row and
+    // returns the existing id (rather than 500-ing on the unique node_id).
+    let device_id = crate::api::pair::insert_device_row(
+        &mut tx,
+        &device_id,
+        kind,
+        &label,
+        &device_info_val,
+        None,
+        Some(peer_node_id),
+        Some(source_id.as_str()),
+    )
+    .await
+    .map_err(|e| {
+        tracing::warn!(error = %e, "enroll_peer_core: device insert failed");
+        EnrollError::Internal
+    })?;
+    tx.commit().await.map_err(|e| {
+        tracing::warn!(error = %e, "enroll_peer_core: commit failed");
+        EnrollError::Internal
+    })?;
+
+    // Allowlist the EndpointId + register it with atlas so the relay admits it,
+    // THEN fan out the device's ingest actions (anchored on device_id).
+    crate::relay::after_pairing_change(pool.clone());
+    let action_ids = crate::api::pair::assemble_action_fanout(pool, &device_id)
+        .await
+        .unwrap_or_default();
+
+    Ok(EnrolledPeer {
+        device_id,
+        action_ids,
+    })
+}
+
+// WG peer eviction is no longer done inline here. Kernel `wg0` state has a
+// single writer — the `virtues-wireguard` daemon — which reconciles from the
+// active peer set (see virtues_wg::reconcile + signal). Revoke marks the row
+// and fires `NOTIFY wg_reconcile`; the daemon drops the peer. This removes the
+// previous dual-writer (a direct `remove_peer` here racing the daemon's poll).

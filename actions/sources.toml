@@ -48,3 +48,13 @@ display_name = "Plaid"
 icon = "ri:bank-card-line"
 description = "Connect bank accounts via Plaid Hosted Link to sync transactions, balances, investments, and liabilities."
 auth = { kind = "via_proxy", start_path = "/plaid/start" }
+
+# One-time import (NOT a living/cron'd source): the user uploads an export file
+# which is parsed box-side and ingested once. Modeled as a source so it gets a
+# catalog tile + uniform dedup; its action is manual-trigger only (no cron).
+[[source]]
+id = "chat_import"
+display_name = "Chat History"
+icon = "ri:chat-history-line"
+description = "Import past conversations from a Claude, ChatGPT, or Gemini export — a one-time snapshot, not a live sync."
+auth = { kind = "api_key", fields = [] }

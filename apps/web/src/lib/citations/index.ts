@@ -20,14 +20,9 @@ export {
 export {
 	buildCitationContext,
 	buildCitationContextFromParts,
-	buildCitationsFromGrounding,
-	mergeCitationContexts,
 	extractToolCallParts,
 	isToolCallPart,
 	hasCitations,
 	getCitationByMarker,
-	type ToolCallPart,
-	type GoogleGroundingMetadata,
-	type GoogleGroundingChunk,
-	type GoogleGroundingSupport
+	type ToolCallPart
 } from './builder';

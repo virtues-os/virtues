@@ -47,7 +47,7 @@
 		bottom: calc(100% + 8px);
 		left: 50%;
 		transform: translateX(-50%);
-		z-index: 50;
+		z-index: var(--z-tooltip);
 		min-width: 220px;
 		max-width: 320px;
 		padding: 12px;

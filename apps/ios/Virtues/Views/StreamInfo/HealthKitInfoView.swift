@@ -110,6 +110,8 @@ struct HealthKitInfoView: View {
             }
 
             InfoRow(label: "Pending Records", value: "\(uploadCoordinator.streamCounts.healthkit)")
+
+            ActionLinkRow(streamKey: "ios_healthkit")
         }
         .padding(16)
         .background(Color.warmSurfaceElevated)
@@ -145,7 +147,7 @@ struct HealthKitInfoView: View {
             }
             .padding(.vertical, 4)
 
-            Text("Data is synced every 5 minutes using incremental sync to avoid duplicates.")
+            Text("Data is uploaded to your box every 15 minutes using incremental sync to avoid duplicates.")
                 .font(.subheadline)
                 .foregroundColor(.warmForegroundMuted)
         }
@@ -154,12 +156,12 @@ struct HealthKitInfoView: View {
     private var configSection: some View {
         InfoSection(title: "Configuration", icon: "slider.horizontal.3") {
             VStack(spacing: 10) {
-                InfoRow(label: "Sync Interval", value: "5 minutes")
+                InfoRow(label: "Sync Interval", value: "15 minutes")
                 InfoRow(label: "Initial Lookback", value: "90 days")
                 InfoRow(label: "Batch Size", value: "1000 samples")
             }
 
-            Text("Configuration is managed by the server.")
+            Text("Default collection settings.")
                 .font(.caption)
                 .foregroundColor(.warmForegroundMuted)
                 .padding(.top, 4)

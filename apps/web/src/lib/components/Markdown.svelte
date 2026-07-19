@@ -2,6 +2,8 @@
 	import { browser } from '$app/environment';
 	import { Streamdown } from 'svelte-streamdown';
 	import type { BundledTheme } from 'shiki';
+	import MarkdownCodeBlock from './MarkdownCodeBlock.svelte';
+	import { preprocessMarkdown } from '$lib/utils/markdownPreprocess';
 
 	interface Props {
 		content: string;
@@ -9,6 +11,8 @@
 	}
 
 	let { content, isStreaming = false }: Props = $props();
+
+	const processedContent = $derived(preprocessMarkdown(content));
 
 	// Read Shiki theme from CSS variable (defined in themes.css)
 	function getShikiTheme(): BundledTheme {
@@ -41,19 +45,26 @@
 			skeleton: 'block text-foreground bg-transparent animate-none',
 			downloadButton: 'px-2 py-1 rounded hover:bg-border/50 transition-colors text-foreground-muted',
 			downloadIcon: 'w-4 h-4'
-		}
+		},
+		// Cells rendered by streamdown's default td/th (inline markdown works); we
+		// only style them. The `table` snippet supplies the scrolling wrapper.
+		thead: { base: 'bg-surface-elevated' },
+		tbody: { base: '' },
+		tr: { base: '' },
+		th: { base: 'px-3 py-2 text-left font-medium border-b border-border-subtle' },
+		td: { base: 'px-3 py-2 align-top border-b border-border-subtle/50' }
 	};
 </script>
 
 {#if browser}
 	<div class="markdown">
 		<Streamdown
-			{content}
+			content={processedContent}
 			class="streamdown-content"
 			shikiTheme={currentShikiTheme}
 			parseIncompleteMarkdown={isStreaming}
 			theme={customTheme}
-			controls={{ table: false }}
+			controls={{ table: true }}
 			allowedLinkPrefixes={['*']}
 			animation={{
 				enabled: isStreaming,
@@ -62,7 +73,17 @@
 				tokenize: 'word',
 				animateOnMount: false
 			}}
-		/>
+		>
+			{#snippet table({ children }: { children: import('svelte').Snippet })}
+				<div class="my-4 w-full overflow-x-auto rounded-xl border border-border-subtle">
+					<table class="w-full border-collapse text-sm">{@render children()}</table>
+				</div>
+			{/snippet}
+
+			{#snippet code({ token }: { token: any })}
+				<MarkdownCodeBlock {token} {isStreaming} />
+			{/snippet}
+		</Streamdown>
 	</div>
 {:else}
 	<!-- SSR fallback: plain text with basic styling -->

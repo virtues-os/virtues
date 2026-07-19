@@ -1,0 +1,53 @@
+[package]
+name = "virtues-client"
+version = "0.1.0"
+edition = "2021"
+authors = ["Virtues Team <team@virtues.com>"]
+description = "Small CLI that pairs this machine to a Virtues box and opens it in the browser. In the relay model the box is reachable at its own HTTPS URL, so this is a pair + open + status tool — no tunnel, no proxy."
+license = "MIT"
+repository = "https://github.com/virtues-os/virtues"
+
+[[bin]]
+name = "virtues-client"
+path = "src/main.rs"
+
+[dependencies]
+# CLI
+clap = { version = "4.5", features = ["derive"] }
+
+# Shared reach core: pair (consume) + the `:7117` loopback proxy over iroh.
+# The desktop supplies its keychain-backed BoxStore; the crate does the rest.
+virtues-reach-client = { path = "../../crates/virtues-reach-client" }
+
+# Async runtime (pair/status/discover are async; mDNS browse + reqwest need it)
+tokio = { version = "1.40", features = ["full"] }
+
+# HTTP client for the pair flow + reachability/revoke calls. webpki-roots so the
+# box's relay URL (browser-trusted ACME cert chaining to a public root) verifies.
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls-webpki-roots"] }
+
+# OS-native credential storage (Keychain on macOS, Secret Service on Linux,
+# Credential Manager on Windows). Persists the paired-box record after pair.
+keyring = "3"
+
+# Serialization
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+
+# Errors
+anyhow = "1.0"
+
+# Logging — stderr by default
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+# Pair URL parsing
+url = "2.5"
+
+# mDNS service discovery — browses _http._tcp.local. for Virtues boxes.
+mdns-sd = "0.11"
+
+# mdns-sd's browse channel is a flume Receiver; we name flume's
+# RecvTimeoutError directly to tell "no packet yet" (keep polling) apart from
+# "channel closed" (stop). Pinned to mdns-sd's own flume major to keep one copy.
+flume = "0.11"

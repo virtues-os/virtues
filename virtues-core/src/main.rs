@@ -1,9 +1,7 @@
 //! Virtues CLI - Command-line interface for the Virtues personal data platform
 
-use clap::Parser;
 use std::env;
 use virtues::cli::types::{Cli, Commands};
-use virtues::search::Embedder;
 use virtues::VirtuesBuilder;
 
 #[tokio::main]
@@ -27,188 +25,177 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         // We use rustls with `default-features = false, features = ["ring"]` to
         // avoid aws-lc-rs (and aws-lc-sys, which doesn't cross-compile under
         // GCC 11). Rustls 0.23 requires the provider to be installed once at
-        // startup before any TLS work; otherwise the axum-server TLS task
-        // panics on first connection.
+        // startup before any TLS work — the box serves no TLS itself, but
+        // outbound HTTPS to atlas (via reqwest with rustls-tls-webpki-roots)
+        // still needs the provider installed.
         rustls::crypto::ring::default_provider()
             .install_default()
             .expect("install rustls ring CryptoProvider");
 
-        // Load environment variables from .env file
-        // Try current directory first, then parent directory (for running from core/)
+        // Load env in this priority order:
+        //   1. Existing process env (set by systemd's EnvironmentFile or the
+        //      operator's `env VAR=… virtues …` invocation) — never override.
+        //   2. /var/lib/virtues/virtues.env — the canonical production env
+        //      file install.sh writes. Lets `sudo -u virtues virtues init`
+        //      work without `env $(cat /var/lib/virtues/virtues.env | xargs)`.
+        //   3. ./.env in CWD (Mac/dev convention).
+        //   4. ../.env (for running from virtues-core/ during dev).
+        let _ = dotenv::from_path("/var/lib/virtues/virtues.env");
         if dotenv::dotenv().is_err() {
             let _ = dotenv::from_path("../.env");
         }
 
-        // Initialize tracing
-        // Use RUST_LOG env var, falling back to INFO if not set
+        // On a box install, DB-touching CLI commands must run as the `virtues`
+        // service user (Unix-socket peer auth maps OS user → Postgres role).
+        // Running `virtues init` as adam/root used to burn a fake 30s
+        // "Postgres did not accept connections" timeout. Self-correct instead.
+        #[cfg(unix)]
+        maybe_reexec_as_service_user();
+
+        // Initialize tracing.
+        //
+        // Interactive subcommands share stdout with cliclack/dialoguer wizards
+        // — INFO log lines collide with the TUI and break the carefully drawn
+        // rail-connected prompts. So:
+        //   • Default to `warn` for interactive subcommands; full `info` for
+        //     `server` and the background/daemon commands.
+        //   • Always write tracing output to stderr so cliclack owns stdout
+        //     cleanly, even when RUST_LOG bumps the filter to debug.
+        // RUST_LOG still overrides for debugging.
+        let interactive = matches!(
+            std::env::args().nth(1).as_deref(),
+            Some("init")
+                | Some("pair")
+                | Some("link")
+                | Some("login")
+                | Some("subscribe")
+                | Some("status")
+                | Some("doctor")
+                | Some("upgrade")
+                | Some("backup")
+                | Some("restore")
+                | Some("reset")
+                | Some("configure-inference")
+                | Some("reindex")
+                | Some("sudo")
+                | Some("warm-models")
+        );
+        let default_filter = if interactive { "warn" } else { "info" };
         let env_filter = tracing_subscriber::EnvFilter::try_from_default_env()
-            .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info"));
+            .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new(default_filter));
 
-        tracing_subscriber::fmt().with_env_filter(env_filter).init();
+        tracing_subscriber::fmt()
+            .with_env_filter(env_filter)
+            .with_writer(std::io::stderr)
+            .init();
 
-        // Initialize observability (metrics)
-        // If OTEL_EXPORTER_OTLP_ENDPOINT is set, metrics will be exported
-        if let Err(e) =
-            virtues::observability::init(virtues::observability::ObservabilityConfig::default())
-        {
-            tracing::warn!(error = %e, "Failed to initialize observability, continuing without metrics");
-        }
+        // No metrics exporter. Virtues collects no central telemetry — all
+        // observability is box-local (see api/system_telemetry.rs + the
+        // app_ai_calls / app_system_samples tables). The old OpenTelemetry
+        // OTLP exporter was removed: it was egress and dropped-on-restart.
     }
 
-    let cli = Cli::parse();
+    // Inject the rich version (semver + codename + date + sha) into clap's
+    // `--version`/`-V`. The derive uses CARGO_PKG_VERSION; override it at the
+    // parse site since the codename is computed from the baked git sha.
+    let cli = {
+        use clap::{CommandFactory, FromArgMatches};
+        // clap wants a &'static str; the version is fixed for the process, so
+        // leak the one-time String.
+        let version: &'static str =
+            Box::leak(virtues::codename::long_version().into_boxed_str());
+        let matches = Cli::command().version(version).get_matches();
+        match Cli::from_arg_matches(&matches) {
+            Ok(c) => c,
+            Err(e) => e.exit(),
+        }
+    };
 
-    // Handle Doctor early (no database — pure hardware/model resolution report)
+    // Handle Doctor early (no app stack — the report opens its own DB pool
+    // best-effort, and an unreadable DB is itself a finding, not a crash).
     if matches!(cli.command, Some(Commands::Doctor)) {
-        print_resolution_report();
-        return Ok(());
+        std::process::exit(virtues::cli::doctor::run().await);
     }
 
     // Handle WarmModels early (no database needed — just downloads ML models)
     if matches!(cli.command, Some(Commands::WarmModels)) {
-        // Show what will be fetched (accelerator, precision, baked vs download)
-        // before pulling anything — same report `virtues doctor` prints.
-        print_resolution_report();
+        use virtues::cli::ui;
+        // Show what will be exercised (accelerator, precision, on-disk state)
+        // before pulling anything — the same ledger `virtues doctor` prints.
+        // A missing GGUF is a hard stop here: warming would fail against it
+        // anyway, so fail with the remedy instead of a sidecar error.
+        let mut issues = ui::Issues::new();
+        ui::section("Warm models");
+        virtues::cli::doctor::print_inference(
+            &virtues::inference_report::resolution_report(),
+            &mut issues,
+        );
+        if issues.has_errors() {
+            std::process::exit(issues.verdict());
+        }
         println!();
 
         let embedder = virtues::search::get_embedder().await?;
-        println!("✅ Embedder ready (dim={})", embedder.dimension());
+        // Actually embed once, don't just connect: this runs the sidecar's
+        // native-dim validation, so a wrong GGUF (e.g. a 1024-dim model vs
+        // EmbeddingGemma's 768-dim native) fails HERE instead of "passing" a connect-only
+        // check and silently corrupting the index.
+        let probe = embedder.embed_query_async("virtues warm-up probe").await?;
+        ui::ok(&format!(
+            "embedder ready (stored dim={}, native validated)",
+            probe.len()
+        ));
 
         let _reranker = virtues::search::get_reranker().await?;
-        println!("✅ Reranker ready");
+        ui::ok("reranker ready");
+        println!();
 
         return Ok(());
     }
 
     // Handle Init command early (doesn't need Virtues client).
     //
-    // `virtues init` is the all-in-one first-run wizard:
-    //   1. Local config: DB URL, server URL, storage path, encryption key
-    //   2. Save to .env
-    //   3. Migrations (required before subscribe — box_secrets table)
-    //   4. Subscribe ($20/mo via QR + URL on the same screen)
-    //   5. Done — print next-step hints
+    // `virtues init` is PLUMBING, not a wizard (docs/onboarding.md): resolve
+    // config from the env the installer wrote, run migrations, mint a pair
+    // token, print the handoff. The account/subscribe conversation lives in
+    // the web setup wizard (/setup) — a TTY is the worst possible medium for
+    // billing and OAuth, so the interactive middle this command used to have
+    // is gone. The installer execs this at the end of `curl virtues.com/sh`;
+    // re-running it by hand is always safe (everything here is idempotent).
     //
-    // Power users still have `virtues subscribe` / `virtues migrate` separately
-    // when they want granular control.
+    // Power users keep `virtues subscribe` / `account-login` / `migrate` as
+    // hidden standalone commands.
     if matches!(cli.command, Some(Commands::Init)) {
-        use dialoguer::{theme::ColorfulTheme, Select};
+        // recommended_config() reads DATABASE_URL, VIRTUES_ENCRYPTION_KEY,
+        // STATIC_DIR, STORAGE_PATH, etc. from the process env (systemd
+        // EnvironmentFile + dotenv both populate them). Operators who need
+        // to override can edit /var/lib/virtues/virtues.env first; there is
+        // deliberately no second wizard here — the Recommended/Advanced
+        // choice lives one level up, in the installer.
+        let config = virtues::setup::recommended_config()?;
 
-        // First-boot mode selector. 99.99% of users want Recommended
-        // (zero config questions — install.sh already wrote the env file
-        // with sane defaults). Advanced is the override-everything wizard
-        // for the rare operator running a custom deployment.
-        let mode_idx = Select::with_theme(&ColorfulTheme::default())
-            .with_prompt("How do you want to set up?")
-            .items(&[
-                "Recommended — takes care of everything (what you want)",
-                "Advanced — override defaults (DB URL, storage, encryption key, …)",
-            ])
-            .default(0)
-            .interact()
-            .unwrap_or(0);
-
-        let config = if mode_idx == 0 {
-            // Recommended: zero questions. Pull DATABASE_URL from the
-            // environment (install.sh wrote /var/lib/virtues/virtues.env;
-            // the systemd unit + this binary both load it). Fall back to
-            // the production peer-auth URL if env is unset.
-            virtues::setup::recommended_config()?
-        } else {
-            // Advanced: full interactive wizard.
-            let cfg = virtues::setup::run_init().await?;
-            virtues::setup::save_config(&cfg)?;
-            cfg
-        };
-
-        // Migrations are functionally required before the subscribe step
-        // (box vault stores billing_token in `box_secrets`). Idempotent —
-        // safe to re-run on every `virtues init` invocation.
-        println!();
-        println!("📊 Running migrations...");
         let db = virtues::database::Database::new(&config.database_url)?;
         db.initialize().await?;
-        println!("✅ Migrations complete");
+        // Match the installer's step iconography (it just printed its own
+        // "✓" steps right above us via `ui::ok`), so the handoff reads as one
+        // continuous checklist rather than switching to emoji mid-stream.
+        println!();
+        println!("  {}  {}", console::style("✓").green(), "Database ready");
 
-        // Privacy framing before the account prompt. The user is *deciding*
-        // whether to attach a Virtues account — they need the trust pitch
-        // now, not buried in a Settings page later.
-        print_account_intro();
-
-        // Account selector. Replaces the old binary Confirm.
-        //
-        // [1] Log in: lands when atlas /init/login (Stripe Customer Portal
-        //     magic link → mint billing_token for verified customer) ships.
-        //     Until then, the option exists in the UI for honesty + sets
-        //     expectations.
-        // [2] Create new: existing device-authorization → Stripe Checkout
-        //     flow that's been working since v0.1.0.
-        let account_idx = Select::with_theme(&ColorfulTheme::default())
-            .with_prompt("Account")
-            .items(&[
-                "Log in to existing Virtues account",
-                "Create a new Virtues account ($20/mo, $15 wallet)",
-            ])
-            .default(1)
-            .interact()
-            .unwrap_or(1);
-
-        // Two completely different "log ins":
-        //   - account login   = atlas /init/login → Resend magic link → box
-        //                       polls until the user clicks the email and
-        //                       atlas flips the device_link to ready.
-        //   - box login       = your laptop browser pairing with the box
-        //                       via the pair URL printed at the end of
-        //                       this function. Same UI surface (the web
-        //                       app); fundamentally different semantics
-        //                       (this is "log into the box's web UI",
-        //                       not "log into Virtues account").
-        if account_idx == 0 {
-            // Account login via magic-link email. The function below
-            // calls /api/billing/link/login on the box, which in turn
-            // hits atlas /init/login. On success, the existing poll
-            // loop will pick up the billing_token when the user clicks
-            // the email link.
-            use virtues::VirtuesBuilder;
-            let virtues = VirtuesBuilder::new()
-                .database(&config.database_url)
-                .build()
-                .await?;
-            if let Err(e) = virtues::cli::commands::deploy::handle_login(&virtues).await {
+        // Print the handoff with the box's UNIVERSAL standing code — the same
+        // rotating code the panel shows and `virtues pair` prints. The fragment
+        // form (`/pair#t=…`) never leaks the code to server logs or referers.
+        // Opening it lands the browser in the setup wizard, which owns
+        // everything that used to be prompted here.
+        match virtues::api::pair::ensure_standing(db.pool()).await {
+            Ok(minted) => print_link_output(&minted),
+            Err(e) => {
                 println!();
-                println!("  ⚠  log-in step did not finish: {e}");
-                println!("     Run `virtues login` later when you're ready, or");
-                println!("     re-run `virtues init` and pick Create new instead.");
-            }
-        } else {
-            use virtues::VirtuesBuilder;
-            let virtues = VirtuesBuilder::new()
-                .database(&config.database_url)
-                .build()
-                .await?;
-            // Soft-fail — let the user retry with `virtues subscribe` if
-            // the link expires or atlas is unreachable.
-            if let Err(e) = virtues::cli::commands::deploy::handle_subscribe(&virtues).await {
-                println!();
-                println!("  ⚠  subscribe step did not finish: {e}");
-                println!("     Run `virtues subscribe` later when you're ready.");
+                println!("  ⚠  could not produce a pair code: {e}");
+                println!("     Run `virtues pair` later to get one.");
             }
         }
 
-        // Mint a CLI-origin pair token and print the URL.  The fragment-token
-        // form (`/pair#t=…`) never leaks the token to server logs or referers.
-        {
-            let db = virtues::database::Database::new(&config.database_url)?;
-            match virtues::api::pair::mint_pair_token(db.pool(), None, Some("browser")).await {
-                Ok(minted) => print_link_output(&minted.token),
-                Err(e) => {
-                    println!();
-                    println!("  ⚠  could not mint pair token: {e}");
-                    println!("     Run `virtues link` later to get a fresh URL.");
-                }
-            }
-        }
-
-        virtues::setup::display_completion();
         return Ok(());
     }
 
@@ -285,25 +272,125 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         return Ok(());
     }
 
-    // ─── `virtues link` ─────────────────────────────────────────────────────
-    // Mints a CLI-origin pair token (authorized immediately because typing
-    // this command IS proof of physical access) and prints a one-time URL.
+    // ─── `virtues pair` (aliases: `login`, `link`) ──────────────────────────
+    // THE human verb for connecting a device to the box (docs/onboarding.md). Mints a
+    // CLI-origin pair token (authorized immediately because typing this
+    // command IS proof of physical access), prints the one-time URL + QR,
+    // then waits until the link is opened — the wait is also the
+    // client-isolation detector (a printed link nobody opens is the only
+    // box-side signal for a network that blocks device-to-device traffic).
     // The URL puts the token in a `#t=` fragment, so it never hits server
-    // logs or referer headers. Open it in any browser to land in a paired
-    // session.
-    if matches!(cli.command, Some(Commands::Link)) {
+    // logs or referer headers.
+    if let Some(Commands::Pair { no_wait }) = &cli.command {
         let database_url = virtues::database::normalize_database_url()?;
         let db = virtues::database::Database::new(&database_url)?;
-        match virtues::api::pair::mint_pair_token(db.pool(), None, Some("browser")).await {
+        // Show the box's UNIVERSAL standing code — the same rotating code the
+        // panel displays — rather than minting a throwaway one. It's multi-use
+        // within its window and rotates (~20 min), so any device can pair with
+        // it. (The rotator keeps it fresh; we mint on the spot if the server
+        // hasn't run yet on this box.)
+        match virtues::api::pair::ensure_standing(db.pool()).await {
             Ok(minted) => {
-                print_link_output(&minted.token);
+                print_link_output(&minted);
+                if !*no_wait {
+                    use virtues::cli::link::wait_for_new_device;
+                    println!("  Waiting for a device to connect… (Ctrl+C to exit;");
+                    println!("  the code stays valid while shown and rotates automatically)");
+                    match wait_for_new_device(db.pool()).await {
+                        Ok(()) => {
+                            println!();
+                            println!("  ✓ connected — finish setup in the app.");
+                        }
+                        Err(e) => eprintln!("  (stopped waiting: {e})"),
+                    }
+                }
                 return Ok(());
             }
             Err(e) => {
-                eprintln!("error: could not mint pair token: {e}");
+                eprintln!("error: could not produce a pair code: {e}");
                 eprintln!("hint: is the database reachable? DATABASE_URL={}", database_url);
                 std::process::exit(1);
             }
+        }
+    }
+
+    // ─── `virtues device <ls|rm|add>` ───────────────────────────────────────
+    // The allowlist as a CLI — "who can reach this box?" is one list. `ls`
+    // shows non-revoked devices, `rm` de-allowlists one (next dial refused at
+    // the handshake), `add` prints the standing pair code (same as `pair`).
+    // Bare-pool: the on-box operator is the owner (physical access = you).
+    if let Some(Commands::Device { action }) = &cli.command {
+        use virtues::cli::types::DeviceCommands;
+        let database_url = virtues::database::normalize_database_url()?;
+        let db = virtues::database::Database::new(&database_url)?;
+        let pool = db.pool();
+        match action {
+            DeviceCommands::Ls => {
+                use virtues::cli::ui;
+                let devices = virtues::api::devices::list_devices_cli(pool).await?;
+                if devices.is_empty() {
+                    println!();
+                    ui::skip("no devices on the allowlist — run `virtues device add` to pair one");
+                    println!();
+                    return Ok(());
+                }
+                println!();
+                println!(
+                    "  {}",
+                    console::style(format!(
+                        "{:<30}  {:<12}  {:<22}  {:<14}  {}",
+                        "ID", "KIND", "LABEL", "KEY", "LAST SEEN"
+                    ))
+                    .dim()
+                );
+                for (id, kind, label, node_id, last_seen) in &devices {
+                    let key = node_id
+                        .as_deref()
+                        .map(|n| ui::ellipsize_middle(n, 14))
+                        .unwrap_or_else(|| "—".to_string());
+                    // Relative on a TTY (a ledger you scan); absolute RFC 3339
+                    // when piped (a log you correlate).
+                    let seen = match last_seen {
+                        Some(t) if ui::tty() => ui::rel_time(*t),
+                        Some(t) => t.to_rfc3339(),
+                        None => "never".to_string(),
+                    };
+                    let label = if label.chars().count() > 22 {
+                        format!("{}…", label.chars().take(21).collect::<String>())
+                    } else {
+                        label.clone()
+                    };
+                    println!("  {id:<30}  {kind:<12}  {label:<22}  {key:<14}  {seen}");
+                }
+                println!();
+                return Ok(());
+            }
+            DeviceCommands::Rm { id } => match virtues::api::devices::revoke_device_cli(pool, id).await {
+                Ok(true) => {
+                    virtues::cli::ui::ok(&format!(
+                        "revoked {id} — its key is de-allowlisted; the next dial is refused"
+                    ));
+                    return Ok(());
+                }
+                Ok(false) => {
+                    eprintln!("error: no active device with id {id} (already revoked or unknown)");
+                    std::process::exit(1);
+                }
+                Err(e) => {
+                    eprintln!("error: revoke failed: {e}");
+                    std::process::exit(1);
+                }
+            },
+            DeviceCommands::Add => match virtues::api::pair::ensure_standing(pool).await {
+                Ok(minted) => {
+                    print_link_output(&minted);
+                    return Ok(());
+                }
+                Err(e) => {
+                    eprintln!("error: could not produce a pair code: {e}");
+                    std::process::exit(1);
+                }
+            },
         }
     }
 
@@ -347,12 +434,82 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     }
 
+    // ─── `virtues uninstall` ────────────────────────────────────────────────
+    // Destructive, root-gated, typed-hostname confirm. Handled here (not in
+    // `cli::run`) because it must not require a healthy DB pool — uninstall
+    // is exactly what you reach for when the install is broken.
+    if let Some(Commands::Uninstall { keep_data, purge_models, force }) = &cli.command {
+        match virtues::cli::uninstall::run(*keep_data, *purge_models, *force).await {
+            Ok(()) => return Ok(()),
+            Err(e) => {
+                eprintln!("error: uninstall failed: {e}");
+                std::process::exit(1);
+            }
+        }
+    }
+
+    // ─── `virtues reset` (HIDDEN, testing) ──────────────────────────────────
+    // Destructive: wipes the box (DB + lake) back to fresh state. Handled here
+    // (not in `cli::run`) because it manages the schema itself and runs against
+    // a bare pool, like restore/uninstall.
+    if let Some(Commands::Reset { keep_data, yes, force }) = &cli.command {
+        match virtues::cli::reset::run(*keep_data, *yes, *force).await {
+            Ok(()) => return Ok(()),
+            Err(e) => {
+                eprintln!("error: reset failed: {e}");
+                std::process::exit(1);
+            }
+        }
+    }
+
+    // ─── `virtues configure-inference` ──────────────────────────────────────
+    // Recover after a manual endpoint's model changed. Runs BEFORE the app
+    // builds the guarded embedder — which would itself fail on the very
+    // fingerprint mismatch this command exists to fix.
+    if let Some(Commands::ConfigureInference { reembed, yes }) = &cli.command {
+        match virtues::cli::configure_inference::run(*reembed, *yes).await {
+            Ok(()) => return Ok(()),
+            Err(e) => {
+                eprintln!("error: configure-inference failed: {e}");
+                std::process::exit(1);
+            }
+        }
+    }
+
+    // ─── `virtues reindex` ──────────────────────────────────────────────────
+    // Rebuild the derived search index from source. Runs BEFORE normal init:
+    // its ensure_embedding_dims refuses the width change (e.g. halfvec 256→384)
+    // while the index is populated — reindex is the wedge-clearer.
+    if let Some(Commands::Reindex { yes }) = &cli.command {
+        match virtues::cli::reindex::run(*yes).await {
+            Ok(()) => return Ok(()),
+            Err(e) => {
+                eprintln!("error: reindex failed: {e}");
+                std::process::exit(1);
+            }
+        }
+    }
+
+    // ─── `virtues lake-adopt` ───────────────────────────────────────────────
+    // Pull the recordings that predate the lake into it. Needs only a pool (and
+    // STORAGE_PATH from the box env), so it runs here rather than paying for the
+    // whole client stack.
+    if let Some(Commands::LakeAdopt { dry_run }) = &cli.command {
+        match virtues::cli::lake_adopt::run(*dry_run).await {
+            Ok(()) => return Ok(()),
+            Err(e) => {
+                eprintln!("error: lake-adopt failed: {e}");
+                std::process::exit(1);
+            }
+        }
+    }
+
     // ─── `virtues upgrade` ──────────────────────────────────────────────────
     // Self-update from the latest GitHub Release (or a pinned --version
     // tag). Stops the service, swaps the binary, applies migrations,
     // restarts. Detailed in `virtues::cli::upgrade`.
-    if let Some(Commands::Upgrade { check, version }) = &cli.command {
-        match virtues::cli::upgrade::run(*check, version.clone()).await {
+    if let Some(Commands::Upgrade { check, version, pre, force }) = &cli.command {
+        match virtues::cli::upgrade::run(*check, version.clone(), *pre, *force).await {
             Ok(()) => return Ok(()),
             Err(e) => {
                 eprintln!("error: upgrade failed: {e}");
@@ -402,7 +559,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
         Cli {
             command: Some(Commands::Server {
-                host: "0.0.0.0".to_string(),
+                // Dual-stack: `[::]` accepts both IPv4 and IPv6 (incl. the WG
+                // tunnel's ULA fd00:5654::1 that pairing bundles advertise).
+                // `0.0.0.0` would be IPv4-only and unreachable over the tunnel.
+                host: "[::]".to_string(),
                 port,
             }),
         }
@@ -416,174 +576,197 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-/// Print the first-boot trust pitch shown right before the account prompt
-/// in `virtues init`.
-///
-/// Design notes (deliberate, not stylistic):
-///
-/// - **No named competitor comparisons.** Earlier drafts had a table
-///   ("Google reads your content; we don't") — visually punchy but legally
-///   exposed (Lanham false-advertising; trade libel; named-trademark use).
-///   The cost-to-defend a single bad-faith C&D outweighs the rhetorical
-///   win. Replaced with pure self-statements + one positive Plex analogy.
-///
-/// - **First-person, not comparative.** "What stays on your box" / "What
-///   we see" lets the reader supply their own contrast from their own
-///   life — usually more damning than ours.
-///
-/// - **Sunset commitment elevated to the closer.** The strongest trust
-///   signal isn't a state (today's privacy) but a direction (where we're
-///   going). It lands last so it's the thought the user holds when they
-///   make the [1] / [2] choice.
-///
-/// - **Every claim has to remain true.** If we add a feature that breaks
-///   one ("anything semantic about who you are stays on your box" implies
-///   no telemetry of behavior), this copy needs updating in lockstep.
-fn print_account_intro() {
-    use console::style;
-    let line = style("─────────────────────────────────────────────────────────").dim();
-    let sep  = style("═════════════════════════════════════════════════════════").dim();
+// NOTE: the first-boot trust pitch (`print_account_intro`) that used to live
+// here moved to the web setup wizard's account step — the user now makes the
+// account decision in a browser, so that's where the pitch belongs. Its
+// design rules travel with it (kept in the wizard's comments): first-person
+// claims only, no named-competitor comparisons (Lanham/trade-libel exposure),
+// the virtues-api sunset commitment as the closer, and every claim must stay
+// true in lockstep with shipped features.
 
-    println!();
-    println!("{line}");
-    println!();
-    println!("  {}", style("Your data lives on this Linux device. Never our cloud.").bold());
-    println!();
-    println!("  {}", style("What stays on your box:").bold());
-    println!("    • Every message, photo, file, calendar event, note");
-    println!("    • Every prompt you type and every response");
-    println!("    • Your encryption keys");
-    println!("    • Anything semantic about who you are");
-    println!();
-    println!("  {}", style("What we see (the strict minimum):").bold());
-    println!("    • A Stripe customer ID  ({})",
-        style("Stripe holds your card and email").dim());
-    println!("    • Token counts on AI calls  ({})",
-        style("for billing").dim());
-    println!("    • OAuth callbacks for ~200ms  ({})",
-        style("so Google / Notion / Plaid will talk to your box at all").dim());
-    println!();
-    println!("  We never see content, conversations, who you talk to, or what");
-    println!("  you ask. No metadata, no contact graph, no semantic shape of");
-    println!("  your life.");
-    println!();
-    println!("{sep}");
-    println!();
-    println!("  {}",
-        style("Two things still require a Virtues account").bold());
-    println!("  — the smallest remaining surface, shrinking every release:");
-    println!();
-    println!("    1. {}.  Google, Notion, Plaid etc. require a registered",
-        style("OAuth callbacks").bold());
-    println!("       HTTPS URL. virtues.com hosts it, forwards to your box");
-    println!("       in ~200ms, discards the auth code.");
-    println!();
-    println!("    2. {}.  Your provider key (yours or Virtues wallet) stays",
-        style("AI proxy").bold());
-    println!("       server-side as a short-lived bearer instead of living on");
-    println!("       every device. Calls are passthrough — providers log");
-    println!("       nothing of our traffic; we see only token counts.");
-    println!();
-    println!("{sep}");
-    println!();
-    println!("  {}",
-        style("Our north star: make virtues-api extinct.").bold().green());
-    println!();
-    println!("  Every line of code there is something we'd rather you ran at");
-    println!("  home. The roadmap is structured around shrinking this layer:");
-    println!();
-    println!("    • {}.  Edge models close the gap with cloud LLMs every",
-        style("Local inference").bold());
-    println!("      quarter. We route embeddings on-device today; chat-tier");
-    println!("      moves home as Ollama-class models reach parity.");
-    println!();
-    println!("    • {}.  IETF is standardizing flows that don't need",
-        style("Device-bound OAuth").bold());
-    println!("      a hosted callback. When providers adopt them, the");
-    println!("      callback-hosting role disappears.");
-    println!();
-    println!("    • {}.  Replaces atlas's role in box",
-        style("Self-coordinated rendezvous").bold());
-    println!("      discovery — signaling-only, then nothing.");
-    println!();
-    println!("  Every release that removes us from your data path is one we");
-    println!("  ship harder than features.");
-    println!();
-    println!("{line}");
+/// The Virtues wordmark — a serif figlet ("Georgia11") that opens the CLI
+/// journey. Plain text on purpose: this output is frequently piped, captured,
+/// and read over SSH, so no ANSI styling that would garble in a log.
+fn print_banner() {
+    const WORDMARK: &str = r#"
+              ,,
+`7MMF'   `7MF'db             mm
+  `MA     ,V                 MM
+   VM:   ,V `7MM  `7Mb,od8 mmMMmm `7MM  `7MM  .gP"Ya  ,pP"Ybd
+    MM.  M'   MM    MM' "'   MM     MM    MM ,M'   Yb 8I   `"
+    `MM A'    MM    MM       MM     MM    MM 8M"""""" `YMMMa.
+     :MM;     MM    MM       MM     MM    MM YM.    , L.   I8
+      VF    .JMML..JMML.     `Mbmo  `Mbod"YML.`Mbmmd' M9mmmP'
+"#;
+    println!("{WORDMARK}");
+    println!("   This is technology that helps you be the person you ought to become.");
     println!();
 }
 
-/// Print the inference stack's hardware-resolution plan: which accelerator is
-/// active, whether this build links CUDA, the chosen ONNX precision, and where
-/// each model's files come from (baked vs download). Pure — no DB, no network,
-/// Print the `virtues link` + `virtues init` output: the pair URL(s), then
-/// the per-OS CA-trust recipes. Honors `ENVIRONMENT=dev` (plain HTTP, no CA
-/// step) and falls back from `virtues.local` to the box's primary IP for
-/// clients on which mDNS isn't resolving. Shared between `Link` and `Init`
-/// so the user sees identical output regardless of which command they ran.
-fn print_link_output(token: &str) {
-    use virtues::cli::link::{ca_recipe_host, ca_recipes, reachable_pair_urls};
+/// Print the boxed "Your server is ready" call-to-action — the one thing the
+/// user must act on, so it's the only block with a border. The pair code is the
+/// single most important glyph on screen: bright + bold on a TTY, plain when
+/// piped/captured. The box itself uses Unicode line-drawing (renders fine in
+/// terminals and logs); only the colour is TTY-gated to avoid garbling logs.
+fn print_pair_hero(display: &str) {
+    use console::style;
+    const W: usize = 54; // inner width between the borders (fits the downloads URL line)
+    let tty = console::Term::stdout().is_term();
+
+    let top = format!("  ┌{}┐", "─".repeat(W));
+    let bot = format!("  └{}┘", "─".repeat(W));
+    let blank = format!("  │{}│", " ".repeat(W));
+    // A left-padded content line, right-padded to the inner width.
+    let line = |content: &str| {
+        let pad = W.saturating_sub(content.chars().count());
+        format!("  │{}{}│", content, " ".repeat(pad))
+    };
+
+    println!("{top}");
+    println!("{blank}");
+    println!("{}", line("   Your server is ready."));
+    println!("{blank}");
+    println!("{}", line("   1.  Desktop app     https://virtues.com/downloads"));
+
+    // The code line: pad on the *visible* length (ANSI is zero-width), then
+    // wrap just the code in colour so the right border still aligns.
+    let prefix = "   2.  Enter code      ";
+    let pad = W.saturating_sub(prefix.chars().count() + display.chars().count());
+    let code = if tty {
+        style(display).cyan().bold().to_string()
+    } else {
+        display.to_string()
+    };
+    println!("  │{prefix}{code}{}│", " ".repeat(pad));
+
+    println!("{blank}");
+    println!("{}", line("   Rotates automatically · valid while shown"));
+    println!("{blank}");
+    println!("{bot}");
+}
+
+fn print_link_output(minted: &virtues::api::pair::MintedToken) {
+    use virtues::cli::link::{reachable_pair_urls, ssh_context, ssh_forward_host, ssh_handoff_block};
     let is_dev = std::env::var("ENVIRONMENT").map(|v| v == "dev").unwrap_or(false);
     let web_port = std::env::var("VIRTUES_WEB_PORT").unwrap_or_else(|_| "5173".to_string());
-    let urls = reachable_pair_urls(token, is_dev, &web_port);
+    let token = &minted.token;
+    let display = minted.display_code();
 
     println!();
-    println!("─────────────────────────────────────────────────────────");
-    println!("  Open this in your browser to log in:");
-    println!();
-    for url in &urls {
-        println!("    {:<18}  {}", format!("{}:", url.label), url.url);
-    }
-    println!();
+
     if is_dev {
-        println!("  Notes:");
-        println!("    • Dev mode (ENVIRONMENT=dev): plain HTTP, no CA trust needed.");
-        println!("    • Link expires in 15 minutes. Single-use.");
-    } else {
-        println!("  First visit only: trust the box's CA root (one-time).");
-        println!("  Run the line for your client OS:");
-        println!();
-        for recipe in ca_recipes(&ca_recipe_host()) {
-            println!("    {}:", recipe.os);
-            println!("      {}", recipe.command);
-            println!();
-        }
-        println!("  Notes:");
-        println!("    • If `virtues.local` doesn't resolve on your laptop, use the IP URL above.");
-        println!("    • Linux clients can also install `libnss-mdns` (Debian/Ubuntu) or");
-        println!("      `nss-mdns` (Fedora) to make `.local` work natively.");
-        println!("    • Link expires in 15 minutes. Single-use.");
+        println!("─────────────────────────────────────────────────────────");
+        println!("  [dev] http://localhost:{web_port}/pair#t={token}");
+        println!("─────────────────────────────────────────────────────────");
+        return;
     }
+
+    // Skip the wordmark when the installer chained straight into `init` — it
+    // already printed the serif banner at the top of `curl … | sh`. Standalone
+    // `virtues pair` / `virtues init` runs still get it.
+    if std::env::var_os("VIRTUES_NO_BANNER").is_none() {
+        print_banner();
+    }
+    print_pair_hero(&display);
+
+    // On SSH: the desktop app needs a route to the box. On isolated networks
+    // (office/hotel) mDNS is blocked, so the existing SSH session is the
+    // reliable path — print the forward recipe ("auto-notice everything").
+    if let Some(ssh) = ssh_context() {
+        println!();
+        let host = ssh_forward_host();
+        for line in ssh_handoff_block(&ssh, &host, token) {
+            println!("{line}");
+        }
+    }
+
+    // Secondary: browser URLs for users who don't have the app yet.
+    // Less prominent — the app flow is the intended path.
+    let urls = reachable_pair_urls(token, is_dev, &web_port);
+    println!();
+    println!("  No app yet? Open in a browser on your network:");
+    for url in &urls {
+        println!("    {}", url.url);
+    }
+
+    // The box's global IPv6 — what to type into the app's Advanced "enter its
+    // address" field when mDNS doesn't carry (off-network, isolated wifi). The
+    // box is reached directly here; only shown when it actually has a global v6.
+    if let Some(v6) = virtues::net_check::compute_net_status().ipv6_global {
+        println!();
+        println!("  Box IPv6 (Advanced → \"enter its address\" if it isn't found):");
+        println!("    {v6}");
+    }
+
     println!("─────────────────────────────────────────────────────────");
 }
 
-/// no session construction.
-fn print_resolution_report() {
-    use virtues::search::model_cache::{resolution_report, ModelSource};
-
-    let r = resolution_report();
-    println!("Virtues inference resolution");
-    println!("  accelerator:   {}", r.accelerator);
-    println!("  precision:     {}", r.precision);
-    println!(
-        "  cuda in build: {}",
-        if r.cuda_compiled { "yes" } else { "no (CPU-only image)" }
-    );
-    match &r.models_dir {
-        Some(d) => println!("  models dir:    {} (baked)", d.display()),
-        None => println!("  models dir:    none — models download from HuggingFace on first use"),
+/// Re-exec `sudo -u virtues <argv>` when a DB-touching CLI command runs as the
+/// wrong OS user on a box install.
+///
+/// Box installs talk to Postgres over the Unix socket with peer auth, so the
+/// OS user IS the database identity: only the `virtues` service user (and the
+/// systemd unit, which runs as it) can connect. A human SSH'd in as adam (or
+/// root) typing `virtues init` would get an instant-but-permanent auth error.
+/// Rather than telling them to retype the command, become the right user.
+///
+/// Guards (all must hold, so dev machines are never touched):
+///   - argv[1] is one of the DB-touching interactive commands
+///   - `/var/lib/virtues/virtues.env` exists (the box-install marker)
+///   - the current user isn't already `virtues`
+///
+/// On exec failure (no sudo rights, etc.) we print the one-line manual hint
+/// and exit — never fall through to the misleading Postgres timeout.
+#[cfg(unix)]
+fn maybe_reexec_as_service_user() {
+    const DB_COMMANDS: &[&str] = &[
+        "init", "pair", "link", "login", "subscribe", "sudo", "backup", "reset", "status",
+        "migrate", "seed",
+        // `doctor` reads the env file (inference mode) and the DB (reach legs),
+        // both `virtues`-owned. Run as another user it can read neither, so it
+        // would render the default llama-server guess + "DB unknown" — a
+        // confident, wrong report. Re-exec so it reports this box's real config.
+        "doctor",
+    ];
+    let Some(cmd) = std::env::args().nth(1) else { return };
+    if !DB_COMMANDS.contains(&cmd.as_str()) {
+        return;
     }
-    if r.accelerator == "cuda" && !r.cuda_compiled {
-        // reconcile() already downgraded to CPU + warned; never reached, but
-        // kept as a guard if policy changes.
-        println!("  note:          GPU detected but no CUDA EP linked — running on CPU");
+    if !std::path::Path::new("/var/lib/virtues/virtues.env").exists() {
+        return;
     }
-    println!("  models:");
-    for m in &r.models {
-        let source = match &m.source {
-            ModelSource::Baked(p) => format!("baked @ {}", p.display()),
-            ModelSource::Download => "download".to_string(),
-        };
-        println!("    - {:<9} {} :: {} [{}]", m.name, m.repo, m.onnx_file, source);
+    let user = std::process::Command::new("id")
+        .arg("-un")
+        .output()
+        .ok()
+        .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
+        .unwrap_or_default();
+    if user.is_empty() || user == "virtues" {
+        return;
     }
+    eprintln!("(running as '{user}' — switching to the 'virtues' service user)");
+    use std::os::unix::process::CommandExt;
+    let mut reexec = std::process::Command::new("sudo");
+    reexec.arg("-u").arg("virtues");
+    // `SSH_CONNECTION` is set in this (login-user) process but stripped by
+    // sudo's env_reset. It carries the box-side IP the client reached us on —
+    // the only provably-reachable address for the SSH-forward handoff (the LAN
+    // IP is unreachable on client-isolated wifi). Thread it across via an `env`
+    // prefix (run as the virtues user, after the privilege drop), which
+    // sidesteps any sudoers env policy. Absent over a console login → omitted,
+    // and the handoff falls back to the overlay/LAN address.
+    if let Some(ip) = std::env::var("SSH_CONNECTION")
+        .ok()
+        .and_then(|c| c.split_whitespace().nth(2).map(str::to_string))
+        .filter(|s| !s.is_empty())
+    {
+        reexec.arg("env").arg(format!("VIRTUES_SSH_SERVER_IP={ip}"));
+    }
+    let err = reexec.args(std::env::args()).exec();
+    eprintln!("could not switch user: {err}");
+    eprintln!("hint: run it as the service user yourself: sudo -u virtues virtues {cmd}");
+    std::process::exit(1);
 }
+
+// NOTE: the doctor report (inference + reach ledgers + verdict) lives in
+// `virtues::cli::doctor`; `virtues warm-models` shares its Inference ledger.

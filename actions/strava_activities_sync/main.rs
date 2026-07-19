@@ -11,8 +11,10 @@ mod transform;
 
 use anyhow::{Context, Result};
 use serde_json::Value;
+use virtues::storage::lake;
 use virtues_helpers::{connect_from_env, output, read_input};
 
+const ACTION: &str = "strava_activities_sync";
 const STRAVA_API: &str = "https://www.strava.com/api/v3/athlete/activities";
 const PAGE_SIZE: u32 = 100;
 const MAX_PAGES: u32 = 10;
@@ -35,6 +37,7 @@ async fn main() -> Result<()> {
         .and_then(|v| v.as_i64())
         .unwrap_or_else(|| chrono::Utc::now().timestamp() - 90 * 86400);
 
+    let storage = lake::storage_from_env()?;
     let client = reqwest::Client::new();
     let mut total_written = 0usize;
     let mut latest_start: i64 = after;
@@ -73,6 +76,8 @@ async fn main() -> Result<()> {
                 }
             }
         }
+
+        lake::archive_cloud(&pool, &storage, "strava", ACTION, "activities", &resp).await?;
 
         let written = transform::write_activities(&pool, &resp).await?;
         total_written += written;

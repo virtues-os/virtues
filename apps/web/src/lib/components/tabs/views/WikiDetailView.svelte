@@ -6,7 +6,7 @@
 	 * WikiContent component and handles tab-specific concerns like label updates.
 	 */
 	import type { Tab } from '$lib/tabs/types';
-	import { spaceStore } from '$lib/stores/space.svelte';
+	import { windowShellStore } from '$lib/stores/window-shell.svelte';
 	import { WikiContent } from '$lib/components/views';
 
 	let { tab, active }: { tab: Tab; active: boolean } = $props();
@@ -21,7 +21,7 @@
 	});
 
 	function handleLabelChange(label: string) {
-		spaceStore.updateTab(tab.id, { label });
+		windowShellStore.updateTab(tab.id, { label });
 	}
 </script>
 

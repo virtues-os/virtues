@@ -1,9 +1,25 @@
 <script lang="ts">
 	import { onMount, onDestroy } from "svelte";
-	import { type EditorView } from "@codemirror/view";
+	import { EditorView, keymap } from "@codemirror/view";
+	import { Prec, Compartment } from "@codemirror/state";
 	import { createCodeMirrorEditor } from "$lib/codemirror/editor";
+	import { extractHeadings, type PageHeading } from "$lib/codemirror/outline";
+	import {
+		focusMode,
+		focusModeCompartment,
+	} from "$lib/codemirror/extensions/focus-mode";
+	import { pageDisplay } from "$lib/stores/pageDisplay.svelte";
+	import {
+		startAiSession,
+		abortAiSession,
+		isAiSessionActive,
+	} from "$lib/ai/aiCursorSession";
+	import { registerPageEditor, unregisterPageEditor } from "$lib/ai/aiPresence";
+	import { aiCursor } from "$lib/codemirror/extensions/ai-cursor";
+	import type { AiIntent } from "$lib/ai/inlineComplete";
+	import AiPromptPopover from "$lib/components/pages/AiPromptPopover.svelte";
 	import type { YjsDocument } from "$lib/yjs";
-	import { createEntityPicker, insertEntity } from "$lib/codemirror/extensions/entity-picker";
+	import { createRefPicker, insertRef } from "$lib/codemirror/extensions/ref-picker";
 	import {
 		createSlashCommands,
 		getDefaultSlashCommands,
@@ -12,8 +28,9 @@
 	} from "$lib/codemirror/extensions/slash-commands";
 	import { createSelectionToolbar } from "$lib/codemirror/extensions/selection-toolbar";
 	import { createMediaPaste } from "$lib/codemirror/extensions/media-paste";
-	import EntityPicker from "$lib/components/EntityPicker.svelte";
-	import type { EntityResult } from "$lib/components/EntityPicker.svelte";
+	import RefPicker from "$lib/components/RefPicker.svelte";
+	import { toast } from "svelte-sonner";
+	import type { EntityResult } from "$lib/components/RefPicker.svelte";
 	import SlashMenu from "$lib/components/SlashMenu.svelte";
 	import SelectionToolbar from "$lib/components/SelectionToolbar.svelte";
 
@@ -32,6 +49,10 @@
 		initialContent?: string;
 		/** Called when the document changes with computed stats */
 		onDocChange?: (stats: DocStats) => void;
+		/** Called with the h1–h3 outline whenever the document changes */
+		onOutline?: (headings: PageHeading[]) => void;
+		/** Exposes the live EditorView (null on teardown) for scroll/TOC control */
+		onViewReady?: (view: EditorView | null) => void;
 		placeholder?: string;
 		/** Optional Yjs document for real-time collaboration */
 		yjsDoc?: YjsDocument;
@@ -39,25 +60,34 @@
 		isConnected?: boolean;
 		/** Whether synced with the server */
 		isSynced?: boolean;
-		/** Whether line numbers are shown */
-		showDragHandles?: boolean;
 		/** Page ID for filtering events */
 		pageId?: string;
+		/** The page's real title (passed to AI prompts for context) */
+		pageTitle?: string;
 	}
 
 	let {
 		initialContent = "",
 		onDocChange,
+		onOutline,
+		onViewReady,
 		placeholder: placeholderText,
 		yjsDoc,
 		isConnected = true,
 		isSynced = true,
-		showDragHandles = true,
 		pageId,
+		pageTitle,
 	}: Props = $props();
 
 	let editorContainer: HTMLDivElement;
 	let view: EditorView | null = null;
+
+	// Browser spell-check on the editor's contenteditable, toggled from the toolbar.
+	const spellcheckCompartment = new Compartment();
+	function spellcheckExt(on: boolean) {
+		return EditorView.contentAttributes.of({ spellcheck: on ? "true" : "false" });
+	}
+	let cleanupListeners: (() => void) | null = null;
 
 	// --- Entity Picker state ---
 	let entityPickerOpen = $state(false);
@@ -84,6 +114,41 @@
 		link: false,
 	});
 
+	// --- AI prompt popover state ---
+	let aiPromptOpen = $state(false);
+	let aiPromptPos = $state({ x: 0, y: 0 });
+	let aiPromptIntent = $state<AiIntent>("continue");
+
+	function openAiPrompt(coords: { x: number; y: number }, intent: AiIntent) {
+		aiPromptPos = coords;
+		aiPromptIntent = intent;
+		aiPromptOpen = true;
+	}
+
+	/** Open the AI prompt at the current caret position. */
+	function openAiPromptAtCaret() {
+		if (!view) return;
+		const sel = view.state.selection.main;
+		const coords = view.coordsAtPos(sel.head);
+		if (!coords) return;
+		openAiPrompt(
+			{ x: coords.left, y: coords.bottom },
+			sel.from !== sel.to ? "rewrite" : "continue",
+		);
+	}
+
+	function handleAiSubmit(instruction: string) {
+		aiPromptOpen = false;
+		if (!view || !yjsDoc) return;
+		view.focus();
+		startAiSession({ view, yjsDoc, intent: aiPromptIntent, instruction, pageTitle });
+	}
+
+	function handleAiPromptClose() {
+		aiPromptOpen = false;
+		view?.focus();
+	}
+
 	function computeStats(content: string): DocStats {
 		const words = content.trim().split(/\s+/).filter(Boolean);
 		const links = content.match(/\[([^\]]+)\]\(([^)]+)\)/g) || [];
@@ -101,12 +166,13 @@
 		if (onDocChange) {
 			onDocChange(computeStats(content));
 		}
+		onOutline?.(extractHeadings(content));
 	}
 
 	// --- Entity Picker handlers ---
 	function handleEntitySelect(entity: EntityResult) {
 		if (!view) return;
-		insertEntity(view, entityPickerFrom, entity.name, entity.url);
+		insertRef(view, entityPickerFrom, entity.name, entity.url, entity.entity_type);
 		entityPickerOpen = false;
 	}
 
@@ -197,7 +263,17 @@
 		const formData = new FormData();
 		formData.append("file", file);
 		const resp = await fetch("/api/media/upload", { method: "POST", body: formData });
-		if (!resp.ok) throw new Error(`Upload failed: ${resp.statusText}`);
+		if (!resp.ok) {
+			// Prefer the server's JSON { error } message over a bare statusText.
+			let message = resp.statusText || `HTTP ${resp.status}`;
+			try {
+				const body = await resp.json();
+				if (body?.error) message = body.error;
+			} catch {
+				/* non-JSON body */
+			}
+			throw new Error(message);
+		}
 		const data = await resp.json();
 		return data.url;
 	}
@@ -232,6 +308,9 @@
 			})
 			.catch((err) => {
 				console.error("Image upload failed:", err);
+				toast.error("Image upload failed", {
+					description: err instanceof Error ? err.message : String(err),
+				});
 				if (!view) return;
 				const doc = view.state.doc.toString();
 				const pText = `![Uploading ${file.name}...]()\n`;
@@ -250,7 +329,7 @@
 		if (!yjsDoc) return;
 
 		// Create interactive extensions with callbacks
-		const entityPickerExt = createEntityPicker({
+		const entityPickerExt = createRefPicker({
 			onOpen: (coords, from) => {
 				entityPickerFrom = from;
 				entityPickerPos = coords;
@@ -260,7 +339,7 @@
 				entityPickerOpen = false;
 			},
 			onQueryChange: () => {
-				// EntityPicker component has its own search input, so we just need to keep it open
+				// RefPicker component has its own search input, so we just need to keep it open
 			},
 		});
 
@@ -304,14 +383,49 @@
 			ytext: yjsDoc.ytext,
 			awareness: yjsDoc.provider.awareness,
 			readOnly: false,
-			placeholder: placeholderText || "Type / for commands, @ for entities...",
-			showLineNumbers: showDragHandles,
+			placeholder: placeholderText || "Start writing, or press / for commands…",
 			onDocChange: handleDocChange,
 			extensions: [
+				aiCursor,
 				entityPickerExt,
 				slashCommandsExt,
 				selectionToolbarExt,
 				mediaPasteExt,
+				focusModeCompartment.of(focusMode(pageDisplay.focusMode)),
+				spellcheckCompartment.of(spellcheckExt(pageDisplay.spellcheck)),
+				// High-precedence editor keymaps (Esc must beat default handlers
+				// when an AI session is running).
+				Prec.high(
+					keymap.of([
+						{
+							// Esc interrupts a running AI session (otherwise passthrough)
+							key: "Escape",
+							run: () => {
+								if (isAiSessionActive()) {
+									abortAiSession();
+									return true;
+								}
+								return false;
+							},
+						},
+						{
+							// Cmd/Ctrl+J opens the AI prompt at the caret
+							key: "Mod-j",
+							run: () => {
+								openAiPromptAtCaret();
+								return true;
+							},
+						},
+						{
+							// Cmd/Ctrl+Shift+F toggles focus mode
+							key: "Mod-Shift-f",
+							run: () => {
+								pageDisplay.toggleFocus();
+								return true;
+							},
+						},
+					]),
+				),
 			],
 		});
 
@@ -321,11 +435,63 @@
 		};
 		editorContainer.addEventListener("slash-command-image", handleImageCommand);
 
+		// Listen for /ai slash command → open the AI prompt at that position
+		const handleAiCommand = (e: Event) => {
+			if (!view) return;
+			const pos = (e as CustomEvent<{ pos: number }>).detail?.pos ?? view.state.selection.main.head;
+			const coords = view.coordsAtPos(pos);
+			if (coords) openAiPrompt({ x: coords.left, y: coords.bottom }, "continue");
+		};
+		editorContainer.addEventListener("slash-command-ai", handleAiCommand);
+
+		// Etiquette: if the user starts typing while the AI is writing, yield.
+		// User input fires beforeinput; the AI's Yjs-driven inserts do not.
+		const handleUserInput = () => {
+			if (isAiSessionActive()) abortAiSession();
+		};
+		view.contentDOM.addEventListener("beforeinput", handleUserInput);
+
+		// Make this editor reachable by pageId so chat-driven edits can drive the
+		// same AI presence animation as the inline session.
+		if (pageId) registerPageEditor(pageId, view);
+
+		// Expose the view so the table-of-contents can scroll + scroll-spy.
+		onViewReady?.(view);
+
+		cleanupListeners = () => {
+			editorContainer.removeEventListener("slash-command-image", handleImageCommand);
+			editorContainer.removeEventListener("slash-command-ai", handleAiCommand);
+			view?.contentDOM.removeEventListener("beforeinput", handleUserInput);
+		};
+
 		// Compute initial stats
 		handleDocChange(yjsDoc.ytext.toString());
 	});
 
+	// Live-reconfigure focus/typewriter mode when the display setting changes
+	$effect(() => {
+		const enabled = pageDisplay.focusMode;
+		if (view) {
+			view.dispatch({
+				effects: focusModeCompartment.reconfigure(focusMode(enabled)),
+			});
+		}
+	});
+
+	// Live-toggle spell-check from the toolbar.
+	$effect(() => {
+		const on = pageDisplay.spellcheck;
+		if (view) {
+			view.dispatch({ effects: spellcheckCompartment.reconfigure(spellcheckExt(on)) });
+		}
+	});
+
 	onDestroy(() => {
+		abortAiSession();
+		cleanupListeners?.();
+		cleanupListeners = null;
+		if (pageId && view) unregisterPageEditor(pageId, view);
+		onViewReady?.(null);
 		view?.destroy();
 		view = null;
 	});
@@ -347,7 +513,7 @@
 
 	<!-- Floating UI overlays -->
 	{#if entityPickerOpen}
-		<EntityPicker
+		<RefPicker
 			position={entityPickerPos}
 			onSelect={handleEntitySelect}
 			onClose={handleEntityClose}
@@ -369,7 +535,20 @@
 			position={selToolbarPos}
 			activeMarks={selToolbarMarks}
 			onFormat={handleFormat}
+			onAskAi={() => {
+				selToolbarOpen = false;
+				openAiPrompt(selToolbarPos, "rewrite");
+			}}
 			onClose={handleSelToolbarClose}
+		/>
+	{/if}
+
+	{#if aiPromptOpen}
+		<AiPromptPopover
+			position={aiPromptPos}
+			intent={aiPromptIntent}
+			onSubmit={handleAiSubmit}
+			onClose={handleAiPromptClose}
 		/>
 	{/if}
 </div>

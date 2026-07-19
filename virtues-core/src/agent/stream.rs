@@ -12,9 +12,9 @@ use super::protocol::{AgentEvent, StepReason};
 
 /// Configuration for the LLM client.
 ///
-/// Streams through the device bearer (`BearerClient`), which auto-renews the
-/// monthly voucher when expired. The client itself is cheap to clone (it
-/// wraps an `Arc`-backed `reqwest::Client` + `PgPool`).
+/// Streams through the device api_key (`BearerClient`); a 402 on an empty
+/// wallet triggers one auto-top-up-and-retry. The client itself is cheap to
+/// clone (it wraps an `Arc`-backed `reqwest::Client` + `PgPool`).
 #[derive(Debug, Clone)]
 pub struct LlmConfig {
     pub client: crate::virtues_api::client::BearerClient,
@@ -51,6 +51,10 @@ pub struct TokenUsage {
     pub prompt_tokens: u32,
     pub completion_tokens: u32,
     pub reasoning_tokens: Option<u32>,
+    /// Authoritative cost in micros-USD, from the gateway's `usage.cost` (the
+    /// real upstream price for this call). `None` if the gateway didn't report
+    /// it. Captured into `app_ai_calls` rather than re-estimated locally.
+    pub cost_micros: Option<i64>,
 }
 
 /// Stream an LLM response and emit events
@@ -67,6 +71,7 @@ pub async fn stream_llm_response<F>(
     tools: &[Value],
     provider_options: Option<Value>,
     thought_signature: Option<String>,
+    max_tokens: Option<u32>,
     mut emit: F,
 ) -> Result<LlmStreamResult, StreamError>
 where
@@ -78,6 +83,10 @@ where
         "messages": messages,
         "stream": true
     });
+
+    if let Some(mt) = max_tokens {
+        body["max_tokens"] = serde_json::json!(mt);
+    }
 
     if !tools.is_empty() {
         body["tools"] = serde_json::json!(tools);
@@ -92,8 +101,8 @@ where
         body["thought_signature"] = serde_json::json!(sig);
     }
 
-    // Stream through the device bearer. Renewal (if the monthly voucher has
-    // expired) happens before the body opens; mid-stream renewal is impossible.
+    // Stream through the device api_key. Any auto-top-up-and-retry on a 402
+    // happens before the body opens; mid-stream top-up is impossible.
     let response = match config
         .client
         .stream("/v1/ai/chat/completions", &body)
@@ -260,6 +269,12 @@ where
                             .and_then(|t| t.as_u64())
                             .map(|t| t as u32);
                     }
+
+                    // Authoritative cost from the gateway (USD float → micros).
+                    // Keep it instead of re-estimating from a local price table.
+                    if let Some(cost) = usage_obj.get("cost").and_then(|c| c.as_f64()) {
+                        usage.cost_micros = Some((cost * 1_000_000.0).round() as i64);
+                    }
                 }
             }
         }
@@ -288,6 +303,8 @@ where
             prompt_tokens: usage.prompt_tokens,
             completion_tokens: usage.completion_tokens,
             total_tokens: Some(usage.prompt_tokens + usage.completion_tokens),
+            reasoning_tokens: usage.reasoning_tokens,
+            cost_micros: usage.cost_micros,
         });
     }
 

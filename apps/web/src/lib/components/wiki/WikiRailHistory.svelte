@@ -225,7 +225,7 @@
 		color: var(--color-foreground-subtle);
 		background: var(--color-surface);
 		padding: 0.125rem 0.375rem;
-		border-radius: 9999px;
+		border-radius: var(--radius-full);
 	}
 
 	.history-empty {

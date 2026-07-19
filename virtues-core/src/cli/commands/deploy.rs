@@ -8,9 +8,7 @@
 use anyhow::Result;
 
 use crate::api::box_status::BoxStatus;
-use crate::search::model_cache::{self, ModelSource};
-use crate::search::Embedder;
-use crate::wireguard::{ca, pairing};
+use crate::inference_report::{self, ModelSource};
 use crate::Virtues;
 
 /// `virtues status` — a human-readable box health report and the DIY
@@ -26,50 +24,62 @@ pub async fn handle_status(virtues: &Virtues) -> Result<()> {
     println!("Virtues box status");
     println!("──────────────────");
     println!("  identity:");
-    println!("    server CA            {}", yn(s.identity.server_ca));
-    println!("    WG server keypair    {}", yn(s.identity.wg_server_keypair));
-    if let Some(pk) = &s.identity.wg_public_key {
-        println!("      public key         {pk}");
-    }
-    println!("    rendezvous identity  {}", yn(s.identity.rendezvous));
-    if let Some(pid) = &s.identity.publish_id {
-        println!("      publish_id         {pid}");
-    }
+    println!("    iroh endpoint up     {}", yn(s.identity.endpoint_up));
 
-    // Inference resolution (accelerator + per-model baked/download).
-    let r = model_cache::resolution_report();
+    // Inference resolution (sidecar engine + per-model on-disk/missing).
+    let r = inference_report::resolution_report();
     println!("  inference:");
     println!("    accelerator          {} ({})", r.accelerator, r.precision);
-    if r.accelerator == "cuda" && !r.cuda_compiled {
-        println!("    note                 GPU present but CPU-only build — `--features cuda`");
-    }
     let mut any_download = false;
     for m in &r.models {
         let src = match &m.source {
-            ModelSource::Baked(_) => "baked",
+            ModelSource::Baked(_) => "on disk",
             ModelSource::Download => {
                 any_download = true;
-                "download on first use"
+                "missing — re-run installer"
             }
         };
         println!("    {:<8}             {}", m.name, src);
     }
 
     println!("  subscription:");
-    println!("    billing token        {}", yn(s.subscription.billing_token));
-    println!("    AI ready (bearer)    {}", yn(s.subscription.bearer));
+    println!("    linked (api key)     {}", yn(s.subscription.linked));
     println!("  devices:");
     println!("    paired (WG)          {}", s.devices.paired_wg);
+
+    // Setup + next-wins checklists — the textual mirror of the panel/wizard
+    // (one state machine, three renderers; see docs/onboarding.md).
+    if let Ok(setup) = crate::api::box_status::compute_setup_state(virtues.database.pool()).await {
+        println!("  setup:");
+        for step in &setup.setup {
+            print_step(step);
+        }
+        if setup.setup_complete {
+            println!("  next wins:");
+            for step in &setup.onboarding {
+                print_step(step);
+            }
+        }
+    }
     println!();
 
     if any_download {
-        println!("  tip: run `virtues warm-models` to pre-fetch models (else they");
-        println!("       download on the first search/chat request).");
-        println!();
+        // GGUFs don't lazy-download — a missing one means the sidecar for it
+        // can't be serving. Surface it next to the per-model lines above.
+        println!("  note: missing model files — re-run the installer to fetch");
     }
     println!("  next: {}", next_step(&s));
     println!();
     Ok(())
+}
+
+/// Render one setup/onboarding step as a checklist line.
+fn print_step(step: &crate::api::box_status::SetupStep) {
+    let mark = if step.done { "✓" } else { "—" };
+    match &step.detail {
+        Some(d) => println!("    {:<20} {mark}  ({d})", step.title),
+        None => println!("    {:<20} {mark}", step.title),
+    }
 }
 
 /// The single next action a DIY operator should take, derived from the boot
@@ -80,7 +90,7 @@ fn next_step(s: &BoxStatus) -> String {
     if !s.ready {
         return "identity incomplete — run `virtues bringup`".to_string();
     }
-    if !s.subscription.billing_token {
+    if !s.subscription.linked {
         return format!("link your Virtues subscription — open {url}");
     }
     if s.devices.paired_wg == 0 {
@@ -104,22 +114,11 @@ fn access_url() -> String {
 }
 
 /// `virtues bringup` — non-interactive first-boot: run migrations and ensure the
-/// box's identity exists (CA, rendezvous identity, WG server keypair). Idempotent,
-/// so it's safe to run on every boot. The appliance runs this headless; DIY runs
-/// it too.
+/// box's identity exists (WG server keypair). Idempotent, so it's safe to run on
+/// every boot. The appliance runs this headless; DIY runs it too.
 pub async fn handle_bringup(virtues: &Virtues) -> Result<()> {
-    let pool = virtues.database.pool();
-
     println!("running migrations…");
     virtues.database.initialize().await?;
-
-    println!("ensuring box identity…");
-    ca::ensure_ca(pool).await?;
-    pairing::ensure_rendezvous_identity(pool).await?;
-    #[cfg(target_os = "linux")]
-    crate::wireguard::reconcile::ensure_server_keypair(pool).await?;
-    #[cfg(not(target_os = "linux"))]
-    println!("  (WG server keypair skipped — Linux-only; generated on the appliance)");
 
     println!("✅ bringup complete");
     handle_status(virtues).await
@@ -128,25 +127,20 @@ pub async fn handle_bringup(virtues: &Virtues) -> Result<()> {
 /// `virtues subscribe` — connect this box to a paid Virtues subscription via the
 /// device-authorization flow.
 ///
-/// Three onboarding paths printed at once — user picks whatever's easiest:
+/// Two onboarding paths printed at once — user picks whatever's easiest:
 ///
 ///   1. Phone scan      → QR code rendered in terminal (unicode half-blocks)
 ///   2. Browser open    → URL printed alongside
-///   3. Manual paste    → if the user already subscribed elsewhere they can
-///                        skip the whole flow by setting `VIRTUES_BILLING_TOKEN`
-///                        before running (we detect it before starting a link)
 ///
-/// All three converge on the same atlas /link/* device-authorization flow.
-/// On success the billing token is stored sealed in the box vault and the
-/// first bearer is minted.
+/// Both converge on the same atlas /init/* device-authorization flow. On
+/// success the device `api_key` is stored in the box vault (atlas registers the
+/// device + funds the wallet at link).
 pub async fn handle_subscribe(virtues: &Virtues) -> Result<()> {
     use crate::virtues_api::link::{self, LinkStatus};
 
     let pool = virtues.database.pool();
     let atlas_url =
-        std::env::var("VIRTUES_ATLAS_URL").unwrap_or_else(|_| "http://localhost:9100".to_string());
-    let api_url =
-        std::env::var("VIRTUES_API_URL").unwrap_or_else(|_| "http://localhost:9002".to_string());
+        crate::virtues_api::atlas_url();
     let http = crate::http_client::virtues_api_client();
 
     print_welcome(&atlas_url);
@@ -172,29 +166,12 @@ pub async fn handle_subscribe(virtues: &Virtues) -> Result<()> {
             println!("  link expired — run `virtues subscribe` again.");
             return Ok(());
         }
-        match link::poll(pool, &http, &atlas_url, &api_url).await {
+        match link::poll(pool, &http, &atlas_url).await {
             Ok(LinkStatus::Ready) => {
+                // link::poll stores the api_key; atlas funds the wallet at link.
+                // Lazy renew on the first AI call handles any in-poll renew failure.
                 println!();
-                println!("  ✅ linked — subscription active.");
-                // Eagerly fetch the first voucher + credit the wallet so the
-                // user's very next chat call doesn't 402 with an empty wallet.
-                // The periodic renew cron handles every subsequent cycle; this
-                // closes the cold-start gap between "subscription created" and
-                // "wallet has money in it."
-                match crate::virtues_api::renew::renew(pool, &http, &atlas_url, &api_url).await {
-                    Ok(_) => println!("  ✅ wallet credited — AI ready."),
-                    Err(e) => {
-                        // Non-fatal — subscription is active even if the
-                        // first voucher redeem failed (network blip, atlas
-                        // restart, etc.). The renew cron will retry; tell
-                        // the user so they're not surprised by a 402 on
-                        // their first chat.
-                        tracing::warn!(error = %e, "post-subscribe renew failed");
-                        println!("  ⚠  wallet not yet credited (network issue?).");
-                        println!("     The renew cron will retry; if your first chat");
-                        println!("     returns 402, run `virtues subscribe` again or wait a minute.");
-                    }
-                }
+                println!("  Subscribed. AI ready.");
                 return handle_status(virtues).await;
             }
             Ok(LinkStatus::Expired) => {
@@ -218,15 +195,13 @@ pub async fn handle_subscribe(virtues: &Virtues) -> Result<()> {
 /// the device_link gets flipped to ready:
 ///   - subscribe: user completes Stripe Checkout → atlas finalizes
 ///   - login:     user clicks magic link in email → atlas finalizes
-/// Same poll loop afterward; same eager renew for the first voucher.
+/// Same poll loop afterward.
 pub async fn handle_login(virtues: &Virtues) -> Result<()> {
     use crate::virtues_api::link::{self, LinkStatus, LoginStart};
 
     let pool = virtues.database.pool();
     let atlas_url =
-        std::env::var("VIRTUES_ATLAS_URL").unwrap_or_else(|_| "http://localhost:9100".to_string());
-    let api_url =
-        std::env::var("VIRTUES_API_URL").unwrap_or_else(|_| "http://localhost:9002".to_string());
+        crate::virtues_api::atlas_url();
     let http = crate::http_client::virtues_api_client();
 
     // Start a device_link so the atlas /init/login call has something to
@@ -250,58 +225,42 @@ pub async fn handle_login(virtues: &Virtues) -> Result<()> {
     println!();
     match link::login(pool, &http, &atlas_url, &email).await? {
         LoginStart::Sent => {
-            println!("  📧 Sent — check {email} for the magic link.");
-            println!("     (15 min, single-use. Click the link, then this CLI continues.)");
+            println!("  Sent magic link to {email}. Waiting… (Ctrl-C to cancel)");
         }
         LoginStart::NoAccount => {
-            println!(
-                "  No Virtues subscription found on {email}. Re-run `virtues init`"
-            );
-            println!("  and pick [2] Create new account instead.");
+            println!("  No Virtues subscription on {email}. Re-run `virtues init` and pick [2] Create new.");
             return Ok(());
         }
         LoginStart::RateLimited => {
-            println!(
-                "  Too many login attempts for {email} in the last hour."
-            );
-            println!("  Try again later, or use [2] Create new if you don't have an account.");
+            println!("  Too many login attempts for {email}. Try again later.");
             return Ok(());
         }
     }
 
-    println!();
-    println!("  Waiting for you to click the link… (Ctrl-C to cancel)");
-
     // Same poll loop as handle_subscribe. The device_link flips to ready
     // when the user clicks the email magic link → atlas marks it ready
-    // → next poll picks up the billing_token.
+    // → next poll picks up the api_key.
     let interval = std::time::Duration::from_secs(5);
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(15 * 60);
     loop {
         tokio::time::sleep(interval).await;
         if std::time::Instant::now() > deadline {
-            println!("  link expired — run `virtues login` again.");
+            println!("  link expired — run `virtues account-login` again.");
             return Ok(());
         }
-        match link::poll(pool, &http, &atlas_url, &api_url).await {
+        match link::poll(pool, &http, &atlas_url).await {
             Ok(LinkStatus::Ready) => {
+                // link::poll stores the api_key; atlas funds the wallet at link.
                 println!();
-                println!("  ✅ logged in — subscription attached.");
-                match crate::virtues_api::renew::renew(pool, &http, &atlas_url, &api_url).await {
-                    Ok(_) => println!("  ✅ wallet credited — AI ready."),
-                    Err(e) => {
-                        tracing::warn!(error = %e, "post-login renew failed");
-                        println!("  ⚠  wallet not yet credited (network blip?). It'll retry shortly.");
-                    }
-                }
+                println!("  Logged in. AI ready.");
                 return handle_status(virtues).await;
             }
             Ok(LinkStatus::Expired) => {
-                println!("  link expired or denied — run `virtues login` again.");
+                println!("  link expired or denied — run `virtues account-login` again.");
                 return Ok(());
             }
             Ok(LinkStatus::None) => {
-                println!("  no link in flight — run `virtues login` again.");
+                println!("  no link in flight — run `virtues account-login` again.");
                 return Ok(());
             }
             Ok(LinkStatus::Pending) => { /* keep waiting */ }
@@ -313,8 +272,8 @@ pub async fn handle_login(virtues: &Virtues) -> Result<()> {
 /// Welcome banner + honest privacy framing. The "passes through, never stored"
 /// claim is the v3 marketing line — accurate to what virtues-api actually does
 /// (in-memory proxy, no logging, no DB persistence; verifiable in source).
-fn print_welcome(atlas_url: &str) {
-    let is_staging = atlas_url.contains("staging") || atlas_url.contains("localhost");
+fn print_welcome(_atlas_url: &str) {
+    let is_staging = crate::virtues_api::is_nonprod_cloud();
     println!();
     println!("─────────────────────────────────────────────────────────");
     println!("  Welcome to Virtues.");
@@ -336,7 +295,12 @@ fn print_welcome(atlas_url: &str) {
 /// Render a QR code for `data` using unicode half-block characters so each
 /// row is two QR-modules tall — keeps the QR compact enough to scan on
 /// reasonable terminals (~25 lines tall for typical link URLs).
-fn print_qr_block(data: &str) {
+///
+/// Assumes a UTF-8 terminal — the installer provisions a UTF-8 system locale
+/// (`ensure_utf8_locale`) precisely so box-side output never needs an ASCII
+/// fallback path. A terminal that still mangles this has a client-side font
+/// problem no box-side rendering choice can detect or fix.
+pub fn print_qr_block(data: &str) {
     let qr = match qrcode::QrCode::new(data) {
         Ok(q) => q,
         Err(_) => {

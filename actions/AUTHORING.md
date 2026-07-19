@@ -38,7 +38,7 @@ name = "My Action"
 description = "What this does, in one sentence."
 owner = "user"
 runtime = "function"
-function_name = "my_action"
+command = ["my_action"]           # bare name → Cargo-built binary under target/
 triggers = ["cron", "manual"]
 default_cron = "0 */15 * * * *"   # every 15 minutes
 ```
@@ -112,7 +112,7 @@ result = "synced 42 records"
 print(json.dumps({"result": result, "config": inp["config"]}))
 ```
 
-No Cargo entry needed — `command` overrides `function_name`. Reconcile picks it up after the folder lands.
+No Cargo entry needed — a multi-element `command` runs the script directly via `PATH`. Reconcile picks it up after the folder lands.
 
 ### `runtime = "service"`
 
@@ -123,7 +123,7 @@ name = "My App"
 description = "Long-running HTTP server."
 owner = "user"
 runtime = "service"
-function_name = "my_app"           # or `command = [...]` for non-Rust
+command = ["my_app"]               # bare name → Cargo binary; ["node","server.js"] etc. for non-Rust
 triggers = ["manual"]              # cron/webhook also work — see below
 default_enabled = true
 
@@ -149,7 +149,7 @@ async fn main() -> anyhow::Result<()> {
 }
 ```
 
-After reconcile, core spawns this binary, allocates a port, probes `/__health`, and proxies `/app/<action_id>/*` to it. So `curl http://localhost:8000/app/<action_id>/hello` reaches your `/hello` handler.
+After reconcile, core spawns this binary, allocates a port, probes `/__health`, and proxies `/service/<action_id>/*` to it. So `curl http://localhost:8000/service/<action_id>/hello` reaches your `/hello` handler.
 
 **Env vars provided by core:**
 - `PORT` — bind here
@@ -165,11 +165,10 @@ After reconcile, core spawns this binary, allocates a port, probes `/__health`, 
 ```
 actions/
 └── my_view/
-    └── manifest.toml
-apps/web/src/lib/applets/
-└── my_view/
-    ├── Card.svelte           # optional — overrides TemplateCard
-    └── Detail.svelte         # optional — overrides ActionDetailView
+    ├── manifest.toml
+    └── ui/                   # UI co-located with the action
+        ├── Card.svelte       # optional — overrides TemplateCard
+        └── Detail.svelte     # optional — overrides ActionDetailView
 ```
 
 `actions/my_view/manifest.toml`:
@@ -183,10 +182,10 @@ triggers = []                  # never invoked server-side
 default_enabled = true
 
 [config.view]
-name = "my_view"               # matches the folder under apps/web/src/lib/applets/
+name = "my_view"               # the view bundle key — folder name under actions/<name>/ui/
 ```
 
-`apps/web/src/lib/applets/my_view/Card.svelte`:
+`actions/my_view/ui/Card.svelte`:
 
 ```svelte
 <script lang="ts">
@@ -233,7 +232,7 @@ Manifest is **declarative** — what the action *is*. SQL (`app_actions`) holds 
 
 | Field | Lives in | Wins on conflict |
 |---|---|---|
-| `name`, `description`, `runtime`, `command`, `function_name`, `triggers`, `default_cron`, `default_enabled`, `per_credential`, `source`, `condition`, `agent`, `config` | manifest.toml | manifest (system actions) / first-seed-only (user actions) |
+| `name`, `description`, `runtime`, `command`, `triggers`, `default_cron`, `default_enabled`, `per_credential`, `source`, `condition`, `agent`, `config` | manifest.toml | manifest (system actions) / first-seed-only (user actions) |
 | current `enabled`, current `cron_schedule`, last_run, runs[], `credential_id` (if fanned out) | SQL | always SQL |
 
 User toggles via the UI (enable/disable, change cron) write SQL only — your manifest is unchanged. User edits to manifest.toml propagate via reconcile but don't blow away user-managed runtime state.
@@ -258,9 +257,8 @@ Reconcile materializes one `app_actions` row per active credential of that sourc
 ## Naming conventions
 
 - Folder name → action's `id_prefix` (`action_<folder>`) by default
-- `function_name` (when set) must match a `[[bin]]` in `actions/Cargo.toml` for Rust
-- `command` and `function_name` are exclusive — set one or the other, not both
-- `runtime = "view"` actions must NOT set `function_name` or `command`
+- A bare `command` (e.g. `["my_action"]`) must match a `[[bin]]` in `actions/Cargo.toml` for Rust; a multi-element `command` runs via `PATH`
+- `runtime = "view"` actions must NOT set `command`
 - `id_prefix` override is rarely needed; only set it if migrating an existing action
 
 ---
@@ -285,7 +283,7 @@ For both `function` and `service`, the trigger payload is delivered as JSON. For
 | React to a device webhook | `function` + `triggers = ["webhook"]` + `per_credential` | Standard pattern for iOS/Mac streams |
 | Real-time control of an external device (Hue, MQTT, websocket) | `service` | Persistent connection; sub-100ms response |
 | Heavy ML model loaded in memory | `service` | Avoid load-per-call overhead |
-| Multi-step LLM agent loop | `function` + `agent = "..."` (no `function_name`) | Built-in agent runner |
+| Multi-step LLM agent loop | `function` + `agent = "..."` (no `command`) | Built-in agent runner |
 | Dashboard of `data_*` tables | `view` | No backend needed; pure SQL + Svelte |
 | Polyglot script (Python, Node, Bash) | `function` + `command = [...]` | Cargo not involved |
 
@@ -293,12 +291,11 @@ For both `function` and `service`, the trigger payload is delivered as JSON. For
 
 ## Common pitfalls
 
-- **Forgot to `cargo build`** — for Rust function/app actions, the binary must exist before reconcile. Builds happen at the workspace level: `cargo build --bin <function_name>`.
+- **Forgot to `cargo build`** — for Rust function/service actions, the binary must exist before reconcile. Builds happen at the workspace level: `cargo build --bin <bin-name>`.
 - **`webhook` trigger without `per_credential`** — reconcile will refuse the manifest. Webhooks need a credential to authenticate.
 - **`view` action with `triggers = ["cron"]`** — won't run (scheduler skips view-runtime). Set `triggers = []`.
-- **`command` and `function_name` both set** — `command` wins. Pick one.
 - **Live editing `main.rs`** — reconcile doesn't trigger `cargo build`. You still need to rebuild manually for Rust changes.
-- **Editing manifest while app is running** — reconcile picks up the change but config-change-restart isn't auto in v1. Stop the app via DB toggle, then reconcile twice.
+- **Editing manifest while a service is running** — reconcile picks up the change but config-change-restart isn't auto in v1. Stop the service via DB toggle, then reconcile twice.
 
 ---
 
@@ -307,18 +304,16 @@ For both `function` and `service`, the trigger payload is delivered as JSON. For
 ```
 actions/
 ├── sources.toml                     # [[source]] catalog (auth providers)
-├── Cargo.toml                       # [[bin]] entries for Rust function/app
+├── Cargo.toml                       # [[bin]] entries for Rust function/service
 ├── <name>/
 │   ├── manifest.toml                # declarative metadata
-│   ├── main.rs                      # function/app entry (Rust)
+│   ├── main.rs                      # function/service entry (Rust)
 │   ├── transform.rs                 # ... or whatever helper modules
+│   ├── ui/                          # for runtime = "view"
+│   │   ├── Card.svelte
+│   │   └── Detail.svelte
 │   └── ...
 └── MANIFEST_SCHEMA.json             # validate your manifest against this
-
-apps/web/src/lib/applets/
-└── <name>/                          # for runtime = "view"
-    ├── Card.svelte
-    └── Detail.svelte
 ```
 
 That's the whole story.

@@ -10,6 +10,94 @@ import { sanitizeUrl } from '$lib/utils/urlUtils';
 const API_BASE = '/api';
 
 // ============================================================================
+// Shared request layer
+// ============================================================================
+
+/**
+ * Error thrown by the shared `request()` helper when a response is not ok.
+ * Carries the HTTP `status` so callers can branch on it (e.g. 402 = wallet
+ * expired / subscription lapsed, 401 = unknown key) instead of parsing a
+ * stringified statusText. `body` holds the parsed JSON error payload when the
+ * server returned one.
+ */
+export class ApiError extends Error {
+	readonly status: number;
+	readonly body: unknown;
+	constructor(status: number, message: string, body?: unknown) {
+		super(message);
+		this.name = 'ApiError';
+		this.status = status;
+		this.body = body;
+	}
+}
+
+type QueryValue = string | number | boolean | null | undefined;
+
+/**
+ * Core fetch wrapper for JSON endpoints under `/api`. Serializes an optional
+ * query object, throws {@link ApiError} (with status) on non-2xx, and returns
+ * the parsed JSON body (or `undefined` for empty/204 responses).
+ *
+ * Not for binary/blob endpoints or progress-tracked uploads — those keep their
+ * own `fetch`/XHR (see uploadMedia, downloadDriveFile).
+ */
+export async function request<T>(
+	path: string,
+	init?: RequestInit & { query?: Record<string, QueryValue> },
+): Promise<T> {
+	let url = `${API_BASE}${path}`;
+	if (init?.query) {
+		const qs = new URLSearchParams();
+		for (const [key, value] of Object.entries(init.query)) {
+			if (value !== undefined && value !== null) qs.set(key, String(value));
+		}
+		const q = qs.toString();
+		if (q) url += `?${q}`;
+	}
+
+	const res = await fetch(url, init);
+
+	if (!res.ok) {
+		let body: unknown;
+		let message = res.statusText || `HTTP ${res.status}`;
+		try {
+			const text = await res.text();
+			if (text) {
+				try {
+					body = JSON.parse(text);
+					const parsed = body as { error?: string; message?: string };
+					message = parsed?.error || parsed?.message || message;
+				} catch {
+					body = text;
+					message = text;
+				}
+			}
+		} catch {
+			/* keep statusText fallback */
+		}
+		throw new ApiError(res.status, message, body);
+	}
+
+	if (res.status === 204) return undefined as T;
+	const text = await res.text();
+	return (text ? JSON.parse(text) : undefined) as T;
+}
+
+/** GET a JSON endpoint, with an optional query object. */
+export function apiGet<T>(path: string, query?: Record<string, QueryValue>): Promise<T> {
+	return request<T>(path, { query });
+}
+
+/** Send a JSON body (POST/PUT/PATCH/DELETE) and parse the JSON response. */
+export function apiSend<T>(method: string, path: string, jsonBody?: unknown): Promise<T> {
+	return request<T>(path, {
+		method,
+		headers: jsonBody !== undefined ? { 'Content-Type': 'application/json' } : undefined,
+		body: jsonBody !== undefined ? JSON.stringify(jsonBody) : undefined,
+	});
+}
+
+// ============================================================================
 // Actions — new schema (post cutover + PR 2 endpoints)
 // ============================================================================
 
@@ -364,6 +452,9 @@ export interface Credential {
 	last_seen_at: string | null;
 	created_at: string;
 	action_count: number;
+	/** Tier-2 init-sync lifecycle for active credentials:
+	 *  'connected' → 'backfilling' → 'live'. Absent for pending/revoked. */
+	sync_state?: 'connected' | 'backfilling' | 'live';
 }
 
 export async function listCredentials(): Promise<Credential[]> {
@@ -424,43 +515,111 @@ export async function listSourceCatalog(): Promise<SourceCatalogItem[]> {
 // Source-connect flows (drive the 5 thin handlers in virtues-core/src/api/source_auth.rs)
 // ─────────────────────────────────────────────────────────────────────────────
 
-export interface PairInitiateResponse {
-	credential_id: string;
-	qr_payload: string;
+// ─── Unified pairing (`/api/pair/*`) ─────────────────────────────────────────
+// One token mechanism for every device: the owner's authenticated session mints
+// a token, the new device redeems it at `/api/pair/consume`. The phone scans the
+// QR (`/pair#t=<token>`); the Mac app / collector takes the token directly.
+
+export interface PairMintResponse {
+	id: string;
+	token: string;
+	pair_url: string;
+	qr_svg: string;
+	expires_at: string;
+}
+
+/** POST /api/pair/mint — auth'd. Mint a `pending` token to add a device. */
+export async function pairMint(intendedKind?: string): Promise<PairMintResponse> {
+	const res = await fetch(`${API_BASE}/pair/mint`, {
+		method: 'POST',
+		headers: { 'Content-Type': 'application/json' },
+		body: JSON.stringify({ intended_kind: intendedKind ?? null })
+	});
+	if (!res.ok) {
+		const err = await res.json().catch(() => ({ error: res.statusText }));
+		throw new Error(err.error || `pair_mint failed: ${res.statusText}`);
+	}
+	return res.json();
+}
+
+/** POST /api/pair/deny/:id — auth'd. Cancel an outstanding token (e.g. modal close). */
+export async function pairDeny(id: string): Promise<void> {
+	await fetch(`${API_BASE}/pair/deny/${encodeURIComponent(id)}`, { method: 'POST' }).catch(
+		() => {
+			/* benign — token may have already been consumed/expired */
+		}
+	);
+}
+
+export interface PairStatusResponse {
+	status: string; // pending | authorized | consumed | denied | expired
+	consumed_by_device: string | null;
+	consumed_by_label: string | null;
+}
+
+/** GET /api/pair/status/:id — auth'd. Poll for the new device redeeming. */
+export async function pairStatus(id: string): Promise<PairStatusResponse> {
+	const res = await fetch(`${API_BASE}/pair/status/${encodeURIComponent(id)}`);
+	if (!res.ok) throw new Error(`pair_status failed: ${res.statusText}`);
+	return res.json();
 }
 
 /**
- * **DEPRECATED IN v1.** The legacy `/api/pairing/initiate` and
- * `/api/pairing/complete/:credential_id` endpoints were removed when iOS
- * migrated to the unified pair-only flow. Pair iOS / Mac / sensor devices
- * via Settings → Devices → "Add device" instead — that mints a pair token
- * the device redeems against `/api/pair/consume`.
- *
- * These stubs remain so old call sites (DevicePairModal.svelte, the
- * Sources-tab "Pair iOS" button) throw a clear error instead of silently
- * hitting a 404. Delete callers in v1.1 and remove these exports.
+ * DELETE /api/devices/:id — auth'd. Revoke a device (soft-delete + credential
+ * teardown).
  */
-const LEGACY_PAIRING_REMOVED =
-	'This pairing flow was removed in v1. Pair the device from Settings → Devices → "Add device".';
-
-export async function pairInitiate(
-	_source_id: string,
-	_name: string
-): Promise<PairInitiateResponse> {
-	throw new Error(LEGACY_PAIRING_REMOVED);
+export async function deleteDevice(id: string): Promise<void> {
+	await fetch(`${API_BASE}/devices/${encodeURIComponent(id)}`, { method: 'DELETE' }).catch(() => {
+		/* benign — device may already be revoked */
+	});
 }
 
-export interface PairCompleteResponse {
-	credential_id: string;
-	action_ids: Record<string, string>;
+export interface ChatImportResponse {
+	status: string;
+	summary: string;
+	run_id: string | null;
 }
 
-export async function pairComplete(
-	_credential_id: string,
-	_token: string,
-	_device_info: Record<string, unknown> = {}
-): Promise<PairCompleteResponse> {
-	throw new Error(LEGACY_PAIRING_REMOVED);
+/**
+ * POST /api/chat-import/upload — multipart upload of a chat export (Tier 3
+ * one-time import). Parsed + ingested box-side; returns the "Imported N
+ * messages" summary once the run completes.
+ */
+export async function uploadChatImport(
+	file: File,
+	provider: string
+): Promise<ChatImportResponse> {
+	const form = new FormData();
+	form.append('provider', provider);
+	form.append('file', file);
+	const res = await fetch(`${API_BASE}/chat-import/upload`, {
+		method: 'POST',
+		body: form
+	});
+	if (!res.ok) {
+		const err = await res.json().catch(() => ({ error: res.statusText }));
+		throw new Error(err.error || `chat_import upload failed: ${res.statusText}`);
+	}
+	return res.json();
+}
+
+export interface MintCollectorResponse {
+	token: string;
+	expires_at: string;
+}
+
+/**
+ * POST /api/pair/mint-collector — auth'd. Mint + self-authorize a token for
+ * installing the local collector on THIS machine (handed to
+ * `installCollector(token)` via the Tauri bridge).
+ */
+export async function mintCollectorToken(): Promise<MintCollectorResponse> {
+	const res = await fetch(`${API_BASE}/pair/mint-collector`, { method: 'POST' });
+	if (!res.ok) {
+		const err = await res.json().catch(() => ({ error: res.statusText }));
+		throw new Error(err.error || `mint_collector failed: ${res.statusText}`);
+	}
+	return res.json();
 }
 
 export interface OauthStartResponse {
@@ -520,48 +679,49 @@ import type {
 } from '$lib/types/device-pairing';
 
 /**
- * Initiate device pairing — wraps the Phase 6+ `/api/pairing/initiate` endpoint.
+ * Initiate device pairing via the unified `/api/pair/mint` flow.
  *
- * The new endpoint returns a `credential_id` + `qr_payload`. We adapt to the
- * `PairingInitResponse` shape (with `source_id` populated from `credential_id`)
- * so the modal that reads this type keeps working without a rewrite.
+ * Returns a `PairingInitResponse` whose `source_id` is the pair-token id (polled
+ * via {@link getPairingStatus}), plus the QR/token redemption payload the new
+ * device scans (`qr_svg` encodes `/pair#t=<token>`) or types (`token`).
  *
- * @param deviceType - Source id (e.g., "ios", "mac"). Becomes the `source_id`
- *   on the credentials row.
- * @param name - Display name for the credential.
+ * @param deviceType - "ios" → `mobile_app`, otherwise `desktop_app`.
+ * @param _name - Display name (the device labels itself at consume time).
  */
 export async function initiatePairing(
 	deviceType: string,
-	name: string
+	_name: string
 ): Promise<PairingInitResponse> {
-	const { credential_id } = await pairInitiate(deviceType, name);
+	const intendedKind = deviceType === 'ios' ? 'mobile_app' : 'desktop_app';
+	const minted = await pairMint(intendedKind);
 	return {
-		source_id: credential_id
+		source_id: minted.id,
+		token: minted.token,
+		qr_svg: minted.qr_svg,
+		pair_url: minted.pair_url
 	};
 }
 
 /**
- * Check pairing status by polling the credential row.
- *
- * The legacy `GET /api/devices/pairing/:source_id` endpoint is gone.
- * We poll the credentials list and look up the row by id.
+ * Poll pairing status by the token id. Maps the unified token lifecycle onto
+ * the modal's `pending | active | revoked` shape: `consumed` → active (the new
+ * device redeemed), `denied`/`expired` → revoked, everything else → pending.
  */
 export async function getPairingStatus(sourceId: string): Promise<PairingStatus> {
-	const list = await listCredentials();
-	const row = list.find((c) => c.id === sourceId);
-	if (!row) {
-		return { status: 'pending' };
-	}
-	if (row.is_active) {
+	const s = await pairStatus(sourceId);
+	if (s.status === 'consumed') {
 		return {
 			status: 'active',
-			device_info: row.device_info ?? {
-				device_id: '',
-				device_name: row.name,
+			device_info: {
+				device_id: s.consumed_by_device ?? '',
+				device_name: s.consumed_by_label ?? '',
 				device_model: '',
 				os_version: ''
 			}
 		};
+	}
+	if (s.status === 'denied' || s.status === 'expired') {
+		return { status: 'revoked' };
 	}
 	return { status: 'pending' };
 }
@@ -587,10 +747,11 @@ export interface Profile {
 	employer?: string | null;
 	theme?: string | null;
 	update_check_hour?: number | null;
-	timezone?: string | null;
+	home_timezone?: string | null;
 	home_place_id?: string | null;
 	home_city?: string | null;
 	home_country?: string | null;
+	onboarding_status?: string | null;
 }
 
 export async function getProfile(): Promise<Profile> {
@@ -679,6 +840,29 @@ export async function getDriveFile(fileId: string): Promise<DriveFile> {
 	if (!res.ok) {
 		const error = await res.json().catch(() => ({ error: res.statusText }));
 		throw new Error(error.error || `Failed to get file: ${res.statusText}`);
+	}
+	return res.json();
+}
+
+/** One raw life-graph record (the data viewer / citation target). */
+export interface OntologyRecord {
+	ontology: string;
+	record_id: string;
+	display_name: string;
+	table_name: string;
+	timestamp_column: string;
+	/** The full row as a plain object (all columns). */
+	row: Record<string, unknown>;
+}
+
+/** Fetch a single raw record by ontology + id — backs the data viewer. */
+export async function getRecord(ontology: string, recordId: string): Promise<OntologyRecord> {
+	const res = await fetch(
+		`${API_BASE}/records/${encodeURIComponent(ontology)}/${encodeURIComponent(recordId)}`
+	);
+	if (!res.ok) {
+		const error = await res.json().catch(() => ({ error: res.statusText }));
+		throw new Error(error.error || `Failed to get record: ${res.statusText}`);
 	}
 	return res.json();
 }
@@ -961,7 +1145,7 @@ export async function createChat(
  */
 export async function updateChat(
 	chatId: string,
-	updates: { title?: string; icon?: string | null }
+	updates: { title?: string; icon?: string | null; notebookId?: string | null }
 ): Promise<{ conversation_id: string; title: string; icon?: string | null; updated_at: string }> {
 	const res = await fetch(`${API_BASE}/chats/${chatId}`, {
 		method: 'PATCH',
@@ -994,115 +1178,110 @@ export async function deleteChat(chatId: string): Promise<{ deleted: boolean }> 
 }
 
 // =============================================================================
-// Spaces API
+// Notebooks API — the "room" a chat lives in
+//
+// A Notebook is a manual collection the user returns to: a project, pet, hobby,
+// goal, or topic. It gathers entities, chats, and pages as URL-native members
+// and carries a single accent tint plus a catch-up memo (`current_status`).
+// A chat lives in at most one Notebook (see `updateChat`'s `notebookId`).
 // =============================================================================
 
-export interface Space {
+/** Core Notebook row (no counts). Returned by create/update. */
+export interface Notebook {
 	id: string;
 	name: string;
 	icon: string | null;
-	is_system: boolean;
-	sort_order: number;
-	theme_id: string;
 	accent_color: string | null;
-	active_tab_state_json: string | null;
+	current_status: string | null;
+	current_status_at: string | null;
+	instructions: string | null;
+	sort_order: number;
 	created_at: string;
 	updated_at: string;
 }
 
-export interface SpaceSummary {
-	id: string;
-	name: string;
-	icon: string | null;
-	is_system: boolean;
+/** List-view summary — adds member and chat counts. */
+export interface NotebookSummary extends Notebook {
+	item_count: number;
+	chat_count: number;
+}
+
+/** A single URL-native member of a Notebook. */
+export interface NotebookItem {
+	url: string;
 	sort_order: number;
-	theme_id: string;
-	accent_color: string | null;
-	created_at: string;
-	updated_at: string;
+	added_at: string;
 }
 
-export interface SpaceListResponse {
-	spaces: SpaceSummary[];
+/** GET /api/notebooks/:id — a Notebook plus its ordered members. */
+export interface NotebookDetail extends Notebook {
+	items: NotebookItem[];
 }
 
-/**
- * List all spaces
- */
-export async function listSpaces(): Promise<SpaceListResponse> {
-	const res = await fetch(`${API_BASE}/spaces`);
-	if (!res.ok) throw new Error(`Failed to list spaces: ${res.statusText}`);
+/** GET /api/notebooks — all Notebooks with counts. */
+export async function listNotebooks(): Promise<{ notebooks: NotebookSummary[] }> {
+	const res = await fetch(`${API_BASE}/notebooks`);
+	if (!res.ok) throw new Error(`Failed to list notebooks: ${res.statusText}`);
+	return res.json();
+}
+
+/** GET /api/notebooks/:id — a Notebook with its ordered members. */
+export async function getNotebook(id: string): Promise<NotebookDetail> {
+	const res = await fetch(`${API_BASE}/notebooks/${encodeURIComponent(id)}`);
+	if (!res.ok) throw new Error(`Failed to get notebook: ${res.statusText}`);
+	return res.json();
+}
+
+/** POST /api/notebooks — create a Notebook. */
+export async function createNotebook(body: {
+	name: string;
+	icon?: string | null;
+	accent_color?: string | null;
+}): Promise<Notebook> {
+	const res = await fetch(`${API_BASE}/notebooks`, {
+		method: 'POST',
+		headers: { 'Content-Type': 'application/json' },
+		body: JSON.stringify(body)
+	});
+	if (!res.ok) throw new Error(`Failed to create notebook: ${res.statusText}`);
 	return res.json();
 }
 
 /**
- * Get a single space by ID
+ * PUT /api/notebooks/:id — update a Notebook. For the nullable fields
+ * (`icon`/`accent_color`/`current_status`): omit the key to leave unchanged,
+ * send `null` to clear, send a value to set.
  */
-export async function getSpace(id: string): Promise<Space> {
-	const res = await fetch(`${API_BASE}/spaces/${id}`);
-	if (!res.ok) throw new Error(`Failed to get space: ${res.statusText}`);
-	return res.json();
-}
-
-// createSpace removed — single workspace model
-
-/**
- * Update an existing space
- */
-export async function updateSpace(
+export async function updateNotebook(
 	id: string,
-	updates: {
+	patch: {
 		name?: string;
-		icon?: string;
+		icon?: string | null;
+		accent_color?: string | null;
+		current_status?: string | null;
+		instructions?: string | null;
 		sort_order?: number;
-		theme_id?: string;
-		accent_color?: string;
 	}
-): Promise<Space> {
-	const res = await fetch(`${API_BASE}/spaces/${id}`, {
+): Promise<Notebook> {
+	const res = await fetch(`${API_BASE}/notebooks/${encodeURIComponent(id)}`, {
 		method: 'PUT',
 		headers: { 'Content-Type': 'application/json' },
-		body: JSON.stringify(updates)
+		body: JSON.stringify(patch)
 	});
-	if (!res.ok) throw new Error(`Failed to update space: ${res.statusText}`);
+	if (!res.ok) throw new Error(`Failed to update notebook: ${res.statusText}`);
 	return res.json();
 }
 
-// deleteSpace + saveSpaceTabState removed — single workspace model
+/** DELETE /api/notebooks/:id */
+export async function deleteNotebook(id: string): Promise<void> {
+	const res = await fetch(`${API_BASE}/notebooks/${encodeURIComponent(id)}`, { method: 'DELETE' });
+	if (!res.ok) throw new Error(`Failed to delete notebook: ${res.statusText}`);
+}
 
 // =============================================================================
-// Views API (replaces Explorer Nodes)
+// View Entity (sidebar smart-section rows — resolved client-side from
+// /api/chats and listPages; the folder/view CRUD API was removed.)
 // =============================================================================
-
-export interface View {
-	id: string;
-	space_id: string;
-	parent_view_id: string | null;
-	name: string;
-	icon: string | null;
-	sort_order: number;
-	view_type: 'manual' | 'smart';
-	query_config: string | null;
-	is_system: boolean;
-	created_at: string;
-	updated_at: string;
-}
-
-export interface ViewSummary {
-	id: string;
-	space_id: string;
-	parent_view_id: string | null;
-	name: string;
-	icon: string | null;
-	sort_order: number;
-	view_type: 'manual' | 'smart';
-	query_config: string | null;
-	is_system: boolean;
-}
-
-export interface ViewListResponse {
-	views: ViewSummary[];
-}
 
 export interface ViewEntity {
 	id: string;
@@ -1110,163 +1289,6 @@ export interface ViewEntity {
 	namespace: string;
 	icon: string;
 	updated_at?: string;
-}
-
-/** Space item entity — ViewEntity with sort_order for unified ordering with folders */
-export interface SpaceItemEntity extends ViewEntity {
-	sort_order: number;
-}
-
-export interface ViewResolutionResponse {
-	entities: ViewEntity[];
-	total: number;
-	has_more: boolean;
-}
-
-export interface CreateViewRequest {
-	name: string;
-	icon?: string;
-	view_type: 'manual' | 'smart';
-	parent_view_id?: string;
-	query_config?: object;
-}
-
-/**
- * List all views for a space
- */
-export async function listViews(spaceId: string): Promise<ViewListResponse> {
-	const res = await fetch(`${API_BASE}/spaces/${spaceId}/views`);
-	if (!res.ok) throw new Error(`Failed to list views: ${res.statusText}`);
-	return res.json();
-}
-
-/**
- * Get a single view by ID
- */
-export async function getView(viewId: string): Promise<View> {
-	const res = await fetch(`${API_BASE}/views/${viewId}`);
-	if (!res.ok) throw new Error(`Failed to get view: ${res.statusText}`);
-	return res.json();
-}
-
-/**
- * Create a new view in a space
- */
-export async function createView(
-	spaceId: string,
-	request: CreateViewRequest
-): Promise<View> {
-	const res = await fetch(`${API_BASE}/views`, {
-		method: 'POST',
-		headers: { 'Content-Type': 'application/json' },
-		body: JSON.stringify({
-			space_id: spaceId,
-			...request
-		})
-	});
-	if (!res.ok) throw new Error(`Failed to create view: ${res.statusText}`);
-	return res.json();
-}
-
-/**
- * Update an existing view
- */
-export async function updateView(
-	viewId: string,
-	updates: {
-		name?: string;
-		icon?: string;
-		sort_order?: number;
-		query_config?: object;
-	}
-): Promise<View> {
-	const res = await fetch(`${API_BASE}/views/${viewId}`, {
-		method: 'PUT',
-		headers: { 'Content-Type': 'application/json' },
-		body: JSON.stringify(updates)
-	});
-	if (!res.ok) throw new Error(`Failed to update view: ${res.statusText}`);
-	return res.json();
-}
-
-/**
- * Delete a view by ID
- */
-export async function deleteView(viewId: string): Promise<void> {
-	const res = await fetch(`${API_BASE}/views/${viewId}`, { method: 'DELETE' });
-	if (!res.ok) throw new Error(`Failed to delete view: ${res.statusText}`);
-}
-
-/**
- * Resolve a view to its entities
- */
-export async function resolveView(viewId: string): Promise<ViewResolutionResponse> {
-	const res = await fetch(`${API_BASE}/views/${viewId}/resolve`, {
-		method: 'POST'
-	});
-	if (!res.ok) throw new Error(`Failed to resolve view: ${res.statusText}`);
-	return res.json();
-}
-
-/**
- * Add an item to a manual view
- * @param viewId - The view to add the item to
- * @param url - The URL of the item (e.g., '/page/page_xyz', '/person/person_abc')
- */
-export async function addViewItem(viewId: string, url: string): Promise<void> {
-	const sanitizedUrl = sanitizeUrl(url);
-	const res = await fetch(`${API_BASE}/views/${viewId}/items`, {
-		method: 'POST',
-		headers: { 'Content-Type': 'application/json' },
-		body: JSON.stringify({ url: sanitizedUrl })
-	});
-	if (!res.ok) throw new Error(`Failed to add item to view: ${res.statusText}`);
-}
-
-/**
- * Remove an item from a manual view
- * @param viewId - The view to remove the item from
- * @param url - The URL of the item (e.g., '/page/page_xyz', '/person/person_abc')
- */
-export async function removeViewItem(viewId: string, url: string): Promise<void> {
-	const res = await fetch(`${API_BASE}/views/${viewId}/items`, {
-		method: 'DELETE',
-		headers: { 'Content-Type': 'application/json' },
-		body: JSON.stringify({ url })
-	});
-	if (!res.ok) throw new Error(`Failed to remove item from view: ${res.statusText}`);
-}
-
-/**
- * View item as stored in the database
- */
-export interface ViewItem {
-	id: number;
-	view_id: string;
-	url: string;
-	sort_order: number;
-	created_at: string;
-}
-
-/**
- * List items in a manual view
- */
-export async function listViewItems(viewId: string): Promise<ViewItem[]> {
-	const res = await fetch(`${API_BASE}/views/${viewId}/items`);
-	if (!res.ok) throw new Error(`Failed to list view items: ${res.statusText}`);
-	return res.json();
-}
-
-/**
- * Reorder items in a manual view
- */
-export async function reorderViewItems(viewId: string, urlOrder: string[]): Promise<void> {
-	const res = await fetch(`${API_BASE}/views/${viewId}/items/reorder`, {
-		method: 'PUT',
-		headers: { 'Content-Type': 'application/json' },
-		body: JSON.stringify({ url_order: urlOrder })
-	});
-	if (!res.ok) throw new Error(`Failed to reorder view items: ${res.statusText}`);
 }
 
 // =============================================================================
@@ -1296,64 +1318,42 @@ export async function executeSql(sql: string): Promise<SqlResult> {
 }
 
 // =============================================================================
-// Space Items API (root-level items at space level, not in any folder)
+// Notebook Items API — the URL-native members of a Notebook
+//
+// (Listing comes back inside `getNotebook(id)` as `NotebookDetail.items`; there is
+// no separate GET.)
 // =============================================================================
 
-/**
- * List items at space root level (not inside any folder)
- * @param spaceId - The space ID
- * @returns Resolved entities for the space's root items
- */
-export async function listSpaceItems(spaceId: string): Promise<SpaceItemEntity[]> {
-	const res = await fetch(`${API_BASE}/spaces/${spaceId}/items`);
-	if (!res.ok) throw new Error(`Failed to list space items: ${res.statusText}`);
-	return res.json();
-}
-
-/**
- * Add an item to space root level
- * @param spaceId - The space ID
- * @param url - The URL of the item (e.g., '/page/page_xyz', '/person/person_abc')
- */
-export async function addSpaceItem(spaceId: string, url: string): Promise<void> {
+/** POST /api/notebooks/:id/items — add a member URL to a Notebook. */
+export async function addNotebookItem(notebookId: string, url: string): Promise<NotebookItem> {
 	const sanitizedUrl = sanitizeUrl(url);
-	const res = await fetch(`${API_BASE}/spaces/${spaceId}/items`, {
+	const res = await fetch(`${API_BASE}/notebooks/${encodeURIComponent(notebookId)}/items`, {
 		method: 'POST',
 		headers: { 'Content-Type': 'application/json' },
 		body: JSON.stringify({ url: sanitizedUrl })
 	});
-	if (!res.ok) throw new Error(`Failed to add space item: ${res.statusText}`);
+	if (!res.ok) throw new Error(`Failed to add notebook item: ${res.statusText}`);
+	return res.json();
 }
 
-/**
- * Remove an item from space root level
- * @param spaceId - The space ID
- * @param url - The URL of the item to remove
- */
-export async function removeSpaceItem(spaceId: string, url: string): Promise<void> {
-	const res = await fetch(`${API_BASE}/spaces/${spaceId}/items`, {
+/** DELETE /api/notebooks/:id/items — remove a member URL from a Notebook. */
+export async function removeNotebookItem(notebookId: string, url: string): Promise<void> {
+	const res = await fetch(`${API_BASE}/notebooks/${encodeURIComponent(notebookId)}/items`, {
 		method: 'DELETE',
 		headers: { 'Content-Type': 'application/json' },
 		body: JSON.stringify({ url })
 	});
-	if (!res.ok) throw new Error(`Failed to remove space item: ${res.statusText}`);
+	if (!res.ok) throw new Error(`Failed to remove notebook item: ${res.statusText}`);
 }
 
-/**
- * Reorder items at space root level
- * @param spaceId - The space ID
- * @param urlOrder - Array of URLs in the new desired order
- */
-export async function reorderSpaceItems(
-	spaceId: string,
-	items: Array<{ url: string; sort_order: number }>
-): Promise<void> {
-	const res = await fetch(`${API_BASE}/spaces/${spaceId}/items/reorder`, {
+/** PUT /api/notebooks/:id/items/reorder — set the member order by URL. */
+export async function reorderNotebookItems(notebookId: string, urls: string[]): Promise<void> {
+	const res = await fetch(`${API_BASE}/notebooks/${encodeURIComponent(notebookId)}/items/reorder`, {
 		method: 'PUT',
 		headers: { 'Content-Type': 'application/json' },
-		body: JSON.stringify({ items })
+		body: JSON.stringify({ urls })
 	});
-	if (!res.ok) throw new Error(`Failed to reorder space items: ${res.statusText}`);
+	if (!res.ok) throw new Error(`Failed to reorder notebook items: ${res.statusText}`);
 }
 
 // =============================================================================
@@ -1364,7 +1364,7 @@ export interface Page {
 	id: string;
 	title: string;
 	content: string;
-	space_id: string | null;
+	notebook_id: string | null;
 	icon: string | null;
 	cover_url: string | null;
 	tags: string | null; // JSON array string: '["tag1", "tag2"]'
@@ -1375,7 +1375,7 @@ export interface Page {
 export interface PageSummary {
 	id: string;
 	title: string;
-	space_id: string | null;
+	notebook_id: string | null;
 	icon: string | null;
 	cover_url: string | null;
 	tags: string | null; // JSON array string: '["tag1", "tag2"]'
@@ -1390,25 +1390,25 @@ export interface PageListResponse {
 	offset: number;
 }
 
-export interface EntitySearchResult {
+export interface RefSearchResult {
 	id: string;
 	name: string;
 	entity_type: string;
 	icon: string;
 }
 
-export interface EntitySearchResponse {
-	results: EntitySearchResult[];
+export interface RefSearchResponse {
+	results: RefSearchResult[];
 }
 
 /**
  * List all pages with optional pagination and workspace filter
  */
-export async function listPages(limit?: number, offset?: number, space_id?: string): Promise<PageListResponse> {
+export async function listPages(limit?: number, offset?: number, notebook_id?: string): Promise<PageListResponse> {
 	const params = new URLSearchParams();
 	if (limit !== undefined) params.set('limit', String(limit));
 	if (offset !== undefined) params.set('offset', String(offset));
-	if (space_id !== undefined) params.set('space_id', space_id);
+	if (notebook_id !== undefined) params.set('notebook_id', notebook_id);
 
 	const url = params.toString() ? `${API_BASE}/pages?${params}` : `${API_BASE}/pages`;
 	const res = await fetch(url);
@@ -1432,13 +1432,13 @@ export async function getPage(id: string): Promise<Page> {
 export async function createPage(
 	title: string,
 	content: string = '',
-	space_id: string | null = null,
+	notebook_id: string | null = null,
 	options?: { icon?: string; cover_url?: string; tags?: string }
 ): Promise<Page> {
 	const res = await fetch(`${API_BASE}/pages`, {
 		method: 'POST',
 		headers: { 'Content-Type': 'application/json' },
-		body: JSON.stringify({ title, content, spaceId: space_id, ...options })
+		body: JSON.stringify({ title, content, notebookId: notebook_id, ...options })
 	});
 
 	if (!res.ok) throw new Error(`Failed to create page: ${res.statusText}`);
@@ -1453,7 +1453,7 @@ export async function updatePage(
 	updates: {
 		title?: string;
 		content?: string;
-		space_id?: string | null;
+		notebook_id?: string | null;
 		icon?: string | null;
 		cover_url?: string | null;
 		tags?: string | null;
@@ -1484,8 +1484,8 @@ export async function deletePage(id: string): Promise<void> {
  * Search entities for autocomplete in the page editor
  * Used when typing [[ to link to entities
  */
-export async function searchEntities(query: string): Promise<EntitySearchResponse> {
-	const res = await fetch(`${API_BASE}/pages/search/entities?q=${encodeURIComponent(query)}`);
+export async function searchRefs(query: string): Promise<RefSearchResponse> {
+	const res = await fetch(`${API_BASE}/pages/search/refs?q=${encodeURIComponent(query)}`);
 	if (!res.ok) throw new Error(`Failed to search entities: ${res.statusText}`);
 	return res.json();
 }
@@ -1548,156 +1548,25 @@ export async function createReflection(date: string): Promise<Page> {
 }
 
 // ============================================================================
-// Things API
-//
-// A "thing" is a folder you can re-enter — a project, pet, goal, topic,
-// anything you want to keep loosely organized. A Thing has a list of
-// pinned URLs it accumulates over time. The `current_status*` fields back
-// the catch-up memo at the top of the detail view. The `category` column
-// exists on the row but is not surfaced in v1 UX.
+// Backlinks / References API
 // ============================================================================
 
-export interface Thing {
+/** A page that links TO the queried page (an inbound reference). */
+export interface Backlink {
 	id: string;
-	name: string;
-	category: string | null;
+	title: string;
 	icon: string | null;
-	description: string | null;
-	cover_image: string | null;
-	current_status: string | null;
-	current_status_at: string | null;
-	current_status_edited_by: 'ai' | 'human';
-	created_at: string;
+	/** One-line plain-text snippet of the surrounding context. */
+	snippet: string;
 	updated_at: string;
 }
 
-export interface ThingSummary {
-	id: string;
-	name: string;
-	category: string | null;
-	icon: string | null;
-	description: string | null;
-	cover_image: string | null;
-	current_status: string | null;
-	current_status_at: string | null;
-	pin_count: number;
-	created_at: string;
-	updated_at: string;
-}
-
-export interface ThingPin {
-	id: string;
-	thing_id: string;
-	url: string;
-	name: string | null;
-	description: string | null;
-	sort_order: number;
-	added_at: string;
-}
-
-export interface ThingDetail extends Thing {
-	pins: ThingPin[];
-}
-
-export interface ThingListResponse {
-	things: ThingSummary[];
-}
-
-export async function listThings(category?: string): Promise<ThingListResponse> {
-	const qs = category ? `?category=${encodeURIComponent(category)}` : '';
-	const res = await fetch(`${API_BASE}/things${qs}`);
-	if (!res.ok) throw new Error(`Failed to list things: ${res.statusText}`);
-	return res.json();
-}
-
-export async function getThing(id: string): Promise<ThingDetail> {
-	const res = await fetch(`${API_BASE}/things/${encodeURIComponent(id)}`);
-	if (!res.ok) throw new Error(`Failed to get thing: ${res.statusText}`);
-	return res.json();
-}
-
-export async function createThing(
-	name: string,
-	options?: {
-		category?: string | null;
-		icon?: string | null;
-		description?: string | null;
-	}
-): Promise<Thing> {
-	const res = await fetch(`${API_BASE}/things`, {
-		method: 'POST',
-		headers: { 'Content-Type': 'application/json' },
-		body: JSON.stringify({
-			name,
-			category: options?.category ?? null,
-			icon: options?.icon ?? null,
-			description: options?.description ?? null
-		})
-	});
-	if (!res.ok) throw new Error(`Failed to create thing: ${res.statusText}`);
-	return res.json();
-}
-
-export async function updateThing(
-	id: string,
-	updates: {
-		name?: string;
-		category?: string | null;
-		icon?: string | null;
-		description?: string | null;
-	}
-): Promise<Thing> {
-	const res = await fetch(`${API_BASE}/things/${encodeURIComponent(id)}`, {
-		method: 'PATCH',
-		headers: { 'Content-Type': 'application/json' },
-		body: JSON.stringify(updates)
-	});
-	if (!res.ok) throw new Error(`Failed to update thing: ${res.statusText}`);
-	return res.json();
-}
-
-export async function deleteThing(id: string): Promise<void> {
-	const res = await fetch(`${API_BASE}/things/${encodeURIComponent(id)}`, { method: 'DELETE' });
-	if (!res.ok) throw new Error(`Failed to delete thing: ${res.statusText}`);
-}
-
-export async function addThingPin(
-	thingId: string,
-	url: string,
-	options?: { name?: string | null; description?: string | null }
-): Promise<ThingPin> {
-	const res = await fetch(`${API_BASE}/things/${encodeURIComponent(thingId)}/pins`, {
-		method: 'POST',
-		headers: { 'Content-Type': 'application/json' },
-		body: JSON.stringify({
-			url,
-			name: options?.name ?? null,
-			description: options?.description ?? null
-		})
-	});
-	if (!res.ok) throw new Error(`Failed to add thing pin: ${res.statusText}`);
-	return res.json();
-}
-
-export async function removeThingPin(thingId: string, url: string): Promise<void> {
-	const res = await fetch(`${API_BASE}/things/${encodeURIComponent(thingId)}/pins`, {
-		method: 'DELETE',
-		headers: { 'Content-Type': 'application/json' },
-		body: JSON.stringify({ url })
-	});
-	if (!res.ok) throw new Error(`Failed to remove thing pin: ${res.statusText}`);
-}
-
-export async function reorderThingPins(thingId: string, urls: string[]): Promise<void> {
-	const res = await fetch(
-		`${API_BASE}/things/${encodeURIComponent(thingId)}/pins/reorder`,
-		{
-			method: 'PUT',
-			headers: { 'Content-Type': 'application/json' },
-			body: JSON.stringify({ urls })
-		}
-	);
-	if (!res.ok) throw new Error(`Failed to reorder thing pins: ${res.statusText}`);
+/** Get inbound references (pages that link to the given page). */
+export async function getPageBacklinks(pageId: string): Promise<Backlink[]> {
+	const res = await fetch(`${API_BASE}/pages/${pageId}/backlinks`);
+	if (!res.ok) throw new Error(`Failed to get backlinks: ${res.statusText}`);
+	const data = await res.json();
+	return data.backlinks ?? [];
 }
 
 // ============================================================================
@@ -1767,3 +1636,272 @@ export async function queryOntologyData(
 	return res.json();
 }
 
+// ============================================================================
+// Setup state API
+// ============================================================================
+
+export interface SetupStep {
+	id: string;
+	title: string;
+	done: boolean;
+	/** Server-authored copy for the step's current state — render verbatim. */
+	detail?: string;
+	/**
+	 * Cosmetic hint only (e.g. "ipv6_direct", "byo", or a network class).
+	 * Behavior must key off `done`; unknown/missing kinds render like today.
+	 */
+	kind?: string;
+}
+
+export interface SetupState {
+	setup: SetupStep[];
+	setup_complete: boolean;
+	onboarding: SetupStep[];
+}
+
+export async function getSetupState(): Promise<SetupState> {
+	const res = await fetch(`${API_BASE}/setup/state`);
+	if (!res.ok) throw new Error(`Failed to get setup state: ${res.statusText}`);
+	return res.json();
+}
+
+
+// ============================================================================
+// Tier 2 wrappers — routed through the shared request() layer (ApiError + status).
+// Inputs are typed precisely; outputs use a generic passthrough (<T = unknown>)
+// so each call site reuses the response type it already declares locally.
+// ============================================================================
+
+// ── Assistant profile ────────────────────────────────────────────────────────
+export function getAssistantProfile<T = unknown>(): Promise<T> {
+	return apiGet<T>('/assistant-profile');
+}
+export function updateAssistantProfile<T = unknown>(patch: Record<string, unknown>): Promise<T> {
+	return apiSend<T>('PUT', '/assistant-profile', patch);
+}
+
+// ── Billing / wallet ─────────────────────────────────────────────────────────
+export function getBillingLinkStatus<T = unknown>(): Promise<T> {
+	return apiGet<T>('/billing/link/status');
+}
+export function startBillingLink<T = unknown>(): Promise<T> {
+	return apiSend<T>('POST', '/billing/link/start');
+}
+export function openBillingPortal<T = unknown>(): Promise<T> {
+	return apiSend<T>('POST', '/billing/portal');
+}
+export function getBillingState<T = unknown>(): Promise<T> {
+	return apiGet<T>('/billing/state');
+}
+export function setBillingAutoTopup<T = unknown>(enabled: boolean): Promise<T> {
+	return apiSend<T>('POST', '/billing/auto-topup', { enabled });
+}
+export function getBillingUsage<T = unknown>(): Promise<T> {
+	return apiGet<T>('/billing/usage');
+}
+export function getByoKey<T = unknown>(): Promise<T> {
+	return apiGet<T>('/settings/byo-key');
+}
+export function setByoKey<T = unknown>(body: Record<string, unknown>): Promise<T> {
+	return apiSend<T>('POST', '/settings/byo-key', body);
+}
+export function deleteByoKey<T = unknown>(sudoRequestId?: string): Promise<T> {
+	return apiSend<T>('DELETE', '/settings/byo-key', { sudo_request_id: sudoRequestId });
+}
+
+// ── MCP / tools ──────────────────────────────────────────────────────────────
+export function listTools<T = unknown>(): Promise<T> {
+	return apiGet<T>('/tools');
+}
+export function listMcpServers<T = unknown>(): Promise<T> {
+	return apiGet<T>('/mcp/servers');
+}
+export function getMcpServer<T = unknown>(id: string): Promise<T> {
+	return apiGet<T>(`/mcp/servers/${encodeURIComponent(id)}`);
+}
+export function createMcpServer<T = unknown>(body: Record<string, unknown>): Promise<T> {
+	return apiSend<T>('POST', '/mcp/servers', body);
+}
+export function deleteMcpServer<T = unknown>(id: string): Promise<T> {
+	return apiSend<T>('DELETE', `/mcp/servers/${encodeURIComponent(id)}`);
+}
+export function connectMcpServer<T = unknown>(id: string): Promise<T> {
+	return apiSend<T>('POST', `/mcp/servers/${encodeURIComponent(id)}/connect`);
+}
+export function disconnectMcpServer<T = unknown>(id: string): Promise<T> {
+	return apiSend<T>('POST', `/mcp/servers/${encodeURIComponent(id)}/disconnect`);
+}
+export function toggleMcpTool<T = unknown>(toolId: string): Promise<T> {
+	return apiSend<T>('PATCH', `/mcp/tools/${encodeURIComponent(toolId)}/toggle`);
+}
+
+// ── Personas ─────────────────────────────────────────────────────────────────
+export function listPersonas<T = unknown>(): Promise<T> {
+	return apiGet<T>('/personas');
+}
+export function createPersona<T = unknown>(body: { title: string; content: string }): Promise<T> {
+	return apiSend<T>('POST', '/personas', body);
+}
+export function updatePersona<T = unknown>(id: string, updates: object): Promise<T> {
+	return apiSend<T>('PUT', `/personas/${encodeURIComponent(id)}`, updates);
+}
+export function deletePersona<T = unknown>(id: string): Promise<T> {
+	return apiSend<T>('DELETE', `/personas/${encodeURIComponent(id)}`);
+}
+export function unhidePersona<T = unknown>(id: string): Promise<T> {
+	return apiSend<T>('POST', `/personas/${encodeURIComponent(id)}/unhide`);
+}
+export function resetPersonas<T = unknown>(): Promise<T> {
+	return apiSend<T>('POST', '/personas/reset');
+}
+
+// ── Chats (extras beyond createChat/updateChat/deleteChat above) ──────────────
+export function listChats<T = unknown>(): Promise<T> {
+	return apiGet<T>('/chats');
+}
+export function getChat<T = unknown>(id: string): Promise<T> {
+	return apiGet<T>(`/chats/${encodeURIComponent(id)}`);
+}
+export function getChatUsage<T = unknown>(id: string): Promise<T> {
+	return apiGet<T>(`/chats/${encodeURIComponent(id)}/usage`);
+}
+export function setChatTitle<T = unknown>(body: Record<string, unknown>): Promise<T> {
+	return apiSend<T>('POST', '/chats/title', body);
+}
+export function cancelChat<T = unknown>(chatId: string): Promise<T> {
+	return apiSend<T>('POST', '/chat/cancel', { chatId });
+}
+export function compactChat<T = unknown>(id: string, force = true): Promise<T> {
+	return apiSend<T>('POST', `/chats/${encodeURIComponent(id)}/compact`, { force });
+}
+export function getChatPermissions<T = unknown>(id: string): Promise<T> {
+	return apiGet<T>(`/chats/${encodeURIComponent(id)}/permissions`);
+}
+export function addChatPermission<T = unknown>(id: string, body: Record<string, unknown>): Promise<T> {
+	return apiSend<T>('POST', `/chats/${encodeURIComponent(id)}/permissions`, body);
+}
+export function removeChatPermission<T = unknown>(id: string, entityId: string): Promise<T> {
+	return apiSend<T>(
+		'DELETE',
+		`/chats/${encodeURIComponent(id)}/permissions/${encodeURIComponent(entityId)}`,
+	);
+}
+
+// ── Models ───────────────────────────────────────────────────────────────────
+export function listModels<T = unknown>(): Promise<T> {
+	return apiGet<T>('/models');
+}
+export function getModel<T = unknown>(id: string): Promise<T> {
+	return apiGet<T>(`/models/${encodeURIComponent(id)}`);
+}
+export function getRecommendedModels<T = unknown>(): Promise<T> {
+	return apiGet<T>('/models/recommended');
+}
+
+// ── Page versions (yjs history) ──────────────────────────────────────────────
+export function createPageVersion<T = unknown>(pageId: string, body: Record<string, unknown>): Promise<T> {
+	return apiSend<T>('POST', `/pages/${encodeURIComponent(pageId)}/versions`, body);
+}
+export function listPageVersions<T = unknown>(pageId: string, limit?: number): Promise<T> {
+	return apiGet<T>(`/pages/${encodeURIComponent(pageId)}/versions`, { limit });
+}
+export function getPageVersion<T = unknown>(versionId: string): Promise<T> {
+	return apiGet<T>(`/pages/versions/${encodeURIComponent(versionId)}`);
+}
+
+// ── Setup (extras beyond getSetupState) ──────────────────────────────────────
+export function setupLinkPoll<T = unknown>(): Promise<T> {
+	return apiSend<T>('POST', '/setup/link/poll');
+}
+export function setupSubscribeStart<T = unknown>(): Promise<T> {
+	return apiSend<T>('POST', '/setup/subscribe/start');
+}
+export function setupLoginStart<T = unknown>(email: string): Promise<T> {
+	return apiSend<T>('POST', '/setup/login/start', { email });
+}
+
+// ── Sudo (privilege elevation) ───────────────────────────────────────────────
+export function requestSudo<T = unknown>(action: string, actionPayload?: unknown): Promise<T> {
+	return apiSend<T>('POST', '/sudo/request', { action, action_payload: actionPayload });
+}
+export function getSudoStatus<T = unknown>(id: string): Promise<T> {
+	return apiGet<T>(`/sudo/status/${encodeURIComponent(id)}`);
+}
+
+// ── Mentions queue ───────────────────────────────────────────────────────────
+export function getMentionQueue<T = unknown>(): Promise<T> {
+	return apiGet<T>('/mentions/queue');
+}
+export function resolveMention<T = unknown>(path: string, body: Record<string, unknown>): Promise<T> {
+	return apiSend<T>('POST', `/mentions/${encodeURIComponent(path)}`, body);
+}
+
+// ── Data lake ────────────────────────────────────────────────────────────────
+export function getLakeSummary<T = unknown>(): Promise<T> {
+	return apiGet<T>('/lake/summary');
+}
+export function getLakeStreams<T = unknown>(): Promise<T> {
+	return apiGet<T>('/lake/streams');
+}
+
+// ── System / telemetry / usage ───────────────────────────────────────────────
+export function getSystemTelemetry<T = unknown>(): Promise<T> {
+	return apiGet<T>('/system/telemetry');
+}
+export function getSystemHistory<T = unknown>(): Promise<T> {
+	return apiGet<T>('/system/history');
+}
+export function getMetricsActivity<T = unknown>(): Promise<T> {
+	return apiGet<T>('/metrics/activity');
+}
+export function getAiCalls<T = unknown>(): Promise<T> {
+	return apiGet<T>('/telemetry/ai-calls');
+}
+export function getAuthAudit<T = unknown>(): Promise<T> {
+	return apiGet<T>('/audit/auth');
+}
+export function getUsageSummary<T = unknown>(): Promise<T> {
+	return apiGet<T>('/usage/summary');
+}
+export function getSubscription<T = unknown>(): Promise<T> {
+	return apiGet<T>('/subscription');
+}
+
+// ── Narrative identity (wiki) ────────────────────────────────────────────────
+export function getNarrativeIdentity<T = unknown>(): Promise<T> {
+	return apiGet<T>('/wiki/narrative-identity');
+}
+export function updateNarrativeIdentity<T = unknown>(body: Record<string, unknown>): Promise<T> {
+	return apiSend<T>('PUT', '/wiki/narrative-identity', body);
+}
+
+// ── Devices / pairing (extras beyond pairMint/pairDeny/pairStatus) ────────────
+export function listDevices<T = unknown>(): Promise<T> {
+	return apiGet<T>('/devices');
+}
+export function pairConfirm<T = unknown>(id: string): Promise<T> {
+	return apiSend<T>('POST', `/pair/confirm/${encodeURIComponent(id)}`);
+}
+export function pairConsume<T = unknown>(body?: Record<string, unknown>): Promise<T> {
+	return apiSend<T>('POST', '/pair/consume', body);
+}
+
+// ── Misc singletons ──────────────────────────────────────────────────────────
+export function getDeveloperTables<T = unknown>(): Promise<T> {
+	return apiGet<T>('/developer/tables');
+}
+export function getDriveMedia<T = unknown>(): Promise<T> {
+	return apiGet<T>('/drive/media');
+}
+export function searchUnsplash<T = unknown>(body: Record<string, unknown>): Promise<T> {
+	return apiSend<T>('POST', '/unsplash/search', body);
+}
+export function getServerInfo<T = unknown>(): Promise<T> {
+	return apiGet<T>('/app/server-info');
+}
+export function triggerAction<T = unknown>(id: string): Promise<T> {
+	return apiSend<T>('POST', `/actions/${encodeURIComponent(id)}/trigger`);
+}
+export function aiComplete<T = unknown>(req: Record<string, unknown>): Promise<T> {
+	return apiSend<T>('POST', '/ai/complete', req);
+}

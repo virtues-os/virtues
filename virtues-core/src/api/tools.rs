@@ -102,7 +102,7 @@ pub async fn list_tools(db: &PgPool, params: ListToolsQuery) -> Result<Vec<Tool>
     // Note: We use a raw query here to avoid SQLx offline issues until migrations are run
     let mcp_rows = sqlx::query(
         r#"
-        SELECT id, server_name, tool_name, description, input_schema, enabled
+        SELECT id, server_name, tool_name, description, input_schema::text, enabled
         FROM app_mcp_tools
         "#
     )
@@ -161,7 +161,7 @@ pub async fn get_tool(db: &PgPool, id: String) -> Result<Tool> {
     // Try MCP tool
     let row = sqlx::query(
         r#"
-        SELECT id, server_name, tool_name, description, input_schema, enabled
+        SELECT id, server_name, tool_name, description, input_schema::text, enabled
         FROM app_mcp_tools
         WHERE id = $1
         "#

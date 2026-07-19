@@ -91,7 +91,7 @@
 	/* Font Families */
 	--font-mono: 'IBM Plex Mono', monospace;
 	--font-sans: 'Avenir', sans-serif;
-	--font-serif: 'PP Writer', Lora, serif;
+	--font-serif: 'JJannon', Lora, serif;
 
 	/* Animation Tokens */
 	--duration-fast: 150ms;
@@ -100,72 +100,84 @@
 	--ease-out-expo: cubic-bezier(0.16, 1, 0.3, 1);
 	--ease-in-out-quad: cubic-bezier(0.45, 0, 0.55, 1);
 	--ease-premium: cubic-bezier(0.2, 0, 0, 1);
+
+	/* Radius — sm/md/lg/xl (4/6/8/12px) already match Tailwind v4 defaults,
+	   so `rounded-*` utilities are unchanged. `--radius-full` is the one gap:
+	   Tailwind's `rounded-full` is a static calc(infinity*1px) with no var,
+	   so this exposes a pill radius to hand-written `<style>` blocks. */
+	--radius-full: 9999px;
+
+	/* Named breakpoint for the app's dominant hand-written media query (900px),
+	   giving a `nav:` responsive variant. Deliberately NOT redefining --breakpoint-lg
+	   (that would silently move every existing `lg:` utility from 1024px). */
+	--breakpoint-nav: 900px;
 }
 
 /* ===================================
    PEMBERLEY (DEFAULT)
-   Austen elegance, pristine white
+   American heritage — ivory, navy & claret
    Applied to :root so it's the default
    =================================== */
 :root {
 	/* Code Syntax Highlighting */
 	--shiki-theme: github-light;
 
-	/* Surface Colors - Pure whites */
-	--background: #FFFFFF;
+	/* Surface Colors - Whiter warm paper, a whisper of cream (de-yellowed) */
+	--background: #FDFCF9;
 	--surface: #FFFFFF;
-	--surface-elevated: #F5F5F5;
+	--surface-elevated: #F5F4EF;
 	--surface-overlay: #FFFFFF;
 
-	/* Background Treatment - Flat for this theme */
+	/* Background Treatment - Flat warm ivory */
 	--background-image: none;
 	--surface-elevated-image: none;
 	--surface-elevated-size: auto;
 
-	/* Content Colors - Neutral grays */
-	--foreground: #171717;
-	--foreground-muted: #404040;
-	--foreground-subtle: #737373;
-	--foreground-disabled: #a3a3a3;
+	/* Content Colors - Navy-black ink on ivory */
+	--foreground: #1A2030;
+	--foreground-muted: #3E4459;
+	--foreground-subtle: #6C7185;
+	--foreground-disabled: #A8A395;
 
-	/* Interactive Colors - Blue accent */
-	--primary: #2883DE;
-	--primary-hover: #4a9ae5;
-	--primary-active: #1d6bb8;
-	--primary-subtle: #EFF6FF;
+	/* Interactive Colors - Deep heritage navy */
+	--primary: #1E3159;
+	--primary-hover: #294271;
+	--primary-active: #16243F;
+	--primary-subtle: #E9EDF4;
 
-	--secondary: #171717;
-	--secondary-hover: #262626;
-	--secondary-active: #0a0a0a;
+	/* Secondary - Claret heritage red (the signature accent) */
+	--secondary: #9A2B2E;
+	--secondary-hover: #B23639;
+	--secondary-active: #7E2225;
 
-	/* Status Colors */
-	--success: #16a34a;
-	--success-subtle: #dcfce7;
-	--warning: #ea580c;
-	--warning-subtle: #ffedd5;
-	--error: #dc2626;
-	--error-subtle: #fee2e2;
-	--info: #0284c7;
-	--info-subtle: #e0f2fe;
+	/* Status Colors - Hunter green + goldenrod + claret */
+	--success: #2E6B43;
+	--success-subtle: #E3EDE5;
+	--warning: #B07514;
+	--warning-subtle: #F6ECD6;
+	--error: #9A2B2E;
+	--error-subtle: #F6E3E2;
+	--info: #1E4E8C;
+	--info-subtle: #E5EBF5;
 
-	/* Border Colors - Neutral grays */
-	--border: #e5e5e5;
-	--border-subtle: #f5f5f5;
-	--border-strong: #d4d4d4;
-	--border-focus: #2883DE;
+	/* Border Colors - Cool greige (de-yellowed) */
+	--border: #E7E3D9;
+	--border-subtle: #F2EFE8;
+	--border-strong: #D9D3C7;
+	--border-focus: #1E3159;
 
-	/* Selection/Highlight - Soft light yellow */
-	--highlight: rgba(253, 237, 178, 0.45);
-	--highlight-foreground: #171717;
+	/* Selection/Highlight - Soft claret wash */
+	--highlight: rgba(154, 43, 46, 0.14);
+	--highlight-foreground: #1A2030;
 
 	/* Diff Colors */
-	--diff-add: #16a34a;
-	--diff-add-bg: #dcfce7;
-	--diff-remove: #dc2626;
-	--diff-remove-bg: #fee2e2;
+	--diff-add: #2E6B43;
+	--diff-add-bg: #E3EDE5;
+	--diff-remove: #9A2B2E;
+	--diff-remove-bg: #F6E3E2;
 
-	/* Background Inverse */
-	--background-inverse: #0a0a0a;
+	/* Background Inverse - Deep navy, never black */
+	--background-inverse: #14203A;
 
 	/* Sidebar Component Tokens */
 	--sidebar-interactive-padding: 6px 10px;
@@ -342,6 +354,71 @@
 	/* Background Treatment - Paper texture */
 	--background-image: url('/textures/paper.webp');
 	--surface-elevated-image: url('/textures/paper.webp');
+	--surface-elevated-size: auto;
+
+	/* Content Colors - Neutral grays */
+	--foreground: #171717;
+	--foreground-muted: #404040;
+	--foreground-subtle: #737373;
+	--foreground-disabled: #a3a3a3;
+
+	/* Interactive Colors - Blue accent */
+	--primary: #2883DE;
+	--primary-hover: #4a9ae5;
+	--primary-active: #1d6bb8;
+	--primary-subtle: #EFF6FF;
+
+	--secondary: #171717;
+	--secondary-hover: #262626;
+	--secondary-active: #0a0a0a;
+
+	/* Status Colors */
+	--success: #16a34a;
+	--success-subtle: #dcfce7;
+	--warning: #ea580c;
+	--warning-subtle: #ffedd5;
+	--error: #dc2626;
+	--error-subtle: #fee2e2;
+	--info: #0284c7;
+	--info-subtle: #e0f2fe;
+
+	/* Border Colors - Neutral grays */
+	--border: #e5e5e5;
+	--border-subtle: #f5f5f5;
+	--border-strong: #d4d4d4;
+	--border-focus: #2883DE;
+
+	/* Selection/Highlight - Soft light yellow */
+	--highlight: rgba(253, 237, 178, 0.45);
+	--highlight-foreground: #171717;
+
+	/* Diff Colors */
+	--diff-add: #16a34a;
+	--diff-add-bg: #dcfce7;
+	--diff-remove: #dc2626;
+	--diff-remove-bg: #fee2e2;
+
+	/* Background Inverse */
+	--background-inverse: #0a0a0a;
+}
+
+/* ===================================
+   NETHERFIELD
+   Austen elegance, pristine white
+   =================================== */
+[data-theme="netherfield"] {
+	/* Code Syntax Highlighting */
+	--shiki-theme: github-light;
+
+	/* Surface Colors - Pure whites */
+	--background: #FFFFFF;
+	--surface: #FFFFFF;
+	--surface-elevated: #F5F5F5;
+	--surface-overlay: #FFFFFF;
+
+	/* Background Treatment - Flat for this theme */
+	--background-image: none;
+	--surface-elevated-image: none;
 	--surface-elevated-size: auto;
 
 	/* Content Colors - Neutral grays */
@@ -1178,4 +1255,72 @@
 [data-theme="agora"],
 [data-theme="shire"] {
 	--illustration-filter: invert(1);
+}
+
+/* ──────────────────────────────────────────────────────────────────────────
+ * CATEGORICAL PALETTE
+ * Non-semantic, per-category accent hues — citation source-types, chat
+ * message-roles, etc. These are NOT status colors: for success/warning/error/
+ * info use the semantic --color-* tokens instead.
+ * Theme-adaptive by design: the light values below are the default; the dark
+ * override lightens each hue (~one Tailwind step) so categories stay legible
+ * on dark surfaces. Retune these values freely — every consumer reads var().
+ * ────────────────────────────────────────────────────────────────────────── */
+:root {
+	--cat-purple: #a855f7;
+	--cat-purple-light: #c084fc;
+	--cat-indigo: #6366f1;
+	--cat-violet: #8b5cf6;
+	--cat-pink: #ec4899;
+	--cat-rose: #f43f5e;
+	--cat-orange: #f97316;
+	--cat-yellow: #eab308;
+	--cat-cyan: #06b6d4;
+	--cat-cyan-light: #22d3ee;
+	--cat-emerald: #10b981;
+	--cat-emerald-light: #34d399;
+}
+
+[data-theme="lothlorien"],
+[data-theme="baker-street"],
+[data-theme="narnia"],
+[data-theme="canterbury"],
+[data-theme="borghese"],
+[data-theme="gatsby"],
+[data-theme="lyceum"],
+[data-theme="asgard"],
+[data-theme="agora"],
+[data-theme="shire"] {
+	--cat-purple: #c084fc;
+	--cat-purple-light: #d8b4fe;
+	--cat-indigo: #818cf8;
+	--cat-violet: #a78bfa;
+	--cat-pink: #f472b6;
+	--cat-rose: #fb7185;
+	--cat-orange: #fb923c;
+	--cat-yellow: #facc15;
+	--cat-cyan: #22d3ee;
+	--cat-cyan-light: #67e8f9;
+	--cat-emerald: #34d399;
+	--cat-emerald-light: #6ee7b7;
+}
+
+/* ──────────────────────────────────────────────────────────────────────────
+ * Z-INDEX LADDER
+ * One named stacking order for the whole app — consume as `z-index: var(--z-…)`.
+ * Theme-invariant (plain :root, not @theme). Replaces ad-hoc magic numbers and
+ * the 9999/10000/10001 "stacking war". Ordered low → high.
+ * ────────────────────────────────────────────────────────────────────────── */
+:root {
+	--z-raised: 10;          /* local raised content inside a component      */
+	--z-sticky: 20;          /* sticky headers / breadcrumbs / outlines      */
+	--z-dropdown: 50;        /* dropdowns, menus                             */
+	--z-popover: 60;         /* ref preview, selection popover               */
+	--z-overlay: 100;        /* split panes, side panels, tab bar            */
+	--z-modal: 1000;         /* modal dialogs, search, provisioning overlay  */
+	--z-lightbox: 1100;      /* fullscreen media lightbox                    */
+	--z-toast: 1200;         /* toasts / sonner                              */
+	--z-context-menu: 1300;  /* right-click context menu                     */
+	--z-context-submenu: 1301; /* its submenu, one above the menu            */
+	--z-tooltip: 1400;       /* tooltips — always on top                     */
 }

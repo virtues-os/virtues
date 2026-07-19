@@ -1,8 +1,9 @@
 <script lang="ts">
 	import Icon from "$lib/components/Icon.svelte";
-	import { spaceStore } from "$lib/stores/space.svelte";
+	import { windowShellStore } from "$lib/stores/window-shell.svelte";
 	import { pagesStore } from "$lib/stores/pages.svelte";
-	import { listPages, type ViewEntity } from "$lib/api/client";
+	import { listPages, listChats, type ViewEntity } from "$lib/api/client";
+	import { chatSessions } from "$lib/stores/chatSessions.svelte";
 	import type { SystemSection } from "$lib/sidebar/sections";
 	import SidebarNavItem from "./SidebarNavItem.svelte";
 
@@ -18,29 +19,68 @@
 		accentColor = null,
 	}: Props = $props();
 
-	const isExpanded = $derived(spaceStore.isViewExpanded(section.id));
+	// Local expand state (folder/view expansion no longer lives in the window shell store)
+	let isExpanded = $state(false);
 
 	// Smart section data
 	let smartItems = $state<ViewEntity[]>([]);
 	let smartLoading = $state(false);
 	let lastCacheVersion = $state(-1);
 
+	// The chat list is served from the shared, reactive chatSessions store (single
+	// source of truth) instead of a private cached fetch — so titles/renames/deletes
+	// propagate here the instant any surface mutates the store. Pages keep the
+	// existing fetch+cache path.
+	const isChatSection = $derived(section.type === 'smart' && section.namespace === 'chat');
+
+	const chatEntities = $derived<ViewEntity[]>(
+		chatSessions.sessions.slice(0, section.limit ?? 8).map((c) => ({
+			id: `/chat/${c.conversation_id}`,
+			name: c.title ?? 'Untitled',
+			namespace: 'chat',
+			icon: c.icon || 'ri:chat-1-line',
+			updated_at: c.last_updated ?? undefined,
+		})),
+	);
+
+	const displayItems = $derived(isChatSection ? chatEntities : smartItems);
+	const displayLoading = $derived(
+		isChatSection ? chatSessions.isLoading && chatSessions.sessions.length === 0 : smartLoading,
+	);
+
 	// Seed from cache on mount
 	{
-		const cached = spaceStore.smartSectionCache.get(section.id);
+		const cached = windowShellStore.smartSectionCache.get(section.id);
 		if (cached) {
 			smartItems = cached;
-			lastCacheVersion = spaceStore.viewCacheVersion;
+			lastCacheVersion = windowShellStore.viewCacheVersion;
 		}
 	}
 
-	// Fetch smart section items when expanded or cache invalidated
+	// Fetch smart section items when expanded or cache invalidated (pages only —
+	// chat is store-backed and handled by the effect below).
 	$effect.pre(() => {
-		if (section.type !== 'smart') return;
-		const currentVersion = spaceStore.viewCacheVersion;
+		if (section.type !== 'smart' || isChatSection) return;
+		const currentVersion = windowShellStore.viewCacheVersion;
 		if (isExpanded && lastCacheVersion !== currentVersion) {
 			const forceRefresh = lastCacheVersion !== -1;
 			fetchSmartItems(currentVersion, forceRefresh);
+		}
+	});
+
+	// Chat section: populate the shared store once, the first time it's expanded.
+	// Guarded so an empty result (a user with no chats) can't re-trigger the load.
+	let chatsRequested = $state(false);
+	$effect(() => {
+		if (
+			isChatSection &&
+			isExpanded &&
+			!chatsRequested &&
+			chatSessions.sessions.length === 0 &&
+			!chatSessions.isLoading
+		) {
+			chatsRequested = true;
+			chatSessions.load();
 		}
 	});
 
@@ -48,7 +88,7 @@
 		if (smartLoading) return;
 
 		if (!forceRefresh) {
-			const cached = spaceStore.smartSectionCache.get(section.id);
+			const cached = windowShellStore.smartSectionCache.get(section.id);
 			if (cached) {
 				smartItems = cached;
 				lastCacheVersion = cacheVersion;
@@ -63,8 +103,7 @@
 			let entities: ViewEntity[] = [];
 
 			if (section.namespace === 'chat') {
-				const res = await fetch('/api/chats');
-				const data = await res.json();
+				const data = await listChats<{ conversations?: Array<{ conversation_id: string; title: string; icon?: string; last_updated?: string }> }>();
 				entities = (data.conversations || [])
 					.slice(0, section.limit ?? 8)
 					.map((c: { conversation_id: string; title: string; icon?: string; last_updated?: string }) => ({
@@ -86,7 +125,7 @@
 			}
 
 			smartItems = entities;
-			spaceStore.updateSmartSectionCache(section.id, entities);
+			windowShellStore.updateSmartSectionCache(section.id, entities);
 		} catch (e) {
 			console.error(`[SystemSection] Failed to fetch ${section.namespace} items:`, e);
 		} finally {
@@ -95,13 +134,20 @@
 	}
 
 	function toggleExpanded() {
-		spaceStore.toggleViewExpanded(section.id);
+		isExpanded = !isExpanded;
 	}
 
 	function handleClick(e: MouseEvent) {
 		e.preventDefault();
 		e.stopPropagation();
 		toggleExpanded();
+	}
+
+	function handleKeydown(e: KeyboardEvent) {
+		if (e.key === "Enter" || e.key === " ") {
+			e.preventDefault();
+			toggleExpanded();
+		}
 	}
 
 	function handleQuickAdd(e: MouseEvent) {
@@ -112,7 +158,7 @@
 	}
 
 	function handleNewChat() {
-		spaceStore.openTabFromRoute("/", {
+		windowShellStore.openTabFromRoute("/", {
 			label: "New Chat",
 			forceNew: true,
 			preferEmptyPane: true,
@@ -122,7 +168,7 @@
 	async function handleNewPage() {
 		try {
 			const page = await pagesStore.createNewPage();
-			spaceStore.openTabFromRoute(`/page/${page.id}`, {
+			windowShellStore.openTabFromRoute(`/page/${page.id}`, {
 				label: page.title,
 				forceNew: true,
 				preferEmptyPane: true,
@@ -136,14 +182,14 @@
 		e.preventDefault();
 		e.stopPropagation();
 		if (section.moreRoute) {
-			spaceStore.openTabFromRoute(section.moreRoute);
+			windowShellStore.openTabFromRoute(section.moreRoute);
 		}
 	}
 </script>
 
 {#if !collapsed}
 	{#if section.type === 'link' && section.href}
-		<div class="system-section" class:group-break={section.groupBreak}>
+		<div class="system-section">
 			<SidebarNavItem
 				item={{
 					id: section.id,
@@ -160,10 +206,13 @@
 			/>
 		</div>
 	{:else}
-	<div class="system-section" class:group-break={section.groupBreak}>
-		<button
+	<div class="system-section">
+		<div
 			class="sidebar-interactive system"
+			role="button"
+			tabindex="0"
 			onclick={handleClick}
+			onkeydown={handleKeydown}
 		>
 			<span class="folder-toggle" class:expanded={isExpanded}>
 				<span class="folder-toggle-icon">
@@ -215,7 +264,7 @@
 					</button>
 				{/if}
 			</span>
-		</button>
+		</div>
 
 		<!-- Section contents — CSS grid expand/collapse -->
 		<div class="sidebar-expandable-content" class:expanded={isExpanded}>
@@ -238,12 +287,12 @@
 							/>
 						{/each}
 					{:else if section.type === 'smart'}
-						{#if smartLoading && smartItems.length === 0}
+						{#if displayLoading && displayItems.length === 0}
 							<div class="sidebar-loading">Loading...</div>
-						{:else if smartItems.length === 0}
+						{:else if displayItems.length === 0}
 							<div class="sidebar-empty">No matches</div>
 						{:else}
-							{#each smartItems as item (item.id)}
+							{#each displayItems as item (item.id)}
 								<SidebarNavItem
 									item={{
 										id: item.id,
@@ -274,10 +323,6 @@
 	.system-section {
 		display: flex;
 		flex-direction: column;
-	}
-
-	.system-section.group-break {
-		margin-top: 12px;
 	}
 
 	/* ------- Icon ↔ Chevron slide toggle (matches UnifiedFolder) ------- */
