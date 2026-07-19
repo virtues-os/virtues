@@ -1,9 +1,13 @@
-//! Binary tarball download + SHA256 verify + extract.
+//! Binary tarball download + SHA256 verify + extract → atomic release slot.
 //!
 //! Resolves "latest" via the GitHub Releases API when no version is pinned.
 //! SHA-verifies the tarball against the sidecar `.sha256` (CI uploads both).
-//! Extracts to a tempdir, then installs the `virtues` binary to
-//! `$INSTALL_PREFIX/bin/` and `web/` to `$INSTALL_PREFIX/share/virtues/web/`.
+//! Extracts to a tempdir, stages the WHOLE release into
+//! `$INSTALL_PREFIX/share/virtues/releases/<slot>/`, flips the `current`
+//! symlink, and maintains the stable routing links every well-known path
+//! resolves through (see virtues-core `cli/slots.rs` for the layout). The
+//! installer is the ONLY creator of this layout; `virtues upgrade` requires
+//! it and `virtues rollback` flips within it.
 
 use anyhow::{anyhow, Context, Result};
 use sha2::{Digest, Sha256};
@@ -74,94 +78,78 @@ pub async fn download_binary(cfg: &mut InstallConfig, arch: &str) -> Result<()> 
     cmd.args(["-xzf", tar_path.to_str().unwrap(), "-C", tmpdir.path().to_str().unwrap()]);
     run_step(&format!("Extract {tar_name}"), cmd).await?;
 
-    // Install binary (atomic replace — the dst is very likely the running box
-    // binary, so a plain truncating copy would hit ETXTBSY "text file busy").
-    let bin_src = tmpdir.path().join("virtues");
-    let bin_dst = cfg.binary_path();
-    install_executable(&bin_src, &bin_dst)?;
+    // ── Stage the whole release into its slot ──────────────────────────
+    // Slot id comes from the tarball's BUILD.json (<version>-<sha7>); older
+    // tarballs without one get a timestamp suffix.
+    let slot_id = read_slot_id(tmpdir.path(), &version);
+    let share = cfg.share_virtues_dir();
+    let releases = share.join("releases");
+    let slot = releases.join(&slot_id);
+    fs::create_dir_all(&releases).with_context(|| format!("creating {}", releases.display()))?;
+    let _ = fs::remove_dir_all(&slot); // re-install of the same build starts clean
 
-    // llama-server — the inference sidecar engine (embed + rerank; see
-    // install::install_inference). The tarball ships the per-arch build our
-    // CI compiled; on the Dragon image GPU offload comes through the generic
-    // Vulkan/OpenCL backends, so there is no per-board binary swap.
-    let llama_src = tmpdir.path().join("llama-server");
-    if llama_src.is_file() {
-        let llama_dst = cfg.llama_binary_path();
-        install_executable(&llama_src, &llama_dst)?;
-        ui::ok(&format!("Installed llama-server → {}", llama_dst.display()));
+    fs::create_dir_all(&slot)?;
+    // Binaries — exec bits set; only `virtues` is mandatory.
+    install_executable(&tmpdir.path().join("virtues"), &slot.join("virtues"))?;
+    let has_llama = tmpdir.path().join("llama-server").is_file();
+    if has_llama {
+        install_executable(&tmpdir.path().join("llama-server"), &slot.join("llama-server"))?;
     } else {
-        ui::warn(
-            "llama-server not in tarball (pre-v0.1.1 release) — inference sidecars \
-             will not be installed. Upgrade once a newer release is available.",
-        );
+        ui::warn("llama-server not in tarball — inference sidecars unavailable from this release");
     }
-
-    // virtues-qnnd — the Dragon NPU daemon (Hexagon v68). Present only in the
-    // aarch64 tarball built with QNN_SDK_ROOT; absent (or a stub) elsewhere, so
-    // install it only when the real binary shipped. install_qnn checks for it
-    // and errors clearly if a Dragon install finds it missing.
-    let qnnd_src = tmpdir.path().join("virtues-qnnd");
-    if qnnd_src.is_file() {
-        let qnnd_dst = cfg.qnnd_binary_path();
-        install_executable(&qnnd_src, &qnnd_dst)?;
-        ui::ok(&format!("Installed virtues-qnnd → {}", qnnd_dst.display()));
+    let has_qnnd = tmpdir.path().join("virtues-qnnd").is_file();
+    if has_qnnd {
+        install_executable(&tmpdir.path().join("virtues-qnnd"), &slot.join("virtues-qnnd"))?;
     }
-
-    // Install web dir (newer tarballs ship apps/web/build/ as web/).
-    let web_src = tmpdir.path().join("web");
-    if web_src.is_dir() {
-        let web_dst = cfg.web_dir();
-        // Remove any prior copy so we replace cleanly.
-        let _ = fs::remove_dir_all(&web_dst);
-        copy_dir_all(&web_src, &web_dst)?;
-        ui::ok(&format!("Installed web UI → {}", web_dst.display()));
+    if tmpdir.path().join("BUILD.json").is_file() {
+        let _ = fs::copy(tmpdir.path().join("BUILD.json"), slot.join("BUILD.json"));
     }
-
-    // Install the action tree (newer tarballs ship `actions/`). virtues-core
-    // globs this at runtime; without it the box has no actions and pairing
-    // returns an empty action map. Older tarballs lack it — warn, don't fail.
-    let actions_src = tmpdir.path().join("actions");
-    if actions_src.is_dir() {
-        let actions_dst = cfg.actions_dir();
-        let _ = fs::remove_dir_all(&actions_dst);
-        copy_dir_all(&actions_src, &actions_dst)?;
-        ui::ok(&format!("Installed actions → {}", actions_dst.display()));
-    } else {
-        ui::warn(
-            "actions/ not in tarball (pre-v1.x release) — the box will have no \
-             actions and clients will pair with an empty action map. Upgrade to \
-             a release that ships actions/.",
-        );
-    }
-
-    // Install the compiled action binaries (ios_*, *_sync, …). These must be
-    // executable, so they go through install_executable (atomic replace +
-    // chmod 0755) rather than copy_dir_all, which copies bytes without the
-    // exec bit. virtues-core forks them by name via VIRTUES_ACTIONS_BIN_DIR.
-    let actions_bin_src = tmpdir.path().join("actions-bin");
-    if actions_bin_src.is_dir() {
-        let actions_bin_dst = cfg.actions_bin_dir();
-        fs::create_dir_all(&actions_bin_dst)
-            .with_context(|| format!("creating {}", actions_bin_dst.display()))?;
-        let mut count = 0usize;
-        for entry in fs::read_dir(&actions_bin_src)? {
-            let entry = entry?;
-            if entry.file_type()?.is_file() {
-                install_executable(&entry.path(), &actions_bin_dst.join(entry.file_name()))?;
-                count += 1;
+    // Directories.
+    for name in ["web", "actions", "actions-bin"] {
+        let src = tmpdir.path().join(name);
+        if src.is_dir() {
+            if name == "actions-bin" {
+                // Compiled action executables need their exec bits.
+                let dst = slot.join(name);
+                fs::create_dir_all(&dst)?;
+                for entry in fs::read_dir(&src)? {
+                    let entry = entry?;
+                    if entry.file_type()?.is_file() {
+                        install_executable(&entry.path(), &dst.join(entry.file_name()))?;
+                    }
+                }
+            } else {
+                copy_dir_all(&src, &slot.join(name))?;
             }
+        } else {
+            ui::warn(&format!("{name}/ not in tarball — skipped"));
         }
-        ui::ok(&format!(
-            "Installed {count} action binaries → {}",
-            actions_bin_dst.display()
-        ));
-    } else {
-        ui::warn(
-            "actions-bin/ not in tarball (pre-v1.x release) — function actions \
-             (ios_*, syncs) have no executable on the box and their webhooks \
-             will fail. Upgrade to a release that ships actions-bin/.",
-        );
     }
+    ui::ok(&format!("Staged release slot {slot_id}"));
+
+    // ── Activate: flip `current`, maintain the routing symlinks ────────────
+    // Every well-known path is a symlink resolving THROUGH `current`, so env
+    // files and systemd units never change across releases; a flip moves
+    // binary + web + actions together. force_symlink replaces whatever is
+    // there — including the pre-slot real files/dirs of an older install
+    // (this is the one-time layout adoption; unlink works on a running
+    // binary's path, the process keeps its inode until restart).
+    atomic_flip(&share, &slot)?;
+    let current = share.join("current");
+    force_symlink(&current.join("web"), &share.join("web"))?;
+    force_symlink(&current.join("actions"), &share.join("actions"))?;
+    force_symlink(&current.join("virtues"), &cfg.binary_path())?;
+    if has_llama {
+        force_symlink(&current.join("llama-server"), &cfg.llama_binary_path())?;
+    }
+    if has_qnnd {
+        force_symlink(&current.join("virtues-qnnd"), &cfg.qnnd_binary_path())?;
+    }
+    force_symlink(&current.join("actions-bin"), &cfg.actions_bin_dir())?;
+    ui::ok(&format!("Activated {slot_id} (current → releases/{slot_id})"));
+
+    // Keep current + one previous; prune the rest.
+    prune_slots(&share, 1);
 
     cfg.pinned_version = Some(version);
     Ok(())
@@ -337,4 +325,84 @@ fn copy_dir_all(src: &Path, dst: &Path) -> Result<()> {
         }
     }
     Ok(())
+}
+
+/// Slot directory name for this tarball: `<version>-<sha7>` from BUILD.json,
+/// else a timestamp suffix (older tarballs).
+fn read_slot_id(tmpdir: &Path, version: &str) -> String {
+    let sha7 = fs::read(tmpdir.join("BUILD.json"))
+        .ok()
+        .and_then(|b| serde_json::from_slice::<serde_json::Value>(&b).ok())
+        .and_then(|v| v.get("sha").and_then(|s| s.as_str()).map(|s| s[..s.len().min(7)].to_string()));
+    match sha7 {
+        Some(sha) => format!("{version}-{sha}"),
+        None => format!("{version}-{}", chrono_free_timestamp()),
+    }
+}
+
+/// UTC timestamp without pulling chrono into the installer: seconds since
+/// epoch is unique enough for a slot suffix.
+fn chrono_free_timestamp() -> String {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs().to_string())
+        .unwrap_or_else(|_| "0".into())
+}
+
+/// Atomically point `share/current` at `slot` (tmp symlink + rename — rename
+/// on one filesystem is atomic, so `current` always resolves to a complete
+/// release).
+fn atomic_flip(share: &Path, slot: &Path) -> Result<()> {
+    let tmp = share.join(".current.tmp");
+    let _ = fs::remove_file(&tmp);
+    std::os::unix::fs::symlink(slot, &tmp).with_context(|| format!("symlink {}", tmp.display()))?;
+    fs::rename(&tmp, share.join("current")).context("flipping current")?;
+    Ok(())
+}
+
+/// Replace whatever exists at `link` (file, dir, or old symlink) with a
+/// symlink to `target`. The dir case is the one-time adoption of a pre-slot
+/// install, whose web/actions were real directories.
+fn force_symlink(target: &Path, link: &Path) -> Result<()> {
+    if let Some(parent) = link.parent() {
+        fs::create_dir_all(parent)?;
+    }
+    if link.is_symlink() || link.is_file() {
+        let _ = fs::remove_file(link);
+    } else if link.is_dir() {
+        let _ = fs::remove_dir_all(link);
+    }
+    std::os::unix::fs::symlink(target, link)
+        .with_context(|| format!("symlink {} -> {}", link.display(), target.display()))?;
+    Ok(())
+}
+
+/// Delete release slots beyond the newest `keep` (never the one `current`
+/// points at). Best-effort.
+fn prune_slots(share: &Path, keep: usize) {
+    let current = fs::read_link(share.join("current"))
+        .ok()
+        .and_then(|t| if t.is_absolute() { t.canonicalize().ok() } else { share.join(t).canonicalize().ok() });
+    let mut slots: Vec<(std::time::SystemTime, std::path::PathBuf)> =
+        fs::read_dir(share.join("releases"))
+            .into_iter()
+            .flatten()
+            .flatten()
+            .filter(|e| e.path().is_dir())
+            .filter_map(|e| {
+                Some((e.metadata().ok()?.modified().ok()?, e.path().canonicalize().ok()?))
+            })
+            .collect();
+    slots.sort_by(|a, b| b.0.cmp(&a.0));
+    let mut kept = 0usize;
+    for (_, slot) in slots {
+        let is_current = current.as_ref().map(|c| c == &slot).unwrap_or(false);
+        if is_current || kept < keep {
+            if !is_current {
+                kept += 1;
+            }
+            continue;
+        }
+        let _ = fs::remove_dir_all(&slot);
+    }
 }

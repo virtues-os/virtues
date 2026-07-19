@@ -1132,3 +1132,29 @@ pub async fn health_check(cfg: &InstallConfig, mode: &InferenceMode) -> Result<u
 
     Ok(issues)
 }
+
+/// Write `install.json` — the box's topology manifest, the single place that
+/// records what shape this install is (which inference profile, which sidecar
+/// units exist, where models live). `virtues upgrade`/`doctor` READ this
+/// instead of sniffing unit files, so what-to-restart is declared, not
+/// guessed (the guessing is what once restarted the wrong sidecars and never
+/// restarted qnnd). Rewritten on every install run — the installer is the
+/// only writer.
+pub fn write_install_manifest(cfg: &InstallConfig, mode: &InferenceMode) -> Result<()> {
+    let (profile, sidecars): (&str, Vec<&str>) = match mode {
+        InferenceMode::Dragon => ("dragon", vec!["virtues-qnnd"]),
+        InferenceMode::Bundled => ("bundled", vec!["virtues-embed", "virtues-rerank"]),
+        InferenceMode::Manual { .. } => ("manual", vec![]),
+    };
+    let manifest = serde_json::json!({
+        "profile": profile,
+        "sidecars": sidecars,
+        "models_dir": cfg.models_dir(),
+        "written_by": env!("CARGO_PKG_VERSION"),
+    });
+    let path = cfg.share_virtues_dir().join("install.json");
+    fs::write(&path, serde_json::to_vec_pretty(&manifest).expect("manifest serializes"))
+        .with_context(|| format!("writing {}", path.display()))?;
+    ui::ok(&format!("Wrote topology manifest → {}", path.display()));
+    Ok(())
+}

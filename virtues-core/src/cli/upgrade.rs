@@ -586,10 +586,24 @@ fn refresh_named(label: &str, src: &Path, dst: &Path) {
 /// set is wrong for the other — assuming llama.cpp made a healthy Q6A box print
 /// "Unit virtues-embed.service not loaded" and a false "search/embeddings degraded"
 /// on every upgrade. So ask the filesystem instead of guessing.
-fn installed_inference_units() -> Vec<&'static str> {
+fn installed_inference_units() -> Vec<String> {
+    // Prefer the installer's topology manifest — DECLARED shape, not a guess.
+    if let Ok(bytes) = fs::read("/usr/local/share/virtues/install.json") {
+        if let Ok(v) = serde_json::from_slice::<serde_json::Value>(&bytes) {
+            if let Some(units) = v.get("sidecars").and_then(|s| s.as_array()) {
+                return units
+                    .iter()
+                    .filter_map(|u| u.as_str().map(str::to_string))
+                    .collect();
+            }
+        }
+    }
+    // Fallback for boxes installed before the manifest existed: ask the
+    // filesystem which unit files are present.
     ["virtues-embed", "virtues-rerank", "virtues-qnnd"]
         .into_iter()
         .filter(|u| Path::new(&format!("/etc/systemd/system/{u}.service")).exists())
+        .map(str::to_string)
         .collect()
 }
 

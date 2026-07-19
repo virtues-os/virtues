@@ -100,6 +100,7 @@ pub async fn run(cli: Config) -> Result<()> {
             ui::skip("Manual inference — skipping local sidecar provisioning")
         }
     }
+    install::write_install_manifest(&cfg, &inference)?;
     install::write_env_file(&cfg, &inference, validation.as_ref()).await?;
     install::run_bringup(&cfg).await?;
     install::install_systemd_unit(&cfg).await?;
