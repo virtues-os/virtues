@@ -218,13 +218,15 @@ pub(crate) fn parse_client_header(headers: &axum::http::HeaderMap) -> Option<Cli
 
 /// Merge a client's reported build into `device_info.build`. Best-effort — a
 /// failure never blocks the request. The shallow jsonb `||` replaces just the
-/// `build` key, so this is an idempotent refresh.
+/// `build` key. The `IS DISTINCT FROM` guard makes this a no-op write on the
+/// common path (build unchanged between upgrades), so it doesn't churn the row
+/// on every request — it only writes when the reported sha actually changes.
 pub(crate) async fn record_client_build(pool: &PgPool, device_id: &str, cb: &ClientBuild) {
     let _ = sqlx::query(
         "UPDATE app_device \
          SET device_info = device_info || jsonb_build_object(\
              'build', jsonb_build_object('version', $2::text, 'sha', $3::text, 'channel', $4::text)) \
-         WHERE id = $1",
+         WHERE id = $1 AND (device_info->'build'->>'sha') IS DISTINCT FROM $3::text",
     )
     .bind(device_id)
     .bind(&cb.version)
