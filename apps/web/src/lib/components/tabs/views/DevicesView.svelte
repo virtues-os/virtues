@@ -45,6 +45,11 @@
 		paired_at: string;
 		last_seen_at: string | null;
 		paired_from_ip: string | null;
+		// Reported build identity (X-Virtues-Client header). Null until the
+		// device has checked in on a build that reports it.
+		version: string | null;
+		sha: string | null;
+		channel: string | null;
 		is_current: boolean;
 	};
 
@@ -266,6 +271,15 @@
 								{/if}
 							</div>
 							<div class="text-xs text-foreground-muted mt-1 flex flex-wrap gap-x-3 gap-y-1">
+								{#if device.version}
+									<span class="font-mono text-foreground"
+										>{device.version}{device.sha && device.sha !== "dev"
+											? ` · ${device.sha}`
+											: ""}{device.channel ? ` · ${device.channel}` : ""}</span
+									>
+								{:else}
+									<span class="italic">version unknown</span>
+								{/if}
 								<span>Last seen {formatTimeAgo(device.last_seen_at)}</span>
 								<span>Paired {formatTimeAgo(device.paired_at)}</span>
 								{#if device.paired_from_ip}

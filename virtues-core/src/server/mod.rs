@@ -949,7 +949,8 @@ async fn health(axum::extract::State(state): axum::extract::State<AppState>) -> 
         status_code,
         Json(serde_json::json!({
             "status": if is_healthy { "healthy" } else { "unhealthy" },
-            "version": env!("CARGO_PKG_VERSION"),
+            "version": crate::codename::version(),
+            "channel": crate::codename::channel(),
             "commit": env!("GIT_COMMIT"),
             "built_at": env!("BUILD_TIME"),
             "min_ios_version": min_ios_version,

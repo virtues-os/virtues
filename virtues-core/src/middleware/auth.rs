@@ -97,6 +97,12 @@ where
         if let Some(peer) = parts.extensions.get::<virtues_iroh::ProvenPeer>() {
             let node_id = peer.0.to_string();
             if let Some(user) = validate_iroh_peer(&pool, &node_id).await {
+                // Best-effort: refresh the device's reported build identity from
+                // the X-Virtues-Client header (update-manifold Phase 1). Never
+                // affects auth — a missing/malformed header is simply skipped.
+                if let Some(cb) = parse_client_header(&parts.headers) {
+                    record_client_build(&pool, &user.device_id, &cb).await;
+                }
                 return Ok(user);
             }
         }
@@ -176,6 +182,56 @@ pub(crate) async fn validate_iroh_peer(pool: &PgPool, node_id: &str) -> Option<A
         device_id,
         device_label,
     })
+}
+
+/// The build identity a client reports via
+/// `X-Virtues-Client: version=…; sha=…; channel=…`. All best-effort — a
+/// malformed header is ignored, never a request failure.
+#[derive(Debug, Default)]
+pub(crate) struct ClientBuild {
+    pub version: String,
+    pub sha: String,
+    pub channel: String,
+}
+
+/// Parse the `X-Virtues-Client` header. Returns `None` unless a version is
+/// present (so we never write an empty build blob) and the values are within
+/// sane length bounds (hygiene against a hostile paired client).
+pub(crate) fn parse_client_header(headers: &axum::http::HeaderMap) -> Option<ClientBuild> {
+    let raw = headers.get("x-virtues-client")?.to_str().ok()?;
+    let mut cb = ClientBuild::default();
+    for part in raw.split(';') {
+        let mut kv = part.splitn(2, '=');
+        match (kv.next().map(str::trim), kv.next().map(str::trim)) {
+            (Some("version"), Some(v)) => cb.version = v.to_string(),
+            (Some("sha"), Some(v)) => cb.sha = v.to_string(),
+            (Some("channel"), Some(v)) => cb.channel = v.to_string(),
+            _ => {}
+        }
+    }
+    if cb.version.is_empty() || cb.version.len() > 64 || cb.sha.len() > 64 || cb.channel.len() > 32
+    {
+        return None;
+    }
+    Some(cb)
+}
+
+/// Merge a client's reported build into `device_info.build`. Best-effort — a
+/// failure never blocks the request. The shallow jsonb `||` replaces just the
+/// `build` key, so this is an idempotent refresh.
+pub(crate) async fn record_client_build(pool: &PgPool, device_id: &str, cb: &ClientBuild) {
+    let _ = sqlx::query(
+        "UPDATE app_device \
+         SET device_info = device_info || jsonb_build_object(\
+             'build', jsonb_build_object('version', $2::text, 'sha', $3::text, 'channel', $4::text)) \
+         WHERE id = $1",
+    )
+    .bind(device_id)
+    .bind(&cb.version)
+    .bind(&cb.sha)
+    .bind(&cb.channel)
+    .execute(pool)
+    .await;
 }
 
 /// Idempotent upsert for the synthetic console device row. Called at server

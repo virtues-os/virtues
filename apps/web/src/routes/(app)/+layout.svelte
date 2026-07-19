@@ -29,8 +29,14 @@
 	import { page } from "$app/stores";
 	import type { Snippet } from "svelte";
 
+	import { installClientHeader } from "$lib/build";
+
 	// @ts-ignore — Vite compile-time constant (see vite.config.ts + app.d.ts)
 	const BUILD_COMMIT: string = __BUILD_COMMIT__;
+
+	// Stamp X-Virtues-Client on box requests so this browser's build shows up on
+	// the Devices page (update-manifold Phase 1). Idempotent, SSR-safe.
+	installClientHeader();
 
 	// Get session expiry from page data
 	// Note: children is intentionally not rendered - this app uses a custom tab-based routing system

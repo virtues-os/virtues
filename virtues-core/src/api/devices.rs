@@ -35,15 +35,25 @@ pub struct DeviceListItem {
     pub paired_at: DateTime<Utc>,
     pub last_seen_at: Option<DateTime<Utc>>,
     pub paired_from_ip: Option<String>,
+    /// The client's reported build identity (from the `X-Virtues-Client`
+    /// header, stored under `device_info.build`). Null until the device has
+    /// made a request on a build that sends it.
+    pub version: Option<String>,
+    pub sha: Option<String>,
+    pub channel: Option<String>,
     /// True if this is the device currently making the request.
     pub is_current: bool,
 }
 
 /// `GET /api/devices` — list all active paired devices for the current user.
 pub async fn list_handler(State(pool): State<PgPool>, user: AuthUser) -> impl IntoResponse {
-    let rows: Result<Vec<(String, String, String, DateTime<Utc>, Option<DateTime<Utc>>, Option<String>)>, _> =
+    #[allow(clippy::type_complexity)]
+    let rows: Result<Vec<(String, String, String, DateTime<Utc>, Option<DateTime<Utc>>, Option<String>, Option<String>, Option<String>, Option<String>)>, _> =
         sqlx::query_as(
-            "SELECT id, kind, label, paired_at, last_seen_at, paired_from_ip \
+            "SELECT id, kind, label, paired_at, last_seen_at, paired_from_ip, \
+                    device_info->'build'->>'version' AS version, \
+                    device_info->'build'->>'sha'     AS sha, \
+                    device_info->'build'->>'channel' AS channel \
              FROM app_device \
              WHERE user_id = $1 AND revoked_at IS NULL \
              ORDER BY last_seen_at DESC NULLS LAST, paired_at DESC",
@@ -56,7 +66,7 @@ pub async fn list_handler(State(pool): State<PgPool>, user: AuthUser) -> impl In
         Ok(rows) => {
             let items: Vec<DeviceListItem> = rows
                 .into_iter()
-                .map(|(id, kind, label, paired_at, last_seen_at, ip)| {
+                .map(|(id, kind, label, paired_at, last_seen_at, ip, version, sha, channel)| {
                     let is_current = id == user.device_id;
                     DeviceListItem {
                         id,
@@ -65,6 +75,9 @@ pub async fn list_handler(State(pool): State<PgPool>, user: AuthUser) -> impl In
                         paired_at,
                         last_seen_at,
                         paired_from_ip: ip,
+                        version,
+                        sha,
+                        channel,
                         is_current,
                     }
                 })
