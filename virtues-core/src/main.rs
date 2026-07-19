@@ -508,11 +508,25 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Self-update from the latest GitHub Release (or a pinned --version
     // tag). Stops the service, swaps the binary, applies migrations,
     // restarts. Detailed in `virtues::cli::upgrade`.
-    if let Some(Commands::Upgrade { check, version, pre, force }) = &cli.command {
-        match virtues::cli::upgrade::run(*check, version.clone(), *pre, *force).await {
+    if let Some(Commands::Upgrade { check, version, pre, force, only }) = &cli.command {
+        match virtues::cli::upgrade::run(*check, version.clone(), *pre, *force, only.clone()).await
+        {
             Ok(()) => return Ok(()),
             Err(e) => {
                 eprintln!("error: upgrade failed: {e}");
+                std::process::exit(1);
+            }
+        }
+    }
+
+    // ─── `virtues rollback` ─────────────────────────────────────────────────
+    // Flip `current` back to the previous release slot and restart — the
+    // atomic inverse of an upgrade's activation. Like Upgrade, needs no DB.
+    if let Some(Commands::Rollback) = &cli.command {
+        match virtues::cli::upgrade::rollback().await {
+            Ok(()) => return Ok(()),
+            Err(e) => {
+                eprintln!("error: rollback failed: {e}");
                 std::process::exit(1);
             }
         }

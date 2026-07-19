@@ -301,8 +301,17 @@ jobs:
             TAR_EXTRA="virtues-qnnd"
           fi
 
+          # BUILD.json — the tarball's build identity. `virtues upgrade` reads
+          # it for SHA-based no-op detection (the only honest identity for
+          # prerelease builds, which all report the bare crate version) and to
+          # name the release slot (<tag>-<sha7>).
+          printf '{"version":"%s","sha":"%s","channel":"%s","built_at":"%s"}\n' \
+            "${{ steps.tag.outputs.version }}" "${GITHUB_SHA}" \
+            "$(case "${{ steps.tag.outputs.version }}" in *staging*) echo staging;; edge*) echo edge;; v*-*) echo dev;; v*) echo stable;; *) echo dev;; esac)" \
+            "$(date -u +%Y-%m-%dT%H:%M:%SZ)" > staging/BUILD.json
+
           TAR_NAME="virtues-${{ steps.tag.outputs.version }}-${{ matrix.arch }}-linux.tar.gz"
-          tar -czf "dist/${TAR_NAME}" -C staging virtues llama-server web actions actions-bin $TAR_EXTRA
+          tar -czf "dist/${TAR_NAME}" -C staging virtues llama-server web actions actions-bin BUILD.json $TAR_EXTRA
           (cd dist && sha256sum "${TAR_NAME}" > "${TAR_NAME}.sha256")
 
           # The installer ships as a standalone binary (NOT inside the
