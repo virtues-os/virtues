@@ -1,10 +1,11 @@
-//! `virtues upgrade` — self-update from a GitHub Release.
+//! `virtues upgrade` — self-update from a GitHub Release, via atomic slots.
 //!
-//! Stops the service, swaps `/usr/local/bin/virtues` with the downloaded
-//! binary (keeping one `.bak` for rollback), applies any pending DB
-//! migrations under the new binary, restarts the service. On any failure
-//! mid-swap the rollback command is printed verbatim so a tired operator at
-//! 2 AM can paste it without thinking.
+//! A release is staged whole into `releases/<slot>/`, preflighted (the STAGED
+//! binary runs `migrate --check` + a `--version` smoke before anything is
+//! touched), then activated by flipping the `current` symlink — binary + web
+//! + actions move together, atomically. Any failure before the flip leaves
+//! the box byte-identical; any failure after flips straight back. `virtues
+//! rollback` is the same flip in reverse. See `cli/slots.rs` for the layout.
 //!
 //! Strictly opt-in. No background auto-upgrade — that lands when the
 //! upgrade path has been battle-tested.
@@ -19,7 +20,7 @@ use semver::Version;
 
 use sha2::{Digest, Sha256};
 
-use super::ui;
+use super::{slots, ui};
 
 const BINARY_PATH: &str = "/usr/local/bin/virtues";
 const RELEASE_REPO: &str = "virtues-os/virtues";
@@ -30,6 +31,7 @@ pub async fn run(
     version: Option<String>,
     pre: bool,
     force: bool,
+    only: Option<String>,
 ) -> Result<(), crate::Error> {
     let target_tag = match version {
         Some(v) => v,
@@ -44,8 +46,14 @@ pub async fn run(
     ui::kv("target", target);
     println!();
 
-    if target == current {
-        ui::ok(&format!("already on {current} — nothing to do"));
+    // Cheap no-op detection works only for STABLE tags, where the semver is
+    // the whole identity. Prerelease/edge builds all report the bare crate
+    // version, so equality there means nothing — those fall through to the
+    // SHA comparison after download (the fix for "edge→edge is impossible").
+    // `--force` bypasses every equality short-circuit.
+    let is_stable_tag = !target.contains('-') && target.chars().next().is_some_and(|c| c.is_ascii_digit());
+    if !force && is_stable_tag && target == current {
+        ui::ok(&format!("already on {current} — nothing to do (--force to reinstall)"));
         return Ok(());
     }
     if check {
@@ -112,30 +120,146 @@ pub async fn run(
     let extracted = work_path.join("extracted");
 
     // Which artifacts this tarball actually carries. Older releases ship a
-    // subset — every one is optional and best-effort so an upgrade from any
-    // historical tarball still swaps whatever it can. `virtues` itself is the
-    // only mandatory member (already located by `extract_binary`).
+    // subset — every member but `virtues` itself is optional.
     let new_llama = find_named(&extracted, "llama-server").ok();
+    let new_qnnd = find_named(&extracted, "virtues-qnnd").ok();
     let web_src = find_dir_named(&extracted, "web").ok();
     let actions_src = find_dir_named(&extracted, "actions").ok();
     let actions_bin_src = find_dir_named(&extracted, "actions-bin").ok();
 
-    let dirs = InstallDirs::resolve();
+    // Build identity from the tarball's BUILD.json (releases since the slot
+    // era carry one). The SHA is the only honest identity for prerelease
+    // builds — every edge build reports the same crate version.
+    let build = read_build_manifest(&extracted);
+    if !force {
+        if let Some(sha) = build.as_ref().and_then(|b| b.sha.as_deref()) {
+            let running = env!("GIT_COMMIT");
+            if !running.is_empty() && running != "unknown" && sha.starts_with(&running[..running.len().min(7)]) {
+                ui::ok(&format!(
+                    "already on this exact build ({}) — nothing to do (--force to reinstall)",
+                    &sha[..sha.len().min(7)]
+                ));
+                return Ok(());
+            }
+        }
+    }
+
+    // ── `--only web[,actions]` — the fast path ──────────────────────────────
+    // Refresh just the named components IN the current slot, no binary swap,
+    // no migration, no restart (web is static files; actions are re-globbed).
+    // Deliberately mutates the live slot: this is the dev/UI iteration loop,
+    // not a release activation.
+    if let Some(list) = only {
+        let dirs = InstallDirs::resolve();
+        for part in list.split(',').map(str::trim).filter(|s| !s.is_empty()) {
+            match part {
+                "web" => match &web_src {
+                    Some(src) => refresh_named("web UI", src, &canonical(&dirs.web)),
+                    None => ui::warn("tarball carries no web/ — skipped"),
+                },
+                "actions" => {
+                    match &actions_src {
+                        Some(src) => refresh_named("actions", src, &canonical(&dirs.actions)),
+                        None => ui::warn("tarball carries no actions/ — skipped"),
+                    }
+                    match &actions_bin_src {
+                        Some(src) => {
+                            refresh_named("action binaries", src, &canonical(&dirs.actions_bin))
+                        }
+                        None => ui::warn("tarball carries no actions-bin/ — skipped"),
+                    }
+                }
+                other => {
+                    return Err(crate::Error::Other(format!(
+                        "--only {other}: unknown component (web, actions)"
+                    )))
+                }
+            }
+        }
+        println!();
+        ui::ok(&format!("refreshed --only components from {target_tag}"));
+        return Ok(());
+    }
+
+    // ── Slot layout required from here on ───────────────────────────────────
+    let layout = slots::SlotLayout::system();
+    if !layout.exists() {
+        return Err(crate::Error::Other(
+            "this box predates release slots (no `current` link under \
+             /usr/local/share/virtues). Re-run the installer once to adopt the \
+             slot layout:\n\n  curl -sSL https://virtues.com/sh | sudo sh\n"
+                .to_string(),
+        ));
+    }
+    let prior_slot = layout.current_slot();
+
+    // ── Stage the whole release into its slot ───────────────────────────────
+    let slot_id = build
+        .as_ref()
+        .and_then(|b| b.slot_id(&target_tag))
+        .unwrap_or_else(|| format!("{target_tag}-{}", chrono::Utc::now().format("%Y%m%dT%H%M%S")));
+    let slot = layout.slot_dir(&slot_id);
+    ui::step(&format!("staging release into {}…", slot.display()));
+    stage_slot(&slot, &new_binary, &new_llama, &new_qnnd, &web_src, &actions_src, &actions_bin_src)?;
+
+    // ── Preflight — the STAGED binary must prove itself before any swap ────
+    // 1. `--version` smoke: the binary runs on this box at all.
+    // 2. `migrate --check`: lineage compatibility, applying nothing. This is
+    //    what turns "brick mid-swap on a migration mismatch" into a clean
+    //    refusal with the box untouched. `--force` skips only the lineage
+    //    gate (older targets don't know `--check`), never the smoke test.
+    let staged_bin = slot.join("virtues");
+    ui::step("preflight: staged binary smoke test…");
+    match Command::new(&staged_bin).arg("--version").output() {
+        Ok(o) if o.status.success() => {
+            ui::ok(&format!("staged: {}", String::from_utf8_lossy(&o.stdout).trim()));
+        }
+        Ok(o) => {
+            let _ = fs::remove_dir_all(&slot);
+            return Err(crate::Error::Other(format!(
+                "staged binary failed --version (exit {}); box untouched",
+                o.status
+            )));
+        }
+        Err(e) => {
+            let _ = fs::remove_dir_all(&slot);
+            return Err(crate::Error::Other(format!(
+                "staged binary would not run ({e}); box untouched"
+            )));
+        }
+    }
+    if !force {
+        ui::step("preflight: migration lineage check…");
+        match Command::new(&staged_bin).args(["migrate", "--check"]).output() {
+            Ok(o) if o.status.success() => ui::ok("lineage OK"),
+            Ok(o) => {
+                let _ = fs::remove_dir_all(&slot);
+                eprintln!("{}", String::from_utf8_lossy(&o.stderr).trim_end());
+                return Err(crate::Error::Other(
+                    "migration preflight refused this release — box untouched \
+                     (see reason above; `--force` overrides at your own risk)"
+                        .to_string(),
+                ));
+            }
+            Err(e) => {
+                let _ = fs::remove_dir_all(&slot);
+                return Err(crate::Error::Other(format!(
+                    "could not run migration preflight ({e}); box untouched"
+                )));
+            }
+        }
+    }
 
     // Relay migration: an upgrade from a WireGuard-era release has an orphaned
-    // `virtues-wireguard.service` (the box now reaches via the relay). Stop +
-    // disable it so it doesn't idle forever reconciling a wg0 nothing creates.
-    // Best-effort; a no-op on boxes that never had it.
+    // `virtues-wireguard.service`. Best-effort; no-op on boxes that never had it.
     disable_legacy_wireguard();
 
-    // ── Stop affected services ──────────────────────────────────────────────
-    // The main app always. The inference sidecars only when we're actually
-    // replacing their binaries — restarting the sidecars reloads multi-GB GGUFs
-    // (slow), so don't pay that cost for a binary-only app upgrade. A running process holds the old inode until restarted, so the
-    // stop→swap→start ordering is what makes the new bytes take effect.
+    // ── Stop → flip → migrate → start ───────────────────────────────────────
+    // Sidecars restart only when the release replaces their binaries
+    // (reloading multi-GB GGUFs is slow; don't pay it for an app-only bump).
     ui::step("stopping virtues.service…");
     service_stop("virtues");
-    let sidecars = if new_llama.is_some() {
+    let sidecars = if new_llama.is_some() || new_qnnd.is_some() {
         installed_inference_units()
     } else {
         Vec::new()
@@ -144,101 +268,50 @@ pub async fn run(
         service_stop(unit);
     }
 
-    // Bring the sidecars we stopped back up. Called on every abort path below
-    // so a failed upgrade doesn't leave the box with dead search — without this,
-    // stopping `virtues-embed`/`-rerank` early then returning on a migrate or
-    // start failure left them down until a manual `systemctl start`. Idempotent
-    // and best-effort.
-    let to_revive = sidecars.clone();
-    let revive_sidecars = move || {
-        for unit in &to_revive {
+    // On any failure after this point: flip back to the prior slot and
+    // restart, so the box always runs a COMPLETE release (binary + web +
+    // actions together — the old per-component path could not promise that).
+    let flip_back = |layout: &slots::SlotLayout, why: String| -> crate::Error {
+        if let Some(prior) = &prior_slot {
+            let _ = layout.flip(prior);
+            ui::warn(&format!("rolled back to {}", prior.display()));
+        }
+        let _ = service_start("virtues");
+        for unit in &sidecars {
             let _ = service_start(unit);
         }
+        crate::Error::Other(why)
     };
 
-    // ── Swap the main binary (mandatory; keep .bak for rollback) ────────────
-    let bak = match swap_with_bak(&new_binary, Path::new(BINARY_PATH)) {
-        Ok(b) => b.unwrap_or_else(|| format!("{BINARY_PATH}.bak")),
-        Err(e) => {
-            // Nothing irreversible happened yet (swap_with_bak restores the
-            // original on failure), but be explicit about the manual path.
-            revive_sidecars();
-            print_rollback_hint(&format!("{BINARY_PATH}.bak"));
-            return Err(e);
-        }
-    };
-    ui::ok(&format!("swapped {BINARY_PATH} (rollback copy at {bak})"));
-
-    // ── Swap the sidecar binaries (best-effort; they sit next to `virtues`) ─
-    // A failed sidecar swap must not abort an otherwise-good app upgrade —
-    // swap_with_bak restores the prior binary on failure, so the box keeps a
-    // working sidecar. We warn and continue.
-    if let Some(src) = &new_llama {
-        let dst = dirs.bin_dir.join("llama-server");
-        match swap_with_bak(src, &dst) {
-            Ok(_) => ui::ok(&format!("swapped {}", dst.display())),
-            Err(e) => ui::warn(&format!("llama-server not swapped ({e}); prior binary kept")),
-        }
-    }
-
-    // ── Refresh the shipped directories (best-effort, atomic per-dir) ───────
-    // web/: a binary-only swap leaves the browser served a stale SvelteKit
-    // build. actions/: manifests + UI the server globs at runtime.
-    // actions-bin/: the compiled per-source action executables the box forks
-    // by name — the one whose staleness caused the rustls "No provider set"
-    // panic that motivated making this path complete.
-    if let Some(src) = &web_src {
-        refresh_named("web UI", src, &dirs.web);
-    }
-    if let Some(src) = &actions_src {
-        refresh_named("actions", src, &dirs.actions);
-    }
-    if let Some(src) = &actions_bin_src {
-        refresh_named("action binaries", src, &dirs.actions_bin);
+    ui::step("activating release (symlink flip)…");
+    if let Err(e) = layout.flip(&slot) {
+        return Err(flip_back(&layout, format!("could not flip current → {slot_id}: {e}")));
     }
 
     ui::step("running migrations under the new binary…");
-    let migrate = Command::new(BINARY_PATH).arg("migrate").status();
-    match migrate {
+    match Command::new(BINARY_PATH).arg("migrate").status() {
         Ok(s) if s.success() => {}
         Ok(s) => {
-            revive_sidecars();
-            print_rollback_hint(&bak);
-            return Err(crate::Error::Other(format!(
-                "new binary's `migrate` exited {s}"
-            )));
+            return Err(flip_back(
+                &layout,
+                format!("new binary's `migrate` exited {s} — rolled back"),
+            ))
         }
-        Err(e) => {
-            revive_sidecars();
-            print_rollback_hint(&bak);
-            return Err(crate::Error::Other(format!("invoke migrate: {e}")));
-        }
+        Err(e) => return Err(flip_back(&layout, format!("invoke migrate: {e} — rolled back"))),
     }
 
-    // The box keeps its default `virtues.local` name (no in-app rename step),
-    // so the old hostname-rename sudoers grant is dead. Remove it from boxes
-    // that were installed when the rename step still existed. Best-effort.
+    // The box keeps its default `virtues.local` name; remove the dead
+    // hostname-rename sudoers grant from older installs. Best-effort.
     remove_stale_setup_sudoers();
 
-    // ── Start services back up ──────────────────────────────────────────────
-    // The main app is the one whose failure aborts (and prints the rollback
-    // hint); the sidecars are best-effort restarts that won't undo a good app
-    // upgrade — but a sidecar that won't start means degraded search, so warn
-    // loudly.
     ui::step("starting virtues.service…");
     match service_start("virtues") {
         Ok(true) => {}
-        Ok(false) => {
-            revive_sidecars();
-            print_rollback_hint(&bak);
-            return Err(crate::Error::Other(
-                "systemctl start virtues failed".to_string(),
-            ));
-        }
-        Err(e) => {
-            revive_sidecars();
-            print_rollback_hint(&bak);
-            return Err(crate::Error::Other(format!("invoke systemctl: {e}")));
+        _ => {
+            return Err(flip_back(
+                &layout,
+                "systemctl start virtues failed on the new release — rolled back".to_string(),
+            ))
         }
     }
     for unit in &sidecars {
@@ -248,6 +321,9 @@ pub async fn run(
             ));
         }
     }
+
+    // Keep current + one previous; delete older slots.
+    layout.prune(slots::KEEP_SLOTS - 1);
 
     // Model-set drift check. `virtues upgrade` swaps binaries but does NOT
     // fetch model GGUFs or rewrite the sidecar `-m`/pooling in the unit files —
@@ -291,9 +367,152 @@ pub async fn run(
     }
 
     println!();
-    ui::ok(&format!("upgraded to {target_tag} — rollback copy kept at {bak}"));
+    ui::ok(&format!(
+        "upgraded to {target_tag} (slot {slot_id}) — `virtues rollback` restores the previous release"
+    ));
     println!();
     Ok(())
+}
+
+/// `virtues rollback` — flip `current` back to the previous release slot and
+/// restart. The inverse of an upgrade's activation: one atomic symlink flip
+/// moves binary + web + actions together. No migrations run — schema rolls
+/// FORWARD only; a rolled-back binary boots with `ignore_missing`, so a
+/// newer-schema DB is tolerated (features that need the newer binary are
+/// simply gone until you upgrade again).
+pub async fn rollback() -> Result<(), crate::Error> {
+    ui::section("Rollback");
+    let layout = slots::SlotLayout::system();
+    if !layout.exists() {
+        return Err(crate::Error::Other(
+            "no release slots on this box (re-run the installer once to adopt the slot layout)"
+                .to_string(),
+        ));
+    }
+    let current = layout
+        .current_slot()
+        .ok_or_else(|| crate::Error::Other("current release link dangles".to_string()))?;
+    let Some(previous) = layout.previous_slot() else {
+        return Err(crate::Error::Other(
+            "no previous release kept — nothing to roll back to".to_string(),
+        ));
+    };
+    ui::kv("current", &current.file_name().unwrap_or_default().to_string_lossy());
+    ui::kv("target", &previous.file_name().unwrap_or_default().to_string_lossy());
+    println!();
+
+    if !running_as_root() {
+        return Err(crate::Error::Other(
+            "virtues rollback must run as root (try with sudo)".to_string(),
+        ));
+    }
+    let _lock = acquire_lock()?;
+
+    ui::step("stopping services…");
+    service_stop("virtues");
+    let sidecars = installed_inference_units();
+    for unit in &sidecars {
+        service_stop(unit);
+    }
+
+    ui::step("flipping current → previous release…");
+    layout
+        .flip(&previous)
+        .map_err(|e| crate::Error::Other(format!("flip failed: {e}")))?;
+
+    ui::step("starting services…");
+    match service_start("virtues") {
+        Ok(true) => {}
+        _ => {
+            // Roll forward again rather than leave the box down on a release
+            // that won't boot.
+            let _ = layout.flip(&current);
+            let _ = service_start("virtues");
+            for unit in &sidecars {
+                let _ = service_start(unit);
+            }
+            return Err(crate::Error::Other(
+                "previous release would not start — flipped forward again".to_string(),
+            ));
+        }
+    }
+    for unit in &sidecars {
+        let _ = service_start(unit);
+    }
+
+    println!();
+    ui::ok("rolled back — the previous release is active");
+    Ok(())
+}
+
+/// The tarball's build identity, written by CI next to the binaries.
+#[derive(serde::Deserialize)]
+struct BuildManifest {
+    version: Option<String>,
+    sha: Option<String>,
+}
+
+impl BuildManifest {
+    /// Directory name for this release's slot: `<tag>-<sha7>`. Unique per
+    /// build (two edge cuts differ by sha), stable per artifact (re-running
+    /// an upgrade re-stages the same slot).
+    fn slot_id(&self, tag: &str) -> Option<String> {
+        let sha = self.sha.as_deref()?;
+        Some(format!("{tag}-{}", &sha[..sha.len().min(7)]))
+    }
+}
+
+/// Read `BUILD.json` from the extracted tarball. Absent on pre-slot-era
+/// releases — every consumer treats it as optional.
+fn read_build_manifest(extracted: &Path) -> Option<BuildManifest> {
+    let p = find_named(extracted, "BUILD.json").ok()?;
+    serde_json::from_slice(&fs::read(p).ok()?).ok()
+}
+
+/// Copy one whole release into its slot dir. The slot is the unit of
+/// activation and rollback, so it carries EVERYTHING the tarball shipped;
+/// only `virtues` itself is mandatory.
+fn stage_slot(
+    slot: &Path,
+    binary: &Path,
+    llama: &Option<PathBuf>,
+    qnnd: &Option<PathBuf>,
+    web: &Option<PathBuf>,
+    actions: &Option<PathBuf>,
+    actions_bin: &Option<PathBuf>,
+) -> Result<(), crate::Error> {
+    // Re-staging the same slot id (a retried upgrade) starts clean.
+    let _ = fs::remove_dir_all(slot);
+    fs::create_dir_all(slot)
+        .map_err(|e| crate::Error::Other(format!("mkdir {}: {e}", slot.display())))?;
+
+    let copy_bin = |src: &Path, name: &str| -> Result<(), crate::Error> {
+        let dst = slot.join(name);
+        fs::copy(src, &dst)
+            .map_err(|e| crate::Error::Other(format!("stage {name}: {e}")))?;
+        fs::set_permissions(&dst, fs::Permissions::from_mode(0o755))
+            .map_err(|e| crate::Error::Other(format!("chmod {name}: {e}")))?;
+        Ok(())
+    };
+    copy_bin(binary, "virtues")?;
+    if let Some(p) = llama {
+        copy_bin(p, "llama-server")?;
+    }
+    if let Some(p) = qnnd {
+        copy_bin(p, "virtues-qnnd")?;
+    }
+    for (src, name) in [(web, "web"), (actions, "actions"), (actions_bin, "actions-bin")] {
+        if let Some(s) = src {
+            copy_dir_all(s, &slot.join(name))?;
+        }
+    }
+    Ok(())
+}
+
+/// Resolve a well-known path through its symlinks to the real directory —
+/// `--only` must write INTO the current slot, not replace the routing link.
+fn canonical(p: &Path) -> PathBuf {
+    p.canonicalize().unwrap_or_else(|_| p.to_path_buf())
 }
 
 /// Read a single `KEY=value` from the box env file (`/var/lib/virtues/virtues.env`).
@@ -349,27 +568,6 @@ impl InstallDirs {
     }
 }
 
-/// Replace `dest` with `new`, keeping the prior file as `dest.bak` for
-/// rollback. Restores the original if the swap fails partway, so a caller that
-/// treats a failure as non-fatal still has a working binary in place. Returns
-/// the `.bak` path when one was created (`None` for a fresh install).
-fn swap_with_bak(new: &Path, dest: &Path) -> Result<Option<String>, crate::Error> {
-    let bak = format!("{}.bak", dest.display());
-    let had_prior = dest.exists();
-    if had_prior {
-        let _ = fs::remove_file(&bak);
-        fs::rename(dest, &bak)
-            .map_err(|e| crate::Error::Other(format!("rename {} to {bak}: {e}", dest.display())))?;
-    }
-    if let Err(e) = swap_binary(new, dest) {
-        if had_prior {
-            let _ = fs::rename(&bak, dest); // put the working binary back
-        }
-        return Err(e);
-    }
-    Ok(had_prior.then_some(bak))
-}
-
 /// Atomically replace a shipped directory, logging a uniform success/skip line.
 /// Best-effort: a copy failure leaves the prior dir untouched (install_web
 /// stages into a sibling and only swaps on success) and never aborts the run.
@@ -388,10 +586,24 @@ fn refresh_named(label: &str, src: &Path, dst: &Path) {
 /// set is wrong for the other — assuming llama.cpp made a healthy Q6A box print
 /// "Unit virtues-embed.service not loaded" and a false "search/embeddings degraded"
 /// on every upgrade. So ask the filesystem instead of guessing.
-fn installed_inference_units() -> Vec<&'static str> {
+fn installed_inference_units() -> Vec<String> {
+    // Prefer the installer's topology manifest — DECLARED shape, not a guess.
+    if let Ok(bytes) = fs::read("/usr/local/share/virtues/install.json") {
+        if let Ok(v) = serde_json::from_slice::<serde_json::Value>(&bytes) {
+            if let Some(units) = v.get("sidecars").and_then(|s| s.as_array()) {
+                return units
+                    .iter()
+                    .filter_map(|u| u.as_str().map(str::to_string))
+                    .collect();
+            }
+        }
+    }
+    // Fallback for boxes installed before the manifest existed: ask the
+    // filesystem which unit files are present.
     ["virtues-embed", "virtues-rerank", "virtues-qnnd"]
         .into_iter()
         .filter(|u| Path::new(&format!("/etc/systemd/system/{u}.service")).exists())
+        .map(str::to_string)
         .collect()
 }
 
@@ -781,30 +993,6 @@ fn find_named(dir: &Path, name: &str) -> Result<PathBuf, crate::Error> {
     Err(crate::Error::Other(format!(
         "{name} not found inside the release tarball"
     )))
-}
-
-fn swap_binary(new_binary: &Path, dest: &Path) -> Result<(), crate::Error> {
-    // `fs::rename` is atomic when src + dst share a filesystem. The
-    // extracted binary may not — fall back to copy + remove.
-    if fs::rename(new_binary, dest).is_err() {
-        fs::copy(new_binary, dest)
-            .map_err(|e| crate::Error::Other(format!("copy new binary to {}: {e}", dest.display())))?;
-    }
-    fs::set_permissions(dest, fs::Permissions::from_mode(0o755))
-        .map_err(|e| crate::Error::Other(format!("chmod {}: {e}", dest.display())))?;
-    Ok(())
-}
-
-/// Stays on stderr and deliberately unstyled beyond the marker: this is the
-/// paste-at-2AM block, and it must survive any capture/pipe intact.
-fn print_rollback_hint(bak: &str) {
-    eprintln!();
-    eprintln!("  ✖  upgrade failed mid-swap. Roll back with:");
-    eprintln!();
-    eprintln!("       sudo systemctl stop virtues");
-    eprintln!("       sudo mv {bak} {BINARY_PATH}");
-    eprintln!("       sudo systemctl start virtues");
-    eprintln!();
 }
 
 struct Stage(PathBuf);

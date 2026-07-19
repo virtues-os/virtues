@@ -100,6 +100,12 @@ impl InstallConfig {
         self.install_prefix.join("share/virtues/web")
     }
 
+    /// The slot-layout root (`share/virtues`) — holds `releases/`, the
+    /// `current` flip link, the routing symlinks, and `install.json`.
+    pub fn share_virtues_dir(&self) -> PathBuf {
+        self.install_prefix.join("share/virtues")
+    }
+
     /// Where the action tree (manifests + UI + sources.toml) lands on the box.
     /// virtues-core reads this via `VIRTUES_ACTIONS_DIR` (see
     /// `action_templates::actions_root`); the default here must match

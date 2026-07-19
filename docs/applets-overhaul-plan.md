@@ -35,8 +35,40 @@ Applet = a **typed Rust enum of archetypes**, each a small serde spec, validated
 ## Decisions locked
 
 - **Name: `Applet`** — one word, unit and thing. No two-tier "automations vs artifacts" split (that re-drew a line the schema erased). No separate word for the collection. `action`/`app_actions` stays as the internal/code word; **Applet** is the user-facing noun everywhere.
+  - **Re-litigated and re-confirmed 2026-07-19.** The namespace is picked over (IFTTT: Applets; Claude: Artifacts; Alexa: Skills + Routines; Apple: Shortcuts; HA: Automations). Rejected: **Artifact** (denotes inert output, not a thing that runs), **Instruments** (best semantic coverage — means-of-action + instrument-panel + document-that-enacts, plus the Rule of St. Benedict ch. 4 "Instruments of Good Works" lineage — but too long), **Practices** (see below), **Daemons** (techy, demons), agent-nouns like Keeper/Steward/Familiar (personhood fails for dashboards). Persona-panel finding: engineers name the mechanism (jobs/workers/units), contemplatives name the meaning (practices/offices/a rule), laypeople name only the *instance* ("the calorie thing") — no word wins all three camps, so the category noun just has to be unembarrassing in the nav. Applet wins by offending no one.
+  - **"Practices" survives as a collection, not the primitive:** the contemplative built-ins (examen, daily office, weekly review) are marketed in the gallery/starter surface as **Practices** — a curated set of applets. Honest to both the monastery and the meditation app; never a schema concept.
+  - Feature-level vocabulary reserved the same way: **vigil** is available as the friendly word for a watcher/trigger-shaped applet in UI copy, never a type.
 - **One primitive, one flat list**, sectioned only by `owner` → **"Yours" / "Built-in."** That's a filter, not a taxonomy of kinds.
 - **`runtime` stops being a type the user picks.** It collapses into two orthogonal *properties* every applet may have: does it do **background work** (scheduled / persistent / triggered) and does it have a **face** (UI). Zero, one, or both. `function` vs `service` is just a lifecycle knob; `view` is just "has a face."
+
+## Product layer (decided 2026-07-19)
+
+A second round of decisions, made from the user's side of the glass:
+
+- **Chat is the front door; authoring and adopting are the same primitive.** The core loop is conversational intent → applet: "remind me to X on date Y," "build a dashboard of heart rate vs. workouts," "a calorie app — I send a photo, it logs," "each morning before 6am, write my examen from my narrative identity + Catholic values + yesterday's data." The ~5% power-author (git-link, terminal) is the *same* primitive with the hood open — one paradigm serves both; no separate builder surface, no catalog-first bet.
+- **Lifecycle is a first-class property: `ephemeral` vs `persistent`.** A dated reminder is an applet that archives itself on completion (disable/archive-on-run); an examen runs forever. The AI infers lifecycle from intent; it's visible and flippable on the detail page. This kills the "applet graveyard" problem structurally — one-offs clean themselves up, so the list only holds living things.
+- **Owner grows a third value: `system | user | ai`.** Honest framing: applets are the box's **universal scheduler and job system**. The list default-hides `system` rows (a filter, not a wall) — `embedding_index` and `credential_refresh` are inspectable on demand because transparency is the brand, but they don't crowd the addiction-fighter's guardian out of view.
+- **Failure UX v1 = what exists + a "needs attention" strip.** Errors keep surfacing in the list's last-run status; add one strip at the top of the applets surface (and its homepage tile) for errored / hasn't-run-when-expected / credential-expired. No new alerting infrastructure in v1.
+- **Last-mile delivery is v2.** Pings/notifications route through `virtues-helpers` primitives so every applet gets them for free when they land; v2 is messaging-shaped (iMessage/text), not APNs-first. Do not design around APNs now.
+- **Explicitly out of scope by decision:** persona counterparty ethics and addiction-recovery duty-of-care framing (not product questions for now); sharing/app-store distribution (v2); output-surface strategy beyond today's chat/pages (v2, arrives with messaging).
+
+## Caps — per-applet limits (v1, a real differentiator)
+
+Researched the two closest personal-agent projects (2026-07): **neither enforces anything.**
+
+- **OpenClaw**: token counting, cost estimation, and context-size caps (`toolResultMaxChars` etc.) — observability only. The feature request for `maxTokensPerDay`-style budgets ([#58826](https://github.com/openclaw/openclaw/issues/58826)) was closed *not planned*; official guidance is "set a hard cap at your LLM provider." Sandbox = isolation, not metering.
+- **Hermes Agent**: no app-layer limits; documents four "spending lanes" (primary / auxiliary / gateway / background) for *diagnosing* spend, recommends cheaper models for background jobs, defers hard limits to provider spending caps. No RAM/storage limits.
+
+Both punt to the provider because they don't own one. **Virtues owns both the provider and the runtime**, so caps can be native and hard:
+
+| Limit | Enforced where | Mechanism |
+|---|---|---|
+| `max_llm_cost` (per-run + per-day) | Gateway/wallet | Inference already flows through the virtues-api ledger; tag calls with `action_id`, hard-stop at the cap, surface in needs-attention. Extends the existing per-call/day/month cap family. |
+| `max_ram`, `cpu`, `timeout` | Runtime | The `systemd-run` jail already used for `code_interpreter` (`MemoryMax`, `CPUQuota`, `RuntimeMaxSec`) — same profile, now parameterized per applet. |
+| `max_storage` | Runtime | Quota on the applet's state/working dir. |
+| `max_runs` (per hour/day) | Scheduler | Backstop against trigger storms — mandatory before event/data triggers (thread 7) light up composition loops. |
+
+Defaults come from the archetype (a Reflect applet gets a daily LLM budget; a View gets none); overridable in a manifest `limits` block and on the detail page. The **plan/preview gate shows estimated recurring cost** ("~$0.12/day") next to the capability grants — cost is a capability. Scheduled/background applets default to the cheaper slot per the slot doctrine (Chat/Lite, no model literals), echoing the one piece of Hermes guidance worth keeping.
 
 ## The model
 
@@ -45,7 +77,9 @@ Applet = a **typed Rust enum of archetypes**, each a small serde spec, validated
 | **Applet** | A thing that runs for you. Folder at `actions/<name>/` (manifest + optional code/face). |
 | **Background work** | Optional. Cron / persistent service / trigger-driven. (subsumes today's `function` + `service`) |
 | **Face** | Optional. A rendered UI. (subsumes today's `view`) |
-| **Owner** | `system` (built-in, reconcile-managed) or `user` (yours). The only sectioning. |
+| **Owner** | `system` (built-in, reconcile-managed), `user` (yours), or `ai` (chat-authored). The only sectioning; list default-hides `system`. |
+| **Lifecycle** | `ephemeral` (archive-on-completion — a dated reminder) or `persistent`. AI infers from intent; flippable in the detail page. |
+| **Limits** | Per-applet caps: `max_llm_cost`, `max_ram`, `max_storage`, `timeout`, `max_runs`. Archetype defaults, manifest-overridable. |
 | **Definition** | On disk (manifest + source). Git-able. |
 | **State** | In Postgres (enabled, schedule, runs, memory). Never on disk. |
 
@@ -136,9 +170,10 @@ Two lanes, because today's import is **one-way and destructive** (`git clone --d
 
 ## Sequence
 
-1. **Rename + collapse the surface** — Applet everywhere; one owner-sectioned list (no sub-tabs); one degrading detail page. Cheap; fixes half the complaints; everything lands on top.
+0. **Immediate fixes (pre-refactor, small)** — `setup_action` contract drift (tool schema advertises `endpoint` + `activation_code`; the executor drops both — either implement or stop advertising) and the one-agent-applet-per-chat id collision (`action_agent_<chat_id>` upsert silently overwrites). These are the current AI-authoring story's credibility.
+1. **Rename + collapse the surface** — Applet everywhere; one owner-sectioned list (no sub-tabs, `system` hidden by default); one degrading detail page; the **needs-attention strip**; `lifecycle` column + archive-on-completion. Cheap; fixes half the complaints; everything lands on top.
 2. **Unlock on-box authoring** — runtime-loadable views + the sandboxed-script path + sandbox routing. This is what makes live AI authoring *possible at all*. Flagship.
-3. **The closed authoring loop** — file-authoring tools scoped to `actions/<name>/`, write→run→see→fix, AGENTS.md + authoring Skills, capability-manifest permissions.
+3. **The closed authoring loop** — file-authoring tools scoped to `actions/<name>/`, write→run→see→fix, AGENTS.md + authoring Skills, capability-manifest permissions, **and the limits block** (caps enforced at gateway + jail; estimated cost shown at the plan/preview gate).
 4. **Event/data triggers + wire the dead chaining** — the composability unlock.
 5. **Git box-owned lane** — commit-back, rollback, reviewable diffs.
 6. **Cleanup** — memory bounding, delete state, trigger/condition vocabulary, doc-drift fix.

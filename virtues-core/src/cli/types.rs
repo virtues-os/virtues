@@ -100,7 +100,15 @@ pub enum Commands {
     },
 
     /// Run database migrations
-    Migrate,
+    Migrate {
+        /// Check lineage only — apply NOTHING. Diffs the DB's applied
+        /// migrations against this binary's embedded set and exits non-zero
+        /// on divergence (applied-but-missing or checksum drift). The upgrade
+        /// preflight runs this under the STAGED binary before any swap, so a
+        /// lineage mismatch is a clean refusal instead of a mid-swap brick.
+        #[arg(long)]
+        check: bool,
+    },
 
     /// Snapshot the box's state into a single tarball.
     ///
@@ -188,11 +196,13 @@ pub enum Commands {
         force: bool,
     },
 
-    /// Self-update from the latest GitHub Release.
+    /// Self-update from the latest GitHub Release, via atomic release slots.
     ///
-    /// Stops the service, swaps `/usr/local/bin/virtues` with the new binary
-    /// (keeping one `.bak` for rollback), runs `virtues migrate` to apply
-    /// any schema changes, restarts the service.
+    /// Stages the whole release into `releases/<slot>/`, preflights it (the
+    /// staged binary must pass `migrate --check` + a version smoke test),
+    /// then activates by flipping the `current` symlink — binary + web +
+    /// actions move together. Failures before the flip leave the box
+    /// untouched; failures after flip straight back.
     Upgrade {
         /// Report the available version without changing anything.
         #[arg(long)]
@@ -214,7 +224,20 @@ pub enum Commands {
         /// `--pre`, where the prerelease channel is an explicit opt-in.)
         #[arg(long)]
         force: bool,
+
+        /// Refresh only the named components (comma-separated: `web`,
+        /// `actions`) in the CURRENT release — no binary swap, no migration,
+        /// no restart. The safe fast path for UI iteration.
+        #[arg(long)]
+        only: Option<String>,
     },
+
+    /// Flip back to the previous release slot and restart.
+    ///
+    /// The atomic inverse of `upgrade`: one symlink flip restores binary +
+    /// web + actions together. Schema is not rolled back (migrations only go
+    /// forward); the previous binary tolerates a newer schema.
+    Rollback,
 
     /// Start the HTTP server
     #[command(hide = true)]
