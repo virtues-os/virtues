@@ -138,25 +138,14 @@ fn check_schema_compatible(manifest: &Manifest) -> Result<(), crate::Error> {
     Ok(())
 }
 
-/// Read the sqlx migrations directory at build time + report the largest
-/// id. Migrations are named `NNNN_*.sql` in `virtues-core/migrations/`.
+/// The largest migration id this binary ships — read from the EMBEDDED
+/// migration set, so it can never drift from reality. (This replaced a
+/// hand-bumped `KNOWN_MAX_MIGRATION` constant that was still at 9 while the
+/// real set was at 49 — the exact silent-drift failure a derived value
+/// cannot have. Works cold: the embedded set needs no DB connection.)
 fn current_migration_max() -> Option<u64> {
-    // We can't read the source-tree at install time. The simplest stable
-    // signal: ship a compile-time constant updated by the migration script
-    // — but we don't have one. Instead, parse `_sqlx_migrations` at
-    // runtime by connecting; we already do that in `backup.rs`. For
-    // restore, the binary is starting cold (PG may not even be up). So:
-    // hardcode the highest known migration ID in this binary build.
-    //
-    // The number must be bumped any time a new `migrations/NNNN_*.sql`
-    // file is added. CI lints could enforce this, but for v1 it's a
-    // discipline note in PRs.
-    Some(KNOWN_MAX_MIGRATION)
+    crate::database::embedded_migration_max().map(|v| v as u64)
 }
-
-/// Bump this when you add a `migrations/NNNN_*.sql` file. Matches the
-/// largest ID under `virtues-core/migrations/`.
-const KNOWN_MAX_MIGRATION: u64 = 9;
 
 fn verify_sha256(staging: &Path, artifacts: &[Artifact]) -> Result<(), crate::Error> {
     println!("→ verifying sha256 of {} artifact(s)…", artifacts.len());

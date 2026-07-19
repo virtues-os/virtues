@@ -100,7 +100,15 @@ pub enum Commands {
     },
 
     /// Run database migrations
-    Migrate,
+    Migrate {
+        /// Check lineage only — apply NOTHING. Diffs the DB's applied
+        /// migrations against this binary's embedded set and exits non-zero
+        /// on divergence (applied-but-missing or checksum drift). The upgrade
+        /// preflight runs this under the STAGED binary before any swap, so a
+        /// lineage mismatch is a clean refusal instead of a mid-swap brick.
+        #[arg(long)]
+        check: bool,
+    },
 
     /// Snapshot the box's state into a single tarball.
     ///
