@@ -38,6 +38,7 @@ A private intelligence that connects your digital life — health, finance, loca
 > `http://localhost:8000`. Expect rough edges.
 
 [![License: BUSL-1.1 + MIT](https://img.shields.io/badge/License-BUSL--1.1%20%2B%20MIT-blue.svg)](LICENSE)
+[![Discord](https://img.shields.io/badge/Discord-Join%20Us-7289da?logo=discord&logoColor=white)](https://discord.gg/sSQKzDWqgv)
 
 <a id="what-it-does"></a>
 ## <picture><source media="(prefers-color-scheme: dark)" srcset=".github/images/headings/h2-what-it-does-dark.svg"><img alt="What It Does" src=".github/images/headings/h2-what-it-does-light.svg" height="28"></picture>
