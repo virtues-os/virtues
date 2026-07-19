@@ -10,7 +10,14 @@ export default defineConfig(({ mode }) => {
 		envDir: '../..', // Load .env from project root
 		plugins: [tailwindcss(), sveltekit()],
 		define: {
+			// Build identity, baked at build time — mirrors the box's build.rs.
+			// GIT_COMMIT = full sha; GIT_DESCRIBE = the release tag (CI sets
+			// VIRTUES_BUILD_VERSION on shallow checkouts). channel is derived from
+			// the tag in $lib/build. See docs/update-identity-spine.md.
 			'__BUILD_COMMIT__': JSON.stringify(process.env.GIT_COMMIT || 'dev'),
+			'__BUILD_VERSION__': JSON.stringify(
+				process.env.GIT_DESCRIBE || process.env.VIRTUES_BUILD_VERSION || 'dev'
+			),
 		},
 		server: {
 			fs: {

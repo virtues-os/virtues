@@ -67,13 +67,41 @@ pub fn long_version() -> String {
     let sha = env!("GIT_COMMIT");
     let short = &sha[..sha.len().min(7)];
     let date = env!("BUILD_TIME").split('T').next().unwrap_or(env!("BUILD_TIME"));
+    format!("{} \"{}\" · {} · {}", version(), codename(sha), date, short)
+}
+
+/// The clean version string — the full release tag (`GIT_DESCRIBE`, e.g.
+/// `v0.2.0` or `v0.1.0-staging.57`), falling back to the crate semver for
+/// tag-less local builds. Baked at build time. This is the single source of
+/// truth for the version everywhere (`--version`, `/health`, pairing), so a box
+/// never reports the bare `CARGO_PKG_VERSION` (`0.1.0`) when it's on a real tag.
+pub fn version() -> &'static str {
     let describe = env!("GIT_DESCRIBE");
-    let version = if describe.is_empty() {
+    if describe.is_empty() {
         env!("CARGO_PKG_VERSION")
     } else {
         describe
-    };
-    format!("{} \"{}\" · {} · {}", version, codename(sha), date, short)
+    }
+}
+
+/// The release channel, derived from the baked build tag — first-class so every
+/// surface reports the same word. `stable` = a bare `vX.Y.Z` tag (what
+/// virtues.com/sh serves); `staging`/`edge` = the prerelease tracks; `dev` = an
+/// untagged working build (`git describe` with an offset, `-dirty`, or nothing).
+pub fn channel() -> &'static str {
+    let d = env!("GIT_DESCRIBE");
+    if d.is_empty() {
+        "dev"
+    } else if d.contains("staging") {
+        "staging"
+    } else if d.starts_with("edge") {
+        "edge"
+    } else if d.contains('-') {
+        // e.g. `v0.2.0-4-gabc123` or `v0.2.0-dirty` — a build between/after tags.
+        "dev"
+    } else {
+        "stable"
+    }
 }
 
 /// Deterministic `adjective-animal` from a git short sha (or any hex string).
