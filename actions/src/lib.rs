@@ -41,10 +41,20 @@ pub fn init_tracing() {
 /// A reqwest client with a generous default timeout for action HTTP calls
 /// (the bare `Client::new()` they used had no timeout at all).
 pub fn http_client() -> reqwest::Client {
+    ensure_crypto_provider();
     reqwest::Client::builder()
         .timeout(Duration::from_secs(120))
         .build()
         .expect("failed to build reqwest client")
+}
+
+/// Install the ring crypto provider once (reqwest here is rustls-tls-no-provider,
+/// so direct external HTTPS panics with "No provider set" without this).
+fn ensure_crypto_provider() {
+    static ONCE: std::sync::Once = std::sync::Once::new();
+    ONCE.call_once(|| {
+        let _ = rustls::crypto::ring::default_provider().install_default();
+    });
 }
 
 /// Read `credentials.secrets.<key>` as a string, erroring if absent.

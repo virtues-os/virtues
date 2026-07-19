@@ -56,6 +56,12 @@ path = "google_calendar_sync/main.rs"
 name = "google_gmail_sync"
 path = "google_gmail_sync/main.rs"
 
+# ── Weather (Open-Meteo, no auth) ───────────────────────────────────────────
+
+[[bin]]
+name = "weather_sync"
+path = "weather_sync/main.rs"
+
 # ── Notion / Strava (via_proxy) ─────────────────────────────────────────────
 
 [[bin]]
@@ -118,6 +124,9 @@ uuid = { version = "1.10", features = ["v4", "v5", "serde"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls-no-provider"] }
+# reqwest is built with no default crypto provider (matches virtues-core); an action
+# doing direct external HTTPS installs the ring provider via http_client() below.
+rustls = { version = "0.23", default-features = false, features = ["ring"] }
 base64 = "0.22"
 urlencoding = "2.1"
 # On-box voice-activity gate (transcription_resolution): decode m4a → mel → run
