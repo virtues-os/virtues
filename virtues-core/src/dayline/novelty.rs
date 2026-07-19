@@ -1,6 +1,6 @@
 //! Novelty scoring for dayline events.
 //!
-//! Embeds event summaries (bge-m3, via the llama-server sidecar) and produces
+//! Embeds event summaries (EmbeddingGemma-300M, via the llama-server sidecar) and produces
 //! TWO orthogonal z-scored signals against a recency- and phase-weighted
 //! baseline of recent events:
 //!

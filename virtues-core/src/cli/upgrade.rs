@@ -252,7 +252,7 @@ pub async fn run(
     // Model-set drift check. `virtues upgrade` swaps binaries but does NOT
     // fetch model GGUFs or rewrite the sidecar `-m`/pooling in the unit files —
     // those are provisioned by the installer. So a release that changes the
-    // model set (e.g. bge → EmbeddingGemma) leaves the box serving the OLD
+    // model set (e.g. swapping the embedder or reranker) leaves the box serving the OLD
     // models against a runtime that expects the new ones (embeds get rejected
     // at the native-dim check). Detect it and tell the user exactly how to
     // reconcile, instead of degrading search silently.

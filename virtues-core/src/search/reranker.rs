@@ -2,7 +2,7 @@
 //!
 //! Mirrors `embedder.rs`: a dedicated `llama-server --rerank` sidecar
 //! (`http://127.0.0.1:18182` by default, `VIRTUES_RERANK_URL` to override)
-//! hosts a bge-reranker-v2-m3 GGUF and speaks the Jina/Cohere-style
+//! hosts a gte-reranker-modernbert-base GGUF and speaks the Jina/Cohere-style
 //! `/v1/rerank` JSON that llama.cpp has shipped since late 2024. The
 //! installer runs it as `virtues-rerank.service`.
 //!
