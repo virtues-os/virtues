@@ -508,7 +508,7 @@
 		gap: 4px;
 		padding: 6px 8px;
 		border-bottom: 1px solid var(--color-border);
-		background: var(--color-surface);
+		background: var(--color-background);
 		flex-shrink: 0;
 		position: relative;
 		z-index: var(--z-overlay); /* Above global drag overlays */

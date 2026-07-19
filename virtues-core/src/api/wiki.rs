@@ -2119,6 +2119,197 @@ pub async fn get_timeline_day(pool: &PgPool, date: NaiveDate) -> Result<Timeline
 }
 
 // ============================================================================
+// Today Streams - the three raw record streams, as spans, before synthesis
+// ============================================================================
+//
+// The homepage renders the day *before* the nightly synthesis has read it into
+// a biography. At that point the box does not have "events" — it has three
+// sensor streams, each with real start/end spans: where the phone was
+// (data_location_visit), what the calendar promised (data_calendar_event), and
+// when the microphone was open (data_audio_recording — the raw live chunks, NOT
+// the nightly `data_audio_session` rollup, which doesn't exist mid-day). This
+// endpoint returns exactly those three, tz-anchored, drawn as rectangles.
+
+/// A location visit span (where you were, and for how long).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TodayLocationSpan {
+    pub id: String,
+    pub start_time: String,
+    pub end_time: String,
+    pub place_name: Option<String>,
+    pub place_category: Option<String>,
+    pub duration_minutes: Option<i32>,
+}
+
+/// A calendar event span (the day as intended).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TodayCalendarSpan {
+    pub id: String,
+    pub start_time: String,
+    pub end_time: String,
+    pub title: String,
+    pub is_all_day: bool,
+    pub is_sacred: bool,
+    pub location_name: Option<String>,
+    pub calendar_name: Option<String>,
+}
+
+/// A raw audio recording chunk (~5 min each) — the live mic capture, before any
+/// sessionization. `is_silent` marks a chunk the box flagged as silence. The
+/// client merges contiguous chunks into "mic was open" blocks.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TodayAudioSpan {
+    pub id: String,
+    pub start_time: String,
+    pub end_time: String,
+    pub is_silent: bool,
+}
+
+/// The three raw streams for a day, before the nightly synthesis.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TodayStreamsView {
+    pub date: String,
+    /// The zone the spans are anchored to (see docs/timezone-model.md).
+    pub timezone: String,
+    pub location: Vec<TodayLocationSpan>,
+    pub calendar: Vec<TodayCalendarSpan>,
+    pub audio: Vec<TodayAudioSpan>,
+}
+
+/// Get the three raw record streams (location, calendar, audio) for a day as
+/// spans. Anchored to the day's effective timezone exactly like `get_day_sources`.
+pub async fn get_today_streams(
+    pool: &PgPool,
+    date: NaiveDate,
+    client_tz: Option<&str>,
+) -> Result<TodayStreamsView> {
+    use sqlx::Row;
+
+    let timezone = resolve_render_timezone(pool, date, client_tz).await;
+    let (start_str, end_str) = super::day_summary::day_boundaries_utc(date, Some(&timezone));
+
+    // --- Location: where the phone was ---
+    let loc_rows = sqlx::query(
+        r#"
+        SELECT
+            v.id               AS id,
+            v.arrival_time     AS arrival_time,
+            v.departure_time   AS departure_time,
+            v.duration_minutes AS duration_minutes,
+            p.name             AS place_name,
+            p.category         AS place_category
+        FROM data_location_visit v
+        LEFT JOIN wiki_entity_refs er
+            ON er.source_table = 'data_location_visit'
+           AND er.source_id    = v.id
+           AND er.entity_type  = 'place'
+        LEFT JOIN wiki_places p ON p.id = er.entity_id
+        WHERE v.arrival_time >= $1::timestamptz AND v.arrival_time < $2::timestamptz
+        ORDER BY v.arrival_time ASC
+        "#,
+    )
+    .bind(&start_str)
+    .bind(&end_str)
+    .fetch_all(pool)
+    .await
+    .map_err(|e| Error::Database(format!("today streams: location query failed: {e}")))?;
+
+    let location: Vec<TodayLocationSpan> = loc_rows
+        .iter()
+        .filter_map(|row| {
+            let arrival: DateTime<Utc> = row.try_get("arrival_time").ok()?;
+            let departure: Option<DateTime<Utc>> =
+                row.try_get::<Option<DateTime<Utc>>, _>("departure_time").ok().flatten();
+            Some(TodayLocationSpan {
+                id: row.try_get("id").ok()?,
+                start_time: arrival.to_rfc3339(),
+                end_time: departure.unwrap_or(arrival).to_rfc3339(),
+                place_name: row.try_get("place_name").ok().flatten(),
+                place_category: row.try_get("place_category").ok().flatten(),
+                duration_minutes: row.try_get("duration_minutes").ok(),
+            })
+        })
+        .collect();
+
+    // --- Calendar: the day as intended ---
+    let cal_rows = sqlx::query(
+        r#"
+        SELECT id, title, start_time, end_time, is_all_day,
+               COALESCE(is_sacred, FALSE) AS is_sacred, location_name, calendar_name
+        FROM data_calendar_event
+        WHERE start_time >= $1::timestamptz AND start_time < $2::timestamptz
+        ORDER BY start_time ASC
+        "#,
+    )
+    .bind(&start_str)
+    .bind(&end_str)
+    .fetch_all(pool)
+    .await
+    .map_err(|e| Error::Database(format!("today streams: calendar query failed: {e}")))?;
+
+    let calendar: Vec<TodayCalendarSpan> = cal_rows
+        .iter()
+        .filter_map(|row| {
+            let start: DateTime<Utc> = row.try_get("start_time").ok()?;
+            let end: DateTime<Utc> = row.try_get("end_time").ok()?;
+            Some(TodayCalendarSpan {
+                id: row.try_get("id").ok()?,
+                start_time: start.to_rfc3339(),
+                end_time: end.to_rfc3339(),
+                title: row.try_get("title").unwrap_or_else(|_| "(no title)".to_string()),
+                is_all_day: row.try_get("is_all_day").unwrap_or(false),
+                is_sacred: row.try_get("is_sacred").unwrap_or(false),
+                location_name: row.try_get("location_name").ok().flatten(),
+                calendar_name: row.try_get("calendar_name").ok().flatten(),
+            })
+        })
+        .collect();
+
+    // --- Audio: raw recording chunks (the live mic capture) ---
+    let aud_rows = sqlx::query(
+        r#"
+        SELECT id, started_at, ended_at, duration_seconds, COALESCE(is_silent, FALSE) AS is_silent
+        FROM data_audio_recording
+        WHERE started_at >= $1::timestamptz AND started_at < $2::timestamptz
+        ORDER BY started_at ASC
+        "#,
+    )
+    .bind(&start_str)
+    .bind(&end_str)
+    .fetch_all(pool)
+    .await
+    .map_err(|e| Error::Database(format!("today streams: audio query failed: {e}")))?;
+
+    let audio: Vec<TodayAudioSpan> = aud_rows
+        .iter()
+        .filter_map(|row| {
+            let start: DateTime<Utc> = row.try_get("started_at").ok()?;
+            let ended: Option<DateTime<Utc>> =
+                row.try_get::<Option<DateTime<Utc>>, _>("ended_at").ok().flatten();
+            let dur_s: Option<f64> = row.try_get("duration_seconds").ok().flatten();
+            // Fall back to the chunk's duration (or a nominal 5 min) when it has no end.
+            let end = ended.unwrap_or_else(|| {
+                start + chrono::Duration::milliseconds((dur_s.unwrap_or(300.0) * 1000.0) as i64)
+            });
+            Some(TodayAudioSpan {
+                id: row.try_get("id").ok()?,
+                start_time: start.to_rfc3339(),
+                end_time: end.to_rfc3339(),
+                is_silent: row.try_get("is_silent").unwrap_or(false),
+            })
+        })
+        .collect();
+
+    Ok(TodayStreamsView {
+        date: date.to_string(),
+        timezone,
+        location,
+        calendar,
+        audio,
+    })
+}
+
+// ============================================================================
 // Day Streams - Dynamic Ontology Queries
 // ============================================================================
 

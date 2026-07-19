@@ -115,68 +115,69 @@
 
 /* ===================================
    PEMBERLEY (DEFAULT)
-   Austen elegance, pristine white
+   American heritage — ivory, navy & claret
    Applied to :root so it's the default
    =================================== */
 :root {
 	/* Code Syntax Highlighting */
 	--shiki-theme: github-light;
 
-	/* Surface Colors - Pure whites */
-	--background: #FFFFFF;
+	/* Surface Colors - Whiter warm paper, a whisper of cream (de-yellowed) */
+	--background: #FDFCF9;
 	--surface: #FFFFFF;
-	--surface-elevated: #F5F5F5;
+	--surface-elevated: #F5F4EF;
 	--surface-overlay: #FFFFFF;
 
-	/* Background Treatment - Flat for this theme */
+	/* Background Treatment - Flat warm ivory */
 	--background-image: none;
 	--surface-elevated-image: none;
 	--surface-elevated-size: auto;
 
-	/* Content Colors - Neutral grays */
-	--foreground: #171717;
-	--foreground-muted: #404040;
-	--foreground-subtle: #737373;
-	--foreground-disabled: #a3a3a3;
+	/* Content Colors - Navy-black ink on ivory */
+	--foreground: #1A2030;
+	--foreground-muted: #3E4459;
+	--foreground-subtle: #6C7185;
+	--foreground-disabled: #A8A395;
 
-	/* Interactive Colors - Blue accent */
-	--primary: #2883DE;
-	--primary-hover: #4a9ae5;
-	--primary-active: #1d6bb8;
-	--primary-subtle: #EFF6FF;
+	/* Interactive Colors - Deep heritage navy */
+	--primary: #1E3159;
+	--primary-hover: #294271;
+	--primary-active: #16243F;
+	--primary-subtle: #E9EDF4;
 
-	--secondary: #171717;
-	--secondary-hover: #262626;
-	--secondary-active: #0a0a0a;
+	/* Secondary - Claret heritage red (the signature accent) */
+	--secondary: #9A2B2E;
+	--secondary-hover: #B23639;
+	--secondary-active: #7E2225;
 
-	/* Status Colors */
-	--success: #16a34a;
-	--success-subtle: #dcfce7;
-	--warning: #ea580c;
-	--warning-subtle: #ffedd5;
-	--error: #dc2626;
-	--error-subtle: #fee2e2;
-	--info: #0284c7;
-	--info-subtle: #e0f2fe;
+	/* Status Colors - Hunter green + goldenrod + claret */
+	--success: #2E6B43;
+	--success-subtle: #E3EDE5;
+	--warning: #B07514;
+	--warning-subtle: #F6ECD6;
+	--error: #9A2B2E;
+	--error-subtle: #F6E3E2;
+	--info: #1E4E8C;
+	--info-subtle: #E5EBF5;
 
-	/* Border Colors - Neutral grays */
-	--border: #e5e5e5;
-	--border-subtle: #f5f5f5;
-	--border-strong: #d4d4d4;
-	--border-focus: #2883DE;
+	/* Border Colors - Cool greige (de-yellowed) */
+	--border: #E7E3D9;
+	--border-subtle: #F2EFE8;
+	--border-strong: #D9D3C7;
+	--border-focus: #1E3159;
 
-	/* Selection/Highlight - Soft light yellow */
-	--highlight: rgba(253, 237, 178, 0.45);
-	--highlight-foreground: #171717;
+	/* Selection/Highlight - Soft claret wash */
+	--highlight: rgba(154, 43, 46, 0.14);
+	--highlight-foreground: #1A2030;
 
 	/* Diff Colors */
-	--diff-add: #16a34a;
-	--diff-add-bg: #dcfce7;
-	--diff-remove: #dc2626;
-	--diff-remove-bg: #fee2e2;
+	--diff-add: #2E6B43;
+	--diff-add-bg: #E3EDE5;
+	--diff-remove: #9A2B2E;
+	--diff-remove-bg: #F6E3E2;
 
-	/* Background Inverse */
-	--background-inverse: #0a0a0a;
+	/* Background Inverse - Deep navy, never black */
+	--background-inverse: #14203A;
 
 	/* Sidebar Component Tokens */
 	--sidebar-interactive-padding: 6px 10px;
@@ -353,6 +354,71 @@
 	/* Background Treatment - Paper texture */
 	--background-image: url('/textures/paper.webp');
 	--surface-elevated-image: url('/textures/paper.webp');
+	--surface-elevated-size: auto;
+
+	/* Content Colors - Neutral grays */
+	--foreground: #171717;
+	--foreground-muted: #404040;
+	--foreground-subtle: #737373;
+	--foreground-disabled: #a3a3a3;
+
+	/* Interactive Colors - Blue accent */
+	--primary: #2883DE;
+	--primary-hover: #4a9ae5;
+	--primary-active: #1d6bb8;
+	--primary-subtle: #EFF6FF;
+
+	--secondary: #171717;
+	--secondary-hover: #262626;
+	--secondary-active: #0a0a0a;
+
+	/* Status Colors */
+	--success: #16a34a;
+	--success-subtle: #dcfce7;
+	--warning: #ea580c;
+	--warning-subtle: #ffedd5;
+	--error: #dc2626;
+	--error-subtle: #fee2e2;
+	--info: #0284c7;
+	--info-subtle: #e0f2fe;
+
+	/* Border Colors - Neutral grays */
+	--border: #e5e5e5;
+	--border-subtle: #f5f5f5;
+	--border-strong: #d4d4d4;
+	--border-focus: #2883DE;
+
+	/* Selection/Highlight - Soft light yellow */
+	--highlight: rgba(253, 237, 178, 0.45);
+	--highlight-foreground: #171717;
+
+	/* Diff Colors */
+	--diff-add: #16a34a;
+	--diff-add-bg: #dcfce7;
+	--diff-remove: #dc2626;
+	--diff-remove-bg: #fee2e2;
+
+	/* Background Inverse */
+	--background-inverse: #0a0a0a;
+}
+
+/* ===================================
+   NETHERFIELD
+   Austen elegance, pristine white
+   =================================== */
+[data-theme="netherfield"] {
+	/* Code Syntax Highlighting */
+	--shiki-theme: github-light;
+
+	/* Surface Colors - Pure whites */
+	--background: #FFFFFF;
+	--surface: #FFFFFF;
+	--surface-elevated: #F5F5F5;
+	--surface-overlay: #FFFFFF;
+
+	/* Background Treatment - Flat for this theme */
+	--background-image: none;
+	--surface-elevated-image: none;
 	--surface-elevated-size: auto;
 
 	/* Content Colors - Neutral grays */

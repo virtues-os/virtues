@@ -12,6 +12,7 @@ export type Theme =
 	| 'caladan'
 	| 'rivendell'
 	| 'oxford'
+	| 'netherfield'
 	| 'lothlorien'
 	| 'hogwarts'
 	| 'tatooine'
@@ -142,6 +143,7 @@ export function isValidTheme(theme: string): theme is Theme {
 		'caladan',
 		'rivendell',
 		'oxford',
+		'netherfield',
 		'lothlorien',
 		'hogwarts',
 		'tatooine',
@@ -182,6 +184,7 @@ export function getAvailableThemes(): Theme[] {
 		'caladan',
 		'rivendell',
 		'oxford',
+		'netherfield',
 		'lothlorien',
 		'hogwarts',
 		'tatooine',
@@ -206,6 +209,7 @@ export function getThemeDisplayName(theme: Theme): string {
 		caladan: 'Caladan',
 		rivendell: 'Rivendell',
 		oxford: 'Oxford',
+		netherfield: 'Netherfield',
 		lothlorien: 'Lothlorien',
 		hogwarts: 'Hogwarts',
 		tatooine: 'Tatooine',
@@ -239,13 +243,13 @@ export const themePreviewColors: Record<
 	}
 > = {
 	pemberley: {
-		background: '#FFFFFF',
+		background: '#FDFCF9',
 		surface: '#FFFFFF',
-		surfaceElevated: '#F5F5F5',
-		foreground: '#171717',
-		foregroundMuted: '#525252',
-		primary: '#2883DE',
-		syntax: ['#cf222e', '#0a3069', '#8250df', '#0550ae', '#6e7781', '#24292f']
+		surfaceElevated: '#F5F4EF',
+		foreground: '#1A2030',
+		foregroundMuted: '#3E4459',
+		primary: '#1E3159',
+		syntax: ['#9A2B2E', '#1E3159', '#7E2225', '#1E4E8C', '#6C7185', '#1A2030']
 	},
 	caladan: {
 		background: '#FFFFFF',
@@ -269,6 +273,15 @@ export const themePreviewColors: Record<
 		background: '#FFFFFF',
 		surface: '#FFFFFF',
 		surfaceElevated: '#FAFAFA',
+		foreground: '#171717',
+		foregroundMuted: '#525252',
+		primary: '#2883DE',
+		syntax: ['#cf222e', '#0a3069', '#8250df', '#0550ae', '#6e7781', '#24292f']
+	},
+	netherfield: {
+		background: '#FFFFFF',
+		surface: '#FFFFFF',
+		surfaceElevated: '#F5F5F5',
 		foreground: '#171717',
 		foregroundMuted: '#525252',
 		primary: '#2883DE',
@@ -395,8 +408,8 @@ export const themeMetadata: Record<
 	}
 > = {
 	pemberley: {
-		icon: 'ph:building-bold',
-		description: 'Austen elegance, pristine'
+		icon: 'ph:feather-bold',
+		description: 'American heritage, navy & claret'
 	},
 	caladan: {
 		icon: 'ph:waves-bold',
@@ -409,6 +422,10 @@ export const themeMetadata: Record<
 	oxford: {
 		icon: 'ph:book-open-bold',
 		description: 'Academic, studious'
+	},
+	netherfield: {
+		icon: 'ph:building-bold',
+		description: 'Austen elegance, pristine'
 	},
 	lothlorien: {
 		icon: 'ph:tree-bold',

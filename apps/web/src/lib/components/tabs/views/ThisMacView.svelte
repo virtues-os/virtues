@@ -127,9 +127,14 @@
 				the people you message, and your on-screen activity — all stored on your box.
 			</p>
 		</div>
-	{:else if loading}
-		<div class="text-sm text-foreground-muted">Loading…</div>
-	{:else if !status?.running}
+	{:else if !status}
+		<!-- No successful read yet (initial load, or the daemon read errored and
+		     was discarded in refresh()). Don't render this as "off" — that's how
+		     a running collector wrongly showed "isn't collecting yet." -->
+		<div class="text-sm text-foreground-muted">
+			{loading ? "Loading…" : "Checking this Mac…"}
+		</div>
+	{:else if !status.running}
 		<!-- Collector not running: offer to set it up. -->
 		<div class="rounded-lg border border-border bg-surface p-4 space-y-3">
 			<div>

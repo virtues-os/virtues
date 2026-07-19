@@ -724,3 +724,124 @@ export async function getDayTimeline(
 	return res.json();
 }
 
+// ============================================================================
+// Today Streams — the three raw record streams, as spans, before synthesis
+// ============================================================================
+
+export interface TodayLocationSpan {
+	id: string;
+	start_time: string;
+	end_time: string;
+	place_name: string | null;
+	place_category: string | null;
+	duration_minutes: number | null;
+}
+
+export interface TodayCalendarSpan {
+	id: string;
+	start_time: string;
+	end_time: string;
+	title: string;
+	is_all_day: boolean;
+	is_sacred: boolean;
+	location_name: string | null;
+	calendar_name: string | null;
+}
+
+export interface TodayAudioSpan {
+	id: string;
+	start_time: string;
+	end_time: string;
+	/** the box flagged this ~5-min chunk as silence */
+	is_silent: boolean;
+}
+
+export interface TodayStreamsView {
+	date: string;
+	timezone: string;
+	location: TodayLocationSpan[];
+	calendar: TodayCalendarSpan[];
+	audio: TodayAudioSpan[];
+}
+
+/**
+ * Get the three raw record streams (location, calendar, audio) for a day, as
+ * spans — the "day before synthesis" homepage view. Passes the viewing device's
+ * IANA zone so an in-progress "today" is anchored to where the owner is.
+ * @param date - The date in YYYY-MM-DD format
+ */
+export async function getTodayStreams(
+	date: string,
+	fetchFn: FetchFn = fetch,
+): Promise<TodayStreamsView | null> {
+	const tz = Intl.DateTimeFormat().resolvedOptions().timeZone;
+	const qs = tz ? `?tz=${encodeURIComponent(tz)}` : "";
+	const res = await fetchFn(`/api/today/${encodeURIComponent(date)}/streams${qs}`);
+	if (!res.ok) return null;
+	return res.json();
+}
+
+// ============================================================================
+// Home-page loops — weather, upcoming calendar, unnamed-place backlog
+// ============================================================================
+
+export interface WeatherNow {
+	temperature_c: number | null;
+	apparent_c: number | null;
+	humidity_pct: number | null;
+	wind_kph: number | null;
+	is_day: boolean | null;
+	weather_code: number | null;
+	condition: string;
+	temp_max_c: number | null;
+	temp_min_c: number | null;
+	sunrise: string | null;
+	sunset: string | null;
+	valid_time: string;
+}
+
+/** Current weather for the masthead. Null until the weather_sync cron runs. */
+export async function getWeatherNow(fetchFn: FetchFn = fetch): Promise<WeatherNow | null> {
+	const res = await fetchFn("/api/weather/current");
+	if (!res.ok) return null;
+	return res.json();
+}
+
+export interface UpcomingEvent {
+	id: string;
+	title: string;
+	start_time: string;
+	end_time: string;
+	is_all_day: boolean;
+	location_name: string | null;
+	is_sacred: boolean;
+}
+
+/** The next few calendar events (holidays/birthdays filtered out). */
+export async function getCalendarUpcoming(
+	limit = 5,
+	fetchFn: FetchFn = fetch,
+): Promise<UpcomingEvent[]> {
+	const res = await fetchFn(`/api/calendar/upcoming?limit=${limit}`);
+	if (!res.ok) return [];
+	return res.json();
+}
+
+export interface UnnamedPlace {
+	id: string;
+	name: string;
+	visit_count: number;
+	latitude: number | null;
+	longitude: number | null;
+}
+
+/** Places visited but never named — the home "name this place" ask. */
+export async function getUnnamedPlaces(
+	limit = 3,
+	fetchFn: FetchFn = fetch,
+): Promise<UnnamedPlace[]> {
+	const res = await fetchFn(`/api/places/unnamed?limit=${limit}`);
+	if (!res.ok) return [];
+	return res.json();
+}
+

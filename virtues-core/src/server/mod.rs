@@ -277,6 +277,14 @@ pub async fn run(client: Virtues, host: &str, port: u16) -> Result<()> {
     let protected_routes = Router::new()
         // Timeline day (location chunks for movement map)
         .route("/api/timeline/day/:date", get(api::timeline_get_day_handler))
+        // Today streams — location/calendar/audio spans, pre-synthesis (homepage)
+        .route("/api/today/:date/streams", get(api::today_streams_handler))
+        // Map tiles — the Atlas: box-cached tiles (private + offline). docs/map-atlas-plan.md
+        .route("/api/map/tiles/:style/:z/:x/:y", get(api::map_tile_handler))
+        // Home-page loops — weather · upcoming calendar · unnamed-place backlog
+        .route("/api/weather/current", get(api::weather_now_handler))
+        .route("/api/calendar/upcoming", get(api::calendar_upcoming_handler))
+        .route("/api/places/unnamed", get(api::unnamed_places_handler))
         // ─── Pair-only auth: "+ Add device" from a paired session ─────
         .route("/api/pair/mint",          post(crate::api::pair::mint_handler))
         .route("/api/pair/mint-collector", post(crate::api::pair::mint_collector_handler))
