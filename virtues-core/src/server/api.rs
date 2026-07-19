@@ -1998,6 +1998,136 @@ pub struct DaySourcesQuery {
     pub tz: Option<String>,
 }
 
+/// Get the three raw record streams (location, calendar, audio) for a day, as
+/// spans — the homepage's "day before synthesis" view.
+pub async fn today_streams_handler(
+    State(state): State<AppState>,
+    Path(date): Path<String>,
+    Query(query): Query<DaySourcesQuery>,
+) -> Response {
+    match date.parse::<chrono::NaiveDate>() {
+        Ok(parsed_date) => api_response(
+            crate::api::get_today_streams(state.db.pool(), parsed_date, query.tz.as_deref()).await,
+        ),
+        Err(_) => error_response(Error::InvalidInput(format!(
+            "Invalid date format: {}",
+            date
+        ))),
+    }
+}
+
+// ============================================================================
+// Map tile cache (the Atlas) — serve map tiles from the box, caching upstream
+// tiles on first request so the browser never talks to a third-party tile
+// provider and cached areas keep working offline. See docs/map-atlas-plan.md.
+// ============================================================================
+
+/// Allowed styles → upstream tile URL template. The ONLY place the upstream
+/// provider is named, so it stays swappable (see the ToS note in the plan).
+const MAP_TILE_STYLES: &[(&str, &str)] = &[
+    ("light", "https://basemaps.cartocdn.com/light_all/{z}/{x}/{y}.png"),
+    ("dark", "https://basemaps.cartocdn.com/dark_all/{z}/{x}/{y}.png"),
+];
+
+fn map_tile_response(bytes: Vec<u8>) -> Response {
+    (
+        [
+            (axum::http::header::CONTENT_TYPE, "image/png".to_string()),
+            (
+                axum::http::header::CACHE_CONTROL,
+                "public, max-age=31536000, immutable".to_string(),
+            ),
+            (axum::http::header::CONTENT_LENGTH, bytes.len().to_string()),
+        ],
+        bytes,
+    )
+        .into_response()
+}
+
+async fn fetch_upstream_tile(url: &str) -> Result<Vec<u8>, Error> {
+    let client = crate::http_client::base_builder()
+        .timeout(std::time::Duration::from_secs(15))
+        .user_agent("virtues-box atlas (self-hosted personal map cache)")
+        .build()
+        .map_err(|e| Error::Other(format!("tile client: {e}")))?;
+    let resp = client
+        .get(url)
+        .send()
+        .await
+        .map_err(|e| Error::Other(format!("tile GET {url}: {e}")))?
+        .error_for_status()
+        .map_err(|e| Error::Other(format!("tile status {url}: {e}")))?;
+    let bytes = resp
+        .bytes()
+        .await
+        .map_err(|e| Error::Other(format!("tile body {url}: {e}")))?;
+    Ok(bytes.to_vec())
+}
+
+/// Serve a map tile, caching it from upstream on first request.
+pub async fn map_tile_handler(
+    State(state): State<AppState>,
+    Path((style, z, x, y)): Path<(String, u32, u32, u32)>,
+) -> Response {
+    let tmpl = match MAP_TILE_STYLES.iter().find(|(s, _)| *s == style) {
+        Some((_, t)) => *t,
+        None => return (axum::http::StatusCode::NOT_FOUND, "unknown map style").into_response(),
+    };
+    // Reject nonsense coordinates so nobody can drive arbitrary upstream URLs.
+    if z > 19 || x >= (1u32 << z) || y >= (1u32 << z) {
+        return (axum::http::StatusCode::BAD_REQUEST, "tile out of range").into_response();
+    }
+
+    let key = format!("map_tiles/{style}/{z}/{x}/{y}.png");
+
+    // Cache hit — served straight from the box, never leaves it.
+    if let Ok(bytes) = state.storage.download(&key).await {
+        return map_tile_response(bytes);
+    }
+
+    // Miss — fetch once from upstream, cache, serve.
+    let url = tmpl
+        .replace("{z}", &z.to_string())
+        .replace("{x}", &x.to_string())
+        .replace("{y}", &y.to_string());
+    match fetch_upstream_tile(&url).await {
+        Ok(bytes) => {
+            // Best-effort cache; still serve even if the write fails.
+            let _ = state.storage.upload(&key, bytes.clone()).await;
+            map_tile_response(bytes)
+        }
+        // Offline / upstream error: Leaflet's errorTileUrl renders a blank tile.
+        Err(_) => (axum::http::StatusCode::BAD_GATEWAY, "tile unavailable").into_response(),
+    }
+}
+
+/// `?limit=N` for the small home-page list endpoints.
+#[derive(Debug, Deserialize, Default)]
+pub struct LimitQuery {
+    pub limit: Option<i64>,
+}
+
+/// Current weather for the home masthead (null until the weather_sync cron runs).
+pub async fn weather_now_handler(State(state): State<AppState>) -> Response {
+    api_response(crate::api::get_current_weather(state.db.pool()).await)
+}
+
+/// The next few calendar events (holidays/birthdays filtered).
+pub async fn calendar_upcoming_handler(
+    State(state): State<AppState>,
+    Query(q): Query<LimitQuery>,
+) -> Response {
+    api_response(crate::api::get_calendar_upcoming(state.db.pool(), q.limit.unwrap_or(5)).await)
+}
+
+/// Places visited but never named — the home "name this place" ask.
+pub async fn unnamed_places_handler(
+    State(state): State<AppState>,
+    Query(q): Query<LimitQuery>,
+) -> Response {
+    api_response(crate::api::get_unnamed_places(state.db.pool(), q.limit.unwrap_or(3)).await)
+}
+
 /// Get data sources (ontology records) for a day
 pub async fn wiki_get_day_sources_handler(
     State(state): State<AppState>,

@@ -458,7 +458,16 @@ async fn get_collector_status(app: AppHandle) -> Result<CollectorStatus, String>
     if output.status.success() {
         serde_json::from_slice(&output.stdout).map_err(|e| e.to_string())
     } else {
-        Ok(CollectorStatus::default())
+        // The installed binary (or sidecar) ran but exited non-zero — a real
+        // read failure, NOT proof the collector is off. Surface it as an error
+        // so callers keep their last-good state instead of flashing "stopped".
+        // (The genuine "never installed, no sidecar" case already returned a
+        // default above.)
+        Err(format!(
+            "collector status failed (exit {:?}): {}",
+            output.status.code(),
+            String::from_utf8_lossy(&output.stderr).trim()
+        ))
     }
 }
 

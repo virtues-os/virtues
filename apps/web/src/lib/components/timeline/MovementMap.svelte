@@ -231,15 +231,15 @@
 			tap: interactive,
 		});
 
-		// Use CartoDB Positron (light, muted) tiles for a grayscale/muted look
-		L.tileLayer(
-			"https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png",
-			{
-				maxZoom: 19,
-				attribution: "&copy; OpenStreetMap contributors &copy; CARTO",
-				subdomains: "abcd",
-			},
-		).addTo(map);
+		// Tiles are served + cached by the box itself (see docs/map-atlas-plan.md):
+		// the browser never talks to a third-party tile provider, and cached areas
+		// keep working offline. Upstream (CartoDB Positron) attribution is preserved.
+		L.tileLayer("/api/map/tiles/light/{z}/{x}/{y}", {
+			maxZoom: 19,
+			attribution: "&copy; OpenStreetMap contributors &copy; CARTO",
+			// Blank tile when the box is offline / upstream fails → grey gaps, not broken images.
+			errorTileUrl: "data:image/gif;base64,R0lGODlhAQABAAAAACwAAAAAAQABAAA=",
+		}).addTo(map);
 
 		render();
 	});

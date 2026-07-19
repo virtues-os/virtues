@@ -27,6 +27,7 @@ pub mod developer;
 pub mod drive;
 pub mod entities;
 pub mod exa;
+pub mod home;
 pub mod internal;
 pub mod lake;
 pub mod media;
@@ -228,6 +229,7 @@ pub use usage::{
     record_usage as record_service_usage, LimitType, RemainingUsage, Service, ServiceUsage,
     UsageLimitError, UsageSummary,
 };
+pub use home::{get_calendar_upcoming, get_current_weather, get_unnamed_places};
 pub use wiki::{
     create_temporal_event,
     delete_auto_events_for_day,
@@ -244,6 +246,7 @@ pub use wiki::{
     get_day_sources,
     get_day_streams,
     get_timeline_day,
+    get_today_streams,
     get_events_by_date,
     get_or_create_day,
     get_organization,
