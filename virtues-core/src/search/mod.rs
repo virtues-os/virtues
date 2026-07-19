@@ -10,10 +10,10 @@
 //!
 //! # Architecture
 //!
-//! - `embedder.rs` - sidecar client, :18181 (text → 1024-dim vector, bge-m3)
+//! - `embedder.rs` - sidecar client, :18181 (text → 256-dim vector, EmbeddingGemma-300M)
 //! - `indexer.rs`  - Background job that embeds new records
 //! - `query.rs`    - Vector search (query embedding + pgvector ANN lookup)
-//! - `reranker.rs` - sidecar client, :18182 (cross-encoder, bge-reranker-v2-m3;
+//! - `reranker.rs` - sidecar client, :18182 (cross-encoder, gte-reranker-modernbert-base;
 //!   search falls back to bi-encoder cosine if it's down)
 
 pub mod bm25;

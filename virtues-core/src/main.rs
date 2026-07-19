@@ -137,8 +137,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
         let embedder = virtues::search::get_embedder().await?;
         // Actually embed once, don't just connect: this runs the sidecar's
-        // native-dim validation, so a wrong GGUF (e.g. bge's 1024 vs
-        // EmbeddingGemma's 768) fails HERE instead of "passing" a connect-only
+        // native-dim validation, so a wrong GGUF (e.g. a 1024-dim model vs
+        // EmbeddingGemma's 768-dim native) fails HERE instead of "passing" a connect-only
         // check and silently corrupting the index.
         let probe = embedder.embed_query_async("virtues warm-up probe").await?;
         ui::ok(&format!(
