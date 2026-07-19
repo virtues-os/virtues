@@ -1,10 +1,18 @@
 # virtues-qnnd
 
-The QNN HTP serving daemon for the **Radxa Dragon Q6A** (Qualcomm QCM6490,
+The NPU inference daemon for the **Radxa Dragon Q6A** (Qualcomm QCM6490,
 Hexagon **v68** NPU) — the one fully-supported Virtues appliance board. It loads
-QAIRT context binaries once and serves embed / rerank executes over a tiny
-binary TCP protocol. virtues-core talks to it via a native Rust client (no HTTP)
-that handles tokenization and ColBERT MaxSim scoring.
+QAIRT context binaries once and serves the box's **llama-server-compatible HTTP
+inference contract** (`/health`, `/v1/models`, `/v1/embeddings`, `/v1/rerank`)
+on loopback `:18181`/`:18182` — so virtues-core talks to a Dragon exactly the
+way it talks to the llama-server sidecars or any BYO endpoint
+(`VIRTUES_EMBED_URL`/`VIRTUES_RERANK_URL`), with no QNN-specific code path.
+
+Internally the C++ engine (`csrc/qnn_server.cpp`) still runs its tiny binary
+TCP loop (`--port 7788`, now an implementation detail); the Rust layer
+(`src/engine.rs`, moved from virtues-core) owns tokenization, the gte/ColBERT
+packing rules, and MaxSim scoring, and `src/http.rs` exposes the contract.
+`--no-http` preserves the legacy TCP-only shape for the on-device dev tools.
 
 Validated on-device: gte-small embed **3.8 ms/call**, colbert@256 rerank
 **7.5 ms/call**, HTP turbo/burst power mode.
