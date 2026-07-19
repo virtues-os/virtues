@@ -57,6 +57,13 @@ enum HTTPWire {
             head += "\(name): \(value)\r\n"
         }
 
+        // Stamp this app's build identity so the box records it on this device's
+        // row (shown on the Devices page — update-manifold Phase 1). Only when
+        // the caller hasn't set it explicitly.
+        if request.value(forHTTPHeaderField: "X-Virtues-Client") == nil {
+            head += "X-Virtues-Client: \(AppBuild.clientHeader)\r\n"
+        }
+
         let body = request.httpBody ?? Data()
         head += "Content-Length: \(body.count)\r\n"
         head += "Connection: close\r\n"
@@ -121,5 +128,28 @@ enum HTTPWire {
             throw HTTPWireError.malformedResponse("could not build HTTPURLResponse")
         }
         return (body, response)
+    }
+}
+
+/// The app's build identity, reported to the box via the `X-Virtues-Client`
+/// header so it appears on the Devices page (update-manifold Phase 1). Mirrors
+/// the box's `{version, sha, channel}` shape. `sha`/`channel` read from optional
+/// Info.plist keys a CI build phase can set (`GitCommit`, `Channel`); until then
+/// they degrade to `unknown` / `stable` rather than blocking.
+enum AppBuild {
+    static var version: String {
+        Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "0.0"
+    }
+    static var sha: String {
+        let v = Bundle.main.infoDictionary?["GitCommit"] as? String
+        return (v?.isEmpty == false) ? v! : "unknown"
+    }
+    static var channel: String {
+        let v = Bundle.main.infoDictionary?["Channel"] as? String
+        return (v?.isEmpty == false) ? v! : "stable"
+    }
+    /// The `X-Virtues-Client` header value: `version=…; sha=…; channel=…`.
+    static var clientHeader: String {
+        "version=\(version); sha=\(sha); channel=\(channel)"
     }
 }
