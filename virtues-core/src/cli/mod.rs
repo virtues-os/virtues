@@ -11,6 +11,7 @@ pub mod reindex;
 pub mod report_crash;
 pub mod reset;
 pub mod restore;
+pub mod slots;
 pub mod types;
 pub mod ui;
 pub mod uninstall;
@@ -61,6 +62,11 @@ pub async fn run(cli: Cli, virtues: Virtues) -> Result<(), Box<dyn std::error::E
             // Same — and intentionally does NOT touch the DB; the new
             // binary's `migrate` does that after the binary swap.
             unreachable!("Upgrade command should be handled in main.rs");
+        }
+
+        Commands::Rollback => {
+            // Same — a pure slot flip + service restart, no DB.
+            unreachable!("Rollback command should be handled in main.rs");
         }
 
         Commands::Uninstall { .. } => {
