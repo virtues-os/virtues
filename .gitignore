@@ -141,3 +141,6 @@ tmp/*
 /crates/virtues-registry/target
 /virtues-core/core/
 /virtues-core/.sqlx
+
+# Local Claude Code project state (runtime locks, local settings)
+.claude/

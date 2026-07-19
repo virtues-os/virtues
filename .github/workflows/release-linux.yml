@@ -240,6 +240,11 @@ jobs:
 
       - name: Build web UI (SvelteKit static)
         working-directory: apps/web
+        env:
+          # Bake the SPA's build identity so __BUILD_COMMIT__/__BUILD_VERSION__
+          # resolve to the real release (not 'dev'). Mirrors the box's build.rs.
+          GIT_COMMIT: ${{ github.sha }}
+          GIT_DESCRIBE: ${{ env.VIRTUES_BUILD_VERSION }}
         run: |
           pnpm install --frozen-lockfile
           pnpm build
