@@ -2,17 +2,29 @@
 name = "virtues-qnnd"
 version = "0.1.0"
 edition = "2021"
-description = "Virtues QNN HTP serving daemon for the Radxa Dragon Q6A (Hexagon v68 NPU). Loads QAIRT context binaries once and serves embed/rerank executes over a tiny binary TCP protocol."
+description = "Virtues NPU inference daemon for the Radxa Dragon Q6A (Hexagon v68). Runs the C++ QNN engine and serves the box's llama-server-compatible HTTP inference contract (/v1/embeddings, /v1/rerank) on :18181/:18182."
 publish = false
 
-# A thin Rust `main` forwards argv into the C++ daemon's `qnnd_main` (see
-# csrc/qnn_server.cpp). The C++ is compiled by build.rs against the Qualcomm
-# QAIRT SDK (resolved from QNN_SDK_ROOT). When the SDK is absent — normal dev
-# machines, CI legs without QAIRT — build.rs compiles a stub instead so the
-# whole workspace still builds; only boxes/legs with the SDK get a real daemon.
+# Two layers in one binary: a background thread runs the C++ engine
+# (csrc/qnn_server.cpp — its binary TCP loop is now internal), and the Rust
+# side owns tokenization/packing/MaxSim (src/engine.rs, moved from
+# virtues-core) plus the HTTP contract (src/http.rs). build.rs compiles the
+# C++ against QNN_SDK_ROOT, or a stub when the SDK is absent so the whole
+# workspace still builds; only boxes/legs with the SDK get a real daemon.
 [[bin]]
 name = "virtues-qnnd"
 path = "src/main.rs"
+
+[dependencies]
+anyhow = "1"
+axum = "0.7"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tokenizers = { version = "0.20", default-features = false, features = ["onig"] }
+tokio = { version = "1.40", features = ["rt-multi-thread", "net", "io-util", "time", "macros"] }
+
+[dev-dependencies]
+tower = { version = "0.4", features = ["util"] }
 
 [build-dependencies]
 cc = "1"

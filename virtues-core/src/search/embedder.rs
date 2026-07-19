@@ -25,10 +25,12 @@
 //! whatever its owner points it at. Which model produced a vector is *recorded*
 //! (`search_embeddings.model`, from `model_id()`), never assumed.
 //!
-//! **Dragon (NPU)** does not use this file's HTTP path at all — it runs the QNN
-//! daemon, which serves **gte-small (384-d, native, untruncated)**. See
-//! `qnn_client`. That module owns the model's identity because its context binary
-//! is compiled for exactly that model and can serve no other.
+//! **Dragon (NPU)** is the same HTTP path: `virtues-qnnd` serves this exact
+//! contract (`/v1/embeddings` + `/v1/models`) on :18181, backed by the Hexagon
+//! NPU running **gte-small (384-d, native, untruncated)**. The tokenization/
+//! packing intelligence lives in that daemon (`crates/virtues-qnnd`), not here
+//! — the box no longer has a QNN-specific code path, and Dragon gets the same
+//! probe/fingerprint/dim guards as every other endpoint.
 //!
 //! **Sidecar (default DIY/dev)** is the HTTP path below, and the installer's
 //! current GGUF is EmbeddingGemma-300M (QAT Q8_0) — a Gemma-3-lineage
@@ -51,28 +53,8 @@
 
 use anyhow::{anyhow, Context, Result};
 use serde::Deserialize;
-use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::sync::OnceCell;
-
-use super::qnn_client::{QnnClient, GTE_DIM};
-
-/// The Dragon NPU daemon's loopback address, if this box runs one. Set by the
-/// installer's `dragon` mode; its presence is what switches embedding (and
-/// reranking) from the HTTP sidecar path to the native QNN client.
-pub(super) fn qnnd_addr() -> Option<String> {
-    std::env::var("VIRTUES_QNND_ADDR").ok().filter(|s| !s.trim().is_empty())
-}
-
-/// Directory holding the QNN tokenizers (`tok_gte/`, `tok_colbert/`) shipped
-/// alongside the `.bin` context binaries.
-pub(super) fn qnnd_models_dir() -> PathBuf {
-    std::env::var("VIRTUES_QNND_MODELS_DIR")
-        .ok()
-        .filter(|s| !s.trim().is_empty())
-        .map(PathBuf::from)
-        .unwrap_or_else(|| PathBuf::from("/var/lib/virtues/models/qnn"))
-}
 
 // `SIDECAR_NATIVE_DIM = 768` and `SIDECAR_STORED_DIM = 256` lived here (named
 // `DRAGON_*`, which was doubly wrong — Dragon does not even use this path; it
@@ -521,68 +503,40 @@ impl HttpEmbedder {
     }
 }
 
-/// The active embedding backend, chosen once at construction: the HTTP sidecar
-/// (llama-server or the user's BYO endpoint) or the Dragon NPU daemon
-/// (`qnn_client`). Callers never see this — they hold `Arc<LocalEmbedder>` and
-/// call the same methods regardless.
-enum Backend {
-    Http(Arc<HttpEmbedder>),
-    Qnn(Arc<QnnClient>),
-}
-
-/// The embedder callers use. A thin dispatcher over [`Backend`] that preserves
-/// the previous public surface (so `get_embedder()` consumers are unchanged),
-/// selecting the QNN NPU path when `VIRTUES_QNND_ADDR` is set.
+/// The embedder callers use — a thin wrapper preserving the public surface
+/// from when this dispatched between an HTTP backend and a native QNN client.
+/// There is now exactly ONE inference path: the HTTP contract. On Dragon the
+/// endpoint behind `VIRTUES_EMBED_URL` is `virtues-qnnd` (gte-small on the
+/// NPU); everywhere else it's llama-server or a BYO endpoint. The box can't
+/// tell the difference, which is the point.
 pub struct LocalEmbedder {
-    backend: Backend,
-    /// The stored vector width (= the vector column's dims). Http: resolved from
-    /// the endpoint/config as before. Qnn: gte-small's native 384 (no Matryoshka).
+    inner: Arc<HttpEmbedder>,
+    /// The stored vector width (= the vector column's dims), resolved from the
+    /// endpoint/config at startup.
     stored_dim: usize,
 }
 
 impl LocalEmbedder {
     pub async fn new() -> Result<Self> {
-        if let Some(addr) = qnnd_addr() {
-            let dir = qnnd_models_dir();
-            let client = QnnClient::new(addr.clone(), &dir).with_context(|| {
-                format!("initializing QNN client (addr={addr}, models={})", dir.display())
-            })?;
-            // Liveness: a tiny embed round-trip, so we fail at startup with a
-            // clear message instead of on the first search.
-            client.embed("virtues warm-up probe").await.with_context(|| {
-                format!("QNN daemon unreachable at {addr} — check: systemctl status virtues-qnnd")
-            })?;
-            return Ok(Self { backend: Backend::Qnn(Arc::new(client)), stored_dim: GTE_DIM });
-        }
         let http = HttpEmbedder::new().await?;
         let stored_dim = http.stored_dim;
-        Ok(Self { backend: Backend::Http(Arc::new(http)), stored_dim })
+        Ok(Self { inner: Arc::new(http), stored_dim })
     }
 
-    /// Embed a search **query**. (gte is symmetric — query and document use the
-    /// same packing — so the QNN path doesn't distinguish them; the HTTP path
-    /// still applies its asymmetric query prompt.)
+    /// Embed a search **query** (asymmetric — applies the query prompt; empty
+    /// for symmetric models like gte).
     pub async fn embed_query_async(&self, text: &str) -> Result<Vec<f32>> {
-        match &self.backend {
-            Backend::Http(h) => h.embed_query_async(text).await,
-            Backend::Qnn(c) => c.embed(text).await,
-        }
+        self.inner.embed_query_async(text).await
     }
 
     /// Embed a single stored **document/content** string.
     pub async fn embed_async(&self, text: &str) -> Result<Vec<f32>> {
-        match &self.backend {
-            Backend::Http(h) => h.embed_async(text).await,
-            Backend::Qnn(c) => c.embed(text).await,
-        }
+        self.inner.embed_async(text).await
     }
 
     /// Embed a batch of **documents/content**.
     pub async fn embed_batch_async(&self, texts: Vec<String>) -> Result<Vec<Vec<f32>>> {
-        match &self.backend {
-            Backend::Http(h) => h.embed_batch_async(texts).await,
-            Backend::Qnn(c) => c.embed_batch(&texts).await,
-        }
+        self.inner.embed_batch_async(texts).await
     }
 
     pub fn dimension(&self) -> usize {
@@ -598,21 +552,15 @@ impl LocalEmbedder {
     /// silently: its vectors land in a different geometry from their neighbours,
     /// cosine between them means nothing, and the index degrades with no error
     /// anywhere. Recording the truth is what makes that detectable — and it is
-    /// what lets a user bring their own model at all.
+    /// what lets a user bring their own model at all. (On Dragon, `virtues-qnnd`
+    /// answers `/v1/models` with `gte-small` — the same stamp the old native
+    /// path wrote, so an existing index stays valid across the consolidation.)
     pub fn model_id(&self) -> String {
-        match &self.backend {
-            Backend::Http(h) => h.model_id(),
-            // The NPU serves exactly one model — its context binary is compiled
-            // for it and cannot serve another.
-            Backend::Qnn(_) => super::qnn_client::GTE_MODEL.to_string(),
-        }
+        self.inner.model_id()
     }
 
     fn backend_label(&self) -> &'static str {
-        match &self.backend {
-            Backend::Http(_) => "http-sidecar",
-            Backend::Qnn(_) => "qnn-npu",
-        }
+        "http-contract"
     }
 }
 
