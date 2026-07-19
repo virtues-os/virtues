@@ -878,34 +878,34 @@ fn setup_action_tool() -> ToolConfig {
         id: "setup_action".to_string(),
         name: "Setup Action".to_string(),
         description: "Create a scheduled action".to_string(),
-        llm_description: r#"Turn the current chat into an action that runs on a schedule or as an API endpoint.
+        llm_description: r#"Turn the current chat's intent into a saved action that runs on a schedule, on demand, or via a triggerable endpoint.
 
 Use this tool when:
-- User asks to set up a recurring task (e.g. "check Hacker News every hour")
-- User wants an automated action that runs periodically
-- User wants to create a webhook/endpoint that triggers an AI task
+- User asks to set up a recurring task (e.g. "check Hacker News every hour", "write my examen at 6am")
+- User wants an automated action that runs periodically or a one-off future task
+- User wants a standing task they can trigger via API/webhook
 
 Parameters:
-- name: Short descriptive name for the action (e.g. "HN Highlights")
-- instruction: What the action should do each time it runs. Be specific and detailed.
+- name: Short descriptive name for the action (e.g. "HN Highlights"). One action per name per chat — reusing a name updates that action; a new name creates another alongside it.
+- agent: What the action should do each time it runs. Be specific and detailed.
 - cron_schedule: Cron expression for when to run (6-field: sec min hour day month dow). Schedules run in the user's LOCAL timezone, so write the hour the user means literally (no UTC conversion). Examples:
   - "0 0 * * * *" = every hour
   - "0 0 9 * * *" = daily at 9am local time
   - "0 */30 * * * *" = every 30 minutes
   - "0 0 9 * * 1-5" = weekday mornings at 9am local time
-- endpoint: Set to true to also expose as a triggerable API endpoint
-- activation_code: Optional Python code that runs before each invocation (e.g. to fetch data). The code is dry-run tested before saving.
+- triggers: Optional array of allowed invocation sources: "cron", "manual", "tool", "api", "webhook". Defaults to ["cron","manual","tool"] when cron_schedule is set, otherwise ["manual","tool"]. Include "api" or "webhook" to expose the action as a triggerable endpoint.
+- condition: Optional SQL boolean expression evaluated before each run; the run is skipped when it is false. Power-user gate — omit unless the user explicitly asks for one.
 
 The action will post its results back into this chat each time it runs."#.to_string(),
         parameters: serde_json::json!({
             "type": "object",
-            "required": ["name", "instruction"],
+            "required": ["name", "agent"],
             "properties": {
                 "name": {
                     "type": "string",
-                    "description": "Short name for the action (e.g. 'HN Highlights', 'Daily Digest')"
+                    "description": "Short name for the action (e.g. 'HN Highlights', 'Daily Digest'). Reusing a name in this chat updates that action; a new name creates another."
                 },
-                "instruction": {
+                "agent": {
                     "type": "string",
                     "description": "Detailed instruction for what the action should do each run"
                 },
@@ -913,14 +913,17 @@ The action will post its results back into this chat each time it runs."#.to_str
                     "type": "string",
                     "description": "Cron schedule (6-field: sec min hour day month dow). E.g. '0 0 * * * *' for hourly"
                 },
-                "endpoint": {
-                    "type": "boolean",
-                    "description": "Whether to also expose as a triggerable API endpoint",
-                    "default": false
+                "triggers": {
+                    "type": "array",
+                    "items": {
+                        "type": "string",
+                        "enum": ["cron", "manual", "tool", "api", "webhook"]
+                    },
+                    "description": "Allowed invocation sources. Defaults based on cron_schedule; add 'api'/'webhook' to expose as an endpoint."
                 },
-                "activation_code": {
+                "condition": {
                     "type": "string",
-                    "description": "Optional Python code to run before each invocation (e.g. fetch external data)"
+                    "description": "Optional SQL boolean expression gating each run (run skipped when false)"
                 }
             }
         }),

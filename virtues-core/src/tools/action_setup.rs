@@ -93,7 +93,21 @@ pub async fn execute(
     let config = serde_json::json!({ "chat_id": chat_id });
     let config_json = config.to_string();
 
-    let action_id = format!("action_agent_{}", chat_id);
+    // One row per (chat, name): the name slug is part of the id so a chat can
+    // own several actions. Re-running with the same name updates in place; a
+    // new name creates a sibling instead of silently overwriting.
+    let mut slug = String::new();
+    for c in name.to_lowercase().chars() {
+        if c.is_ascii_alphanumeric() {
+            slug.push(c);
+        } else if !slug.ends_with('_') && !slug.is_empty() {
+            slug.push('_');
+        }
+    }
+    let slug = slug.trim_end_matches('_');
+    let slug = if slug.is_empty() { "applet" } else { slug };
+    let slug = &slug[..slug.len().min(48)];
+    let action_id = format!("action_agent_{}_{}", chat_id, slug);
 
     sqlx::query(
         r#"

@@ -92,10 +92,50 @@ pub async fn run(cli: Cli, virtues: Virtues) -> Result<(), Box<dyn std::error::E
             unreachable!("LakeAdopt command should be handled in main.rs");
         }
 
-        Commands::Migrate => {
-            println!("Running database migrations...");
-            virtues.database.initialize().await?;
-            println!("Migrations completed successfully");
+        Commands::Migrate { check } => {
+            if check {
+                // Preflight: report-and-exit, applying nothing. Non-zero exit
+                // on divergence is the contract `virtues upgrade` relies on.
+                let report = virtues.database.migration_check().await?;
+                if !report.pending.is_empty() {
+                    println!(
+                        "pending: {} migration(s) this binary will apply ({}..{})",
+                        report.pending.len(),
+                        report.pending.first().unwrap(),
+                        report.pending.last().unwrap()
+                    );
+                }
+                if report.is_divergent() {
+                    if !report.missing.is_empty() {
+                        eprintln!(
+                            "✖ divergence: migration(s) {:?} are applied in the database but \
+                             missing from this binary — a branch/edge lineage this build does \
+                             not carry. Upgrading across lineages strands them; to cross \
+                             deliberately, reset the DB (`virtues db reset`) or restore a \
+                             matching backup.",
+                            report.missing
+                        );
+                    }
+                    if !report.drifted.is_empty() {
+                        eprintln!(
+                            "✖ divergence: migration(s) {:?} have a different checksum in \
+                             this binary than what was applied — the file changed after being \
+                             applied somewhere.",
+                            report.drifted
+                        );
+                    }
+                    return Err(crate::Error::Other(
+                        "migration lineage divergence — refusing (nothing was applied)"
+                            .to_string(),
+                    )
+                    .into());
+                }
+                println!("✓ lineage OK — this binary can migrate this database");
+            } else {
+                println!("Running database migrations...");
+                virtues.database.initialize().await?;
+                println!("Migrations completed successfully");
+            }
         }
 
         Commands::Server { host, port } => {

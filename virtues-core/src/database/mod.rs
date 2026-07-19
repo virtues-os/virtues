@@ -287,6 +287,10 @@ impl Database {
     /// Run database migrations
     async fn run_migrations(&self) -> Result<()> {
         let mut migrator = sqlx::migrate!("./migrations");
+        // NOTE: `ignore_missing` below means BOOT does not enforce lineage —
+        // deliberate (one dev DB serves many branches). The enforcement point
+        // is `virtues migrate --check` (migration_check), which the upgrade
+        // path runs BEFORE swapping anything. See docs/update-paradigm.md.
         // One dev database serves many branches: a migration applied on a
         // feature branch must not brick `make dev` on branches that don't
         // carry its file. Skip applied-but-unknown versions instead.
@@ -296,6 +300,43 @@ impl Database {
             .await
             .map_err(|e| Error::Database(format!("Failed to run migrations: {e}")))?;
         Ok(())
+    }
+
+    /// Lineage check between the DB's applied migrations and this binary's
+    /// embedded set — **applies nothing**. This is the upgrade preflight: run
+    /// under the *staged* binary before any swap, it turns "brick mid-swap on
+    /// a migration mismatch" into a clean pre-swap refusal.
+    pub async fn migration_check(&self) -> Result<MigrationCheck> {
+        let embedded: std::collections::BTreeMap<i64, &[u8]> = EMBEDDED_MIGRATIONS
+            .iter()
+            .map(|m| (m.version, m.checksum.as_ref()))
+            .collect();
+
+        // A fresh DB (no _sqlx_migrations table yet) has nothing applied —
+        // every embedded migration is pending, no divergence possible.
+        let applied: Vec<(i64, Vec<u8>)> = match sqlx::query_as(
+            "SELECT version, checksum FROM _sqlx_migrations ORDER BY version",
+        )
+        .fetch_all(&self.pool)
+        .await
+        {
+            Ok(rows) => rows,
+            Err(_) => Vec::new(),
+        };
+
+        let mut check = MigrationCheck::default();
+        for (version, checksum) in &applied {
+            match embedded.get(version) {
+                None => check.missing.push(*version),
+                Some(c) if *c != checksum.as_slice() => check.drifted.push(*version),
+                Some(_) => {}
+            }
+        }
+        let applied_set: std::collections::BTreeSet<i64> =
+            applied.iter().map(|(v, _)| *v).collect();
+        check.pending =
+            embedded.keys().filter(|v| !applied_set.contains(v)).copied().collect();
+        Ok(check)
     }
 
     /// Execute a query with parameters
@@ -403,5 +444,39 @@ mod tests {
     #[test]
     fn test_normalize_errors_when_unset() {
         assert!(normalize_from(None).is_err());
+    }
+}
+
+/// This binary's embedded migration set — the single source of truth for
+/// "which migrations does this build know". Shared by `migration_check` (the
+/// upgrade preflight) and restore's schema-compatibility gate, so neither can
+/// drift from the real set the way the old hand-bumped `KNOWN_MAX_MIGRATION`
+/// constant did.
+pub static EMBEDDED_MIGRATIONS: sqlx::migrate::Migrator = sqlx::migrate!("./migrations");
+
+/// The largest migration version this binary ships. `None` only for a build
+/// with an empty migrations dir (never in practice).
+pub fn embedded_migration_max() -> Option<i64> {
+    EMBEDDED_MIGRATIONS.iter().map(|m| m.version).max()
+}
+
+/// Result of [`Database::migration_check`]: how the DB's applied migrations
+/// relate to this binary's embedded set. `missing`/`drifted` are DIVERGENCE
+/// (refuse to upgrade across them); `pending` is the normal forward case.
+#[derive(Debug, Default)]
+pub struct MigrationCheck {
+    /// Applied in the DB but absent from this binary — a branch/edge lineage
+    /// this build does not carry. Upgrading would strand them.
+    pub missing: Vec<i64>,
+    /// Applied with a different checksum than this binary ships — the file
+    /// was edited after being applied somewhere.
+    pub drifted: Vec<i64>,
+    /// In this binary but not yet applied — what a normal `migrate` will run.
+    pub pending: Vec<i64>,
+}
+
+impl MigrationCheck {
+    pub fn is_divergent(&self) -> bool {
+        !self.missing.is_empty() || !self.drifted.is_empty()
     }
 }
