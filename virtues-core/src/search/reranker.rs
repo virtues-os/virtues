@@ -23,9 +23,6 @@ use serde::Deserialize;
 use std::sync::Arc;
 use tokio::sync::OnceCell;
 
-use super::embedder::{qnnd_addr, qnnd_models_dir};
-use super::qnn_client::QnnClient;
-
 const DEFAULT_URL: &str = "http://127.0.0.1:18182";
 
 /// Score from the cross-encoder reranker. `index` refers to the position
@@ -132,62 +129,33 @@ fn resolve_base_url() -> String {
         .unwrap_or_else(|_| DEFAULT_URL.to_string())
 }
 
-/// The active rerank backend, chosen once at construction: the HTTP sidecar
-/// (cross-encoder over `/v1/rerank`) or the Dragon NPU daemon running
-/// answerai-colbert@256, scored by ColBERT late-interaction (MaxSim). Both
-/// return one scalar per document, so the caller (`query.rs`) is unchanged.
-enum Backend {
-    Http(Arc<HttpReranker>),
-    Qnn(Arc<QnnClient>),
-}
-
-/// The reranker callers use. Thin dispatcher over [`Backend`]; selects the QNN
-/// NPU path when `VIRTUES_QNND_ADDR` is set.
+/// The reranker callers use — a thin wrapper preserving the public surface
+/// from when this dispatched between an HTTP backend and a native QNN client.
+/// One inference path now: the `/v1/rerank` contract. On Dragon the endpoint
+/// behind `VIRTUES_RERANK_URL` is `virtues-qnnd` (ColBERT MaxSim on the NPU —
+/// unbounded-positive monotonic scores; `query.rs`'s sigmoid preserves their
+/// order); everywhere else it's llama-server's cross-encoder logits.
 pub struct LocalReranker {
-    backend: Backend,
+    inner: Arc<HttpReranker>,
 }
 
 impl LocalReranker {
     async fn new() -> Result<Self> {
-        if let Some(addr) = qnnd_addr() {
-            // Reuse the embedder's daemon liveness contract implicitly — the
-            // embedder init already proved the socket; here we just build the
-            // client (tokenizers load) and defer errors to first rerank, which
-            // query.rs already treats as non-fatal (falls back to fusion order).
-            let client = QnnClient::new(addr, &qnnd_models_dir())
-                .context("initializing QNN reranker client")?;
-            return Ok(Self { backend: Backend::Qnn(Arc::new(client)) });
-        }
-        Ok(Self { backend: Backend::Http(Arc::new(HttpReranker::new().await?)) })
+        Ok(Self { inner: Arc::new(HttpReranker::new().await?) })
     }
 
     /// Score `documents` against `query`; one score per document, indexed into
-    /// the input slice. HTTP: cross-encoder logits. QNN: ColBERT MaxSim sums
-    /// (higher = more relevant; unbounded positive, monotonic — `query.rs`'s
-    /// sigmoid preserves their order).
+    /// the input slice.
     pub async fn rerank_async(
         &self,
         query: &str,
         documents: &[String],
     ) -> Result<Vec<RerankScore>> {
-        match &self.backend {
-            Backend::Http(h) => h.rerank_async(query, documents).await,
-            Backend::Qnn(c) => {
-                let scores = c.rerank(query, documents).await?;
-                Ok(scores
-                    .into_iter()
-                    .enumerate()
-                    .map(|(index, score)| RerankScore { index, score })
-                    .collect())
-            }
-        }
+        self.inner.rerank_async(query, documents).await
     }
 
     fn backend_label(&self) -> &'static str {
-        match &self.backend {
-            Backend::Http(_) => "http-sidecar",
-            Backend::Qnn(_) => "qnn-npu-colbert",
-        }
+        "http-contract"
     }
 }
 

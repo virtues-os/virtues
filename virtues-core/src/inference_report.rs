@@ -63,9 +63,10 @@ pub const EMBED_GGUF: &str = "embeddinggemma-300m-qat-Q8_0.gguf";
 pub const RERANK_GGUF: &str = "gte-reranker-modernbert-base-Q8_0.gguf";
 
 /// The Dragon NPU path's QAIRT context binaries (Hexagon v68) — gte-small embed
-/// + answerai-colbert@256 rerank, served by `virtues-qnnd` on loopback :7788.
-/// NOT GGUFs and NOT EmbeddingGemma: that's the HTTP-sidecar path. Must agree
-/// with the installer (`config.rs` qnn_embed_bin / qnn_rerank_bin).
+/// + answerai-colbert@256 rerank, served by `virtues-qnnd` behind the same
+/// llama-compatible HTTP contract on :18181/:18182. NOT GGUFs and NOT
+/// EmbeddingGemma: that's the llama-server flavor of the same contract. Must
+/// agree with the installer (`config.rs` qnn_embed_bin / qnn_rerank_bin).
 pub const QNN_EMBED_BIN: &str = "gte_v68_vtcm2.bin";
 pub const QNN_RERANK_BIN: &str = "cb256_v68_vtcm2.bin";
 
@@ -75,10 +76,14 @@ fn models_dir() -> PathBuf {
         .unwrap_or_else(|_| PathBuf::from("/var/lib/virtues/models"))
 }
 
-/// Dragon NPU daemon address, if this box runs one — its presence selects the
-/// QNN inference path (mirrors `search::embedder`).
-fn qnnd_addr() -> Option<String> {
-    std::env::var("VIRTUES_QNND_ADDR").ok().filter(|s| !s.trim().is_empty())
+/// Is this box the Dragon NPU profile? The runtime no longer has a QNN code
+/// path (virtues-qnnd serves the same HTTP contract as llama-server), so this
+/// is purely a REPORTING distinction: which model artifacts to list. Keyed off
+/// the installer's `VIRTUES_INFERENCE=dragon`, with the qnnd unit file as a
+/// fallback for `sudo` CLI contexts that don't load the box env.
+fn is_dragon_profile() -> bool {
+    std::env::var("VIRTUES_INFERENCE").map(|v| v == "dragon").unwrap_or(false)
+        || std::path::Path::new("/etc/systemd/system/virtues-qnnd.service").exists()
 }
 
 fn qnn_models_dir() -> PathBuf {
@@ -96,10 +101,10 @@ fn qnn_models_dir() -> PathBuf {
 /// endpoints. The "are the sidecars actually up?" checks live in the
 /// embedder/reranker startup paths and in `virtues warm-models`.
 pub fn resolution_report() -> ResolutionReport {
-    // Dragon NPU path: report the QNN daemon + its context binaries, not the
+    // Dragon NPU profile: report the QNN daemon + its context binaries, not the
     // HTTP-sidecar GGUFs. Checked first so a Dragon box never mis-reports
     // EmbeddingGemma/gte-reranker as "missing" (they aren't used here).
-    if qnnd_addr().is_some() {
+    if is_dragon_profile() {
         let dir = qnn_models_dir();
         let source_for = |f: &str| {
             let p = dir.join(f);
@@ -116,13 +121,13 @@ pub fn resolution_report() -> ResolutionReport {
             models: vec![
                 ModelEntry {
                     name: "embed",
-                    repo: "gte-small · Hexagon NPU :7788",
+                    repo: "gte-small · Hexagon NPU :18181",
                     gguf_file: QNN_EMBED_BIN,
                     source: source_for(QNN_EMBED_BIN),
                 },
                 ModelEntry {
                     name: "rerank",
-                    repo: "answerai-colbert@256 · Hexagon NPU :7788",
+                    repo: "answerai-colbert@256 · Hexagon NPU :18182",
                     gguf_file: QNN_RERANK_BIN,
                     source: source_for(QNN_RERANK_BIN),
                 },

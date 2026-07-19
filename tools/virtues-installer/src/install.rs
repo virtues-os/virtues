@@ -216,8 +216,9 @@ pub async fn install_inference(cfg: &InstallConfig) -> Result<()> {
 
 /// Provision the Dragon NPU daemon: fetch the QAIRT context binaries +
 /// tokenizers, then install + start `virtues-qnnd.service`. Replaces the
-/// llama-server sidecars on our board — the runtime talks to it natively (no
-/// HTTP) via `VIRTUES_QNND_ADDR`.
+/// llama-server sidecars on our board — but serves the SAME llama-compatible
+/// HTTP inference contract on :18181/:18182, so the runtime talks to it through
+/// `VIRTUES_EMBED_URL`/`VIRTUES_RERANK_URL` like any other endpoint.
 ///
 /// Depends on two things this installer does NOT produce: the `virtues-qnnd`
 /// binary in the tarball (CI must build it for aarch64 with `QNN_SDK_ROOT`) and
@@ -278,7 +279,8 @@ pub async fn install_qnn(cfg: &InstallConfig) -> Result<()> {
         .replace("__QNN_ENV__", &qnn_env)
         .replace("__BIN__", &bin.display().to_string())
         .replace("__EMBED_BIN__", &qnn_dir.join(&cfg.qnn_embed_bin).display().to_string())
-        .replace("__RERANK_BIN__", &qnn_dir.join(&cfg.qnn_rerank_bin).display().to_string());
+        .replace("__RERANK_BIN__", &qnn_dir.join(&cfg.qnn_rerank_bin).display().to_string())
+        .replace("__QNN_DIR__", &qnn_dir.display().to_string());
     fs::write("/etc/systemd/system/virtues-qnnd.service", body)
         .context("writing virtues-qnnd.service")?;
 
@@ -433,9 +435,11 @@ WantedBy=multi-user.target
 "#;
 
 /// The Dragon NPU daemon unit. `virtues-qnnd` loads the two QAIRT context
-/// binaries once and serves embed/rerank on loopback :7788 (see
-/// `crates/virtues-qnnd`). `--burst` pins the HTP to its performance power
-/// corners. `__SUPP_GROUPS__` grants access to the DSP device node
+/// binaries once and serves the box's llama-compatible HTTP inference contract
+/// on loopback :18181/:18182 (its internal engine loop stays on :7788 — see
+/// `crates/virtues-qnnd`); `--models-dir` points it at the tokenizers shipped
+/// next to the context binaries. `--burst` pins the HTP to its performance
+/// power corners. `__SUPP_GROUPS__` grants access to the DSP device node
 /// (`/dev/fastrpc-cdsp`, `render` group). `__QNN_ENV__` sets both
 /// `LD_LIBRARY_PATH` (host-side `libQnnHtp.so`/`libQnnSystem.so`) and
 /// `ADSP_LIBRARY_PATH` (the DSP-side `libQnnHtpV68Skel.so`, loaded onto the
@@ -450,7 +454,7 @@ After=network.target
 Type=simple
 User=virtues
 Group=virtues
-__SUPP_GROUPS____QNN_ENV__ExecStart=__BIN__ __EMBED_BIN__ __RERANK_BIN__ --burst --port 7788
+__SUPP_GROUPS____QNN_ENV__ExecStart=__BIN__ __EMBED_BIN__ __RERANK_BIN__ --burst --port 7788 --models-dir __QNN_DIR__
 Restart=on-failure
 RestartSec=5
 
@@ -728,13 +732,17 @@ fn inference_env_keys(
     validation: Option<&ValidationReport>,
 ) -> Vec<(&'static str, String)> {
     match mode {
-        // Dragon: the native NPU daemon (`virtues-qnnd`) on loopback :7788. Its
-        // presence (`VIRTUES_QNND_ADDR`) is what switches core's embedder +
-        // reranker to the QNN path (gte-small 384-d + colbert MaxSim); no HTTP
-        // sidecar, no fingerprint pin (it's our compiled model).
+        // Dragon: `virtues-qnnd` serves the SAME llama-compatible HTTP contract
+        // as the llama-server sidecars (gte-small 384-d embed + colbert MaxSim
+        // rerank on the Hexagon NPU), so core needs nothing QNN-specific — just
+        // the standard URLs. No fingerprint pin (it's our compiled model; the
+        // runtime's /v1/models + dim probes cover identity).
+        // VIRTUES_QNND_MODELS_DIR stays for the resolution report (which
+        // context binaries to list) and the daemon's tokenizer default.
         InferenceMode::Dragon => vec![
             ("VIRTUES_INFERENCE", "dragon".to_string()),
-            ("VIRTUES_QNND_ADDR", "127.0.0.1:7788".to_string()),
+            ("VIRTUES_EMBED_URL", "http://127.0.0.1:18181".to_string()),
+            ("VIRTUES_RERANK_URL", "http://127.0.0.1:18182".to_string()),
             (
                 "VIRTUES_QNND_MODELS_DIR",
                 cfg.qnn_models_dir().display().to_string(),
@@ -1049,20 +1057,22 @@ pub async fn health_check(cfg: &InstallConfig, mode: &InferenceMode) -> Result<u
     }
 
     if let InferenceMode::Dragon = mode {
-        // NPU daemon accepting connections on loopback :7788. It takes a few
+        // NPU daemon serving the HTTP contract on loopback. It takes a few
         // seconds to load both context binaries after `systemctl start` — retry.
         let mut up = false;
+        // :18181 is the daemon's HTTP contract listener, which only binds after
+        // its internal engine loop came up — so one probe proves the whole chain.
         for _ in 0..10 {
-            if tokio::net::TcpStream::connect("127.0.0.1:7788").await.is_ok() {
+            if tokio::net::TcpStream::connect("127.0.0.1:18181").await.is_ok() {
                 up = true;
                 break;
             }
             tokio::time::sleep(std::time::Duration::from_secs(2)).await;
         }
         if up {
-            ui::ok("NPU daemon responding on :7788");
+            ui::ok("NPU daemon serving the inference contract on :18181/:18182");
         } else {
-            ui::warn("virtues-qnnd not responding on :7788 — journalctl -u virtues-qnnd");
+            ui::warn("virtues-qnnd not responding on :18181 — journalctl -u virtues-qnnd");
             issues += 1;
         }
         // Context binaries + tokenizers on disk.
