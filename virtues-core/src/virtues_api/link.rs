@@ -5,7 +5,7 @@
 //! checkout page. `start` kicks off a link and stashes the secret `device_code`
 //! in `box_secrets`, so a later `poll` (possibly a separate HTTP request from
 //! the web UI) can resume. `poll` returns the status; on `ready` it stores the
-//! billing token and mints the first bearer, so AI works immediately.
+//! device `api_key` — AI works immediately (atlas funds the wallet at link).
 //!
 //! [RFC 8628]: https://www.rfc-editor.org/rfc/rfc8628
 
@@ -13,7 +13,7 @@ use anyhow::{anyhow, Context, Result};
 use serde::Serialize;
 use sqlx::PgPool;
 
-use crate::wireguard::box_secrets;
+use crate::box_secrets;
 
 /// box_secrets key holding the in-flight link's secret device_code + metadata.
 const INFLIGHT_KEY: &str = "billing_link_inflight";
@@ -36,7 +36,7 @@ pub struct LinkStart {
 pub enum LinkStatus {
     /// Checkout not completed yet — keep polling.
     Pending,
-    /// Linked: billing token stored + first bearer minted.
+    /// Linked: api_key stored.
     Ready,
     /// The link expired or was denied — start over.
     Expired,
@@ -46,10 +46,36 @@ pub enum LinkStatus {
 
 /// Start a device link: ask Atlas for a device/user code pair, stash the secret
 /// device_code, and return the user-facing bits.
+/// Send with bounded retry on transient *transport* failures (connection
+/// resets, timeouts). The box is almost always set up on captive/flaky wifi,
+/// where a single blip would otherwise hard-fail onboarding with a 502 mid-
+/// wizard (the exact pain point this addresses). A real HTTP response — even
+/// an error status — returns immediately and is the caller's to interpret;
+/// only `send()` transport errors are retried. Three attempts, ~0.3s then
+/// ~1.2s backoff between them.
+async fn send_with_retry<F>(make_req: F) -> reqwest::Result<reqwest::Response>
+where
+    F: Fn() -> reqwest::RequestBuilder,
+{
+    const BACKOFFS_MS: [u64; 2] = [300, 1200];
+    let mut attempt = 0usize;
+    loop {
+        match make_req().send().await {
+            Ok(resp) => return Ok(resp),
+            Err(e) => {
+                if attempt >= BACKOFFS_MS.len() {
+                    return Err(e);
+                }
+                tracing::warn!(attempt = attempt + 1, error = ?e, "atlas request failed; retrying");
+                tokio::time::sleep(std::time::Duration::from_millis(BACKOFFS_MS[attempt])).await;
+                attempt += 1;
+            }
+        }
+    }
+}
+
 pub async fn start(db: &PgPool, http: &reqwest::Client, atlas_url: &str) -> Result<LinkStart> {
-    let resp = http
-        .post(format!("{}/init/start", atlas_url.trim_end_matches('/')))
-        .send()
+    let resp = send_with_retry(|| http.post(format!("{}/init/start", atlas_url.trim_end_matches('/'))))
         .await
         .context("POST /init/start")?;
     if !resp.status().is_success() {
@@ -86,25 +112,24 @@ pub async fn start(db: &PgPool, http: &reqwest::Client, atlas_url: &str) -> Resu
     })
 }
 
-/// Poll the in-flight link. On `ready`, store the billing token and eagerly
-/// mint the first bearer (best-effort — lazy renew retries on the first AI
-/// call). Clears the in-flight state on any terminal outcome.
+/// Poll the in-flight link. On `ready`, store the api_key (atlas already
+/// registered the device + funded the wallet, so AI works immediately).
+/// Clears the in-flight state on any terminal outcome.
 pub async fn poll(
     db: &PgPool,
     http: &reqwest::Client,
     atlas_url: &str,
-    api_url: &str,
 ) -> Result<LinkStatus> {
     let Some((device_code, _meta)) = box_secrets::get(db, INFLIGHT_KEY).await? else {
         return Ok(LinkStatus::None);
     };
 
-    let resp = http
-        .post(format!("{}/init/poll", atlas_url.trim_end_matches('/')))
-        .json(&serde_json::json!({ "device_code": device_code }))
-        .send()
-        .await
-        .context("POST /init/poll")?;
+    let resp = send_with_retry(|| {
+        http.post(format!("{}/init/poll", atlas_url.trim_end_matches('/')))
+            .json(&serde_json::json!({ "device_code": device_code }))
+    })
+    .await
+    .context("POST /init/poll")?;
     if !resp.status().is_success() {
         let s = resp.status();
         let b = resp.text().await.unwrap_or_default();
@@ -114,19 +139,22 @@ pub async fn poll(
     let v: serde_json::Value = resp.json().await?;
     match v["status"].as_str().unwrap_or("pending") {
         "ready" => {
-            let token = v["billing_token"]
+            let api_key = v["api_key"]
                 .as_str()
                 .filter(|s| !s.is_empty())
-                .ok_or_else(|| anyhow!("link ready but no billing_token"))?;
-            super::renew::store_billing_token(db, token).await?;
-            if let Err(e) = super::renew::renew(db, http, atlas_url, api_url).await {
-                tracing::warn!("eager bearer mint after link failed (lazy retry later): {e}");
+                .ok_or_else(|| anyhow!("link ready but no api_key"))?;
+            super::renew::store_api_key(db, api_key).await?;
+            // Provision relay reachability (best-effort): atlas mints this box's
+            // per-SNI token; the box stores it for the relay subsystem. A failure
+            // (e.g. relay disabled → 503) just leaves the box reachable on LAN.
+            if let Err(e) = super::relay::fetch_and_store(db, http, atlas_url, api_key).await {
+                tracing::warn!(error = %e, "relay config provisioning skipped (LAN-only reach)");
             }
             clear_inflight(db).await;
             Ok(LinkStatus::Ready)
         }
         // Already retrieved on a prior poll (e.g. crash before clearing) — the
-        // token is stored; just converge.
+        // api_key is stored; just converge.
         "claimed" => {
             clear_inflight(db).await;
             Ok(LinkStatus::Ready)
@@ -174,12 +202,12 @@ pub async fn login(
         ));
     };
 
-    let resp = http
-        .post(format!("{}/init/login", atlas_url.trim_end_matches('/')))
-        .json(&serde_json::json!({ "device_code": device_code, "email": email }))
-        .send()
-        .await
-        .context("POST /init/login")?;
+    let resp = send_with_retry(|| {
+        http.post(format!("{}/init/login", atlas_url.trim_end_matches('/')))
+            .json(&serde_json::json!({ "device_code": device_code, "email": email }))
+    })
+    .await
+    .context("POST /init/login")?;
 
     let status = resp.status();
     let v: serde_json::Value = resp.json().await.context("/init/login non-JSON response")?;

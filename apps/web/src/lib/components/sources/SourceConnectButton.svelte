@@ -228,7 +228,7 @@
 		place-items: center;
 		width: 28px;
 		height: 28px;
-		border-radius: 999px;
+		border-radius: var(--radius-full);
 		background: var(--color-surface-elevated, #f3f4f6);
 		color: var(--color-foreground-muted, #6b7280);
 	}

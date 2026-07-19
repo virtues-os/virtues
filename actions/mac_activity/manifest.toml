@@ -1,8 +1,0 @@
-name = "Mac Activity"
-description = "Ingest app usage, browser activity, and iMessage history from a paired Mac."
-owner = "system"
-runtime = "function"
-command = ["mac_activity"]
-triggers = ["webhook"]
-per_credential = true
-source = { id = "mac" }

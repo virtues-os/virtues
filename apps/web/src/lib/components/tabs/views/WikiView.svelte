@@ -1,49 +1,168 @@
+<!--
+	WikiView.svelte
+
+	The wiki room: Overview dashboard plus the entity sections, absorbed from
+	the former /entities page. Sub-navigation is route-driven via SubNav
+	(/wiki, /wiki/entities, /wiki/people, ...), so sections are deep-linkable.
+-->
+
 <script lang="ts">
 	import type { Tab } from '$lib/tabs/types';
-	import { spaceStore } from '$lib/stores/space.svelte';
+	import { windowShellStore } from '$lib/stores/window-shell.svelte';
 	import { Page } from '$lib';
-	import { ActivityHeatmap } from '$lib/components/wiki';
+	import {
+		ActivityHeatmap,
+		PersonTable,
+		PlaceTable,
+		OrganizationTable,
+		MentionQueue,
+	} from '$lib/components/wiki';
+	import { fetchRecurringCount } from '$lib/components/wiki/MentionQueue.svelte';
+	import SubNav, { type SubNavItem } from '$lib/components/SubNav.svelte';
+	import UniversalDataGrid, { type Column } from '$lib/components/datagrid/UniversalDataGrid.svelte';
 	import { onMount } from 'svelte';
 	import Icon from '$lib/components/Icon.svelte';
 	import { getLocalDateSlug, formatLongDate } from '$lib/utils/dateUtils';
+	import {
+		listPeople,
+		listPlaces,
+		listOrganizations,
+		type WikiPersonListItem,
+		type WikiPlaceListItem,
+		type WikiOrganizationListItem,
+	} from '$lib/wiki/api';
 
 	let { tab, active }: { tab: Tab; active: boolean } = $props();
 
-	// Entity counts from API
-	let entityCounts = $state<{ people: number; places: number; orgs: number }>({
-		people: 0,
-		places: 0,
-		orgs: 0
+	type Section = 'overview' | 'entities' | 'people' | 'places' | 'orgs' | 'unlinked';
+
+	// Names seen in enough distinct records to be worth a decision. Only these
+	// carry a badge — badging every floating surface makes a count that never
+	// reaches zero, which is wallpaper, not a signal.
+	let recurringMentions = $state(0);
+
+	const sections = $derived<SubNavItem[]>([
+		{ id: 'overview', label: 'Overview' },
+		{ id: 'entities', label: 'Entities' },
+		{ id: 'people', label: 'People' },
+		{ id: 'places', label: 'Places' },
+		{ id: 'orgs', label: 'Organizations' },
+		{ id: 'unlinked', label: 'Unlinked', badge: recurringMentions || undefined },
+	]);
+
+	// Active section is derived from the route (SubNav owns the writing side).
+	const section = $derived<Section>(
+		(tab.route.match(/^\/wiki\/(entities|people|places|orgs|unlinked)$/)?.[1] as Section) ??
+			'overview'
+	);
+
+	// --- Unified entity list (also feeds the overview counts) ---
+
+	interface UnifiedEntity {
+		id: string;
+		name: string;
+		entityType: 'person' | 'place' | 'org';
+		subtitle: string | null;
+		route: string;
+	}
+
+	const typeConfig = {
+		person: { icon: 'ri:user-line', label: 'Person', section: 'people' },
+		place: { icon: 'ri:map-pin-line', label: 'Place', section: 'places' },
+		org: { icon: 'ri:building-line', label: 'Organization', section: 'orgs' },
+	} as const;
+
+	let allEntities = $state<UnifiedEntity[]>([]);
+	let loading = $state(true);
+	let error = $state<string | null>(null);
+
+	let counts = $derived({
+		person: allEntities.filter((e) => e.entityType === 'person').length,
+		place: allEntities.filter((e) => e.entityType === 'place').length,
+		org: allEntities.filter((e) => e.entityType === 'org').length,
 	});
 
-	// Activity data for heatmap (will come from API)
-	let activityData = $state<Map<string, { count: number; slug: string }>>(new Map());
+	async function loadAllEntities() {
+		loading = true;
+		error = null;
+		try {
+			const [people, places, orgs] = await Promise.all([
+				listPeople(),
+				listPlaces(),
+				listOrganizations(),
+			]);
+
+			const unified: UnifiedEntity[] = [
+				...people.map((p: WikiPersonListItem): UnifiedEntity => ({
+					id: p.id,
+					name: p.canonical_name,
+					entityType: 'person',
+					subtitle: p.relationship_category,
+					route: `/person/${p.id}`,
+				})),
+				...places.map((p: WikiPlaceListItem): UnifiedEntity => ({
+					id: p.id,
+					name: p.name,
+					entityType: 'place',
+					subtitle: p.category || p.address,
+					route: `/place/${p.id}`,
+				})),
+				...orgs.map((o: WikiOrganizationListItem): UnifiedEntity => ({
+					id: o.id,
+					name: o.canonical_name,
+					entityType: 'org',
+					subtitle: o.organization_type || o.relationship_type,
+					route: `/org/${o.id}`,
+				})),
+			];
+
+			unified.sort((a, b) => a.name.localeCompare(b.name));
+			allEntities = unified;
+		} catch (e) {
+			console.error('Failed to load entities:', e);
+			error = e instanceof Error ? e.message : 'Failed to load entities';
+		} finally {
+			loading = false;
+		}
+	}
+
+	const entityColumns: Column<UnifiedEntity>[] = [
+		{
+			key: 'name',
+			label: 'Name',
+			icon: 'ri:group-line',
+			width: '45%',
+			minWidth: '200px',
+		},
+		{
+			key: 'entityType',
+			label: 'Type',
+			icon: 'ri:price-tag-3-line',
+			width: '20%',
+			minWidth: '120px',
+			getValue: (item) => typeConfig[item.entityType].label,
+		},
+		{
+			key: 'subtitle',
+			label: 'Details',
+			icon: 'ri:information-line',
+			width: '35%',
+			minWidth: '140px',
+			hideOnMobile: true,
+		},
+	];
+
+	// --- Overview data ---
+
+	let activityData = $state<Map<string, number>>(new Map());
 	let loadingActivity = $state(true);
 
 	onMount(async () => {
-		// Load entity counts
-		try {
-			const [peopleRes, placesRes, orgsRes] = await Promise.all([
-				fetch('/api/wiki/people'),
-				fetch('/api/wiki/places'),
-				fetch('/api/wiki/organizations')
-			]);
+		loadAllEntities();
 
-			if (peopleRes.ok) {
-				const people = await peopleRes.json();
-				entityCounts.people = Array.isArray(people) ? people.length : 0;
-			}
-			if (placesRes.ok) {
-				const places = await placesRes.json();
-				entityCounts.places = Array.isArray(places) ? places.length : 0;
-			}
-			if (orgsRes.ok) {
-				const orgs = await orgsRes.json();
-				entityCounts.orgs = Array.isArray(orgs) ? orgs.length : 0;
-			}
-		} catch (e) {
-			console.error('Failed to load entity counts:', e);
-		}
+		// The badge must be right before the tab is ever opened, so the count is
+		// fetched here rather than reported up by a mounted MentionQueue.
+		recurringMentions = await fetchRecurringCount();
 
 		// Load activity data for the past year
 		try {
@@ -57,13 +176,13 @@
 
 			if (res.ok) {
 				const days = await res.json();
-				const dataMap = new Map<string, { count: number; slug: string }>();
+				const dataMap = new Map<string, number>();
 
 				for (const day of days) {
 					// Count activity based on whether there's content
 					const hasContent = day.autobiography || day.autobiography_sections;
 					if (hasContent) {
-						dataMap.set(day.date, { count: 1, slug: day.date });
+						dataMap.set(day.date, 1);
 					}
 				}
 
@@ -79,12 +198,16 @@
 	// Handle day click from heatmap
 	function handleDayClick(_date: Date, slug: string) {
 		// slug is a date string like "2026-01-24"
-		spaceStore.openTabFromRoute(`/day/day_${slug}`);
+		windowShellStore.openTabFromRoute(`/day/day_${slug}`);
 	}
 
-	// Handle navigation
-	function navigateTo(route: string) {
-		spaceStore.openTabFromRoute(route);
+	function openEntity(entity: UnifiedEntity) {
+		windowShellStore.openTabFromRoute(entity.route);
+	}
+
+	// Overview cards switch this pane to the matching section.
+	function goToSection(id: Section) {
+		windowShellStore.updateTab(tab.id, { route: id === 'overview' ? '/wiki' : `/wiki/${id}` });
 	}
 
 	// Today's formatted date
@@ -92,145 +215,151 @@
 	const todaySlug = getLocalDateSlug(today);
 	const todayFormatted = formatLongDate(today);
 
-	// Entity display config
-	const entities = [
-		{ key: 'people', label: 'People', route: '/person', icon: 'ri:user-line' },
-		{ key: 'places', label: 'Places', route: '/place', icon: 'ri:map-pin-line' },
-		{ key: 'orgs', label: 'Organizations', route: '/org', icon: 'ri:building-line' }
+	// Entity display config for the overview cards
+	const entityCards = [
+		{ key: 'person', label: 'People' },
+		{ key: 'place', label: 'Places' },
+		{ key: 'org', label: 'Organizations' },
 	] as const;
 </script>
 
-<Page title="Wiki" description="Your personal knowledge base" maxWidth="prose">
-	<!-- Today context -->
-	<div class="today-context">
-		<p>
-			Today's entry is
-			<button onclick={() => navigateTo(`/day/day_${todaySlug}`)} class="today-link">
-				{todayFormatted}
-			</button>
-		</p>
-	</div>
+<div class="wiki-view">
+	<SubNav
+		tabId={tab.id}
+		route={tab.route}
+		base="/wiki"
+		default="overview"
+		items={sections}
+		ariaLabel="Wiki sections"
+	/>
 
-	<!-- Activity Heatmap -->
-	<section class="section heatmap-section">
-		<h2>Activity</h2>
-		{#if loadingActivity}
-			<div class="heatmap-loading">
-				<span class="loading-text">Loading activity...</span>
+	<main class="content">
+		{#if section === 'overview'}
+			<Page title="Wiki" description="Your personal knowledge base" maxWidth="prose">
+				<!-- Today context -->
+				<div class="today-context">
+					<p>
+						Today's entry is
+						<button
+							onclick={() => windowShellStore.openTabFromRoute(`/day/day_${todaySlug}`)}
+							class="today-link"
+						>
+							{todayFormatted}
+						</button>
+					</p>
+				</div>
+
+				<!-- Activity Heatmap -->
+				<section class="section heatmap-section">
+					<h2>Activity</h2>
+					{#if loadingActivity}
+						<div class="heatmap-loading">
+							<span class="loading-text">Loading activity...</span>
+						</div>
+					{:else}
+						<ActivityHeatmap {activityData} onDayClick={handleDayClick} />
+					{/if}
+				</section>
+
+				<hr class="divider" />
+
+				<!-- Entities -->
+				<section class="section">
+					<h2>Entities</h2>
+					<p class="section-description">
+						The people, places, and organizations that appear in your data.
+					</p>
+
+					<div class="entity-grid">
+						{#each entityCards as card}
+							<button
+								onclick={() => goToSection(typeConfig[card.key].section)}
+								class="entity-card"
+							>
+								<Icon icon={typeConfig[card.key].icon} class="entity-icon" />
+								<span class="entity-label">{card.label}</span>
+								<span class="entity-count">{counts[card.key]}</span>
+							</button>
+						{/each}
+					</div>
+				</section>
+			</Page>
+		{:else if section === 'entities'}
+			<div class="grid-wrap">
+				<UniversalDataGrid
+					items={allEntities}
+					columns={entityColumns}
+					entityType="entities"
+					{loading}
+					{error}
+					emptyIcon="ri:group-line"
+					emptyMessage="No entities yet"
+					loadingMessage="Loading entities..."
+					searchPlaceholder="Search all entities..."
+					onItemClick={openEntity}
+					onRetry={loadAllEntities}
+				>
+					{#snippet tableRow(entity: UnifiedEntity)}
+						<td class="col-name">
+							<div class="name-cell">
+								<Icon icon={typeConfig[entity.entityType].icon} width="16" />
+								<span class="name-text">{entity.name}</span>
+							</div>
+						</td>
+						<td class="col-type">
+							<span class="badge badge-muted">{typeConfig[entity.entityType].label}</span>
+						</td>
+						<td class="col-details hide-mobile">
+							{#if entity.subtitle}
+								<span class="subtitle-text">{entity.subtitle}</span>
+							{:else}
+								<span class="empty-cell">—</span>
+							{/if}
+						</td>
+					{/snippet}
+
+					{#snippet card(entity: UnifiedEntity)}
+						<div class="card-content">
+							<Icon icon={typeConfig[entity.entityType].icon} width="28" />
+							<span class="card-name">{entity.name}</span>
+							<span class="badge badge-muted">{typeConfig[entity.entityType].label}</span>
+						</div>
+					{/snippet}
+				</UniversalDataGrid>
 			</div>
-		{:else}
-			<ActivityHeatmap {activityData} onDayClick={handleDayClick} />
+		{:else if section === 'people'}
+			<div class="grid-wrap"><PersonTable /></div>
+		{:else if section === 'places'}
+			<div class="grid-wrap"><PlaceTable /></div>
+		{:else if section === 'orgs'}
+			<div class="grid-wrap"><OrganizationTable /></div>
+		{:else if section === 'unlinked'}
+			<div class="grid-wrap">
+				<MentionQueue oncount={(n) => (recurringMentions = n)} />
+			</div>
 		{/if}
-	</section>
-
-	<hr class="divider" />
-
-	<!-- Entities -->
-	<section class="section">
-		<h2>Entities</h2>
-		<p class="section-description">
-			The people, places, and organizations that appear in your data.
-		</p>
-
-		<div class="entity-grid">
-			{#each entities as entity}
-				{@const count = entityCounts[entity.key]}
-				<button onclick={() => navigateTo(entity.route)} class="entity-card">
-					<Icon icon={entity.icon} class="entity-icon"/>
-					<span class="entity-label">{entity.label}</span>
-					<span class="entity-count">{count}</span>
-				</button>
-			{/each}
-		</div>
-	</section>
-
-	<hr class="divider" />
-
-	<!-- Coming Soon -->
-	<section class="section coming-soon-section">
-		<div class="coming-soon-header">
-			<Icon icon="ri:seedling-line" class="coming-soon-icon"/>
-			<h2>What's Next</h2>
-		</div>
-
-		<p class="coming-soon-intro">
-			The wiki is growing. Here's what we're building:
-		</p>
-
-		<div class="feature-list">
-			<div class="feature-item">
-				<div class="feature-title">
-					<Icon icon="ri:book-open-line"/>
-					<span>Narrative Structure</span>
-				</div>
-				<p class="feature-description">
-					Organize your life into acts and chapters. Define the major seasons of your story and the arcs within them.
-				</p>
-			</div>
-
-			<div class="feature-item">
-				<div class="feature-title">
-					<Icon icon="ri:calendar-line"/>
-					<span>Temporal View</span>
-				</div>
-				<p class="feature-description">
-					Browse by year, month, or day. See what happened when, with automatic journaling from your connected sources.
-				</p>
-			</div>
-
-			<div class="feature-item">
-				<div class="feature-title">
-					<Icon icon="ri:links-line"/>
-					<span>Entity Resolution</span>
-				</div>
-				<p class="feature-description">
-					As you connect more data sources, we'll automatically identify and link people, places, and things across your life.
-				</p>
-			</div>
-
-			<div class="feature-item">
-				<div class="feature-title">
-					<Icon icon="ri:edit-line"/>
-					<span>AI-Assisted Journaling</span>
-				</div>
-				<p class="feature-description">
-					Daily summaries generated from your data, ready for you to review and personalize. Your story, written with you.
-				</p>
-			</div>
-		</div>
-	</section>
-</Page>
+	</main>
+</div>
 
 <style>
-	.wiki-scroll-container {
+	.wiki-view {
+		display: flex;
+		flex-direction: column;
 		height: 100%;
+		min-height: 0;
+	}
+
+	.content {
+		flex: 1;
 		overflow-y: auto;
+		min-height: 0;
 	}
 
-	.wiki-page {
-		max-width: 42rem;
+	.grid-wrap {
+		padding: 1.25rem 1.5rem 2rem;
+		max-width: 72rem;
+		width: 100%;
 		margin: 0 auto;
-		padding: 2.5rem 2rem;
-	}
-
-	/* Header */
-	.page-header {
-		margin-bottom: 1.5rem;
-	}
-
-	.page-header h1 {
-		font-family: var(--font-serif, Georgia, serif);
-		font-size: 2rem;
-		font-weight: 400;
-		color: var(--color-foreground);
-		margin: 0;
-		letter-spacing: -0.02em;
-	}
-
-	.page-subtitle {
-		font-size: 0.9375rem;
-		color: var(--color-foreground-muted);
-		margin: 0.25rem 0 0 0;
 	}
 
 	/* Today context */
@@ -328,7 +457,7 @@
 		background: var(--color-surface-hover);
 	}
 
-	.entity-icon {
+	.entity-card :global(.entity-icon) {
 		font-size: 1.25rem;
 		color: var(--color-foreground-muted);
 	}
@@ -346,78 +475,74 @@
 		font-variant-numeric: tabular-nums;
 	}
 
-	/* Coming soon section */
-	.coming-soon-section {
-		margin-top: 2rem;
-	}
-
-	.coming-soon-header {
+	/* Unified entity grid cells */
+	.name-cell {
 		display: flex;
 		align-items: center;
 		gap: 0.5rem;
-		margin-bottom: 0.75rem;
+		color: var(--color-foreground-subtle);
 	}
 
-	.coming-soon-header h2 {
-		margin: 0;
-	}
-
-	.coming-soon-icon {
-		font-size: 1.25rem;
-		color: var(--color-success);
-	}
-
-	.coming-soon-intro {
-		font-size: 0.9375rem;
-		color: var(--color-foreground-muted);
-		margin: 0 0 1.25rem 0;
-		line-height: 1.5;
-	}
-
-	.feature-list {
-		display: flex;
-		flex-direction: column;
-		gap: 1rem;
-	}
-
-	.feature-item {
-		padding: 1rem;
-		background: var(--color-surface-elevated);
-		border: 1px solid var(--color-border);
-		border-radius: 8px;
-	}
-
-	.feature-title {
-		display: flex;
-		align-items: center;
-		gap: 0.5rem;
-		margin-bottom: 0.5rem;
-	}
-
-	.feature-title :global(svg) {
-		font-size: 1rem;
-		color: var(--color-foreground-muted);
-	}
-
-	.feature-title span {
-		font-size: 0.9375rem;
+	.name-text {
 		font-weight: 500;
 		color: var(--color-foreground);
 	}
 
-	.feature-description {
-		font-size: 0.8125rem;
+	.subtitle-text {
 		color: var(--color-foreground-muted);
-		margin: 0;
-		line-height: 1.5;
+		font-size: 0.8125rem;
+		text-transform: capitalize;
+	}
+
+	.empty-cell {
+		color: var(--color-foreground-subtle);
+	}
+
+	.col-name {
+		width: 45%;
+		min-width: 200px;
+		padding: 0.625rem 0.75rem;
+		padding-left: 0;
+	}
+
+	.col-type {
+		width: 20%;
+		min-width: 120px;
+		padding: 0.625rem 0.75rem;
+	}
+
+	.col-details {
+		width: 35%;
+		min-width: 140px;
+		padding: 0.625rem 0.75rem;
+		padding-right: 0;
+	}
+
+	/* Card mode */
+	.card-content {
+		display: flex;
+		flex-direction: column;
+		align-items: center;
+		gap: 0.75rem;
+		text-align: center;
+		color: var(--color-foreground-subtle);
+	}
+
+	.card-name {
+		font-weight: 600;
+		font-size: 0.9375rem;
+		color: var(--color-foreground);
+		line-height: 1.3;
+	}
+
+	@media (max-width: 768px) {
+		.hide-mobile {
+			display: none;
+		}
 	}
 
 	/* Responsive */
 	@media (max-width: 640px) {
-		.wiki-page {
-			padding: 1.5rem;
-		}
-
 		.entity-grid {
 			grid-template-columns: 1fr;
 		}

@@ -1,5 +1,7 @@
 <script lang="ts">
 	import Icon from "$lib/components/Icon.svelte";
+	import { aiSession } from "$lib/ai/aiSession.svelte";
+	import { abortAiSession } from "$lib/ai/aiCursorSession";
 
 	interface Props {
 		linkCount: number;
@@ -42,6 +44,26 @@
 		<span>{charCount.toLocaleString()} chars</span>
 	</div>
 	<div class="status-spacer"></div>
+	<!-- Live AI writing indicator -->
+	{#if aiSession.active}
+		<button class="ai-indicator" onclick={() => abortAiSession()} title="Stop">
+			<Icon icon="ri:sparkling-2-line" width="12" class="ai-spark" />
+			<span>Virtues is writing…</span>
+			<Icon icon="ri:stop-circle-line" width="13" />
+		</button>
+		<div class="status-divider"></div>
+	{:else if aiSession.status === "error"}
+		<button
+			class="ai-error"
+			onclick={() => aiSession.reset()}
+			title={aiSession.error ?? "AI error"}
+		>
+			<Icon icon="ri:error-warning-line" width="12" />
+			<span>AI couldn’t finish</span>
+			<Icon icon="ri:close-line" width="13" />
+		</button>
+		<div class="status-divider"></div>
+	{/if}
 	<!-- Unified save status -->
 	<div
 		class="status-item status-save"
@@ -142,5 +164,57 @@
 
 	.status-save.offline {
 		color: var(--color-warning);
+	}
+
+	.ai-indicator {
+		display: flex;
+		align-items: center;
+		gap: 5px;
+		padding: 2px 6px;
+		border: none;
+		background: transparent;
+		color: var(--color-primary);
+		font-size: 11px;
+		font-family: inherit;
+		border-radius: 5px;
+		cursor: pointer;
+		transition: background-color 0.12s ease;
+	}
+
+	.ai-indicator:hover {
+		background: var(--color-primary-subtle);
+	}
+
+	.ai-error {
+		display: flex;
+		align-items: center;
+		gap: 5px;
+		padding: 2px 6px;
+		border: none;
+		background: transparent;
+		color: var(--color-error);
+		font-size: 11px;
+		font-family: inherit;
+		border-radius: 5px;
+		cursor: pointer;
+		transition: background-color 0.12s ease;
+	}
+
+	.ai-error:hover {
+		background: color-mix(in srgb, var(--color-error) 12%, transparent);
+	}
+
+	:global(.ai-spark) {
+		animation: ai-spark-pulse 1.4s ease-in-out infinite;
+	}
+
+	@keyframes ai-spark-pulse {
+		0%,
+		100% {
+			opacity: 0.5;
+		}
+		50% {
+			opacity: 1;
+		}
 	}
 </style>

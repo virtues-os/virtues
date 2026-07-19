@@ -13,6 +13,8 @@
 
 <Toaster
 	position="top-center"
+	offset="max(16px, env(safe-area-inset-top))"
+	mobileOffset="max(16px, env(safe-area-inset-top))"
 	toastOptions={{
 		style: `
 			background: var(--surface);

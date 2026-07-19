@@ -34,10 +34,10 @@ path = "src/bin/prod_seed.rs"
 # never enable in release builds.
 dev-transport = ["virtues-helpers/dev-transport"]
 
-# Accelerator features are no-ops in v0.1.0 — Ollama owns GPU/CPU
-# detection now. Kept as named features so existing `--features cuda`
-# build invocations (e.g. the Jetson appliance image script) don't break.
-# Will be removed in v0.1.1 once consumers are updated.
+# Accelerator features are no-ops — the llama-server sidecars own GPU/CPU
+# selection now (decided by which binary CI built for the arch). Kept as
+# named features so existing `--features cuda` build invocations (e.g. the
+# Jetson appliance image script) don't break. Remove once consumers update.
 cuda = []
 tensorrt = ["cuda"]
 
@@ -47,9 +47,11 @@ virtues-registry = { path = "../crates/virtues-registry" }
 
 # Single shared utility crate: crypto, auth, contract, db, dedup, ids, ios, ...
 virtues-helpers = { path = "../crates/virtues-helpers" }
-# Minimal WireGuard engine (kernel wg0, ULA, sealed box-secrets). Re-exported
-# via core::wireguard; also the basis of the standalone virtues-wireguard daemon.
-virtues-wg = { path = "../crates/virtues-wg" }
+# iroh reach layer: the box is an iroh Endpoint that serves this axum app over
+# iroh (LAN-direct → hole-punch → our relay). Replaces the hand-rolled relay.
+virtues-iroh = { path = "../crates/virtues-iroh" }
+# Wire-protocol types shared with every paired-device daemon (iOS, desktop
+# client, etc.). Pure data + serde; no I/O.
 
 # CLI
 clap = { version = "4.5", features = ["derive"] }
@@ -68,7 +70,7 @@ async-trait = "0.1"
 sqlx = { version = "0.8", features = ["postgres", "runtime-tokio", "migrate", "chrono", "json", "macros", "uuid", "rust_decimal"] }
 
 # Vector search (pgvector extension — Rust bindings round-trip vector(N) via sqlx)
-pgvector = { version = "0.4", features = ["sqlx"] }
+pgvector = { version = "0.4", features = ["sqlx", "halfvec"] }
 
 # Serialization
 serde = { version = "1.0", features = ["derive"] }
@@ -79,27 +81,19 @@ toml = "0.8"
 anyhow = "1.0"
 thiserror = "1.0"
 
-# Logging & Observability
+# Logging (box-local only — no metrics exporter; Virtues collects no central telemetry)
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
-tracing-opentelemetry = "0.28"
-opentelemetry = { version = "0.27", features = ["metrics"] }
-opentelemetry_sdk = { version = "0.27", features = ["rt-tokio", "metrics"] }
-opentelemetry-otlp = { version = "0.27", features = ["metrics", "grpc-tonic"] }
 
 # HTTP Server
 axum = { version = "0.7", features = ["macros", "multipart", "ws"] }
 axum-extra = { version = "0.9", features = ["cookie"] }
-# Box serves HTTPS on :443 with a per-box CA-signed leaf (virtues.local).
-# Using rustls (no OpenSSL) + tokio-rustls for the listener.
-# Use the no-provider variant + an explicit `rustls` dep below with the
-# `ring` provider. The default `tls-rustls` pulls `aws-lc-rs` →
-# `aws-lc-sys`, which the GCC 11 in our cross containers refuses to build
-# (see GCC bug 95189). Ring also avoids needing to install a default
-# CryptoProvider at runtime startup.
-axum-server = { version = "0.7", default-features = false, features = ["tls-rustls-no-provider"] }
+# The box serves no TLS — see [[localhost-daemon-trust]] in MEMORY.md. We
+# keep rustls as a direct dep because outbound HTTPS (reqwest → atlas) still
+# needs the ring CryptoProvider installed at startup (rustls 0.23 requires it
+# once per process). `default-features = false` + `ring` avoids aws-lc-sys,
+# which GCC 11 in our cross containers refuses to build (GCC bug 95189).
 rustls = { version = "0.23", default-features = false, features = ["ring", "std", "logging", "tls12"] }
-tokio-rustls = "0.26"
 mime_guess = "2.0"
 tower = "0.4"
 tower-http = { version = "0.5", features = ["cors", "trace", "fs"] }
@@ -109,11 +103,14 @@ tokio-stream = "0.1"
 # Utilities
 chrono = { version = "0.4", features = ["serde"] }
 chrono-tz = "0.10"
+iana-time-zone = "0.1"          # box's own system tz (home_timezone source)
+tzf-rs = "0.4"                  # offline coords → IANA tz (per-day user-location tz)
 uuid = { version = "1.10", features = ["v4", "serde"] }
 
 # OAuth
 oauth2 = "4.4"
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls-no-provider", "stream"] }
+rustls-native-certs = "0.8"
 
 # Financial integrations
 plaid = "9.0.1"
@@ -132,19 +129,24 @@ ring = "0.17"
 base64 = "0.22"
 hex = "0.4"
 
-# Per-server CA + virtues.internal leaf (TLS context 1, WS-2).
-# x509-parser: reload a stored CA from PEM to sign leaves after a restart.
-rcgen = { version = "0.13", features = ["x509-parser"] }
-
  # HMAC signing for OAuth state tokens
 hmac = "0.12"
 sha2 = "0.10"
+
+# WordPiece tokenization for the Dragon NPU path (`search/qnn_client.rs`): the
+# QNN daemon is token-in, so we tokenize + pack int32 IDs here before the RPC.
+# Local `from_file` only — no HTTP feature (we ship the tokenizer.json).
+tokenizers = { version = "0.20", default-features = false, features = ["onig"] }
 
 # `virtues backup` / `virtues restore` — single self-contained tarball
 # containing pg_dump + lake archives + env. `tar` reads/writes streaming
 # archives; `flate2` is the gzip layer.
 tar = "0.4"
 flate2 = "1.0"
+
+# `virtues upgrade` downgrade guard — semver ordering so a stale/hostile
+# "latest" or an explicit older `--version` can't silently roll the box back.
+semver = "1"
 
 # Unicode text segmentation for slug generation
 unicode-segmentation = "1.11"
@@ -166,6 +168,10 @@ regex = "1.0"
 # Static initialization
 lazy_static = "1.5"
 
+# Host telemetry for the web System view (CPU/mem/disk/net/thermal). The Jetson
+# GPU is read separately via tegrastats; sysinfo covers the cross-platform rest.
+sysinfo = "0.33"
+
 # Time handling for cookies
 time = "0.3"
 
@@ -176,12 +182,10 @@ schemars = "1.0"
 # Geospatial/clustering
 geo = "0.28"  # Geospatial calculations (Haversine distance)
 
-# Local inference — Ollama HTTP client. ORT 1.24's prebuilt blobs needed
-# glibc 2.38+ which Jetson JetPack 6.x doesn't ship; migrating to Ollama
-# moves model management + GPU/CPU detection out of our process and into
-# a daemon that handles it cleanly across every target. `embedder.rs`
-# is the only consumer.
-ollama-rs = { version = "0.2", default-features = false, features = ["stream", "rustls"] }
+# Local inference needs no client crate: the llama-server sidecars
+# (embedding :18181, rerank :18182 — installed + pinned by
+# tools/virtues-installer) speak OpenAI/Jina-compatible JSON, handled by
+# the existing reqwest dep in search/embedder.rs + search/reranker.rs.
 futures = "0.3"
 
 # Changepoint detection
@@ -199,9 +203,8 @@ indicatif = "0.17"
 # Sandboxing
 tempfile = "3.12"
 
-# SSH
-russh = "0.48"
-russh-keys = "0.48"
+# Terminal: in-process PTY for the developer terminal websocket
+portable-pty = "0.9"
 
 # Yjs/CRDT support
 yrs = "0.18"
@@ -213,6 +216,11 @@ similar = "2.7.0"
 pulldown-cmark = { version = "0.10", default-features = false, features = ["simd"] }
 
 bytes = "1.7"
+
+[target.'cfg(target_os = "linux")'.dependencies]
+# getifaddrs(3) for the BYO-transport auto-notice in net_check (already in the
+# tree transitively; zero new build cost).
+libc = "0.2"
 
 [build-dependencies]
 chrono = "0.4"
@@ -227,7 +235,6 @@ chrono = "0.4"
 # the GCC 11 in our cross images — GCC bug 95189). Re-add via a separate
 # integration-tests crate if you need it back.
 dotenv = "0.15"
-serial_test = "3.1"
 
 # Async testing
 tokio-test = "0.4"

@@ -370,7 +370,7 @@
 		display: inline-block;
 		width: 8px;
 		height: 8px;
-		border-radius: 999px;
+		border-radius: var(--radius-full);
 		flex-shrink: 0;
 	}
 

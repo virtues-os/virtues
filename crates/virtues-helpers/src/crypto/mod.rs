@@ -265,10 +265,9 @@ impl TokenEncryptor {
 
 /// AES-256-GCM seal of raw bytes under an explicit 32-byte key — NOT the env
 /// master key. Layout: `nonce(12) || ciphertext || tag(16)`, matching
-/// `TokenEncryptor::encrypt`. Used by the blind rendezvous, where the key K
-/// lives only on the box + its paired devices and is never an environment
-/// secret. A fresh random nonce per call is safe: the box is the sole writer
-/// and publishes rarely.
+/// `TokenEncryptor::encrypt`. A general-purpose seal for bytes under a
+/// caller-supplied key that is never an environment secret. A fresh random
+/// nonce per call is safe: the box is the sole writer and seals rarely.
 pub fn seal_aes_256_gcm(key: &[u8; 32], plaintext: &[u8]) -> Result<Vec<u8>> {
     let unbound = UnboundKey::new(&AES_256_GCM, key)
         .map_err(|_| CryptoError::InvalidKey("failed to create AES key".to_string()))?;
@@ -549,7 +548,24 @@ pub fn verify_stripe_signature(
     Err(StripeWebhookError::SignatureMismatch)
 }
 
-fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
+/// HMAC-SHA256(key, msg) as lowercase hex. Used to authenticate a value with a
+/// shared secret across services/devices (e.g. the link-a-device MAC that binds a
+/// device EndpointId to the one-time code). Lives here because Lint 3 forbids HMAC
+/// primitives outside this module.
+pub fn hmac_sha256_hex(key: &[u8], msg: &[u8]) -> String {
+    use hmac::{Hmac, Mac};
+    use sha2::Sha256;
+    let mut mac = <Hmac<Sha256>>::new_from_slice(key).expect("HMAC accepts any key length");
+    mac.update(msg);
+    hex::encode(mac.finalize().into_bytes())
+}
+
+/// Length-independent-of-content byte comparison: returns `true` iff `a == b`,
+/// taking time proportional to the (equal) length rather than short-circuiting
+/// at the first differing byte. Use for comparing secrets/MACs/bearers so a
+/// caller can't recover them via a timing side-channel. (Length itself is not
+/// hidden — an early `false` on length mismatch is fine for fixed-size tokens.)
+pub fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
     if a.len() != b.len() {
         return false;
     }

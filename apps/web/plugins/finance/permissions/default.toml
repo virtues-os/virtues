@@ -1,0 +1,3 @@
+[default]
+description = "Default permissions for the finance plugin"
+permissions = ["allow-enable", "allow-resume", "allow-status", "allow-collect"]

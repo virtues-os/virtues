@@ -22,20 +22,32 @@ use crate::AppState;
 pub fn router() -> Router<Arc<AppState>> {
     Router::new()
         .route("/v1/whoami", get(whoami))
+        .route("/v1/usage", get(usage))
         .route("/v1/charge-test", post(charge_test))
 }
 
-/// Returns a non-sensitive summary of the resolved entitlement.
-/// Useful for verifying bearer auth + entitlement lookup work end-to-end.
-///
-/// Returns BOTH pools for debugging; iOS should only surface
-/// `wallet_chat_micros` to the user (see project_economic_model memory).
-async fn whoami(BearerAuth(ent): BearerAuth) -> impl IntoResponse {
+/// Balance + recent ledger entries for the authenticated account. Drives the
+/// box's billing/usage surface ("here's your balance, here's where it went").
+async fn usage(State(state): State<Arc<AppState>>, BearerAuth(acct): BearerAuth) -> impl IntoResponse {
+    match entitlement::usage_summary(&state.db, &acct.account_id, 50).await {
+        Ok(summary) => (StatusCode::OK, Json(summary)).into_response(),
+        Err(e) => {
+            tracing::warn!("usage summary failed: {e:#}");
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(json!({ "error": { "code": "internal" } })),
+            )
+                .into_response()
+        }
+    }
+}
+
+/// Returns a non-sensitive summary of the resolved account (balance, caps).
+/// Useful for verifying api_key auth + account lookup work end-to-end.
+async fn whoami(BearerAuth(acct): BearerAuth) -> impl IntoResponse {
     Json(json!({
-        "wallet_micros": ent.wallet_micros,
-        "today_spent_micros": ent.today_spent_micros,
-        "today_reset_at": ent.today_reset_at,
-        "expires_at": ent.expires_at,
+        "balance_micros": acct.balance_micros,
+        "expires_at": acct.expires_at,
     }))
 }
 
@@ -54,16 +66,7 @@ async fn charge_test(
     headers: HeaderMap,
     Query(params): Query<ChargeParams>,
 ) -> impl IntoResponse {
-    let pool = match state.db.as_ref() {
-        Some(p) => p,
-        None => {
-            return (
-                StatusCode::SERVICE_UNAVAILABLE,
-                Json(json!({ "error": { "code": "db_unavailable" } })),
-            )
-                .into_response()
-        }
-    };
+    let pool = &state.db;
 
     let cost = params.cost_micros.unwrap_or(1_000); // default $0.001
     if cost <= 0 {
@@ -76,19 +79,19 @@ async fn charge_test(
 
     let _ = &headers; // X-Virtues-Purpose accepted, no-op in v3
 
-    match entitlement::charge(pool, &ent.bearer_hash, cost).await {
+    match entitlement::charge(pool, &ent.account_id, cost).await {
         Ok(ok) => (
             StatusCode::OK,
             Json(json!({
                 "real_cost_micros": ok.real_micros,
                 "billed_micros": ok.billed_micros,
-                "wallet_micros": ok.wallet_micros,
+                "balance_micros": ok.balance_micros,
             })),
         )
             .into_response(),
         Err(ChargeError::Expired) => (
             StatusCode::PAYMENT_REQUIRED,
-            Json(json!({ "error": { "code": "bearer_expired" } })),
+            Json(json!({ "error": { "code": "wallet_expired" } })),
         )
             .into_response(),
         Err(ChargeError::InsufficientBudget) => (
@@ -98,7 +101,7 @@ async fn charge_test(
             .into_response(),
         Err(ChargeError::NotFound) => (
             StatusCode::UNAUTHORIZED,
-            Json(json!({ "error": { "code": "unknown_bearer" } })),
+            Json(json!({ "error": { "code": "unknown_key" } })),
         )
             .into_response(),
         Err(ChargeError::InvalidCost) => (
@@ -109,11 +112,6 @@ async fn charge_test(
         Err(ChargeError::CallTooExpensive) => (
             StatusCode::BAD_REQUEST,
             Json(json!({ "error": { "code": "call_too_expensive" } })),
-        )
-            .into_response(),
-        Err(ChargeError::DailyCapReached) => (
-            StatusCode::PAYMENT_REQUIRED,
-            Json(json!({ "error": { "code": "daily_cap_reached" } })),
         )
             .into_response(),
         Err(ChargeError::Db(e)) => {

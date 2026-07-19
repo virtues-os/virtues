@@ -116,4 +116,9 @@ export const markdownKeybindings: Extension = keymap.of([
 		key: 'Mod-Shift-x',
 		run: (view) => toggleWrapper(view, '~~'),
 	},
+	{
+		// Highlight (==text==)
+		key: 'Mod-Shift-h',
+		run: (view) => toggleWrapper(view, '=='),
+	},
 ]);

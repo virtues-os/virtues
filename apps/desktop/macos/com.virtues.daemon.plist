@@ -1,0 +1,40 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <!-- System LaunchDaemon — runs as root at boot. -->
+    <!-- Install: sudo cp com.virtues.daemon.plist /Library/LaunchDaemons/ -->
+    <!--          sudo launchctl load -w /Library/LaunchDaemons/com.virtues.daemon.plist -->
+
+    <key>Label</key>
+    <string>com.virtues.daemon</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>/usr/local/bin/virtues-client</string>
+        <string>daemon</string>
+        <!-- The installer substitutes INSTALL_USER with the actual username,
+             e.g. via: sed "s/INSTALL_USER/$(logname)/g" -->
+        <string>--bundle-path</string>
+        <string>/Users/INSTALL_USER/.virtues/bundle.json</string>
+    </array>
+
+    <!-- Start at boot and restart on exit. -->
+    <key>RunAtLoad</key>
+    <true/>
+    <key>KeepAlive</key>
+    <true/>
+
+    <!-- Log to /var/log so root can read them. -->
+    <key>StandardOutPath</key>
+    <string>/var/log/virtues-daemon.log</string>
+    <key>StandardErrorPath</key>
+    <string>/var/log/virtues-daemon.log</string>
+
+    <!-- Cap restart rate: if the daemon crashes within 10s of starting,
+         wait 30s before trying again. Avoids hammering the system when the
+         server is not yet paired. -->
+    <key>ThrottleInterval</key>
+    <integer>30</integer>
+</dict>
+</plist>

@@ -2,14 +2,52 @@
 members = [
     "virtues-core",
     "crates/virtues-helpers",
-    "crates/virtues-wg",
+    "crates/virtues-iroh",
+    "crates/virtues-iroh-ffi",
+    "crates/virtues-reach-client",
     "crates/virtues-registry",
+    "crates/virtues-qnnd",
     "actions",
-    "apps/installer",
+    "apps/desktop",
     "services/virtues-api",
-    "services/atlas",
+    "services/virtues-atlas",
+    "tools/virtues-installer",
+]
+# The Tauri desktop app is a standalone crate built by the `tauri` CLI, with
+# its own Cargo.lock and release profile (panic=abort, lto). It must NOT be a
+# workspace member, or `cargo metadata` (which the tauri CLI runs) fails.
+exclude = [
+    "apps/web/src-tauri",
+    # Local Tauri mobile plugins, path-deps of the excluded src-tauri crate —
+    # must be excluded too so `cargo metadata` (run by the tauri CLI) resolves.
+    "apps/web/plugins/location-probe",
+    "apps/web/plugins/reach",
+    "apps/web/plugins/health",
+    "apps/web/plugins/eventkit",
+    "apps/web/plugins/contacts",
+    "apps/web/plugins/finance",
+    "apps/web/plugins/audio",
+    # Throwaway iroh evaluation crate — own Cargo.lock, kept out of the main
+    # build so iroh's dep tree can't destabilize it during the spike.
+    "spike-iroh",
+    # Vendored copy of iroh's `noq-udp` carrying a temporary GSO patch (see
+    # `[patch.crates-io]` below). Not a workspace member — it replaces the
+    # crates.io dep for the whole tree via the patch, not by being built here.
+    "vendor/noq-udp",
 ]
 resolver = "2"
+
+# TEMPORARY: force GSO (UDP segmentation offload) off in iroh's UDP layer.
+# Some NICs (e.g. the Jetson Orin tegra onboard wifi) pass iroh's GSO probe but
+# then fail every GSO `sendmsg` with EIO, stalling the QUIC path so no data flows
+# over a direct connection. iroh's runtime "halting segmentation offload" doesn't
+# propagate to quinn-proto's batching, so GSO keeps being used. The vendored copy
+# reports `max_gso_segments = 1` (GSO never batches) — NIC-agnostic, no config.
+# Remove this patch + the `vendor/noq-udp` dir once quinn PR #2653 lands the
+# EIO→resend-as-singles fallback upstream and we bump iroh.
+# https://github.com/quinn-rs/quinn/issues/2399
+[patch.crates-io]
+noq-udp = { path = "vendor/noq-udp" }
 
 [workspace.package]
 version = "0.1.0"
@@ -21,6 +59,16 @@ repository = "https://github.com/virtues-os/virtues"
 [profile.release]
 opt-level = 3
 lto = "thin"
+
+# Faster-compiling profile for staging/test builds: drops LTO and eases the
+# optimizer so CI turns around quicker. Runtime is marginally slower than
+# `release` (negligible for this I/O- and network-bound workload), so it's only
+# used for `*-staging.*` tags — production `v*` tags still build `release`.
+# release-linux.yml selects this via `--profile staging` (CARGO_PROFILE env).
+[profile.staging]
+inherits = "release"
+opt-level = 2
+lto = false
 
 [profile.dev]
 opt-level = 0

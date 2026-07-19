@@ -7,7 +7,7 @@ use chrono::{DateTime, Utc};
 use serde_json::Value;
 use sqlx::PgPool;
 use uuid::Uuid;
-use virtues_helpers::dedup::{build_batch_insert_query, BATCH_SIZE};
+use virtues_helpers::dedup::{build_batch_upsert_query, BATCH_SIZE};
 
 #[allow(clippy::type_complexity)]
 type TxRow = (
@@ -19,7 +19,7 @@ type TxRow = (
     Option<String>, // merchant_name
     Option<String>, // merchant_category
     Option<String>, // description
-    String,         // category (JSON)
+    Value,          // category (JSONB)
     bool,           // is_pending
     Option<String>, // transaction_type
     Option<String>, // payment_channel
@@ -140,7 +140,7 @@ pub async fn write_transactions(
             merchant_name,
             merchant_category,
             description,
-            serde_json::to_string(&categories).unwrap_or_else(|_| "[]".into()),
+            serde_json::json!(categories),
             is_pending,
             transaction_type,
             payment_channel,
@@ -165,12 +165,42 @@ async fn flush(db: &PgPool, records: &[TxRow]) -> Result<usize> {
     if records.is_empty() {
         return Ok(0);
     }
-    let sql = build_batch_insert_query(
+    let columns: &[&str] = &[
+        "id",
+        "account_id",
+        "transaction_id",
+        "amount",
+        "currency",
+        "merchant_name",
+        "merchant_category",
+        "description",
+        "category",
+        "is_pending",
+        "transaction_type",
+        "payment_channel",
+        "timestamp",
+        "authorized_timestamp",
+        "source_stream_id",
+        "source_table",
+        "source_provider",
+        "metadata",
+    ];
+    // UPSERT. Plaid's `/transactions/sync` returns `added` AND `modified`, and both
+    // arrive here — `modified` being Plaid correcting something it already told us.
+    // Under ON CONFLICT DO NOTHING every one of those corrections was discarded on
+    // arrival, so a pending $50 pre-auth that settled at $43.17 kept the $50, and kept
+    // its pending flag, forever. The correction is only visible in a diff Plaid will
+    // never send again (the cursor is consumed), so this is not a "fix it on the next
+    // sync" situation — it is the only chance.
+    //
+    // Every listed column is a pure function of the Plaid transaction object, so
+    // re-deriving one can only make an existing row more right. `id`, `transaction_id`
+    // and `source_stream_id` are identity and stay out of it.
+    let sql = build_batch_upsert_query(
         "data_financial_transaction",
+        columns,
+        "source_stream_id",
         &[
-            "id",
-            "account_id",
-            "transaction_id",
             "amount",
             "currency",
             "merchant_name",
@@ -182,12 +212,8 @@ async fn flush(db: &PgPool, records: &[TxRow]) -> Result<usize> {
             "payment_channel",
             "timestamp",
             "authorized_timestamp",
-            "source_stream_id",
-            "source_table",
-            "source_provider",
             "metadata",
         ],
-        "source_stream_id",
         records.len(),
     );
     let mut q = sqlx::query(&sql);
@@ -212,5 +238,47 @@ async fn flush(db: &PgPool, records: &[TxRow]) -> Result<usize> {
             .bind("plaid")
             .bind(&r.15);
     }
-    Ok(q.execute(db).await?.rows_affected() as usize)
+    Ok(q.fetch_all(db).await?.len())
+}
+
+/// Mark transactions Plaid says are gone.
+///
+/// `/transactions/sync` returns a `removed` list — a transaction was reversed, voided,
+/// or deleted at the bank. Nothing read it. The message was discarded on arrival and
+/// the transaction stayed in the user's finances permanently, which means a reversed
+/// charge quietly kept counting against them.
+///
+/// A tombstone, not a DELETE. "The bank took this back" is itself a fact worth keeping:
+/// deleting the row would leave a hole where a transaction used to be, and no way to
+/// tell that hole apart from one we never saw. `deleted_at_source` already exists on
+/// every ontology table for exactly this.
+///
+/// Plaid sends only `{"transaction_id": "..."}` here, so the join is on that.
+pub async fn tombstone_removed(db: &PgPool, removed: &[Value]) -> Result<usize> {
+    let ids: Vec<String> = removed
+        .iter()
+        .filter_map(|r| r.get("transaction_id").and_then(|v| v.as_str()))
+        .map(String::from)
+        .collect();
+    if ids.is_empty() {
+        return Ok(0);
+    }
+
+    let affected = sqlx::query(
+        "UPDATE data_financial_transaction
+         SET deleted_at_source = now(), updated_at = now()
+         WHERE transaction_id = ANY($1) AND deleted_at_source IS NULL",
+    )
+    .bind(&ids)
+    .execute(db)
+    .await?
+    .rows_affected();
+
+    if affected > 0 {
+        tracing::info!(
+            removed = affected,
+            "Plaid reported transactions removed upstream — tombstoned"
+        );
+    }
+    Ok(affected as usize)
 }

@@ -7,10 +7,32 @@
  */
 export const isTauri = typeof window !== 'undefined' && '__TAURI__' in window;
 
+/** The raw platform string, lowercased (empty when no navigator). */
+const platformStr =
+	typeof navigator !== 'undefined' ? navigator.platform.toLowerCase() : '';
+
 /**
  * Check if running on macOS (only relevant in Tauri)
  */
-export const isMacOS = isTauri && navigator.platform.toLowerCase().includes('mac');
+export const isMacOS = isTauri && platformStr.includes('mac');
+
+/** Running on Windows (only meaningful in Tauri). */
+export const isWindows = isTauri && platformStr.includes('win');
+
+/** Running on Linux (only meaningful in Tauri; excludes Android). */
+export const isLinux = isTauri && platformStr.includes('linux') && !platformStr.includes('android');
+
+/**
+ * A human label for "this computer", by OS. Falls back to "this computer"
+ * when the OS is unknown (e.g. plain browser).
+ */
+export const thisComputerLabel: string = isMacOS
+	? 'this Mac'
+	: isWindows
+		? 'this PC'
+		: isLinux
+			? 'this Linux machine'
+			: 'this computer';
 
 /**
  * Check if running in browser (not Tauri)

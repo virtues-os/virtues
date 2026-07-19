@@ -2,11 +2,18 @@
 
 pub mod backup;
 pub mod commands;
+pub mod configure_inference;
 pub mod diag;
+pub mod doctor;
+pub mod lake_adopt;
 pub mod link;
+pub mod reindex;
 pub mod report_crash;
+pub mod reset;
 pub mod restore;
 pub mod types;
+pub mod ui;
+pub mod uninstall;
 pub mod upgrade;
 
 use crate::Virtues;
@@ -23,15 +30,20 @@ pub async fn run(cli: Cli, virtues: Virtues) -> Result<(), Box<dyn std::error::E
             unreachable!("Init command should be handled in main.rs");
         }
 
-        Commands::Link => {
+        Commands::Pair { .. } => {
             // Handled in main.rs before the Virtues client is created — it
             // only needs the DB pool, not the full app stack.
-            unreachable!("Link command should be handled in main.rs");
+            unreachable!("Pair command should be handled in main.rs");
         }
 
         Commands::Sudo { .. } => {
             // Same — handled in main.rs against a bare DB pool.
             unreachable!("Sudo command should be handled in main.rs");
+        }
+
+        Commands::Device { .. } => {
+            // Same — handled in main.rs against a bare DB pool.
+            unreachable!("Device command should be handled in main.rs");
         }
 
         Commands::Backup { .. } => {
@@ -49,6 +61,35 @@ pub async fn run(cli: Cli, virtues: Virtues) -> Result<(), Box<dyn std::error::E
             // Same — and intentionally does NOT touch the DB; the new
             // binary's `migrate` does that after the binary swap.
             unreachable!("Upgrade command should be handled in main.rs");
+        }
+
+        Commands::Uninstall { .. } => {
+            // Same — must work even when the DB pool can't be built;
+            // a broken install is uninstall's primary use case.
+            unreachable!("Uninstall command should be handled in main.rs");
+        }
+
+        Commands::Reset { .. } => {
+            // Same — destructive schema management against a bare pool,
+            // like Restore/Uninstall.
+            unreachable!("Reset command should be handled in main.rs");
+        }
+
+        Commands::ConfigureInference { .. } => {
+            // Same — must run before the app builds the guarded embedder, which
+            // would fail on the fingerprint mismatch this command fixes.
+            unreachable!("ConfigureInference command should be handled in main.rs");
+        }
+
+        Commands::Reindex { .. } => {
+            // Same — runs before the normal init path, whose ensure_embedding_dims
+            // would refuse the width change on the still-populated index.
+            unreachable!("Reindex command should be handled in main.rs");
+        }
+        Commands::LakeAdopt { .. } => {
+            // Needs only a pool + STORAGE_PATH, so main.rs runs it before the client
+            // stack is built.
+            unreachable!("LakeAdopt command should be handled in main.rs");
         }
 
         Commands::Migrate => {
@@ -125,6 +166,16 @@ pub async fn run(cli: Cli, virtues: Virtues) -> Result<(), Box<dyn std::error::E
                 .map_err(|e| e.to_string())?;
         }
 
+        Commands::AccountLogin => {
+            // Pairs with `virtues init`'s [1] Log in branch; same idempotent
+            // migration guard as Subscribe so a standalone retry on a fresh
+            // box doesn't hit a missing-table error mid-login.
+            virtues.database.initialize().await?;
+            commands::deploy::handle_login(&virtues)
+                .await
+                .map_err(|e| e.to_string())?;
+        }
+
         Commands::ResolveEntities { hours } => {
             use crate::entity_resolution::{self, TimeWindow};
             println!("Running entity resolution for last {hours} hours...");
@@ -138,102 +189,23 @@ pub async fn run(cli: Cli, virtues: Virtues) -> Result<(), Box<dyn std::error::E
             println!("   duration:        {}ms", stats.duration_ms);
         }
 
-        Commands::VerifyTokens { bearer } => {
-            use crate::crypto::TokenEncryptor;
-            println!("Loading encryptor from VIRTUES_ENCRYPTION_KEY...");
-            let encryptor = match TokenEncryptor::from_env() {
-                Ok(e) => {
-                    println!("  ✓ encryptor loaded");
-                    e
-                }
-                Err(e) => {
-                    println!("  ✗ FAILED: {e}");
-                    return Ok(());
-                }
-            };
-            println!();
-
-            let rows: Vec<(String, String, Option<String>, String)> = sqlx::query_as(
-                r#"SELECT id, status, secret_lookup_hash, secrets_ciphertext
-                     FROM credentials WHERE source_id = 'ios'"#,
-            )
-            .fetch_all(virtues.database.pool())
-            .await?;
-
-            let bearer_hash = bearer
-                .as_deref()
-                .map(|b| encryptor.lookup_hash(b))
-                .transpose()?;
-
-            println!("Found {} iOS row(s) in credentials:", rows.len());
-            for (id, status, lookup_hash, secrets_ciphertext) in &rows {
-                println!();
-                println!("  id={id}");
-                println!("  status={status}");
-                match lookup_hash {
-                    Some(h) => {
-                        let prefix = &h[..h.len().min(16)];
-                        println!("  secret_lookup_hash: {prefix}…");
-                        if let Some(ref bh) = bearer_hash {
-                            if h == bh {
-                                println!("  ✓ MATCHES bearer hash");
-                            } else {
-                                println!("  ✗ does NOT match bearer hash");
-                            }
-                        }
-                    }
-                    None => {
-                        println!("  secret_lookup_hash: NULL (pending or revoked)");
-                    }
-                }
-                match encryptor.decrypt(secrets_ciphertext) {
-                    Ok(plaintext) => {
-                        let preview = if plaintext.len() > 60 {
-                            format!("{}…", &plaintext[..60])
-                        } else {
-                            plaintext
-                        };
-                        println!("  ✓ DECRYPT OK → {preview}");
-                    }
-                    Err(e) => println!("  ✗ DECRYPT FAILED: {e}"),
-                }
-            }
-        }
-
-        Commands::PairIos { device_id, name } => {
-            // Make sure the schema is in place before we touch it
-            println!("Running migrations...");
-            virtues.database.initialize().await?;
-
-            println!("Pairing iOS device '{name}'...");
-            let pool = virtues.database.pool();
-            let credential_id =
-                virtues_helpers::auth::mint_pending_credential(pool, "ios", &name).await?;
-            // The SERVER mints the bearer — never the device id (no
-            // stable-device-id-as-bearer). The supplied `device_id` is kept only
-            // as a non-secret label in metadata.
-            let bearer = virtues_helpers::auth::generate_bearer();
-            let device_info = serde_json::json!({ "device_id": device_id });
-            virtues_helpers::auth::finalize_self_issued_bearer(
-                pool,
-                &credential_id,
-                &bearer,
-                &device_info,
-            )
-            .await?;
-            crate::action_templates::reconcile_templates(pool).await?;
-
-            println!();
-            println!("✅ Paired");
-            println!("   credential_id:  {credential_id}");
-            println!("   bearer (paste into the app's keychain): {bearer}");
-        }
-
         Commands::WarmModels => {
             unreachable!("WarmModels command should be handled in main.rs");
         }
         Commands::Doctor => {
             unreachable!("Doctor command should be handled in main.rs");
+        }
+
+        Commands::Magnet => {
+            virtues.database.initialize().await?;
+            let pool = virtues.database.pool();
+
+            use crate::magnet::{self, NOTEBOOK, STORY};
+            let notebooks = magnet::run_all(pool, NOTEBOOK).await?;
+            let stories = magnet::run_all(pool, STORY).await?;
+
+            println!("magnet · notebooks attached {notebooks} · stories attached {stories}");
+            return Ok(());
         }
 
         Commands::ComputeNovelty => {
@@ -243,8 +215,11 @@ pub async fn run(cli: Cli, virtues: Virtues) -> Result<(), Box<dyn std::error::E
 
             let pool = virtues.database.pool();
 
-            // Get all dates that have events with summaries
-            let dates: Vec<String> = sqlx::query_scalar(
+            // `wiki_days.date` is DATE, not TEXT. Decoding it as String made
+            // this backfill fail on its very first row with a ColumnDecode
+            // error — so the one manual escape hatch from the cron's
+            // delete-then-score bug had itself never run.
+            let dates: Vec<chrono::NaiveDate> = sqlx::query_scalar(
                 "SELECT DISTINCT d.date FROM wiki_days d \
                  JOIN wiki_events e ON e.day_id = d.id \
                  WHERE e.event_summary IS NOT NULL AND e.event_summary != '' \
@@ -256,19 +231,18 @@ pub async fn run(cli: Cli, virtues: Virtues) -> Result<(), Box<dyn std::error::E
             println!("Found {} days with events to score", dates.len());
 
             let mut total_scored = 0u32;
-            for (i, date_str) in dates.iter().enumerate() {
-                let date = date_str.parse::<chrono::NaiveDate>()
-                    .map_err(|e| format!("Bad date {}: {}", date_str, e))?;
+            for (i, date) in dates.iter().enumerate() {
+                let date = *date;
 
                 match crate::dayline::novelty::compute_novelty_for_day(pool, date).await {
                     Ok(scored) => {
                         total_scored += scored;
                         if scored > 0 || (i + 1) % 10 == 0 {
-                            println!("  {} — {} events scored ({}/{})", date_str, scored, i + 1, dates.len());
+                            println!("  {} — {} events scored ({}/{})", date, scored, i + 1, dates.len());
                         }
                     }
                     Err(e) => {
-                        eprintln!("  {} — error: {}", date_str, e);
+                        eprintln!("  {} — error: {}", date, e);
                     }
                 }
             }
@@ -278,9 +252,8 @@ pub async fn run(cli: Cli, virtues: Virtues) -> Result<(), Box<dyn std::error::E
             // Topic/entity novelty
             println!("Computing topic/entity novelty...");
             let mut total_te = 0u32;
-            for (i, date_str) in dates.iter().enumerate() {
-                let date = date_str.parse::<chrono::NaiveDate>()
-                    .map_err(|e| format!("Bad date {}: {}", date_str, e))?;
+            for (i, date) in dates.iter().enumerate() {
+                let date = *date;
 
                 match crate::dayline::topic_entity_novelty::compute_topic_entity_novelty(pool, date).await {
                     Ok(updated) => {
@@ -290,7 +263,7 @@ pub async fn run(cli: Cli, virtues: Virtues) -> Result<(), Box<dyn std::error::E
                         }
                     }
                     Err(e) => {
-                        eprintln!("  {} — topic/entity error: {}", date_str, e);
+                        eprintln!("  {} — topic/entity error: {}", date, e);
                     }
                 }
             }
@@ -298,9 +271,66 @@ pub async fn run(cli: Cli, virtues: Virtues) -> Result<(), Box<dyn std::error::E
             println!("Topic/entity novelty: {} events updated.", total_te);
         }
 
-        Commands::DaySummary { date } => {
+        Commands::AnnotateEvents => {
             println!("Running migrations...");
             virtues.database.initialize().await?;
+            println!("Annotating events (avg_hr, entities, source_ontologies)...");
+
+            let pool = virtues.database.pool();
+            let dates: Vec<chrono::NaiveDate> = sqlx::query_scalar(
+                "SELECT DISTINCT d.date FROM wiki_days d \
+                 JOIN wiki_events e ON e.day_id = d.id ORDER BY d.date"
+            )
+            .fetch_all(pool)
+            .await?;
+
+            let mut total = 0u32;
+            for date in &dates {
+                match crate::dayline::annotate::annotate_events_for_day(pool, *date).await {
+                    Ok(n) => total += n,
+                    Err(e) => eprintln!("  {} — error: {}", date, e),
+                }
+            }
+            println!("Annotated {} events across {} days.", total, dates.len());
+        }
+
+        Commands::SessionizeAudio { date } => {
+            virtues.database.initialize().await?;
+            let pool = virtues.database.pool();
+
+            let dates: Vec<chrono::NaiveDate> = if let Some(d) = date {
+                vec![d.parse().map_err(|e| format!("bad date: {e}"))?]
+            } else {
+                sqlx::query_scalar(
+                    "SELECT DISTINCT start_time::date FROM data_communication_transcription ORDER BY 1",
+                )
+                .fetch_all(pool)
+                .await?
+            };
+
+            let mut total = 0u32;
+            for d in &dates {
+                match crate::sessionize::audio::sessionize_day(pool, *d).await {
+                    Ok(n) => {
+                        total += n;
+                        println!("  {d}: {n} sessions");
+                    }
+                    Err(e) => eprintln!("  {d} — error: {e}"),
+                }
+            }
+            println!("Sessionized {} audio sessions across {} day(s).", total, dates.len());
+            return Ok(());
+        }
+
+        Commands::DaySummary { date, narrate_only, segment_only } => {
+            // `--narrate-only` / `--segment-only` read an already-migrated DB (e.g.
+            // a box snapshot) and only re-run one stage — skip migrations so a
+            // snapshot whose `_sqlx_migrations` checksums differ from this branch
+            // still runs.
+            if !narrate_only && !segment_only {
+                println!("Running migrations...");
+                virtues.database.initialize().await?;
+            }
 
             let pool = virtues.database.pool();
 
@@ -329,8 +359,114 @@ pub async fn run(cli: Cli, virtues: Virtues) -> Result<(), Box<dyn std::error::E
                 .flatten()
                 .and_then(|s| s.parse().ok());
 
-            println!("Generating day summary for {target_date}...");
-            let day = crate::api::day_summary::generate_day_summary(pool, target_date).await?;
+            // `--segment-only`: re-run just the DETECTIVE and print the timeline —
+            // no scoring, no narrative, no embedder. Clear the sources fingerprint
+            // first so segmentation actually re-cuts even when sources are
+            // unchanged (its idempotency check would otherwise no-op). For
+            // inspecting how the detective segments a day, and its run-to-run
+            // variance, in isolation.
+            if segment_only {
+                sqlx::query("UPDATE wiki_days SET sources_fingerprint = NULL WHERE date = $1")
+                    .bind(target_date)
+                    .execute(pool)
+                    .await?;
+                println!("Rolling audio chunks into sessions...");
+                let sessions = crate::sessionize::audio::sessionize_day(pool, target_date).await?;
+                println!("  {sessions} audio sessions");
+                println!("Segmenting {target_date} into events (detective, forced re-cut)...");
+                let n = crate::api::day_summary::segment_day_events(pool, target_date).await?;
+                println!("  {n} events");
+                crate::dayline::sleep::resolve_sleep_events(pool, target_date).await;
+                let gap_ops = crate::dayline::gaps::classify_day_gaps(pool, target_date).await?;
+                println!("  {gap_ops} gap ops (slivers absorbed / transit labelled)");
+
+                let day_id: Option<String> =
+                    sqlx::query_scalar("SELECT id FROM wiki_days WHERE date = $1")
+                        .bind(target_date)
+                        .fetch_optional(pool)
+                        .await?;
+                if let Some(day_id) = day_id {
+                    let events = crate::api::wiki::get_day_events(pool, day_id).await?;
+                    println!();
+                    println!("Event timeline ({}):", events.len());
+                    for ev in &events {
+                        let label = ev
+                            .auto_label
+                            .as_deref()
+                            .or(ev.user_label.as_deref())
+                            .unwrap_or("(no label)");
+                        let (start_fmt, end_fmt) = if let Some(tz) = tz_for_display {
+                            (
+                                ev.start_time.with_timezone(&tz).format("%H:%M").to_string(),
+                                ev.end_time.with_timezone(&tz).format("%H:%M").to_string(),
+                            )
+                        } else {
+                            (
+                                ev.start_time.format("%H:%M").to_string(),
+                                ev.end_time.format("%H:%M").to_string(),
+                            )
+                        };
+                        println!("  {start_fmt} → {end_fmt}  {label}");
+                        if let Some(summary) =
+                            ev.event_summary.as_ref().filter(|s| !s.trim().is_empty())
+                        {
+                            println!("                  {summary}");
+                        }
+                    }
+                }
+                return Ok(());
+            }
+
+            // The full nightly chain, in the SAME order the action runs it, so a
+            // local run is a faithful reproduction (and the narrative actually sees
+            // the scores). Order is load-bearing: segment DELETES and re-creates the
+            // auto events, so every scoring step must follow it (guarded by
+            // tests/day_pipeline.rs).
+            //
+            //   sessionize → DETECTIVE (Chat) → sleep → annotate → novelty →
+            //   autonomic → topic/entity → DAY SUMMARY (Chat)
+            //
+            // `--narrate-only` skips everything up to the narrative: it reads the
+            // day's EXISTING scored events and re-runs just `narrate_day`. For
+            // iterating on the narrate prompt without re-segmenting (no detective
+            // call) or re-scoring (no embedder / NPU).
+            if !narrate_only {
+                println!("Rolling audio chunks into sessions...");
+                let sessions =
+                    crate::sessionize::audio::sessionize_day(pool, target_date).await?;
+                println!("  {sessions} audio sessions");
+
+                println!("Segmenting {target_date} into events (detective)...");
+                let n = crate::api::day_summary::segment_day_events(pool, target_date).await?;
+                println!("  {n} events");
+
+                // Scoring sits BETWEEN the two agents — it is what lets the narrative
+                // name the day's most novel event.
+                println!("Scoring events (sleep, gaps, annotate, novelty, autonomic, topic)...");
+                crate::dayline::sleep::resolve_sleep_events(pool, target_date).await;
+                // Settle the spine: absorb sub-15-min slivers, label transit. After
+                // sleep, before scoring — so transit is scored like any event.
+                let gap_ops = crate::dayline::gaps::classify_day_gaps(pool, target_date).await?;
+                println!("  {gap_ops} gap ops (slivers absorbed / transit labelled)");
+                crate::dayline::annotate::annotate_events_for_day(pool, target_date).await?;
+                crate::dayline::novelty::compute_novelty_for_day(pool, target_date).await?;
+                crate::dayline::autonomic_scoring::compute_autonomic_for_day(pool, target_date)
+                    .await?;
+                crate::dayline::topic_entity_novelty::compute_topic_entity_novelty(
+                    pool,
+                    target_date,
+                )
+                .await?;
+            } else {
+                println!("--narrate-only: skipping sessionize / detective / scoring");
+            }
+
+            println!("Narrating {target_date} (day summary)...");
+            let Some(day) = crate::api::day_summary::narrate_day(pool, target_date).await? else {
+                println!();
+                println!("· Not enough of a day to write about — no narrative, and no LLM call.");
+                return Ok(());
+            };
 
             println!();
             println!("✅ Day summary written to wiki_days id={}", day.id);
@@ -392,7 +528,7 @@ pub async fn run(cli: Cli, virtues: Virtues) -> Result<(), Box<dyn std::error::E
 
             let pool = virtues.database.pool();
 
-            let dates: Vec<String> = sqlx::query_scalar(
+            let dates: Vec<chrono::NaiveDate> = sqlx::query_scalar(
                 "SELECT DISTINCT d.date FROM wiki_days d \
                  JOIN wiki_events e ON e.day_id = d.id \
                  WHERE e.avg_hr IS NOT NULL \
@@ -404,19 +540,19 @@ pub async fn run(cli: Cli, virtues: Virtues) -> Result<(), Box<dyn std::error::E
             println!("Found {} days with HR data to score", dates.len());
 
             let mut total_scored = 0u32;
-            for (i, date_str) in dates.iter().enumerate() {
-                let date = date_str.parse::<chrono::NaiveDate>()
-                    .map_err(|e| format!("Bad date {}: {}", date_str, e))?;
+            for (i, date) in dates.iter().enumerate() {
+                let date = *date;
+
 
                 match crate::dayline::autonomic_scoring::compute_autonomic_for_day(pool, date).await {
                     Ok(scored) => {
                         total_scored += scored;
                         if scored > 0 || (i + 1) % 10 == 0 {
-                            println!("  {} — {} events scored ({}/{})", date_str, scored, i + 1, dates.len());
+                            println!("  {} — {} events scored ({}/{})", date, scored, i + 1, dates.len());
                         }
                     }
                     Err(e) => {
-                        eprintln!("  {} — error: {}", date_str, e);
+                        eprintln!("  {} — error: {}", date, e);
                     }
                 }
             }

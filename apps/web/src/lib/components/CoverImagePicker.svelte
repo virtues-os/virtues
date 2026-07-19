@@ -6,7 +6,13 @@
 	 * Use inside a Popover primitive for proper positioning and dismiss behavior.
 	 */
 	import Icon from './Icon.svelte';
-	import { listDriveFiles, uploadMedia, type DriveFile } from '$lib/api/client';
+	import {
+		listDriveFiles,
+		uploadMedia,
+		searchUnsplash as searchUnsplashApi,
+		ApiError,
+		type DriveFile
+	} from '$lib/api/client';
 
 	interface Props {
 		/** Current cover URL */
@@ -32,7 +38,7 @@
 	let uploadProgress = $state(0);
 	let uploadError = $state<string | null>(null);
 	let dragOver = $state(false);
-	let fileInputEl: HTMLInputElement;
+	let fileInputEl = $state<HTMLInputElement>();
 
 	// Library tab state
 	let libraryImages = $state<DriveFile[]>([]);
@@ -54,7 +60,7 @@
 	let unsplashLoading = $state(false);
 	let unsplashError = $state<string | null>(null);
 	let unsplashSearchTimeout: ReturnType<typeof setTimeout> | null = null;
-	let searchInputEl: HTMLInputElement;
+	let searchInputEl = $state<HTMLInputElement>();
 
 	// Upload handlers
 	async function handleFileSelect(files: FileList | null) {
@@ -162,19 +168,27 @@
 		unsplashLoading = true;
 		unsplashError = null;
 		try {
-			const res = await fetch('/api/unsplash/search', {
-				method: 'POST',
-				headers: { 'Content-Type': 'application/json' },
-				body: JSON.stringify({ query: query.trim(), per_page: 16 }),
+			const data = await searchUnsplashApi<{ results?: UnsplashPhoto[] }>({
+				query: query.trim(),
+				per_page: 16
 			});
-			if (!res.ok) {
-				const err = await res.json().catch(() => ({ error: res.statusText }));
-				throw new Error(err.error?.message || err.error || 'Search failed');
-			}
-			const data = await res.json();
 			unsplashResults = data.results || [];
 		} catch (e) {
-			unsplashError = e instanceof Error ? e.message : 'Search failed';
+			if (e instanceof ApiError) {
+				const err = e.body as { error?: { code?: string; message?: string } | string } | undefined;
+				const errObj = err && typeof err.error === 'object' ? err.error : null;
+				// Don't leak backend config errors — show a friendly, actionable line.
+				if (errObj?.code === 'service_not_configured' || e.status === 503) {
+					unsplashError = 'Image search is temporarily unavailable.';
+				} else {
+					unsplashError =
+						errObj?.message ||
+						(typeof err?.error === 'string' ? err.error : null) ||
+						'Search failed';
+				}
+			} else {
+				unsplashError = e instanceof Error ? e.message : 'Search failed';
+			}
 			unsplashResults = [];
 		} finally {
 			unsplashLoading = false;

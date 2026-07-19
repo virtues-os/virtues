@@ -11,7 +11,7 @@
 
 <script lang="ts">
 	import { type Tab, routeToEntityId } from '$lib/tabs/types';
-	import { spaceStore } from '$lib/stores/space.svelte';
+	import { windowShellStore } from '$lib/stores/window-shell.svelte';
 	import Icon from '$lib/components/Icon.svelte';
 	import Badge from '$lib/components/Badge.svelte';
 	import Button from '$lib/components/Button.svelte';
@@ -125,7 +125,7 @@
 	}
 
 	function backToSources() {
-		spaceStore.openTabFromRoute('/sources');
+		windowShellStore.openTabFromRoute('/sources');
 	}
 </script>
 
@@ -264,7 +264,7 @@
 		color: var(--color-foreground-subtle, #9ca3af);
 	}
 	.state.error {
-		color: #b91c1c;
+		color: color-mix(in srgb, var(--color-error) 75%, #000);
 	}
 
 	.back {
@@ -300,7 +300,7 @@
 		place-items: center;
 		width: 44px;
 		height: 44px;
-		border-radius: 999px;
+		border-radius: var(--radius-full);
 		background: var(--color-surface-elevated, #f3f4f6);
 		color: var(--color-foreground-muted, #6b7280);
 		flex-shrink: 0;

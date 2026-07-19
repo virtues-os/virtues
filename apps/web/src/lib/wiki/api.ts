@@ -65,26 +65,14 @@ export interface WikiOrganizationApi {
 	updated_at: string;
 }
 
-export interface WikiThingApi {
-	id: string;
-	name: string;
-	category: string | null;
-	description: string | null;
-	content: string | null;
-	cover_image: string | null;
-	created_at: string;
-	updated_at: string;
-}
 
 export interface WikiDayApi {
 	id: string;
 	date: string; // ISO date string
 	start_timezone: string | null;
-	end_timezone: string | null;
 	autobiography: string | null;
 	autobiography_sections: Array<{ id: string; heading: string; content: string; authored_by: string; last_edited_at: string }> | null;
 	epigraph: string | null;
-	has_illustration: boolean;
 	last_edited_by: string | null;
 	cover_image: string | null;
 	act_id: string | null;
@@ -187,12 +175,6 @@ export interface WikiOrganizationListItem {
 	relationship_type: string | null;
 }
 
-export interface WikiThingListItem {
-	id: string;
-	name: string;
-	category: string | null;
-	description: string | null;
-}
 
 // ============================================================================
 // API Functions
@@ -300,37 +282,6 @@ export async function updateOrganization(
 	fetchFn: FetchFn = fetch
 ): Promise<WikiOrganizationApi | null> {
 	const res = await fetchFn(`/api/wiki/organization/${id}`, {
-		method: "PUT",
-		headers: { "Content-Type": "application/json" },
-		body: JSON.stringify(data),
-	});
-	if (!res.ok) return null;
-	return res.json();
-}
-
-// --- Thing ---
-
-export async function getThingById(
-	id: string,
-	fetchFn: FetchFn = fetch
-): Promise<WikiThingApi | null> {
-	const res = await fetchFn(`/api/wiki/thing/${encodeURIComponent(id)}`);
-	if (!res.ok) return null;
-	return res.json();
-}
-
-export async function listThings(fetchFn: FetchFn = fetch): Promise<WikiThingListItem[]> {
-	const res = await fetchFn("/api/wiki/things");
-	if (!res.ok) return [];
-	return res.json();
-}
-
-export async function updateThing(
-	id: string,
-	data: Partial<WikiThingApi>,
-	fetchFn: FetchFn = fetch
-): Promise<WikiThingApi | null> {
-	const res = await fetchFn(`/api/wiki/thing/${id}`, {
 		method: "PUT",
 		headers: { "Content-Type": "application/json" },
 		body: JSON.stringify(data),
@@ -542,7 +493,7 @@ export interface UpdateTemporalEventRequest {
 
 /**
  * Get citations for a wiki page.
- * @param sourceType - The type of wiki page (person, place, organization, thing, telos, act, chapter, day)
+ * @param sourceType - The type of wiki page (person, place, organization, telos, act, chapter, day)
  * @param sourceId - The UUID of the wiki page
  */
 export async function getCitations(
@@ -676,6 +627,9 @@ export interface DaySourceApi {
 	timestamp: string;
 	label: string;
 	preview: string | null;
+	/** High-frequency measurement streams (heart rate, steps, HRV). Hidden by
+	 *  default on the day page behind a filter, since a day holds thousands. */
+	continuous: boolean;
 }
 
 /**
@@ -687,7 +641,12 @@ export async function getDaySources(
 	date: string,
 	fetchFn: FetchFn = fetch
 ): Promise<DaySourceApi[]> {
-	const res = await fetchFn(`/api/wiki/day/${encodeURIComponent(date)}/sources`);
+	// Pass the viewing device's IANA zone so an in-progress "today" is anchored to
+	// where the owner currently is (see docs/timezone-model.md). Harmless for past
+	// days — the server prefers the day's locked start_timezone.
+	const tz = Intl.DateTimeFormat().resolvedOptions().timeZone;
+	const qs = tz ? `?tz=${encodeURIComponent(tz)}` : "";
+	const res = await fetchFn(`/api/wiki/day/${encodeURIComponent(date)}/sources${qs}`);
 	if (!res.ok) return [];
 	return res.json();
 }
@@ -762,6 +721,127 @@ export async function getDayTimeline(
 ): Promise<TimelineDayView | null> {
 	const res = await fetchFn(`/api/timeline/day/${encodeURIComponent(date)}`);
 	if (!res.ok) return null;
+	return res.json();
+}
+
+// ============================================================================
+// Today Streams — the three raw record streams, as spans, before synthesis
+// ============================================================================
+
+export interface TodayLocationSpan {
+	id: string;
+	start_time: string;
+	end_time: string;
+	place_name: string | null;
+	place_category: string | null;
+	duration_minutes: number | null;
+}
+
+export interface TodayCalendarSpan {
+	id: string;
+	start_time: string;
+	end_time: string;
+	title: string;
+	is_all_day: boolean;
+	is_sacred: boolean;
+	location_name: string | null;
+	calendar_name: string | null;
+}
+
+export interface TodayAudioSpan {
+	id: string;
+	start_time: string;
+	end_time: string;
+	/** the box flagged this ~5-min chunk as silence */
+	is_silent: boolean;
+}
+
+export interface TodayStreamsView {
+	date: string;
+	timezone: string;
+	location: TodayLocationSpan[];
+	calendar: TodayCalendarSpan[];
+	audio: TodayAudioSpan[];
+}
+
+/**
+ * Get the three raw record streams (location, calendar, audio) for a day, as
+ * spans — the "day before synthesis" homepage view. Passes the viewing device's
+ * IANA zone so an in-progress "today" is anchored to where the owner is.
+ * @param date - The date in YYYY-MM-DD format
+ */
+export async function getTodayStreams(
+	date: string,
+	fetchFn: FetchFn = fetch,
+): Promise<TodayStreamsView | null> {
+	const tz = Intl.DateTimeFormat().resolvedOptions().timeZone;
+	const qs = tz ? `?tz=${encodeURIComponent(tz)}` : "";
+	const res = await fetchFn(`/api/today/${encodeURIComponent(date)}/streams${qs}`);
+	if (!res.ok) return null;
+	return res.json();
+}
+
+// ============================================================================
+// Home-page loops — weather, upcoming calendar, unnamed-place backlog
+// ============================================================================
+
+export interface WeatherNow {
+	temperature_c: number | null;
+	apparent_c: number | null;
+	humidity_pct: number | null;
+	wind_kph: number | null;
+	is_day: boolean | null;
+	weather_code: number | null;
+	condition: string;
+	temp_max_c: number | null;
+	temp_min_c: number | null;
+	sunrise: string | null;
+	sunset: string | null;
+	valid_time: string;
+}
+
+/** Current weather for the masthead. Null until the weather_sync cron runs. */
+export async function getWeatherNow(fetchFn: FetchFn = fetch): Promise<WeatherNow | null> {
+	const res = await fetchFn("/api/weather/current");
+	if (!res.ok) return null;
+	return res.json();
+}
+
+export interface UpcomingEvent {
+	id: string;
+	title: string;
+	start_time: string;
+	end_time: string;
+	is_all_day: boolean;
+	location_name: string | null;
+	is_sacred: boolean;
+}
+
+/** The next few calendar events (holidays/birthdays filtered out). */
+export async function getCalendarUpcoming(
+	limit = 5,
+	fetchFn: FetchFn = fetch,
+): Promise<UpcomingEvent[]> {
+	const res = await fetchFn(`/api/calendar/upcoming?limit=${limit}`);
+	if (!res.ok) return [];
+	return res.json();
+}
+
+export interface UnnamedPlace {
+	id: string;
+	name: string;
+	visit_count: number;
+	latitude: number | null;
+	longitude: number | null;
+}
+
+/** Places visited but never named — the home "name this place" ask. */
+export async function getUnnamedPlaces(
+	limit = 3,
+	fetchFn: FetchFn = fetch,
+): Promise<UnnamedPlace[]> {
+	const res = await fetchFn(`/api/places/unnamed?limit=${limit}`);
+	if (!res.ok) return [];
 	return res.json();
 }
 

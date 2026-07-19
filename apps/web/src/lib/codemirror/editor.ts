@@ -12,15 +12,16 @@ import { bracketMatching, indentOnInput } from '@codemirror/language';
 import { GFM } from '@lezer/markdown';
 import { languages } from '@codemirror/language-data';
 import { EditorState, type Extension } from '@codemirror/state';
-import { EditorView, keymap, lineNumbers, placeholder as cmPlaceholder } from '@codemirror/view';
+import { EditorView, keymap, placeholder as cmPlaceholder } from '@codemirror/view';
 import { yCollab, yUndoManagerKeymap } from 'y-codemirror.next';
 import type { Awareness } from 'y-protocols/awareness';
 import type { Text as YText } from 'yjs';
 
 import { checkboxes } from './extensions/checkboxes';
 import { codeBlocks } from './extensions/code-blocks';
-import { entityLinks } from './extensions/entity-links';
+import { entityLinks } from './extensions/ref-links';
 import { markdownKeybindings } from './extensions/keybindings';
+import { listRenumber } from './extensions/list-renumber';
 import { livePreview } from './extensions/live-preview';
 import { mediaWidgets } from './extensions/media-widgets';
 import { shikiHighlight } from './extensions/shiki-highlight';
@@ -33,7 +34,6 @@ export interface CodeMirrorEditorOptions {
 	awareness: Awareness;
 	readOnly?: boolean;
 	placeholder?: string;
-	showLineNumbers?: boolean;
 	extensions?: Extension[];
 	onDocChange?: (content: string) => void;
 }
@@ -44,8 +44,7 @@ export function createCodeMirrorEditor(options: CodeMirrorEditorOptions): Editor
 		ytext,
 		awareness,
 		readOnly = false,
-		placeholder = 'Type / for commands, @ for entities...',
-		showLineNumbers = false,
+		placeholder = 'Start writing, or press / for commands…',
 		extensions: extraExtensions = [],
 		onDocChange,
 	} = options;
@@ -55,7 +54,6 @@ export function createCodeMirrorEditor(options: CodeMirrorEditorOptions): Editor
 		yCollab(ytext, awareness),
 
 		// Markdown language support (GFM = Strikethrough + Table + TaskList)
-		// @ts-expect-error — @lezer/common version mismatch between hoisted and pnpm copies
 		markdown({ codeLanguages: languages, extensions: GFM }),
 
 		// Basic editing features
@@ -81,6 +79,9 @@ export function createCodeMirrorEditor(options: CodeMirrorEditorOptions): Editor
 		shikiHighlight,
 		tables,
 
+		// Keep ordered lists sequential after edits
+		listRenumber,
+
 		// Markdown formatting keybindings
 		markdownKeybindings,
 
@@ -91,11 +92,6 @@ export function createCodeMirrorEditor(options: CodeMirrorEditorOptions): Editor
 		EditorView.editable.of(!readOnly),
 		EditorState.readOnly.of(readOnly),
 	];
-
-	// Optional line numbers gutter
-	if (showLineNumbers) {
-		baseExtensions.push(lineNumbers());
-	}
 
 	// Doc change listener
 	if (onDocChange) {
@@ -137,7 +133,6 @@ export function createReadOnlyEditor(options: ReadOnlyEditorOptions): EditorView
 		state: EditorState.create({
 			doc: content,
 			extensions: [
-				// @ts-expect-error — @lezer/common version mismatch
 				markdown({ codeLanguages: languages, extensions: GFM }),
 				EditorView.lineWrapping,
 				virtuesTheme,

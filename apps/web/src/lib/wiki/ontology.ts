@@ -15,6 +15,8 @@ const ONTOLOGY_NAMES: Record<string, string> = {
 	transaction: "Financial Transactions",
 	transcription: "Voice Transcriptions",
 	steps: "Steps",
+	heart_rate: "Heart Rate",
+	hrv: "Heart Rate Variability",
 	chat: "Chat Sessions",
 	page: "Page Edits",
 	listening: "Listening History",

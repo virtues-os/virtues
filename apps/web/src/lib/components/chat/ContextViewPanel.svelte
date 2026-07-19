@@ -1,4 +1,7 @@
 <script lang="ts">
+	import { getChatUsage, getChat, compactChat } from '$lib/api/client';
+	import { formatDateTime } from '$lib/utils/dateUtils';
+
 	interface SessionUsage {
 		session_id: string;
 		model: string;
@@ -83,16 +86,13 @@
 		contextViewError = null;
 
 		try {
-			const [usageRes, sessionRes] = await Promise.all([
-				fetch(`/api/chats/${conversationId}/usage`),
-				fetch(`/api/chats/${conversationId}`)
+			const [usage, session] = await Promise.all([
+				getChatUsage<SessionUsage>(conversationId),
+				getChat<SessionDetail>(conversationId)
 			]);
 
-			if (!usageRes.ok) throw new Error(`Failed to fetch usage: ${usageRes.status}`);
-			if (!sessionRes.ok) throw new Error(`Failed to fetch session: ${sessionRes.status}`);
-
-			sessionUsage = await usageRes.json();
-			sessionDetail = await sessionRes.json();
+			sessionUsage = usage;
+			sessionDetail = session;
 		} catch (e) {
 			contextViewError = e instanceof Error ? e.message : 'Unknown error';
 		} finally {
@@ -105,13 +105,7 @@
 
 		compacting = true;
 		try {
-			const res = await fetch(`/api/chats/${conversationId}/compact`, {
-				method: 'POST',
-				headers: { 'Content-Type': 'application/json' },
-				body: JSON.stringify({ force: true })
-			});
-
-			if (!res.ok) throw new Error(`Failed to compact: ${res.status}`);
+			await compactChat(conversationId, true);
 
 			await fetchContextViewData();
 			onCompacted?.();
@@ -167,11 +161,11 @@
 
 	function formatDate(date: string | null): string {
 		if (!date) return '—';
-		return new Date(date).toLocaleString();
+		return formatDateTime(date);
 	}
 
 	function formatShortDate(date: string): string {
-		return new Date(date).toLocaleString('en-US', {
+		return formatDateTime(date, {
 			month: 'short',
 			day: 'numeric',
 			hour: 'numeric',
@@ -384,10 +378,10 @@
 		min-width: 2px;
 	}
 
-	.cv-segment.cv-user { background: #10b981; }
-	.cv-segment.cv-assistant { background: #ec4899; }
-	.cv-segment.cv-tools { background: #eab308; }
-	.cv-segment.cv-other { background: #6b7280; }
+	.cv-segment.cv-user { background: var(--cat-emerald); }
+	.cv-segment.cv-assistant { background: var(--cat-pink); }
+	.cv-segment.cv-tools { background: var(--cat-yellow); }
+	.cv-segment.cv-other { background: var(--color-foreground-muted); }
 
 	.cv-legend {
 		display: flex;
@@ -407,10 +401,10 @@
 		vertical-align: middle;
 	}
 
-	.cv-dot.cv-user { background: #10b981; }
-	.cv-dot.cv-assistant { background: #ec4899; }
-	.cv-dot.cv-tools { background: #eab308; }
-	.cv-dot.cv-other { background: #6b7280; }
+	.cv-dot.cv-user { background: var(--cat-emerald); }
+	.cv-dot.cv-assistant { background: var(--cat-pink); }
+	.cv-dot.cv-tools { background: var(--cat-yellow); }
+	.cv-dot.cv-other { background: var(--color-foreground-muted); }
 
 	.cv-bar.cv-empty {
 		background: var(--color-surface-elevated);

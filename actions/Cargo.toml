@@ -11,31 +11,14 @@ description = "Virtues action binaries: one subprocess per data source stream"
 [lib]
 path = "src/lib.rs"
 
-# ── iOS action binaries ─────────────────────────────────────────────────────
+# ── iOS ingest (one binary + one action, all paired-iPhone streams) ─────────
+# Single dispatcher for healthkit/location/eventkit/contacts/microphone/
+# financekit. The phone tags each push with a `stream` field and the dispatcher
+# fans it to the right ontology table; see ios_ingest/main.rs.
 
 [[bin]]
-name = "ios_healthkit"
-path = "ios_healthkit/main.rs"
-
-[[bin]]
-name = "ios_location"
-path = "ios_location/main.rs"
-
-[[bin]]
-name = "ios_eventkit"
-path = "ios_eventkit/main.rs"
-
-[[bin]]
-name = "ios_financekit"
-path = "ios_financekit/main.rs"
-
-[[bin]]
-name = "ios_contacts"
-path = "ios_contacts/main.rs"
-
-[[bin]]
-name = "ios_microphone"
-path = "ios_microphone/main.rs"
+name = "ios_ingest"
+path = "ios_ingest/main.rs"
 
 [[bin]]
 name = "transcription_resolution"
@@ -46,6 +29,10 @@ name = "day_summary_eod"
 path = "day_summary_eod/main.rs"
 
 [[bin]]
+name = "narrative_identity_draft"
+path = "narrative_identity_draft/main.rs"
+
+[[bin]]
 name = "embedding_index"
 path = "embedding_index/main.rs"
 
@@ -53,15 +40,11 @@ path = "embedding_index/main.rs"
 name = "credential_refresh"
 path = "credential_refresh/main.rs"
 
-[[bin]]
-name = "virtues_api_renew"
-path = "virtues_api_renew/main.rs"
-
 # ── Mac stream (self_issued_bearer like iOS) ────────────────────────────────
 
 [[bin]]
-name = "mac_activity"
-path = "mac_activity/main.rs"
+name = "mac_ingest"
+path = "mac_ingest/main.rs"
 
 # ── Google syncs (via_proxy) ────────────────────────────────────────────────
 
@@ -72,6 +55,12 @@ path = "google_calendar_sync/main.rs"
 [[bin]]
 name = "google_gmail_sync"
 path = "google_gmail_sync/main.rs"
+
+# ── Weather (Open-Meteo, no auth) ───────────────────────────────────────────
+
+[[bin]]
+name = "weather_sync"
+path = "weather_sync/main.rs"
 
 # ── Notion / Strava (via_proxy) ─────────────────────────────────────────────
 
@@ -101,6 +90,12 @@ path = "plaid_investments_sync/main.rs"
 name = "plaid_liabilities_sync"
 path = "plaid_liabilities_sync/main.rs"
 
+# ── One-time import (manual-trigger, no cron) ───────────────────────────────
+
+[[bin]]
+name = "chat_import"
+path = "chat_import/main.rs"
+
 # ── Example app-runtime action ──────────────────────────────────────────────
 
 [[bin]]
@@ -110,6 +105,13 @@ path = "echo_app/main.rs"
 [dependencies]
 virtues = { path = "../virtues-core" }
 virtues-helpers = { path = "../crates/virtues-helpers" }
+# Model-slot resolution (the Omni slot for audio transcription) — actions pick
+# models from the same registry the server does, never a hardcoded id.
+virtues-registry = { path = "../crates/virtues-registry" }
+# Actions must see the same box environment the server does — model width and
+# prompt formats live there, and an action that cannot read them embeds into a
+# different geometry. See `init_tracing`.
+dotenv = "0.15"
 sqlx = { version = "0.8", features = ["postgres", "runtime-tokio", "chrono", "json", "macros", "uuid"] }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
@@ -122,7 +124,15 @@ uuid = { version = "1.10", features = ["v4", "v5", "serde"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls-no-provider"] }
+# reqwest is built with no default crypto provider (matches virtues-core); an action
+# doing direct external HTTPS installs the ring provider via http_client() below.
+rustls = { version = "0.23", default-features = false, features = ["ring"] }
 base64 = "0.22"
 urlencoding = "2.1"
+# On-box voice-activity gate (transcription_resolution): decode m4a → mel → run
+# NVIDIA MarbleNet VAD, all pure-Rust so nothing native ships in the appliance.
+tract-onnx = "0.21"
+realfft = "3"
+symphonia = { version = "0.5", default-features = false, features = ["isomp4", "aac"] }
 # axum: for `app`-runtime example (echo_app) and any other long-running HTTP app actions
 axum = { version = "0.7", features = ["json"] }

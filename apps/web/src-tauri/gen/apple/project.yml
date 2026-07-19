@@ -1,0 +1,136 @@
+name: virtues
+options:
+  bundleIdPrefix: com.virtues
+  deploymentTarget:
+    iOS: 15.0
+fileGroups: [../../src]
+configs:
+  debug: debug
+  release: release
+settingGroups:
+  app:
+    base:
+      PRODUCT_NAME: Virtues
+      PRODUCT_BUNDLE_IDENTIFIER: com.virtues.app
+targetTemplates:
+  app:
+    type: application
+    sources:
+      - path: Sources
+    scheme:
+      environmentVariables:
+        RUST_BACKTRACE: full
+        RUST_LOG: info
+    settings:
+      groups: [app]
+targets:
+  virtues_iOS:
+    type: application
+    platform: iOS
+    sources:
+      - path: Sources
+      - path: Assets.xcassets
+      - path: virtues_iOS
+      - path: assets
+        buildPhase: resources
+        type: folder
+      - path: LaunchScreen.storyboard
+    info:
+      path: virtues_iOS/Info.plist
+      properties:
+        LSRequiresIPhoneOS: true
+        UILaunchStoryboardName: LaunchScreen
+        UIRequiredDeviceCapabilities: [arm64, metal]
+        UISupportedInterfaceOrientations:
+          - UIInterfaceOrientationPortrait
+          - UIInterfaceOrientationLandscapeLeft
+          - UIInterfaceOrientationLandscapeRight
+        UISupportedInterfaceOrientations~ipad:
+          - UIInterfaceOrientationPortrait
+          - UIInterfaceOrientationPortraitUpsideDown
+          - UIInterfaceOrientationLandscapeLeft
+          - UIInterfaceOrientationLandscapeRight
+        CFBundleShortVersionString: 1.0.15
+        CFBundleVersion: "1.0.15"
+        NSLocationWhenInUseUsageDescription: "Virtues records your location to build your personal timeline."
+        NSLocationAlwaysAndWhenInUseUsageDescription: "Virtues records your location in the background to build your personal timeline, even when the app is closed."
+        NSLocationAlwaysUsageDescription: "Virtues records your location in the background to build your personal timeline, even when the app is closed."
+        # HealthKit read access — collected on this device and synced to your box.
+        NSHealthShareUsageDescription: "Virtues reads your health data (heart rate, steps, sleep, and more) to build your personal timeline — stored on your own box, not Virtues' servers."
+        # Calendar (EventKit) read access.
+        NSCalendarsUsageDescription: "Virtues reads your calendar events to build your personal timeline — stored on your own box, not Virtues' servers."
+        NSCalendarsFullAccessUsageDescription: "Virtues reads your calendar events to build your personal timeline — stored on your own box, not Virtues' servers."
+        # Contacts read access.
+        NSContactsUsageDescription: "Virtues reads your contacts to build your personal timeline and understand who's in your life — stored on your own box, not Virtues' servers."
+        # Microphone — continuous ambient recording, transcribed on your box.
+        NSMicrophoneUsageDescription: "Virtues records ambient audio to build your personal timeline — the sounds and moments of your day. Recordings and transcripts are stored on your own box, not Virtues' servers."
+        # FinanceKit read access — without a usage string the API SIGABRTs.
+        # Both keys (Apple's documented one + the one the prod app used) for safety.
+        NSFinancialDataUsageDescription: "Virtues reads your Apple Card, Apple Cash, and connected account transactions to build your personal timeline — stored on your own box, not Virtues' servers."
+        NSFinanceUsageDescription: "Virtues reads your Apple Card, Apple Cash, and connected account transactions to build your personal timeline — stored on your own box, not Virtues' servers."
+        UIBackgroundModes:
+          - location
+          - audio
+          - processing
+          - fetch
+        BGTaskSchedulerPermittedIdentifiers:
+          - com.virtues.ios.sync
+        # Permit the WKWebView to load the in-process iroh loopback
+        # (http://127.0.0.1:7117) and its WebSocket — otherwise ATS blocks it.
+        NSAppTransportSecurity:
+          NSAllowsLocalNetworking: true
+        # Reaching the box on the LAN (pair consume + iroh direct dial) trips
+        # iOS local-network privacy; without this the connection is blocked.
+        NSLocalNetworkUsageDescription: "Virtues connects to your box on your local network to pair and sync your data."
+        # Bonjour service types the app browses to auto-find the box on the LAN.
+        NSBonjourServices:
+          - _http._tcp
+    entitlements:
+      path: virtues_iOS/virtues_iOS.entitlements
+      properties:
+        com.apple.developer.healthkit: true
+        com.apple.developer.healthkit.access: []
+        # Must be the ARRAY ["financial-data"] (matching the App ID's registered
+        # capability + the prod app's entitlements) — NOT `true`. A bool value
+        # mismatches the provisioning profile ("doesn't match the entitlements
+        # file's value"). With the correct value, automatic signing attaches it.
+        com.apple.developer.financekit: [financial-data]
+    scheme:
+      environmentVariables:
+        RUST_BACKTRACE: full
+        RUST_LOG: info
+    settings:
+      base:
+        ENABLE_BITCODE: false
+        ARCHS: [arm64]
+        VALID_ARCHS: arm64 
+        LIBRARY_SEARCH_PATHS[arch=x86_64]: $(inherited) $(PROJECT_DIR)/Externals/x86_64/$(CONFIGURATION) $(SDKROOT)/usr/lib/swift $(DEVELOPER_DIR)/Toolchains/XcodeDefault.xctoolchain/usr/lib/swift/$(PLATFORM_NAME) $(DEVELOPER_DIR)/Toolchains/XcodeDefault.xctoolchain/usr/lib/swift-5.0/$(PLATFORM_NAME)
+        LIBRARY_SEARCH_PATHS[arch=arm64]: $(inherited) $(PROJECT_DIR)/Externals/arm64/$(CONFIGURATION) $(SDKROOT)/usr/lib/swift $(DEVELOPER_DIR)/Toolchains/XcodeDefault.xctoolchain/usr/lib/swift/$(PLATFORM_NAME) $(DEVELOPER_DIR)/Toolchains/XcodeDefault.xctoolchain/usr/lib/swift-5.0/$(PLATFORM_NAME)
+        # false: on iOS 14+ the Swift runtime (incl. libswiftCore /
+        # libswift_Concurrency) ships in the OS. Embedding it (the stale Tauri
+        # template default) embedded libswift_Concurrency without libswiftCore
+        # once the Finance plugin pulled in async/await → dyld crash at launch.
+        ALWAYS_EMBED_SWIFT_STANDARD_LIBRARIES: false
+        EXCLUDED_ARCHS[sdk=iphoneos*]: x86_64
+      groups: [app]
+    dependencies:
+      - framework: libapp.a
+        embed: false
+      - sdk: CoreGraphics.framework
+      - sdk: Metal.framework
+      - sdk: MetalKit.framework
+      - sdk: QuartzCore.framework
+      - sdk: Security.framework
+      # iroh/reqwest's resolver stack (hickory-resolver, netdev,
+      # system_configuration) calls SystemConfiguration for proxy/DNS/interface
+      # discovery — must be linked or the app fails at link time.
+      - sdk: SystemConfiguration.framework
+      - sdk: UIKit.framework
+      - sdk: WebKit.framework
+    preBuildScripts:
+      - script: pnpm tauri ios xcode-script -v --platform ${PLATFORM_DISPLAY_NAME:?} --sdk-root ${SDKROOT:?} --framework-search-paths "${FRAMEWORK_SEARCH_PATHS:?}" --header-search-paths "${HEADER_SEARCH_PATHS:?}" --gcc-preprocessor-definitions "${GCC_PREPROCESSOR_DEFINITIONS:-}" --configuration ${CONFIGURATION:?} ${FORCE_COLOR} ${ARCHS:?}
+        name: Build Rust Code
+        basedOnDependencyAnalysis: false
+        outputFiles:
+          - $(SRCROOT)/Externals/x86_64/${CONFIGURATION}/libapp.a
+          - $(SRCROOT)/Externals/arm64/${CONFIGURATION}/libapp.a

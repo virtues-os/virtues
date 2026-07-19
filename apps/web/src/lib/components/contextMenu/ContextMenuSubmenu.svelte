@@ -123,9 +123,12 @@
 		padding: 4px;
 		min-width: 160px;
 		max-width: 280px;
-		max-height: calc(100vh - 32px);
+		/* Keep clear of the Dynamic Island / home indicator on the phone. */
+		max-height: calc(
+			100dvh - max(16px, env(safe-area-inset-top)) - max(16px, env(safe-area-inset-bottom))
+		);
 		overflow-y: auto;
-		z-index: 10001;
+		z-index: var(--z-context-submenu);
 		animation: submenu-fade-in 100ms ease-out;
 	}
 

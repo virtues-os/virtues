@@ -23,6 +23,26 @@ export const load: LayoutLoad = async ({ fetch, url }) => {
 			return { session: sessionData };
 		}
 
+		// Setup gate: an authenticated device on a box whose REQUIRED core
+		// (account → name; the rest of onboarding is optional, network is
+		// informational) isn't finished belongs in the unified /setup flow, not
+		// the app shell. /setup lives in the (onboarding) route group with its
+		// own layout, so this can't loop. Without this, a freshly-reinstalled
+		// box drops the user straight into chat with account/naming undone.
+		try {
+			const setupRes = await fetch('/api/setup/state');
+			if (setupRes.ok) {
+				const setup = await setupRes.json();
+				if (setup.setup_complete === false) {
+					throw redirect(303, '/setup');
+				}
+			}
+		} catch (e) {
+			// Re-throw the redirect; swallow only network/parse errors so a
+			// transient box blip never traps the user out of their app.
+			if (e && typeof e === 'object' && 'status' in e) throw e;
+		}
+
 		// Fetch profile for user preferences and server status
 		const profileResponse = await fetch('/api/profile');
 
@@ -38,7 +58,7 @@ export const load: LayoutLoad = async ({ fetch, url }) => {
 				preferredName: profile.preferred_name || null,
 				serverStatus: profile.server_status || 'ready',
 				sessionExpires: sessionData.expires || null,
-				profileTimezone: profile.timezone || null,
+				homeTimezone: profile.home_timezone || null,
 				onboardingStatus: profile.onboarding_status || 'active'
 			};
 		}
@@ -48,7 +68,7 @@ export const load: LayoutLoad = async ({ fetch, url }) => {
 			preferredName: null,
 			serverStatus: 'ready', // Assume ready if profile fetch fails
 			sessionExpires: sessionData.expires || null,
-			profileTimezone: null,
+			homeTimezone: null,
 			onboardingStatus: 'active'
 		};
 	} catch (error) {

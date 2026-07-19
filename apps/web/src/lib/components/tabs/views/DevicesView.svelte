@@ -10,8 +10,31 @@
 	import type { Tab } from "$lib/tabs/types";
 	import { Page, Button, Badge, EmptyState, LoadingState, ErrorState } from "$lib";
 	import Icon from "$lib/components/Icon.svelte";
-	import { onMount } from "svelte";
+	import {
+		listDevices,
+		pairMint,
+		pairConfirm,
+		pairDeny,
+		pairStatus as pairStatusApi,
+	} from "$lib/api/client";
+	import { createResource } from "$lib/utils/resource.svelte";
+	import { formatTimeAgo } from "$lib/utils/dateUtils";
 	import { toast } from "svelte-sonner";
+	import { isTauri } from "$lib/utils/platform";
+
+	// Where to land after revoking THIS device — the one true "return to pairing"
+	// flow. In the browser, pairing is the SPA's cookie-redeem `/pair` page. In
+	// the Tauri app, pairing is the native shell's concern: reloading the webview
+	// root re-runs the app's unpaired gate, which hands control back to the shell.
+	// (The precise native handoff — a shell IPC that drops the proven iroh key —
+	// is the one open seam; until it lands, the gate + re-pair covers it.)
+	function returnToPairing() {
+		if (isTauri) {
+			window.location.href = "/";
+			return;
+		}
+		window.location.href = "/pair";
+	}
 
 	let { tab, active }: { tab: Tab; active: boolean } = $props();
 
@@ -25,9 +48,9 @@
 		is_current: boolean;
 	};
 
-	let devices = $state<Device[]>([]);
-	let loading = $state(true);
-	let errorMessage = $state<string | null>(null);
+	type DevicesResponse = { devices: Device[] };
+	const res = createResource(() => listDevices<DevicesResponse>());
+	const devices = $derived(res.data?.devices ?? []);
 
 	// "+ Add device" modal state.
 	let addOpen = $state(false);
@@ -43,23 +66,6 @@
 	);
 	let consumedByLabel = $state<string | null>(null);
 	let pollHandle: ReturnType<typeof setInterval> | null = null;
-
-	onMount(load);
-
-	async function load() {
-		loading = true;
-		errorMessage = null;
-		try {
-			const resp = await fetch("/api/devices");
-			if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
-			const data = await resp.json();
-			devices = data.devices ?? [];
-		} catch (e) {
-			errorMessage = e instanceof Error ? e.message : "Failed to load devices";
-		} finally {
-			loading = false;
-		}
-	}
 
 	async function revoke(device: Device) {
 		const confirmText = device.is_current
@@ -83,11 +89,11 @@
 			}
 			toast.success("Device revoked");
 			if (device.is_current) {
-				// We just nuked our own session — go to /pair.
-				window.location.href = "/pair";
+				// We just revoked our own access — hand back to pairing.
+				returnToPairing();
 				return;
 			}
-			await load();
+			await res.reload();
 		} catch (e) {
 			toast.error("Revoke failed", {
 				description: e instanceof Error ? e.message : "Network error",
@@ -113,13 +119,7 @@
 		consumedByLabel = null;
 		mintLoading = true;
 		try {
-			const resp = await fetch("/api/pair/mint", {
-				method: "POST",
-				headers: { "Content-Type": "application/json" },
-				body: JSON.stringify({ intended_kind: "browser" }),
-			});
-			if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
-			const data = await resp.json();
+			const data = await pairMint("browser");
 			mintedToken = data.token;
 			mintedUrl = data.pair_url;
 			mintedQrSvg = data.qr_svg;
@@ -137,14 +137,7 @@
 	async function confirmPair() {
 		if (!mintedTokenId) return;
 		try {
-			const resp = await fetch(`/api/pair/confirm/${mintedTokenId}`, { method: "POST" });
-			if (!resp.ok) {
-				const data = await resp.json().catch(() => ({}));
-				toast.error("Confirmation failed", {
-					description: data.error ?? `HTTP ${resp.status}`,
-				});
-				return;
-			}
+			await pairConfirm(mintedTokenId);
 			pairStatus = "authorized";
 		} catch (e) {
 			toast.error("Confirmation failed", {
@@ -155,11 +148,7 @@
 
 	async function denyPair() {
 		if (!mintedTokenId) return;
-		try {
-			await fetch(`/api/pair/deny/${mintedTokenId}`, { method: "POST" });
-		} catch {
-			/* best effort */
-		}
+		await pairDeny(mintedTokenId);
 		pairStatus = "denied";
 		stopPolling();
 	}
@@ -167,10 +156,8 @@
 	async function pollStatus() {
 		if (!mintedTokenId) return;
 		try {
-			const resp = await fetch(`/api/pair/status/${mintedTokenId}`);
-			if (!resp.ok) return;
-			const data = await resp.json();
-			pairStatus = data.status;
+			const data = await pairStatusApi(mintedTokenId);
+			pairStatus = data.status as typeof pairStatus;
 			if (data.consumed_by_label) {
 				consumedByLabel = data.consumed_by_label;
 			}
@@ -182,7 +169,7 @@
 				stopPolling();
 				if (data.status === "consumed") {
 					toast.success("New device paired");
-					await load();
+					await res.reload();
 				}
 			}
 		} catch {
@@ -232,19 +219,6 @@
 		}
 	}
 
-	function timeAgo(iso: string | null) {
-		if (!iso) return "—";
-		const then = new Date(iso).getTime();
-		const now = Date.now();
-		const sec = Math.max(0, Math.floor((now - then) / 1000));
-		if (sec < 60) return "just now";
-		const min = Math.floor(sec / 60);
-		if (min < 60) return `${min}m ago`;
-		const hr = Math.floor(min / 60);
-		if (hr < 24) return `${hr}h ago`;
-		const d = Math.floor(hr / 24);
-		return `${d}d ago`;
-	}
 </script>
 
 <Page>
@@ -256,21 +230,23 @@
 					Every browser, app, and sensor paired with this box.
 				</p>
 			</div>
-			<Button variant="primary" onclick={startAdd}>
-				<Icon icon="ri:add-line" />
-				Add device
-			</Button>
+			<div class="flex items-center gap-2">
+				<Button variant="primary" onclick={startAdd}>
+					<Icon icon="ri:add-line" />
+					Add device
+				</Button>
+			</div>
 		</div>
 
-		{#if loading}
+		{#if res.loading}
 			<LoadingState />
-		{:else if errorMessage}
-			<ErrorState message={errorMessage} />
+		{:else if res.error}
+			<ErrorState message={res.error} onRetry={res.reload} />
 		{:else if devices.length === 0}
 			<EmptyState
 				icon="ri:device-line"
 				title="No paired devices"
-				message="Run `virtues link` on the box to pair this browser, or click Add device above."
+				message="Run `virtues pair` on the box to pair this browser, or click Add device above."
 			/>
 		{:else}
 			<ul class="divide-y divide-border rounded-lg border border-border bg-surface">
@@ -290,8 +266,8 @@
 								{/if}
 							</div>
 							<div class="text-xs text-foreground-muted mt-1 flex flex-wrap gap-x-3 gap-y-1">
-								<span>Last seen {timeAgo(device.last_seen_at)}</span>
-								<span>Paired {timeAgo(device.paired_at)}</span>
+								<span>Last seen {formatTimeAgo(device.last_seen_at)}</span>
+								<span>Paired {formatTimeAgo(device.paired_at)}</span>
 								{#if device.paired_from_ip}
 									<span>from {device.paired_from_ip}</span>
 								{/if}

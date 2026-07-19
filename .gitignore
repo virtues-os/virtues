@@ -1,6 +1,10 @@
 # Stray per-member Cargo.lock — the workspace root lock is canonical.
 /virtues-core/Cargo.lock
 
+# Built XCFramework + raw bindings from build-xcframework.sh (regenerate it;
+# the app vendors the Swift binding under apps/ios/.../Tunnel/).
+/crates/virtues-tunnel/generated/
+
 # Environment variables
 .env
 .env.local
@@ -16,6 +20,11 @@
 *.bak.*
 *.swp
 *.orig
+
+# Postgres dumps — real box data must NEVER be committed (see `make dev-pull`).
+# The dump lands in $TMPDIR, not here, but ignore the patterns as belt-and-suspenders.
+*.dump
+*.pgdump
 *.rej
 
 # SvelteKit build output (per-package generated)
@@ -117,12 +126,18 @@ wheels/
 
 # Other
 /target/
+# Per-plugin Cargo build output (root `/target/` is anchored and misses these).
+apps/web/plugins/*/target/
 .data/
+# Runtime box data — the data lake (.media blobs), DB scratch, etc. Never
+# tracked: it's per-install state, not source. (The legacy `.data/` rule above
+# missed the real dir, which is `data/`.)
+/data/
 tmp/*
 
 /.pnpm-store
 /apps/web/.pnpm-store
-/apps/mac/.build
+/apps/mac-source/.build
 /crates/virtues-registry/target
 /virtues-core/core/
 /virtues-core/.sqlx

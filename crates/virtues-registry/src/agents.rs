@@ -36,7 +36,8 @@ pub fn default_agents() -> Vec<AgentConfig> {
         description: "Intelligent assistant with access to all available tools. Can query data, search the web, visualize information, and help with tasks.".to_string(),
         color: "#6b7280".to_string(),
         icon: "ri:robot-line".to_string(),
-        default_model: "google/gemini-3-flash".to_string(),
+        default_model: crate::models::default_model_for_slot(crate::models::ModelSlot::Chat)
+            .to_string(),
         max_steps: 5,
         enabled: true,
         sort_order: 1,

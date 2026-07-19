@@ -31,7 +31,8 @@ pub fn assistant_profile_defaults() -> AssistantProfileDefaults {
     AssistantProfileDefaults {
         assistant_name: None,
         default_agent_id: "agent".to_string(),
-        default_model_id: "google/gemini-3-flash".to_string(),
+        default_model_id: crate::models::default_model_for_slot(crate::models::ModelSlot::Chat)
+            .to_string(),
         enabled_tools: default_enabled_tools(),
         ui_preferences: serde_json::json!({
             "theme": DEFAULT_THEME,

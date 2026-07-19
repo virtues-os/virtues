@@ -1,7 +1,8 @@
 <script lang="ts">
 	import type { Tab } from "$lib/tabs/types";
-	import { spaceStore } from "$lib/stores/space.svelte";
+	import { windowShellStore } from "$lib/stores/window-shell.svelte";
 	import ChatInput from "$lib/components/ChatInput.svelte";
+	import MediaLightbox from "$lib/components/MediaLightbox.svelte";
 	import {
 		getSelectedModel,
 		getDefaultModel,
@@ -9,18 +10,41 @@
 		getInitializationPromise,
 	} from "$lib/stores/models.svelte";
 	import CitedMarkdown from "$lib/components/CitedMarkdown.svelte";
+	import StoppedNotice from "$lib/components/StoppedNotice.svelte";
+	import Icon from "$lib/components/Icon.svelte";
+	import SelectionPopover from "$lib/components/SelectionPopover.svelte";
+	import ContextIndicator from "$lib/components/ContextIndicator.svelte";
+	import { fetchModels, type ModelOption } from "$lib/config/models";
+	import { normalizeImage } from "$lib/multimodal/normalizeImage";
 	import { CitationPanel } from "$lib/components/citations";
 	import { buildCitationContextFromParts } from "$lib/citations";
 	import type { Citation } from "$lib/types/Citation";
 	import UserMessage from "$lib/components/UserMessage.svelte";
 	import ThinkingBlock from "$lib/components/ThinkingBlock.svelte";
+	import SubagentPanel from "$lib/components/SubagentPanel.svelte";
 	import { onMount, onDestroy, tick } from "svelte";
+	import { fade, fly } from "svelte/transition";
+	import { cubicInOut } from "svelte/easing";
 	import { chatSessions } from "$lib/stores/chatSessions.svelte";
 	import { chatInstances } from "$lib/stores/chatInstances.svelte";
-	import { thingsStore } from "$lib/stores/things.svelte";
+	import { animateChatEdit } from "$lib/ai/aiPresence";
+	import { pendingPrompt } from "$lib/stores/pendingPrompt.svelte";
+	import { notebookStore } from "$lib/stores/notebook.svelte";
+	import ChatNotebookBreadcrumb from "$lib/components/chat/ChatNotebookBreadcrumb.svelte";
+	import {
+		updateChat,
+		deleteChat,
+		getChat,
+		getChatUsage,
+		getAssistantProfile,
+		getProfile,
+		setChatTitle,
+		cancelChat,
+	} from "$lib/api/client";
+	import { contextMenu, type ContextMenuItem } from "$lib/stores/contextMenu.svelte";
 	import type { Chat } from "@ai-sdk/svelte";
 	// Active page editing imports
-	import { editAllowListStore } from "$lib/stores/editAllowList.svelte";
+	import { editAllowListStore, type EditableResourceType } from "$lib/stores/editAllowList.svelte";
 	import PageBindingInline from "$lib/components/chat/PageBindingInline.svelte";
 	import PageEditResult from "$lib/components/chat/PageEditResult.svelte";
 	import EditDiffCard from "$lib/components/chat/EditDiffCard.svelte";
@@ -29,7 +53,7 @@
 	import ContextViewPanel from "$lib/components/chat/ContextViewPanel.svelte";
 	import { ChatError } from "$lib/components/chat";
 	import { createYjsDocument } from "$lib/yjs";
-	import type { EntityResult } from "$lib/components/EntityPicker.svelte";
+	import type { EntityResult } from "$lib/components/RefPicker.svelte";
 	import type { AgentModeId } from "$lib/config/agentModes";
 
 	// Generate a random 16-char hex ID (matches backend format)
@@ -43,7 +67,7 @@
 	interface ToolResultPart {
 		type: string;
 		state?: string;
-		toolCallId?: string;
+		toolCallId: string;
 		output?: {
 			page_id?: string;
 			title?: string;
@@ -80,6 +104,15 @@
 		return pathOnly === '/' || pathOnly === '/chat';
 	}
 
+	// Temporary ("ghost") chat — opened via /?temporary=1. Never persisted to
+	// history; nothing is written to the sidebar/session list. The request also
+	// carries a `temporary` flag so the backend can skip storage.
+	function isTemporaryRoute(route: string): boolean {
+		return /[?&]temporary=1\b/.test(route);
+	}
+	// svelte-ignore state_referenced_locally
+	let isGhost = $state(isTemporaryRoute(tab.route));
+
 	// Capture initial conversationId from tab prop (intentionally captures initial value only)
 	// svelte-ignore state_referenced_locally
 	const initialConversationId = extractConversationId(tab.route);
@@ -91,6 +124,268 @@
 	let enableTransitions = $state(false);
 	let isLoading = $state(true);
 	let isAwaitingResponse = $state(false);
+	// Track C: messages typed while the assistant is still streaming are queued
+	// and sent automatically when the turn finishes (Cursor-style chips above the
+	// composer). Local to the view — a tab drag-away mid-queue is an accepted edge.
+	let queuedMessages = $state<string[]>([]);
+
+	// Track D: highlight-to-reference. Select text in a message → comment bar →
+	// stage a reference chip above the composer that scopes the next message.
+	// Empty note = quote; typed note = quote + comment. Ephemeral. The in-text
+	// mark uses the app's own --color-highlight token (one warm marker, not a
+	// per-ref rainbow) — references are distinguished by being listed, not colored.
+	type StagedRef = {
+		id: string;
+		messageId: string;
+		text: string;
+		range: Range;
+	};
+	type SelectionDraft = {
+		text: string;
+		messageId: string;
+		rect: { top: number; left: number; bottom: number; width: number };
+		range: Range;
+	};
+	let stagedRefs = $state<StagedRef[]>([]);
+	let selectionDraft = $state<SelectionDraft | null>(null);
+
+	function handleWindowMouseup(e: MouseEvent) {
+		const sel = window.getSelection();
+		const text = sel && !sel.isCollapsed ? sel.toString().trim() : "";
+		if (text && sel && sel.rangeCount > 0) {
+			const range = sel.getRangeAt(0);
+			const node = range.commonAncestorContainer;
+			const el = (node.nodeType === 1 ? node : node.parentElement) as HTMLElement | null;
+			const wrapper = el?.closest(".message-wrapper") as HTMLElement | null;
+			// Only chat messages; ignore selections inside the popover itself.
+			if (!wrapper || el?.closest(".vref-bar")) return;
+			const rect = range.getBoundingClientRect();
+			selectionDraft = {
+				text,
+				messageId: wrapper.getAttribute("data-message-id") || "",
+				rect: { top: rect.top, left: rect.left, bottom: rect.bottom, width: rect.width },
+				range: range.cloneRange(),
+			};
+			return;
+		}
+		// Collapsed selection = a click → dismiss the popover if clicking outside it.
+		if (selectionDraft && !(e.target as HTMLElement)?.closest(".vref-bar")) {
+			selectionDraft = null;
+		}
+	}
+
+	function addStagedRef() {
+		if (!selectionDraft) return;
+		const d = selectionDraft;
+		stagedRefs = [
+			...stagedRefs,
+			{
+				id: crypto?.randomUUID?.() ?? `ref-${stagedRefs.length}-${d.text.length}`,
+				messageId: d.messageId,
+				text: d.text,
+				range: d.range,
+			},
+		];
+		selectionDraft = null;
+		window.getSelection()?.removeAllRanges();
+		repaintHighlights();
+	}
+
+	function removeStagedRef(id: string) {
+		stagedRefs = stagedRefs.filter((r) => r.id !== id);
+		repaintHighlights();
+	}
+
+	function clearStagedRefs() {
+		stagedRefs = [];
+		repaintHighlights();
+	}
+
+	// Paint staged refs with the CSS Custom Highlight API under one name — no DOM
+	// mutation, no reflow, themed via --color-highlight. Only committed refs are
+	// painted; the pending selection keeps the browser's own native highlight so
+	// it never double-marks (and Cmd+C keeps copying it).
+	function repaintHighlights() {
+		const cssAny = CSS as any;
+		if (typeof CSS === "undefined" || !cssAny.highlights || typeof (window as any).Highlight === "undefined") return;
+		const ranges = stagedRefs.map((r) => r.range);
+		if (ranges.length === 0) {
+			cssAny.highlights.delete("vref");
+			return;
+		}
+		try {
+			cssAny.highlights.set("vref", new (window as any).Highlight(...ranges));
+		} catch {
+			/* range invalidated by a re-render — drop silently */
+		}
+	}
+
+	// Repaint whenever the staged set changes.
+	$effect(() => {
+		void stagedRefs;
+		repaintHighlights();
+	});
+
+	function serializeRef(r: StagedRef): string {
+		return `> ${r.text.replace(/\s*\n\s*/g, " ")}`;
+	}
+
+	// Track E1: multimodal attachments. Files are read to base64 data URLs (so they
+	// round-trip to the provider and render on reload) and sent as AI SDK file parts.
+	type Attachment = {
+		id: string;
+		mediaType: string;
+		url: string; // data URL
+		filename: string;
+		size: number;
+		kind: "image" | "pdf" | "audio" | "text";
+		width?: number;
+		height?: number;
+	};
+
+	function formatFileSize(bytes: number): string {
+		if (bytes < 1024) return `${bytes} B`;
+		if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+		return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+	}
+	let attachments = $state<Attachment[]>([]);
+	let dragActive = $state(false);
+
+	// Click an in-message image to open it in a shared-element lightbox.
+	let lightbox = $state<{ src: string; alt: string; rect: DOMRect } | null>(null);
+	function openLightbox(e: MouseEvent, src: string, alt: string) {
+		const el = e.currentTarget as HTMLImageElement;
+		lightbox = { src, alt, rect: el.getBoundingClientRect() };
+	}
+	let availableModels = $state<ModelOption[]>([]);
+
+	onMount(() => {
+		fetchModels()
+			.then((m) => (availableModels = m))
+			.catch(() => {});
+	});
+
+	// Text/code/doc extensions — MIME is unreliable for these, so check the name too.
+	const TEXT_EXT =
+		/\.(md|markdown|txt|text|csv|tsv|json|html?|xml|ya?ml|toml|ini|env|log|ts|tsx|js|jsx|mjs|cjs|py|rb|rs|go|java|c|h|cpp|cc|cs|php|swift|kt|sh|bash|zsh|sql|css|scss)$/i;
+
+	function attachmentKind(file: File): Attachment["kind"] | null {
+		const mt = (file.type || "").toLowerCase();
+		if (mt.startsWith("image/")) return "image";
+		if (mt === "application/pdf") return "pdf";
+		if (mt.startsWith("audio/")) return "audio";
+		if (mt.startsWith("text/") || mt === "application/json" || TEXT_EXT.test(file.name))
+			return "text";
+		return null;
+	}
+
+	function readAsDataURL(file: File): Promise<string> {
+		return new Promise((resolve, reject) => {
+			const r = new FileReader();
+			r.onload = () => resolve(r.result as string);
+			r.onerror = () => reject(r.error);
+			r.readAsDataURL(file);
+		});
+	}
+
+	function readAsText(file: File): Promise<string> {
+		return new Promise((resolve, reject) => {
+			const r = new FileReader();
+			r.onload = () => resolve(r.result as string);
+			r.onerror = () => reject(r.error);
+			r.readAsText(file);
+		});
+	}
+
+	function base64Utf8(s: string): string {
+		const bytes = new TextEncoder().encode(s);
+		let bin = "";
+		for (let i = 0; i < bytes.length; i++) bin += String.fromCharCode(bytes[i]);
+		return btoa(bin);
+	}
+
+	async function addFiles(files: File[]) {
+		const MAX = 100 * 1024 * 1024; // 100 MB, matches the media backend cap
+		const MAX_TEXT = 100 * 1024; // inline-text cap (~25k tokens) before truncating
+		for (const file of files) {
+			const kind = attachmentKind(file);
+			if (!kind || file.size > MAX) continue;
+			try {
+				let mediaType = file.type || "application/octet-stream";
+				let url: string;
+				let width: number | undefined;
+				let height: number | undefined;
+
+				if (kind === "image") {
+					const norm = await normalizeImage(file);
+					url = norm.dataUrl;
+					mediaType = norm.mediaType;
+					width = norm.width || undefined;
+					height = norm.height || undefined;
+				} else if (kind === "text") {
+					let text = await readAsText(file);
+					if (text.length > MAX_TEXT) text = text.slice(0, MAX_TEXT) + "\n…[truncated]";
+					mediaType = "text/plain";
+					url = `data:text/plain;base64,${base64Utf8(text)}`;
+				} else {
+					url = await readAsDataURL(file);
+				}
+
+				attachments = [
+					...attachments,
+					{
+						id: crypto?.randomUUID?.() ?? `att-${attachments.length}-${file.size}`,
+						mediaType,
+						url,
+						filename: file.name,
+						size: file.size,
+						kind,
+						width,
+						height,
+					},
+				];
+			} catch {
+				/* unreadable / undecodable file — skip */
+			}
+		}
+	}
+
+	function removeAttachment(id: string) {
+		attachments = attachments.filter((a) => a.id !== id);
+	}
+
+	// Capability gate: does the active model support every attached modality? If not,
+	// surface a switch to a model that does (or note none is available).
+	const capabilityIssue = $derived.by(() => {
+		if (attachments.length === 0) return null;
+		const model =
+			availableModels.find((m) => m.id === selectedModelValue?.id) ??
+			selectedModelValue ??
+			null;
+		const needs = {
+			image: attachments.some((a) => a.kind === "image"),
+			pdf: attachments.some((a) => a.kind === "pdf"),
+			audio: attachments.some((a) => a.kind === "audio"),
+		};
+		const lacks: string[] = [];
+		if (needs.image && !model?.supportsVision) lacks.push("images");
+		if (needs.pdf && !model?.supportsPdf) lacks.push("PDFs");
+		if (needs.audio && !model?.supportsAudio) lacks.push("audio");
+		if (lacks.length === 0) return null;
+		const candidate =
+			availableModels.find(
+				(m) =>
+					(!needs.image || m.supportsVision) &&
+					(!needs.pdf || m.supportsPdf) &&
+					(!needs.audio || m.supportsAudio),
+			) ?? null;
+		return { lacks, modelName: model?.displayName ?? "This model", candidate };
+	});
+
+	function switchToCapableModel() {
+		const candidate = capabilityIssue?.candidate;
+		if (candidate) selectedModelValue = candidate;
+	}
 	let loadedMessages = $state<any[]>([]);
 
 	// Track tab route to reset state when switching conversations
@@ -113,32 +408,49 @@
 
 	// Keep a map of message metadata (agentId, provider, etc.) for rendering
 	let messageMetadata = $state<
-		Map<string, { agentId?: string; provider?: string }>
+		Map<string, { agentId?: string; provider?: string; stopped?: boolean }>
 	>(new Map());
 
 	// Citation panel state
 	let citationPanelOpen = $state(false);
 	let selectedCitation = $state<Citation | null>(null);
 
-	// Attached things (context lens) — IDs are sent with each message so the agent
-	// sees the project's items as salience hints. Persisted per-tab only (ephemeral).
-	let attachedThingIds = $state<string[]>([]);
+	// The Notebook (room) this chat lives in — at most one. Its id is sent with each
+	// message (drives the agent's active-space context + server-side binding), and
+	// the breadcrumb at the top lets the user enter / file / create a room.
+	let chatNotebookId = $state<string | null>(null);
+	// Which conversation chatNotebookId was seeded for. Seeding happens ONCE per
+	// conversation (when its session row is available, or once the session list
+	// has finished loading and confirms there's no row yet) so a later session
+	// refresh can never clobber a room the user just picked locally.
+	let seededNotebookFor = $state<string | null>(null);
 
-	function attachThing(thingId: string) {
-		if (!attachedThingIds.includes(thingId)) {
-			attachedThingIds = [...attachedThingIds, thingId];
+	$effect(() => {
+		const id = conversationId;
+		if (seededNotebookFor === id) return;
+		const session = chatSessions.sessions.find((s) => s.conversation_id === id);
+		if (session) {
+			chatNotebookId = session.notebook_id ?? null;
+			seededNotebookFor = id;
+		} else if (!chatSessions.isLoading) {
+			// Sessions are loaded and this chat has no row yet (brand-new, not yet
+			// persisted) — start unfiled; the create path binds it from the first
+			// message's notebookId.
+			chatNotebookId = null;
+			seededNotebookFor = id;
+		}
+	});
+
+	async function setChatNotebook(notebookId: string | null) {
+		chatNotebookId = notebookId; // locally authoritative
+		seededNotebookFor = conversationId; // don't let a later seed override this pick
+		// Persist only if the chat already exists server-side; a brand-new chat
+		// has no row yet and is bound by the create path from getNotebookId().
+		const persisted = chatSessions.sessions.some((s) => s.conversation_id === conversationId);
+		if (persisted) {
+			await notebookStore.setChatNotebook(conversationId, notebookId);
 		}
 	}
-
-	function detachThing(thingId: string) {
-		attachedThingIds = attachedThingIds.filter((id) => id !== thingId);
-	}
-
-	const attachedThings = $derived.by(() =>
-		attachedThingIds
-			.map((id) => thingsStore.things.find((p) => p.id === id))
-			.filter((p): p is NonNullable<typeof p> => p !== undefined),
-	);
 
 	// Open citation panel with selected citation
 	function openCitationPanel(citation: Citation) {
@@ -165,7 +477,7 @@
 	}
 
 	function handleRemoveItem(type: string, id: string) {
-		editAllowListStore.remove(type as 'page' | 'folder' | 'wiki_entry', id);
+		editAllowListStore.remove(type as EditableResourceType, id);
 	}
 
 	function handlePageSelect(pageId: string, pageTitle: string) {
@@ -187,8 +499,9 @@
 			const yjsDoc = createYjsDocument(entityId);
 			await editAllowListStore.addPage(entityId, title, yjsDoc);
 		} else {
+			// folder / action / wiki_entry — no Yjs doc, granted generically by (type, id)
 			await editAllowListStore.add({
-				type: (entityType === 'folder' ? 'folder' : 'page') as 'page' | 'folder',
+				type: entityType as EditableResourceType,
 				id: entityId,
 				title
 			});
@@ -252,11 +565,8 @@
 		// which races with the server's Y.Text initialization.
 		editAllowListStore.addPage(pageId, title);
 
-		if (!spaceStore.isSplit) {
-			spaceStore.enableSplit();
-		}
-		spaceStore.openTabFromRoute(`/page/${pageId}`, { paneId: 'right' });
-		spaceStore.refreshViews();
+		// Open the page BESIDE the chat (Category A) — never navigate the chat in place.
+		windowShellStore.openRouteBeside(`/page/${pageId}`);
 	}
 
 	// Effect to handle create_page side effects (auto-open new pages)
@@ -293,7 +603,7 @@
 				if (part.type === 'tool-create_page' && part.state === 'output-available') {
 					const output = part.output;
 					if (output?.page_id && !initialCompletedToolCalls.has(part.toolCallId)) {
-						handlePageCreated(output.page_id, output.title);
+						handlePageCreated(output.page_id, output.title ?? "");
 						initialCompletedToolCalls.add(part.toolCallId); // Mark as handled
 					}
 				}
@@ -302,6 +612,41 @@
 	});
 
 
+
+	// Effect to drive the AI presence animation when a chat `edit_page` lands.
+	// Mirrors the create_page effect: seed historical edits on the first settled
+	// run (so we don't replay them), then animate only new ones, deduped by
+	// edit_id. The animation is a no-op if the page isn't open in a pane.
+	let editAnimSeeded = false;
+	const animatedEditIds = new Set<string>();
+	$effect(() => {
+		if (!chat?.messages || isLoading) return;
+
+		const collectNew = (animate: boolean) => {
+			for (const message of chat.messages) {
+				if (message.role !== "assistant") continue;
+				for (const part of message.parts as ToolResultPart[]) {
+					if (part.type !== "tool-edit_page" || part.state !== "output-available")
+						continue;
+					const output = part.output as any;
+					const edit = output?.edit;
+					if (!edit?.edit_id || animatedEditIds.has(edit.edit_id)) continue;
+					animatedEditIds.add(edit.edit_id);
+					if (animate && output?.applied) {
+						animateChatEdit(edit.page_id, edit.replace || "");
+					}
+				}
+			}
+		};
+
+		// First settled run: seed history without animating.
+		if (!editAnimSeeded) {
+			collectNew(false);
+			editAnimSeeded = true;
+			return;
+		}
+		collectNew(true);
+	});
 
 	// Context usage state
 	interface ContextUsageState {
@@ -317,10 +662,11 @@
 		if (!conversationId || isNewChat(tab.route)) return;
 
 		try {
-			const res = await fetch(`/api/chats/${conversationId}/usage`);
-			if (!res.ok) return;
-
-			const data = await res.json();
+			const data = await getChatUsage<{
+				usage_percentage: number;
+				total_tokens: number;
+				context_window: number;
+			}>(conversationId);
 			const status: "healthy" | "warning" | "critical" =
 				data.usage_percentage >= 85
 					? "critical"
@@ -343,31 +689,36 @@
 
 	// Handle context indicator click - open context tab in split view
 	function handleContextClick() {
-		const currentPane = spaceStore.findTabPane(tab.id);
-		spaceStore.openChatContext(conversationId, currentPane);
+		const currentPane = windowShellStore.findTabPane(tab.id);
+		windowShellStore.openChatContext(conversationId, currentPane);
 	}
 
 	// Handle compaction completion from ContextViewPanel - refresh messages
 	async function handleCompacted() {
 		if (!conversationId) return;
-		const messagesRes = await fetch(`/api/chats/${conversationId}`);
-		if (messagesRes.ok) {
-			const data = await messagesRes.json();
+		try {
+			const data = await getChat<{ messages?: any[] }>(conversationId);
 			loadedMessages = data.messages || [];
 			chat.messages = deduplicateMessages(loadedMessages).map((msg: any) => ({
 				id: msg.id,
 				role: msg.role as "user" | "assistant" | "checkpoint",
 				parts: convertMessageToParts(msg),
-			}));
+			})) as unknown as typeof chat.messages;
+		} catch {
+			// Non-critical refresh — leave the current messages in place on failure.
 		}
 	}
 
 	// Helper function to convert database messages to Chat parts
 	function convertMessageToParts(msg: any) {
-		if (msg.agentId || msg.provider) {
+		// Carry agent/provider + the user-stopped flag (subject='cancelled') so the
+		// "Stopped" notice survives a reload.
+		const stopped = msg.subject === "cancelled";
+		if (msg.agentId || msg.provider || stopped) {
 			messageMetadata.set(msg.id, {
 				agentId: msg.agentId,
 				provider: msg.provider,
+				stopped,
 			});
 		}
 
@@ -434,11 +785,10 @@
 		return selectedModelValue?.id || getDefaultModel()?.id || "";
 	}
 
-	// Getter for current space ID - used by Chat transport for auto-add
-	// Returns null for system space (Virtues) so chats don't get auto-added
-	function getSpaceId(): string | null {
-		if (spaceStore.isSystemSpace) return null;
-		return spaceStore.activeSpaceId;
+	// Getter for the chat's Notebook (room) ID — sent with each message so the agent
+	// gets the active-space context block and the server keeps the binding fresh.
+	function getNotebookId(): string | null {
+		return chatNotebookId;
 	}
 
 	// Get or create chat instance for the current conversationId
@@ -452,7 +802,7 @@
 			chat = chatInstances.getOrCreate({
 				conversationId,
 				getModel: getCurrentModel,
-				getSpaceId,
+				getNotebookId,
 				getActivePageContext: () => {
 					const page = getBoundPage();
 					if (!page) return null;
@@ -468,7 +818,7 @@
 				},
 				getPersona: () => selectedPersona,
 				getAgentMode: () => selectedAgentMode,
-				getThingIds: () => attachedThingIds,
+				getTemporary: () => isGhost,
 			});
 			currentChatConversationId = conversationId;
 		}
@@ -530,6 +880,9 @@
 				isLoading = true;
 				(async () => {
 					try {
+						// Raw fetch (not getChat): this load carries an AbortSignal so
+						// switching tabs mid-load cancels it. The client wrapper has no
+						// signal channel, so this site stays on fetch by design.
 						const response = await fetch(
 							`/api/chats/${currentTabConversationId}`,
 							{ signal },
@@ -545,7 +898,7 @@
 								id: msg.id,
 								role: msg.role as "user" | "assistant" | "checkpoint",
 								parts: convertMessageToParts(msg),
-							}));
+							})) as unknown as typeof chat.messages;
 							if (data.conversation?.model) {
 								initializeSelectedModel(
 									data.conversation.model,
@@ -585,6 +938,19 @@
 
 	// Load conversation data on mount
 	onMount(() => {
+		// Load Notebooks so the room breadcrumb can resolve name/accent immediately.
+		notebookStore.load();
+
+		// Claim any prompt handed off from Home / ⌘K / "Ask this notebook"
+		// (consume-once, synchronously — so only this freshly-opened chat sends it).
+		const initialPrompt = pendingPrompt.take();
+		// If the ask came from a notebook, bind this new chat to it before the
+		// first message so the create path files it + grounds retrieval there.
+		const seededNotebook = pendingPrompt.takeNotebook();
+		if (seededNotebook) {
+			chatNotebookId = seededNotebook;
+			seededNotebookFor = conversationId;
+		}
 		(async () => {
 			// Stage 1: Models must load first (other code depends on model list)
 			await getInitializationPromise();
@@ -597,15 +963,17 @@
 
 			const profilePromise = (async () => {
 				try {
-					const profileResponse = await fetch("/api/assistant-profile");
-					if (profileResponse.ok) {
-						const profile = await profileResponse.json();
-						if (profile.ui_preferences) {
-							uiPreferences = profile.ui_preferences;
-						}
-						profileDefaultModelId = profile.chat_model_id || profile.default_model_id;
-						profileDefaultPersona = profile.persona;
+					const profile = await getAssistantProfile<{
+						ui_preferences?: Record<string, unknown>;
+						chat_model_id?: string;
+						default_model_id?: string;
+						persona?: string;
+					}>();
+					if (profile.ui_preferences) {
+						uiPreferences = profile.ui_preferences;
 					}
+					profileDefaultModelId = profile.chat_model_id || profile.default_model_id;
+					profileDefaultPersona = profile.persona;
 				} catch (error) {
 					console.error("Failed to load assistant profile:", error);
 				}
@@ -613,12 +981,9 @@
 
 			const namePromise = (async () => {
 				try {
-					const response = await fetch("/api/profile");
-					if (response.ok) {
-						const profile = await response.json();
-						preferredName = profile.preferred_name;
-						onboardingStatus = profile.onboarding_status || 'active';
-					}
+					const profile = await getProfile();
+					preferredName = profile.preferred_name ?? undefined;
+					onboardingStatus = profile.onboarding_status || 'active';
 				} catch {
 					// Non-critical, continue without preferred name
 				}
@@ -626,20 +991,20 @@
 
 			const conversationPromise = tabConversationId ? (async () => {
 				try {
-					const response = await fetch(`/api/chats/${tabConversationId}`);
-					if (response.ok) {
-						const data = await response.json();
-						loadedMessages = data.messages || [];
-						chat.messages = deduplicateMessages(loadedMessages).map(
-							(msg: any) => ({
-								id: msg.id,
-								role: msg.role as "user" | "assistant" | "checkpoint",
-								parts: convertMessageToParts(msg),
-							}),
-						);
-						if (data.conversation?.model) {
-							initializeSelectedModel(data.conversation.model);
-						}
+					const data = await getChat<{
+						messages?: any[];
+						conversation?: { model?: string };
+					}>(tabConversationId);
+					loadedMessages = data.messages || [];
+					chat.messages = deduplicateMessages(loadedMessages).map(
+						(msg: any) => ({
+							id: msg.id,
+							role: msg.role as "user" | "assistant" | "checkpoint",
+							parts: convertMessageToParts(msg),
+						}),
+					) as unknown as typeof chat.messages;
+					if (data.conversation?.model) {
+						initializeSelectedModel(data.conversation.model);
 					}
 				} catch (error) {
 					console.error("[ChatView] Error loading conversation:", error);
@@ -673,6 +1038,12 @@
 				enableTransitions = true;
 			}, 50);
 
+			// Auto-send the handed-off prompt on a brand-new chat. handleChatSubmit
+			// queues internally if the instance isn't "ready" yet, so this is safe.
+			if (initialPrompt && isNewChat(tab.route)) {
+				handleChatSubmit(initialPrompt);
+			}
+
 			// Auto-start onboarding for new users with no messages
 			// DISABLED for demo — onboarding was repeating the same message
 			// if (onboardingStatus === 'new' && loadedMessages.length === 0) {
@@ -692,6 +1063,9 @@
 		if (currentChatConversationId) {
 			chatInstances.release(currentChatConversationId);
 		}
+		// Clear any staged highlight ranges from the global CSS highlight registry.
+		stagedRefs = [];
+		repaintHighlights();
 	});
 
 	// Derive thinking state from chat status
@@ -807,32 +1181,117 @@
 	// Also gate on isLoading to prevent flashing "new chat" while fetching an existing conversation
 	let isEmpty = $derived(uniqueMessages.length === 0 && !isLoading);
 
+	// Chat title (header breadcrumb tail). Sourced from the persisted session so it
+	// stays in sync with the sidebar; only shown once the chat has earned a title.
+	let editingTitle = $state(false);
+	let titleDraft = $state("");
+	let titleInputEl = $state<HTMLInputElement | null>(null);
+	const chatTitle = $derived(
+		chatSessions.sessions.find((s) => s.conversation_id === conversationId)?.title ?? "",
+	);
+	const showTitle = $derived((!!chatTitle || editingTitle) && !isEmpty && !isGhost);
+
+	function startRename() {
+		titleDraft = chatTitle;
+		editingTitle = true;
+		tick().then(() => {
+			titleInputEl?.focus();
+			titleInputEl?.select();
+		});
+	}
+
+	// A real, saved chat the user can act on (not the empty new-chat state, not a ghost).
+	const canManageChat = $derived(!isEmpty && !isGhost);
+
+	async function deleteThisChat() {
+		try {
+			windowShellStore.closeTabsByRoute(`/chat/${conversationId}`);
+			await deleteChat(conversationId);
+			chatSessions.remove(conversationId);
+			windowShellStore.invalidateViewCache("chat");
+		} catch (e) {
+			console.error("[ChatView] Failed to delete chat:", e);
+		}
+	}
+
+	function openChatMenu(e: MouseEvent) {
+		const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
+		const pinned = !!windowShellStore.findTab((t) => t.id === tab.id)?.tab.pinned;
+		const items: ContextMenuItem[] = [
+			{ id: "rename", label: "Rename", icon: "ri:edit-line", action: startRename },
+			{
+				id: "pin",
+				label: pinned ? "Unpin tab" : "Pin tab",
+				icon: pinned ? "ri:unpin-line" : "ri:pushpin-line",
+				action: () => windowShellStore.togglePin(tab.id),
+			},
+			{
+				id: "delete",
+				label: "Delete chat",
+				icon: "ri:delete-bin-line",
+				variant: "destructive",
+				dividerBefore: true,
+				action: deleteThisChat,
+			},
+		];
+		contextMenu.show(
+			{ x: rect.right, y: rect.bottom },
+			items,
+			{
+				anchor: { x: rect.left, y: rect.top, width: rect.width, height: rect.height },
+				placement: "bottom-end",
+			},
+		);
+	}
+
+	async function saveTitle() {
+		const next = titleDraft.trim();
+		editingTitle = false;
+		if (!next || next === chatTitle) return;
+		// Optimistic across all store-bound surfaces (header + sidebar), then persist.
+		chatSessions.applyTitle(conversationId, next);
+		windowShellStore.updateTab(tab.id, { label: next });
+		try {
+			await updateChat(conversationId, { title: next });
+		} catch (e) {
+			console.error("[ChatView] Failed to rename chat:", e);
+			await chatSessions.refresh(); // roll back to server truth on failure
+		}
+	}
+
+	function titleKeydown(e: KeyboardEvent) {
+		if (e.key === "Enter") {
+			e.preventDefault();
+			saveTitle();
+		} else if (e.key === "Escape") {
+			e.preventDefault();
+			editingTitle = false;
+		}
+	}
+
 
 	// Generate title after first assistant response
 	async function generateTitle() {
 		if (titleGenerated || chat.messages.length < 2) return;
 
 		try {
-			const response = await fetch("/api/chats/title", {
-				method: "POST",
-				headers: { "Content-Type": "application/json" },
-				body: JSON.stringify({
-					chatId: conversationId,
-					messages: chat.messages.map((m) => ({
-						role: m.role,
-						content:
-							m.parts.find((p) => p.type === "text")?.text || "",
-					})),
-				}),
+			const data = await setChatTitle<{ title?: string }>({
+				chatId: conversationId,
+				messages: chat.messages.map((m) => ({
+					role: m.role,
+					content: m.parts.find((p) => p.type === "text")?.text || "",
+				})),
 			});
 
-			if (response.ok) {
-				const data = await response.json();
+			// Only mark done once we actually have a title, so an ok-but-empty
+			// response retries on the next turn instead of giving up silently.
+			if (data.title) {
 				titleGenerated = true;
-				// Update tab label with the new title
-				if (data.title) {
-					spaceStore.updateTab(tab.id, { label: data.title });
-				}
+				windowShellStore.updateTab(tab.id, { label: data.title });
+				// Optimistically seed the shared session store so the header
+				// breadcrumb (and any store-bound surface) updates immediately,
+				// without waiting on the server-persist → refetch round-trip.
+				chatSessions.applyTitle(conversationId, data.title);
 			}
 		} catch (error) {
 			// Title generation is non-critical
@@ -852,13 +1311,19 @@
 		// Stop the client-side stream
 		chat.stop();
 
+		// Mark the in-flight assistant message as user-stopped so the "Stopped"
+		// notice shows immediately (reload reads the persisted subject='cancelled').
+		const stoppedId = lastAssistantMessage?.id;
+		if (stoppedId) {
+			const existing = messageMetadata.get(stoppedId) ?? {};
+			messageMetadata.set(stoppedId, { ...existing, stopped: true });
+			// $state(Map) doesn't track .set() — reassign so the chip re-renders live.
+			messageMetadata = new Map(messageMetadata);
+		}
+
 		// Also notify the backend to cancel the agent loop
 		try {
-			await fetch('/api/chat/cancel', {
-				method: 'POST',
-				headers: { 'Content-Type': 'application/json' },
-				body: JSON.stringify({ chatId: conversationId })
-			});
+			await cancelChat(conversationId);
 		} catch (e) {
 			console.error('[ChatView] Failed to cancel chat:', e);
 		}
@@ -889,18 +1354,47 @@
 		// Update tab route to reflect the new chat
 		const newRoute = `/chat/${conversationId}`;
 		previousTabRoute = newRoute;
-		spaceStore.updateTab(tab.id, { route: newRoute });
-		spaceStore.invalidateViewCache('chat');
+		windowShellStore.updateTab(tab.id, { route: newRoute });
+		windowShellStore.invalidateViewCache('chat');
 	}
 
 	async function handleChatSubmit(value: string) {
-		const messageToSend = value.trim();
-		if (!messageToSend) return;
+		let messageToSend = value.trim();
+
+		// Track D: prepend any staged highlight references as quoted context +
+		// comments. Only present on a direct send (cleared before queue-drain).
+		if (stagedRefs.length > 0) {
+			const refsBlock = stagedRefs.map(serializeRef).join("\n\n");
+			messageToSend = refsBlock + (messageToSend ? `\n\n${messageToSend}` : "");
+			clearStagedRefs();
+		}
+
+		// Track E1: block sending if an attachment isn't supported by the active
+		// model — the capability banner prompts a switch instead.
+		if (capabilityIssue) return;
+
+		if (!messageToSend && attachments.length === 0) return;
 
 		if (chat.status !== "ready") {
+			// Queue text; attachments stay staged and ride along when the drain
+			// effect re-sends this once the current turn finishes.
+			queuedMessages = [...queuedMessages, messageToSend];
+			input = "";
 			return;
 		}
 		input = "";
+
+		// Capture + clear attachments as AI SDK file parts.
+		const files = attachments.map((a) => ({
+			type: "file" as const,
+			mediaType: a.mediaType,
+			url: a.url,
+			filename: a.filename,
+		}));
+		attachments = [];
+
+		// New turn → clear any leftover Deep Research panel from the previous turn.
+		chatInstances.clearSubagents(conversationId);
 
 		// Optimistic: show thinking indicator immediately (before network round-trip)
 		isAwaitingResponse = true;
@@ -911,14 +1405,17 @@
 
 		try {
 			// Sync permissions to backend BEFORE sending (so AI tool calls have them during streaming)
-			// add_permission endpoint handles chat creation via INSERT OR IGNORE INTO chats
-			if (isNewChat(tab.route) && editAllowListStore.hasItems) {
+			// add_permission endpoint handles chat creation via INSERT OR IGNORE INTO chats.
+			// Ghost chats are never created server-side, so skip this.
+			if (!isGhost && isNewChat(tab.route) && editAllowListStore.hasItems) {
 				await editAllowListStore.markChatCreated();
 			}
 
-			await chat.sendMessage({ text: messageToSend });
+			await chat.sendMessage(
+				files.length > 0 ? { text: messageToSend, files } : { text: messageToSend },
+			);
 
-			if (chat.messages.length === 2) {
+			if (chat.messages.length >= 2 && !isGhost && !titleGenerated) {
 				await generateTitle();
 				// Update tab route if it's a new chat
 				if (isNewChat(tab.route)) {
@@ -926,26 +1423,13 @@
 					// from treating this as a tab change and resetting state
 					const newRoute = `/chat/${conversationId}`;
 					previousTabRoute = newRoute;
-					console.log(
-						"[ChatView] Updating tab with route:",
-						{
-							tabId: tab.id,
-							conversationId,
-							newRoute,
-						},
-					);
-					spaceStore.updateTab(tab.id, {
+					windowShellStore.updateTab(tab.id, {
 						route: newRoute,
 					});
 					// Ensure chat is marked as created (may already be done above if hasItems)
 					await editAllowListStore.markChatCreated();
 					// Invalidate the Chats view cache so it refreshes with the new chat
-					spaceStore.invalidateViewCache('chat');
-					// Reload space items so new chat appears in sidebar
-					// (Backend already added it via chat.rs auto-add logic)
-					if (!spaceStore.isSystemSpace) {
-						await spaceStore.loadSpaceItems();
-					}
+					windowShellStore.invalidateViewCache('chat');
 				}
 				await chatSessions.refresh();
 			}
@@ -964,17 +1448,163 @@
 			isAwaitingResponse = false;
 		}
 	}
+
+	// Track C: drain the queue when the assistant goes idle.
+	$effect(() => {
+		if (
+			chat.status === "ready" &&
+			queuedMessages.length > 0 &&
+			!isAwaitingResponse
+		) {
+			const [next, ...rest] = queuedMessages;
+			queuedMessages = rest;
+			handleChatSubmit(next);
+		}
+	});
+
+	function removeQueued(index: number) {
+		queuedMessages = queuedMessages.filter((_, i) => i !== index);
+	}
+
+	// Flip the current (empty) chat into a temporary/ghost chat, or back. Only
+	// allowed before the first message — we can't retroactively un-persist a turn.
+	function toggleGhost() {
+		if (!isEmpty) return;
+		isGhost = !isGhost;
+	}
 </script>
+
+<svelte:window onmouseup={handleWindowMouseup} />
+
+{#if selectionDraft}
+	<SelectionPopover
+		rect={selectionDraft.rect}
+		onAdd={addStagedRef}
+		onClose={() => (selectionDraft = null)}
+	/>
+{/if}
+
+{#if lightbox}
+	<MediaLightbox
+		src={lightbox.src}
+		alt={lightbox.alt}
+		originRect={lightbox.rect}
+		onClose={() => (lightbox = null)}
+	/>
+{/if}
 
 {#if !chat}
 	<!-- wait for chat to initialize -->
 {:else if isContextView}
 	<ContextViewPanel {conversationId} {active} onCompacted={handleCompacted} />
 {:else}
-	<div class="chat-root">
+	<div
+		class="chat-root"
+		role="presentation"
+		ondragover={(e) => {
+			if (e.dataTransfer?.types.includes("Files")) {
+				e.preventDefault();
+				dragActive = true;
+			}
+		}}
+		ondragleave={(e) => {
+			// Only clear when leaving the root, not when crossing child boundaries.
+			if (!e.relatedTarget || !(e.currentTarget as HTMLElement).contains(e.relatedTarget as Node)) {
+				dragActive = false;
+			}
+		}}
+		ondrop={(e) => {
+			e.preventDefault();
+			dragActive = false;
+			if (e.dataTransfer?.files?.length) addFiles(Array.from(e.dataTransfer.files));
+		}}
+	>
+		{#snippet renderFilePart(part: any, compact = false)}
+			{@const mt = part.mediaType || ""}
+			{#if mt.startsWith("image/")}
+				<!-- svelte-ignore a11y_click_events_have_key_events a11y_no_noninteractive_element_interactions -->
+				<img
+					src={part.url}
+					alt={part.filename || "image"}
+					class="msg-image"
+					class:compact-img={compact}
+					onclick={(e) => openLightbox(e, part.url, part.filename || "image")}
+				/>
+			{:else if mt.startsWith("audio/")}
+				<audio src={part.url} controls class="msg-audio"></audio>
+			{:else}
+				<a class="msg-file" href={part.url} download={part.filename || "file"}>
+					<Icon icon={mt === "application/pdf" ? "ri:file-pdf-fill" : "ri:file-text-line"} width="16" />
+					<span>{part.filename || "Document"}</span>
+				</a>
+			{/if}
+		{/snippet}
+
 		<div class="chat-container">
 			<!-- Main chat area -->
-			<div class="chat-area">
+			<div class="chat-area" class:ghost={isGhost}>
+				<!-- Breadcrumb — the Space this chat lives in, then its title (top chrome) -->
+				<div class="chat-topbar">
+					<ChatNotebookBreadcrumb notebookId={chatNotebookId} onChange={setChatNotebook} />
+					{#if showTitle}
+						{#if chatNotebookId}
+							<Icon icon="ri:arrow-right-s-line" width="15" class="crumb-sep" />
+						{/if}
+						{#if editingTitle}
+							<!-- svelte-ignore a11y_autofocus -->
+							<input
+								bind:this={titleInputEl}
+								class="title-input"
+								bind:value={titleDraft}
+								onblur={saveTitle}
+								onkeydown={titleKeydown}
+								aria-label="Rename chat"
+							/>
+						{:else}
+							<button class="chat-title" onclick={startRename} title="Rename chat">
+								{chatTitle}
+							</button>
+						{/if}
+					{/if}
+				</div>
+				<!-- Top-right chrome: temporary-chat toggle + live context ring -->
+				<div class="chat-topbar-right">
+					{#if !isGhost && contextUsage && extractConversationId(tab.route)}
+						<ContextIndicator
+							conversationId={extractConversationId(tab.route)!}
+							usagePercentage={contextUsage.percentage}
+							totalTokens={contextUsage.tokens}
+							contextWindow={contextUsage.window}
+							status={contextUsage.status}
+							onclick={handleContextClick}
+						/>
+					{/if}
+					{#if isEmpty || isGhost}
+						<button
+							type="button"
+							class="ghost-toggle"
+							class:active={isGhost}
+							disabled={!isEmpty}
+							onclick={toggleGhost}
+							aria-pressed={isGhost}
+							title={isGhost ? "Temporary chat — won't be saved" : "Start a temporary chat"}
+						>
+							<Icon icon="ri:ghost-line" width="16" />
+						</button>
+					{/if}
+					{#if canManageChat}
+						<button
+							type="button"
+							class="chat-menu-btn"
+							onclick={openChatMenu}
+							aria-haspopup="menu"
+							aria-label="Chat options"
+							title="Chat options"
+						>
+							<Icon icon="ri:more-2-fill" width="16" />
+						</button>
+					{/if}
+				</div>
 				<div class="page-container" class:is-empty={isEmpty}>
 					<!-- Messages area -->
 					<div
@@ -999,6 +1629,9 @@
 								>
 									<div
 										class="message-wrapper"
+										class:user-has-attachment={isUserMessage &&
+											message.parts.some((p: any) => p.type === "file")}
+										data-message-id={message.id}
 										data-role={message.role}
 										data-agent-id={messageMetadata.get(
 											message.id,
@@ -1006,7 +1639,7 @@
 										data-loading={message.role ===
 											"assistant" &&
 											!message.parts.some(
-												(p) =>
+												(p: any) =>
 													p.type === "text" && p.text,
 											)}
 									>
@@ -1055,6 +1688,19 @@
 												messageReasoning ||
 												messageToolParts.length > 0}
 
+											{@const subagents =
+												isLastMessage
+													? chatInstances.getSubagents(
+															conversationId,
+														)
+													: []}
+											{#if subagents.length > 0}
+												<SubagentPanel
+													{subagents}
+													variant={selectedAgentMode === 'council' ? 'voice' : 'research'}
+												/>
+											{/if}
+
 											{#if hasThinkingContent || (isStreaming && isLastMessage)}
 												<ThinkingBlock
 													isThinking={isStreaming &&
@@ -1082,6 +1728,20 @@
 															onCitationClick={openCitationPanel}
 														/>
 													</div>
+											{:else if part.type === "file"}
+												{@render renderFilePart(part as any)}
+											{:else if part.type.startsWith("tool-") && (part as any).state === "output-available" && (part as any).output?.permission_needed}
+												<!-- Any gated tool (run_action, delete_action, …) awaiting the user's "I allow" -->
+												{@const output = (part as any).output}
+												<PageBindingInline
+													entityId={output.entity_id}
+													entityType={output.entity_type}
+													entityTitle={output.entity_title}
+													message={output.message}
+													permissionMode={true}
+													onAllow={(id, type, title) => handlePermissionAllow(id, type, title)}
+													onDeny={() => handlePermissionDeny()}
+												/>
 											{:else if part.type === "tool-create_page" && (part as any).state === "output-available"}
 												{@const output = (part as any).output}
 												{#if output?.page_id}
@@ -1090,29 +1750,14 @@
 														title={output.title}
 														pageId={output.page_id}
 														onOpenPage={(id) => {
-													if (!spaceStore.isSplit) {
-														spaceStore.enableSplit();
-													}
-													spaceStore.openTabFromRoute(`/page/${id}`, { paneId: 'right' });
+													// Open the created page beside the chat (Category A).
+													windowShellStore.openRouteBeside(`/page/${id}`);
 												}}
-														onBindPage={handlePageSelect}
-													/>
+														/>
 												{/if}
 											{:else if part.type === "tool-edit_page" && (part as any).state === "output-available"}
 												{@const output = (part as any).output}
-												{#if output?.permission_needed}
-													<!-- AI needs permission to edit this entity -->
-													<PageBindingInline
-														entityId={output.entity_id}
-														entityType={output.entity_type}
-														entityTitle={output.entity_title}
-														message={output.message}
-														proposedAction={output.proposed_action}
-														permissionMode={true}
-														onAllow={(id, type, title) => handlePermissionAllow(id, type, title)}
-														onDeny={() => handlePermissionDeny()}
-													/>
-												{:else if output?.needs_binding}
+												{#if output?.needs_binding}
 													<PageBindingInline
 														entityId={output.page_id}
 														entityTitle={output.page_title}
@@ -1128,10 +1773,8 @@
 														replace={output.edit.replace || ''}
 														isFullReplace={!output.edit.find}
 														onViewPage={editPageId ? () => {
-															if (!spaceStore.isSplit) {
-																spaceStore.enableSplit();
-															}
-															spaceStore.openTabFromRoute(`/page/${editPageId}`, { paneId: 'right', forceNew: true });
+															// View the edited page beside the chat (Category A).
+															windowShellStore.openRouteBeside(`/page/${editPageId}`);
 														} : undefined}
 													/>
 												{/if}
@@ -1144,6 +1787,28 @@
 													code={toolPart.input?.code || ''}
 													output={toolPart.output}
 												/>
+											{:else if part.type === "tool-generate_image"}
+												{@const gen = part as any}
+												{#if gen.state === "output-available" && gen.output?.url}
+													<figure class="generated-image">
+														<!-- svelte-ignore a11y_click_events_have_key_events a11y_no_noninteractive_element_interactions -->
+														<img
+															src={gen.output.url}
+															alt={gen.output.prompt || gen.input?.prompt || "Generated image"}
+															class="msg-image"
+															onclick={(e) => openLightbox(e, gen.output.url, gen.output.prompt || gen.input?.prompt || "Generated image")}
+														/>
+													</figure>
+												{:else if gen.state === "output-error"}
+													<div class="tool-error mb-3 text-sm text-error p-3 bg-error-subtle rounded-lg">
+														Image generation failed{gen.errorText ? ` — ${gen.errorText}` : ""}.
+													</div>
+												{:else}
+													<div class="generating-image">
+														<Icon icon="ri:image-add-line" width="16" />
+														<span>Generating image…</span>
+													</div>
+												{/if}
 												{:else if part.type.startsWith("tool-") && (part as any).state === "output-error"}
 													<div
 														class="tool-error mb-3 text-sm text-error p-3 bg-error-subtle rounded-lg"
@@ -1161,16 +1826,25 @@
 													</div>
 												{/if}
 											{/each}
+											{#if messageMetadata.get(message.id)?.stopped}
+												<StoppedNotice />
+											{/if}
 										{:else}
-											<UserMessage
-												text={message.parts
-													.filter(
-														(p) =>
-															p.type === "text",
-													)
-													.map((p) => p.text)
-													.join("")}
-											/>
+											{@const fileParts = message.parts.filter((p: any) => p.type === "file")}
+											{#if fileParts.length > 0}
+												<div class="msg-attachments">
+													{#each fileParts as fp, i (i)}
+														{@render renderFilePart(fp as any, true)}
+													{/each}
+												</div>
+											{/if}
+											{@const userText = message.parts
+												.filter((p: any) => p.type === "text")
+												.map((p: any) => p.text)
+												.join("")}
+											{#if userText.trim()}
+												<UserMessage text={userText} />
+											{/if}
 										{/if}
 									</div>
 								</div>
@@ -1194,9 +1868,21 @@
 								</div>
 							{/if}
 
-							<ChatError error={chat.error} onRetry={() => chat.regenerate()} />
+							<ChatError error={chat.error ?? null} onRetry={() => chat.regenerate()} />
 						</div>
 					</div>
+
+					{#if isEmpty && isGhost}
+						<div
+							class="ghost-hero"
+							in:fade={{ duration: 300 }}
+							out:fly={{ y: -14, duration: 300, easing: cubicInOut }}
+						>
+							<Icon icon="ri:ghost-line" width="30" class="ghost-hero-icon" />
+							<h1 class="ghost-hero-title">Temporary Chat</h1>
+							<p class="ghost-hero-sub">This chat won't be saved to your history.</p>
+						</div>
+					{/if}
 
 					<!-- ChatInput -->
 					<div
@@ -1205,37 +1891,116 @@
 						class:has-messages={!isEmpty}
 						class:transitions-enabled={enableTransitions}
 						class:focused={inputFocused}
+						class:drag-active={dragActive}
 					>
+						{#if dragActive}
+							<div class="drop-hint">
+								<Icon icon="ri:download-2-line" width="15" />
+								<span>Drop to attach &middot; images, PDFs, or audio</span>
+							</div>
+						{/if}
+						{#if attachments.length > 0}
+							<div class="attachments">
+								{#each attachments as a (a.id)}
+									<div class="attachment">
+										{#if a.kind === "image"}
+											<img src={a.url} alt={a.filename} class="attachment-thumb" />
+										{:else}
+											<span class="attachment-icon">
+												<Icon
+													icon={a.kind === "pdf"
+														? "ri:file-pdf-fill"
+														: a.kind === "audio"
+															? "ri:music-2-line"
+															: "ri:file-text-line"}
+													width="18"
+												/>
+											</span>
+										{/if}
+										<div class="attachment-meta">
+											<span class="attachment-name">{a.filename}</span>
+											<span class="attachment-size">{formatFileSize(a.size)}</span>
+										</div>
+										<button
+											type="button"
+											class="attachment-remove"
+											aria-label="Remove attachment"
+											onclick={() => removeAttachment(a.id)}
+										>
+											<Icon icon="ri:close-line" width="13" />
+										</button>
+									</div>
+								{/each}
+							</div>
+						{/if}
+						{#if capabilityIssue}
+							<div class="capability-banner">
+								<span>
+									{capabilityIssue.modelName} can't read {capabilityIssue.lacks.join(" or ")}.
+								</span>
+								{#if capabilityIssue.candidate}
+									<button type="button" class="capability-switch" onclick={switchToCapableModel}>
+										Switch to {capabilityIssue.candidate.displayName}
+									</button>
+								{:else}
+									<span class="capability-none">No available model can read {capabilityIssue.lacks.join(" or ")} yet.</span>
+								{/if}
+							</div>
+						{/if}
+						{#if stagedRefs.length > 0}
+							<div class="staged-refs">
+								{#each stagedRefs as r (r.id)}
+									<div class="staged-ref">
+										<Icon
+											icon="ri:double-quotes-l"
+											width="13"
+											class="staged-ref-mark"
+										/>
+										<div class="staged-ref-body">
+											<span class="staged-ref-quote">{r.text}</span>
+										</div>
+										<button
+											type="button"
+											class="queued-remove"
+											aria-label="Remove reference"
+											onclick={() => removeStagedRef(r.id)}
+										>
+											<Icon icon="ri:close-line" width="13" />
+										</button>
+									</div>
+								{/each}
+							</div>
+						{/if}
+						{#if queuedMessages.length > 0}
+							<div class="queued-messages">
+								{#each queuedMessages as q, i (i)}
+									<div class="queued-chip">
+										<span class="queued-text">{q}</span>
+										<button
+											type="button"
+											class="queued-remove"
+											aria-label="Remove queued message"
+											onclick={() => removeQueued(i)}
+										>
+											<Icon icon="ri:close-line" width="13" />
+										</button>
+									</div>
+								{/each}
+							</div>
+						{/if}
 						<ChatInput
+							allowEmptySubmit={stagedRefs.length > 0 || attachments.length > 0}
+							onAttach={addFiles}
 							bind:value={input}
 							bind:focused={inputFocused}
 							bind:selectedModel={selectedModelValue}
-							bind:selectedAgentMode={selectedAgentMode}
-							bind:selectedPersona={selectedPersona}
 							disabled={false}
 							sendDisabled={chat.status !== "ready"}
 							isStreaming={chat.status === "streaming"}
 							maxWidth="max-w-3xl"
-							showToolbar={true}
-							conversationId={extractConversationId(tab.route)}
-							{contextUsage}
-							onContextClick={handleContextClick}
-							editableItems={editAllowListStore.items}
-							pageBinding={getBoundPage() ? { pageId: getBoundPage()!.id, pageTitle: getBoundPage()!.title || 'Untitled' } : undefined}
-							attachedThings={attachedThings}
-							allThings={thingsStore.things}
-							onAttachThing={attachThing}
-							onDetachThing={detachThing}
-							onPageClear={handlePageClear}
-							onRemoveItem={handleRemoveItem}
-							onPageSelect={handlePageSelect}
-							onSelectEntities={handleSelectEntities}
-							on:submit={(e) => {
-								if (chat.status === "ready") {
-									handleChatSubmit(e.detail);
-								}
-							}}
-							on:stop={() => handleChatStop()}
+							placeholder={isGhost ? "Write a message (temporary)…" : "Write a message..."}
+							onSubmit={(text) => handleChatSubmit(text)}
+							onStop={() => handleChatStop()}
 						/>
 
 					</div>
@@ -1278,6 +2043,54 @@
 		height: 100%;
 		width: 100%;
 		display: flex;
+		position: relative;
+	}
+
+	/* Track D in-text reference mark — the app's own warm highlight token, one
+	   marker for every staged reference. Painted via the CSS Custom Highlight API
+	   (no DOM mutation, no reflow), so it's theme-aware for free. */
+	:global(::highlight(vref)) {
+		background-color: var(--color-highlight);
+		color: var(--color-highlight-foreground);
+	}
+
+	.staged-refs {
+		display: flex;
+		flex-direction: column;
+		gap: 0.375rem;
+		margin-bottom: 0.5rem;
+	}
+
+	.staged-ref {
+		display: flex;
+		align-items: baseline;
+		gap: 0.4375rem;
+		padding: 0.375rem 0.5rem 0.375rem 0.625rem;
+		border: 1px solid var(--color-border-subtle);
+		border-radius: 0.625rem;
+		background: var(--color-surface-elevated);
+	}
+
+	.staged-ref :global(.staged-ref-mark) {
+		flex-shrink: 0;
+		color: var(--color-foreground-subtle);
+		transform: translateY(1px);
+	}
+
+	.staged-ref-body {
+		flex: 1;
+		min-width: 0;
+		display: flex;
+		flex-direction: column;
+		gap: 0.0625rem;
+	}
+
+	.staged-ref-quote {
+		font-size: 0.8125rem;
+		color: var(--color-foreground-muted);
+		overflow: hidden;
+		text-overflow: ellipsis;
+		white-space: nowrap;
 	}
 
 	.chat-container {
@@ -1294,6 +2107,218 @@
 		overflow: hidden;
 	}
 
+	.chat-topbar {
+		position: absolute;
+		top: 8px;
+		left: 12px;
+		z-index: 5;
+		display: flex;
+		align-items: center;
+		gap: 1px;
+		max-width: min(60%, 34rem);
+		padding: 2px;
+		border-radius: 9px;
+		background: color-mix(in srgb, var(--color-surface) 72%, transparent);
+		backdrop-filter: blur(8px);
+		-webkit-backdrop-filter: blur(8px);
+	}
+
+	.chat-topbar :global(.crumb-sep) {
+		flex-shrink: 0;
+		color: var(--color-foreground-subtle);
+		opacity: 0.7;
+	}
+
+	.chat-title {
+		min-width: 0;
+		max-width: 22rem;
+		height: 24px;
+		padding: 0 6px;
+		border: 1px solid transparent;
+		border-radius: 7px;
+		background: transparent;
+		color: var(--color-foreground);
+		font-family: var(--font-sans);
+		font-size: 12px;
+		font-weight: 500;
+		white-space: nowrap;
+		overflow: hidden;
+		text-overflow: ellipsis;
+		cursor: text;
+		transition: background 0.12s ease;
+	}
+
+	.chat-title:hover {
+		background: var(--color-surface-elevated);
+	}
+
+	.title-input {
+		max-width: 22rem;
+		height: 24px;
+		padding: 0 6px;
+		border: 1px solid color-mix(in srgb, var(--color-primary) 50%, transparent);
+		border-radius: 7px;
+		background: var(--color-surface);
+		color: var(--color-foreground);
+		font-family: var(--font-sans);
+		font-size: 12px;
+		font-weight: 500;
+		outline: none;
+	}
+
+	.chat-topbar-right {
+		position: absolute;
+		top: 8px;
+		right: 12px;
+		z-index: 6;
+		display: flex;
+		align-items: center;
+		gap: 6px;
+	}
+
+	.ghost-toggle {
+		display: inline-flex;
+		align-items: center;
+		justify-content: center;
+		width: 28px;
+		height: 28px;
+		border-radius: 9px;
+		color: var(--color-foreground-subtle);
+		background: color-mix(in srgb, var(--color-surface) 72%, transparent);
+		backdrop-filter: blur(8px);
+		-webkit-backdrop-filter: blur(8px);
+		transition:
+			color 0.15s ease,
+			background-color 0.15s ease;
+		cursor: pointer;
+	}
+
+	.ghost-toggle:hover:not(:disabled) {
+		color: var(--color-foreground);
+		background: var(--color-surface-elevated);
+	}
+
+	.ghost-toggle.active {
+		color: var(--color-primary);
+		background: color-mix(in srgb, var(--color-primary) 14%, transparent);
+	}
+
+	.ghost-toggle:disabled {
+		cursor: default;
+	}
+
+	.chat-menu-btn {
+		display: inline-flex;
+		align-items: center;
+		justify-content: center;
+		width: 28px;
+		height: 28px;
+		border-radius: 9px;
+		color: var(--color-foreground-subtle);
+		background: color-mix(in srgb, var(--color-surface) 72%, transparent);
+		backdrop-filter: blur(8px);
+		-webkit-backdrop-filter: blur(8px);
+		transition:
+			color 0.15s ease,
+			background-color 0.15s ease;
+		cursor: pointer;
+	}
+
+	.chat-menu-btn:hover {
+		color: var(--color-foreground);
+		background: var(--color-surface-elevated);
+	}
+
+	.chat-topbar-right > :global(*) {
+		animation: topbar-pop-in 260ms cubic-bezier(0.34, 1.4, 0.64, 1) backwards;
+	}
+
+	@keyframes topbar-pop-in {
+		from {
+			opacity: 0;
+			transform: scale(0.7);
+		}
+		to {
+			opacity: 1;
+			transform: scale(1);
+		}
+	}
+
+	/* Ghost/temporary chat — faint tiled ghost field, theme-aware via mask. The
+	   field reveals as a circle expanding from the composer (screen center) so the
+	   ghosts ripple outward from the middle. */
+	.chat-area.ghost::before {
+		content: "";
+		position: absolute;
+		inset: 0;
+		z-index: 0;
+		pointer-events: none;
+		background: var(--color-foreground);
+		opacity: 0.035;
+		-webkit-mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath d='M12 2a8 8 0 0 0-8 8v10l2.5-2 2.5 2 2.5-2 2.5 2 2.5-2 2.5 2V10a8 8 0 0 0-8-8z' fill='%23000'/%3E%3C/svg%3E");
+		mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath d='M12 2a8 8 0 0 0-8 8v10l2.5-2 2.5 2 2.5-2 2.5 2 2.5-2 2.5 2V10a8 8 0 0 0-8-8z' fill='%23000'/%3E%3C/svg%3E");
+		-webkit-mask-size: 46px 46px;
+		mask-size: 46px 46px;
+		-webkit-mask-repeat: repeat;
+		mask-repeat: repeat;
+		animation: ghost-wave-in 900ms cubic-bezier(0.22, 1, 0.36, 1) both;
+	}
+
+	@keyframes ghost-wave-in {
+		from {
+			opacity: 0;
+			clip-path: circle(0% at 50% 50%);
+		}
+		to {
+			opacity: 0.035;
+			clip-path: circle(120% at 50% 50%);
+		}
+	}
+
+	@media (prefers-reduced-motion: reduce) {
+		.chat-area.ghost::before,
+		.chat-topbar-right > :global(*) {
+			animation: none;
+		}
+		.chat-input-wrapper.transitions-enabled,
+		.chat-layout {
+			transition: opacity 0.2s ease;
+		}
+	}
+
+	.ghost-hero {
+		position: absolute;
+		left: 0;
+		right: 0;
+		bottom: calc(50% + 52px);
+		z-index: 2;
+		display: flex;
+		flex-direction: column;
+		align-items: center;
+		gap: 0.375rem;
+		text-align: center;
+		padding: 0 1.5rem;
+		pointer-events: none;
+	}
+
+	.ghost-hero :global(.ghost-hero-icon) {
+		color: var(--color-foreground-subtle);
+		margin-bottom: 0.125rem;
+	}
+
+	.ghost-hero-title {
+		font-family: var(--font-serif);
+		font-size: 1.75rem;
+		font-weight: 400;
+		color: var(--color-foreground);
+	}
+
+	.ghost-hero-sub {
+		font-size: 0.875rem;
+		color: var(--color-foreground-muted);
+		max-width: 30rem;
+	}
+
 	.page-container {
 		height: 100%;
 		position: relative;
@@ -1303,9 +2328,15 @@
 		height: 100%;
 		opacity: 0;
 		pointer-events: none;
-		transition: opacity 0.2s ease-in-out;
+		/* Fade + rise in as the composer glides down (matched to the ~400ms glide). */
+		transform: translateY(10px);
+		transition:
+			opacity 0.32s ease,
+			transform 0.4s cubic-bezier(0.76, 0, 0.24, 1);
 		position: relative;
 		z-index: 1;
+		/* Keep scroll position stable as streamed content grows above the fold */
+		overflow-anchor: auto;
 		/* Use standard scrollbar styling — preserves overlay scrollbar behavior on macOS
 		   (unlike ::-webkit-scrollbar which forces classic scrollbars that steal layout space) */
 		scrollbar-width: thin;
@@ -1314,6 +2345,7 @@
 
 	.chat-layout.visible {
 		opacity: 1;
+		transform: translateY(0);
 		pointer-events: auto;
 	}
 
@@ -1327,6 +2359,10 @@
 		gap: 1rem;
 		position: relative;
 		z-index: 1;
+		/* Stop a growing streamed message from reflowing/repainting the whole list.
+		   Safe here: the sticky .chat-input-wrapper is a sibling of the scroller,
+		   not a descendant, so layout containment doesn't affect it. */
+		contain: layout paint;
 	}
 
 	.chat-input-wrapper {
@@ -1343,26 +2379,277 @@
 		background-blend-mode: multiply;
 		box-sizing: border-box;
 		z-index: 10;
+		/* Docked resting state. The empty state centers itself relative to this same
+		   bottom-anchored box (bottom:50% + translateY) so the whole center→dock
+		   travel is one interpolatable transition — no snap, no position swap. */
+		transform: translateY(0);
+		will-change: bottom, transform;
+	}
+
+	.queued-messages {
+		display: flex;
+		flex-direction: column;
+		gap: 0.375rem;
+		margin-bottom: 0.5rem;
+	}
+
+	.queued-chip {
+		display: flex;
+		align-items: center;
+		gap: 0.5rem;
+		padding: 0.375rem 0.625rem;
+		border: 1px solid var(--color-border);
+		border-radius: 0.625rem;
+		background: var(--color-surface-elevated);
+		font-size: 0.8125rem;
+		color: var(--color-foreground-muted);
+	}
+
+	.queued-text {
+		flex: 1;
+		min-width: 0;
+		overflow: hidden;
+		text-overflow: ellipsis;
+		white-space: nowrap;
+	}
+
+	.queued-remove {
+		flex-shrink: 0;
+		display: inline-flex;
+		align-items: center;
+		justify-content: center;
+		padding: 0.125rem;
+		border-radius: 0.375rem;
+		color: var(--color-foreground-muted);
+		transition: background-color 0.15s ease;
+	}
+
+	.queued-remove:hover {
+		background: var(--color-border);
+	}
+
+	/* Track E1 — composer attachment previews */
+	.attachments {
+		display: flex;
+		flex-wrap: wrap;
+		gap: 0.5rem;
+		margin-bottom: 0.5rem;
+	}
+
+	.attachment {
+		display: inline-flex;
+		align-items: center;
+		gap: 0.5rem;
+		padding: 0.375rem 0.5rem 0.375rem 0.375rem;
+		border: 1px solid var(--color-border-subtle);
+		border-radius: 0.625rem;
+		background: var(--color-surface-elevated);
+		max-width: 15rem;
+	}
+
+	.attachment-thumb {
+		width: 2.25rem;
+		height: 2.25rem;
+		border-radius: 0.4rem;
+		object-fit: cover;
+		flex-shrink: 0;
+		display: block;
+	}
+
+	.attachment-icon {
+		width: 2.25rem;
+		height: 2.25rem;
+		border-radius: 0.4rem;
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		background: var(--color-surface);
+		color: var(--color-foreground-muted);
+		flex-shrink: 0;
+	}
+
+	.attachment-meta {
+		display: flex;
+		flex-direction: column;
+		gap: 0.0625rem;
+		min-width: 0;
+	}
+
+	.attachment-name {
+		font-size: 0.8125rem;
+		color: var(--color-foreground);
+		overflow: hidden;
+		text-overflow: ellipsis;
+		white-space: nowrap;
+	}
+
+	.attachment-size {
+		font-size: 0.6875rem;
+		color: var(--color-foreground-subtle);
+	}
+
+	.attachment-remove {
+		flex-shrink: 0;
+		display: inline-flex;
+		align-items: center;
+		justify-content: center;
+		padding: 0.125rem;
+		border-radius: 0.375rem;
+		color: var(--color-foreground-muted);
+		transition: background-color 0.15s ease;
+	}
+
+	.attachment-remove:hover {
+		background: var(--color-border);
+	}
+
+	.capability-banner {
+		display: flex;
+		align-items: center;
+		flex-wrap: wrap;
+		gap: 0.5rem;
+		margin-bottom: 0.5rem;
+		padding: 0.375rem 0.625rem;
+		border: 1px solid var(--color-warning, var(--color-border));
+		border-radius: 0.625rem;
+		background: var(--color-warning-subtle, var(--color-surface-elevated));
+		font-size: 0.8125rem;
+		color: var(--color-foreground);
+	}
+
+	.capability-switch {
+		color: var(--color-primary);
+		font-weight: 500;
+	}
+
+	.capability-switch:hover {
+		text-decoration: underline;
+	}
+
+	.capability-none {
+		color: var(--color-foreground-muted);
+	}
+
+	/* Track E1 — in-message media */
+	.msg-attachments {
+		display: flex;
+		flex-wrap: wrap;
+		gap: 0.5rem;
+		margin-bottom: 0.5rem;
+	}
+
+	.msg-image {
+		max-width: min(420px, 100%);
+		max-height: 420px;
+		border-radius: 0.75rem;
+		border: 1px solid var(--color-border-subtle);
+		display: block;
+		cursor: zoom-in;
+	}
+
+	.msg-audio {
+		width: min(420px, 100%);
+	}
+
+	.msg-file {
+		display: inline-flex;
+		align-items: center;
+		gap: 0.375rem;
+		padding: 0.5rem 0.75rem;
+		border: 1px solid var(--color-border-subtle);
+		border-radius: 0.625rem;
+		background: var(--color-surface-elevated);
+		font-size: 0.875rem;
+		color: var(--color-foreground);
+		text-decoration: none;
+	}
+
+	.msg-file:hover {
+		border-color: var(--color-border-strong);
+	}
+
+	/* Track E2 — generated image */
+	.generated-image {
+		margin: 0.5rem 0;
+	}
+
+	.generating-image {
+		display: inline-flex;
+		align-items: center;
+		gap: 0.5rem;
+		margin: 0.5rem 0;
+		padding: 0.5rem 0.75rem;
+		border: 1px solid var(--color-border-subtle);
+		border-radius: 0.625rem;
+		background: var(--color-surface-elevated);
+		font-size: 0.8125rem;
+		color: var(--color-foreground-muted);
+	}
+
+	/* Track E1 — in-place drag affordance: the composer becomes the dropzone
+	   (no full-screen scrim — context stays visible, the cue points at the
+	   exact landing spot). Drop still works anywhere over the chat root. */
+	.drop-hint {
+		position: absolute;
+		left: 50%;
+		bottom: calc(100% - 0.5rem);
+		transform: translateX(-50%);
+		display: inline-flex;
+		align-items: center;
+		gap: 0.4rem;
+		padding: 0.3rem 0.7rem;
+		border-radius: var(--radius-full);
+		background: var(--color-primary);
+		color: var(--color-on-primary, #fff);
+		font-size: 0.75rem;
+		font-weight: 500;
+		white-space: nowrap;
+		box-shadow: 0 6px 18px -6px color-mix(in srgb, var(--color-primary) 60%, transparent);
+		pointer-events: none;
+		z-index: 11;
+		animation: drop-hint-in 0.18s cubic-bezier(0.22, 1, 0.36, 1);
+	}
+
+	@keyframes drop-hint-in {
+		from {
+			opacity: 0;
+			transform: translateX(-50%) translateY(0.35rem);
+		}
+		to {
+			opacity: 1;
+			transform: translateX(-50%) translateY(0);
+		}
+	}
+
+	/* Accent ring + gentle lift on the actual composer box while dragging. */
+	.chat-input-wrapper.drag-active :global(.chat-input-container .chat-input-wrapper) {
+		border-color: var(--color-primary);
+		box-shadow:
+			0 0 0 3px color-mix(in srgb, var(--color-primary) 22%, transparent),
+			0 10px 28px -14px color-mix(in srgb, var(--color-primary) 50%, transparent);
+		transition:
+			border-color 0.15s ease,
+			box-shadow 0.15s ease;
 	}
 
 	.chat-input-wrapper.transitions-enabled {
+		/* Deliberate ~600ms ease-in-out glide. The surface mask fades in only near
+		   the end (delayed) so it doesn't read as a panel sliding over the messages. */
 		transition:
-			bottom 0.6s cubic-bezier(0.4, 0, 0.2, 1),
-			transform 0.6s cubic-bezier(0.4, 0, 0.2, 1);
+			bottom 0.4s cubic-bezier(0.76, 0, 0.24, 1),
+			transform 0.4s cubic-bezier(0.76, 0, 0.24, 1),
+			background-color 0.22s ease 0.2s;
 	}
 
 	.chat-input-wrapper.is-empty {
-		bottom: auto;
-		top: 50%;
-		transform: translateY(-50%);
-	}
-
-	.chat-input-wrapper.has-messages {
-		padding-bottom: 1.5rem;
-	}
-
-	.page-container:not(.is-empty) .chat-input-wrapper {
-		position: sticky;
+		/* Centered relative to the same bottom anchor: bottom edge to mid-container,
+		   then nudged down half its own height → exact vertical center, any height. */
+		bottom: 50%;
+		transform: translateY(50%);
+		/* Nothing to mask when centered — let the background (incl. ghost field)
+		   show through instead of a solid surface block around the composer. */
+		background-color: transparent;
+		background-image: none;
 	}
 
 	.hero-section {
@@ -1394,6 +2681,9 @@
 		min-width: 0;
 		overflow-wrap: break-word;
 		word-break: break-word;
+		/* Isolate each message's layout/paint so a re-render of one (e.g. the
+		   streaming tail) can't reflow siblings. */
+		contain: layout paint;
 	}
 
 	.message-wrapper :global(h1),
@@ -1403,12 +2693,32 @@
 		margin-top: 0;
 	}
 
-	/* User message card styling */
+	/* User message card styling — hugs its content (left-aligned). Radius mirrors
+	   the composer's language: big enough that a one-line bubble caps into a pill
+	   (radius ≥ half its height) to match the input, but still leaves flat sides
+	   once the text wraps, so 2+ lines read as a clean rounded rect, not a lozenge. */
 	.message-wrapper[data-role="user"] {
 		background: var(--color-surface-elevated);
 		border: 1px solid var(--color-border);
-		border-radius: 8px;
+		border-radius: 1.5rem;
 		padding: 10px 16px;
+		width: fit-content;
+		max-width: 80%;
+	}
+
+	/* A user turn with attachments hugs its content (photo + caption) instead of
+	   spanning full width with dead space. Text-only user turns are unchanged.
+	   Direct class (set in the loop) — robust vs :has()/snippet scoping. */
+	.message-wrapper.user-has-attachment {
+		width: fit-content;
+		max-width: 100%;
+	}
+
+	/* User-attached images render as compact thumbnails (class is on the <img>
+	   itself); assistant/generated images keep the larger size. */
+	.msg-image.compact-img {
+		max-width: min(260px, 100%);
+		max-height: 260px;
 	}
 
 	/* Assistant response text - spacing after thinking block */

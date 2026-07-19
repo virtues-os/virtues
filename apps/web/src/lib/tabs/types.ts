@@ -9,32 +9,34 @@
 
 // All supported tab types - consolidated namespace-based types
 export type TabType =
+	// Landing surface
+	| 'home' // Home / "Return" page: /home
 	// Entity namespaces (Postgres backend)
 	| 'chat' // Chat conversations: /, /chat, /chat/chat_{id}
 	| 'chat-history' // Chat history list: /chat-history
 	| 'page' // User documents: /page, /page/page_{id}
-	| 'wiki' // Wiki overview: /wiki
-	| 'entities' // All entities: /entities
+	| 'wiki' // Wiki room (overview + entity sections): /wiki, /wiki/{section}
 	| 'person' // Wiki people: /person, /person/person_{id}
 	| 'place' // Wiki places: /place, /place/place_{id}
 	| 'org' // Wiki organizations: /org, /org/org_{id}
-	| 'thing' // Wiki things (projects, pets, goals, ...): /things, /thing/thg_{id}
+	| 'notebook' // Notebooks (rooms a chat lives in): /notebooks, /notebook/{id}
+	| 'story' // Stories (a claim, gathered from across time): /stories — PLACEHOLDER
 	| 'day' // Wiki days: /day, /day/day_{date}
 	| 'year' // Wiki years: /year, /year/{year}
 	| 'narrative-identity' // Wiki narrative identity: /narrative-identity
 	| 'source' // Data sources: /source, /source/source_{id}
-	| 'tools' // Tools management: /tools
 	| 'actions' // Actions list: /actions
 	| 'action' // Action detail: /action/action_{id}
 	| 'developers' // Developers tools (SQL/Terminal/Lake): /developers
 	| 'ontology' // Ontology data: /ontologies, /ontologies/{name}
+	| 'record' // Single raw record viewer: /record/{ontology}/{id}
 	// Storage namespaces
-	| 'drive' // Personal files: /drive, /drive/{path}
-	| 'trash' // Drive trash: /trash
-	// View namespace
-	| 'view' // Folder/view pages: /view/view_{id}
+	| 'storage' // Drive | Streams | App Media | Trash: /storage, /storage/{tab}, /storage/drive/{path}
+	| 'drive' // LEGACY alias of /storage (kept so old links resolve): /drive, /drive/{path}
+	| 'asset' // Single file viewer (open density): /drive/file_{id}
+	| 'trash' // LEGACY alias of /storage/trash: /trash
 	// System namespace
-	| 'virtues' // System pages: /virtues/{account|assistant|usage|jobs|sql|terminal|sitemap}
+	| 'virtues' // System pages: /virtues/{account|assistant|usage|jobs|sql|terminal}
 	// Easter eggs
 	| 'conway'
 	| 'dog-jump';
@@ -52,6 +54,11 @@ export interface Tab {
 	route: string; // URL-native: '/chat/chat_abc123', '/page/page_xyz'
 	icon?: string;
 	pinned?: boolean;
+
+	// Per-tab navigation history (browser model). `route` is a denormalized
+	// mirror of `history[historyIndex]`, always written together with them.
+	history: string[]; // routes, oldest → newest
+	historyIndex: number; // pointer into history
 
 	// Storage path (for drive/lake namespaces)
 	storagePath?: string; // e.g., 'photos/2024/vacation.jpg'
@@ -84,9 +91,9 @@ export function isOrgTab(tab: Tab): tab is Tab & { type: 'org' } {
 	return tab.type === 'org';
 }
 
-export function isThingTab(tab: Tab): tab is Tab & { type: 'thing' } {
-	return tab.type === 'thing';
-}
+// `isThingTab` lived here — a type guard for a type that no longer exists.
+// Things were retired (a container masquerading as an entity); the guard outlived
+// them, comparing TabType against a string it can never equal.
 
 export function isDayTab(tab: Tab): tab is Tab & { type: 'day' } {
 	return tab.type === 'day';

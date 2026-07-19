@@ -1,0 +1,3 @@
+[default]
+description = "Default permissions for the contacts plugin"
+permissions = ["allow-enable", "allow-resume", "allow-status", "allow-collect"]

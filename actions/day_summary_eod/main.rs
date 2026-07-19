@@ -32,55 +32,132 @@ async fn main() -> Result<()> {
         })
         .transpose()?;
 
-    // Cron-triggered runs arrive every hour. Gate to the user's local
-    // maintenance hour (profile.update_check_hour, default 8am) so we only
-    // actually do the work once per day, aligned to the user's timezone.
-    // Running without a date → this is a cron / scheduled invocation.
-    if explicit_date.is_none() {
-        let (tz, hour) = load_user_maintenance(&pool).await;
-        let now_local = chrono::Utc::now().with_timezone(&tz);
-        if now_local.hour() as i32 != hour {
-            tracing::info!(
-                now_local = %now_local.format("%Y-%m-%d %H:%M %Z"),
-                maintenance_hour = hour,
-                "outside maintenance hour, skipping"
-            );
-            let summary = format!("skipped: local hour {}, maintenance {}", now_local.hour(), hour);
-            return output(&summary, &input.config);
-        }
-    }
-
+    // Cron-triggered runs arrive every hour. Gate to the user's local maintenance
+    // hour (DEFAULT_MAINTENANCE_HOUR = 4am, in the box's home_timezone) so the whole
+    // chain runs ONCE a day, on the COMPLETED prior day.
+    //
+    // The chain is nightly, not hourly, because the detective is now a best-model
+    // Chat call. You cannot fuse a day that is not over — its distribution of
+    // novelty, its context boundaries, are only knowable once — and re-running a
+    // premium call 23×/day to rebuild a half-day it would discard tonight is pure
+    // waste. So every non-maintenance tick is a no-op. The live "today" view is a
+    // separate, deterministic, zero-LLM read of visits+calendar+sleep and needs
+    // nothing from this action.
     let date = match explicit_date {
+        // A date was named: the caller means it. Run the chain for that day.
         Some(d) => d,
-        None => resolve_user_yesterday(&pool).await,
+        None => {
+            let (tz, hour) = load_user_maintenance(&pool).await;
+            let now_local = chrono::Utc::now().with_timezone(&tz);
+            if now_local.hour() as i32 != hour {
+                // Any other hour: nothing to do. The chain only runs on a completed
+                // day, at the maintenance hour.
+                let skip = format!(
+                    "skipped: local hour {}, maintenance {}",
+                    now_local.hour(),
+                    hour
+                );
+                tracing::info!(%skip, "not the maintenance hour — no-op");
+                return output(&skip, &input.config);
+            }
+            // The maintenance hour: yesterday is complete. Run the whole chain.
+            resolve_user_yesterday(&pool).await
+        }
     };
 
     tracing::info!(date = %date, "day_summary_eod starting");
 
-    // 1. Sleep resolution (side-effects; doesn't return counts)
+    // ─────────────────────────────────────────────────────────────────────
+    // ORDER IS LOad-BEARING. Do not move a scoring step above step 1.
+    //
+    // `generate_day_summary` SEGMENTS the day: it deletes every auto event
+    // (`delete_auto_events_for_day` — `WHERE is_user_added = false`) and
+    // re-inserts fresh rows carrying only 14 columns, none of which is a
+    // score. So anything computed before it is written to rows that are about
+    // to be dropped.
+    //
+    // This is exactly what used to happen: sleep → novelty → autonomic →
+    // topic/entity all ran FIRST, and the summary then deleted the rows
+    // holding every value they had just computed. The result was that
+    // `embedding`, `novelty_z`, `local_novelty_z`, `lof_raw`, `avg_hr`,
+    // `hr_z`, `autonomic_z`, `topic_novelty` and `entity_novelty` were NULL
+    // after every single cron run — and because `novelty::load_baseline`
+    // requires `embedding IS NOT NULL` on PAST events, the baseline could
+    // never accumulate either. The scoring subsystem had never persisted a
+    // value. Seed data hand-populates these columns, which is why nobody
+    // noticed.
+    //
+    // Segment first. Then score what actually exists.
+    // Guarded by `virtues-core/tests/day_pipeline.rs` — if you reorder this,
+    // that test fails.
+    // ─────────────────────────────────────────────────────────────────────
+
+    // 0. Roll audio chunks up into context sessions BEFORE the detective reads
+    //    them. Mechanical (changepoint on loudness + speaker count, no LLM), so it
+    //    is cheap enough to run each pass; idempotent per day. Without this the
+    //    detective drowns in 271 five-minute chunks instead of ~20 sessions.
+    let audio_sessions = virtues::sessionize::audio::sessionize_day(&pool, date)
+        .await
+        .context("audio sessionization failed")?;
+
+    // 1. Segment the day into events — THE DETECTIVE (LLM, Chat slot). Fuses the
+    //    dossier of clean rollups into a gapless timeline. DESTRUCTIVE — replaces
+    //    all auto events. Idempotent: if the day's sources are unchanged since the
+    //    last cut, this returns 0 immediately and makes no model call.
+    let events = virtues::api::day_summary::segment_day_events(&pool, date)
+        .await
+        .context("day segmentation failed")?;
+
+    // 2. Sleep resolution. Must follow the segmentation: a sleep event has
+    //    `is_user_added = false`, so the delete in step 1 eats it too.
     virtues::dayline::sleep::resolve_sleep_events(&pool, date).await;
 
-    // 2. Novelty scoring
+    // 2b. Settle the raw spine into its final shape: absorb sub-15-min Unknown
+    //     slivers into neighbours and label location-change gaps as Transit
+    //     (`is_transit`). AFTER sleep (so it also cleans the short Unknown tails
+    //     sleep's split leaves behind) and BEFORE scoring (so transit blocks are
+    //     annotated and scored like any event — mode descriptive, salience decisive).
+    let gap_ops = virtues::dayline::gaps::classify_day_gaps(&pool, date)
+        .await
+        .context("gap classification failed")?;
+
+    // 3. Annotate the surviving events from their own time windows: avg_hr
+    //    (the input autonomic scoring has always lacked), the entity refs
+    //    that overlap them, and which ontologies actually had data.
+    let annotated = virtues::dayline::annotate::annotate_events_for_day(&pool, date)
+        .await
+        .context("event annotation failed")?;
+
+    // 4. Novelty scoring — writes `embedding`, which everything downstream
+    //    (autonomic's similarity baseline, class-by-neighbourhood, the W5
+    //    story magnet) depends on.
     let novelty_count = virtues::dayline::novelty::compute_novelty_for_day(&pool, date)
         .await
         .context("novelty scoring failed")?;
 
-    // 3. Autonomic scoring (HR/HRV against contextual baseline)
+    // 5. Autonomic scoring (HR against a contextual baseline). Needs step 3's
+    //    avg_hr and step 4's embeddings; before this reorder it had neither.
     let autonomic_count =
         virtues::dayline::autonomic_scoring::compute_autonomic_for_day(&pool, date)
             .await
             .context("autonomic scoring failed")?;
 
-    // 4. Topic/entity novelty
+    // 6. Topic/entity novelty. Needs the topics step 1 now emits and the
+    //    entities step 3 attaches; before this it scored empty arrays.
     let topic_entity_count =
         virtues::dayline::topic_entity_novelty::compute_topic_entity_novelty(&pool, date)
             .await
             .context("topic/entity novelty scoring failed")?;
 
-    // 5. Autobiography generation via LLM
-    virtues::api::day_summary::generate_day_summary(&pool, date)
+    // 7. Narrate the day — THE DAY SUMMARY (LLM, Chat slot). Reads the scored
+    //    EVENTS (not raw sources) plus the 14-day case file, and names the day's
+    //    standout from novelty_z. The whole chain only reaches here at the
+    //    maintenance hour on a completed day, so this always runs (gated internally
+    //    to days that earned a story).
+    let narrated = virtues::api::day_summary::narrate_day(&pool, date)
         .await
-        .context("autobiography generation failed")?;
+        .context("day narration failed")?
+        .is_some();
 
     // Stash the last processed date in config so subsequent cron runs can
     // short-circuit in a condition or observe progress. Also strip any
@@ -94,9 +171,15 @@ async fn main() -> Result<()> {
     }
     config["last_date"] = json!(date.format("%Y-%m-%d").to_string());
 
+    // Every count here must be "rows actually written", never "rows seen".
+    // The old `topic_entity=N` reported events *considered*, so it stayed
+    // cheerfully non-zero while the function scored nothing at all — the same
+    // failure mode as avg_hr, in production, undetected. A metric that can't
+    // go to zero can't tell you anything.
     let summary = format!(
-        "{}: novelty={} autonomic={} topic_entity={}, autobiography generated",
-        date, novelty_count, autonomic_count, topic_entity_count
+        "{date}: audio_sessions={audio_sessions} events={events} gap_ops={gap_ops} annotated={annotated} \
+         novelty={novelty_count} autonomic={autonomic_count} topic_entity={topic_entity_count} \
+         narrated={narrated}"
     );
     output(&summary, &config)
 }
@@ -108,20 +191,33 @@ async fn resolve_user_yesterday(pool: &sqlx::PgPool) -> NaiveDate {
     now_local.date_naive() - chrono::Duration::days(1)
 }
 
-/// Load the user's timezone and maintenance hour from `app_user_profile`.
-/// Defaults: UTC timezone, 8 for maintenance hour.
-async fn load_user_maintenance(pool: &sqlx::PgPool) -> (chrono_tz::Tz, i32) {
-    let row: Option<(Option<String>, Option<i32>)> = sqlx::query_as(
-        "SELECT timezone, update_check_hour FROM app_user_profile LIMIT 1",
-    )
-    .fetch_optional(pool)
-    .await
-    .ok()
-    .flatten();
+/// The local hour the nightly chain runs at. 4am: the day is definitively over,
+/// late collector data (audio chunks still transcribing, final visits) has
+/// settled, it is before the user wakes so the autobiography is ready for them,
+/// and the box is idle. A fixed default until a real per-user setting is migrated.
+const DEFAULT_MAINTENANCE_HOUR: i32 = 4;
 
-    let (tz_str, hour) = row.unwrap_or((None, None));
-    let tz = tz_str
+/// Load the user's timezone and maintenance hour from `app_user_profile`.
+/// Defaults: UTC timezone, 8am maintenance hour.
+///
+/// This used to `SELECT home_timezone, update_check_hour` — but `update_check_hour`
+/// ships in NO migration and does not exist on the box, so the whole query errored
+/// on the missing column and the `.ok()` swallowed it, silently dropping
+/// `home_timezone` too. The nightly then ran at 8am **UTC** for everyone, ignoring
+/// the user's timezone entirely (and near midnight, resolving the wrong
+/// "yesterday"). Read only the column that exists; the maintenance hour is a fixed
+/// default until a configurable setting is actually migrated + wired.
+async fn load_user_maintenance(pool: &sqlx::PgPool) -> (chrono_tz::Tz, i32) {
+    let row: Option<(Option<String>,)> =
+        sqlx::query_as("SELECT home_timezone FROM app_user_profile LIMIT 1")
+            .fetch_optional(pool)
+            .await
+            .ok()
+            .flatten();
+
+    let tz = row
+        .and_then(|(tz_str,)| tz_str)
         .and_then(|s| s.parse::<chrono_tz::Tz>().ok())
         .unwrap_or(chrono_tz::UTC);
-    (tz, hour.unwrap_or(8))
+    (tz, DEFAULT_MAINTENANCE_HOUR)
 }

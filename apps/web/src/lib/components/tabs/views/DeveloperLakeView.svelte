@@ -1,7 +1,9 @@
 <script lang="ts">
 	import type { Tab } from "$lib/tabs/types";
 	import Icon from "$lib/components/Icon.svelte";
-	import { onMount } from "svelte";
+	import { EmptyState, LoadingState, ErrorState } from "$lib";
+	import { getLakeSummary, getLakeStreams } from "$lib/api/client";
+	import { createResource } from "$lib/utils/resource.svelte";
 
 	let { tab, active }: { tab: Tab; active: boolean } = $props();
 
@@ -27,45 +29,15 @@
 		latest_at: string | null;
 	}
 
-	let summary: LakeSummary | null = $state(null);
-	let streams: LakeStream[] = $state([]);
-	let loading = $state(true);
-	let error: string | null = $state(null);
+	const res = createResource(() =>
+		Promise.all([
+			getLakeSummary<LakeSummary>(),
+			getLakeStreams<LakeStream[]>(),
+		]).then(([summary, streams]) => ({ summary, streams })),
+	);
 
-	onMount(async () => {
-		await loadData();
-	});
-
-	async function loadData() {
-		loading = true;
-		error = null;
-
-		try {
-			const [summaryRes, streamsRes] = await Promise.all([
-				fetch("/api/lake/summary"),
-				fetch("/api/lake/streams"),
-			]);
-
-			if (!summaryRes.ok) {
-				throw new Error(
-					`Failed to load lake summary: ${summaryRes.statusText}`,
-				);
-			}
-			if (!streamsRes.ok) {
-				throw new Error(
-					`Failed to load lake streams: ${streamsRes.statusText}`,
-				);
-			}
-
-			summary = await summaryRes.json();
-			streams = await streamsRes.json();
-		} catch (e: any) {
-			console.error("Failed to load lake data", e);
-			error = e.message;
-		} finally {
-			loading = false;
-		}
-	}
+	const summary = $derived(res.data?.summary ?? null);
+	const streams = $derived(res.data?.streams ?? []);
 
 	function formatBytes(bytes: number): string {
 		if (bytes === 0) return "0 B";
@@ -119,13 +91,13 @@
 			</div>
 		</div>
 		<button
-			onclick={loadData}
-			disabled={loading}
+			onclick={res.reload}
+			disabled={res.loading}
 			class="flex items-center gap-1.5 rounded px-2 py-1 text-xs text-foreground-muted hover:bg-surface-elevated hover:text-foreground disabled:opacity-50"
 		>
 			<Icon
 				icon="ri:refresh-line"
-				class={loading ? "animate-spin" : ""}
+				class={res.loading ? "animate-spin" : ""}
 			/>
 			Refresh
 		</button>
@@ -133,20 +105,14 @@
 
 	<!-- Content -->
 	<div class="flex-1 overflow-auto p-6">
-		{#if loading}
-			<div class="flex items-center justify-center h-full">
-				<Icon icon="ri:loader-4-line" width="20" class="spin" />
-			</div>
-		{:else if error}
-			<div
-				class="rounded-md border border-destructive/20 bg-destructive/10 p-4 text-destructive"
-			>
-				<div class="flex items-center gap-2 font-medium">
-					<Icon icon="ri:error-warning-line" />
-					Failed to load lake data
-				</div>
-				<p class="mt-1 text-xs">{error}</p>
-			</div>
+		{#if res.loading}
+			<LoadingState class="h-full" />
+		{:else if res.error}
+			<ErrorState
+				title="Failed to load lake data"
+				message={res.error}
+				onRetry={res.reload}
+			/>
 		{:else if summary}
 			<!-- Stats Cards -->
 			<div class="mb-8 grid grid-cols-3 gap-4">
@@ -198,18 +164,11 @@
 				</div>
 
 				{#if streams.length === 0}
-					<div
-						class="flex flex-col items-center justify-center py-12 text-foreground-muted"
-					>
-						<Icon
-							icon="ri:inbox-line"
-							class="text-3xl opacity-50"
-						/>
-						<p class="mt-2 text-sm">No data archived yet</p>
-						<p class="mt-1 text-xs">
-							Connect a source to start archiving
-						</p>
-					</div>
+					<EmptyState
+						icon="ri:inbox-line"
+						title="No data archived yet"
+						message="Connect a source to start archiving"
+					/>
 				{:else}
 					<div class="overflow-x-auto">
 						<table class="w-full">

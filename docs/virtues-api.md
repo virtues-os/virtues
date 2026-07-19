@@ -20,7 +20,7 @@ Most companies promise privacy: *"we won't look at your data."* That promise is 
 
 So we split the company's knowledge in two and made sure the two halves can never be rejoined:
 
-- **Billing** knows *who you are* — your email, your card, that you pay us $29/month. It knows **nothing** about what you do.
+- **Billing** knows *who you are* — your email, your card, that you pay us $20/month. It knows **nothing** about what you do.
 - **The API** knows *what gets used* — that some anonymous token spent a few cents on a map lookup. It knows **nothing** about who you are.
 
 The link between "who" and "what" exists in exactly one place: **your own server, in your own home.** That's your data, on your hardware. We never hold it.
@@ -44,23 +44,18 @@ Think of it as three rooms that never share a filing cabinet:
 > A little more concrete than the rest of this page — the actual moving parts,
 > for when you need them. Full detail in `docs/`.
 
-There's a fourth, minor player the story above doesn't name: a **rendezvous** —
-a tiny lookup that helps your phone *find* your home server when your ISP
-changes its address. True to the theme, it can't see who you are either: it
-holds an **opaque pointer to an encrypted address it can't read.**
-
 **The parties — who knows what:**
 
 | Party | Its job — and *only* this | Knows | Never sees |
 |---|---|---|---|
 | **Your home server** (VirtuesOS) | runs your stuff; the one place the link lives | everything (it's yours) | — |
-| **Billing** (Atlas) | who pays, plus admin / support | customer, email, that you pay $29/mo | your usage token |
+| **Billing** (Atlas) | who pays, plus admin / support | customer, email, that you pay $20/mo | your usage token |
 | **The API** (virtues-api) | serves requests, counts the budget down | an anonymous token has budget left | who you are |
-| **Rendezvous** | helps your phone find your home server | an opaque pointer to an encrypted address | who you are; your real address (it's encrypted) |
 
-Billing and the API are still the "two rooms, no shared cabinet"; the home
-server is the only place they meet. The rendezvous is a utility closet that
-holds nothing legible.
+Billing and the API are the "two rooms, no shared cabinet"; the home server is
+the only place they meet. (Your phone finds your home server by dialing the
+global IPv6 baked into its pairing bundle — Virtues runs no lookup service for
+it.)
 
 **Where every credential lives:**
 
@@ -68,15 +63,12 @@ holds nothing legible.
 |---|---|---|---|---|---|
 | **Billing token** | Billing, at signup | your home server | Billing (hashed) | proves "I'm paid" → request vouchers | the API |
 | **Voucher** | Billing, monthly | passes *through* your server | the API (hashed, until spent) | one-time baton, Billing → API | both forget it after |
-| **Usage token** *(bearer)* | your home server, monthly | your home server | the API (hashed) | anonymous spend — AI, maps, search, rendezvous writes | Billing |
+| **Usage token** *(bearer)* | your home server, monthly | your home server | the API (hashed) | anonymous spend — AI, maps, search | Billing |
 | **Device key** *(pairing bearer)* | your box, at pairing | each of your devices | your box | your phone / laptop ↔ your own box (local) | all of Virtues' cloud |
-| **Box pointer** *(publish_id)* | your box, at pairing | your box + your devices | rendezvous (the lookup key) | the opaque "where's my box" id | — (it's opaque) |
-| **Address key** *(K)* | your box, at pairing | your box + your devices | **nowhere at Virtues** | encrypts your server's address | the rendezvous |
 
 Two "bearers" people conflate, kept distinct:
 - The **usage token** is *home server ↔ the API* — your anonymous "I'm a paying
-  subscriber" pass that gates everything Virtues-operated (including rendezvous
-  writes).
+  subscriber" pass that gates everything Virtues-operated.
 - The **device key** is *your phone ↔ your own box* — pure local auth that
   **never leaves your house**; Virtues' cloud never sees it.
 
@@ -123,7 +115,7 @@ This is the line that matters, and we mean it literally:
 - We don't have a "customer-to-activity table we promise not to join." **There is no shared key to join on.** Billing's records and the API's records have no field in common.
 - We don't *decline* to link your identity to your behavior. **We are unable to.** The only copy of that link lives on hardware we don't own and can't reach.
 
-A subpoena to Billing yields: *"This customer pays us $29/month."* Nothing else.
+A subpoena to Billing yields: *"This customer pays us $20/month."* Nothing else.
 A subpoena to the API yields: *"Some token has $4.40 left this month."* Nothing else.
 A subpoena to both yields: *those two facts, still unjoinable.*
 

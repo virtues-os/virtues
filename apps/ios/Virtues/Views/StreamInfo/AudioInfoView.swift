@@ -103,6 +103,8 @@ struct AudioInfoView: View {
 
             InfoRow(label: "Pending Chunks", value: "\(uploadCoordinator.streamCounts.audio)")
 
+            ActionLinkRow(streamKey: "ios_microphone")
+
             if audioManager.isRecording {
                 InfoRow(label: "Recording", value: "Active", valueColor: .warmSuccess)
 
@@ -166,7 +168,7 @@ struct AudioInfoView: View {
                 .padding(.top, 4)
 
             VStack(alignment: .leading, spacing: 8) {
-                bulletPoint("Records continuous 5-minute audio chunks")
+                bulletPoint("Records 30-second audio chunks (2s overlap)")
                 bulletPoint("Audio is transcribed to text on the server")
                 bulletPoint("Raw audio is deleted after transcription")
                 bulletPoint("Average dB level stored for activity analysis")
@@ -183,7 +185,7 @@ struct AudioInfoView: View {
 
             VStack(spacing: 10) {
                 InfoRow(label: "Sample Rate", value: "16 kHz")
-                InfoRow(label: "Chunk Duration", value: "5 minutes")
+                InfoRow(label: "Chunk Duration", value: "30 seconds")
                 InfoRow(label: "Format", value: "AAC (16 kbps)")
             }
 

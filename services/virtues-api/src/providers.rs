@@ -41,16 +41,33 @@ pub fn get_embeddings_config(config: &Config) -> ProviderConfig {
     }
 }
 
-/// Calculate cost from usage data based on model pricing.
+/// Calculate cost from token usage. FALLBACK ONLY.
 ///
-/// This is the FALLBACK only — Vercel AI Gateway's `usage.cost` field is the
-/// authoritative source for billing (see `routes/ai.rs::extract_cost_micros`).
-/// We reach here just when the gateway omits `cost`. Pricing comes from the
-/// single shared registry (`virtues_registry::models::get_model_pricing`),
-/// which returns rates per 1K tokens — no second table to drift out of sync.
-pub fn calculate_cost(model: &str, prompt_tokens: u32, completion_tokens: u32) -> f64 {
-    let (input_cost_per_1k, output_cost_per_1k) =
-        virtues_registry::models::get_model_pricing(model);
+/// The gateway's `usage.cost` is authoritative and covers nearly every call
+/// (see `routes/ai.rs::extract_cost_micros`). We land here only when it's
+/// absent — older endpoints, non-Vercel upstreams, some embeddings responses.
+///
+/// Prices come from the live gateway catalog. If the catalog is cold (a fresh
+/// process that has never reached the gateway) we use `FALLBACK_PRICING`, which
+/// is deliberately expensive: in a blind spot, over-charge visibly rather than
+/// under-charge silently.
+///
+/// There is no per-model price table here anymore, and there must never be one
+/// again — the last one under-billed image generation by 13× because nobody
+/// remembered to add a row. See `catalog.rs`.
+pub fn calculate_cost(
+    catalog: &crate::catalog::Catalog,
+    model: &str,
+    prompt_tokens: u32,
+    completion_tokens: u32,
+) -> f64 {
+    let (input_cost_per_1k, output_cost_per_1k) = catalog.pricing(model).unwrap_or_else(|| {
+        tracing::warn!(
+            model,
+            "no catalog pricing — billing at the fallback floor (catalog cold or model unknown)"
+        );
+        virtues_registry::models::FALLBACK_PRICING
+    });
 
     let input_cost = (prompt_tokens as f64 / 1000.0) * input_cost_per_1k;
     let output_cost = (completion_tokens as f64 / 1000.0) * output_cost_per_1k;

@@ -1,7 +1,7 @@
 //! Storage module — local filesystem backend.
 
+pub mod lake;
 pub mod models;
-pub mod stream_writer;
 
 use std::path::PathBuf;
 use std::sync::Arc;

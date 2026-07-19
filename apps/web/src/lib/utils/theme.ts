@@ -5,11 +5,14 @@
  * Themes are applied via data-theme attribute on <html> and CSS custom properties.
  */
 
+import { getAssistantProfile, updateAssistantProfile } from '$lib/api/client';
+
 export type Theme =
 	| 'pemberley'
 	| 'caladan'
 	| 'rivendell'
 	| 'oxford'
+	| 'netherfield'
 	| 'lothlorien'
 	| 'hogwarts'
 	| 'tatooine'
@@ -76,22 +79,16 @@ export async function setTheme(theme: Theme): Promise<void> {
 
 	// Persist to database
 	try {
-		const profileRes = await fetch('/api/assistant-profile');
-		let existingPrefs = {};
-		if (profileRes.ok) {
-			const profile = await profileRes.json();
-			existingPrefs = profile.ui_preferences || {};
-		}
+		const profile = await getAssistantProfile<{ ui_preferences?: Record<string, unknown> }>().catch(
+			() => null
+		);
+		const existingPrefs = profile?.ui_preferences || {};
 
-		await fetch('/api/assistant-profile', {
-			method: 'PUT',
-			headers: { 'Content-Type': 'application/json' },
-			body: JSON.stringify({
-				ui_preferences: {
-					...existingPrefs,
-					theme
-				}
-			})
+		await updateAssistantProfile({
+			ui_preferences: {
+				...existingPrefs,
+				theme
+			}
 		});
 	} catch (error) {
 		console.error('Failed to save theme to database:', error);
@@ -106,14 +103,11 @@ export async function loadThemeFromDB(): Promise<Theme> {
 	if (typeof window === 'undefined') return FALLBACK_THEME;
 
 	try {
-		const response = await fetch('/api/assistant-profile');
-		if (response.ok) {
-			const profile = await response.json();
-			const theme = profile.ui_preferences?.theme as Theme;
-			if (theme && isValidTheme(theme)) {
-				applyTheme(theme);
-				return theme;
-			}
+		const profile = await getAssistantProfile<{ ui_preferences?: { theme?: string } }>();
+		const theme = profile.ui_preferences?.theme as Theme;
+		if (theme && isValidTheme(theme)) {
+			applyTheme(theme);
+			return theme;
 		}
 	} catch (error) {
 		console.error('Failed to load theme from database:', error);
@@ -149,6 +143,7 @@ export function isValidTheme(theme: string): theme is Theme {
 		'caladan',
 		'rivendell',
 		'oxford',
+		'netherfield',
 		'lothlorien',
 		'hogwarts',
 		'tatooine',
@@ -166,6 +161,21 @@ export function isValidTheme(theme: string): theme is Theme {
 
 
 /**
+ * Whether a theme reads as dark (its background luminance is below mid-gray).
+ * Used by the native mobile shell to pick status-bar / keyboard appearance —
+ * themes are user-picked, so darkness can't be inferred from the OS setting.
+ */
+export function isThemeDark(theme: Theme): boolean {
+	const hex = themePreviewColors[theme]?.background ?? '#ffffff';
+	const n = parseInt(hex.slice(1), 16);
+	const r = (n >> 16) & 0xff;
+	const g = (n >> 8) & 0xff;
+	const b = n & 0xff;
+	// Perceived luminance (ITU-R BT.601), 0–255.
+	return 0.299 * r + 0.587 * g + 0.114 * b < 128;
+}
+
+/**
  * Get all available themes
  */
 export function getAvailableThemes(): Theme[] {
@@ -174,6 +184,7 @@ export function getAvailableThemes(): Theme[] {
 		'caladan',
 		'rivendell',
 		'oxford',
+		'netherfield',
 		'lothlorien',
 		'hogwarts',
 		'tatooine',
@@ -198,6 +209,7 @@ export function getThemeDisplayName(theme: Theme): string {
 		caladan: 'Caladan',
 		rivendell: 'Rivendell',
 		oxford: 'Oxford',
+		netherfield: 'Netherfield',
 		lothlorien: 'Lothlorien',
 		hogwarts: 'Hogwarts',
 		tatooine: 'Tatooine',
@@ -231,13 +243,13 @@ export const themePreviewColors: Record<
 	}
 > = {
 	pemberley: {
-		background: '#FFFFFF',
+		background: '#FDFCF9',
 		surface: '#FFFFFF',
-		surfaceElevated: '#F5F5F5',
-		foreground: '#171717',
-		foregroundMuted: '#525252',
-		primary: '#2883DE',
-		syntax: ['#cf222e', '#0a3069', '#8250df', '#0550ae', '#6e7781', '#24292f']
+		surfaceElevated: '#F5F4EF',
+		foreground: '#1A2030',
+		foregroundMuted: '#3E4459',
+		primary: '#1E3159',
+		syntax: ['#9A2B2E', '#1E3159', '#7E2225', '#1E4E8C', '#6C7185', '#1A2030']
 	},
 	caladan: {
 		background: '#FFFFFF',
@@ -261,6 +273,15 @@ export const themePreviewColors: Record<
 		background: '#FFFFFF',
 		surface: '#FFFFFF',
 		surfaceElevated: '#FAFAFA',
+		foreground: '#171717',
+		foregroundMuted: '#525252',
+		primary: '#2883DE',
+		syntax: ['#cf222e', '#0a3069', '#8250df', '#0550ae', '#6e7781', '#24292f']
+	},
+	netherfield: {
+		background: '#FFFFFF',
+		surface: '#FFFFFF',
+		surfaceElevated: '#F5F5F5',
 		foreground: '#171717',
 		foregroundMuted: '#525252',
 		primary: '#2883DE',
@@ -387,8 +408,8 @@ export const themeMetadata: Record<
 	}
 > = {
 	pemberley: {
-		icon: 'ph:building-bold',
-		description: 'Austen elegance, pristine'
+		icon: 'ph:feather-bold',
+		description: 'American heritage, navy & claret'
 	},
 	caladan: {
 		icon: 'ph:waves-bold',
@@ -401,6 +422,10 @@ export const themeMetadata: Record<
 	oxford: {
 		icon: 'ph:book-open-bold',
 		description: 'Academic, studious'
+	},
+	netherfield: {
+		icon: 'ph:building-bold',
+		description: 'Austen elegance, pristine'
 	},
 	lothlorien: {
 		icon: 'ph:tree-bold',

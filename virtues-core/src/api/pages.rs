@@ -4,8 +4,8 @@
 //! Pages are knowledge documents with entity linking support using
 //! the format: ((Display Name))[[prefix_hash]]
 //!
-//! Note: Pages don't "belong" to spaces - they're just URL-native entities.
-//! Organization is handled by space_items which hold URL references.
+//! Note: Pages don't "belong" to notebooks - they're just URL-native entities.
+//! Organization is handled by notebook_items which hold URL references.
 
 use crate::error::{Error, Result};
 use crate::ids::{generate_id, PAGE_PREFIX, PAGE_SHARE_PREFIX, PAGE_VERSION_PREFIX};
@@ -29,9 +29,6 @@ where
     // So if we're here, the field was present - deserialize its value
     Ok(Some(Option::deserialize(deserializer)?))
 }
-
-// System space ID - pages created here don't get auto-added
-const SYSTEM_SPACE_ID: &str = "space_system";
 
 // ============================================================================
 // Types
@@ -70,8 +67,8 @@ pub struct CreatePageRequest {
     pub title: String,
     #[serde(default)]
     pub content: String,
-    #[serde(rename = "spaceId")]
-    pub space_id: Option<String>,  // For auto-add to space_items (not stored on page)
+    #[serde(rename = "notebookId")]
+    pub notebook_id: Option<String>,  // For auto-add to notebook_items (not stored on page)
     pub icon: Option<String>,
     pub cover_url: Option<String>,
     pub tags: Option<serde_json::Value>, // JSONB array: ["tag1", "tag2"]
@@ -99,9 +96,26 @@ pub struct PageListResponse {
     pub offset: i64,
 }
 
+/// An inbound reference — a page that links TO the queried page.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Backlink {
+    pub id: String,
+    pub title: String,
+    pub icon: Option<String>,
+    /// A one-line plain-text snippet of the surrounding context.
+    pub snippet: String,
+    pub updated_at: Timestamp,
+}
+
+/// Backlinks (references) response
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BacklinksResponse {
+    pub backlinks: Vec<Backlink>,
+}
+
 /// Entity search result for autocomplete
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct EntitySearchResult {
+pub struct RefSearchResult {
     pub id: String,
     pub name: String,
     pub entity_type: String,
@@ -112,8 +126,8 @@ pub struct EntitySearchResult {
 
 /// Entity search response
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct EntitySearchResponse {
-    pub results: Vec<EntitySearchResult>,
+pub struct RefSearchResponse {
+    pub results: Vec<RefSearchResult>,
 }
 
 // ============================================================================
@@ -234,8 +248,100 @@ pub async fn get_page(pool: &PgPool, id: &str) -> Result<Page> {
     Ok(page)
 }
 
+/// Get inbound references (backlinks) for a page.
+///
+/// Links are stored inline in markdown as `[@Label](/page/{id})`. On a
+/// single-tenant box the page count is small, so we pre-filter candidate pages
+/// with a `LIKE` on the target URL and extract a context snippet in Rust.
+pub async fn get_page_backlinks(pool: &PgPool, id: &str) -> Result<BacklinksResponse> {
+    // The trailing `)` pins the match to the exact id (so `pg_ab` doesn't match
+    // `pg_abc`) and to a real markdown link, not a bare mention of the id.
+    let needle = format!("/page/{})", id);
+    let like = format!("%{}%", needle);
+
+    #[derive(sqlx::FromRow)]
+    struct Row {
+        id: String,
+        title: String,
+        icon: Option<String>,
+        content: String,
+        updated_at: Timestamp,
+    }
+
+    let rows = sqlx::query_as::<_, Row>(
+        r#"
+        SELECT id, title, icon, content, updated_at
+        FROM app_pages
+        WHERE id <> $1 AND content LIKE $2
+        ORDER BY updated_at DESC
+        "#,
+    )
+    .bind(id)
+    .bind(&like)
+    .fetch_all(pool)
+    .await
+    .map_err(|e| Error::Database(format!("Failed to get backlinks: {}", e)))?;
+
+    let backlinks = rows
+        .into_iter()
+        .filter_map(|row| {
+            let snippet = backlink_snippet(&row.content, &needle)?;
+            Some(Backlink {
+                id: row.id,
+                title: row.title,
+                icon: row.icon,
+                snippet,
+                updated_at: row.updated_at,
+            })
+        })
+        .collect();
+
+    Ok(BacklinksResponse { backlinks })
+}
+
+/// Extract a one-line, plain-text snippet around the first link matching
+/// `needle` within markdown `content`. Returns `None` if the line is empty
+/// after stripping markup.
+fn backlink_snippet(content: &str, needle: &str) -> Option<String> {
+    let pos = content.find(needle)?;
+    // Bound the snippet to the enclosing line.
+    let start = content[..pos].rfind('\n').map(|i| i + 1).unwrap_or(0);
+    let end = content[pos..]
+        .find('\n')
+        .map(|i| pos + i)
+        .unwrap_or(content.len());
+    let plain = strip_markdown(&content[start..end]);
+    let trimmed = plain.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+    Some(truncate_chars(trimmed, 160))
+}
+
+/// Reduce a line of markdown to plain text: `[text](url)` → `text`, and strip
+/// leading heading/list/quote markers.
+fn strip_markdown(line: &str) -> String {
+    use std::sync::OnceLock;
+    static LINK_RE: OnceLock<regex::Regex> = OnceLock::new();
+    let re = LINK_RE.get_or_init(|| regex::Regex::new(r"\[([^\]]*)\]\([^)]*\)").unwrap());
+    let no_links = re.replace_all(line, "$1");
+    no_links
+        .trim_start_matches(|c: char| matches!(c, '#' | '-' | '*' | '>' | ' ' | '\t'))
+        .to_string()
+}
+
+/// Truncate to at most `max` characters (not bytes), appending an ellipsis.
+fn truncate_chars(s: &str, max: usize) -> String {
+    if s.chars().count() <= max {
+        return s.to_string();
+    }
+    let mut out: String = s.chars().take(max).collect();
+    out.push('…');
+    out
+}
+
 /// Create a new page
-/// If space_id is provided and not the system space, auto-adds to space_items
+/// If notebook_id is provided and not the system notebook, auto-adds to notebook_items
 pub async fn create_page(pool: &PgPool, req: CreatePageRequest) -> Result<Page> {
     let title = req.title.trim();
     if title.is_empty() {
@@ -258,19 +364,23 @@ pub async fn create_page(pool: &PgPool, req: CreatePageRequest) -> Result<Page> 
     .bind(&req.content)
     .bind(&req.icon)
     .bind(&req.cover_url)
-    .bind(&req.tags)
+    .bind(req.tags.clone().unwrap_or_else(|| serde_json::json!([])))
     .fetch_one(pool)
     .await
     .map_err(|e| Error::Database(format!("Failed to create page: {}", e)))?;
 
-    // Auto-add to space_items if space_id provided and not system space
-    if let Some(space_id) = &req.space_id {
-        if space_id != SYSTEM_SPACE_ID {
-            let url = format!("/page/{}", page.id);
-            if let Err(e) = crate::api::views::add_space_item(pool, space_id, &url).await {
-                tracing::warn!("Failed to auto-add page to space {}: {}", space_id, e);
-                // Don't fail page creation if auto-add fails
-            }
+    // Auto-add the page as a member of the Notebook it was created in.
+    if let Some(notebook_id) = &req.notebook_id {
+        let url = format!("/page/{}", page.id);
+        if let Err(e) = crate::api::notebooks::add_notebook_item(
+            pool,
+            notebook_id,
+            crate::api::notebooks::AddNotebookItemRequest { url },
+        )
+        .await
+        {
+            tracing::warn!("Failed to auto-add page to notebook {}: {}", notebook_id, e);
+            // Don't fail page creation if auto-add fails
         }
     }
 
@@ -323,7 +433,7 @@ pub async fn update_page(pool: &PgPool, id: &str, req: UpdatePageRequest) -> Res
 }
 
 /// Delete a page by ID
-/// Also cleans up all space_items references (orphan cleanup)
+/// Also cleans up all notebook_items references (orphan cleanup)
 pub async fn delete_page(pool: &PgPool, id: &str) -> Result<()> {
     // First delete the page
     let result = sqlx::query(r#"DELETE FROM app_pages WHERE id = $1"#)
@@ -336,10 +446,10 @@ pub async fn delete_page(pool: &PgPool, id: &str) -> Result<()> {
         return Err(Error::NotFound(format!("Page not found: {}", id)));
     }
 
-    // Clean up all space_items references
+    // Clean up all notebook_items references
     let url = format!("/page/{}", id);
-    if let Err(e) = crate::api::views::remove_items_by_url(pool, &url).await {
-        tracing::warn!("Failed to clean up space_items for page {}: {}", id, e);
+    if let Err(e) = crate::api::notebooks::remove_items_by_url(pool, &url).await {
+        tracing::warn!("Failed to clean up notebook_items for page {}: {}", id, e);
         // Don't fail deletion if cleanup fails
     }
 
@@ -407,13 +517,13 @@ pub async fn create_reflection(pool: &PgPool, date: &str, title: Option<&str>) -
 /// Raw entity search result from database (before URL computation)
 #[derive(Debug, Clone, sqlx::FromRow)]
 #[allow(dead_code)]
-struct RawEntitySearchResult {
+struct RawRefSearchResult {
     id: String,
     name: String,
     entity_type: String,
     icon: String,
     mime_type: Option<String>,
-    updated_at: String,
+    updated_at: Timestamp,
     relevance: i32,
 }
 
@@ -429,6 +539,8 @@ fn get_entity_url(entity_type: &str, id: &str) -> String {
         "year" => format!("/year/{}", id),
         "source" => format!("/source/{}", id),
         "chat" => format!("/chat/{}", id),
+        "notebook" => format!("/notebook/{}", id),
+        "thing" => format!("/thing/{}", id),
         "file" => format!("/drive/{}", id),
         _ => format!("/{}/{}", entity_type, id),
     }
@@ -441,7 +553,7 @@ fn get_entity_url(entity_type: &str, id: &str) -> String {
 /// Results are ranked by:
 /// 1. Relevance: prefix matches (name starts with query) come before contains matches
 /// 2. Recency: within each relevance tier, most recently updated items come first
-pub async fn search_entities(pool: &PgPool, query: &str) -> Result<EntitySearchResponse> {
+pub async fn search_refs(pool: &PgPool, query: &str) -> Result<RefSearchResponse> {
     let query = query.trim();
 
     // For empty query, show most recent items
@@ -455,38 +567,57 @@ pub async fn search_entities(pool: &PgPool, query: &str) -> Result<EntitySearchR
 
     // Search across multiple tables with UNION
     // Relevance: 0 = prefix match (highest), 1 = contains match
-    // Note: wiki_things table doesn't exist yet, so we skip it
-    let raw_results = sqlx::query_as::<_, RawEntitySearchResult>(
+    let raw_results = sqlx::query_as::<_, RawRefSearchResult>(
         r#"
         SELECT id, canonical_name as name, 'person' as entity_type, 'ri:user-line' as icon,
                NULL as mime_type, updated_at,
-               CASE WHEN canonical_name LIKE $2 THEN 0 ELSE 1 END as relevance
+               CASE WHEN canonical_name ILIKE $2 THEN 0 ELSE 1 END as relevance
         FROM wiki_people
-        WHERE canonical_name LIKE $1
+        WHERE canonical_name ILIKE $1
+        UNION ALL
+        SELECT id, name, 'thing' as entity_type, 'ri:lightbulb-line' as icon,
+               NULL as mime_type, updated_at,
+               CASE WHEN name ILIKE $2 THEN 0 ELSE 1 END as relevance
+        FROM wiki_things
+        WHERE name ILIKE $1
         UNION ALL
         SELECT id, name, 'place' as entity_type, 'ri:map-pin-line' as icon,
                NULL as mime_type, updated_at,
-               CASE WHEN name LIKE $2 THEN 0 ELSE 1 END as relevance
+               CASE WHEN name ILIKE $2 THEN 0 ELSE 1 END as relevance
         FROM wiki_places
-        WHERE name LIKE $1
+        WHERE name ILIKE $1
         UNION ALL
         SELECT id, canonical_name as name, 'org' as entity_type, 'ri:building-line' as icon,
                NULL as mime_type, updated_at,
-               CASE WHEN canonical_name LIKE $2 THEN 0 ELSE 1 END as relevance
+               CASE WHEN canonical_name ILIKE $2 THEN 0 ELSE 1 END as relevance
         FROM wiki_orgs
-        WHERE canonical_name LIKE $1
+        WHERE canonical_name ILIKE $1
         UNION ALL
         SELECT id, filename as name, 'file' as entity_type, 'ri:file-line' as icon,
                mime_type, updated_at,
-               CASE WHEN filename LIKE $2 THEN 0 ELSE 1 END as relevance
+               CASE WHEN filename ILIKE $2 THEN 0 ELSE 1 END as relevance
         FROM app_drive_files
-        WHERE filename LIKE $1 AND deleted_at IS NULL
+        WHERE filename ILIKE $1 AND deleted_at IS NULL
         UNION ALL
         SELECT id, title as name, 'page' as entity_type, 'ri:file-text-line' as icon,
                NULL as mime_type, updated_at,
-               CASE WHEN title LIKE $2 THEN 0 ELSE 1 END as relevance
+               CASE WHEN title ILIKE $2 THEN 0 ELSE 1 END as relevance
         FROM app_pages
-        WHERE title LIKE $1
+        WHERE title ILIKE $1
+        UNION ALL
+        SELECT id, title as name, 'chat' as entity_type,
+               CASE WHEN icon LIKE 'ri:%' THEN icon ELSE 'ri:chat-3-line' END as icon,
+               NULL as mime_type, updated_at,
+               CASE WHEN title ILIKE $2 THEN 0 ELSE 1 END as relevance
+        FROM app_chats
+        WHERE title ILIKE $1 AND title <> ''
+        UNION ALL
+        SELECT id, name, 'notebook' as entity_type,
+               CASE WHEN icon LIKE 'ri:%' THEN icon ELSE 'ri:folder-line' END as icon,
+               NULL as mime_type, updated_at,
+               CASE WHEN name ILIKE $2 THEN 0 ELSE 1 END as relevance
+        FROM app_notebooks
+        WHERE name ILIKE $1
         ORDER BY relevance ASC, updated_at DESC
         LIMIT $3
         "#,
@@ -498,10 +629,10 @@ pub async fn search_entities(pool: &PgPool, query: &str) -> Result<EntitySearchR
     .await
     .map_err(|e| Error::Database(format!("Failed to search entities: {}", e)))?;
 
-    // Convert raw results to EntitySearchResult with computed URLs
-    let results: Vec<EntitySearchResult> = raw_results
+    // Convert raw results to RefSearchResult with computed URLs
+    let results: Vec<RefSearchResult> = raw_results
         .into_iter()
-        .map(|r| EntitySearchResult {
+        .map(|r| RefSearchResult {
             url: get_entity_url(&r.entity_type, &r.id),
             id: r.id,
             name: r.name,
@@ -511,7 +642,7 @@ pub async fn search_entities(pool: &PgPool, query: &str) -> Result<EntitySearchR
         })
         .collect();
 
-    Ok(EntitySearchResponse { results })
+    Ok(RefSearchResponse { results })
 }
 
 // ============================================================================

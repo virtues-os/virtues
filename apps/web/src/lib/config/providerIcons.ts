@@ -11,7 +11,6 @@ export const PROVIDER_ICONS: Record<string, string> = {
 	openai: 'simple-icons:openai',
 	mistral: 'simple-icons:mistral',
 	cerebras: 'ri:cpu-line',
-	ollama: 'simple-icons:ollama',
 	deepseek: 'ri:brain-line',
 	xai: 'simple-icons:x',
 	glm: 'ri:sparkling-line',

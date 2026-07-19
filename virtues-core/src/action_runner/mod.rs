@@ -203,14 +203,16 @@ async fn prepare_run(
         }));
     }
 
-    // 2b. Webhook invariant: webhook triggers require a credential_id.
-    if trigger == "webhook" && action.credential_id.is_none() {
+    // 2b. Webhook invariant: a webhook action must resolve to an identity that
+    // authorizes the post — a device_id (device ingest, keyed on the proven iroh
+    // key) or a credential_id (OAuth/api). One or the other must be set.
+    if trigger == "webhook" && action.credential_id.is_none() && action.device_id.is_none() {
         tracing::error!(
             action_id,
-            "webhook trigger on action with no credential_id — rejected"
+            "webhook trigger on action with no device_id or credential_id — rejected"
         );
         return Ok(PrepareOutcome::Early(ActionRunResult::forbidden(
-            "webhook trigger requires credential_id".to_string(),
+            "webhook trigger requires a device_id or credential_id".to_string(),
         )));
     }
 
@@ -317,6 +319,7 @@ async fn execute_prepared(
 
     // 7. Subprocess phase.
     let mut subprocess_summary: Option<String> = None;
+    let mut subprocess_records: i64 = 0;
     let has_command = action.command.as_ref().is_some_and(|c| !c.is_empty());
     if action.runtime == "service" && has_command {
         match run_app_trigger(&action, payload.as_ref()).await {
@@ -340,8 +343,9 @@ async fn execute_prepared(
         )
         .await
         {
-            Ok(summary) => {
-                subprocess_summary = Some(summary);
+            Ok(outcome) => {
+                subprocess_summary = Some(outcome.summary);
+                subprocess_records = outcome.records;
             }
             Err(e) => {
                 let msg = e.to_string();
@@ -390,7 +394,7 @@ async fn execute_prepared(
     // 9. Complete run.
     let summary = subprocess_summary.unwrap_or_default();
     if let Err(e) =
-        actions::complete_run(&deps.db, &run_id, "success", 0, None, Some(&summary)).await
+        actions::complete_run(&deps.db, &run_id, "success", subprocess_records, None, Some(&summary)).await
     {
         tracing::error!(action_id, error = %e, "complete_run failed at end of run");
     }
@@ -446,7 +450,12 @@ async fn load_credentials(db: &PgPool, credential_id: &str) -> Result<serde_json
         .await
         .map_err(|e| Error::Other(format!("credential refresh failed for {credential_id}: {e}")))?;
 
-    let row: Option<(String, String, String)> = sqlx::query_as(
+    // `metadata` is a JSONB column — decode it straight into a `Value`, not a
+    // `String`. (Pre-Postgres it was a TEXT JSON string read via `from_str`;
+    // the migration to JSONB made that decode fail with "Rust type String is
+    // not compatible with SQL type JSONB", which silently broke every ingest.)
+    // `secrets_ciphertext` stays TEXT (it's opaque ciphertext, not JSON).
+    let row: Option<(String, String, serde_json::Value)> = sqlx::query_as(
         r#"SELECT source_id, secrets_ciphertext, metadata
              FROM credentials
             WHERE id = $1 AND status = 'active'"#,
@@ -456,7 +465,7 @@ async fn load_credentials(db: &PgPool, credential_id: &str) -> Result<serde_json
     .await
     .map_err(|e| Error::Database(format!("failed to load credential: {e}")))?;
 
-    let Some((source_id, secrets_ciphertext, metadata_raw)) = row else {
+    let Some((source_id, secrets_ciphertext, metadata_value)) = row else {
         return Err(Error::NotFound(format!(
             "credential not found or not active: {credential_id}"
         )));
@@ -471,8 +480,13 @@ async fn load_credentials(db: &PgPool, credential_id: &str) -> Result<serde_json
     let secrets: serde_json::Value = serde_json::from_str(&secrets_plaintext)
         .unwrap_or_else(|_| serde_json::json!({}));
 
-    let metadata: serde_json::Value =
-        serde_json::from_str(&metadata_raw).unwrap_or_else(|_| serde_json::json!({}));
+    // Normalize JSON `null` (or a non-object) to `{}` so downstream always sees
+    // an object, matching the prior `from_str(...).unwrap_or({})` behavior.
+    let metadata = if metadata_value.is_object() {
+        metadata_value
+    } else {
+        serde_json::json!({})
+    };
 
     Ok(serde_json::json!({
         "id": credential_id,
@@ -562,13 +576,40 @@ async fn run_app_trigger(
     Ok(summary)
 }
 
+/// Hard ceiling on a single action subprocess. Generous enough for the largest
+/// legitimate batch, short enough that a hung/wedged process frees the per-action
+/// run lock instead of blocking the action until the box restarts. (A device
+/// upload gives up far sooner; the box still finishes idempotently if it can.)
+const SUBPROCESS_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(300);
+
+/// Per-action ceiling override. The embedding indexer drains its whole backlog
+/// in one run (see `search::indexer`) — initial onboarding embeds an entire
+/// corpus, which is hours of legitimate work, not a hang. Its drain loop
+/// enforces its own 2-hour wall-clock ceiling and commits per record, so the
+/// subprocess gets that ceiling plus margin and the internal limit exits
+/// cleanly rather than being SIGKILLed mid-drain. Keyed on the manifest dir
+/// (stable), not the id (which gets collision-suffixed on rename).
+fn subprocess_timeout(action: &Action) -> std::time::Duration {
+    match action.dir.as_str() {
+        "embedding_index" => std::time::Duration::from_secs(2 * 3600 + 300),
+        _ => SUBPROCESS_TIMEOUT,
+    }
+}
+
+/// What a successful subprocess phase produced: the one-line summary plus the
+/// processed-record count (for `app_action_runs.records_processed`).
+struct SubprocessOutcome {
+    summary: String,
+    records: i64,
+}
+
 async fn run_subprocess(
     db: &PgPool,
     action: &Action,
     command: &[String],
     credentials: Option<serde_json::Value>,
     payload: Option<&serde_json::Value>,
-) -> Result<String> {
+) -> Result<SubprocessOutcome> {
     let argv0 = command
         .first()
         .ok_or_else(|| Error::Other("action command is empty".to_string()))?;
@@ -595,6 +636,7 @@ async fn run_subprocess(
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
+        .kill_on_drop(true)
         .spawn()
         .map_err(|e| Error::Other(format!("failed to spawn action command: {e}")))?;
 
@@ -605,10 +647,22 @@ async fn run_subprocess(
             .map_err(|e| Error::Other(format!("failed to write stdin: {e}")))?;
     }
 
-    let output = child
-        .wait_with_output()
-        .await
-        .map_err(|e| Error::Other(format!("failed to wait for action subprocess: {e}")))?;
+    // Bound the wait so a hung action can't hold the per-action run lock (and thus
+    // block every future webhook for this action) indefinitely. On timeout the
+    // wait future is dropped; `kill_on_drop` then SIGKILLs the child, and the
+    // caller records the run as `error`, freeing the lock.
+    let ceiling = subprocess_timeout(action);
+    let output = match tokio::time::timeout(ceiling, child.wait_with_output()).await {
+        Ok(res) => {
+            res.map_err(|e| Error::Other(format!("failed to wait for action subprocess: {e}")))?
+        }
+        Err(_) => {
+            return Err(Error::Other(format!(
+                "action subprocess timed out after {}s",
+                ceiling.as_secs()
+            )));
+        }
+    };
 
     let stdout = String::from_utf8_lossy(&output.stdout).to_string();
     let stderr = String::from_utf8_lossy(&output.stderr).to_string();
@@ -636,16 +690,38 @@ async fn run_subprocess(
         .await
         .map_err(|e| Error::Database(format!("failed to save action config: {e}")))?;
 
-    Ok(action_output.result)
+    // Surface stderr even on a clean exit. An action can succeed (exit 0, valid
+    // JSON) while warning on stderr — that channel used to be swallowed, which
+    // is exactly how the transcription runaway stayed invisible. Log it, and
+    // fold a short tail into the run summary so it shows in the Telemetry tab.
+    let mut summary = action_output.result;
+    if !stderr.trim().is_empty() {
+        tracing::warn!(action_id = %action.id, "action stderr (exit 0): {}", stderr.trim());
+        let tail: String = stderr.trim().chars().rev().take(500).collect::<Vec<_>>()
+            .into_iter().rev().collect();
+        summary = format!("{summary}\n[stderr] {tail}");
+    }
+
+    Ok(SubprocessOutcome {
+        summary,
+        records: action_output.records,
+    })
 }
+
+/// Default deployed location for action binaries, matching the installer's
+/// `InstallConfig::actions_bin_dir` (`$INSTALL_PREFIX/libexec/virtues`). Kept
+/// in sync with where the installer copies `actions-bin/` and points
+/// `VIRTUES_ACTIONS_BIN_DIR`.
+const WELL_KNOWN_ACTIONS_BIN_DIR: &str = "/usr/local/libexec/virtues";
 
 /// Resolve a command's program (argv[0]) to something spawnable.
 ///
 /// A bare name (no path separator) is first looked up as a Cargo-built action
-/// binary — `$VIRTUES_ACTIONS_BIN_DIR/<name>` in production, else
-/// `target/{release,debug}/<name>` walking up from cwd. If no workspace binary
-/// matches (e.g. `python3`, `node`) the name is returned verbatim so the OS
-/// resolves it on `PATH`. Explicit paths (`./x`, `/usr/bin/x`) pass through.
+/// binary — `$VIRTUES_ACTIONS_BIN_DIR/<name>` in production, then the
+/// well-known install dir, else `target/{release,debug}/<name>` walking up from
+/// cwd. If no workspace binary matches (e.g. `python3`, `node`) the name is
+/// returned verbatim so the OS resolves it on `PATH`. Explicit paths
+/// (`./x`, `/usr/bin/x`) pass through.
 fn resolve_program(argv0: &str) -> PathBuf {
     if argv0.contains('/') {
         return PathBuf::from(argv0);
@@ -656,6 +732,15 @@ fn resolve_program(argv0: &str) -> PathBuf {
         if p.exists() {
             return p;
         }
+    }
+
+    // Well-known install location (matches the installer's
+    // `InstallConfig::actions_bin_dir`), so a deployed box still resolves
+    // action binaries even if VIRTUES_ACTIONS_BIN_DIR didn't reach the process
+    // environment. Dev builds fall through to the target/ walk below.
+    let installed = PathBuf::from(WELL_KNOWN_ACTIONS_BIN_DIR).join(argv0);
+    if installed.exists() {
+        return installed;
     }
 
     if let Ok(cwd) = std::env::current_dir() {

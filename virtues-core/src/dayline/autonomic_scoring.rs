@@ -18,6 +18,8 @@
 use chrono::NaiveDate;
 use sqlx::PgPool;
 
+use crate::dayline::embedding_ops::{bytes_to_embedding, cosine_similarity};
+
 /// Recency half-life in days (3-week decay: α ≈ 0.1 EMA equivalent).
 const RECENCY_HALF_LIFE_DAYS: f64 = 21.0;
 
@@ -36,10 +38,12 @@ const SIMILARITY_BANDWIDTH: f64 = 0.5;
 ///
 /// Returns the number of events scored.
 pub async fn compute_autonomic_for_day(pool: &PgPool, date: NaiveDate) -> anyhow::Result<u32> {
+    // Bind DATEs as DATEs. Binding a formatted String against the `date` column
+    // fails with "operator does not exist: date = text" — the same error that
+    // had kept `topic_entity_novelty` from ever completing a call. `date_str` is
+    // still needed by the resting-HR helpers, which take &str.
     let date_str = date.format("%Y-%m-%d").to_string();
-    let baseline_start = (date - chrono::Duration::days(84))
-        .format("%Y-%m-%d")
-        .to_string();
+    let baseline_start = date - chrono::Duration::days(84);
 
     // 1. Load today's events that need scoring (have avg_hr but no autonomic_z)
     let today_events: Vec<(String, f64, Option<Vec<u8>>, bool)> = sqlx::query_as(
@@ -53,7 +57,7 @@ pub async fn compute_autonomic_for_day(pool: &PgPool, date: NaiveDate) -> anyhow
           AND e.user_hidden = FALSE
         "#,
     )
-    .bind(&date_str)
+    .bind(date)
     .fetch_all(pool)
     .await?;
 
@@ -62,7 +66,7 @@ pub async fn compute_autonomic_for_day(pool: &PgPool, date: NaiveDate) -> anyhow
     }
 
     // 2. Load baseline events (past 12 weeks) with embeddings + avg_hr
-    let baseline: Vec<(Vec<u8>, f64, String)> = sqlx::query_as(
+    let baseline: Vec<(Vec<u8>, f64, NaiveDate)> = sqlx::query_as(
         r#"
         SELECT e.embedding, e.avg_hr, d.date
         FROM wiki_events e
@@ -75,8 +79,8 @@ pub async fn compute_autonomic_for_day(pool: &PgPool, date: NaiveDate) -> anyhow
           AND e.user_hidden = FALSE
         "#,
     )
-    .bind(&baseline_start)
-    .bind(&date_str)
+    .bind(baseline_start)
+    .bind(date)
     .fetch_all(pool)
     .await?;
 
@@ -93,7 +97,8 @@ pub async fn compute_autonomic_for_day(pool: &PgPool, date: NaiveDate) -> anyhow
             if emb.is_empty() {
                 return None;
             }
-            let days_ago = days_between_dates(d, &date_str);
+            // Both are real dates now — no string parsing round-trip.
+            let days_ago = (date - *d).num_days().max(0) as f64;
             Some((emb, *hr, days_ago))
         })
         .collect();
@@ -201,34 +206,6 @@ pub async fn compute_autonomic_for_day(pool: &PgPool, date: NaiveDate) -> anyhow
 // ============================================================================
 // Helpers
 // ============================================================================
-
-fn cosine_similarity(a: &[f32], b: &[f32]) -> f64 {
-    let mut dot = 0.0f64;
-    let mut norm_a = 0.0f64;
-    let mut norm_b = 0.0f64;
-    for i in 0..a.len().min(b.len()) {
-        let av = a[i] as f64;
-        let bv = b[i] as f64;
-        dot += av * bv;
-        norm_a += av * av;
-        norm_b += bv * bv;
-    }
-    let denom = norm_a.sqrt() * norm_b.sqrt();
-    if denom < 1e-10 {
-        0.0
-    } else {
-        (dot / denom).max(-1.0).min(1.0)
-    }
-}
-
-fn bytes_to_embedding(blob: &[u8]) -> Vec<f32> {
-    if blob.len() % 4 != 0 {
-        return Vec::new();
-    }
-    blob.chunks_exact(4)
-        .map(|chunk| f32::from_le_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]))
-        .collect()
-}
 
 fn days_between_dates(from: &str, to: &str) -> f64 {
     let from_date = chrono::NaiveDate::parse_from_str(from, "%Y-%m-%d");

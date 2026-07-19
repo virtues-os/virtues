@@ -6,10 +6,10 @@
 	 */
 	import { onDestroy } from "svelte";
 	import Modal from "$lib/components/Modal.svelte";
+	import Icon from "$lib/components/Icon.svelte";
 	import { Button } from "$lib";
 	import * as api from "$lib/api/client";
 	import type { PairingInitResponse } from "$lib/types/device-pairing";
-	import QRCode from "qrcode";
 
 	interface Props {
 		deviceType: "ios" | "mac";
@@ -23,13 +23,14 @@
 
 	// Shared state
 	let error = $state<string | null>(null);
-	let apiEndpoint = $state("");
-	let isLoadingEndpoint = $state(true);
 
-	// iOS QR pairing state
-	let qrDataUrl = $state<string>("");
+	// iOS QR pairing: the phone scans a QR of the box's `/pair#t=<token>` URL
+	// while on the same network and consumes it over the LAN — the same
+	// mint→consume flow as the Mac code, just rendered as a QR instead of digits.
+	// The QR carries no secrets (only the pair URL), so cancelling simply denies
+	// the pending token — nothing to revoke.
+	let qrSvg = $state<string>("");
 	let qrSourceId = $state<string>("");
-	let isGeneratingQR = $state(false);
 	// Shared polling state (used by both iOS QR and Mac flows)
 	let pairingData = $state<PairingInitResponse | null>(null);
 	let isInitiating = $state(false);
@@ -44,21 +45,6 @@
 	let timerInterval: ReturnType<typeof setInterval> | null = null;
 	let pollInterval: ReturnType<typeof setInterval> | null = null;
 
-	// Fetch server endpoint on mount
-	$effect(() => {
-		if (typeof window !== "undefined" && open) {
-			fetch("/api/app/server-info")
-				.then((r) => r.json())
-				.then((data) => {
-					apiEndpoint = data.apiEndpoint;
-					isLoadingEndpoint = false;
-				})
-				.catch(() => {
-					apiEndpoint = `${window.location.origin}/api`;
-					isLoadingEndpoint = false;
-				});
-		}
-	});
 
 	// Start iOS QR pairing or Mac pairing when modal opens
 	$effect(() => {
@@ -70,13 +56,6 @@
 		}
 	});
 
-	// Generate QR code once we have both endpoint and source_id
-	$effect(() => {
-		if (qrSourceId && apiEndpoint && !isLoadingEndpoint && !qrDataUrl) {
-			generateQRCode(apiEndpoint, qrSourceId);
-		}
-	});
-
 	// --- iOS QR Flow ---
 
 	async function initiateQRPairing() {
@@ -84,12 +63,11 @@
 		error = null;
 
 		try {
-			const response = await api.initiatePairing(deviceType, displayName);
+			const response = await api.initiatePairing("ios", displayName);
 			pairingData = response;
 			qrSourceId = response.source_id;
+			qrSvg = response.qr_svg ?? "";
 			startPolling();
-			// Client-side 10 minute timer (server enforces actual expiry)
-			timeRemaining = 600;
 			startTimer();
 		} catch (err) {
 			error = err instanceof Error ? err.message : "Failed to initiate pairing";
@@ -98,33 +76,12 @@
 		}
 	}
 
-	async function generateQRCode(endpoint: string, sourceId: string) {
-		isGeneratingQR = true;
-		try {
-			// Strip /api suffix — the QR payload should be the root server URL
-			const root = endpoint.replace(/\/api\/?$/, "");
-			const payload = JSON.stringify({ e: root, s: sourceId });
-			qrDataUrl = await QRCode.toDataURL(payload, {
-				width: 240,
-				margin: 2,
-				errorCorrectionLevel: "M",
-				color: { dark: "#26251E", light: "#FFFFFF" },
-			});
-		} catch (err) {
-			console.error("Failed to generate QR code:", err);
-			error = "Failed to generate QR code";
-		} finally {
-			isGeneratingQR = false;
-		}
-	}
-
 	function retryQRPairing() {
 		hasTimedOut = false;
 		pairingData = null;
 		qrSourceId = "";
-		qrDataUrl = "";
+		qrSvg = "";
 		error = null;
-		timeRemaining = 600;
 		initiateQRPairing();
 	}
 
@@ -146,35 +103,26 @@
 		}
 	}
 
-	async function copyEndpoint() {
-		try {
-			await navigator.clipboard.writeText(apiEndpoint);
-		} catch (err) {
-			console.error("Failed to copy endpoint:", err);
-		}
-	}
-
 	function retryMacPairing() {
 		hasTimedOut = false;
 		pairingData = null;
 		error = null;
-		timeRemaining = 600;
 		initiateMacPairing();
 	}
 
 	// --- Shared Polling & Timer ---
 
 	async function checkPairingStatus() {
-		const sourceId = pairingData?.source_id || qrSourceId;
-		if (!sourceId) return;
-
 		try {
+			// Both iOS (QR) and Mac (code) ride the same token → consume lifecycle.
+			const sourceId = pairingData?.source_id || qrSourceId;
+			if (!sourceId) return;
 			const status = await api.getPairingStatus(sourceId);
-
 			if (status.status === "active") {
 				stopPolling();
 				stopTimer();
 				pairingSucceeded = true;
+				resetLocalState();
 				onSuccess(sourceId);
 				onClose();
 			} else if (status.status === "revoked") {
@@ -202,11 +150,10 @@
 		isPolling = false;
 	}
 
-	function startTimer() {
+	function startTimer(seconds = 600) {
 		if (timerInterval) return;
 
-		// Client-side 10 minute timer (server enforces actual expiry)
-		timeRemaining = 600;
+		timeRemaining = seconds;
 
 		timerInterval = setInterval(() => {
 			timeRemaining--;
@@ -214,6 +161,9 @@
 				hasTimedOut = true;
 				stopTimer();
 				stopPolling();
+				// Don't leave the displayed secret/token live just because the
+				// user walked away — revoke/deny it now (server TTL is the backstop).
+				cleanupPending();
 			}
 		}, 1000);
 	}
@@ -231,21 +181,30 @@
 		return `${mins}:${secs.toString().padStart(2, "0")}`;
 	}
 
+	/** Clear iOS/Mac flow state so the next open starts a fresh pairing. */
+	function resetLocalState() {
+		qrSourceId = "";
+		qrSvg = "";
+		pairingData = null;
+		hasTimedOut = false;
+		error = null;
+	}
+
+	/** Deny the outstanding (unclaimed) pair token. Called when the user cancels
+	 *  AND when the code/QR times out — no credential exists until the new device
+	 *  consumes, so both flows just deny the pending token. Idempotent +
+	 *  best-effort; the server-side token TTL is the backstop. */
+	function cleanupPending() {
+		if (pairingSucceeded) return;
+		const pendingId = pairingData?.source_id || qrSourceId;
+		if (pendingId) void api.pairDeny(pendingId);
+	}
+
 	function handleClose() {
 		stopPolling();
 		stopTimer();
-
-		// Cancel mid-flow: hard-delete the pending credential the server minted
-		// at pair_initiate, otherwise it sits in the DB as a stale `pending`
-		// row and surfaces in the credentials list. Backend's smart DELETE
-		// dispatches by status, so this is a no-op for already-active rows.
-		const pendingId = pairingData?.source_id || qrSourceId;
-		if (pendingId && !pairingSucceeded) {
-			void api.revokeCredential(pendingId).catch(() => {
-				/* benign — row may have been finalized in a race */
-			});
-		}
-
+		cleanupPending();
+		resetLocalState();
 		onClose();
 	}
 
@@ -268,48 +227,62 @@
 			{#if hasTimedOut}
 				<!-- Expired state -->
 				<div class="text-center py-6">
-					<p class="font-serif text-lg text-foreground mb-2">QR Code Expired</p>
+					<p class="font-serif text-lg text-foreground mb-2">Code expired</p>
 					<p class="text-sm text-foreground-muted mb-6">
 						The pairing session timed out. No device connected.
 					</p>
 					<div class="flex justify-center gap-4">
 						<Button variant="ghost" onclick={handleClose}>Cancel</Button>
-						<Button variant="primary" onclick={retryQRPairing}>Generate New Code</Button>
+						<Button variant="primary" onclick={retryQRPairing}>Generate a new code</Button>
 					</div>
 				</div>
 
 			{:else}
 				<!-- QR Code pairing -->
 				<div class="flex flex-col items-center text-center">
-					<div class="mb-4">
-						<p class="text-sm text-foreground-muted mb-1">
-							Open the Virtues app on your iPhone and tap <strong>Scan QR Code</strong>
+					<div class="mb-5">
+						<p class="text-sm leading-relaxed text-foreground-muted">
+							Open the Virtues app on your iPhone and tap <strong class="text-foreground">Scan QR Code</strong>
 						</p>
 					</div>
 
-					<!-- QR Code -->
-					<div class="bg-white rounded-xl p-4 shadow-sm border border-border mb-3">
-						{#if isGeneratingQR || isInitiating || isLoadingEndpoint}
-							<div class="w-[240px] h-[240px] flex items-center justify-center">
-								<p class="text-sm text-foreground-muted">Generating...</p>
-							</div>
-						{:else if qrDataUrl}
-							<img src={qrDataUrl} alt="Pairing QR Code" class="w-[240px] h-[240px]" />
-						{:else}
-							<div class="w-[240px] h-[240px] flex items-center justify-center">
-								<p class="text-sm text-error">Failed to generate QR</p>
-							</div>
-						{/if}
+					<!-- QR Code (server-rendered SVG encoding /pair#t=<token>), framed
+					     with hairline corner brackets so it reads like a scan target,
+					     not a clip-art box. -->
+					<div class="qr-frame mb-5">
+						<span class="qr-corner qr-corner--tl"></span>
+						<span class="qr-corner qr-corner--tr"></span>
+						<span class="qr-corner qr-corner--bl"></span>
+						<span class="qr-corner qr-corner--br"></span>
+						<div class="rounded-xl bg-white p-4">
+							{#if isInitiating}
+								<div class="w-[232px] h-[232px] flex items-center justify-center">
+									<Icon icon="ri:loader-4-line" width="22" class="animate-spin text-neutral-400" />
+								</div>
+							{:else if qrSvg}
+								<!-- eslint-disable-next-line svelte/no-at-html-tags -->
+								<div class="w-[232px] h-[232px] [&>svg]:w-full [&>svg]:h-full">
+									{@html qrSvg}
+								</div>
+							{:else}
+								<div class="w-[232px] h-[232px] flex items-center justify-center">
+									<p class="text-sm text-error">Failed to generate QR</p>
+								</div>
+							{/if}
+						</div>
 					</div>
 
 					<!-- Status -->
-					<div class="flex items-center gap-2 text-sm text-foreground-muted">
-						{#if isPolling}
-							<span class="inline-block w-2 h-2 bg-primary rounded-full animate-pulse"></span>
-							<span>Waiting for device...</span>
-							<span class="text-foreground-subtle">{formatTime(timeRemaining)}</span>
-						{/if}
-					</div>
+					{#if isPolling}
+						<div class="flex items-center gap-2.5 rounded-full bg-surface-elevated px-3.5 py-1.5 text-sm text-foreground-muted">
+							<span class="relative flex h-2 w-2">
+								<span class="absolute inline-flex h-full w-full animate-ping rounded-full bg-primary opacity-60"></span>
+								<span class="relative inline-flex h-2 w-2 rounded-full bg-primary"></span>
+							</span>
+							<span>Waiting for your device…</span>
+							<span class="font-mono text-xs tabular-nums text-foreground-subtle">{formatTime(timeRemaining)}</span>
+						</div>
+					{/if}
 				</div>
 
 				{#if error}
@@ -336,47 +309,31 @@
 				<p class="text-foreground-muted py-8">Generating pairing code...</p>
 			{:else if hasTimedOut}
 				<div class="py-4">
-					<p class="font-serif text-lg text-foreground mb-2">Code Expired</p>
+					<p class="font-serif text-lg text-foreground mb-2">Code expired</p>
 					<p class="text-sm text-foreground-muted mb-6">
 						The pairing code expired. No device connected.
 					</p>
 					<div class="flex justify-center gap-4">
 						<Button variant="ghost" onclick={handleClose}>Cancel</Button>
-						<Button variant="primary" onclick={retryMacPairing}>Try Again</Button>
+						<Button variant="primary" onclick={retryMacPairing}>Try again</Button>
 					</div>
 				</div>
 			{:else if pairingData}
 				<div class="space-y-6">
 					<div>
 						<p class="text-sm text-foreground-muted mb-4">
-							Enter this device ID in the Virtues Mac app:
+							Enter this pairing code in the Virtues Mac app:
 						</p>
-						<div class="font-mono text-xl font-medium tracking-wide text-foreground py-4 break-all">
-							{pairingData.source_id}
+						<div class="font-mono text-2xl font-medium tracking-[0.3em] text-foreground py-4 break-all">
+							{pairingData.token ?? "…"}
 						</div>
 						<p class="text-xs text-foreground-subtle mb-2">
 							Expires in {formatTime(timeRemaining)}
 						</p>
 					</div>
 
-					<div class="pt-4 border-t border-border">
-						<p class="text-xs text-foreground-subtle mb-2">Server endpoint:</p>
-						<div class="flex items-center justify-center gap-2">
-							<code class="text-xs font-mono text-foreground">
-								{isLoadingEndpoint ? "Loading..." : apiEndpoint}
-							</code>
-							<button
-								class="text-xs text-primary hover:underline"
-								onclick={copyEndpoint}
-								disabled={isLoadingEndpoint}
-							>
-								Copy
-							</button>
-						</div>
-					</div>
-
 					{#if isPolling}
-						<p class="text-sm text-foreground-muted">Waiting for device...</p>
+						<p class="text-sm text-foreground-muted">Waiting for your device…</p>
 					{/if}
 
 					<div class="pt-4">
@@ -387,3 +344,50 @@
 		</div>
 	{/if}
 </Modal>
+
+<style>
+	@reference "../../../app.css";
+
+	/* Scan-target frame: white QR plate with four hairline corner brackets.
+	   Reads as "aim here" rather than a bare clip-art square. */
+	.qr-frame {
+		position: relative;
+		padding: 10px;
+	}
+
+	.qr-corner {
+		position: absolute;
+		width: 16px;
+		height: 16px;
+		border-color: var(--color-foreground);
+		opacity: 0.85;
+	}
+	.qr-corner--tl {
+		top: 0;
+		left: 0;
+		border-top: 2px solid;
+		border-left: 2px solid;
+		border-top-left-radius: 6px;
+	}
+	.qr-corner--tr {
+		top: 0;
+		right: 0;
+		border-top: 2px solid;
+		border-right: 2px solid;
+		border-top-right-radius: 6px;
+	}
+	.qr-corner--bl {
+		bottom: 0;
+		left: 0;
+		border-bottom: 2px solid;
+		border-left: 2px solid;
+		border-bottom-left-radius: 6px;
+	}
+	.qr-corner--br {
+		bottom: 0;
+		right: 0;
+		border-bottom: 2px solid;
+		border-right: 2px solid;
+		border-bottom-right-radius: 6px;
+	}
+</style>

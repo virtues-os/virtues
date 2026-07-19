@@ -2,6 +2,7 @@
   "$schema": "https://schemas.tauri.app/capability/schema.json",
   "identifier": "default",
   "description": "Default capabilities for the main window",
+  "platforms": ["macOS", "windows", "linux"],
   "windows": ["*"],
   "permissions": [
     "core:default",
@@ -9,6 +10,8 @@
     "core:window:allow-get-all-windows",
     "core:window:allow-set-focus",
     "opener:default",
+    "updater:default",
+    "notification:default",
     "shell:allow-open",
     {
       "identifier": "shell:allow-execute",
@@ -16,6 +19,15 @@
         {
           "name": "binaries/virtues-collector",
           "sidecar": true,
+          "args": true
+        },
+        {
+          "name": "binaries/virtues-client",
+          "sidecar": true,
+          "args": true
+        },
+        {
+          "name": "osascript",
           "args": true
         }
       ]
@@ -29,13 +41,28 @@
           "args": true
         },
         {
+          "name": "binaries/virtues-client",
+          "sidecar": true,
+          "args": true
+        },
+        {
           "name": "open",
+          "args": true
+        },
+        {
+          "name": "osascript",
           "args": true
         }
       ]
     }
   ],
   "remote": {
-    "urls": ["https://virtues.com/*", "https://*.virtues.com/*", "https://localhost:*/*"]
+    "urls": [
+      "https://virtues.com/*",
+      "https://*.virtues.com/*",
+      "https://localhost:*/*",
+      "http://localhost:*/*",
+      "http://*.virtues:*/*"
+    ]
   }
 }

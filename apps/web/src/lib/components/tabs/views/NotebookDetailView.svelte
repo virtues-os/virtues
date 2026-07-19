@@ -1,0 +1,486 @@
+<script lang="ts">
+	import type { Tab } from '$lib/tabs/types';
+	import type { NotebookDetail } from '$lib/api/client';
+	import Icon from '$lib/components/Icon.svelte';
+	import { notebookStore } from '$lib/stores/notebook.svelte';
+	import { chatSessions } from '$lib/stores/chatSessions.svelte';
+	import { windowShellStore } from '$lib/stores/window-shell.svelte';
+	import { contextMenu } from '$lib/stores/contextMenu.svelte';
+	import RefPicker from '$lib/components/RefPicker.svelte';
+	import ColorPickerModal from '$lib/components/sidebar/ColorPickerModal.svelte';
+	import { getRefSummary } from '$lib/utils/refSummary';
+	import { getPage, getDriveFile } from '$lib/api/client';
+	import { askVirtues } from '$lib/stores/pendingPrompt.svelte';
+
+	let { tab }: { tab: Tab; active?: boolean } = $props();
+
+	const notebookId = $derived.by(() => {
+		const m = tab.route.match(/^\/notebook\/([^/]+)$/);
+		return m?.[1] ?? null;
+	});
+
+	let detail = $state<NotebookDetail | null>(null);
+	let loading = $state(false);
+	let error = $state<string | null>(null);
+
+	async function load(force = false) {
+		const id = notebookId;
+		if (!id) return;
+		loading = true;
+		error = null;
+		try {
+			detail = await notebookStore.get(id, { force });
+		} catch (e) {
+			console.error('[NotebookDetailView] Failed to load notebook:', e);
+			error = e instanceof Error ? e.message : 'Failed to load notebook';
+			detail = null;
+		} finally {
+			loading = false;
+		}
+	}
+
+	// (Re)load whenever the tab points at a different room.
+	$effect(() => {
+		if (notebookId) load();
+	});
+
+	// Chats filed into this room — sourced from the authoritative session list,
+	// not from membership rows, so removing a pinned member can't desync a chat.
+	const roomChats = $derived(
+		chatSessions.sessions.filter((s) => s.notebook_id === notebookId),
+	);
+
+	// Members = everything except chats (chats render in their own list).
+	const pinnedItems = $derived((detail?.items ?? []).filter((i) => !i.url.startsWith('/chat/')));
+
+	// ---- Resolve real member names (not the type slug) -----------------------
+	let memberNames = $state<Record<string, string>>({});
+	const requestedNames = new Set<string>();
+	async function resolveMemberName(url: string): Promise<string> {
+		if (url.startsWith('http://') || url.startsWith('https://')) {
+			try { return new URL(url).hostname.replace(/^www\./, ''); } catch { return url; }
+		}
+		const parts = url.split('/'); // ['', type, id, ...]
+		const type = parts[1] ?? '';
+		const id = parts.slice(2).join('/');
+		try {
+			if (type === 'person' || type === 'place' || type === 'org' || type === 'thing') {
+				const s = await getRefSummary(type, id);
+				if (s?.name) return s.name;
+			} else if (type === 'page') {
+				const p = await getPage(id);
+				if (p) return p.title?.trim() || 'Untitled page';
+			} else if (type === 'drive') {
+				const f = await getDriveFile(parts[2] ?? id);
+				if (f?.filename) return f.filename;
+			} else if (type === 'day' || type === 'year') {
+				return id;
+			}
+		} catch { /* fall through to type label */ }
+		return type ? type[0].toUpperCase() + type.slice(1) : url;
+	}
+	$effect(() => {
+		for (const it of pinnedItems) {
+			if (!requestedNames.has(it.url)) {
+				requestedNames.add(it.url);
+				resolveMemberName(it.url).then((n) => {
+					memberNames = { ...memberNames, [it.url]: n };
+				});
+			}
+		}
+	});
+
+	// ---- Ask this notebook (opens a new chat bound + grounded here) ----------
+	let askDraft = $state('');
+	function submitAsk(e: Event) {
+		e.preventDefault();
+		const text = askDraft.trim();
+		const id = notebookId;
+		if (!text || !id) return;
+		askVirtues(text, id);
+		askDraft = '';
+	}
+
+	function iconForUrl(url: string): string {
+		if (url.startsWith('http://') || url.startsWith('https://')) return 'ri:external-link-line';
+		const prefix = url.split('/')[1] ?? '';
+		const map: Record<string, string> = {
+			person: 'ri:user-line',
+			page: 'ri:file-text-line',
+			org: 'ri:building-line',
+			place: 'ri:map-pin-line',
+			thing: 'ri:shapes-line',
+			day: 'ri:calendar-line',
+			year: 'ri:calendar-2-line',
+			source: 'ri:database-2-line',
+			drive: 'ri:file-line',
+		};
+		return map[prefix] ?? 'ri:links-line';
+	}
+
+	function labelForUrl(url: string): string {
+		if (url.startsWith('http://') || url.startsWith('https://')) {
+			try { return new URL(url).hostname; } catch { return url; }
+		}
+		// e.g. "/person/p_abc" → "person"; the destination view shows the full name.
+		return url.split('/')[1] ?? url;
+	}
+
+	function memberType(url: string): string {
+		if (url.startsWith('http://') || url.startsWith('https://')) return 'Link';
+		const t = url.split('/')[1] ?? '';
+		const map: Record<string, string> = {
+			person: 'Person', page: 'Page', org: 'Org', place: 'Place',
+			thing: 'Thing', day: 'Day', year: 'Year', source: 'Source', drive: 'File',
+		};
+		return map[t] ?? t;
+	}
+
+	function openUrl(url: string) {
+		if (url.startsWith('http://') || url.startsWith('https://')) {
+			window.open(url, '_blank', 'noopener,noreferrer');
+			return;
+		}
+		windowShellStore.openTabFromRoute(url);
+	}
+
+	function openChat(conversationId: string) {
+		windowShellStore.openTabFromRoute(`/chat/${conversationId}`);
+	}
+
+	// ---- Inline name edit ----------------------------------------------------
+	let editingName = $state(false);
+	let nameDraft = $state('');
+	function startRename() {
+		if (!detail) return;
+		nameDraft = detail.name;
+		editingName = true;
+	}
+	async function commitRename() {
+		editingName = false;
+		const id = notebookId;
+		if (!id || !detail) return;
+		const name = nameDraft.trim();
+		if (!name || name === detail.name) return;
+		await notebookStore.update(id, { name });
+		await load(true);
+	}
+
+	// ---- Catch-up memo -------------------------------------------------------
+	let editingMemo = $state(false);
+	let memoDraft = $state('');
+	function startMemo() {
+		if (!detail) return;
+		memoDraft = detail.current_status ?? '';
+		editingMemo = true;
+	}
+	async function commitMemo() {
+		editingMemo = false;
+		const id = notebookId;
+		if (!id) return;
+		await notebookStore.update(id, { current_status: memoDraft.trim() || null });
+		await load(true);
+	}
+
+	// ---- Accent color --------------------------------------------------------
+	let colorOpen = $state(false);
+	async function setAccent(color: string | null) {
+		colorOpen = false;
+		const id = notebookId;
+		if (!id) return;
+		await notebookStore.update(id, { accent_color: color });
+		await load(true);
+	}
+
+	// ---- Membership ----------------------------------------------------------
+	let pickerPos = $state<{ x: number; y: number } | null>(null);
+	function openPicker(e: MouseEvent) {
+		pickerPos = { x: e.clientX, y: e.clientY };
+	}
+	async function addMember(entity: { url: string }) {
+		pickerPos = null;
+		const id = notebookId;
+		if (!id || !entity.url) return;
+		await notebookStore.addItem(id, entity.url);
+	}
+	async function removeMember(url: string) {
+		const id = notebookId;
+		if (!id) return;
+		await notebookStore.removeItem(id, url);
+	}
+	function memberMenu(e: MouseEvent, url: string) {
+		e.preventDefault();
+		contextMenu.show({ x: e.clientX, y: e.clientY }, [
+			{ id: 'remove', label: 'Remove from Notebook', icon: 'ri:close-line', action: () => removeMember(url) },
+		]);
+	}
+
+	// ---- Delete --------------------------------------------------------------
+	async function deleteNotebook() {
+		const id = notebookId;
+		if (!id || !detail) return;
+		contextMenu.hide?.();
+		if (!confirm(`Delete the Notebook "${detail.name}"? Chats and pages stay; they're just unfiled.`)) return;
+		await notebookStore.remove(id);
+		windowShellStore.openTabFromRoute('/notebooks');
+	}
+
+	const accent = $derived(detail?.accent_color || null);
+</script>
+
+<div class="notebook-detail" style={accent ? `--room-accent: ${accent}` : ''}>
+	{#if loading && !detail}
+		<div class="state"><Icon icon="ri:loader-4-line" width="18" class="spin" /> Loading…</div>
+	{:else if error}
+		<div class="state error">{error}</div>
+	{:else if detail}
+		<div class="inner">
+			<header class="head">
+				<div class="head-top">
+					<button class="nb-icon" class:tinted={!!accent} title="Set color" onclick={() => (colorOpen = true)}>
+						<Icon icon={detail.icon || 'ri:booklet-line'} width="22" />
+					</button>
+					<div class="head-actions">
+						<button class="icon-btn" title="Rename" onclick={startRename}><Icon icon="ri:edit-line" width="15" /></button>
+						<button class="icon-btn danger" title="Delete Notebook" onclick={deleteNotebook}><Icon icon="ri:delete-bin-line" width="15" /></button>
+					</div>
+				</div>
+
+				{#if editingName}
+					<!-- svelte-ignore a11y_autofocus -->
+					<input
+						class="title-input font-serif"
+						bind:value={nameDraft}
+						autofocus
+						onblur={commitRename}
+						onkeydown={(e) => { if (e.key === 'Enter') commitRename(); if (e.key === 'Escape') editingName = false; }}
+					/>
+				{:else}
+					<h1 class="title font-serif" ondblclick={startRename}>{detail.name}</h1>
+				{/if}
+
+				{#if editingMemo}
+					<!-- svelte-ignore a11y_autofocus -->
+					<textarea
+						class="desc-input"
+						bind:value={memoDraft}
+						autofocus
+						placeholder="Add a description — what this notebook is for. It also gives the assistant context."
+						onblur={commitMemo}
+					></textarea>
+				{:else if detail.current_status}
+					<button class="desc" onclick={startMemo}>{detail.current_status}</button>
+				{:else}
+					<button class="desc desc-empty" onclick={startMemo}>Add a description…</button>
+				{/if}
+
+				<div class="meta font-mono">
+					{pinnedItems.length} {pinnedItems.length === 1 ? 'source' : 'sources'}
+					<span class="dot">·</span>
+					{roomChats.length} {roomChats.length === 1 ? 'chat' : 'chats'}
+				</div>
+			</header>
+
+			<!-- Ask this notebook — a new chat grounded in these sources -->
+			<form class="ask" onsubmit={submitAsk}>
+				<Icon icon="ri:sparkling-2-line" width="16" />
+				<input class="ask-input" bind:value={askDraft} placeholder="Ask this notebook…" />
+				<button class="ask-send" type="submit" disabled={!askDraft.trim()} title="Ask — grounded in this notebook">
+					<Icon icon="ri:arrow-right-line" width="15" />
+				</button>
+			</form>
+
+			<!-- Library — the sources that ground this notebook -->
+			<section class="section">
+				<div class="eyebrow font-mono">
+					<span>Library</span>
+					<button class="add-btn" onclick={openPicker} title="Add a page, person, place, or link"><Icon icon="ri:add-line" width="14" /></button>
+				</div>
+				{#if pinnedItems.length === 0}
+					<button class="add-row" onclick={openPicker}>
+						<Icon icon="ri:add-line" width="15" /> Add pages, people, places, or links
+					</button>
+				{:else}
+					<ul class="ledger">
+						{#each pinnedItems as it (it.url)}
+							<li class="ledger-row">
+								<button class="ledger-item" onclick={() => openUrl(it.url)} oncontextmenu={(e) => memberMenu(e, it.url)} title={memberNames[it.url] || it.url}>
+									<Icon icon={iconForUrl(it.url)} width="16" class="ledger-ic" />
+									<span class="ledger-name">{memberNames[it.url] || labelForUrl(it.url)}</span>
+									<span class="ledger-type font-mono">{memberType(it.url)}</span>
+								</button>
+								<button class="ledger-remove" title="Remove from Notebook" onclick={() => removeMember(it.url)}><Icon icon="ri:close-line" width="13" /></button>
+							</li>
+						{/each}
+					</ul>
+				{/if}
+			</section>
+
+			<!-- Chats filed here -->
+			<section class="section">
+				<div class="eyebrow font-mono"><span>Chats</span></div>
+				{#if roomChats.length === 0}
+					<p class="empty">No chats yet — ask something above to start one here.</p>
+				{:else}
+					<ul class="ledger">
+						{#each roomChats as c (c.conversation_id)}
+							<li class="ledger-row">
+								<button class="ledger-item" onclick={() => openChat(c.conversation_id)} title={c.title ?? 'Untitled chat'}>
+									<Icon icon={c.icon || 'ri:chat-3-line'} width="16" class="ledger-ic" />
+									<span class="ledger-name">{c.title ?? 'Untitled chat'}</span>
+								</button>
+							</li>
+						{/each}
+					</ul>
+				{/if}
+			</section>
+		</div>
+	{:else}
+		<div class="state">Notebook not found.</div>
+	{/if}
+</div>
+
+{#if pickerPos}
+	<RefPicker
+		mode="single"
+		position={pickerPos}
+		placeholder="Add a person, page, or link…"
+		excludeIds={pinnedItems.map((i) => i.url)}
+		onSelect={addMember}
+		onClose={() => (pickerPos = null)}
+	/>
+{/if}
+
+<ColorPickerModal open={colorOpen} value={accent} onSelect={setAccent} onClose={() => (colorOpen = false)} />
+
+<style>
+	/* Centered reading column (robust: full-width scroller, auto-margin inner) */
+	.notebook-detail { width: 100%; height: 100%; overflow-y: auto; }
+	.inner { max-width: 720px; margin: 0 auto; padding: 3.5rem 2rem 6rem; }
+	.state { display: flex; align-items: center; gap: 8px; padding: 3rem 2rem; color: var(--color-foreground-muted); }
+	.state.error { color: var(--color-error, #dc2626); }
+
+	/* Header — serif title + one description (the app's title/description pattern) */
+	.head { margin-bottom: 2rem; }
+	.head-top { display: flex; align-items: center; justify-content: space-between; margin-bottom: 1.1rem; }
+	.nb-icon {
+		display: grid; place-items: center; width: 46px; height: 46px;
+		border-radius: 12px; border: 1px solid var(--color-border);
+		background: var(--color-surface-elevated); color: var(--color-foreground); cursor: pointer;
+	}
+	.nb-icon.tinted {
+		background: color-mix(in srgb, var(--room-accent) 14%, var(--color-surface-elevated));
+		border-color: color-mix(in srgb, var(--room-accent) 32%, var(--color-border));
+		color: color-mix(in srgb, var(--room-accent) 80%, var(--color-foreground));
+	}
+	.head-actions { display: flex; gap: 2px; }
+	.icon-btn {
+		display: grid; place-items: center; width: 30px; height: 30px;
+		border: none; border-radius: 8px; background: transparent;
+		color: var(--color-foreground-subtle, #9ca3af); cursor: pointer;
+	}
+	.icon-btn:hover { background: var(--color-surface-elevated); color: var(--color-foreground); }
+	.icon-btn.danger:hover { color: var(--color-error, #dc2626); }
+
+	.title {
+		font-size: 2rem; font-weight: 500; line-height: 1.12; margin: 0;
+		color: var(--color-foreground); cursor: text;
+	}
+	.title-input {
+		font-size: 2rem; font-weight: 500; line-height: 1.12; width: 100%;
+		border: none; background: transparent; color: var(--color-foreground); outline: none; padding: 0 0 2px;
+		border-bottom: 1.5px solid color-mix(in srgb, var(--room-accent, var(--color-foreground)) 45%, var(--color-border));
+	}
+	.desc {
+		display: block; width: 100%; text-align: left; margin-top: 0.6rem;
+		border: none; background: transparent; cursor: text; padding: 0;
+		font: inherit; font-size: 0.95rem; line-height: 1.55; color: var(--color-foreground-muted);
+	}
+	.desc:hover { color: var(--color-foreground); }
+	.desc-empty { color: var(--color-foreground-subtle, #9ca3af); }
+	.desc-input {
+		width: 100%; margin-top: 0.6rem; min-height: 3rem; resize: vertical;
+		border: none; border-left: 2px solid var(--room-accent, var(--color-border));
+		background: var(--color-surface-elevated); border-radius: 0 8px 8px 0;
+		padding: 0.55rem 0.7rem; font: inherit; font-size: 0.95rem; line-height: 1.55;
+		color: var(--color-foreground); outline: none;
+	}
+	.meta {
+		margin-top: 1rem; font-size: 11px; letter-spacing: 0.04em;
+		text-transform: uppercase; color: var(--color-foreground-subtle, #9ca3af);
+	}
+	.meta .dot { margin: 0 0.6ch; opacity: 0.5; }
+
+	/* Ask bar — the primary action */
+	.ask {
+		display: flex; align-items: center; gap: 10px; height: 48px;
+		padding: 0 6px 0 14px;
+		border: 1px solid var(--color-border); border-radius: 12px;
+		background: var(--color-surface-elevated); margin-bottom: 2.5rem;
+		transition: border-color 120ms, box-shadow 120ms;
+	}
+	.ask:focus-within {
+		border-color: color-mix(in srgb, var(--room-accent, var(--color-foreground-subtle, #9ca3af)) 55%, var(--color-border));
+		box-shadow: 0 0 0 3px color-mix(in srgb, var(--room-accent, var(--color-foreground-subtle, #9ca3af)) 13%, transparent);
+	}
+	.ask > :global(svg) { color: var(--color-foreground-subtle, #9ca3af); flex-shrink: 0; }
+	.ask-input {
+		flex: 1; min-width: 0; border: none; background: transparent; outline: none;
+		font: inherit; font-size: 0.95rem; color: var(--color-foreground);
+	}
+	.ask-input::placeholder { color: var(--color-foreground-subtle, #9ca3af); }
+	.ask-send {
+		display: grid; place-items: center; width: 34px; height: 34px; flex-shrink: 0;
+		border: none; border-radius: 9px; cursor: pointer;
+		background: var(--room-accent, var(--color-foreground)); color: var(--color-background, #fff);
+	}
+	.ask-send:disabled { opacity: 0.35; cursor: default; }
+
+	/* Sections — quiet ledger lists (hairline rows, not boxes) */
+	.section { margin-bottom: 2.25rem; }
+	.eyebrow {
+		display: flex; align-items: center; justify-content: space-between;
+		font-size: 11px; letter-spacing: 0.09em; text-transform: uppercase;
+		color: var(--color-foreground-subtle, #9ca3af);
+		padding-bottom: 0.55rem; border-bottom: 1px solid var(--color-border);
+	}
+	.add-btn {
+		display: grid; place-items: center; width: 22px; height: 22px;
+		border: none; border-radius: 6px; background: transparent;
+		color: var(--color-foreground-subtle, #9ca3af); cursor: pointer;
+	}
+	.add-btn:hover { background: var(--color-surface-elevated); color: var(--color-foreground); }
+	.empty { margin: 0; padding: 0.85rem 0; font-size: 0.9rem; color: var(--color-foreground-muted); }
+	.add-row {
+		display: flex; align-items: center; gap: 8px; width: 100%; text-align: left;
+		padding: 0.85rem 0; border: none; background: transparent; cursor: pointer;
+		font: inherit; font-size: 0.9rem; color: var(--color-foreground-subtle, #9ca3af);
+	}
+	.add-row:hover { color: var(--color-foreground); }
+
+	.ledger { list-style: none; margin: 0; padding: 0; }
+	.ledger-row {
+		position: relative; display: flex; align-items: center;
+		border-bottom: 1px solid color-mix(in srgb, var(--color-border) 55%, transparent);
+	}
+	.ledger-item {
+		display: flex; align-items: center; gap: 12px; width: 100%;
+		padding: 0.7rem 0.25rem; border: none; background: transparent;
+		color: var(--color-foreground); font: inherit; font-size: 0.95rem; text-align: left; cursor: pointer;
+	}
+	.ledger-item :global(.ledger-ic) { color: var(--color-foreground-subtle, #9ca3af); flex-shrink: 0; }
+	.ledger-row:hover .ledger-item :global(.ledger-ic) { color: color-mix(in srgb, var(--room-accent, var(--color-foreground)) 70%, var(--color-foreground)); }
+	.ledger-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 450; }
+	.ledger-type { flex-shrink: 0; font-size: 10px; letter-spacing: 0.06em; color: var(--color-foreground-subtle, #9ca3af); }
+	.ledger-remove {
+		position: absolute; right: 0;
+		display: grid; place-items: center; width: 22px; height: 22px;
+		border: none; border-radius: 6px; background: var(--color-background);
+		color: var(--color-foreground-subtle, #9ca3af); cursor: pointer; opacity: 0;
+	}
+	.ledger-row:hover .ledger-remove { opacity: 1; }
+	.ledger-remove:hover { color: var(--color-foreground); }
+
+	:global(.spin) { animation: spin 0.8s linear infinite; }
+	@keyframes spin { to { transform: rotate(360deg); } }
+</style>

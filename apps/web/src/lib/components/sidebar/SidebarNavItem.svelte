@@ -1,32 +1,21 @@
 <script lang="ts">
 	import { page } from "$app/state";
-	import { spaceStore } from "$lib/stores/space.svelte";
+	import { windowShellStore } from "$lib/stores/window-shell.svelte";
 	import Icon from "$lib/components/Icon.svelte";
 	import { contextMenu } from "$lib/stores/contextMenu.svelte";
-	import { removeViewItem, deleteChat, updatePage, updateChat } from "$lib/api/client";
+	import { deleteChat, updatePage, updateChat } from "$lib/api/client";
 	import { pagesStore } from "$lib/stores/pages.svelte";
 	import { chatSessions } from "$lib/stores/chatSessions.svelte";
 	import { iconPickerStore } from "$lib/stores/iconPicker.svelte";
-	import { getWorkspaceMenuItems } from "$lib/utils/contextMenuItems";
+	import { getNotebookMenuItems } from "$lib/utils/contextMenuItems";
 	import { isEmoji } from "$lib/utils/iconHelpers";
 	import type { ContextMenuItem } from "$lib/stores/contextMenu.svelte";
 	import type { SidebarNavItemData } from "./types";
-
-	/**
-	 * Context passed when this item is rendered inside a folder (view).
-	 * Enables folder-specific context menu options like "Remove from Folder".
-	 */
-	interface FolderContext {
-		viewId: string;
-		isSystemFolder: boolean;
-	}
 
 	interface Props {
 		item: SidebarNavItemData;
 		collapsed?: boolean;
 		indent?: number;
-		/** When set, this item is inside a folder and can be removed from it */
-		inFolderContext?: FolderContext;
 		/** System items can't be removed or deleted */
 		isSystemItem?: boolean;
 		/** Workspace accent color — shows as a small dot before the icon */
@@ -41,7 +30,6 @@
 		item,
 		collapsed = false,
 		indent = 0,
-		inFolderContext,
 		isSystemItem = false,
 		accentColor = null,
 		onQuickAdd,
@@ -55,7 +43,7 @@
 		if (!href) return false;
 
 		// Get active tabs from all visible panes (supports split view)
-		const activeTabs = spaceStore.getActiveTabsForSidebar();
+		const activeTabs = windowShellStore.getActiveTabsForSidebar();
 
 		// If we have active tabs, check if ANY of them match this nav item
 		if (activeTabs.length > 0) {
@@ -99,7 +87,7 @@
 		const forceNew = e.metaKey || e.ctrlKey;
 		// Pass the item label so chat tabs show proper titles like "Google Antigravity..."
 		// preferEmptyPane: true so sidebar clicks can open in empty panes in split view
-		spaceStore.openTabFromRoute(item.href, {
+		windowShellStore.openTabFromRoute(item.href, {
 			forceNew,
 			label: item.label,
 			preferEmptyPane: true,
@@ -110,7 +98,7 @@
 		if (e.key === "Enter" || e.key === " ") {
 			e.preventDefault();
 			if (item.href) {
-				spaceStore.openTabFromRoute(item.href, {
+				windowShellStore.openTabFromRoute(item.href, {
 					label: item.label,
 					preferEmptyPane: true,
 				});
@@ -134,7 +122,7 @@
 				label: "Open in New Tab",
 				icon: "ri:external-link-line",
 				action: () => {
-					spaceStore.openTabFromRoute(href, {
+					windowShellStore.openTabFromRoute(href, {
 						forceNew: true,
 						label,
 						preferEmptyPane: true,
@@ -148,13 +136,13 @@
 				icon: "ri:layout-column-line",
 				action: () => {
 					// If not split, enable it
-					if (!spaceStore.isSplit) {
-						spaceStore.enableSplit();
+					if (!windowShellStore.isSplit) {
+						windowShellStore.enableSplit();
 					}
 					// Open in the other pane
 					const otherPane =
-						spaceStore.activePaneId === "left" ? "right" : "left";
-					spaceStore.openTabFromRoute(href, {
+						windowShellStore.activePaneId === "left" ? "right" : "left";
+					windowShellStore.openTabFromRoute(href, {
 						forceNew: true,
 						label,
 						paneId: otherPane,
@@ -178,12 +166,12 @@
 						try {
 							if (entityType === 'page') {
 								await updatePage(entityId, { icon });
-								await pagesStore.load();
+								pagesStore.updatePageLocally(entityId, { icon });
 							} else if (entityType === 'chat') {
 								await updateChat(entityId, { icon });
 								chatSessions.updateSessionIcon(entityId, icon);
 							}
-							spaceStore.invalidateViewCache();
+							windowShellStore.invalidateViewCache();
 						} catch (err) {
 							console.error("[SidebarNavItem] Failed to change icon:", err);
 						}
@@ -192,44 +180,8 @@
 			});
 		}
 
-		// Add "Add to Folder" / "Move to Workspace" submenus
-		items.push(...getWorkspaceMenuItems(href));
-
-		// If inside a non-system folder, add "Remove from Folder" option
-		if (inFolderContext && !inFolderContext.isSystemFolder) {
-			items.push({
-				id: "remove-from-folder",
-				label: "Remove from Folder",
-				icon: "ri:close-line",
-				dividerBefore: true,
-				action: async () => {
-					try {
-						await removeViewItem(inFolderContext.viewId, href);
-						spaceStore.invalidateViewCache();
-					} catch (err) {
-						console.error("[SidebarNavItem] Failed to remove from folder:", err);
-					}
-				},
-			});
-		}
-
-		// If NOT inside a folder and NOT a system item, this is a root-level space item - allow removal
-		if (!inFolderContext && !isSystemItem) {
-			items.push({
-				id: "remove-from-space",
-				label: "Remove from Space",
-				icon: "ri:close-circle-line",
-				dividerBefore: true,
-				action: async () => {
-					try {
-						await spaceStore.removeSpaceItem(href);
-						spaceStore.invalidateViewCache();
-					} catch (err) {
-						console.error("[SidebarNavItem] Failed to remove from space:", err);
-					}
-				},
-			});
-		}
+		// Add "Add to Notebook" submenu
+		items.push(...getNotebookMenuItems(href));
 
 		// Add "Delete" option for deletable entities (pages, chats)
 		// Always available if the entity is a page or chat, regardless of isSystemItem
@@ -246,14 +198,13 @@
 							await pagesStore.removePage(entityId);
 						} else if (entityType === 'chat') {
 							// Close any open tabs for this chat first
-							spaceStore.closeTabsByRoute(`/chat/${entityId}`);
+							windowShellStore.closeTabsByRoute(`/chat/${entityId}`);
 							// Delete the chat
 							await deleteChat(entityId);
-							// Invalidate cache and refresh sidebar
-							spaceStore.invalidateViewCache();
-							if (!spaceStore.isSystemSpace) {
-								await spaceStore.loadSpaceItems();
-							}
+							// Keep the shared session store (which the sidebar list now
+							// binds to) in sync, plus the page cache.
+							chatSessions.remove(entityId);
+							windowShellStore.invalidateViewCache();
 						}
 					} catch (err) {
 						console.error("[SidebarNavItem] Failed to delete:", err);
@@ -267,9 +218,9 @@
 
 	const active = $derived.by(() => {
 		// Access activeTabId directly to track it for reactivity
-		const _activeTabId = spaceStore.activeTabId;
+		const _activeTabId = windowShellStore.activeTabId;
 		// Also track split state for reactivity when panes change
-		const _splitEnabled = spaceStore.isSplit;
+		const _splitEnabled = windowShellStore.isSplit;
 		return item.forceActive ?? isActive(item.href, item.pagespace);
 	});
 </script>

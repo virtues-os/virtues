@@ -1,189 +1,33 @@
 <script lang="ts">
-	import Icon from "$lib/components/Icon.svelte";
-	import { spaceStore } from "$lib/stores/space.svelte";
-	import {
-		DEFAULT_FOLDER_PATH,
-		VIRTUES_LOGO_PATH,
-		getIconPath,
-	} from "$lib/utils/svgPaths";
-	import { onMount, untrack } from "svelte";
-
 	interface Props {
 		collapsed?: boolean;
 		animationDelay?: number;
+		/** Opens the search / command modal (the whole masthead is the ⌘K trigger). */
+		onSearch?: () => void;
 	}
 
-	let {
-		collapsed = false,
-		animationDelay = 0,
-	}: Props = $props();
+	let { collapsed = false, animationDelay = 0, onSearch }: Props = $props();
 
-	// GSAP (dynamically loaded)
-	let gsapLib: typeof import("gsap").default | null = $state(null);
-	let morphReady = $state(false);
-
-	// Morph icon ref — GSAP owns the `d` attribute after first render
-	let morphPathEl: SVGPathElement | null = $state(null);
-	let prevSpaceId = $state("");
-	let prevTargetPath = $state<string | null>(null);
-	let tweenRef: { kill: () => void } | null = null;
-
-	// Track emoji state for crossfade
-	let isEmojiActive = $state(false);
-	let emojiValue = $state("");
-
-	onMount(async () => {
-		try {
-			const gsapModule = await import("gsap");
-			const { MorphSVGPlugin } = await import("gsap/MorphSVGPlugin");
-			gsapLib = gsapModule.default;
-			if (gsapLib && MorphSVGPlugin) {
-				gsapLib.registerPlugin(MorphSVGPlugin);
-				morphReady = true;
-			}
-		} catch (e) {
-			console.warn("[WorkspaceHeader] GSAP/MorphSVG load failed:", e);
-		}
-	});
-
-	function isEmoji(val: string | null): boolean {
-		if (!val) return false;
-		return !val.includes(":");
-	}
-
-	function getTargetPath(
-		space: (typeof spaceStore.spaces)[0] | undefined | null,
-	): string | null {
-		if (!space) return DEFAULT_FOLDER_PATH;
-		if (space.is_system) return VIRTUES_LOGO_PATH;
-		if (space.icon && !isEmoji(space.icon)) {
-			return getIconPath(space.icon) || DEFAULT_FOLDER_PATH;
-		}
-		if (!space.icon) return DEFAULT_FOLDER_PATH;
-		return null; // Emoji — no SVG path
-	}
-
-	// Active space label
-	const activeLabel = $derived.by(() => {
-		const space = spaceStore.activeSpace;
-		if (!space) return "Workspace";
-		return space.is_system ? "Virtues" : space.name;
-	});
-
-	// Accent color from active space
-	const accentColor = $derived(spaceStore.activeSpace?.accent_color ?? null);
-
-	// Derive target path reactively (triggers the $effect below)
-	const targetPath = $derived.by(() => {
-		const space = spaceStore.activeSpace;
-		return getTargetPath(space);
-	});
-
-	// Morph the title icon when active space changes.
-	// CRITICAL: GSAP owns the <path d="..."> attribute — we never bind it reactively.
-	// NOTE: morphPathEl is read OUTSIDE untrack() so bind:this triggers a re-run.
-	$effect(() => {
-		const newSpaceId = spaceStore.activeSpaceId;
-		const newTargetPath = targetPath;
-		const el = morphPathEl; // Subscribe to element binding
-
-		untrack(() => {
-			if (!newSpaceId || !el) return;
-
-			const spaceChanged = newSpaceId !== prevSpaceId;
-			const pathChanged = newTargetPath !== prevTargetPath;
-
-			if (!spaceChanged && !pathChanged) return;
-
-			const space = spaceStore.activeSpace;
-			const isFirstRender = !prevSpaceId;
-
-			if (tweenRef) {
-				tweenRef.kill();
-				tweenRef = null;
-			}
-
-			if (newTargetPath === null) {
-				// Emoji — crossfade
-				isEmojiActive = true;
-				emojiValue = space?.icon || "";
-				if (morphReady && gsapLib) {
-					tweenRef = gsapLib.to(el, {
-						opacity: 0,
-						duration: 0.15,
-						ease: "power2.out",
-					});
-				}
-			} else {
-				const wasEmoji = isEmojiActive;
-				isEmojiActive = false;
-				emojiValue = "";
-
-				if (isFirstRender || !spaceChanged) {
-					// First render or late-arriving space data — set immediately
-					el.setAttribute("d", newTargetPath);
-				} else if (morphReady && gsapLib) {
-					if (wasEmoji) {
-						el.setAttribute("d", newTargetPath);
-						tweenRef = gsapLib.fromTo(
-							el,
-							{ opacity: 0 },
-							{ opacity: 1, duration: 0.15 },
-						);
-					} else {
-						tweenRef = gsapLib.to(el, {
-							morphSVG: newTargetPath,
-							duration: 0.4,
-							ease: "power2.inOut",
-						});
-					}
-				} else {
-					el.setAttribute("d", newTargetPath);
-				}
-			}
-
-			prevSpaceId = newSpaceId;
-			prevTargetPath = newTargetPath;
-		});
-
-		return () => {
-			if (tweenRef) {
-				tweenRef.kill();
-				tweenRef = null;
-			}
-		};
-	});
+	// The masthead is one quiet control: the ∴ mark sits over the icon column
+	// below it, and the whole row opens the command palette (⌘K). No app menu —
+	// Account/System/Sign out live in the Settings folder at the foot.
 </script>
 
-<div class="header-container" class:collapsed>
-	<div
-		class="title-row animate-row"
+<div class="masthead" class:collapsed>
+	<button
+		type="button"
+		class="masthead-btn animate-row"
 		style="animation-delay: {animationDelay}ms; --stagger-delay: {animationDelay}ms"
+		onclick={() => onSearch?.()}
+		title="Ask or search (⌘K)"
+		aria-label="Ask or search"
 	>
-		<!-- Morphing icon -->
-		<div class="title-icon" style:color={accentColor}>
-			{#if isEmojiActive}
-				<span class="title-emoji">{emojiValue}</span>
-			{/if}
-			<svg
-				class="title-svg"
-				class:hidden={isEmojiActive}
-				width="16"
-				height="16"
-				viewBox="0 0 24 24"
-			>
-				<!-- d is set imperatively by GSAP — NOT a reactive binding -->
-				<path bind:this={morphPathEl} fill="currentColor" />
-			</svg>
-		</div>
-
-		<span class="title-label" style:color={accentColor}>{activeLabel}</span>
-	</div>
+		<span class="mark">∴</span>
+		<kbd class="kbd">⌘K</kbd>
+	</button>
 </div>
 
 <style>
-	@reference "../../../app.css";
-
 	:root {
 		--ease-premium: cubic-bezier(0.2, 0, 0, 1);
 	}
@@ -199,15 +43,16 @@
 		}
 	}
 
-	.header-container {
-		display: flex;
-		flex-direction: column;
-		padding: 16px 0 10px 8px;
+	/* Right inset 0 to match .workspace-nav (12px 0 12px 8px) so the row's
+	   hover pill spans the same width as the nav rows below. */
+	.masthead {
+		padding: 14px 0 8px 8px;
 	}
 
-	.header-container.collapsed {
+	.masthead.collapsed {
 		opacity: 0;
 		transform: translateX(-8px);
+		pointer-events: none;
 		transition:
 			opacity 150ms var(--ease-premium),
 			transform 150ms var(--ease-premium);
@@ -215,102 +60,50 @@
 
 	.animate-row {
 		animation: fadeSlideIn 200ms var(--ease-premium) backwards;
-		opacity: 1;
-		transform: translateX(0);
-		transition:
-			opacity 200ms var(--ease-premium) var(--stagger-delay, 0ms),
-			transform 200ms var(--ease-premium) var(--stagger-delay, 0ms);
 	}
 
-	.title-row {
+	/* One full-width row: ∴ left (flush over the nav icon column below —
+	   same --sidebar-padding-left-base + 16px column as the rows), ⌘K right. */
+	.masthead-btn {
 		display: flex;
 		align-items: center;
-		gap: 6px;
-		padding: 8px var(--sidebar-padding-left-base, 10px);
-		height: 32px;
+		justify-content: space-between;
+		width: 100%;
+		height: 30px;
 		box-sizing: border-box;
-		cursor: pointer;
+		padding: 0 10px 0 var(--sidebar-padding-left-base);
 		border-radius: 6px;
-	}
-
-	.title-icon {
-		display: flex;
-		align-items: center;
-		justify-content: center;
-		width: 16px;
-		height: 16px;
-		flex-shrink: 0;
-		color: var(--color-foreground);
-		position: relative;
-	}
-
-	.title-svg {
-		display: block;
-		transition: opacity 0.15s ease;
-	}
-
-	.title-svg.hidden {
-		opacity: 0;
-		position: absolute;
-	}
-
-	.title-emoji {
-		font-size: 14px;
-		line-height: 1;
-	}
-
-	.title-label {
-		flex: 1;
-		overflow: hidden;
-		text-overflow: ellipsis;
-		white-space: nowrap;
-		font-size: 17px;
-		font-weight: 400;
-		font-family: var(--font-serif, serif);
-		color: var(--color-foreground);
-		line-height: 1.4;
-	}
-
-	/* Hidden by default, shown on title row hover */
-	.title-actions {
-		display: flex;
-		align-items: center;
-		gap: 2px;
-		opacity: 0;
-		transition: opacity 150ms ease;
-	}
-
-	.title-row:hover .title-actions {
-		opacity: 1;
-	}
-
-	.title-action {
-		display: flex;
-		align-items: center;
-		justify-content: center;
-		width: 20px;
-		height: 20px;
-		border-radius: 4px;
+		background: none;
 		border: none;
-		background: transparent;
-		color: var(--color-foreground-subtle);
 		cursor: pointer;
-		padding: 0;
-		transition:
-			background-color 150ms ease,
-			color 150ms ease;
+		transition: background 0.15s ease;
 	}
 
-	.title-action:hover {
-		background: color-mix(
-			in srgb,
-			var(--color-foreground) 7%,
-			transparent
-		);
+	.masthead-btn:hover {
+		background: color-mix(in srgb, var(--color-foreground) 6%, transparent);
+	}
+
+	.mark {
+		display: inline-block;
+		width: 16px;
+		text-align: center;
+		font-family: var(--font-serif, serif);
+		font-size: 18px;
+		line-height: 1;
 		color: var(--color-foreground);
+		letter-spacing: 0.02em;
 	}
 
-	.title-action:active {
-		transform: scale(0.95);
+	.kbd {
+		font-family: var(--font-sans);
+		font-size: 10px;
+		color: var(--color-foreground-subtle);
+		opacity: 0.7;
+		transition: opacity 0.15s ease, color 0.15s ease;
+	}
+
+	.masthead-btn:hover .kbd {
+		opacity: 1;
+		color: var(--color-foreground-muted);
 	}
 </style>

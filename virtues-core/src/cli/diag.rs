@@ -23,7 +23,7 @@ use serde_json::Value;
 /// to the production atlas. Localhost shows up in dev / when staging is
 /// configured.
 pub fn atlas_url() -> String {
-    std::env::var("VIRTUES_ATLAS_URL").unwrap_or_else(|_| "https://atlas.virtues.com".to_string())
+    crate::virtues_api::atlas_url()
 }
 
 /// True when the user has not opted out of cloud diagnostics. We read

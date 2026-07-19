@@ -1,0 +1,11 @@
+-- Drop the blind-rendezvous endpoint-discovery store (v1 removal).
+--
+-- Rendezvous let a box re-publish its WG endpoint so paired devices could
+-- re-resolve it after an ISP IPv6 prefix rotation. v1 drops it: the box's
+-- current global IPv6 is baked straight into the pairing bundle and a prefix
+-- rotation is handled by re-pairing. The table held only opaque ciphertext keyed
+-- by a random capability — nothing legible, no migration of data needed.
+--
+-- 0002_rendezvous.sql is kept (it's an applied migration) so this is the clean
+-- forward-only teardown.
+DROP TABLE IF EXISTS rendezvous;

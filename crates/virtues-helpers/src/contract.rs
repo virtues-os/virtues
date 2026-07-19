@@ -73,6 +73,11 @@ pub struct ActionOutput {
     pub result: String,
     /// Updated config to persist back into `app_actions.config`.
     pub config: serde_json::Value,
+    /// How many records this run processed (synced/transformed/transcribed).
+    /// Surfaced as `app_action_runs.records_processed` for the Telemetry tab.
+    /// Optional + defaulted, so older action binaries that omit it record 0.
+    #[serde(default)]
+    pub records: i64,
 }
 
 impl ActionOutput {
@@ -80,7 +85,14 @@ impl ActionOutput {
         Self {
             result: result.into(),
             config,
+            records: 0,
         }
+    }
+
+    /// Set the processed-record count reported to the runner.
+    pub fn with_records(mut self, records: i64) -> Self {
+        self.records = records;
+        self
     }
 }
 

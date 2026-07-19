@@ -10,8 +10,10 @@ mod transform;
 use anyhow::{Context, Result};
 use serde_json::Value;
 use std::collections::HashMap;
+use virtues::storage::lake;
 use virtues_helpers::{connect_from_env, output, read_input};
 
+const ACTION: &str = "google_calendar_sync";
 const CAL_LIST: &str = "https://www.googleapis.com/calendar/v3/users/me/calendarList";
 const EVENTS_BASE: &str = "https://www.googleapis.com/calendar/v3/calendars";
 const PAGE_SIZE: u32 = 250;
@@ -27,6 +29,7 @@ async fn main() -> Result<()> {
     let access_token = virtues_actions::secret(&input, "access_token")?
         .to_string();
 
+    let storage = lake::storage_from_env()?;
     let client = reqwest::Client::new();
 
     // Per-calendar sync tokens live under config.sync_tokens (map cal_id → token).
@@ -52,7 +55,7 @@ async fn main() -> Result<()> {
 
         let prior_token = sync_tokens.get(cal_id).cloned();
         let (written, new_token) =
-            sync_calendar(&client, &access_token, &pool, cal_id, prior_token.as_deref()).await?;
+            sync_calendar(&client, &access_token, &pool, &storage, cal_id, prior_token.as_deref()).await?;
         total_written += written;
 
         if let Some(t) = new_token {
@@ -94,6 +97,7 @@ async fn sync_calendar(
     client: &reqwest::Client,
     token: &str,
     db: &sqlx::PgPool,
+    storage: &virtues::storage::Storage,
     calendar_id: &str,
     prior_sync_token: Option<&str>,
 ) -> Result<(usize, Option<String>)> {
@@ -130,6 +134,11 @@ async fn sync_calendar(
             .json()
             .await
             .context("events response was not JSON")?;
+
+        // Archive the whole page. A syncToken response is a DELTA — it carries
+        // cancellations and edits, and the token is single-use, so Google will never
+        // describe this change again. Whatever the transform doesn't read here is gone.
+        lake::archive_cloud(db, storage, "google", ACTION, "calendar", &[resp.clone()]).await?;
 
         if let Some(items) = resp.get("items").and_then(|v| v.as_array()) {
             written += transform::write_events(db, calendar_id, items).await?;

@@ -1,28 +1,23 @@
-//! Bearer-authenticated client for the new virtues-api routes.
+//! api_key-authenticated client for the virtues-api routes.
 //!
-//! Attaches the home server's current bearer (from the credential vault)
-//! and auto-renews once on a `bearer_expired` (402) — the OAuth
-//! refresh-token pattern, with `renew::renew` as the refresh.
+//! Attaches the box's device api_key (from the credential vault) on every call.
+//! No renewal — the key is stable; the wallet behind it is credited
+//! server-side. On a `wallet_empty` 402 it triggers one auto-top-up via atlas
+//! (which charges the card + credits the wallet) and retries; other 402s
+//! (wallet_expired) and 401 (unknown_key → re-link) surface to the caller.
 //!
-//! Use this for the bearer routes (`/v1/ai/*`, `/v1/places/*`, `/v1/exa/*`,
-//! `/v1/unsplash/*`). The legacy `with_*_auth` header helpers remain for
-//! the old `/v1/services/*` routes until every caller migrates.
+//! Use this for the proxy routes (`/v1/ai/*`, `/v1/places/*`, `/v1/exa/*`,
+//! `/v1/unsplash/*`).
 //!
-//! ## Purpose tagging (two-pool wallet model)
+//! ## Purpose tagging (vestige — no-op)
 //!
-//! Every charged call carries an `X-Virtues-Purpose` header so the server
-//! can route the debit to either the OS reserve or the chat wallet (see
-//! `services/virtues-api/src/entitlement.rs` for the routing semantics).
-//!
-//! Default is [`Purpose::User`] — anything user-initiated (chat, agent
-//! loops, on-demand search, places autocomplete) stays as-is. For
-//! background/system work (nightly summaries, entity resolution,
-//! transcription, embeddings indexing, compaction) call
-//! `BearerClient::from_env(pool).with_purpose(Purpose::System)` so the
-//! charge hits the protected OS reserve and chat budget stays untouched.
+//! Calls still carry an `X-Virtues-Purpose` header (`user`/`system`), but the
+//! server **ignores** it — the old OS-reserve / chat-wallet two-pool split was
+//! removed when billing collapsed to a single wallet. `Purpose` +
+//! `with_purpose()` are kept only so background callers don't have to change;
+//! they have no billing effect and the whole thing is safe to delete later.
 
 use anyhow::{anyhow, Result};
-use chrono::Utc;
 use serde_json::{json, Value};
 use sqlx::PgPool;
 
@@ -109,15 +104,47 @@ async fn auto_topup_allowed(pool: &sqlx::PgPool) -> bool {
     }
 }
 
-/// Reset the failure counter to zero. Called after a successful top-up so
-/// transient blips don't accumulate into a breaker trip across days.
+/// Record a successful top-up: reset the failure counter, and enforce the
+/// RATE guard. Counts auto-top-ups within a rolling 24h window; if the count
+/// exceeds `AUTO_TOPUP_MAX_PER_WINDOW`, trip the breaker
+/// (`auto_topup_enabled = FALSE`) so a runaway loop can't keep charging the
+/// card unboundedly (the failure breaker only catches *failed* charges). The
+/// monthly cap bounds total spend; this bounds the velocity.
 async fn record_topup_success(pool: &sqlx::PgPool) -> Result<(), sqlx::Error> {
+    let now = chrono::Utc::now();
+    let row: Option<(i32, Option<chrono::DateTime<chrono::Utc>>)> = sqlx::query_as(
+        "SELECT auto_topup_count_window, auto_topup_window_start \
+         FROM app_user_profile \
+         WHERE id = '00000000-0000-0000-0000-000000000001'",
+    )
+    .fetch_optional(pool)
+    .await?;
+    // Roll the window if it's stale (or unset); otherwise increment within it.
+    let (count, window_start) = match row {
+        Some((c, Some(start))) if now.signed_duration_since(start).num_seconds() < AUTO_TOPUP_WINDOW_SECS => {
+            (c + 1, start)
+        }
+        _ => (1, now),
+    };
+    let tripped = count > AUTO_TOPUP_MAX_PER_WINDOW;
+    if tripped {
+        tracing::warn!(
+            count,
+            "auto-top-up rate guard tripped — disabling auto-top-up (too many refills in 24h)"
+        );
+    }
     sqlx::query(
         "UPDATE app_user_profile \
          SET auto_topup_failures_24h = 0, \
-             auto_topup_disabled_at = NULL \
+             auto_topup_count_window = $1, \
+             auto_topup_window_start = $2, \
+             auto_topup_enabled = CASE WHEN $3 THEN FALSE ELSE auto_topup_enabled END, \
+             auto_topup_disabled_at = CASE WHEN $3 THEN now() ELSE NULL END \
          WHERE id = '00000000-0000-0000-0000-000000000001'",
     )
+    .bind(count)
+    .bind(window_start)
+    .bind(tripped)
     .execute(pool)
     .await
     .map(|_| ())
@@ -152,6 +179,13 @@ async fn record_topup_failure(pool: &sqlx::PgPool) -> Result<(), sqlx::Error> {
 /// successful top-up OR by the sweeper rolling the daily window.
 const AUTO_TOPUP_FAILURE_THRESHOLD: i32 = 3;
 
+/// Rolling window for the success-rate guard, and the max auto-top-ups allowed
+/// within it before the breaker trips. At the $20 default that's ~$100/24h of
+/// auto-refills before the box stops charging the card and asks the user to
+/// intervene — a velocity bound on runaway loops, complementing the monthly cap.
+const AUTO_TOPUP_WINDOW_SECS: i64 = 24 * 60 * 60;
+const AUTO_TOPUP_MAX_PER_WINDOW: i32 = 5;
+
 /// A fully-read virtues-api response: status + parsed JSON body.
 pub struct ApiResponse {
     pub status: u16,
@@ -172,18 +206,14 @@ pub enum StreamOutcome {
     Error { status: u16, body: String },
 }
 
-/// What the call is for — drives `X-Virtues-Purpose` and which pool gets
-/// debited server-side.
+/// What the call is for. Sets the `X-Virtues-Purpose` header for telemetry,
+/// but the server ignores it (single wallet now — no per-purpose routing).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Purpose {
-    /// User-initiated work (chat, agent loops, on-demand search). Debits
-    /// `wallet_chat_micros` only; never touches the OS reserve.
+    /// User-initiated work (chat, agent loops, on-demand search).
     User,
-    /// Box-essential background work (transcription, ER, summaries,
-    /// event summaries, embeddings indexing). Debits `os_reserve_micros`
-    /// first; falls back to the chat wallet only if the OS reserve is
-    /// exhausted (heavy-OS users subsidize the OS from their chat credit;
-    /// light users never notice).
+    /// Box-essential background work (transcription, ER, summaries, event
+    /// summaries, embeddings indexing). No billing difference from `User`.
     System,
 }
 
@@ -204,50 +234,104 @@ pub struct BearerClient {
     api_url: String,
     atlas_url: String,
     purpose: Purpose,
+    /// Feature bucket for box-local cost capture (`app_ai_calls`). Set by
+    /// background callers (e.g. "transcription", "day_summary"); falls back to
+    /// the purpose tag. The streaming chat path records its own row (cost only
+    /// arrives in the SSE trailer), so this drives the non-streaming `post_json`
+    /// capture.
+    feature: Option<String>,
 }
 
 impl BearerClient {
     pub fn from_env(pool: PgPool) -> Self {
-        let api_url =
-            std::env::var("VIRTUES_API_URL").unwrap_or_else(|_| "http://localhost:9002".into());
-        let atlas_url =
-            std::env::var("VIRTUES_ATLAS_URL").unwrap_or_else(|_| "http://localhost:9100".into());
+        let api_url = super::api_url();
+        let atlas_url = super::atlas_url();
         Self {
             http: crate::http_client::virtues_api_client(),
             stream_http: crate::http_client::virtues_api_streaming_client(),
             pool,
             api_url,
             atlas_url,
-            // Safer default: user calls 402 on chat exhaustion, OS reserve
-            // is never raided. Background callers must explicitly opt into
-            // System via `.with_purpose(Purpose::System)`.
+            // No-op now (single wallet); just the default telemetry tag.
             purpose: Purpose::User,
+            feature: None,
         }
     }
 
-    /// Override the call purpose. Use `Purpose::System` for background
-    /// box-essential work (nightly summaries, entity resolution,
-    /// transcription, embeddings indexing) so charges hit the protected
-    /// OS reserve and the user's chat budget is preserved.
+    /// Override the call purpose (telemetry only — no billing effect; see
+    /// [`Purpose`]). Background callers tag `Purpose::System`.
     pub fn with_purpose(mut self, purpose: Purpose) -> Self {
         self.purpose = purpose;
         self
     }
 
-    /// POST JSON to a virtues-api bearer route. Two automatic recoveries:
-    ///   * `bearer_expired` (402) → run the voucher renewal, retry once.
-    ///   * `insufficient_budget` (402) → trigger auto-top-up via atlas
-    ///     (`/credits/auto-topup`), redeem the resulting voucher onto the
-    ///     existing bearer, retry once. Surfaces typed errors back to the
-    ///     caller for `card_declined`, `monthly_cap_reached`, etc — these
-    ///     are not retryable from the box's side.
+    /// Tag the cost bucket recorded into `app_ai_calls` for this client's
+    /// `post_json` calls to `/v1/ai/*` (e.g. "transcription", "day_summary").
+    pub fn with_feature(mut self, feature: impl Into<String>) -> Self {
+        self.feature = Some(feature.into());
+        self
+    }
+
+    /// POST JSON to a virtues-api route, attaching the api_key. On a
+    /// `wallet_empty`/`insufficient_budget` 402 it triggers one auto-top-up via
+    /// atlas (`/credits/auto-topup`) and retries once; typed errors
+    /// (`card_declined`, `monthly_cap_reached`, …) and other 402s surface to the
+    /// caller. A 401 (`unknown_key`) means the box must re-link.
+    ///
+    /// For `/v1/ai/*` calls, the authoritative `usage.cost` in the response is
+    /// captured into `app_ai_calls` here — the single chokepoint, so every
+    /// non-streaming AI feature (compaction, day summaries, transcription, …)
+    /// is accounted for without per-caller bookkeeping.
     pub async fn post_json(&self, path: &str, body: &Value) -> Result<ApiResponse> {
         let bearer = self.ensure_bearer().await?;
         let resp = self.send(path, body, &bearer).await?;
-        self.handle_402_and_retry_post(path, body, resp).await
+        let resp = self.handle_402_and_retry_post(path, body, resp).await?;
+        self.record_ai_usage(path, body, &resp).await;
+        Ok(resp)
     }
 
-    /// GET a virtues-api bearer route. Same recovery semantics as `post_json`.
+    /// Best-effort: record one `app_ai_calls` row for a successful `/v1/ai/*`
+    /// response that carries a `usage` block. Never fails the request.
+    async fn record_ai_usage(&self, path: &str, req_body: &Value, resp: &ApiResponse) {
+        if !path.starts_with("/v1/ai/") || !resp.is_success() {
+            return;
+        }
+        let Some(usage) = resp.body.get("usage") else { return };
+        let as_i64 = |k: &str| usage.get(k).and_then(|v| v.as_i64()).unwrap_or(0);
+        let cost_micros = usage
+            .get("cost")
+            .and_then(|c| c.as_f64())
+            .map(|c| (c * 1_000_000.0).round() as i64)
+            .unwrap_or(0);
+        let reasoning = usage
+            .get("completion_tokens_details")
+            .and_then(|d| d.get("reasoning_tokens"))
+            .and_then(|v| v.as_i64())
+            .unwrap_or(0);
+        let feature = self
+            .feature
+            .clone()
+            .unwrap_or_else(|| self.purpose.as_str().to_string());
+        let call = crate::api::ai_calls::AiCall {
+            feature,
+            model: req_body
+                .get("model")
+                .and_then(|m| m.as_str())
+                .unwrap_or_default()
+                .to_string(),
+            prompt_tokens: as_i64("prompt_tokens"),
+            completion_tokens: as_i64("completion_tokens"),
+            reasoning_tokens: reasoning,
+            cost_micros,
+            chat_id: None,
+            action_run_id: None,
+        };
+        if let Err(e) = crate::api::ai_calls::record_ai_call(&self.pool, &call).await {
+            tracing::warn!(error = %e, "failed to record ai_call (post_json)");
+        }
+    }
+
+    /// GET a virtues-api route (api_key attached). Same recovery as `post_json`.
     pub async fn get_json(&self, path: &str) -> Result<ApiResponse> {
         let bearer = self.ensure_bearer().await?;
         let resp = self.send_get(path, &bearer).await?;
@@ -265,15 +349,12 @@ impl BearerClient {
         }
         let code = resp.body["error"]["code"].as_str().unwrap_or("");
         match code {
-            "bearer_expired" => {
-                let fresh = renew::renew(&self.pool, &self.http, &self.atlas_url, &self.api_url)
-                    .await?;
-                self.send(path, body, &fresh.bearer).await
-            }
             "insufficient_budget" | "wallet_empty" => {
                 self.auto_topup_and_retry_post(path, body).await
             }
-            _ => Ok(resp), // daily_cap_reached, call_too_expensive, etc — surface
+            // wallet_expired (sub lapsed), call_too_expensive,
+            // unknown_key (re-link) — not recoverable from the box; surface.
+            _ => Ok(resp),
         }
     }
 
@@ -287,11 +368,6 @@ impl BearerClient {
         }
         let code = resp.body["error"]["code"].as_str().unwrap_or("");
         match code {
-            "bearer_expired" => {
-                let fresh = renew::renew(&self.pool, &self.http, &self.atlas_url, &self.api_url)
-                    .await?;
-                self.send_get(path, &fresh.bearer).await
-            }
             "insufficient_budget" | "wallet_empty" => {
                 self.auto_topup_and_retry_get(path).await
             }
@@ -317,10 +393,10 @@ impl BearerClient {
         if !auto_topup_allowed(&self.pool).await {
             return Ok(synthesize_topup_disabled());
         }
-        match renew::auto_topup(&self.pool, &self.http, &self.atlas_url, &self.api_url).await? {
-            renew::AutoTopupOutcome::Funded { wallet_micros } => {
+        match renew::auto_topup(&self.pool, &self.http, &self.atlas_url).await? {
+            renew::AutoTopupOutcome::Funded { amount_micros } => {
                 let _ = record_topup_success(&self.pool).await;
-                tracing::info!(wallet_micros, "auto-top-up funded; retrying request");
+                tracing::info!(amount_micros, "auto-top-up funded; retrying request");
                 let bearer = self.ensure_bearer().await?;
                 self.send(path, body, &bearer).await
             }
@@ -335,10 +411,10 @@ impl BearerClient {
         if !auto_topup_allowed(&self.pool).await {
             return Ok(synthesize_topup_disabled());
         }
-        match renew::auto_topup(&self.pool, &self.http, &self.atlas_url, &self.api_url).await? {
-            renew::AutoTopupOutcome::Funded { wallet_micros } => {
+        match renew::auto_topup(&self.pool, &self.http, &self.atlas_url).await? {
+            renew::AutoTopupOutcome::Funded { amount_micros } => {
                 let _ = record_topup_success(&self.pool).await;
-                tracing::info!(wallet_micros, "auto-top-up funded; retrying GET");
+                tracing::info!(amount_micros, "auto-top-up funded; retrying GET");
                 let bearer = self.ensure_bearer().await?;
                 self.send_get(path, &bearer).await
             }
@@ -349,44 +425,12 @@ impl BearerClient {
         }
     }
 
-    /// PUT raw bytes to a virtues-api bearer route (the blind rendezvous).
-    /// Returns the HTTP status. The body is opaque ciphertext, stored verbatim
-    /// server-side. A 402 here is always `bearer_expired` (the rendezvous route
-    /// is not metered), so we renew once and retry, mirroring [`post_json`].
-    pub async fn put_bytes(&self, path: &str, body: Vec<u8>) -> Result<u16> {
-        let bearer = self.ensure_bearer().await?;
-        let status = self.send_put_bytes(path, body.clone(), &bearer).await?;
-
-        if status == 402 {
-            let fresh =
-                renew::renew(&self.pool, &self.http, &self.atlas_url, &self.api_url).await?;
-            return self.send_put_bytes(path, body, &fresh.bearer).await;
-        }
-        Ok(status)
-    }
-
-    async fn send_put_bytes(&self, path: &str, body: Vec<u8>, bearer: &str) -> Result<u16> {
-        let resp = self
-            .http
-            .put(format!("{}{}", self.api_url.trim_end_matches('/'), path))
-            .header("Authorization", format!("Bearer {}", bearer))
-            .header("X-Virtues-Purpose", self.purpose.as_str())
-            .header("Content-Type", "application/octet-stream")
-            .body(body)
-            .send()
-            .await
-            .map_err(|e| anyhow!("virtues-api put request failed: {e}"))?;
-        Ok(resp.status().as_u16())
-    }
-
-    /// Open a streaming POST to a virtues-api bearer route. Renewal/top-up
-    /// can only happen *before* the body starts flowing (mid-stream
-    /// recovery is impossible), so we ensure a valid bearer up front and,
-    /// if the server still answers 402 at connect time, recover-then-retry
-    /// once. On success the response body is returned untouched for the
-    /// caller to stream; non-recoverable 402s (daily_cap_reached,
-    /// card_declined, etc) come back as `StreamOutcome::Error` with the
-    /// drained body.
+    /// Open a streaming POST to a virtues-api route. Auto-top-up can only
+    /// happen *before* the body starts flowing (mid-stream recovery is
+    /// impossible), so on a `wallet_empty` 402 at connect time we top up and
+    /// retry once. On success the response body is returned untouched for the
+    /// caller to stream; non-recoverable 402s (card_declined, wallet_expired, …)
+    /// come back as `StreamOutcome::Error` with the drained body.
     pub async fn stream(&self, path: &str, body: &Value) -> Result<StreamOutcome> {
         // BYO key escape hatch. When the user has set their own provider
         // key, every chat call goes box → upstream directly. virtues-api
@@ -402,18 +446,10 @@ impl BearerClient {
 
         if resp.status().as_u16() == 402 {
             let err_body = resp.text().await.unwrap_or_default();
-            if err_body.contains("bearer_expired") {
-                let fresh =
-                    renew::renew(&self.pool, &self.http, &self.atlas_url, &self.api_url).await?;
-                let retry = self.send_stream(path, body, &fresh.bearer).await?;
-                return Ok(Self::classify_stream(retry).await);
-            }
             if err_body.contains("insufficient_budget") || err_body.contains("wallet_empty") {
-                match renew::auto_topup(&self.pool, &self.http, &self.atlas_url, &self.api_url)
-                    .await?
-                {
-                    renew::AutoTopupOutcome::Funded { wallet_micros } => {
-                        tracing::info!(wallet_micros, "auto-top-up funded; retrying stream");
+                match renew::auto_topup(&self.pool, &self.http, &self.atlas_url).await? {
+                    renew::AutoTopupOutcome::Funded { amount_micros } => {
+                        tracing::info!(amount_micros, "auto-top-up funded; retrying stream");
                         let bearer = self.ensure_bearer().await?;
                         let retry = self.send_stream(path, body, &bearer).await?;
                         return Ok(Self::classify_stream(retry).await);
@@ -492,28 +528,23 @@ impl BearerClient {
         Ok(Self::classify_stream(resp).await)
     }
 
-    /// Return a usable bearer: the current one if still valid, otherwise
-    /// renew. Renewal requires a previously-claimed billing token.
+    /// Return the device api_key to authenticate with. No renewal — the key
+    /// is stable; the wallet behind it is credited server-side.
     ///
-    /// Dev override: when `VIRTUES_API_BEARER` is set we present it verbatim
-    /// and skip the vault/renew path entirely. This pairs with the gated
-    /// seed in virtues-api (`ENVIRONMENT=dev`), which funds an entitlement
-    /// keyed by `sha256(VIRTUES_API_BEARER)` — so a local virtues-api accepts
-    /// our calls without a real subscription. Unset in prod → no effect.
+    /// Dev override: when `VIRTUES_API_KEY` is set we present it verbatim and
+    /// skip the vault. Pairs with the gated dev seed in virtues-api
+    /// (`ENVIRONMENT=dev`), which registers a device key keyed by
+    /// `sha256(VIRTUES_API_KEY)` against a funded account. Unset in prod → no
+    /// effect.
     async fn ensure_bearer(&self) -> Result<String> {
-        if let Ok(bearer) = std::env::var("VIRTUES_API_BEARER") {
-            if !bearer.is_empty() {
-                return Ok(bearer);
+        if let Ok(key) = std::env::var("VIRTUES_API_KEY") {
+            if !key.is_empty() {
+                return Ok(key);
             }
         }
-        match renew::current_bearer(&self.pool).await? {
-            Some((bearer, Some(exp))) if exp > Utc::now() => Ok(bearer),
-            _ => {
-                let fresh =
-                    renew::renew(&self.pool, &self.http, &self.atlas_url, &self.api_url).await?;
-                Ok(fresh.bearer)
-            }
-        }
+        renew::read_api_key(&self.pool)
+            .await?
+            .ok_or_else(|| anyhow!("no virtues_api key — link a subscription first"))
     }
 
     async fn send(&self, path: &str, body: &Value, bearer: &str) -> Result<ApiResponse> {

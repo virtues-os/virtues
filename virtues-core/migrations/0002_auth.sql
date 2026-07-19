@@ -2,13 +2,12 @@
 --
 -- Pair-only auth model. No passwords, no email, no magic links.
 --
--- Canonical entity is `app_device` — every connecting client (browser tab,
--- iOS app, Mac collector, sensor) is a paired device. Both the browser
--- cookie path (`app_auth_session`) and the bearer-token path (`credentials`)
--- carry a `device_id` FK so the unified Devices page can list and revoke
--- across credential types in a single transaction. Revocation cascades:
--- soft-revoke the device → middleware refuses the cookie AND the WG daemon
--- evicts the peer.
+-- Canonical entity is `app_device` — every connecting client (iOS app, Mac
+-- collector, sensor, CLI) is a paired device holding an allowlisted iroh
+-- EndpointId (`node_id`). Authentication IS the proven, allowlisted key: the
+-- box has no session cookie and no device bearer. Revocation is soft
+-- (`app_device.revoked_at`) → the reconciler drops the key from the iroh
+-- allowlist → the next dial is refused at the QUIC handshake.
 --
 -- Bootstrap primitive: `app_pair_token`. A 24-byte random token with an
 -- RFC 8628-shaped state machine (pending → authorized → consumed). The
@@ -40,18 +39,34 @@ INSERT INTO app_auth_user (id) VALUES ('00000000-0000-0000-0000-000000000001')
 -- ---------------------------------------------------------------------------
 -- Device — the canonical record for everything that talks to the box.
 --
--- `kind` discriminates browser cookies from app bearers from sensors. The
--- credential payload itself lives in `app_auth_session` (cookies) or
--- `credentials` (bearers + WG peers). One device may have at most one row in
--- each of those tables; revoke flows the other direction.
+-- `kind` discriminates apps from sensors from the on-box CLI. `node_id` is the
+-- device's proven iroh EndpointId (the allowlist entry = the credential).
+-- `source_id` is the catalog source a collector device ingests as (ios/mac),
+-- used to fan out its per-device ingest action; NULL for non-source devices.
 -- ---------------------------------------------------------------------------
 CREATE TABLE app_device (
     id              TEXT PRIMARY KEY,
     user_id         TEXT NOT NULL REFERENCES app_auth_user(id) ON DELETE CASCADE,
     kind            TEXT NOT NULL
-                        CHECK (kind IN ('browser', 'mobile_app', 'desktop_app', 'sensor', 'cli')),
-    label           TEXT NOT NULL,                                 -- "MacBook · Chrome", "iPhone 15 Pro", "garage ESP32"
+                        CHECK (kind IN ('mobile_app', 'desktop_app', 'sensor', 'cli')),
+    -- The device's Ed25519 iroh EndpointId, submitted at pairing. The box's
+    -- iroh transport allowlists the set of non-revoked node_ids — this IS the
+    -- auth boundary. NULL only for the synthetic on-box console device.
+    node_id         TEXT,
+    -- Catalog source this device ingests as (e.g. 'ios', 'mac'); anchors its
+    -- per-device ingest action fan-out. NULL for non-collector devices.
+    source_id       TEXT,
+    label           TEXT NOT NULL,                                 -- "iPhone 15 Pro", "garage ESP32"
     device_info     JSONB NOT NULL DEFAULT '{}'::jsonb,            -- model, os, app_version, user_agent, etc.
+    -- Onboarding "doorplate": set when the owner deliberately renames this
+    -- device (vs the auto-generated `label`). NULL = still auto-labeled.
+    -- Drives the Tier -1 "named" onboarding step (see api/box_status.rs).
+    named_at        TIMESTAMPTZ,
+    -- Initial backfill timing for collector/source devices (Tier 0/1). Set on
+    -- the first action run for this device's credential, and on its first
+    -- success. Drives the "device_collecting" onboarding step.
+    init_sync_started_at   TIMESTAMPTZ,
+    init_sync_completed_at TIMESTAMPTZ,
     paired_at       TIMESTAMPTZ NOT NULL DEFAULT now(),
     paired_from_ip  TEXT,                                          -- audit-only
     last_seen_at    TIMESTAMPTZ,
@@ -61,27 +76,14 @@ CREATE TABLE app_device (
 );
 CREATE INDEX idx_app_device_user_active ON app_device(user_id) WHERE revoked_at IS NULL;
 CREATE INDEX idx_app_device_last_seen   ON app_device(last_seen_at DESC) WHERE revoked_at IS NULL;
+CREATE INDEX idx_app_device_source      ON app_device(source_id) WHERE source_id IS NOT NULL AND revoked_at IS NULL;
+-- One ACTIVE device per EndpointId. Partial unique: multiple NULLs allowed, and
+-- scoped to non-revoked rows so a device that re-pairs with a stable iroh key
+-- (its old row now revoked) doesn't collide with itself.
+CREATE UNIQUE INDEX app_device_node_id_key ON app_device(node_id)
+    WHERE node_id IS NOT NULL AND revoked_at IS NULL;
 CREATE TRIGGER set_updated_at BEFORE UPDATE ON app_device
     FOR EACH ROW EXECUTE FUNCTION tg_set_updated_at();
-
--- ---------------------------------------------------------------------------
--- Browser session cookies.
---
--- `last_used_at` is touched on every authenticated request; the middleware
--- enforces an 8h idle ceiling (re-pair required after) in addition to the
--- 30d hard expiry. Revocation is soft via `app_device.revoked_at` — the
--- middleware joins both rows and refuses if either fails.
--- ---------------------------------------------------------------------------
-CREATE TABLE app_auth_session (
-    id              TEXT PRIMARY KEY,
-    session_token   TEXT NOT NULL UNIQUE,                          -- opaque 32-byte base64url
-    device_id       TEXT NOT NULL REFERENCES app_device(id) ON DELETE CASCADE,
-    expires_at      TIMESTAMPTZ NOT NULL,                          -- hard ceiling (30d from creation)
-    last_used_at    TIMESTAMPTZ NOT NULL DEFAULT now(),            -- updated each request; idle-timeout source
-    created_at      TIMESTAMPTZ NOT NULL DEFAULT now()
-);
-CREATE INDEX idx_app_auth_session_device     ON app_auth_session(device_id);
-CREATE INDEX idx_app_auth_session_expires_at ON app_auth_session(expires_at);
 
 -- ---------------------------------------------------------------------------
 -- Pair token — the bootstrap right-to-enroll.
@@ -108,7 +110,7 @@ CREATE TABLE app_pair_token (
     minted_by_device    TEXT REFERENCES app_device(id) ON DELETE SET NULL,  -- NULL when CLI-minted
     minted_via          TEXT NOT NULL CHECK (minted_via IN ('cli', 'web')),
     intended_kind       TEXT
-                            CHECK (intended_kind IN ('browser', 'mobile_app', 'desktop_app', 'sensor', 'cli')),
+                            CHECK (intended_kind IN ('mobile_app', 'desktop_app', 'sensor', 'cli')),
     status              TEXT NOT NULL DEFAULT 'pending'
                             CHECK (status IN ('pending', 'authorized', 'consumed', 'expired', 'denied')),
     consumed_by_device  TEXT REFERENCES app_device(id) ON DELETE SET NULL,

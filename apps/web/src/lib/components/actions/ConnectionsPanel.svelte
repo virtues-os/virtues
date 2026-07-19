@@ -14,9 +14,10 @@
 
 <script lang="ts">
 	import Icon from '$lib/components/Icon.svelte';
-	import { spaceStore } from '$lib/stores/space.svelte';
 	import DevicePairModal from '$lib/components/sources/DevicePairModal.svelte';
 	import ApiKeyConnectModal from '$lib/components/sources/ApiKeyConnectModal.svelte';
+	import Modal from '$lib/components/Modal.svelte';
+	import ChatImportCard from '$lib/components/onboarding/ChatImportCard.svelte';
 	import SourceConnectButton from '$lib/components/sources/SourceConnectButton.svelte';
 	import UniversalDataGrid, {
 		type Column
@@ -24,10 +25,12 @@
 	import {
 		listCredentials,
 		listSourceCatalog,
-		oauthStart,
+		renameCredential,
+		revokeCredential,
 		type Credential,
 		type SourceCatalogItem
 	} from '$lib/api/client';
+	import { startOAuth, reloadOnReturn } from '$lib/components/sources/connectDispatch';
 	import { relativeTime } from '$lib/actions/palette';
 
 	// ────────────────────────────────────────────────────────────────────────
@@ -45,6 +48,17 @@
 
 	let apikeyModalOpen = $state(false);
 	let apikeyModalSource = $state<SourceCatalogItem | null>(null);
+
+	let chatImportOpen = $state(false);
+
+	// Manage-connection modal (opened by clicking a credential row). Holds the
+	// rename + disconnect affordances — the only place to CRUD a connection.
+	let manageOpen = $state(false);
+	let manageCred = $state<CredRow | null>(null);
+	let renameValue = $state('');
+	let manageBusy = $state(false);
+	let manageErr = $state<string | null>(null);
+	let confirmingDisconnect = $state(false);
 
 	// ────────────────────────────────────────────────────────────────────────
 	// Data loading
@@ -98,13 +112,19 @@
 
 		if (source.auth_kind === 'via_proxy') {
 			try {
-				const { redirect_url } = await oauthStart(source.id, {
-					return_url: `${window.location.origin}/oauth/callback`
-				});
-				window.location.assign(redirect_url);
+				const { external } = await startOAuth(source.id);
+				// Tauri: the SPA stayed mounted (system browser handled the dance);
+				// refresh the credential list when the user switches back.
+				if (external) reloadOnReturn(load);
 			} catch (e) {
 				err = e instanceof Error ? e.message : String(e);
 			}
+			return;
+		}
+
+		// One-time import sources open the upload card, not the api-key form.
+		if (source.id === 'chat_import') {
+			chatImportOpen = true;
 			return;
 		}
 
@@ -118,7 +138,50 @@
 	}
 
 	function handleRowClick(row: CredRow) {
-		spaceStore.openTabFromRoute(`/sources/${row.id}`);
+		manageCred = row;
+		renameValue = row.name;
+		manageErr = null;
+		confirmingDisconnect = false;
+		manageOpen = true;
+	}
+
+	function closeManage() {
+		manageOpen = false;
+		manageCred = null;
+		manageBusy = false;
+		confirmingDisconnect = false;
+		manageErr = null;
+	}
+
+	async function doRename() {
+		if (!manageCred) return;
+		const next = renameValue.trim();
+		if (!next || next === manageCred.name) return;
+		manageBusy = true;
+		manageErr = null;
+		try {
+			await renameCredential(manageCred.id, next);
+			closeManage();
+			await load();
+		} catch (e) {
+			manageErr = e instanceof Error ? e.message : String(e);
+			manageBusy = false;
+		}
+	}
+
+	async function doDisconnect() {
+		if (!manageCred) return;
+		manageBusy = true;
+		manageErr = null;
+		try {
+			await revokeCredential(manageCred.id);
+			closeManage();
+			await load();
+		} catch (e) {
+			manageErr = e instanceof Error ? e.message : String(e);
+			manageBusy = false;
+			confirmingDisconnect = false;
+		}
 	}
 
 	// ────────────────────────────────────────────────────────────────────────
@@ -141,7 +204,9 @@
 			.map((c) => ({
 				...c,
 				source_label: sourceLabel(c.provider),
-				status_label: c.status,
+				// Active rows show the Tier-2 init-sync lifecycle
+				// (connected → backfilling → live); others show the raw status.
+				status_label: c.status === 'active' ? (c.sync_state ?? 'active') : c.status,
 				last_seen_label: c.last_seen_at
 					? relativeTime(c.last_seen_at)
 					: c.status === 'active'
@@ -172,7 +237,13 @@
 			width: '15%',
 			minWidth: '100px',
 			format: 'badge',
-			badgeColors: { active: 'badge-success', revoked: 'badge-muted' }
+			badgeColors: {
+				live: 'badge-success',
+				active: 'badge-success',
+				backfilling: 'badge-warning',
+				connected: 'badge-muted',
+				revoked: 'badge-muted'
+			}
 		},
 		{
 			key: 'last_seen_label',
@@ -270,13 +341,97 @@
 	}}
 />
 
+<Modal open={chatImportOpen} onClose={() => { chatImportOpen = false; void load(); }} title="Import chat history" width="md">
+	<ChatImportCard />
+</Modal>
+
+<Modal open={manageOpen} onClose={closeManage} title="Manage connection" width="sm">
+	{#if manageCred}
+		<div class="manage">
+			<div class="manage-head">
+				<Icon icon={catalogById.get(manageCred.provider)?.icon ?? 'ri:plug-line'} width="20" />
+				<span class="manage-source">{manageCred.source_label}</span>
+				<span class="manage-status" class:revoked={manageCred.status !== 'active'}>
+					{manageCred.status_label}
+				</span>
+			</div>
+
+			{#if manageCred.device_info}
+				<dl class="manage-info">
+					<div><dt>Device</dt><dd>{manageCred.device_info.device_model || manageCred.device_info.device_name}</dd></div>
+					<div><dt>OS</dt><dd>{manageCred.device_info.os_version}</dd></div>
+					{#if manageCred.device_info.app_version}
+						<div><dt>App</dt><dd>{manageCred.device_info.app_version}</dd></div>
+					{/if}
+					<div><dt>Last seen</dt><dd>{manageCred.last_seen_label}</dd></div>
+					<div><dt>Actions</dt><dd>{manageCred.action_count}</dd></div>
+				</dl>
+			{:else}
+				<dl class="manage-info">
+					<div><dt>Last seen</dt><dd>{manageCred.last_seen_label}</dd></div>
+					<div><dt>Actions</dt><dd>{manageCred.action_count}</dd></div>
+				</dl>
+			{/if}
+
+			{#if manageCred.status === 'active'}
+				<label class="manage-rename">
+					<span>Name</span>
+					<div class="rename-row">
+						<input
+							type="text"
+							bind:value={renameValue}
+							placeholder="e.g. My iPhone"
+							disabled={manageBusy}
+						/>
+						<button
+							class="btn-secondary"
+							onclick={doRename}
+							disabled={manageBusy || !renameValue.trim() || renameValue.trim() === manageCred.name}
+						>
+							Save
+						</button>
+					</div>
+				</label>
+			{/if}
+
+			{#if manageErr}
+				<div class="error">{manageErr}</div>
+			{/if}
+
+			{#if manageCred.status === 'active'}
+				<div class="manage-danger">
+					{#if confirmingDisconnect}
+						<p class="danger-prompt">
+							Disconnect this {manageCred.source_label}? It stops ingesting and its
+							actions are removed. Re-pair to reconnect.
+						</p>
+						<div class="danger-actions">
+							<button class="btn-ghost" onclick={() => (confirmingDisconnect = false)} disabled={manageBusy}>
+								Cancel
+							</button>
+							<button class="btn-danger" onclick={doDisconnect} disabled={manageBusy}>
+								{manageBusy ? 'Disconnecting…' : 'Disconnect'}
+							</button>
+						</div>
+					{:else}
+						<button class="btn-danger-outline" onclick={() => (confirmingDisconnect = true)} disabled={manageBusy}>
+							<Icon icon="ri:link-unlink-m" width="15" />
+							Disconnect
+						</button>
+					{/if}
+				</div>
+			{/if}
+		</div>
+	{/if}
+</Modal>
+
 <style>
 	.sources-page {
 		display: flex;
 		flex-direction: column;
 		gap: 1.25rem;
 		padding: 1.25rem 1.5rem 2rem;
-		max-width: 1100px;
+		max-width: 72rem;
 		width: 100%;
 		margin: 0 auto;
 	}
@@ -337,8 +492,142 @@
 	.error {
 		padding: 0.5rem 0.75rem;
 		border-radius: 6px;
-		background: #fee2e2;
-		color: #991b1b;
+		background: var(--color-error-subtle);
+		color: color-mix(in srgb, var(--color-error) 75%, #000);
 		font-size: 0.8125rem;
+	}
+
+	/* ── Manage-connection modal ──────────────────────────────────────────── */
+	.manage {
+		display: flex;
+		flex-direction: column;
+		gap: 1rem;
+	}
+	.manage-head {
+		display: flex;
+		align-items: center;
+		gap: 0.5rem;
+		font-size: 0.9375rem;
+		font-weight: 600;
+		color: var(--color-foreground, #111827);
+	}
+	.manage-source {
+		flex: 1;
+		min-width: 0;
+	}
+	.manage-status {
+		font-size: 0.6875rem;
+		font-weight: 600;
+		text-transform: uppercase;
+		letter-spacing: 0.03em;
+		padding: 0.125rem 0.5rem;
+		border-radius: var(--radius-full);
+		background: var(--color-success-subtle, #dcfce7);
+		color: var(--color-success, #166534);
+	}
+	.manage-status.revoked {
+		background: var(--color-muted, #f3f4f6);
+		color: var(--color-foreground-muted, #6b7280);
+	}
+	.manage-info {
+		display: grid;
+		grid-template-columns: 1fr 1fr;
+		gap: 0.5rem 1rem;
+		margin: 0;
+	}
+	.manage-info div {
+		display: flex;
+		flex-direction: column;
+		gap: 0.125rem;
+	}
+	.manage-info dt {
+		font-size: 0.6875rem;
+		text-transform: uppercase;
+		letter-spacing: 0.03em;
+		color: var(--color-foreground-subtle, #9ca3af);
+	}
+	.manage-info dd {
+		margin: 0;
+		font-size: 0.8125rem;
+		color: var(--color-foreground, #111827);
+	}
+	.manage-rename {
+		display: flex;
+		flex-direction: column;
+		gap: 0.375rem;
+	}
+	.manage-rename > span {
+		font-size: 0.6875rem;
+		text-transform: uppercase;
+		letter-spacing: 0.03em;
+		color: var(--color-foreground-subtle, #9ca3af);
+	}
+	.rename-row {
+		display: flex;
+		gap: 0.5rem;
+	}
+	.rename-row input {
+		flex: 1;
+		min-width: 0;
+		padding: 0.4375rem 0.625rem;
+		border: 1px solid var(--color-border, #d1d5db);
+		border-radius: 6px;
+		font-size: 0.8125rem;
+		background: var(--color-background, #fff);
+		color: var(--color-foreground, #111827);
+	}
+	.manage-danger {
+		border-top: 1px solid var(--color-border, #e5e7eb);
+		padding-top: 0.875rem;
+	}
+	.danger-prompt {
+		margin: 0 0 0.625rem;
+		font-size: 0.8125rem;
+		line-height: 1.45;
+		color: var(--color-foreground-muted, #6b7280);
+	}
+	.danger-actions {
+		display: flex;
+		justify-content: flex-end;
+		gap: 0.5rem;
+	}
+	.btn-secondary,
+	.btn-ghost,
+	.btn-danger,
+	.btn-danger-outline {
+		display: inline-flex;
+		align-items: center;
+		gap: 0.375rem;
+		padding: 0.4375rem 0.75rem;
+		border-radius: 6px;
+		font-size: 0.8125rem;
+		font-weight: 500;
+		cursor: pointer;
+		border: 1px solid transparent;
+	}
+	.btn-secondary {
+		background: var(--color-muted, #f3f4f6);
+		color: var(--color-foreground, #111827);
+		border-color: var(--color-border, #d1d5db);
+	}
+	.btn-ghost {
+		background: transparent;
+		color: var(--color-foreground-muted, #6b7280);
+	}
+	.btn-danger {
+		background: var(--color-error);
+		color: #fff;
+	}
+	.btn-danger-outline {
+		background: transparent;
+		color: color-mix(in srgb, var(--color-error) 75%, #000);
+		border-color: var(--color-error);
+	}
+	.btn-secondary:disabled,
+	.btn-danger:disabled,
+	.btn-danger-outline:disabled,
+	.btn-ghost:disabled {
+		opacity: 0.5;
+		cursor: not-allowed;
 	}
 </style>

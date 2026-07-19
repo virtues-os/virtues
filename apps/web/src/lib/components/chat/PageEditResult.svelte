@@ -6,7 +6,7 @@
 	 * Shows different states: page_created, edit_applied, edit_failed
 	 */
 	import Icon from '$lib/components/Icon.svelte';
-	import { spaceStore } from '$lib/stores/space.svelte';
+	import { windowShellStore } from '$lib/stores/window-shell.svelte';
 
 	interface Props {
 		type: 'page_created' | 'edit_applied' | 'edit_failed';
@@ -44,7 +44,7 @@
 			onOpenPage(pageId);
 		} else if (pageId) {
 			// Fallback to direct store call if handler is missing
-			spaceStore.openTabFromRoute(`/page/${pageId}`, { paneId: 'right' });
+			windowShellStore.openTabFromRoute(`/page/${pageId}`, { paneId: 'right' });
 		}
 	}
 </script>
@@ -146,7 +146,7 @@
 		padding: 0.375rem 0.625rem;
 		background: transparent;
 		border: none;
-		border-radius: 9999px;
+		border-radius: var(--radius-full);
 		font-size: 0.75rem;
 		font-weight: 500;
 		color: var(--color-foreground-muted);

@@ -1,0 +1,15 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n            UPDATE data_communication_message m\n            SET from_name = u.name\n            FROM UNNEST($1::text[], $2::text[]) AS u(id, name)\n            WHERE m.id = u.id AND m.from_name IS NULL\n            ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "TextArray",
+        "TextArray"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "f155e6ff0a5fc6b158a793fb49ab7ba5483ca19214b8eab1b09b90d4caf8cb03"
+}

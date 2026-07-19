@@ -199,7 +199,7 @@ pub async fn save_handler(
         }
     };
     let _ = sqlx::query(
-        "UPDATE credentials SET status = 'revoked', secret_lookup_hash = NULL, \
+        "UPDATE credentials SET status = 'revoked', \
                                  status_reason = 'replaced_by_user', updated_at = now() \
          WHERE source_id = $1 AND status = 'active'",
     )
@@ -273,7 +273,7 @@ pub async fn delete_handler(
     }
 
     let _ = sqlx::query(
-        "UPDATE credentials SET status = 'revoked', secret_lookup_hash = NULL, \
+        "UPDATE credentials SET status = 'revoked', \
                                  status_reason = 'user_deleted', updated_at = now() \
          WHERE source_id = $1 AND status = 'active'",
     )

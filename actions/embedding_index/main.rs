@@ -8,7 +8,11 @@
 //! All real work lives in [`virtues::search::run_embedding_job`]. This binary
 //! is the subprocess wrapper that gives the runner stdin/stdout contract.
 //!
-//! Triggered every 15 minutes per `templates.toml`.
+//! Triggered every 15 minutes per `templates.toml`. The job drains: it loops
+//! batches until the backlog is empty (or its wall-clock ceiling trips), so a
+//! large onboarding backlog clears in one run instead of trickling one batch
+//! per cron tick. A pg advisory lock inside the job makes an overlapping cron
+//! tick no-op cleanly.
 
 use anyhow::Result;
 use virtues::search::run_embedding_job;

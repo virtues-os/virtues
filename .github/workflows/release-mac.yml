@@ -1,19 +1,41 @@
 name: Release Mac App
 
+# Builds the Tauri desktop app (apps/web/src-tauri) into a signed + notarized
+# universal DMG and attaches it to a GitHub Release. Bundles both helper
+# sidecars: virtues-client (Rust) and virtues-collector (Swift).
+#
+# This replaces the old native-Xcode pipeline (apps/mac-source/mac.xcodeproj),
+# which was removed when the app moved to Tauri.
+#
+# Signing + notarization are handled natively by `tauri build` when these env
+# vars are present (mapped from existing repo secrets):
+#   APPLE_CERTIFICATE          <- APPLE_CERTIFICATE_BASE64  (base64 .p12)
+#   APPLE_CERTIFICATE_PASSWORD <- APPLE_CERTIFICATE_PASSWORD
+#   APPLE_SIGNING_IDENTITY     <- APPLE_DEVELOPER_ID        ("Developer ID Application: …")
+#   APPLE_ID                   <- APPLE_ID
+#   APPLE_PASSWORD             <- APPLE_APP_PASSWORD         (app-specific password)
+#   APPLE_TEAM_ID              <- APPLE_TEAM_ID
+# Without them the build still succeeds, unsigned (for local/test tags).
+
 on:
   push:
     tags:
+      # Stable: `mac-v0.1.0` (prerelease:false, updates the rolling `mac-latest`
+      # that virtues.com/downloads/mac serves).
       - 'mac-v*'
+      # Edge: rolling `mac-edge`, force-pushed each test build → one prerelease
+      # release that overwrites itself (mirrors the box's `edge`).
+      - 'mac-edge'
   workflow_dispatch:
     inputs:
       version:
-        description: 'Version number (e.g., 1.0.0)'
+        description: 'Version (e.g. 0.1.0) or "edge"'
         required: true
         type: string
 
 jobs:
   build-and-release:
-    runs-on: macos-latest
+    runs-on: blacksmith-6vcpu-macos-15
     permissions:
       contents: write
 
@@ -21,290 +43,279 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Select Xcode
-        run: sudo xcode-select -s /Applications/Xcode.app/Contents/Developer
-
-      - name: Get version
+      # Resolve version + channel from the tag:
+      #   • `mac-edge` (or dispatch "edge") → edge channel, prerelease, rolling;
+      #     version taken from the crate semver since the tag carries none.
+      #   • `mac-v0.1.0` → stable, prerelease:false, also updates `mac-latest`.
+      - name: Resolve version + channel
         id: version
         run: |
           if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
-            VERSION="${{ github.event.inputs.version }}"
+            RAW="${{ github.event.inputs.version }}"
           else
-            VERSION=${GITHUB_REF#refs/tags/mac-v}
+            RAW="${GITHUB_REF#refs/tags/}"
           fi
-          echo "VERSION=$VERSION" >> $GITHUB_OUTPUT
-          echo "Building version: $VERSION"
-
-      - name: Import Code Signing Certificate
-        env:
-          APPLE_CERTIFICATE_BASE64: ${{ secrets.APPLE_CERTIFICATE_BASE64 }}
-          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
-        run: |
-          if [ -z "$APPLE_CERTIFICATE_BASE64" ]; then
-            echo "No certificate provided, skipping import"
-            exit 0
+          if [[ "$RAW" == "mac-edge" || "$RAW" == "edge" ]]; then
+            IS_EDGE=true
+            VERSION="$(grep -m1 '^version = ' virtues-core/Cargo.toml | sed -E 's/.*"([^"]+)".*/\1/')"
+            TAG="mac-edge"
+          else
+            IS_EDGE=false
+            VERSION="${RAW#mac-v}"
+            TAG="mac-v${VERSION}"
           fi
+          echo "VERSION=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "IS_EDGE=$IS_EDGE" >> "$GITHUB_OUTPUT"
+          echo "TAG=$TAG" >> "$GITHUB_OUTPUT"
+          echo "channel: edge=$IS_EDGE  version=$VERSION  tag=$TAG"
 
-          # Create temporary keychain
-          KEYCHAIN_PATH=$RUNNER_TEMP/build.keychain
-          KEYCHAIN_PASSWORD=$(openssl rand -base64 32)
-
-          # Create keychain
-          security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
-          security set-keychain-settings -lut 21600 "$KEYCHAIN_PATH"
-          security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
-
-          # Import certificate
-          echo "$APPLE_CERTIFICATE_BASE64" | base64 -d > certificate.p12
-          security import certificate.p12 -P "$APPLE_CERTIFICATE_PASSWORD" \
-            -A -t cert -f pkcs12 -k "$KEYCHAIN_PATH"
-
-          # Set as default keychain and add to search list
-          security list-keychain -d user -s "$KEYCHAIN_PATH" $(security list-keychains -d user | tr -d '"')
-          security default-keychain -s "$KEYCHAIN_PATH"
-
-          # Allow codesign to access the key without prompting
-          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
-
-          # Clean up
-          rm certificate.p12
-
-          # Export keychain path and password for subsequent steps
-          echo "KEYCHAIN_PATH=$KEYCHAIN_PATH" >> $GITHUB_ENV
-          echo "KEYCHAIN_PASSWORD=$KEYCHAIN_PASSWORD" >> $GITHUB_ENV
-
-          # Verify certificate is accessible for code signing
-          echo "Verifying certificate is accessible..."
-          security find-identity -v -p codesigning "$KEYCHAIN_PATH"
-
-          echo "Certificate imported successfully"
-
-      - name: Build universal app bundle
-        env:
-          CODESIGN_IDENTITY: ${{ secrets.APPLE_DEVELOPER_ID }}
+      # Stamp the tag-derived version into tauri.conf.json so the bundler names
+      # the DMG `Virtues_<VERSION>_universal.dmg` to match the tag. Without this
+      # the bundler uses the static `"version"` in the config and every build
+      # was misnamed (e.g. mac-v1.0.16 → Virtues_1.0.15_universal.dmg).
+      - name: Stamp app version from tag
+        working-directory: apps/web/src-tauri
         run: |
-          cd apps/mac
+          tmp="$(mktemp)"
+          jq --arg v "${{ steps.version.outputs.VERSION }}" '.version = $v' tauri.conf.json > "$tmp"
+          mv "$tmp" tauri.conf.json
+          echo "tauri.conf.json version → $(jq -r .version tauri.conf.json)"
 
-          # Build for x86_64
-          echo "Building for x86_64..."
-          xcodebuild -project mac.xcodeproj \
-            -scheme mac \
-            -configuration Release \
-            -arch x86_64 \
-            -derivedDataPath .build/x86_64 \
-            ONLY_ACTIVE_ARCH=NO \
-            CODE_SIGN_IDENTITY="" \
-            CODE_SIGNING_REQUIRED=NO \
-            CODE_SIGNING_ALLOWED=NO \
-            build
+      - name: Install Rust (universal targets)
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-darwin,x86_64-apple-darwin
 
-          # Build for arm64
-          echo "Building for arm64..."
-          xcodebuild -project mac.xcodeproj \
-            -scheme mac \
-            -configuration Release \
-            -arch arm64 \
-            -derivedDataPath .build/arm64 \
-            ONLY_ACTIVE_ARCH=NO \
-            CODE_SIGN_IDENTITY="" \
-            CODE_SIGNING_REQUIRED=NO \
-            CODE_SIGNING_ALLOWED=NO \
-            build
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: ". -> target"
 
-          # Find the built .app bundles
-          X86_APP=$(find .build/x86_64 -name "mac.app" -type d | head -1)
-          ARM_APP=$(find .build/arm64 -name "mac.app" -type d | head -1)
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
 
-          echo "x86_64 app: $X86_APP"
-          echo "arm64 app: $ARM_APP"
+      - uses: actions/setup-node@v4
+        with:
+          # 22, not 20: @ai-sdk/svelte declares engines.node >=22, so pnpm hard-fails
+          # the install (ERR_PNPM_UNSUPPORTED_ENGINE). release-linux.yml was moved to 22
+          # and this was left behind — which is why no Mac release has built since the
+          # dependency landed, and why three weeks of collector work never shipped.
+          node-version: '22'
 
-          # Copy arm64 app as base (preserves all resources, Info.plist, etc.)
-          cp -R "$ARM_APP" Virtues.app
+      # ── Stage both sidecars for the universal build ───────────────────────
+      # `tauri build --target universal-apple-darwin` compiles EACH arch as its
+      # own cargo invocation, and the tauri build script checks for a PER-ARCH
+      # sidecar (binaries/<name>-aarch64-apple-darwin and -x86_64-apple-darwin).
+      # We stage both per-arch files plus the lipo'd -universal one (used for the
+      # final bundle), for each helper.
 
-          # Create universal binary by merging both architectures
-          echo "Creating universal binary..."
+      # The collector reaches the box over iroh via VirtuesIrohMac.xcframework
+      # (uniffi FFI). It's gitignored (a build artifact), so generate it here —
+      # universal, since both darwin targets are installed above — BEFORE the
+      # Swift build links against it.
+      - name: Build iroh FFI xcframework (macOS, universal)
+        run: crates/virtues-iroh-ffi/build-macos.sh
+
+      - name: Build virtues-collector sidecar (Swift)
+        working-directory: apps/mac-source
+        run: |
+          swift build -c release --arch arm64
+          swift build -c release --arch x86_64
+          ARM="$(swift build -c release --arch arm64 --show-bin-path)/virtues-collector"
+          X86="$(swift build -c release --arch x86_64 --show-bin-path)/virtues-collector"
+          OUT="$GITHUB_WORKSPACE/apps/web/src-tauri/binaries"
+          mkdir -p "$OUT"
+          cp "$ARM" "$OUT/virtues-collector-aarch64-apple-darwin"
+          cp "$X86" "$OUT/virtues-collector-x86_64-apple-darwin"
+          lipo -create "$ARM" "$X86" -output "$OUT/virtues-collector-universal-apple-darwin"
+          chmod +x "$OUT"/virtues-collector-*
+
+      - name: Build virtues-client sidecar (Rust)
+        run: |
+          cargo build -p virtues-client --release --target aarch64-apple-darwin
+          cargo build -p virtues-client --release --target x86_64-apple-darwin
+          OUT="apps/web/src-tauri/binaries"
+          cp target/aarch64-apple-darwin/release/virtues-client "$OUT/virtues-client-aarch64-apple-darwin"
+          cp target/x86_64-apple-darwin/release/virtues-client "$OUT/virtues-client-x86_64-apple-darwin"
           lipo -create \
-            "$X86_APP/Contents/MacOS/mac" \
-            "$ARM_APP/Contents/MacOS/mac" \
-            -output Virtues.app/Contents/MacOS/mac
+            "$OUT/virtues-client-aarch64-apple-darwin" \
+            "$OUT/virtues-client-x86_64-apple-darwin" \
+            -output "$OUT/virtues-client-universal-apple-darwin"
+          chmod +x "$OUT"/virtues-client-*
 
-          # Verify universal binary
-          echo "Binary architectures:"
-          lipo -info Virtues.app/Contents/MacOS/mac
+      - name: Install web deps (tauri CLI + plugins)
+        working-directory: apps/web
+        run: pnpm install --frozen-lockfile
 
-          # Sign if certificate is available
-          if [ -n "$CODESIGN_IDENTITY" ] && [ -n "$KEYCHAIN_PATH" ]; then
-            echo "Signing app bundle with identity: $CODESIGN_IDENTITY"
+      - name: Build signed + notarized universal app
+        working-directory: apps/web
+        env:
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE_BASE64 }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_DEVELOPER_ID }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_APP_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          # Self-updater signing (minisign) — orthogonal to Apple codesigning.
+          # With `bundle.createUpdaterArtifacts: true`, tauri also emits a signed
+          # `Virtues.app.tar.gz` + `.sig` here. Notarization does NOT invalidate
+          # this signature (tauri#7703).
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        run: pnpm tauri build --target universal-apple-darwin
 
-            # Unlock keychain for this step
-            security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
-
-            # Verify certificate is still accessible
-            echo "Available signing identities:"
-            security find-identity -v -p codesigning "$KEYCHAIN_PATH"
-
-            # Sign the entire .app bundle with entitlements
-            codesign --force --deep \
-                     --sign "$CODESIGN_IDENTITY" \
-                     --keychain "$KEYCHAIN_PATH" \
-                     --entitlements mac/mac.entitlements \
-                     --options runtime \
-                     --timestamp \
-                     Virtues.app || { echo "ERROR: codesign failed!"; exit 1; }
-
-            # Verify signature
-            codesign --verify --verbose=4 Virtues.app || { echo "ERROR: signature verification failed!"; exit 1; }
-            echo "App bundle signed successfully"
-          else
-            echo "No signing identity provided, app will be unsigned"
-            echo "CODESIGN_IDENTITY: ${CODESIGN_IDENTITY:-<empty>}"
-            echo "KEYCHAIN_PATH: ${KEYCHAIN_PATH:-<empty>}"
-          fi
-
-      - name: Create DMG
+      - name: Locate DMG
+        id: dmg
         run: |
-          cd apps/mac
+          DMG=$(find apps/web/src-tauri/target/universal-apple-darwin/release/bundle/dmg -name '*.dmg' | head -1)
+          [ -n "$DMG" ] || { echo "no DMG produced"; exit 1; }
+          echo "path=$DMG" >> "$GITHUB_OUTPUT"
+          echo "Found DMG: $DMG"
 
-          VERSION="${{ steps.version.outputs.VERSION }}"
-
-          # Create staging folder with app and Applications symlink
-          echo "Creating DMG staging folder..."
-          mkdir -p dmg-staging
-          cp -R Virtues.app dmg-staging/
-          ln -s /Applications dmg-staging/Applications
-
-          # Create DMG from staging folder
-          echo "Creating DMG..."
-          hdiutil create \
-            -volname "Virtues" \
-            -srcfolder dmg-staging \
-            -ov \
-            -format UDZO \
-            "Virtues-${VERSION}.dmg"
-
-          # Cleanup staging
-          rm -rf dmg-staging
-
-          echo "DMG created: Virtues-${VERSION}.dmg"
-          ls -la "Virtues-${VERSION}.dmg"
-
-      - name: Notarize DMG
+      # Tauri notarizes + staples the .app, but NOT the DMG. A downloaded DMG
+      # that isn't itself notarized triggers Gatekeeper's "Apple cannot check
+      # it" prompt — so notarize + staple the DMG too. notarytool accepts the
+      # DMG because the executables inside are already Developer-ID signed +
+      # hardened; the DMG wrapper needs no separate codesign.
+      - name: Notarize + staple the DMG
         env:
           APPLE_ID: ${{ secrets.APPLE_ID }}
-          APPLE_APP_PASSWORD: ${{ secrets.APPLE_APP_PASSWORD }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_APP_PASSWORD }}
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
         run: |
-          cd apps/mac
-          VERSION="${{ steps.version.outputs.VERSION }}"
-          DMG_FILE="Virtues-${VERSION}.dmg"
+          xcrun notarytool submit "${{ steps.dmg.outputs.path }}" \
+            --apple-id "$APPLE_ID" --password "$APPLE_PASSWORD" --team-id "$APPLE_TEAM_ID" --wait
+          xcrun stapler staple "${{ steps.dmg.outputs.path }}"
 
-          # Check if we have notarization credentials
-          if [ -z "$APPLE_ID" ] || [ -z "$APPLE_APP_PASSWORD" ]; then
-            echo "No notarization credentials provided, skipping"
-            exit 0
-          fi
-
-          # Debug: Show signing info
-          echo "=== Checking app signature ==="
-          codesign -dv --verbose=4 Virtues.app 2>&1 || true
-          echo "=== End signature check ==="
-
-          # Check if app has any valid signature (not just Authority)
-          if codesign -v Virtues.app 2>&1; then
-            echo "App is signed, submitting DMG for notarization..."
-
-            # Submit for notarization
-            xcrun notarytool submit "$DMG_FILE" \
-              --apple-id "$APPLE_ID" \
-              --password "$APPLE_APP_PASSWORD" \
-              --team-id "$APPLE_TEAM_ID" \
-              --wait
-
-            # Staple the notarization ticket to the DMG
-            echo "Stapling notarization ticket..."
-            xcrun stapler staple "$DMG_FILE"
-
-            # Verify stapling
-            xcrun stapler validate "$DMG_FILE"
-
-            echo "Notarization and stapling complete!"
-          else
-            echo "ERROR: App not properly signed, cannot notarize"
-            echo "Check that APPLE_DEVELOPER_ID is set to a valid 'Developer ID Application' certificate"
+      # Gate: refuse to publish unless the app is Developer ID signed AND the DMG
+      # is notarized + stapled. If the APPLE_* secrets are missing, tauri builds
+      # unsigned and this fails here — so a misconfigured run never ships an
+      # unsigned release.
+      - name: Verify signed + notarized
+        run: |
+          APP=$(find apps/web/src-tauri/target/universal-apple-darwin/release/bundle/macos -name '*.app' | head -1)
+          [ -n "$APP" ] || { echo "no .app produced"; exit 1; }
+          echo "== codesign =="
+          codesign --verify --deep --strict --verbose=2 "$APP"
+          if ! codesign -dvv "$APP" 2>&1 | grep -q "Authority=Developer ID Application"; then
+            echo "::error::app is NOT Developer ID signed — are the APPLE_* secrets set?"
             exit 1
           fi
+          echo "== notarization staple =="
+          if ! xcrun stapler validate "${{ steps.dmg.outputs.path }}"; then
+            echo "::error::DMG is not notarized/stapled"
+            exit 1
+          fi
+          # externalBin / #11992 guard: both sidecars must be validly signed
+          # inside the bundle, or the updater would ship a broken app that
+          # Gatekeeper rejects on relaunch. (--deep above already walks them;
+          # this asserts each explicitly so a regression fails loudly.)
+          echo "== sidecars signed (externalBin guard) =="
+          for s in virtues-client virtues-collector; do
+            codesign --verify --strict "$APP/Contents/MacOS/$s" \
+              || { echo "::error::sidecar $s is not validly signed"; exit 1; }
+          done
+          echo "✓ signed + notarized"
 
-      - name: Copy installer script
+      # Stable, version-independent filename so download pages point at a fixed
+      # URL — mac-latest/Virtues.dmg (stable) or mac-edge/Virtues.dmg (edge).
+      - name: Stable-named copy for the download URL
+        id: stable
         run: |
-          # Copy the installer script (updated for DMG)
-          cp apps/mac/Scripts/installer.sh installer.sh
-          chmod +x installer.sh
+          STABLE="$(dirname "${{ steps.dmg.outputs.path }}")/Virtues.dmg"
+          cp "${{ steps.dmg.outputs.path }}" "$STABLE"
+          echo "path=$STABLE" >> "$GITHUB_OUTPUT"
 
-      - name: Create Release
-        uses: softprops/action-gh-release@v1
+      # Updater manifest (STABLE only). `tauri build` already emitted a signed
+      # `*.app.tar.gz` + `.sig` (createUpdaterArtifacts + TAURI_SIGNING_*). We
+      # copy them to fixed names and compose `latest.json` pointing at the
+      # `mac-latest` download URL — the endpoint the app's updater polls. Edge
+      # never produces these, so the updater can't pull a rolling test build.
+      # One universal artifact serves both arches.
+      - name: Generate updater manifest (latest.json)
+        if: steps.version.outputs.IS_EDGE == 'false'
+        id: updater
+        run: |
+          BUNDLE="apps/web/src-tauri/target/universal-apple-darwin/release/bundle"
+          TARGZ=$(find "$BUNDLE" -name '*.app.tar.gz' | head -1)
+          SIG=$(find "$BUNDLE" -name '*.app.tar.gz.sig' | head -1)
+          if [ -z "$TARGZ" ] || [ -z "$SIG" ]; then
+            echo "::error::updater artifacts (.app.tar.gz/.sig) missing — check createUpdaterArtifacts + TAURI_SIGNING_PRIVATE_KEY"
+            exit 1
+          fi
+          DIR="$(dirname "$TARGZ")"
+          # tauri already names these `Virtues.app.tar.gz`/`.sig`; only copy when
+          # a rename is actually needed (cp onto itself errors under `set -e`).
+          [ "$TARGZ" = "$DIR/Virtues.app.tar.gz" ] || cp "$TARGZ" "$DIR/Virtues.app.tar.gz"
+          [ "$SIG" = "$DIR/Virtues.app.tar.gz.sig" ] || cp "$SIG" "$DIR/Virtues.app.tar.gz.sig"
+          URL="https://github.com/virtues-os/virtues/releases/download/mac-latest/Virtues.app.tar.gz"
+          jq -n \
+            --arg version "${{ steps.version.outputs.VERSION }}" \
+            --arg notes "Performance, reliability, and self-update improvements." \
+            --arg pubdate "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+            --arg sig "$(cat "$DIR/Virtues.app.tar.gz.sig")" \
+            --arg url "$URL" \
+            '{version:$version, notes:$notes, pub_date:$pubdate, platforms:{"darwin-aarch64":{signature:$sig,url:$url},"darwin-x86_64":{signature:$sig,url:$url}}}' \
+            > "$DIR/latest.json"
+          echo "targz=$DIR/Virtues.app.tar.gz" >> "$GITHUB_OUTPUT"
+          echo "sig=$DIR/Virtues.app.tar.gz.sig" >> "$GITHUB_OUTPUT"
+          echo "manifest=$DIR/latest.json" >> "$GITHUB_OUTPUT"
+          echo "== latest.json =="; cat "$DIR/latest.json"
+
+      # The channel release: `mac-v0.1.0` (stable, permanent, prerelease:false)
+      # or `mac-edge` (rolling, prerelease:true). Both carry the versioned DMG
+      # and the stable Virtues.dmg so each channel has a fixed download URL.
+      #
+      # make_latest:false is load-bearing: the repo-global `releases/latest`
+      # pointer belongs exclusively to the Linux box's bare `v*` stable (it's
+      # what virtues.com/sh + bootstrap.sh + virtues-installer resolve). The Mac
+      # app has its OWN rolling pointer (`mac-latest`, below) that its updater +
+      # virtues.com/downloads/mac use — it never needs the global flag. Without
+      # this, a `prerelease:false` mac-v* would auto-grab `releases/latest` and
+      # `curl virtues.com/sh` 404s (no bootstrap.sh on a mac DMG release).
+      - name: Publish channel release
+        uses: softprops/action-gh-release@v2
         with:
-          name: Virtues for Mac v${{ steps.version.outputs.VERSION }}
+          name: ${{ steps.version.outputs.IS_EDGE == 'true' && 'Virtues for Mac (Edge)' || format('Virtues for Mac v{0}', steps.version.outputs.VERSION) }}
+          tag_name: ${{ steps.version.outputs.TAG }}
+          prerelease: ${{ steps.version.outputs.IS_EDGE == 'true' }}
+          make_latest: false
           body: |
-            ## Virtues for Mac v${{ steps.version.outputs.VERSION }}
+            ## Virtues for Mac ${{ steps.version.outputs.IS_EDGE == 'true' && '(Edge — rolling test build)' || format('v{0}', steps.version.outputs.VERSION) }}
 
-            ### Installation
+            Universal (Intel + Apple Silicon) Tauri app. Bundles the
+            `virtues-client` (networking) and `virtues-collector` (data) helpers.
 
-            #### Option 1: Download DMG (Recommended)
-            1. Download `Virtues-${{ steps.version.outputs.VERSION }}.dmg`
-            2. Double-click to mount
-            3. Drag **Virtues** to your Applications folder
-            4. Launch from Applications
-
-            #### Option 2: Command Line Installer
-            ```bash
-            curl -sSL https://github.com/${{ github.repository }}/releases/latest/download/installer.sh | bash
-            ```
-
-            ### First Run
-            1. Launch Virtues from Applications
-            2. Click the menu bar icon
-            3. Select "Pair with Virtues..."
-            4. Enter your pairing code from the web app
-
-            ### Features
-            - Universal binary (Intel + Apple Silicon)
-            - Menu bar app with status indicator
-            - Automatic startup on login
-            - Activity tracking (app focus events)
-            - 5-minute batch uploads
-            - Local SQLite queue for reliability
-
-            ### Requirements
-            - macOS 11.0 or later
-            - Accessibility permissions (prompted on first run)
+            ### Install
+            1. Download the `.dmg`, open it, drag **Virtues** to Applications.
+            2. Launch it and enter the 6-char code from `virtues pair` on your server.
           files: |
-            apps/mac/Virtues-${{ steps.version.outputs.VERSION }}.dmg
-            installer.sh
+            ${{ steps.dmg.outputs.path }}
+            ${{ steps.stable.outputs.path }}
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Prepare latest release files
-        if: success()
-        run: |
-          cd apps/mac
-          VERSION="${{ steps.version.outputs.VERSION }}"
-
-          # Copy DMG for latest tag
-          cp "Virtues-${VERSION}.dmg" Virtues.dmg
-
-      - name: Upload latest artifacts
-        if: success()
-        uses: softprops/action-gh-release@v1
+      # Stable builds also update the rolling `mac-latest` that
+      # virtues.com/downloads/mac 302s to. Edge skips this — `mac-edge` IS the
+      # rolling edge pointer.
+      - name: Update mac-latest (stable only)
+        if: steps.version.outputs.IS_EDGE == 'false'
+        uses: softprops/action-gh-release@v2
         with:
           tag_name: mac-latest
+          make_latest: false
           name: Virtues for Mac (Latest)
           body: |
-            This release is automatically updated with the latest stable version.
+            Automatically tracks the latest stable Mac build.
             Current version: v${{ steps.version.outputs.VERSION }}
 
-            For specific versions, see [all releases](https://github.com/${{ github.repository }}/releases).
+            Stable download: `Virtues.dmg` (same file, version-independent URL).
+            Self-update manifest: `latest.json` (+ `Virtues.app.tar.gz`/`.sig`).
           files: |
-            apps/mac/Virtues.dmg
-            installer.sh
+            ${{ steps.dmg.outputs.path }}
+            ${{ steps.stable.outputs.path }}
+            ${{ steps.updater.outputs.targz }}
+            ${{ steps.updater.outputs.sig }}
+            ${{ steps.updater.outputs.manifest }}
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

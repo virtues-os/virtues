@@ -30,6 +30,7 @@ pub mod contract;
 pub mod crypto;
 pub mod db;
 pub mod dedup;
+pub mod handles;
 pub mod error;
 pub mod ids;
 pub mod input;
@@ -39,4 +40,4 @@ pub mod transport;
 // Hot-path re-exports (used by every action subprocess binary).
 pub use contract::{ActionInput, ActionOutput};
 pub use db::connect_from_env;
-pub use input::{output, read_input};
+pub use input::{output, output_with_records, read_input};

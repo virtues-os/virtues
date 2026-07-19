@@ -4,6 +4,7 @@
  */
 
 import { browser } from '$app/environment';
+import { listModels, getModel, ApiError } from '$lib/api/client';
 
 export interface ModelOption {
 	id: string;
@@ -12,6 +13,9 @@ export interface ModelOption {
 	contextWindow: number | null;
 	maxOutputTokens: number | null;
 	supportsTools: boolean | null;
+	supportsVision: boolean | null;
+	supportsPdf: boolean | null;
+	supportsAudio: boolean | null;
 	enabled: boolean;
 	sortOrder: number;
 	isDefault?: boolean;
@@ -25,11 +29,7 @@ export async function fetchModels(): Promise<ModelOption[]> {
 		return [];
 	}
 
-	const response = await fetch('/api/models');
-	if (!response.ok) {
-		throw new Error(`Failed to fetch models: ${response.statusText}`);
-	}
-	const data = await response.json();
+	const data = await listModels<any[]>();
 
 	// Transform API response to ModelOption format
 	return data.map((model: any) => ({
@@ -39,6 +39,9 @@ export async function fetchModels(): Promise<ModelOption[]> {
 		contextWindow: model.context_window,
 		maxOutputTokens: model.max_output_tokens,
 		supportsTools: model.supports_tools,
+		supportsVision: model.supports_vision ?? null,
+		supportsPdf: model.supports_pdf ?? null,
+		supportsAudio: model.supports_audio ?? null,
 		enabled: model.enabled,
 		sortOrder: model.sort_order,
 		isDefault: model.is_default || false
@@ -53,12 +56,13 @@ export async function getModelById(modelId: string): Promise<ModelOption | null>
 		return null;
 	}
 
-	const response = await fetch(`/api/models/${encodeURIComponent(modelId)}`);
-	if (!response.ok) {
-		if (response.status === 404) return null;
-		throw new Error(`Failed to fetch model: ${response.statusText}`);
+	let model: any;
+	try {
+		model = await getModel<any>(modelId);
+	} catch (e) {
+		if (e instanceof ApiError && e.status === 404) return null;
+		throw e;
 	}
-	const model = await response.json();
 
 	return {
 		id: model.model_id,
@@ -67,6 +71,9 @@ export async function getModelById(modelId: string): Promise<ModelOption | null>
 		contextWindow: model.context_window,
 		maxOutputTokens: model.max_output_tokens,
 		supportsTools: model.supports_tools,
+		supportsVision: model.supports_vision ?? null,
+		supportsPdf: model.supports_pdf ?? null,
+		supportsAudio: model.supports_audio ?? null,
 		enabled: model.enabled,
 		sortOrder: model.sort_order,
 		isDefault: model.is_default || false

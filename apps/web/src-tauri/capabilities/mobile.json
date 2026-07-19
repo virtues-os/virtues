@@ -1,0 +1,18 @@
+{
+  "$schema": "https://schemas.tauri.app/capability/schema.json",
+  "identifier": "mobile",
+  "description": "Capabilities for the iOS/Android probe build",
+  "platforms": ["iOS", "android"],
+  "windows": ["*"],
+  "permissions": [
+    "core:default",
+    "core:window:allow-create",
+    "location-probe:default",
+    "reach:default",
+    "health:default",
+    "eventkit:default",
+    "contacts:default",
+    "finance:default",
+    "audio:default"
+  ]
+}

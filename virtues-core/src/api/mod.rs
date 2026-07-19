@@ -2,6 +2,8 @@
 
 pub mod action_events;
 pub mod agents;
+pub mod ai_calls;
+pub mod ai_complete;
 pub mod assistant_profile;
 pub mod audit;
 pub mod auth;
@@ -10,6 +12,7 @@ pub mod box_status;
 pub mod devices;
 pub mod pair;
 pub mod settings_byo;
+pub mod setup;
 pub mod sudo;
 pub mod chat;
 pub mod chat_permissions;
@@ -18,37 +21,41 @@ pub mod chats;
 pub mod code;
 pub mod compaction;
 pub mod credentials;
-pub mod day_illustration;
+pub mod image_gen;
 pub mod day_summary;
 pub mod developer;
 pub mod drive;
 pub mod entities;
 pub mod exa;
+pub mod home;
 pub mod internal;
 pub mod lake;
 pub mod media;
 pub mod metrics;
+pub mod mentions;
+pub mod model_catalog;
 pub mod models;
 pub mod namespaces;
+pub mod narrative_identity_gen;
 pub mod pages;
 pub mod personas;
 pub mod pins;
 pub mod things;
 pub mod places;
 pub mod profile;
-pub mod rate_limit;
+pub mod notebooks;
+pub mod records;
 pub mod seed_testing;
 pub mod source_auth;
-pub mod spaces;
 pub mod storage;
 pub mod subscription;
+pub mod system_telemetry;
 pub mod system_update;
 pub mod terminal;
 pub mod token_estimation;
 pub mod tools;
 pub mod unsplash;
 pub mod usage;
-pub mod views;
 pub mod wiki;
 
 // Re-export all functions for convenience
@@ -57,12 +64,12 @@ pub use assistant_profile::{
     get_assistant_name, get_assistant_profile, update_assistant_profile,
     UpdateAssistantProfileRequest,
 };
-pub use auth::{session_handler, signout_handler, SessionResponse, SessionUser};
+pub use auth::{session_handler, SessionResponse, SessionUser};
 pub use code::{execute_code, ExecuteCodeRequest, ExecuteCodeResponse};
 pub use credentials::{
     check_pairing_status, delete_pending_credential, list_credentials, list_pending_pairings,
-    rename_credential, revoke_credential, update_last_seen, validate_device_token,
-    CredentialListItem, DeviceInfo, PairingStatus, PendingPairing,
+    rename_credential, revoke_credential, CredentialListItem, DeviceInfo, PairingStatus,
+    PendingPairing,
 };
 pub use drive::{
     check_quota as check_drive_quota,
@@ -78,6 +85,7 @@ pub use drive::{
     init_drive_quota,
     is_lake_object_id,
     list_files as list_drive_files,
+    list_media as list_drive_media,
     list_trash as list_drive_trash,
     move_file as move_drive_file,
     purge_file as purge_drive_file,
@@ -112,7 +120,7 @@ pub use metrics::{
     StreamStats, TimeWindowMetrics,
 };
 pub use models::{
-    get_model, list_models, list_recommended_models, ModelInfo, RecommendedModelsResponse,
+    get_model, list_models, list_models_with_slots, ModelInfo, ModelsResponse,
 };
 pub use unsplash::{
     search as unsplash_search, SearchRequest as UnsplashSearchRequest,
@@ -147,18 +155,21 @@ pub use pages::{
     get_reflections_for_date,
     create_reflection,
     get_page,
+    get_page_backlinks,
     get_page_share,
     get_shared_page,
     get_version,
     list_pages,
     list_versions,
-    search_entities,
+    search_refs,
     update_page,
     validate_shared_file,
+    Backlink,
+    BacklinksResponse,
     CreatePageRequest,
     CreateVersionRequest,
-    EntitySearchResponse,
-    EntitySearchResult,
+    RefSearchResponse,
+    RefSearchResult,
     Page,
     PageListResponse,
     PageShare,
@@ -177,27 +188,23 @@ pub use pins::{
     create_pin, delete_pin, list_pins, reorder_pins, update_pin, CreatePinRequest, Pin,
     UpdatePinRequest,
 };
-// Re-export only the request/response types from things; functions are
-// referenced directly via `crate::api::things::*` to avoid name clashes
-// with `wiki::get_thing` / `wiki::list_things` (which return the basic
-// entity row used by the Wiki browser surface).
+// Things are the single source over `wiki_things` (/api/things). Functions are
+// referenced directly via `crate::api::things::*`; only the request/response
+// types are re-exported here.
 pub use things::{
-    AddThingPinRequest, CreateThingRequest, ListThingsParams, ReorderThingPinsRequest, Thing,
-    ThingDetail, ThingListResponse, ThingPin, ThingSummary, UpdateThingRequest,
+    CreateThingRequest, ListThingsParams, Thing, ThingListResponse, ThingSummary,
+    UpdateThingRequest,
 };
-pub use spaces::{
-    get_space, list_spaces, update_space,
-    CreateSpaceRequest, SaveTabStateRequest, Space, SpaceListResponse, SpaceSummary,
-    UpdateSpaceRequest,
-};
-pub use views::{
-    add_item_to_view, create_view, delete_view, get_view, list_views, remove_item_from_view,
-    resolve_view, update_view, CreateViewRequest, QueryConfig, UpdateViewRequest, View, ViewEntity,
-    ViewListResponse, ViewResolutionResponse, ViewSummary,
+pub use notebooks::{
+    add_notebook_item, create_notebook, delete_notebook, get_notebook, list_notebooks,
+    remove_notebook_item, reorder_notebook_items, set_chat_notebook, touch_notebook,
+    update_notebook, AddNotebookItemRequest, CreateNotebookRequest, Notebook, NotebookDetail,
+    NotebookItem, NotebookListResponse, NotebookSummary, ReorderNotebookItemsRequest,
+    UpdateNotebookRequest,
 };
 
 pub use chat_usage::{
-    calculate_cost as calculate_token_cost, check_compaction_needed, get_chat_usage,
+    check_compaction_needed, get_chat_usage,
     record_chat_usage, ChatUsageInfo, CompactionStatus, UsageData,
 };
 pub use developer::{execute_sql, list_tables, ExecuteSqlRequest};
@@ -207,10 +214,6 @@ pub use personas::{
     PersonaListResponse, PersonasData, UpdatePersonaRequest,
 };
 pub use profile::{get_display_name, get_profile, update_profile, UpdateProfileRequest};
-pub use rate_limit::{
-    check_rate_limit, get_usage_stats, record_usage, RateLimitError, RateLimits, TokenUsage,
-    UsageStats,
-};
 pub use seed_testing::{
     get_data_quality_metrics, get_pipeline_status, DataQualityMetrics, PipelineStatus,
 };
@@ -222,10 +225,11 @@ pub use token_estimation::{
 };
 pub use tools::{get_tool, list_tools, ListToolsQuery, Tool};
 pub use usage::{
-    check_and_record_usage, check_limit, get_all_usage, init_limits_from_tier,
+    check_limit, get_all_usage, init_limits_from_tier,
     record_usage as record_service_usage, LimitType, RemainingUsage, Service, ServiceUsage,
     UsageLimitError, UsageSummary,
 };
+pub use home::{get_calendar_upcoming, get_current_weather, get_unnamed_places};
 pub use wiki::{
     create_temporal_event,
     delete_auto_events_for_day,
@@ -242,26 +246,24 @@ pub use wiki::{
     get_day_sources,
     get_day_streams,
     get_timeline_day,
+    get_today_streams,
     get_events_by_date,
     get_or_create_day,
     get_organization,
     get_person,
     get_telos,
-    get_thing,
     get_wiki_place,
     list_acts,
     list_chapters_for_act,
     list_days,
     list_organizations,
     list_people,
-    list_things,
     list_wiki_places,
     resolve_id,
     update_day,
     update_organization,
     update_person,
     update_temporal_event,
-    update_thing,
     update_wiki_place,
     CreateTemporalEventRequest,
     DaySource,
@@ -275,7 +277,6 @@ pub use wiki::{
     UpdateWikiOrganizationRequest,
     UpdateWikiPersonRequest,
     UpdateWikiPlaceRequest,
-    UpdateWikiThingRequest,
     WikiAct,
     WikiChapter,
     WikiDay,
@@ -285,7 +286,5 @@ pub use wiki::{
     WikiPersonListItem,
     WikiPlace,
     WikiPlaceListItem,
-    WikiThing,
-    WikiThingListItem,
     WikiTelos,
 };

@@ -19,6 +19,11 @@
 		/** Optional cursor time (epoch ms) — renders a moving dot interpolated
 		 * along the track at this timestamp. Set null to hide. */
 		hoverTimeMs?: number | null;
+		/** When false, the map is a static display — no drag/zoom/controls — so
+		 * clicks pass through to an enclosing card. */
+		interactive?: boolean;
+		/** Center zoom used for a single stop (fitBounds would zoom to max). */
+		zoom?: number;
 	}
 
 	let {
@@ -26,6 +31,8 @@
 		stops = [],
 		height = 260,
 		hoverTimeMs = null,
+		interactive = true,
+		zoom = 13,
 	}: Props = $props();
 
 	let container: HTMLDivElement | null = null;
@@ -102,11 +109,16 @@
 				marker.bindTooltip(p.label, { direction: "top", opacity: 0.9 });
 		}
 
-		// If we only have stops (no track), fit to stops bounds
+		// If we only have stops (no track), fit to stops bounds — but a single
+		// stop has zero-size bounds (fitBounds → max zoom), so center it instead.
 		if (!hasTrack && hasStops) {
 			try {
-				const bounds = L.latLngBounds(stops.map((p) => [p.lat, p.lng]));
-				map.fitBounds(bounds, { padding: [16, 16] });
+				if (stops.length === 1) {
+					map.setView([stops[0].lat, stops[0].lng], zoom);
+				} else {
+					const bounds = L.latLngBounds(stops.map((p) => [p.lat, p.lng]));
+					map.fitBounds(bounds, { padding: [16, 16] });
+				}
 			} catch {
 				// ignore
 			}
@@ -208,20 +220,26 @@
 		L = (leaflet as any).default ?? leaflet;
 
 		map = L.map(container, {
-			zoomControl: true,
+			zoomControl: interactive,
 			attributionControl: false,
 			scrollWheelZoom: false,
+			dragging: interactive,
+			doubleClickZoom: interactive,
+			boxZoom: interactive,
+			keyboard: interactive,
+			touchZoom: interactive,
+			tap: interactive,
 		});
 
-		// Use CartoDB Positron (light, muted) tiles for a grayscale/muted look
-		L.tileLayer(
-			"https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png",
-			{
-				maxZoom: 19,
-				attribution: "&copy; OpenStreetMap contributors &copy; CARTO",
-				subdomains: "abcd",
-			},
-		).addTo(map);
+		// Tiles are served + cached by the box itself (see docs/map-atlas-plan.md):
+		// the browser never talks to a third-party tile provider, and cached areas
+		// keep working offline. Upstream (CartoDB Positron) attribution is preserved.
+		L.tileLayer("/api/map/tiles/light/{z}/{x}/{y}", {
+			maxZoom: 19,
+			attribution: "&copy; OpenStreetMap contributors &copy; CARTO",
+			// Blank tile when the box is offline / upstream fails → grey gaps, not broken images.
+			errorTileUrl: "data:image/gif;base64,R0lGODlhAQABAAAAACwAAAAAAQABAAA=",
+		}).addTo(map);
 
 		render();
 	});

@@ -153,11 +153,20 @@ function buildDecorations(view: EditorView): DecorationSet {
 			// --- List markers ---
 			if (name === 'ListMark' && !overlapsActiveLine) {
 				const markerText = view.state.sliceDoc(from, to);
-				if (markerText === '-' || markerText === '*' || markerText === '+') {
-					// Bullet markers → replace with dot character
+				// Task items (`- [ ]` / `- [x]`) are rendered entirely by the
+				// checkboxes extension (which replaces `- [ ] ` with a checkbox).
+				// Skip the bullet dot here so we don't get BOTH a • and a checkbox.
+				const isTaskItem = /^\s*[-*+]\s+\[[ xX]\]/.test(doc.lineAt(from).text);
+				if (isTaskItem) {
+					// handled by checkboxes.ts — no marker decoration
+				} else if (markerText === '-' || markerText === '*' || markerText === '+') {
+					// Bullet markers → a dot; glyph varies by nesting depth.
+					const bulletLine = doc.lineAt(from);
+					const indent = bulletLine.text.length - bulletLine.text.trimStart().length;
+					const depth = Math.floor(indent / 2);
 					builder.push(
 						Decoration.replace({
-							widget: new BulletDotWidget(),
+							widget: new BulletDotWidget(BULLET_GLYPHS[depth % BULLET_GLYPHS.length]),
 						}).range(from, to)
 					);
 				} else {
@@ -214,6 +223,23 @@ function buildDecorations(view: EditorView): DecorationSet {
 		}
 	}
 
+	// --- Highlight: ==text== → theme-aware highlight, markers hidden off-line ---
+	const HIGHLIGHT_REGEX = /==(.+?)==/g;
+	for (let lineNum = startLine; lineNum <= endLine; lineNum++) {
+		if (lineNum === cursorLine.number) continue;
+		const line = doc.line(lineNum);
+		HIGHLIGHT_REGEX.lastIndex = 0;
+		for (let m = HIGHLIGHT_REGEX.exec(line.text); m !== null; m = HIGHLIGHT_REGEX.exec(line.text)) {
+			const from = line.from + m.index;
+			const openEnd = from + 2;                 // after ==
+			const closeStart = from + 2 + m[1].length; // before closing ==
+			const to = from + m[0].length;
+			builder.push(Decoration.replace({}).range(from, openEnd));
+			builder.push(Decoration.mark({ class: 'cm-highlight' }).range(openEnd, closeStart));
+			builder.push(Decoration.replace({}).range(closeStart, to));
+		}
+	}
+
 	// Decoration.set with sort=true handles ordering
 	return Decoration.set(builder, true);
 }
@@ -240,18 +266,25 @@ function getInnerRange(
 }
 
 /**
- * Widget for rendering bullet list markers as a dot
+ * Widget for rendering bullet list markers as a dot. The glyph varies by nesting
+ * depth (• → ◦ → ▪) so nested bullet levels read as an outline.
  */
+const BULLET_GLYPHS = ['•', '◦', '▪'];
+
 class BulletDotWidget extends WidgetType {
+	constructor(private glyph: string = '•') {
+		super();
+	}
+
 	toDOM() {
 		const span = document.createElement('span');
 		span.className = 'cm-bullet-dot';
-		span.textContent = '•';
+		span.textContent = this.glyph;
 		return span;
 	}
 
-	eq() {
-		return true;
+	eq(other: BulletDotWidget) {
+		return other.glyph === this.glyph;
 	}
 }
 

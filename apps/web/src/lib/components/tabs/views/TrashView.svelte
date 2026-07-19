@@ -10,8 +10,11 @@
 	} from "$lib/api/client";
 	import Icon from "$lib/components/Icon.svelte";
 	import Modal from "$lib/components/Modal.svelte";
+	import UniversalDataGrid, {
+		type Column,
+	} from "$lib/components/datagrid/UniversalDataGrid.svelte";
 	import { onMount } from "svelte";
-	import { spaceStore } from "$lib/stores/space.svelte";
+	import { windowShellStore } from "$lib/stores/window-shell.svelte";
 
 	let { tab, active }: { tab: Tab; active: boolean } = $props();
 
@@ -234,14 +237,69 @@
 	}
 
 	function navigateToDrive() {
-		spaceStore.openTabFromRoute("/drive");
+		windowShellStore.openTabFromRoute("/drive");
 	}
+
+	// Grid items: DriveFile + computed expiry countdown
+	type TrashItem = DriveFile & { days_remaining: number };
+
+	const trashItems: TrashItem[] = $derived(
+		trashFiles.map((file) => ({
+			...file,
+			days_remaining: file.deleted_at
+				? getDaysRemaining(file.deleted_at)
+				: 30,
+		})),
+	);
+
+	// Column definitions
+	const columns: Column<TrashItem>[] = [
+		{
+			key: "filename",
+			label: "Name",
+			icon: "ri:file-line",
+			width: "40%",
+			minWidth: "200px",
+		},
+		{
+			key: "size_bytes",
+			label: "Size",
+			icon: "ri:hard-drive-2-line",
+			width: "12%",
+			minWidth: "90px",
+			getValue: (file) =>
+				file.is_folder ? null : formatBytes(file.size_bytes),
+		},
+		{
+			key: "deleted_at",
+			label: "Deleted",
+			icon: "ri:time-line",
+			width: "18%",
+			minWidth: "110px",
+			hideOnMobile: true,
+			getValue: (file) =>
+				file.deleted_at ? formatDate(file.deleted_at) : null,
+		},
+		{
+			key: "days_remaining",
+			label: "Expires",
+			icon: "ri:hourglass-line",
+			width: "15%",
+			minWidth: "100px",
+		},
+		{
+			key: "id",
+			label: "",
+			width: "72px",
+			sortable: false,
+		},
+	];
 </script>
 
 <Page
 	title="Trash"
 	description="Items in Trash are automatically deleted after 30 days"
-	maxWidth="full"
+	maxWidth="wide"
 >
 	{#snippet actions()}
 		<button
@@ -279,141 +337,123 @@
 			</div>
 		{/if}
 
-		<!-- Trash Table -->
-		<div class="border border-border rounded-lg overflow-hidden">
-			{#if loading}
-				<div class="flex items-center justify-center p-12">
-					<Icon icon="ri:loader-4-line" width="20" class="spin" />
-				</div>
-			{:else if trashFiles.length === 0}
-				<div class="p-12 text-center">
+		<!-- Trash Grid -->
+		<UniversalDataGrid
+			items={trashItems}
+			{columns}
+			entityType="trash"
+			{loading}
+			emptyIcon="ri:delete-bin-line"
+			emptyMessage="Trash is empty — deleted files are kept here for 30 days before being permanently removed"
+			loadingMessage="Loading trash..."
+			searchPlaceholder="Search trash..."
+			onRefresh={loadTrash}
+		>
+			{#snippet tableRow(file: TrashItem)}
+				{@const isWarning = file.days_remaining <= 7}
+				{@const isCritical = file.days_remaining <= 3}
+				<td class="px-3 py-2.5">
+					<div class="flex items-center gap-3">
+						<Icon
+							icon={getFileIcon(file)}
+							class="text-xl {getFileIconColor(file)} opacity-50"
+						/>
+						<div>
+							<span class="text-sm text-foreground"
+								>{file.filename}</span
+							>
+							<p class="text-xs text-foreground-subtle">
+								{file.path}
+							</p>
+						</div>
+					</div>
+				</td>
+				<td class="px-3 py-2.5 text-sm text-foreground-muted">
+					{file.is_folder ? "—" : formatBytes(file.size_bytes)}
+				</td>
+				<td class="px-3 py-2.5 text-sm text-foreground-muted hide-mobile">
+					{file.deleted_at ? formatDate(file.deleted_at) : "—"}
+				</td>
+				<td class="px-3 py-2.5">
+					<span
+						class="text-xs px-2 py-1 rounded-full {isCritical
+							? 'bg-error/10 text-error'
+							: isWarning
+								? 'bg-warning/10 text-warning'
+								: 'text-foreground-muted'}"
+					>
+						{file.days_remaining}
+						{file.days_remaining === 1 ? "day" : "days"}
+					</span>
+				</td>
+				<td class="px-3 py-2.5 text-right">
+					<div class="flex items-center justify-end gap-1">
+						<button
+							class="p-1 text-foreground-subtle hover:text-success transition-colors"
+							onclick={(e) => {
+								e.stopPropagation();
+								fileToRestore = file;
+							}}
+							aria-label="Restore {file.filename}"
+							title="Restore"
+						>
+							<Icon icon="ri:arrow-go-back-line" />
+						</button>
+						<button
+							class="p-1 text-foreground-subtle hover:text-error transition-colors"
+							onclick={(e) => {
+								e.stopPropagation();
+								fileToPurge = file;
+							}}
+							aria-label="Delete forever {file.filename}"
+							title="Delete forever"
+						>
+							<Icon icon="ri:delete-bin-7-line" />
+						</button>
+					</div>
+				</td>
+			{/snippet}
+
+			{#snippet card(file: TrashItem)}
+				<div class="flex flex-col items-center gap-2 text-center">
 					<Icon
-						icon="ri:delete-bin-line"
-						class="text-6xl text-foreground-subtle mb-4"
+						icon={getFileIcon(file)}
+						class="text-3xl {getFileIconColor(file)} opacity-50"
 					/>
-					<h3 class="text-lg font-medium text-foreground mb-2">
-						Trash is empty
-					</h3>
-					<p class="text-foreground-muted">
-						Deleted files will appear here for 30 days before being
-						permanently removed
-					</p>
+					<span class="text-sm font-medium text-foreground break-all"
+						>{file.filename}</span
+					>
+					<span class="text-xs text-foreground-muted">
+						{file.days_remaining}
+						{file.days_remaining === 1 ? "day" : "days"} left
+					</span>
+					<div class="flex items-center gap-1">
+						<button
+							class="p-1 text-foreground-subtle hover:text-success transition-colors"
+							onclick={(e) => {
+								e.stopPropagation();
+								fileToRestore = file;
+							}}
+							aria-label="Restore {file.filename}"
+							title="Restore"
+						>
+							<Icon icon="ri:arrow-go-back-line" />
+						</button>
+						<button
+							class="p-1 text-foreground-subtle hover:text-error transition-colors"
+							onclick={(e) => {
+								e.stopPropagation();
+								fileToPurge = file;
+							}}
+							aria-label="Delete forever {file.filename}"
+							title="Delete forever"
+						>
+							<Icon icon="ri:delete-bin-7-line" />
+						</button>
+					</div>
 				</div>
-			{:else}
-				<table class="w-full">
-					<thead class="bg-surface-elevated border-b border-border">
-						<tr>
-							<th
-								class="px-4 py-3 text-left text-xs font-medium text-foreground-subtle uppercase tracking-wide"
-							>
-								Name
-							</th>
-							<th
-								class="px-4 py-3 text-right text-xs font-medium text-foreground-subtle uppercase tracking-wide"
-							>
-								Size
-							</th>
-							<th
-								class="px-4 py-3 text-right text-xs font-medium text-foreground-subtle uppercase tracking-wide"
-							>
-								Deleted
-							</th>
-							<th
-								class="px-4 py-3 text-right text-xs font-medium text-foreground-subtle uppercase tracking-wide"
-							>
-								Expires
-							</th>
-							<th class="px-4 py-3 w-24"></th>
-						</tr>
-					</thead>
-					<tbody class="divide-y divide-border">
-						{#each trashFiles as file}
-							{@const daysRemaining = file.deleted_at
-								? getDaysRemaining(file.deleted_at)
-								: 30}
-							{@const isWarning = daysRemaining <= 7}
-							{@const isCritical = daysRemaining <= 3}
-							<tr
-								class="group hover:bg-surface-elevated transition-colors"
-							>
-								<td class="px-4 py-3">
-									<div class="flex items-center gap-3">
-										<Icon
-											icon={getFileIcon(file)}
-											class="text-xl {getFileIconColor(
-												file,
-											)} opacity-50"
-										/>
-										<div>
-											<span
-												class="text-sm text-foreground"
-												>{file.filename}</span
-											>
-											<p
-												class="text-xs text-foreground-subtle"
-											>
-												{file.path}
-											</p>
-										</div>
-									</div>
-								</td>
-								<td
-									class="px-4 py-3 text-right text-sm text-foreground-muted"
-								>
-									{file.is_folder
-										? "-"
-										: formatBytes(file.size_bytes)}
-								</td>
-								<td
-									class="px-4 py-3 text-right text-sm text-foreground-muted"
-								>
-									{file.deleted_at
-										? formatDate(file.deleted_at)
-										: "-"}
-								</td>
-								<td class="px-4 py-3 text-right">
-									<span
-										class="text-xs px-2 py-1 rounded-full {isCritical
-											? 'bg-error/10 text-error'
-											: isWarning
-												? 'bg-warning/10 text-warning'
-												: 'text-foreground-muted'}"
-									>
-										{daysRemaining}
-										{daysRemaining === 1 ? "day" : "days"}
-									</span>
-								</td>
-								<td class="px-4 py-3 text-right">
-									<div
-										class="flex items-center justify-end gap-1 opacity-0 group-hover:opacity-100 transition-all"
-									>
-										<button
-											class="p-1 text-foreground-subtle hover:text-emerald-500 transition-colors"
-											onclick={() =>
-												(fileToRestore = file)}
-											aria-label="Restore {file.filename}"
-											title="Restore"
-										>
-											<Icon
-												icon="ri:arrow-go-back-line"
-											/>
-										</button>
-										<button
-											class="p-1 text-foreground-subtle hover:text-error transition-colors"
-											onclick={() => (fileToPurge = file)}
-											aria-label="Delete forever {file.filename}"
-											title="Delete forever"
-										>
-											<Icon icon="ri:delete-bin-7-line" />
-										</button>
-									</div>
-								</td>
-							</tr>
-						{/each}
-					</tbody>
-				</table>
-			{/if}
-		</div>
+			{/snippet}
+		</UniversalDataGrid>
 </Page>
 
 <!-- Toast Notification -->
@@ -450,7 +490,7 @@
 			Cancel
 		</button>
 		<button
-			class="modal-btn bg-emerald-500 text-white hover:bg-emerald-600 disabled:opacity-50"
+			class="modal-btn bg-success text-surface hover:bg-success/90 disabled:opacity-50"
 			onclick={handleRestore}
 			disabled={restoring}
 		>
@@ -519,3 +559,11 @@
 		</button>
 	{/snippet}
 </Modal>
+
+<style>
+	@media (max-width: 768px) {
+		.hide-mobile {
+			display: none;
+		}
+	}
+</style>

@@ -3,7 +3,7 @@
 	import Badge from '$lib/components/Badge.svelte';
 	import Button from '$lib/components/Button.svelte';
 	import LogsPanel from '$lib/components/actions/LogsPanel.svelte';
-	import { spaceStore } from '$lib/stores/space.svelte';
+	import { windowShellStore } from '$lib/stores/window-shell.svelte';
 	import { routeToEntityId } from '$lib/tabs/types';
 	import type { Tab } from '$lib/tabs/types';
 	import {
@@ -83,7 +83,7 @@
 				memory: a.memory ?? ''
 			};
 			isDirty = false;
-			spaceStore.updateTab(tab.id, { label: a.name });
+			windowShellStore.updateTab(tab.id, { label: a.name });
 		} catch (e) {
 			err = e instanceof Error ? e.message : String(e);
 		} finally {
@@ -127,7 +127,7 @@
 				memory: updated.memory ?? ''
 			};
 			isDirty = false;
-			spaceStore.updateTab(tab.id, { label: updated.name });
+			windowShellStore.updateTab(tab.id, { label: updated.name });
 		} catch (e) {
 			err = e instanceof Error ? e.message : String(e);
 		} finally {
@@ -169,7 +169,7 @@
 		err = null;
 		try {
 			await deleteAction(action.id);
-			spaceStore.closeTab(tab.id);
+			windowShellStore.closeTab(tab.id);
 		} catch (e) {
 			err = e instanceof Error ? e.message : String(e);
 		} finally {
@@ -282,7 +282,10 @@
 							Delete action
 						</Button>
 					{:else}
-						<span></span>
+						<span class="system-note">
+							<Icon icon="ri:lock-line" width="12" />
+							System action — managed automatically. Disable it to stop it running; it can't be deleted (reconcile would recreate it).
+						</span>
 					{/if}
 					<Button variant="primary" onclick={save} disabled={!isDirty || saving}>
 						{saving ? 'Saving…' : 'Save changes'}
@@ -396,7 +399,7 @@
 		opacity: 0.5;
 	}
 	.muted-inline {
-		color: #b45309;
+		color: var(--color-warning);
 	}
 	.hero-actions {
 		display: flex;
@@ -407,8 +410,8 @@
 		margin-top: 0.75rem;
 		padding: 0.5rem 0.75rem;
 		border-radius: 6px;
-		background: #fee2e2;
-		color: #991b1b;
+		background: var(--color-error-subtle);
+		color: var(--color-error);
 		font-size: 0.8125rem;
 	}
 
@@ -538,6 +541,15 @@
 		border-top: 1px solid var(--color-border-subtle, #f3f4f6);
 		margin-top: 0.5rem;
 	}
+	.system-note {
+		display: inline-flex;
+		align-items: center;
+		gap: 0.375rem;
+		max-width: 60ch;
+		font-size: 0.6875rem;
+		line-height: 1.4;
+		color: var(--color-foreground-subtle, #9ca3af);
+	}
 
 	.runs {
 		border-left: 1px solid var(--color-border-subtle, #f3f4f6);
@@ -595,7 +607,7 @@
 	.run-error {
 		margin: 0.375rem 0 0;
 		font-size: 0.75rem;
-		color: #991b1b;
+		color: color-mix(in srgb, var(--color-error) 75%, #000);
 		font-family: var(--font-mono, monospace);
 	}
 
@@ -604,6 +616,6 @@
 		font-style: italic;
 	}
 	.error-msg {
-		color: #991b1b;
+		color: color-mix(in srgb, var(--color-error) 75%, #000);
 	}
 </style>

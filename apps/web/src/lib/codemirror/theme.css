@@ -9,13 +9,20 @@
    LIVE PREVIEW — HEADINGS (applied via line decorations)
    ============================================================================= */
 
+/*
+ * Vertical rhythm: headings use ASYMMETRIC padding — a generous push above
+ * (separating from the previous section) and a tight hug below (grouping with
+ * the text they introduce). Padding, never margin: margin collapses on .cm-line
+ * and creates dead click-zones / caret-gap artifacts in CodeMirror.
+ */
 .cm-heading-1 {
 	font-family: var(--font-serif, Georgia, 'Times New Roman', serif);
 	font-size: 1.75rem;
 	line-height: 1.3;
 	font-weight: 400;
 	color: var(--color-foreground);
-	margin: 0;
+	padding-top: 1.75rem !important;
+	padding-bottom: 0.2rem !important;
 }
 
 .cm-heading-2 {
@@ -24,6 +31,8 @@
 	line-height: 1.35;
 	font-weight: 400;
 	color: var(--color-foreground);
+	padding-top: 1.25rem !important;
+	padding-bottom: 0.2rem !important;
 }
 
 .cm-heading-3 {
@@ -32,6 +41,8 @@
 	line-height: 1.4;
 	font-weight: 500;
 	color: var(--color-foreground);
+	padding-top: 0.85rem !important;
+	padding-bottom: 0.15rem !important;
 }
 
 .cm-heading-4 {
@@ -39,6 +50,8 @@
 	line-height: 1.5;
 	font-weight: 500;
 	color: var(--color-foreground);
+	padding-top: 0.6rem !important;
+	padding-bottom: 0.1rem !important;
 }
 
 .cm-heading-5 {
@@ -46,6 +59,8 @@
 	line-height: 1.5;
 	font-weight: 600;
 	color: var(--color-foreground);
+	padding-top: 0.5rem !important;
+	padding-bottom: 0.1rem !important;
 }
 
 .cm-heading-6 {
@@ -53,6 +68,8 @@
 	line-height: 1.5;
 	font-weight: 600;
 	color: var(--color-foreground);
+	padding-top: 0.5rem !important;
+	padding-bottom: 0.1rem !important;
 }
 
 /* =============================================================================
@@ -74,6 +91,16 @@
 
 .cm-underline {
 	text-decoration: underline;
+}
+
+/* ==highlight== — theme-aware; the highlight color comes from the active theme
+   (honors the no-hardcoded-colors rule), spanning wrapped lines cleanly. */
+.cm-highlight {
+	background-color: var(--color-highlight, rgba(250, 224, 130, 0.45));
+	border-radius: 2px;
+	padding: 0 1px;
+	box-decoration-break: clone;
+	-webkit-box-decoration-break: clone;
 }
 
 .cm-inline-code {
@@ -110,108 +137,25 @@
 }
 
 /* =============================================================================
-   LIVE PREVIEW — ENTITY LINKS (pill chips with type-specific icon)
-   ============================================================================= */
-
-.cm-entity-link {
-	display: inline-flex;
-	align-items: center;
-	gap: 3px;
-	padding: 1px 7px 1px 5px;
-	margin: 0 1px;
-	border-radius: 100px;
-	background-color: color-mix(in srgb, var(--color-primary) 12%, transparent);
-	color: var(--color-primary);
-	text-decoration: none;
-	cursor: pointer;
-	font-size: 0.8125rem;
-	font-weight: normal;
-	transition: background-color 0.15s ease;
-	border: none;
-	font-family: inherit;
-	user-select: none;
-	vertical-align: baseline;
-}
-
-.cm-entity-link:hover {
-	background-color: color-mix(in srgb, var(--color-primary) 20%, transparent);
-	text-decoration: none;
-}
-
-.cm-entity-icon {
-	display: inline-flex;
-	align-items: center;
-	flex-shrink: 0;
-	opacity: 0.8;
-}
-
-.cm-entity-text {
-	overflow: hidden;
-	text-overflow: ellipsis;
-	white-space: nowrap;
-}
-
-/* =============================================================================
-   LIVE PREVIEW — EXTERNAL LINKS (favicon + text)
-   ============================================================================= */
-
-.cm-external-link {
-	display: inline-flex;
-	align-items: center;
-	gap: 4px;
-	color: var(--color-primary);
-	text-decoration: none;
-	cursor: pointer;
-	font-size: inherit;
-	vertical-align: baseline;
-}
-
-.cm-external-link:hover {
-	text-decoration: underline;
-}
-
-.cm-external-icon {
-	display: inline-flex;
-	align-items: center;
-	flex-shrink: 0;
-	width: 14px;
-	height: 14px;
-	color: var(--color-foreground-muted);
-}
-
-.cm-external-icon svg {
-	width: 14px;
-	height: 14px;
-}
-
-.cm-external-favicon {
-	display: block;
-	width: 12px;
-	height: 12px;
-	border-radius: 2px;
-}
-
-/* =============================================================================
-   LIVE PREVIEW — INTERNAL LINKS (simple colored text)
-   ============================================================================= */
-
-.cm-internal-link {
-	color: var(--color-primary);
-	text-decoration: none;
-	cursor: pointer;
-}
-
-.cm-internal-link:hover {
-	text-decoration: underline;
-}
-
-/* =============================================================================
-   LIVE PREVIEW — LINK TEXT (shared)
-   ============================================================================= */
-
-.cm-link-text {
+   LIVE PREVIEW — REFERENCES (inline links: plain, Wikipedia-style)
+   =============================================================================
+   Every inline ref — entity, file, internal, or external — renders as a plain
+   underlined link that belongs to the prose: no pill, no chip, no favicon. The
+   target/type distinctions live in the hover preview and the block embed, not
+   in inline chrome. Colour inherits the surrounding text; the underline is a
+   muted hairline that firms up on hover. */
+.cm-ref-link {
 	color: inherit;
-	text-decoration: inherit;
+	text-decoration: underline;
+	text-decoration-color: color-mix(in srgb, currentColor 32%, transparent);
+	text-decoration-thickness: 1px;
+	text-underline-offset: 2px;
+	cursor: pointer;
+	transition: text-decoration-color 0.12s ease;
+}
+
+.cm-ref-link:hover {
+	text-decoration-color: currentColor;
 }
 
 /* =============================================================================
@@ -359,10 +303,14 @@
 	border-radius: 3px;
 	background-color: transparent;
 	cursor: pointer;
-	vertical-align: middle;
-	margin-right: 6px;
+	/* Optically center the 14px box against the prose line (line-height 1.7);
+	   plain `middle` rides a touch high on the taller line box. */
+	vertical-align: -0.18em;
+	margin-right: 0.5rem;
 	position: relative;
-	transition: all 0.15s ease;
+	transition:
+		border-color 0.15s ease,
+		background-color 0.15s ease;
 }
 
 .cm-checkbox:hover {
@@ -741,15 +689,111 @@
 }
 
 /* =============================================================================
-   DRAG HANDLES / LINE NUMBERS GUTTER
+   EMPTY-STATE PLACEHOLDER
    ============================================================================= */
 
-.cm-lineNumbers .cm-gutterElement {
-	cursor: grab;
-	user-select: none;
+.cm-placeholder {
+	color: var(--color-foreground-subtle);
+	font-style: normal;
 }
 
-.cm-lineNumbers .cm-gutterElement:hover {
-	color: var(--color-foreground);
-	background-color: var(--color-surface-elevated);
+/* =============================================================================
+   FOCUS / TYPEWRITER MODE
+   ============================================================================= */
+
+.cm-focus-dim {
+	opacity: 0.35;
+	transition: opacity 0.25s ease;
+}
+
+/* =============================================================================
+   LIVE AI CURSOR
+   ============================================================================= */
+
+/* AI-authored text: a soft highlight that fades away ("ghost trail"). */
+.cm-ai-trail {
+	border-radius: 2px;
+	animation: cm-ai-trail-fade 1.4s ease forwards;
+}
+
+@keyframes cm-ai-trail-fade {
+	from {
+		background-color: color-mix(in srgb, var(--color-primary) 20%, transparent);
+	}
+	to {
+		background-color: transparent;
+	}
+}
+
+/* The region the AI is about to change (intent telegraph). */
+.cm-ai-telegraph {
+	background-color: color-mix(in srgb, var(--color-primary) 16%, transparent);
+	border-radius: 2px;
+	transition: background-color 0.2s ease;
+}
+
+/* The gliding caret overlay (positioned by the ViewPlugin). */
+.cm-ai-caret {
+	position: absolute;
+	top: 0;
+	left: 0;
+	display: flex;
+	align-items: flex-start;
+	pointer-events: none;
+	z-index: 20;
+	transition: transform 0.13s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.cm-ai-caret-bar {
+	width: 2px;
+	height: 100%;
+	background: var(--color-primary);
+	border-radius: 1px;
+	box-shadow: 0 0 6px color-mix(in srgb, var(--color-primary) 70%, transparent);
+	animation: cm-ai-caret-blink 1.1s steps(2, start) infinite;
+}
+
+.cm-ai-caret-label {
+	position: absolute;
+	top: -15px;
+	left: 0;
+	font-family: var(--font-sans);
+	font-size: 10px;
+	font-weight: 600;
+	line-height: 1;
+	color: var(--color-primary-foreground, white);
+	background: var(--color-primary);
+	padding: 2px 5px;
+	border-radius: 4px;
+	white-space: nowrap;
+}
+
+@keyframes cm-ai-caret-blink {
+	0%,
+	100% {
+		opacity: 1;
+	}
+	50% {
+		opacity: 0.4;
+	}
+}
+
+/* Finish: a single pulse before the caret dissolves. */
+.cm-ai-caret--done .cm-ai-caret-bar {
+	animation: cm-ai-caret-pulse 0.5s ease;
+}
+
+@keyframes cm-ai-caret-pulse {
+	0% {
+		transform: scaleY(1);
+		box-shadow: 0 0 6px color-mix(in srgb, var(--color-primary) 70%, transparent);
+	}
+	40% {
+		transform: scaleY(1.15);
+		box-shadow: 0 0 14px color-mix(in srgb, var(--color-primary) 90%, transparent);
+	}
+	100% {
+		transform: scaleY(1);
+		box-shadow: 0 0 0 transparent;
+	}
 }

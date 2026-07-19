@@ -1,7 +1,7 @@
 @import 'tailwindcss';
 @import './themes.css';
 @import './lib/styles/sidebar.css';
-@import './lib/styles/entity-badge.css';
+@import './lib/styles/ref-badge.css';
 
 /* Add Streamdown styles to Tailwind build */
 @source "../node_modules/svelte-streamdown/**/*";
@@ -34,12 +34,95 @@
 	background-attachment: fixed;
 }
 
+/* Avenir (sans) — self-hosted so it renders off-Apple (Jetson/Linux), not just
+   where it's a system font. Three static weights cover regular/medium/bold. */
+@font-face {
+	font-family: 'Avenir';
+	src: url('/fonts/Avenir-Regular.woff2') format('woff2');
+	font-weight: 400;
+	font-style: normal;
+	font-display: swap;
+}
+@font-face {
+	font-family: 'Avenir';
+	src: url('/fonts/Avenir-Medium.woff2') format('woff2');
+	font-weight: 500;
+	font-style: normal;
+	font-display: swap;
+}
+@font-face {
+	font-family: 'Avenir';
+	src: url('/fonts/Avenir-Bold.woff2') format('woff2');
+	font-weight: 700;
+	font-style: normal;
+	font-display: swap;
+}
+
+/* IBM Plex Mono (mono) — self-hosted (OFL) so code/terminal UIs render off-Apple
+   instead of falling back to a generic monospace on the Jetson. */
+@font-face {
+	font-family: 'IBM Plex Mono';
+	src: url('/fonts/IBMPlexMono-Regular.woff2') format('woff2');
+	font-weight: 400;
+	font-style: normal;
+	font-display: swap;
+}
+
+@font-face {
+	font-family: 'IBM Plex Mono';
+	src: url('/fonts/IBMPlexMono-Medium.woff2') format('woff2');
+	font-weight: 500;
+	font-style: normal;
+	font-display: swap;
+}
+
+@font-face {
+	font-family: 'IBM Plex Mono';
+	src: url('/fonts/IBMPlexMono-SemiBold.woff2') format('woff2');
+	font-weight: 600;
+	font-style: normal;
+	font-display: swap;
+}
+
+@font-face {
+	font-family: 'JJannon';
+	src: url('/fonts/JJannon-Display-Regular.woff2') format('woff2');
+	font-weight: 300;
+	font-style: normal;
+	font-display: swap;
+}
+
+@font-face {
+	font-family: 'JJannon';
+	src: url('/fonts/JJannon-Display-Regular.woff2') format('woff2');
+	font-weight: 400;
+	font-style: normal;
+	font-display: swap;
+}
+
 @font-face {
 	font-family: 'Lora';
 	src: url('/fonts/Lora-VariableFont_wght.ttf') format('truetype');
 	font-weight: 300 700;
 	font-style: normal;
 	font-display: swap;
+}
+
+/* Themed root background. On the mobile shell the page paints edge-to-edge
+   (viewport-fit=cover), so this is what shows behind translucent chrome, in
+   the safe-area zones during transitions, and before the app shell mounts —
+   without it those read as the bare (black/white) native window. */
+html,
+body {
+	background-color: var(--color-background);
+}
+
+/* Native phone shell (class set by hooks.client.ts): suppress the iOS
+   long-press callout — the app synthesizes its own context menus on
+   long-press (ContextMenuProvider), and the system bubble fights them.
+   Text selection itself is unaffected. */
+html.native-mobile * {
+	-webkit-touch-callout: none;
 }
 
 /* Serif font defaults to 400 weight */
@@ -80,8 +163,6 @@ h6 {
 	@apply text-2xl font-normal font-serif mb-5;
 	color: var(--color-foreground);
 	line-height: 1.5;
-	padding-bottom: 0.25rem;
-	border-bottom: 1px solid var(--color-border);
 }
 
 .markdown h3 {
@@ -276,7 +357,7 @@ h6 {
 	padding: 0.125rem 0.5rem;
 	font-size: 0.75rem;
 	font-weight: 500;
-	border-radius: 9999px;
+	border-radius: var(--radius-full);
 	white-space: nowrap;
 	text-transform: capitalize;
 }
@@ -341,4 +422,23 @@ h6 {
 
 [data-sonner-toast] [data-description] {
 	color: var(--foreground-muted) !important;
+}
+
+/* =============================================================================
+   FULL-SCREEN FOCUS MODE
+   Driven by body.focus-mode (toggled from the (app) layout on
+   pageDisplay.focusMode). Hides all peripheral chrome — sidebar + tab bars —
+   and removes the editor frame so only the document remains. A floating exit
+   button lives in the layout. !important guards against Tailwind utilities
+   (m-3 / border / rounded-lg) on <main>.
+   ============================================================================= */
+body.focus-mode .sidebar-container,
+body.focus-mode .tab-bar {
+	display: none !important;
+}
+
+body.focus-mode main {
+	margin: 0 !important;
+	border: none !important;
+	border-radius: 0 !important;
 }
