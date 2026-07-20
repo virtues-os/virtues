@@ -17,6 +17,7 @@ pub mod database;
 pub mod dayline;
 pub mod entity_resolution;
 pub mod error;
+pub mod extraction;
 pub mod geo;
 pub mod http_client;
 pub mod ids;
