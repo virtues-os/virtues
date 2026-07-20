@@ -2,57 +2,128 @@
 <html>
 <head>
 	<meta charset="utf-8" />
-	<title>Hello World</title>
+	<title>A Little Ledger</title>
 	<link rel="stylesheet" href="virtues.css" />
 	<style>
-		body { padding: 1.25rem; }
-		h1 { margin: 0 0 0.25rem; font-size: 1.125rem; }
-		.sub { color: var(--color-foreground-subtle); font-size: 0.8125rem; margin: 0 0 1rem; }
-		.tiles { display: flex; gap: 0.75rem; flex-wrap: wrap; }
-		.tile {
-			border: 1px solid var(--color-border);
-			border-radius: 8px;
-			padding: 0.75rem 1rem;
-			min-width: 8rem;
-			background: var(--color-surface-elevated);
+		body {
+			padding: 2.25rem 2rem 2rem;
+			max-width: 30rem;
+			margin: 0 auto;
 		}
-		.tile .n { font-size: 1.5rem; font-weight: 600; }
-		.tile .l { font-size: 0.75rem; color: var(--color-foreground-subtle); }
-		.err { color: var(--color-error); font-size: 0.8125rem; }
+		.greeting {
+			font-family: Georgia, 'Iowan Old Style', 'Times New Roman', serif;
+			font-size: 1.5rem;
+			font-weight: 400;
+			margin: 0 0 0.375rem;
+			letter-spacing: 0.01em;
+		}
+		.since {
+			margin: 0 0 1.75rem;
+			font-size: 0.8125rem;
+			color: var(--color-foreground-subtle);
+		}
+		.ledger {
+			margin: 0;
+			padding: 0;
+			list-style: none;
+			opacity: 0;
+			transition: opacity 0.6s ease;
+		}
+		.ledger.ready { opacity: 1; }
+		.row {
+			display: flex;
+			align-items: baseline;
+			gap: 0.5rem;
+			padding: 0.3125rem 0;
+			font-size: 0.875rem;
+		}
+		.row .what { color: var(--color-foreground-subtle); }
+		.row .dots {
+			flex: 1;
+			border-bottom: 1px dotted var(--color-border);
+			transform: translateY(-0.25em);
+			min-width: 1.5rem;
+		}
+		.row .n {
+			font-variant-numeric: tabular-nums;
+			font-weight: 500;
+		}
+		.close {
+			margin: 1.75rem 0 0;
+			font-family: Georgia, 'Iowan Old Style', 'Times New Roman', serif;
+			font-style: italic;
+			font-size: 0.875rem;
+			color: var(--color-foreground-subtle);
+		}
+		.quiet {
+			font-size: 0.8125rem;
+			color: var(--color-foreground-subtle);
+		}
 	</style>
 </head>
 <body>
-	<h1>Hello from an applet face</h1>
-	<p class="sub">
-		Sandboxed iframe · opaque origin · read-only query bridge. This page is
-		<code>face/index.html</code> in the applet folder.
-	</p>
-	<div class="tiles" id="tiles"><span class="sub">querying…</span></div>
+	<h1 class="greeting" id="greeting">Hello.</h1>
+	<p class="since" id="since">&nbsp;</p>
+	<ul class="ledger" id="ledger"></ul>
+	<p class="close" id="close"></p>
 
 	<script src="virtues.js"></script>
 	<script>
+		const hour = new Date().getHours();
+		document.getElementById('greeting').textContent =
+			hour < 5 ? 'Still up?' :
+			hour < 12 ? 'Good morning.' :
+			hour < 18 ? 'Good afternoon.' :
+			'Good evening.';
+
+		// Each line is optional — a box without a source simply has a
+		// shorter ledger. Nothing here errors at the reader.
+		const LINES = [
+			["days chronicled", "SELECT count(*)::int AS n FROM wiki_days"],
+			["moments on the calendar", "SELECT count(*)::int AS n FROM data_calendar_event"],
+			["letters received", "SELECT count(*)::int AS n FROM data_communication_email"],
+			["workouts logged", "SELECT count(*)::int AS n FROM data_health_workout"],
+			["footsteps remembered", "SELECT count(*)::int AS n FROM data_location_point"],
+		];
+
 		(async () => {
-			const tiles = document.getElementById('tiles');
+			const ledger = document.getElementById('ledger');
+
 			try {
-				const [days] = await virtues.query(
-					"SELECT count(*)::int AS n FROM wiki_days"
+				const [row] = await virtues.query(
+					"SELECT to_char(min(date), 'FMMonth DD, YYYY') AS d FROM wiki_days"
 				);
-				const [events] = await virtues.query(
-					"SELECT count(*)::int AS n FROM data_calendar_event"
-				);
-				tiles.innerHTML = '';
-				for (const [n, label] of [
-					[days?.n ?? 0, 'days chronicled'],
-					[events?.n ?? 0, 'calendar events'],
-				]) {
-					const el = document.createElement('div');
-					el.className = 'tile';
-					el.innerHTML = `<div class="n">${n}</div><div class="l">${label}</div>`;
-					tiles.appendChild(el);
+				if (row?.d) {
+					document.getElementById('since').textContent =
+						`Your story, kept since ${row.d}.`;
 				}
-			} catch (e) {
-				tiles.innerHTML = `<span class="err">${e.message}</span>`;
+			} catch { /* a young box has no first page yet */ }
+
+			let kept = 0;
+			for (const [what, sql] of LINES) {
+				try {
+					const [row] = await virtues.query(sql);
+					const n = row?.n ?? 0;
+					if (n === 0) continue;
+					const li = document.createElement('li');
+					li.className = 'row';
+					li.innerHTML =
+						`<span class="what">${what}</span>` +
+						`<span class="dots"></span>` +
+						`<span class="n">${n.toLocaleString()}</span>`;
+					ledger.appendChild(li);
+					kept += n;
+				} catch { /* source not connected — skip the line */ }
 			}
+
+			if (kept > 0) {
+				document.getElementById('close').textContent =
+					'All of it here, on your own box.';
+			} else {
+				ledger.innerHTML =
+					'<li class="quiet">Nothing in the ledger yet — connect a source and it will begin to fill.</li>';
+			}
+			ledger.classList.add('ready');
 		})();
 	</script>
 </body>
