@@ -421,13 +421,20 @@ pub async fn reconcile_templates(db: &PgPool) -> Result<usize> {
         guard.clone()
     };
 
-    // GC pass: delete fan-out action rows whose anchor is gone — an inactive
-    // credential (OAuth/api actions) or a revoked/absent device (ingest
+    // GC pass: delete fan-out action rows whose anchor is GONE — a deleted
+    // credential row (OAuth/api actions) or a revoked/absent device (ingest
     // actions). The revoke paths handle this inline, but any state drift
     // (direct SQL, import, bug) leaves orphans. Nullify run FKs first so history
     // is preserved under `action_id = NULL`.
+    //
+    // Deliberately NOT keyed on credential status: a recoverable blip
+    // (`reauth_required`, refresh error) must not destroy the row's operational
+    // state (archived_at, memory, sync cursors in config). Inactive-but-present
+    // credentials just fail/skip at run time and surface in run status; the row
+    // survives to resume when the credential recovers. Device revocation is
+    // permanent, so the device clause still keys on revoked_at.
     const ORPHAN_PREDICATE: &str = "(credential_id IS NOT NULL \
-             AND credential_id NOT IN (SELECT id FROM credentials WHERE status = 'active')) \
+             AND credential_id NOT IN (SELECT id FROM credentials)) \
           OR (device_id IS NOT NULL \
              AND device_id NOT IN (SELECT id FROM app_device WHERE revoked_at IS NULL))";
     let pruned = sqlx::query(&format!(
