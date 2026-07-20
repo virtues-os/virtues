@@ -88,6 +88,33 @@ impl InstallConfig {
         }
     }
 
+    /// pdfium build version re-hosted on the models release (from
+    /// bblanchon/pdfium-binaries, BSD-licensed). Version is baked into the
+    /// asset name — updates ship under a NEW name + a config bump here,
+    /// never replaced in place (same doctrine as the GGUFs).
+    pub const PDFIUM_VERSION: &'static str = "7961";
+
+    /// Per-arch pdfium asset name on the models release. The installer is
+    /// compiled per-target, so the arch is a compile-time fact.
+    pub fn pdfium_asset(&self) -> String {
+        #[cfg(target_arch = "aarch64")]
+        let arch = "arm64";
+        #[cfg(target_arch = "x86_64")]
+        let arch = "x64";
+        format!("libpdfium-{}-linux-{arch}.so", Self::PDFIUM_VERSION)
+    }
+
+    /// Where libpdfium lands on the box. virtues-core's PDF extractor finds
+    /// it via the VIRTUES_PDFIUM_PATH env line (written at install) and via
+    /// its VIRTUES_MODELS_DIR/pdfium fallback.
+    pub fn pdfium_dir(&self) -> PathBuf {
+        self.models_dir().join("pdfium")
+    }
+
+    pub fn pdfium_lib_path(&self) -> PathBuf {
+        self.pdfium_dir().join("libpdfium.so")
+    }
+
     pub fn env_file_path(&self) -> PathBuf {
         self.data_dir.join("virtues.env")
     }

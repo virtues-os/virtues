@@ -2652,7 +2652,6 @@ pub async fn upload_drive_file_handler(
 
                 // Repeated file fields: keep the last, drop the earlier stage.
                 cleanup(&staged);
-                staged = None;
 
                 let staging_dir = match state.drive_config.storage.staging_dir().await {
                     Ok(d) => d,
