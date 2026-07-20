@@ -18,16 +18,19 @@ live entities you already own (federation, not upload-bin).
 - Internal metaphor = **room** (you enter it; it has a state and an accent tint). User-facing
   name = Notebook. Don't name the feature "Rooms".
 
-### Naming (resolved)
+### Naming (resolved; REVISED 2026-07-20 — see researcher-plan.md decision 0)
 
-- The materials in a notebook = its **Library** ("add to Library"). NOT "Sources" (already used
-  for credential connections) and NOT "References" (collides with the existing `[@ref]` entity-link
-  system). Internal DB role value = `library`.
-- **Library = anything retrievable, not just files.** Files, external snapshots, pasted text,
-  AND internal entities/data/days/people — a Library member's chunks are resolved into the
+- ~~The materials in a notebook = its **Library**~~ **SUPERSEDED**: the "Library" noun is
+  retired — a notebook *containing* a Library was a container-inside-container that
+  contradicted the lens model. Things are simply **in the notebook**; the verb is
+  **"Add to notebook"**, the contents are **notebook items** (`app_notebook_items`).
+  Still NOT "Sources" (credential connections) and NOT "References" (`[@ref]` links).
+  Internal DB role value stays `library` (= grounds chat, the default for every added
+  item); `role='pin'` is schema-only for nav-only edges (e.g. related notebooks).
+- **Items = anything retrievable, not just files.** Files, external snapshots, pasted text,
+  AND internal entities/data/days/people — an item's chunks are resolved into the
   notebook's retrieval scope regardless of type. This is the federation superpower (don't ape
-  NotebookLM's upload-bin). The real split is **`library` (retrievable, grounds chat) vs `pin`
-  (nav-only shortcut)** — not files vs entities.
+  NotebookLM's upload-bin).
 - A notebook has **no local notes** — just global **Pages** it references. "Paste raw text"
   creates a `.md`/`.txt` file in Drive → becomes a Library material like any other file.
   One ingestion path for everything.
