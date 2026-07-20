@@ -455,13 +455,22 @@ impl ReachState {
 
   pub async fn pair(&self, server: &str, code: &str) -> Result<ReachStatus> {
     let origin = normalize_server(server);
+    // Label the device by the platform it's actually pairing from, so the box's
+    // device list shows a Mac as desktop and a phone as mobile (was hardcoded to
+    // ios/mobile). `std::env::consts::OS` = "macos"/"windows"/"linux"/"ios"/
+    // "android"; `client_kind` picks the box's device class.
+    let (client_kind, device_name, client_id) = if cfg!(mobile) {
+      ("mobile_app", "Virtues Mobile", "virtues-mobile")
+    } else {
+      ("desktop_app", "Virtues Desktop", "virtues-desktop")
+    };
     let device_info = serde_json::json!({
-      "device_name": "Virtues Mobile",
-      "os": "ios",
-      "client": "virtues-mobile",
+      "device_name": device_name,
+      "os": std::env::consts::OS,
+      "client": client_id,
       "version": env!("CARGO_PKG_VERSION"),
     });
-    virtues_reach_client::pair::consume(self.store.as_ref(), &origin, code, "mobile_app", device_info)
+    virtues_reach_client::pair::consume(self.store.as_ref(), &origin, code, client_kind, device_info)
       .await?;
     self.ensure_serving().await?;
     Ok(self.status().await)

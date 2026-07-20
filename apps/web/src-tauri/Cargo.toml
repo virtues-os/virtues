@@ -40,6 +40,12 @@ tauri-plugin-updater = "2"
 tauri-plugin-notification = "2"
 dirs = "5"
 keyring = "3"
+# In-process iroh reach (pair + :7117 loopback) — replaces the retired
+# virtues-client proxy sidecar on desktop. Same crate the mobile app uses.
+tauri-plugin-reach = { path = "../plugins/reach" }
+# Reach core, for the LAN subnet scan behind `discover_servers` (the plugin's
+# discovery isn't exposed as a ReachExt method).
+virtues-reach-client = { path = "../../../crates/virtues-reach-client" }
 
 # iOS-only: raw objc for the appearance bridge (set_appearance flips the UIKit
 # windows' overrideUserInterfaceStyle so the status bar / keyboard track the
