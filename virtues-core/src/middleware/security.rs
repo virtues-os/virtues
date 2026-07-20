@@ -20,18 +20,32 @@ use axum::{
 // ─── Security headers ───────────────────────────────────────────────────────
 
 pub async fn headers_layer(req: Request, next: Next) -> Response {
+    // Applet faces (and service-URL faces) are DESIGNED to be framed by the
+    // box UI — that's the sandbox model. They must be exempt from the global
+    // `X-Frame-Options: DENY` / `frame-ancestors 'none'`, and they set their
+    // own sandbox-appropriate CSP which this layer must not clobber.
+    let path = req.uri().path();
+    let is_face = path.starts_with("/face/") || path.starts_with("/service/");
+
     let mut resp = next.run(req).await;
     let h = resp.headers_mut();
-    // Clickjacking — the box's UI must never render inside someone else's frame.
-    h.insert("x-frame-options", HeaderValue::from_static("DENY"));
     // MIME-sniffing defense for any served file content.
     h.insert("x-content-type-options", HeaderValue::from_static("nosniff"));
-    // Conservative CSP — same-origin only. SvelteKit inlines styles, so style-src
-    // allows 'unsafe-inline'; script-src stays strict. `connect-src` is the one
-    // operator-tunable axis (a BYO api/atlas on a custom domain) — see csp_header.
-    h.insert("content-security-policy", csp_header().clone());
     // Don't leak the full URL on outbound nav.
     h.insert("referrer-policy", HeaderValue::from_static("same-origin"));
+
+    if is_face {
+        // Framable by the box's own origin only; cross-origin framing still
+        // denied. Leave the handler's Content-Security-Policy in place.
+        h.insert("x-frame-options", HeaderValue::from_static("SAMEORIGIN"));
+    } else {
+        // Clickjacking — the box's UI must never render inside someone else's frame.
+        h.insert("x-frame-options", HeaderValue::from_static("DENY"));
+        // Conservative CSP — same-origin only. SvelteKit inlines styles, so style-src
+        // allows 'unsafe-inline'; script-src stays strict. `connect-src` is the one
+        // operator-tunable axis (a BYO api/atlas on a custom domain) — see csp_header.
+        h.insert("content-security-policy", csp_header().clone());
+    }
     resp
 }
 
