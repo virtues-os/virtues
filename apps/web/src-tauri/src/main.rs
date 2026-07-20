@@ -1,4 +1,11 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
+// The tray, self-updater, and collector-reconcile machinery is macOS-only for
+// now (Windows/Linux ship a lean views-only window — no tray, no self-update,
+// no collector). Those fns still *compile* everywhere but are only *called* from
+// macOS-gated sites; likewise `Manager`/`WindowEvent` are only used there. So
+// suppress the resulting dead-code / unused-import warnings off macOS rather
+// than #[cfg]-gating ~20 definitions. Revisit when desktop collectors land.
+#![cfg_attr(not(target_os = "macos"), allow(dead_code, unused_imports))]
 
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Manager, WebviewUrl, WebviewWindowBuilder, WindowEvent};
@@ -1077,7 +1084,9 @@ fn main() {
         .setup(|app| {
             // Keep the installed collector matching what this app bundle ships
             // (a stale collector after an app update is the only reconcile case
-            // left now that the proxy runs in-process).
+            // left now that the proxy runs in-process). macOS-only: the collector
+            // is a macOS daemon, and Windows/Linux are views-only here.
+            #[cfg(target_os = "macos")]
             if reconcile_helpers() {
                 std::thread::sleep(std::time::Duration::from_millis(300));
             }
@@ -1094,7 +1103,9 @@ fn main() {
                 }
             }
 
-            // Shared state for the self-updater (read by the tray poll).
+            // Shared state for the self-updater (read by the tray poll). macOS
+            // only — Windows/Linux defer self-update (updates come from the box).
+            #[cfg(target_os = "macos")]
             app.manage(std::sync::Mutex::new(UpdateState::default()));
 
             // Decide where to land. A valid pairing reconnects SILENTLY (the
@@ -1140,33 +1151,47 @@ fn main() {
             #[cfg(not(debug_assertions))]
             let _ = window;
 
-            setup_tray(app.handle())?;
+            // Menu-bar tray + self-update loop: macOS only. Windows/Linux ship a
+            // plain window (no tray, no self-update) — see the v1 scope decision.
+            #[cfg(target_os = "macos")]
+            {
+                setup_tray(app.handle())?;
 
-            // Self-update check loop: first pass ~5s after launch (off the
-            // critical path, after reconcile), then every 6h. The stable channel
-            // (mac-latest latest.json) is the source; download is deferred to the
-            // user's "Restart to update" click. The tray's own poll surfaces the
-            // staged state within its interval.
-            let updater_handle = app.handle().clone();
-            std::thread::spawn(move || {
-                std::thread::sleep(std::time::Duration::from_secs(5));
-                loop {
-                    tauri::async_runtime::block_on(check_for_update(&updater_handle));
-                    std::thread::sleep(std::time::Duration::from_secs(6 * 3600));
-                }
-            });
+                // Self-update check loop: first pass ~5s after launch (off the
+                // critical path, after reconcile), then every 6h. The stable
+                // channel (mac-latest latest.json) is the source; download is
+                // deferred to the user's "Restart to update" click. The tray's
+                // own poll surfaces the staged state within its interval.
+                let updater_handle = app.handle().clone();
+                std::thread::spawn(move || {
+                    std::thread::sleep(std::time::Duration::from_secs(5));
+                    loop {
+                        tauri::async_runtime::block_on(check_for_update(&updater_handle));
+                        std::thread::sleep(std::time::Duration::from_secs(6 * 3600));
+                    }
+                });
+            }
 
             Ok(())
         })
         .on_window_event(|window, event| {
+            // macOS: the tray owns the app lifetime, so closing the window just
+            // hides it (Quit from the tray is the real exit). Windows/Linux have
+            // no tray, so let the close through — closing the last window quits.
+            #[cfg(target_os = "macos")]
             if let WindowEvent::CloseRequested { api, .. } = event {
                 let _ = window.hide();
                 api.prevent_close();
             }
+            #[cfg(not(target_os = "macos"))]
+            let _ = (window, event);
         })
         .build(tauri::generate_context!())
         .expect("error while building tauri application")
         .run(|app_handle, event| {
+            // `Reopen` (dock/tray re-activate with no visible window) is a
+            // macOS-only RunEvent variant — gate so non-macOS compiles.
+            #[cfg(target_os = "macos")]
             if let tauri::RunEvent::Reopen { has_visible_windows, .. } = event {
                 if !has_visible_windows {
                     if let Some(window) = app_handle.get_webview_window("main") {
@@ -1175,5 +1200,7 @@ fn main() {
                     }
                 }
             }
+            #[cfg(not(target_os = "macos"))]
+            let _ = (app_handle, event);
         });
 }
