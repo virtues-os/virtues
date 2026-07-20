@@ -124,8 +124,12 @@ pub async fn run(
     let new_llama = find_named(&extracted, "llama-server").ok();
     let new_qnnd = find_named(&extracted, "virtues-qnnd").ok();
     let web_src = find_dir_named(&extracted, "web").ok();
-    let actions_src = find_dir_named(&extracted, "actions").ok();
-    let actions_bin_src = find_dir_named(&extracted, "actions-bin").ok();
+    let actions_src = find_dir_named(&extracted, "applets")
+        .or_else(|_| find_dir_named(&extracted, "actions"))
+        .ok();
+    let actions_bin_src = find_dir_named(&extracted, "applets-bin")
+        .or_else(|_| find_dir_named(&extracted, "actions-bin"))
+        .ok();
 
     // Build identity from the tarball's BUILD.json (releases since the slot
     // era carry one). The SHA is the only honest identity for prerelease
@@ -157,21 +161,21 @@ pub async fn run(
                     Some(src) => refresh_named("web UI", src, &canonical(&dirs.web)),
                     None => ui::warn("tarball carries no web/ — skipped"),
                 },
-                "actions" => {
+                "applets" | "actions" => {
                     match &actions_src {
-                        Some(src) => refresh_named("actions", src, &canonical(&dirs.actions)),
-                        None => ui::warn("tarball carries no actions/ — skipped"),
+                        Some(src) => refresh_named("applets", src, &canonical(&dirs.actions)),
+                        None => ui::warn("tarball carries no applets/ — skipped"),
                     }
                     match &actions_bin_src {
                         Some(src) => {
-                            refresh_named("action binaries", src, &canonical(&dirs.actions_bin))
+                            refresh_named("applet binaries", src, &canonical(&dirs.actions_bin))
                         }
-                        None => ui::warn("tarball carries no actions-bin/ — skipped"),
+                        None => ui::warn("tarball carries no applets-bin/ — skipped"),
                     }
                 }
                 other => {
                     return Err(crate::Error::Other(format!(
-                        "--only {other}: unknown component (web, actions)"
+                        "--only {other}: unknown component (web, applets)"
                     )))
                 }
             }
@@ -501,7 +505,7 @@ fn stage_slot(
     if let Some(p) = qnnd {
         copy_bin(p, "virtues-qnnd")?;
     }
-    for (src, name) in [(web, "web"), (actions, "actions"), (actions_bin, "actions-bin")] {
+    for (src, name) in [(web, "web"), (actions, "applets"), (actions_bin, "applets-bin")] {
         if let Some(s) = src {
             copy_dir_all(s, &slot.join(name))?;
         }
@@ -562,8 +566,8 @@ impl InstallDirs {
         Self {
             bin_dir,
             web: env_dir("STATIC_DIR", "/usr/local/share/virtues/web"),
-            actions: env_dir("VIRTUES_ACTIONS_DIR", "/usr/local/share/virtues/actions"),
-            actions_bin: env_dir("VIRTUES_ACTIONS_BIN_DIR", "/usr/local/libexec/virtues"),
+            actions: env_dir("VIRTUES_APPLETS_DIR", "/usr/local/share/virtues/applets"),
+            actions_bin: env_dir("VIRTUES_APPLETS_BIN_DIR", "/usr/local/libexec/virtues"),
         }
     }
 }

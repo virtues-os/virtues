@@ -14,7 +14,7 @@
 //! 6. Resolve credentials from the `credentials` Vault and decrypt secrets
 //!    (if `credential_id` set). Subprocess receives plaintext JSON.
 //! 7. **Subprocess phase**: if `command` set, resolve argv[0] + spawn, pipe stdin
-//!    JSON, read stdout JSON, save returned config back to `app_actions.config`.
+//!    JSON, read stdout JSON, save returned config back to `app_applets.config`.
 //! 8. **Agent phase**: if `agent` (instruction) set, run LLM agent loop with the
 //!    subprocess result as context.
 //! 9. Complete run row with final status + result summary.
@@ -683,7 +683,7 @@ fn subprocess_timeout(action: &Action) -> std::time::Duration {
 }
 
 /// What a successful subprocess phase produced: the one-line summary plus the
-/// processed-record count (for `app_action_runs.records_processed`).
+/// processed-record count (for `app_applet_runs.records_processed`).
 struct SubprocessOutcome {
     summary: String,
     records: i64,
@@ -769,7 +769,7 @@ async fn run_subprocess(
     })?;
 
     // Persist returned config back to the action row (JSONB column)
-    sqlx::query("UPDATE app_actions SET config = $1, updated_at = now() WHERE id = $2")
+    sqlx::query("UPDATE app_applets SET config = $1, updated_at = now() WHERE id = $2")
         .bind(&action_output.config)
         .bind(&action.id)
         .execute(db)
@@ -798,7 +798,7 @@ async fn run_subprocess(
 /// `InstallConfig::actions_bin_dir` (`$INSTALL_PREFIX/libexec/virtues`). Kept
 /// in sync with where the installer copies `actions-bin/` and points
 /// `VIRTUES_ACTIONS_BIN_DIR`.
-const WELL_KNOWN_ACTIONS_BIN_DIR: &str = "/usr/local/libexec/virtues";
+const WELL_KNOWN_APPLETS_BIN_DIR: &str = "/usr/local/libexec/virtues";
 
 /// Resolve a command's program (argv[0]) to something spawnable.
 ///
@@ -813,18 +813,20 @@ fn resolve_program(argv0: &str) -> PathBuf {
         return PathBuf::from(argv0);
     }
 
-    if let Ok(actions_dir) = std::env::var("VIRTUES_ACTIONS_BIN_DIR") {
-        let p = PathBuf::from(actions_dir).join(argv0);
-        if p.exists() {
-            return p;
+    for var in ["VIRTUES_APPLETS_BIN_DIR", "VIRTUES_ACTIONS_BIN_DIR"] {
+        if let Ok(bin_dir) = std::env::var(var) {
+            let p = PathBuf::from(bin_dir).join(argv0);
+            if p.exists() {
+                return p;
+            }
         }
     }
 
     // Well-known install location (matches the installer's
-    // `InstallConfig::actions_bin_dir`), so a deployed box still resolves
-    // action binaries even if VIRTUES_ACTIONS_BIN_DIR didn't reach the process
+    // `InstallConfig::applets_bin_dir`), so a deployed box still resolves
+    // applet binaries even if VIRTUES_APPLETS_BIN_DIR didn't reach the process
     // environment. Dev builds fall through to the target/ walk below.
-    let installed = PathBuf::from(WELL_KNOWN_ACTIONS_BIN_DIR).join(argv0);
+    let installed = PathBuf::from(WELL_KNOWN_APPLETS_BIN_DIR).join(argv0);
     if installed.exists() {
         return installed;
     }

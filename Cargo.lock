@@ -8065,35 +8065,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "virtues-actions"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "axum",
- "base64 0.22.1",
- "chrono",
- "chrono-tz",
- "dotenv",
- "realfft",
- "reqwest 0.12.28",
- "rustls 0.23.37",
- "serde",
- "serde_json",
- "sqlx",
- "symphonia",
- "thiserror 1.0.69",
- "tokio",
- "tracing",
- "tracing-subscriber",
- "tract-onnx",
- "urlencoding",
- "uuid",
- "virtues",
- "virtues-helpers",
- "virtues-registry",
-]
-
-[[package]]
 name = "virtues-api"
 version = "0.1.0"
 dependencies = [
@@ -8122,6 +8093,35 @@ dependencies = [
  "tracing",
  "tracing-subscriber",
  "uuid",
+ "virtues-helpers",
+ "virtues-registry",
+]
+
+[[package]]
+name = "virtues-applets"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "axum",
+ "base64 0.22.1",
+ "chrono",
+ "chrono-tz",
+ "dotenv",
+ "realfft",
+ "reqwest 0.12.28",
+ "rustls 0.23.37",
+ "serde",
+ "serde_json",
+ "sqlx",
+ "symphonia",
+ "thiserror 1.0.69",
+ "tokio",
+ "tracing",
+ "tracing-subscriber",
+ "tract-onnx",
+ "urlencoding",
+ "uuid",
+ "virtues",
  "virtues-helpers",
  "virtues-registry",
 ]

@@ -499,6 +499,7 @@ export const tabRegistry: Record<TabType, TabDefinition> = {
 	// ========================================================================
 	actions: {
 		match: (path) =>
+			path === '/applets' ||
 			path === '/actions' || /^\/actions\/(actions|templates|history)$/.test(path),
 		parse: () => ({
 			type: 'actions',
@@ -506,7 +507,7 @@ export const tabRegistry: Record<TabType, TabDefinition> = {
 			icon: 'ri:flashlight-line',
 		}),
 		serialize: () => 'actions',
-		deserialize: () => '/actions',
+		deserialize: () => '/applets',
 		icon: 'ri:flashlight-line',
 		defaultLabel: 'Applets',
 		component: ActionsView,
@@ -517,9 +518,9 @@ export const tabRegistry: Record<TabType, TabDefinition> = {
 	// Singular namespace — no list view; actions list lives under `actions`.
 	// ========================================================================
 	action: {
-		match: (path) => /^\/action\/action_[^/]+$/.test(path),
+		match: (path) => /^\/(applet|action)\/action_[^/]+$/.test(path),
 		parse: (path) => {
-			const match = path.match(/^\/action\/(action_[^/]+)$/);
+			const match = path.match(/^\/(?:applet|action)\/(action_[^/]+)$/);
 			return {
 				type: 'action',
 				label: 'Applet',
@@ -529,8 +530,8 @@ export const tabRegistry: Record<TabType, TabDefinition> = {
 		},
 		serialize: (id) => (id ? `action_${id}` : 'action'),
 		deserialize: (serialized) => {
-			if (serialized.startsWith('action_')) return `/action/${serialized}`;
-			return '/actions';
+			if (serialized.startsWith('action_')) return `/applet/${serialized}`;
+			return '/applets';
 		},
 		icon: 'ri:flashlight-line',
 		defaultLabel: 'Applet',

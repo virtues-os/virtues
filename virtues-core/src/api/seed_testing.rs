@@ -59,7 +59,7 @@ pub async fn get_pipeline_status(db: &Database) -> Result<PipelineStatus> {
             SUM(CASE WHEN status = 'success' THEN 1 ELSE 0 END) as completed,
             SUM(CASE WHEN status = 'error' THEN 1 ELSE 0 END) as failed,
             CAST(COALESCE(SUM(records_processed), 0) AS INTEGER) as records_synced
-        FROM app_action_runs
+        FROM app_applet_runs
         WHERE action_id IS NOT NULL AND parent_run_id IS NULL
         "#,
     )
@@ -80,7 +80,7 @@ pub async fn get_pipeline_status(db: &Database) -> Result<PipelineStatus> {
             COUNT(*) as total,
             SUM(CASE WHEN status = 'success' THEN 1 ELSE 0 END) as completed,
             CAST(COALESCE(SUM(records_processed), 0) AS INTEGER) as records_processed
-        FROM app_action_runs
+        FROM app_applet_runs
         WHERE parent_run_id IS NOT NULL
         "#,
     )
@@ -89,7 +89,7 @@ pub async fn get_pipeline_status(db: &Database) -> Result<PipelineStatus> {
 
     // Count unique transform stages
     let ontology_count: i64 = sqlx::query_scalar(
-        "SELECT COUNT(DISTINCT transform_stage) FROM app_action_runs WHERE parent_run_id IS NOT NULL AND status = 'success'"
+        "SELECT COUNT(DISTINCT transform_stage) FROM app_applet_runs WHERE parent_run_id IS NOT NULL AND status = 'success'"
     )
     .fetch_one(db.pool())
     .await

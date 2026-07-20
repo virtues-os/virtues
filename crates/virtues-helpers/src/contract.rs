@@ -32,7 +32,7 @@ use serde::{Deserialize, Serialize};
 /// Input piped to the action subprocess via stdin.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ActionInput {
-    /// Settings + code-managed state from `app_actions.config`.
+    /// Settings + code-managed state from `app_applets.config`.
     pub config: serde_json::Value,
 
     /// Decrypted credentials from the `credentials` Vault, resolved by the
@@ -71,10 +71,10 @@ impl ActionInput {
 pub struct ActionOutput {
     /// One-line summary of what the action did.
     pub result: String,
-    /// Updated config to persist back into `app_actions.config`.
+    /// Updated config to persist back into `app_applets.config`.
     pub config: serde_json::Value,
     /// How many records this run processed (synced/transformed/transcribed).
-    /// Surfaced as `app_action_runs.records_processed` for the Telemetry tab.
+    /// Surfaced as `app_applet_runs.records_processed` for the Telemetry tab.
     /// Optional + defaulted, so older action binaries that omit it record 0.
     #[serde(default)]
     pub records: i64,

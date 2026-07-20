@@ -179,17 +179,17 @@ export interface ActionDetail extends Action {
 export async function mintFaceToken(
 	actionId: string
 ): Promise<{ token: string; expires_in_seconds: number }> {
-	return request(`/actions/${encodeURIComponent(actionId)}/face-token`);
+	return request(`/applets/${encodeURIComponent(actionId)}/face-token`);
 }
 
 export async function listActions(): Promise<Action[]> {
-	const res = await fetch(`${API_BASE}/actions`);
+	const res = await fetch(`${API_BASE}/applets`);
 	if (!res.ok) throw new Error(`Failed to list actions: ${res.statusText}`);
 	return res.json();
 }
 
 export async function getAction(id: string): Promise<Action> {
-	const res = await fetch(`${API_BASE}/actions/${encodeURIComponent(id)}`);
+	const res = await fetch(`${API_BASE}/applets/${encodeURIComponent(id)}`);
 	if (!res.ok) throw new Error(`Failed to get action: ${res.statusText}`);
 	return res.json();
 }
@@ -286,7 +286,7 @@ export async function listSystemApps(): Promise<RunningApp[]> {
 
 /** GET /api/actions/:id/logs — captured stdout/stderr ring buffer for an app. */
 export async function getActionLogs(id: string): Promise<LogLine[]> {
-	const res = await fetch(`${API_BASE}/actions/${encodeURIComponent(id)}/logs`);
+	const res = await fetch(`${API_BASE}/applets/${encodeURIComponent(id)}/logs`);
 	if (!res.ok) throw new Error(`Failed to get action logs: ${res.statusText}`);
 	return res.json();
 }
@@ -304,7 +304,7 @@ export async function adminReconcile(): Promise<{
 }
 
 /**
- * POST /api/admin/actions/import-git — clones a repo into `actions/<slug>/`
+ * POST /api/admin/applets/import-git — clones a repo into `actions/<slug>/`
  * and runs the standard scanner. Any folder under the slug containing a
  * `manifest.toml` becomes an action. Returns added/updated/removed ids.
  */
@@ -312,7 +312,7 @@ export async function importActionsFromGit(body: {
 	url: string;
 	ref?: string;
 }): Promise<{ added: string[]; updated: string[]; removed: string[] }> {
-	const res = await fetch(`${API_BASE}/admin/actions/import-git`, {
+	const res = await fetch(`${API_BASE}/admin/applets/import-git`, {
 		method: 'POST',
 		headers: { 'Content-Type': 'application/json' },
 		body: JSON.stringify(body)
@@ -333,7 +333,7 @@ export interface CreateActionRequest {
 }
 
 export async function createAction(body: CreateActionRequest): Promise<Action> {
-	const res = await fetch(`${API_BASE}/actions`, {
+	const res = await fetch(`${API_BASE}/applets`, {
 		method: 'POST',
 		headers: { 'Content-Type': 'application/json' },
 		body: JSON.stringify(body)
@@ -357,7 +357,7 @@ export interface PatchActionBody {
 }
 
 export async function patchAction(id: string, patch: PatchActionBody): Promise<Action> {
-	const res = await fetch(`${API_BASE}/actions/${encodeURIComponent(id)}`, {
+	const res = await fetch(`${API_BASE}/applets/${encodeURIComponent(id)}`, {
 		method: 'PATCH',
 		headers: { 'Content-Type': 'application/json' },
 		body: JSON.stringify(patch)
@@ -370,7 +370,7 @@ export async function patchAction(id: string, patch: PatchActionBody): Promise<A
 }
 
 export async function deleteAction(id: string): Promise<void> {
-	const res = await fetch(`${API_BASE}/actions/${encodeURIComponent(id)}`, {
+	const res = await fetch(`${API_BASE}/applets/${encodeURIComponent(id)}`, {
 		method: 'DELETE'
 	});
 	if (!res.ok) {
@@ -391,7 +391,7 @@ export async function runAction(
 	id: string,
 	payload?: Record<string, unknown>
 ): Promise<TriggerActionResponse> {
-	const res = await fetch(`${API_BASE}/actions/${encodeURIComponent(id)}/run`, {
+	const res = await fetch(`${API_BASE}/applets/${encodeURIComponent(id)}/run`, {
 		method: 'POST',
 		headers: { 'Content-Type': 'application/json' },
 		body: JSON.stringify(payload ? { payload } : {})
@@ -412,7 +412,7 @@ export async function listActionRuns(
 	if (opts?.status) params.set('status', opts.status);
 	const qs = params.toString();
 	const res = await fetch(
-		`${API_BASE}/actions/${encodeURIComponent(id)}/runs${qs ? `?${qs}` : ''}`
+		`${API_BASE}/applets/${encodeURIComponent(id)}/runs${qs ? `?${qs}` : ''}`
 	);
 	if (!res.ok) throw new Error(`Failed to list runs: ${res.statusText}`);
 	return res.json();
@@ -437,7 +437,7 @@ export async function listRuns(opts?: {
 export async function getJobStatus(
 	jobId: string
 ): Promise<{ id: string; status: string; records_processed: number; error: string | null }> {
-	const res = await fetch(`${API_BASE}/actions/runs/${jobId}`);
+	const res = await fetch(`${API_BASE}/applets/runs/${jobId}`);
 	if (!res.ok) throw new Error(`Failed to get run status: ${res.statusText}`);
 	return res.json();
 }
@@ -1915,7 +1915,7 @@ export function getServerInfo<T = unknown>(): Promise<T> {
 	return apiGet<T>('/app/server-info');
 }
 export function triggerAction<T = unknown>(id: string): Promise<T> {
-	return apiSend<T>('POST', `/actions/${encodeURIComponent(id)}/trigger`);
+	return apiSend<T>('POST', `/applets/${encodeURIComponent(id)}/trigger`);
 }
 export function aiComplete<T = unknown>(req: Record<string, unknown>): Promise<T> {
 	return apiSend<T>('POST', '/ai/complete', req);

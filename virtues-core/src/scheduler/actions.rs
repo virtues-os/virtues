@@ -110,7 +110,7 @@ pub struct ActionRun {
 
 /// Get all enabled actions.
 pub async fn get_enabled_actions(db: &PgPool) -> Result<Vec<Action>> {
-    let rows = sqlx::query("SELECT * FROM app_actions WHERE enabled = TRUE ORDER BY name")
+    let rows = sqlx::query("SELECT * FROM app_applets WHERE enabled = TRUE ORDER BY name")
         .fetch_all(db)
         .await?;
 
@@ -119,7 +119,7 @@ pub async fn get_enabled_actions(db: &PgPool) -> Result<Vec<Action>> {
 
 /// Get all actions (for API listing).
 pub async fn get_all_actions(db: &PgPool) -> Result<Vec<Action>> {
-    let rows = sqlx::query("SELECT * FROM app_actions ORDER BY name")
+    let rows = sqlx::query("SELECT * FROM app_applets ORDER BY name")
         .fetch_all(db)
         .await?;
 
@@ -128,7 +128,7 @@ pub async fn get_all_actions(db: &PgPool) -> Result<Vec<Action>> {
 
 /// Get an action by ID.
 pub async fn get_action(db: &PgPool, action_id: &str) -> Result<Action> {
-    let row = sqlx::query("SELECT * FROM app_actions WHERE id = $1")
+    let row = sqlx::query("SELECT * FROM app_applets WHERE id = $1")
         .bind(action_id)
         .fetch_optional(db)
         .await?
@@ -139,7 +139,7 @@ pub async fn get_action(db: &PgPool, action_id: &str) -> Result<Action> {
 
 /// Toggle an action's enabled state.
 pub async fn toggle_action(db: &PgPool, action_id: &str, enabled: bool) -> Result<()> {
-    let affected = sqlx::query("UPDATE app_actions SET enabled = $1 WHERE id = $2")
+    let affected = sqlx::query("UPDATE app_applets SET enabled = $1 WHERE id = $2")
         .bind(enabled)
         .bind(action_id)
         .execute(db)
@@ -155,7 +155,7 @@ pub async fn toggle_action(db: &PgPool, action_id: &str, enabled: bool) -> Resul
 /// Update an action's persistent memory (markdown scratchpad across runs).
 pub async fn update_memory(db: &PgPool, action_id: &str, memory: &str) -> Result<()> {
     let affected = sqlx::query(
-        "UPDATE app_actions SET memory = $1, updated_at = now() WHERE id = $2",
+        "UPDATE app_applets SET memory = $1, updated_at = now() WHERE id = $2",
     )
     .bind(memory)
     .bind(action_id)
@@ -170,18 +170,18 @@ pub async fn update_memory(db: &PgPool, action_id: &str, memory: &str) -> Result
 
 /// Delete an action. Nullifies action_id on existing runs first (FK safety).
 pub async fn delete_action(db: &PgPool, action_id: &str) -> Result<()> {
-    let owner: Option<String> = sqlx::query_scalar("SELECT owner FROM app_actions WHERE id = $1")
+    let owner: Option<String> = sqlx::query_scalar("SELECT owner FROM app_applets WHERE id = $1")
         .bind(action_id)
         .fetch_optional(db)
         .await?;
     if owner.as_deref() == Some("system") {
         return Err(crate::Error::InvalidInput("Cannot delete system action".into()));
     }
-    sqlx::query("UPDATE app_action_runs SET action_id = NULL WHERE action_id = $1")
+    sqlx::query("UPDATE app_applet_runs SET action_id = NULL WHERE action_id = $1")
         .bind(action_id)
         .execute(db)
         .await?;
-    sqlx::query("DELETE FROM app_actions WHERE id = $1")
+    sqlx::query("DELETE FROM app_applets WHERE id = $1")
         .bind(action_id)
         .execute(db)
         .await?;
@@ -243,7 +243,7 @@ pub async fn create_user_action(
     let mut action_id = base_id.clone();
     for attempt in 1u32..=MAX_ATTEMPTS {
         let result = sqlx::query(
-            r#"INSERT INTO app_actions (id, name, owner, agent, cron_schedule, enabled, config, triggers)
+            r#"INSERT INTO app_applets (id, name, owner, agent, cron_schedule, enabled, config, triggers)
                VALUES ($1, $2, 'user', $3, $4, TRUE, $5::jsonb, $6::jsonb)"#,
         )
         .bind(&action_id)
@@ -388,7 +388,7 @@ pub async fn update_action(
     sets.push("updated_at = now()".to_string());
     let id_param = next();
     let query = format!(
-        "UPDATE app_actions SET {} WHERE id = ${}",
+        "UPDATE app_applets SET {} WHERE id = ${}",
         sets.join(", "),
         id_param
     );
@@ -545,7 +545,7 @@ pub async fn create_run(
     );
 
     let row = sqlx::query(
-        r#"INSERT INTO app_action_runs (id, action_id, trigger)
+        r#"INSERT INTO app_applet_runs (id, action_id, trigger)
            VALUES ($1, $2, $3)
            RETURNING *"#,
     )
@@ -561,7 +561,7 @@ pub async fn create_run(
     if let Some(aid) = action_id {
         let _ = sqlx::query(
             "UPDATE app_device SET init_sync_started_at = now() \
-             WHERE id = (SELECT c.device_id FROM app_actions a \
+             WHERE id = (SELECT c.device_id FROM app_applets a \
                          JOIN credentials c ON c.id = a.credential_id WHERE a.id = $1) \
                AND init_sync_started_at IS NULL",
         )
@@ -590,7 +590,7 @@ pub async fn create_child_run(
     );
 
     let row = sqlx::query(
-        r#"INSERT INTO app_action_runs (id, parent_run_id, transform_stage, trigger)
+        r#"INSERT INTO app_applet_runs (id, parent_run_id, transform_stage, trigger)
            VALUES ($1, $2, $3, $4)
            RETURNING *"#,
     )
@@ -617,7 +617,7 @@ pub async fn complete_run(
     let result_summary = result_summary.map(|s| truncate_utf8_bytes(s, RESULT_SUMMARY_MAX_BYTES));
 
     sqlx::query(
-        r#"UPDATE app_action_runs
+        r#"UPDATE app_applet_runs
            SET status = $1, completed_at = now(),
                records_processed = $2, error = $3, result_summary = $4
            WHERE id = $5"#,
@@ -635,8 +635,8 @@ pub async fn complete_run(
     if status == "success" {
         let _ = sqlx::query(
             "UPDATE app_device SET init_sync_completed_at = now() \
-             WHERE id = (SELECT c.device_id FROM app_action_runs r \
-                         JOIN app_actions a ON a.id = r.action_id \
+             WHERE id = (SELECT c.device_id FROM app_applet_runs r \
+                         JOIN app_applets a ON a.id = r.action_id \
                          JOIN credentials c ON c.id = a.credential_id WHERE r.id = $1) \
                AND init_sync_completed_at IS NULL",
         )
@@ -660,7 +660,7 @@ const RUN_STALE_TTL_SECS: f64 = 600.0;
 /// `running` longer than [`RUN_STALE_TTL_SECS`] (treated as dead).
 pub async fn has_active_run(db: &PgPool, action_id: &str) -> Result<bool> {
     let result = sqlx::query_scalar::<_, bool>(
-        "SELECT EXISTS(SELECT 1 FROM app_action_runs \
+        "SELECT EXISTS(SELECT 1 FROM app_applet_runs \
          WHERE action_id = $1 AND status = 'running' \
          AND started_at > now() - make_interval(secs => $2))",
     )
@@ -675,7 +675,7 @@ pub async fn has_active_run(db: &PgPool, action_id: &str) -> Result<bool> {
 /// Get the most recent run for an action.
 pub async fn last_run(db: &PgPool, action_id: &str) -> Result<Option<ActionRun>> {
     let row = sqlx::query(
-        "SELECT * FROM app_action_runs WHERE action_id = $1 ORDER BY created_at DESC LIMIT 1",
+        "SELECT * FROM app_applet_runs WHERE action_id = $1 ORDER BY created_at DESC LIMIT 1",
     )
     .bind(action_id)
     .fetch_optional(db)
@@ -686,7 +686,7 @@ pub async fn last_run(db: &PgPool, action_id: &str) -> Result<Option<ActionRun>>
 
 /// Get a run by ID.
 pub async fn get_run(db: &PgPool, run_id: &str) -> Result<ActionRun> {
-    let row = sqlx::query("SELECT * FROM app_action_runs WHERE id = $1")
+    let row = sqlx::query("SELECT * FROM app_applet_runs WHERE id = $1")
         .bind(run_id)
         .fetch_optional(db)
         .await?
@@ -703,7 +703,7 @@ pub async fn query_runs(
     limit: i64,
 ) -> Result<Vec<ActionRun>> {
     let rows = sqlx::query(
-        r#"SELECT * FROM app_action_runs
+        r#"SELECT * FROM app_applet_runs
            WHERE ($1 IS NULL OR action_id = $2)
              AND ($3 IS NULL OR status = $4)
            ORDER BY created_at DESC
@@ -723,7 +723,7 @@ pub async fn query_runs(
 /// Cancel a running run.
 pub async fn cancel_run(db: &PgPool, run_id: &str) -> Result<()> {
     let affected = sqlx::query(
-        r#"UPDATE app_action_runs
+        r#"UPDATE app_applet_runs
            SET status = 'cancelled', completed_at = now()
            WHERE id = $1 AND status = 'running'"#,
     )
@@ -743,7 +743,7 @@ pub async fn cancel_run(db: &PgPool, run_id: &str) -> Result<()> {
 /// Mark all stale running runs as error (called on startup).
 pub async fn cleanup_stale_runs(db: &PgPool) -> Result<u64> {
     let affected = sqlx::query(
-        r#"UPDATE app_action_runs
+        r#"UPDATE app_applet_runs
            SET status = 'error', error = 'interrupted by restart', completed_at = now()
            WHERE status = 'running'"#,
     )
@@ -757,7 +757,7 @@ pub async fn cleanup_stale_runs(db: &PgPool) -> Result<u64> {
 /// Get child runs for a parent run.
 pub async fn get_child_runs(db: &PgPool, parent_run_id: &str) -> Result<Vec<ActionRun>> {
     let rows = sqlx::query(
-        "SELECT * FROM app_action_runs WHERE parent_run_id = $1 ORDER BY created_at ASC",
+        "SELECT * FROM app_applet_runs WHERE parent_run_id = $1 ORDER BY created_at ASC",
     )
     .bind(parent_run_id)
     .fetch_all(db)
@@ -829,7 +829,7 @@ pub fn derived_runtime(a: &Action) -> &'static str {
 /// applet stops waking without any scheduler-side special case).
 pub async fn archive_action(db: &PgPool, action_id: &str) -> Result<()> {
     sqlx::query(
-        "UPDATE app_actions SET archived_at = now(), enabled = FALSE \
+        "UPDATE app_applets SET archived_at = now(), enabled = FALSE \
          WHERE id = $1 AND archived_at IS NULL",
     )
     .bind(action_id)

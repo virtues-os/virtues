@@ -300,7 +300,7 @@ pub async fn compute_setup_state(pool: &PgPool) -> Result<SetupState> {
     // recoverable from the dashboard backlog and survives a refresh. The action
     // row's id is `action_chat_import` (see server::api::chat_import_upload).
     let chat_imported: bool = sqlx::query_scalar(
-        "SELECT EXISTS(SELECT 1 FROM app_action_runs \
+        "SELECT EXISTS(SELECT 1 FROM app_applet_runs \
          WHERE action_id = 'action_chat_import' AND status = 'success')",
     )
     .fetch_one(pool)
@@ -309,7 +309,7 @@ pub async fn compute_setup_state(pool: &PgPool) -> Result<SetupState> {
 
     // First sync = any action run has ever succeeded (data actually landed).
     let first_sync: i64 = sqlx::query_scalar(
-        "SELECT count(*) FROM app_action_runs WHERE status = 'success'",
+        "SELECT count(*) FROM app_applet_runs WHERE status = 'success'",
     )
     .fetch_one(pool)
     .await
@@ -327,7 +327,7 @@ pub async fn compute_setup_state(pool: &PgPool) -> Result<SetupState> {
     .await
     .unwrap_or(false);
     let nid_running: bool = sqlx::query_scalar(
-        "SELECT EXISTS(SELECT 1 FROM app_action_runs \
+        "SELECT EXISTS(SELECT 1 FROM app_applet_runs \
          WHERE action_id = 'action_narrative_identity_draft' AND status = 'running')",
     )
     .fetch_one(pool)
@@ -340,8 +340,8 @@ pub async fn compute_setup_state(pool: &PgPool) -> Result<SetupState> {
     let living_source: bool = sqlx::query_scalar(
         "SELECT EXISTS( \
            SELECT 1 FROM credentials c \
-           JOIN app_actions a ON a.credential_id = c.id \
-           JOIN app_action_runs r ON r.action_id = a.id AND r.status = 'success' \
+           JOIN app_applets a ON a.credential_id = c.id \
+           JOIN app_applet_runs r ON r.action_id = a.id AND r.status = 'success' \
            WHERE c.status = 'active' AND c.device_id IS NULL \
              AND c.source_id NOT IN ($1, $2, $3))",
     )
