@@ -14,6 +14,7 @@
 	import ActionCard from './ActionCard.svelte';
 	import GitImportModal from './GitImportModal.svelte';
 	import Popover from '$lib/floating/primitives/Popover.svelte';
+	import { contextMenu } from '$lib/stores/contextMenu.svelte';
 
 	let actions = $state<Action[]>([]);
 	let pulseByAction = $state<Record<string, ActionRun[]>>({});
@@ -98,13 +99,45 @@
 		void load();
 	});
 
-	function openCard(a: Action) {
+	function openView(a: Action) {
+		windowShellStore.openTabFromRoute(`/applet/${a.id}/view`);
+	}
+
+	function openDetail(a: Action) {
 		windowShellStore.openAside({
 			type: 'action',
 			label: a.name,
 			route: `/applet/${a.id}`,
 			icon: 'ri:flashlight-line'
 		});
+	}
+
+	// Default open: an applet with a face goes straight to its full-page view;
+	// otherwise to its settings/detail.
+	function openCard(a: Action) {
+		if (a.has_face) openView(a);
+		else openDetail(a);
+	}
+
+	// Right-click: pick view (if it has one) or settings explicitly.
+	function rowContextMenu(a: Action, e: MouseEvent) {
+		e.preventDefault();
+		const items = [];
+		if (a.has_face) {
+			items.push({
+				id: 'view',
+				label: 'Open view',
+				icon: 'ri:layout-2-line',
+				action: () => openView(a)
+			});
+		}
+		items.push({
+			id: 'detail',
+			label: 'Settings & runs',
+			icon: 'ri:settings-3-line',
+			action: () => openDetail(a)
+		});
+		contextMenu.show({ x: e.clientX, y: e.clientY }, items);
 	}
 
 	function lastRunStatus(action: Action): string {
@@ -306,6 +339,7 @@
 		searchPlaceholder="Search applets…"
 		pageSize={50}
 		onItemClick={openCard}
+		onItemContextMenu={rowContextMenu}
 	>
 		{#snippet card(action)}
 			<ActionCard
