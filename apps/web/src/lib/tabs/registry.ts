@@ -23,6 +23,7 @@ import ConnectionsPanel from '$lib/components/actions/ConnectionsPanel.svelte';
 import CredentialDetailView from '$lib/components/tabs/views/CredentialDetailView.svelte';
 import ActionsView from '$lib/components/tabs/views/ActionsView.svelte';
 import ActionDetailView from '$lib/components/tabs/views/ActionDetailView.svelte';
+import AppletView from '$lib/components/tabs/views/AppletView.svelte';
 import DevelopersView from '$lib/components/tabs/views/DevelopersView.svelte';
 import SettingsView from '$lib/components/tabs/views/SettingsView.svelte';
 import StorageView from '$lib/components/tabs/views/StorageView.svelte';
@@ -512,8 +513,33 @@ export const tabRegistry: Record<TabType, TabDefinition> = {
 	},
 
 	// ========================================================================
-	// ACTION DETAIL: /action/action_{id}
-	// Singular namespace — no list view; actions list lives under `actions`.
+	// APPLET VIEW: /applet/action_{id}/view — the applet's face, full-page.
+	// Must precede `action` (whose match ends at $, so order is belt-and-braces).
+	// ========================================================================
+	'applet-view': {
+		match: (path) => /^\/(?:applet|action)\/action_[^/]+\/view$/.test(path),
+		parse: (path) => {
+			const match = path.match(/^\/(?:applet|action)\/(action_[^/]+)\/view$/);
+			return {
+				type: 'applet-view',
+				label: 'Applet',
+				icon: 'ri:layout-2-line',
+				entityId: match?.[1],
+			};
+		},
+		serialize: (id) => (id ? `${id}__view` : 'applet-view'),
+		deserialize: (serialized) => {
+			const id = serialized.replace(/__view$/, '');
+			if (id.startsWith('action_')) return `/applet/${id}/view`;
+			return '/applets';
+		},
+		icon: 'ri:layout-2-line',
+		defaultLabel: 'Applet',
+		component: AppletView,
+	},
+
+	// ========================================================================
+	// ACTION DETAIL: /applet/action_{id} — settings, prompt, runs (no face).
 	// ========================================================================
 	action: {
 		match: (path) => /^\/(applet|action)\/action_[^/]+$/.test(path),
@@ -847,6 +873,7 @@ export function parseRoute(route: string): ParsedRoute {
 		// Specific patterns first
 		'source', // Source list and detail views
 		'actions', // Actions list page (must come before singular 'action')
+		'applet-view', // Applet full-page face (must come before 'action')
 		'action', // Action detail page
 		'developers', // Developers tab group (SQL/Terminal/Lake)
 		'ontology', // Ontology data browsing

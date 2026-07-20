@@ -3,7 +3,6 @@
 	import Badge from '$lib/components/Badge.svelte';
 	import Button from '$lib/components/Button.svelte';
 	import LogsPanel from '$lib/components/actions/LogsPanel.svelte';
-	import FaceFrame from '$lib/components/actions/FaceFrame.svelte';
 	import { windowShellStore } from '$lib/stores/window-shell.svelte';
 	import { routeToEntityId } from '$lib/tabs/types';
 	import type { Tab } from '$lib/tabs/types';
@@ -149,6 +148,11 @@
 		}
 	}
 
+	function openView() {
+		if (!action) return;
+		windowShellStore.openTabFromRoute(`/applet/${action.id}/view`);
+	}
+
 	async function runNow() {
 		if (!action) return;
 		saving = true;
@@ -226,13 +230,14 @@
 			{#if err}
 				<div class="error-banner">{err}</div>
 			{/if}
+			{#if action.has_face}
+				<div class="meta view-link">
+					<button type="button" class="open-view" onclick={openView}>
+						<Icon icon="ri:layout-2-line" width="13" /> Open view
+					</button>
+				</div>
+			{/if}
 		</header>
-
-		{#if action.has_face}
-			<div class="face-wrap">
-				<FaceFrame actionId={action.id} />
-			</div>
-		{/if}
 
 		<div class="body">
 			<section class="col main">
@@ -375,9 +380,22 @@
 </div>
 
 <style>
-	.face-wrap {
-		padding: 0 1.5rem;
+	.view-link {
+		margin-top: 0.5rem;
 	}
+	.open-view {
+		display: inline-flex;
+		align-items: center;
+		gap: 0.3rem;
+		padding: 0.25rem 0.6rem;
+		font-size: 0.8125rem;
+		border: 1px solid var(--color-border);
+		border-radius: 6px;
+		background: var(--color-surface-elevated);
+		color: var(--color-foreground);
+		cursor: pointer;
+	}
+	.open-view:hover { border-color: var(--color-foreground-subtle); }
 
 	.detail {
 		display: flex;
