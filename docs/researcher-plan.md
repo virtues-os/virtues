@@ -180,27 +180,15 @@ The trust loop: drop PDFs on a notebook → watch them index → ask → click c
 - Embedding volume from universal extraction: acceptable (halfvec 384); watch via
   existing telemetry.
 
-## Spikes required (proofs before/while building — none of these are done)
+## Verify inline while building (no standalone spikes — decided 2026-07-20)
 
-- **S1 · Extractor bake-off on Q6A (gates D1, week 1).** `pdfium-render` with a
-  linux-aarch64 pdfium binary (pdfium-binaries publishes arm64) vs pure-Rust
-  fallback, run on the Q6A: 10 real papers (two-column, math-heavy, footnoted);
-  eyeball reading order, header/footer noise, chunk quality; measure speed + RAM.
-  Include the DOCX quick-check (unzip + document.xml). MuPDF excluded (AGPL).
-- **S2 · Quote-landing hit rate (gates the citation trust loop).** Rust-extracted
-  snippets searched against pdf.js `getTextContent` with whitespace normalization
-  + de-hyphenation across the same 10 papers. Target ≥95% found; tune snippet
-  length; page-only fallback covers misses. Cheap browser-side script.
-- **S3 · Selection → normalized rects (gates D2 schema).** Capture multi-span
-  text-layer selections as normalized page-space quads; verify zoom/DPR
-  invariance on re-render. Half-day.
-- **S4 · Fusion sanity with chunks in the mix.** Mixed query over life-data +
-  document chunks: do ranks interleave sensibly; and when the indexer's
-  sub-windows of ONE chunk all match, does search collapse them to one result
-  (dedup by record_id) — verify, add dedup if not.
-- **S5 · Backfill throughput on Q6A.** A 300-page book + a 50-PDF drop:
-  end-to-end time through extraction (CPU) + embedding (QNN NPU daemon), cron
-  pacing, no starvation of other crons.
+Extractor presumed fine (`pdfium-render`, pdfium-binaries ships linux-aarch64 for
+the Q6A; MuPDF excluded — AGPL). Checks folded into the build itself:
+- D1: quote-landing hit rate on a handful of real papers (whitespace-normalize +
+  de-hyphenate; page-only fallback covers misses); sub-window dedup by record_id
+  in search results (verify, add if missing); watch backfill pacing through the
+  QNN embed daemon on the first real drive.
+- D2: selection→normalized-rects zoom/DPR invariance before locking rect JSON.
 
 ## Open questions (decide during D1, cheap but real)
 
