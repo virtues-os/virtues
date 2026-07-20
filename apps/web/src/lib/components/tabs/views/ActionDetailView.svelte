@@ -3,6 +3,7 @@
 	import Badge from '$lib/components/Badge.svelte';
 	import Button from '$lib/components/Button.svelte';
 	import LogsPanel from '$lib/components/actions/LogsPanel.svelte';
+	import FaceFrame from '$lib/components/actions/FaceFrame.svelte';
 	import { windowShellStore } from '$lib/stores/window-shell.svelte';
 	import { routeToEntityId } from '$lib/tabs/types';
 	import type { Tab } from '$lib/tabs/types';
@@ -227,6 +228,12 @@
 			{/if}
 		</header>
 
+		{#if action.has_face}
+			<div class="face-wrap">
+				<FaceFrame actionId={action.id} />
+			</div>
+		{/if}
+
 		<div class="body">
 			<section class="col main">
 				<label class="field">
@@ -364,6 +371,10 @@
 </div>
 
 <style>
+	.face-wrap {
+		padding: 0 1.5rem;
+	}
+
 	.detail {
 		display: flex;
 		flex-direction: column;

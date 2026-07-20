@@ -275,6 +275,7 @@ pub async fn list_actions_handler(State(state): State<AppState>) -> Response {
                     let archived_at: Option<chrono::DateTime<chrono::Utc>> =
                         r.try_get("archived_at").unwrap_or(None);
                     let supervise: bool = r.try_get("supervise").unwrap_or(false);
+                    let has_face = crate::server::faces::face_dir_for(&id).is_some();
                     // Derived display shape (the old runtime taxonomy).
                     let runtime = if supervise {
                         "service"
@@ -326,6 +327,7 @@ pub async fn list_actions_handler(State(state): State<AppState>) -> Response {
                         "until": until,
                         "archived_at": archived_at,
                         "supervise": supervise,
+                        "has_face": has_face,
                         "created_at": created,
                         "updated_at": updated,
                         "is_system": owner == "system",
@@ -375,6 +377,7 @@ pub async fn get_action_handler(
                     "until": action.until,
                     "archived_at": action.archived_at,
                     "supervise": action.supervise,
+                    "has_face": crate::server::faces::face_dir_for(&action.id).is_some(),
                     "created_at": action.created_at,
                     "updated_at": action.updated_at,
                     "is_system": action.owner == "system",

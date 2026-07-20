@@ -404,6 +404,23 @@ fn load_catalog() -> ParsedTemplates {
     }
 }
 
+/// Resolve the manifest folder (relative to `actions_root()`) that produced
+/// an action id. Matches the base id (`id_prefix`) and per-credential /
+/// per-device fan-out ids (`<id_prefix>_<anchor>`). Used by the face server
+/// to root static serving at the applet's folder.
+pub fn dir_for_action_id(action_id: &str) -> Option<String> {
+    let guard = catalog_lock().read().expect("catalog rwlock poisoned");
+    guard
+        .action
+        .iter()
+        .find(|t| {
+            t.id_prefix.as_deref().is_some_and(|p| {
+                action_id == p || action_id.strip_prefix(p).is_some_and(|r| r.starts_with('_'))
+            })
+        })
+        .map(|t| t.dir.clone())
+}
+
 /// Look up a `[[source]]` entry by its id. Returns an owned clone so the
 /// catalog rwlock isn't held across the caller's await points.
 pub fn lookup_source(id: &str) -> Option<Source> {

@@ -164,6 +164,8 @@ export interface Action {
 	archived_at: string | null;
 	/** Command applets that run as a long-lived supervised service. */
 	supervise: boolean;
+	/** True when the applet folder ships a face/ (sandboxed-iframe HTML UI). */
+	has_face: boolean;
 	is_system: boolean;
 	created_at: string;
 	updated_at: string;
@@ -172,6 +174,12 @@ export interface Action {
 
 export interface ActionDetail extends Action {
 	recent_runs?: ActionRun[];
+}
+
+export async function mintFaceToken(
+	actionId: string
+): Promise<{ token: string; expires_in_seconds: number }> {
+	return request(`/actions/${encodeURIComponent(actionId)}/face-token`);
 }
 
 export async function listActions(): Promise<Action[]> {
