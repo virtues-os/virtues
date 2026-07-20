@@ -141,7 +141,7 @@ export type ActionRuntime = 'function' | 'service' | 'view';
 
 export interface Action {
 	id: string;
-	owner: 'system' | 'user';
+	owner: 'system' | 'user' | 'ai';
 	name: string;
 	agent: string | null;
 	cron_schedule: string | null;
@@ -157,6 +157,13 @@ export interface Action {
 	 *  binary by `function_name`. Null when the action uses the function_name
 	 *  shortcut. */
 	command: string[] | null;
+	/** Lifecycle: null = forever · "once" = archive after first success ·
+	 *  anything else = SQL boolean checked after each success. */
+	until: string | null;
+	/** Set when the lifecycle completed; archived applets are disabled. */
+	archived_at: string | null;
+	/** Command applets that run as a long-lived supervised service. */
+	supervise: boolean;
 	is_system: boolean;
 	created_at: string;
 	updated_at: string;
