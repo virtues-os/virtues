@@ -26,6 +26,7 @@
 mod executor;
 mod web_search;
 pub(crate) mod sql_query;
+pub(crate) mod sql_write;
 mod page_editor;
 mod semantic_search;
 pub mod action_setup;
@@ -78,30 +79,34 @@ pub fn get_all_tool_definitions_for_llm() -> Vec<serde_json::Value> {
         .collect()
 }
 
-/// Tool ids a headless action run must NOT hold. `dispatch_subagents` because Deep Research
-/// fan-out is an interactive, budgeted, panel-visible capability. The action-management tools
-/// because an unattended run that can mint, edit, delete, or trigger *other* scheduled actions
-/// bypasses every authoring-time permission boundary (credential grant, schedule enablement,
-/// send/spend) — self-modification is an authoring-surface capability, never a runtime one.
-/// Read-only introspection (`list_actions`, `get_action`) and the run's own scratchpad
-/// (`update_action_memory`) stay.
-const ACTION_RUN_DENIED_TOOLS: &[&str] = &[
-    "dispatch_subagents",
-    "setup_applet",
-    "edit_applet",
-    "delete_applet",
-    "run_applet",
-    "setup_action",
-    "edit_action",
-    "delete_action",
-    "run_action",
+/// The explicit allowlist for a headless applet run — the runtime capability
+/// table from docs/applet-authoring-plan.md §B, enforced. What an applet's
+/// agent may do: think, read (sql_query/semantic_search/web_search), write
+/// its own applet_* tables (sql_write), keep notes (update_applet_memory),
+/// write pages, compute in the jail, and introspect applets read-only. Its
+/// run RESULT posts to the linked chat — that's the delivery verb, not a
+/// tool. Everything else — applet management (self-modification), memory/
+/// profile/name writes, fan-out, image spend — is absent by construction.
+const APPLET_RUN_ALLOWED_TOOLS: &[&str] = &[
+    "think",
+    "sql_query",
+    "sql_write",
+    "semantic_search",
+    "web_search",
+    "update_applet_memory",
+    "create_page",
+    "get_page_content",
+    "edit_page",
+    "code_interpreter",
+    "list_applets",
+    "get_applet",
 ];
 
-/// Tools for an autonomous **action** run: the default set minus `ACTION_RUN_DENIED_TOOLS`.
+/// Tools for an autonomous **applet** run: the explicit allowlist above.
 pub fn get_tools_for_action() -> Vec<serde_json::Value> {
     virtues_registry::tools::default_tools()
         .into_iter()
-        .filter(|tool| !ACTION_RUN_DENIED_TOOLS.contains(&tool.id.as_str()))
+        .filter(|tool| APPLET_RUN_ALLOWED_TOOLS.contains(&tool.id.as_str()))
         .map(|tool| {
             serde_json::json!({
                 "type": "function",

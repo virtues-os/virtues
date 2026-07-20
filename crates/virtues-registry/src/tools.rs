@@ -79,6 +79,7 @@ pub fn default_tools() -> Vec<ToolConfig> {
         web_search_tool(),
         semantic_search_tool(),
         sql_query_tool(),
+        sql_write_tool(),
         code_interpreter_tool(),
         dispatch_subagents_tool(),
         create_page_tool(),
@@ -872,6 +873,37 @@ Tips:
     }
 }
 
+/// SQL Write tool — DML scoped to applet-owned schemas
+fn sql_write_tool() -> ToolConfig {
+    ToolConfig {
+        id: "sql_write".to_string(),
+        name: "SQL Write".to_string(),
+        description: "Write to applet-owned tables".to_string(),
+        llm_description: r#"Write to an applet's own tables (INSERT / UPDATE / DELETE). One statement per call.
+
+Scope is enforced by the database role: only tables in applet_* schemas are writable — data_*, wiki_*, and app_* are read-only (use sql_query to read them). Create applet tables via setup_applet's schema_sql first.
+
+Use this to log entries into a tracker ("log lunch: 650 kcal" -> INSERT INTO applet_calorie_tracker.meals ...), correct or delete rows the user asks about, or maintain an applet's rollup tables during its runs.
+
+Add RETURNING to get rows back (capped at 500); otherwise the result is rows_affected."#.to_string(),
+        parameters: serde_json::json!({
+            "type": "object",
+            "required": ["sql"],
+            "properties": {
+                "sql": {
+                    "type": "string",
+                    "description": "One INSERT/UPDATE/DELETE statement targeting an applet_* schema table"
+                }
+            }
+        }),
+        tool_type: ToolType::Builtin,
+        category: ToolCategory::Data,
+        icon: "ri:database-2-line".to_string(),
+        display_order: 7,
+        is_system: false,
+    }
+}
+
 /// Setup Applet tool — materialize a chat-authored applet as a folder
 fn setup_applet_tool() -> ToolConfig {
     ToolConfig {
@@ -886,7 +918,7 @@ WHAT THE APPLET CAN DO AT RUNTIME (its prompt may only rely on these):
 - read data: sql_query (read-only) · semantic_search · web_search (queries only — it CANNOT fetch URLs/feeds)
 - deliver to the user: its run result posts back into this chat
 - keep notes: update_applet_memory · write pages: create_page / edit_page
-- own tables: anything you create via schema_sql (schema applet_<slug>)
+- own tables: anything you create via schema_sql (schema applet_<slug>), written at runtime with sql_write
 - its face reads data via virtues.query(sql) (read-only)
 If the ask needs a verb not listed (send email, fetch a URL, react to incoming messages): decompose it, or decline honestly and offer the nearest real alternative. Never write a prompt that pretends a tool exists.
 
