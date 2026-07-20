@@ -210,14 +210,24 @@ Reuse the mobile `lib.rs`; add the Android shell; gate collectors off.
 
 ---
 
-## Sequencing
+## Sequencing / status
 
-0. **Phase 0 — retire the macOS proxy sidecar**, moving `:7117` in-process on the
-   shipping app. Establishes the single reach path everything else reuses.
-1. **A — desktop reach** (now trivial post-Phase-0: widen the dep + pairing-shell
-   parity). Unblocks B.
-2. **B — Windows + Linux** config + gates + CI → two view apps ship.
-3. **C — Android** init + collector re-gating + shell + CI → view app ships.
+0. **Phase 0 — retire the macOS proxy sidecar** — ✅ DONE (commit 45e13811,
+   branch `phase0-in-process-reach`). `:7117` in-process; compiles on macOS.
+1. **A — desktop reach** — ✅ DONE (folded into Phase 0). reach dep widened to all
+   desktop targets; pairing shell unchanged.
+2. **B — Windows + Linux (views)** — ✅ CODE DONE, ⏳ CI-UNVERIFIED. macOS-only
+   code (`tray`/updater/reconcile/collector/`Reopen`/close-to-hide) gated;
+   `tauri.windows.conf.json` (nsis) + `tauri.linux.conf.json` (appimage+deb),
+   `externalBin` cleared, `createUpdaterArtifacts:false`; `icons/icon.ico`
+   generated; `release-windows.yml` + `release-linux-desktop.yml` added. macOS
+   `cargo check` still green. **Windows/Linux compile + bundle can only be
+   verified in CI** (can't cross-compile Tauri's native webview from macOS) —
+   push a `win-edge` / `linux-desktop-edge` tag (or run the workflow) to validate.
+   Minor wart: the `tray-icon` feature stays compiled on Linux, so the build
+   pulls `libayatana-appindicator3-dev` even though no tray is shown; a future
+   cleanup can gate that feature off non-macOS for a leaner binary.
+3. **C — Android** — TODO: `tauri android init` + collector re-gating + shell + CI.
 
 (Lower-risk alternative if you'd rather not touch the shipping app first: run
 B and C on in-process, leave macOS on its sidecar, and do Phase 0 last. Costs you
