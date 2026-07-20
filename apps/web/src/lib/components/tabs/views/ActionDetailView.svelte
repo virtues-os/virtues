@@ -32,7 +32,7 @@
 	let appState = $state<RunningApp | null>(null);
 
 	$effect(() => {
-		if (action?.runtime !== 'service' || !action?.id) return;
+		if (!action?.supervise || !action?.id) return;
 		const id = action.id;
 		const fetch = async () => {
 			try {
@@ -194,7 +194,19 @@
 					<h1 class="title">{action.name}</h1>
 					<div class="meta">
 						<span>{describeSchedule(action.cron_schedule ?? null)}</span>
-						{#if !action.enabled}
+						<span class="dot-sep">·</span>
+						<span class="muted-inline">
+							{#if action.archived_at}
+								archived {new Date(action.archived_at).toLocaleDateString()}
+							{:else if !action.until}
+								runs forever
+							{:else if action.until.toLowerCase() === 'once'}
+								runs once, then archives
+							{:else}
+								runs until: {action.until}
+							{/if}
+						</span>
+						{#if !action.enabled && !action.archived_at}
 							<span class="dot-sep">·</span>
 							<span class="muted-inline">disabled</span>
 						{/if}
@@ -333,7 +345,7 @@
 		     have long-lived stdout/stderr captured in the supervisor's per-app
 		     ring buffer. `function` runs surface their output via runs above;
 		     `view` runtimes have no server-side execution. -->
-		{#if action.runtime === 'service'}
+		{#if action.supervise}
 			<div class="app-meta">
 				{#if appState}
 					<span class="meta-badge {appStatusVariant(appState.status)}">{appState.status}</span>

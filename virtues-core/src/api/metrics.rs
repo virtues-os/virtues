@@ -121,11 +121,14 @@ pub async fn get_activity_metrics(db: &Database) -> Result<ActivityMetrics> {
         avg_duration_seconds: summary_row.try_get("avg_duration").ok(),
     };
 
-    // Task type breakdown by action runtime (function / service / view).
+    // Task type breakdown by derived shape (function / service / view / transform).
     let job_type_rows = sqlx::query(
         r#"
         SELECT
-            COALESCE(t.runtime, 'transform') as action_type,
+            CASE WHEN t.id IS NULL THEN 'transform'
+                 WHEN t.supervise THEN 'service'
+                 WHEN t.command IS NULL AND (t.agent IS NULL OR btrim(t.agent) = '') THEN 'view'
+                 ELSE 'function' END as action_type,
             COUNT(*) as total,
             SUM(CASE WHEN r.status = 'success' THEN 1 ELSE 0 END) as succeeded,
             SUM(CASE WHEN r.status = 'error' THEN 1 ELSE 0 END) as failed,
@@ -135,7 +138,7 @@ pub async fn get_activity_metrics(db: &Database) -> Result<ActivityMetrics> {
             CAST(COALESCE(SUM(r.records_processed), 0) AS BIGINT) as total_records
         FROM app_action_runs r
         LEFT JOIN app_actions t ON r.action_id = t.id
-        GROUP BY COALESCE(t.runtime, 'transform')
+        GROUP BY 1
         ORDER BY total DESC
         "#,
     )
@@ -200,7 +203,10 @@ pub async fn get_activity_metrics(db: &Database) -> Result<ActivityMetrics> {
     // Recent errors (last 10)
     let error_rows = sqlx::query(
         r#"
-        SELECT r.id, COALESCE(t.runtime, 'transform') as action_type,
+        SELECT r.id, CASE WHEN t.id IS NULL THEN 'transform'
+                 WHEN t.supervise THEN 'service'
+                 WHEN t.command IS NULL AND (t.agent IS NULL OR btrim(t.agent) = '') THEN 'view'
+                 ELSE 'function' END as action_type,
                r.transform_stage, r.error, r.completed_at
         FROM app_action_runs r
         LEFT JOIN app_actions t ON r.action_id = t.id

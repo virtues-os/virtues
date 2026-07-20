@@ -224,7 +224,7 @@ pub async fn list_actions_handler(State(state): State<AppState>) -> Response {
             t.id, t.owner, t.name, t.agent, t.cron_schedule,
             t.enabled, t.config, t.condition, t.triggers,
             t.memory, t.credential_id,
-            t.runtime, t.command,
+            t.command,
             t.until, t.archived_at, t.supervise,
             t.created_at, t.updated_at,
             r.status AS last_run_status,
@@ -267,9 +267,6 @@ pub async fn list_actions_handler(State(state): State<AppState>) -> Response {
                         serde_json::from_value(triggers_val).unwrap_or_default();
                     let memory: Option<String> = r.try_get("memory").unwrap_or(None);
                     let credential_id: Option<String> = r.try_get("credential_id").unwrap_or(None);
-                    let runtime: String = r
-                        .try_get("runtime")
-                        .unwrap_or_else(|_| "function".to_string());
                     let command_raw: Option<String> = r.try_get("command").unwrap_or(None);
                     let command: Option<Vec<String>> = command_raw
                         .as_deref()
@@ -278,6 +275,16 @@ pub async fn list_actions_handler(State(state): State<AppState>) -> Response {
                     let archived_at: Option<chrono::DateTime<chrono::Utc>> =
                         r.try_get("archived_at").unwrap_or(None);
                     let supervise: bool = r.try_get("supervise").unwrap_or(false);
+                    // Derived display shape (the old runtime taxonomy).
+                    let runtime = if supervise {
+                        "service"
+                    } else if command.as_ref().is_none_or(|c| c.is_empty())
+                        && agent.as_deref().is_none_or(|s| s.trim().is_empty())
+                    {
+                        "view"
+                    } else {
+                        "function"
+                    };
                     // TIMESTAMPTZ columns decode to DateTime<Utc>; serde emits
                     // RFC3339 in the JSON. Reading them as String failed (empty).
                     let created: chrono::DateTime<chrono::Utc> =
@@ -364,7 +371,7 @@ pub async fn get_action_handler(
                     "memory": action.memory,
                     "command": action.command,
                     "credential_id": action.credential_id,
-                    "runtime": action.runtime,
+                    "runtime": crate::scheduler::actions::derived_runtime(&action),
                     "until": action.until,
                     "archived_at": action.archived_at,
                     "supervise": action.supervise,

@@ -202,7 +202,7 @@ async fn prepare_run(
         return Ok(PrepareOutcome::Early(ActionRunResult {
             run_id: None,
             status: ActionRunStatus::Skipped,
-            summary: "view runtime — not server-invoked".to_string(),
+            summary: "face-only applet — not server-invoked".to_string(),
             error: None,
         }));
     }
