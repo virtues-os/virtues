@@ -16,7 +16,7 @@ layer, over the life-graph, on the box.
   Never overclaim "nothing leaves the box" — retrieval is local, inference today
   is not. (Researcher privacy concern is at 58% and rising; "don't put unpublished
   work in cloud AI" is standard advice. An appliance is the only honest answer.)
-- **Federation beats the upload-bin**: a Library holds the PDF, the advisor's email
+- **Federation beats the upload-bin**: a notebook holds the PDF, the advisor's email
   thread, the person, and last Tuesday as peers in one retrieval scope.
 - **Citations = refs (already doctrine)**: a cited answer opens the exact page —
   and after D2, the exact passage. NotebookLM's dead-end "Source 3" chips are the
@@ -26,6 +26,14 @@ layer, over the life-graph, on the box.
 
 ## Decisions locked (2026-07-20, incl. review revisions)
 
+0. **No "Library" noun (renamed 2026-07-20).** The two-noun structure
+   (a notebook *containing* a Library) contradicted the lens model. Things are
+   simply **in the notebook** — user-facing verb is **"Add to notebook"**, the
+   contents are **notebook items** (matching `app_notebook_items`). Internally
+   every added item defaults to `role='library'` (grounds chat — that is what
+   membership means); `role='pin'` survives schema-only for nav-only edges
+   (e.g. related notebooks), with no chooser UI in v1. Where these docs say
+   "Library", read "the notebook's items".
 1. **Universal extraction on upload.** Every text-bearing drive file is extracted,
    chunked, and embedded — the whole drive is corpus. The Library is a *lens*
    (scope + up-weight), not a container that triggers ingestion. Supersedes
@@ -125,9 +133,9 @@ The trust loop: drop PDFs on a notebook → watch them index → ask → click c
 5. **Citations via the existing pipeline**: `semantic_search` chunk hits carry
    `ref = /drive/file_{id}?page=N&q=<quote_head>`; model cites per refs doctrine;
    `CitedMarkdown` renders; PdfPane lands on the page (D2 upgrades to passage).
-6. **Ingestion UX**: drag-drop files onto a notebook's Library = upload + auto-add
+6. **Ingestion UX**: drag-drop files onto a notebook = upload + auto-add
    (`role='library'`). (Chat-attachment unification is NOT in D1 — see leftovers.)
-7. **Status UI truth**: per-material chips in the Library (`queued · extracting ·
+7. **Status UI truth**: per-item chips in the notebook (`queued · extracting ·
    indexed (14 pages) · no text layer · failed·retry`) + an indexed column in
    DriveView; aggregate count when a bulk drop is draining.
 
@@ -147,7 +155,7 @@ The trust loop: drop PDFs on a notebook → watch them index → ask → click c
 5. **Annotations retrievable**: ontology `document_annotation`
    (`embed_text_sql` over `quote_text || note_md`) — "what did I highlight about X".
 6. **Annotation index views**: per-file rail in AssetView (jump list); notebook
-   "Highlights" tab aggregating across the Library.
+   "Highlights" tab aggregating across the notebook's items.
 
 ## D3 — Scholar layer (Zotero-grade, local-only) · ~3 days
 
@@ -158,7 +166,7 @@ The trust loop: drop PDFs on a notebook → watch them index → ask → click c
 3. **Metadata edit form** (heuristics will be wrong; this is the correction lane —
    and the quality gate for citekeys/BibTeX).
 4. **Citekeys** (`author2026word`) + collision suffixes.
-5. **References view**: notebook Library as bibliography grid (UniversalDataGrid):
+5. **References view**: the notebook's documents as a bibliography grid (UniversalDataGrid):
    authors · year · title · venue · status.
 6. **BibTeX export** (`GET /api/notebooks/:id/bibtex`) + copy-citekey.
 7. **Dedup**: SHA-256 (exists) + DOI match surfaced ("already in Drive").
@@ -169,7 +177,7 @@ The trust loop: drop PDFs on a notebook → watch them index → ask → click c
    suffix when meta exists). **Must reconcile with Yjs** (append via the Yjs doc /
    server-side update, not blind REST content replace — open-editor clobber risk).
 2. **Bulk annotations export** (markdown per file / per notebook).
-3. Polish: keyboard for colors, Library counts, empty-states that teach the loop.
+3. Polish: keyboard for colors, item counts, empty-states that teach the loop.
 
 ## Sequencing & risks
 
@@ -197,14 +205,14 @@ the Q6A; MuPDF excluded — AGPL). Checks folded into the build itself:
 - Scope toggle: **per-chat, persisted** (recommended) vs per-message.
 - Chunk hits in tool output should carry **doc title + page** so the model cites
   by name ("per Smith 2024, p. 6"), not by filename.
-- **Trash semantics**: a Library member whose file is in trash — show a
+- **Trash semantics**: a notebook item whose file is in trash — show a
   "in trash" chip state, exclude from scope resolution.
 - **Shared pages**: `shared_file_download` validates file membership in the
   shared page — confirm `?page/q` params flow through and no chunk/annotation
   data leaks via share tokens.
 - Highlights spanning page boundaries: **disallow in v1** (anchor model is
   per-page).
-- Add-to-Library affordances: drag-drop (D1) + an "add from Drive" picker —
+- Add-to-notebook affordances: drag-drop (D1) + an "add from Drive" picker —
   picker ships when trivial, else fast-follow.
 
 ## D5 — OCR on the NPU (in v1 · ~3–4 days, after D3 / alongside D4)
