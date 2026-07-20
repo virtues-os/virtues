@@ -13,7 +13,10 @@
 //!
 //! MarbleNet is chosen over Silero because it is control-flow-free (Silero's
 //! decoder `If` op does not translate in tract) and over Earshot/WebRTC-VAD
-//! because those keep loud ambient (music/traffic) as "speech". The mel
+//! because those keep loud ambient (music/traffic) as "speech". Known blind
+//! spot in the opposite direction: speech buried under loud music (parties,
+//! Minecraft-with-friends over speakers) scores near zero, so those chunks are
+//! recorded silent — the stored audio keeps them re-runnable. The mel
 //! front-end is bit-parity-validated against NVIDIA's NeMo preprocessing: the
 //! full pipeline's speech/no-speech decision is identical to the Python +
 //! onnxruntime reference on the validation set (0 flips / 24 clips).
@@ -44,10 +47,50 @@ const WIN: usize = 400; // 25ms
 const HOP: usize = 160; // 10ms
 const N_FREQ: usize = N_FFT / 2 + 1; // 257
 const PREEMPH: f32 = 0.97;
-/// A chunk counts as "speech" if at least this many seconds of speech frames
-/// are detected. Deliberately low: the goal is only to skip chunks with NO
+/// A frame counts as speech at this probability. The original 0.5 proved too
+/// permissive in production — overnight snoring/breathing/room-tone frames
+/// hover just past even odds, and 60/96 sleeping-hours chunks reached Gemini
+/// only for it to return empty text. At 0.65 those collapse to ~0 speech-secs
+/// while soft real speech (whispered self-talk, cross-room chatter) retains
+/// signal. Validated 2026-07-20 on 32 labeled clips from the box via
+/// examples/vad_sweep.rs: overnight false-positives 12→2 passed, quiet-speech
+/// retention 9/12, zero loss on clear conversation.
+const SPEECH_PROB: f32 = 0.65;
+/// Only contiguous speech runs at least this long count toward the total.
+/// Kept at 0 (off): in the same validation a 0.1s floor cost a genuine
+/// fragmented-speech clip (muffled instructions in a noisy room) without
+/// killing any additional false positives. The probability floor does the
+/// separating; run length is retained as a knob for the sweep harness.
+const MIN_RUN_SECS: f32 = 0.0;
+/// A chunk counts as "speech" if qualifying runs total at least this many
+/// seconds. Deliberately low: the goal is only to skip chunks with NO
 /// speech — anything with a real utterance must reach Gemini.
-const MIN_SPEECH_SECS: f32 = 0.3;
+const MIN_SPEECH_SECS: f32 = 0.25;
+
+/// The speech/no-speech decision over per-frame probabilities: frames ≥
+/// `p_speech` form runs; runs shorter than `min_run_secs` are discarded;
+/// the survivors' total must reach `min_speech_secs`.
+pub fn gate(probs: &[f32], dur: f32, p_speech: f32, min_run_secs: f32, min_speech_secs: f32) -> bool {
+    let frame_secs = dur / probs.len().max(1) as f32;
+    let mut total = 0f32;
+    let mut run = 0usize;
+    for (i, &p) in probs.iter().enumerate() {
+        if p >= p_speech {
+            run += 1;
+        }
+        if p < p_speech || i == probs.len() - 1 {
+            let run_secs = run as f32 * frame_secs;
+            if run_secs >= min_run_secs {
+                total += run_secs;
+                if total >= min_speech_secs {
+                    return true;
+                }
+            }
+            run = 0;
+        }
+    }
+    false
+}
 
 pub struct Vad {
     model: InferenceModel,
@@ -89,9 +132,21 @@ impl Vad {
     }
 
     fn detect(&self, m4a: &[u8]) -> Result<bool> {
+        let (probs, dur) = match self.speech_probs(m4a)? {
+            Some(v) => v,
+            None => return Ok(false), // too short to contain speech
+        };
+        Ok(gate(&probs, dur, SPEECH_PROB, MIN_RUN_SECS, MIN_SPEECH_SECS))
+    }
+
+    /// Per-frame speech probability for the whole recording, plus its duration
+    /// in seconds. `None` if the audio is shorter than one analysis frame.
+    /// Exposed for the offline threshold-sweep harness (examples/vad_sweep.rs);
+    /// production goes through `has_speech`.
+    pub fn speech_probs(&self, m4a: &[u8]) -> Result<Option<(Vec<f32>, f32)>> {
         let pcm = decode_m4a_16k_mono(m4a)?;
         if pcm.len() < N_FFT {
-            return Ok(false); // too short to contain speech
+            return Ok(None);
         }
         let (feat, frames_in) = self.logmel(&pcm);
 
@@ -105,17 +160,14 @@ impl Vad {
         let scores = out[0].to_array_view::<f32>()?; // [1, frames_out, 2]
         let frames_out = scores.shape()[1];
 
-        let mut speech = 0usize;
+        let mut probs = Vec::with_capacity(frames_out);
         for i in 0..frames_out {
             let (non, sp) = (scores[[0, i, 0]], scores[[0, i, 1]]);
             // softmax over the 2 logits; class 1 is speech.
-            if sp.exp() / (non.exp() + sp.exp()) >= 0.5 {
-                speech += 1;
-            }
+            probs.push(sp.exp() / (non.exp() + sp.exp()));
         }
         let dur = pcm.len() as f32 / SR as f32;
-        let speech_secs = speech as f32 / frames_out.max(1) as f32 * dur;
-        Ok(speech_secs >= MIN_SPEECH_SECS)
+        Ok(Some((probs, dur)))
     }
 
     /// 80-dim NeMo-style log-mel: preemphasis → centered STFT (zero-pad, hann)
