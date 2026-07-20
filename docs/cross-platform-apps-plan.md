@@ -175,38 +175,88 @@ Config + gating + packaging. No collector, no service, no sidecar.
   (`tauri build` → AppImage/deb). These are **new** — `release-linux.yml` today
   builds the server, not the app.
 
-## Workstream C — Android (view)
+## Workstream C — Android (view) — SCOPE
 
-Reuse the mobile `lib.rs`; add the Android shell; gate collectors off.
+Reuse the mobile `lib.rs` (already the iOS entry point), boot it **reach-only**,
+and add the Android shell. The current `lib.rs` registers `reach` + 6 collectors
+and calls `resume()` on all 6 in `setup()`; the collectors have no Android Kotlin
+halves, so the whole job is: compile+run reach on Android, gate collectors off,
+and add the Android-specific storage/manifest bits.
 
-- **Init:** `tauri android init` → generates `gen/android` (Gradle project) and
-  the Android half of `tauri.conf`.
-- **Re-gate the collector deps to iOS-only (cleanest fix).** The collector
-  plugins are currently `[target.'cfg(any(ios, android))'.dependencies]`, so an
-  Android build would (a) compile all of them and (b) have `lib.rs` call their
-  `resume()` → `register_android_plugin("com.virtues.health", "HealthPlugin")`,
-  which **fails** (no Kotlin class). Narrow the collector deps to
-  `cfg(target_os = "ios")` and keep `reach` on `cfg(any(ios, android))` (+ the
-  desktop widening from A). Then the Android view compiles **only `reach`** and
-  never touches a missing collector — no dormant-registration failure, and no
-  "do the collector crates even build on Android?" risk. The collector `resume()`
-  calls in `lib.rs` also need `#[cfg(target_os = "ios")]` guards. Un-gate per
-  plugin as each `android/` Kotlin half lands — this is the collector seam.
-  (Health/audio crates showed no Apple-only Rust deps, so they *should* build on
-  Android when the time comes, but that stays unverified until attempted.)
-- **Storage:** point the reach `FileStore` at the Tauri `app_data_dir()` on
-  Android instead of `dirs::data_dir()` (which is unreliable on Android). App-
-  private storage is already sandboxed; Android Keystore hardening is a later
-  follow-up (parallels the iOS Keychain bridge).
-- **Cleartext loopback:** add a `network_security_config.xml` permitting cleartext
-  to `127.0.0.1` so the SPA→loopback HTTP isn't blocked by Android's default
-  cleartext policy. Mirror the CSP/connect-src into the Android setup.
-- **Network monitoring:** the reach plugin's iOS `ReachMonitor` (reconnect on
-  network change) has no Android half. Rely on Rust-side reconnect for v1; a small
-  `ConnectivityManager` Kotlin shim is a later nicety.
-- **`set_appearance`:** already has an Android no-op branch — good.
-- **Manifest:** `INTERNET` only (no collector perms for views).
-- **Signing + CI:** Android keystore + a build workflow (APK/AAB).
+**Android builds run on macOS** (Android SDK/NDK cross-compile — unlike the
+Win/Linux Tauri builds), so this is locally validatable *if* the toolchain is
+installed. Otherwise a Linux/macOS CI runner with the Android SDK.
+
+### C0 — De-risk FIRST (cheap spike, do before anything else)
+
+**The load-bearing unknown: does `virtues-reach-client` (iroh + QUIC + its dep
+tree) cross-compile and *run* on Android?** iroh generally supports Android, but
+this is unverified for our exact deps. Spike it before investing:
+`cargo build --target aarch64-linux-android -p virtues-reach-client` (needs the
+NDK + `cargo-ndk` or the linker configured). If reach doesn't build/run on
+Android, the whole Android app is blocked and we learn it in an hour, not a week.
+
+### C1 — Re-gate deps so Android compiles reach-only (code, no toolchain)
+
+- **Cargo.toml:** move the 6 collector plugin deps from
+  `cfg(any(ios, android))` to `cfg(target_os = "ios")`; keep `reach` on
+  `cfg(any(ios, android))`. (`objc2` is already ios-only.) Android then compiles
+  **only reach** — sidesteps "do the collector crates build on Android?" entirely.
+- **lib.rs:** gate the 6 collector `.plugin()` registrations **and** their
+  `resume()` calls in `setup()` to `#[cfg(target_os = "ios")]` (use the
+  conditional-`let builder` pattern for the plugin chain, as `main.rs` does for
+  single-instance). Android boots reach + the webview only.
+- Verifiable now: iOS/desktop still compile. Android compile needs C0's toolchain.
+
+### C2 — Android storage (reach-plugin code)
+
+The reach `FileStore` uses `dirs::data_dir()` (`virtues_dir()`), which is
+unreliable on Android. Resolve `box.json`'s dir from the Tauri app-data dir
+(`app.path().app_data_dir()`) on Android — likely refactor `FileStore` to accept
+an injected base dir set from the plugin's `setup(app)` (iOS keeps its Keychain
+bridge; desktop keeps `dirs::data_dir()`). App-private storage is sandboxed;
+Android Keystore hardening is a later follow-up (parallels the iOS Keychain).
+
+### C3 — `tauri android init` + Android project config (needs toolchain)
+
+- `tauri android init` → generates `gen/android` (Gradle project).
+- **Cleartext loopback:** the SPA calls `http://127.0.0.1:7117` (the in-process
+  reach). Android blocks cleartext by default (API 28+) → add a
+  `network_security_config.xml` permitting cleartext to `127.0.0.1`, referenced
+  from `AndroidManifest.xml`.
+- **Manifest:** `INTERNET` only (no collector permissions for views).
+- **Capabilities:** confirm `capabilities/mobile.json` targets `android` for the
+  reach commands (`plugin:reach|pair`/`discover`/…).
+- **Icons:** `tauri icon` already emits the Android `mipmap` set — reuse.
+
+### C4 — Build + run (needs toolchain)
+
+- `tauri android dev` (emulator/device) → confirm it boots reach-only, loads
+  `mobile-pair.html`, pairs by code, and loads the box UI over the loopback.
+- `tauri android build` → APK/AAB.
+
+### C5 — Signing + CI
+
+- Android keystore; a `release-android.yml` (APK/AAB). Debug/unsigned for the
+  first validation, signed release after.
+
+### Deferred (not this workstream)
+
+- **Collectors** — per-plugin Android Kotlin halves, un-gating C1 as each lands:
+  `health`→Health Connect, `location-probe`→FusedLocationProvider,
+  `audio`→AudioRecord + typed foreground service, `contacts`→ContactsContract,
+  `eventkit`→CalendarContract; **`finance` has no Android equivalent** (iOS-only).
+- **Network monitoring** — the reach plugin's iOS `ReachMonitor` (reconnect on
+  network change) has no Android half; rely on Rust-side reconnect for v1, add a
+  `ConnectivityManager` shim later.
+- **`set_appearance`** already has an Android no-op branch — nothing to do.
+
+### What's doable now vs needs the Android toolchain
+
+- **Now (pure code):** C1 (re-gate) + C2 (storage) — leaves iOS/desktop building,
+  sets Android up to compile reach-only.
+- **Needs SDK/NDK/Gradle (local on macOS or CI):** C0 spike, C3 init/config, C4
+  build/run, C5 signing/CI.
 
 ---
 
@@ -227,7 +277,10 @@ Reuse the mobile `lib.rs`; add the Android shell; gate collectors off.
    Minor wart: the `tray-icon` feature stays compiled on Linux, so the build
    pulls `libayatana-appindicator3-dev` even though no tray is shown; a future
    cleanup can gate that feature off non-macOS for a leaner binary.
-3. **C — Android** — TODO: `tauri android init` + collector re-gating + shell + CI.
+3. **C — Android (view)** — 📋 SCOPED (see Workstream C above). Sequence: C0
+   iroh-on-Android spike → C1 re-gate deps reach-only → C2 Android storage → C3
+   `tauri android init` + cleartext/manifest → C4 build/run → C5 signing/CI.
+   C1/C2 are code-now; C0/C3–C5 need the Android SDK/NDK (local on macOS or CI).
 
 (Lower-risk alternative if you'd rather not touch the shipping app first: run
 B and C on in-process, leave macOS on its sidecar, and do Phase 0 last. Costs you
