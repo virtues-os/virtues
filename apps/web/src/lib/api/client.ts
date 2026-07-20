@@ -369,14 +369,28 @@ export async function patchAction(id: string, patch: PatchActionBody): Promise<A
 	return res.json();
 }
 
-export async function deleteAction(id: string): Promise<void> {
-	const res = await fetch(`${API_BASE}/applets/${encodeURIComponent(id)}`, {
+export async function deleteAction(id: string, dropData = false): Promise<void> {
+	const q = dropData ? '?drop_data=true' : '';
+	const res = await fetch(`${API_BASE}/applets/${encodeURIComponent(id)}${q}`, {
 		method: 'DELETE'
 	});
 	if (!res.ok) {
 		const err = await res.json().catch(() => ({ error: res.statusText }));
 		throw new Error(err.error || `Failed to delete action: ${res.statusText}`);
 	}
+}
+
+/** The private tables an applet owns — shown on the delete confirm so the user
+ *  can choose whether to also drop its data. Empty when it owns none. */
+export interface AppletData {
+	schema: string | null;
+	tables: string[];
+}
+
+export async function getAppletData(id: string): Promise<AppletData> {
+	const res = await fetch(`${API_BASE}/applets/${encodeURIComponent(id)}/data`);
+	if (!res.ok) return { schema: null, tables: [] };
+	return (await res.json()) as AppletData;
 }
 
 export interface TriggerActionResponse {

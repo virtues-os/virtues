@@ -370,6 +370,7 @@ pub async fn run(client: Virtues, host: &str, port: u16) -> Result<()> {
                 .delete(api::delete_action_handler),
         )
         .route("/api/applets/:id/run", post(api::trigger_action_handler))
+        .route("/api/applets/:id/data", get(api::get_action_data_handler))
         // Chat-export upload (Tier 3 one-time import). Per-route body limit
         // overrides the router-wide 105MB cap — ChatGPT exports can be larger.
         .route(
