@@ -37,6 +37,10 @@ name = "embedding_index"
 path = "embedding_index/main.rs"
 
 [[bin]]
+name = "document_extraction"
+path = "document_extraction/main.rs"
+
+[[bin]]
 name = "credential_refresh"
 path = "credential_refresh/main.rs"
 

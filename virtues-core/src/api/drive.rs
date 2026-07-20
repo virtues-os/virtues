@@ -665,12 +665,21 @@ pub async fn upload_file(
                 .map(|m| m.to_string())
         });
 
+    // Universal extraction (researcher-plan D1): text-bearing uploads queue
+    // for the document_extraction cron; everything else is 'skipped'.
+    let extraction_status =
+        if crate::extraction::doc_kind(mime_type.as_deref(), &actual_filename).is_some() {
+            "pending"
+        } else {
+            "skipped"
+        };
+
     // Insert database record
     let file_id = ids::generate_id(ids::DRIVE_FILE_PREFIX, &[&file_path_str]);
     sqlx::query(
         r#"
-        INSERT INTO app_drive_files (id, path, filename, mime_type, size_bytes, parent_id, is_folder, sha256_hash)
-        VALUES ($1, $2, $3, $4, $5, $6, FALSE, $7)
+        INSERT INTO app_drive_files (id, path, filename, mime_type, size_bytes, parent_id, is_folder, sha256_hash, extraction_status)
+        VALUES ($1, $2, $3, $4, $5, $6, FALSE, $7, $8)
         "#,
     )
     .bind(&file_id)
@@ -680,6 +689,7 @@ pub async fn upload_file(
     .bind(size_bytes)
     .bind(&parent_id)
     .bind(&hash)
+    .bind(extraction_status)
     .execute(pool)
     .await
     .map_err(|e| Error::Database(format!("Failed to insert file record: {e}")))?;
