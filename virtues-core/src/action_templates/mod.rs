@@ -277,6 +277,11 @@ fn parse_template(manifest_path: &std::path::Path, dir: &str) -> Option<Template
         tmpl.id_prefix = Some(format!("action_{}", dir.replace('/', "__")));
     }
     tmpl.dir = dir.to_string();
+    // Legacy `runtime = "service"` normalizes into the supervise flag —
+    // the taxonomy is derived from fields now; supervise is the one real bit.
+    if tmpl.runtime == "service" {
+        tmpl.supervise = true;
+    }
     Some(tmpl)
 }
 

@@ -112,7 +112,7 @@ impl ServiceSupervisor {
             sqlx::query_as(
                 r#"SELECT id, command, config
                FROM app_actions
-               WHERE runtime = 'service' AND enabled = TRUE"#,
+               WHERE supervise = TRUE AND enabled = TRUE"#,
             )
             .fetch_all(db)
             .await?;
@@ -377,7 +377,7 @@ impl ServiceSupervisor {
             sqlx::query_as(
                 r#"SELECT id, command, config
                FROM app_actions
-               WHERE runtime = 'service' AND enabled = TRUE"#,
+               WHERE supervise = TRUE AND enabled = TRUE"#,
             )
             .fetch_all(db)
             .await?;

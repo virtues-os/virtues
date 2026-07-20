@@ -191,10 +191,14 @@ async fn prepare_run(
         ))));
     }
 
-    // 2a. `view`-runtime actions are pure-frontend renderers; never invoked
-    // server-side. Skip silently so cron ticks don't churn the runs table.
-    if action.runtime == "view" {
-        tracing::debug!(action_id, "view runtime — never invoked server-side");
+    // 2a. Face-only applets (no command, no agent — the old `view` runtime,
+    // now derived from field presence) are pure-frontend renderers; never
+    // invoked server-side. Skip silently so cron ticks don't churn the runs
+    // table.
+    let has_agent = action.agent.as_deref().is_some_and(|s| !s.trim().is_empty());
+    let has_exec = has_agent || action.command.as_ref().is_some_and(|c| !c.is_empty());
+    if !has_exec {
+        tracing::debug!(action_id, "face-only applet — never invoked server-side");
         return Ok(PrepareOutcome::Early(ActionRunResult {
             run_id: None,
             status: ActionRunStatus::Skipped,
@@ -334,7 +338,7 @@ async fn execute_prepared(
     let mut subprocess_summary: Option<String> = None;
     let mut subprocess_records: i64 = 0;
     let has_command = action.command.as_ref().is_some_and(|c| !c.is_empty());
-    if action.runtime == "service" && has_command {
+    if action.supervise && has_command {
         match run_app_trigger(&action, payload.as_ref()).await {
             Ok(summary) => {
                 subprocess_summary = summary;
@@ -662,18 +666,20 @@ async fn run_app_trigger(
 /// upload gives up far sooner; the box still finishes idempotently if it can.)
 const SUBPROCESS_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(300);
 
-/// Per-action ceiling override. The embedding indexer drains its whole backlog
-/// in one run (see `search::indexer`) — initial onboarding embeds an entire
-/// corpus, which is hours of legitimate work, not a hang. Its drain loop
-/// enforces its own 2-hour wall-clock ceiling and commits per record, so the
-/// subprocess gets that ceiling plus margin and the internal limit exits
-/// cleanly rather than being SIGKILLed mid-drain. Keyed on the manifest dir
-/// (stable), not the id (which gets collision-suffixed on rename).
+/// Per-applet ceiling: `config.limits.timeout_s` (the first limits-block
+/// field enforced), falling back to the global default. Actions with long
+/// legitimate runs declare their ceiling in their own manifest — e.g.
+/// embedding_index's initial-onboarding drain is hours of real work, so its
+/// manifest carries `[config.limits] timeout_s = 7500` and its internal
+/// 2-hour wall-clock limit exits cleanly rather than being SIGKILLed.
 fn subprocess_timeout(action: &Action) -> std::time::Duration {
-    match action.dir.as_str() {
-        "embedding_index" => std::time::Duration::from_secs(2 * 3600 + 300),
-        _ => SUBPROCESS_TIMEOUT,
-    }
+    action
+        .config
+        .get("limits")
+        .and_then(|l| l.get("timeout_s"))
+        .and_then(|v| v.as_u64())
+        .map(std::time::Duration::from_secs)
+        .unwrap_or(SUBPROCESS_TIMEOUT)
 }
 
 /// What a successful subprocess phase produced: the one-line summary plus the
