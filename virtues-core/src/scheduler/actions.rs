@@ -73,10 +73,7 @@ pub struct Action {
     /// Device-ingest (webhook) actions anchor here — the owning device whose
     /// proven iroh key authorizes posts to this action.
     pub device_id: Option<String>,
-    pub runtime: String,
     pub command: Option<Vec<String>>,
-    /// Manifest folder relative to the repo's `actions/` root.
-    pub dir: String,
     /// Lifecycle: NULL = forever · `"once"` = archive after first success ·
     /// SQL boolean = archive when it evaluates true (checked post-success).
     pub until: Option<String>,
@@ -783,11 +780,7 @@ pub fn action_from_row(row: &sqlx::postgres::PgRow) -> Result<Action> {
         .try_get("config")
         .unwrap_or_else(|_| serde_json::json!({}));
 
-    let runtime: String = row
-        .try_get("runtime")
-        .unwrap_or_else(|_| "function".to_string());
-
-    // `command` is a JSON-encoded Vec<String> argv; None only for `view`
+    // `command` is a JSON-encoded Vec<String> argv; None for face-only
     // (no execution) or pure-agent actions.
     let command_raw: Option<String> = row.try_get("command").ok();
     let command: Option<Vec<String>> = command_raw
@@ -807,15 +800,28 @@ pub fn action_from_row(row: &sqlx::postgres::PgRow) -> Result<Action> {
         memory: row.try_get("memory")?,
         credential_id: row.try_get("credential_id")?,
         device_id: row.try_get("device_id")?,
-        runtime,
         command,
-        dir: row.try_get("dir").unwrap_or_default(),
         until: row.try_get("until").ok().flatten(),
         archived_at: row.try_get("archived_at").ok().flatten(),
         supervise: row.try_get("supervise").unwrap_or(false),
         created_at: row.try_get("created_at")?,
         updated_at: row.try_get("updated_at")?,
     })
+}
+
+/// Derived display shape — the old `runtime` taxonomy, computed from fields:
+/// supervise ⇒ service; no command and no agent ⇒ view (face-only);
+/// otherwise function. Presentation only; nothing executes off this.
+pub fn derived_runtime(a: &Action) -> &'static str {
+    if a.supervise {
+        "service"
+    } else if a.command.as_ref().is_none_or(|c| c.is_empty())
+        && a.agent.as_deref().is_none_or(|s| s.trim().is_empty())
+    {
+        "view"
+    } else {
+        "function"
+    }
 }
 
 /// Archive an applet whose lifecycle completed: stamp `archived_at` and

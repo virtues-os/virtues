@@ -668,11 +668,10 @@ async fn upsert_row(
         r#"
         INSERT INTO app_actions (
             id, name, owner, agent, cron_schedule, enabled, config, condition,
-            triggers, credential_id, runtime, command, dir, device_id, until, supervise
+            triggers, credential_id, command, device_id, until, supervise
         )
-        VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, $8, $9::jsonb, $10, $11, $12, $13, $14, $15, $16)
+        VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, $8, $9::jsonb, $10, $11, $12, $13, $14)
         ON CONFLICT(id) DO UPDATE SET
-            dir            = EXCLUDED.dir,
             device_id      = EXCLUDED.device_id,
             updated_at     = now()
         "#
@@ -680,9 +679,9 @@ async fn upsert_row(
         r#"
         INSERT INTO app_actions (
             id, name, owner, agent, cron_schedule, enabled, config, condition,
-            triggers, credential_id, runtime, command, dir, device_id, until, supervise
+            triggers, credential_id, command, device_id, until, supervise
         )
-        VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, $8, $9::jsonb, $10, $11, $12, $13, $14, $15, $16)
+        VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, $8, $9::jsonb, $10, $11, $12, $13, $14)
         ON CONFLICT(id) DO UPDATE SET
             name           = EXCLUDED.name,
             owner          = EXCLUDED.owner,
@@ -691,9 +690,7 @@ async fn upsert_row(
             condition      = EXCLUDED.condition,
             triggers       = EXCLUDED.triggers,
             credential_id  = EXCLUDED.credential_id,
-            runtime        = EXCLUDED.runtime,
             command        = EXCLUDED.command,
-            dir            = EXCLUDED.dir,
             device_id      = EXCLUDED.device_id,
             until          = EXCLUDED.until,
             supervise      = EXCLUDED.supervise,
@@ -712,9 +709,7 @@ async fn upsert_row(
         .bind(&template.condition)
         .bind(&triggers_json)
         .bind(credential_id)
-        .bind(&template.runtime)
         .bind(&command_json)
-        .bind(&template.dir)
         .bind(device_id)
         .bind(&template.until)
         .bind(template.supervise)
