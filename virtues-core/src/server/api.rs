@@ -2558,6 +2558,48 @@ pub async fn download_drive_file_handler(
     }
 }
 
+// ── Annotations (document highlights + margin notes, researcher-plan D2) ──
+
+/// GET /api/annotations?file_id=… — list a file's annotations.
+#[derive(Debug, Deserialize)]
+pub struct ListAnnotationsQuery {
+    pub file_id: String,
+}
+pub async fn list_annotations_handler(
+    State(state): State<AppState>,
+    Query(q): Query<ListAnnotationsQuery>,
+) -> Response {
+    api_response(crate::api::list_annotations(state.db.pool(), &q.file_id).await)
+}
+
+/// POST /api/annotations — create (or upsert) a highlight.
+pub async fn create_annotation_handler(
+    State(state): State<AppState>,
+    Json(req): Json<crate::api::CreateAnnotationRequest>,
+) -> Response {
+    api_response(crate::api::create_annotation(state.db.pool(), req).await)
+}
+
+/// PATCH /api/annotations/:id — edit note/color.
+pub async fn update_annotation_handler(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    Json(req): Json<crate::api::UpdateAnnotationRequest>,
+) -> Response {
+    api_response(crate::api::update_annotation(state.db.pool(), &id, req).await)
+}
+
+/// DELETE /api/annotations/:id
+pub async fn delete_annotation_handler(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> Response {
+    match crate::api::delete_annotation(state.db.pool(), &id).await {
+        Ok(_) => success_message("Annotation deleted"),
+        Err(e) => error_response(e),
+    }
+}
+
 /// POST /api/drive/files/:id/reextract — queue a file for (re-)extraction.
 pub async fn reextract_drive_file_handler(
     State(state): State<AppState>,

@@ -1,6 +1,7 @@
 //! Library-level API functions.
 
 pub mod action_events;
+pub mod annotations;
 pub mod ai_calls;
 pub mod ai_complete;
 pub mod assistant_profile;
@@ -183,6 +184,10 @@ pub use pins::{
 pub use things::{
     CreateThingRequest, ListThingsParams, Thing, ThingListResponse, ThingSummary,
     UpdateThingRequest,
+};
+pub use annotations::{
+    create_annotation, delete_annotation, get_annotation, list_annotations, update_annotation,
+    Annotation, CreateAnnotationRequest, UpdateAnnotationRequest,
 };
 pub use notebooks::{
     add_notebook_item, create_notebook, delete_notebook, get_notebook, list_notebooks,

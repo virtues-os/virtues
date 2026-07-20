@@ -90,6 +90,9 @@ pub const PIN_PREFIX: &str = "pin";
 // Notebook Layer (Organization system)
 pub const NOTEBOOK_PREFIX: &str = "nb";
 
+// Document annotations (highlights + margin notes on drive files)
+pub const ANNOTATION_PREFIX: &str = "anno";
+
 // Chat Layer (Conversations)
 pub const CHAT_PREFIX: &str = "chat";
 pub const SESSION_PREFIX_DEPRECATED: &str = "session";  // Kept for backwards compat
