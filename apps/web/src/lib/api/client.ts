@@ -810,16 +810,16 @@ export interface DriveUsage {
 	drive_bytes: number;
 	/** ELT archives in /home/user/data-lake/ */
 	data_lake_bytes: number;
-	/** Quota limit based on tier */
+	/** Total capacity of the box's disk */
 	quota_bytes: number;
+	/** Free space actually left on that disk (other data lives there too) */
+	available_bytes: number;
 	/** Number of user files */
 	file_count: number;
 	/** Number of user folders */
 	folder_count: number;
 	/** Usage percentage (total_bytes / quota_bytes * 100) */
 	usage_percent: number;
-	/** Tier name (standard, pro) */
-	tier: string;
 }
 
 /**
@@ -1724,10 +1724,7 @@ export function deleteByoKey<T = unknown>(sudoRequestId?: string): Promise<T> {
 	return apiSend<T>('DELETE', '/settings/byo-key', { sudo_request_id: sudoRequestId });
 }
 
-// ── MCP / tools ──────────────────────────────────────────────────────────────
-export function listTools<T = unknown>(): Promise<T> {
-	return apiGet<T>('/tools');
-}
+// ── MCP ──────────────────────────────────────────────────────────────────────
 export function listMcpServers<T = unknown>(): Promise<T> {
 	return apiGet<T>('/mcp/servers');
 }
