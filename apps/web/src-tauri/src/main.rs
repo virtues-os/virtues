@@ -1054,7 +1054,23 @@ fn copy_executable(src: &std::path::Path, dst: &std::path::Path) -> std::io::Res
 // ============================================================================
 
 fn main() {
-    tauri::Builder::default()
+    let builder = tauri::Builder::default();
+
+    // Single-instance guard — Windows/Linux only. macOS is single-instance
+    // natively (LaunchServices) and uses the tray + RunEvent::Reopen model, so
+    // gating it off there avoids interfering with that. Elsewhere, a second
+    // launch would spawn a process that fails to bind :7117 (the first instance
+    // holds it) and strand on a dead window — so instead focus the running one.
+    // MUST be the first plugin registered (it decides whether to even continue).
+    #[cfg(not(target_os = "macos"))]
+    let builder = builder.plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
+        if let Some(w) = app.get_webview_window("main") {
+            let _ = w.show();
+            let _ = w.set_focus();
+        }
+    }));
+
+    builder
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
