@@ -40,10 +40,21 @@ impl SemanticSearchTool {
             .and_then(|v| v.as_str())
             .ok_or_else(|| ToolError::InvalidParameters("query is required".into()))?;
 
+        // The tool advertises friendly domain names (email, calendar, document…)
+        // that do NOT equal the real ontology names (calendar_event,
+        // uploaded_document…). Normalize aliases to real ontology names and
+        // DROP anything that resolves to nothing — a hallucinated or unknown
+        // domain must degrade to "search everything", never zero the results.
         let domains: Option<Vec<String>> = arguments
             .get("domains")
             .and_then(|v| v.as_array())
-            .map(|arr| arr.iter().filter_map(|v| v.as_str().map(|s| s.to_string())).collect());
+            .map(|arr| {
+                arr.iter()
+                    .filter_map(|v| v.as_str())
+                    .flat_map(normalize_domain)
+                    .collect::<Vec<String>>()
+            })
+            .filter(|d| !d.is_empty());
 
         let date_after = arguments.get("date_after").and_then(|v| v.as_str());
         let date_before = arguments.get("date_before").and_then(|v| v.as_str());
@@ -128,5 +139,67 @@ impl SemanticSearchTool {
             "count": results.len(),
             "tip": "Use sql_query with record IDs to get full details for specific results."
         })))
+    }
+}
+
+/// Map a friendly domain alias to the real ontology name(s) the search filters
+/// on (`se.ontology`). Unknown tokens that aren't already a real ontology name
+/// map to nothing, so the caller drops them rather than zeroing the search.
+fn normalize_domain(raw: &str) -> Vec<String> {
+    let d = raw.trim().to_lowercase();
+    let mapped: &[&str] = match d.as_str() {
+        "document" | "documents" | "doc" | "docs" | "file" | "files" | "pdf" | "paper"
+        | "papers" => &["uploaded_document"],
+        "message" | "messages" | "email" | "emails" | "sms" | "text" => {
+            &["communication_message"]
+        }
+        "transcription" | "transcript" | "transcripts" | "audio" | "recording" => {
+            &["communication_transcription"]
+        }
+        "calendar" | "event" | "events" | "meeting" | "meetings" => &["calendar_event"],
+        "transaction" | "transactions" | "finance" | "financial" | "purchase" => {
+            &["financial_transaction"]
+        }
+        "chat" | "chats" | "conversation" | "conversations" | "ai_conversation" => {
+            &["app_chat", "app_chat_message"]
+        }
+        "page" | "pages" | "note" | "notes" => &["app_page"],
+        // Already a real ontology name → pass through; else it maps to nothing.
+        other => {
+            if virtues_registry::ontologies::get_ontology(other).is_some() {
+                return vec![other.to_string()];
+            }
+            &[]
+        }
+    };
+    mapped.iter().map(|s| s.to_string()).collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::normalize_domain;
+
+    #[test]
+    fn friendly_aliases_map_to_real_ontologies() {
+        assert_eq!(normalize_domain("document"), vec!["uploaded_document"]);
+        assert_eq!(normalize_domain("PDF"), vec!["uploaded_document"]);
+        assert_eq!(normalize_domain("calendar"), vec!["calendar_event"]);
+        assert_eq!(
+            normalize_domain("chat"),
+            vec!["app_chat", "app_chat_message"]
+        );
+    }
+
+    #[test]
+    fn real_ontology_names_pass_through() {
+        assert_eq!(normalize_domain("uploaded_document"), vec!["uploaded_document"]);
+    }
+
+    #[test]
+    fn hallucinated_domains_drop_to_nothing() {
+        // The exact failure seen on the box: a made-up ontology name must
+        // resolve to nothing (→ caller searches everything, not zero).
+        assert!(normalize_domain("data_content_document").is_empty());
+        assert!(normalize_domain("nonsense").is_empty());
     }
 }

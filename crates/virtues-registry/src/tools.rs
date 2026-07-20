@@ -359,7 +359,12 @@ Think of it this way:
 - semantic_search = "find things ABOUT X" (meaning-based)
 - sql_query = "count/sum/filter X" (structure-based)
 
-Searchable domains: email, message, calendar, document, ai_conversation, transaction, bookmark
+Searchable domains: document (uploaded PDFs/files), email, message, calendar, chat, transaction, transcription, page.
+
+IMPORTANT: `domains` is an OPTIONAL narrowing filter. OMIT it to search everything —
+including the user's uploaded documents. When the conversation is grounded in a
+notebook, ALWAYS omit `domains`: the notebook already scopes the results, and an
+extra domain filter will wrongly exclude the notebook's materials.
 
 Returns ranked results with title, preview, author, timestamp, and a similarity score.
 Use sql_query with the returned record_ids to get full details."#.to_string(),
@@ -374,7 +379,7 @@ Use sql_query with the returned record_ids to get full details."#.to_string(),
                 "domains": {
                     "type": "array",
                     "items": { "type": "string" },
-                    "description": "Optional filter: only search these domains (e.g., ['email', 'calendar'])"
+                    "description": "OPTIONAL narrowing filter — omit to search all sources (including uploaded documents). Valid: document, email, message, calendar, chat, transaction, transcription, page. In a notebook-grounded chat, OMIT this."
                 },
                 "date_after": {
                     "type": "string",
