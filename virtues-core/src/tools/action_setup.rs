@@ -16,6 +16,7 @@ use serde::Serialize;
 use sqlx::PgPool;
 
 use super::executor::{ToolContext, ToolError, ToolResult};
+use crate::scheduler::actions;
 
 const FACE_HTML_MAX: usize = 48 * 1024;
 const SCHEMA_SQL_MAX: usize = 16 * 1024;
@@ -147,14 +148,46 @@ pub async fn execute(
         })));
     }
 
-    // ---- 3. Materialize the folder ---------------------------------------
+    // ---- 3. Resolve the folder (collision-safe) --------------------------
     let root = crate::action_templates::actions_root();
+    // A slug is "ours to update" only if an existing folder's manifest has the
+    // same name. A different applet that merely collapses to the same slug
+    // gets a numeric suffix instead of silently overwriting it.
+    let slug = disambiguate_slug(&root, &slug, name);
     let dir = root.join("user").join(&slug);
     let existed = dir.join("manifest.toml").is_file();
+    let action_id = format!("action_user__{slug}");
 
     // Boundary predicate: schedule/trigger beyond manual+tool = unattended.
     let crosses_boundary = schedule.is_some()
         || triggers.iter().any(|t| matches!(t.as_str(), "api" | "webhook"));
+
+    // Re-gate logic: read the current row (if any) so an update can preserve
+    // the user's enable choice AND force-disable when a boundary is newly
+    // added to an already-enabled applet (the gate invariant).
+    let (was_boundary, was_enabled) = if existed {
+        match actions::get_action(pool, &action_id).await {
+            Ok(a) => (
+                a.cron_schedule.is_some()
+                    || a.triggers.iter().any(|t| t == "api" || t == "webhook"),
+                a.enabled,
+            ),
+            Err(_) => (false, false),
+        }
+    } else {
+        (false, false)
+    };
+    let re_gate = existed && crosses_boundary && !was_boundary;
+
+    // Manifest default_enabled: fresh → gate on boundary; re-gate → false;
+    // otherwise preserve the user's last choice (restore fidelity).
+    let default_enabled = if !existed {
+        !crosses_boundary
+    } else if re_gate {
+        false
+    } else {
+        was_enabled
+    };
 
     let mut config = toml::value::Table::new();
     if let Some(cid) = &chat_id {
@@ -172,10 +205,7 @@ pub async fn execute(
         owner: "ai",
         schedule: schedule.clone(),
         triggers: triggers.clone(),
-        // New applets that cross a boundary seed disabled — the gate.
-        // Updates preserve the row's current enabled (reconcile's non-user
-        // branches never touch `enabled` after insert).
-        default_enabled: !crosses_boundary,
+        default_enabled,
         condition: condition.clone(),
         until: until.clone(),
         agent: agent.to_string(),
@@ -183,6 +213,20 @@ pub async fn execute(
     };
     let manifest_toml = toml::to_string_pretty(&manifest)
         .map_err(|e| ToolError::ExecutionFailed(format!("manifest serialize failed: {e}")))?;
+
+    // ---- 4. Apply schema FIRST, then write the folder --------------------
+    // Ordering matters: if the schema apply fails, no folder is written, so a
+    // later global reconcile can't promote an orphan row whose tables were
+    // never created. schema.sql is idempotent, so re-running is safe.
+    if let Some(ddl) = &schema_sql {
+        if let Err(e) = apply_schema_sql(pool, ddl).await {
+            return Ok(ToolResult::success(serde_json::json!({
+                "status": "error",
+                "error": format!("schema apply failed: {e}"),
+            })));
+        }
+        let _ = crate::server::faces::ensure_applet_db_grants(pool).await;
+    }
 
     std::fs::create_dir_all(&dir)
         .map_err(|e| ToolError::ExecutionFailed(format!("mkdir failed: {e}")))?;
@@ -200,25 +244,28 @@ pub async fn execute(
             .map_err(|e| ToolError::ExecutionFailed(format!("face write failed: {e}")))?;
     }
 
-    // ---- 4. Apply the schema + reconcile (one door, mutexed) --------------
-    if let Some(ddl) = &schema_sql {
-        if let Err(e) = apply_schema_sql(pool, ddl).await {
-            // Folder stays (it passed check; apply failure here is environmental)
-            // but surface it loudly.
-            return Ok(ToolResult::success(serde_json::json!({
-                "status": "error",
-                "error": format!("schema apply failed: {e}"),
-            })));
-        }
-        // New applet_* schema exists → refresh face-reader grants.
-        let _ = crate::server::faces::ensure_applet_db_grants(pool).await;
-    }
-
     crate::action_templates::reload_and_reconcile(pool)
         .await
         .map_err(|e| ToolError::ExecutionFailed(format!("reconcile failed: {e}")))?;
 
-    let action_id = format!("action_user__{slug}");
+    // Explicit re-author re-arms a completed applet. Reconcile never
+    // un-archives (that would resurrect one-shots on every boot), so clear it
+    // here — this path is only ever reached by the user-driven authoring tool.
+    if existed {
+        let _ = actions::unarchive_action(pool, &action_id).await;
+    }
+
+    // Re-gate: reconcile deliberately preserves `enabled`, so an applet that
+    // just gained a boundary while enabled is still enabled — flip it off so
+    // the user must re-enable (the gate invariant holds on updates too).
+    if re_gate {
+        let _ = actions::update_action(
+            pool,
+            &action_id,
+            &serde_json::json!({ "enabled": false }),
+        )
+        .await;
+    }
 
     // ---- 5. Proposal ------------------------------------------------------
     let mut capabilities = vec!["reads your data (read-only SQL)".to_string()];
@@ -241,9 +288,9 @@ pub async fn execute(
         "name": name,
         "slug": slug,
         "folder": format!("user/{slug}"),
-        "enabled": !crosses_boundary,
-        "gate": if crosses_boundary {
-            "created DISABLED — the user must enable it on the applet page (tell them)"
+        "enabled": default_enabled,
+        "gate": if !default_enabled {
+            "DISABLED — the user must enable it on the applet page (tell them)"
         } else {
             "manual-only: enabled"
         },
@@ -277,6 +324,38 @@ fn opt_str(args: &serde_json::Value, key: &str) -> Option<String> {
 
 fn finding(field: &str, error: &str, suggestion: Option<&str>) -> serde_json::Value {
     serde_json::json!({ "field": field, "error": error, "suggestion": suggestion })
+}
+
+/// Return a slug that is either free, or already owned by an applet with the
+/// SAME name (an update). If the base slug is taken by a DIFFERENT applet
+/// (two names collapsing to one slug), append `_2`, `_3`, … so we never
+/// overwrite an unrelated applet.
+fn disambiguate_slug(root: &std::path::Path, base: &str, name: &str) -> String {
+    let owns = |slug: &str| -> Option<bool> {
+        // Some(true) = folder exists and its manifest name matches (ours to update)
+        // Some(false) = folder exists, different name (collision)
+        // None = free
+        let mf = root.join("user").join(slug).join("manifest.toml");
+        let text = std::fs::read_to_string(&mf).ok()?;
+        let existing_name = text
+            .parse::<toml::Value>()
+            .ok()
+            .and_then(|v| v.get("name").and_then(|n| n.as_str()).map(String::from))
+            .unwrap_or_default();
+        Some(existing_name == name)
+    };
+    match owns(base) {
+        None | Some(true) => return base.to_string(),
+        Some(false) => {}
+    }
+    for n in 2..=99 {
+        let cand = format!("{base}_{n}");
+        match owns(&cand) {
+            None | Some(true) => return cand,
+            Some(false) => continue,
+        }
+    }
+    base.to_string()
 }
 
 pub(crate) fn slugify(name: &str) -> String {
@@ -366,6 +445,16 @@ async fn run_schema_statements(pool: &PgPool, ddl: &str, commit: bool) -> Result
         .execute(&mut *tx)
         .await
         .map_err(|e| e.to_string())?;
+    // Empty search_path is the real guard (the textual check is belt-and-
+    // braces): every table name must be schema-qualified, so an unqualified
+    // `DROP TABLE data_location_points` or `CREATE TABLE evil (...)` resolves
+    // to no schema and errors instead of hitting `public`. Combined with
+    // validate_schema_text rejecting any qualified name outside applet_<slug>,
+    // there is no path for this DDL to touch data_*/wiki_*/app_*/public.
+    sqlx::query("SET LOCAL search_path = ''")
+        .execute(&mut *tx)
+        .await
+        .map_err(|e| e.to_string())?;
     for stmt in ddl.split(';') {
         let stmt = stmt.trim();
         if stmt.is_empty() {
@@ -435,11 +524,11 @@ fn estimate_runs_per_day(cron: &str) -> f64 {
         5 => (f[0], f[1], f[4]),
         _ => return 1.0,
     };
-    let per_day = if let Some(n) = min.strip_prefix("*/").and_then(|n| n.parse::<f64>().ok()) {
+    let per_day = if let Some(n) = min.strip_prefix("*/").and_then(|n| n.parse::<f64>().ok()).filter(|n| *n > 0.0) {
         1440.0 / n
     } else if min == "*" {
         1440.0
-    } else if let Some(n) = hour.strip_prefix("*/").and_then(|n| n.parse::<f64>().ok()) {
+    } else if let Some(n) = hour.strip_prefix("*/").and_then(|n| n.parse::<f64>().ok()).filter(|n| *n > 0.0) {
         24.0 / n
     } else if hour == "*" {
         24.0

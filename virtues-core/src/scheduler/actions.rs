@@ -833,6 +833,18 @@ pub fn derived_runtime(a: &Action) -> &'static str {
     }
 }
 
+/// Clear the archived state — used when a user explicitly re-authors a
+/// completed applet (re-arm). Distinct from reconcile, which must NOT
+/// un-archive (that would resurrect completed one-shots on every boot).
+pub async fn unarchive_action(db: &PgPool, action_id: &str) -> Result<()> {
+    sqlx::query("UPDATE app_applets SET archived_at = NULL WHERE id = $1")
+        .bind(action_id)
+        .execute(db)
+        .await
+        .map_err(|e| Error::Database(format!("unarchive_action failed: {e}")))?;
+    Ok(())
+}
+
 /// Archive an applet whose lifecycle completed: stamp `archived_at` and
 /// disable it (the scheduler only loads `enabled = TRUE`, so an archived
 /// applet stops waking without any scheduler-side special case).

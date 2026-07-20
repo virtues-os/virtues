@@ -35,7 +35,12 @@ pub async fn execute(pool: &PgPool, arguments: serde_json::Value) -> Result<Tool
     }
 
     let owned_sql = sql.trim_end_matches(';').to_string();
-    let wants_rows = owned_sql.to_lowercase().contains("returning");
+    // RETURNING as a whole word (not the substring inside e.g. a string
+    // literal "returning"). Word-boundary check on lowercased tokens.
+    let lower = owned_sql.to_lowercase();
+    let wants_rows = lower
+        .split(|c: char| !c.is_ascii_alphanumeric() && c != '_')
+        .any(|w| w == "returning");
 
     let mut tx = match pool.begin().await {
         Ok(tx) => tx,
@@ -44,6 +49,9 @@ pub async fn execute(pool: &PgPool, arguments: serde_json::Value) -> Result<Tool
     for setup in [
         "SET LOCAL ROLE virtues_applet_writer",
         "SET LOCAL statement_timeout = '5s'",
+        // Force fully-qualified names; unqualified writes can't fall through
+        // to public even on PG versions where PUBLIC holds create-in-public.
+        "SET LOCAL search_path = ''",
     ] {
         if let Err(e) = sqlx::query(setup).execute(&mut *tx).await {
             return Ok(fail(&format!("setup failed: {e}")));

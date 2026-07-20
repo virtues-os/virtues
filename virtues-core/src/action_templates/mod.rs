@@ -254,10 +254,12 @@ pub fn reconcile_lock() -> &'static tokio::sync::Mutex<()> {
     LOCK.get_or_init(|| tokio::sync::Mutex::new(()))
 }
 
-/// The one blessed way to apply on-disk changes: reload the catalog and
-/// reconcile rows, under the global reconcile mutex.
+/// The one blessed way to apply on-disk changes: reload the catalog then
+/// reconcile rows. Serialization lives inside `reconcile_templates` itself,
+/// so EVERY caller (this wrapper, the admin endpoint, git import, OAuth/
+/// pairing fan-out, boot) is serialized — not just this path. `reload_catalog`
+/// is an atomic in-memory swap and needs no lock.
 pub async fn reload_and_reconcile(db: &PgPool) -> Result<usize> {
-    let _guard = reconcile_lock().lock().await;
     reload_catalog();
     reconcile_templates(db).await
 }
@@ -506,6 +508,12 @@ pub fn list_sources_sorted() -> Vec<Source> {
 ///
 /// Returns the number of rows upserted.
 pub async fn reconcile_templates(db: &PgPool) -> Result<usize> {
+    // Serialize the whole reconcile against every other caller — the pass is
+    // global and non-transactional, so concurrent GC-deletes + upserts (a chat
+    // setup racing an OAuth callback / admin reconcile / boot) would interleave.
+    // The lock lives here, not in a wrapper, so bare callers are covered too.
+    let _guard = reconcile_lock().lock().await;
+
     let templates: ParsedTemplates = {
         let guard = catalog_lock().read().expect("catalog rwlock poisoned");
         guard.clone()
@@ -773,7 +781,6 @@ async fn upsert_row(
             condition      = EXCLUDED.condition,
             triggers       = EXCLUDED.triggers,
             until          = EXCLUDED.until,
-            archived_at    = NULL,
             updated_at     = now()
         "#
     } else {
