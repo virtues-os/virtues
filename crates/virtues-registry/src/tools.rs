@@ -84,7 +84,7 @@ pub fn default_tools() -> Vec<ToolConfig> {
         create_page_tool(),
         get_page_content_tool(),
         edit_page_tool(),
-        setup_action_tool(),
+        setup_applet_tool(),
         update_action_memory_tool(),
         list_actions_tool(),
         get_action_tool(),
@@ -872,64 +872,56 @@ Tips:
     }
 }
 
-/// Setup Action tool — turn current chat into a scheduled action
-fn setup_action_tool() -> ToolConfig {
+/// Setup Applet tool — materialize a chat-authored applet as a folder
+fn setup_applet_tool() -> ToolConfig {
     ToolConfig {
-        id: "setup_action".to_string(),
-        name: "Setup Action".to_string(),
-        description: "Create a scheduled action".to_string(),
-        llm_description: r#"Turn the current chat's intent into a saved action that runs on a schedule, on demand, or via a triggerable endpoint.
+        id: "setup_applet".to_string(),
+        name: "Setup Applet".to_string(),
+        description: "Create or update an applet".to_string(),
+        llm_description: r#"Turn the user's intent into an applet — a small thing that runs for them: a scheduled task, a one-off reminder, a self-ending monitor, a tracker with its own tables, or a dashboard face.
 
-Use this tool when:
-- User asks to set up a recurring task (e.g. "check Hacker News every hour", "write my examen at 6am")
-- User wants an automated action that runs periodically or a one-off future task
-- User wants a standing task they can trigger via API/webhook
+Use when the user asks for anything recurring, deferred, monitored, tracked, or dashboarded. Re-calling with the same name UPDATES that applet (this is also how you edit one). Before writing SQL, check the real schema first with sql_query over information_schema (tables data_* / wiki_*) — never reference tables you haven't confirmed exist.
+
+WHAT THE APPLET CAN DO AT RUNTIME (its prompt may only rely on these):
+- read data: sql_query (read-only) · semantic_search · web_search (queries only — it CANNOT fetch URLs/feeds)
+- deliver to the user: its run result posts back into this chat
+- keep notes: update_applet_memory · write pages: create_page / edit_page
+- own tables: anything you create via schema_sql (schema applet_<slug>)
+- its face reads data via virtues.query(sql) (read-only)
+If the ask needs a verb not listed (send email, fetch a URL, react to incoming messages): decompose it, or decline honestly and offer the nearest real alternative. Never write a prompt that pretends a tool exists.
+
+GATE: applets with a schedule/api/webhook trigger are created DISABLED — tell the user to review and enable on the applet page. You cannot enable them.
 
 Parameters:
-- name: Short descriptive name for the action (e.g. "HN Highlights"). One action per name per chat — reusing a name updates that action; a new name creates another alongside it.
-- agent: What the action should do each time it runs. Be specific and detailed.
-- cron_schedule: Cron expression for when to run (6-field: sec min hour day month dow). Schedules run in the user's LOCAL timezone, so write the hour the user means literally (no UTC conversion). Examples:
-  - "0 0 * * * *" = every hour
-  - "0 0 9 * * *" = daily at 9am local time
-  - "0 */30 * * * *" = every 30 minutes
-  - "0 0 9 * * 1-5" = weekday mornings at 9am local time
-- triggers: Optional array of allowed invocation sources: "cron", "manual", "tool", "api", "webhook". Defaults to ["cron","manual","tool"] when cron_schedule is set, otherwise ["manual","tool"]. Include "api" or "webhook" to expose the action as a triggerable endpoint.
-- condition: Optional SQL boolean expression evaluated before each run; the run is skipped when it is false. Power-user gate — omit unless the user explicitly asks for one.
-- until: Optional lifecycle. Omit = runs forever. "once" = archives itself after the first successful run (use for dated/one-off reminders). Any other value = a SQL boolean expression checked after each successful run; when true, the action archives itself (use for monitors that should end, e.g. "until the package arrives").
+- name (required): short name. slug = lowercased name with _ (e.g. "Calorie Tracker" -> calorie_tracker); its tables live in schema applet_<slug>.
+- description (required): ONE sentence of the user's intent — shown as the applet's headline.
+- agent (required): the runtime prompt. It runs with a kickoff message "Run your action instruction now." and NO chat history — write it self-contained.
+- schedule: 6-field cron (sec min hour day month dow), box-LOCAL timezone. "0 0 9 25 7 *" = July 25, 9am. Date-anchored one-offs: nearest future occurrence + until="once".
+- triggers: subset of cron/manual/tool/api/webhook. Defaults: with schedule ["cron","manual","tool"], else ["manual","tool"].
+- condition: SQL boolean gating each run (skipped when false). Local data only.
+- until: omit = forever · "once" = archive after first success · SQL boolean = archive when true after a success.
+- schema_sql: idempotent DDL, MUST target only schema applet_<slug> (start with CREATE SCHEMA IF NOT EXISTS applet_<slug>;).
+- face_html: a complete index.html for the applet's face (sandboxed iframe; include <link rel="stylesheet" href="virtues.css"> and <script src="virtues.js"></script>; read data with await virtues.query(sql); max 48KB).
+- limits: {max_llm_cost, timeout, max_runs} — protective defaults, user-editable.
 
-The action will post its results back into this chat each time it runs."#.to_string(),
+If the result status is "check_failed", fix the findings and call again — nothing was created."#.to_string(),
         parameters: serde_json::json!({
             "type": "object",
-            "required": ["name", "agent"],
+            "required": ["name", "description", "agent"],
             "properties": {
-                "name": {
-                    "type": "string",
-                    "description": "Short name for the action (e.g. 'HN Highlights', 'Daily Digest'). Reusing a name in this chat updates that action; a new name creates another."
-                },
-                "agent": {
-                    "type": "string",
-                    "description": "Detailed instruction for what the action should do each run"
-                },
-                "cron_schedule": {
-                    "type": "string",
-                    "description": "Cron schedule (6-field: sec min hour day month dow). E.g. '0 0 * * * *' for hourly"
-                },
+                "name": { "type": "string" },
+                "description": { "type": "string", "description": "One-sentence intent — the applet's headline" },
+                "agent": { "type": "string", "description": "Self-contained runtime prompt" },
+                "schedule": { "type": "string", "description": "6-field cron, box-local tz" },
                 "triggers": {
                     "type": "array",
-                    "items": {
-                        "type": "string",
-                        "enum": ["cron", "manual", "tool", "api", "webhook"]
-                    },
-                    "description": "Allowed invocation sources. Defaults based on cron_schedule; add 'api'/'webhook' to expose as an endpoint."
+                    "items": { "type": "string", "enum": ["cron", "manual", "tool", "api", "webhook"] }
                 },
-                "condition": {
-                    "type": "string",
-                    "description": "Optional SQL boolean expression gating each run (run skipped when false)"
-                },
-                "until": {
-                    "type": "string",
-                    "description": "Optional lifecycle: omit = forever; 'once' = archive after first success (one-off reminders); else a SQL boolean checked after each success — archive when true (self-ending monitors)"
-                }
+                "condition": { "type": "string", "description": "SQL boolean run gate" },
+                "until": { "type": "string", "description": "forever (omit) | 'once' | SQL boolean" },
+                "schema_sql": { "type": "string", "description": "Idempotent DDL in schema applet_<slug> only" },
+                "face_html": { "type": "string", "description": "Complete face index.html (48KB max)" },
+                "limits": { "type": "object", "description": "{max_llm_cost, timeout, max_runs}" }
             }
         }),
         tool_type: ToolType::Builtin,
@@ -943,8 +935,8 @@ The action will post its results back into this chat each time it runs."#.to_str
 /// List actions — lightweight catalog for chat-driven discovery
 fn list_actions_tool() -> ToolConfig {
     ToolConfig {
-        id: "list_actions".to_string(),
-        name: "List Actions".to_string(),
+        id: "list_applets".to_string(),
+        name: "List Applets".to_string(),
         description: "List scheduled actions".to_string(),
         llm_description: r#"List the user's scheduled actions (both system and user-owned). Returns id, name, owner, enabled, cron_schedule, triggers, and last_run for each.
 
@@ -977,8 +969,8 @@ Optional filters:
 /// Get a single action's full details + recent runs
 fn get_action_tool() -> ToolConfig {
     ToolConfig {
-        id: "get_action".to_string(),
-        name: "Get Action".to_string(),
+        id: "get_applet".to_string(),
+        name: "Get Applet".to_string(),
         description: "Fetch a single action".to_string(),
         llm_description: r#"Fetch a single action by id, including its full configuration (agent, cron_schedule, triggers, condition, memory, config) and its last 10 runs with status + summary.
 
@@ -1005,8 +997,8 @@ Use this when:
 /// Edit an existing action — partial update with system-owner guard
 fn edit_action_tool() -> ToolConfig {
     ToolConfig {
-        id: "edit_action".to_string(),
-        name: "Edit Action".to_string(),
+        id: "edit_applet".to_string(),
+        name: "Edit Applet".to_string(),
         description: "Update an action's configuration".to_string(),
         llm_description: r#"Update one or more fields on an existing action. Send only the fields you want to change as a `patch` object.
 
@@ -1059,8 +1051,8 @@ Use this when the user asks to:
 /// Delete a user-owned action
 fn delete_action_tool() -> ToolConfig {
     ToolConfig {
-        id: "delete_action".to_string(),
-        name: "Delete Action".to_string(),
+        id: "delete_applet".to_string(),
+        name: "Delete Applet".to_string(),
         description: "Delete a user-owned action".to_string(),
         llm_description: r#"Delete an action by id. Only user-owned actions can be deleted — system rows (built-in pipelines like day_summary_eod, embedding_index, trash_purge) are protected and will return an error. Tell the user to disable them instead.
 
@@ -1083,8 +1075,8 @@ This is destructive. Confirm with the user before calling unless the request is 
 /// Manually run an action
 fn run_action_tool() -> ToolConfig {
     ToolConfig {
-        id: "run_action".to_string(),
-        name: "Run Action".to_string(),
+        id: "run_applet".to_string(),
+        name: "Run Applet".to_string(),
         description: "Trigger an action to run now".to_string(),
         llm_description: r#"Manually dispatch an action to run immediately. The action must have `tool` in its triggers list.
 
@@ -1115,8 +1107,8 @@ Use when the user asks to "run it now" or "re-run yesterday's summary"."#.to_str
 /// Update action memory — persistent markdown scratchpad for actions
 fn update_action_memory_tool() -> ToolConfig {
     ToolConfig {
-        id: "update_action_memory".to_string(),
-        name: "Update Action Memory".to_string(),
+        id: "update_applet_memory".to_string(),
+        name: "Update Applet Memory".to_string(),
         description: "Update this action's persistent memory".to_string(),
         llm_description: r#"Save persistent memory that will be available on your next run.
 Use this to remember facts, preferences, or state across runs. The content is markdown.

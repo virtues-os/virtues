@@ -87,6 +87,10 @@ pub fn get_all_tool_definitions_for_llm() -> Vec<serde_json::Value> {
 /// (`update_action_memory`) stay.
 const ACTION_RUN_DENIED_TOOLS: &[&str] = &[
     "dispatch_subagents",
+    "setup_applet",
+    "edit_applet",
+    "delete_applet",
+    "run_applet",
     "setup_action",
     "edit_action",
     "delete_action",
