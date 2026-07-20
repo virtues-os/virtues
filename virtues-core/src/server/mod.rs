@@ -1,6 +1,7 @@
 //! HTTP server for data ingestion and API
 
 pub mod api;
+pub mod faces;
 pub mod webhook;
 pub mod yjs;
 
@@ -55,6 +56,12 @@ pub async fn run(client: Virtues, host: &str, port: u16) -> Result<()> {
     // scheduler resolves cron timezones. Idempotent. See docs/timezone-model.md.
     if let Err(e) = crate::api::profile::ensure_home_timezone(client.database.pool()).await {
         tracing::warn!("Failed to seed home_timezone: {}", e);
+    }
+
+    // Face-reader grants: idempotent default-deny SELECT surface for applet
+    // faces (data_*/wiki_* tables + applet_* schemas). Best-effort.
+    if let Err(e) = faces::ensure_face_reader_grants(client.database.pool()).await {
+        tracing::warn!("face reader grants failed: {e}");
     }
 
     // Eager identity bringup: ensure the loopback console device exists so the
@@ -234,6 +241,16 @@ pub async fn run(client: Virtues, host: &str, port: u16) -> Result<()> {
             get(api::get_server_status_handler),
         )
         .route("/internal/mark-ready", post(api::mark_server_ready_handler))
+        // Applet faces: sandboxed-iframe runtime. Token-based (the mint route
+        // rides normal transport auth; file/query routes are the only CORS-
+        // permissive surface, which is the inner wall of the face jail).
+        .route("/api/actions/:id/face-token", get(faces::mint_face_token_handler))
+        .route(
+            "/api/face/query",
+            post(faces::face_query_handler).options(faces::face_query_preflight),
+        )
+        .route("/face/:action_id/", get(faces::face_index_handler))
+        .route("/face/:action_id/*path", get(faces::face_file_handler))
         // Public page sharing (token-based access, no session needed)
         .route("/api/s/:token", get(api::get_shared_page_handler))
         .route(

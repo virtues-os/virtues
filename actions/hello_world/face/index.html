@@ -1,0 +1,59 @@
+<!doctype html>
+<html>
+<head>
+	<meta charset="utf-8" />
+	<title>Hello World</title>
+	<link rel="stylesheet" href="virtues.css" />
+	<style>
+		body { padding: 1.25rem; }
+		h1 { margin: 0 0 0.25rem; font-size: 1.125rem; }
+		.sub { color: var(--color-foreground-subtle); font-size: 0.8125rem; margin: 0 0 1rem; }
+		.tiles { display: flex; gap: 0.75rem; flex-wrap: wrap; }
+		.tile {
+			border: 1px solid var(--color-border);
+			border-radius: 8px;
+			padding: 0.75rem 1rem;
+			min-width: 8rem;
+			background: var(--color-surface-elevated);
+		}
+		.tile .n { font-size: 1.5rem; font-weight: 600; }
+		.tile .l { font-size: 0.75rem; color: var(--color-foreground-subtle); }
+		.err { color: var(--color-error); font-size: 0.8125rem; }
+	</style>
+</head>
+<body>
+	<h1>Hello from an applet face</h1>
+	<p class="sub">
+		Sandboxed iframe · opaque origin · read-only query bridge. This page is
+		<code>face/index.html</code> in the applet folder.
+	</p>
+	<div class="tiles" id="tiles"><span class="sub">querying…</span></div>
+
+	<script src="virtues.js"></script>
+	<script>
+		(async () => {
+			const tiles = document.getElementById('tiles');
+			try {
+				const [days] = await virtues.query(
+					"SELECT count(*)::int AS n FROM wiki_days"
+				);
+				const [events] = await virtues.query(
+					"SELECT count(*)::int AS n FROM data_calendar_event"
+				);
+				tiles.innerHTML = '';
+				for (const [n, label] of [
+					[days?.n ?? 0, 'days chronicled'],
+					[events?.n ?? 0, 'calendar events'],
+				]) {
+					const el = document.createElement('div');
+					el.className = 'tile';
+					el.innerHTML = `<div class="n">${n}</div><div class="l">${label}</div>`;
+					tiles.appendChild(el);
+				}
+			} catch (e) {
+				tiles.innerHTML = `<span class="err">${e.message}</span>`;
+			}
+		})();
+	</script>
+</body>
+</html>
