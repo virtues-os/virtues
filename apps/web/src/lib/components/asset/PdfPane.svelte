@@ -9,6 +9,15 @@
 	// IntersectionObserver; the download route's Range support (Phase 2) lets
 	// pdf.js fetch large documents piecewise instead of whole.
 	import Icon from "$lib/components/Icon.svelte";
+	import Markdown from "$lib/components/Markdown.svelte";
+	import {
+		listAnnotations,
+		createAnnotation,
+		updateAnnotation,
+		deleteAnnotation,
+		type Annotation,
+		type AnnotationRect,
+	} from "$lib/api/client";
 
 	let {
 		url,
@@ -180,10 +189,181 @@
 			await textLayer.render();
 			if (epoch !== renderEpoch) return;
 
-			container.replaceChildren(canvas, textDiv);
+			// Inject canvas + text layer into the inner render target, leaving
+			// the Svelte-managed highlight overlay (a sibling) untouched.
+			const target = container.querySelector<HTMLElement>(".pdf-render") ?? container;
+			target.replaceChildren(canvas, textDiv);
 		} catch {
 			renderedAt.delete(pageNum);
 		}
+	}
+
+	// ── Annotations (highlights + margin notes) ──────────────────────────────
+	// Highlights are stored as normalized page-space rects (0..1), so drawing
+	// them as percentage-positioned overlays is zoom-independent — no coupling
+	// to the canvas render epoch.
+	const HL_COLORS: Record<string, string> = {
+		yellow: "rgba(255, 214, 0, 0.38)",
+		green: "rgba(64, 209, 120, 0.34)",
+		blue: "rgba(80, 160, 255, 0.32)",
+		pink: "rgba(255, 120, 190, 0.34)",
+	};
+	function colorCss(c: string): string {
+		return HL_COLORS[c] ?? HL_COLORS.yellow;
+	}
+
+	let annotations = $state<Annotation[]>([]);
+	const annosByPage = $derived.by(() => {
+		const m = new Map<number, Annotation[]>();
+		for (const a of annotations) {
+			const p = a.page_num ?? 1;
+			(m.get(p) ?? m.set(p, []).get(p)!).push(a);
+		}
+		return m;
+	});
+
+	$effect(() => {
+		const fid = fileId;
+		annotations = [];
+		listAnnotations(fid)
+			.then((a) => (annotations = a))
+			.catch(() => {});
+	});
+
+	// Floating selection toolbar state.
+	let sel = $state<{
+		x: number;
+		y: number;
+		pageNum: number;
+		quote: string;
+		prefix: string;
+		suffix: string;
+		rects: AnnotationRect[];
+	} | null>(null);
+
+	// Open note popover for an existing highlight.
+	let activeAnno = $state<Annotation | null>(null);
+	let noteDraft = $state("");
+	let notePos = $state<{ x: number; y: number }>({ x: 0, y: 0 });
+
+	function clearSelectionUi() {
+		sel = null;
+	}
+
+	// On mouse-up, capture a text selection inside a page's text layer as
+	// normalized page-space rects + quote (+ context to disambiguate repeats).
+	function handleMouseUp(e: MouseEvent) {
+		const selection = window.getSelection();
+		if (!selection || selection.isCollapsed || selection.rangeCount === 0) {
+			return;
+		}
+		const quote = selection.toString().trim();
+		if (quote.length < 2) return;
+
+		const range = selection.getRangeAt(0);
+		// Which page? Walk up from the selection anchor to a .pdf-page.
+		let node: Node | null = range.startContainer;
+		let pageEl: HTMLElement | null = null;
+		while (node) {
+			if (node instanceof HTMLElement && node.classList.contains("pdf-page")) {
+				pageEl = node;
+				break;
+			}
+			node = node.parentNode;
+		}
+		if (!pageEl) return;
+		const pageNum = Number(pageEl.dataset.page);
+		const pageBox = pageEl.getBoundingClientRect();
+		if (pageBox.width === 0 || pageBox.height === 0) return;
+
+		// Client rects → normalized page-space.
+		const rects: AnnotationRect[] = [];
+		for (const r of range.getClientRects()) {
+			if (r.width < 1 || r.height < 1) continue;
+			rects.push({
+				x: (r.left - pageBox.left) / pageBox.width,
+				y: (r.top - pageBox.top) / pageBox.height,
+				w: r.width / pageBox.width,
+				h: r.height / pageBox.height,
+			});
+		}
+		if (rects.length === 0) return;
+
+		// Prefix/suffix context from the page's text-layer string.
+		const pageText = pageEl.querySelector(".pdf-text-layer")?.textContent ?? "";
+		const idx = pageText.indexOf(quote);
+		const prefix = idx > 0 ? pageText.slice(Math.max(0, idx - 30), idx) : "";
+		const suffix =
+			idx >= 0 ? pageText.slice(idx + quote.length, idx + quote.length + 30) : "";
+
+		sel = {
+			x: e.clientX,
+			y: e.clientY,
+			pageNum,
+			quote,
+			prefix,
+			suffix,
+			rects,
+		};
+	}
+
+	async function commitHighlight(color: string) {
+		if (!sel) return;
+		const s = sel;
+		sel = null;
+		window.getSelection()?.removeAllRanges();
+		try {
+			const created = await createAnnotation({
+				file_id: fileId,
+				page_num: s.pageNum,
+				quote_text: s.quote,
+				quote_prefix: s.prefix,
+				quote_suffix: s.suffix,
+				rects: s.rects,
+				color,
+			});
+			// Replace any existing (upsert) or append.
+			annotations = [...annotations.filter((a) => a.id !== created.id), created];
+		} catch {
+			/* transient — highlight not saved */
+		}
+	}
+
+	function openNote(a: Annotation, e: MouseEvent) {
+		e.stopPropagation();
+		activeAnno = a;
+		noteDraft = a.note_md;
+		notePos = { x: e.clientX, y: e.clientY };
+	}
+
+	async function saveNote() {
+		if (!activeAnno) return;
+		const id = activeAnno.id;
+		try {
+			const up = await updateAnnotation(id, { note_md: noteDraft });
+			annotations = annotations.map((a) => (a.id === id ? up : a));
+			activeAnno = up;
+		} catch {
+			/* keep draft */
+		}
+	}
+
+	async function setColor(color: string) {
+		if (!activeAnno) return;
+		const id = activeAnno.id;
+		const up = await updateAnnotation(id, { color }).catch(() => null);
+		if (up) {
+			annotations = annotations.map((a) => (a.id === id ? up : a));
+			activeAnno = up;
+		}
+	}
+
+	async function removeAnno() {
+		if (!activeAnno) return;
+		const id = activeAnno.id;
+		activeAnno = null;
+		await deleteAnnotation(id).catch(() => {});
+		annotations = annotations.filter((a) => a.id !== id);
 	}
 
 	// ── Navigation ──────────────────────────────────────────────────────────
@@ -276,6 +456,7 @@
 		bind:this={scroller}
 		bind:clientWidth={containerWidth}
 		onscroll={handleScroll}
+		onmouseup={handleMouseUp}
 	>
 		{#if loading}
 			<div class="pdf-status"><Icon icon="ri:loader-4-line" width="22" class="spin" /></div>
@@ -291,11 +472,77 @@
 					data-page={pageNum}
 					style="width: {pageWidth}px; height: {pageHeight}px;"
 					use:registerPage={pageNum}
-				></div>
+				>
+					<!-- canvas + text layer injected here by renderPage -->
+					<div class="pdf-render"></div>
+					<!-- Svelte-managed highlight overlay: normalized rects →
+					     percentage boxes, so zoom needs no re-render. -->
+					<div class="pdf-anno-layer">
+						{#each annosByPage.get(pageNum) ?? [] as a (a.id)}
+							{#each a.rects as r}
+								<!-- svelte-ignore a11y_no_static_element_interactions -->
+								<div
+									class="pdf-hl"
+									style="left:{r.x * 100}%; top:{r.y * 100}%; width:{r.w *
+										100}%; height:{r.h * 100}%; background:{colorCss(a.color)};"
+									title={a.note_md || 'Highlight'}
+									onclick={(e) => openNote(a, e)}
+								></div>
+							{/each}
+						{/each}
+					</div>
+				</div>
 			{/each}
 		{/if}
 	</div>
 </div>
+
+<!-- Selection toolbar: pick a color to highlight. -->
+{#if sel}
+	<div class="pdf-sel-toolbar" style="left:{sel.x}px; top:{sel.y + 10}px;">
+		{#each Object.keys(HL_COLORS) as c}
+			<button
+				class="pdf-sel-swatch"
+				style="background:{colorCss(c)};"
+				title="Highlight {c}"
+				aria-label="Highlight {c}"
+				onclick={() => commitHighlight(c)}
+			></button>
+		{/each}
+	</div>
+{/if}
+
+<!-- Note popover for an existing highlight. -->
+{#if activeAnno}
+	<!-- svelte-ignore a11y_no_static_element_interactions -->
+	<div class="pdf-note-scrim" onclick={() => (activeAnno = null)}></div>
+	<div class="pdf-note" style="left:{notePos.x}px; top:{notePos.y + 10}px;">
+		<div class="pdf-note-swatches">
+			{#each Object.keys(HL_COLORS) as c}
+				<button
+					class="pdf-sel-swatch"
+					class:active={activeAnno.color === c}
+					style="background:{colorCss(c)};"
+					aria-label="Set {c}"
+					onclick={() => setColor(c)}
+				></button>
+			{/each}
+			<div class="pdf-note-spacer"></div>
+			<button class="pdf-note-del" title="Delete highlight" onclick={removeAnno}>
+				<Icon icon="ri:delete-bin-line" width="13" />
+			</button>
+		</div>
+		<textarea
+			class="pdf-note-input"
+			bind:value={noteDraft}
+			placeholder="Add a note…"
+			onblur={saveNote}
+		></textarea>
+		{#if activeAnno.note_md && activeAnno.note_md === noteDraft}
+			<div class="pdf-note-preview"><Markdown content={activeAnno.note_md} /></div>
+		{/if}
+	</div>
+{/if}
 
 <style>
 	.pdf-pane {
@@ -369,6 +616,105 @@
 	.pdf-page :global(canvas) {
 		position: absolute;
 		inset: 0;
+	}
+
+	/* Highlight overlay — normalized-rect boxes, percentage-positioned so they
+	   track the page at any zoom. Below the text layer (z:1) so selection still
+	   works, but pointer-events on the boxes themselves to catch clicks. */
+	.pdf-anno-layer {
+		position: absolute;
+		inset: 0;
+		pointer-events: none;
+		z-index: 2;
+	}
+	.pdf-hl {
+		position: absolute;
+		pointer-events: auto;
+		cursor: pointer;
+		border-radius: 1px;
+		mix-blend-mode: multiply;
+		transition: filter 0.1s;
+	}
+	.pdf-hl:hover {
+		filter: brightness(0.92);
+	}
+
+	/* Selection color toolbar + note popover */
+	.pdf-sel-toolbar {
+		position: fixed;
+		z-index: 50;
+		display: flex;
+		gap: 4px;
+		padding: 5px 6px;
+		border-radius: 8px;
+		background: var(--color-surface-elevated, #222);
+		border: 1px solid var(--color-border);
+		box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4);
+	}
+	.pdf-sel-swatch {
+		width: 18px;
+		height: 18px;
+		border-radius: 50%;
+		border: 1px solid rgba(0, 0, 0, 0.2);
+		cursor: pointer;
+		padding: 0;
+	}
+	.pdf-sel-swatch.active {
+		outline: 2px solid var(--color-primary);
+		outline-offset: 1px;
+	}
+	.pdf-note-scrim {
+		position: fixed;
+		inset: 0;
+		z-index: 49;
+	}
+	.pdf-note {
+		position: fixed;
+		z-index: 50;
+		width: 260px;
+		padding: 8px;
+		border-radius: 10px;
+		background: var(--color-surface-elevated, #222);
+		border: 1px solid var(--color-border);
+		box-shadow: 0 6px 24px rgba(0, 0, 0, 0.45);
+	}
+	.pdf-note-swatches {
+		display: flex;
+		align-items: center;
+		gap: 4px;
+		margin-bottom: 6px;
+	}
+	.pdf-note-spacer {
+		flex: 1;
+	}
+	.pdf-note-del {
+		display: inline-flex;
+		padding: 3px;
+		border: none;
+		background: transparent;
+		color: var(--color-foreground-subtle);
+		cursor: pointer;
+		border-radius: 5px;
+	}
+	.pdf-note-del:hover {
+		color: var(--color-danger, #e5484d);
+		background: var(--ref-pill-bg);
+	}
+	.pdf-note-input {
+		width: 100%;
+		min-height: 54px;
+		resize: vertical;
+		padding: 6px 8px;
+		font-size: 0.8125rem;
+		border: 1px solid var(--color-border);
+		border-radius: 6px;
+		background: transparent;
+		color: var(--color-foreground);
+	}
+	.pdf-note-preview {
+		margin-top: 6px;
+		font-size: 0.8125rem;
+		color: var(--color-foreground-muted);
 	}
 
 	/* Minimal text layer (pdf.js positions spans via inline styles + the
