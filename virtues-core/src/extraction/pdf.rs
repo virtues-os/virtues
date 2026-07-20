@@ -26,12 +26,25 @@ impl PdfExtractor {
     }
 
     fn bind() -> Result<Bindings> {
-        // 1. Explicit override.
+        // 1. Explicit override (the installer writes this into the box env).
         if let Ok(path) = std::env::var("VIRTUES_PDFIUM_PATH") {
             return Pdfium::bind_to_library(&path)
                 .map_err(|e| Error::Other(format!("pdfium at VIRTUES_PDFIUM_PATH: {e}")));
         }
-        // 2. Next to the executable (appliance layout), then system paths.
+        // 2. The installer's drop location under the models dir (covers
+        //    upgraded boxes whose env file predates the pdfium line).
+        if let Ok(models_dir) = std::env::var("VIRTUES_MODELS_DIR") {
+            let dir = std::path::Path::new(&models_dir).join("pdfium");
+            for candidate in [
+                dir.join("libpdfium.so"),
+                Pdfium::pdfium_platform_library_name_at_path(&dir),
+            ] {
+                if let Ok(b) = Pdfium::bind_to_library(&candidate) {
+                    return Ok(b);
+                }
+            }
+        }
+        // 3. Next to the executable (appliance layout), then system paths.
         Pdfium::bind_to_library(Pdfium::pdfium_platform_library_name_at_path("./"))
             .or_else(|_| Pdfium::bind_to_system_library())
             .map_err(|e| {

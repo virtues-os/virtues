@@ -100,6 +100,9 @@ pub async fn run(cli: Config) -> Result<()> {
             ui::skip("Manual inference — skipping local sidecar provisioning")
         }
     }
+    // libpdfium — document text extraction. Mode-independent (CPU parse):
+    // every path gets it, Dragon and DIY alike.
+    install::install_pdfium(&cfg).await?;
     install::write_install_manifest(&cfg, &inference)?;
     install::write_env_file(&cfg, &inference, validation.as_ref()).await?;
     install::run_bringup(&cfg).await?;
