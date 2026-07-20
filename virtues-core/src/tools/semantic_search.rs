@@ -33,6 +33,7 @@ impl SemanticSearchTool {
         &self,
         arguments: serde_json::Value,
         notebook_id: Option<&str>,
+        scope_mode: crate::search::ScopeMode,
     ) -> Result<ToolResult, ToolError> {
         let query = arguments
             .get("query")
@@ -64,14 +65,47 @@ impl SemanticSearchTool {
                 date_before,
                 entities.as_deref(),
                 notebook_id,
+                scope_mode,
                 num_results,
             )
             .await
             .map_err(|e| ToolError::ExecutionFailed(format!("Semantic search failed: {}", e)))?;
 
+        // Document-chunk hits cite the FILE VIEWER at the right page (with a
+        // quote snippet for passage landing), not the raw record route — the
+        // researcher-plan trust loop. One batch lookup for all doc hits.
+        let doc_chunk_ids: Vec<String> = results
+            .iter()
+            .filter(|r| r.ontology == "uploaded_document")
+            .map(|r| r.record_id.clone())
+            .collect();
+        let doc_refs = self
+            .engine
+            .document_ref_info(&doc_chunk_ids)
+            .await
+            .unwrap_or_default();
+
         let result_json: Vec<serde_json::Value> = results
             .iter()
             .map(|r| {
+                let ref_route = match doc_refs.get(&r.record_id) {
+                    Some((file_id, _filename, page, quote)) => {
+                        let mut route = format!("/drive/{file_id}");
+                        let mut sep = '?';
+                        if let Some(p) = page {
+                            route.push_str(&format!("{sep}page={p}"));
+                            sep = '&';
+                        }
+                        if !quote.is_empty() {
+                            route.push_str(&format!(
+                                "{sep}q={}",
+                                urlencoding::encode(quote)
+                            ));
+                        }
+                        route
+                    }
+                    None => format!("/record/{}/{}", r.ontology, r.record_id),
+                };
                 serde_json::json!({
                     "ontology": r.ontology,
                     "record_id": r.record_id,
@@ -80,10 +114,11 @@ impl SemanticSearchTool {
                     "preview": r.preview,
                     "author": r.author,
                     "timestamp": r.timestamp,
-                    // Viewable route for this exact source record — opens the raw
-                    // record in the data viewer. Cite it inline (see the
-                    // tool-usage prompt). Every retrieved record is viewable.
-                    "ref": format!("/record/{}/{}", r.ontology, r.record_id),
+                    // Viewable route for this exact source — document chunks
+                    // open the file viewer at their page; everything else opens
+                    // the raw record in the data viewer. Cite it inline (see
+                    // the tool-usage prompt).
+                    "ref": ref_route,
                 })
             })
             .collect();

@@ -818,6 +818,7 @@
 				},
 				getPersona: () => selectedPersona,
 				getAgentMode: () => selectedAgentMode,
+				getChatMode: () => chatMode,
 				getTemporary: () => isGhost,
 			});
 			currentChatConversationId = conversationId;
@@ -1139,6 +1140,19 @@
 	// Agent mode and persona selection state - used for tool filtering on backend
 	let selectedAgentMode = $state<AgentModeId>('chat');
 	let selectedPersona = $state<string>('default');
+
+	// Retrieval scope for notebook chats: 'open' (whole graph, notebook items
+	// up-weighted) or 'scoped' (grounded — items only). Persisted per chat;
+	// meaningless (and hidden) outside a notebook.
+	let chatMode = $state<'open' | 'scoped'>('open');
+	$effect(() => {
+		const id = conversationId;
+		chatMode = localStorage.getItem(`chat-scope:${id}`) === 'scoped' ? 'scoped' : 'open';
+	});
+	function toggleChatMode() {
+		chatMode = chatMode === 'scoped' ? 'open' : 'scoped';
+		localStorage.setItem(`chat-scope:${conversationId}`, chatMode);
+	}
 
 	// Sync selected model with store (only on initial load)
 	$effect(() => {
@@ -1988,6 +2002,27 @@
 								{/each}
 							</div>
 						{/if}
+						{#if chatNotebookId}
+							<!-- Open vs Scoped: how this notebook shapes retrieval.
+							     Open = whole graph with the notebook up-weighted;
+							     Scoped = grounded in the notebook's items only. -->
+							<div class="scope-toggle-row max-w-3xl">
+								<button
+									class="scope-toggle"
+									class:scoped={chatMode === 'scoped'}
+									onclick={toggleChatMode}
+									title={chatMode === 'scoped'
+										? 'Grounded: answers only from this notebook\'s items. Click for Open.'
+										: 'Open: searches everything, this notebook weighted first. Click for Scoped.'}
+								>
+									<Icon
+										icon={chatMode === 'scoped' ? 'ri:focus-3-line' : 'ri:global-line'}
+										width="12"
+									/>
+									{chatMode === 'scoped' ? 'Scoped' : 'Open'}
+								</button>
+							</div>
+						{/if}
 						<ChatInput
 							allowEmptySubmit={stagedRefs.length > 0 || attachments.length > 0}
 							onAttach={addFiles}
@@ -2031,6 +2066,33 @@
 		border-top-color: var(--color-primary);
 		border-radius: 50%;
 		animation: spin 0.8s linear infinite;
+	}
+
+	/* Open/Scoped retrieval toggle (notebook chats only) */
+	.scope-toggle-row {
+		display: flex;
+		justify-content: flex-end;
+		margin: 0 auto 4px;
+		width: 100%;
+	}
+	.scope-toggle {
+		display: inline-flex;
+		align-items: center;
+		gap: 4px;
+		padding: 2px 8px;
+		font-size: 0.6875rem;
+		border-radius: 999px;
+		border: 1px solid var(--color-border);
+		background: transparent;
+		color: var(--color-foreground-subtle);
+		cursor: pointer;
+	}
+	.scope-toggle:hover {
+		color: var(--color-foreground);
+	}
+	.scope-toggle.scoped {
+		border-color: var(--color-primary);
+		color: var(--color-primary);
 	}
 
 	@keyframes spin {

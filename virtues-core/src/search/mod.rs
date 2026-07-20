@@ -26,5 +26,5 @@ pub mod reranker;
 
 pub use embedder::{get_embedder, Embedder, LocalEmbedder};
 pub use indexer::run_embedding_job;
-pub use query::SemanticSearchEngine;
+pub use query::{ScopeMode, SemanticSearchEngine};
 pub use reranker::{get_reranker, LocalReranker, RerankScore};
