@@ -50,7 +50,9 @@ layer, over the life-graph, on the box.
      for bookkeeping — never for viewer landing.
 4. **No whiteboard.** Heptabase's spatial canvas is out; its loop (highlight →
    excerpt → note) is in, targeting Pages.
-5. **No OCR** (unchanged). Scanned PDFs detected and labeled "no text layer".
+5. **OCR IS in v1 — classic tier on the NPU** (reversed 2026-07-20 after model
+   research; see D5). PP-OCRv5 det+rec via QNN on the Q6A Hexagon; scanned PDFs
+   flow `no_text → ocr → indexed`. The VLM parser tier stays out (see D5).
 6. **No Crossref in v1** (privacy: titles/DOIs of what you read — and unpublished
    drafts' titles — must not leak by default). Local metadata heuristics + a
    **manual metadata edit form**. Crossref returns later as explicit opt-in.
@@ -205,22 +207,42 @@ the Q6A; MuPDF excluded — AGPL). Checks folded into the build itself:
 - Add-to-Library affordances: drag-drop (D1) + an "add from Drive" picker —
   picker ships when trivial, else fast-follow.
 
-## OCR — position (asked and answered)
+## D5 — OCR on the NPU (in v1 · ~3–4 days, after D3 / alongside D4)
 
-**Not in v1, but the pipeline is OCR-ready by design.** `extraction_status =
-'no_text'` files ARE the OCR queue: the extractor sits behind a trait, so an OCR
-backend slots in without schema or pipeline changes, and scanned PDFs already
-render fine in PdfPane (they're images) — reading works today, only retrieval
-waits. When we do it (fast-follow spike, not now): candidates are `ocrs`
-(pure-Rust, CPU, could run on-box), tesseract (C dep, weak on academic layouts),
-or a permissioned cloud-vision path (same opt-in posture as Crossref). A
-QNN-hosted vision model on the Q6A NPU is a research project, not a plan item.
-The scanned-book/archival corpus (humanities researchers) is real demand — the
-v1 line is honesty ("no text layer") rather than silent emptiness.
+Decided 2026-07-20 after model research: OCR ships in v1 as the **classic
+det+rec tier on the Hexagon NPU** — not a VLM.
+
+- **Models: PP-OCRv5 mobile det+rec** (single-digit-M params, tens of MB —
+  ~100× smaller than the VLM doc-parsers, ~95% of the value for printed scans).
+  ONNX sourced via PaddleOCR/RapidOCR packaging.
+- **Runtime**: w8a8 ONNX through the **QNN path** — either ONNX Runtime's QNN
+  execution provider (QCS6490 explicitly supported) or lifted into
+  `virtues-qnnd` beside gte-small (same daemon, same QNN graph pattern — the
+  architecturally consistent option; decide by integration cost). **DIY/CPU
+  floor**: the same ONNX runs on CPU at a few hundred ms/page — OCR is not
+  appliance-exclusive, the NPU is the accelerated path.
+- **Pipeline**: the `no_text` queue is the OCR queue. pdfium (already the
+  extractor dep) rasterizes pages (~250 DPI) → det → rec → per-page text into
+  the normal chunk pipeline. `extraction_status` gains `ocr_pending|ocr_done`.
+- **Store normalized word boxes** with the OCR text — this is what a future
+  synthetic text layer needs (selectable scans, precise citation landing on
+  scanned pages; det+rec gives boxes for free, VLMs mostly don't). v1 citation
+  landing on OCR'd docs is page-level; box-based passage landing is a cheap
+  later upgrade because the data is already stored.
+- **Honest progress**: chips show `ocr — 41%` (1s/page-ish on NPU; a 300-page
+  scan takes minutes and must never look stuck).
+- **Named non-goal — the VLM parser tier** (vision-language models: an LLM with
+  an image encoder that *writes out* the page — tables/math/handwriting/layout).
+  Current leaders: PaddleOCR-VL-0.9B/1.6 (OmniDocBench SOTA), Surya 2 (650M —
+  the one to watch for a future CPU-cron tier), DeepSeek-OCR, OCRFlux-3B.
+  None fit the QCS6490 NPU (they target 8-Gen-2-class silicon and up); future
+  paths are CPU cron, a permissioned-cloud lane (Crossref posture), or beefier
+  box hardware. Not v1.
 
 ## Explicit non-goals (v1)
 
-Whiteboard/spatial canvas · OCR · Crossref/network metadata enrichment (opt-in
+Whiteboard/spatial canvas · VLM document-parser tier (see D5 — classic-tier OCR
+IS in v1) · Crossref/network metadata enrichment (opt-in
 later) · URL/YouTube snapshot ingestion (separate lane) · Zotero/BibTeX importer
 (fast-follow; schema is receiver-ready) · literature discovery (Elicit's corpus) ·
 audio overviews / studio artifacts · auto-NER concept maps (prose ER paused) ·
