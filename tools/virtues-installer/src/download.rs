@@ -104,26 +104,43 @@ pub async fn download_binary(cfg: &mut InstallConfig, arch: &str) -> Result<()> 
     if tmpdir.path().join("BUILD.json").is_file() {
         let _ = fs::copy(tmpdir.path().join("BUILD.json"), slot.join("BUILD.json"));
     }
-    // Directories.
-    for name in ["web", "actions", "actions-bin"] {
-        let src = tmpdir.path().join(name);
-        if src.is_dir() {
-            if name == "actions-bin" {
-                // Compiled action executables need their exec bits.
-                let dst = slot.join(name);
-                fs::create_dir_all(&dst)?;
-                for entry in fs::read_dir(&src)? {
-                    let entry = entry?;
-                    if entry.file_type()?.is_file() {
-                        install_executable(&entry.path(), &dst.join(entry.file_name()))?;
+    // Directories. Each is staged under a canonical SLOT name from whichever
+    // tarball dir exists — the actions→applets rename changed the tarball dir
+    // names (applets/ + applets-bin/), and an installer that only knew the old
+    // names would stage NOTHING from a renamed tarball, leaving a box with no
+    // cron actions at all. Prefer the new name, fall back to the legacy one.
+    let staged_bins;
+    {
+        // (canonical slot name, tarball candidate names in preference order, exec?)
+        let dirs: [(&str, &[&str], bool); 3] = [
+            ("web", &["web"], false),
+            ("applets", &["applets", "actions"], false),
+            ("applets-bin", &["applets-bin", "actions-bin"], true),
+        ];
+        let mut applets_bin_staged = false;
+        for (canonical, candidates, is_exec) in dirs {
+            let src = candidates
+                .iter()
+                .map(|c| tmpdir.path().join(c))
+                .find(|p| p.is_dir());
+            match src {
+                Some(src) if is_exec => {
+                    // Compiled action executables need their exec bits.
+                    let dst = slot.join(canonical);
+                    fs::create_dir_all(&dst)?;
+                    for entry in fs::read_dir(&src)? {
+                        let entry = entry?;
+                        if entry.file_type()?.is_file() {
+                            install_executable(&entry.path(), &dst.join(entry.file_name()))?;
+                        }
                     }
+                    applets_bin_staged = true;
                 }
-            } else {
-                copy_dir_all(&src, &slot.join(name))?;
+                Some(src) => copy_dir_all(&src, &slot.join(canonical))?,
+                None => ui::warn(&format!("{canonical}/ not in tarball — skipped")),
             }
-        } else {
-            ui::warn(&format!("{name}/ not in tarball — skipped"));
         }
+        staged_bins = applets_bin_staged;
     }
     ui::ok(&format!("Staged release slot {slot_id}"));
 
@@ -137,7 +154,12 @@ pub async fn download_binary(cfg: &mut InstallConfig, arch: &str) -> Result<()> 
     atomic_flip(&share, &slot)?;
     let current = share.join("current");
     force_symlink(&current.join("web"), &share.join("web"))?;
-    force_symlink(&current.join("actions"), &share.join("actions"))?;
+    // Applet dir routing under BOTH the new and legacy well-known names, so the
+    // runtime resolves it whether the box env points at VIRTUES_APPLETS_DIR
+    // (share/virtues/applets) or the legacy VIRTUES_ACTIONS_DIR
+    // (share/virtues/actions) — both land on the slot's `applets/`.
+    force_symlink(&current.join("applets"), &share.join("applets"))?;
+    force_symlink(&current.join("applets"), &share.join("actions"))?;
     force_symlink(&current.join("virtues"), &cfg.binary_path())?;
     if has_llama {
         force_symlink(&current.join("llama-server"), &cfg.llama_binary_path())?;
@@ -145,7 +167,11 @@ pub async fn download_binary(cfg: &mut InstallConfig, arch: &str) -> Result<()> 
     if has_qnnd {
         force_symlink(&current.join("virtues-qnnd"), &cfg.qnnd_binary_path())?;
     }
-    force_symlink(&current.join("actions-bin"), &cfg.actions_bin_dir())?;
+    if staged_bins {
+        // The bin dir is a single filesystem path (libexec/virtues) regardless
+        // of the env var name, so one symlink serves both schemes.
+        force_symlink(&current.join("applets-bin"), &cfg.actions_bin_dir())?;
+    }
     ui::ok(&format!("Activated {slot_id} (current → releases/{slot_id})"));
 
     // Keep current + one previous; prune the rest.
