@@ -35,19 +35,70 @@ Kotlin/native collector halves can land later without rework.
   macOS/Windows/Linux, **wrong on Android** (needs the Tauri path API). iOS uses
   a Keychain bridge; Android will fall back to the file store initially.
 
-## Central decision: one reach path for all three new platforms
+## Central decision: one reach path for ALL platforms (incl. macOS)
 
-For the view-only milestone, run the reach proxy **in-process** everywhere:
+Run the reach proxy **in-process everywhere** — macOS included. The reason to
+special-case macOS turned out to be **obsolete**:
 
-- **Android** — mandatory (no sidecars on Android). Already the mobile `lib.rs`
-  path.
-- **Windows / Linux** — *choose* in-process over porting the sidecar. Since
-  view-only doesn't need the proxy to outlive the app, in-process deletes an
-  entire category of work: no per-platform service install, no
-  `reconcile_helpers`, and no Windows rename-over-running-exe problem.
-- **macOS** — leave the existing sidecar path untouched (its collector already
-  depends on it). The desktop `main.rs` keeps macOS on the sidecar; Windows/Linux
-  take the in-process branch.
+- The macOS collector daemon was migrated to reach the box **directly over iroh**
+  (`apps/mac-source`, July 5 — `BoxTransport` via `VirtuesIrohMac.xcframework`).
+  `Config.swift`: `VIRTUES_API_URL`/`:7117` is used **only for the one-time
+  pair/consume**; "everything after goes over iroh."
+- So `:7117` now serves **only the app's own webview** — which only exists while
+  the app is open. Nothing needs the proxy to outlive the app.
+- The `install_helpers` doc comment claiming "the collector uploads through
+  `:7117`" (and "tunnels over WireGuard") is **stale** — it predates the iroh
+  collector migration.
+
+Therefore in-process is correct on every platform:
+
+- **Android** — mandatory (no sidecars). Already the mobile `lib.rs` path.
+- **Windows / Linux** — in-process; no service install, no `reconcile_helpers`,
+  no Windows rename-over-running-exe problem.
+- **macOS** — **migrate to in-process too (see Phase 0)** and retire the proxy
+  sidecar. Note there are *two* macOS sidecars: `virtues-client` (the proxy —
+  retired here) and `virtues-collector` (the collector daemon — **kept**; it
+  still needs FDA/Accessibility and 24/7 background, unchanged and out of scope).
+
+## Phase 0 — retire the macOS proxy sidecar (do first)
+
+Lay the unified foundation before porting anything. This is the highest-leverage
+cleanup and it de-risks every downstream workstream, because after it there is
+**one** reach path, not a macOS fork.
+
+- Serve `:7117` **in-process** in the desktop app (`reach.ensure_serving()` at
+  launch, *before* the box-session probe — mirrors the mobile `lib.rs` order).
+- **Delete:** `install_helpers` / `uninstall_helpers` (the `virtues-client
+  install` LaunchAgent — note the current app installs the proxy as a **durable**
+  `com.virtues.client` agent, `RunAtLoad`+`KeepAlive`, not an app-session child),
+  the `virtues-client` half of `reconcile_helpers` (+ its `launchctl kickstart` /
+  `copy_executable` / exe-swap machinery), the `virtues-client` entry in
+  `externalBin`, and the sidecar-probe assumptions in the launch flow.
+- **Migration teardown (must-do, or it bites silently):** on first run of the
+  in-process build, actively `launchctl bootout` + remove the already-installed
+  `com.virtues.client` LaunchAgent. Existing users have it running durably; if
+  left, it (a) orphans forever and (b) squats `:7117`, colliding with the app's
+  new in-process bind on the same port. This is the one step that fails quietly
+  if skipped.
+- **Keep:** `virtues-collector` (the collector daemon) and *its* half of
+  `reconcile_helpers` + `install_collector`. Point `install_collector`'s
+  one-time consume at the in-process `:7117` (up during "Turn on this Mac" since
+  the app is open) or directly at the box origin.
+- **Why retiring the proxy is safe for background collection:** the collector is
+  its **own** iroh peer — it embeds `VirtuesIrohMac.xcframework` and uploads via
+  `BoxTransport.send` → `IrohTransport.dial` (`Uploader.swift:25`), and runs as an
+  independent LaunchAgent (`RunAtLoad`+`KeepAlive`). It does **not** route uploads
+  through `:7117`; that env var is used only for the one-time pairing consume. So
+  the collector keeps sending over iroh with the app quit — it never depended on
+  the app's proxy. (The collector and app are deliberately *separate paired
+  devices*; they should not share one reach client.)
+- **Risk to respect:** this touches the **shipping** macOS app. It's the correct
+  foundation but a real migration, not a config tweak — test the full launch
+  matrix `pair.html` already handles (paired / `#reset` / `#unreachable` /
+  `#repair`) plus the silent-reconnect path before shipping.
+
+The `virtues-client` CLI crate (`apps/desktop`) itself can stay for now (dev/
+debugging), just no longer installed or shelled-to by the app.
 
 **Leaving room for collectors:** keep the `reach` plugin as the single reach
 layer (already true), keep the shared `virtues_enqueue` outbox in place (already
@@ -57,21 +108,37 @@ nothing here forecloses it.
 
 ---
 
-## Workstream A — Desktop reach unification (shared prerequisite)
+## Workstream A — Desktop reach (folds into Phase 0 for macOS)
 
-Make the desktop `main.rs` serve the box **in-process on Windows/Linux** while
-leaving macOS on the sidecar.
+With Phase 0, **all** desktop platforms serve `:7117` in-process — no per-target
+fork. macOS just goes through Phase 0 first; Windows/Linux inherit the same path.
 
-1. Register the `reach` plugin in the desktop `Builder` (already a path dep in
-   `src-tauri/Cargo.toml`; just add `.plugin(tauri_plugin_reach::init())`).
-2. `#[cfg(target_os = "macos")]` → keep `install_helpers`/`virtues_client_command`
-   (sidecar `up`). `#[cfg(not(target_os = "macos"))]` → replace those calls with
-   `reach.ensure_serving()` and route pair/discover through the reach plugin's
-   commands instead of shelling to `virtues-client`.
-3. Confirm the connect shell: desktop uses `ui/pair.html` (not
-   `mobile-pair.html`) and does **not** set `__VIRTUES_MOBILE__`, so the desktop
-   sidebar chrome renders. Inject `__VIRTUES_BACKEND_ORIGIN__` from
-   `reach.loopback_url()` the same way `lib.rs` does.
+1. **Widen the `reach` dep to all desktop targets.** It is currently gated
+   `[target.'cfg(any(target_os = "ios", target_os = "android"))'.dependencies]`
+   in `src-tauri/Cargo.toml` — **not** a desktop dependency today. Extend the gate
+   to macOS + Windows + Linux, then `.plugin(tauri_plugin_reach::init())` in the
+   desktop `Builder`.
+2. Replace the sidecar calls (`install_helpers`, `virtues_client_command`) with
+   `reach.ensure_serving()` in-process — the same on every desktop OS (this is
+   the Phase 0 deletion, not a `cfg` fork).
+3. **Command-surface parity (the real frontend work).** The desktop connect
+   shell `ui/pair.html` speaks the sidecar vocabulary — `discover_servers`,
+   `pair_with_code`, `install_helpers`, `recheck_box`, `diagnose_box`,
+   `forget_pairing`. The reach plugin exposes a *different, smaller* set —
+   `plugin:reach|{pair, discover, reach_status, forget, drain_now}` — because
+   `status`/`ensure_serving` collapse what the sidecar split across
+   diagnose/recheck/install. Two options: (a) point Windows/Linux at a
+   **desktop-chrome variant of `mobile-pair.html`** (which already speaks reach
+   commands — cheapest), or (b) keep `pair.html` and add thin `#[cfg(not(macos))]`
+   wrapper commands in `main.rs` that forward the old names to `app.reach()`.
+   Recommend (a). Note the reach `discover` uses a **subnet scan, not mDNS**
+   (deliberate — Bonjour is flaky); behavior-equivalent on desktop LANs.
+4. **Frontend-loading model:** desktop loads the box-served UI directly
+   (`WebviewUrl::External("http://localhost:7117")`); mobile bundles the SPA and
+   hits the loopback as an API. Windows/Linux should follow the **desktop model**
+   (External loopback) — it works unchanged over the in-process reach and avoids
+   bundling. Inject `__VIRTUES_BACKEND_ORIGIN__` from `reach.loopback_url()` only
+   for the pre-paired shell.
 
 ## Workstream B — Windows + Linux (one workstream)
 
@@ -91,9 +158,16 @@ Config + gating + packaging. No collector, no service, no sidecar.
     "no tray" fallback.
   - `reconcile_helpers` / `copy_executable` — sidecar-only; compiled out on the
     in-process branch.
-- **Credential store:** `keyring` covers Windows Credential Manager + Linux
-  Secret Service; the reach `FileStore` fallback already covers headless/no-
-  keyring Linux.
+- **WebView runtime:** Windows needs **WebView2** (evergreen; NSIS bootstraps
+  it — a non-issue). Linux needs **`webkit2gtk` 4.1** present at runtime — a real
+  distro-version pain; the deb should declare it, the AppImage should bundle or
+  document it.
+- **Credential store:** the reach `FileStore` (`dirs::data_dir()`) already works
+  on Windows/Linux and is the store the in-process path uses — so `keyring` is
+  not on the critical path for views. (The sidecar's `keyring` use stays on
+  macOS.)
+- **Icons:** generate the `.ico` (Windows) and PNG set (Linux) with
+  `tauri icon <source.png>` — none exist yet.
 - **Updater:** Windows NSIS + `latest.json` + (ideally) Authenticode signing;
   Linux AppImage updater + its own `latest.json`. Acceptable to defer self-update
   to v1 and ship manual/store updates first.
@@ -107,13 +181,19 @@ Reuse the mobile `lib.rs`; add the Android shell; gate collectors off.
 
 - **Init:** `tauri android init` → generates `gen/android` (Gradle project) and
   the Android half of `tauri.conf`.
-- **Gate collectors to iOS for now.** `lib.rs` currently calls
-  `app.health().resume()`, `app.audio().resume()`, etc. unconditionally on
-  mobile. On Android these call `register_android_plugin("com.virtues.health",
-  "HealthPlugin")`, which **fails** — the Kotlin class doesn't exist. Wrap the
-  collector plugin registration + `resume()` calls in `#[cfg(target_os = "ios")]`
-  so Android boots with **only `reach`** active. This is the seam collectors slot
-  back into (un-gate + add `android/` Kotlin halves).
+- **Re-gate the collector deps to iOS-only (cleanest fix).** The collector
+  plugins are currently `[target.'cfg(any(ios, android))'.dependencies]`, so an
+  Android build would (a) compile all of them and (b) have `lib.rs` call their
+  `resume()` → `register_android_plugin("com.virtues.health", "HealthPlugin")`,
+  which **fails** (no Kotlin class). Narrow the collector deps to
+  `cfg(target_os = "ios")` and keep `reach` on `cfg(any(ios, android))` (+ the
+  desktop widening from A). Then the Android view compiles **only `reach`** and
+  never touches a missing collector — no dormant-registration failure, and no
+  "do the collector crates even build on Android?" risk. The collector `resume()`
+  calls in `lib.rs` also need `#[cfg(target_os = "ios")]` guards. Un-gate per
+  plugin as each `android/` Kotlin half lands — this is the collector seam.
+  (Health/audio crates showed no Apple-only Rust deps, so they *should* build on
+  Android when the time comes, but that stays unverified until attempted.)
 - **Storage:** point the reach `FileStore` at the Tauri `app_data_dir()` on
   Android instead of `dirs::data_dir()` (which is unreliable on Android). App-
   private storage is already sandboxed; Android Keystore hardening is a later
@@ -132,10 +212,42 @@ Reuse the mobile `lib.rs`; add the Android shell; gate collectors off.
 
 ## Sequencing
 
-1. **A — desktop reach unification** (in-process for non-macOS). Unblocks B.
+0. **Phase 0 — retire the macOS proxy sidecar**, moving `:7117` in-process on the
+   shipping app. Establishes the single reach path everything else reuses.
+1. **A — desktop reach** (now trivial post-Phase-0: widen the dep + pairing-shell
+   parity). Unblocks B.
 2. **B — Windows + Linux** config + gates + CI → two view apps ship.
-3. **C — Android** init + collector-gating + shell + CI → view app ships.
+3. **C — Android** init + collector re-gating + shell + CI → view app ships.
+
+(Lower-risk alternative if you'd rather not touch the shipping app first: run
+B and C on in-process, leave macOS on its sidecar, and do Phase 0 last. Costs you
+the two-path fork in the interim — see Open decision 4.)
 
 Each collector, later, is additive: Android gets `android/` Kotlin halves +
 un-gating; Windows/Linux get a desktop collector story (daemon or plugin halves)
 against the same `virtues_enqueue` outbox that already exists.
+
+## Open decisions (need a call before/at implementation)
+
+1. **Tray on Windows/Linux?** The macOS tray exists largely to show *collector*
+   status. A view-only app has only box status + updater to show. Recommend
+   **shipping windowed-only for v1** (skip the tray, its
+   `libayatana-appindicator` dep, and the GNOME no-tray fallback) — add it back
+   with the desktop collector.
+2. **Self-update now or later?** Per-platform updaters (Windows NSIS + latest.json
+   + Authenticode; Linux AppImage-only) are real work. Recommend **deferring to
+   manual/download for v1**, keeping the macOS updater as-is.
+3. **Pairing shell approach** — (a) desktop-chrome variant of `mobile-pair.html`
+   on reach commands (recommended, cheapest) vs (b) sidecar-name wrapper commands
+   in `main.rs`. See Workstream A.3.
+4. **Phase 0 timing / risk appetite** — retiring the macOS proxy sidecar is the
+   right foundation (one reach path, deletes the sidecar/reconcile/launchctl
+   machinery) but it modifies the **shipping** macOS app. Decision: do Phase 0
+   first (recommended — everything downstream gets simpler and proven), or ship
+   Windows/Linux/Android on in-process while leaving macOS on its working sidecar
+   and migrate macOS last (lower blast radius, but carries the two-path fork
+   longer). ~~macOS *must* keep the sidecar~~ — corrected: it needn't, the
+   collector is iroh-direct.
+5. **Unverified build assumptions** to settle by actually building, not planning:
+   iroh / `virtues-reach-client` on the Android target; `webkit2gtk` 4.1
+   availability on the Linux distros you care about.
