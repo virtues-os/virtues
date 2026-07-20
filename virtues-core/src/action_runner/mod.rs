@@ -389,6 +389,7 @@ async fn execute_prepared(
                 {
                     tracing::error!(action_id, error = %e, "complete_run failed after agent success");
                 }
+                maybe_archive_on_until(&deps.db, &action).await;
                 return ActionRunResult {
                     run_id: Some(run_id),
                     status: ActionRunStatus::Success,
@@ -411,11 +412,48 @@ async fn execute_prepared(
     {
         tracing::error!(action_id, error = %e, "complete_run failed at end of run");
     }
+    maybe_archive_on_until(&deps.db, &action).await;
     ActionRunResult {
         run_id: Some(run_id),
         status: ActionRunStatus::Success,
         summary,
         error: None,
+    }
+}
+
+// ============================================================================
+// Lifecycle
+// ============================================================================
+
+/// Post-success lifecycle check. `until` semantics: NULL/empty = forever;
+/// the literal `once` = archive after this (first) success; anything else =
+/// a SQL boolean, archive when it evaluates true. Evaluation reuses the
+/// hardened `eval_condition` path (read-only tx, timeout, local timezone).
+/// Failures are logged, never fatal — a broken `until` must not fail a run
+/// that already succeeded.
+async fn maybe_archive_on_until(db: &PgPool, action: &Action) {
+    let Some(until) = action.until.as_deref().map(str::trim) else {
+        return;
+    };
+    if until.is_empty() {
+        return;
+    }
+    let done = if until.eq_ignore_ascii_case("once") {
+        true
+    } else {
+        match eval_condition(db, until).await {
+            Ok(v) => v,
+            Err(e) => {
+                tracing::warn!(action_id = %action.id, error = %e, "until evaluation failed; not archiving");
+                false
+            }
+        }
+    };
+    if done {
+        tracing::info!(action_id = %action.id, "lifecycle complete (until met); archiving");
+        if let Err(e) = actions::archive_action(db, &action.id).await {
+            tracing::error!(action_id = %action.id, error = %e, "archive_action failed");
+        }
     }
 }
 

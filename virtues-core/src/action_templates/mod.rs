@@ -84,12 +84,23 @@ struct Template {
     owner: String,
     #[serde(default)]
     triggers: Vec<String>,
-    #[serde(default)]
+    /// Cron seed for the live `cron_schedule` value (SQL-owned after seeding).
+    /// Canonical manifest key is `schedule`; `default_cron` accepted as the
+    /// legacy spelling.
+    #[serde(default, alias = "schedule")]
     default_cron: Option<String>,
     #[serde(default = "default_true")]
     default_enabled: bool,
     #[serde(default)]
     condition: Option<String>,
+    /// Lifecycle: absent = forever · `"once"` = archive after first success ·
+    /// SQL boolean = archive when true (evaluated post-success).
+    #[serde(default)]
+    until: Option<String>,
+    /// Command applets: run as a long-lived supervised service instead of
+    /// fork-per-trigger (replaces `runtime = "service"`).
+    #[serde(default)]
+    supervise: bool,
     #[serde(default)]
     agent: Option<String>,
     #[serde(default)]
@@ -652,9 +663,9 @@ async fn upsert_row(
         r#"
         INSERT INTO app_actions (
             id, name, owner, agent, cron_schedule, enabled, config, condition,
-            triggers, credential_id, runtime, command, dir, device_id
+            triggers, credential_id, runtime, command, dir, device_id, until, supervise
         )
-        VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, $8, $9::jsonb, $10, $11, $12, $13, $14)
+        VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, $8, $9::jsonb, $10, $11, $12, $13, $14, $15, $16)
         ON CONFLICT(id) DO UPDATE SET
             dir            = EXCLUDED.dir,
             device_id      = EXCLUDED.device_id,
@@ -664,9 +675,9 @@ async fn upsert_row(
         r#"
         INSERT INTO app_actions (
             id, name, owner, agent, cron_schedule, enabled, config, condition,
-            triggers, credential_id, runtime, command, dir, device_id
+            triggers, credential_id, runtime, command, dir, device_id, until, supervise
         )
-        VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, $8, $9::jsonb, $10, $11, $12, $13, $14)
+        VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, $8, $9::jsonb, $10, $11, $12, $13, $14, $15, $16)
         ON CONFLICT(id) DO UPDATE SET
             name           = EXCLUDED.name,
             owner          = EXCLUDED.owner,
@@ -679,6 +690,8 @@ async fn upsert_row(
             command        = EXCLUDED.command,
             dir            = EXCLUDED.dir,
             device_id      = EXCLUDED.device_id,
+            until          = EXCLUDED.until,
+            supervise      = EXCLUDED.supervise,
             updated_at     = now()
         "#
     };
@@ -698,6 +711,8 @@ async fn upsert_row(
         .bind(&command_json)
         .bind(&template.dir)
         .bind(device_id)
+        .bind(&template.until)
+        .bind(template.supervise)
         .execute(db)
         .await?;
 

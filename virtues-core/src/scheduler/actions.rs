@@ -77,6 +77,15 @@ pub struct Action {
     pub command: Option<Vec<String>>,
     /// Manifest folder relative to the repo's `actions/` root.
     pub dir: String,
+    /// Lifecycle: NULL = forever · `"once"` = archive after first success ·
+    /// SQL boolean = archive when it evaluates true (checked post-success).
+    pub until: Option<String>,
+    /// Set when the lifecycle completed; archived applets also get
+    /// `enabled = FALSE` so the scheduler skips them naturally.
+    pub archived_at: Option<crate::types::Timestamp>,
+    /// Command applets: run as a long-lived supervised service (the old
+    /// `runtime = 'service'`) instead of fork-per-trigger.
+    pub supervise: bool,
     pub created_at: crate::types::Timestamp,
     pub updated_at: crate::types::Timestamp,
 }
@@ -801,9 +810,27 @@ pub fn action_from_row(row: &sqlx::postgres::PgRow) -> Result<Action> {
         runtime,
         command,
         dir: row.try_get("dir").unwrap_or_default(),
+        until: row.try_get("until").ok().flatten(),
+        archived_at: row.try_get("archived_at").ok().flatten(),
+        supervise: row.try_get("supervise").unwrap_or(false),
         created_at: row.try_get("created_at")?,
         updated_at: row.try_get("updated_at")?,
     })
+}
+
+/// Archive an applet whose lifecycle completed: stamp `archived_at` and
+/// disable it (the scheduler only loads `enabled = TRUE`, so an archived
+/// applet stops waking without any scheduler-side special case).
+pub async fn archive_action(db: &PgPool, action_id: &str) -> Result<()> {
+    sqlx::query(
+        "UPDATE app_actions SET archived_at = now(), enabled = FALSE \
+         WHERE id = $1 AND archived_at IS NULL",
+    )
+    .bind(action_id)
+    .execute(db)
+    .await
+    .map_err(|e| Error::Database(format!("archive_action failed: {e}")))?;
+    Ok(())
 }
 
 fn run_from_row(row: &sqlx::postgres::PgRow) -> Result<ActionRun> {

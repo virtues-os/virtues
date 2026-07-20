@@ -1,164 +1,227 @@
 {
-	"$schema": "https://json-schema.org/draft/2020-12/schema",
-	"$id": "https://virtues.com/schemas/manifest.json",
-	"title": "Virtues action manifest",
-	"description": "Schema for actions/<name>/manifest.toml. The folder name supplies id_prefix as `action_<folder>` if not set explicitly. See actions/AUTHORING.md for the user-facing guide.",
-	"type": "object",
-	"required": ["name", "owner"],
-	"properties": {
-		"name": {
-			"type": "string",
-			"description": "Human-readable name displayed in UIs."
-		},
-		"description": {
-			"type": "string",
-			"description": "One-sentence summary of what this action does."
-		},
-		"owner": {
-			"type": "string",
-			"enum": ["system", "user"],
-			"description": "system: shipped with Virtues; reconcile overwrites declarative fields. user: authored by user/LLM; INSERT-OR-IGNORE — preserved after first seed."
-		},
-		"runtime": {
-			"type": "string",
-			"enum": ["function", "service", "view"],
-			"default": "function",
-			"description": "function: fork-per-trigger CLI (stdin/stdout JSON). service: long-running supervised HTTP server. view: pure Svelte component, no server-side execution."
-		},
-		"command": {
-			"type": "array",
-			"items": {"type": "string"},
-			"description": "Argv to spawn (function = subprocess, service = supervised daemon). A bare command[0] resolves to a Cargo-built action binary under target/{debug,release}; anything else runs via PATH. Examples: [\"ios_healthkit\"], [\"python3\", \"main.py\"], [\"node\", \"server.js\"], [\"./build/handler\"]."
-		},
-		"triggers": {
-			"type": "array",
-			"items": {
-				"type": "string",
-				"enum": ["cron", "webhook", "manual", "tool"]
-			},
-			"description": "What can fire this action. webhook requires per_credential=true. view-runtime actions should set [] (never invoked server-side)."
-		},
-		"default_cron": {
-			"type": "string",
-			"description": "Cron expression (sec min hour dom month dow), e.g. \"0 0 7 * * *\" for 7am daily. Seeds cron_schedule on first reconcile; user edits via UI win after."
-		},
-		"default_enabled": {
-			"type": "boolean",
-			"default": true,
-			"description": "Whether this action is enabled when first seeded."
-		},
-		"per_credential": {
-			"type": "boolean",
-			"default": false,
-			"description": "When true, fan out one app_actions row per active credential of `source.id`. Required for webhook-triggered actions."
-		},
-		"source": {
-			"type": "object",
-			"properties": {
-				"id": {
-					"type": "string",
-					"description": "References a [[source]] entry in actions/sources.toml."
-				}
-			},
-			"required": ["id"],
-			"description": "Required when per_credential=true. Match credentials by source_id."
-		},
-		"agent": {
-			"type": "string",
-			"description": "Prompt for an LLM-driven action. When set with no command, the action runs as an agent loop (no subprocess)."
-		},
-		"condition": {
-			"type": "string",
-			"description": "SQL expression evaluated before each run; if false, run is skipped silently. Used to gate hourly-cron-but-only-fire-once-a-day actions."
-		},
-		"id_prefix": {
-			"type": "string",
-			"description": "Override the auto-derived `action_<folder>` id. Rare — change only if migrating an existing action that needs a stable id."
-		},
-		"config": {
-			"type": "object",
-			"description": "Free-form config that flows into app_actions.config JSON. Notable: [config.view] name = \"<applet>\" for view-runtime actions; [config.service] health_path / mem_mb for service-runtime actions; [config.image_url] for custom card hero illustrations.",
-			"properties": {
-				"view": {
-					"type": "object",
-					"properties": {
-						"name": {
-							"type": "string",
-							"description": "Folder under apps/web/src/lib/applets/<name>/ holding Card.svelte / Detail.svelte for this action."
-						}
-					}
-				},
-				"service": {
-					"type": "object",
-					"properties": {
-						"health_path": {
-							"type": "string",
-							"default": "/__health",
-							"description": "Path the supervisor GETs to confirm service readiness."
-						},
-						"mem_mb": {
-							"type": "integer",
-							"description": "Soft RSS cap (macOS-only watchdog). Absent on Linux for v1."
-						}
-					}
-				},
-				"image_url": {
-					"type": "string",
-					"description": "Optional path/URL for the TemplateCard hero illustration (e.g. /templates/morning-examen.png)."
-				}
-			},
-			"additionalProperties": true
-		}
-	},
-	"oneOf": [
-		{
-			"properties": {"runtime": {"const": "view"}},
-			"not": {"required": ["command"]}
-		},
-		{
-			"properties": {"runtime": {"enum": ["function", "service"]}}
-		}
-	],
-	"examples": [
-		{
-			"name": "Morning Examen",
-			"description": "Daily morning reflection.",
-			"owner": "user",
-			"runtime": "function",
-			"triggers": ["cron", "manual"],
-			"default_cron": "0 0 7 * * *",
-			"agent": "You are the user's morning reflection companion. ..."
-		},
-		{
-			"name": "iOS HealthKit",
-			"description": "Ingest HealthKit metrics from a paired iPhone.",
-			"owner": "system",
-			"runtime": "function",
-			"command": ["ios_healthkit"],
-			"triggers": ["webhook"],
-			"per_credential": true,
-			"source": {"id": "ios"}
-		},
-		{
-			"name": "Echo Service",
-			"description": "Long-running HTTP server demonstration.",
-			"owner": "system",
-			"runtime": "service",
-			"command": ["echo_service"],
-			"triggers": ["manual"],
-			"config": {
-				"service": {"health_path": "/__health"}
-			}
-		},
-		{
-			"name": "Hello World",
-			"description": "Pure-frontend Svelte applet.",
-			"owner": "user",
-			"runtime": "view",
-			"triggers": [],
-			"config": {
-				"view": {"name": "hello_world"}
-			}
-		}
-	]
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://virtues.com/schemas/manifest.json",
+  "title": "Virtues action manifest",
+  "description": "Schema for actions/<name>/manifest.toml. The folder name supplies id_prefix as `action_<folder>` if not set explicitly. See actions/AUTHORING.md for the user-facing guide.",
+  "type": "object",
+  "required": [
+    "name",
+    "owner"
+  ],
+  "properties": {
+    "name": {
+      "type": "string",
+      "description": "Human-readable name displayed in UIs."
+    },
+    "description": {
+      "type": "string",
+      "description": "One-sentence summary of what this action does."
+    },
+    "owner": {
+      "type": "string",
+      "enum": [
+        "system",
+        "user"
+      ],
+      "description": "system: shipped with Virtues; reconcile overwrites declarative fields. user: authored by user/LLM; INSERT-OR-IGNORE \u2014 preserved after first seed."
+    },
+    "runtime": {
+      "type": "string",
+      "enum": [
+        "function",
+        "service",
+        "view"
+      ],
+      "default": "function",
+      "description": "function: fork-per-trigger CLI (stdin/stdout JSON). service: long-running supervised HTTP server. view: pure Svelte component, no server-side execution."
+    },
+    "command": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "description": "Argv to spawn (function = subprocess, service = supervised daemon). A bare command[0] resolves to a Cargo-built action binary under target/{debug,release}; anything else runs via PATH. Examples: [\"ios_healthkit\"], [\"python3\", \"main.py\"], [\"node\", \"server.js\"], [\"./build/handler\"]."
+    },
+    "triggers": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "enum": [
+          "cron",
+          "webhook",
+          "manual",
+          "tool"
+        ]
+      },
+      "description": "What can fire this action. webhook requires per_credential=true. view-runtime actions should set [] (never invoked server-side)."
+    },
+    "default_cron": {
+      "type": "string",
+      "description": "Cron expression (sec min hour dom month dow), e.g. \"0 0 7 * * *\" for 7am daily. Seeds cron_schedule on first reconcile; user edits via UI win after. Legacy alias of `schedule`."
+    },
+    "default_enabled": {
+      "type": "boolean",
+      "default": true,
+      "description": "Whether this action is enabled when first seeded."
+    },
+    "per_credential": {
+      "type": "boolean",
+      "default": false,
+      "description": "When true, fan out one app_actions row per active credential of `source.id`. Required for webhook-triggered actions."
+    },
+    "source": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "References a [[source]] entry in actions/sources.toml."
+        }
+      },
+      "required": [
+        "id"
+      ],
+      "description": "Required when per_credential=true. Match credentials by source_id."
+    },
+    "agent": {
+      "type": "string",
+      "description": "Prompt for an LLM-driven action. When set with no command, the action runs as an agent loop (no subprocess)."
+    },
+    "condition": {
+      "type": "string",
+      "description": "SQL expression evaluated before each run; if false, run is skipped silently. Used to gate hourly-cron-but-only-fire-once-a-day actions."
+    },
+    "id_prefix": {
+      "type": "string",
+      "description": "Override the auto-derived `action_<folder>` id. Rare \u2014 change only if migrating an existing action that needs a stable id."
+    },
+    "config": {
+      "type": "object",
+      "description": "Free-form config that flows into app_actions.config JSON. Notable: [config.view] name = \"<applet>\" for view-runtime actions; [config.service] health_path / mem_mb for service-runtime actions; [config.image_url] for custom card hero illustrations.",
+      "properties": {
+        "view": {
+          "type": "object",
+          "properties": {
+            "name": {
+              "type": "string",
+              "description": "Folder under apps/web/src/lib/applets/<name>/ holding Card.svelte / Detail.svelte for this action."
+            }
+          }
+        },
+        "service": {
+          "type": "object",
+          "properties": {
+            "health_path": {
+              "type": "string",
+              "default": "/__health",
+              "description": "Path the supervisor GETs to confirm service readiness."
+            },
+            "mem_mb": {
+              "type": "integer",
+              "description": "Soft RSS cap (macOS-only watchdog). Absent on Linux for v1."
+            }
+          }
+        },
+        "image_url": {
+          "type": "string",
+          "description": "Optional path/URL for the TemplateCard hero illustration (e.g. /templates/morning-examen.png)."
+        }
+      },
+      "additionalProperties": true
+    },
+    "schedule": {
+      "type": "string",
+      "description": "Cron seed (6-field, seconds first, box-local timezone) for the live cron_schedule value. Canonical spelling; default_cron is the legacy alias."
+    },
+    "until": {
+      "type": "string",
+      "description": "Lifecycle: absent = forever; 'once' = archive after first successful run; any other value = SQL boolean checked after each success, archive when true."
+    },
+    "supervise": {
+      "type": "boolean",
+      "description": "Command applets: run as a long-lived supervised service instead of fork-per-trigger (replaces runtime='service')."
+    }
+  },
+  "oneOf": [
+    {
+      "properties": {
+        "runtime": {
+          "const": "view"
+        }
+      },
+      "not": {
+        "required": [
+          "command"
+        ]
+      }
+    },
+    {
+      "properties": {
+        "runtime": {
+          "enum": [
+            "function",
+            "service"
+          ]
+        }
+      }
+    }
+  ],
+  "examples": [
+    {
+      "name": "Morning Examen",
+      "description": "Daily morning reflection.",
+      "owner": "user",
+      "runtime": "function",
+      "triggers": [
+        "cron",
+        "manual"
+      ],
+      "default_cron": "0 0 7 * * *",
+      "agent": "You are the user's morning reflection companion. ..."
+    },
+    {
+      "name": "iOS HealthKit",
+      "description": "Ingest HealthKit metrics from a paired iPhone.",
+      "owner": "system",
+      "runtime": "function",
+      "command": [
+        "ios_healthkit"
+      ],
+      "triggers": [
+        "webhook"
+      ],
+      "per_credential": true,
+      "source": {
+        "id": "ios"
+      }
+    },
+    {
+      "name": "Echo Service",
+      "description": "Long-running HTTP server demonstration.",
+      "owner": "system",
+      "runtime": "service",
+      "command": [
+        "echo_service"
+      ],
+      "triggers": [
+        "manual"
+      ],
+      "config": {
+        "service": {
+          "health_path": "/__health"
+        }
+      }
+    },
+    {
+      "name": "Hello World",
+      "description": "Pure-frontend Svelte applet.",
+      "owner": "user",
+      "runtime": "view",
+      "triggers": [],
+      "config": {
+        "view": {
+          "name": "hello_world"
+        }
+      }
+    }
+  ]
 }

@@ -38,9 +38,19 @@ pub async fn list_actions(
     let enabled_filter = arguments.get("enabled").and_then(|v| v.as_bool());
     let trigger_filter = arguments.get("trigger").and_then(|v| v.as_str());
 
+    let include_archived = arguments
+        .get("include_archived")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
+
     let all = actions::get_all_actions(pool).await.map_err(map_err)?;
     let mut items = Vec::with_capacity(all.len());
     for a in all {
+        // Archived applets (lifecycle complete) are hidden by default —
+        // the list holds living things.
+        if a.archived_at.is_some() && !include_archived {
+            continue;
+        }
         if let Some(o) = owner_filter {
             if a.owner != o {
                 continue;
