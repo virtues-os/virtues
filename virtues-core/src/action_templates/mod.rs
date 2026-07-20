@@ -430,6 +430,37 @@ fn load_catalog() -> ParsedTemplates {
     }
 }
 
+/// Mirror an ai-owned applet's enabled flag into its manifest
+/// (`default_enabled`) so a DB rebuilt from disk restores the user's last
+/// choice. Best-effort — only chat-authored folders (`user/` namespace) are
+/// ever touched, and failures just log.
+pub fn mirror_enabled_to_manifest(action_id: &str, enabled: bool) {
+    let Some(dir) = dir_for_action_id(action_id) else {
+        return;
+    };
+    if !dir.starts_with("user/") {
+        return;
+    }
+    let path = actions_root().join(&dir).join("manifest.toml");
+    let Ok(text) = std::fs::read_to_string(&path) else {
+        return;
+    };
+    let Ok(mut doc) = text.parse::<toml::Value>() else {
+        return;
+    };
+    if let Some(table) = doc.as_table_mut() {
+        table.insert("default_enabled".into(), toml::Value::Boolean(enabled));
+        match toml::to_string_pretty(&doc) {
+            Ok(out) => {
+                if let Err(e) = std::fs::write(&path, out) {
+                    tracing::warn!(action_id, error = %e, "enabled mirror write failed");
+                }
+            }
+            Err(e) => tracing::warn!(action_id, error = %e, "enabled mirror serialize failed"),
+        }
+    }
+}
+
 /// Resolve the manifest folder (relative to `actions_root()`) that produced
 /// an action id. Matches the base id (`id_prefix`) and per-credential /
 /// per-device fan-out ids (`<id_prefix>_<anchor>`). Used by the face server
@@ -707,6 +738,15 @@ async fn upsert_row(
     //   user:   ON CONFLICT DO NOTHING. Factory defaults are seeded the first time
     //           the template is added; after that the row is fully owned by
     //           the user and reconcile is a no-op.
+    //
+    //   ai:     the third branch (authoring plan §E). The folder is written by
+    //           setup_applet, so COMPILED fields (name, agent, condition,
+    //           until, triggers, schedule) overwrite on reconcile — re-setup
+    //           IS the edit path and must propagate. OPERATIONAL state is
+    //           never touched: `enabled` (the gate lives there; the user
+    //           toggle mirrors back into the manifest for restore fidelity),
+    //           `memory`, and non-manifest config keys — manifest config
+    //           merges OVER existing config so runtime keys survive.
     let sql = if template.owner == "user" {
         r#"
         INSERT INTO app_applets (
@@ -716,6 +756,24 @@ async fn upsert_row(
         VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, $8, $9::jsonb, $10, $11, $12, $13, $14)
         ON CONFLICT(id) DO UPDATE SET
             device_id      = EXCLUDED.device_id,
+            updated_at     = now()
+        "#
+    } else if template.owner == "ai" {
+        r#"
+        INSERT INTO app_applets (
+            id, name, owner, agent, cron_schedule, enabled, config, condition,
+            triggers, credential_id, command, device_id, until, supervise
+        )
+        VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, $8, $9::jsonb, $10, $11, $12, $13, $14)
+        ON CONFLICT(id) DO UPDATE SET
+            name           = EXCLUDED.name,
+            agent          = EXCLUDED.agent,
+            cron_schedule  = EXCLUDED.cron_schedule,
+            config         = app_applets.config || EXCLUDED.config,
+            condition      = EXCLUDED.condition,
+            triggers       = EXCLUDED.triggers,
+            until          = EXCLUDED.until,
+            archived_at    = NULL,
             updated_at     = now()
         "#
     } else {

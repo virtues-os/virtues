@@ -487,6 +487,15 @@ pub async fn update_action(
         return Err(Error::NotFound(format!("Action not found: {action_id}")));
     }
 
+    // Restore fidelity for chat-authored applets: the user's enable/disable
+    // choice mirrors into the manifest's default_enabled, so a DB rebuilt
+    // from disk comes back in the last chosen state (authoring plan §E).
+    if current.owner == "ai" {
+        if let Some(enabled) = obj.get("enabled").and_then(|v| v.as_bool()) {
+            crate::action_templates::mirror_enabled_to_manifest(action_id, enabled);
+        }
+    }
+
     get_action(db, action_id).await
 }
 

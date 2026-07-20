@@ -194,7 +194,7 @@
 		if (file.is_folder) {
 			navigateToFolder(file.path);
 		} else {
-			handleDownload(file);
+			windowShellStore.openRouteBeside(`/drive/file_${file.id}`, file.filename);
 		}
 	}
 
