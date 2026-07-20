@@ -1,189 +1,204 @@
 # Applets — the overhaul plan
 
-> Status: **design, not built.** Captures decisions locked in discussion + open questions still to resolve. Supersedes the "actions" framing in [`architecture.md`](./architecture.md) at the *concept/UX* layer; the execution engine (manifest + reconcile + runner) stays.
+> Status: **design locked 2026-07-19, not built.** Supersedes the "actions" framing in [`architecture.md`](./architecture.md) at the concept/UX layer; the execution engine (manifest + reconcile + runner) stays. Decision history and research notes are in the appendices.
 
-## Thesis
+## What we are building
 
-The backend already did the hard consolidation: **one table (`app_actions`), one primitive.** A sync, a daemon, a dashboard, and an AI job are the same row with different fields set. Almost everything wrong today is the *concept and UX* stretched across that one primitive — a weak name, an ugly generic detail form, a four-way runtime taxonomy in the user's face, and an authoring path that can only make scheduled prompts.
+**A user-space systemd with an AI author.** One primitive (`app_actions`, one row = one applet), where a sync, a daemon, a dashboard, a reminder, and an AI job are the same row with different fields set. The AI turns chat intent into a small set of flat, per-field-validated values — a prompt, a cron, a SQL condition, an argv, an HTML face — which trusted, already-shipped machinery interprets. It is **not** a coding agent; real code is the power tier (Rust, off-box, git-linked).
 
-The fix is **more consolidation, not a split.** One noun, one list, one detail page, one authoring loop, one blessed stack, one distribution mechanism, one safety layer. What we're building, stated honestly:
+The honest technical comps, and what each contributes:
 
-> **A supervisor for small local programs + an intent→spec compiler that writes them.** The AI turns natural language into a small, typed, *validated spec* (a serde Rust enum over ~5 archetypes), which trusted, already-shipped Rust+Svelte machinery interprets. It is **not** a coding agent. A real coding agent (Claude Code in the terminal, or git-link) is the **power-user tier only**.
+| Comp | What we take |
+|---|---|
+| **systemd units** | The closest mirror: a unit file IS flat fields — `[Timer]`=cron, `ConditionPathExists=`=our SQL condition, `MemoryMax`/`CPUQuota`/`RuntimeMaxSec`=limits, `Restart=`+`StartLimitBurst`=crash-loop policy, `systemd-analyze verify`=`--check`, `systemctl status`=detail page, `journalctl`=run log. Applets are unit files humans (and models) can write. |
+| **K8s CronJob** | The vocabulary we were missing: `concurrencyPolicy` (overlap), `startingDeadlineSeconds` (missed-run), `backoffLimit`. |
+| **anacron / systemd `Persistent=`** | Catch-up semantics for a box that was asleep at 6am. |
+| **Android WorkManager** | Constraints-as-conditions, backoff policy — the mobile proof that flat declarative job specs cover consumer automation. |
+| **IFTTT / Shortcuts / HA** | ~90% of personal-app requests are NL → declarative config, not code. |
+| **Claude Artifacts** | Model-authored HTML in a sandboxed iframe is the proven face pattern. |
 
-The scope *is* the advantage, and it's bigger than "bounded codegen." The research (IFTTT, Zapier, Apple Shortcuts, Notion/Airtable, Glide/Retool, Val Town, v0) proves that ~90% of personal-app requests are **natural-language → declarative config, not code.** So the common case emits *data* (a rule / a dashboard spec / a prompt / a template binding), not a program — which means no compile, no build-toolchain wall, and mostly nothing to sandbox. Real code is confined to three narrow escape-hatch slots (a filter predicate, a bespoke sync transform, a novel view) and the power tier.
-
-### The archetype catalog (the "what")
-
-| Archetype | Example | Spec is… | Real code? |
-|---|---|---|---|
-| **Rule** (trigger→action) | "when Mom texts during work, auto-reply" | trigger + condition + action | No — IFTTT-style |
-| **Reflect** (scheduled) | "daily examen from my data" | schedule + data query + prompt + output sink | No — a prompt |
-| **View** (dashboard) | "custom homepage of xyz" | data query + component choice + props | No — inverted-trust generative UI |
-| **Tracker** (CRUD) | "track my calories" | schema + form + views | No — template |
-| **Sync** (pipeline) | "pull my X" | source + field-map | Only for novel transforms |
-| **Persona** (acts-in-my-voice) | "reply to Mom as me when busy" | identity + boundaries + exemplars-from-my-data + channel | No — a character sheet |
-
-Applet = a **typed Rust enum of archetypes**, each a small serde spec, validated/repaired on parse. The artifact is inert data the box owns, inspects, diffs, versions.
-
-### Keystones the reframe unlocks
-
-- **Views by inverted trust (v0/generative-UI's real lesson):** the model emits *(query + component choice + props)*, never Svelte. The code stays in the audited component library (`MovementMap`, timeline, charts — already shipped). This **dissolves the build-toolchain wall and the view-sandbox problem at once** — a dashboard is props rendered at runtime, no compile, no rebuild, no jail. Don't load views; render specs.
-- **Schema-grounded generation (Glide's move):** generate against the box's *real* `data_*` tables/columns/sample rows. The box *is* the data — the structural advantage no SaaS tool has.
-- **Per-call model routing (Apple's "Use Model"):** a first-class spec field, `box_local | hosted_frontier` per step; default local, escalation explicit and visible.
-- **Persona = a character sheet, not a program (Character.AI):** identity + boundaries + **exemplars auto-drawn from the owner's own messages** ("show, don't tell"), bound to a **channel** (the one concept worth stealing from Vercel eve). "Auto-reply to Mom" is the smallest instance.
-
-## Decisions locked
-
-- **Name: `Applet`** — one word, unit and thing. No two-tier "automations vs artifacts" split (that re-drew a line the schema erased). No separate word for the collection. `action`/`app_actions` stays as the internal/code word; **Applet** is the user-facing noun everywhere.
-  - **Re-litigated and re-confirmed 2026-07-19.** The namespace is picked over (IFTTT: Applets; Claude: Artifacts; Alexa: Skills + Routines; Apple: Shortcuts; HA: Automations). Rejected: **Artifact** (denotes inert output, not a thing that runs), **Instruments** (best semantic coverage — means-of-action + instrument-panel + document-that-enacts, plus the Rule of St. Benedict ch. 4 "Instruments of Good Works" lineage — but too long), **Practices** (see below), **Daemons** (techy, demons), agent-nouns like Keeper/Steward/Familiar (personhood fails for dashboards). Persona-panel finding: engineers name the mechanism (jobs/workers/units), contemplatives name the meaning (practices/offices/a rule), laypeople name only the *instance* ("the calorie thing") — no word wins all three camps, so the category noun just has to be unembarrassing in the nav. Applet wins by offending no one.
-  - **"Practices" survives as a collection, not the primitive:** the contemplative built-ins (examen, daily office, weekly review) are marketed in the gallery/starter surface as **Practices** — a curated set of applets. Honest to both the monastery and the meditation app; never a schema concept.
-  - Feature-level vocabulary reserved the same way: **vigil** is available as the friendly word for a watcher/trigger-shaped applet in UI copy, never a type.
-- **One primitive, one flat list**, sectioned only by `owner` → **"Yours" / "Built-in."** That's a filter, not a taxonomy of kinds.
-- **`runtime` stops being a type the user picks.** It collapses into two orthogonal *properties* every applet may have: does it do **background work** (scheduled / persistent / triggered) and does it have a **face** (UI). Zero, one, or both. `function` vs `service` is just a lifecycle knob; `view` is just "has a face."
-
-## Product layer (decided 2026-07-19)
-
-A second round of decisions, made from the user's side of the glass:
-
-- **Chat is the front door; authoring and adopting are the same primitive.** The core loop is conversational intent → applet: "remind me to X on date Y," "build a dashboard of heart rate vs. workouts," "a calorie app — I send a photo, it logs," "each morning before 6am, write my examen from my narrative identity + Catholic values + yesterday's data." The ~5% power-author (git-link, terminal) is the *same* primitive with the hood open — one paradigm serves both; no separate builder surface, no catalog-first bet.
-- **Lifecycle is a first-class property: `ephemeral` vs `persistent`.** A dated reminder is an applet that archives itself on completion (disable/archive-on-run); an examen runs forever. The AI infers lifecycle from intent; it's visible and flippable on the detail page. This kills the "applet graveyard" problem structurally — one-offs clean themselves up, so the list only holds living things.
-- **Owner grows a third value: `system | user | ai`.** Honest framing: applets are the box's **universal scheduler and job system**. The list default-hides `system` rows (a filter, not a wall) — `embedding_index` and `credential_refresh` are inspectable on demand because transparency is the brand, but they don't crowd the addiction-fighter's guardian out of view.
-- **Failure UX v1 = what exists + a "needs attention" strip.** Errors keep surfacing in the list's last-run status; add one strip at the top of the applets surface (and its homepage tile) for errored / hasn't-run-when-expected / credential-expired. No new alerting infrastructure in v1.
-- **Last-mile delivery is v2.** Pings/notifications route through `virtues-helpers` primitives so every applet gets them for free when they land; v2 is messaging-shaped (iMessage/text), not APNs-first. Do not design around APNs now.
-- **Explicitly out of scope by decision:** persona counterparty ethics and addiction-recovery duty-of-care framing (not product questions for now); sharing/app-store distribution (v2); output-surface strategy beyond today's chat/pages (v2, arrives with messaging).
-
-## Caps — per-applet limits (v1, a real differentiator)
-
-Researched the two closest personal-agent projects (2026-07): **neither enforces anything.**
-
-- **OpenClaw**: token counting, cost estimation, and context-size caps (`toolResultMaxChars` etc.) — observability only. The feature request for `maxTokensPerDay`-style budgets ([#58826](https://github.com/openclaw/openclaw/issues/58826)) was closed *not planned*; official guidance is "set a hard cap at your LLM provider." Sandbox = isolation, not metering.
-- **Hermes Agent**: no app-layer limits; documents four "spending lanes" (primary / auxiliary / gateway / background) for *diagnosing* spend, recommends cheaper models for background jobs, defers hard limits to provider spending caps. No RAM/storage limits.
-
-Both punt to the provider because they don't own one. **Virtues owns both the provider and the runtime**, so caps can be native and hard:
-
-| Limit | Enforced where | Mechanism |
-|---|---|---|
-| `max_llm_cost` (per-run + per-day) | Gateway/wallet | Inference already flows through the virtues-api ledger; tag calls with `action_id`, hard-stop at the cap, surface in needs-attention. Extends the existing per-call/day/month cap family. |
-| `max_ram`, `cpu`, `timeout` | Runtime | The `systemd-run` jail already used for `code_interpreter` (`MemoryMax`, `CPUQuota`, `RuntimeMaxSec`) — same profile, now parameterized per applet. |
-| `max_storage` | Runtime | Quota on the applet's state/working dir. |
-| `max_runs` (per hour/day) | Scheduler | Backstop against trigger storms — mandatory before event/data triggers (thread 7) light up composition loops. |
-
-Defaults come from the archetype (a Reflect applet gets a daily LLM budget; a View gets none); overridable in a manifest `limits` block and on the detail page. The **plan/preview gate shows estimated recurring cost** ("~$0.12/day") next to the capability grants — cost is a capability. Scheduled/background applets default to the cheaper slot per the slot doctrine (Chat/Lite, no model literals), echoing the one piece of Hermes guidance worth keeping.
+Chat is the front door: "remind me to X on date Y" / "dashboard of heart rate vs workouts" / "calorie app — I send a photo" / "examen before 6am from my narrative identity" → applet. The ~5% power-author is the same primitive with the hood open.
 
 ## The model
 
 | Concept | What it is |
 |---|---|
-| **Applet** | A thing that runs for you. Folder at `actions/<name>/` (manifest + optional code/face). |
-| **Background work** | Optional. Cron / persistent service / trigger-driven. (subsumes today's `function` + `service`) |
-| **Face** | Optional. A rendered UI. (subsumes today's `view`) |
-| **Owner** | `system` (built-in, reconcile-managed), `user` (yours), or `ai` (chat-authored). The only sectioning; list default-hides `system`. |
-| **Lifecycle** | `ephemeral` (archive-on-completion — a dated reminder) or `persistent`. AI infers from intent; flippable in the detail page. |
-| **Limits** | Per-applet caps: `max_llm_cost`, `max_ram`, `max_storage`, `timeout`, `max_runs`. Archetype defaults, manifest-overridable. |
-| **Definition** | On disk (manifest + source). Git-able. |
-| **State** | In Postgres (enabled, schedule, runs, memory). Never on disk. |
+| **Applet** | A thing that runs for you. Folder at `applets/<name>/` (manifest + optional prompt/face/schema/code). |
+| **Fields** | Any subset of: `agent` (prompt) · `command` (argv, power tier) · `cron_schedule` · `condition`/`until` (SQL) · `triggers` · face (`index.html`). Combinations compose; nothing to pick. `runtime` is derived (command+supervise=service; face-only=view; else function). |
+| **Owner** | `system` (reconcile-managed) \| `user` \| `ai`. The only sectioning; list default-hides `system`. |
+| **Lifecycle** | One nullable field: `until` — absent = forever · `"once"` = archive after first success · a SQL bool = archive when true. The enum is a derived display label. |
+| **Limits** | Per-applet caps (below). Protective defaults, always user-editable — never locks. |
+| **Definition** | On disk, git-able. **State** in Postgres, never on disk. The sorting rule: **changes when it *runs* → Postgres (memory, rows, runs); changes when it's *edited* → folder (prompt, `schedule` seed, `schema.sql` DDL).** Manifest and row are the same serde struct in two homes — TOML is the portable/git-able serialization (the systemd-unit-file / k8s-YAML split), reconcile is the one-way apply, and they share no field they could disagree on. Memory-files-on-disk stay rejected: files-as-memory is for frameworks without a DB; run-state in the folder would churn the git lane per run and split the DB-is-the-backup story. |
 
-## The seven threads
+**Archetypes are recipes, not types** (cookbook/AGENTS.md, never schema): Reflect = schedule+agent · Rule = trigger+condition+(agent|command) · Sync = schedule+command+credential · Tracker = `schema.sql`+face+agent-writes-entries · View = face+queries · Persona = agent (identity+boundaries+exemplars-from-own-messages)+channel.
 
-### 1. Listing page
-Kill the `Actions / Templates / History` sub-tabs. **One flat list**, owner-sectioned (Yours / Built-in). Drop the runtime column. Each row: a glyph or a **live thumbnail of its face** if it has one, name, one plain-English line, last activity, on/off, a run-pulse. Faced applets render richer; headless ones are a status row — gallery and table in one list, no mode switch. `+ New` becomes primary and points at chat.
+**Two cross-cutting conventions:**
 
-### 2. Detail page
-One template that **degrades gracefully, view-first.** Header (name · on/off · last ran · Run now). Then **its face** — a dashboard fills the canvas; a headless applet's "face" is its run log / last output. Below/behind: the guts — schedule, triggers, credential, memory, and **the source in a CodeMirror editor** (reuse the Pages editor). "Edit" reveals the source; this is where AI iterations land. Delete stops vanishing on built-ins → explicit "Built-in — managed by the system" state.
+- **`description` is the intent-source, not decoration.** Lite-slot compaction distills the authoring chat into one sentence ("each morning before 6, write my examen from my values and yesterday's data"); the preview-gate tap blesses *the sentence*; the fields are compiled from it. Contract: editing the sentence recompiles the fields; manually editing a field updates/flags the sentence (no silent drift). This is also the answer to authoring-chat context inheritance — whatever mattered was distilled into the sentence at creation; nothing else carries over (`chat_id` survives only as the thread route).
+- **Ensure-semantics is the blessed recipe for data-product applets** (examen, syncs, summaries): phrase the job as a state — "make sure today's X exists" — check-first, create-if-missing. Idempotency then dissolves the scheduler edge-cases: missed slot → next wake sees it's missing (catch-up), racing runs → second no-ops (overlap), failure → still missing, try again (retry). Moment-anchored effects ("remind me at the right time") stay event-shaped.
 
-### 3–5. The authoring engine (chat + coding-agent + sandbox = ONE project)
-- **Don't adopt opencode / OpenHands / pi wholesale.** They're general-purpose harnesses with heavier (Docker) sandboxes than we need. Level up the **existing loop** (`agent/mod.rs`, already "production-ready").
-- **Three tiers, one primitive (Zapier's split, refined):**
-  - **Tier 1 — declarative applet** (default, ~90%): NL → validated spec over the archetype catalog; deterministic, auditable, **zero per-run frontier cost**, mostly nothing to sandbox.
-  - **Tier 1.5 — standing-instruction agent**: for genuinely fuzzy goals; still *declarative to author* (instructions + tools + channel), LLM-in-the-loop at runtime (the eve / Zapier-Agents shape).
-  - **Tier 2 — real code** (power user, ~10%): Claude Code in Virtues' terminal, or git-link a repo. Full jail + full authoring loop + git-import. This is the only tier that is actually a "coding agent."
-- **A plan/preview gate before materializing** (Replit's move): render the proposed spec — trigger, data, model-routing, capabilities — for one-tap confirm. Cheap, because the artifact is a small typed struct; doubles as the capability-grant surface.
-- **The closed loop is the whole game:** write → reconcile → run/render → read stdout+errors+the rendered face → fix → repeat until it works. One-shot codegen doesn't compile; the feedback cycle is what ships working applets. Simple architecture, real feedback. *Simple ≠ shallow.*
-- **Sandbox is an edge case, not the centerpiece — and it's ~80% built.** Because the declarative 90% are *inert validated specs* interpreted by trusted machinery (a spec can't escape), there is nothing to sandbox for them; safety there = **capability grants derived from the archetype + params** (a Rule that sends SMS structurally needs send-SMS; a View structurally only reads `data_health_*`), shown once at a **plan/preview gate**, plus the four boundary gates. The jail is reserved for the three code escape-hatch slots + the power tier. When it *is* needed: `code_interpreter` already runs in a `systemd-run` jail (PrivateNetwork, MemoryMax, seccomp, DynamicUser, ProtectSystem=strict; refuses to run unsandboxed in release). Work = **routing + a second profile**: run applet subprocesses through that jail when `owner ∈ {ai, community}` or during the authoring loop; trusted user/system applets keep the fast bare path.
-- **The concrete stack is exactly where the local-first agents converged** (Claude Code = bubblewrap+seccomp; Codex = Landlock+seccomp+bubblewrap) — validating "no Docker, no microVM": **Landlock + seccomp driven from Rust** (`landlock` crate for FS + TCP-connect, `extrasafe`/`seccompiler` for syscalls), **wrapped in a `systemd-run` transient unit** for the resource caps + `DynamicUser` Landlock can't do. Skip Firecracker/gVisor/e2b (hypervisor/daemon/cloud deps against the grain); accept the residual "shared host kernel" risk as proportionate for a single trusted user.
-- **Egress = a localhost proxy over a Unix-domain socket that holds and injects the one credential and allowlists the one host**, with direct network denied (netns removal or `IPAddressDeny=any`+allow). The secret never enters the sandbox — the cleanest privacy story, and again the exact pattern Claude Code/Codex use. This is the "scoped egress + one injected credential" profile, distinct from `code_interpreter`'s fully-sealed no-network one.
+### Three-axis semantics
 
-### 6. Memory
-Keep the per-applet `memory` scratchpad (right for agent applets — daily continuity). But: **bound it** (cap + summarize on overflow, reuse `api/compaction.rs`); **hard line — definition on disk (git-able), runtime state in Postgres.** No memory-files-on-disk (breaks the DB-is-the-backup / no-SQLite model). Coded applets persist via SQL, not the text blob. Surface memory in the detail page as an editable "notes this applet keeps."
+| Axis | Question | Values |
+|---|---|---|
+| **Wake** | what causes a run attempt | cron · manual · tool · api/webhook · data-event (later: new `data_*` rows, applet-finished via `parent_run_id`) · *always-up* (services aren't woken). Closed set. **Trigger = who wakes you (push, carries the new rows); condition = what you check once awake (poll).** They compose: `trigger=data:data_location` + `condition="speed < 5"`. Cron-poll + condition covers everything data triggers do, at a latency/efficiency cost — which is why data is "later." Webhook = authenticated box API route over iroh/relay; no public-exposure question. |
+| **Gate** | does the attempt proceed | none · deterministic SQL `condition` — **local state only, never network I/O**. A gate that fetches is a run (latency, failures, cost). "If endpoint says X then continue" decomposes: the run fetches-and-decides (→ `skipped`), or a sync applet lands the endpoint's state in a table the gate reads. Fuzzy judgment stays OUT of the schema — "when appropriate" lives in the agent prompt. |
+| **Life** | when is it done | one nullable `until` field: absent = forever · `"once"` = first success · SQL bool = archive when true (same `SELECT (expr)` evaluator as `condition`, checked after each success → `archived_at`). Second completion channel: the run can declare itself complete (agent judges "delivered, done"). |
 
-### 7. Triggers & conditions
-Collapse the muddled "triggers / activations / gates" vocabulary to **two words: Trigger** (what wakes it) and **Condition** (whether it proceeds). Then add the missing one: **a data/event trigger** — "run when new `data_health_sleep` lands," "when applet X finishes," "when significance crosses a threshold" — backed by the dirty-window/projection mechanism. This lights up the **already-scaffolded but dead** transform-chaining (`parent_run_id`/`transform_stage` — CRUD exists, nothing creates child runs) and turns applets from isolated cron jobs into a **reactive dataflow where applets compose.** Keep raw-SQL `condition` for power users; offer legible presets.
+Worked example — "remind me once today, when appropriate, to pray for X": wake=cron poll, gate=none, prompt=judge the moment/deliver/skip, life=`once`. The fuzziest consumer ask, zero new machinery.
 
-## The authoring agent (a narrow Claude Code)
+### Schema migration (small)
 
-Steal the converged 2025–26 patterns, all implementable in pure Rust with no new protocol:
+```
+app_actions: keep agent/command/config as-is
+  DROP runtime, dir                -- both derived (fields set; folder path)
+  owner: + 'ai'
+  ADD until TEXT (NULL=forever | 'once' | SQL bool), archived_at
+  config = THE one JSONB: limits.*, chat_id (thread route), supervise, model (slot), fetch allowlist…
+           -- optional, defaulted, never queried relationally; typed serde struct on read.
+           -- Columns only for what the scheduler indexes. ({view:{name}} dies with iframe faces.)
+  triggers: accept objects later ({"data":{"table":…}}), bare strings stay as sugar
+  manifest key: default_cron → `schedule` (phase 1) — seeds the live SQL value per field-ownership
+  fan-out: system syncs keep per_credential templates; user/ai applets are CONCRETE (one row,
+           single optional credential_id); multi-cred access = granted credentialed TOOLS, not rows
+  memory: KEPT (persistent UNstructured data — scratchpad/cursors/prose), distinct from
+          applet_<slug> tables (persistent STRUCTURED data); bounded per thread 6
+app_action_runs: unchanged (parent_run_id/transform_stage already wait for chaining)
+```
 
-- **AGENTS.md as portable conventions.** Rename/dual-home `actions/AUTHORING.md` → `actions/AGENTS.md` (the neutral standard — Linux Foundation, read by 20+ tools, nearest-in-tree). Then an outside Claude Code / Cursor session can also author applets, not just the in-box agent. **Fix the doc drift first** — [`AUTHORING.md:55`](../actions/AUTHORING.md#L55) shows `connect_from_env()` but the real sig is `connect_from_env(app_name: &str)`; the agent will trust it literally.
-- **Skills with progressive disclosure** for authoring recipes ("how to write a sync," "a dashboard," "a credential source"). Folder + `SKILL.md` (YAML name/description + body). Metadata always-on (cheap), body loaded on demand — decouples breadth of installed know-how from per-request token cost. **Note the symmetry: an applet *is* a skill's shape** (folder + manifest, loaded on demand). Our MEMORY.md auto-memory already proves we have the filesystem-loaded-context primitive.
-- **CLI tools over MCP.** Expose box capabilities to the agent as CLI tools it calls with `--help`, not standing MCP servers (which cost tens of thousands of always-on tokens and add a protocol + long-lived processes). Reserve MCP for genuine external integrations.
-- **Targeted edits, not whole-file rewrites** (Aider/Cline-style SEARCH/REPLACE) with **reflect-on-mismatch retry** (report the failed match back to the model, retry with a cap). Diff-apply mismatch is the #1 reliability bug class in every agent studied — build the applier carefully (exact-match, order-invariant).
-- **Shadow-git checkpoints as the autonomy substrate** (Cline's best idea). Snapshot the applet's files/state *before each agent action* in a repo separate from the user-facing one; offer 3-way restore (files / conversation / both). This is what makes "let it run" safe — and it resolves the git two-lane tension below: shadow-git = the agent's private working/undo store; the user-facing applet repo is a separate, clean history.
-- **Files-as-memory, not a vector framework.** The 2025–26 consensus (Anthropic memory tool, CLAUDE.md/auto-memory, Willison) is a directory of markdown the agent edits with file tools — auditable, diffable, zero infra. **Skip mem0/Letta/Zep** (vector+graph DBs, Python services, and the loudest cargo-cult warning — they solve a temporal-personalization problem a single-user coding agent doesn't have). If semantic recall over a large corpus is ever needed, wire the box's existing Postgres BM25 + halfvec + gte-small-384 as a *retrieval tool*, not a framework.
-- **The model is hosted frontier via the gateway/slots — same as chat today. Not on the box.** So the loop is frontier-grade at tool-calling and multi-step verify; no local-model mitigations (toolshim, grammar-constrained decoding, context-window ceilings) apply. This is a resolved decision, not an open one.
+### Limits (the systemd checklist)
 
-**Reference designs to mine (Apache-2.0, mechanism not wholesale adoption):** **Goose** (Block) — Rust core + Axum HTTP/WS + SQLite session store is the closest architectural mirror of what an on-box agent service looks like; **Codex CLI** — the Landlock+seccomp+bubblewrap sandbox model (below); **Cline** — shadow-git checkpoints + model-tagged command risk; **Aider** — SEARCH/REPLACE + reflection edit primitive. Do **not** copy Goose's "every built-in tool is an MCP server" (indirection + surface you don't want) or OpenHands' Docker-in-Docker sandbox (too heavy).
+| Limit | Enforced where |
+|---|---|
+| `max_llm_cost` per-run/day | Gateway/wallet — helpers *propagate* (`inference()` auto-tags `action_id`), wallet *enforces* (hard-stop, surface in needs-attention). Never helper-enforced (opt-in = bypassable). |
+| `max_ram`, `cpu_weight`, `timeout` | `systemd-run` jail (`MemoryMax`, `CPUWeight`, `RuntimeMaxSec`) — background work shouldn't starve the box. |
+| `max_storage` | `pg_total_relation_size` over the applet's schema + folder size. |
+| `max_runs` per hour/day | Scheduler — mandatory before data triggers light up composition loops. |
+| `retry` | Flat object: `maxAttempts`, backoff `factor`, min/max, jitter (Trigger.dev vocabulary). |
+| overlap — **not a knob, a doctrine** | Every applet is a singleton. A wake attempt during a live run records `skipped (already running)`. The one legit exception is a UI action, not config: "Run now" during a stuck run offers cancel-and-restart. (`allow` is never right for personal automations — racing syncs = duplicates.) |
+| `catch_up` | bool, **defaulted from schedule shape**: daily-or-less-frequent → true (examen, weekly review must happen); hourly-or-more → false (the next tick covers it). Guardrails: catch up **at most once** (anacron semantics, never replay missed slots) and **same-period only**. "Too late in the day" needs no field — the SQL gate composes: `condition = "extract(hour from now()) < 12"`. |
+| `crash_loop` | services: auto-disable + needs-attention after N restarts in window (`StartLimitBurst`). |
+| runs retention | Cap run-history rows per applet; prune (the runs table must not grow unboundedly). |
+
+Defaults per recipe; the preview gate shows estimated recurring cost ("~$0.12/day") — cost is a capability. Scheduled applets default to the cheaper slot (slot doctrine, no model literals).
+
+## Faces = sandboxed-iframe HTML
+
+One primitive: `face = index.html` in the folder (or the service's own URL — the port proxy already fronts it), rendered in a sandboxed iframe (`sandbox` + CSP = browser-grade jail for free). The box injects **`virtues.css`** (theme via CSS vars — light/dark for free) and **`virtues.js`** (scoped read-only `query(sql)` bridge with the applet's token). HTML/JS is the most in-distribution artifact a model produces (Claude Artifacts / Grafana / HA converged here). **Svelte is the app; iframe-HTML is the applets** — builtins' native views stay in the bundle; the boundary is trust. List thumbnails = the same iframe rendered small (gallery for free). Costs accepted: slightly less native feel; props-into-audited-components demoted to a maybe-later polish lane.
+
+## Applet-owned tables (Trackers for free)
+
+Each applet may own a **Postgres schema** (`applet_<slug>`), declared as an optional idempotent `schema.sql` in its folder, applied by reconcile. Schemas, not prefixes: `DROP SCHEMA … CASCADE` cleanup (grace period), per-role `GRANT` hardening later, `pg_total_relation_size` quota, and PG's transactional DDL lets `--check` dry-run in `BEGIN…ROLLBACK`. Killer feature: **joins against `data_*`** (calories × workouts — the box IS the data). Rejected: SQLite-in-folder (state-on-disk breaks the doctrine; second engine; data island that can't join).
+
+## Authoring — a lite harness, ours (~80% assembled)
+
+Claude Code's lesson: files + exec + a typechecker that talks back. The applet equivalents:
+
+| Claude Code | Applets | Status |
+|---|---|---|
+| Write/Edit | file tools scoped to `applets/<name>/` | build |
+| compiler/LSP | `reconcile --check` — per-field validators (cron parser exists; SQL via `EXPLAIN`; DDL via `BEGIN…ROLLBACK`; binary/HTML file-exists) | add `--check` |
+| run tests | `applet run <name>` | exists (Run now) |
+| read failure | run row / logs | exists |
+| few-shot corpus | the ~20 builtin folders | free |
+| CLAUDE.md | `applets/AGENTS.md` + authoring skills | build |
+
+Loop: write-TOML → check → run → read error → fix. **The highest-leverage investment is error-message quality — the LSP of this system.** Every error names the fix (the reader is a model in a retry loop): `unknown table "data_helth_sleep" — did you mean "data_health_sleep"?`. "Lite" = no repo-wide navigation, no multi-file refactoring, no LSP farm; the full harness (Claude Code in terminal) is the power tier.
+
+- **`setup_action` becomes sugar**: write the folder → check → reconcile. One door for builtin/git/chat applets; chat-authored become diffable/git-able/portable for free; the direct-to-Postgres path dies.
+- **The manifest IS the preview gate**: no separate artifact — render the TOML prettily with two annotations (capability grants derived from filled fields; estimated cost/day), one tap to confirm. The user approves the thing that will exist on disk.
+- **The applet is a correspondent — reply to iterate.** Every applet owns a thread; runs land as messages; **replying iterates it** ("shorter tomorrow" → authoring loop edits the manifest, diff visible). Collapses output-sink + editing-surface + v2-messaging into one existing surface: when iMessage lands, the applet just becomes a contact. Detail-page run log and the thread are the same object.
+- **Schema-grounding is a context file**: materialize the data catalog (tables/columns/3 sample rows) for the authoring agent to read like AGENTS.md.
+- Patterns held from the agent research: AGENTS.md as the portable convention (fix the `connect_from_env` doc drift); skills with progressive disclosure (an applet IS a skill's shape); CLI tools over MCP; targeted SEARCH/REPLACE edits with reflect-on-mismatch retry; shadow-git checkpoints as the undo/autonomy substrate; files-as-memory, no vector framework; **authoring model = hosted frontier via gateway/slots** (resolved).
+
+## The stack — one language per layer, nothing bespoke
+
+| Layer | Language | Built where |
+|---|---|---|
+| Wiring | TOML manifest | — |
+| Gates | SQL (`condition`, `until`) | — |
+| Judgment | the agent prompt (LLM is the interpreter) | — |
+| Faces | HTML/JS in sandboxed iframe | on-box, no compile |
+| Tables | `schema.sql` (PG DDL) | applied by reconcile |
+| Real code | Rust + `virtues-helpers` | off-box: **applet template repo** (cargo-generate scaffold + GH Actions cross-compiling aarch64/x86_64; git-link pulls artifacts). The box never builds. |
+
+**Rejected**: sandboxed-Python hatch (foreign runtime for a gap that doesn't exist: predicates→SQL, fuzzy→prompt, code→Rust; deferred fallback if ever needed = embedded QuickJS); Rust toolchain on the appliance; cloud-compiling AI Rust (source leaves the box); runtime-loaded Svelte (superseded by iframes).
 
 ## Permissions
 
-Principle: **prompt on the irreversible, external, and credentialed; auto-allow the reversible, local, and sandboxed.** The research makes the case sharper than a hunch: Anthropic reports **sandboxing cut permission prompts 84%**, users approved **93%** of prompts (so prompts are mostly noise), and prompt-fatigue is a *security failure* — habituation trains users to click through the one dangerous prompt. So the sandbox isn't just safety; it's the permission-UX unlock.
+Prompt on the irreversible, external, credentialed; auto-allow the reversible, local, sandboxed (Anthropic: sandboxing cut prompts 84%; 93% approval = prompts are noise; habituation is a security failure). Two axes (Codex): sandbox level × approval policy, with **`on-failure`** (escalate only when the jail actually blocks) as the elegant default. The declarative 90% are inert validated fields — nothing to sandbox; faces get the iframe jail; the `systemd-run` jail is for untrusted binaries (git-imported, `owner∈{ai,community}` code). Interrupt only at **four boundaries**: (1) granting a credential, (2) enabling a schedule/trigger, (3) side effects that send or spend, (4) promoting sandboxed→trusted. Capabilities are **derived, not declared** for declarative applets — 100% computable from the filled fields (`credential_id` → touches that account; `schema.sql` → writes own tables; face-only → read-only), so authors never write them; the preview gate derives and displays them as the consent artifact, granted once, reviewably. Declaration exists only for **power-tier binaries** (opaque code must state its egress hosts, and the jail's proxy enforces the declaration). Derived-for-display, declared-for-enforcement. Hard rules: **enforce outside the model** (never the LLM's self-assessment); **no shell denylists** (Cursor's was bypassed 4 ways then removed) — remove broad capability, expose narrow typed tools, enforce at the OS layer, keep hardcoded circuit-breakers. Egress for jailed code = localhost proxy over a Unix socket that injects the one credential and allowlists the one host; the secret never enters the sandbox.
 
-**Model it as two orthogonal axes (Codex's design), not one mode:**
-- **Sandbox level** — read-only / workspace-write / full-access.
-- **Approval policy** — the elegant primitive is **`on-failure`: run optimistically inside the jail, only escalate to a human when the sandbox actually blocks something.** Boundary-crossing, not step-by-step.
+## UI surfaces
 
-Inside the jail, writing/reconciling/running/rendering/reading `data_*` read-only need **no prompts** (contained + reversible). Interrupt only at the **four boundary crossings:**
+- **List**: one flat list, owner-sectioned Yours/Built-in (`system` hidden by default), no sub-tabs, no runtime column. Row = face-thumbnail-or-glyph, name, plain-English line, last activity, on/off, run-pulse. **Needs-attention strip** on top (errored / expected-but-didn't-run / credential-expired) — failure UX v1, no new alerting infra. `+ New` points at chat. Surfaced info, never enforcement: "14 applets running, ~$0.9/day."
+- **Detail**: header (name · on/off · last ran · Run now) → its face (headless = run log/thread) → the guts (schedule, triggers, limits — all editable; memory as "notes this applet keeps", bounded via compaction; source in CodeMirror). Built-ins get an explicit "managed by the system" state instead of a vanishing delete.
+- **Gallery**: the contemplative starter set markets as **"Practices"** (examen, daily office, weekly review) — a curated collection of applets, never a schema concept.
 
-1. **Granting a credential** to an applet (now it touches real Google/Plaid/bank data). *The* boundary.
-2. **Enabling a schedule/trigger** (it will run unattended). Prompt once at turn-on.
-3. **External side effects that send or spend** (email, messages, money, deletion).
-4. **Promoting sandboxed → trusted** (removing the jail).
+## Git / distribution (resolved 2026-07-19: fork-on-edit + ownership-aware push-back)
 
-Make it legible: **declare capabilities in the manifest** (needs: egress to `api.plaid.com`, the Google credential, write to `data_health_*`) — grant once, up front, reviewably. Better than per-action runtime prompts.
-
-**Two hard rules from the research (both learned the painful way by others):**
-- **Enforce outside the model.** The gate is harness code, never the LLM's judgment. A model self-tagging its own command as "safe" (Cline) is *advisory only*.
-- **Denylists over a general shell are unenforceable.** Cursor's command denylist was bypassed four ways (base64-pipe, subshell, write-then-run, quoting) and they *removed* it. Don't allowlist shell verbs — **remove the broad capability and expose a narrow typed tool** (deny `curl`; give a domain-allowlisted fetch), enforce at the OS/sandbox layer, and keep hardcoded circuit-breakers (`rm -rf` on `/`/home) that fire even in any "auto" mode.
-
-## The stack — and the build-toolchain wall
-
-**The single most important constraint in the whole design:** the box has **no build toolchain.** Rust applet binaries are compiled in **CI and shipped precompiled** (`release-linux.yml` → `/usr/local/libexec/virtues`); there is no on-box `cargo`. And `view` applets go through a **build-time** Vite glob, so a new Svelte face needs the *web bundle* rebuilt too. ⇒ **The only applet shape authorable on-box with zero build is the agent-prompt** — which is exactly why `setup_action` only makes that shape today.
-
-Resolution:
-
-| Layer | Language | Built where | Notes |
-|---|---|---|---|
-| **Built-in core** | Rust + `virtues-helpers` + `virtues-actions` lib | CI, precompiled | Blessed path. 18/18 existing actions are Rust. Helpers give DB, OAuth-vault, HTTP, credential-decrypt for free. |
-| **AI-authored logic** | agent-prompt (no code) OR sandboxed interpreted script | on-box, no compile | Reuse the `systemd-run` Python path already present for `code_interpreter`. |
-| **AI-authored faces** | Svelte via **runtime loading** (NOT the build-time glob) | on-box | ⚠️ Keystone: without runtime-loadable views there are no AI-authored dashboards at all. |
-| **Coded Rust applets** | Rust | CI / dev | A developer/power-user artifact, not something in-box chat spins up live. |
-
-Rejected: shipping a Rust toolchain on the appliance (GBs, slow ARM builds, turns the box into a dev machine); cloud-compiling AI-written Rust (applet source would leave the box — privacy compromise). If live AI-authored Rust is ever a hard requirement, on-demand cloud build is the only thin-appliance option and it's an explicit privacy tradeoff.
-
-## Git / distribution
-
-Two lanes, because today's import is **one-way and destructive** (`git clone --depth 1` then `git reset --hard FETCH_HEAD` — "pulled code wins"; no commit-back):
-
-- **Box-owned lane** — a repo the box commits to. AI-authored applets get version history, one-command rollback, and every AI change becomes a **reviewable diff** (an audit log + a natural permission gate). *New work* — must be reconciled with, not layered on, the one-way import.
-- **Imported lane** — upstream-owned, read-only / hard-reset. `POST /api/admin/actions/import-git` already does clone/fetch/reconcile/diff; one repo = one folder = one-or-more applets. Distribution = git URLs, no registry. **Cloned = untrusted → sandbox it.**
-
-(Also: git-import is admin-HTTP only, no CLI.)
+One mechanic, no reconciliation problem: **all edits — user's or AI's — land as commits in the box-owned lane; imports are never edited in place**, so clobbering is structurally impossible. An untouched import hard-resets on upstream update as today; touching one forks it into the box-owned lane with `forked_from = <url>@<sha>`. Upstream updates to a forked applet show a diff + the authoring loop offers a rebase. Ownership decides the *affordance*: if the remote is the user's (push rights), the detail page offers an explicit **"push changes upstream"** (a publish — never automatic); third-party remotes just stay forked. Shadow-git remains the agent's private undo store, invisible to both lanes. Cloned = untrusted → jail. Distribution = git URLs, no registry (sharing/app-store = v2).
 
 ## Sequence
 
-0. **Immediate fixes (pre-refactor, small)** — `setup_action` contract drift (tool schema advertises `endpoint` + `activation_code`; the executor drops both — either implement or stop advertising) and the one-agent-applet-per-chat id collision (`action_agent_<chat_id>` upsert silently overwrites). These are the current AI-authoring story's credibility.
-1. **Rename + collapse the surface** — Applet everywhere; one owner-sectioned list (no sub-tabs, `system` hidden by default); one degrading detail page; the **needs-attention strip**; `lifecycle` column + archive-on-completion. Cheap; fixes half the complaints; everything lands on top.
-2. **Unlock on-box authoring** — runtime-loadable views + the sandboxed-script path + sandbox routing. This is what makes live AI authoring *possible at all*. Flagship.
-3. **The closed authoring loop** — file-authoring tools scoped to `actions/<name>/`, write→run→see→fix, AGENTS.md + authoring Skills, capability-manifest permissions, **and the limits block** (caps enforced at gateway + jail; estimated cost shown at the plan/preview gate).
-4. **Event/data triggers + wire the dead chaining** — the composability unlock.
+0. **Done (2026-07-19)**: `setup_action` contract drift fixed (phantom `endpoint`/`activation_code` removed; `agent` canonical; `triggers`/`condition` advertised); id = `action_agent_<chat_id>_<slug>` (multiple applets per chat). *Committed entangled in `e62e4e87` on `feat/box-safety` — split out.*
+1. **Rename + collapse** — Applet everywhere; `actions/` → `applets/` folder (do it now: git-lane paths must be stable before anyone links repos); one list + needs-attention strip; one detail page; lifecycle + archive-on-completion; drop `runtime`/`dir`.
+2. **On-box authoring unlock** — iframe face runtime (`virtues.css`/`virtues.js`, scoped tokens); sandbox routing for untrusted binaries. **Dogfood proof: demote `morning_examen` (then `day_summary_eod`) from Rust to manifest+prompt** — if the flagship can't be expressed in flat fields, the schema is wrong and we want to know now; deletes code; seeds Practices; becomes the canonical few-shot example.
+3. **The authoring loop** — scoped file tools, `--check`, AGENTS.md + skills, manifest-as-preview-gate, limits enforcement (gateway + jail), correspondent threads (reply-to-iterate).
+4. **Data triggers + wire the dead chaining** — the composability unlock (`parent_run_id` machinery lives).
 5. **Git box-owned lane** — commit-back, rollback, reviewable diffs.
-6. **Cleanup** — memory bounding, delete state, trigger/condition vocabulary, doc-drift fix.
+6. **Cleanup** — memory bounding, trigger/condition vocabulary sweep, AUTHORING.md→AGENTS.md + doc-drift fix.
 
 ## Open decisions
 
-- **On-box build resolution** — confirm runtime-loadable views approach (dynamic Svelte compile vs sandboxed-iframe render vs simpler runtime format); confirm sandboxed-interpreted-script language + whether a runtime ships or is assumed present.
-- **Git two-lane reconciliation** — how box-owned commits coexist with one-way imports without clobbering (shadow-git checkpoints likely resolve the agent-working-state half).
-- **Should coded-Rust applets ever be on-box-authorable**, or permanently a CI/dev artifact.
+**None.** Every question raised through 2026-07-19 is resolved — see Resolved below, the judgment calls in Appendix B, and the Git section. Remaining work is build, guided by the Sequence and the Appendix B findings register (bugs + amendments).
 
-## Resolved (was open)
+*(Context inheritance: resolved by the intent-source contract. Git two-lane: resolved by fork-on-edit.)*
 
-- **The authoring model is hosted frontier via the gateway/slots — not on the box.** Same posture as chat/transcription today. No on-box model; local-model authoring is out of scope. Privacy = data stays on the box, inference goes to the gateway as it already does.
+---
+
+## Appendix A — decision log
+
+- **Name: `Applet`** (re-litigated and confirmed 2026-07-19). Namespace picked over (IFTTT Applets, Claude Artifacts, Alexa Skills/Routines, Apple Shortcuts, HA Automations). Rejected: Artifact (inert output, not a runner), Instruments (best semantics — means-of-action + instrument-panel + document-that-enacts + Rule of St. Benedict ch.4 "Instruments of Good Works" — but too long), Daemons (techy/demons), Keeper/Steward/Familiar (personhood fails for dashboards), Practices (fails machinery; survives as the gallery collection). Persona-panel finding: engineers name the mechanism, contemplatives the meaning, laypeople only the instance — no word wins all camps; the noun just has to be unembarrassing in the nav. "Vigil" reserved as UI copy for watcher-shaped applets. `action`/`app_actions` stays the code word.
+- **Tagged-enum `spec` REJECTED** — a 7-arm union is a bespoke DSL (extend enum+validator+interpreter+migration per new shape); models are native at lingua francas, mediocre at bespoke schemas. Flat fields won. (Letta's v1 walked back its bespoke mechanisms for exactly this reason: scaffolding should stay "in-distribution.")
+- **Consumer-lens filter** — REJECTED auto-pause-on-inactivity ("inactivity" undefined for a headless sync; nothing the user turned on turns itself off); DEMOTED count caps to surfaced info (they're plan-tier monetization); every limit user-editable.
+- **Product layer** — chat is the front door (no catalog-first bet, no separate builder); owner system|user|ai; failure UX v1 = needs-attention strip only; last-mile delivery v2 (iMessage/text via virtues-helpers, not APNs-first); out of scope: persona ethics, duty-of-care framing, sharing (v2), output surfaces beyond chat/pages (v2).
+- **Faces** — inverted-trust props-into-components demoted; sandboxed-iframe HTML adopted (2026-07-19).
+- **Keystones kept** — schema-grounded generation (Glide); per-call model routing `box_local|hosted_frontier` as a spec field (Apple "Use Model"); Persona = character sheet + channel (Character.AI / eve), exemplars auto-drawn from the owner's messages.
+
+## Appendix B — three-agent review findings (2026-07-19, status: proposed unless marked)
+
+Three independent agents (red-team vs code · simplicity audit · writability test authoring 10 real manifests, scored 6.5/10 → 8-9 reachable with zero schema changes).
+
+**Code-verified bugs (fix regardless):**
+- `eval_condition` decodes `Option<i64>` — every boolean SQL gate (incl. the plan's own examples) errors instead of skipping; runs unhardened on the core role, no READ ONLY/timeout, `now()` = UTC not local. Fix: boolean decode, `READ ONLY` + `statement_timeout` + restricted role + `SET LOCAL timezone`.
+- Runtime agents get the FULL toolset incl. `setup_action`/`delete_action`/`sql_query` — an ai-owned applet can mint new scheduled applets, bypassing all four permission boundaries. Fix: capability-derived per-applet tool allowlist; strip applet-management tools by default.
+- Condition/concurrency skips create NO run row (contradicts the singleton doctrine's `skipped` claim); no `next_due_at`/`last_slot_at` anywhere → catch_up and "expected-but-didn't-run" are uncomputable; DST/tz offset frozen at job registration. Fix: persist skip rows + slot bookkeeping + re-register on tz change.
+- Migration as written doesn't compile: `supervise` flag never ADDed; runner/scheduler branch on `runtime`; `subprocess_timeout` keys off `dir`. Fix: add `supervise`, generated/derived column strategy before DROP.
+- Reconcile GC hard-DELETEs fan-out rows on credential blips (`reauth_required` destroys `archived_at`/memory/cursors). Fix: soft-disable for recoverable states.
+
+**Convergent design amendments (2+ agents agree):**
+- **Correspondent threads: defer full reply-to-iterate to v2** (simplicity: duplicates surfaces; writability: reply-as-input vs reply-as-edit collide; red-team: no schema substrate, id-scheme conflict, context-creep). Salvage the load-bearing part: **add a `message` wake** (post to applet thread → run with message as payload — the calorie tracker's front door) with the clean routing rule: *applet thread = I/O only; edits happen in detail page / main chat.*
+- **Agent-runtime capability table is the #1 missing contract** — exactly what a declarative agent can do: read `data_*`, write own schema, post to thread, fetch URLs (grant the domain-allowlisted fetch the Permissions section already prescribes), scoped credentialed source tools (gmail-archive etc. — email rules are the canonical consumer automation and currently have no path). Belongs in AGENTS.md + enforced allowlist.
+- **`--check` can't see agent prose** — imaginary tables in prompts fail soft forever. AGENTS.md doctrine: catalog-check-first, "you are the check," honest downgrades (decline + offer manual tracker).
+- **Intent-sentence: one-way for v1** (provenance + staleness flag; recompile-on-edit deferred — nondeterministic recompile clobbers hand-tuned fields; needs per-field `compiled|user-pinned` provenance if ever bidirectional).
+- **`catch_up` × time-of-day gate annihilate** (wake-at-7 catch-up killed by before-6 condition — examen silently skipped). Rule: a clock-time condition also gates catch-up; widen the window, don't tighten the cron.
+- **schema.sql is CREATE-only — Tracker breaks on first edit.** Numbered append-only migration files per applet, applied-set tracked.
+- **Face security hardening is a Phase-2 prerequisite, not "later"**: per-applet PG role + default-deny grants (the current sql_query "starts with SELECT" check is the denylist anti-pattern the plan itself forbids); service faces must not be same-origin with the box API; thumbnails = cached static snapshots, not N live token-holding iframes.
+- **Persona: mark "v2 — not yet authorable" in the cookbook** (no inbound wake, no channel, no send capability — a model following the recipe today authors dead manifests).
+- **Preview gate only when a boundary is crossed** (credential/spend/recurring-LLM-cost); a gate on a $0 read-only view is the habituation the Permissions section warns about.
+- **Limits diet for v1**: `max_llm_cost` + `timeout` as fields; retry/catch_up become doctrine-defaults (no field); `max_runs`/`crash_loop`/`max_storage` arrive with the phase that needs them. Add later: `cooldown` (writability found it smeared across prompt text + max_runs hacks). `budget_exceeded` = distinct run status; propagate `run_id` in gateway tags; show estimated-vs-actual cost on detail.
+- **Sequence: examen demotion moves to the front** — it needs no iframe/threads/git; if the flagship can't be flat-fielded, everything downstream is rework.
+- **Upgrade/restart breaks singleton** for jailed/supervised work: deterministic unit names (`virtues-applet-<id>`), adopt-or-kill against systemctl at startup before reaping, drain step in upgrade preflight.
+
+**Judgment calls — all resolved 2026-07-19 (user):**
+- `memory` column **KEPT** — persistent *unstructured* data (scratchpad/cursors/prose), distinct from `applet_<slug>` tables (persistent *structured* data). Auditor's cut rejected.
+- Fan-out: system syncs keep `per_credential` templates; **user/ai applets are concrete** (one row, single optional `credential_id`); multi-cred access = granted credentialed tools.
+- `limits` **merged into `config`** — one JSONB (limits.*, chat_id, supervise, model slot, …).
+- Manifest cron key → **`schedule`** in phase 1 (seeds the live SQL value).
+- Git two-lane: **fork-on-edit + ownership-aware push-back** (see Git section).
+
+## Appendix C — research notes
+
+- **Caps research (2026-07)**: OpenClaw = observability only, budgets feature request closed *not planned*, guidance "cap at your provider"; Hermes = four spending lanes for diagnosis, no app-layer limits. Both punt because they don't own a provider; **Virtues owns provider + runtime → hard native caps are a differentiator.** OpenClaw's HEARTBEAT.md: "keep it short — every tick costs tokens."
+- **Deep-research pass (verified 3-0 unless noted)**: Vercel eve — agent IS a directory of named slots (`instructions.md` + optional `tools/ channels/ schedules/`), presence activates capability, validate-before-serve = our `--check`; channel secrets outside the definition; no NL-authoring loop (repair = observability + eval gates); no decay story. ChatGPT Tasks — conversational authoring precedent; context-firewalled from authoring project; monitoring tasks = poll + run-to-run diff + notify-on-change + **end condition** (→ our `until`). Gemini — 10-task cap, silent auto-disable. **ChatGPT Pulse (sunset 2026-06-17)** — proactive agent steerable only by free-text with no inspectable artifact → walked back into editable scheduled tasks; the visible field-based artifact IS the product (its good idea survives: ephemeral output promoted by engagement). Claude Code SKILL.md — all-optional fields, two independent booleans over a type enum. Inngest — triggers unified as one list; flow control as flat fields (throttle enqueues, rateLimit drops). Trigger.dev — flat retry object. Cloudflare — schedules as rows beside the agent. HA practice — LLMs "stubbornly wrong" on fragmented per-card syntax; fix = ground in live inventory + small uniform schema.
+- **Reference agent designs**: Goose (Rust core mirror; don't copy tools-as-MCP), Codex (Landlock+seccomp+systemd-run shape), Cline (shadow-git), Aider (SEARCH/REPLACE+reflection). Sandbox: no Docker/microVM/Firecracker — `systemd-run` + Landlock + seccomp, accept shared-kernel residual for a single trusted user.
