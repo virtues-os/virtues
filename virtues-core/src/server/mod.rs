@@ -471,6 +471,15 @@ pub async fn run(client: Virtues, host: &str, port: u16) -> Result<()> {
         .route("/api/search/web", post(api::exa_search_handler))
         // Unsplash API (cover image search)
         .route("/api/unsplash/search", post(api::unsplash_search_handler))
+        // Annotations API (document highlights + margin notes)
+        .route(
+            "/api/annotations",
+            get(api::list_annotations_handler).post(api::create_annotation_handler),
+        )
+        .route(
+            "/api/annotations/:id",
+            patch(api::update_annotation_handler).delete(api::delete_annotation_handler),
+        )
         // Drive API (user file storage)
         .route(
             "/api/drive/files/:id/reextract",

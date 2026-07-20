@@ -946,6 +946,37 @@ pub fn registered_ontologies() -> Vec<OntologyDescriptor> {
             //                    who  whom what when where why  how
             is_activation_signal: false,
         },
+        // Highlights + margin notes on documents (researcher-plan D2). Your
+        // own marks are dense signal — embedding quote + note makes "what did
+        // I highlight about X" work, and annotations out-rank raw text.
+        OntologyDescriptor {
+            name: "document_annotation",
+            display_name: "Highlights",
+            description: "Highlights and margin notes on documents in Drive",
+            domain: "documents",
+            table_name: "app_annotations",
+            source_streams: vec![],
+            timestamp_column: "created_at",
+            end_timestamp_column: None,
+            embedding: Some(EmbeddingConfig {
+                embed_text_sql: "t.quote_text || CASE WHEN t.note_md <> '' \
+                                 THEN E'\\n\\n' || t.note_md ELSE '' END",
+                content_type: "annotation",
+                title_sql: Some(
+                    "(SELECT f.filename FROM app_drive_files f WHERE f.id = t.file_id) || \
+                     COALESCE(' · p. ' || t.page_num, '')",
+                ),
+                preview_sql: "SUBSTR(t.quote_text, 1, 200)",
+                author_sql: None,
+                timestamp_sql: "t.created_at",
+            }),
+            extraction: None,
+            temporal_type: TemporalType::Discrete,
+            day_source: None,
+            continuous_agg: None,
+            //                    who  whom what when where why  how
+            is_activation_signal: false,
+        },
     ]
 }
 

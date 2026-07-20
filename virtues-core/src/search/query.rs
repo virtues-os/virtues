@@ -512,6 +512,27 @@ impl SemanticSearchEngine {
             .collect())
     }
 
+    /// Citation info for annotation hits: annotation_id → (file_id, page_num).
+    /// The semantic_search tool turns these into `/drive/{file}?page=N&hl=<id>`.
+    pub async fn annotation_ref_info(
+        &self,
+        anno_ids: &[String],
+    ) -> Result<std::collections::HashMap<String, (String, Option<i32>)>> {
+        if anno_ids.is_empty() {
+            return Ok(Default::default());
+        }
+        let rows: Vec<(String, String, Option<i32>)> = sqlx::query_as(
+            "SELECT id, file_id, page_num FROM app_annotations WHERE id = ANY($1)",
+        )
+        .bind(anno_ids)
+        .fetch_all(self.pool.as_ref())
+        .await?;
+        Ok(rows
+            .into_iter()
+            .map(|(id, file_id, page)| (id, (file_id, page)))
+            .collect())
+    }
+
     /// Rerank candidates over the matched **chunk** text. Returns `true` if it
     /// reranked, `false` if there were no usable docs. Errors only when the
     /// reranker is unreachable (caller falls back to fused order). Sets each

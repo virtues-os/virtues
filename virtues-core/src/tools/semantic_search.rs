@@ -96,26 +96,46 @@ impl SemanticSearchTool {
             .await
             .unwrap_or_default();
 
+        // Annotation hits cite the viewer at the highlight itself.
+        let anno_ids: Vec<String> = results
+            .iter()
+            .filter(|r| r.ontology == "document_annotation")
+            .map(|r| r.record_id.clone())
+            .collect();
+        let anno_refs = self
+            .engine
+            .annotation_ref_info(&anno_ids)
+            .await
+            .unwrap_or_default();
+
         let result_json: Vec<serde_json::Value> = results
             .iter()
             .map(|r| {
-                let ref_route = match doc_refs.get(&r.record_id) {
-                    Some((file_id, _filename, page, quote)) => {
-                        let mut route = format!("/drive/{file_id}");
-                        let mut sep = '?';
-                        if let Some(p) = page {
-                            route.push_str(&format!("{sep}page={p}"));
-                            sep = '&';
-                        }
-                        if !quote.is_empty() {
-                            route.push_str(&format!(
-                                "{sep}q={}",
-                                urlencoding::encode(quote)
-                            ));
-                        }
-                        route
+                let ref_route = if let Some((file_id, _filename, page, quote)) =
+                    doc_refs.get(&r.record_id)
+                {
+                    let mut route = format!("/drive/{file_id}");
+                    let mut sep = '?';
+                    if let Some(p) = page {
+                        route.push_str(&format!("{sep}page={p}"));
+                        sep = '&';
                     }
-                    None => format!("/record/{}/{}", r.ontology, r.record_id),
+                    if !quote.is_empty() {
+                        route.push_str(&format!("{sep}q={}", urlencoding::encode(quote)));
+                    }
+                    route
+                } else if let Some((file_id, page)) = anno_refs.get(&r.record_id) {
+                    // hl=<annotation_id> lands on the highlight (D2.4 flashes it).
+                    let mut route = format!("/drive/{file_id}");
+                    let mut sep = '?';
+                    if let Some(p) = page {
+                        route.push_str(&format!("{sep}page={p}"));
+                        sep = '&';
+                    }
+                    route.push_str(&format!("{sep}hl={}", r.record_id));
+                    route
+                } else {
+                    format!("/record/{}/{}", r.ontology, r.record_id)
                 };
                 serde_json::json!({
                     "ontology": r.ontology,
@@ -150,6 +170,7 @@ fn normalize_domain(raw: &str) -> Vec<String> {
     let mapped: &[&str] = match d.as_str() {
         "document" | "documents" | "doc" | "docs" | "file" | "files" | "pdf" | "paper"
         | "papers" => &["uploaded_document"],
+        "highlight" | "highlights" | "annotation" | "annotations" => &["document_annotation"],
         "message" | "messages" | "email" | "emails" | "sms" | "text" => {
             &["communication_message"]
         }
@@ -183,6 +204,7 @@ mod tests {
     fn friendly_aliases_map_to_real_ontologies() {
         assert_eq!(normalize_domain("document"), vec!["uploaded_document"]);
         assert_eq!(normalize_domain("PDF"), vec!["uploaded_document"]);
+        assert_eq!(normalize_domain("highlights"), vec!["document_annotation"]);
         assert_eq!(normalize_domain("calendar"), vec!["calendar_event"]);
         assert_eq!(
             normalize_domain("chat"),
