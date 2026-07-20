@@ -22,7 +22,6 @@
 //! - **Built-in tools** (this registry): web_search, query_ontology, semantic_search
 //! - **MCP tools** (Postgres `app_mcp_tools`): dynamically discovered from connected MCP servers
 
-pub mod agents;
 pub mod assistant;
 pub mod models;
 pub mod ontologies;
@@ -30,7 +29,6 @@ pub mod personas;
 pub mod tools;
 
 // Re-export main types for convenience
-pub use agents::{default_agents, AgentConfig};
 pub use assistant::{assistant_profile_defaults, AssistantProfileDefaults, DEFAULT_THEME};
 pub use models::{default_models, ModelConfig};
 pub use ontologies::{registered_ontologies, EmbeddingConfig, OntologyDescriptor};
