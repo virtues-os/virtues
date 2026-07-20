@@ -895,6 +895,7 @@ Parameters:
   - "0 0 9 * * 1-5" = weekday mornings at 9am local time
 - triggers: Optional array of allowed invocation sources: "cron", "manual", "tool", "api", "webhook". Defaults to ["cron","manual","tool"] when cron_schedule is set, otherwise ["manual","tool"]. Include "api" or "webhook" to expose the action as a triggerable endpoint.
 - condition: Optional SQL boolean expression evaluated before each run; the run is skipped when it is false. Power-user gate — omit unless the user explicitly asks for one.
+- until: Optional lifecycle. Omit = runs forever. "once" = archives itself after the first successful run (use for dated/one-off reminders). Any other value = a SQL boolean expression checked after each successful run; when true, the action archives itself (use for monitors that should end, e.g. "until the package arrives").
 
 The action will post its results back into this chat each time it runs."#.to_string(),
         parameters: serde_json::json!({
@@ -924,6 +925,10 @@ The action will post its results back into this chat each time it runs."#.to_str
                 "condition": {
                     "type": "string",
                     "description": "Optional SQL boolean expression gating each run (run skipped when false)"
+                },
+                "until": {
+                    "type": "string",
+                    "description": "Optional lifecycle: omit = forever; 'once' = archive after first success (one-off reminders); else a SQL boolean checked after each success — archive when true (self-ending monitors)"
                 }
             }
         }),

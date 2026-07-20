@@ -87,6 +87,16 @@ pub async fn execute(
         .and_then(|v| v.as_str())
         .map(|s| s.to_string());
 
+    // Lifecycle: absent = forever · "once" = archive after first success ·
+    // anything else = SQL boolean, archived when it evaluates true after a
+    // successful run.
+    let until = arguments
+        .get("until")
+        .and_then(|v| v.as_str())
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(|s| s.to_string());
+
     let triggers_json = serde_json::to_string(&triggers)
         .map_err(|e| ToolError::ExecutionFailed(format!("failed to serialize triggers: {e}")))?;
 
@@ -113,9 +123,9 @@ pub async fn execute(
         r#"
         INSERT INTO app_actions (
             id, name, owner, agent, cron_schedule, enabled, config,
-            condition, triggers
+            condition, triggers, until
         )
-        VALUES ($1, $2, 'user', $3, $4, TRUE, $5::jsonb, $6, $7::jsonb)
+        VALUES ($1, $2, 'ai', $3, $4, TRUE, $5::jsonb, $6, $7::jsonb, $8)
         ON CONFLICT(id) DO UPDATE SET
             name          = excluded.name,
             agent         = excluded.agent,
@@ -124,6 +134,8 @@ pub async fn execute(
             config        = excluded.config,
             condition     = excluded.condition,
             triggers      = excluded.triggers,
+            until         = excluded.until,
+            archived_at   = NULL,
             updated_at    = now()
         "#,
     )
@@ -134,6 +146,7 @@ pub async fn execute(
     .bind(&config_json)
     .bind(&condition)
     .bind(&triggers_json)
+    .bind(&until)
     .execute(pool)
     .await
     .map_err(|e| ToolError::ExecutionFailed(format!("Failed to create action: {}", e)))?;
@@ -155,6 +168,9 @@ pub async fn execute(
         "action_state": state,
         "triggers": triggers,
         "has_condition": condition.is_some(),
+        "lifecycle": until.as_deref().map(|u| {
+            if u.eq_ignore_ascii_case("once") { "once" } else { "until" }
+        }).unwrap_or("forever"),
     });
 
     if let Some(cron) = cron_schedule {
