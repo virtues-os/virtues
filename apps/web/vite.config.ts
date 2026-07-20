@@ -36,6 +36,17 @@ export default defineConfig(({ mode }) => {
 					target: env.BACKEND_URL || 'http://localhost:8000',
 					changeOrigin: true
 				},
+				// Applet face runtime — sandboxed-iframe HTML/JS/CSS served by
+				// core (the `/api/face/query` bridge already rides `/api`). The
+				// `/service` proxy fronts service-URL faces the same way.
+				'/face': {
+					target: env.BACKEND_URL || 'http://localhost:8000',
+					changeOrigin: true
+				},
+				'/service': {
+					target: env.BACKEND_URL || 'http://localhost:8000',
+					changeOrigin: true
+				},
 				// OAuth proxy redirects browser here after the dance — Rust handler
 				// verifies signed state, fetches secrets via /exchange, then 302s
 				// back to /sources?connected=...
