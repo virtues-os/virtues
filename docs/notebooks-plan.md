@@ -53,8 +53,10 @@ Clean three tiers: **Notebooks** (curated workspaces) · **Pins** (flat shortcut
 - **Materials are snapshots you own, not live pointers.** External URL/YouTube = fetch once,
   extract readable text/transcript, store with `source_url` + `fetched_at` + `content_hash`.
   Durable, offline, citable. Re-fetch/change-detection is a separate future "watch" feature.
-- **Extraction is native-text only, lazy, on add-to-Library.** No OCR for now (born-digital PDFs
-  carry text). Extraction is a property of *being a material*, not of *being a file*.
+- **Extraction is native-text only.** No OCR for now (born-digital PDFs carry text).
+  *(SUPERSEDED 2026-07-20, see [researcher-plan.md](./researcher-plan.md): extraction is now
+  universal on upload — every text-bearing drive file is extracted/embedded; the Library is a
+  lens (scope + up-weight), not the ingestion trigger.)*
 - **Citations: source/page-level now, char-precise later.** Source-level citation is the trust
   mechanism and nearly free (retrieval already returns chunk→record_id). Char/rect highlight is
   annotation-grade and deferred.
@@ -398,6 +400,13 @@ Ask any question that retrieves → load-bearing claims show named source chips 
 ---
 
 ## Phase D — Asset track (upload → extract → embed → view → cite)
+
+> **SUPERSEDED 2026-07-20 by [researcher-plan.md](./researcher-plan.md)** — the full
+> researcher-archetype plan (D1 corpus · D2 annotation · D3 scholar metadata · D4 synthesis
+> bridge). Key deltas: universal extraction on upload (Library = lens, not trigger);
+> annotation-grade + Zotero-grade now IN v1; scope modes renamed Open/Scoped
+> (`ScopeMode::Weighted|Exclusive`); Range + viewer page-jump already SHIPPED (Phases 2–3).
+> The section below is kept for its inventory notes.
 
 **Goal:** a notebook can hold an uploaded PDF / text / doc whose **native text** is extracted, embedded, retrievable (scoped, via Phase C's citations), and viewable. This is the researcher/PhD archetype. Bigger than C; sequence it after.
 
