@@ -9,7 +9,7 @@
 	import RefPicker from '$lib/components/RefPicker.svelte';
 	import ColorPickerModal from '$lib/components/sidebar/ColorPickerModal.svelte';
 	import { getRefSummary } from '$lib/utils/refSummary';
-	import { getPage, getDriveFile } from '$lib/api/client';
+	import { getPage, getDriveFile, uploadDriveFile, addNotebookItem, reextractDriveFile } from '$lib/api/client';
 	import { askVirtues } from '$lib/stores/pendingPrompt.svelte';
 
 	let { tab }: { tab: Tab; active?: boolean } = $props();
@@ -55,6 +55,8 @@
 
 	// ---- Resolve real member names (not the type slug) -----------------------
 	let memberNames = $state<Record<string, string>>({});
+	// Per-item extraction state for drive files (honest indexing chips).
+	let memberStatus = $state<Record<string, string>>({});
 	const requestedNames = new Set<string>();
 	async function resolveMemberName(url: string): Promise<string> {
 		if (url.startsWith('http://') || url.startsWith('https://')) {
@@ -72,7 +74,10 @@
 				if (p) return p.title?.trim() || 'Untitled page';
 			} else if (type === 'drive') {
 				const f = await getDriveFile(parts[2] ?? id);
-				if (f?.filename) return f.filename;
+				if (f) {
+					memberStatus = { ...memberStatus, [url]: f.extraction_status };
+					if (f.filename) return f.filename;
+				}
 			} else if (type === 'day' || type === 'year') {
 				return id;
 			}
@@ -134,6 +139,50 @@
 			thing: 'Thing', day: 'Day', year: 'Year', source: 'Source', drive: 'File',
 		};
 		return map[t] ?? t;
+	}
+
+	// Status chip for drive-file members: where the file is in the corpus
+	// pipeline. Empty for non-files and non-text files (no chip, no noise).
+	function statusChip(url: string): { label: string; retry: boolean } | null {
+		const s = memberStatus[url];
+		if (!s || s === 'skipped') return null;
+		switch (s) {
+			case 'done': return { label: 'indexed', retry: false };
+			case 'pending': return { label: 'queued', retry: false };
+			case 'extracting': return { label: 'extracting…', retry: false };
+			case 'no_text': return { label: 'no text layer', retry: false };
+			case 'failed': return { label: 'failed — retry', retry: true };
+			default: return null;
+		}
+	}
+
+	async function retryExtraction(url: string, e: Event) {
+		e.stopPropagation();
+		const fileId = url.split('/')[2];
+		if (!fileId) return;
+		try {
+			await reextractDriveFile(fileId);
+			memberStatus = { ...memberStatus, [url]: 'pending' };
+		} catch { /* chip stays; next open refreshes */ }
+	}
+
+	// ---- Drag-drop onto the notebook: upload + add in one motion -------------
+	let dropActive = $state(false);
+	async function handleDrop(e: DragEvent) {
+		e.preventDefault();
+		dropActive = false;
+		const id = notebookId;
+		const dropped = e.dataTransfer?.files;
+		if (!id || !dropped || dropped.length === 0) return;
+		for (const f of dropped) {
+			try {
+				const uploaded = await uploadDriveFile('uploads', f);
+				await addNotebookItem(id, `/drive/${uploaded.id}`);
+			} catch (err) {
+				console.error('[NotebookDetailView] drop-add failed:', err);
+			}
+		}
+		await load(true);
 	}
 
 	function openUrl(url: string) {
@@ -275,7 +324,7 @@
 				{/if}
 
 				<div class="meta font-mono">
-					{pinnedItems.length} {pinnedItems.length === 1 ? 'source' : 'sources'}
+					{pinnedItems.length} {pinnedItems.length === 1 ? 'item' : 'items'}
 					<span class="dot">·</span>
 					{roomChats.length} {roomChats.length === 1 ? 'chat' : 'chats'}
 				</div>
@@ -290,15 +339,22 @@
 				</button>
 			</form>
 
-			<!-- Library — the sources that ground this notebook -->
-			<section class="section">
+			<!-- The notebook's items — what grounds its chats. Drop files here
+			     to upload + add in one motion. -->
+			<section
+				class="section"
+				class:drop-active={dropActive}
+				ondragover={(e) => { e.preventDefault(); dropActive = true; }}
+				ondragleave={() => (dropActive = false)}
+				ondrop={handleDrop}
+			>
 				<div class="eyebrow font-mono">
-					<span>Library</span>
-					<button class="add-btn" onclick={openPicker} title="Add a page, person, place, or link"><Icon icon="ri:add-line" width="14" /></button>
+					<span>Materials</span>
+					<button class="add-btn" onclick={openPicker} title="Add a page, person, place, file, or link"><Icon icon="ri:add-line" width="14" /></button>
 				</div>
 				{#if pinnedItems.length === 0}
 					<button class="add-row" onclick={openPicker}>
-						<Icon icon="ri:add-line" width="15" /> Add pages, people, places, or links
+						<Icon icon="ri:add-line" width="15" /> Add pages, people, places, or links — or drop files
 					</button>
 				{:else}
 					<ul class="ledger">
@@ -307,6 +363,14 @@
 								<button class="ledger-item" onclick={() => openUrl(it.url)} oncontextmenu={(e) => memberMenu(e, it.url)} title={memberNames[it.url] || it.url}>
 									<Icon icon={iconForUrl(it.url)} width="16" class="ledger-ic" />
 									<span class="ledger-name">{memberNames[it.url] || labelForUrl(it.url)}</span>
+									{#if statusChip(it.url)}
+										{@const chip = statusChip(it.url)}
+										{#if chip?.retry}
+											<span class="status-chip failed font-mono" role="button" tabindex="-1" onclick={(e) => retryExtraction(it.url, e)} onkeydown={(e) => e.key === 'Enter' && retryExtraction(it.url, e)}>{chip.label}</span>
+										{:else}
+											<span class="status-chip font-mono">{chip?.label}</span>
+										{/if}
+									{/if}
 									<span class="ledger-type font-mono">{memberType(it.url)}</span>
 								</button>
 								<button class="ledger-remove" title="Remove from Notebook" onclick={() => removeMember(it.url)}><Icon icon="ri:close-line" width="13" /></button>
@@ -358,6 +422,27 @@
 	.notebook-detail { width: 100%; height: 100%; overflow-y: auto; }
 	.inner { max-width: 720px; margin: 0 auto; padding: 3.5rem 2rem 6rem; }
 	.state { display: flex; align-items: center; gap: 8px; padding: 3rem 2rem; color: var(--color-foreground-muted); }
+
+	/* Per-file extraction chips + drop affordance */
+	.status-chip {
+		flex-shrink: 0;
+		padding: 1px 7px;
+		font-size: 0.625rem;
+		border-radius: 999px;
+		border: 1px solid var(--color-border);
+		color: var(--color-foreground-subtle);
+		white-space: nowrap;
+	}
+	.status-chip.failed {
+		border-color: var(--color-danger, #e5484d);
+		color: var(--color-danger, #e5484d);
+		cursor: pointer;
+	}
+	.section.drop-active {
+		outline: 1.5px dashed var(--color-primary);
+		outline-offset: 6px;
+		border-radius: 8px;
+	}
 	.state.error { color: var(--color-error, #dc2626); }
 
 	/* Header — serif title + one description (the app's title/description pattern) */

@@ -812,9 +812,22 @@ export interface DriveFile {
 	is_folder: boolean;
 	parent_id: string | null;
 	sha256_hash: string | null;
+	/** Universal-extraction state: pending | extracting | done | no_text | failed | skipped */
+	extraction_status: string;
 	deleted_at: string | null;
 	created_at: string;
 	updated_at: string;
+}
+
+/** Queue a file for (re-)extraction (retry after a failure, or after
+ * installing a missing extractor). */
+export async function reextractDriveFile(fileId: string): Promise<DriveFile> {
+	const res = await fetch(`${API_BASE}/drive/files/${fileId}/reextract`, { method: 'POST' });
+	if (!res.ok) {
+		const error = await res.json().catch(() => ({ error: res.statusText }));
+		throw new Error(error.error || 'Failed to queue extraction');
+	}
+	return res.json();
 }
 
 export interface DriveUsage {
