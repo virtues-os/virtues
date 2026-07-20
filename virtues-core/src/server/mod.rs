@@ -33,11 +33,6 @@ pub async fn run(client: Virtues, host: &str, port: u16) -> Result<()> {
         tracing::warn!("Failed to initialize usage limits: {}", e);
     }
 
-    // Initialize drive quota from TIER env var
-    if let Err(e) = crate::api::init_drive_quota(client.database.pool()).await {
-        tracing::warn!("Failed to initialize drive quota: {}", e);
-    }
-
     // Reap runs left in `running` by a crash/restart mid-execution, so a stale
     // lock doesn't survive a reboot. (The concurrency gate also age-bounds stale
     // runs at request time; this just keeps the runs table honest on boot.)
@@ -426,9 +421,6 @@ pub async fn run(client: Virtues, host: &str, port: u16) -> Result<()> {
             "/api/assistant-profile",
             put(api::update_assistant_profile_handler),
         )
-        // Tools API
-        .route("/api/tools", get(api::list_tools_handler))
-        .route("/api/tools/:id", get(api::get_tool_handler))
         // Models API
         .route("/api/models", get(api::list_models_handler))
         .route(
@@ -436,9 +428,6 @@ pub async fn run(client: Virtues, host: &str, port: u16) -> Result<()> {
             get(api::list_models_with_slots_handler),
         )
         .route("/api/models/:id", get(api::get_model_handler))
-        // Agents API
-        .route("/api/agents", get(api::list_agents_handler))
-        .route("/api/agents/:id", get(api::get_agent_handler))
         // Personas API
         .route("/api/personas", get(api::list_personas_handler))
         .route("/api/personas", post(api::create_persona_handler))
@@ -450,15 +439,6 @@ pub async fn run(client: Virtues, host: &str, port: u16) -> Result<()> {
             post(api::unhide_persona_handler),
         )
         .route("/api/personas/reset", post(api::reset_personas_handler))
-        // Seed Testing API
-        .route(
-            "/api/seed/pipeline-status",
-            get(api::seed_pipeline_status_handler),
-        )
-        .route(
-            "/api/seed/data-quality",
-            get(api::seed_data_quality_handler),
-        )
         // Metrics API
         .route(
             "/api/metrics/activity",
@@ -490,15 +470,6 @@ pub async fn run(client: Virtues, host: &str, port: u16) -> Result<()> {
         .route("/api/search/web", post(api::exa_search_handler))
         // Unsplash API (cover image search)
         .route("/api/unsplash/search", post(api::unsplash_search_handler))
-        // Storage API
-        .route(
-            "/api/storage/objects",
-            get(api::list_storage_objects_handler),
-        )
-        .route(
-            "/api/storage/objects/:id/content",
-            get(api::get_storage_object_content_handler),
-        )
         // Drive API (user file storage)
         .route("/api/drive/usage", get(api::get_drive_usage_handler))
         .route("/api/drive/warnings", get(api::get_drive_warnings_handler))
@@ -632,8 +603,6 @@ pub async fn run(client: Virtues, host: &str, port: u16) -> Result<()> {
             "/api/wiki/day/:date/streams",
             get(api::wiki_get_day_streams_handler),
         )
-        // Code Execution API (AI Sandbox)
-        .route("/api/code/execute", post(api::execute_code_handler))
         // Admin API — LLM-authoring on-ramp for new actions
         .route("/api/admin/reconcile", post(api::admin_reconcile_handler))
         .route(
@@ -744,9 +713,6 @@ pub async fn run(client: Virtues, host: &str, port: u16) -> Result<()> {
             "/api/notebooks/:id/items/reorder",
             put(api::reorder_notebook_items_handler),
         )
-        // Namespaces API
-        .route("/api/namespaces", get(api::list_namespaces_handler))
-        .route("/api/namespaces/:name", get(api::get_namespace_handler))
         // Chats API
         .route(
             "/api/chats",
@@ -799,7 +765,7 @@ pub async fn run(client: Virtues, host: &str, port: u16) -> Result<()> {
         .merge(protected_routes)
         .with_state(state.clone())
         .layer(middleware::from_fn(crate::middleware::security::headers_layer))
-        .layer(DefaultBodyLimit::max(105 * 1024 * 1024)); // 105MB (slightly above 100MB file limit for multipart overhead)
+        .layer(DefaultBodyLimit::max(260 * 1024 * 1024)); // 260MB (slightly above 250MB file limit for multipart overhead)
 
     // Add MCP routes to the same server
     let mcp_server = VirtuesMcpServer::new(client.database.pool().clone());

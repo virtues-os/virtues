@@ -194,7 +194,7 @@
 		if (file.is_folder) {
 			navigateToFolder(file.path);
 		} else {
-			windowShellStore.openRouteBeside(`/drive/file_${file.id}`, file.filename);
+			windowShellStore.openRouteBeside(`/drive/${file.id}`, file.filename);
 		}
 	}
 
@@ -215,9 +215,19 @@
 		}
 	}
 
+	// Server router body limit is 260MB; the advertised per-file ceiling is 250MB.
+	const MAX_UPLOAD_BYTES = 250 * 1024 * 1024;
+
 	// Handle file upload
 	async function handleUpload(fileList: FileList) {
 		if (fileList.length === 0) return;
+
+		// Preflight: reject oversize files before any bytes leave the browser.
+		const oversize = Array.from(fileList).find((f) => f.size > MAX_UPLOAD_BYTES);
+		if (oversize) {
+			error = `${oversize.name} is ${formatBytes(oversize.size)} — the upload limit is 250 MB.`;
+			return;
+		}
 
 		uploading = true;
 		uploadProgress = 0;
@@ -482,11 +492,6 @@
 							usage.quota_bytes,
 						)} used
 					</span>
-					<span
-						class="text-xs text-foreground-subtle uppercase tracking-wide"
-					>
-						{usage.tier} tier
-					</span>
 				</div>
 				<!-- Segmented progress bar -->
 				<div class="h-3 bg-border rounded-full overflow-hidden flex">
@@ -527,14 +532,11 @@
 					</a>
 					<span class="flex items-center gap-1.5">
 						<span class="w-2.5 h-2.5 bg-border rounded-sm"></span>
-						Available ({formatBytes(
-							usage.quota_bytes - usage.total_bytes,
-						)})
+						<!-- Real free space on the box's disk — other data
+						     (OS, Postgres, models) lives there too, so this is
+						     NOT quota minus drive usage. -->
+						Available ({formatBytes(usage.available_bytes)})
 					</span>
-				</div>
-				<div class="flex gap-4 mt-2 text-xs text-foreground-subtle">
-					<span>{usage.file_count} files</span>
-					<span>{usage.folder_count} folders</span>
 				</div>
 			</div>
 		{/if}

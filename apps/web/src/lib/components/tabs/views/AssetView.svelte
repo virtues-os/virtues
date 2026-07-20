@@ -4,6 +4,8 @@
 	// Entities keep their own WikiDetailView — "open" is the one density allowed
 	// to differ by target type.
 	import Icon from "$lib/components/Icon.svelte";
+	import CsvPane from "$lib/components/asset/CsvPane.svelte";
+	import TextPane from "$lib/components/asset/TextPane.svelte";
 	import { getDriveFile, type DriveFile } from "$lib/api/client";
 	import { refIcon } from "$lib/utils/refRoutes";
 	import type { Tab } from "$lib/tabs/types";
@@ -13,6 +15,8 @@
 	// /drive/file_xxx → file_xxx
 	const fileId = $derived(tab.route.split("/").filter(Boolean).pop() ?? "");
 	const downloadUrl = $derived(`/api/drive/files/${fileId}/download`);
+	// Viewer surfaces render in place; the Download button keeps attachment.
+	const viewUrl = $derived(`${downloadUrl}?disposition=inline`);
 
 	let file = $state<DriveFile | null>(null);
 	let loading = $state(true);
@@ -36,10 +40,15 @@
 			});
 	});
 
-	type Kind = "image" | "audio" | "video" | "pdf" | "other";
+	type Kind = "image" | "audio" | "video" | "pdf" | "csv" | "markdown" | "code" | "plain" | "other";
 	const IMAGE_EXT = /\.(jpe?g|png|gif|webp|svg|bmp|ico|heic)$/i;
 	const AUDIO_EXT = /\.(mp3|wav|ogg|flac|aac|m4a)$/i;
 	const VIDEO_EXT = /\.(mp4|webm|mov|avi|mkv)$/i;
+	const CSV_EXT = /\.(csv|tsv)$/i;
+	const MD_EXT = /\.(md|markdown)$/i;
+	const CODE_EXT =
+		/\.(json|ya?ml|toml|xml|html?|css|scss|[mc]?js|tsx?|jsx|svelte|py|rs|go|rb|swift|kt|java|c|h|cpp|hpp|sh|zsh|bash|fish|sql|ini|conf|dockerfile|makefile)$/i;
+	const PLAIN_EXT = /\.(txt|log|text)$/i;
 
 	function kindOf(f: DriveFile | null): Kind {
 		if (!f) return "other";
@@ -49,9 +58,16 @@
 		if (mime.startsWith("audio/") || AUDIO_EXT.test(name)) return "audio";
 		if (mime.startsWith("video/") || VIDEO_EXT.test(name)) return "video";
 		if (mime === "application/pdf" || /\.pdf$/i.test(name)) return "pdf";
+		if (mime === "text/csv" || mime === "text/tab-separated-values" || CSV_EXT.test(name))
+			return "csv";
+		if (mime === "text/markdown" || MD_EXT.test(name)) return "markdown";
+		if (CODE_EXT.test(name) || /^application\/(json|xml|x-yaml|yaml|toml|javascript)$/.test(mime))
+			return "code";
+		if (mime.startsWith("text/") || PLAIN_EXT.test(name)) return "plain";
 		return "other";
 	}
 	const kind = $derived(kindOf(file));
+	const isText = $derived(kind === "markdown" || kind === "code" || kind === "plain");
 
 	function formatBytes(n: number): string {
 		if (n < 1024) return `${n} B`;
@@ -89,7 +105,11 @@
 		</button>
 	</header>
 
-	<div class="asset-body" class:framed={kind === "image" || kind === "video"}>
+	<div
+		class="asset-body"
+		class:framed={kind === "image" || kind === "video"}
+		class:flush={kind === "csv" || isText}
+	>
 		{#if loading}
 			<div class="asset-status"><Icon icon="ri:loader-4-line" width="22" class="spin" /></div>
 		{:else if error}
@@ -98,19 +118,23 @@
 				<span>{error}</span>
 			</div>
 		{:else if kind === "image"}
-			<img class="asset-image" src={downloadUrl} alt={file?.filename} />
+			<img class="asset-image" src={viewUrl} alt={file?.filename} />
 		{:else if kind === "audio"}
 			<div class="asset-audio">
 				<Icon icon="ri:music-2-line" width="40" />
 				<!-- Scrubber via native controls. Waveform + timestamped notes: deferred. -->
-				<audio controls src={downloadUrl}></audio>
+				<audio controls src={viewUrl}></audio>
 			</div>
 		{:else if kind === "video"}
 			<!-- svelte-ignore a11y_media_has_caption -->
-			<video class="asset-video" controls src={downloadUrl}></video>
+			<video class="asset-video" controls src={viewUrl}></video>
 		{:else if kind === "pdf"}
 			<!-- Reader. Highlight / margin-notes / OCR: deferred (net-new persistence). -->
-			<iframe class="asset-pdf" src={downloadUrl} title={file?.filename}></iframe>
+			<iframe class="asset-pdf" src={viewUrl} title={file?.filename}></iframe>
+		{:else if kind === "csv"}
+			<CsvPane url={viewUrl} filename={file?.filename ?? ""} />
+		{:else if kind === "markdown" || kind === "code" || kind === "plain"}
+			<TextPane url={viewUrl} filename={file?.filename ?? ""} flavor={kind} />
 		{:else}
 			<div class="asset-status">
 				<Icon
@@ -186,6 +210,13 @@
 	.asset-body.framed {
 		background: var(--color-surface-sunken, #000);
 		padding: 0;
+	}
+	/* Text/CSV panes own their scroll and padding — fill the body edge-to-edge. */
+	.asset-body.flush {
+		align-items: stretch;
+		justify-content: stretch;
+		padding: 0;
+		overflow: hidden;
 	}
 
 	.asset-image {

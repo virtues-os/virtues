@@ -1,7 +1,6 @@
 //! Library-level API functions.
 
 pub mod action_events;
-pub mod agents;
 pub mod ai_calls;
 pub mod ai_complete;
 pub mod assistant_profile;
@@ -35,7 +34,6 @@ pub mod metrics;
 pub mod mentions;
 pub mod model_catalog;
 pub mod models;
-pub mod namespaces;
 pub mod narrative_identity_gen;
 pub mod pages;
 pub mod personas;
@@ -45,21 +43,17 @@ pub mod places;
 pub mod profile;
 pub mod notebooks;
 pub mod records;
-pub mod seed_testing;
 pub mod source_auth;
-pub mod storage;
 pub mod subscription;
 pub mod system_telemetry;
 pub mod system_update;
 pub mod terminal;
 pub mod token_estimation;
-pub mod tools;
 pub mod unsplash;
 pub mod usage;
 pub mod wiki;
 
 // Re-export all functions for convenience
-pub use agents::{get_agent, list_agents, AgentInfo};
 pub use assistant_profile::{
     get_assistant_name, get_assistant_profile, update_assistant_profile,
     UpdateAssistantProfileRequest,
@@ -82,7 +76,6 @@ pub use drive::{
     empty_trash as empty_drive_trash,
     get_drive_usage,
     get_file_metadata as get_drive_file,
-    init_drive_quota,
     is_lake_object_id,
     list_files as list_drive_files,
     list_media as list_drive_media,
@@ -90,7 +83,6 @@ pub use drive::{
     move_file as move_drive_file,
     purge_file as purge_drive_file,
     purge_old_trash as purge_old_drive_trash,
-    quotas as drive_quotas,
     reconcile_usage as reconcile_drive_usage,
     restore_file as restore_drive_file,
     upload_file as upload_drive_file,
@@ -98,7 +90,7 @@ pub use drive::{
     CreateFolderRequest as DriveCreateFolderRequest,
     DriveConfig,
     DriveFile,
-    DriveTier,
+    StagedUpload,
     DriveUsage,
     MoveFileRequest as DriveMoveFileRequest,
     QuotaWarnings,
@@ -141,10 +133,6 @@ pub use chats::{
 pub use internal::{
     ensure_server_status, get_server_status, hydrate_profile, mark_server_ready, HydrateRequest,
     HydrateResponse, ServerStatus,
-};
-pub use namespaces::{
-    entity_id_to_route, extract_namespace_from_entity_id, get_namespace, list_entity_namespaces,
-    list_namespaces, route_to_entity_id, Namespace, NamespaceListResponse,
 };
 pub use pages::{
     create_page,
@@ -214,16 +202,11 @@ pub use personas::{
     PersonaListResponse, PersonasData, UpdatePersonaRequest,
 };
 pub use profile::{get_display_name, get_profile, update_profile, UpdateProfileRequest};
-pub use seed_testing::{
-    get_data_quality_metrics, get_pipeline_status, DataQualityMetrics, PipelineStatus,
-};
-pub use storage::{get_object_content, list_recent_objects, ObjectContent, StreamObjectSummary};
 pub use system_update::CURRENT_COMMIT;
 pub use token_estimation::{
     estimate_message_tokens, estimate_session_context, estimate_tokens, ContextEstimate,
     ContextStatus,
 };
-pub use tools::{get_tool, list_tools, ListToolsQuery, Tool};
 pub use usage::{
     check_limit, get_all_usage, init_limits_from_tier,
     record_usage as record_service_usage, LimitType, RemainingUsage, Service, ServiceUsage,
