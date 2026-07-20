@@ -211,7 +211,7 @@ pub async fn execute(
             })));
         }
         // New applet_* schema exists → refresh face-reader grants.
-        let _ = crate::server::faces::ensure_face_reader_grants(pool).await;
+        let _ = crate::server::faces::ensure_applet_db_grants(pool).await;
     }
 
     crate::action_templates::reload_and_reconcile(pool)

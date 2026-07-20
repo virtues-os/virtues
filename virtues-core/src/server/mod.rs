@@ -60,7 +60,7 @@ pub async fn run(client: Virtues, host: &str, port: u16) -> Result<()> {
 
     // Face-reader grants: idempotent default-deny SELECT surface for applet
     // faces (data_*/wiki_* tables + applet_* schemas). Best-effort.
-    if let Err(e) = faces::ensure_face_reader_grants(client.database.pool()).await {
+    if let Err(e) = faces::ensure_applet_db_grants(client.database.pool()).await {
         tracing::warn!("face reader grants failed: {e}");
     }
 

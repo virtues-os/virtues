@@ -312,10 +312,14 @@ async fn run_face_query(pool: &sqlx::PgPool, sql: &str) -> std::result::Result<s
     Ok(value)
 }
 
-/// Idempotent startup grants for the face-reader role: default-deny, then
-/// SELECT on `data_*` / `wiki_*` tables and every `applet_*` schema. Called
-/// at server boot (and safe to call after reconcile creates new schemas).
-pub async fn ensure_face_reader_grants(pool: &sqlx::PgPool) -> crate::error::Result<()> {
+/// Idempotent grants for the two applet DB roles. Called at server boot and
+/// after each setup_applet schema apply.
+///
+/// - `virtues_face_reader`: SELECT on `data_*` / `wiki_*` tables and every
+///   `applet_*` schema (the faces' read-only bridge).
+/// - `virtues_applet_writer`: DML strictly inside `applet_*` schemas (the
+///   `sql_write` tool) — the write scope is PG grants, not SQL parsing.
+pub async fn ensure_applet_db_grants(pool: &sqlx::PgPool) -> crate::error::Result<()> {
     sqlx::query(
         r#"
         DO $$
@@ -331,18 +335,31 @@ pub async fn ensure_face_reader_grants(pool: &sqlx::PgPool) -> crate::error::Res
                                t.schemaname, t.tablename);
             END LOOP;
             FOR t IN
+                SELECT schemaname, tablename FROM pg_tables
+                WHERE schemaname LIKE 'applet\_%'
+            LOOP
+                EXECUTE format(
+                    'GRANT SELECT, INSERT, UPDATE, DELETE ON %I.%I TO virtues_applet_writer',
+                    t.schemaname, t.tablename);
+            END LOOP;
+            FOR t IN
                 SELECT nspname AS schemaname, NULL::text AS tablename
                 FROM pg_namespace WHERE nspname LIKE 'applet\_%'
             LOOP
                 EXECUTE format('GRANT USAGE ON SCHEMA %I TO virtues_face_reader',
                                t.schemaname);
+                EXECUTE format('GRANT USAGE ON SCHEMA %I TO virtues_applet_writer',
+                               t.schemaname);
+                EXECUTE format(
+                    'GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA %I TO virtues_applet_writer',
+                    t.schemaname);
             END LOOP;
         END $$
         "#,
     )
     .execute(pool)
     .await
-    .map_err(|e| crate::error::Error::Database(format!("face reader grants failed: {e}")))?;
+    .map_err(|e| crate::error::Error::Database(format!("applet db grants failed: {e}")))?;
     Ok(())
 }
 

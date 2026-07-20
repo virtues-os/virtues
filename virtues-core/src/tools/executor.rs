@@ -264,6 +264,7 @@ impl ToolExecutor {
                     .await
             }
             "sql_query" => self.sql_query.execute(arguments).await,
+            "sql_write" => super::sql_write::execute(&self._pool, arguments).await,
             "code_interpreter" => self.execute_code_interpreter(arguments).await,
             // Deep Research fan-out: spawn read-only research workers in parallel.
             "dispatch_subagents" => {
@@ -624,6 +625,7 @@ impl ToolExecutor {
             "web_search",
             "semantic_search",
             "sql_query",
+            "sql_write",
             "code_interpreter",
             "create_page",
             "get_page_content",
