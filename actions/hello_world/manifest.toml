@@ -1,6 +1,5 @@
 name = "Biscuit"
 description = "A small dog who lives on your box."
-description = "Demonstrates the view runtime — a pure-frontend applet that overrides TemplateCard / ActionDetailView via apps/web/src/lib/applets/hello_world/."
 owner = "user"
 runtime = "view"
 triggers = []
