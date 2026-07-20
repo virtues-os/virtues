@@ -247,14 +247,27 @@ async fn prepare_run(
         }
     }
 
-    // 4. Concurrency gate.
+    // 4. Concurrency gate — every applet is a singleton. Unlike a falsy
+    // condition (silent by design: frequent polls would flood run history),
+    // an overlap skip is rare and diagnostically important, so it records a
+    // real `skipped` run row per the singleton doctrine.
     if actions::has_active_run(&deps.db, &action.id)
         .await
         .unwrap_or(false)
     {
         tracing::info!(action_id, "previous run still active; skipping");
+        let run = actions::create_run(&deps.db, Some(&action.id), trigger).await?;
+        actions::complete_run(
+            &deps.db,
+            &run.id,
+            "skipped",
+            0,
+            None,
+            Some("skipped — previous run still active"),
+        )
+        .await?;
         return Ok(PrepareOutcome::Early(ActionRunResult {
-            run_id: None,
+            run_id: Some(run.id),
             status: ActionRunStatus::Skipped,
             summary: "previous run still active".to_string(),
             error: None,
@@ -411,15 +424,44 @@ async fn execute_prepared(
 // ============================================================================
 
 /// Evaluate a SQL condition expression. Returns true if the expression is
-/// truthy, false otherwise. A truthy result is any non-zero, non-empty,
-/// non-null value.
+/// truthy, false otherwise (NULL is false).
+///
+/// The expression is LLM/user-authored, so it runs hardened: inside a
+/// READ ONLY transaction (rolled back regardless), under a short
+/// statement_timeout, with the session timezone set to the box's
+/// home_timezone so clock-based gates like
+/// `extract(hour from now()) < 6` mean the user's local time, not UTC.
+/// The result is cast to boolean, so both boolean and integer expressions
+/// evaluate correctly.
 async fn eval_condition(db: &PgPool, condition: &str) -> Result<bool> {
-    let sql = format!("SELECT ({}) AS result", condition);
-    let result: Option<i64> = sqlx::query_scalar(&sql)
-        .fetch_optional(db)
+    let mut tx = db
+        .begin()
+        .await
+        .map_err(|e| Error::Database(format!("condition tx begin failed: {e}")))?;
+    sqlx::query("SET TRANSACTION READ ONLY")
+        .execute(&mut *tx)
+        .await
+        .map_err(|e| Error::Database(format!("condition read-only set failed: {e}")))?;
+    sqlx::query("SET LOCAL statement_timeout = '5s'")
+        .execute(&mut *tx)
+        .await
+        .map_err(|e| Error::Database(format!("condition timeout set failed: {e}")))?;
+    sqlx::query(
+        "SELECT set_config('timezone', COALESCE(\
+             (SELECT home_timezone FROM app_user_profile LIMIT 1), \
+             current_setting('timezone')), true)",
+    )
+    .execute(&mut *tx)
+    .await
+    .map_err(|e| Error::Database(format!("condition timezone set failed: {e}")))?;
+
+    let sql = format!("SELECT (({}))::boolean AS result", condition);
+    let result: Option<bool> = sqlx::query_scalar(&sql)
+        .fetch_optional(&mut *tx)
         .await
         .map_err(|e| Error::Database(format!("condition sql failed: {e}")))?;
-    Ok(result.map(|v| v != 0).unwrap_or(false))
+    tx.rollback().await.ok();
+    Ok(result.unwrap_or(false))
 }
 
 // ============================================================================

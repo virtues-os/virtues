@@ -78,13 +78,26 @@ pub fn get_all_tool_definitions_for_llm() -> Vec<serde_json::Value> {
         .collect()
 }
 
-/// Tools for an autonomous **action** run: everything except `dispatch_subagents`. Deep Research
-/// fan-out is an interactive, budgeted, panel-visible capability; a headless action shouldn't be
-/// able to silently spawn workers on every run.
+/// Tool ids a headless action run must NOT hold. `dispatch_subagents` because Deep Research
+/// fan-out is an interactive, budgeted, panel-visible capability. The action-management tools
+/// because an unattended run that can mint, edit, delete, or trigger *other* scheduled actions
+/// bypasses every authoring-time permission boundary (credential grant, schedule enablement,
+/// send/spend) — self-modification is an authoring-surface capability, never a runtime one.
+/// Read-only introspection (`list_actions`, `get_action`) and the run's own scratchpad
+/// (`update_action_memory`) stay.
+const ACTION_RUN_DENIED_TOOLS: &[&str] = &[
+    "dispatch_subagents",
+    "setup_action",
+    "edit_action",
+    "delete_action",
+    "run_action",
+];
+
+/// Tools for an autonomous **action** run: the default set minus `ACTION_RUN_DENIED_TOOLS`.
 pub fn get_tools_for_action() -> Vec<serde_json::Value> {
     virtues_registry::tools::default_tools()
         .into_iter()
-        .filter(|tool| tool.id != "dispatch_subagents")
+        .filter(|tool| !ACTION_RUN_DENIED_TOOLS.contains(&tool.id.as_str()))
         .map(|tool| {
             serde_json::json!({
                 "type": "function",
