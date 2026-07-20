@@ -57,15 +57,17 @@ impl Scheduler {
     ///
     /// Templates.toml reconciliation must have already run so the rows exist.
     pub async fn schedule_all(&self) -> Result<()> {
-        // `view`-runtime actions never run server-side — exclude from cron
-        // scheduling so they don't tick into a no-op skip every minute.
+        // Face-only applets (no command, no agent) never run server-side —
+        // exclude from cron scheduling so they don't tick into a no-op skip
+        // every minute. Derived from field presence, not the legacy
+        // `runtime` taxonomy.
         let rows: Vec<(String, String, String)> = sqlx::query_as(
             r#"SELECT id, name, cron_schedule
                FROM app_actions
                WHERE enabled = TRUE
                  AND cron_schedule IS NOT NULL
                  AND triggers @> '["cron"]'::jsonb
-                 AND runtime != 'view'"#,
+                 AND (command IS NOT NULL OR (agent IS NOT NULL AND btrim(agent) <> ''))"#,
         )
         .fetch_all(&self.db)
         .await?;
