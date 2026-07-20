@@ -1,0 +1,114 @@
+name: Release Windows App
+
+# Builds the Tauri desktop app (apps/web/src-tauri) into a Windows NSIS installer
+# and attaches it to a GitHub Release. VIEWS-ONLY for v1: no collector sidecar
+# (macOS-only), reach runs in-process, no self-update, and the build is UNSIGNED
+# (SmartScreen will warn until an Authenticode cert is wired in — see the plan
+# doc's open decision). Modeled on release-mac.yml minus signing/notarization/
+# sidecars/updater. Cross-platform config comes from tauri.windows.conf.json.
+
+on:
+  push:
+    tags:
+      - 'win-v*'
+      - 'win-edge'
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version (e.g. 0.1.0) or "edge"'
+        required: true
+        type: string
+
+jobs:
+  build-and-release:
+    runs-on: windows-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Resolve version + channel
+        id: version
+        shell: bash
+        run: |
+          if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
+            RAW="${{ github.event.inputs.version }}"
+          else
+            RAW="${GITHUB_REF#refs/tags/}"
+          fi
+          if [[ "$RAW" == "win-edge" || "$RAW" == "edge" ]]; then
+            IS_EDGE=true
+            VERSION="$(grep -m1 '^version = ' virtues-core/Cargo.toml | sed -E 's/.*"([^"]+)".*/\1/')"
+            TAG="win-edge"
+          else
+            IS_EDGE=false
+            VERSION="${RAW#win-v}"
+            TAG="win-v${VERSION}"
+          fi
+          echo "VERSION=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "IS_EDGE=$IS_EDGE" >> "$GITHUB_OUTPUT"
+          echo "TAG=$TAG" >> "$GITHUB_OUTPUT"
+
+      - name: Stamp app version from tag
+        working-directory: apps/web/src-tauri
+        shell: bash
+        run: |
+          tmp="$(mktemp)"
+          jq --arg v "${{ steps.version.outputs.VERSION }}" '.version = $v' tauri.conf.json > "$tmp"
+          mv "$tmp" tauri.conf.json
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-pc-windows-msvc
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: "apps/web/src-tauri -> target"
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Install web deps (tauri CLI + plugins)
+        working-directory: apps/web
+        run: pnpm install --frozen-lockfile
+
+      # Unsigned build. WebView2 is bootstrapped by the NSIS installer, so no
+      # runtime prerequisite for users. To sign later, set the Authenticode env
+      # (TAURI signing docs) and add a verify step.
+      - name: Build Windows app (NSIS)
+        working-directory: apps/web
+        run: pnpm tauri build --target x86_64-pc-windows-msvc
+
+      - name: Locate installer
+        id: nsis
+        shell: bash
+        run: |
+          EXE=$(find apps/web/src-tauri/target/x86_64-pc-windows-msvc/release/bundle/nsis -name '*-setup.exe' | head -1)
+          [ -n "$EXE" ] || { echo "no NSIS installer produced"; exit 1; }
+          echo "path=$EXE" >> "$GITHUB_OUTPUT"
+
+      - name: Publish channel release
+        uses: softprops/action-gh-release@v2
+        with:
+          name: ${{ steps.version.outputs.IS_EDGE == 'true' && 'Virtues for Windows (Edge)' || format('Virtues for Windows v{0}', steps.version.outputs.VERSION) }}
+          tag_name: ${{ steps.version.outputs.TAG }}
+          prerelease: ${{ steps.version.outputs.IS_EDGE == 'true' }}
+          make_latest: false
+          body: |
+            ## Virtues for Windows ${{ steps.version.outputs.IS_EDGE == 'true' && '(Edge — rolling test build)' || format('v{0}', steps.version.outputs.VERSION) }}
+
+            Windows viewer (NSIS installer). Pair with your box using the 6-char
+            code from `virtues pair`. **Unsigned for now** — Windows SmartScreen
+            may warn on first launch ("More info" → "Run anyway").
+          files: |
+            ${{ steps.nsis.outputs.path }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
