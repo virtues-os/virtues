@@ -563,11 +563,31 @@ impl InstallDirs {
                 .map(PathBuf::from)
                 .unwrap_or_else(|| PathBuf::from(default))
         };
+        // Applets dir: honor whichever env var the box was provisioned with,
+        // in the SAME order the runtime resolves it (action_templates.rs /
+        // action_runner.rs try APPLETS_ first, then legacy ACTIONS_). A box
+        // installed before the actions→applets rename only sets the ACTIONS_
+        // vars; defaulting straight to /applets here would refresh into a dir
+        // the runtime never reads (the bug that stranded document_extraction
+        // on the dragon). Falls through to the new default only when neither
+        // is set.
+        let env_dir_multi = |vars: &[&str], default: &str| {
+            vars.iter()
+                .find_map(|v| std::env::var(v).ok().filter(|s| !s.is_empty()))
+                .map(PathBuf::from)
+                .unwrap_or_else(|| PathBuf::from(default))
+        };
         Self {
             bin_dir,
             web: env_dir("STATIC_DIR", "/usr/local/share/virtues/web"),
-            actions: env_dir("VIRTUES_APPLETS_DIR", "/usr/local/share/virtues/applets"),
-            actions_bin: env_dir("VIRTUES_APPLETS_BIN_DIR", "/usr/local/libexec/virtues"),
+            actions: env_dir_multi(
+                &["VIRTUES_APPLETS_DIR", "VIRTUES_ACTIONS_DIR"],
+                "/usr/local/share/virtues/applets",
+            ),
+            actions_bin: env_dir_multi(
+                &["VIRTUES_APPLETS_BIN_DIR", "VIRTUES_ACTIONS_BIN_DIR"],
+                "/usr/local/libexec/virtues",
+            ),
         }
     }
 }
