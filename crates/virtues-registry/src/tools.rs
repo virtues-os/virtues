@@ -914,6 +914,11 @@ fn setup_applet_tool() -> ToolConfig {
 
 Use when the user asks for anything recurring, deferred, monitored, tracked, or dashboarded. Re-calling with the same name UPDATES that applet (this is also how you edit one). Before writing SQL, check the real schema first with sql_query over information_schema (tables data_* / wiki_*) — never reference tables you haven't confirmed exist.
 
+An applet needs EITHER an `agent` prompt OR a `face_html` (or both). Pick by what the user wants:
+- A DASHBOARD / chart / "explorer" that just shows data = `face_html` ONLY. The face reads data itself with virtues.query — do NOT add an agent; it has no server-side run and needs no prompt.
+- A REMINDER / digest / examen / monitor that DOES something each run (writes a page, posts a message, computes) = `agent` (+ schedule/condition). No face unless they also want a view.
+- A TRACKER the user feeds = `schema_sql` + `face_html`; add an `agent` only if it should also summarize on a schedule.
+
 WHAT THE APPLET CAN DO AT RUNTIME (its prompt may only rely on these):
 - read data: sql_query (read-only) · semantic_search · web_search (queries only — it CANNOT fetch URLs/feeds)
 - deliver to the user: its run result posts back into this chat
@@ -939,11 +944,11 @@ Parameters:
 If the result status is "check_failed", fix the findings and call again — nothing was created."#.to_string(),
         parameters: serde_json::json!({
             "type": "object",
-            "required": ["name", "description", "agent"],
+            "required": ["name", "description"],
             "properties": {
                 "name": { "type": "string" },
                 "description": { "type": "string", "description": "One-sentence intent — the applet's headline" },
-                "agent": { "type": "string", "description": "Self-contained runtime prompt" },
+                "agent": { "type": "string", "description": "OPTIONAL. Self-contained runtime prompt — only for applets that DO something each run. Omit for pure dashboards/views (face-only)." },
                 "schedule": { "type": "string", "description": "6-field cron, box-local tz" },
                 "triggers": {
                     "type": "array",
