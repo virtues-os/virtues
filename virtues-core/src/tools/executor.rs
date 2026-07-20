@@ -50,6 +50,9 @@ pub struct ToolContext {
     pub user_id: Option<String>,
     /// Notebook ID
     pub notebook_id: Option<String>,
+    /// How the notebook shapes retrieval: Weighted (Open chat) or Exclusive
+    /// (Scoped/grounded chat). Meaningless without a notebook_id.
+    pub scope_mode: crate::search::ScopeMode,
     /// Chat ID (for permission checking)
     pub chat_id: Option<String>,
     /// Action ID (set when running as an action — for action memory tool)
@@ -71,6 +74,7 @@ impl Default for ToolContext {
             page_id: None,
             user_id: None,
             notebook_id: None,
+            scope_mode: crate::search::ScopeMode::default(),
             chat_id: None,
             action_id: None,
             subagent_tx: None,
@@ -260,7 +264,7 @@ impl ToolExecutor {
             "web_search" => self.web_search.execute(arguments).await,
             "semantic_search" => {
                 self.semantic_search
-                    .execute(arguments, context.notebook_id.as_deref())
+                    .execute(arguments, context.notebook_id.as_deref(), context.scope_mode)
                     .await
             }
             "sql_query" => self.sql_query.execute(arguments).await,
