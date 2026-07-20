@@ -830,6 +830,75 @@ export async function reextractDriveFile(fileId: string): Promise<DriveFile> {
 	return res.json();
 }
 
+// ── Annotations (document highlights + margin notes, researcher-plan D2) ──
+
+export interface AnnotationRect {
+	x: number;
+	y: number;
+	w: number;
+	h: number;
+}
+
+export interface Annotation {
+	id: string;
+	file_id: string;
+	page_num: number | null;
+	quote_text: string;
+	quote_prefix: string;
+	quote_suffix: string;
+	rects: AnnotationRect[];
+	color: string;
+	note_md: string;
+	created_at: string;
+	updated_at: string;
+}
+
+export async function listAnnotations(fileId: string): Promise<Annotation[]> {
+	const res = await fetch(`${API_BASE}/annotations?file_id=${encodeURIComponent(fileId)}`);
+	if (!res.ok) throw new Error(`Failed to list annotations: ${res.statusText}`);
+	return res.json();
+}
+
+export async function createAnnotation(body: {
+	file_id: string;
+	page_num?: number | null;
+	quote_text: string;
+	quote_prefix?: string;
+	quote_suffix?: string;
+	rects?: AnnotationRect[];
+	color?: string;
+	note_md?: string;
+}): Promise<Annotation> {
+	const res = await fetch(`${API_BASE}/annotations`, {
+		method: 'POST',
+		headers: { 'Content-Type': 'application/json' },
+		body: JSON.stringify(body)
+	});
+	if (!res.ok) {
+		const e = await res.json().catch(() => ({ error: res.statusText }));
+		throw new Error(e.error || 'Failed to create annotation');
+	}
+	return res.json();
+}
+
+export async function updateAnnotation(
+	id: string,
+	body: { color?: string; note_md?: string }
+): Promise<Annotation> {
+	const res = await fetch(`${API_BASE}/annotations/${id}`, {
+		method: 'PATCH',
+		headers: { 'Content-Type': 'application/json' },
+		body: JSON.stringify(body)
+	});
+	if (!res.ok) throw new Error(`Failed to update annotation: ${res.statusText}`);
+	return res.json();
+}
+
+export async function deleteAnnotation(id: string): Promise<void> {
+	const res = await fetch(`${API_BASE}/annotations/${id}`, { method: 'DELETE' });
+	if (!res.ok) throw new Error(`Failed to delete annotation: ${res.statusText}`);
+}
+
 export interface DriveUsage {
 	/** Total bytes used (drive_bytes + data_lake_bytes) */
 	total_bytes: number;
