@@ -2817,6 +2817,84 @@
           "markdownDescription": "Denies the reveal_item_in_dir command without any pre-configured scope."
         },
         {
+          "description": "Default permissions for the reach plugin\n#### This default permission set includes:\n\n- `allow-pair`\n- `allow-reach-status`\n- `allow-forget`\n- `allow-discover`\n- `allow-outbox-stats`\n- `allow-drain-now`",
+          "type": "string",
+          "const": "reach:default",
+          "markdownDescription": "Default permissions for the reach plugin\n#### This default permission set includes:\n\n- `allow-pair`\n- `allow-reach-status`\n- `allow-forget`\n- `allow-discover`\n- `allow-outbox-stats`\n- `allow-drain-now`"
+        },
+        {
+          "description": "Enables the discover command without any pre-configured scope.",
+          "type": "string",
+          "const": "reach:allow-discover",
+          "markdownDescription": "Enables the discover command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the drain_now command without any pre-configured scope.",
+          "type": "string",
+          "const": "reach:allow-drain-now",
+          "markdownDescription": "Enables the drain_now command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the forget command without any pre-configured scope.",
+          "type": "string",
+          "const": "reach:allow-forget",
+          "markdownDescription": "Enables the forget command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the outbox_stats command without any pre-configured scope.",
+          "type": "string",
+          "const": "reach:allow-outbox-stats",
+          "markdownDescription": "Enables the outbox_stats command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the pair command without any pre-configured scope.",
+          "type": "string",
+          "const": "reach:allow-pair",
+          "markdownDescription": "Enables the pair command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the reach_status command without any pre-configured scope.",
+          "type": "string",
+          "const": "reach:allow-reach-status",
+          "markdownDescription": "Enables the reach_status command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the discover command without any pre-configured scope.",
+          "type": "string",
+          "const": "reach:deny-discover",
+          "markdownDescription": "Denies the discover command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the drain_now command without any pre-configured scope.",
+          "type": "string",
+          "const": "reach:deny-drain-now",
+          "markdownDescription": "Denies the drain_now command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the forget command without any pre-configured scope.",
+          "type": "string",
+          "const": "reach:deny-forget",
+          "markdownDescription": "Denies the forget command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the outbox_stats command without any pre-configured scope.",
+          "type": "string",
+          "const": "reach:deny-outbox-stats",
+          "markdownDescription": "Denies the outbox_stats command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the pair command without any pre-configured scope.",
+          "type": "string",
+          "const": "reach:deny-pair",
+          "markdownDescription": "Denies the pair command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the reach_status command without any pre-configured scope.",
+          "type": "string",
+          "const": "reach:deny-reach-status",
+          "markdownDescription": "Denies the reach_status command without any pre-configured scope."
+        },
+        {
           "description": "This permission set configures which\nshell functionality is exposed by default.\n\n#### Granted Permissions\n\nIt allows to use the `open` functionality with a reasonable\nscope pre-configured. It will allow opening `http(s)://`,\n`tel:` and `mailto:` links.\n\n#### This default permission set includes:\n\n- `allow-open`",
           "type": "string",
           "const": "shell:default",

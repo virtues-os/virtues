@@ -6741,6 +6741,7 @@ dependencies = [
  "tauri-plugin-reach",
  "tauri-plugin-shell",
  "tauri-plugin-updater",
+ "virtues-reach-client",
 ]
 
 [[package]]

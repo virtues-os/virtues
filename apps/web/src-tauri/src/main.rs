@@ -2,6 +2,7 @@
 
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Manager, WebviewUrl, WebviewWindowBuilder, WindowEvent};
+use tauri_plugin_reach::ReachExt;
 use tauri_plugin_shell::ShellExt;
 
 /// Collector status returned from CLI
@@ -16,12 +17,11 @@ pub struct CollectorStatus {
     pub has_accessibility: bool,
 }
 
-/// A Virtues server discovered on the local network.
+/// A Virtues server discovered on the local network. Shape mirrors what the
+/// connect screen (`pair.html`) reads: `name` + `origin`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FoundServer {
     pub name: String,
-    pub host: String,
-    pub port: u16,
     pub origin: String,
 }
 
@@ -31,21 +31,17 @@ pub struct FoundServer {
 
 /// Check whether this machine is paired.
 ///
-/// Tries the keychain first, then falls back to `~/.virtues/box.json`. The
-/// fallback matters because macOS scopes keychain items to the creating binary:
-/// the iroh pairing record is written by the `virtues-client` sidecar (and by
-/// `virtues-client pair` on the CLI), so this app binary often can't read that
-/// keychain entry. `pair` also writes the record to a 0600 `box.json` readable
-/// by any of the user's processes — the reliable signal.
+/// Reads the in-process reach plugin's store location: `box.json` under the
+/// platform data dir (`dirs::data_dir()/virtues/box.json` — mirrors the reach
+/// plugin's `virtues_dir()` / `FileStore`). This is the record the reach pairing
+/// flow writes, so its presence is the reliable paired signal now that the
+/// `virtues-client` sidecar (which wrote to the keychain / `~/.virtues`) is gone.
+///
+/// A bare existence check (not a full parse) — enough for the tray / launch
+/// decision; the reach plugin does the authoritative load when it serves.
 fn is_paired() -> bool {
-    let keychain_ok = keyring::Entry::new("virtues-client", "default-box")
-        .and_then(|e| e.get_password())
-        .is_ok();
-    if keychain_ok {
-        return true;
-    }
-    dirs::home_dir()
-        .map(|h| h.join(".virtues").join("box.json").exists())
+    dirs::data_dir()
+        .map(|d| d.join("virtues").join("box.json").exists())
         .unwrap_or(false)
 }
 
@@ -229,32 +225,6 @@ mod session_probe_tests {
     }
 }
 
-/// Build a shell `Command` for virtues-client. Resolution order:
-///   1. `~/.virtues/bin/virtues-client` (system installer's location)
-///   2. `/usr/local/bin/virtues-client` (alt install location)
-///   3. the bundled sidecar (`binaries/virtues-client`)
-///
-/// The sidecar fallback matters for first-run: a freshly-installed app can pair
-/// before virtues-client has been installed system-wide. Mirrors the collector.
-fn virtues_client_command(
-    app: &AppHandle,
-) -> Result<tauri_plugin_shell::process::Command, String> {
-    let shell = app.shell();
-    let home_bin = dirs::home_dir()
-        .unwrap_or_default()
-        .join(".virtues")
-        .join("bin")
-        .join("virtues-client");
-    if home_bin.exists() {
-        return Ok(shell.command(home_bin.to_string_lossy().to_string()));
-    }
-    let usr_local = std::path::Path::new("/usr/local/bin/virtues-client");
-    if usr_local.exists() {
-        return Ok(shell.command(usr_local.to_string_lossy().to_string()));
-    }
-    shell.sidecar("virtues-client").map_err(|e| e.to_string())
-}
-
 // ============================================================================
 // Tauri Commands (IPC from web frontend)
 // ============================================================================
@@ -265,159 +235,66 @@ fn get_client_status() -> bool {
     is_paired()
 }
 
-/// Discover Virtues servers on the local network by shelling to virtues-client.
+/// Discover Virtues boxes on the local network (subnet scan, via the reach
+/// crate — Bonjour-free, reliable across multicast-filtering APs).
 #[tauri::command]
-async fn discover_servers(app: AppHandle) -> Result<Vec<FoundServer>, String> {
-    let output = virtues_client_command(&app)?
-        .args(["discover", "--json"])
-        .output()
-        .await
-        .map_err(|e| e.to_string())?;
-
-    if output.status.success() {
-        serde_json::from_slice(&output.stdout).map_err(|e| e.to_string())
-    } else {
-        Ok(vec![])
-    }
+async fn discover_servers() -> Result<Vec<FoundServer>, String> {
+    let found = virtues_reach_client::scan_subnet().await;
+    Ok(found
+        .into_iter()
+        .map(|b| FoundServer { name: b.name, origin: b.origin })
+        .collect())
 }
 
-/// Pair with a server using a 6-character code.
+/// Pair with a box using a 6-character code, over the in-process reach plugin.
+/// `pair` consumes the code (plain HTTP to the box's LAN origin), stores the
+/// iroh reach ticket, and starts serving `:7117` in-process — no sidecar.
 #[tauri::command]
-async fn pair_with_code(
-    app: AppHandle,
-    server: String,
-    code: String,
-) -> Result<(), String> {
-    let output = virtues_client_command(&app)?
-        .args(["pair-code", &code, "--server", &server])
-        .output()
+async fn pair_with_code(app: AppHandle, server: String, code: String) -> Result<(), String> {
+    app.reach()
+        .pair(&server, &code)
         .await
-        .map_err(|e| e.to_string())?;
-
-    if output.status.success() {
-        Ok(())
-    } else {
-        Err(String::from_utf8_lossy(&output.stderr).to_string())
-    }
+        .map(|_| ())
+        .map_err(|e| e.to_string())
 }
 
-/// Start the localhost helper after pairing. In the iroh model the helper
-/// (`virtues-client up`) reaches the box by its stored EndpointId reach ticket
-/// (from pairing) over iroh — LAN-direct → hole-punched → relay — and serves it
-/// at `http://localhost:7117`. The browser then talks plain loopback HTTP, so
-/// same-origin cookies/CSRF are untouched. No WireGuard, no root daemon.
-///
-/// The proxy is installed as a DURABLE background service (macOS LaunchAgent /
-/// Linux systemd user unit), not spawned as an app-session child. It has to
-/// outlive the desktop app: the collector uploads through `:7117`, so background
-/// collection would break whenever the app was closed if the proxy died with it.
-/// `virtues-client install` copies the binary into `~/.virtues/bin`, writes the
-/// service, and starts it (`RunAtLoad` + restart-on-crash). This also lights up
-/// the launch-time `reconcile_helpers`, which can now swap the client on update.
-///
-/// The collector (data collection) is NOT installed here — it pairs as its own
-/// device and needs Full Disk Access / Accessibility grants, so it stays an
-/// explicit opt-in via `install_collector`.
+/// Start serving the box on `:7117` in-process (idempotent). Called by the
+/// connect screen right after pairing; `pair` already starts serving, so this is
+/// a confirm/no-op in the normal flow, but keeps the connect-screen sequence
+/// intact and covers a paired-but-not-yet-serving relaunch.
 #[tauri::command]
 async fn install_helpers(app: AppHandle, _server: String) -> Result<(), String> {
-    let output = virtues_client_command(&app)?
-        .args(["install"])
-        .output()
-        .await
-        .map_err(|e| format!("helper install failed: {e}"))?;
-    if output.status.success() {
-        Ok(())
-    } else {
-        Err(String::from_utf8_lossy(&output.stderr).to_string())
-    }
+    app.reach().ensure_serving().await.map_err(|e| e.to_string())
 }
 
-/// Remove the localhost proxy LaunchAgent (reverse of [`install_helpers`]).
+/// No-op retained for connect-screen API compatibility. There is no proxy
+/// service to uninstall now that reach runs in-process — `forget_pairing` does
+/// the real teardown (aborts serving + clears creds).
 #[tauri::command]
-async fn uninstall_helpers(app: AppHandle) -> Result<(), String> {
-    let _ = virtues_client_command(&app)?
-        .args(["uninstall"])
-        .output()
-        .await;
+async fn uninstall_helpers(_app: AppHandle) -> Result<(), String> {
     Ok(())
 }
 
-/// Clear THIS Mac's pairing — the productized `make dev-wipe-mac`. Clears the
-/// stored bundle/keys (keychain + ~/.virtues/bundle.json) and removes the proxy
-/// LaunchAgent. Local-only: never needs the box to be reachable.
+/// Clear THIS device's pairing. Aborts the in-process loopback + drain tasks,
+/// clears the warm client, and deletes the stored box record — a true clean
+/// slate so a re-pair (even to a reset box) starts fresh without an app restart.
 ///
-/// Called (a) by the connect screen *before* a re-pair, so re-pairing a box
-/// that was RESET starts clean — otherwise the box's new SPKI key trips the
-/// TOFU pin from the old pairing and the daemon refuses; and (b) by Settings →
-/// "Disconnect this Mac" for a deliberate hand-off / box switch.
+/// Called (a) by the connect screen *before* a re-pair of a RESET box (its new
+/// key would otherwise trip the TOFU pin), and (b) by Settings →
+/// "Disconnect this Mac".
 #[tauri::command]
 async fn forget_pairing(app: AppHandle) -> Result<(), String> {
-    // `revoke` clears the local creds (keychain + bundle.json), best-effort
-    // box-side credential delete first but clears locally regardless.
-    let _ = virtues_client_command(&app)?
-        .args(["revoke"])
-        .output()
-        .await;
-    // Drop the proxy LaunchAgent so a stale bearer can't keep serving.
-    let _ = virtues_client_command(&app)?
-        .args(["uninstall"])
-        .output()
-        .await;
-    Ok(())
-}
-
-/// Ensure the proxy service is installed AND running before we probe. This is
-/// what makes "Retry" (and the poll behind it) able to *recover* rather than
-/// just re-observe a dead `:7117`: the common stranding is a proxy that isn't
-/// running (app quit before the service model landed, launchd unloaded it, a
-/// fresh boot before RunAtLoad, or a user paired before this fix and so has no
-/// service at all). Install-if-missing, else kickstart — both cheap and
-/// idempotent, and a no-op cost once the box is actually reachable.
-async fn ensure_client_service(app: &AppHandle) {
-    let installed = dirs::home_dir()
-        .map(|h| h.join(".virtues").join("bin").join("virtues-client").exists())
-        .unwrap_or(false);
-    if !installed {
-        // Migrates already-paired users and repairs a torn-down service.
-        if let Ok(cmd) = virtues_client_command(app) {
-            let _ = cmd.args(["install"]).output().await;
-        }
-        return;
-    }
-    // Installed → just make sure launchd/systemd has it running now.
-    #[cfg(target_os = "macos")]
-    {
-        let uid = std::process::Command::new("id")
-            .arg("-u")
-            .output()
-            .ok()
-            .and_then(|o| String::from_utf8(o.stdout).ok())
-            .map(|s| s.trim().to_string())
-            .unwrap_or_default();
-        if !uid.is_empty() {
-            let _ = std::process::Command::new("/bin/launchctl")
-                .args(["kickstart", &format!("gui/{uid}/com.virtues.client")])
-                .output();
-        }
-    }
-    #[cfg(target_os = "linux")]
-    {
-        let _ = std::process::Command::new("systemctl")
-            .args(["--user", "start", "virtues-client.service"])
-            .output();
-    }
+    app.reach().forget().map_err(|e| e.to_string())
 }
 
 /// Re-check whether the box now accepts this device — backs the connect
 /// screen's "Retry" on the unreachable state (box was off/asleep/elsewhere).
-/// `true` → load the box; `false` → still not reachable/accepted.
+/// `true` → load the box; `false` → still not reachable/accepted. The reach
+/// loopback is already served in-process (launch ensures it when paired), so
+/// this just re-probes `/auth/session` through it. Single attempt: the connect
+/// screen polls on a timer, so the poll interval IS the retry cadence.
 #[tauri::command]
-async fn recheck_box(app: AppHandle) -> bool {
-    // First make sure our side is actually up (the frequent cause of a stuck
-    // Retry is a stopped proxy, not an offline box), THEN probe. Single probe
-    // attempt: the connect screen polls on a timer, so the poll interval IS the
-    // retry cadence.
-    ensure_client_service(&app).await;
+async fn recheck_box() -> bool {
     probe_box_session(1).await == Some(true)
 }
 
@@ -1067,27 +944,22 @@ fn setup_tray(app: &AppHandle) -> tauri::Result<()> {
 // Helper reconcile — keep installed helpers matching the app's bundled ones
 // ============================================================================
 
-/// On launch, make the installed background helpers (`virtues-client`,
-/// `virtues-collector` in `~/.virtues/bin/`) match the versions THIS app bundle
-/// ships. The app and its helpers are built + signed together, but the helpers
-/// are *copied* into `~/.virtues/bin` at install/pair time and run as
-/// LaunchAgents — so a plain app update leaves the OLD helper running. That bit
-/// us hard: after updating the app, a stale proxy couldn't read a freshly-paired
-/// WG key and silently fell back to a relay forever. Reconciling here turns
-/// "install a new app" into "all its parts update," with zero user action.
+/// On launch, keep the installed **collector** helper (`virtues-collector` in
+/// `~/.virtues/bin/`) matching the version THIS app bundle ships. The collector
+/// is *copied* into `~/.virtues/bin` at "Turn on this Mac" time and runs as a
+/// LaunchAgent, so a plain app update would otherwise leave the OLD collector
+/// running. Reconciling here turns "install a new app" into "the collector
+/// updates too," with zero user action.
 ///
-/// Only touches helpers that are ALREADY installed — first-run install (which
-/// needs a paired upstream / permission grants) stays with the pair/opt-in flow.
-/// A no-op once everything's in sync, so it's safe to run on every launch.
+/// (The reach proxy is no longer a sidecar — it runs in-process — so only the
+/// collector is reconciled now.)
 ///
-/// Returns true if anything was actually redeployed (the caller pauses briefly
-/// so a just-restarted proxy can settle before the launch probe).
+/// Only touches a collector that's ALREADY installed — first-run install stays
+/// with the "Turn on this Mac" opt-in flow. A no-op once in sync, so it's safe
+/// to run on every launch. Returns true if the collector was redeployed.
 fn reconcile_helpers() -> bool {
     let mut changed = false;
-    for (name, agent) in [
-        ("virtues-client", "com.virtues.client"),
-        ("virtues-collector", "com.virtues.collector"),
-    ] {
+    for (name, agent) in [("virtues-collector", "com.virtues.collector")] {
         match reconcile_one(name, agent) {
             Ok(true) => {
                 changed = true;
@@ -1098,69 +970,6 @@ fn reconcile_helpers() -> bool {
         }
     }
     changed
-}
-
-/// Launch-time guarantee that the proxy service exists and is running whenever
-/// we're paired. `reconcile_helpers` only refreshes an ALREADY-installed helper
-/// on version drift; this covers the two cases it can't:
-///   - paired before the service model existed (no `~/.virtues/bin/virtues-client`,
-///     no LaunchAgent) → install it now, so re-opening the app stops stranding
-///     on the connect screen and background collector uploads have a live `:7117`;
-///   - installed but not currently running (launchd unloaded it, fresh boot
-///     racing RunAtLoad) → kickstart it.
-/// Returns true if it installed or (re)started something, so the caller can let
-/// the proxy settle before probing. No-op (and cheap) when already up.
-fn ensure_client_service_blocking() -> bool {
-    if !is_paired() {
-        return false;
-    }
-    let installed = dirs::home_dir()
-        .map(|h| h.join(".virtues").join("bin").join("virtues-client").exists())
-        .unwrap_or(false);
-    if !installed {
-        // Run the bundled helper (sitting next to this app binary in
-        // Contents/MacOS/) to install itself as a service. Dev builds without a
-        // co-located sidecar simply skip — the manual `virtues-client up` path
-        // still works there.
-        let bundled = std::env::current_exe()
-            .ok()
-            .and_then(|p| p.parent().map(|d| d.join("virtues-client")));
-        if let Some(bin) = bundled.filter(|b| b.exists()) {
-            let ran = std::process::Command::new(&bin)
-                .arg("install")
-                .output()
-                .map(|o| o.status.success())
-                .unwrap_or(false);
-            return ran;
-        }
-        return false;
-    }
-    // Installed → nudge the service manager so it's serving before we probe.
-    #[cfg(target_os = "macos")]
-    {
-        let uid = std::process::Command::new("id")
-            .arg("-u")
-            .output()
-            .ok()
-            .and_then(|o| String::from_utf8(o.stdout).ok())
-            .map(|s| s.trim().to_string())
-            .unwrap_or_default();
-        if !uid.is_empty() {
-            let _ = std::process::Command::new("/bin/launchctl")
-                .args(["kickstart", &format!("gui/{uid}/com.virtues.client")])
-                .output();
-            return true;
-        }
-    }
-    #[cfg(target_os = "linux")]
-    {
-        let _ = std::process::Command::new("systemctl")
-            .args(["--user", "start", "virtues-client.service"])
-            .output();
-        return true;
-    }
-    #[allow(unreachable_code)]
-    false
 }
 
 /// Reconcile one helper. `Ok(true)` = it was stale and got redeployed.
@@ -1243,6 +1052,9 @@ fn main() {
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_notification::init())
+        // In-process iroh reach: pairs + serves the box on :7117 within the app
+        // (replaces the retired virtues-client proxy sidecar).
+        .plugin(tauri_plugin_reach::init())
         .invoke_handler(tauri::generate_handler![
             get_client_status,
             discover_servers,
@@ -1263,45 +1075,42 @@ fn main() {
             open_accessibility_settings,
         ])
         .setup(|app| {
-            // Keep the installed background helpers matching what this app
-            // bundle ships, BEFORE we probe the proxy below — otherwise a stale
-            // helper (e.g. a proxy that can't read a freshly-paired key) would
-            // skew the launch decision. If anything was actually swapped, give
-            // the just-restarted proxy a moment to bind :7117 before probing.
-            let reconciled = reconcile_helpers();
-            // Then guarantee the proxy service itself is installed + running
-            // (migrates pre-service-model pairings, restarts a stopped proxy).
-            // Both must run, so bind the results before the OR. Either action
-            // needs the just-(re)started proxy a moment to bind :7117 before the
-            // launch probe reads it.
-            let ensured = ensure_client_service_blocking();
-            if reconciled || ensured {
-                std::thread::sleep(std::time::Duration::from_millis(700));
+            // Keep the installed collector matching what this app bundle ships
+            // (a stale collector after an app update is the only reconcile case
+            // left now that the proxy runs in-process).
+            if reconcile_helpers() {
+                std::thread::sleep(std::time::Duration::from_millis(300));
+            }
+
+            // Bring reach up IN-PROCESS before the launch probe: when paired,
+            // bind :7117 + build the warm iroh client here so the probe below
+            // (and the webview) have a live loopback to read. This replaces the
+            // old durable virtues-client proxy sidecar — the app now serves its
+            // own box reach for its session (the collector reaches the box over
+            // its own embedded iroh, independent of this).
+            if app.reach().is_paired() {
+                if let Err(e) = tauri::async_runtime::block_on(app.reach().ensure_serving()) {
+                    eprintln!("[reach] ensure_serving failed: {e}");
+                }
             }
 
             // Shared state for the self-updater (read by the tray poll).
             app.manage(std::sync::Mutex::new(UpdateState::default()));
 
-            // Paired → the local virtues-client proxy on :7117 (NOT the box's
-            // own 8000; the proxy listens on 7117 to avoid squatting a common
-            // dev port). Keep in sync with LOCAL_PROXY_PORT in
-            // apps/desktop/src/proxy.rs, the CSP, and pair.html.
             // Decide where to land. A valid pairing reconnects SILENTLY (the
             // 90% reinstall case); we only ever interrupt when something's
             // actually wrong, and the connect screen is the single recovery
             // surface. The verdict is passed to pair.html via the URL hash so it
             // can show the right one-line banner:
             //   not paired        → fresh connect screen
-            //   box accepts us    → load the box
+            //   box accepts us    → load the box (the in-process :7117 loopback)
             //   box rejects us    → #reset      ("your box was reset, reconnect")
-            //   box unreachable   → #unreachable ("can't reach it" + Retry, which
-            //                       (re)starts the proxy service, then re-probes)
+            //   box unreachable   → #unreachable ("can't reach it" + Retry)
             // A SINGLE fast probe (not the multi-retry loop): reachable boxes
             // reconnect silently with no connect-screen flash (the
             // silent-reconnect doctrine), and an unreachable box bounds the
-            // pre-window delay to ~1.2s instead of blocking launch for ~7.5s.
-            // We never retry here — the connect screen polls asynchronously off
-            // the UI thread, so recovery doesn't cost main-thread time.
+            // pre-window delay. The connect screen polls asynchronously off the
+            // UI thread, so recovery doesn't cost main-thread time.
             let url = if !is_paired() {
                 WebviewUrl::App("pair.html".into())
             } else {
