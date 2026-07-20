@@ -85,6 +85,7 @@ pub use drive::{
     purge_old_trash as purge_old_drive_trash,
     reconcile_usage as reconcile_drive_usage,
     restore_file as restore_drive_file,
+    reextract_file as reextract_drive_file,
     upload_file as upload_drive_file,
     validate_drive_path,
     CreateFolderRequest as DriveCreateFolderRequest,

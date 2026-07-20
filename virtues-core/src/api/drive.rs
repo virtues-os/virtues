@@ -96,6 +96,9 @@ pub struct DriveFile {
     pub is_folder: bool,
     pub parent_id: Option<String>,
     pub sha256_hash: Option<String>,
+    /// Universal-extraction state (researcher-plan D1):
+    /// pending | extracting | done | no_text | failed | skipped
+    pub extraction_status: String,
     pub deleted_at: Option<Timestamp>,
     pub created_at: Timestamp,
     pub updated_at: Timestamp,
@@ -473,7 +476,7 @@ pub async fn list_files(pool: &PgPool, path: &str) -> Result<Vec<DriveFile>> {
         sqlx::query_as::<_, DriveFile>(
             r#"
             SELECT id, path, filename, mime_type, size_bytes,
-                   is_folder, parent_id, sha256_hash, deleted_at, created_at, updated_at
+                   is_folder, parent_id, sha256_hash, extraction_status, deleted_at, created_at, updated_at
             FROM app_drive_files
             WHERE parent_id IS NULL
               AND deleted_at IS NULL
@@ -498,7 +501,7 @@ pub async fn list_files(pool: &PgPool, path: &str) -> Result<Vec<DriveFile>> {
             Some((parent_id,)) => sqlx::query_as::<_, DriveFile>(
                 r#"
                     SELECT id, path, filename, mime_type, size_bytes,
-                           is_folder, parent_id, sha256_hash, deleted_at, created_at, updated_at
+                           is_folder, parent_id, sha256_hash, extraction_status, deleted_at, created_at, updated_at
                     FROM app_drive_files
                     WHERE parent_id = $1
                       AND deleted_at IS NULL
@@ -549,6 +552,7 @@ pub async fn get_file_metadata(pool: &PgPool, file_id: &str) -> Result<DriveFile
             is_folder: true,
             parent_id: None,
             sha256_hash: None,
+            extraction_status: "skipped".to_string(),
             deleted_at: None,
             created_at: now,
             updated_at: now,
@@ -565,7 +569,7 @@ pub async fn get_file_metadata(pool: &PgPool, file_id: &str) -> Result<DriveFile
     let file = sqlx::query_as::<_, DriveFile>(
         r#"
         SELECT id, path, filename, mime_type, size_bytes,
-               is_folder, parent_id, sha256_hash, deleted_at, created_at, updated_at
+               is_folder, parent_id, sha256_hash, extraction_status, deleted_at, created_at, updated_at
         FROM app_drive_files
         WHERE id = $1
         "#,
@@ -701,6 +705,29 @@ pub async fn upload_file(
     get_file_metadata(pool, &file_id).await
 }
 
+/// Queue a file for (re-)extraction. Used by the UI's retry affordance on
+/// `failed` chips and after installing a missing extractor (e.g. pdfium).
+/// Only text-bearing files can queue; others stay `skipped`.
+pub async fn reextract_file(pool: &PgPool, file_id: &str) -> Result<DriveFile> {
+    let file = get_file_metadata(pool, file_id).await?;
+    if file.is_folder {
+        return Err(Error::InvalidInput("Cannot extract a folder".into()));
+    }
+    if crate::extraction::doc_kind(file.mime_type.as_deref(), &file.filename).is_none() {
+        return Err(Error::InvalidInput(
+            "This file type has no text to extract".into(),
+        ));
+    }
+    sqlx::query(
+        "UPDATE app_drive_files SET extraction_status = 'pending', updated_at = now() WHERE id = $1",
+    )
+    .bind(file_id)
+    .execute(pool)
+    .await
+    .map_err(|e| Error::Database(format!("Failed to queue extraction: {e}")))?;
+    get_file_metadata(pool, file_id).await
+}
+
 /// Upload a file to a system path (like `.media/`)
 ///
 /// Similar to `upload_file` but allows hidden folder paths.
@@ -737,7 +764,7 @@ pub async fn upload_system_file(
     let existing = sqlx::query_as::<_, DriveFile>(
         r#"
         SELECT id, path, filename, mime_type, size_bytes,
-               is_folder, parent_id, sha256_hash, deleted_at, created_at, updated_at
+               is_folder, parent_id, sha256_hash, extraction_status, deleted_at, created_at, updated_at
         FROM app_drive_files
         WHERE path = $1 AND deleted_at IS NULL
         "#,
@@ -877,7 +904,7 @@ pub async fn get_file_by_path(pool: &PgPool, path: &str) -> Result<DriveFile> {
     let file = sqlx::query_as::<_, DriveFile>(
         r#"
         SELECT id, path, filename, mime_type, size_bytes,
-               is_folder, parent_id, sha256_hash, deleted_at, created_at, updated_at
+               is_folder, parent_id, sha256_hash, extraction_status, deleted_at, created_at, updated_at
         FROM app_drive_files
         WHERE path = $1 AND deleted_at IS NULL
         "#,
@@ -1064,7 +1091,7 @@ async fn soft_delete_folder_recursive(pool: &PgPool, folder_id: &str) -> Result<
     let children = sqlx::query_as::<_, DriveFile>(
         r#"
         SELECT id, path, filename, mime_type, size_bytes,
-               is_folder, parent_id, sha256_hash, deleted_at, created_at, updated_at
+               is_folder, parent_id, sha256_hash, extraction_status, deleted_at, created_at, updated_at
         FROM app_drive_files
         WHERE parent_id = $1 AND deleted_at IS NULL
         "#,
@@ -1117,7 +1144,7 @@ async fn hard_delete_folder_recursive(
     let children = sqlx::query_as::<_, DriveFile>(
         r#"
         SELECT id, path, filename, mime_type, size_bytes,
-               is_folder, parent_id, sha256_hash, deleted_at, created_at, updated_at
+               is_folder, parent_id, sha256_hash, extraction_status, deleted_at, created_at, updated_at
         FROM app_drive_files
         WHERE parent_id = $1
         "#,
@@ -1175,7 +1202,7 @@ pub async fn list_media(pool: &PgPool) -> Result<Vec<DriveFile>> {
     let files = sqlx::query_as::<_, DriveFile>(
         r#"
         SELECT id, path, filename, mime_type, size_bytes,
-               is_folder, parent_id, sha256_hash, deleted_at, created_at, updated_at
+               is_folder, parent_id, sha256_hash, extraction_status, deleted_at, created_at, updated_at
         FROM app_drive_files
         WHERE deleted_at IS NULL
           AND is_folder = false
@@ -1194,7 +1221,7 @@ pub async fn list_trash(pool: &PgPool) -> Result<Vec<DriveFile>> {
     let files = sqlx::query_as::<_, DriveFile>(
         r#"
         SELECT id, path, filename, mime_type, size_bytes,
-               is_folder, parent_id, sha256_hash, deleted_at, created_at, updated_at
+               is_folder, parent_id, sha256_hash, extraction_status, deleted_at, created_at, updated_at
         FROM app_drive_files
         WHERE deleted_at IS NOT NULL
           AND deleted_at > datetime('now', '-30 days')
@@ -1371,7 +1398,7 @@ pub async fn purge_old_trash(pool: &PgPool, config: &DriveConfig) -> Result<u64>
     let old_files = sqlx::query_as::<_, DriveFile>(
         r#"
         SELECT id, path, filename, mime_type, size_bytes,
-               is_folder, parent_id, sha256_hash, deleted_at, created_at, updated_at
+               is_folder, parent_id, sha256_hash, extraction_status, deleted_at, created_at, updated_at
         FROM app_drive_files
         WHERE deleted_at IS NOT NULL
           AND deleted_at < datetime('now', '-30 days')
@@ -1622,7 +1649,7 @@ pub async fn move_file(
         let descendants = sqlx::query_as::<_, DriveFile>(
             r#"
             SELECT id, path, filename, mime_type, size_bytes,
-                   is_folder, parent_id, sha256_hash, deleted_at, created_at, updated_at
+                   is_folder, parent_id, sha256_hash, extraction_status, deleted_at, created_at, updated_at
             FROM app_drive_files
             WHERE path LIKE $1 AND is_folder = FALSE AND deleted_at IS NULL
             "#,

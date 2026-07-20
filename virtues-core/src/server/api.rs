@@ -2558,6 +2558,14 @@ pub async fn download_drive_file_handler(
     }
 }
 
+/// POST /api/drive/files/:id/reextract — queue a file for (re-)extraction.
+pub async fn reextract_drive_file_handler(
+    State(state): State<AppState>,
+    Path(file_id): Path<String>,
+) -> Response {
+    api_response(crate::api::reextract_drive_file(state.db.pool(), &file_id).await)
+}
+
 /// DELETE /api/drive/files/:id - Delete a file or folder
 pub async fn delete_drive_file_handler(
     State(state): State<AppState>,
