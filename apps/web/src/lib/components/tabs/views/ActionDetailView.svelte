@@ -251,28 +251,32 @@
 					{/if}
 				</label>
 
-				<label class="field">
-					<span class="label">Agent prompt</span>
-					{#if isAgent || !isSystem}
-						<textarea
-							rows="10"
-							bind:value={edit.agent}
-							disabled={isSystem}
-							oninput={markDirty}
-							placeholder="What should this action do each run?"
-						></textarea>
-					{:else}
-						<div class="pipeline-note">
-							<Icon icon="ri:terminal-line" width="14" />
-							<span>Subprocess pipeline: <code>{action.function_name}</code></span>
-						</div>
-					{/if}
-					{#if isSystem && isAgent}
-						<span class="hint">
-							<Icon icon="ri:lock-line" width="12" /> System prompt — read only
-						</span>
-					{/if}
-				</label>
+				<!-- A pure View (a face with no agent) has no server-side run and
+				     no prompt — don't show an empty agent editor for it. -->
+				{#if isAgent || !action.has_face}
+					<label class="field">
+						<span class="label">Agent prompt</span>
+						{#if isAgent || !isSystem}
+							<textarea
+								rows="10"
+								bind:value={edit.agent}
+								disabled={isSystem}
+								oninput={markDirty}
+								placeholder="What should this action do each run?"
+							></textarea>
+						{:else}
+							<div class="pipeline-note">
+								<Icon icon="ri:terminal-line" width="14" />
+								<span>Subprocess pipeline: <code>{action.function_name}</code></span>
+							</div>
+						{/if}
+						{#if isSystem && isAgent}
+							<span class="hint">
+								<Icon icon="ri:lock-line" width="12" /> System prompt — read only
+							</span>
+						{/if}
+					</label>
+				{/if}
 
 				<label class="field">
 					<span class="label">Schedule</span>

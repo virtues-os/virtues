@@ -36,7 +36,8 @@ struct ManifestOut {
     condition: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     until: Option<String>,
-    agent: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    agent: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     config: Option<toml::Value>,
 }
@@ -54,11 +55,12 @@ pub async fn execute(
     // ---- 1. Parse params -------------------------------------------------
     let name = req_str(&arguments, "name")?;
     let description = req_str(&arguments, "description")?;
-    let agent = arguments
-        .get("agent")
-        .and_then(|v| v.as_str())
-        .or_else(|| arguments.get("instruction").and_then(|v| v.as_str()))
-        .ok_or_else(|| ToolError::InvalidParameters("agent is required".into()))?;
+    // `agent` is OPTIONAL. A pure dashboard/View (a face that reads data) or a
+    // Tracker (schema + face) has no server-side run and needs no prompt — the
+    // face queries directly. Only Reflect/Rule applets that DO something each
+    // run (write a page, post to chat, compute) carry an agent.
+    let agent = opt_str(&arguments, "agent")
+        .or_else(|| opt_str(&arguments, "instruction"));
     let schedule = opt_str(&arguments, "schedule")
         .or_else(|| opt_str(&arguments, "cron_schedule"));
     let condition = opt_str(&arguments, "condition");
@@ -66,6 +68,14 @@ pub async fn execute(
     let schema_sql = opt_str(&arguments, "schema_sql");
     let face_html = opt_str(&arguments, "face_html");
     let limits = arguments.get("limits").cloned().filter(|v| v.is_object());
+
+    // An applet must DO or SHOW something: a prompt to run, or a face to view.
+    if agent.is_none() && face_html.is_none() {
+        return Ok(ToolResult::success(serde_json::json!({
+            "status": "check_failed",
+            "findings": [finding("agent", "an applet needs either an `agent` prompt (to run) or a `face_html` (to show) — a dashboard is face-only, a reminder is agent-only", None)],
+        })));
+    }
 
     let triggers: Vec<String> = arguments
         .get("triggers")
@@ -108,7 +118,7 @@ pub async fn execute(
         }
     }
 
-    if agent.len() > AGENT_MAX {
+    if agent.as_deref().is_some_and(|a| a.len() > AGENT_MAX) {
         findings.push(finding("agent", "prompt too large (24KB max)", None));
     }
     if let Some(f) = &face_html {
@@ -208,7 +218,7 @@ pub async fn execute(
         default_enabled,
         condition: condition.clone(),
         until: until.clone(),
-        agent: agent.to_string(),
+        agent: agent.clone(),
         config: if config.is_empty() { None } else { Some(toml::Value::Table(config)) },
     };
     let manifest_toml = toml::to_string_pretty(&manifest)
@@ -275,7 +285,8 @@ pub async fn execute(
     if face_html.is_some() {
         capabilities.push("has a face (sandboxed page)".into());
     }
-    if chat_id.is_some() {
+    // Only agent-bearing applets run and deliver; a face-only View just renders.
+    if agent.is_some() && chat_id.is_some() {
         capabilities.push("posts run results to this chat".into());
     }
 
