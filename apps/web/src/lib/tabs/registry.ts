@@ -502,13 +502,13 @@ export const tabRegistry: Record<TabType, TabDefinition> = {
 			path === '/actions' || /^\/actions\/(actions|templates|history)$/.test(path),
 		parse: () => ({
 			type: 'actions',
-			label: 'Actions',
+			label: 'Applets',
 			icon: 'ri:flashlight-line',
 		}),
 		serialize: () => 'actions',
 		deserialize: () => '/actions',
 		icon: 'ri:flashlight-line',
-		defaultLabel: 'Actions',
+		defaultLabel: 'Applets',
 		component: ActionsView,
 	},
 
@@ -522,7 +522,7 @@ export const tabRegistry: Record<TabType, TabDefinition> = {
 			const match = path.match(/^\/action\/(action_[^/]+)$/);
 			return {
 				type: 'action',
-				label: 'Action',
+				label: 'Applet',
 				icon: 'ri:flashlight-line',
 				entityId: match?.[1],
 			};
@@ -533,7 +533,7 @@ export const tabRegistry: Record<TabType, TabDefinition> = {
 			return '/actions';
 		},
 		icon: 'ri:flashlight-line',
-		defaultLabel: 'Action',
+		defaultLabel: 'Applet',
 		component: ActionDetailView,
 		detailComponent: ActionDetailView,
 	},

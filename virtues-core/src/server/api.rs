@@ -225,6 +225,7 @@ pub async fn list_actions_handler(State(state): State<AppState>) -> Response {
             t.enabled, t.config, t.condition, t.triggers,
             t.memory, t.credential_id,
             t.runtime, t.command,
+            t.until, t.archived_at, t.supervise,
             t.created_at, t.updated_at,
             r.status AS last_run_status,
             r.started_at AS last_run_at,
@@ -273,6 +274,10 @@ pub async fn list_actions_handler(State(state): State<AppState>) -> Response {
                     let command: Option<Vec<String>> = command_raw
                         .as_deref()
                         .and_then(|s| serde_json::from_str(s).ok());
+                    let until: Option<String> = r.try_get("until").unwrap_or(None);
+                    let archived_at: Option<chrono::DateTime<chrono::Utc>> =
+                        r.try_get("archived_at").unwrap_or(None);
+                    let supervise: bool = r.try_get("supervise").unwrap_or(false);
                     // TIMESTAMPTZ columns decode to DateTime<Utc>; serde emits
                     // RFC3339 in the JSON. Reading them as String failed (empty).
                     let created: chrono::DateTime<chrono::Utc> =
@@ -311,6 +316,9 @@ pub async fn list_actions_handler(State(state): State<AppState>) -> Response {
                         "credential_id": credential_id,
                         "runtime": runtime,
                         "command": command,
+                        "until": until,
+                        "archived_at": archived_at,
+                        "supervise": supervise,
                         "created_at": created,
                         "updated_at": updated,
                         "is_system": owner == "system",
@@ -357,6 +365,9 @@ pub async fn get_action_handler(
                     "command": action.command,
                     "credential_id": action.credential_id,
                     "runtime": action.runtime,
+                    "until": action.until,
+                    "archived_at": action.archived_at,
+                    "supervise": action.supervise,
                     "created_at": action.created_at,
                     "updated_at": action.updated_at,
                     "is_system": action.owner == "system",
