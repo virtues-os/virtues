@@ -101,7 +101,8 @@ The trust loop: drop PDFs on a notebook → watch them index → ask → click c
    - Allowlist: `pdf`, `docx` (unzip + document.xml text pull — researchers live in
      Word), `txt`, `md`, `html` (tag-strip). Size cap (~50MB extracted text).
    - PDF extractor behind a trait: evaluate `pdfium-render` (layout quality; check
-     arm64/Jetson binary availability) vs pure-Rust fallback in week 1.
+     linux-aarch64 binary availability — **prod box is Q6A/QCS6490, not Jetson**)
+     vs pure-Rust fallback in week 1. Avoid MuPDF (AGPL).
    - Scanned/no-text → `extraction_status='no_text'` (honest, never silent).
    - State on `app_drive_files`: `extraction_status`
      (`pending|extracting|done|no_text|failed|skipped`) + `extracted_at`;
@@ -172,12 +173,62 @@ The trust loop: drop PDFs on a notebook → watch them index → ask → click c
 
 - D1 → D2 → D3 → D4; each ships standalone value.
 - **Extractor quality** (reading order, headers/footers): trait boundary + week-1
-  pdfium-vs-pure-Rust decision gate; Jetson arm64 check.
+  pdfium-vs-pure-Rust decision gate on Q6A (linux-aarch64).
 - **Quote-landing misses** (extractor text vs pdf.js text differ enough that the
   quote isn't found): fallback = page-only landing; tune snippet length.
 - **Yjs append** (D4): coordinate with pages' live layer before building.
 - Embedding volume from universal extraction: acceptable (halfvec 384); watch via
   existing telemetry.
+
+## Spikes required (proofs before/while building — none of these are done)
+
+- **S1 · Extractor bake-off on Q6A (gates D1, week 1).** `pdfium-render` with a
+  linux-aarch64 pdfium binary (pdfium-binaries publishes arm64) vs pure-Rust
+  fallback, run on the Q6A: 10 real papers (two-column, math-heavy, footnoted);
+  eyeball reading order, header/footer noise, chunk quality; measure speed + RAM.
+  Include the DOCX quick-check (unzip + document.xml). MuPDF excluded (AGPL).
+- **S2 · Quote-landing hit rate (gates the citation trust loop).** Rust-extracted
+  snippets searched against pdf.js `getTextContent` with whitespace normalization
+  + de-hyphenation across the same 10 papers. Target ≥95% found; tune snippet
+  length; page-only fallback covers misses. Cheap browser-side script.
+- **S3 · Selection → normalized rects (gates D2 schema).** Capture multi-span
+  text-layer selections as normalized page-space quads; verify zoom/DPR
+  invariance on re-render. Half-day.
+- **S4 · Fusion sanity with chunks in the mix.** Mixed query over life-data +
+  document chunks: do ranks interleave sensibly; and when the indexer's
+  sub-windows of ONE chunk all match, does search collapse them to one result
+  (dedup by record_id) — verify, add dedup if not.
+- **S5 · Backfill throughput on Q6A.** A 300-page book + a 50-PDF drop:
+  end-to-end time through extraction (CPU) + embedding (QNN NPU daemon), cron
+  pacing, no starvation of other crons.
+
+## Open questions (decide during D1, cheap but real)
+
+- Scope toggle: **per-chat, persisted** (recommended) vs per-message.
+- Chunk hits in tool output should carry **doc title + page** so the model cites
+  by name ("per Smith 2024, p. 6"), not by filename.
+- **Trash semantics**: a Library member whose file is in trash — show a
+  "in trash" chip state, exclude from scope resolution.
+- **Shared pages**: `shared_file_download` validates file membership in the
+  shared page — confirm `?page/q` params flow through and no chunk/annotation
+  data leaks via share tokens.
+- Highlights spanning page boundaries: **disallow in v1** (anchor model is
+  per-page).
+- Add-to-Library affordances: drag-drop (D1) + an "add from Drive" picker —
+  picker ships when trivial, else fast-follow.
+
+## OCR — position (asked and answered)
+
+**Not in v1, but the pipeline is OCR-ready by design.** `extraction_status =
+'no_text'` files ARE the OCR queue: the extractor sits behind a trait, so an OCR
+backend slots in without schema or pipeline changes, and scanned PDFs already
+render fine in PdfPane (they're images) — reading works today, only retrieval
+waits. When we do it (fast-follow spike, not now): candidates are `ocrs`
+(pure-Rust, CPU, could run on-box), tesseract (C dep, weak on academic layouts),
+or a permissioned cloud-vision path (same opt-in posture as Crossref). A
+QNN-hosted vision model on the Q6A NPU is a research project, not a plan item.
+The scanned-book/archival corpus (humanities researchers) is real demand — the
+v1 line is honesty ("no text layer") rather than silent emptiness.
 
 ## Explicit non-goals (v1)
 
