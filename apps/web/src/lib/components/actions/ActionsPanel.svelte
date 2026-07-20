@@ -452,16 +452,18 @@
 		background: var(--color-surface-elevated, #f3f4f6);
 	}
 
+	/* Theme tokens only — --color-error/-subtle are defined per theme
+	   (light and dark); no hardcoded fallbacks that break dark themes. */
 	.attention-strip {
 		display: flex;
 		align-items: center;
 		gap: 0.625rem;
 		flex-wrap: wrap;
 		padding: 0.5rem 0.75rem;
-		border: 1px solid var(--color-error-border, #fecaca);
+		border: 1px solid var(--color-error-subtle);
 		border-radius: 8px;
-		background: var(--color-error-surface, #fef2f2);
-		color: var(--color-error, #b91c1c);
+		background: var(--color-error-subtle);
+		color: var(--color-error);
 		font-size: 0.8125rem;
 	}
 	.attention-label {
@@ -478,18 +480,18 @@
 		align-items: baseline;
 		gap: 0.375rem;
 		padding: 0.125rem 0.5rem;
-		border: 1px solid var(--color-error-border, #fecaca);
+		border: 1px solid var(--color-border);
 		border-radius: 999px;
-		background: var(--color-surface, #fff);
-		color: inherit;
+		background: var(--color-surface);
+		color: var(--color-error);
 		font-size: 0.75rem;
 		cursor: pointer;
 	}
 	.attention-item:hover {
-		background: var(--color-error-surface, #fef2f2);
+		background: var(--color-surface-elevated);
 	}
 	.attention-why {
-		color: var(--color-foreground-subtle, #9ca3af);
+		color: var(--color-foreground-subtle);
 		font-size: 0.6875rem;
 	}
 </style>
