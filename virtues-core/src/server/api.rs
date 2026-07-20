@@ -459,12 +459,21 @@ pub async fn patch_action_handler(
     }
 }
 
-/// DELETE /api/actions/:id — delete a user-owned action. System rows refused.
+/// DELETE /api/applets/:id?drop_data= — delete a user-owned applet. System rows
+/// refused. `drop_data=true` also drops the applet's private `applet_<slug>`
+/// schema; the default keeps its data.
+#[derive(Debug, Deserialize)]
+pub struct DeleteActionQuery {
+    #[serde(default)]
+    pub drop_data: bool,
+}
+
 pub async fn delete_action_handler(
     State(state): State<AppState>,
     Path(action_id): Path<String>,
+    axum::extract::Query(q): axum::extract::Query<DeleteActionQuery>,
 ) -> Response {
-    match crate::scheduler::actions::delete_action(state.db.pool(), &action_id).await {
+    match crate::scheduler::actions::delete_action(state.db.pool(), &action_id, q.drop_data).await {
         Ok(()) => StatusCode::NO_CONTENT.into_response(),
         Err(e) => {
             let status = match e.http_status() {
@@ -474,6 +483,30 @@ pub async fn delete_action_handler(
             };
             (status, Json(serde_json::json!({ "error": e.to_string() }))).into_response()
         }
+    }
+}
+
+/// GET /api/applets/:id/data — the tables an applet owns in its private
+/// `applet_<slug>` schema, so the delete confirm can show what `drop_data`
+/// would remove. Empty `tables` (and null `schema`) when it owns none.
+pub async fn get_action_data_handler(
+    State(state): State<AppState>,
+    Path(action_id): Path<String>,
+) -> Response {
+    match crate::scheduler::actions::applet_data_tables(state.db.pool(), &action_id).await {
+        Ok(tables) => {
+            let schema = crate::scheduler::actions::applet_schema_name(&action_id);
+            (
+                StatusCode::OK,
+                Json(serde_json::json!({ "schema": schema, "tables": tables })),
+            )
+                .into_response()
+        }
+        Err(e) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({ "error": e.to_string() })),
+        )
+            .into_response(),
     }
 }
 

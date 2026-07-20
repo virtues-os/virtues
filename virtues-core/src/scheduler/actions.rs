@@ -169,7 +169,14 @@ pub async fn update_memory(db: &PgPool, action_id: &str, memory: &str) -> Result
 }
 
 /// Delete an action. Nullifies action_id on existing runs first (FK safety).
-pub async fn delete_action(db: &PgPool, action_id: &str) -> Result<()> {
+/// Delete a user-owned applet: its row, its run-history linkage, its on-disk
+/// folder (so reconcile won't resurrect it), and — only when `drop_data` — the
+/// private `applet_<slug>` schema it owns. System rows are refused.
+///
+/// Folder + schema teardown live here so BOTH the HTTP delete and the chat
+/// `delete_applet` tool tear down identically (one door). `drop_data` defaults
+/// to keeping data: an applet's tables outlive it unless the user opts in.
+pub async fn delete_action(db: &PgPool, action_id: &str, drop_data: bool) -> Result<()> {
     let owner: Option<String> = sqlx::query_scalar("SELECT owner FROM app_applets WHERE id = $1")
         .bind(action_id)
         .fetch_optional(db)
@@ -177,6 +184,13 @@ pub async fn delete_action(db: &PgPool, action_id: &str) -> Result<()> {
     if owner.as_deref() == Some("system") {
         return Err(crate::Error::InvalidInput("Cannot delete system action".into()));
     }
+
+    // Resolve the on-disk folder BEFORE the row goes away. Only chat-authored
+    // folders (under user/) are ours to remove; builtin/imported folders are
+    // managed by their own lanes.
+    let dir =
+        crate::action_templates::dir_for_action_id(action_id).filter(|d| d.starts_with("user/"));
+
     sqlx::query("UPDATE app_applet_runs SET action_id = NULL WHERE action_id = $1")
         .bind(action_id)
         .execute(db)
@@ -185,7 +199,63 @@ pub async fn delete_action(db: &PgPool, action_id: &str) -> Result<()> {
         .bind(action_id)
         .execute(db)
         .await?;
+
+    // Drop the applet's owned data schema only when the caller opts in. The
+    // schema name is derived from the id (slugs are `[a-z0-9_]`, so it is a
+    // safe unquoted identifier).
+    if drop_data {
+        if let Some(schema) = applet_schema_name(action_id) {
+            sqlx::query(&format!("DROP SCHEMA IF EXISTS {schema} CASCADE"))
+                .execute(db)
+                .await?;
+        }
+    }
+
+    if let Some(d) = dir {
+        let path = crate::action_templates::actions_root().join(&d);
+        if let Err(e) = std::fs::remove_dir_all(&path) {
+            return Err(crate::Error::Other(format!(
+                "applet row deleted but folder removal failed ({e}); it may reappear on \
+                 reconcile — remove {d} manually"
+            )));
+        }
+        crate::action_templates::reload_catalog();
+    }
+
     Ok(())
+}
+
+/// The Postgres schema a user applet owns for its private tables, or `None` for
+/// non-user applets — only `action_user__<slug>` applets own an `applet_`
+/// schema. Slugs are `[a-z0-9_]`, so the result is a safe unquoted identifier.
+pub(crate) fn applet_schema_name(action_id: &str) -> Option<String> {
+    let slug = action_id.strip_prefix("action_user__")?;
+    if slug.is_empty()
+        || !slug
+            .bytes()
+            .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'_')
+    {
+        return None;
+    }
+    Some(format!("applet_{slug}"))
+}
+
+/// List the base tables in a user applet's owned `applet_<slug>` schema. Empty
+/// when the applet owns no schema (never created one, or isn't a user applet) —
+/// used by the delete confirm to show exactly what `drop_data` would remove.
+pub async fn applet_data_tables(db: &PgPool, action_id: &str) -> Result<Vec<String>> {
+    let Some(schema) = applet_schema_name(action_id) else {
+        return Ok(Vec::new());
+    };
+    let tables: Vec<String> = sqlx::query_scalar(
+        "SELECT table_name FROM information_schema.tables \
+         WHERE table_schema = $1 AND table_type = 'BASE TABLE' \
+         ORDER BY table_name",
+    )
+    .bind(&schema)
+    .fetch_all(db)
+    .await?;
+    Ok(tables)
 }
 
 /// Fields the user can tune on a `system`-owned action row. Must match the

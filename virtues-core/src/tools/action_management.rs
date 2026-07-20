@@ -182,27 +182,12 @@ pub async fn delete_action(
         .and_then(|v| v.as_str())
         .ok_or_else(|| ToolError::InvalidParameters("id is required".into()))?;
 
-    // Resolve the folder BEFORE the row goes away, and remove it too —
-    // otherwise the next reconcile resurrects the applet from disk. Only
-    // chat-authored folders (under user/) are removable this way; builtin
-    // and imported folders are managed by their own lanes.
-    let dir = crate::action_templates::dir_for_action_id(id)
-        .filter(|d| d.starts_with("user/"));
-
-    actions::delete_action(pool, id).await.map_err(map_err)?;
-
-    if let Some(d) = dir {
-        let path = crate::action_templates::actions_root().join(&d);
-        if let Err(e) = std::fs::remove_dir_all(&path) {
-            // The row is gone but the folder survives — the next reconcile
-            // would re-insert it. Surface this rather than swallow it: the
-            // delete is not complete while the folder remains.
-            return Err(ToolError::ExecutionFailed(format!(
-                "applet row deleted but folder removal failed ({e}); it may reappear on reconcile — remove {d} manually"
-            )));
-        }
-        crate::action_templates::reload_catalog();
-    }
+    // Full teardown (row + on-disk folder) lives in `actions::delete_action`.
+    // The tool keeps the applet's data by default — dropping owned tables is a
+    // user decision made on the delete confirm, not something the model does.
+    actions::delete_action(pool, id, false)
+        .await
+        .map_err(map_err)?;
 
     Ok(ToolResult::success(serde_json::json!({
         "deleted": true,
