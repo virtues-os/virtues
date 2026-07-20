@@ -126,6 +126,20 @@ pub async fn edit_action(
         .cloned()
         .ok_or_else(|| ToolError::InvalidParameters("patch is required".into()))?;
 
+    // The gate invariant: no path from model output to an enabled scheduled
+    // row without a user-surface action. Enabling an ai-owned applet is a
+    // user act (the toggle on the applet page — a plain HTTP PATCH), never a
+    // tool act. Disabling stays allowed (reversible, protective).
+    if patch.get("enabled").and_then(|v| v.as_bool()) == Some(true) {
+        let current = actions::get_action(pool, id).await.map_err(map_err)?;
+        if current.owner == "ai" {
+            return Ok(ToolResult::success(serde_json::json!({
+                "status": "refused",
+                "error": "enabling an AI-authored applet is a user action — ask the user to enable it on the applet page",
+            })));
+        }
+    }
+
     let updated = actions::update_action(pool, id, &patch)
         .await
         .map_err(map_err)?;
@@ -144,7 +158,23 @@ pub async fn delete_action(
         .and_then(|v| v.as_str())
         .ok_or_else(|| ToolError::InvalidParameters("id is required".into()))?;
 
+    // Resolve the folder BEFORE the row goes away, and remove it too —
+    // otherwise the next reconcile resurrects the applet from disk. Only
+    // chat-authored folders (under user/) are removable this way; builtin
+    // and imported folders are managed by their own lanes.
+    let dir = crate::action_templates::dir_for_action_id(id)
+        .filter(|d| d.starts_with("user/"));
+
     actions::delete_action(pool, id).await.map_err(map_err)?;
+
+    if let Some(d) = dir {
+        let path = crate::action_templates::actions_root().join(&d);
+        if let Err(e) = std::fs::remove_dir_all(&path) {
+            tracing::warn!(id, dir = %d, error = %e, "applet folder removal failed");
+        }
+        crate::action_templates::reload_catalog();
+    }
+
     Ok(ToolResult::success(serde_json::json!({
         "deleted": true,
         "id": id,

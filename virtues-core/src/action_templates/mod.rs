@@ -236,6 +236,22 @@ fn catalog_lock() -> &'static RwLock<ParsedTemplates> {
 ///
 /// Called by the `/api/admin/reconcile` handler after a user (or LLM) edits
 /// a manifest on disk.
+/// Serializes every reload+reconcile pass (chat setups, admin endpoint, git
+/// import). Reconcile is global and non-transactional; concurrent passes can
+/// interleave GC with upserts. One mutex, one writer at a time.
+pub fn reconcile_lock() -> &'static tokio::sync::Mutex<()> {
+    static LOCK: std::sync::OnceLock<tokio::sync::Mutex<()>> = std::sync::OnceLock::new();
+    LOCK.get_or_init(|| tokio::sync::Mutex::new(()))
+}
+
+/// The one blessed way to apply on-disk changes: reload the catalog and
+/// reconcile rows, under the global reconcile mutex.
+pub async fn reload_and_reconcile(db: &PgPool) -> Result<usize> {
+    let _guard = reconcile_lock().lock().await;
+    reload_catalog();
+    reconcile_templates(db).await
+}
+
 pub fn reload_catalog() {
     let fresh = load_catalog();
     let lock = catalog_lock();
