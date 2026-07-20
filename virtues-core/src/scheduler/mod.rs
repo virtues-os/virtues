@@ -1,6 +1,6 @@
-//! Cron scheduler for app_actions.
+//! Cron scheduler for app_applets.
 //!
-//! Reads every enabled action with a cron schedule from `app_actions` and
+//! Reads every enabled action with a cron schedule from `app_applets` and
 //! registers a job with `tokio-cron-scheduler`. Each firing calls
 //! [`crate::action_runner::run_action`] with `trigger = "cron"`; the unified
 //! runner handles triggers validation, condition evaluation, concurrency, and
@@ -63,7 +63,7 @@ impl Scheduler {
         // `runtime` taxonomy.
         let rows: Vec<(String, String, String)> = sqlx::query_as(
             r#"SELECT id, name, cron_schedule
-               FROM app_actions
+               FROM app_applets
                WHERE enabled = TRUE
                  AND cron_schedule IS NOT NULL
                  AND triggers @> '["cron"]'::jsonb
@@ -147,9 +147,9 @@ impl Scheduler {
     pub async fn list_scheduled(&self) -> Result<Vec<ScheduledAction>> {
         let rows = sqlx::query_as::<_, (String, String, String, Option<Timestamp>)>(
             r#"SELECT a.id, a.name, a.cron_schedule, r.started_at
-               FROM app_actions a
-               LEFT JOIN app_action_runs r ON r.id = (
-                   SELECT id FROM app_action_runs
+               FROM app_applets a
+               LEFT JOIN app_applet_runs r ON r.id = (
+                   SELECT id FROM app_applet_runs
                    WHERE action_id = a.id AND status = 'success'
                    ORDER BY started_at DESC LIMIT 1
                )

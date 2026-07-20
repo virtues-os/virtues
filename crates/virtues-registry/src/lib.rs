@@ -7,7 +7,7 @@
 //! - Ontologies (normalized data schemas)
 //!
 //! Source/stream catalog data lives in `actions/` (TOML manifests reconciled
-//! into the `app_actions` table), not here — the former `sources`/`streams`
+//! into the `app_applets` table), not here — the former `sources`/`streams`
 //! modules were removed as dead code.
 //!
 //! # Design Principles

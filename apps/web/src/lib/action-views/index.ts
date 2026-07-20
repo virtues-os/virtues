@@ -24,16 +24,16 @@ import type { Component } from 'svelte';
 // `actions/<name>/ui/`:
 //   action-views/ → lib/ → src/ → web/ → apps/ → <repo root>
 const cardModules = import.meta.glob<{ default: Component }>(
-	'../../../../../actions/*/ui/Card.svelte',
+	'../../../../../applets/*/ui/Card.svelte',
 	{ eager: true }
 );
 const detailModules = import.meta.glob<{ default: Component }>(
-	'../../../../../actions/*/ui/Detail.svelte',
+	'../../../../../applets/*/ui/Detail.svelte',
 	{ eager: true }
 );
 
 /** Extract the action folder name (`hello_world`) from a glob key
- * (`../../../../../actions/hello_world/ui/Card.svelte`).
+ * (`../../../../../applets/hello_world/ui/Card.svelte`).
  */
 function nameFromPath(path: string): string | null {
 	const m = path.match(/\/actions\/([^/]+)\/ui\//);

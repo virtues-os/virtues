@@ -23,7 +23,7 @@ pub fn output(result: &str, config: &serde_json::Value) -> Result<()> {
 }
 
 /// Like [`output`], but also reports how many records this run processed (the
-/// count lands in `app_action_runs.records_processed` for the Telemetry tab).
+/// count lands in `app_applet_runs.records_processed` for the Telemetry tab).
 pub fn output_with_records(result: &str, config: &serde_json::Value, records: i64) -> Result<()> {
     let out = ActionOutput::new(result, config.clone()).with_records(records);
     serde_json::to_writer(std::io::stdout(), &out)

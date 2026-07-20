@@ -121,7 +121,7 @@ const ACTIONS: SystemSection = {
 	name: 'Applets',
 	icon: 'ri:flashlight-line',
 	type: 'link',
-	href: '/actions',
+	href: '/applets',
 };
 
 export const SECTION_GROUPS: SectionGroup[] = [

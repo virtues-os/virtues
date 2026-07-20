@@ -94,7 +94,7 @@ pub async fn get_activity_metrics(db: &Database) -> Result<ActivityMetrics> {
             AVG(CASE WHEN completed_at IS NOT NULL
                 THEN EXTRACT(EPOCH FROM (completed_at - started_at))
                 ELSE NULL END) as avg_duration
-        FROM app_action_runs
+        FROM app_applet_runs
         "#,
     )
     .fetch_one(db.pool())
@@ -136,8 +136,8 @@ pub async fn get_activity_metrics(db: &Database) -> Result<ActivityMetrics> {
                 THEN EXTRACT(EPOCH FROM (r.completed_at - r.started_at))
                 ELSE NULL END) as avg_duration,
             CAST(COALESCE(SUM(r.records_processed), 0) AS BIGINT) as total_records
-        FROM app_action_runs r
-        LEFT JOIN app_actions t ON r.action_id = t.id
+        FROM app_applet_runs r
+        LEFT JOIN app_applets t ON r.action_id = t.id
         GROUP BY 1
         ORDER BY total DESC
         "#,
@@ -157,7 +157,7 @@ pub async fn get_activity_metrics(db: &Database) -> Result<ActivityMetrics> {
         })
         .collect();
 
-    // Per-action throughput (the closest real "stream" dimension app_action_runs
+    // Per-action throughput (the closest real "stream" dimension app_applet_runs
     // carries — one row per action by its display name).
     let stream_rows = sqlx::query(
         r#"
@@ -168,8 +168,8 @@ pub async fn get_activity_metrics(db: &Database) -> Result<ActivityMetrics> {
             SUM(CASE WHEN r.status = 'error' THEN 1 ELSE 0 END) as failed,
             MAX(r.completed_at) as last_sync_at,
             CAST(COALESCE(SUM(r.records_processed), 0) AS BIGINT) as total_records
-        FROM app_action_runs r
-        LEFT JOIN app_actions t ON r.action_id = t.id
+        FROM app_applet_runs r
+        LEFT JOIN app_applets t ON r.action_id = t.id
         GROUP BY COALESCE(t.name, '(deleted action)')
         ORDER BY job_count DESC
         "#,
@@ -208,8 +208,8 @@ pub async fn get_activity_metrics(db: &Database) -> Result<ActivityMetrics> {
                  WHEN t.command IS NULL AND (t.agent IS NULL OR btrim(t.agent) = '') THEN 'view'
                  ELSE 'function' END as action_type,
                r.transform_stage, r.error, r.completed_at
-        FROM app_action_runs r
-        LEFT JOIN app_actions t ON r.action_id = t.id
+        FROM app_applet_runs r
+        LEFT JOIN app_applets t ON r.action_id = t.id
         WHERE r.status = 'error' AND r.error IS NOT NULL
         ORDER BY r.completed_at DESC NULLS LAST
         LIMIT 10
@@ -256,7 +256,7 @@ async fn get_period_stats(db: &Database, since: DateTime<Utc>) -> Result<PeriodS
             SUM(CASE WHEN status = 'success' THEN 1 ELSE 0 END) as completed,
             SUM(CASE WHEN status = 'error' THEN 1 ELSE 0 END) as failed,
             CAST(COALESCE(SUM(records_processed), 0) AS INTEGER) as records
-        FROM app_action_runs
+        FROM app_applet_runs
         WHERE created_at >= $1
         "#,
     )

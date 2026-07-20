@@ -102,7 +102,7 @@
 		windowShellStore.openAside({
 			type: 'action',
 			label: a.name,
-			route: `/action/${a.id}`,
+			route: `/applet/${a.id}`,
 			icon: 'ri:flashlight-line'
 		});
 	}

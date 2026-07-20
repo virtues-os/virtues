@@ -99,7 +99,7 @@ pub async fn trigger_action_handler(
     // Detach the heavy phase (subprocess + agent) onto a tokio task so a
     // client disconnect can't drop the future mid-run and leave the row
     // stuck in `running`. The handler returns 202 with the run_id as soon
-    // as the row is created; the UI polls `app_action_runs` for the final
+    // as the row is created; the UI polls `app_applet_runs` for the final
     // status.
     let result = match crate::action_runner::run_action_detached(
         &deps,
@@ -232,9 +232,9 @@ pub async fn list_actions_handler(State(state): State<AppState>) -> Response {
             r.records_processed AS last_run_records,
             r.error AS last_run_error,
             r.result_summary AS last_run_summary
-           FROM app_actions t
-           LEFT JOIN app_action_runs r ON r.id = (
-               SELECT id FROM app_action_runs
+           FROM app_applets t
+           LEFT JOIN app_applet_runs r ON r.id = (
+               SELECT id FROM app_applet_runs
                WHERE action_id = t.id
                ORDER BY created_at DESC LIMIT 1
            )
@@ -733,7 +733,7 @@ pub async fn list_system_apps_handler(State(state): State<AppState>) -> Response
 ///
 /// Returns the per-app captured stdout/stderr ring buffer (oldest → newest).
 /// For `function`-runtime actions, returns an empty list (logs live in
-/// `app_action_runs.error` / `result_summary` per run instead).
+/// `app_applet_runs.error` / `result_summary` per run instead).
 ///
 /// v1: JSON polling at ~1Hz from the frontend. SSE streaming is a v1.1 add.
 pub async fn get_action_logs_handler(
@@ -754,7 +754,7 @@ pub async fn get_action_logs_handler(
 /// `POST /api/admin/reconcile`
 ///
 /// Re-reads `actions/sources.toml` + every `actions/<name>/manifest.toml` from
-/// disk, upserts `app_actions` rows accordingly, then asks the supervisor to
+/// disk, upserts `app_applets` rows accordingly, then asks the supervisor to
 /// diff/spawn/stop `app`-runtime children.
 ///
 /// This is the LLM-authoring on-ramp: an LLM creates a new action folder,
@@ -768,7 +768,7 @@ pub async fn admin_reconcile_handler(State(state): State<AppState>) -> Response 
     //    reconcile calls see the new data.
     crate::action_templates::reload_catalog();
 
-    // 2. Reconcile `app_actions` SQL rows against the fresh catalog. Manifest
+    // 2. Reconcile `app_applets` SQL rows against the fresh catalog. Manifest
     //    fields overwrite for system actions; user-managed runtime state
     //    (enabled, cron_schedule, config) is preserved per the field-ownership
     //    rule documented in action_templates/mod.rs.
@@ -819,7 +819,7 @@ pub async fn admin_reconcile_handler(State(state): State<AppState>) -> Response 
 /// `POST /api/admin/actions/import-git`
 ///
 /// Clone (or update) a Git repo into `actions/<slug>/` and reconcile so the
-/// new manifests show up as `app_actions` rows. Same diff/spawn machinery
+/// new manifests show up as `app_applets` rows. Same diff/spawn machinery
 /// that `/api/admin/reconcile` uses; we just scope the per-row diff to the
 /// slug prefix and clean up rows for manifests that disappeared upstream.
 pub async fn import_git_actions_handler(
@@ -934,7 +934,7 @@ pub async fn device_action_runs_handler(
     // Ownership: the action must belong to this device. EXISTS returns a
     // non-null bool, so a missing action and a foreign action both → false.
     let owned: bool = sqlx::query_scalar(
-        "SELECT EXISTS(SELECT 1 FROM app_actions WHERE id = $1 AND device_id = $2)",
+        "SELECT EXISTS(SELECT 1 FROM app_applets WHERE id = $1 AND device_id = $2)",
     )
     .bind(&action_id)
     .bind(&user.device_id)

@@ -15,7 +15,7 @@
 //! On startup, `reconcile_templates`:
 //!   - Loads sources from sources.toml into a static catalog (lookup by `id`).
 //!   - Globs `actions/*/manifest.toml`, parses each, and upserts into
-//!     `app_actions`. Manifest-managed fields (name, owner, agent, runtime,
+//!     `app_applets`. Manifest-managed fields (name, owner, agent, runtime,
 //!     command, triggers, condition, source) are overwritten
 //!     on every system reconcile. User-managed runtime state (enabled,
 //!     cron_schedule, config, memory) is preserved.
@@ -125,7 +125,7 @@ struct Template {
     /// via PATH. Used by both `function` and `service` runtimes; unset for `view`.
     #[serde(default)]
     command: Option<Vec<String>>,
-    /// Free-form config that flows from manifest into `app_actions.config`.
+    /// Free-form config that flows from manifest into `app_applets.config`.
     /// Notable use: `[config.view] name = "<applet>"` for view-runtime
     /// actions, which the frontend reads to dispatch the custom Card /
     /// Detail components from `apps/web/src/lib/applets/<applet>/`.
@@ -180,7 +180,7 @@ fn default_runtime() -> String {
 
 /// Compile-time fallback for the source catalog — used when `actions/sources.toml`
 /// can't be read at runtime (binary shipped without the tree, tests, etc.).
-const SOURCES_TOML: &str = include_str!("../../../actions/sources.toml");
+const SOURCES_TOML: &str = include_str!("../../../applets/sources.toml");
 
 /// Absolute path to the on-disk `actions/` root. Resolved in priority order:
 ///
@@ -198,12 +198,20 @@ const SOURCES_TOML: &str = include_str!("../../../actions/sources.toml");
 /// this resolves to, so the standard scanner picks the new folder up — there
 /// is no separate "imported actions" location.
 pub fn actions_root() -> std::path::PathBuf {
-    if let Ok(dir) = std::env::var("VIRTUES_ACTIONS_DIR") {
-        if !dir.is_empty() {
-            return std::path::PathBuf::from(dir);
+    for var in ["VIRTUES_APPLETS_DIR", "VIRTUES_ACTIONS_DIR"] {
+        if let Ok(dir) = std::env::var(var) {
+            if !dir.is_empty() {
+                return std::path::PathBuf::from(dir);
+            }
         }
     }
-    let installed = std::path::PathBuf::from(WELL_KNOWN_ACTIONS_DIR);
+    let installed = std::path::PathBuf::from(WELL_KNOWN_APPLETS_DIR);
+    let installed = if installed.is_dir() {
+        installed
+    } else {
+        let legacy = std::path::PathBuf::from(WELL_KNOWN_APPLETS_DIR_LEGACY);
+        if legacy.is_dir() { legacy } else { installed }
+    };
     if installed.is_dir() {
         return installed;
     }
@@ -214,12 +222,14 @@ pub fn actions_root() -> std::path::PathBuf {
 /// Default deployed location, matching the installer's `share/virtues/web`
 /// convention (`InstallConfig::web_dir`). Kept in sync with the path the
 /// installer copies `actions/` to and sets `VIRTUES_ACTIONS_DIR` to.
-const WELL_KNOWN_ACTIONS_DIR: &str = "/usr/local/share/virtues/actions";
+const WELL_KNOWN_APPLETS_DIR: &str = "/usr/local/share/virtues/applets";
+/// Pre-rename deployments (transition fallback; removed once the fleet moves).
+const WELL_KNOWN_APPLETS_DIR_LEGACY: &str = "/usr/local/share/virtues/actions";
 
 /// The actions directory, relative to the repo root. Resolved against
 /// `CARGO_MANIFEST_DIR`'s parent at runtime so `cargo run` works regardless
 /// of the user's CWD.
-const ACTIONS_DIR_FROM_CORE: &str = "../actions";
+const ACTIONS_DIR_FROM_CORE: &str = "../applets";
 
 /// Cached merged catalog. Initialized lazily on first access; the inner
 /// `RwLock` allows `reload_catalog()` to replace the contents in-place when
@@ -334,7 +344,7 @@ fn load_catalog() -> ParsedTemplates {
     //    - any imported slug (e.g. `team-pack/`) — owned by that import.
     //
     // The `dir` recorded on each Template is the folder path relative to the
-    // actions root; reconcile writes it onto every `app_actions` row, and
+    // actions root; reconcile writes it onto every `app_applets` row, and
     // `id_prefix` defaults to `action_<dir-with-/-as-__>` so different
     // namespaces never collide.
     let mut actions: Vec<Template> = Vec::new();
@@ -457,7 +467,7 @@ pub fn list_sources_sorted() -> Vec<Source> {
 // Reconciliation
 // ─────────────────────────────────────────────────────────────────────────────
 
-/// Reconcile `app_actions` rows against the on-disk catalog.
+/// Reconcile `app_applets` rows against the on-disk catalog.
 ///
 /// Snapshots the catalog under a brief read lock, releases the lock, then
 /// performs SQL writes against the snapshot. This avoids holding the
@@ -487,14 +497,14 @@ pub async fn reconcile_templates(db: &PgPool) -> Result<usize> {
           OR (device_id IS NOT NULL \
              AND device_id NOT IN (SELECT id FROM app_device WHERE revoked_at IS NULL))";
     let pruned = sqlx::query(&format!(
-        "UPDATE app_action_runs SET action_id = NULL \
-         WHERE action_id IN (SELECT id FROM app_actions WHERE {ORPHAN_PREDICATE})"
+        "UPDATE app_applet_runs SET action_id = NULL \
+         WHERE action_id IN (SELECT id FROM app_applets WHERE {ORPHAN_PREDICATE})"
     ))
     .execute(db)
     .await?
     .rows_affected();
 
-    let deleted = sqlx::query(&format!("DELETE FROM app_actions WHERE {ORPHAN_PREDICATE}"))
+    let deleted = sqlx::query(&format!("DELETE FROM app_applets WHERE {ORPHAN_PREDICATE}"))
         .execute(db)
         .await?
         .rows_affected();
@@ -614,9 +624,9 @@ pub async fn reconcile_templates(db: &PgPool) -> Result<usize> {
     // are nullified first so the history survives under `action_id = NULL`.
     if !live_ids.is_empty() {
         sqlx::query(
-            r#"UPDATE app_action_runs SET action_id = NULL
+            r#"UPDATE app_applet_runs SET action_id = NULL
                WHERE action_id IN (
-                   SELECT id FROM app_actions
+                   SELECT id FROM app_applets
                    WHERE owner = 'system' AND id <> ALL($1::text[])
                )"#,
         )
@@ -625,7 +635,7 @@ pub async fn reconcile_templates(db: &PgPool) -> Result<usize> {
         .await?;
 
         let removed = sqlx::query(
-            r#"DELETE FROM app_actions
+            r#"DELETE FROM app_applets
                WHERE owner = 'system' AND id <> ALL($1::text[])"#,
         )
         .bind(&live_ids)
@@ -699,7 +709,7 @@ async fn upsert_row(
     //           the user and reconcile is a no-op.
     let sql = if template.owner == "user" {
         r#"
-        INSERT INTO app_actions (
+        INSERT INTO app_applets (
             id, name, owner, agent, cron_schedule, enabled, config, condition,
             triggers, credential_id, command, device_id, until, supervise
         )
@@ -710,7 +720,7 @@ async fn upsert_row(
         "#
     } else {
         r#"
-        INSERT INTO app_actions (
+        INSERT INTO app_applets (
             id, name, owner, agent, cron_schedule, enabled, config, condition,
             triggers, credential_id, command, device_id, until, supervise
         )
@@ -858,7 +868,7 @@ mod tests {
     }
 
     /// Reconcile must be idempotent: a second back-to-back call against the
-    /// same DB and templates produces zero `app_actions` row diffs.
+    /// same DB and templates produces zero `app_applets` row diffs.
     ///
     /// This is the precondition for triggering reconcile from auth handlers
     /// (Phase 3 + Phase 4). If reconcile churns rows, every double-callback
@@ -885,7 +895,7 @@ mod tests {
         assert!(first > 0, "first reconcile should populate some rows");
 
         let snapshot_before: Vec<(String, String, String, String, Option<String>)> = sqlx::query_as(
-            "SELECT id, name, owner, triggers::text, credential_id FROM app_actions ORDER BY id",
+            "SELECT id, name, owner, triggers::text, credential_id FROM app_applets ORDER BY id",
         )
         .fetch_all(&pool)
         .await
@@ -899,7 +909,7 @@ mod tests {
         );
 
         let snapshot_after: Vec<(String, String, String, String, Option<String>)> = sqlx::query_as(
-            "SELECT id, name, owner, triggers::text, credential_id FROM app_actions ORDER BY id",
+            "SELECT id, name, owner, triggers::text, credential_id FROM app_applets ORDER BY id",
         )
         .fetch_all(&pool)
         .await

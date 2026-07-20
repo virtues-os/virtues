@@ -244,7 +244,7 @@ pub async fn run(client: Virtues, host: &str, port: u16) -> Result<()> {
         // Applet faces: sandboxed-iframe runtime. Token-based (the mint route
         // rides normal transport auth; file/query routes are the only CORS-
         // permissive surface, which is the inner wall of the face jail).
-        .route("/api/actions/:id/face-token", get(faces::mint_face_token_handler))
+        .route("/api/applets/:id/face-token", get(faces::mint_face_token_handler))
         .route(
             "/api/face/query",
             post(faces::face_query_handler).options(faces::face_query_preflight),
@@ -360,16 +360,16 @@ pub async fn run(client: Virtues, host: &str, port: u16) -> Result<()> {
         .route("/api/devices/health", get(api::device_health_check_handler))
         // Actions API
         .route(
-            "/api/actions",
+            "/api/applets",
             get(api::list_actions_handler).post(api::create_action_handler),
         )
         .route(
-            "/api/actions/:id",
+            "/api/applets/:id",
             get(api::get_action_handler)
                 .patch(api::patch_action_handler)
                 .delete(api::delete_action_handler),
         )
-        .route("/api/actions/:id/run", post(api::trigger_action_handler))
+        .route("/api/applets/:id/run", post(api::trigger_action_handler))
         // Chat-export upload (Tier 3 one-time import). Per-route body limit
         // overrides the router-wide 105MB cap — ChatGPT exports can be larger.
         .route(
@@ -377,8 +377,8 @@ pub async fn run(client: Virtues, host: &str, port: u16) -> Result<()> {
             post(api::chat_import_upload_handler)
                 .layer(DefaultBodyLimit::max(512 * 1024 * 1024)),
         )
-        .route("/api/actions/:id/runs", get(api::list_action_runs_handler))
-        .route("/api/actions/runs/:id", get(api::get_action_run_handler))
+        .route("/api/applets/:id/runs", get(api::list_action_runs_handler))
+        .route("/api/applets/runs/:id", get(api::get_action_run_handler))
         .route("/api/runs", get(api::list_runs_handler))
         // Credentials API
         .route("/api/credentials", get(api::list_credentials_handler))
@@ -632,12 +632,12 @@ pub async fn run(client: Virtues, host: &str, port: u16) -> Result<()> {
         // Admin API — LLM-authoring on-ramp for new actions
         .route("/api/admin/reconcile", post(api::admin_reconcile_handler))
         .route(
-            "/api/admin/actions/import-git",
+            "/api/admin/applets/import-git",
             post(api::import_git_actions_handler),
         )
         // System (operator surface — apps + logs)
         .route("/api/system/apps", get(api::list_system_apps_handler))
-        .route("/api/actions/:id/logs", get(api::get_action_logs_handler))
+        .route("/api/applets/:id/logs", get(api::get_action_logs_handler))
         // Live host snapshot + persisted history for the System/Telemetry views.
         .route(
             "/api/system/telemetry",
