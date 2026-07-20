@@ -320,6 +320,18 @@ async fn run_face_query(pool: &sqlx::PgPool, sql: &str) -> std::result::Result<s
 /// - `virtues_applet_writer`: DML strictly inside `applet_*` schemas (the
 ///   `sql_write` tool) — the write scope is PG grants, not SQL parsing.
 pub async fn ensure_applet_db_grants(pool: &sqlx::PgPool) -> crate::error::Result<()> {
+    // Role MEMBERSHIP must hold for the *connected* login role, or SET LOCAL
+    // ROLE fails ("permission denied to set role") and every face query and
+    // applet write breaks. Migrations 0052/0054 grant membership to whoever
+    // ran them — which on a cloud/externally-managed DB may differ from the
+    // app's pool role. Re-establish it here, at boot, as the pool role itself.
+    sqlx::query(
+        "GRANT virtues_face_reader, virtues_applet_writer TO current_user",
+    )
+    .execute(pool)
+    .await
+    .map_err(|e| crate::error::Error::Database(format!("applet role membership grant failed: {e}")))?;
+
     sqlx::query(
         r#"
         DO $$

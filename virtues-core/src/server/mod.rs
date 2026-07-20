@@ -241,10 +241,11 @@ pub async fn run(client: Virtues, host: &str, port: u16) -> Result<()> {
             get(api::get_server_status_handler),
         )
         .route("/internal/mark-ready", post(api::mark_server_ready_handler))
-        // Applet faces: sandboxed-iframe runtime. Token-based (the mint route
-        // rides normal transport auth; file/query routes are the only CORS-
-        // permissive surface, which is the inner wall of the face jail).
-        .route("/api/applets/:id/face-token", get(faces::mint_face_token_handler))
+        // Applet faces — the CORS-permissive, token-gated leaves only. The
+        // mint route is AUTHENTICATED (in protected_routes): the token is the
+        // sole gate on the data door, so obtaining one must require owner auth.
+        // The query bridge validates the token; the file routes serve inert
+        // assets. These carry no data without a token minted by the authed app.
         .route(
             "/api/face/query",
             post(faces::face_query_handler).options(faces::face_query_preflight),
@@ -292,6 +293,10 @@ pub async fn run(client: Virtues, host: &str, port: u16) -> Result<()> {
     // Protected routes (authentication required via route_layer)
     // ============================================================
     let protected_routes = Router::new()
+        // Face-token mint — AUTHENTICATED. The authed app mints a short-lived
+        // per-applet token and passes it into the iframe `src` (?vt=). This is
+        // the gate on the whole face data door (faces.rs).
+        .route("/api/applets/:id/face-token", get(faces::mint_face_token_handler))
         // Timeline day (location chunks for movement map)
         .route("/api/timeline/day/:date", get(api::timeline_get_day_handler))
         // Today streams — location/calendar/audio spans, pre-synthesis (homepage)
