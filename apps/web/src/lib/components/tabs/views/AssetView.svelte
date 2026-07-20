@@ -5,6 +5,7 @@
 	// to differ by target type.
 	import Icon from "$lib/components/Icon.svelte";
 	import CsvPane from "$lib/components/asset/CsvPane.svelte";
+	import PdfPane from "$lib/components/asset/PdfPane.svelte";
 	import TextPane from "$lib/components/asset/TextPane.svelte";
 	import { getDriveFile, type DriveFile } from "$lib/api/client";
 	import { refIcon } from "$lib/utils/refRoutes";
@@ -12,8 +13,13 @@
 
 	let { tab }: { tab: Tab; active?: boolean } = $props();
 
-	// /drive/file_xxx → file_xxx
-	const fileId = $derived(tab.route.split("/").filter(Boolean).pop() ?? "");
+	// /drive/file_xxx[?page=N] → file_xxx (+ optional page deep link)
+	const lastSegment = $derived(tab.route.split("/").filter(Boolean).pop() ?? "");
+	const fileId = $derived(lastSegment.split("?")[0]);
+	const pageParam = $derived.by(() => {
+		const n = Number(new URLSearchParams(lastSegment.split("?")[1] ?? "").get("page"));
+		return Number.isFinite(n) && n > 0 ? n : undefined;
+	});
 	const downloadUrl = $derived(`/api/drive/files/${fileId}/download`);
 	// Viewer surfaces render in place; the Download button keeps attachment.
 	const viewUrl = $derived(`${downloadUrl}?disposition=inline`);
@@ -108,7 +114,7 @@
 	<div
 		class="asset-body"
 		class:framed={kind === "image" || kind === "video"}
-		class:flush={kind === "csv" || isText}
+		class:flush={kind === "csv" || kind === "pdf" || isText}
 	>
 		{#if loading}
 			<div class="asset-status"><Icon icon="ri:loader-4-line" width="22" class="spin" /></div>
@@ -129,8 +135,9 @@
 			<!-- svelte-ignore a11y_media_has_caption -->
 			<video class="asset-video" controls src={viewUrl}></video>
 		{:else if kind === "pdf"}
-			<!-- Reader. Highlight / margin-notes / OCR: deferred (net-new persistence). -->
-			<iframe class="asset-pdf" src={viewUrl} title={file?.filename}></iframe>
+			<!-- pdf.js reader: text layer + page addressing (?page=N).
+			     Highlight / margin-notes / OCR: deferred (net-new persistence). -->
+			<PdfPane url={viewUrl} {fileId} initialPage={pageParam} />
 		{:else if kind === "csv"}
 			<CsvPane url={viewUrl} filename={file?.filename ?? ""} />
 		{:else if kind === "markdown" || kind === "code" || kind === "plain"}
@@ -228,12 +235,6 @@
 		max-width: 100%;
 		max-height: 100%;
 	}
-	.asset-pdf {
-		width: 100%;
-		height: 100%;
-		border: none;
-	}
-
 	.asset-audio {
 		display: flex;
 		flex-direction: column;
