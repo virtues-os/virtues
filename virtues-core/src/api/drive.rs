@@ -622,9 +622,13 @@ pub async fn upload_file(
     let mut file_path_str = file_path.to_string_lossy().to_string();
     let mut actual_filename = request.filename.clone();
 
-    // Check if file already exists (only non-deleted files)
+    // Check if the path is taken by ANY file, including a trashed one. The
+    // file id is derived from the path, so a trashed file at this path still
+    // holds the primary key — uploading the same name after trashing it would
+    // otherwise collide on the pkey. Renaming past trashed rows keeps the
+    // upload non-destructive (the trashed file stays recoverable).
     let existing = sqlx::query_scalar::<_, String>(
-        "SELECT id FROM app_drive_files WHERE path = $1 AND deleted_at IS NULL",
+        "SELECT id FROM app_drive_files WHERE path = $1",
     )
     .bind(&file_path_str)
     .fetch_optional(pool)
@@ -1458,8 +1462,11 @@ async fn get_unique_path(pool: &PgPool, original_path: &str) -> Result<String> {
             format!("{}/{}", parent, new_filename)
         };
 
+        // Consider trashed rows too: their path-derived id still occupies the
+        // primary key, so a "free" path must be free of ALL rows or the caller
+        // will collide on insert.
         let exists = sqlx::query_scalar::<_, String>(
-            "SELECT id FROM app_drive_files WHERE path = $1 AND deleted_at IS NULL",
+            "SELECT id FROM app_drive_files WHERE path = $1",
         )
         .bind(&new_path)
         .fetch_optional(pool)
