@@ -126,7 +126,6 @@ pub async fn get_activity_metrics(db: &Database) -> Result<ActivityMetrics> {
         r#"
         SELECT
             CASE WHEN t.id IS NULL THEN 'transform'
-                 WHEN t.supervise THEN 'service'
                  WHEN t.command IS NULL AND (t.agent IS NULL OR btrim(t.agent) = '') THEN 'view'
                  ELSE 'function' END as action_type,
             COUNT(*) as total,
@@ -204,7 +203,6 @@ pub async fn get_activity_metrics(db: &Database) -> Result<ActivityMetrics> {
     let error_rows = sqlx::query(
         r#"
         SELECT r.id, CASE WHEN t.id IS NULL THEN 'transform'
-                 WHEN t.supervise THEN 'service'
                  WHEN t.command IS NULL AND (t.agent IS NULL OR btrim(t.agent) = '') THEN 'view'
                  ELSE 'function' END as action_type,
                r.transform_stage, r.error, r.completed_at

@@ -128,16 +128,14 @@ export interface ActionLastRun {
 }
 
 /**
- * Three-runtime model — see ARCHITECTURE.md.
+ * Two-runtime model — see ARCHITECTURE.md.
  *
  * - `function`: fork-per-trigger CLI; the default. Server forks the binary
  *   on every trigger, pipes ActionInput/Output JSON.
- * - `app`: long-running supervised HTTP server. Core proxies `/service/<id>/*`
- *   to it; cron/webhook triggers become `POST /__trigger`.
  * - `view`: pure Svelte component, never invoked server-side. Lives at
  *   `apps/web/src/lib/applets/<name>/`.
  */
-export type ActionRuntime = 'function' | 'service' | 'view';
+export type ActionRuntime = 'function' | 'view';
 
 export interface Action {
 	id: string;
@@ -162,8 +160,6 @@ export interface Action {
 	until: string | null;
 	/** Set when the lifecycle completed; archived applets are disabled. */
 	archived_at: string | null;
-	/** Command applets that run as a long-lived supervised service. */
-	supervise: boolean;
 	/** True when the applet folder ships a face/ (sandboxed-iframe HTML UI). */
 	has_face: boolean;
 	is_system: boolean;
@@ -254,50 +250,8 @@ export async function reorderPins(urls: string[]): Promise<void> {
 	if (!res.ok) throw new Error(`Failed to reorder pins: ${res.statusText}`);
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// System (operator surface for app-runtime actions — `/actions#system`)
-// ─────────────────────────────────────────────────────────────────────────────
-
-export type AppStatus = 'Starting' | 'Running' | 'Backoff' | 'Crashed' | 'Stopping';
-
-export interface RunningApp {
-	action_id: string;
-	port: number;
-	pid: number | null;
-	status: AppStatus;
-	started_at: string | null;
-	restart_count: number;
-}
-
-export type LogStream = 'stdout' | 'stderr';
-
-export interface LogLine {
-	stream: LogStream;
-	line: string;
-	at: string;
-}
-
-/** GET /api/system/apps — snapshot of supervised app-runtime children. */
-export async function listSystemApps(): Promise<RunningApp[]> {
-	const res = await fetch(`${API_BASE}/system/apps`);
-	if (!res.ok) throw new Error(`Failed to list system apps: ${res.statusText}`);
-	return res.json();
-}
-
-/** GET /api/actions/:id/logs — captured stdout/stderr ring buffer for an app. */
-export async function getActionLogs(id: string): Promise<LogLine[]> {
-	const res = await fetch(`${API_BASE}/applets/${encodeURIComponent(id)}/logs`);
-	if (!res.ok) throw new Error(`Failed to get action logs: ${res.statusText}`);
-	return res.json();
-}
-
-/** POST /api/admin/reconcile — picks up new manifests + diffs running apps. */
-export async function adminReconcile(): Promise<{
-	upserted: number;
-	added: string[];
-	removed: string[];
-	restarted: string[];
-}> {
+/** POST /api/admin/reconcile — re-reads manifests and upserts applet rows. */
+export async function adminReconcile(): Promise<{ upserted: number }> {
 	const res = await fetch(`${API_BASE}/admin/reconcile`, { method: 'POST' });
 	if (!res.ok) throw new Error(`Reconcile failed: ${res.statusText}`);
 	return res.json();

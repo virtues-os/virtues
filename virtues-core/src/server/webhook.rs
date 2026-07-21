@@ -42,11 +42,6 @@ pub struct AppState {
     pub tool_executor: Option<Arc<crate::tools::ToolExecutor>>,
     pub yjs_state: super::yjs::YjsState,
     pub chat_cancel_state: ChatCancellationState,
-    /// Handle to the long-running app supervisor — needed by the
-    /// `/api/admin/reconcile` handler to diff/restart apps after the user
-    /// (or LLM) edits a manifest. Optional only because some test setups
-    /// don't boot the supervisor.
-    pub service_supervisor: Option<crate::services::ServiceSupervisor>,
 }
 
 impl axum::extract::FromRef<AppState> for sqlx::PgPool {
