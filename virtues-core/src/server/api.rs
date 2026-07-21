@@ -2572,6 +2572,15 @@ pub async fn list_annotations_handler(
     api_response(crate::api::list_annotations(state.db.pool(), &q.file_id).await)
 }
 
+/// GET /api/notebooks/:id/annotations — every highlight across the notebook's
+/// library documents, enriched with filenames (researcher-plan D2.5).
+pub async fn list_notebook_annotations_handler(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> Response {
+    api_response(crate::api::list_notebook_annotations(state.db.pool(), &id).await)
+}
+
 /// POST /api/annotations — create (or upsert) a highlight.
 pub async fn create_annotation_handler(
     State(state): State<AppState>,

@@ -859,6 +859,25 @@ export async function listAnnotations(fileId: string): Promise<Annotation[]> {
 	return res.json();
 }
 
+/** A highlight enriched with its file's name, for the notebook Highlights tab. */
+export interface NotebookAnnotation {
+	id: string;
+	file_id: string;
+	filename: string;
+	page_num: number | null;
+	quote_text: string;
+	color: string;
+	note_md: string;
+	created_at: string;
+	updated_at: string;
+}
+
+export async function listNotebookAnnotations(notebookId: string): Promise<NotebookAnnotation[]> {
+	const res = await fetch(`${API_BASE}/notebooks/${encodeURIComponent(notebookId)}/annotations`);
+	if (!res.ok) throw new Error(`Failed to list notebook annotations: ${res.statusText}`);
+	return res.json();
+}
+
 export async function createAnnotation(body: {
 	file_id: string;
 	page_num?: number | null;

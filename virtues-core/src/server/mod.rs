@@ -480,6 +480,10 @@ pub async fn run(client: Virtues, host: &str, port: u16) -> Result<()> {
             "/api/annotations/:id",
             patch(api::update_annotation_handler).delete(api::delete_annotation_handler),
         )
+        .route(
+            "/api/notebooks/:id/annotations",
+            get(api::list_notebook_annotations_handler),
+        )
         // Drive API (user file storage)
         .route(
             "/api/drive/files/:id/reextract",

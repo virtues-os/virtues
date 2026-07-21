@@ -9,7 +9,7 @@
 	import RefPicker from '$lib/components/RefPicker.svelte';
 	import ColorPickerModal from '$lib/components/sidebar/ColorPickerModal.svelte';
 	import { getRefSummary } from '$lib/utils/refSummary';
-	import { getPage, getDriveFile, uploadDriveFile, addNotebookItem, reextractDriveFile } from '$lib/api/client';
+	import { getPage, getDriveFile, uploadDriveFile, addNotebookItem, reextractDriveFile, listNotebookAnnotations, type NotebookAnnotation } from '$lib/api/client';
 	import { askVirtues } from '$lib/stores/pendingPrompt.svelte';
 
 	let { tab }: { tab: Tab; active?: boolean } = $props();
@@ -43,6 +43,53 @@
 	$effect(() => {
 		if (notebookId) load();
 	});
+
+	// ---- Highlights across the notebook's documents (D2.5) -------------------
+	// Every annotation on the notebook's library files, grouped by file so the
+	// notebook reads as one marked-up corpus.
+	let highlights = $state<NotebookAnnotation[]>([]);
+	async function loadHighlights() {
+		const id = notebookId;
+		if (!id) {
+			highlights = [];
+			return;
+		}
+		try {
+			highlights = await listNotebookAnnotations(id);
+		} catch (e) {
+			console.error('[NotebookDetailView] Failed to load highlights:', e);
+			highlights = [];
+		}
+	}
+	$effect(() => {
+		if (notebookId) loadHighlights();
+	});
+	// [{ file_id, filename, items: [...] }] in the query's file/reading order.
+	const highlightGroups = $derived.by(() => {
+		const groups: { file_id: string; filename: string; items: NotebookAnnotation[] }[] = [];
+		for (const h of highlights) {
+			let g = groups.at(-1);
+			if (!g || g.file_id !== h.file_id) {
+				g = { file_id: h.file_id, filename: h.filename, items: [] };
+				groups.push(g);
+			}
+			g.items.push(h);
+		}
+		return groups;
+	});
+	const HL_TINT: Record<string, string> = {
+		yellow: '#ffd54a',
+		green: '#7ee081',
+		blue: '#6fb5ff',
+		pink: '#ff8fc7',
+	};
+	function openHighlight(h: NotebookAnnotation) {
+		let route = `/drive/${h.file_id}`;
+		const params = new URLSearchParams();
+		if (h.page_num) params.set('page', String(h.page_num));
+		params.set('hl', h.id);
+		windowShellStore.openTabFromRoute(`${route}?${params.toString()}`);
+	}
 
 	// Chats filed into this room — sourced from the authoritative session list,
 	// not from membership rows, so removing a pinned member can't desync a chat.
@@ -183,6 +230,7 @@
 			}
 		}
 		await load(true);
+		await loadHighlights();
 	}
 
 	function openUrl(url: string) {
@@ -380,6 +428,39 @@
 				{/if}
 			</section>
 
+			<!-- Highlights across the notebook's documents -->
+			{#if highlights.length > 0}
+				<section class="section">
+					<div class="eyebrow font-mono">
+						<span>Highlights</span>
+						<span class="eyebrow-count">{highlights.length}</span>
+					</div>
+					{#each highlightGroups as g (g.file_id)}
+						<div class="hl-group">
+							<button class="hl-file" onclick={() => openUrl(`/drive/${g.file_id}`)} title={g.filename}>
+								<Icon icon="ri:file-line" width="13" class="hl-file-ic" />
+								<span class="hl-file-name">{g.filename}</span>
+								<span class="hl-file-count font-mono">{g.items.length}</span>
+							</button>
+							<ul class="ledger">
+								{#each g.items as h (h.id)}
+									<li class="hl-row">
+										<button class="hl-item" onclick={() => openHighlight(h)}>
+											<span class="hl-bar" style="background:{HL_TINT[h.color] ?? HL_TINT.yellow}"></span>
+											<span class="hl-body">
+												<span class="hl-quote">{h.quote_text}</span>
+												{#if h.note_md}<span class="hl-note">{h.note_md}</span>{/if}
+											</span>
+											{#if h.page_num}<span class="hl-page font-mono">p{h.page_num}</span>{/if}
+										</button>
+									</li>
+								{/each}
+							</ul>
+						</div>
+					{/each}
+				</section>
+			{/if}
+
 			<!-- Chats filed here -->
 			<section class="section">
 				<div class="eyebrow font-mono"><span>Chats</span></div>
@@ -565,6 +646,44 @@
 	}
 	.ledger-row:hover .ledger-remove { opacity: 1; }
 	.ledger-remove:hover { color: var(--color-foreground); }
+
+	/* Highlights — grouped by file, each a quiet quote row that opens the
+	   viewer at the mark. */
+	.eyebrow-count {
+		font-size: 10px; padding: 1px 7px; border-radius: 999px;
+		background: var(--color-surface-elevated); color: var(--color-foreground-subtle, #9ca3af);
+	}
+	.hl-group { margin-top: 0.9rem; }
+	.hl-file {
+		display: flex; align-items: center; gap: 7px; width: 100%; text-align: left;
+		padding: 0.3rem 0.25rem; border: none; background: transparent; cursor: pointer;
+		color: var(--color-foreground-muted);
+	}
+	.hl-file:hover { color: var(--color-foreground); }
+	.hl-file :global(.hl-file-ic) { color: var(--color-foreground-subtle, #9ca3af); flex-shrink: 0; }
+	.hl-file-name {
+		min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+		font-size: 0.78rem; font-weight: 500; letter-spacing: 0.01em;
+	}
+	.hl-file-count { flex-shrink: 0; font-size: 10px; color: var(--color-foreground-subtle, #9ca3af); }
+	.hl-row { display: flex; }
+	.hl-item {
+		display: flex; align-items: flex-start; gap: 10px; width: 100%; text-align: left;
+		padding: 0.45rem 0.25rem 0.45rem 0.4rem; border: none; background: transparent;
+		cursor: pointer; font: inherit; border-radius: 6px;
+	}
+	.hl-item:hover { background: color-mix(in srgb, var(--color-border) 30%, transparent); }
+	.hl-bar { flex-shrink: 0; width: 3px; align-self: stretch; border-radius: 2px; min-height: 1.1rem; }
+	.hl-body { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+	.hl-quote {
+		font-size: 0.875rem; line-height: 1.4; color: var(--color-foreground);
+		display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
+	}
+	.hl-note {
+		font-size: 0.78rem; line-height: 1.4; color: var(--color-foreground-muted);
+		display: -webkit-box; -webkit-line-clamp: 1; -webkit-box-orient: vertical; overflow: hidden;
+	}
+	.hl-page { flex-shrink: 0; font-size: 10px; color: var(--color-foreground-subtle, #9ca3af); padding-top: 2px; }
 
 	:global(.spin) { animation: spin 0.8s linear infinite; }
 	@keyframes spin { to { transform: rotate(360deg); } }
