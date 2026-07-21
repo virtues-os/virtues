@@ -23,10 +23,16 @@
 		url,
 		fileId,
 		initialPage,
+		initialQuote,
+		initialHighlight,
 	}: {
 		url: string;
 		fileId: string;
 		initialPage?: number;
+		/** Citation landing (D2.4): flash the passage matching this quote. */
+		initialQuote?: string;
+		/** Citation landing (D2.4): flash this annotation's highlight. */
+		initialHighlight?: string;
 	} = $props();
 
 	type PdfjsModule = typeof import("pdfjs-dist");
@@ -372,6 +378,94 @@
 		pageEls.get(clamped)?.scrollIntoView({ block: "start" });
 	}
 
+	// ── Citation landing (D2.4): flash the cited passage/highlight ───────────
+	// Runs once, after the initial jump. The page's text layer renders lazily
+	// after the scroll, so retry a few frames until it exists.
+	let landed = false;
+	function flashLanding() {
+		if (landed) return;
+		if (!initialQuote && !initialHighlight) return;
+		landed = true;
+
+		// A highlight ref resolves against the loaded annotations — scroll to
+		// its page and pulse its overlay box.
+		if (initialHighlight) {
+			const attempt = (tries: number) => {
+				const box = scroller?.querySelector<HTMLElement>(
+					`.pdf-hl[data-anno="${initialHighlight}"]`
+				);
+				if (box) {
+					box.scrollIntoView({ block: "center" });
+					pulse(box);
+				} else if (tries > 0) {
+					setTimeout(() => attempt(tries - 1), 80);
+				}
+			};
+			attempt(20);
+			return;
+		}
+
+		// A quote ref: text-search the target page's layer for the snippet and
+		// pulse the matching spans. Falls back to page-only (already scrolled).
+		if (initialQuote) {
+			const needle = normalizeText(initialQuote);
+			const targetPage = initialPage ?? currentPage;
+			const attempt = (tries: number) => {
+				const layer = pageEls
+					.get(targetPage)
+					?.querySelector<HTMLElement>(".pdf-text-layer");
+				if (layer && layer.textContent && layer.textContent.length > 0) {
+					const spans = [...layer.querySelectorAll<HTMLElement>("span")];
+					const hit = findSpanRun(spans, needle);
+					if (hit.length) {
+						hit[0].scrollIntoView({ block: "center" });
+						hit.forEach(pulse);
+						return;
+					}
+				}
+				if (tries > 0) setTimeout(() => attempt(tries - 1), 80);
+			};
+			attempt(20);
+		}
+	}
+
+	function normalizeText(s: string): string {
+		return s.toLowerCase().replace(/\s+/g, " ").trim();
+	}
+
+	// Find the shortest run of consecutive spans whose combined text contains
+	// the needle (pdf.js splits a line across many spans).
+	function findSpanRun(spans: HTMLElement[], needle: string): HTMLElement[] {
+		for (let i = 0; i < spans.length; i++) {
+			let combined = "";
+			for (let j = i; j < spans.length && j < i + 40; j++) {
+				combined += " " + (spans[j].textContent ?? "");
+				if (normalizeText(combined).includes(needle)) {
+					return spans.slice(i, j + 1);
+				}
+			}
+		}
+		// Loosen: match on the first several words if the full quote drifted.
+		const short = needle.split(" ").slice(0, 5).join(" ");
+		if (short.length >= 8 && short !== needle) {
+			for (let i = 0; i < spans.length; i++) {
+				let combined = "";
+				for (let j = i; j < spans.length && j < i + 20; j++) {
+					combined += " " + (spans[j].textContent ?? "");
+					if (normalizeText(combined).includes(short)) {
+						return spans.slice(i, j + 1);
+					}
+				}
+			}
+		}
+		return [];
+	}
+
+	function pulse(el: HTMLElement) {
+		el.classList.add("pdf-flash");
+		setTimeout(() => el.classList.remove("pdf-flash"), 2400);
+	}
+
 	// Initial jump (deep link / remembered page). Deferred until the pane has
 	// real layout: a tab can mount hidden (display:none keeps containerWidth
 	// at 0 indefinitely), and page heights are only final once the fit-width
@@ -390,6 +484,15 @@
 				else setTimeout(() => attempt(tries - 1), 50);
 			};
 			setTimeout(() => attempt(10), 0);
+		}
+	});
+
+	// Citation flash: fire once the pane has layout, after the jump settles.
+	// Independent of pendingJump so a quote on page 1 (no jump) still flashes.
+	$effect(() => {
+		if (landed || (!initialQuote && !initialHighlight)) return;
+		if (containerWidth > 100 && doc && numPages > 0) {
+			setTimeout(flashLanding, 150);
 		}
 	});
 
@@ -483,6 +586,7 @@
 								<!-- svelte-ignore a11y_no_static_element_interactions -->
 								<div
 									class="pdf-hl"
+									data-anno={a.id}
 									style="left:{r.x * 100}%; top:{r.y * 100}%; width:{r.w *
 										100}%; height:{r.h * 100}%; background:{colorCss(a.color)};"
 									title={a.note_md || 'Highlight'}
@@ -639,6 +743,25 @@
 		filter: brightness(0.92);
 	}
 
+	/* Citation-landing flash — a brief pulse on the cited passage/highlight.
+	   Applied to text-layer spans (transparent text → outline) and highlight
+	   boxes alike. */
+	:global(.pdf-flash) {
+		animation: pdf-flash-pulse 2.4s ease-out;
+		border-radius: 2px;
+	}
+	@keyframes pdf-flash-pulse {
+		0%,
+		30% {
+			background: rgba(80, 160, 255, 0.55);
+			box-shadow: 0 0 0 3px rgba(80, 160, 255, 0.4);
+		}
+		100% {
+			background: transparent;
+			box-shadow: 0 0 0 0 rgba(80, 160, 255, 0);
+		}
+	}
+
 	/* Selection color toolbar + note popover */
 	.pdf-sel-toolbar {
 		position: fixed;
@@ -737,9 +860,17 @@
 		cursor: text;
 		transform-origin: 0% 0%;
 	}
-	.pdf-page :global(.pdf-text-layer ::selection),
+	/* Keep selected text-layer glyphs TRANSPARENT — otherwise the browser
+	   paints them in its default selection color, offset from the canvas
+	   glyphs, producing a doubled/ghosted look. The background alone shows the
+	   selection cleanly over the canvas text. */
+	.pdf-page :global(.pdf-text-layer ::selection) {
+		background: rgba(64, 128, 255, 0.3);
+		color: transparent;
+	}
 	.pdf-page :global(.pdf-text-layer span::selection) {
 		background: rgba(64, 128, 255, 0.3);
+		color: transparent;
 	}
 
 	.pdf-status {
