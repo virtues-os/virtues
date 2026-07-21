@@ -233,6 +233,31 @@ fn apply_yjs_update(doc: &mut PageDoc, data: &[u8]) -> Option<Vec<u8>> {
 // ============================================================================
 
 /// Write a variable-length unsigned integer (lib0 format)
+/// Insert a markdown block at the END of a doc's `content` text.
+///
+/// Separated from the async append path so the block-separation rules and the
+/// merge (no-clobber) property are unit-testable without a pool or doc cache.
+/// A blank line is inserted unless the doc is empty or already ends in one.
+fn append_block_to_doc(doc: &Doc, markdown: &str) {
+    let mut txn = doc.transact_mut();
+    let text = txn.get_or_insert_text("content");
+    let len = text.len(&txn);
+    let current = text.get_string(&txn);
+
+    let prefix = if current.is_empty() {
+        ""
+    } else if current.ends_with("\n\n") {
+        ""
+    } else if current.ends_with('\n') {
+        "\n"
+    } else {
+        "\n\n"
+    };
+
+    text.insert(&mut txn, len, &format!("{prefix}{markdown}"));
+    // txn commits on drop
+}
+
 fn write_var_uint(buf: &mut Vec<u8>, mut value: usize) {
     while value > 0x7f {
         buf.push((value as u8) | 0x80);
@@ -525,28 +550,7 @@ impl YjsState {
         let (new_content, update_bytes) = {
             let mut doc = page_doc.write().await;
 
-            {
-                let mut txn = doc.doc.transact_mut();
-                let text = txn.get_or_insert_text("content");
-                let len = text.len(&txn);
-                let current = text.get_string(&txn);
-
-                // Separate blocks: blank line unless the doc is empty or already
-                // ends in one.
-                let prefix = if current.is_empty() {
-                    ""
-                } else if current.ends_with("\n\n") {
-                    ""
-                } else if current.ends_with('\n') {
-                    "\n"
-                } else {
-                    "\n\n"
-                };
-
-                text.insert(&mut txn, len, &format!("{prefix}{markdown}"));
-                // txn commits on drop
-            }
-
+            append_block_to_doc(&doc.doc, markdown);
             doc.last_update = Instant::now();
 
             let txn = doc.doc.transact();
@@ -771,6 +775,91 @@ mod tests {
     fn read_content(doc: &Doc) -> String {
         let txn = doc.transact();
         txn.get_text("content").unwrap().get_string(&txn)
+    }
+
+    // ── append (researcher-plan D4.1) ───────────────────────────────────────
+
+    #[test]
+    fn append_separates_blocks_with_a_blank_line() {
+        let doc = setup_doc("Existing note.");
+        append_block_to_doc(&doc, "> a quote");
+        assert_eq!(read_content(&doc), "Existing note.\n\n> a quote");
+
+        // A second append separates again rather than running together.
+        append_block_to_doc(&doc, "> another");
+        assert_eq!(
+            read_content(&doc),
+            "Existing note.\n\n> a quote\n\n> another"
+        );
+    }
+
+    #[test]
+    fn append_does_not_add_leading_blank_line_to_empty_doc() {
+        let doc = setup_doc("");
+        append_block_to_doc(&doc, "> first");
+        assert_eq!(read_content(&doc), "> first");
+    }
+
+    #[test]
+    fn append_respects_existing_trailing_newlines() {
+        let one = setup_doc("Note.\n");
+        append_block_to_doc(&one, "> q");
+        assert_eq!(read_content(&one), "Note.\n\n> q");
+
+        let two = setup_doc("Note.\n\n");
+        append_block_to_doc(&two, "> q");
+        assert_eq!(read_content(&two), "Note.\n\n> q");
+    }
+
+    /// THE property D4.1 exists to guarantee: appending while someone has the
+    /// page open in an editor must MERGE, not clobber their work.
+    ///
+    /// Simulates a connected editor (its own Y.Doc) typing concurrently with a
+    /// server-side append, then syncs both ways — both edits must survive.
+    #[test]
+    fn append_merges_with_a_concurrent_editor_instead_of_clobbering() {
+        let server = setup_doc("Existing note.");
+
+        // An editor connects and syncs the current state.
+        let client = Doc::new();
+        {
+            let sv = client.transact().state_vector();
+            let update = server.transact().encode_state_as_update_v1(&sv);
+            let mut txn = client.transact_mut();
+            txn.apply_update(Update::decode_v1(&update).unwrap());
+        }
+        assert_eq!(read_content(&client), "Existing note.");
+
+        // The user types in the open editor...
+        {
+            let mut txn = client.transact_mut();
+            let text = txn.get_or_insert_text("content");
+            text.insert(&mut txn, 0, "TYPED ");
+        }
+        // ...while the server appends a highlight block.
+        append_block_to_doc(&server, "> a quote");
+
+        // Exchange updates both directions (what the broadcast + client sync do).
+        {
+            let sv = client.transact().state_vector();
+            let update = server.transact().encode_state_as_update_v1(&sv);
+            let mut txn = client.transact_mut();
+            txn.apply_update(Update::decode_v1(&update).unwrap());
+        }
+        {
+            let sv = server.transact().state_vector();
+            let update = client.transact().encode_state_as_update_v1(&sv);
+            let mut txn = server.transact_mut();
+            txn.apply_update(Update::decode_v1(&update).unwrap());
+        }
+
+        let merged = read_content(&server);
+        // The editor's typing survived — this is what a blind content replace
+        // would have destroyed.
+        assert!(merged.contains("TYPED "), "editor's edit was lost: {merged}");
+        assert!(merged.contains("> a quote"), "append was lost: {merged}");
+        // Both docs converged.
+        assert_eq!(merged, read_content(&client));
     }
 
     #[test]
