@@ -7,7 +7,6 @@ pub mod action_runner;
 pub mod action_templates;
 pub mod agent;
 pub mod api;
-pub mod services;
 pub mod cli;
 pub mod client;
 pub mod codename;

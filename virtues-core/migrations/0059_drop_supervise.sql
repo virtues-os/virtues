@@ -1,0 +1,15 @@
+-- Drop the `supervise` flag along with the in-process service runtime.
+--
+-- `supervise` was the one real bit left of the old `runtime = 'service'`
+-- taxonomy (0050 added it, 0051 dropped `runtime` itself). The runtime it
+-- gated — an in-process tokio supervisor with a port allocator and a
+-- `/service/<id>` reverse proxy — is gone: it had exactly one applet
+-- (`echo_app`, a self-described demo), zero successful runs, and two spawn
+-- bugs latent since it was written.
+--
+-- Supervised applets return in the applets overhaul as systemd units
+-- (`virtues-applet-<id>`, adopt-or-kill against systemctl), which is a
+-- different mechanism and will want its own column. A column nothing reads
+-- is worse than an absent one, so it goes now and comes back with the
+-- feature that needs it.
+ALTER TABLE app_applets DROP COLUMN IF EXISTS supervise;
