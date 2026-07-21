@@ -496,6 +496,102 @@
 		}
 	});
 
+	// ── Find in document (⌘F) ────────────────────────────────────────────────
+	// Searches every page's text via pdf.js getTextContent (cached), navigates
+	// matches, and reuses the flash machinery to pulse the hit.
+	let findOpen = $state(false);
+	let findQuery = $state("");
+	let findMatches = $state<number[]>([]); // page numbers, one entry per occurrence
+	let findIndex = $state(0);
+	let findInput: HTMLInputElement | null = $state(null);
+	const pageTextCache = new Map<number, string>();
+
+	async function pageText(n: number): Promise<string> {
+		if (pageTextCache.has(n)) return pageTextCache.get(n)!;
+		if (!doc) return "";
+		try {
+			const content = await doc.getPage(n).then((p) => p.getTextContent());
+			const text = normalizeText(
+				(content.items as { str?: string }[]).map((i) => i.str ?? "").join(" ")
+			);
+			pageTextCache.set(n, text);
+			return text;
+		} catch {
+			return "";
+		}
+	}
+
+	let findToken = 0;
+	async function runFind() {
+		const needle = normalizeText(findQuery);
+		const myToken = ++findToken;
+		if (needle.length < 2) {
+			findMatches = [];
+			findIndex = 0;
+			return;
+		}
+		const matches: number[] = [];
+		for (let p = 1; p <= numPages; p++) {
+			const text = await pageText(p);
+			if (myToken !== findToken) return; // superseded by a newer query
+			let from = 0;
+			for (;;) {
+				const at = text.indexOf(needle, from);
+				if (at === -1) break;
+				matches.push(p);
+				from = at + needle.length;
+			}
+		}
+		if (myToken !== findToken) return;
+		findMatches = matches;
+		findIndex = 0;
+		if (matches.length) gotoMatch(0);
+	}
+
+	function gotoMatch(i: number) {
+		if (!findMatches.length) return;
+		findIndex = ((i % findMatches.length) + findMatches.length) % findMatches.length;
+		const page = findMatches[findIndex];
+		scrollToPage(page);
+		// Flash the match on that page once its text layer is up.
+		const needle = normalizeText(findQuery);
+		const attempt = (tries: number) => {
+			const layer = pageEls.get(page)?.querySelector<HTMLElement>(".pdf-text-layer");
+			if (layer && (layer.textContent?.length ?? 0) > 0) {
+				const hit = findSpanRun([...layer.querySelectorAll<HTMLElement>("span")], needle);
+				if (hit.length) {
+					hit[0].scrollIntoView({ block: "center" });
+					hit.forEach(pulse);
+					return;
+				}
+			}
+			if (tries > 0) setTimeout(() => attempt(tries - 1), 60);
+		};
+		setTimeout(() => attempt(15), 0);
+	}
+
+	function openFind() {
+		findOpen = true;
+		setTimeout(() => findInput?.focus(), 0);
+	}
+	function closeFind() {
+		findOpen = false;
+		findQuery = "";
+		findMatches = [];
+	}
+
+	function handleKeydown(e: KeyboardEvent) {
+		// Multiple PDF tabs may be mounted (hidden); only the visible pane
+		// should own ⌘F.
+		if (!scroller || !scroller.offsetParent) return;
+		if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "f") {
+			e.preventDefault();
+			openFind();
+		} else if (e.key === "Escape" && findOpen) {
+			closeFind();
+		}
+	}
+
 	function handleScroll() {
 		if (!scroller || numPages === 0) return;
 		const top = scroller.getBoundingClientRect().top;
@@ -529,6 +625,8 @@
 	}
 </script>
 
+<svelte:window onkeydown={handleKeydown} />
+
 <div class="pdf-pane">
 	<div class="pdf-toolbar">
 		<button class="pdf-btn" onclick={() => scrollToPage(currentPage - 1)} title="Previous page">
@@ -552,7 +650,39 @@
 		<button class="pdf-btn" onclick={() => zoomBy(1)} title="Zoom in">
 			<Icon icon="ri:zoom-in-line" width="14" />
 		</button>
+		<button class="pdf-btn" onclick={openFind} title="Find in document (⌘F)">
+			<Icon icon="ri:search-line" width="14" />
+		</button>
 	</div>
+
+	{#if findOpen}
+		<div class="pdf-find">
+			<Icon icon="ri:search-line" width="13" class="pdf-find-ic" />
+			<input
+				class="pdf-find-input"
+				bind:this={findInput}
+				bind:value={findQuery}
+				oninput={runFind}
+				onkeydown={(e) => {
+					if (e.key === "Enter") gotoMatch(findIndex + (e.shiftKey ? -1 : 1));
+					if (e.key === "Escape") closeFind();
+				}}
+				placeholder="Find in document…"
+			/>
+			<span class="pdf-find-count">
+				{findMatches.length ? `${findIndex + 1} / ${findMatches.length}` : findQuery.length >= 2 ? "0" : ""}
+			</span>
+			<button class="pdf-btn" onclick={() => gotoMatch(findIndex - 1)} title="Previous (⇧⏎)" disabled={!findMatches.length}>
+				<Icon icon="ri:arrow-up-s-line" width="13" />
+			</button>
+			<button class="pdf-btn" onclick={() => gotoMatch(findIndex + 1)} title="Next (⏎)" disabled={!findMatches.length}>
+				<Icon icon="ri:arrow-down-s-line" width="13" />
+			</button>
+			<button class="pdf-btn" onclick={closeFind} title="Close (Esc)">
+				<Icon icon="ri:close-line" width="13" />
+			</button>
+		</div>
+	{/if}
 
 	<div
 		class="pdf-scroller"
@@ -667,6 +797,42 @@
 	}
 	.pdf-toolbar-spacer {
 		flex: 1;
+	}
+
+	/* Find-in-document bar */
+	.pdf-find {
+		display: flex;
+		align-items: center;
+		gap: 4px;
+		padding: 5px 10px;
+		border-bottom: 1px solid var(--color-border);
+		background: var(--color-surface, transparent);
+		flex-shrink: 0;
+	}
+	.pdf-find :global(.pdf-find-ic) {
+		color: var(--color-foreground-subtle);
+		flex-shrink: 0;
+	}
+	.pdf-find-input {
+		flex: 1;
+		max-width: 320px;
+		padding: 3px 6px;
+		font-size: 0.8125rem;
+		border: 1px solid var(--color-border);
+		border-radius: 6px;
+		background: transparent;
+		color: var(--color-foreground);
+	}
+	.pdf-find-count {
+		font-size: 0.75rem;
+		color: var(--color-foreground-subtle);
+		min-width: 3.5em;
+		text-align: right;
+		white-space: nowrap;
+	}
+	.pdf-btn:disabled {
+		opacity: 0.35;
+		cursor: default;
 	}
 	.pdf-btn {
 		display: inline-flex;
