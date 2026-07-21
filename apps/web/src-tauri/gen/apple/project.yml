@@ -114,16 +114,15 @@ targets:
       base:
         ENABLE_BITCODE: false
         ARCHS: [arm64]
-        # Weak-link Network.framework or the app dies at launch on every iOS
-        # below 26 with "Symbol not found: _nw_path_is_ultra_constrained".
-        # Nothing of ours calls that symbol: ReachMonitor uses NWPathMonitor and
-        # ignores the path entirely, and libapp.a has no reference to it. It is
-        # inlined into the binary by the Swift overlay for `import Network` when
-        # building against the iOS 26 SDK, and it is iOS 26.0+ — so a strong
-        # reference makes dyld abort before any of our code runs, no matter what
-        # the deployment target says. Weak-linking resolves it to null on older
-        # systems, which is safe precisely because it is never called.
-        OTHER_LDFLAGS: $(inherited) -weak_framework Network
+        # Network.framework is linked NORMALLY (strongly) on purpose. It was
+        # briefly weak-linked to dodge the iOS 26-only
+        # `nw_path_is_ultra_constrained` symbol, but that only converted a
+        # loud launch-time abort into a null-pointer segfault the moment
+        # netdev enumerated interfaces — the symbol was genuinely being
+        # called. The real fix is the vendored netdev patch (see the
+        # [patch.crates-io] block in ../../Cargo.toml), which resolves that
+        # symbol at runtime. Strong linking is kept so any FUTURE missing
+        # symbol fails immediately and visibly instead of segfaulting later.
         VALID_ARCHS: arm64 
         LIBRARY_SEARCH_PATHS[arch=x86_64]: $(inherited) $(PROJECT_DIR)/Externals/x86_64/$(CONFIGURATION) $(SDKROOT)/usr/lib/swift $(DEVELOPER_DIR)/Toolchains/XcodeDefault.xctoolchain/usr/lib/swift/$(PLATFORM_NAME) $(DEVELOPER_DIR)/Toolchains/XcodeDefault.xctoolchain/usr/lib/swift-5.0/$(PLATFORM_NAME)
         LIBRARY_SEARCH_PATHS[arch=arm64]: $(inherited) $(PROJECT_DIR)/Externals/arm64/$(CONFIGURATION) $(SDKROOT)/usr/lib/swift $(DEVELOPER_DIR)/Toolchains/XcodeDefault.xctoolchain/usr/lib/swift/$(PLATFORM_NAME) $(DEVELOPER_DIR)/Toolchains/XcodeDefault.xctoolchain/usr/lib/swift-5.0/$(PLATFORM_NAME)
