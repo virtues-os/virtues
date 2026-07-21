@@ -73,6 +73,44 @@ pub async fn list_annotations(pool: &PgPool, file_id: &str) -> Result<Vec<Annota
     .map_err(|e| Error::Database(format!("Failed to list annotations: {e}")))
 }
 
+/// A highlight enriched with its file's name, for the notebook-wide Highlights
+/// view (D2.5). Annotations live on files; a notebook gathers them by joining
+/// its `library` items (url = `/drive/{file_id}`) back to `app_annotations`.
+#[derive(Debug, Clone, Serialize, sqlx::FromRow)]
+pub struct NotebookAnnotation {
+    pub id: String,
+    pub file_id: String,
+    pub filename: String,
+    pub page_num: Option<i32>,
+    pub quote_text: String,
+    pub color: String,
+    pub note_md: String,
+    pub created_at: Timestamp,
+    pub updated_at: Timestamp,
+}
+
+/// Every highlight across a notebook's library documents, grouped by file
+/// (reading order within each file), newest file activity first.
+pub async fn list_notebook_annotations(
+    pool: &PgPool,
+    notebook_id: &str,
+) -> Result<Vec<NotebookAnnotation>> {
+    sqlx::query_as::<_, NotebookAnnotation>(
+        "SELECT a.id, a.file_id, f.filename, a.page_num, a.quote_text, \
+                a.color, a.note_md, a.created_at, a.updated_at \
+         FROM app_annotations a \
+         JOIN app_notebook_items ni \
+           ON ni.url = '/drive/' || a.file_id AND ni.role = 'library' \
+         JOIN app_drive_files f ON f.id = a.file_id \
+         WHERE ni.notebook_id = $1 \
+         ORDER BY a.file_id, COALESCE(a.page_num, 0), a.created_at",
+    )
+    .bind(notebook_id)
+    .fetch_all(pool)
+    .await
+    .map_err(|e| Error::Database(format!("Failed to list notebook annotations: {e}")))
+}
+
 pub async fn get_annotation(pool: &PgPool, id: &str) -> Result<Annotation> {
     sqlx::query_as::<_, Annotation>(
         "SELECT id, file_id, page_num, quote_text, quote_prefix, quote_suffix, \

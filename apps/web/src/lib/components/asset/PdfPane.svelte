@@ -342,6 +342,23 @@
 		notePos = { x: e.clientX, y: e.clientY };
 	}
 
+	// ── Annotation rail (jump list of this file's highlights) ────────────────
+	let railOpen = $state(false);
+	function jumpToAnno(a: Annotation) {
+		const page = a.page_num ?? 1;
+		scrollToPage(page);
+		const attempt = (tries: number) => {
+			const box = scroller?.querySelector<HTMLElement>(`.pdf-hl[data-anno="${a.id}"]`);
+			if (box) {
+				box.scrollIntoView({ block: "center" });
+				pulse(box);
+			} else if (tries > 0) {
+				setTimeout(() => attempt(tries - 1), 70);
+			}
+		};
+		setTimeout(() => attempt(15), 0);
+	}
+
 	async function saveNote() {
 		if (!activeAnno) return;
 		const id = activeAnno.id;
@@ -653,6 +670,15 @@
 		<button class="pdf-btn" onclick={openFind} title="Find in document (⌘F)">
 			<Icon icon="ri:search-line" width="14" />
 		</button>
+		<button
+			class="pdf-btn"
+			class:active={railOpen}
+			onclick={() => (railOpen = !railOpen)}
+			title="Highlights ({annotations.length})"
+		>
+			<Icon icon="ri:markpen-line" width="14" />
+			{#if annotations.length}<span class="pdf-btn-badge">{annotations.length}</span>{/if}
+		</button>
 	</div>
 
 	{#if findOpen}
@@ -684,6 +710,7 @@
 		</div>
 	{/if}
 
+	<div class="pdf-body">
 	<div
 		class="pdf-scroller"
 		bind:this={scroller}
@@ -728,6 +755,34 @@
 				</div>
 			{/each}
 		{/if}
+	</div>
+
+	{#if railOpen}
+		<aside class="pdf-rail">
+			<div class="pdf-rail-head">
+				Highlights
+				<span class="pdf-rail-count">{annotations.length}</span>
+			</div>
+			{#if annotations.length === 0}
+				<p class="pdf-rail-empty">Select text in the document to highlight it.</p>
+			{:else}
+				<ul class="pdf-rail-list">
+					{#each annotations as a (a.id)}
+						<li>
+							<button class="pdf-rail-item" onclick={() => jumpToAnno(a)}>
+								<span class="pdf-rail-swatch" style="background:{colorCss(a.color)};"></span>
+								<span class="pdf-rail-body">
+									<span class="pdf-rail-quote">{a.quote_text}</span>
+									{#if a.note_md}<span class="pdf-rail-note">{a.note_md}</span>{/if}
+								</span>
+								{#if a.page_num}<span class="pdf-rail-page">p{a.page_num}</span>{/if}
+							</button>
+						</li>
+					{/each}
+				</ul>
+			{/if}
+		</aside>
+	{/if}
 	</div>
 </div>
 
@@ -869,12 +924,136 @@
 		text-align: center;
 	}
 
+	/* Body = scroller + optional right rail, side by side. */
+	.pdf-body {
+		display: flex;
+		flex: 1;
+		min-height: 0;
+	}
+
 	.pdf-scroller {
 		flex: 1;
 		min-height: 0;
 		overflow: auto;
 		padding: 16px;
 		background: var(--color-surface-sunken, #1a1a1a);
+	}
+
+	/* Toolbar highlight-count badge on the rail toggle. */
+	.pdf-btn.active {
+		background: var(--ref-pill-bg);
+		color: var(--color-primary);
+	}
+	.pdf-btn-badge {
+		margin-left: 2px;
+		padding: 0 4px;
+		font-size: 0.625rem;
+		line-height: 1.4;
+		font-weight: 600;
+		border-radius: 8px;
+		background: var(--color-primary);
+		color: var(--color-on-primary, #fff);
+	}
+
+	/* Annotation rail — fixed-width index of every highlight in the file. */
+	.pdf-rail {
+		flex-shrink: 0;
+		width: 260px;
+		display: flex;
+		flex-direction: column;
+		min-height: 0;
+		border-left: 1px solid var(--color-border);
+		background: var(--color-surface, transparent);
+		overflow: hidden;
+	}
+	.pdf-rail-head {
+		display: flex;
+		align-items: center;
+		gap: 6px;
+		padding: 10px 12px;
+		font-size: 0.75rem;
+		font-weight: 600;
+		letter-spacing: 0.02em;
+		text-transform: uppercase;
+		color: var(--color-foreground-subtle);
+		border-bottom: 1px solid var(--color-border);
+		flex-shrink: 0;
+	}
+	.pdf-rail-count {
+		padding: 0 6px;
+		font-size: 0.6875rem;
+		border-radius: 8px;
+		background: var(--ref-pill-bg);
+		color: var(--color-foreground-muted);
+	}
+	.pdf-rail-empty {
+		margin: 0;
+		padding: 16px 12px;
+		font-size: 0.8125rem;
+		line-height: 1.4;
+		color: var(--color-foreground-subtle);
+	}
+	.pdf-rail-list {
+		list-style: none;
+		margin: 0;
+		padding: 4px;
+		overflow-y: auto;
+		flex: 1;
+		min-height: 0;
+	}
+	.pdf-rail-item {
+		display: flex;
+		align-items: flex-start;
+		gap: 8px;
+		width: 100%;
+		padding: 8px;
+		border: none;
+		border-radius: 8px;
+		background: transparent;
+		text-align: left;
+		cursor: pointer;
+	}
+	.pdf-rail-item:hover {
+		background: var(--ref-pill-bg);
+	}
+	.pdf-rail-swatch {
+		flex-shrink: 0;
+		width: 10px;
+		height: 10px;
+		margin-top: 3px;
+		border-radius: 3px;
+		border: 1px solid rgba(0, 0, 0, 0.2);
+	}
+	.pdf-rail-body {
+		flex: 1;
+		min-width: 0;
+		display: flex;
+		flex-direction: column;
+		gap: 3px;
+	}
+	.pdf-rail-quote {
+		font-size: 0.8125rem;
+		line-height: 1.35;
+		color: var(--color-foreground);
+		display: -webkit-box;
+		-webkit-line-clamp: 3;
+		-webkit-box-orient: vertical;
+		overflow: hidden;
+	}
+	.pdf-rail-note {
+		font-size: 0.75rem;
+		line-height: 1.35;
+		color: var(--color-foreground-muted);
+		display: -webkit-box;
+		-webkit-line-clamp: 2;
+		-webkit-box-orient: vertical;
+		overflow: hidden;
+	}
+	.pdf-rail-page {
+		flex-shrink: 0;
+		font-size: 0.6875rem;
+		color: var(--color-foreground-subtle);
+		font-variant-numeric: tabular-nums;
 	}
 
 	.pdf-page {
