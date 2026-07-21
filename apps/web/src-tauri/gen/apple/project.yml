@@ -50,8 +50,15 @@ targets:
           - UIInterfaceOrientationPortraitUpsideDown
           - UIInterfaceOrientationLandscapeLeft
           - UIInterfaceOrientationLandscapeRight
-        CFBundleShortVersionString: 1.0.15
-        CFBundleVersion: "1.0.15"
+        # Both keys are overwritten at build time from the merged Tauri config
+        # (`version` in tauri.ios.conf.json) — editing them here has no effect.
+        # iOS keeps its own version line because the retired native app already
+        # shipped 1.1 to TestFlight and App Store Connect refuses an upload at
+        # or below the highest version on the record; the base config's version
+        # tracks the desktop app. Since CFBundleVersion is derived from the same
+        # string, every re-upload needs a `version` bump, not just a new build.
+        CFBundleShortVersionString: 1.2.0
+        CFBundleVersion: "1.2.0"
         NSLocationWhenInUseUsageDescription: "Virtues records your location to build your personal timeline."
         NSLocationAlwaysAndWhenInUseUsageDescription: "Virtues records your location in the background to build your personal timeline, even when the app is closed."
         NSLocationAlwaysUsageDescription: "Virtues records your location in the background to build your personal timeline, even when the app is closed."
