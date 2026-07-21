@@ -6,6 +6,7 @@
 	 * Use inside a Popover primitive for proper positioning and dismiss behavior.
 	 */
 	import Icon from './Icon.svelte';
+	import { backendUrl } from '$lib/config/backend';
 	import {
 		listDriveFiles,
 		uploadMedia,
@@ -306,7 +307,7 @@
 									title={file.filename}
 								>
 									<img
-										src={`/api/drive/files/${file.id}/download`}
+										src={backendUrl(`/api/drive/files/${file.id}/download`)}
 										alt={file.filename}
 										loading="lazy"
 									/>
