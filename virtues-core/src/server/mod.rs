@@ -163,6 +163,25 @@ pub async fn run(client: Virtues, host: &str, port: u16) -> Result<()> {
     // a valid code to display. See `crate::maintenance::pair_rotator`.
     crate::maintenance::pair_rotator::spawn(client.database.pool().clone());
 
+    // Persistent review pair code, for App Store review boxes only. No-op
+    // unless VIRTUES_REVIEW_PAIR_CODE is set, so customer boxes are untouched.
+    // A failure here is loud but not fatal: a demo box that came up without
+    // its code is useless to a reviewer, and the operator needs to see that,
+    // but it must not take down a box that is otherwise healthy.
+    {
+        let pool = client.database.pool().clone();
+        tokio::spawn(async move {
+            match crate::api::pair::ensure_review_code(&pool).await {
+                Ok(Some(_)) => tracing::warn!(
+                    "REVIEW PAIR CODE ACTIVE — this box accepts a permanent pairing code. \
+                     Only ever correct on a disposable box holding synthetic data."
+                ),
+                Ok(None) => {}
+                Err(e) => tracing::error!("review pair code not installed: {e:#}"),
+            }
+        });
+    }
+
     // Entity resolver: periodically turns raw lake primitives (location points,
     // transactions, calendar attendees) into ontology surfaces (visits/places,
     // merchant orgs, people) via `entity_resolution::resolve_entities`. Without
