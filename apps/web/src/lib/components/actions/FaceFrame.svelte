@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { mintFaceToken } from '$lib/api/client';
+	import { backendUrl } from '$lib/config/backend';
 
 	/**
 	 * The applet face runtime: face/index.html rendered in a sandboxed
@@ -21,7 +22,12 @@
 			try {
 				const { token } = await mintFaceToken(id);
 				const theme = document.documentElement.dataset.theme === 'dark' ? 'dark' : 'light';
-				src = `/face/${encodeURIComponent(id)}/?vt=${encodeURIComponent(token)}&theme=${theme}`;
+				// Absolute on mobile: an iframe src bypasses the fetch shim, so a
+				// root-relative path would resolve against the bundled tauri://
+				// origin and render an empty frame.
+				src = backendUrl(
+					`/face/${encodeURIComponent(id)}/?vt=${encodeURIComponent(token)}&theme=${theme}`
+				);
 			} catch (e) {
 				err = e instanceof Error ? e.message : String(e);
 			}
