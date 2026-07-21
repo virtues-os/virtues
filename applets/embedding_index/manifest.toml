@@ -1,0 +1,14 @@
+name = "Embedding Indexer"
+description = "Sweep new wiki/page rows and write vector embeddings for semantic search."
+owner = "system"
+runtime = "function"
+command = ["embedding_index"]
+triggers = ["cron"]
+schedule = "0 */15 * * * *"
+
+# Initial onboarding embeds an entire corpus in one drain run — hours of
+# legitimate work, not a hang. The drain loop enforces its own 2-hour
+# wall-clock ceiling and commits per record; this subprocess ceiling is that
+# plus margin so the internal limit exits cleanly instead of being SIGKILLed.
+[config.limits]
+timeout_s = 7500

@@ -305,14 +305,18 @@ pub async fn add_notebook_item(pool: &PgPool, notebook_id: &str, req: AddNoteboo
         return Err(Error::NotFound(format!("Notebook not found: {}", notebook_id)));
     }
 
+    // role='library' = grounds chat — the default and only v1 role ("Library"
+    // as a noun is retired; membership itself means in-scope). 'pin' survives
+    // schema-only for future nav-only edges.
     let item = sqlx::query_as::<_, NotebookItem>(
         r#"
-        INSERT INTO app_notebook_items (notebook_id, url, sort_order)
+        INSERT INTO app_notebook_items (notebook_id, url, sort_order, role)
         VALUES (
             $1, $2,
-            (SELECT COALESCE(MAX(sort_order), -1) + 1 FROM app_notebook_items WHERE notebook_id = $1)
+            (SELECT COALESCE(MAX(sort_order), -1) + 1 FROM app_notebook_items WHERE notebook_id = $1),
+            'library'
         )
-        ON CONFLICT (notebook_id, url) DO UPDATE SET url = EXCLUDED.url
+        ON CONFLICT (notebook_id, url) DO UPDATE SET role = 'library'
         RETURNING url, sort_order, added_at
         "#,
     )

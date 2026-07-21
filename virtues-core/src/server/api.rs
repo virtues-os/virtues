@@ -99,7 +99,7 @@ pub async fn trigger_action_handler(
     // Detach the heavy phase (subprocess + agent) onto a tokio task so a
     // client disconnect can't drop the future mid-run and leave the row
     // stuck in `running`. The handler returns 202 with the run_id as soon
-    // as the row is created; the UI polls `app_action_runs` for the final
+    // as the row is created; the UI polls `app_applet_runs` for the final
     // status.
     let result = match crate::action_runner::run_action_detached(
         &deps,
@@ -148,7 +148,7 @@ pub async fn trigger_action_handler(
 /// (one-time imports are user-initiated and expected to take a moment), so the
 /// response carries the "Imported N messages" summary for the confirmation UI.
 ///
-/// Mounted with a raised body limit (chat exports can exceed the 105MB default).
+/// Mounted with a raised body limit (chat exports can exceed the 260MB default).
 pub async fn chat_import_upload_handler(
     State(state): State<AppState>,
     mut multipart: axum::extract::Multipart,
@@ -224,16 +224,17 @@ pub async fn list_actions_handler(State(state): State<AppState>) -> Response {
             t.id, t.owner, t.name, t.agent, t.cron_schedule,
             t.enabled, t.config, t.condition, t.triggers,
             t.memory, t.credential_id,
-            t.runtime, t.command,
+            t.command,
+            t.until, t.archived_at, t.supervise,
             t.created_at, t.updated_at,
             r.status AS last_run_status,
             r.started_at AS last_run_at,
             r.records_processed AS last_run_records,
             r.error AS last_run_error,
             r.result_summary AS last_run_summary
-           FROM app_actions t
-           LEFT JOIN app_action_runs r ON r.id = (
-               SELECT id FROM app_action_runs
+           FROM app_applets t
+           LEFT JOIN app_applet_runs r ON r.id = (
+               SELECT id FROM app_applet_runs
                WHERE action_id = t.id
                ORDER BY created_at DESC LIMIT 1
            )
@@ -266,13 +267,25 @@ pub async fn list_actions_handler(State(state): State<AppState>) -> Response {
                         serde_json::from_value(triggers_val).unwrap_or_default();
                     let memory: Option<String> = r.try_get("memory").unwrap_or(None);
                     let credential_id: Option<String> = r.try_get("credential_id").unwrap_or(None);
-                    let runtime: String = r
-                        .try_get("runtime")
-                        .unwrap_or_else(|_| "function".to_string());
                     let command_raw: Option<String> = r.try_get("command").unwrap_or(None);
                     let command: Option<Vec<String>> = command_raw
                         .as_deref()
                         .and_then(|s| serde_json::from_str(s).ok());
+                    let until: Option<String> = r.try_get("until").unwrap_or(None);
+                    let archived_at: Option<chrono::DateTime<chrono::Utc>> =
+                        r.try_get("archived_at").unwrap_or(None);
+                    let supervise: bool = r.try_get("supervise").unwrap_or(false);
+                    let has_face = crate::server::faces::face_dir_for(&id).is_some();
+                    // Derived display shape (the old runtime taxonomy).
+                    let runtime = if supervise {
+                        "service"
+                    } else if command.as_ref().is_none_or(|c| c.is_empty())
+                        && agent.as_deref().is_none_or(|s| s.trim().is_empty())
+                    {
+                        "view"
+                    } else {
+                        "function"
+                    };
                     // TIMESTAMPTZ columns decode to DateTime<Utc>; serde emits
                     // RFC3339 in the JSON. Reading them as String failed (empty).
                     let created: chrono::DateTime<chrono::Utc> =
@@ -311,6 +324,10 @@ pub async fn list_actions_handler(State(state): State<AppState>) -> Response {
                         "credential_id": credential_id,
                         "runtime": runtime,
                         "command": command,
+                        "until": until,
+                        "archived_at": archived_at,
+                        "supervise": supervise,
+                        "has_face": has_face,
                         "created_at": created,
                         "updated_at": updated,
                         "is_system": owner == "system",
@@ -356,7 +373,11 @@ pub async fn get_action_handler(
                     "memory": action.memory,
                     "command": action.command,
                     "credential_id": action.credential_id,
-                    "runtime": action.runtime,
+                    "runtime": crate::scheduler::actions::derived_runtime(&action),
+                    "until": action.until,
+                    "archived_at": action.archived_at,
+                    "supervise": action.supervise,
+                    "has_face": crate::server::faces::face_dir_for(&action.id).is_some(),
                     "created_at": action.created_at,
                     "updated_at": action.updated_at,
                     "is_system": action.owner == "system",
@@ -438,12 +459,21 @@ pub async fn patch_action_handler(
     }
 }
 
-/// DELETE /api/actions/:id — delete a user-owned action. System rows refused.
+/// DELETE /api/applets/:id?drop_data= — delete a user-owned applet. System rows
+/// refused. `drop_data=true` also drops the applet's private `applet_<slug>`
+/// schema; the default keeps its data.
+#[derive(Debug, Deserialize)]
+pub struct DeleteActionQuery {
+    #[serde(default)]
+    pub drop_data: bool,
+}
+
 pub async fn delete_action_handler(
     State(state): State<AppState>,
     Path(action_id): Path<String>,
+    axum::extract::Query(q): axum::extract::Query<DeleteActionQuery>,
 ) -> Response {
-    match crate::scheduler::actions::delete_action(state.db.pool(), &action_id).await {
+    match crate::scheduler::actions::delete_action(state.db.pool(), &action_id, q.drop_data).await {
         Ok(()) => StatusCode::NO_CONTENT.into_response(),
         Err(e) => {
             let status = match e.http_status() {
@@ -453,6 +483,30 @@ pub async fn delete_action_handler(
             };
             (status, Json(serde_json::json!({ "error": e.to_string() }))).into_response()
         }
+    }
+}
+
+/// GET /api/applets/:id/data — the tables an applet owns in its private
+/// `applet_<slug>` schema, so the delete confirm can show what `drop_data`
+/// would remove. Empty `tables` (and null `schema`) when it owns none.
+pub async fn get_action_data_handler(
+    State(state): State<AppState>,
+    Path(action_id): Path<String>,
+) -> Response {
+    match crate::scheduler::actions::applet_data_tables(state.db.pool(), &action_id).await {
+        Ok(tables) => {
+            let schema = crate::scheduler::actions::applet_schema_name(&action_id);
+            (
+                StatusCode::OK,
+                Json(serde_json::json!({ "schema": schema, "tables": tables })),
+            )
+                .into_response()
+        }
+        Err(e) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({ "error": e.to_string() })),
+        )
+            .into_response(),
     }
 }
 
@@ -712,7 +766,7 @@ pub async fn list_system_apps_handler(State(state): State<AppState>) -> Response
 ///
 /// Returns the per-app captured stdout/stderr ring buffer (oldest → newest).
 /// For `function`-runtime actions, returns an empty list (logs live in
-/// `app_action_runs.error` / `result_summary` per run instead).
+/// `app_applet_runs.error` / `result_summary` per run instead).
 ///
 /// v1: JSON polling at ~1Hz from the frontend. SSE streaming is a v1.1 add.
 pub async fn get_action_logs_handler(
@@ -733,7 +787,7 @@ pub async fn get_action_logs_handler(
 /// `POST /api/admin/reconcile`
 ///
 /// Re-reads `actions/sources.toml` + every `actions/<name>/manifest.toml` from
-/// disk, upserts `app_actions` rows accordingly, then asks the supervisor to
+/// disk, upserts `app_applets` rows accordingly, then asks the supervisor to
 /// diff/spawn/stop `app`-runtime children.
 ///
 /// This is the LLM-authoring on-ramp: an LLM creates a new action folder,
@@ -747,7 +801,7 @@ pub async fn admin_reconcile_handler(State(state): State<AppState>) -> Response 
     //    reconcile calls see the new data.
     crate::action_templates::reload_catalog();
 
-    // 2. Reconcile `app_actions` SQL rows against the fresh catalog. Manifest
+    // 2. Reconcile `app_applets` SQL rows against the fresh catalog. Manifest
     //    fields overwrite for system actions; user-managed runtime state
     //    (enabled, cron_schedule, config) is preserved per the field-ownership
     //    rule documented in action_templates/mod.rs.
@@ -798,7 +852,7 @@ pub async fn admin_reconcile_handler(State(state): State<AppState>) -> Response 
 /// `POST /api/admin/actions/import-git`
 ///
 /// Clone (or update) a Git repo into `actions/<slug>/` and reconcile so the
-/// new manifests show up as `app_actions` rows. Same diff/spawn machinery
+/// new manifests show up as `app_applets` rows. Same diff/spawn machinery
 /// that `/api/admin/reconcile` uses; we just scope the per-row diff to the
 /// slug prefix and clean up rows for manifests that disappeared upstream.
 pub async fn import_git_actions_handler(
@@ -913,7 +967,7 @@ pub async fn device_action_runs_handler(
     // Ownership: the action must belong to this device. EXISTS returns a
     // non-null bool, so a missing action and a foreign action both → false.
     let owned: bool = sqlx::query_scalar(
-        "SELECT EXISTS(SELECT 1 FROM app_actions WHERE id = $1 AND device_id = $2)",
+        "SELECT EXISTS(SELECT 1 FROM app_applets WHERE id = $1 AND device_id = $2)",
     )
     .bind(&action_id)
     .bind(&user.device_id)
@@ -999,26 +1053,6 @@ pub async fn update_assistant_profile_handler(
 }
 
 // =============================================================================
-// Tools API
-// =============================================================================
-
-/// List all tools with optional filtering
-pub async fn list_tools_handler(
-    State(state): State<AppState>,
-    Query(query): Query<crate::api::ListToolsQuery>,
-) -> Response {
-    api_response(crate::api::list_tools(state.db.pool(), query).await)
-}
-
-/// Get a specific tool by ID
-pub async fn get_tool_handler(State(state): State<AppState>, Path(id): Path<String>) -> Response {
-    api_response(crate::api::get_tool(state.db.pool(), id).await)
-}
-
-// Note: Built-in tools cannot be updated. They are read-only from the registry.
-// MCP tools can be managed via separate endpoints (to be implemented).
-
-// =============================================================================
 // Models API
 // =============================================================================
 
@@ -1039,20 +1073,6 @@ pub async fn get_model_handler(Path(model_id): Path<String>) -> Response {
 /// resolves to without a second round trip.
 pub async fn list_models_with_slots_handler() -> Response {
     api_response(crate::api::list_models_with_slots().await)
-}
-
-// =============================================================================
-// Agents API
-// =============================================================================
-
-/// List all available agents
-pub async fn list_agents_handler() -> Response {
-    api_response(crate::api::list_agents().await)
-}
-
-/// Get a specific agent by ID
-pub async fn get_agent_handler(Path(agent_id): Path<String>) -> Response {
-    api_response(crate::api::get_agent(&agent_id).await)
 }
 
 // =============================================================================
@@ -1108,47 +1128,6 @@ pub async fn unhide_persona_handler(
 /// Reset personas to defaults (re-seed from registry)
 pub async fn reset_personas_handler(State(state): State<AppState>) -> Response {
     api_response(crate::api::reset_personas(state.db.pool()).await)
-}
-
-// =============================================================================
-// Seed Testing API
-// =============================================================================
-
-/// Get pipeline status (archive, transform, clustering)
-pub async fn seed_pipeline_status_handler(State(state): State<AppState>) -> Response {
-    api_response(crate::api::get_pipeline_status(&state.db).await)
-}
-
-#[derive(Debug, serde::Deserialize)]
-pub struct DataQualityQuery {
-    pub start: String, // RFC3339 timestamp
-    pub end: String,   // RFC3339 timestamp
-}
-
-/// Get data quality metrics for seed data
-pub async fn seed_data_quality_handler(
-    State(state): State<AppState>,
-    Query(params): Query<DataQualityQuery>,
-) -> Response {
-    let start = match chrono::DateTime::parse_from_rfc3339(&params.start) {
-        Ok(dt) => dt.with_timezone(&chrono::Utc),
-        Err(_) => {
-            return error_response(crate::error::Error::InvalidInput(
-                "Invalid start timestamp. Use RFC3339 format".to_string(),
-            ))
-        }
-    };
-
-    let end = match chrono::DateTime::parse_from_rfc3339(&params.end) {
-        Ok(dt) => dt.with_timezone(&chrono::Utc),
-        Err(_) => {
-            return error_response(crate::error::Error::InvalidInput(
-                "Invalid end timestamp. Use RFC3339 format".to_string(),
-            ))
-        }
-    };
-
-    api_response(crate::api::get_data_quality_metrics(&state.db, start, end).await)
 }
 
 // ============================================================================
@@ -1580,32 +1559,6 @@ pub async fn unsplash_search_handler(
     }
 }
 
-// =============================================================================
-// Storage API Handlers
-// =============================================================================
-
-/// Query parameters for listing storage objects
-#[derive(Debug, Deserialize)]
-pub struct ListStorageObjectsParams {
-    pub limit: Option<i64>,
-}
-
-/// List recent storage objects
-pub async fn list_storage_objects_handler(
-    State(state): State<AppState>,
-    Query(params): Query<ListStorageObjectsParams>,
-) -> Response {
-    let limit = params.limit.unwrap_or(10);
-    api_response(crate::api::list_recent_objects(state.db.pool(), limit).await)
-}
-
-/// Get decrypted content of a storage object
-pub async fn get_storage_object_content_handler(
-    State(state): State<AppState>,
-    Path(object_id): Path<String>,
-) -> Response {
-    api_response(crate::api::get_object_content(state.db.pool(), &*state.storage, object_id).await)
-}
 
 // =============================================================================
 // Entities API - Places
@@ -2178,19 +2131,6 @@ pub async fn wiki_get_day_streams_handler(
 }
 
 
-// =============================================================================
-// Code Execution API (AI Sandbox)
-// =============================================================================
-
-/// Execute Python code in a sandboxed environment
-///
-/// Used by the AI agent's code_interpreter tool.
-/// On the appliance (Linux), isolates each run in a transient systemd-run unit.
-/// On dev machines (macOS/Windows, debug builds), runs Python directly.
-pub async fn execute_code_handler(Json(request): Json<crate::api::ExecuteCodeRequest>) -> Response {
-    let response = crate::api::execute_code(request).await;
-    (StatusCode::OK, Json(response)).into_response()
-}
 
 // =============================================================================
 // Chat Usage & Compaction API Handlers
@@ -2393,12 +2333,12 @@ pub async fn auth_session_handler(user: Option<crate::middleware::auth::AuthUser
 
 /// GET /api/drive/usage - Get drive usage statistics
 pub async fn get_drive_usage_handler(State(state): State<AppState>) -> Response {
-    api_response(crate::api::get_drive_usage(state.db.pool()).await)
+    api_response(crate::api::get_drive_usage(state.db.pool(), &state.drive_config).await)
 }
 
 /// GET /api/drive/warnings - Get quota warnings
 pub async fn get_drive_warnings_handler(State(state): State<AppState>) -> Response {
-    api_response(crate::api::check_drive_warnings(state.db.pool()).await)
+    api_response(crate::api::check_drive_warnings(state.db.pool(), &state.drive_config).await)
 }
 
 /// Query params for listing drive files
@@ -2429,10 +2369,93 @@ pub async fn get_drive_file_handler(
 }
 
 /// GET /api/drive/files/:id/download - Download file content
+/// Query parameters for drive downloads.
+#[derive(Debug, Deserialize)]
+pub struct DriveDownloadQuery {
+    /// `inline` renders in-browser (viewer surfaces); default is attachment.
+    pub disposition: Option<String>,
+}
+
+/// Outcome of resolving a Range header against an object size.
+#[derive(Debug, PartialEq)]
+enum RangeOutcome {
+    /// No (or ignorable) range — serve the full object with 200.
+    Full,
+    /// Serve `(start, len)` with 206.
+    Partial(u64, u64),
+    /// Range present but unsatisfiable — 416.
+    Unsatisfiable,
+}
+
+/// Resolve a single-range `Range: bytes=…` header against a total size.
+/// Malformed and multi-range headers are ignored (RFC 7233 permits a full 200
+/// response); syntactically valid but out-of-bounds ranges are unsatisfiable.
+fn resolve_range(header: Option<&str>, total: u64) -> RangeOutcome {
+    let Some(header) = header else {
+        return RangeOutcome::Full;
+    };
+    let Some(spec) = header.trim().strip_prefix("bytes=") else {
+        return RangeOutcome::Full;
+    };
+    if spec.contains(',') {
+        return RangeOutcome::Full;
+    }
+    let Some((start_s, end_s)) = spec.split_once('-') else {
+        return RangeOutcome::Full;
+    };
+    let (start_s, end_s) = (start_s.trim(), end_s.trim());
+    match (start_s.is_empty(), end_s.is_empty()) {
+        (true, true) => RangeOutcome::Full,
+        // Suffix form: last N bytes.
+        (true, false) => {
+            let Ok(n) = end_s.parse::<u64>() else {
+                return RangeOutcome::Full;
+            };
+            if n == 0 || total == 0 {
+                return RangeOutcome::Unsatisfiable;
+            }
+            let start = total.saturating_sub(n);
+            RangeOutcome::Partial(start, total - start)
+        }
+        // Open-ended: from start to EOF.
+        (false, true) => {
+            let Ok(start) = start_s.parse::<u64>() else {
+                return RangeOutcome::Full;
+            };
+            if start >= total {
+                return RangeOutcome::Unsatisfiable;
+            }
+            RangeOutcome::Partial(start, total - start)
+        }
+        // Bounded: start–end inclusive, end clamped to EOF.
+        (false, false) => {
+            let (Ok(start), Ok(end)) = (start_s.parse::<u64>(), end_s.parse::<u64>()) else {
+                return RangeOutcome::Full;
+            };
+            if start > end {
+                return RangeOutcome::Full;
+            }
+            if start >= total {
+                return RangeOutcome::Unsatisfiable;
+            }
+            let end = end.min(total - 1);
+            RangeOutcome::Partial(start, end - start + 1)
+        }
+    }
+}
+
 pub async fn download_drive_file_handler(
     State(state): State<AppState>,
     Path(file_id): Path<String>,
+    Query(query): Query<DriveDownloadQuery>,
+    headers: axum::http::HeaderMap,
 ) -> Response {
+    let disposition = if query.disposition.as_deref() == Some("inline") {
+        "inline"
+    } else {
+        "attachment"
+    };
+
     // Lake objects use in-memory download (different storage layer)
     if crate::api::is_lake_object_id(&file_id) {
         let result =
@@ -2448,7 +2471,7 @@ pub async fn download_drive_file_handler(
                         (axum::http::header::CONTENT_TYPE, content_type),
                         (
                             axum::http::header::CONTENT_DISPOSITION,
-                            format!("attachment; filename=\"{}\"", filename),
+                            format!("{disposition}; filename=\"{filename}\""),
                         ),
                         (
                             axum::http::header::CONTENT_LENGTH,
@@ -2463,34 +2486,166 @@ pub async fn download_drive_file_handler(
         };
     }
 
-    // Regular drive files: stream from storage
-    let result =
-        crate::api::download_drive_file_stream(state.db.pool(), &state.drive_config, &file_id)
-            .await;
+    // Regular drive files: resolve any Range against the stored size, then
+    // stream straight from disk — 206 for partials, 416 when unsatisfiable.
+    let meta = match crate::api::get_drive_file(state.db.pool(), &file_id).await {
+        Ok(f) => f,
+        Err(e) => return error_response(e),
+    };
+    let total = meta.size_bytes.max(0) as u64;
+    let range_header = headers
+        .get(axum::http::header::RANGE)
+        .and_then(|v| v.to_str().ok());
+    let range = match resolve_range(range_header, total) {
+        RangeOutcome::Unsatisfiable => {
+            return (
+                StatusCode::RANGE_NOT_SATISFIABLE,
+                [
+                    (axum::http::header::ACCEPT_RANGES, "bytes".to_string()),
+                    (
+                        axum::http::header::CONTENT_RANGE,
+                        format!("bytes */{total}"),
+                    ),
+                ],
+            )
+                .into_response();
+        }
+        RangeOutcome::Full => None,
+        RangeOutcome::Partial(start, len) => Some((start, len)),
+    };
+
+    let result = crate::api::download_drive_file_stream(
+        state.db.pool(),
+        &state.drive_config,
+        &file_id,
+        range,
+    )
+    .await;
     match result {
-        Ok((file, stream)) => {
+        Ok((file, _disk_total, stream)) => {
             let content_type = file
                 .mime_type
                 .unwrap_or_else(|| "application/octet-stream".to_string());
             let filename = sanitize_content_disposition(&file.filename);
-            (
-                [
-                    (axum::http::header::CONTENT_TYPE, content_type),
-                    (
-                        axum::http::header::CONTENT_DISPOSITION,
-                        format!("attachment; filename=\"{}\"", filename),
-                    ),
-                    (
-                        axum::http::header::CONTENT_LENGTH,
-                        file.size_bytes.to_string(),
-                    ),
-                ],
-                Body::from_stream(stream),
-            )
-                .into_response()
+            let (status, content_length, content_range) = match range {
+                Some((start, len)) => (
+                    StatusCode::PARTIAL_CONTENT,
+                    len,
+                    Some(format!("bytes {}-{}/{}", start, start + len - 1, total)),
+                ),
+                None => (StatusCode::OK, total, None),
+            };
+            let mut builder = axum::http::Response::builder()
+                .status(status)
+                .header(axum::http::header::CONTENT_TYPE, content_type)
+                .header(
+                    axum::http::header::CONTENT_DISPOSITION,
+                    format!("{disposition}; filename=\"{filename}\""),
+                )
+                .header(axum::http::header::ACCEPT_RANGES, "bytes")
+                .header(axum::http::header::CONTENT_LENGTH, content_length);
+            if let Some(cr) = content_range {
+                builder = builder.header(axum::http::header::CONTENT_RANGE, cr);
+            }
+            match builder.body(Body::from_stream(stream)) {
+                Ok(resp) => resp.into_response(),
+                Err(e) => error_response(crate::error::Error::Other(format!(
+                    "Failed to build response: {e}"
+                ))),
+            }
         }
         Err(e) => error_response(e),
     }
+}
+
+// ── Annotations (document highlights + margin notes, researcher-plan D2) ──
+
+/// GET /api/annotations?file_id=… — list a file's annotations.
+#[derive(Debug, Deserialize)]
+pub struct ListAnnotationsQuery {
+    pub file_id: String,
+}
+pub async fn list_annotations_handler(
+    State(state): State<AppState>,
+    Query(q): Query<ListAnnotationsQuery>,
+) -> Response {
+    api_response(crate::api::list_annotations(state.db.pool(), &q.file_id).await)
+}
+
+/// GET /api/notebooks/:id/annotations — every highlight across the notebook's
+/// library documents, enriched with filenames (researcher-plan D2.5).
+pub async fn list_notebook_annotations_handler(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> Response {
+    api_response(crate::api::list_notebook_annotations(state.db.pool(), &id).await)
+}
+
+/// GET /api/annotations/export?file_id=… — a file's highlights as markdown.
+pub async fn export_file_annotations_handler(
+    State(state): State<AppState>,
+    Query(q): Query<ListAnnotationsQuery>,
+) -> Response {
+    match crate::api::export_file_annotations_md(state.db.pool(), &q.file_id).await {
+        Ok(md) => markdown_response(md),
+        Err(e) => error_response(e),
+    }
+}
+
+/// GET /api/notebooks/:id/annotations/export — notebook highlights as markdown.
+pub async fn export_notebook_annotations_handler(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> Response {
+    match crate::api::export_notebook_annotations_md(state.db.pool(), &id).await {
+        Ok(md) => markdown_response(md),
+        Err(e) => error_response(e),
+    }
+}
+
+/// Serve markdown as a downloadable text body.
+fn markdown_response(md: String) -> Response {
+    (
+        [(axum::http::header::CONTENT_TYPE, "text/markdown; charset=utf-8")],
+        md,
+    )
+        .into_response()
+}
+
+/// POST /api/annotations — create (or upsert) a highlight.
+pub async fn create_annotation_handler(
+    State(state): State<AppState>,
+    Json(req): Json<crate::api::CreateAnnotationRequest>,
+) -> Response {
+    api_response(crate::api::create_annotation(state.db.pool(), req).await)
+}
+
+/// PATCH /api/annotations/:id — edit note/color.
+pub async fn update_annotation_handler(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    Json(req): Json<crate::api::UpdateAnnotationRequest>,
+) -> Response {
+    api_response(crate::api::update_annotation(state.db.pool(), &id, req).await)
+}
+
+/// DELETE /api/annotations/:id
+pub async fn delete_annotation_handler(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> Response {
+    match crate::api::delete_annotation(state.db.pool(), &id).await {
+        Ok(_) => success_message("Annotation deleted"),
+        Err(e) => error_response(e),
+    }
+}
+
+/// POST /api/drive/files/:id/reextract — queue a file for (re-)extraction.
+pub async fn reextract_drive_file_handler(
+    State(state): State<AppState>,
+    Path(file_id): Path<String>,
+) -> Response {
+    api_response(crate::api::reextract_drive_file(state.db.pool(), &file_id).await)
 }
 
 /// DELETE /api/drive/files/:id - Delete a file or folder
@@ -2526,13 +2681,54 @@ pub async fn upload_drive_file_handler(
     State(state): State<AppState>,
     mut multipart: axum::extract::Multipart,
 ) -> Response {
-    // Parse multipart form
+    use sha2::Digest as _;
+    use tokio::io::AsyncWriteExt;
+
+    /// Per-file ceiling, enforced while streaming. The router body limit
+    /// (260MB) is only a backstop above this, so the honest 413 below fires
+    /// first and the client gets a real message instead of a connection reset.
+    const MAX_UPLOAD_FILE_BYTES: u64 = 250 * 1024 * 1024;
+
+    let too_large = || {
+        (
+            StatusCode::PAYLOAD_TOO_LARGE,
+            Json(serde_json::json!({
+                "error": "File too large — the upload limit is 250 MB."
+            })),
+        )
+            .into_response()
+    };
+
+    // Stream the multipart form. The file field is written chunk-by-chunk to a
+    // staging file on the drive filesystem while hashing incrementally — the
+    // upload is never held in memory (committing later is a rename).
     let mut path: Option<String> = None;
     let mut filename: Option<String> = None;
     let mut mime_type: Option<String> = None;
-    let mut data: Option<axum::body::Bytes> = None;
+    let mut staged: Option<crate::api::StagedUpload> = None;
 
-    while let Ok(Some(field)) = multipart.next_field().await {
+    let cleanup = |staged: &Option<crate::api::StagedUpload>| {
+        if let Some(s) = staged {
+            let p = s.temp_path.clone();
+            tokio::spawn(async move {
+                let _ = tokio::fs::remove_file(p).await;
+            });
+        }
+    };
+
+    loop {
+        let mut field = match multipart.next_field().await {
+            Ok(Some(field)) => field,
+            Ok(None) => break,
+            Err(_) => {
+                // With the in-stream cap below the router backstop, an error
+                // here is a malformed body or an aborted connection.
+                cleanup(&staged);
+                return error_response(crate::error::Error::InvalidInput(
+                    "Upload interrupted or malformed".into(),
+                ));
+            }
+        };
         let name = field.name().unwrap_or("").to_string();
         match name.as_str() {
             "path" => {
@@ -2543,9 +2739,69 @@ pub async fn upload_drive_file_handler(
             "file" => {
                 filename = field.file_name().map(|s| s.to_string());
                 mime_type = field.content_type().map(|s| s.to_string());
-                if let Ok(bytes) = field.bytes().await {
-                    data = Some(bytes);
+
+                // Repeated file fields: keep the last, drop the earlier stage.
+                cleanup(&staged);
+
+                let staging_dir = match state.drive_config.storage.staging_dir().await {
+                    Ok(d) => d,
+                    Err(e) => return error_response(e),
+                };
+                static STAGING_SEQ: std::sync::atomic::AtomicU64 =
+                    std::sync::atomic::AtomicU64::new(0);
+                let temp_path = staging_dir.join(format!(
+                    "{}-{}.part",
+                    std::process::id(),
+                    STAGING_SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+                ));
+
+                let mut out = match tokio::fs::File::create(&temp_path).await {
+                    Ok(f) => f,
+                    Err(e) => {
+                        return error_response(crate::error::Error::Storage(format!(
+                            "Failed to stage upload: {e}"
+                        )))
+                    }
+                };
+                let mut hasher = sha2::Sha256::new();
+                let mut written: u64 = 0;
+                loop {
+                    match field.chunk().await {
+                        Ok(Some(chunk)) => {
+                            written += chunk.len() as u64;
+                            if written > MAX_UPLOAD_FILE_BYTES {
+                                drop(out);
+                                let _ = tokio::fs::remove_file(&temp_path).await;
+                                return too_large();
+                            }
+                            hasher.update(&chunk);
+                            if let Err(e) = out.write_all(&chunk).await {
+                                let _ = tokio::fs::remove_file(&temp_path).await;
+                                return error_response(crate::error::Error::Storage(format!(
+                                    "Failed to stage upload: {e}"
+                                )));
+                            }
+                        }
+                        Ok(None) => break,
+                        Err(_) => {
+                            let _ = tokio::fs::remove_file(&temp_path).await;
+                            return error_response(crate::error::Error::InvalidInput(
+                                "Upload interrupted or malformed".into(),
+                            ));
+                        }
+                    }
                 }
+                if let Err(e) = out.flush().await {
+                    let _ = tokio::fs::remove_file(&temp_path).await;
+                    return error_response(crate::error::Error::Storage(format!(
+                        "Failed to stage upload: {e}"
+                    )));
+                }
+                staged = Some(crate::api::StagedUpload {
+                    temp_path,
+                    size_bytes: written as i64,
+                    sha256: format!("{:x}", hasher.finalize()),
+                });
             }
             _ => {}
         }
@@ -2557,18 +2813,23 @@ pub async fn upload_drive_file_handler(
         mime_type,
     };
 
-    match data {
-        Some(bytes) => {
+    match staged {
+        Some(staged) => {
+            let temp_path = staged.temp_path.clone();
             match crate::api::upload_drive_file(
                 state.db.pool(),
                 &state.drive_config,
                 request,
-                bytes,
+                staged,
             )
             .await
             {
                 Ok(file) => (StatusCode::CREATED, Json(file)).into_response(),
-                Err(e) => error_response(e),
+                Err(e) => {
+                    // Commit failed before the rename — drop the staged file.
+                    let _ = tokio::fs::remove_file(&temp_path).await;
+                    error_response(e)
+                }
             }
         }
         None => error_response(crate::error::Error::InvalidInput(
@@ -2841,6 +3102,33 @@ pub async fn delete_page_handler(
     }
 }
 
+/// POST /api/pages/:id/append — append a markdown block to a page THROUGH Yjs.
+///
+/// The synthesis-bridge write path (researcher-plan D4): sending a highlight
+/// into a page must not clobber an editor that's currently open on it, so this
+/// goes through the authoritative Yjs doc (transaction + broadcast) rather than
+/// a REST content replace.
+#[derive(Debug, Deserialize)]
+pub struct AppendPageRequest {
+    pub markdown: String,
+}
+
+pub async fn append_page_handler(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    Json(req): Json<AppendPageRequest>,
+) -> Response {
+    if req.markdown.trim().is_empty() {
+        return error_response(crate::error::Error::InvalidInput(
+            "markdown cannot be empty".into(),
+        ));
+    }
+    match state.yjs_state.append_markdown(&id, &req.markdown).await {
+        Ok(content) => api_response(Ok(serde_json::json!({ "content": content }))),
+        Err(e) => error_response(crate::error::Error::Other(e)),
+    }
+}
+
 /// GET /api/pages/:id/backlinks - Get inbound references (pages linking here)
 pub async fn get_page_backlinks_handler(
     State(state): State<AppState>,
@@ -2966,11 +3254,15 @@ pub async fn shared_file_download_handler(
     }
 
     // Regular drive files: stream from storage
-    let result =
-        crate::api::download_drive_file_stream(state.db.pool(), &state.drive_config, &file_id)
-            .await;
+    let result = crate::api::download_drive_file_stream(
+        state.db.pool(),
+        &state.drive_config,
+        &file_id,
+        None,
+    )
+    .await;
     match result {
-        Ok((file, stream)) => {
+        Ok((file, total, stream)) => {
             let content_type = file
                 .mime_type
                 .unwrap_or_else(|| "application/octet-stream".to_string());
@@ -2982,6 +3274,7 @@ pub async fn shared_file_download_handler(
                         axum::http::header::CONTENT_DISPOSITION,
                         format!("inline; filename=\"{}\"", filename),
                     ),
+                    (axum::http::header::CONTENT_LENGTH, total.to_string()),
                 ],
                 axum::body::Body::from_stream(stream),
             )
@@ -3234,22 +3527,6 @@ pub async fn reorder_notebook_items_handler(
     }
 }
 
-// ============================================================================
-// Namespaces Handlers
-// ============================================================================
-
-/// GET /api/namespaces - List all namespaces
-pub async fn list_namespaces_handler(State(state): State<AppState>) -> Response {
-    api_response(crate::api::namespaces::list_namespaces(state.db.pool()).await)
-}
-
-/// GET /api/namespaces/:name - Get a specific namespace
-pub async fn get_namespace_handler(
-    State(state): State<AppState>,
-    Path(name): Path<String>,
-) -> Response {
-    api_response(crate::api::namespaces::get_namespace(state.db.pool(), &name).await)
-}
 
 // ============================================================================
 // Lake API handlers
@@ -3263,4 +3540,88 @@ pub async fn get_lake_summary_handler(State(state): State<AppState>) -> Response
 /// GET /api/lake/streams - List all streams in the lake
 pub async fn list_lake_streams_handler(State(state): State<AppState>) -> Response {
     api_response(crate::api::lake::list_lake_streams(state.db.pool()).await)
+}
+
+#[cfg(test)]
+mod range_tests {
+    use super::{resolve_range, RangeOutcome};
+
+    #[test]
+    fn no_header_serves_full() {
+        assert_eq!(resolve_range(None, 100), RangeOutcome::Full);
+    }
+
+    #[test]
+    fn bounded_range() {
+        assert_eq!(
+            resolve_range(Some("bytes=0-49"), 100),
+            RangeOutcome::Partial(0, 50)
+        );
+        assert_eq!(
+            resolve_range(Some("bytes=10-19"), 100),
+            RangeOutcome::Partial(10, 10)
+        );
+        // End past EOF clamps
+        assert_eq!(
+            resolve_range(Some("bytes=90-199"), 100),
+            RangeOutcome::Partial(90, 10)
+        );
+    }
+
+    #[test]
+    fn open_ended_range() {
+        assert_eq!(
+            resolve_range(Some("bytes=40-"), 100),
+            RangeOutcome::Partial(40, 60)
+        );
+    }
+
+    #[test]
+    fn suffix_range() {
+        assert_eq!(
+            resolve_range(Some("bytes=-10"), 100),
+            RangeOutcome::Partial(90, 10)
+        );
+        // Suffix longer than the object serves the whole object
+        assert_eq!(
+            resolve_range(Some("bytes=-500"), 100),
+            RangeOutcome::Partial(0, 100)
+        );
+    }
+
+    #[test]
+    fn unsatisfiable_ranges() {
+        assert_eq!(
+            resolve_range(Some("bytes=100-"), 100),
+            RangeOutcome::Unsatisfiable
+        );
+        assert_eq!(
+            resolve_range(Some("bytes=200-300"), 100),
+            RangeOutcome::Unsatisfiable
+        );
+        assert_eq!(
+            resolve_range(Some("bytes=-0"), 100),
+            RangeOutcome::Unsatisfiable
+        );
+        // Any range against an empty object is unsatisfiable
+        assert_eq!(
+            resolve_range(Some("bytes=0-10"), 0),
+            RangeOutcome::Unsatisfiable
+        );
+        assert_eq!(
+            resolve_range(Some("bytes=-5"), 0),
+            RangeOutcome::Unsatisfiable
+        );
+    }
+
+    #[test]
+    fn ignored_forms_serve_full() {
+        // Multi-range: permitted to ignore, serve 200
+        assert_eq!(resolve_range(Some("bytes=0-1,5-9"), 100), RangeOutcome::Full);
+        // Malformed
+        assert_eq!(resolve_range(Some("bytes=abc-def"), 100), RangeOutcome::Full);
+        assert_eq!(resolve_range(Some("bytes=50-10"), 100), RangeOutcome::Full);
+        assert_eq!(resolve_range(Some("bytes=-"), 100), RangeOutcome::Full);
+        assert_eq!(resolve_range(Some("items=0-10"), 100), RangeOutcome::Full);
+    }
 }

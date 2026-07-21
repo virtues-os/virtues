@@ -1,0 +1,130 @@
+name: Release Linux Desktop App
+
+# Builds the Tauri desktop app (apps/web/src-tauri) into AppImage + .deb bundles
+# and attaches them to a GitHub Release. VIEWS-ONLY for v1: no collector sidecar
+# (macOS-only), reach runs in-process, no self-update, UNSIGNED. Distinct from
+# release-linux.yml, which builds the BOX (virtues-core server), not this app.
+# Cross-platform config comes from tauri.linux.conf.json.
+#
+# Tag prefix `linux-desktop-*` avoids colliding with the box's `v*` tags.
+
+on:
+  push:
+    tags:
+      - 'linux-desktop-v*'
+      - 'linux-desktop-edge'
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version (e.g. 0.1.0) or "edge"'
+        required: true
+        type: string
+
+jobs:
+  build-and-release:
+    # 22.04 carries webkit2gtk-4.1 (Tauri 2's requirement); newer works too.
+    runs-on: ubuntu-22.04
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Resolve version + channel
+        id: version
+        run: |
+          if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
+            RAW="${{ github.event.inputs.version }}"
+          else
+            RAW="${GITHUB_REF#refs/tags/}"
+          fi
+          if [[ "$RAW" == "linux-desktop-edge" || "$RAW" == "edge" ]]; then
+            IS_EDGE=true
+            VERSION="$(grep -m1 '^version = ' virtues-core/Cargo.toml | sed -E 's/.*"([^"]+)".*/\1/')"
+            TAG="linux-desktop-edge"
+          else
+            IS_EDGE=false
+            VERSION="${RAW#linux-desktop-v}"
+            TAG="linux-desktop-v${VERSION}"
+          fi
+          echo "VERSION=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "IS_EDGE=$IS_EDGE" >> "$GITHUB_OUTPUT"
+          echo "TAG=$TAG" >> "$GITHUB_OUTPUT"
+
+      - name: Stamp app version from tag
+        working-directory: apps/web/src-tauri
+        run: |
+          tmp="$(mktemp)"
+          jq --arg v "${{ steps.version.outputs.VERSION }}" '.version = $v' tauri.conf.json > "$tmp"
+          mv "$tmp" tauri.conf.json
+
+      # Tauri 2 Linux system deps. webkit2gtk-4.1 + gtk3 are required; the
+      # appindicator dev lib is pulled because the tray-icon feature is compiled
+      # in (the tray code is present but only invoked on macOS — see main.rs).
+      - name: Install Tauri system deps
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libwebkit2gtk-4.1-dev \
+            libgtk-3-dev \
+            libayatana-appindicator3-dev \
+            librsvg2-dev \
+            patchelf \
+            build-essential
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-unknown-linux-gnu
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: "apps/web/src-tauri -> target"
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Install web deps (tauri CLI + plugins)
+        working-directory: apps/web
+        run: pnpm install --frozen-lockfile
+
+      - name: Build Linux app (AppImage + deb)
+        working-directory: apps/web
+        run: pnpm tauri build --target x86_64-unknown-linux-gnu
+
+      - name: Locate bundles
+        id: bundles
+        run: |
+          BASE=apps/web/src-tauri/target/x86_64-unknown-linux-gnu/release/bundle
+          APPIMAGE=$(find "$BASE/appimage" -name '*.AppImage' | head -1)
+          DEB=$(find "$BASE/deb" -name '*.deb' | head -1)
+          [ -n "$APPIMAGE" ] || { echo "no AppImage produced"; exit 1; }
+          [ -n "$DEB" ] || { echo "no .deb produced"; exit 1; }
+          echo "appimage=$APPIMAGE" >> "$GITHUB_OUTPUT"
+          echo "deb=$DEB" >> "$GITHUB_OUTPUT"
+
+      - name: Publish channel release
+        uses: softprops/action-gh-release@v2
+        with:
+          name: ${{ steps.version.outputs.IS_EDGE == 'true' && 'Virtues for Linux (Edge)' || format('Virtues for Linux v{0}', steps.version.outputs.VERSION) }}
+          tag_name: ${{ steps.version.outputs.TAG }}
+          prerelease: ${{ steps.version.outputs.IS_EDGE == 'true' }}
+          make_latest: false
+          body: |
+            ## Virtues for Linux ${{ steps.version.outputs.IS_EDGE == 'true' && '(Edge — rolling test build)' || format('v{0}', steps.version.outputs.VERSION) }}
+
+            Linux viewer — **AppImage** (portable) or **.deb** (Debian/Ubuntu).
+            Pair with your box using the 6-char code from `virtues pair`.
+            Requires `webkit2gtk-4.1` at runtime (bundled in the AppImage; declared
+            as a dependency in the .deb).
+          files: |
+            ${{ steps.bundles.outputs.appimage }}
+            ${{ steps.bundles.outputs.deb }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

@@ -54,7 +54,30 @@ pub async fn run_agent_loop(
     } else {
         Vec::new()
     };
-    let llm_messages = build_context_for_llm(&messages, None, 0, Some(&system_prompt));
+    let mut llm_messages = build_context_for_llm(&messages, None, 0, Some(&system_prompt));
+
+    // Providers (Bedrock, zai) require the first non-system message to be a
+    // user message. Two ways that breaks here: a folder applet with no linked
+    // chat has an empty history (system prompt only), and a compacted chat's
+    // post-checkpoint tail can begin with an assistant turn. Insert a
+    // synthetic kickoff turn right after the system message when needed.
+    let first_non_system = llm_messages
+        .iter()
+        .position(|m| m.get("role").and_then(|r| r.as_str()) != Some("system"));
+    let needs_kickoff = match first_non_system {
+        None => true, // system-only (or empty) conversation
+        Some(i) => llm_messages[i].get("role").and_then(|r| r.as_str()) != Some("user"),
+    };
+    if needs_kickoff {
+        let at = first_non_system.unwrap_or(llm_messages.len());
+        llm_messages.insert(
+            at,
+            serde_json::json!({
+                "role": "user",
+                "content": "Run your action instruction now.",
+            }),
+        );
+    }
 
     // 4. Get tools and model
     let tools = crate::tools::get_tools_for_action();

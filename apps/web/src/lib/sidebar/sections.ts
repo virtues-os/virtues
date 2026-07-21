@@ -118,10 +118,10 @@ const DRIVE: SystemSection = {
 
 const ACTIONS: SystemSection = {
 	id: 'sys_actions',
-	name: 'Actions',
+	name: 'Applets',
 	icon: 'ri:flashlight-line',
 	type: 'link',
-	href: '/actions',
+	href: '/applets',
 };
 
 export const SECTION_GROUPS: SectionGroup[] = [

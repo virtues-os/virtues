@@ -10,6 +10,7 @@
 		createDriveFolder,
 		moveDriveFile,
 		getDriveUsage,
+		reextractDriveFile,
 	} from "$lib/api/client";
 	import { formatDate } from "$lib/utils/dateUtils";
 	import Icon from "$lib/components/Icon.svelte";
@@ -194,7 +195,7 @@
 		if (file.is_folder) {
 			navigateToFolder(file.path);
 		} else {
-			handleDownload(file);
+			windowShellStore.openRouteBeside(`/drive/${file.id}`, file.filename);
 		}
 	}
 
@@ -215,9 +216,19 @@
 		}
 	}
 
+	// Server router body limit is 260MB; the advertised per-file ceiling is 250MB.
+	const MAX_UPLOAD_BYTES = 250 * 1024 * 1024;
+
 	// Handle file upload
 	async function handleUpload(fileList: FileList) {
 		if (fileList.length === 0) return;
+
+		// Preflight: reject oversize files before any bytes leave the browser.
+		const oversize = Array.from(fileList).find((f) => f.size > MAX_UPLOAD_BYTES);
+		if (oversize) {
+			error = `${oversize.name} is ${formatBytes(oversize.size)} — the upload limit is 250 MB.`;
+			return;
+		}
 
 		uploading = true;
 		uploadProgress = 0;
@@ -349,6 +360,18 @@
 						icon: "ri:download-line",
 						action: () => handleDownload(file),
 					},
+					// Text-bearing files can re-queue extraction (retry a
+					// failure, or pick up a newly-installed extractor).
+					...(file.extraction_status !== "skipped"
+						? [
+								{
+									id: "reextract",
+									label: "Re-extract text",
+									icon: "ri:refresh-line",
+									action: () => handleReextract(file),
+								},
+							]
+						: []),
 					{
 						id: "rename",
 						label: "Rename",
@@ -429,10 +452,21 @@
 				file.is_folder ? null : formatBytes(file.size_bytes),
 		},
 		{
+			key: "extraction_status",
+			label: "Indexed",
+			icon: "ri:search-eye-line",
+			width: "12%",
+			minWidth: "90px",
+			hideOnMobile: true,
+			// Honest per-file extraction state (researcher-plan D1): text-bearing
+			// files show where they are in the corpus pipeline; others show —.
+			getValue: (file) => extractionLabel(file),
+		},
+		{
 			key: "updated_at",
 			label: "Modified",
 			icon: "ri:time-line",
-			width: "25%",
+			width: "20%",
 			minWidth: "120px",
 			hideOnMobile: true,
 			getValue: (file) => formatDate(file.updated_at),
@@ -444,6 +478,33 @@
 			sortable: false,
 		},
 	];
+
+	function extractionLabel(file: DriveFile): string | null {
+		if (file.is_folder) return null;
+		switch (file.extraction_status) {
+			case "done":
+				return "indexed";
+			case "pending":
+				return "queued";
+			case "extracting":
+				return "extracting…";
+			case "no_text":
+				return "no text layer";
+			case "failed":
+				return "failed";
+			default:
+				return "—";
+		}
+	}
+
+	async function handleReextract(file: DriveFile) {
+		try {
+			await reextractDriveFile(file.id);
+			files = await listDriveFiles(currentPath);
+		} catch (e) {
+			error = e instanceof Error ? e.message : "Failed to queue extraction";
+		}
+	}
 
 	function handleItemClick(file: DriveFile) {
 		if (renamingFile) return;
@@ -481,11 +542,6 @@
 						{formatBytes(usage.total_bytes)} of {formatBytes(
 							usage.quota_bytes,
 						)} used
-					</span>
-					<span
-						class="text-xs text-foreground-subtle uppercase tracking-wide"
-					>
-						{usage.tier} tier
 					</span>
 				</div>
 				<!-- Segmented progress bar -->
@@ -527,14 +583,11 @@
 					</a>
 					<span class="flex items-center gap-1.5">
 						<span class="w-2.5 h-2.5 bg-border rounded-sm"></span>
-						Available ({formatBytes(
-							usage.quota_bytes - usage.total_bytes,
-						)})
+						<!-- Real free space on the box's disk — other data
+						     (OS, Postgres, models) lives there too, so this is
+						     NOT quota minus drive usage. -->
+						Available ({formatBytes(usage.available_bytes)})
 					</span>
-				</div>
-				<div class="flex gap-4 mt-2 text-xs text-foreground-subtle">
-					<span>{usage.file_count} files</span>
-					<span>{usage.folder_count} folders</span>
 				</div>
 			</div>
 		{/if}
@@ -727,6 +780,24 @@
 							{file.is_folder
 								? "—"
 								: formatBytes(file.size_bytes)}
+						</td>
+						<td
+							class="px-3 py-2.5 text-sm text-foreground-subtle hide-mobile"
+						>
+							{#if extractionLabel(file) === "failed"}
+								<button
+									class="text-danger underline decoration-dotted"
+									onclick={(e) => {
+										e.stopPropagation();
+										handleReextract(file);
+									}}
+									title="Extraction failed — click to retry"
+								>
+									failed — retry
+								</button>
+							{:else}
+								{extractionLabel(file) ?? ""}
+							{/if}
 						</td>
 						<td
 							class="px-3 py-2.5 text-sm text-foreground-muted hide-mobile"

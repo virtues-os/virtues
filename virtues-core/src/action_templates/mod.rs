@@ -15,7 +15,7 @@
 //! On startup, `reconcile_templates`:
 //!   - Loads sources from sources.toml into a static catalog (lookup by `id`).
 //!   - Globs `actions/*/manifest.toml`, parses each, and upserts into
-//!     `app_actions`. Manifest-managed fields (name, owner, agent, runtime,
+//!     `app_applets`. Manifest-managed fields (name, owner, agent, runtime,
 //!     command, triggers, condition, source) are overwritten
 //!     on every system reconcile. User-managed runtime state (enabled,
 //!     cron_schedule, config, memory) is preserved.
@@ -84,12 +84,23 @@ struct Template {
     owner: String,
     #[serde(default)]
     triggers: Vec<String>,
-    #[serde(default)]
+    /// Cron seed for the live `cron_schedule` value (SQL-owned after seeding).
+    /// Canonical manifest key is `schedule`; `default_cron` accepted as the
+    /// legacy spelling.
+    #[serde(default, alias = "schedule")]
     default_cron: Option<String>,
     #[serde(default = "default_true")]
     default_enabled: bool,
     #[serde(default)]
     condition: Option<String>,
+    /// Lifecycle: absent = forever · `"once"` = archive after first success ·
+    /// SQL boolean = archive when true (evaluated post-success).
+    #[serde(default)]
+    until: Option<String>,
+    /// Command applets: run as a long-lived supervised service instead of
+    /// fork-per-trigger (replaces `runtime = "service"`).
+    #[serde(default)]
+    supervise: bool,
     #[serde(default)]
     agent: Option<String>,
     #[serde(default)]
@@ -114,7 +125,7 @@ struct Template {
     /// via PATH. Used by both `function` and `service` runtimes; unset for `view`.
     #[serde(default)]
     command: Option<Vec<String>>,
-    /// Free-form config that flows from manifest into `app_actions.config`.
+    /// Free-form config that flows from manifest into `app_applets.config`.
     /// Notable use: `[config.view] name = "<applet>"` for view-runtime
     /// actions, which the frontend reads to dispatch the custom Card /
     /// Detail components from `apps/web/src/lib/applets/<applet>/`.
@@ -169,7 +180,7 @@ fn default_runtime() -> String {
 
 /// Compile-time fallback for the source catalog — used when `actions/sources.toml`
 /// can't be read at runtime (binary shipped without the tree, tests, etc.).
-const SOURCES_TOML: &str = include_str!("../../../actions/sources.toml");
+const SOURCES_TOML: &str = include_str!("../../../applets/sources.toml");
 
 /// Absolute path to the on-disk `actions/` root. Resolved in priority order:
 ///
@@ -187,12 +198,20 @@ const SOURCES_TOML: &str = include_str!("../../../actions/sources.toml");
 /// this resolves to, so the standard scanner picks the new folder up — there
 /// is no separate "imported actions" location.
 pub fn actions_root() -> std::path::PathBuf {
-    if let Ok(dir) = std::env::var("VIRTUES_ACTIONS_DIR") {
-        if !dir.is_empty() {
-            return std::path::PathBuf::from(dir);
+    for var in ["VIRTUES_APPLETS_DIR", "VIRTUES_ACTIONS_DIR"] {
+        if let Ok(dir) = std::env::var(var) {
+            if !dir.is_empty() {
+                return std::path::PathBuf::from(dir);
+            }
         }
     }
-    let installed = std::path::PathBuf::from(WELL_KNOWN_ACTIONS_DIR);
+    let installed = std::path::PathBuf::from(WELL_KNOWN_APPLETS_DIR);
+    let installed = if installed.is_dir() {
+        installed
+    } else {
+        let legacy = std::path::PathBuf::from(WELL_KNOWN_APPLETS_DIR_LEGACY);
+        if legacy.is_dir() { legacy } else { installed }
+    };
     if installed.is_dir() {
         return installed;
     }
@@ -203,12 +222,14 @@ pub fn actions_root() -> std::path::PathBuf {
 /// Default deployed location, matching the installer's `share/virtues/web`
 /// convention (`InstallConfig::web_dir`). Kept in sync with the path the
 /// installer copies `actions/` to and sets `VIRTUES_ACTIONS_DIR` to.
-const WELL_KNOWN_ACTIONS_DIR: &str = "/usr/local/share/virtues/actions";
+const WELL_KNOWN_APPLETS_DIR: &str = "/usr/local/share/virtues/applets";
+/// Pre-rename deployments (transition fallback; removed once the fleet moves).
+const WELL_KNOWN_APPLETS_DIR_LEGACY: &str = "/usr/local/share/virtues/actions";
 
 /// The actions directory, relative to the repo root. Resolved against
 /// `CARGO_MANIFEST_DIR`'s parent at runtime so `cargo run` works regardless
 /// of the user's CWD.
-const ACTIONS_DIR_FROM_CORE: &str = "../actions";
+const ACTIONS_DIR_FROM_CORE: &str = "../applets";
 
 /// Cached merged catalog. Initialized lazily on first access; the inner
 /// `RwLock` allows `reload_catalog()` to replace the contents in-place when
@@ -225,6 +246,24 @@ fn catalog_lock() -> &'static RwLock<ParsedTemplates> {
 ///
 /// Called by the `/api/admin/reconcile` handler after a user (or LLM) edits
 /// a manifest on disk.
+/// Serializes every reload+reconcile pass (chat setups, admin endpoint, git
+/// import). Reconcile is global and non-transactional; concurrent passes can
+/// interleave GC with upserts. One mutex, one writer at a time.
+pub fn reconcile_lock() -> &'static tokio::sync::Mutex<()> {
+    static LOCK: std::sync::OnceLock<tokio::sync::Mutex<()>> = std::sync::OnceLock::new();
+    LOCK.get_or_init(|| tokio::sync::Mutex::new(()))
+}
+
+/// The one blessed way to apply on-disk changes: reload the catalog then
+/// reconcile rows. Serialization lives inside `reconcile_templates` itself,
+/// so EVERY caller (this wrapper, the admin endpoint, git import, OAuth/
+/// pairing fan-out, boot) is serialized — not just this path. `reload_catalog`
+/// is an atomic in-memory swap and needs no lock.
+pub async fn reload_and_reconcile(db: &PgPool) -> Result<usize> {
+    reload_catalog();
+    reconcile_templates(db).await
+}
+
 pub fn reload_catalog() {
     let fresh = load_catalog();
     let lock = catalog_lock();
@@ -266,6 +305,11 @@ fn parse_template(manifest_path: &std::path::Path, dir: &str) -> Option<Template
         tmpl.id_prefix = Some(format!("action_{}", dir.replace('/', "__")));
     }
     tmpl.dir = dir.to_string();
+    // Legacy `runtime = "service"` normalizes into the supervise flag —
+    // the taxonomy is derived from fields now; supervise is the one real bit.
+    if tmpl.runtime == "service" {
+        tmpl.supervise = true;
+    }
     Some(tmpl)
 }
 
@@ -302,7 +346,7 @@ fn load_catalog() -> ParsedTemplates {
     //    - any imported slug (e.g. `team-pack/`) — owned by that import.
     //
     // The `dir` recorded on each Template is the folder path relative to the
-    // actions root; reconcile writes it onto every `app_actions` row, and
+    // actions root; reconcile writes it onto every `app_applets` row, and
     // `id_prefix` defaults to `action_<dir-with-/-as-__>` so different
     // namespaces never collide.
     let mut actions: Vec<Template> = Vec::new();
@@ -388,6 +432,54 @@ fn load_catalog() -> ParsedTemplates {
     }
 }
 
+/// Mirror an ai-owned applet's enabled flag into its manifest
+/// (`default_enabled`) so a DB rebuilt from disk restores the user's last
+/// choice. Best-effort — only chat-authored folders (`user/` namespace) are
+/// ever touched, and failures just log.
+pub fn mirror_enabled_to_manifest(action_id: &str, enabled: bool) {
+    let Some(dir) = dir_for_action_id(action_id) else {
+        return;
+    };
+    if !dir.starts_with("user/") {
+        return;
+    }
+    let path = actions_root().join(&dir).join("manifest.toml");
+    let Ok(text) = std::fs::read_to_string(&path) else {
+        return;
+    };
+    let Ok(mut doc) = text.parse::<toml::Value>() else {
+        return;
+    };
+    if let Some(table) = doc.as_table_mut() {
+        table.insert("default_enabled".into(), toml::Value::Boolean(enabled));
+        match toml::to_string_pretty(&doc) {
+            Ok(out) => {
+                if let Err(e) = std::fs::write(&path, out) {
+                    tracing::warn!(action_id, error = %e, "enabled mirror write failed");
+                }
+            }
+            Err(e) => tracing::warn!(action_id, error = %e, "enabled mirror serialize failed"),
+        }
+    }
+}
+
+/// Resolve the manifest folder (relative to `actions_root()`) that produced
+/// an action id. Matches the base id (`id_prefix`) and per-credential /
+/// per-device fan-out ids (`<id_prefix>_<anchor>`). Used by the face server
+/// to root static serving at the applet's folder.
+pub fn dir_for_action_id(action_id: &str) -> Option<String> {
+    let guard = catalog_lock().read().expect("catalog rwlock poisoned");
+    guard
+        .action
+        .iter()
+        .find(|t| {
+            t.id_prefix.as_deref().is_some_and(|p| {
+                action_id == p || action_id.strip_prefix(p).is_some_and(|r| r.starts_with('_'))
+            })
+        })
+        .map(|t| t.dir.clone())
+}
+
 /// Look up a `[[source]]` entry by its id. Returns an owned clone so the
 /// catalog rwlock isn't held across the caller's await points.
 pub fn lookup_source(id: &str) -> Option<Source> {
@@ -408,7 +500,7 @@ pub fn list_sources_sorted() -> Vec<Source> {
 // Reconciliation
 // ─────────────────────────────────────────────────────────────────────────────
 
-/// Reconcile `app_actions` rows against the on-disk catalog.
+/// Reconcile `app_applets` rows against the on-disk catalog.
 ///
 /// Snapshots the catalog under a brief read lock, releases the lock, then
 /// performs SQL writes against the snapshot. This avoids holding the
@@ -416,29 +508,42 @@ pub fn list_sources_sorted() -> Vec<Source> {
 ///
 /// Returns the number of rows upserted.
 pub async fn reconcile_templates(db: &PgPool) -> Result<usize> {
+    // Serialize the whole reconcile against every other caller — the pass is
+    // global and non-transactional, so concurrent GC-deletes + upserts (a chat
+    // setup racing an OAuth callback / admin reconcile / boot) would interleave.
+    // The lock lives here, not in a wrapper, so bare callers are covered too.
+    let _guard = reconcile_lock().lock().await;
+
     let templates: ParsedTemplates = {
         let guard = catalog_lock().read().expect("catalog rwlock poisoned");
         guard.clone()
     };
 
-    // GC pass: delete fan-out action rows whose anchor is gone — an inactive
-    // credential (OAuth/api actions) or a revoked/absent device (ingest
+    // GC pass: delete fan-out action rows whose anchor is GONE — a deleted
+    // credential row (OAuth/api actions) or a revoked/absent device (ingest
     // actions). The revoke paths handle this inline, but any state drift
     // (direct SQL, import, bug) leaves orphans. Nullify run FKs first so history
     // is preserved under `action_id = NULL`.
+    //
+    // Deliberately NOT keyed on credential status: a recoverable blip
+    // (`reauth_required`, refresh error) must not destroy the row's operational
+    // state (archived_at, memory, sync cursors in config). Inactive-but-present
+    // credentials just fail/skip at run time and surface in run status; the row
+    // survives to resume when the credential recovers. Device revocation is
+    // permanent, so the device clause still keys on revoked_at.
     const ORPHAN_PREDICATE: &str = "(credential_id IS NOT NULL \
-             AND credential_id NOT IN (SELECT id FROM credentials WHERE status = 'active')) \
+             AND credential_id NOT IN (SELECT id FROM credentials)) \
           OR (device_id IS NOT NULL \
              AND device_id NOT IN (SELECT id FROM app_device WHERE revoked_at IS NULL))";
     let pruned = sqlx::query(&format!(
-        "UPDATE app_action_runs SET action_id = NULL \
-         WHERE action_id IN (SELECT id FROM app_actions WHERE {ORPHAN_PREDICATE})"
+        "UPDATE app_applet_runs SET action_id = NULL \
+         WHERE action_id IN (SELECT id FROM app_applets WHERE {ORPHAN_PREDICATE})"
     ))
     .execute(db)
     .await?
     .rows_affected();
 
-    let deleted = sqlx::query(&format!("DELETE FROM app_actions WHERE {ORPHAN_PREDICATE}"))
+    let deleted = sqlx::query(&format!("DELETE FROM app_applets WHERE {ORPHAN_PREDICATE}"))
         .execute(db)
         .await?
         .rows_affected();
@@ -558,9 +663,9 @@ pub async fn reconcile_templates(db: &PgPool) -> Result<usize> {
     // are nullified first so the history survives under `action_id = NULL`.
     if !live_ids.is_empty() {
         sqlx::query(
-            r#"UPDATE app_action_runs SET action_id = NULL
+            r#"UPDATE app_applet_runs SET action_id = NULL
                WHERE action_id IN (
-                   SELECT id FROM app_actions
+                   SELECT id FROM app_applets
                    WHERE owner = 'system' AND id <> ALL($1::text[])
                )"#,
         )
@@ -569,7 +674,7 @@ pub async fn reconcile_templates(db: &PgPool) -> Result<usize> {
         .await?;
 
         let removed = sqlx::query(
-            r#"DELETE FROM app_actions
+            r#"DELETE FROM app_applets
                WHERE owner = 'system' AND id <> ALL($1::text[])"#,
         )
         .bind(&live_ids)
@@ -641,23 +746,48 @@ async fn upsert_row(
     //   user:   ON CONFLICT DO NOTHING. Factory defaults are seeded the first time
     //           the template is added; after that the row is fully owned by
     //           the user and reconcile is a no-op.
+    //
+    //   ai:     the third branch (authoring plan §E). The folder is written by
+    //           setup_applet, so COMPILED fields (name, agent, condition,
+    //           until, triggers, schedule) overwrite on reconcile — re-setup
+    //           IS the edit path and must propagate. OPERATIONAL state is
+    //           never touched: `enabled` (the gate lives there; the user
+    //           toggle mirrors back into the manifest for restore fidelity),
+    //           `memory`, and non-manifest config keys — manifest config
+    //           merges OVER existing config so runtime keys survive.
     let sql = if template.owner == "user" {
         r#"
-        INSERT INTO app_actions (
+        INSERT INTO app_applets (
             id, name, owner, agent, cron_schedule, enabled, config, condition,
-            triggers, credential_id, runtime, command, dir, device_id
+            triggers, credential_id, command, device_id, until, supervise
         )
         VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, $8, $9::jsonb, $10, $11, $12, $13, $14)
         ON CONFLICT(id) DO UPDATE SET
-            dir            = EXCLUDED.dir,
             device_id      = EXCLUDED.device_id,
+            updated_at     = now()
+        "#
+    } else if template.owner == "ai" {
+        r#"
+        INSERT INTO app_applets (
+            id, name, owner, agent, cron_schedule, enabled, config, condition,
+            triggers, credential_id, command, device_id, until, supervise
+        )
+        VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, $8, $9::jsonb, $10, $11, $12, $13, $14)
+        ON CONFLICT(id) DO UPDATE SET
+            name           = EXCLUDED.name,
+            agent          = EXCLUDED.agent,
+            cron_schedule  = EXCLUDED.cron_schedule,
+            config         = app_applets.config || EXCLUDED.config,
+            condition      = EXCLUDED.condition,
+            triggers       = EXCLUDED.triggers,
+            until          = EXCLUDED.until,
             updated_at     = now()
         "#
     } else {
         r#"
-        INSERT INTO app_actions (
+        INSERT INTO app_applets (
             id, name, owner, agent, cron_schedule, enabled, config, condition,
-            triggers, credential_id, runtime, command, dir, device_id
+            triggers, credential_id, command, device_id, until, supervise
         )
         VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, $8, $9::jsonb, $10, $11, $12, $13, $14)
         ON CONFLICT(id) DO UPDATE SET
@@ -668,10 +798,10 @@ async fn upsert_row(
             condition      = EXCLUDED.condition,
             triggers       = EXCLUDED.triggers,
             credential_id  = EXCLUDED.credential_id,
-            runtime        = EXCLUDED.runtime,
             command        = EXCLUDED.command,
-            dir            = EXCLUDED.dir,
             device_id      = EXCLUDED.device_id,
+            until          = EXCLUDED.until,
+            supervise      = EXCLUDED.supervise,
             updated_at     = now()
         "#
     };
@@ -687,10 +817,10 @@ async fn upsert_row(
         .bind(&template.condition)
         .bind(&triggers_json)
         .bind(credential_id)
-        .bind(&template.runtime)
         .bind(&command_json)
-        .bind(&template.dir)
         .bind(device_id)
+        .bind(&template.until)
+        .bind(template.supervise)
         .execute(db)
         .await?;
 
@@ -803,7 +933,7 @@ mod tests {
     }
 
     /// Reconcile must be idempotent: a second back-to-back call against the
-    /// same DB and templates produces zero `app_actions` row diffs.
+    /// same DB and templates produces zero `app_applets` row diffs.
     ///
     /// This is the precondition for triggering reconcile from auth handlers
     /// (Phase 3 + Phase 4). If reconcile churns rows, every double-callback
@@ -830,7 +960,7 @@ mod tests {
         assert!(first > 0, "first reconcile should populate some rows");
 
         let snapshot_before: Vec<(String, String, String, String, Option<String>)> = sqlx::query_as(
-            "SELECT id, name, owner, triggers::text, credential_id FROM app_actions ORDER BY id",
+            "SELECT id, name, owner, triggers::text, credential_id FROM app_applets ORDER BY id",
         )
         .fetch_all(&pool)
         .await
@@ -844,7 +974,7 @@ mod tests {
         );
 
         let snapshot_after: Vec<(String, String, String, String, Option<String>)> = sqlx::query_as(
-            "SELECT id, name, owner, triggers::text, credential_id FROM app_actions ORDER BY id",
+            "SELECT id, name, owner, triggers::text, credential_id FROM app_applets ORDER BY id",
         )
         .fetch_all(&pool)
         .await

@@ -26,7 +26,8 @@ export type TabType =
 	| 'narrative-identity' // Wiki narrative identity: /narrative-identity
 	| 'source' // Data sources: /source, /source/source_{id}
 	| 'actions' // Actions list: /actions
-	| 'action' // Action detail: /action/action_{id}
+	| 'action' // Applet detail: /applet/action_{id}
+	| 'applet-view' // Applet full-page face: /applet/action_{id}/view
 	| 'developers' // Developers tools (SQL/Terminal/Lake): /developers
 	| 'ontology' // Ontology data: /ontologies, /ontologies/{name}
 	| 'record' // Single raw record viewer: /record/{ontology}/{id}

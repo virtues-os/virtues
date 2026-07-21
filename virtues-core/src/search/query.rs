@@ -56,6 +56,18 @@ const CANDIDATE_POOL: i64 = 200;
 /// a hard filter (recall is unchanged; only ranking shifts toward the notebook).
 const NOTEBOOK_BOOST: f64 = 1.0;
 
+/// How an active notebook shapes retrieval (user-facing: "Open" vs "Scoped"
+/// chat — see researcher-plan decision 2).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum ScopeMode {
+    /// Open: search everything; notebook members get the additive z-boost.
+    #[default]
+    Weighted,
+    /// Scoped: hard-filter to the notebook's members (grounded chat). An
+    /// empty scope returns no results — honest, never silently open.
+    Exclusive,
+}
+
 /// Cap each reranker candidate so a (query, doc) pair fits the rerank model's
 /// window (~512 tok for the cross-encoder, 256 for ColBERT). A document's lead
 /// carries the relevance signal, so truncating to ~1000 chars (~256 tok) is
@@ -173,8 +185,9 @@ impl SemanticSearchEngine {
         // source record references one of these entities are returned.
         entities: Option<&[String]>,
         // Active notebook: its members' chunks get an additive ranking boost
-        // (lean v1 = boost-by-default, not a hard filter).
+        // (Weighted) or become the only searchable set (Exclusive).
         notebook_id: Option<&str>,
+        scope_mode: ScopeMode,
         limit: Option<i64>,
     ) -> Result<Vec<SearchResult>> {
         let embedder = get_embedder().await?;
@@ -191,14 +204,20 @@ impl SemanticSearchEngine {
         let w_lex = alpha;
 
         // Notebook scoping: resolve the active notebook's members into a set of
-        // record_ids (page/day/source/chat) and entity_ids (person/place/org/thing)
-        // that get an additive ranking bonus below. External/file/notebook members
-        // aren't indexed yet, so they're skipped (v1.1).
+        // record_ids (page/day/source/chat + document chunks for /drive/file_
+        // members) and entity_ids (person/place/org/thing). Weighted = additive
+        // ranking bonus; Exclusive = hard filter (grounded chat).
         let (nb_records, nb_entities): (Vec<String>, Vec<String>) = match notebook_id {
             Some(nb) => self.resolve_notebook_scope(nb).await?,
             None => (Vec::new(), Vec::new()),
         };
-        let notebook_boost = !nb_records.is_empty() || !nb_entities.is_empty();
+        let notebook_scoped = !nb_records.is_empty() || !nb_entities.is_empty();
+        // Grounded chat over an empty (or fully unindexed) scope: honest zero
+        // results — never silently fall open to the whole graph.
+        if notebook_id.is_some() && scope_mode == ScopeMode::Exclusive && !notebook_scoped {
+            return Ok(Vec::new());
+        }
+        let notebook_boost = notebook_scoped;
 
         // Shared filters (applied to both arms). $1 = query vector, $2 = query
         // terms; filter placeholders start at $3; the final placeholder is the
@@ -239,7 +258,20 @@ impl SemanticSearchEngine {
         } else {
             (0, 0)
         };
-        let boost_sql = if notebook_boost {
+        // Exclusive: membership becomes a hard filter on BOTH arms (the clause
+        // joins filter_sql, which dense and lex share). Weighted: the additive
+        // z-boost as before. Placeholder numbers were allocated above in bind
+        // order, so using them inside filter_sql is safe.
+        if notebook_boost && scope_mode == ScopeMode::Exclusive {
+            filter_sql.push_str(&format!(
+                " AND (se.record_id = ANY(${r}) OR EXISTS (SELECT 1 FROM wiki_entity_refs er2 \
+                  WHERE er2.source_table = se.source_table AND er2.source_id = se.record_id \
+                  AND er2.entity_id = ANY(${e})))",
+                r = p_nb_rec,
+                e = p_nb_ent,
+            ));
+        }
+        let boost_sql = if notebook_boost && scope_mode == ScopeMode::Weighted {
             format!(
                 " + CASE WHEN se.record_id = ANY(${r}) OR EXISTS (SELECT 1 FROM wiki_entity_refs er2 \
                   WHERE er2.source_table = se.source_table AND er2.source_id = se.record_id \
@@ -401,20 +433,22 @@ impl SemanticSearchEngine {
     }
 
     /// Resolve an active notebook's members into the two buckets the search
-    /// boost understands: direct record_ids (page/day/source/chat — already
-    /// indexed by ontology+record_id) and entity_ids (person/place/org/thing —
-    /// matched via `wiki_entity_refs`). Members that aren't indexed yet (external
-    /// URLs, uploaded files, nested notebooks) are skipped — they become
-    /// retrievable in v1.1 once extraction lands. Uses ALL members (the
-    /// library/pin `role` split isn't wired yet).
+    /// scope understands: direct record_ids (page/day/source/chat, plus the
+    /// document CHUNKS of `/drive/file_` members — the uploaded_document
+    /// ontology indexes per-chunk) and entity_ids (person/place/org/thing —
+    /// matched via `wiki_entity_refs`). Filters to `role='library'` (= grounds
+    /// chat; nav-only 'pin' rows are ignored). External URLs and nested
+    /// notebooks aren't indexed and are skipped.
     async fn resolve_notebook_scope(&self, notebook_id: &str) -> Result<(Vec<String>, Vec<String>)> {
-        let urls: Vec<String> =
-            sqlx::query_scalar("SELECT url FROM app_notebook_items WHERE notebook_id = $1")
-                .bind(notebook_id)
-                .fetch_all(self.pool.as_ref())
-                .await?;
+        let urls: Vec<String> = sqlx::query_scalar(
+            "SELECT url FROM app_notebook_items WHERE notebook_id = $1 AND role = 'library'",
+        )
+        .bind(notebook_id)
+        .fetch_all(self.pool.as_ref())
+        .await?;
         let mut records = Vec::new();
         let mut entities = Vec::new();
+        let mut file_ids = Vec::new();
         for url in urls {
             if let Some(id) = url.strip_prefix("/page/") {
                 records.push(id.to_string());
@@ -432,10 +466,71 @@ impl SemanticSearchEngine {
                 entities.push(id.to_string());
             } else if let Some(id) = url.strip_prefix("/thing/") {
                 entities.push(id.to_string());
+            } else if let Some(id) = url.strip_prefix("/drive/") {
+                if id.starts_with("file_") {
+                    // Strip any viewer params (?page=N) a stored route carries.
+                    file_ids.push(id.split('?').next().unwrap_or(id).to_string());
+                }
             }
-            // external https://, /notebook/, /drive/file_ → not indexed (v1.1)
+            // external https://, /notebook/ → not indexed
+        }
+        if !file_ids.is_empty() {
+            let chunk_ids: Vec<String> = sqlx::query_scalar(
+                "SELECT id FROM extracted_document_chunks WHERE file_id = ANY($1)",
+            )
+            .bind(&file_ids)
+            .fetch_all(self.pool.as_ref())
+            .await?;
+            records.extend(chunk_ids);
         }
         Ok((records, entities))
+    }
+
+    /// Citation info for document-chunk hits: chunk_id → (file_id, filename,
+    /// page_num, quote_head). The semantic_search tool uses this to emit
+    /// viewer-resolvable refs (`/drive/{file}?page=N&q=…`) instead of raw
+    /// record routes for `uploaded_document` results.
+    pub async fn document_ref_info(
+        &self,
+        chunk_ids: &[String],
+    ) -> Result<std::collections::HashMap<String, (String, String, Option<i32>, String)>> {
+        if chunk_ids.is_empty() {
+            return Ok(Default::default());
+        }
+        let rows: Vec<(String, String, String, Option<i32>, String)> = sqlx::query_as(
+            "SELECT c.id, c.file_id, f.filename, c.page_num, c.quote_head \
+             FROM extracted_document_chunks c \
+             JOIN app_drive_files f ON f.id = c.file_id \
+             WHERE c.id = ANY($1)",
+        )
+        .bind(chunk_ids)
+        .fetch_all(self.pool.as_ref())
+        .await?;
+        Ok(rows
+            .into_iter()
+            .map(|(id, file_id, filename, page, quote)| (id, (file_id, filename, page, quote)))
+            .collect())
+    }
+
+    /// Citation info for annotation hits: annotation_id → (file_id, page_num).
+    /// The semantic_search tool turns these into `/drive/{file}?page=N&hl=<id>`.
+    pub async fn annotation_ref_info(
+        &self,
+        anno_ids: &[String],
+    ) -> Result<std::collections::HashMap<String, (String, Option<i32>)>> {
+        if anno_ids.is_empty() {
+            return Ok(Default::default());
+        }
+        let rows: Vec<(String, String, Option<i32>)> = sqlx::query_as(
+            "SELECT id, file_id, page_num FROM app_annotations WHERE id = ANY($1)",
+        )
+        .bind(anno_ids)
+        .fetch_all(self.pool.as_ref())
+        .await?;
+        Ok(rows
+            .into_iter()
+            .map(|(id, file_id, page)| (id, (file_id, page)))
+            .collect())
     }
 
     /// Rerank candidates over the matched **chunk** text. Returns `true` if it

@@ -1,0 +1,12 @@
+name = "Biscuit"
+description = "A small dog who lives on your box."
+owner = "user"
+runtime = "view"
+triggers = []
+default_enabled = true
+
+# Drives the applet registry lookup at:
+#   apps/web/src/lib/applets/<name>/Card.svelte
+#   apps/web/src/lib/applets/<name>/Detail.svelte
+[config.view]
+name = "hello_world"

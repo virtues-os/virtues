@@ -111,8 +111,8 @@ impl ServiceSupervisor {
         let rows: Vec<(String, Option<String>, serde_json::Value)> =
             sqlx::query_as(
                 r#"SELECT id, command, config
-               FROM app_actions
-               WHERE runtime = 'service' AND enabled = TRUE"#,
+               FROM app_applets
+               WHERE supervise = TRUE AND enabled = TRUE"#,
             )
             .fetch_all(db)
             .await?;
@@ -376,8 +376,8 @@ impl ServiceSupervisor {
         let rows: Vec<(String, Option<String>, serde_json::Value)> =
             sqlx::query_as(
                 r#"SELECT id, command, config
-               FROM app_actions
-               WHERE runtime = 'service' AND enabled = TRUE"#,
+               FROM app_applets
+               WHERE supervise = TRUE AND enabled = TRUE"#,
             )
             .fetch_all(db)
             .await?;

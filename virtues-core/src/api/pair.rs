@@ -524,7 +524,7 @@ pub struct ConsumeRequest {
 pub struct ConsumeResponse {
     pub device_id: String,
     pub redirect: String,
-    /// Map of `binary-name → app_actions.id` for the per-device ingest fan-out,
+    /// Map of `binary-name → app_applets.id` for the per-device ingest fan-out,
     /// so the device knows which webhook id to POST each stream flush to. Empty
     /// for non-collector devices.
     #[serde(skip_serializing_if = "std::collections::HashMap::is_empty", default)]
@@ -800,7 +800,7 @@ pub async fn consume_handler(
     crate::relay::after_pairing_change(pool.clone());
 
     // Assemble the per-device action fan-out so the device knows which
-    // `app_actions.id` to POST each stream flush to. Post-commit best-effort: a
+    // `app_applets.id` to POST each stream flush to. Post-commit best-effort: a
     // failure here doesn't undo the pairing — the device shows up paired but with
     // no ingest actions until the next reconcile.
     let action_ids = match assemble_action_fanout(&pool, &device_id).await {
@@ -836,7 +836,7 @@ pub async fn consume_handler(
 // the pairing. Shaped as its own helper so the consume handler stays the
 // easy-to-read top-level flow.
 
-/// Reconcile action templates (so per-credential `app_actions` rows are
+/// Reconcile action templates (so per-credential `app_applets` rows are
 /// fanned out) and read back the binary-name → action-id map the device
 /// uses to route stream flushes to `POST /webhook/<action_id>`. Lifted
 /// out of the legacy `pair_complete_handler` so the unified pair flow

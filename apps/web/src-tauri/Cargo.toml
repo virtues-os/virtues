@@ -38,8 +38,18 @@ tauri-plugin-shell = "2"
 tauri-plugin-opener = "2"
 tauri-plugin-updater = "2"
 tauri-plugin-notification = "2"
+# Single-instance guard (registered only on Windows/Linux — see main.rs): a
+# second launch focuses the running window instead of spawning a duplicate that
+# would fail to bind :7117. macOS is single-instance natively (LaunchServices).
+tauri-plugin-single-instance = "2"
 dirs = "5"
 keyring = "3"
+# In-process iroh reach (pair + :7117 loopback) — replaces the retired
+# virtues-client proxy sidecar on desktop. Same crate the mobile app uses.
+tauri-plugin-reach = { path = "../plugins/reach" }
+# Reach core, for the LAN subnet scan behind `discover_servers` (the plugin's
+# discovery isn't exposed as a ReachExt method).
+virtues-reach-client = { path = "../../../crates/virtues-reach-client" }
 
 # iOS-only: raw objc for the appearance bridge (set_appearance flips the UIKit
 # windows' overrideUserInterfaceStyle so the status bar / keyboard track the

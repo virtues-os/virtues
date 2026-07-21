@@ -255,7 +255,7 @@
 		},
 		{
 			key: 'action_count',
-			label: 'Actions',
+			label: 'Applets',
 			icon: 'ri:flashlight-line',
 			width: '15%',
 			minWidth: '90px',
