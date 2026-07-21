@@ -100,25 +100,6 @@ pub async fn run(client: Virtues, host: &str, port: u16) -> Result<()> {
         tracing::warn!("Failed to reconcile action templates: {}", e);
     }
 
-    // Boot the `app`-runtime supervisor — spawns one long-running child per
-    // app-runtime action, watches/restarts on crash, exposes HTTP at
-    // `/service/<action_id>/*` via the proxy handler. See `virtues-core/src/services/`.
-    let service_supervisor = {
-        // Resolve repo root: core's manifest dir is `<repo>/core`, so repo
-        // root is one level up.
-        let repo_root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .parent()
-            .map(|p| p.to_path_buf())
-            .unwrap_or_else(|| std::path::PathBuf::from("."));
-        let api_base = std::env::var("VIRTUES_CORE_URL")
-            .unwrap_or_else(|_| "http://127.0.0.1:8000".to_string());
-        let supervisor = crate::services::ServiceSupervisor::new(repo_root, api_base);
-        if let Err(e) = supervisor.start(client.database.pool()).await {
-            tracing::warn!("app supervisor start failed: {}", e);
-        }
-        supervisor
-    };
-
     // Model facts (prices, context windows, which ids still exist) are fetched
     // from virtues-api, never compiled in. Refreshes on boot and 6-hourly; an
     // unreachable cloud keeps the last snapshot rather than emptying the
@@ -213,7 +194,6 @@ pub async fn run(client: Virtues, host: &str, port: u16) -> Result<()> {
         tool_executor,
         yjs_state: yjs_state.clone(),
         chat_cancel_state,
-        service_supervisor: Some(service_supervisor.clone()),
     };
 
     // ============================================================
@@ -656,8 +636,6 @@ pub async fn run(client: Virtues, host: &str, port: u16) -> Result<()> {
             post(api::import_git_actions_handler),
         )
         // System (operator surface — apps + logs)
-        .route("/api/system/apps", get(api::list_system_apps_handler))
-        .route("/api/applets/:id/logs", get(api::get_action_logs_handler))
         // Live host snapshot + persisted history for the System/Telemetry views.
         .route(
             "/api/system/telemetry",
@@ -820,21 +798,6 @@ pub async fn run(client: Virtues, host: &str, port: u16) -> Result<()> {
     let mcp_server = VirtuesMcpServer::new(client.database.pool().clone());
     let app = add_mcp_routes(app, mcp_server);
 
-    // App-runtime proxy: forwards `/service/:action_id/*` to the supervised
-    // localhost child. Has its own State (the supervisor), so we mount it
-    // as a separate sub-router with its own .with_state(...) before merging.
-    let service_proxy_routes = Router::new()
-        .route(
-            "/service/:action_id",
-            axum::routing::any(crate::services::proxy::handle_service_proxy),
-        )
-        .route(
-            "/service/:action_id/*path",
-            axum::routing::any(crate::services::proxy::handle_service_proxy_rest),
-        )
-        .with_state(service_supervisor.clone());
-    let app = app.merge(service_proxy_routes);
-
     tracing::info!("MCP endpoint enabled at /mcp");
 
     // Add static file serving for SPA frontend
@@ -900,16 +863,10 @@ pub async fn run(client: Virtues, host: &str, port: u16) -> Result<()> {
         tracing::info!("Open the Virtues web UI at {shown}  ·  run `virtues status` for setup steps");
     }
 
-    // Run the server with graceful shutdown — Ctrl+C / SIGTERM triggers
-    // SIGTERM to all `app`-runtime children before we exit.
-    let shutdown_supervisor = service_supervisor.clone();
+    // Run the server with graceful shutdown — Ctrl+C / SIGTERM.
     let shutdown_signal = async move {
         let _ = tokio::signal::ctrl_c().await;
         tracing::info!("shutdown signal received");
-        shutdown_supervisor.shutdown().await;
-        // Give children ~3s to flush state on SIGTERM before we drop them
-        // (which sends SIGKILL via `kill_on_drop(true)`).
-        tokio::time::sleep(tokio::time::Duration::from_secs(3)).await;
     };
 
     // Plain HTTP on :8000 is the only listener. The box has no TLS surface —

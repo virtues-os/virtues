@@ -225,7 +225,7 @@ pub async fn list_actions_handler(State(state): State<AppState>) -> Response {
             t.enabled, t.config, t.condition, t.triggers,
             t.memory, t.credential_id,
             t.command,
-            t.until, t.archived_at, t.supervise,
+            t.until, t.archived_at,
             t.created_at, t.updated_at,
             r.status AS last_run_status,
             r.started_at AS last_run_at,
@@ -274,12 +274,9 @@ pub async fn list_actions_handler(State(state): State<AppState>) -> Response {
                     let until: Option<String> = r.try_get("until").unwrap_or(None);
                     let archived_at: Option<chrono::DateTime<chrono::Utc>> =
                         r.try_get("archived_at").unwrap_or(None);
-                    let supervise: bool = r.try_get("supervise").unwrap_or(false);
                     let has_face = crate::server::faces::face_dir_for(&id).is_some();
                     // Derived display shape (the old runtime taxonomy).
-                    let runtime = if supervise {
-                        "service"
-                    } else if command.as_ref().is_none_or(|c| c.is_empty())
+                    let runtime = if command.as_ref().is_none_or(|c| c.is_empty())
                         && agent.as_deref().is_none_or(|s| s.trim().is_empty())
                     {
                         "view"
@@ -326,7 +323,6 @@ pub async fn list_actions_handler(State(state): State<AppState>) -> Response {
                         "command": command,
                         "until": until,
                         "archived_at": archived_at,
-                        "supervise": supervise,
                         "has_face": has_face,
                         "created_at": created,
                         "updated_at": updated,
@@ -376,7 +372,6 @@ pub async fn get_action_handler(
                     "runtime": crate::scheduler::actions::derived_runtime(&action),
                     "until": action.until,
                     "archived_at": action.archived_at,
-                    "supervise": action.supervise,
                     "has_face": crate::server::faces::face_dir_for(&action.id).is_some(),
                     "created_at": action.created_at,
                     "updated_at": action.updated_at,
@@ -746,55 +741,18 @@ pub async fn delete_credential_handler(
 }
 
 // ============================================================================
-// System (operator surface — running apps, logs, resources)
-// ============================================================================
-
-/// `GET /api/system/apps`
-///
-/// Snapshot of the `app`-runtime supervisor's registry. Used by the System
-/// subtab on `/actions` to render running apps with status, port, PID,
-/// restart count, and started-at timestamp.
-pub async fn list_system_apps_handler(State(state): State<AppState>) -> Response {
-    let apps = match &state.service_supervisor {
-        Some(sup) => sup.registry.list().await,
-        None => Vec::new(),
-    };
-    (StatusCode::OK, Json(apps)).into_response()
-}
-
-/// `GET /api/actions/:id/logs`
-///
-/// Returns the per-app captured stdout/stderr ring buffer (oldest → newest).
-/// For `function`-runtime actions, returns an empty list (logs live in
-/// `app_applet_runs.error` / `result_summary` per run instead).
-///
-/// v1: JSON polling at ~1Hz from the frontend. SSE streaming is a v1.1 add.
-pub async fn get_action_logs_handler(
-    State(state): State<AppState>,
-    axum::extract::Path(action_id): axum::extract::Path<String>,
-) -> Response {
-    let logs = match &state.service_supervisor {
-        Some(sup) => sup.registry.logs(&action_id).await,
-        None => Vec::new(),
-    };
-    (StatusCode::OK, Json(logs)).into_response()
-}
-
-// ============================================================================
 // Admin
 // ============================================================================
 
 /// `POST /api/admin/reconcile`
 ///
 /// Re-reads `actions/sources.toml` + every `actions/<name>/manifest.toml` from
-/// disk, upserts `app_applets` rows accordingly, then asks the supervisor to
-/// diff/spawn/stop `app`-runtime children.
+/// disk and upserts `app_applets` rows accordingly.
 ///
 /// This is the LLM-authoring on-ramp: an LLM creates a new action folder,
 /// hits this endpoint, and the action is live without restarting core.
 ///
-/// Response shape:
-///   { "upserted": <count>, "added": [...], "removed": [...], "restarted": [...] }
+/// Response shape: `{ "upserted": <count> }`
 pub async fn admin_reconcile_handler(State(state): State<AppState>) -> Response {
     // 1. Force a re-read of the on-disk catalog (sources.toml + per-action
     //    manifests). Subsequent lookup_source / list_sources_sorted /
@@ -818,33 +776,9 @@ pub async fn admin_reconcile_handler(State(state): State<AppState>) -> Response 
         }
     };
 
-    // 3. Diff/apply running apps. Supervisor stops apps no longer in the DB
-    //    (or disabled), spawns newly-added ones, and (in v1.1) restarts ones
-    //    whose command/config changed. Skipped if no supervisor (test setup).
-    let outcome = match &state.service_supervisor {
-        Some(sup) => match sup.reload(state.db.pool()).await {
-            Ok(o) => o,
-            Err(e) => {
-                return (
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    Json(serde_json::json!({
-                        "error": format!("supervisor.reload failed: {e}")
-                    })),
-                )
-                    .into_response();
-            }
-        },
-        None => crate::services::supervisor::ReloadOutcome::default(),
-    };
-
     (
         StatusCode::OK,
-        Json(serde_json::json!({
-            "upserted": upserted,
-            "added": outcome.added,
-            "removed": outcome.removed,
-            "restarted": outcome.restarted,
-        })),
+        Json(serde_json::json!({ "upserted": upserted })),
     )
         .into_response()
 }
@@ -852,9 +786,8 @@ pub async fn admin_reconcile_handler(State(state): State<AppState>) -> Response 
 /// `POST /api/admin/actions/import-git`
 ///
 /// Clone (or update) a Git repo into `actions/<slug>/` and reconcile so the
-/// new manifests show up as `app_applets` rows. Same diff/spawn machinery
-/// that `/api/admin/reconcile` uses; we just scope the per-row diff to the
-/// slug prefix and clean up rows for manifests that disappeared upstream.
+/// new manifests show up as `app_applets` rows. We scope the per-row diff to
+/// the slug prefix and clean up rows for manifests that disappeared upstream.
 pub async fn import_git_actions_handler(
     State(state): State<AppState>,
     Json(body): Json<crate::action_git_import::ImportRequest>,
@@ -869,20 +802,6 @@ pub async fn import_git_actions_handler(
                 .into_response();
         }
     };
-
-    // Diff/apply running apps. Same supervisor reload Reconcile uses; if
-    // there's no supervisor (test) we still return the import diff.
-    if let Some(sup) = &state.service_supervisor {
-        if let Err(e) = sup.reload(state.db.pool()).await {
-            return (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(serde_json::json!({
-                    "error": format!("supervisor.reload failed: {e}")
-                })),
-            )
-                .into_response();
-        }
-    }
 
     (StatusCode::OK, Json(outcome)).into_response()
 }

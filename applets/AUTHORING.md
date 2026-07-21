@@ -13,7 +13,6 @@ Pick one based on what your action actually does:
 | Runtime | When to use | Example |
 |---|---|---|
 | **`function`** | Cron job, webhook handler, one-shot CLI | Sync data from an API; respond to an iOS webhook; run an LLM agent loop |
-| **`service`** | Long-running HTTP server with persistent state or low-latency needs | Hue bridge controller; real-time chart server; MQTT subscriber |
 | **`view`** | Pure-frontend dashboard, no backend | Sleep chart over `data_health_*`; status tile on `/today`; widget |
 
 If you're unsure, **start with `function`**. It's the simplest and covers ~80% of cases.
@@ -114,52 +113,6 @@ print(json.dumps({"result": result, "config": inp["config"]}))
 
 No Cargo entry needed — a multi-element `command` runs the script directly via `PATH`. Reconcile picks it up after the folder lands.
 
-### `runtime = "service"`
-
-`manifest.toml`:
-
-```toml
-name = "My App"
-description = "Long-running HTTP server."
-owner = "user"
-runtime = "service"
-command = ["my_app"]               # bare name → Cargo binary; ["node","server.js"] etc. for non-Rust
-triggers = ["manual"]              # cron/webhook also work — see below
-default_enabled = true
-
-[config.service]
-health_path = "/__health"          # default; supervisor probes this
-```
-
-`main.rs` (Rust, axum):
-
-```rust
-use axum::{routing::get, Router};
-
-#[tokio::main]
-async fn main() -> anyhow::Result<()> {
-    let port: u16 = std::env::var("PORT")?.parse()?;
-    let app = Router::new()
-        .route("/__health", get(|| async { "ok" }))
-        .route("/hello", get(|| async { "hi from my_app" }));
-
-    let listener = tokio::net::TcpListener::bind(format!("127.0.0.1:{port}")).await?;
-    axum::serve(listener, app).await?;
-    Ok(())
-}
-```
-
-After reconcile, core spawns this binary, allocates a port, probes `/__health`, and proxies `/service/<action_id>/*` to it. So `curl http://localhost:8000/service/<action_id>/hello` reaches your `/hello` handler.
-
-**Env vars provided by core:**
-- `PORT` — bind here
-- `VIRTUES_API_BASE` — call core's API at this URL (typically `http://127.0.0.1:8000`)
-- `VIRTUES_ACTION_ID` — your action's id (for log correlation)
-
-**Optional endpoints your app can expose:**
-- `GET /__health` — required for the supervisor's readiness probe
-- `POST /__trigger` — fired when the action is invoked via cron/webhook/manual. Body is a JSON `ActionInput`. App not implementing this returns 404 → core treats as "no-op trigger" (no error).
-
 ### `runtime = "view"`
 
 ```
@@ -216,8 +169,6 @@ Returns:
 ```json
 {
   "upserted": 21,        // total app_actions rows refreshed
-  "added": ["my_app"],   // service-runtime actions newly spawned
-  "removed": [],         // service-runtime actions stopped
   "restarted": []        // (v1.1)
 }
 ```
@@ -268,10 +219,9 @@ Reconcile materializes one `app_actions` row per active credential of that sourc
 | Action runtime | Cron tick | Webhook POST `/webhook/:id` | Manual fire | UI render |
 |---|---|---|---|---|
 | `function` | spawns subprocess | spawns subprocess | spawns subprocess | shows generic card |
-| `service` | POST to `/service/<id>/__trigger` | POST to `/service/<id>/__trigger` | POST to `/service/<id>/__trigger` | shows generic card |
 | `view` | skipped (never enqueued) | n/a | skipped | renders custom Card.svelte |
 
-For both `function` and `service`, the trigger payload is delivered as JSON. For `service`, the trigger is a **pre-existing long-running process** receiving an HTTP POST — not a fork.
+For `function`, the trigger payload is delivered as JSON on stdin.
 
 ---
 
@@ -281,8 +231,6 @@ For both `function` and `service`, the trigger payload is delivered as JSON. For
 |---|---|---|
 | Run every N minutes/hours | `function` + `default_cron` | Lowest overhead; fork-per-trigger is fine |
 | React to a device webhook | `function` + `triggers = ["webhook"]` + `per_credential` | Standard pattern for iOS/Mac streams |
-| Real-time control of an external device (Hue, MQTT, websocket) | `service` | Persistent connection; sub-100ms response |
-| Heavy ML model loaded in memory | `service` | Avoid load-per-call overhead |
 | Multi-step LLM agent loop | `function` + `agent = "..."` (no `command`) | Built-in agent runner |
 | Dashboard of `data_*` tables | `view` | No backend needed; pure SQL + Svelte |
 | Polyglot script (Python, Node, Bash) | `function` + `command = [...]` | Cargo not involved |
@@ -291,11 +239,10 @@ For both `function` and `service`, the trigger payload is delivered as JSON. For
 
 ## Common pitfalls
 
-- **Forgot to `cargo build`** — for Rust function/service actions, the binary must exist before reconcile. Builds happen at the workspace level: `cargo build --bin <bin-name>`.
+- **Forgot to `cargo build`** — for Rust function actions, the binary must exist before reconcile. Builds happen at the workspace level: `cargo build --bin <bin-name>`.
 - **`webhook` trigger without `per_credential`** — reconcile will refuse the manifest. Webhooks need a credential to authenticate.
 - **`view` action with `triggers = ["cron"]`** — won't run (scheduler skips view-runtime). Set `triggers = []`.
 - **Live editing `main.rs`** — reconcile doesn't trigger `cargo build`. You still need to rebuild manually for Rust changes.
-- **Editing manifest while a service is running** — reconcile picks up the change but config-change-restart isn't auto in v1. Stop the service via DB toggle, then reconcile twice.
 
 ---
 
@@ -304,10 +251,10 @@ For both `function` and `service`, the trigger payload is delivered as JSON. For
 ```
 actions/
 ├── sources.toml                     # [[source]] catalog (auth providers)
-├── Cargo.toml                       # [[bin]] entries for Rust function/service
+├── Cargo.toml                       # [[bin]] entries for Rust functions
 ├── <name>/
 │   ├── manifest.toml                # declarative metadata
-│   ├── main.rs                      # function/service entry (Rust)
+│   ├── main.rs                      # function entry (Rust)
 │   ├── transform.rs                 # ... or whatever helper modules
 │   ├── ui/                          # for runtime = "view"
 │   │   ├── Card.svelte

@@ -57,7 +57,7 @@
 		reconcileMsg = null;
 		try {
 			const out = await adminReconcile();
-			reconcileMsg = `${out.upserted} upserted · +${out.added.length} · −${out.removed.length}${out.restarted.length ? ` · ↻${out.restarted.length}` : ''}`;
+			reconcileMsg = `${out.upserted} upserted`;
 			await load();
 		} catch (e) {
 			err = e instanceof Error ? e.message : String(e);

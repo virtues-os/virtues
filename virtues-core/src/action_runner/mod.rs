@@ -338,18 +338,7 @@ async fn execute_prepared(
     let mut subprocess_summary: Option<String> = None;
     let mut subprocess_records: i64 = 0;
     let has_command = action.command.as_ref().is_some_and(|c| !c.is_empty());
-    if action.supervise && has_command {
-        match run_app_trigger(&action, payload.as_ref()).await {
-            Ok(summary) => {
-                subprocess_summary = summary;
-            }
-            Err(e) => {
-                let msg = e.to_string();
-                tracing::error!(action_id, error = %msg, "app trigger failed");
-                return fail(&deps, &run_id, &action_id, msg).await;
-            }
-        }
-    } else if has_command {
+    if has_command {
         let command = action.command.clone().unwrap();
         match run_subprocess(
             &deps.db,
@@ -583,82 +572,6 @@ async fn load_credentials(db: &PgPool, credential_id: &str) -> Result<serde_json
 // ============================================================================
 // Subprocess phase
 // ============================================================================
-
-/// Dispatch a trigger to an `app`-runtime action via core's own proxy.
-///
-/// The supervised app is listening on a private port; we POST the
-/// `ActionInput` JSON to `http://127.0.0.1:<api_port>/service/<action_id>/__trigger`
-/// and let the proxy handler resolve the port. This keeps the runner from
-/// needing a direct handle to `ServiceSupervisor` and avoids passing it through
-/// every cron tick.
-///
-/// Conventions:
-///   - 200 with optional `result` field → Success; `result` becomes summary.
-///   - 404 → app doesn't implement `/__trigger` (UI-only app); treat as
-///     Skipped (Ok(None) summary, no error).
-///   - 503 → app not ready; surface as a soft error.
-///   - other 4xx/5xx → error with body as message.
-async fn run_app_trigger(
-    action: &Action,
-    payload: Option<&serde_json::Value>,
-) -> Result<Option<String>> {
-    let api_port = std::env::var("PORT").unwrap_or_else(|_| "8000".to_string());
-    let url = format!(
-        "http://127.0.0.1:{api_port}/service/{}/__trigger",
-        action.id
-    );
-
-    let body = serde_json::json!({
-        "config": action.config,
-        "credential_id": action.credential_id,
-        "payload": payload,
-    });
-
-    let client = reqwest::Client::builder()
-        .timeout(std::time::Duration::from_secs(60))
-        .build()
-        .map_err(|e| Error::Other(format!("build reqwest client: {e}")))?;
-
-    let resp = client
-        .post(&url)
-        .json(&body)
-        .send()
-        .await
-        .map_err(|e| Error::Other(format!("POST {url} failed: {e}")))?;
-
-    let status = resp.status();
-    if status == reqwest::StatusCode::NOT_FOUND {
-        // App didn't implement `/__trigger`. Not an error — UI-only apps
-        // don't need to handle cron/webhook fires.
-        tracing::debug!(
-            action_id = %action.id,
-            "app has no /__trigger handler; nothing to do"
-        );
-        return Ok(None);
-    }
-    if !status.is_success() {
-        let body_text = resp.text().await.unwrap_or_default();
-        return Err(Error::Other(format!(
-            "app /__trigger returned {}: {}",
-            status.as_u16(),
-            body_text
-        )));
-    }
-
-    let json: serde_json::Value = resp
-        .json()
-        .await
-        .map_err(|e| Error::Other(format!("/__trigger non-JSON: {e}")))?;
-
-    // Pull a summary string from the response if present.
-    let summary = json
-        .get("result")
-        .and_then(|v| v.as_str())
-        .map(|s| s.to_string())
-        .or_else(|| Some(json.to_string()));
-
-    Ok(summary)
-}
 
 /// Hard ceiling on a single action subprocess. Generous enough for the largest
 /// legitimate batch, short enough that a hung/wedged process frees the per-action
