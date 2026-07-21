@@ -32,6 +32,7 @@ mod install;
 mod mode;
 mod preflight;
 mod steps;
+mod storage;
 mod ui;
 
 use anyhow::Result;

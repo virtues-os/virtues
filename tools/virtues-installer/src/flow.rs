@@ -21,6 +21,7 @@ use crate::install;
 use crate::mode::{self, InferenceMode};
 use crate::preflight;
 use crate::steps;
+use crate::storage;
 use crate::ui;
 
 pub struct Config {
@@ -45,6 +46,14 @@ pub async fn run(cli: Config) -> Result<()> {
 
     let mut cfg = InstallConfig::recommended_defaults();
     cfg.pinned_version = cli.version.clone();
+
+    // Storage quality is decided by the DATA_DIR medium, which cfg has just
+    // resolved (default /var/lib/virtues, honoring the DATA_DIR env override).
+    // Runs inside pre-flight, after preflight::run, because a slow/lying/NFS
+    // disk is exactly the kind of thing the user should learn about before we
+    // start provisioning Postgres onto it. Non-blocking, like the rest of
+    // pre-flight — it warns with numbers, it never aborts.
+    storage::report(&cfg.data_dir).await?;
 
     if cli.dry_run {
         ui::skip("dry-run — system would be modified by the following steps");
