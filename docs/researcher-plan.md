@@ -215,37 +215,92 @@ the Q6A; MuPDF excluded — AGPL). Checks folded into the build itself:
 - Add-to-notebook affordances: drag-drop (D1) + an "add from Drive" picker —
   picker ships when trivial, else fast-follow.
 
-## D5 — OCR on the NPU (in v1 · ~3–4 days, after D3 / alongside D4)
+## D5 — OCR on the NPU (in v1 · ~3–4 days + D5.5 · promoted ahead of D3)
 
 Decided 2026-07-20 after model research: OCR ships in v1 as the **classic
-det+rec tier on the Hexagon NPU** — not a VLM.
+det+rec tier** — not a VLM. The user-visible win is singular: **scanned PDFs
+and image uploads stop being dead ends.** Today a photographed page or scanned
+paper extracts to `no_text` and vanishes from search/chat; after D5 it flows
+into the *same* corpus loop as born-digital PDFs. D5 adds **zero new
+retrieval/chat surface** — it is a new *producer* feeding the D1 pipeline. This
+is why it precedes D3: it widens the core loop for everyone, not just the
+citation-writing subset.
 
-- **Models: PP-OCRv5 mobile det+rec** (single-digit-M params, tens of MB —
-  ~100× smaller than the VLM doc-parsers, ~95% of the value for printed scans).
-  ONNX sourced via PaddleOCR/RapidOCR packaging.
-- **Runtime**: w8a8 ONNX through the **QNN path** — either ONNX Runtime's QNN
-  execution provider (QCS6490 explicitly supported) or lifted into
-  `virtues-qnnd` beside gte-small (same daemon, same QNN graph pattern — the
-  architecturally consistent option; decide by integration cost). **DIY/CPU
-  floor**: the same ONNX runs on CPU at a few hundred ms/page — OCR is not
-  appliance-exclusive, the NPU is the accelerated path.
-- **Pipeline**: the `no_text` queue is the OCR queue. pdfium (already the
-  extractor dep) rasterizes pages (~250 DPI) → det → rec → per-page text into
-  the normal chunk pipeline. `extraction_status` gains `ocr_pending|ocr_done`.
-- **Store normalized word boxes** with the OCR text — this is what a future
-  synthetic text layer needs (selectable scans, precise citation landing on
-  scanned pages; det+rec gives boxes for free, VLMs mostly don't). v1 citation
-  landing on OCR'd docs is page-level; box-based passage landing is a cheap
-  later upgrade because the data is already stored.
-- **Honest progress**: chips show `ocr — 41%` (1s/page-ish on NPU; a 300-page
-  scan takes minutes and must never look stuck).
-- **Named non-goal — the VLM parser tier** (vision-language models: an LLM with
-  an image encoder that *writes out* the page — tables/math/handwriting/layout).
-  Current leaders: PaddleOCR-VL-0.9B/1.6 (OmniDocBench SOTA), Surya 2 (650M —
-  the one to watch for a future CPU-cron tier), DeepSeek-OCR, OCRFlux-3B.
-  None fit the QCS6490 NPU (they target 8-Gen-2-class silicon and up); future
-  paths are CPU cron, a permissioned-cloud lane (Crossref posture), or beefier
-  box hardware. Not v1.
+**Models: PP-OCRv5 mobile det+rec** (single-digit-M params, tens of MB —
+~100× smaller than the VLM doc-parsers, ~95% of the value for printed scans).
+ONNX via PaddleOCR/RapidOCR, Apache-2.0, char dict bundled (no
+pdfium/MuPDF-style licensing landmine). English/Latin rec in v1; the
+angle-classifier model and multilingual rec are cheap later knobs (printed
+scans are upright).
+
+### Locked decisions (2026-07-20)
+
+1. **Runtime = ONNX Runtime (`ort` crate), QNN execution provider on the box,
+   CPU EP on the DIY floor.** *Not* consolidated into `virtues-qnnd`. The
+   deciding argument is the CPU floor: OCR is explicitly not appliance-exclusive,
+   and ORT runs the **same ONNX on both tiers from one codebase** — swap the EP,
+   nothing else. Consolidating into `virtues-qnnd` (raw QNN) would force a
+   *second, separate* CPU implementation (the way embedding carries QNN-daemon +
+   llama.cpp), and OCR models are CNNs/CRNNs — not GGUF, so llama.cpp isn't the
+   CPU answer anyway. The known counter-risk: two runtime stacks then contend for
+   the Hexagon HTP (gte-small in `virtues-qnnd` + OCR via ORT QNN EP). Mitigation
+   is sequenced, not upfront — prove correctness on ORT **CPU EP** first, flip to
+   **QNN EP**, and lift OCR into `virtues-qnnd` *only if* NPU-sharing actually
+   hurts. Correctness-first, consolidate-if-needed.
+2. **Scan highlighting = page-level in D5, synthetic text layer as D5.5
+   fast-follow.** v1 landing on OCR'd docs is page-level (`?page=N`); `?q=`
+   quote-flash and D2 highlighting do **not** work on a scan (it's an image —
+   no pdf.js text layer to select or flash). D5 stores word boxes; **D5.5**
+   renders a synthetic transparent text layer from them → full D2 parity
+   (selectable, highlightable, quote-flash). Split this way so D5 stays focused
+   on "get the text into the corpus" while the first release doesn't visibly
+   regress the highlighting users just got in D2.
+3. **Quantization = budget a real calibration + accuracy eval pass.** HTP needs
+   w8a8; quantized **rec** can drop accuracy on small fonts — the one place D5
+   could disappoint. Calibrate on a handful of scanned crops and eval against a
+   known-good scan, don't ship RapidOCR's quantized weights on a vibe check.
+
+### Pipeline (bolts onto the existing extractor)
+
+- **The `no_text` queue is the OCR queue** — it already exists, it just needs a
+  consumer. Text extraction runs as today; a PDF whose pdfium text is <~N
+  chars/page average → `no_text`, which (when OCR is enabled) becomes
+  `ocr_pending`. Image uploads (PNG/JPG) route here directly — no pdfium raster.
+- The extraction cron drains `ocr_pending`: pdfium (already the extractor dep)
+  rasterizes each page (~250 DPI, **streamed one page at a time** — a 250 DPI
+  page is ~17 MB raw, never hold the whole doc) → **det** (line boxes) → **rec**
+  (text/line) → reading-order sort → page text → the *existing* chunker →
+  *existing* embeddings. `extraction_status` gains `ocr_pending|ocr_done`.
+- **rec dominates cost**, not det (det = 1 inference/page; rec = 1 per detected
+  line, ~40–60/page). **Batch rec by width bucket** — the biggest single perf
+  lever on both CPU and NPU.
+- **Runs inside the existing extraction cron** — models loaded once per drain,
+  released on exit. No new resident daemon in v1; load cost (<1s) amortizes over
+  a bursty batch (upload a scan → many pages at once). Promote to a warm resident
+  service only if single-page drains become common.
+- **Store normalized word boxes** with the OCR text (`app_document_ocr`:
+  per-page `text` + `boxes` JSONB). det+rec gives boxes for free; VLMs mostly
+  don't. This is the data D5.5's synthetic text layer needs.
+- **Honest progress**: chips show `ocr — 41%` (~1s/page on NPU, a few hundred
+  ms/page on CPU; a 300-page scan takes minutes and must never look stuck).
+
+### Sub-phases
+
+- **D5.1** — ORT wiring + model packaging (det/rec ONNX + dict); CPU EP proving
+  text on a known scan. ~1 d
+- **D5.2** — full pipeline: raster → det → rec → reading-order assembly → page
+  text into chunker; `ocr_pending/ocr_done` + progress chips. ~1–1.5 d
+- **D5.3** — QNN EP on Dragon; quantization + accuracy eval; rec batching. ~1 d
+- **D5.4** — word-box storage (`app_document_ocr`) + image-upload routing. ~0.5 d
+- **D5.5** *(fast-follow)* — synthetic text layer → D2 parity on scans. ~0.5–1 d
+
+**Named non-goal — the VLM parser tier** (vision-language models: an LLM with
+an image encoder that *writes out* the page — tables/math/handwriting/layout).
+Current leaders: PaddleOCR-VL-0.9B/1.6 (OmniDocBench SOTA), Surya 2 (650M —
+the one to watch for a future CPU-cron tier), DeepSeek-OCR, OCRFlux-3B.
+None fit the QCS6490 NPU (they target 8-Gen-2-class silicon and up); future
+paths are CPU cron, a permissioned-cloud lane (Crossref posture), or beefier
+box hardware. Not v1.
 
 ## Explicit non-goals (v1)
 
