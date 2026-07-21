@@ -1636,6 +1636,26 @@ export interface SharedPage {
 	share_token: string;
 }
 
+/**
+ * Append a markdown block to a page THROUGH Yjs (researcher-plan D4).
+ *
+ * Safe when the page is open in an editor: the server applies the insert to the
+ * authoritative Yjs doc and broadcasts it, so an open editor merges the block
+ * instead of being clobbered by a content replace.
+ */
+export async function appendToPage(pageId: string, markdown: string): Promise<{ content: string }> {
+	const res = await fetch(`${API_BASE}/pages/${encodeURIComponent(pageId)}/append`, {
+		method: 'POST',
+		headers: { 'Content-Type': 'application/json' },
+		body: JSON.stringify({ markdown })
+	});
+	if (!res.ok) {
+		const e = await res.json().catch(() => ({ error: res.statusText }));
+		throw new Error(e.error || 'Failed to append to page');
+	}
+	return res.json();
+}
+
 export async function createPageShare(pageId: string): Promise<PageShare> {
 	const res = await fetch(`${API_BASE}/pages/${pageId}/share`, { method: 'POST' });
 	if (!res.ok) throw new Error(`Failed to create share: ${res.statusText}`);

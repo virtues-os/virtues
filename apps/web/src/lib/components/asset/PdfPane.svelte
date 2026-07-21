@@ -10,11 +10,15 @@
 	// pdf.js fetch large documents piecewise instead of whole.
 	import Icon from "$lib/components/Icon.svelte";
 	import Markdown from "$lib/components/Markdown.svelte";
+	import RefPicker, { type EntityResult } from "$lib/components/RefPicker.svelte";
+	import { windowShellStore } from "$lib/stores/window-shell.svelte";
 	import {
 		listAnnotations,
 		createAnnotation,
 		updateAnnotation,
 		deleteAnnotation,
+		appendToPage,
+		createPage,
 		type Annotation,
 		type AnnotationRect,
 	} from "$lib/api/client";
@@ -22,12 +26,15 @@
 	let {
 		url,
 		fileId,
+		filename,
 		initialPage,
 		initialQuote,
 		initialHighlight,
 	}: {
 		url: string;
 		fileId: string;
+		/** Used to label the citation when a highlight is sent to a page. */
+		filename?: string;
 		initialPage?: number;
 		/** Citation landing (D2.4): flash the passage matching this quote. */
 		initialQuote?: string;
@@ -357,6 +364,72 @@
 			}
 		};
 		setTimeout(() => attempt(15), 0);
+	}
+
+	// ---- Send highlight → Page (D4.1) --------------------------------------
+	// The synthesis bridge: a highlight becomes a blockquote + citation ref in a
+	// page. The append goes through Yjs server-side, so a page open in an editor
+	// merges the block instead of being clobbered.
+	let sendAnno = $state<Annotation | null>(null);
+	let sendPos = $state({ x: 0, y: 0 });
+	let sendBusy = $state(false);
+
+	function openSendToPage(a: Annotation, e: MouseEvent) {
+		e.stopPropagation();
+		sendAnno = a;
+		sendPos = { x: e.clientX, y: e.clientY };
+	}
+
+	/** Blockquote + a citation ref that lands back on this exact highlight. */
+	function highlightMarkdown(a: Annotation): string {
+		const label = `${filename ?? "source"}${a.page_num ? `, p. ${a.page_num}` : ""}`;
+		const params = new URLSearchParams();
+		if (a.page_num) params.set("page", String(a.page_num));
+		params.set("hl", a.id);
+		const ref = `/drive/${fileId}?${params.toString()}`;
+		let md = `> ${a.quote_text.trim().replace(/\n+/g, "\n> ")}\n>\n> — [${label}](${ref})`;
+		if (a.note_md?.trim()) md += `\n\n${a.note_md.trim()}`;
+		return md;
+	}
+
+	async function sendToPage(pageId: string) {
+		const a = sendAnno;
+		if (!a || sendBusy) return;
+		sendBusy = true;
+		try {
+			await appendToPage(pageId, highlightMarkdown(a));
+			sendAnno = null;
+			activeAnno = null;
+			windowShellStore.openTabFromRoute(`/page/${pageId}`);
+		} catch (err) {
+			console.error("[PdfPane] send to page failed:", err);
+		} finally {
+			sendBusy = false;
+		}
+	}
+
+	function onPickPage(entity: EntityResult) {
+		const id = entity.url?.split("/")[2];
+		if (id) sendToPage(id);
+	}
+
+	/** Footer action on the picker: start a fresh page from this highlight. */
+	async function sendToNewPage() {
+		const a = sendAnno;
+		if (!a || sendBusy) return;
+		sendBusy = true;
+		try {
+			const title = a.quote_text.trim().slice(0, 60) || "Notes";
+			// A fresh page has no open editor, so seed the content directly.
+			const page = await createPage(title, highlightMarkdown(a));
+			sendAnno = null;
+			activeAnno = null;
+			windowShellStore.openTabFromRoute(`/page/${page.id}`);
+		} catch (err) {
+			console.error("[PdfPane] new page from highlight failed:", err);
+		} finally {
+			sendBusy = false;
+		}
 	}
 
 	async function saveNote() {
@@ -768,7 +841,7 @@
 			{:else}
 				<ul class="pdf-rail-list">
 					{#each annotations as a (a.id)}
-						<li>
+						<li class="pdf-rail-row">
 							<button class="pdf-rail-item" onclick={() => jumpToAnno(a)}>
 								<span class="pdf-rail-swatch" style="background:{colorCss(a.color)};"></span>
 								<span class="pdf-rail-body">
@@ -776,6 +849,13 @@
 									{#if a.note_md}<span class="pdf-rail-note">{a.note_md}</span>{/if}
 								</span>
 								{#if a.page_num}<span class="pdf-rail-page">p{a.page_num}</span>{/if}
+							</button>
+							<button
+								class="pdf-rail-send"
+								title="Send to a page"
+								onclick={(e) => openSendToPage(a, e)}
+							>
+								<Icon icon="ri:file-add-line" width="12" />
 							</button>
 						</li>
 					{/each}
@@ -817,6 +897,13 @@
 				></button>
 			{/each}
 			<div class="pdf-note-spacer"></div>
+			<button
+				class="pdf-note-send"
+				title="Send to a page"
+				onclick={(e) => activeAnno && openSendToPage(activeAnno, e)}
+			>
+				<Icon icon="ri:file-add-line" width="13" /> Send
+			</button>
 			<button class="pdf-note-del" title="Delete highlight" onclick={removeAnno}>
 				<Icon icon="ri:delete-bin-line" width="13" />
 			</button>
@@ -831,6 +918,23 @@
 			<div class="pdf-note-preview"><Markdown content={activeAnno.note_md} /></div>
 		{/if}
 	</div>
+{/if}
+
+<!-- Pick the page to send this highlight into (D4.1). -->
+{#if sendAnno}
+	<RefPicker
+		mode="single"
+		position={sendPos}
+		entityTypes={["page"]}
+		placeholder="Send highlight to page…"
+		onSelect={onPickPage}
+		onClose={() => (sendAnno = null)}
+		footerAction={{
+			label: "New page from this highlight",
+			icon: "ri:file-add-line",
+			action: sendToNewPage,
+		}}
+	/>
 {/if}
 
 <style>
@@ -1001,6 +1105,49 @@
 		flex: 1;
 		min-height: 0;
 	}
+	/* Row wraps the item so the send affordance can sit on hover. */
+	.pdf-rail-row {
+		position: relative;
+		display: flex;
+	}
+	.pdf-rail-send {
+		position: absolute;
+		right: 6px;
+		top: 6px;
+		display: grid;
+		place-items: center;
+		width: 20px;
+		height: 20px;
+		border: none;
+		border-radius: 5px;
+		background: var(--color-surface-elevated, #222);
+		color: var(--color-foreground-subtle);
+		cursor: pointer;
+		opacity: 0;
+	}
+	.pdf-rail-row:hover .pdf-rail-send {
+		opacity: 1;
+	}
+	.pdf-rail-send:hover {
+		color: var(--color-primary);
+	}
+	.pdf-note-send {
+		display: inline-flex;
+		align-items: center;
+		gap: 3px;
+		padding: 3px 7px;
+		font-size: 0.6875rem;
+		border: none;
+		border-radius: 5px;
+		background: transparent;
+		color: var(--color-foreground-muted);
+		cursor: pointer;
+	}
+	.pdf-note-send:hover {
+		background: var(--ref-pill-bg);
+		color: var(--color-primary);
+	}
+
 	.pdf-rail-item {
 		display: flex;
 		align-items: flex-start;

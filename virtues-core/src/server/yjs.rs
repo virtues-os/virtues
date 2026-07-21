@@ -506,6 +506,70 @@ impl YjsState {
         Ok(new_content)
     }
 
+    /// Append a markdown block to the end of a page, through Yjs.
+    ///
+    /// This is the safe way to send content into a page that may be OPEN in an
+    /// editor: the insert happens inside a yrs transaction on the authoritative
+    /// doc and is broadcast to every connected client, so an open editor merges
+    /// it live instead of being clobbered by a blind content replace.
+    ///
+    /// Block separation is handled here — a blank line is inserted when the
+    /// document is non-empty so appended markdown blocks never run together.
+    pub async fn append_markdown(&self, page_id: &str, markdown: &str) -> Result<String, String> {
+        let page_doc = self
+            .doc_cache
+            .get_or_create(page_id, &self.pool)
+            .await
+            .map_err(|e| format!("Failed to get page document: {}", e))?;
+
+        let (new_content, update_bytes) = {
+            let mut doc = page_doc.write().await;
+
+            {
+                let mut txn = doc.doc.transact_mut();
+                let text = txn.get_or_insert_text("content");
+                let len = text.len(&txn);
+                let current = text.get_string(&txn);
+
+                // Separate blocks: blank line unless the doc is empty or already
+                // ends in one.
+                let prefix = if current.is_empty() {
+                    ""
+                } else if current.ends_with("\n\n") {
+                    ""
+                } else if current.ends_with('\n') {
+                    "\n"
+                } else {
+                    "\n\n"
+                };
+
+                text.insert(&mut txn, len, &format!("{prefix}{markdown}"));
+                // txn commits on drop
+            }
+
+            doc.last_update = Instant::now();
+
+            let txn = doc.doc.transact();
+            let new_content = if let Some(text) = txn.get_text("content") {
+                text.get_string(&txn)
+            } else {
+                String::new()
+            };
+            let update_bytes = txn.encode_state_as_update_v1(&StateVector::default());
+
+            let broadcast_msg = encode_sync_update(&update_bytes);
+            let _ = doc.broadcast_tx.send(broadcast_msg);
+
+            (new_content, update_bytes)
+        };
+
+        self.save_queue
+            .queue_save(page_id.to_string(), update_bytes)
+            .await;
+
+        Ok(new_content)
+    }
+
     /// Get the current content of a page from Yjs as markdown.
     ///
     /// The document IS markdown (Y.Text), so this is a simple text read.

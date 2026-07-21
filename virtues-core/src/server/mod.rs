@@ -674,6 +674,9 @@ pub async fn run(client: Virtues, host: &str, port: u16) -> Result<()> {
             "/api/pages/:id/backlinks",
             get(api::get_page_backlinks_handler),
         )
+        // Append a markdown block through Yjs (safe with an open editor) — the
+        // synthesis bridge's write path.
+        .route("/api/pages/:id/append", post(api::append_page_handler))
         // Page Share API
         .route(
             "/api/pages/:id/share",
