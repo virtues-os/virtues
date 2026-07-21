@@ -215,7 +215,40 @@ the Q6A; MuPDF excluded — AGPL). Checks folded into the build itself:
 - Add-to-notebook affordances: drag-drop (D1) + an "add from Drive" picker —
   picker ships when trivial, else fast-follow.
 
-## D5 — OCR on the NPU (in v1 · ~3–4 days + D5.5 · promoted ahead of D3)
+## D5 — OCR — ❌ CUT FROM v1 (decided 2026-07-21, after a full hardware spike)
+
+**Decision: no OCR in v1 at all.** The spike proved the architecture works but
+that quantized recognition can't reach research-corpus accuracy on the Q6A, and
+— more decisively — that **the feature's reach is narrow**: pdfium already
+covers every born-digital PDF. OCR only unlocks *scanned* PDFs and image
+uploads. For a corpus that is mostly born-digital, it is redundant; for a small
+number of scans, CPU-only OCR (7.4 s/page in a background cron) would have been
+sufficient without any NPU work.
+
+Measured on the real Dragon Q6A (QCS6490 / HTP v68) via Qualcomm AI Hub:
+
+| Finding | Result |
+|---|---|
+| det on NPU | 23.9 ms/page, 225/225 layers NPU |
+| rec backbone on NPU (split-head) | 1.92 ms/line, 164/164 layers NPU |
+| rec neck + CTC (CPU) | 4.61 ms/line |
+| split correctness (float) | **25/25 lines byte-identical** to monolithic |
+| **w8a8 quantized accuracy** | **85.0%** char-acc |
+| **w8a16 quantized accuracy** | **93.4%** (weak calib) → **94.11%** (rich calib) |
+| w16a16 / int16 | ❌ won't compile on v68 (graph-compose error 14) |
+| fp16 on NPU | ❌ unsupported (v68 is an integer engine) |
+
+Richer calibration bought only **+0.7pp**, so the loss is **intrinsic to int8
+weight quantization**, not a tuning artifact — quantized rec plateaus ~94%
+(≈1 error per 17 chars), which corrupts citations and poisons embeddings.
+
+Accuracy-preserving fallbacks, if OCR is ever revived: **det-NPU + rec-CPU-float
+(~2.1 s/page, ~100% accuracy, 3.5× faster than all-CPU)**, an earlier split point
+as a tunable accuracy/speed dial, or rec in fp16 on the Adreno 643 GPU (zero
+quantization loss, speed untested). Full details + reusable AI Hub recipe in the
+`project_ocr_npu_spike` memory.
+
+### (historical) the original D5 plan
 
 Decided 2026-07-20 after model research: OCR ships in v1 as the **classic
 det+rec tier** — not a VLM. The user-visible win is singular: **scanned PDFs
