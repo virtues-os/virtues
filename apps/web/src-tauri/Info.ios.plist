@@ -7,6 +7,16 @@
 -->
 <plist version="1.0">
 <dict>
+	<!--
+	  Required by App Store validation whenever the HealthKit entitlement is
+	  present, even though this app never writes to Health: the plugin asks for
+	  `toShare: nil` (plugins/health/ios/Sources/HealthKit.swift). Omitting it
+	  fails upload with a 409, not a warning. It lives here rather than in
+	  gen/apple/project.yml because xcodegen only runs at `tauri ios init`, so
+	  project.yml edits do not reach an already-generated project.
+	-->
+	<key>NSHealthUpdateUsageDescription</key>
+	<string>Virtues does not write anything to Health. It only reads your health data to build your personal timeline, stored on your own box.</string>
 	<key>NSLocationWhenInUseUsageDescription</key>
 	<string>Virtues records your location to build your personal timeline.</string>
 	<key>NSLocationAlwaysAndWhenInUseUsageDescription</key>
