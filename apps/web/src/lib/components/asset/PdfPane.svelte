@@ -19,6 +19,8 @@
 		deleteAnnotation,
 		appendToPage,
 		createPage,
+		exportFileAnnotations,
+		downloadMarkdown,
 		type Annotation,
 		type AnnotationRect,
 	} from "$lib/api/client";
@@ -364,6 +366,16 @@
 			}
 		};
 		setTimeout(() => attempt(15), 0);
+	}
+
+	/** Download this file's highlights as markdown (D4.3). */
+	async function exportHighlights() {
+		try {
+			const md = await exportFileAnnotations(fileId);
+			downloadMarkdown(`${(filename ?? "highlights").replace(/\.[^.]+$/, "")}-highlights`, md);
+		} catch (err) {
+			console.error("[PdfPane] export failed:", err);
+		}
 	}
 
 	// ---- Send highlight → Page (D4.1) --------------------------------------
@@ -835,6 +847,12 @@
 			<div class="pdf-rail-head">
 				Highlights
 				<span class="pdf-rail-count">{annotations.length}</span>
+				<div class="pdf-rail-spacer"></div>
+				{#if annotations.length}
+					<button class="pdf-rail-export" title="Export highlights as markdown" onclick={exportHighlights}>
+						<Icon icon="ri:download-line" width="12" />
+					</button>
+				{/if}
 			</div>
 			{#if annotations.length === 0}
 				<p class="pdf-rail-empty">Select text in the document to highlight it.</p>
@@ -1082,6 +1100,24 @@
 		color: var(--color-foreground-subtle);
 		border-bottom: 1px solid var(--color-border);
 		flex-shrink: 0;
+	}
+	.pdf-rail-spacer {
+		flex: 1;
+	}
+	.pdf-rail-export {
+		display: grid;
+		place-items: center;
+		width: 20px;
+		height: 20px;
+		border: none;
+		border-radius: 5px;
+		background: transparent;
+		color: var(--color-foreground-subtle);
+		cursor: pointer;
+	}
+	.pdf-rail-export:hover {
+		background: var(--ref-pill-bg);
+		color: var(--color-primary);
 	}
 	.pdf-rail-count {
 		padding: 0 6px;

@@ -9,7 +9,7 @@
 	import RefPicker from '$lib/components/RefPicker.svelte';
 	import ColorPickerModal from '$lib/components/sidebar/ColorPickerModal.svelte';
 	import { getRefSummary } from '$lib/utils/refSummary';
-	import { getPage, getDriveFile, uploadDriveFile, addNotebookItem, reextractDriveFile, listNotebookAnnotations, type NotebookAnnotation } from '$lib/api/client';
+	import { getPage, getDriveFile, uploadDriveFile, addNotebookItem, reextractDriveFile, listNotebookAnnotations, exportNotebookAnnotations, downloadMarkdown, type NotebookAnnotation } from '$lib/api/client';
 	import { askVirtues } from '$lib/stores/pendingPrompt.svelte';
 
 	let { tab }: { tab: Tab; active?: boolean } = $props();
@@ -83,6 +83,18 @@
 		blue: '#6fb5ff',
 		pink: '#ff8fc7',
 	};
+	/** Download every highlight in this notebook as markdown (D4.3). */
+	async function exportHighlights() {
+		const id = notebookId;
+		if (!id) return;
+		try {
+			const md = await exportNotebookAnnotations(id);
+			downloadMarkdown(`${(detail?.name ?? 'notebook')}-highlights`, md);
+		} catch (e) {
+			console.error('[NotebookDetailView] export failed:', e);
+		}
+	}
+
 	function openHighlight(h: NotebookAnnotation) {
 		let route = `/drive/${h.file_id}`;
 		const params = new URLSearchParams();
@@ -433,7 +445,12 @@
 				<section class="section">
 					<div class="eyebrow font-mono">
 						<span>Highlights</span>
-						<span class="eyebrow-count">{highlights.length}</span>
+						<span class="eyebrow-right">
+							<span class="eyebrow-count">{highlights.length}</span>
+							<button class="add-btn" title="Export highlights as markdown" onclick={exportHighlights}>
+								<Icon icon="ri:download-line" width="13" />
+							</button>
+						</span>
 					</div>
 					{#each highlightGroups as g (g.file_id)}
 						<div class="hl-group">
@@ -653,6 +670,7 @@
 		font-size: 10px; padding: 1px 7px; border-radius: 999px;
 		background: var(--color-surface-elevated); color: var(--color-foreground-subtle, #9ca3af);
 	}
+	.eyebrow-right { display: flex; align-items: center; gap: 4px; }
 	.hl-group { margin-top: 0.9rem; }
 	.hl-file {
 		display: flex; align-items: center; gap: 7px; width: 100%; text-align: left;
