@@ -140,6 +140,15 @@ pub struct ChatRequest {
     /// Agent mode controlling tool availability (agent, chat, research)
     #[serde(rename = "agentMode", default = "default_agent_mode")]
     pub agent_mode: String,
+    /// Retrieval scope for notebook chats: "open" (default — whole graph,
+    /// notebook items up-weighted) or "scoped" (grounded — items only).
+    /// Ignored without a notebook_id.
+    #[serde(rename = "chatMode", default = "default_chat_mode")]
+    pub chat_mode: String,
+}
+
+fn default_chat_mode() -> String {
+    "open".to_string()
 }
 
 fn default_agent() -> String {
@@ -1104,7 +1113,19 @@ pub async fn chat_handler(
 
     // Build system prompt with active page context, timezone, personalization, and agent mode
     // is_onboarding keeps the onboarding prompt active until set_user_name completes
-    let system_prompt = build_system_prompt(&pool, request.active_page.as_ref(), request.timezone.as_deref(), &request.agent_mode, &request.persona, is_onboarding, effective_notebook_id.as_deref()).await;
+    let mut system_prompt = build_system_prompt(&pool, request.active_page.as_ref(), request.timezone.as_deref(), &request.agent_mode, &request.persona, is_onboarding, effective_notebook_id.as_deref()).await;
+    // Scoped (grounded) chat: retrieval is hard-filtered to the notebook's
+    // items (ScopeMode::Exclusive in ToolContext); this line sets the matching
+    // answer contract. Only meaningful inside a notebook.
+    if request.chat_mode == "scoped" && effective_notebook_id.is_some() {
+        system_prompt.push_str(
+            "\n\nSCOPED CHAT: this conversation is grounded in the current notebook's \
+             materials only. Retrieval is restricted to them. Answer ONLY from what \
+             retrieval returns, citing each load-bearing claim with its ref link. If \
+             the materials don't cover the question, say so plainly — do not answer \
+             from general knowledge.",
+        );
+    }
 
     // Flip 'new' → 'onboarding' after the first synthetic message (NOT to 'active').
     // The onboarding prompt stays active. set_user_name flips 'onboarding' → 'active'.
@@ -1291,6 +1312,11 @@ fn create_agent_stream(
             page_id: request.active_page.as_ref().and_then(|p| p.page_id.clone()),
             user_id: None,
             notebook_id: request.notebook_id.clone(),
+            scope_mode: if request.chat_mode == "scoped" {
+                crate::search::ScopeMode::Exclusive
+            } else {
+                crate::search::ScopeMode::Weighted
+            },
             chat_id: Some(request.chat_id.clone()),
             action_id: None,
             subagent_tx: Some(subagent_tx),

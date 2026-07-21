@@ -26,6 +26,7 @@
 mod executor;
 mod web_search;
 pub(crate) mod sql_query;
+pub(crate) mod sql_write;
 mod page_editor;
 mod semantic_search;
 pub mod action_setup;
@@ -78,13 +79,34 @@ pub fn get_all_tool_definitions_for_llm() -> Vec<serde_json::Value> {
         .collect()
 }
 
-/// Tools for an autonomous **action** run: everything except `dispatch_subagents`. Deep Research
-/// fan-out is an interactive, budgeted, panel-visible capability; a headless action shouldn't be
-/// able to silently spawn workers on every run.
+/// The explicit allowlist for a headless applet run — the runtime capability
+/// table from docs/applet-authoring-plan.md §B, enforced. What an applet's
+/// agent may do: think, read (sql_query/semantic_search/web_search), write
+/// its own applet_* tables (sql_write), keep notes (update_applet_memory),
+/// write pages, compute in the jail, and introspect applets read-only. Its
+/// run RESULT posts to the linked chat — that's the delivery verb, not a
+/// tool. Everything else — applet management (self-modification), memory/
+/// profile/name writes, fan-out, image spend — is absent by construction.
+const APPLET_RUN_ALLOWED_TOOLS: &[&str] = &[
+    "think",
+    "sql_query",
+    "sql_write",
+    "semantic_search",
+    "web_search",
+    "update_applet_memory",
+    "create_page",
+    "get_page_content",
+    "edit_page",
+    "code_interpreter",
+    "list_applets",
+    "get_applet",
+];
+
+/// Tools for an autonomous **applet** run: the explicit allowlist above.
 pub fn get_tools_for_action() -> Vec<serde_json::Value> {
     virtues_registry::tools::default_tools()
         .into_iter()
-        .filter(|tool| tool.id != "dispatch_subagents")
+        .filter(|tool| APPLET_RUN_ALLOWED_TOOLS.contains(&tool.id.as_str()))
         .map(|tool| {
             serde_json::json!({
                 "type": "function",

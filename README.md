@@ -256,7 +256,7 @@ virtues-api runs on port 9002. Core connects to it via `VIRTUES_API_URL=http://l
 <a id="ios-app"></a>
 ## <picture><source media="(prefers-color-scheme: dark)" srcset=".github/images/headings/h2-ios-app-dark.svg"><img alt="iOS App" src=".github/images/headings/h2-ios-app-light.svg" height="28"></picture>
 
-The iOS companion app pairs with your box from `/virtues/devices → Add device` (scan the QR with the camera). See [docs/auth-model.md](docs/auth-model.md) for the pairing model. Source: `apps/ios/`.
+The companion app pairs with your box from `/virtues/devices → Add device` (scan the QR with the camera). See [docs/auth-model.md](docs/auth-model.md) for the pairing model. Source: the cross-platform Tauri app in `apps/web/src-tauri/` (macOS/Windows/Linux/iOS/Android), with on-device collection provided by the native plugins in `apps/web/plugins/`.
 
 <a id="project-structure"></a>
 ## <picture><source media="(prefers-color-scheme: dark)" srcset=".github/images/headings/h2-project-structure-dark.svg"><img alt="Project Structure" src=".github/images/headings/h2-project-structure-light.svg" height="28"></picture>
@@ -430,7 +430,7 @@ The final normalization by coverage is the key insight: **sparse days don't appe
 Virtues uses a hybrid model:
 
 - **Server, web app, and infrastructure** — [Business Source License 1.1](LICENSE) (BUSL-1.1): source-available, free to self-host for personal or internal organizational use, **not** for offering a hosted service or commercial hardware product. Each file converts to Apache 2.0 four years after release.
-- **Native apps and the data model** — MIT (see the `LICENSE` file in those directories, e.g. `apps/ios/`, `apps/mac-source/`).
+- **Native apps and the data model** — MIT (see the `LICENSE` file in those directories, e.g. `apps/web/plugins/`, `apps/mac-source/`).
 
 The repository default is BUSL-1.1 unless a directory contains its own `LICENSE` stating otherwise.
 

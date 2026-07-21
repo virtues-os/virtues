@@ -288,7 +288,12 @@ class WindowShellStore {
 		const searchParams = new URLSearchParams(window.location.search);
 		const rightRoute = searchParams.get('right');
 
-		this.handleDeepLink(path, rightRoute);
+		// Preserve route-level params (e.g. ?page=N) — only ?right= is the shell's.
+		const routeParams = new URLSearchParams(searchParams);
+		routeParams.delete('right');
+		const routeWithParams = routeParams.size > 0 ? `${path}?${routeParams}` : path;
+
+		this.handleDeepLink(routeWithParams, rightRoute);
 	};
 
 	// ============================================================================

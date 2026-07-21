@@ -87,7 +87,13 @@
 		// Note: searchParams.get() already decodes the value, no need for decodeURIComponent
 		const urlPath = $page.url.pathname;
 		const rightParam = $page.url.searchParams.get("right");
-		windowShellStore.handleDeepLink(urlPath, rightParam);
+		// Preserve route-level params (e.g. ?page=N for the PDF viewer) —
+		// only ?right= belongs to the shell itself.
+		const routeParams = new URLSearchParams($page.url.searchParams);
+		routeParams.delete("right");
+		const routeWithParams =
+			routeParams.size > 0 ? `${urlPath}?${routeParams}` : urlPath;
+		windowShellStore.handleDeepLink(routeWithParams, rightParam);
 
 		// Enable URL sync for future navigation
 		windowShellStore.initUrlSync();

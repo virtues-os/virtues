@@ -2,13 +2,12 @@
 	import Icon from "$lib/components/Icon.svelte";
 	import RefPreview from "$lib/components/RefPreview.svelte";
 	import { windowShellStore } from "$lib/stores/window-shell.svelte";
-	import { getEntityRoute, refIcon, getEntityTypeFromRoute } from "$lib/utils/refRoutes";
+	import { refIcon, getEntityTypeFromRoute } from "$lib/utils/refRoutes";
 	import { createRefHover } from "$lib/utils/refHover.svelte";
 
-	let { displayName, entityId, url, entityType, mimeType, variant = "link" } = $props<{
+	let { displayName, url, entityType, mimeType, variant = "link" } = $props<{
 		displayName: string;
-		entityId?: string;
-		url?: string;
+		url: string;
 		entityType?: string;
 		mimeType?: string;
 		// "link" (default): accent name + leading type icon + `@` — for chat answers,
@@ -18,20 +17,13 @@
 		variant?: "link" | "quiet";
 	}>();
 
-	// Get the navigation URL
-	function getNavigationUrl(): string {
-		if (url) return url;
-		if (entityId) return getEntityRoute(entityId);
-		return "#";
-	}
-
 	// Type drives the leading icon; derive from the url if not passed explicitly.
-	const resolvedType = $derived(entityType ?? (url ? getEntityTypeFromRoute(url) : null));
+	const resolvedType = $derived(entityType ?? getEntityTypeFromRoute(url));
 
 	function open() {
 		// Open beside — in the pane next to the one you're in (splits if needed),
 		// so you keep your place. See the Phase 5 click model.
-		windowShellStore.openRouteBeside(getNavigationUrl(), displayName);
+		windowShellStore.openRouteBeside(url, displayName);
 	}
 
 	function handleClick(e: MouseEvent) {
@@ -65,7 +57,7 @@
 		anchor={hover.anchor}
 		type={resolvedType}
 		label={displayName}
-		url={getNavigationUrl()}
+		{url}
 		{mimeType}
 		onOpen={open}
 		onTurnInto={(d) => d === "full" && open()}

@@ -141,7 +141,7 @@ export type ActionRuntime = 'function' | 'service' | 'view';
 
 export interface Action {
 	id: string;
-	owner: 'system' | 'user';
+	owner: 'system' | 'user' | 'ai';
 	name: string;
 	agent: string | null;
 	cron_schedule: string | null;
@@ -157,6 +157,15 @@ export interface Action {
 	 *  binary by `function_name`. Null when the action uses the function_name
 	 *  shortcut. */
 	command: string[] | null;
+	/** Lifecycle: null = forever · "once" = archive after first success ·
+	 *  anything else = SQL boolean checked after each success. */
+	until: string | null;
+	/** Set when the lifecycle completed; archived applets are disabled. */
+	archived_at: string | null;
+	/** Command applets that run as a long-lived supervised service. */
+	supervise: boolean;
+	/** True when the applet folder ships a face/ (sandboxed-iframe HTML UI). */
+	has_face: boolean;
 	is_system: boolean;
 	created_at: string;
 	updated_at: string;
@@ -167,14 +176,20 @@ export interface ActionDetail extends Action {
 	recent_runs?: ActionRun[];
 }
 
+export async function mintFaceToken(
+	actionId: string
+): Promise<{ token: string; expires_in_seconds: number }> {
+	return request(`/applets/${encodeURIComponent(actionId)}/face-token`);
+}
+
 export async function listActions(): Promise<Action[]> {
-	const res = await fetch(`${API_BASE}/actions`);
+	const res = await fetch(`${API_BASE}/applets`);
 	if (!res.ok) throw new Error(`Failed to list actions: ${res.statusText}`);
 	return res.json();
 }
 
 export async function getAction(id: string): Promise<Action> {
-	const res = await fetch(`${API_BASE}/actions/${encodeURIComponent(id)}`);
+	const res = await fetch(`${API_BASE}/applets/${encodeURIComponent(id)}`);
 	if (!res.ok) throw new Error(`Failed to get action: ${res.statusText}`);
 	return res.json();
 }
@@ -271,7 +286,7 @@ export async function listSystemApps(): Promise<RunningApp[]> {
 
 /** GET /api/actions/:id/logs — captured stdout/stderr ring buffer for an app. */
 export async function getActionLogs(id: string): Promise<LogLine[]> {
-	const res = await fetch(`${API_BASE}/actions/${encodeURIComponent(id)}/logs`);
+	const res = await fetch(`${API_BASE}/applets/${encodeURIComponent(id)}/logs`);
 	if (!res.ok) throw new Error(`Failed to get action logs: ${res.statusText}`);
 	return res.json();
 }
@@ -289,7 +304,7 @@ export async function adminReconcile(): Promise<{
 }
 
 /**
- * POST /api/admin/actions/import-git — clones a repo into `actions/<slug>/`
+ * POST /api/admin/applets/import-git — clones a repo into `actions/<slug>/`
  * and runs the standard scanner. Any folder under the slug containing a
  * `manifest.toml` becomes an action. Returns added/updated/removed ids.
  */
@@ -297,7 +312,7 @@ export async function importActionsFromGit(body: {
 	url: string;
 	ref?: string;
 }): Promise<{ added: string[]; updated: string[]; removed: string[] }> {
-	const res = await fetch(`${API_BASE}/admin/actions/import-git`, {
+	const res = await fetch(`${API_BASE}/admin/applets/import-git`, {
 		method: 'POST',
 		headers: { 'Content-Type': 'application/json' },
 		body: JSON.stringify(body)
@@ -318,7 +333,7 @@ export interface CreateActionRequest {
 }
 
 export async function createAction(body: CreateActionRequest): Promise<Action> {
-	const res = await fetch(`${API_BASE}/actions`, {
+	const res = await fetch(`${API_BASE}/applets`, {
 		method: 'POST',
 		headers: { 'Content-Type': 'application/json' },
 		body: JSON.stringify(body)
@@ -342,7 +357,7 @@ export interface PatchActionBody {
 }
 
 export async function patchAction(id: string, patch: PatchActionBody): Promise<Action> {
-	const res = await fetch(`${API_BASE}/actions/${encodeURIComponent(id)}`, {
+	const res = await fetch(`${API_BASE}/applets/${encodeURIComponent(id)}`, {
 		method: 'PATCH',
 		headers: { 'Content-Type': 'application/json' },
 		body: JSON.stringify(patch)
@@ -354,14 +369,28 @@ export async function patchAction(id: string, patch: PatchActionBody): Promise<A
 	return res.json();
 }
 
-export async function deleteAction(id: string): Promise<void> {
-	const res = await fetch(`${API_BASE}/actions/${encodeURIComponent(id)}`, {
+export async function deleteAction(id: string, dropData = false): Promise<void> {
+	const q = dropData ? '?drop_data=true' : '';
+	const res = await fetch(`${API_BASE}/applets/${encodeURIComponent(id)}${q}`, {
 		method: 'DELETE'
 	});
 	if (!res.ok) {
 		const err = await res.json().catch(() => ({ error: res.statusText }));
 		throw new Error(err.error || `Failed to delete action: ${res.statusText}`);
 	}
+}
+
+/** The private tables an applet owns — shown on the delete confirm so the user
+ *  can choose whether to also drop its data. Empty when it owns none. */
+export interface AppletData {
+	schema: string | null;
+	tables: string[];
+}
+
+export async function getAppletData(id: string): Promise<AppletData> {
+	const res = await fetch(`${API_BASE}/applets/${encodeURIComponent(id)}/data`);
+	if (!res.ok) return { schema: null, tables: [] };
+	return (await res.json()) as AppletData;
 }
 
 export interface TriggerActionResponse {
@@ -376,7 +405,7 @@ export async function runAction(
 	id: string,
 	payload?: Record<string, unknown>
 ): Promise<TriggerActionResponse> {
-	const res = await fetch(`${API_BASE}/actions/${encodeURIComponent(id)}/run`, {
+	const res = await fetch(`${API_BASE}/applets/${encodeURIComponent(id)}/run`, {
 		method: 'POST',
 		headers: { 'Content-Type': 'application/json' },
 		body: JSON.stringify(payload ? { payload } : {})
@@ -397,7 +426,7 @@ export async function listActionRuns(
 	if (opts?.status) params.set('status', opts.status);
 	const qs = params.toString();
 	const res = await fetch(
-		`${API_BASE}/actions/${encodeURIComponent(id)}/runs${qs ? `?${qs}` : ''}`
+		`${API_BASE}/applets/${encodeURIComponent(id)}/runs${qs ? `?${qs}` : ''}`
 	);
 	if (!res.ok) throw new Error(`Failed to list runs: ${res.statusText}`);
 	return res.json();
@@ -422,7 +451,7 @@ export async function listRuns(opts?: {
 export async function getJobStatus(
 	jobId: string
 ): Promise<{ id: string; status: string; records_processed: number; error: string | null }> {
-	const res = await fetch(`${API_BASE}/actions/runs/${jobId}`);
+	const res = await fetch(`${API_BASE}/applets/runs/${jobId}`);
 	if (!res.ok) throw new Error(`Failed to get run status: ${res.statusText}`);
 	return res.json();
 }
@@ -783,9 +812,136 @@ export interface DriveFile {
 	is_folder: boolean;
 	parent_id: string | null;
 	sha256_hash: string | null;
+	/** Universal-extraction state: pending | extracting | done | no_text | failed | skipped */
+	extraction_status: string;
 	deleted_at: string | null;
 	created_at: string;
 	updated_at: string;
+}
+
+/** Queue a file for (re-)extraction (retry after a failure, or after
+ * installing a missing extractor). */
+export async function reextractDriveFile(fileId: string): Promise<DriveFile> {
+	const res = await fetch(`${API_BASE}/drive/files/${fileId}/reextract`, { method: 'POST' });
+	if (!res.ok) {
+		const error = await res.json().catch(() => ({ error: res.statusText }));
+		throw new Error(error.error || 'Failed to queue extraction');
+	}
+	return res.json();
+}
+
+// ── Annotations (document highlights + margin notes, researcher-plan D2) ──
+
+export interface AnnotationRect {
+	x: number;
+	y: number;
+	w: number;
+	h: number;
+}
+
+export interface Annotation {
+	id: string;
+	file_id: string;
+	page_num: number | null;
+	quote_text: string;
+	quote_prefix: string;
+	quote_suffix: string;
+	rects: AnnotationRect[];
+	color: string;
+	note_md: string;
+	created_at: string;
+	updated_at: string;
+}
+
+export async function listAnnotations(fileId: string): Promise<Annotation[]> {
+	const res = await fetch(`${API_BASE}/annotations?file_id=${encodeURIComponent(fileId)}`);
+	if (!res.ok) throw new Error(`Failed to list annotations: ${res.statusText}`);
+	return res.json();
+}
+
+/** A highlight enriched with its file's name, for the notebook Highlights tab. */
+export interface NotebookAnnotation {
+	id: string;
+	file_id: string;
+	filename: string;
+	page_num: number | null;
+	quote_text: string;
+	color: string;
+	note_md: string;
+	created_at: string;
+	updated_at: string;
+}
+
+export async function listNotebookAnnotations(notebookId: string): Promise<NotebookAnnotation[]> {
+	const res = await fetch(`${API_BASE}/notebooks/${encodeURIComponent(notebookId)}/annotations`);
+	if (!res.ok) throw new Error(`Failed to list notebook annotations: ${res.statusText}`);
+	return res.json();
+}
+
+/** A file's highlights as markdown (blockquote + citation ref each). */
+export async function exportFileAnnotations(fileId: string): Promise<string> {
+	const res = await fetch(`${API_BASE}/annotations/export?file_id=${encodeURIComponent(fileId)}`);
+	if (!res.ok) throw new Error(`Failed to export annotations: ${res.statusText}`);
+	return res.text();
+}
+
+/** Every highlight across a notebook's documents, grouped by file. */
+export async function exportNotebookAnnotations(notebookId: string): Promise<string> {
+	const res = await fetch(
+		`${API_BASE}/notebooks/${encodeURIComponent(notebookId)}/annotations/export`
+	);
+	if (!res.ok) throw new Error(`Failed to export annotations: ${res.statusText}`);
+	return res.text();
+}
+
+/** Trigger a client-side download of markdown text. */
+export function downloadMarkdown(filename: string, markdown: string): void {
+	const url = URL.createObjectURL(new Blob([markdown], { type: 'text/markdown' }));
+	const a = document.createElement('a');
+	a.href = url;
+	a.download = filename.endsWith('.md') ? filename : `${filename}.md`;
+	a.click();
+	URL.revokeObjectURL(url);
+}
+
+export async function createAnnotation(body: {
+	file_id: string;
+	page_num?: number | null;
+	quote_text: string;
+	quote_prefix?: string;
+	quote_suffix?: string;
+	rects?: AnnotationRect[];
+	color?: string;
+	note_md?: string;
+}): Promise<Annotation> {
+	const res = await fetch(`${API_BASE}/annotations`, {
+		method: 'POST',
+		headers: { 'Content-Type': 'application/json' },
+		body: JSON.stringify(body)
+	});
+	if (!res.ok) {
+		const e = await res.json().catch(() => ({ error: res.statusText }));
+		throw new Error(e.error || 'Failed to create annotation');
+	}
+	return res.json();
+}
+
+export async function updateAnnotation(
+	id: string,
+	body: { color?: string; note_md?: string }
+): Promise<Annotation> {
+	const res = await fetch(`${API_BASE}/annotations/${id}`, {
+		method: 'PATCH',
+		headers: { 'Content-Type': 'application/json' },
+		body: JSON.stringify(body)
+	});
+	if (!res.ok) throw new Error(`Failed to update annotation: ${res.statusText}`);
+	return res.json();
+}
+
+export async function deleteAnnotation(id: string): Promise<void> {
+	const res = await fetch(`${API_BASE}/annotations/${id}`, { method: 'DELETE' });
+	if (!res.ok) throw new Error(`Failed to delete annotation: ${res.statusText}`);
 }
 
 export interface DriveUsage {
@@ -795,16 +951,16 @@ export interface DriveUsage {
 	drive_bytes: number;
 	/** ELT archives in /home/user/data-lake/ */
 	data_lake_bytes: number;
-	/** Quota limit based on tier */
+	/** Total capacity of the box's disk */
 	quota_bytes: number;
+	/** Free space actually left on that disk (other data lives there too) */
+	available_bytes: number;
 	/** Number of user files */
 	file_count: number;
 	/** Number of user folders */
 	folder_count: number;
 	/** Usage percentage (total_bytes / quota_bytes * 100) */
 	usage_percent: number;
-	/** Tier name (standard, pro) */
-	tier: string;
 }
 
 /**
@@ -1506,6 +1662,26 @@ export interface SharedPage {
 	share_token: string;
 }
 
+/**
+ * Append a markdown block to a page THROUGH Yjs (researcher-plan D4).
+ *
+ * Safe when the page is open in an editor: the server applies the insert to the
+ * authoritative Yjs doc and broadcasts it, so an open editor merges the block
+ * instead of being clobbered by a content replace.
+ */
+export async function appendToPage(pageId: string, markdown: string): Promise<{ content: string }> {
+	const res = await fetch(`${API_BASE}/pages/${encodeURIComponent(pageId)}/append`, {
+		method: 'POST',
+		headers: { 'Content-Type': 'application/json' },
+		body: JSON.stringify({ markdown })
+	});
+	if (!res.ok) {
+		const e = await res.json().catch(() => ({ error: res.statusText }));
+		throw new Error(e.error || 'Failed to append to page');
+	}
+	return res.json();
+}
+
 export async function createPageShare(pageId: string): Promise<PageShare> {
 	const res = await fetch(`${API_BASE}/pages/${pageId}/share`, { method: 'POST' });
 	if (!res.ok) throw new Error(`Failed to create share: ${res.statusText}`);
@@ -1709,10 +1885,7 @@ export function deleteByoKey<T = unknown>(sudoRequestId?: string): Promise<T> {
 	return apiSend<T>('DELETE', '/settings/byo-key', { sudo_request_id: sudoRequestId });
 }
 
-// ── MCP / tools ──────────────────────────────────────────────────────────────
-export function listTools<T = unknown>(): Promise<T> {
-	return apiGet<T>('/tools');
-}
+// ── MCP ──────────────────────────────────────────────────────────────────────
 export function listMcpServers<T = unknown>(): Promise<T> {
 	return apiGet<T>('/mcp/servers');
 }
@@ -1900,7 +2073,7 @@ export function getServerInfo<T = unknown>(): Promise<T> {
 	return apiGet<T>('/app/server-info');
 }
 export function triggerAction<T = unknown>(id: string): Promise<T> {
-	return apiSend<T>('POST', `/actions/${encodeURIComponent(id)}/trigger`);
+	return apiSend<T>('POST', `/applets/${encodeURIComponent(id)}/trigger`);
 }
 export function aiComplete<T = unknown>(req: Record<string, unknown>): Promise<T> {
 	return apiSend<T>('POST', '/ai/complete', req);

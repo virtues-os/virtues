@@ -9,7 +9,7 @@
 	import RefPicker from '$lib/components/RefPicker.svelte';
 	import ColorPickerModal from '$lib/components/sidebar/ColorPickerModal.svelte';
 	import { getRefSummary } from '$lib/utils/refSummary';
-	import { getPage, getDriveFile } from '$lib/api/client';
+	import { getPage, getDriveFile, uploadDriveFile, addNotebookItem, reextractDriveFile, listNotebookAnnotations, exportNotebookAnnotations, downloadMarkdown, type NotebookAnnotation } from '$lib/api/client';
 	import { askVirtues } from '$lib/stores/pendingPrompt.svelte';
 
 	let { tab }: { tab: Tab; active?: boolean } = $props();
@@ -44,6 +44,65 @@
 		if (notebookId) load();
 	});
 
+	// ---- Highlights across the notebook's documents (D2.5) -------------------
+	// Every annotation on the notebook's library files, grouped by file so the
+	// notebook reads as one marked-up corpus.
+	let highlights = $state<NotebookAnnotation[]>([]);
+	async function loadHighlights() {
+		const id = notebookId;
+		if (!id) {
+			highlights = [];
+			return;
+		}
+		try {
+			highlights = await listNotebookAnnotations(id);
+		} catch (e) {
+			console.error('[NotebookDetailView] Failed to load highlights:', e);
+			highlights = [];
+		}
+	}
+	$effect(() => {
+		if (notebookId) loadHighlights();
+	});
+	// [{ file_id, filename, items: [...] }] in the query's file/reading order.
+	const highlightGroups = $derived.by(() => {
+		const groups: { file_id: string; filename: string; items: NotebookAnnotation[] }[] = [];
+		for (const h of highlights) {
+			let g = groups.at(-1);
+			if (!g || g.file_id !== h.file_id) {
+				g = { file_id: h.file_id, filename: h.filename, items: [] };
+				groups.push(g);
+			}
+			g.items.push(h);
+		}
+		return groups;
+	});
+	const HL_TINT: Record<string, string> = {
+		yellow: '#ffd54a',
+		green: '#7ee081',
+		blue: '#6fb5ff',
+		pink: '#ff8fc7',
+	};
+	/** Download every highlight in this notebook as markdown (D4.3). */
+	async function exportHighlights() {
+		const id = notebookId;
+		if (!id) return;
+		try {
+			const md = await exportNotebookAnnotations(id);
+			downloadMarkdown(`${(detail?.name ?? 'notebook')}-highlights`, md);
+		} catch (e) {
+			console.error('[NotebookDetailView] export failed:', e);
+		}
+	}
+
+	function openHighlight(h: NotebookAnnotation) {
+		let route = `/drive/${h.file_id}`;
+		const params = new URLSearchParams();
+		if (h.page_num) params.set('page', String(h.page_num));
+		params.set('hl', h.id);
+		windowShellStore.openTabFromRoute(`${route}?${params.toString()}`);
+	}
+
 	// Chats filed into this room — sourced from the authoritative session list,
 	// not from membership rows, so removing a pinned member can't desync a chat.
 	const roomChats = $derived(
@@ -55,6 +114,8 @@
 
 	// ---- Resolve real member names (not the type slug) -----------------------
 	let memberNames = $state<Record<string, string>>({});
+	// Per-item extraction state for drive files (honest indexing chips).
+	let memberStatus = $state<Record<string, string>>({});
 	const requestedNames = new Set<string>();
 	async function resolveMemberName(url: string): Promise<string> {
 		if (url.startsWith('http://') || url.startsWith('https://')) {
@@ -72,7 +133,10 @@
 				if (p) return p.title?.trim() || 'Untitled page';
 			} else if (type === 'drive') {
 				const f = await getDriveFile(parts[2] ?? id);
-				if (f?.filename) return f.filename;
+				if (f) {
+					memberStatus = { ...memberStatus, [url]: f.extraction_status };
+					if (f.filename) return f.filename;
+				}
 			} else if (type === 'day' || type === 'year') {
 				return id;
 			}
@@ -134,6 +198,51 @@
 			thing: 'Thing', day: 'Day', year: 'Year', source: 'Source', drive: 'File',
 		};
 		return map[t] ?? t;
+	}
+
+	// Status chip for drive-file members: where the file is in the corpus
+	// pipeline. Empty for non-files and non-text files (no chip, no noise).
+	function statusChip(url: string): { label: string; retry: boolean } | null {
+		const s = memberStatus[url];
+		if (!s || s === 'skipped') return null;
+		switch (s) {
+			case 'done': return { label: 'indexed', retry: false };
+			case 'pending': return { label: 'queued', retry: false };
+			case 'extracting': return { label: 'extracting…', retry: false };
+			case 'no_text': return { label: 'no text layer', retry: false };
+			case 'failed': return { label: 'failed — retry', retry: true };
+			default: return null;
+		}
+	}
+
+	async function retryExtraction(url: string, e: Event) {
+		e.stopPropagation();
+		const fileId = url.split('/')[2];
+		if (!fileId) return;
+		try {
+			await reextractDriveFile(fileId);
+			memberStatus = { ...memberStatus, [url]: 'pending' };
+		} catch { /* chip stays; next open refreshes */ }
+	}
+
+	// ---- Drag-drop onto the notebook: upload + add in one motion -------------
+	let dropActive = $state(false);
+	async function handleDrop(e: DragEvent) {
+		e.preventDefault();
+		dropActive = false;
+		const id = notebookId;
+		const dropped = e.dataTransfer?.files;
+		if (!id || !dropped || dropped.length === 0) return;
+		for (const f of dropped) {
+			try {
+				const uploaded = await uploadDriveFile('uploads', f);
+				await addNotebookItem(id, `/drive/${uploaded.id}`);
+			} catch (err) {
+				console.error('[NotebookDetailView] drop-add failed:', err);
+			}
+		}
+		await load(true);
+		await loadHighlights();
 	}
 
 	function openUrl(url: string) {
@@ -275,7 +384,7 @@
 				{/if}
 
 				<div class="meta font-mono">
-					{pinnedItems.length} {pinnedItems.length === 1 ? 'source' : 'sources'}
+					{pinnedItems.length} {pinnedItems.length === 1 ? 'item' : 'items'}
 					<span class="dot">·</span>
 					{roomChats.length} {roomChats.length === 1 ? 'chat' : 'chats'}
 				</div>
@@ -290,15 +399,22 @@
 				</button>
 			</form>
 
-			<!-- Library — the sources that ground this notebook -->
-			<section class="section">
+			<!-- The notebook's items — what grounds its chats. Drop files here
+			     to upload + add in one motion. -->
+			<section
+				class="section"
+				class:drop-active={dropActive}
+				ondragover={(e) => { e.preventDefault(); dropActive = true; }}
+				ondragleave={() => (dropActive = false)}
+				ondrop={handleDrop}
+			>
 				<div class="eyebrow font-mono">
-					<span>Library</span>
-					<button class="add-btn" onclick={openPicker} title="Add a page, person, place, or link"><Icon icon="ri:add-line" width="14" /></button>
+					<span>Materials</span>
+					<button class="add-btn" onclick={openPicker} title="Add a page, person, place, file, or link"><Icon icon="ri:add-line" width="14" /></button>
 				</div>
 				{#if pinnedItems.length === 0}
 					<button class="add-row" onclick={openPicker}>
-						<Icon icon="ri:add-line" width="15" /> Add pages, people, places, or links
+						<Icon icon="ri:add-line" width="15" /> Add pages, people, places, or links — or drop files
 					</button>
 				{:else}
 					<ul class="ledger">
@@ -307,6 +423,14 @@
 								<button class="ledger-item" onclick={() => openUrl(it.url)} oncontextmenu={(e) => memberMenu(e, it.url)} title={memberNames[it.url] || it.url}>
 									<Icon icon={iconForUrl(it.url)} width="16" class="ledger-ic" />
 									<span class="ledger-name">{memberNames[it.url] || labelForUrl(it.url)}</span>
+									{#if statusChip(it.url)}
+										{@const chip = statusChip(it.url)}
+										{#if chip?.retry}
+											<span class="status-chip failed font-mono" role="button" tabindex="-1" onclick={(e) => retryExtraction(it.url, e)} onkeydown={(e) => e.key === 'Enter' && retryExtraction(it.url, e)}>{chip.label}</span>
+										{:else}
+											<span class="status-chip font-mono">{chip?.label}</span>
+										{/if}
+									{/if}
 									<span class="ledger-type font-mono">{memberType(it.url)}</span>
 								</button>
 								<button class="ledger-remove" title="Remove from Notebook" onclick={() => removeMember(it.url)}><Icon icon="ri:close-line" width="13" /></button>
@@ -315,6 +439,54 @@
 					</ul>
 				{/if}
 			</section>
+
+			<!-- Highlights across the notebook's documents. Shown even when empty
+			     (once there are documents) so the read→highlight→write loop is
+			     discoverable rather than hidden. -->
+			{#if highlights.length > 0 || pinnedItems.some((i) => i.url.startsWith('/drive/'))}
+				<section class="section">
+					<div class="eyebrow font-mono">
+						<span>Highlights</span>
+						<span class="eyebrow-right">
+							<span class="eyebrow-count">{highlights.length}</span>
+							{#if highlights.length}
+								<button class="add-btn" title="Export highlights as markdown" onclick={exportHighlights}>
+									<Icon icon="ri:download-line" width="13" />
+								</button>
+							{/if}
+						</span>
+					</div>
+					{#if highlights.length === 0}
+						<p class="empty">
+							Open a document and select text to highlight it. Highlights collect here,
+							and can be sent into a page as quotes with citations.
+						</p>
+					{/if}
+					{#each highlightGroups as g (g.file_id)}
+						<div class="hl-group">
+							<button class="hl-file" onclick={() => openUrl(`/drive/${g.file_id}`)} title={g.filename}>
+								<Icon icon="ri:file-line" width="13" class="hl-file-ic" />
+								<span class="hl-file-name">{g.filename}</span>
+								<span class="hl-file-count font-mono">{g.items.length}</span>
+							</button>
+							<ul class="ledger">
+								{#each g.items as h (h.id)}
+									<li class="hl-row">
+										<button class="hl-item" onclick={() => openHighlight(h)}>
+											<span class="hl-bar" style="background:{HL_TINT[h.color] ?? HL_TINT.yellow}"></span>
+											<span class="hl-body">
+												<span class="hl-quote">{h.quote_text}</span>
+												{#if h.note_md}<span class="hl-note">{h.note_md}</span>{/if}
+											</span>
+											{#if h.page_num}<span class="hl-page font-mono">p{h.page_num}</span>{/if}
+										</button>
+									</li>
+								{/each}
+							</ul>
+						</div>
+					{/each}
+				</section>
+			{/if}
 
 			<!-- Chats filed here -->
 			<section class="section">
@@ -358,6 +530,27 @@
 	.notebook-detail { width: 100%; height: 100%; overflow-y: auto; }
 	.inner { max-width: 720px; margin: 0 auto; padding: 3.5rem 2rem 6rem; }
 	.state { display: flex; align-items: center; gap: 8px; padding: 3rem 2rem; color: var(--color-foreground-muted); }
+
+	/* Per-file extraction chips + drop affordance */
+	.status-chip {
+		flex-shrink: 0;
+		padding: 1px 7px;
+		font-size: 0.625rem;
+		border-radius: 999px;
+		border: 1px solid var(--color-border);
+		color: var(--color-foreground-subtle);
+		white-space: nowrap;
+	}
+	.status-chip.failed {
+		border-color: var(--color-danger, #e5484d);
+		color: var(--color-danger, #e5484d);
+		cursor: pointer;
+	}
+	.section.drop-active {
+		outline: 1.5px dashed var(--color-primary);
+		outline-offset: 6px;
+		border-radius: 8px;
+	}
 	.state.error { color: var(--color-error, #dc2626); }
 
 	/* Header — serif title + one description (the app's title/description pattern) */
@@ -480,6 +673,45 @@
 	}
 	.ledger-row:hover .ledger-remove { opacity: 1; }
 	.ledger-remove:hover { color: var(--color-foreground); }
+
+	/* Highlights — grouped by file, each a quiet quote row that opens the
+	   viewer at the mark. */
+	.eyebrow-count {
+		font-size: 10px; padding: 1px 7px; border-radius: 999px;
+		background: var(--color-surface-elevated); color: var(--color-foreground-subtle, #9ca3af);
+	}
+	.eyebrow-right { display: flex; align-items: center; gap: 4px; }
+	.hl-group { margin-top: 0.9rem; }
+	.hl-file {
+		display: flex; align-items: center; gap: 7px; width: 100%; text-align: left;
+		padding: 0.3rem 0.25rem; border: none; background: transparent; cursor: pointer;
+		color: var(--color-foreground-muted);
+	}
+	.hl-file:hover { color: var(--color-foreground); }
+	.hl-file :global(.hl-file-ic) { color: var(--color-foreground-subtle, #9ca3af); flex-shrink: 0; }
+	.hl-file-name {
+		min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+		font-size: 0.78rem; font-weight: 500; letter-spacing: 0.01em;
+	}
+	.hl-file-count { flex-shrink: 0; font-size: 10px; color: var(--color-foreground-subtle, #9ca3af); }
+	.hl-row { display: flex; }
+	.hl-item {
+		display: flex; align-items: flex-start; gap: 10px; width: 100%; text-align: left;
+		padding: 0.45rem 0.25rem 0.45rem 0.4rem; border: none; background: transparent;
+		cursor: pointer; font: inherit; border-radius: 6px;
+	}
+	.hl-item:hover { background: color-mix(in srgb, var(--color-border) 30%, transparent); }
+	.hl-bar { flex-shrink: 0; width: 3px; align-self: stretch; border-radius: 2px; min-height: 1.1rem; }
+	.hl-body { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+	.hl-quote {
+		font-size: 0.875rem; line-height: 1.4; color: var(--color-foreground);
+		display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
+	}
+	.hl-note {
+		font-size: 0.78rem; line-height: 1.4; color: var(--color-foreground-muted);
+		display: -webkit-box; -webkit-line-clamp: 1; -webkit-box-orient: vertical; overflow: hidden;
+	}
+	.hl-page { flex-shrink: 0; font-size: 10px; color: var(--color-foreground-subtle, #9ca3af); padding-top: 2px; }
 
 	:global(.spin) { animation: spin 0.8s linear infinite; }
 	@keyframes spin { to { transform: rotate(360deg); } }

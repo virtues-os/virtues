@@ -351,7 +351,16 @@ pub async fn attach(pool: &PgPool, t: Target, owner_id: &str) -> Result<u32> {
     // copy of it is exactly what the first version was.
     let engine = crate::search::query::SemanticSearchEngine::new(std::sync::Arc::new(pool.clone()));
     let hits = engine
-        .search(&seed, None, None, None, None, None, Some(RECALL))
+        .search(
+            &seed,
+            None,
+            None,
+            None,
+            None,
+            None,
+            crate::search::ScopeMode::Weighted,
+            Some(RECALL),
+        )
         .await?;
 
     for h in hits {

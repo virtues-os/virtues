@@ -1,6 +1,7 @@
 //! HTTP server for data ingestion and API
 
 pub mod api;
+pub mod faces;
 pub mod webhook;
 pub mod yjs;
 
@@ -32,11 +33,6 @@ pub async fn run(client: Virtues, host: &str, port: u16) -> Result<()> {
         tracing::warn!("Failed to initialize usage limits: {}", e);
     }
 
-    // Initialize drive quota from TIER env var
-    if let Err(e) = crate::api::init_drive_quota(client.database.pool()).await {
-        tracing::warn!("Failed to initialize drive quota: {}", e);
-    }
-
     // Reap runs left in `running` by a crash/restart mid-execution, so a stale
     // lock doesn't survive a reboot. (The concurrency gate also age-bounds stale
     // runs at request time; this just keeps the runs table honest on boot.)
@@ -55,6 +51,12 @@ pub async fn run(client: Virtues, host: &str, port: u16) -> Result<()> {
     // scheduler resolves cron timezones. Idempotent. See docs/timezone-model.md.
     if let Err(e) = crate::api::profile::ensure_home_timezone(client.database.pool()).await {
         tracing::warn!("Failed to seed home_timezone: {}", e);
+    }
+
+    // Face-reader grants: idempotent default-deny SELECT surface for applet
+    // faces (data_*/wiki_* tables + applet_* schemas). Best-effort.
+    if let Err(e) = faces::ensure_applet_db_grants(client.database.pool()).await {
+        tracing::warn!("face reader grants failed: {e}");
     }
 
     // Eager identity bringup: ensure the loopback console device exists so the
@@ -234,6 +236,17 @@ pub async fn run(client: Virtues, host: &str, port: u16) -> Result<()> {
             get(api::get_server_status_handler),
         )
         .route("/internal/mark-ready", post(api::mark_server_ready_handler))
+        // Applet faces — the CORS-permissive, token-gated leaves only. The
+        // mint route is AUTHENTICATED (in protected_routes): the token is the
+        // sole gate on the data door, so obtaining one must require owner auth.
+        // The query bridge validates the token; the file routes serve inert
+        // assets. These carry no data without a token minted by the authed app.
+        .route(
+            "/api/face/query",
+            post(faces::face_query_handler).options(faces::face_query_preflight),
+        )
+        .route("/face/:action_id/", get(faces::face_index_handler))
+        .route("/face/:action_id/*path", get(faces::face_file_handler))
         // Public page sharing (token-based access, no session needed)
         .route("/api/s/:token", get(api::get_shared_page_handler))
         .route(
@@ -275,6 +288,10 @@ pub async fn run(client: Virtues, host: &str, port: u16) -> Result<()> {
     // Protected routes (authentication required via route_layer)
     // ============================================================
     let protected_routes = Router::new()
+        // Face-token mint — AUTHENTICATED. The authed app mints a short-lived
+        // per-applet token and passes it into the iframe `src` (?vt=). This is
+        // the gate on the whole face data door (faces.rs).
+        .route("/api/applets/:id/face-token", get(faces::mint_face_token_handler))
         // Timeline day (location chunks for movement map)
         .route("/api/timeline/day/:date", get(api::timeline_get_day_handler))
         // Today streams — location/calendar/audio spans, pre-synthesis (homepage)
@@ -343,16 +360,17 @@ pub async fn run(client: Virtues, host: &str, port: u16) -> Result<()> {
         .route("/api/devices/health", get(api::device_health_check_handler))
         // Actions API
         .route(
-            "/api/actions",
+            "/api/applets",
             get(api::list_actions_handler).post(api::create_action_handler),
         )
         .route(
-            "/api/actions/:id",
+            "/api/applets/:id",
             get(api::get_action_handler)
                 .patch(api::patch_action_handler)
                 .delete(api::delete_action_handler),
         )
-        .route("/api/actions/:id/run", post(api::trigger_action_handler))
+        .route("/api/applets/:id/run", post(api::trigger_action_handler))
+        .route("/api/applets/:id/data", get(api::get_action_data_handler))
         // Chat-export upload (Tier 3 one-time import). Per-route body limit
         // overrides the router-wide 105MB cap — ChatGPT exports can be larger.
         .route(
@@ -360,8 +378,8 @@ pub async fn run(client: Virtues, host: &str, port: u16) -> Result<()> {
             post(api::chat_import_upload_handler)
                 .layer(DefaultBodyLimit::max(512 * 1024 * 1024)),
         )
-        .route("/api/actions/:id/runs", get(api::list_action_runs_handler))
-        .route("/api/actions/runs/:id", get(api::get_action_run_handler))
+        .route("/api/applets/:id/runs", get(api::list_action_runs_handler))
+        .route("/api/applets/runs/:id", get(api::get_action_run_handler))
         .route("/api/runs", get(api::list_runs_handler))
         // Credentials API
         .route("/api/credentials", get(api::list_credentials_handler))
@@ -404,9 +422,6 @@ pub async fn run(client: Virtues, host: &str, port: u16) -> Result<()> {
             "/api/assistant-profile",
             put(api::update_assistant_profile_handler),
         )
-        // Tools API
-        .route("/api/tools", get(api::list_tools_handler))
-        .route("/api/tools/:id", get(api::get_tool_handler))
         // Models API
         .route("/api/models", get(api::list_models_handler))
         .route(
@@ -414,9 +429,6 @@ pub async fn run(client: Virtues, host: &str, port: u16) -> Result<()> {
             get(api::list_models_with_slots_handler),
         )
         .route("/api/models/:id", get(api::get_model_handler))
-        // Agents API
-        .route("/api/agents", get(api::list_agents_handler))
-        .route("/api/agents/:id", get(api::get_agent_handler))
         // Personas API
         .route("/api/personas", get(api::list_personas_handler))
         .route("/api/personas", post(api::create_persona_handler))
@@ -428,15 +440,6 @@ pub async fn run(client: Virtues, host: &str, port: u16) -> Result<()> {
             post(api::unhide_persona_handler),
         )
         .route("/api/personas/reset", post(api::reset_personas_handler))
-        // Seed Testing API
-        .route(
-            "/api/seed/pipeline-status",
-            get(api::seed_pipeline_status_handler),
-        )
-        .route(
-            "/api/seed/data-quality",
-            get(api::seed_data_quality_handler),
-        )
         // Metrics API
         .route(
             "/api/metrics/activity",
@@ -468,16 +471,33 @@ pub async fn run(client: Virtues, host: &str, port: u16) -> Result<()> {
         .route("/api/search/web", post(api::exa_search_handler))
         // Unsplash API (cover image search)
         .route("/api/unsplash/search", post(api::unsplash_search_handler))
-        // Storage API
+        // Annotations API (document highlights + margin notes)
         .route(
-            "/api/storage/objects",
-            get(api::list_storage_objects_handler),
+            "/api/annotations",
+            get(api::list_annotations_handler).post(api::create_annotation_handler),
         )
         .route(
-            "/api/storage/objects/:id/content",
-            get(api::get_storage_object_content_handler),
+            "/api/annotations/:id",
+            patch(api::update_annotation_handler).delete(api::delete_annotation_handler),
+        )
+        .route(
+            "/api/notebooks/:id/annotations",
+            get(api::list_notebook_annotations_handler),
+        )
+        // Bulk annotation export as markdown (D4.3)
+        .route(
+            "/api/annotations/export",
+            get(api::export_file_annotations_handler),
+        )
+        .route(
+            "/api/notebooks/:id/annotations/export",
+            get(api::export_notebook_annotations_handler),
         )
         // Drive API (user file storage)
+        .route(
+            "/api/drive/files/:id/reextract",
+            post(api::reextract_drive_file_handler),
+        )
         .route("/api/drive/usage", get(api::get_drive_usage_handler))
         .route("/api/drive/warnings", get(api::get_drive_warnings_handler))
         .route("/api/drive/files", get(api::list_drive_files_handler))
@@ -610,17 +630,15 @@ pub async fn run(client: Virtues, host: &str, port: u16) -> Result<()> {
             "/api/wiki/day/:date/streams",
             get(api::wiki_get_day_streams_handler),
         )
-        // Code Execution API (AI Sandbox)
-        .route("/api/code/execute", post(api::execute_code_handler))
         // Admin API — LLM-authoring on-ramp for new actions
         .route("/api/admin/reconcile", post(api::admin_reconcile_handler))
         .route(
-            "/api/admin/actions/import-git",
+            "/api/admin/applets/import-git",
             post(api::import_git_actions_handler),
         )
         // System (operator surface — apps + logs)
         .route("/api/system/apps", get(api::list_system_apps_handler))
-        .route("/api/actions/:id/logs", get(api::get_action_logs_handler))
+        .route("/api/applets/:id/logs", get(api::get_action_logs_handler))
         // Live host snapshot + persisted history for the System/Telemetry views.
         .route(
             "/api/system/telemetry",
@@ -665,6 +683,9 @@ pub async fn run(client: Virtues, host: &str, port: u16) -> Result<()> {
             "/api/pages/:id/backlinks",
             get(api::get_page_backlinks_handler),
         )
+        // Append a markdown block through Yjs (safe with an open editor) — the
+        // synthesis bridge's write path.
+        .route("/api/pages/:id/append", post(api::append_page_handler))
         // Page Share API
         .route(
             "/api/pages/:id/share",
@@ -722,9 +743,6 @@ pub async fn run(client: Virtues, host: &str, port: u16) -> Result<()> {
             "/api/notebooks/:id/items/reorder",
             put(api::reorder_notebook_items_handler),
         )
-        // Namespaces API
-        .route("/api/namespaces", get(api::list_namespaces_handler))
-        .route("/api/namespaces/:name", get(api::get_namespace_handler))
         // Chats API
         .route(
             "/api/chats",
@@ -777,7 +795,7 @@ pub async fn run(client: Virtues, host: &str, port: u16) -> Result<()> {
         .merge(protected_routes)
         .with_state(state.clone())
         .layer(middleware::from_fn(crate::middleware::security::headers_layer))
-        .layer(DefaultBodyLimit::max(105 * 1024 * 1024)); // 105MB (slightly above 100MB file limit for multipart overhead)
+        .layer(DefaultBodyLimit::max(260 * 1024 * 1024)); // 260MB (slightly above 250MB file limit for multipart overhead)
 
     // Add MCP routes to the same server
     let mcp_server = VirtuesMcpServer::new(client.database.pool().clone());

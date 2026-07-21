@@ -214,6 +214,18 @@ pub async fn install_inference(cfg: &InstallConfig) -> Result<()> {
     run_step("Start inference sidecars", cmd).await
 }
 
+/// libpdfium — native PDF text extraction for the `document_extraction`
+/// action (researcher-plan D1). Mode-independent (CPU parse; runs the same on
+/// the Dragon and a DIY box), SHA-verified from the models bucket like every
+/// other model asset, skipped when already present.
+pub async fn install_pdfium(cfg: &InstallConfig) -> Result<()> {
+    crate::download::fetch_asset(cfg, &cfg.pdfium_asset(), cfg.pdfium_lib_path()).await?;
+    let mut cmd = Command::new("chown");
+    cmd.args(["-R", "virtues:virtues", cfg.pdfium_dir().to_str().unwrap()]);
+    let _ = cmd.output().await;
+    Ok(())
+}
+
 /// Provision the Dragon NPU daemon: fetch the QAIRT context binaries +
 /// tokenizers, then install + start `virtues-qnnd.service`. Replaces the
 /// llama-server sidecars on our board — but serves the SAME llama-compatible
@@ -838,9 +850,11 @@ pub async fn write_env_file(
          VIRTUES_ATLAS_URL={atlas}\n\
          VIRTUES_API_URL={api}\n\
          VIRTUES_MODELS_DIR={models_dir}\n\
+         VIRTUES_PDFIUM_PATH={pdfium_path}\n\
          VIRTUES_ACTIONS_DIR={actions_dir}\n\
          VIRTUES_ACTIONS_BIN_DIR={actions_bin_dir}\n",
         static_dir = cfg.web_dir().display(),
+        pdfium_path = cfg.pdfium_lib_path().display(),
         storage_path = cfg.data_dir.join("lake").display(),
         atlas = cfg.atlas_url,
         api = cfg.virtues_api_url,

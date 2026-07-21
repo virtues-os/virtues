@@ -123,6 +123,7 @@ interface CreateChatConfig {
     getActivePageContext?: () => ActivePageContext | null; // Getter for active page context (bound page)
     getPersona?: () => string; // Getter for selected persona (per-chat)
     getAgentMode?: () => string; // Getter for agent mode (agent, chat, research)
+    getChatMode?: () => string; // Getter for retrieval scope: 'open' | 'scoped' (notebook chats)
     getTemporary?: () => boolean; // Getter for temporary/ghost mode (don't persist server-side)
 }
 
@@ -164,7 +165,7 @@ class ChatInstanceStore {
      * @param config - Configuration including conversationId and getModel getter
      */
     getOrCreate(config: CreateChatConfig): Chat {
-        const { conversationId, getModel, getNotebookId, getActivePageContext, getPersona, getAgentMode, getTemporary } = config;
+        const { conversationId, getModel, getNotebookId, getActivePageContext, getPersona, getAgentMode, getChatMode, getTemporary } = config;
         const existing = this.instances.get(conversationId);
 
         if (existing) {
@@ -187,6 +188,7 @@ class ChatInstanceStore {
                     const activePage = getActivePageContext?.();
                     const persona = getPersona?.() || 'default';
                     const agentMode = getAgentMode?.() || 'chat';
+                    const chatMode = getChatMode?.() || 'open';
                     const temporary = getTemporary?.() || false;
                     const entry = this.instances.get(conversationId);
                     const thoughtSignature = entry?.lastThoughtSignature;
@@ -199,6 +201,9 @@ class ChatInstanceStore {
                             messages,
                             persona,
                             agentMode,
+                            // Retrieval scope for notebook chats: 'open' (whole
+                            // graph, notebook up-weighted) or 'scoped' (grounded).
+                            chatMode,
                             // Ghost/temporary chat — backend should skip persistence when true.
                             ...(temporary && { temporary: true }),
                             // User's timezone for temporal awareness (IANA format, e.g., "America/Los_Angeles")

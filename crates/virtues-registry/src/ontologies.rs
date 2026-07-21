@@ -911,6 +911,72 @@ pub fn registered_ontologies() -> Vec<OntologyDescriptor> {
             //                    who  whom what when where why  how
             is_activation_signal: false,
         },
+        // ===== Documents (researcher-plan D1) =====
+        // One row per retrieval chunk of an extracted drive file. Universal
+        // extraction: every text-bearing upload lands here via the
+        // document_extraction cron; the generic indexer embeds rows for free.
+        OntologyDescriptor {
+            name: "uploaded_document",
+            display_name: "Documents",
+            description: "Extracted text chunks from files in Drive (PDF, DOCX, text, HTML)",
+            domain: "documents",
+            table_name: "extracted_document_chunks",
+            source_streams: vec![],
+            timestamp_column: "created_at",
+            end_timestamp_column: None,
+            embedding: Some(EmbeddingConfig {
+                embed_text_sql: "t.text",
+                content_type: "document",
+                // Title = the owning file's name (+ page when known), so search
+                // results and model citations read "paper.pdf · p. 6".
+                title_sql: Some(
+                    "(SELECT f.filename FROM app_drive_files f WHERE f.id = t.file_id) || \
+                     COALESCE(' · p. ' || t.page_num, '')",
+                ),
+                preview_sql: "SUBSTR(t.text, 1, 200)",
+                author_sql: None,
+                timestamp_sql: "t.created_at",
+            }),
+            extraction: None,
+            temporal_type: TemporalType::Discrete,
+            // Chunks are not day-page material — they surface via search, the
+            // Library, and citations, not the timeline.
+            day_source: None,
+            continuous_agg: None,
+            //                    who  whom what when where why  how
+            is_activation_signal: false,
+        },
+        // Highlights + margin notes on documents (researcher-plan D2). Your
+        // own marks are dense signal — embedding quote + note makes "what did
+        // I highlight about X" work, and annotations out-rank raw text.
+        OntologyDescriptor {
+            name: "document_annotation",
+            display_name: "Highlights",
+            description: "Highlights and margin notes on documents in Drive",
+            domain: "documents",
+            table_name: "app_annotations",
+            source_streams: vec![],
+            timestamp_column: "created_at",
+            end_timestamp_column: None,
+            embedding: Some(EmbeddingConfig {
+                embed_text_sql: "t.quote_text || CASE WHEN t.note_md <> '' \
+                                 THEN E'\\n\\n' || t.note_md ELSE '' END",
+                content_type: "annotation",
+                title_sql: Some(
+                    "(SELECT f.filename FROM app_drive_files f WHERE f.id = t.file_id) || \
+                     COALESCE(' · p. ' || t.page_num, '')",
+                ),
+                preview_sql: "SUBSTR(t.quote_text, 1, 200)",
+                author_sql: None,
+                timestamp_sql: "t.created_at",
+            }),
+            extraction: None,
+            temporal_type: TemporalType::Discrete,
+            day_source: None,
+            continuous_agg: None,
+            //                    who  whom what when where why  how
+            is_activation_signal: false,
+        },
     ]
 }
 

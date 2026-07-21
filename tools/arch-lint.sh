@@ -107,9 +107,9 @@ fi
 # ─── Lint 6: No AI provider SDKs in client code ────────────────────────────
 # AI provider keys live only on the server (virtues-api → Vercel AI Gateway).
 # Client code uses `@ai-sdk/*` (Vercel AI SDK) to talk to OUR backend, not
-# provider SDKs directly. Forbid direct-provider imports in web + iOS.
+# provider SDKs directly. Forbid direct-provider imports in web client code.
 violations=$(grep -rEn '@anthropic-ai/sdk|from[[:space:]]+["'\'']openai["'\'']|@google/generative-ai|@google-ai/generativelanguage|@aws-sdk/client-bedrock-runtime' \
-    apps/web/src/ apps/ios/Virtues/ 2>/dev/null \
+    apps/web/src/ 2>/dev/null \
     | grep -vE ':[[:space:]]*(///|//!|//|\*)' \
     || true)
 if [ -n "$violations" ]; then
@@ -121,11 +121,11 @@ fi
 
 # ─── Lint 7: No AI provider API keys in client code ────────────────────────
 # Catches both raw key formats and env-var refs that imply client-side keys.
-# virtues-api holds the AI_GATEWAY_API_KEY; nothing in apps/web or apps/ios
+# virtues-api holds the AI_GATEWAY_API_KEY; nothing in apps/web
 # should reference these names. Server-side code (virtues-core/, services/virtues-api/) is
 # excluded from this lint.
 violations=$(grep -rEn 'sk-ant-[A-Za-z0-9]|sk-proj-[A-Za-z0-9]|ANTHROPIC_API_KEY|OPENAI_API_KEY|GEMINI_API_KEY|GOOGLE_AI_API_KEY|AI_GATEWAY_API_KEY|XAI_API_KEY' \
-    apps/web/src/ apps/ios/Virtues/ 2>/dev/null \
+    apps/web/src/ 2>/dev/null \
     | grep -vE ':[[:space:]]*(///|//!|//|\*)' \
     || true)
 if [ -n "$violations" ]; then
@@ -148,23 +148,6 @@ if [ -n "$violations" ]; then
     report \
         "events/usage_log/request_log/audit_log table in virtues-api schema" \
         "virtues-api is counter-only by construction: per-token mutable integers, never an events ledger. A subpoena must yield 'token X has budget Y' — never a list of requests. Use counters in counters tables." \
-        "$violations"
-fi
-
-# ─── Lint 9: No stable device-ID as bearer token ───────────────────────────
-# The doc forbids using a stable device identifier (UUID, serial, etc.) as a
-# bearer token — that's a tracking identifier, not an entitlement proof.
-# WS-2 replaces apps/ios/Virtues/Models/DeviceConfiguration.swift:64 with
-# per-pair credentials from QR pairing; the file is excluded here until then.
-violations=$(grep -rEn 'deviceToken[[:space:]]*[:{=][[:space:]]*[^/]*\bdeviceId\b|\bdeviceToken\b[[:space:]]+\{[[:space:]]*deviceId' \
-    apps/ios/Virtues/ --include='*.swift' 2>/dev/null \
-    | grep -v 'apps/ios/Virtues/Models/DeviceConfiguration.swift' \
-    | grep -vE ':[[:space:]]*(///|//!|//|\*)' \
-    || true)
-if [ -n "$violations" ]; then
-    report \
-        "stable device-ID used as bearer token" \
-        "A stable device identifier (UUID, serial, etc.) used as a bearer is a tracking identifier — explicitly forbidden by the privacy charter. Use per-pair credentials provisioned at QR pairing (see WS-2)." \
         "$violations"
 fi
 

@@ -260,7 +260,7 @@ pub async fn mark_credential_status(
     Ok(())
 }
 
-/// Return the per-device fan-out map: `command-name → app_actions.id` for every
+/// Return the per-device fan-out map: `command-name → app_applets.id` for every
 /// ingest action row anchored to this device. The key is `command[0]` (the
 /// action's program name, e.g. `ios_ingest`), which the device uses to route a
 /// flush to `POST /webhook/{action_id}`. All iOS streams share the single
@@ -270,7 +270,7 @@ pub async fn fanout_action_ids(
     device_id: &str,
 ) -> Result<HashMap<String, String>> {
     let rows: Vec<(Option<String>, String)> = sqlx::query_as(
-        r#"SELECT command::jsonb->>0, id FROM app_actions
+        r#"SELECT command::jsonb->>0, id FROM app_applets
            WHERE device_id = $1 AND command IS NOT NULL"#,
     )
     .bind(device_id)
