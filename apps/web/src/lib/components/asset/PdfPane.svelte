@@ -689,8 +689,26 @@
 		if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "f") {
 			e.preventDefault();
 			openFind();
-		} else if (e.key === "Escape" && findOpen) {
-			closeFind();
+			return;
+		}
+		if (e.key === "Escape") {
+			if (findOpen) closeFind();
+			else if (sendAnno) sendAnno = null;
+			else if (activeAnno) activeAnno = null;
+			else if (sel) sel = null;
+			return;
+		}
+		// 1–4 highlight the live selection (or recolor the open note) — D4.4.
+		if (!e.metaKey && !e.ctrlKey && !e.altKey && /^[1-4]$/.test(e.key)) {
+			const color = Object.keys(HL_COLORS)[Number(e.key) - 1];
+			if (!color) return;
+			if (sel) {
+				e.preventDefault();
+				commitHighlight(color);
+			} else if (activeAnno) {
+				e.preventDefault();
+				setColor(color);
+			}
 		}
 	}
 
@@ -855,7 +873,10 @@
 				{/if}
 			</div>
 			{#if annotations.length === 0}
-				<p class="pdf-rail-empty">Select text in the document to highlight it.</p>
+				<p class="pdf-rail-empty">
+					Select text to highlight it — or press <b>1–4</b> for a color. Highlights
+					collect here, and can be sent into a page as a quote with a citation.
+				</p>
 			{:else}
 				<ul class="pdf-rail-list">
 					{#each annotations as a (a.id)}
@@ -887,15 +908,16 @@
 <!-- Selection toolbar: pick a color to highlight. -->
 {#if sel}
 	<div class="pdf-sel-toolbar" style="left:{sel.x}px; top:{sel.y + 10}px;">
-		{#each Object.keys(HL_COLORS) as c}
+		{#each Object.keys(HL_COLORS) as c, i}
 			<button
 				class="pdf-sel-swatch"
 				style="background:{colorCss(c)};"
-				title="Highlight {c}"
+				title="Highlight {c} ({i + 1})"
 				aria-label="Highlight {c}"
 				onclick={() => commitHighlight(c)}
 			></button>
 		{/each}
+		<span class="pdf-sel-hint">1–4</span>
 	</div>
 {/if}
 
@@ -1309,6 +1331,13 @@
 		border: 1px solid rgba(0, 0, 0, 0.2);
 		cursor: pointer;
 		padding: 0;
+	}
+	.pdf-sel-hint {
+		align-self: center;
+		padding-left: 2px;
+		font-size: 0.625rem;
+		color: var(--color-foreground-subtle);
+		white-space: nowrap;
 	}
 	.pdf-sel-swatch.active {
 		outline: 2px solid var(--color-primary);
