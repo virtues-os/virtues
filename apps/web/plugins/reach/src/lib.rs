@@ -123,8 +123,21 @@ async fn recover_inner() -> i32 {
 // protection encrypts it at rest; keeping it a plain file (vs the Keychain)
 // keeps the BoxStore in pure Rust. Hardening to the iOS Keychain is a follow-up.
 
+/// Base dir injected from the plugin's `setup()` via Tauri's path API. Set on
+/// Android, where `dirs::data_dir()` is unreliable: with no XDG vars and no
+/// `HOME` it falls through to `"."`, and the process CWD on Android is `/` —
+/// read-only, so both `box.json` and `outbox.sqlite` fail to write. Tauri's
+/// `app_data_dir()` resolves the real app-private sandbox instead.
+///
+/// Left unset on desktop/iOS, which keep the `dirs`-derived path they already
+/// use (changing it would strand existing pairings).
+static BASE_DIR: std::sync::OnceLock<PathBuf> = std::sync::OnceLock::new();
+
 /// `<AppSupport>/virtues/` — the app container dir holding creds + the outbox.
 fn virtues_dir() -> PathBuf {
+  if let Some(base) = BASE_DIR.get() {
+    return base.join("virtues");
+  }
   let base = dirs::data_dir()
     .or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join("Library/Application Support")))
     .unwrap_or_else(|| PathBuf::from("."));
@@ -530,6 +543,18 @@ pub fn init<R: Runtime>() -> TauriPlugin<R> {
       commands::drain_now
     ])
     .setup(|app, _api| {
+      // Android: pin the storage base to the app-private sandbox BEFORE anything
+      // resolves virtues_dir() — both ReachState::new() (box.json) and
+      // init_outbox() (outbox.sqlite) read it below. See BASE_DIR.
+      #[cfg(target_os = "android")]
+      {
+        match app.path().app_data_dir() {
+          Ok(dir) => {
+            let _ = BASE_DIR.set(dir);
+          }
+          Err(e) => tracing::error!(error = %e, "app_data_dir unavailable — reach storage will fail"),
+        }
+      }
       // Keep the Swift-called C ABI (virtues_enqueue) in the linked static lib.
       ffi::keep_symbols();
       let state = ReachState::new();
