@@ -440,18 +440,28 @@
 				{/if}
 			</section>
 
-			<!-- Highlights across the notebook's documents -->
-			{#if highlights.length > 0}
+			<!-- Highlights across the notebook's documents. Shown even when empty
+			     (once there are documents) so the read→highlight→write loop is
+			     discoverable rather than hidden. -->
+			{#if highlights.length > 0 || pinnedItems.some((i) => i.url.startsWith('/drive/'))}
 				<section class="section">
 					<div class="eyebrow font-mono">
 						<span>Highlights</span>
 						<span class="eyebrow-right">
 							<span class="eyebrow-count">{highlights.length}</span>
-							<button class="add-btn" title="Export highlights as markdown" onclick={exportHighlights}>
-								<Icon icon="ri:download-line" width="13" />
-							</button>
+							{#if highlights.length}
+								<button class="add-btn" title="Export highlights as markdown" onclick={exportHighlights}>
+									<Icon icon="ri:download-line" width="13" />
+								</button>
+							{/if}
 						</span>
 					</div>
+					{#if highlights.length === 0}
+						<p class="empty">
+							Open a document and select text to highlight it. Highlights collect here,
+							and can be sent into a page as quotes with citations.
+						</p>
+					{/if}
 					{#each highlightGroups as g (g.file_id)}
 						<div class="hl-group">
 							<button class="hl-file" onclick={() => openUrl(`/drive/${g.file_id}`)} title={g.filename}>
