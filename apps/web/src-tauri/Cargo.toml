@@ -53,20 +53,26 @@ virtues-reach-client = { path = "../../../crates/virtues-reach-client" }
 
 # iOS-only: raw objc for the appearance bridge (set_appearance flips the UIKit
 # windows' overrideUserInterfaceStyle so the status bar / keyboard track the
-# app theme's darkness — tao's set_theme is a no-op on iOS).
+# app theme's darkness — tao's set_theme is a no-op on iOS), plus the six native
+# collectors. The collectors are iOS-ONLY on purpose: each is a Rust shim over a
+# Swift half under `plugins/*/ios/`, with no Android Kotlin counterpart yet. The
+# Android app is a VIEWER — gating them here means Android never has to compile
+# (or link) collector crates that have no native implementation on that target.
+# Each one un-gates to `cfg(any(ios, android))` when its Kotlin half lands.
 [target.'cfg(target_os = "ios")'.dependencies]
 objc2 = "0.6"
-
-# Mobile-only: the native collectors plugin (CLLocationManager + SQLite) and the
-# in-process reach plugin (pair + iroh loopback).
-[target.'cfg(any(target_os = "ios", target_os = "android"))'.dependencies]
 tauri-plugin-location-probe = { path = "../plugins/location-probe" }
-tauri-plugin-reach = { path = "../plugins/reach" }
 tauri-plugin-health = { path = "../plugins/health" }
 tauri-plugin-eventkit = { path = "../plugins/eventkit" }
 tauri-plugin-contacts = { path = "../plugins/contacts" }
 tauri-plugin-finance = { path = "../plugins/finance" }
 tauri-plugin-audio = { path = "../plugins/audio" }
+
+# Mobile-only: the in-process reach plugin (pair + iroh loopback). This is the
+# whole Android app — reach + the webview — and the one plugin that must build
+# on both mobile targets.
+[target.'cfg(any(target_os = "ios", target_os = "android"))'.dependencies]
+tauri-plugin-reach = { path = "../plugins/reach" }
 
 [features]
 default = ["custom-protocol"]

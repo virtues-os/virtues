@@ -196,7 +196,7 @@ this is unverified for our exact deps. Spike it before investing:
 NDK + `cargo-ndk` or the linker configured). If reach doesn't build/run on
 Android, the whole Android app is blocked and we learn it in an hour, not a week.
 
-### C1 — Re-gate deps so Android compiles reach-only (code, no toolchain)
+### C1 — Re-gate deps so Android compiles reach-only — ✅ DONE
 
 - **Cargo.toml:** move the 6 collector plugin deps from
   `cfg(any(ios, android))` to `cfg(target_os = "ios")`; keep `reach` on
@@ -208,14 +208,34 @@ Android, the whole Android app is blocked and we learn it in an hour, not a week
   single-instance). Android boots reach + the webview only.
 - Verifiable now: iOS/desktop still compile. Android compile needs C0's toolchain.
 
-### C2 — Android storage (reach-plugin code)
+**Verified:** `cargo check` green on macOS desktop and `aarch64-apple-ios`.
+(Both need `TAURI_CONFIG='{"bundle":{"externalBin":[]}}'` in a fresh checkout —
+`binaries/` holds only `.gitkeep`, the sidecars are CI-built. Pre-existing, not
+related to this work.)
+
+### C1b — Split the capabilities file — ✅ DONE
+
+Not in the original scope, but C1 forces it: `capabilities/mobile.json` declared
+`platforms: ["iOS", "android"]` and listed `health:default`, `audio:default` &c.
+Once the collectors stop compiling on Android, ACL resolution fails **at build
+time**. Split into `mobile.json` (`platforms: ["iOS"]`, unchanged permissions) +
+a new `android.json` (`core:default`, `core:window:allow-create`,
+`reach:default`). `gen/schemas/*.json` regenerate accordingly and are tracked.
+
+### C2 — Android storage (reach-plugin code) — ✅ DONE
 
 The reach `FileStore` uses `dirs::data_dir()` (`virtues_dir()`), which is
-unreliable on Android. Resolve `box.json`'s dir from the Tauri app-data dir
-(`app.path().app_data_dir()`) on Android — likely refactor `FileStore` to accept
-an injected base dir set from the plugin's `setup(app)` (iOS keeps its Keychain
-bridge; desktop keeps `dirs::data_dir()`). App-private storage is sandboxed;
-Android Keystore hardening is a later follow-up (parallels the iOS Keychain).
+unreliable on Android: with no XDG vars and no `HOME` it falls through to `"."`,
+and the process CWD on Android is `/` — read-only, so **both** `box.json` and
+`outbox.sqlite` fail to write.
+
+Implemented as a `BASE_DIR: OnceLock<PathBuf>` in the reach plugin, set from
+`app.path().app_data_dir()` at the top of the plugin's `setup()` — before
+`ReachState::new()` and `init_outbox()`, which are the two callers that resolve
+`virtues_dir()`. Set on Android only; unset elsewhere, so desktop and iOS keep
+the exact `dirs`-derived path they use today (changing it would strand existing
+pairings). App-private storage is sandboxed; Android Keystore hardening is a
+later follow-up (parallels the iOS Keychain).
 
 ### C3 — `tauri android init` + Android project config (needs toolchain)
 
@@ -225,20 +245,66 @@ Android Keystore hardening is a later follow-up (parallels the iOS Keychain).
   `network_security_config.xml` permitting cleartext to `127.0.0.1`, referenced
   from `AndroidManifest.xml`.
 - **Manifest:** `INTERNET` only (no collector permissions for views).
-- **Capabilities:** confirm `capabilities/mobile.json` targets `android` for the
-  reach commands (`plugin:reach|pair`/`discover`/…).
+- **Capabilities:** done in C1b — `android.json` carries the reach commands.
+- **`tauri.android.conf.json`:** mirror `tauri.ios.conf.json` — same
+  `beforeBuildCommand` (`pnpm build` + the `200.html` / `mobile-pair.html`
+  copies), `frontendDist: "../build"`, `externalBin: []`, mobile CSP. Identifier
+  stays `com.virtues.app`.
 - **Icons:** `tauri icon` already emits the Android `mipmap` set — reuse.
+- `gen/apple` is tracked, so track `gen/android` too.
 
 ### C4 — Build + run (needs toolchain)
 
-- `tauri android dev` (emulator/device) → confirm it boots reach-only, loads
-  `mobile-pair.html`, pairs by code, and loads the box UI over the loopback.
-- `tauri android build` → APK/AAB.
+- `tauri android dev --target aarch64` (device) → confirm it boots reach-only,
+  loads `mobile-pair.html`, pairs by code, and loads the box UI over the
+  loopback. Then a background/foreground cycle.
+- `tauri android build --apk --target aarch64` → sideloadable APK.
 
 ### C5 — Signing + CI
 
-- Android keystore; a `release-android.yml` (APK/AAB). Debug/unsigned for the
-  first validation, signed release after.
+- **ABI: `arm64-v8a` only** (decided). Every device sold since ~2017; the app
+  carries native Rust (iroh/QUIC/bundled SQLite) so each extra ABI is a full
+  extra compile. `armeabi-v7a` (32-bit ARM) and `x86_64` (emulators on Intel
+  hosts) are a one-line matrix addition if they ever come up — an arm64 emulator
+  runs natively on Apple Silicon, so local emulator testing isn't lost.
+- **Distribution: sideloaded APK first**, Play Store later (D-U-N-S in flight as
+  of 2026-07-21 for an organization account). Emit `--apk` now; add `--aab` when
+  Play is live — Play requires AAB + Play App Signing, where Google holds the
+  real key and the keystore below becomes the *upload* key.
+- `release-android.yml` on `ubuntu-latest`, tags `android-v*` + rolling
+  `android-edge` (mirrors `release-mac.yml`): setup-java 17 → setup-android →
+  `rustup target add aarch64-linux-android` → rust-cache → `pnpm install` →
+  `tauri android build --apk --target aarch64` → sign → gh-release. Ship an
+  unsigned debug APK first to prove Android compiles reach in CI, then sign.
+- Keystore + four repo secrets (`ANDROID_KEYSTORE_BASE64`,
+  `ANDROID_KEYSTORE_PASSWORD`, `ANDROID_KEY_ALIAS`, `ANDROID_KEY_PASSWORD`) are
+  an **owner action** — the key must be generated and stored by a human.
+
+### Known debt — the ingest action name
+
+`init_outbox` passes `"ios_ingest"` as the ingest key on every platform. This is
+**not** a client-side string: it names a box-side action
+(`actions/ios_ingest/{main.rs,manifest.toml}`, a template-managed `app_actions`
+row) whose concrete id the box hands back at pairing as
+`action_ids: {"ios_ingest": "act_…"}`; the device POSTs to `/webhook/{action_id}`
+(`plugins/reach/src/upload.rs`).
+
+Deliberately **left alone** for this milestone:
+
+- Android is a viewer — all six collectors are gated off, nothing ever enqueues,
+  so the key is unreachable code on that target.
+- Setting `"android_ingest"` client-side without a box action changes nothing:
+  the lookup falls through `ios_ingest` → `values().next()` and posts to the iOS
+  action anyway. A cosmetic string that lies.
+- Building a real `android_ingest` action would fork ingest logic in two
+  permanently, to encode a platform name the `stream` field already carries.
+- The right shape is one platform-neutral `mobile_ingest` — but that rename hits
+  the **shipping** iOS app: already-paired iPhones hold the old `act_…` id, and
+  the template GC pass (`action_templates/mod.rs`) deletes renamed rows, so their
+  uploads 404 until re-pair.
+
+Do the rename as its own scoped change when the first Android collector lands,
+with an alias/compat window for paired iPhones.
 
 ### Deferred (not this workstream)
 
@@ -277,10 +343,23 @@ Android Keystore hardening is a later follow-up (parallels the iOS Keychain).
    Minor wart: the `tray-icon` feature stays compiled on Linux, so the build
    pulls `libayatana-appindicator3-dev` even though no tray is shown; a future
    cleanup can gate that feature off non-macOS for a leaner binary.
-3. **C — Android (view)** — 📋 SCOPED (see Workstream C above). Sequence: C0
-   iroh-on-Android spike → C1 re-gate deps reach-only → C2 Android storage → C3
-   `tauri android init` + cleartext/manifest → C4 build/run → C5 signing/CI.
-   C1/C2 are code-now; C0/C3–C5 need the Android SDK/NDK (local on macOS or CI).
+3. **C — Android (view)** — 🚧 IN PROGRESS, branch `feat/android` (off
+   `cross-platform-apps`). **C1 + C1b + C2 are ✅ DONE** — collectors gated to
+   iOS, capabilities split, storage base injected; macOS + iOS `cargo check`
+   green. Remaining, all gated on the Android SDK/NDK (nothing is installed on
+   the dev Mac as of 2026-07-21 — no JDK, SDK, NDK, or Android rustup targets):
+   **C0** iroh-on-Android spike (the go/no-go — `cargo ndk -t arm64-v8a build -p
+   virtues-reach-client`, then push a smoke bin to the device over `adb`, because
+   compiling does **not** prove QUIC works under Android's network stack) → C3
+   `tauri android init` + cleartext/manifest → C4 build/run on device → C5
+   signing/CI.
+
+   Toolchain, in order: `brew install --cask android-studio` (its bundled JBR is
+   the JDK — there is none on the machine otherwise), SDK Manager →
+   Platform-Tools + Build-Tools + Command-line Tools + NDK (Side by side) + API
+   35, then `JAVA_HOME` / `ANDROID_HOME` / `NDK_HOME` per Tauri's prerequisites,
+   `rustup target add aarch64-linux-android`, `cargo install cargo-ndk`. Gate:
+   `adb devices` sees the phone and `pnpm tauri info` finds the SDK/NDK.
 
 (Lower-risk alternative if you'd rather not touch the shipping app first: run
 B and C on in-process, leave macOS on its sidecar, and do Phase 0 last. Costs you
