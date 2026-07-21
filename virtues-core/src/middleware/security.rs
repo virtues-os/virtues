@@ -25,7 +25,7 @@ pub async fn headers_layer(req: Request, next: Next) -> Response {
     // `X-Frame-Options: DENY` / `frame-ancestors 'none'`, and they set their
     // own sandbox-appropriate CSP which this layer must not clobber.
     let path = req.uri().path();
-    let is_face = path.starts_with("/face/") || path.starts_with("/service/");
+    let is_face = path.starts_with("/face/");
 
     let mut resp = next.run(req).await;
     let h = resp.headers_mut();

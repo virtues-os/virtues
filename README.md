@@ -273,7 +273,7 @@ virtues/
 │   │   ├── storage/         # S3 and local filesystem abstraction
 │   │   └── tools/           # AI tool implementations (SQL, search, code, pages)
 │   └── migrations/          # Postgres schema migrations
-├── actions/                 # Extension system: ingestion + behavior as supervised subprocesses (functions/services/views)
+├── actions/                 # Extension system: ingestion + behavior as subprocesses (functions/views)
 ├── crates/                  # Shared Rust libraries
 │   ├── virtues-helpers/     # Shared helpers for action authors (auth, db, crypto, wire contract)
 │   ├── virtues-wg/          # WireGuard engine (privileged daemon)

@@ -49,7 +49,6 @@ fn truncate_utf8_bytes(s: &str, max: usize) -> String {
 ///
 /// `runtime` declares how the action executes:
 ///   - `function` — fork-per-trigger CLI (today's pattern)
-///   - `service`  — long-running supervised HTTP server, dispatched via proxy
 ///   - `view`     — pure Svelte component, never invoked server-side
 ///
 /// `command` is the argv to spawn (JSON array in SQL). A bare `command[0]`
@@ -80,9 +79,6 @@ pub struct Action {
     /// Set when the lifecycle completed; archived applets also get
     /// `enabled = FALSE` so the scheduler skips them naturally.
     pub archived_at: Option<crate::types::Timestamp>,
-    /// Command applets: run as a long-lived supervised service (the old
-    /// `runtime = 'service'`) instead of fork-per-trigger.
-    pub supervise: bool,
     pub created_at: crate::types::Timestamp,
     pub updated_at: crate::types::Timestamp,
 }
@@ -882,19 +878,16 @@ pub fn action_from_row(row: &sqlx::postgres::PgRow) -> Result<Action> {
         command,
         until: row.try_get("until").ok().flatten(),
         archived_at: row.try_get("archived_at").ok().flatten(),
-        supervise: row.try_get("supervise").unwrap_or(false),
         created_at: row.try_get("created_at")?,
         updated_at: row.try_get("updated_at")?,
     })
 }
 
 /// Derived display shape — the old `runtime` taxonomy, computed from fields:
-/// supervise ⇒ service; no command and no agent ⇒ view (face-only);
-/// otherwise function. Presentation only; nothing executes off this.
+/// no command and no agent ⇒ view (face-only); otherwise function.
+/// Presentation only; nothing executes off this.
 pub fn derived_runtime(a: &Action) -> &'static str {
-    if a.supervise {
-        "service"
-    } else if a.command.as_ref().is_none_or(|c| c.is_empty())
+    if a.command.as_ref().is_none_or(|c| c.is_empty())
         && a.agent.as_deref().is_none_or(|s| s.trim().is_empty())
     {
         "view"

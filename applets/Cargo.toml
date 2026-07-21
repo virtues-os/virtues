@@ -100,12 +100,6 @@ path = "plaid_liabilities_sync/main.rs"
 name = "chat_import"
 path = "chat_import/main.rs"
 
-# ── Example app-runtime action ──────────────────────────────────────────────
-
-[[bin]]
-name = "echo_app"
-path = "echo_app/main.rs"
-
 [dependencies]
 virtues = { path = "../virtues-core" }
 virtues-helpers = { path = "../crates/virtues-helpers" }
@@ -138,5 +132,3 @@ urlencoding = "2.1"
 tract-onnx = "0.21"
 realfft = "3"
 symphonia = { version = "0.5", default-features = false, features = ["isomp4", "aac"] }
-# axum: for `app`-runtime example (echo_app) and any other long-running HTTP app actions
-axum = { version = "0.7", features = ["json"] }
