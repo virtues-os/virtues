@@ -16,10 +16,15 @@
 	// /drive/file_xxx[?page=N] → file_xxx (+ optional page deep link)
 	const lastSegment = $derived(tab.route.split("/").filter(Boolean).pop() ?? "");
 	const fileId = $derived(lastSegment.split("?")[0]);
+	const routeParams = $derived(new URLSearchParams(lastSegment.split("?")[1] ?? ""));
 	const pageParam = $derived.by(() => {
-		const n = Number(new URLSearchParams(lastSegment.split("?")[1] ?? "").get("page"));
+		const n = Number(routeParams.get("page"));
 		return Number.isFinite(n) && n > 0 ? n : undefined;
 	});
+	// Citation landing targets (D2.4): ?q=<quote> flashes the passage,
+	// ?hl=<annotation_id> flashes the highlight.
+	const quoteParam = $derived(routeParams.get("q") ?? undefined);
+	const hlParam = $derived(routeParams.get("hl") ?? undefined);
 	const downloadUrl = $derived(`/api/drive/files/${fileId}/download`);
 	// Viewer surfaces render in place; the Download button keeps attachment.
 	const viewUrl = $derived(`${downloadUrl}?disposition=inline`);
@@ -137,7 +142,13 @@
 		{:else if kind === "pdf"}
 			<!-- pdf.js reader: text layer + page addressing (?page=N).
 			     Highlight / margin-notes / OCR: deferred (net-new persistence). -->
-			<PdfPane url={viewUrl} {fileId} initialPage={pageParam} />
+			<PdfPane
+				url={viewUrl}
+				{fileId}
+				initialPage={pageParam}
+				initialQuote={quoteParam}
+				initialHighlight={hlParam}
+			/>
 		{:else if kind === "csv"}
 			<CsvPane url={viewUrl} filename={file?.filename ?? ""} />
 		{:else if kind === "markdown" || kind === "code" || kind === "plain"}
