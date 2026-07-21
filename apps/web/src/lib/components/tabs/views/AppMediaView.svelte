@@ -9,6 +9,7 @@
 	import Icon from "$lib/components/Icon.svelte";
 	import { EmptyState, LoadingState, ErrorState } from "$lib";
 	import { getDriveMedia } from "$lib/api/client";
+	import { backendUrl } from "$lib/config/backend";
 	import { createResource } from "$lib/utils/resource.svelte";
 	import { formatDate } from "$lib/utils/dateUtils";
 
@@ -74,7 +75,7 @@
 					<div class="flex aspect-square items-center justify-center bg-surface-elevated">
 						{#if isImage(f)}
 							<img
-								src={`/api/drive/files/${f.id}/download`}
+								src={backendUrl(`/api/drive/files/${f.id}/download`)}
 								alt={f.filename}
 								loading="lazy"
 								class="h-full w-full object-cover"

@@ -25,6 +25,21 @@ export function getBackendOrigin(): string {
   return backendOrigin;
 }
 
+/**
+ * Absolute URL for a backend path that the browser resolves from MARKUP rather
+ * than through `window.fetch` — `<iframe src>`, `<img src>`, `<video src>`,
+ * CSS `url()`. The fetch shim below cannot see these: it wraps `window.fetch`,
+ * and an attribute-driven load never goes through it. On mobile they would
+ * otherwise resolve against the bundled `tauri://` origin, which serves no
+ * backend routes, and fail silently (an empty iframe, a broken image).
+ *
+ * No-op on desktop, where `backendOrigin` is empty and the path is already
+ * same-origin.
+ */
+export function backendUrl(path: string): string {
+  return backendOrigin ? backendOrigin + path : path;
+}
+
 /** Base WebSocket URL (y-websocket appends room/pageId). */
 export function getWsUrl(path = '/ws/yjs'): string {
   if (backendOrigin) {
