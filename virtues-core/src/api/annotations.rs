@@ -111,6 +111,97 @@ pub async fn list_notebook_annotations(
     .map_err(|e| Error::Database(format!("Failed to list notebook annotations: {e}")))
 }
 
+/// Render a file's highlights as markdown (researcher-plan D4.3).
+///
+/// Each highlight becomes a blockquote plus a citation ref that lands back on
+/// the mark, so an exported set of notes stays traceable to its source.
+pub async fn export_file_annotations_md(pool: &PgPool, file_id: &str) -> Result<String> {
+    let filename: Option<String> =
+        sqlx::query_scalar("SELECT filename FROM app_drive_files WHERE id = $1")
+            .bind(file_id)
+            .fetch_optional(pool)
+            .await
+            .map_err(|e| Error::Database(format!("export: filename lookup: {e}")))?;
+    let name = filename.unwrap_or_else(|| file_id.to_string());
+    let annos = list_annotations(pool, file_id).await?;
+
+    let mut out = format!("# Highlights — {name}\n");
+    if annos.is_empty() {
+        out.push_str("\n_No highlights yet._\n");
+        return Ok(out);
+    }
+    for a in &annos {
+        out.push('\n');
+        out.push_str(&render_annotation_md(&name, file_id, a));
+        out.push('\n');
+    }
+    Ok(out)
+}
+
+/// Render every highlight across a notebook's library documents, grouped by
+/// file in reading order.
+pub async fn export_notebook_annotations_md(pool: &PgPool, notebook_id: &str) -> Result<String> {
+    let notebook: Option<String> =
+        sqlx::query_scalar("SELECT name FROM app_notebooks WHERE id = $1")
+            .bind(notebook_id)
+            .fetch_optional(pool)
+            .await
+            .map_err(|e| Error::Database(format!("export: notebook lookup: {e}")))?;
+    let title = notebook.unwrap_or_else(|| notebook_id.to_string());
+    let annos = list_notebook_annotations(pool, notebook_id).await?;
+
+    let mut out = format!("# Highlights — {title}\n");
+    if annos.is_empty() {
+        out.push_str("\n_No highlights yet._\n");
+        return Ok(out);
+    }
+    let mut current = String::new();
+    for a in &annos {
+        if a.file_id != current {
+            out.push_str(&format!("\n## {}\n", a.filename));
+            current = a.file_id.clone();
+        }
+        let anno = Annotation {
+            id: a.id.clone(),
+            file_id: a.file_id.clone(),
+            page_num: a.page_num,
+            quote_text: a.quote_text.clone(),
+            quote_prefix: String::new(),
+            quote_suffix: String::new(),
+            rects: serde_json::json!([]),
+            color: a.color.clone(),
+            note_md: a.note_md.clone(),
+            created_at: a.created_at.clone(),
+            updated_at: a.updated_at.clone(),
+        };
+        out.push('\n');
+        out.push_str(&render_annotation_md(&a.filename, &a.file_id, &anno));
+        out.push('\n');
+    }
+    Ok(out)
+}
+
+/// One highlight → blockquote + citation ref (shared by both exporters and
+/// mirrored by the client-side "send to page" formatting).
+fn render_annotation_md(name: &str, file_id: &str, a: &Annotation) -> String {
+    let label = match a.page_num {
+        Some(p) => format!("{name}, p. {p}"),
+        None => name.to_string(),
+    };
+    let mut route = format!("/drive/{file_id}?");
+    if let Some(p) = a.page_num {
+        route.push_str(&format!("page={p}&"));
+    }
+    route.push_str(&format!("hl={}", a.id));
+
+    let quote = a.quote_text.trim().replace('\n', "\n> ");
+    let mut md = format!("> {quote}\n>\n> — [{label}]({route})");
+    if !a.note_md.trim().is_empty() {
+        md.push_str(&format!("\n\n{}", a.note_md.trim()));
+    }
+    md
+}
+
 pub async fn get_annotation(pool: &PgPool, id: &str) -> Result<Annotation> {
     sqlx::query_as::<_, Annotation>(
         "SELECT id, file_id, page_num, quote_text, quote_prefix, quote_suffix, \

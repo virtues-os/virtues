@@ -484,6 +484,15 @@ pub async fn run(client: Virtues, host: &str, port: u16) -> Result<()> {
             "/api/notebooks/:id/annotations",
             get(api::list_notebook_annotations_handler),
         )
+        // Bulk annotation export as markdown (D4.3)
+        .route(
+            "/api/annotations/export",
+            get(api::export_file_annotations_handler),
+        )
+        .route(
+            "/api/notebooks/:id/annotations/export",
+            get(api::export_notebook_annotations_handler),
+        )
         // Drive API (user file storage)
         .route(
             "/api/drive/files/:id/reextract",

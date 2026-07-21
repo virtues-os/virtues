@@ -2581,6 +2581,37 @@ pub async fn list_notebook_annotations_handler(
     api_response(crate::api::list_notebook_annotations(state.db.pool(), &id).await)
 }
 
+/// GET /api/annotations/export?file_id=… — a file's highlights as markdown.
+pub async fn export_file_annotations_handler(
+    State(state): State<AppState>,
+    Query(q): Query<ListAnnotationsQuery>,
+) -> Response {
+    match crate::api::export_file_annotations_md(state.db.pool(), &q.file_id).await {
+        Ok(md) => markdown_response(md),
+        Err(e) => error_response(e),
+    }
+}
+
+/// GET /api/notebooks/:id/annotations/export — notebook highlights as markdown.
+pub async fn export_notebook_annotations_handler(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> Response {
+    match crate::api::export_notebook_annotations_md(state.db.pool(), &id).await {
+        Ok(md) => markdown_response(md),
+        Err(e) => error_response(e),
+    }
+}
+
+/// Serve markdown as a downloadable text body.
+fn markdown_response(md: String) -> Response {
+    (
+        [(axum::http::header::CONTENT_TYPE, "text/markdown; charset=utf-8")],
+        md,
+    )
+        .into_response()
+}
+
 /// POST /api/annotations — create (or upsert) a highlight.
 pub async fn create_annotation_handler(
     State(state): State<AppState>,

@@ -878,6 +878,32 @@ export async function listNotebookAnnotations(notebookId: string): Promise<Noteb
 	return res.json();
 }
 
+/** A file's highlights as markdown (blockquote + citation ref each). */
+export async function exportFileAnnotations(fileId: string): Promise<string> {
+	const res = await fetch(`${API_BASE}/annotations/export?file_id=${encodeURIComponent(fileId)}`);
+	if (!res.ok) throw new Error(`Failed to export annotations: ${res.statusText}`);
+	return res.text();
+}
+
+/** Every highlight across a notebook's documents, grouped by file. */
+export async function exportNotebookAnnotations(notebookId: string): Promise<string> {
+	const res = await fetch(
+		`${API_BASE}/notebooks/${encodeURIComponent(notebookId)}/annotations/export`
+	);
+	if (!res.ok) throw new Error(`Failed to export annotations: ${res.statusText}`);
+	return res.text();
+}
+
+/** Trigger a client-side download of markdown text. */
+export function downloadMarkdown(filename: string, markdown: string): void {
+	const url = URL.createObjectURL(new Blob([markdown], { type: 'text/markdown' }));
+	const a = document.createElement('a');
+	a.href = url;
+	a.download = filename.endsWith('.md') ? filename : `${filename}.md`;
+	a.click();
+	URL.revokeObjectURL(url);
+}
+
 export async function createAnnotation(body: {
 	file_id: string;
 	page_num?: number | null;

@@ -186,7 +186,8 @@ pub use things::{
     UpdateThingRequest,
 };
 pub use annotations::{
-    create_annotation, delete_annotation, get_annotation, list_annotations,
+    create_annotation, delete_annotation, export_file_annotations_md,
+    export_notebook_annotations_md, get_annotation, list_annotations,
     list_notebook_annotations, update_annotation,
     Annotation, CreateAnnotationRequest, UpdateAnnotationRequest,
 };
