@@ -15,6 +15,7 @@ use std::io::{Read, Write};
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::process::Command;
+use std::time::Duration;
 
 use semver::Version;
 
@@ -318,6 +319,31 @@ pub async fn run(
             ))
         }
     }
+
+    // `systemctl start` on a Type=simple unit returns as soon as the process is
+    // SPAWNED — it proves nothing about whether the new release can actually
+    // serve. A binary that panics on a migration it doesn't understand, or that
+    // can't reach Postgres, "starts" cleanly and then fails every request; with
+    // `Restart=on-failure` it crash-loops while the upgrade reports success.
+    //
+    // /health is the honest signal: it returns 200 only after a `SELECT 1`
+    // against the pool succeeds, so it covers both "bound its port" and "has a
+    // working database". Not becoming healthy is a failed upgrade, and gets the
+    // same slot flip-back as a failed start.
+    ui::step("waiting for the new release to serve…");
+    if !wait_healthy(service_port()).await {
+        // The unit is RUNNING (badly) on this path, unlike every other
+        // flip_back caller. Stop it first: flipping `current` only re-points
+        // the symlink, and the live process keeps its old inode open, so
+        // without this the box would go on serving the broken binary from a
+        // rolled-back slot.
+        service_stop("virtues");
+        return Err(flip_back(
+            &layout,
+            format!("{target_tag} started but never became healthy — rolled back"),
+        ));
+    }
+
     for unit in &sidecars {
         if let Ok(false) | Err(_) = service_start(unit) {
             ui::warn(&format!(
@@ -660,6 +686,81 @@ fn service_start(unit: &str) -> std::io::Result<bool> {
         .arg(unit)
         .status()
         .map(|s| s.success())
+}
+
+/// The port `virtues.service` actually serves on, read from the installed
+/// unit's `ExecStart` (`… server --host [::] --port 8000`).
+///
+/// Parsed rather than hardcoded because the probe's failure mode is asymmetric:
+/// probing the wrong port would roll back a perfectly good upgrade. If the unit
+/// is unreadable or its ExecStart has no `--port`, fall back to the same 8000
+/// the installer writes.
+fn service_port() -> u16 {
+    fs::read_to_string("/etc/systemd/system/virtues.service")
+        .ok()
+        .and_then(|u| parse_port_from_unit(&u))
+        .unwrap_or(DEFAULT_SERVICE_PORT)
+}
+
+/// The port the installer writes into `virtues.service`.
+const DEFAULT_SERVICE_PORT: u16 = 8000;
+
+/// Pull `--port N` (or `--port=N`) out of a unit file's `ExecStart` line.
+/// Split out from [`service_port`] so it can be tested without a real
+/// `/etc/systemd/system`.
+fn parse_port_from_unit(unit: &str) -> Option<u16> {
+    let line = unit
+        .lines()
+        .find(|l| l.trim_start().starts_with("ExecStart="))?;
+    let mut it = line.split_whitespace();
+    while let Some(tok) = it.next() {
+        if tok == "--port" {
+            return it.next().and_then(|p| p.parse().ok());
+        }
+        if let Some(p) = tok.strip_prefix("--port=") {
+            return p.parse().ok();
+        }
+    }
+    None
+}
+
+/// Poll the box's own `/health` until it answers 200, or the budget runs out.
+///
+/// Retries rather than probing once: a fresh process has to bind its listener
+/// and open a Postgres pool, and the unit's `Restart=on-failure`/`RestartSec=5`
+/// means a crash-looping binary needs a few cycles before it's distinguishable
+/// from a slow-but-healthy start. 60s covers a cold start comfortably (the unit
+/// itself allows `TimeoutStartSec=120`) without hanging a broken upgrade for
+/// minutes before rolling it back.
+async fn wait_healthy(port: u16) -> bool {
+    const ATTEMPTS: u32 = 30;
+    const EVERY: Duration = Duration::from_secs(2);
+
+    let url = format!("http://127.0.0.1:{port}/health");
+    // Loopback plain HTTP — `base_builder` is the codebase's known-good builder
+    // and is already IPv4-only, which is exactly right for 127.0.0.1.
+    let Ok(client) = crate::http_client::base_builder()
+        .timeout(Duration::from_secs(3))
+        .build()
+    else {
+        // Can't probe → don't claim unhealthy and trigger a spurious rollback.
+        tracing::warn!("could not build health-probe client; skipping the probe");
+        return true;
+    };
+
+    for attempt in 1..=ATTEMPTS {
+        tokio::time::sleep(EVERY).await;
+        if let Ok(r) = client.get(&url).send().await {
+            if r.status().is_success() {
+                ui::ok(&format!(
+                    "health check passed after {}s",
+                    attempt * EVERY.as_secs() as u32
+                ));
+                return true;
+            }
+        }
+    }
+    false
 }
 
 /// Exclusive process lock for the duration of an upgrade. Created with
@@ -1037,4 +1138,56 @@ fn mkstage() -> Result<Stage, crate::Error> {
     fs::create_dir_all(&path)
         .map_err(|e| crate::Error::Other(format!("staging dir: {e}")))?;
     Ok(Stage(path))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The unit the installer actually writes today.
+    const REAL_UNIT: &str = "\
+[Service]
+Type=simple
+ExecStartPre=/bin/sh -c 'until pg_isready -t 1; do sleep 1; done'
+ExecStart=/usr/local/bin/virtues server --host [::] --port 8000
+TimeoutStartSec=120
+";
+
+    #[test]
+    fn reads_the_port_the_installer_writes() {
+        assert_eq!(parse_port_from_unit(REAL_UNIT), Some(8000));
+    }
+
+    #[test]
+    fn reads_a_hand_edited_port() {
+        // The whole reason this is parsed and not hardcoded: probing the wrong
+        // port would roll back a healthy upgrade.
+        let unit = REAL_UNIT.replace("--port 8000", "--port 9123");
+        assert_eq!(parse_port_from_unit(&unit), Some(9123));
+    }
+
+    #[test]
+    fn accepts_the_equals_form() {
+        let unit = REAL_UNIT.replace("--port 8000", "--port=9123");
+        assert_eq!(parse_port_from_unit(&unit), Some(9123));
+    }
+
+    #[test]
+    fn ignores_a_port_outside_execstart() {
+        // ExecStartPre mentions no port, but a sloppier scan of the whole file
+        // could pick up an unrelated one. Only ExecStart counts.
+        let unit = "[Service]\nEnvironment=SOME_PORT=--port 1234\nExecStart=/usr/local/bin/virtues server --port 8000\n";
+        assert_eq!(parse_port_from_unit(unit), Some(8000));
+    }
+
+    #[test]
+    fn no_port_falls_back_to_the_caller_default() {
+        let unit = "[Service]\nExecStart=/usr/local/bin/virtues server\n";
+        assert_eq!(parse_port_from_unit(unit), None);
+    }
+
+    #[test]
+    fn no_execstart_at_all() {
+        assert_eq!(parse_port_from_unit("[Unit]\nDescription=x\n"), None);
+    }
 }
