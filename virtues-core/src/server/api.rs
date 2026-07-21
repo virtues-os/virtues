@@ -3071,6 +3071,33 @@ pub async fn delete_page_handler(
     }
 }
 
+/// POST /api/pages/:id/append — append a markdown block to a page THROUGH Yjs.
+///
+/// The synthesis-bridge write path (researcher-plan D4): sending a highlight
+/// into a page must not clobber an editor that's currently open on it, so this
+/// goes through the authoritative Yjs doc (transaction + broadcast) rather than
+/// a REST content replace.
+#[derive(Debug, Deserialize)]
+pub struct AppendPageRequest {
+    pub markdown: String,
+}
+
+pub async fn append_page_handler(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    Json(req): Json<AppendPageRequest>,
+) -> Response {
+    if req.markdown.trim().is_empty() {
+        return error_response(crate::error::Error::InvalidInput(
+            "markdown cannot be empty".into(),
+        ));
+    }
+    match state.yjs_state.append_markdown(&id, &req.markdown).await {
+        Ok(content) => api_response(Ok(serde_json::json!({ "content": content }))),
+        Err(e) => error_response(crate::error::Error::Other(e)),
+    }
+}
+
 /// GET /api/pages/:id/backlinks - Get inbound references (pages linking here)
 pub async fn get_page_backlinks_handler(
     State(state): State<AppState>,

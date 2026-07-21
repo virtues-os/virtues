@@ -145,6 +145,7 @@
 			<PdfPane
 				url={viewUrl}
 				{fileId}
+				filename={file?.filename}
 				initialPage={pageParam}
 				initialQuote={quoteParam}
 				initialHighlight={hlParam}
