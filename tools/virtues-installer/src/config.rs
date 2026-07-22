@@ -143,6 +143,20 @@ impl InstallConfig {
         self.install_prefix.join("share/virtues/actions")
     }
 
+    /// The WRITABLE applet tree — chat-authored applets and imported packs.
+    ///
+    /// Separate from [`Self::actions_dir`] because the two have opposite
+    /// lifecycles: that one is package data the installer replaces wholesale
+    /// on every release, this one is user data that must survive it. They
+    /// used to be the same directory, which meant the slot flip deleted
+    /// authored applets and a fresh box couldn't create them at all (nothing
+    /// made a service-writable directory). virtues-core reads this via
+    /// `VIRTUES_APPLET_STATE_DIR`; the default must match
+    /// `WELL_KNOWN_APPLET_STATE_DIR` in virtues-core.
+    pub fn applet_state_dir(&self) -> PathBuf {
+        self.data_dir.join("applets")
+    }
+
     /// Where the compiled function-action executables land (libexec = helper
     /// binaries not meant for direct user invocation). virtues-core resolves
     /// action `command[0]` here via `VIRTUES_ACTIONS_BIN_DIR` (see
