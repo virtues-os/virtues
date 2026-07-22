@@ -3219,68 +3219,6 @@ pub async fn get_page_version_handler(
 }
 
 // ============================================================================
-// Things Handlers (long-running named anchors — projects, pets, goals, ...)
-// ============================================================================
-
-#[derive(Debug, Deserialize)]
-pub struct ListThingsQuery {
-    pub category: Option<String>,
-}
-
-/// GET /api/things — list things, optional `?category=...` filter.
-pub async fn list_things_handler(
-    State(state): State<AppState>,
-    axum::extract::Query(q): axum::extract::Query<ListThingsQuery>,
-) -> Response {
-    api_response(
-        crate::api::things::list_things(
-            state.db.pool(),
-            crate::api::ListThingsParams { category: q.category },
-        )
-        .await,
-    )
-}
-
-/// GET /api/things/:id — single thing.
-pub async fn get_thing_handler(
-    State(state): State<AppState>,
-    Path(id): Path<String>,
-) -> Response {
-    api_response(crate::api::things::get_thing(state.db.pool(), &id).await)
-}
-
-/// POST /api/things — create.
-pub async fn create_thing_handler(
-    State(state): State<AppState>,
-    Json(request): Json<crate::api::CreateThingRequest>,
-) -> Response {
-    match crate::api::things::create_thing(state.db.pool(), request).await {
-        Ok(thing) => (StatusCode::CREATED, Json(thing)).into_response(),
-        Err(e) => error_response(e),
-    }
-}
-
-/// PATCH /api/things/:id — update.
-pub async fn update_thing_handler(
-    State(state): State<AppState>,
-    Path(id): Path<String>,
-    Json(request): Json<crate::api::UpdateThingRequest>,
-) -> Response {
-    api_response(crate::api::things::update_thing(state.db.pool(), &id, request).await)
-}
-
-/// DELETE /api/things/:id — delete (cascades to pins).
-pub async fn delete_thing_handler(
-    State(state): State<AppState>,
-    Path(id): Path<String>,
-) -> Response {
-    match crate::api::things::delete_thing(state.db.pool(), &id).await {
-        Ok(_) => success_message("Thing deleted"),
-        Err(e) => error_response(e),
-    }
-}
-
-// ============================================================================
 // Local content search (⌘K)
 // ============================================================================
 

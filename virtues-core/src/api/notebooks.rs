@@ -9,8 +9,9 @@
 //! weights its members in retrieval; conversely the chat is folded into the
 //! Notebook's corpus. Membership is manual in v1 — there is no smart/query view.
 //!
-//! This absorbs the old workspace-shell and the folder role that `wiki_things`
-//! used to play (pins + memo); Things are now pure reference entities.
+//! This absorbs the old workspace-shell and the folder role that the retired
+//! "Things" feature used to play (pins + memo). Things are gone entirely as of
+//! migration 0060 — projects and hobbies are notebooks/stories now.
 
 use crate::error::{Error, Result};
 use crate::ids::{generate_id, NOTEBOOK_PREFIX};

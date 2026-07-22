@@ -42,7 +42,6 @@ pub mod personas;
 pub mod updates;
 pub mod pins;
 pub mod search_local;
-pub mod things;
 pub mod places;
 pub mod profile;
 pub mod notebooks;
@@ -186,13 +185,6 @@ pub use search_local::{search_local, LocalSearchRequest, LocalSearchResponse};
 pub use pins::{
     create_pin, delete_pin, list_pins, reorder_pins, update_pin, CreatePinRequest, Pin,
     UpdatePinRequest,
-};
-// Things are the single source over `wiki_things` (/api/things). Functions are
-// referenced directly via `crate::api::things::*`; only the request/response
-// types are re-exported here.
-pub use things::{
-    CreateThingRequest, ListThingsParams, Thing, ThingListResponse, ThingSummary,
-    UpdateThingRequest,
 };
 pub use annotations::{
     create_annotation, delete_annotation, export_file_annotations_md,

@@ -540,7 +540,6 @@ fn get_entity_url(entity_type: &str, id: &str) -> String {
         "source" => format!("/source/{}", id),
         "chat" => format!("/chat/{}", id),
         "notebook" => format!("/notebook/{}", id),
-        "thing" => format!("/thing/{}", id),
         "file" => format!("/drive/{}", id),
         _ => format!("/{}/{}", entity_type, id),
     }
@@ -574,12 +573,6 @@ pub async fn search_refs(pool: &PgPool, query: &str) -> Result<RefSearchResponse
                CASE WHEN canonical_name ILIKE $2 THEN 0 ELSE 1 END as relevance
         FROM wiki_people
         WHERE canonical_name ILIKE $1
-        UNION ALL
-        SELECT id, name, 'thing' as entity_type, 'ri:lightbulb-line' as icon,
-               NULL as mime_type, updated_at,
-               CASE WHEN name ILIKE $2 THEN 0 ELSE 1 END as relevance
-        FROM wiki_things
-        WHERE name ILIKE $1
         UNION ALL
         SELECT id, name, 'place' as entity_type, 'ri:map-pin-line' as icon,
                NULL as mime_type, updated_at,

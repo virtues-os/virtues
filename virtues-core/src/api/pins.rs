@@ -5,7 +5,7 @@
 //! Distinct from project membership (`app_project_items`): a pin is global to
 //! the user's sidebar, not scoped to a project.
 //!
-//! Same URL convention as the rest of the app: `/thing/thg_xxx`,
+//! Same URL convention as the rest of the app: `/person/per_xxx`,
 //! `/page/page_xxx`, `/person/p_xxx`, or `https://...` for externals.
 
 use crate::error::{Error, Result};

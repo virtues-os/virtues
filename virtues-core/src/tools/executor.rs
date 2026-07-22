@@ -578,17 +578,6 @@ impl ToolExecutor {
                 }))),
                 Err(e) => Ok(ToolResult::error(format!("Failed to fetch organization: {}", e))),
             }
-        } else if let Some(thing_id) = item_url.strip_prefix("/thing/") {
-            match crate::api::things::get_thing(pool, thing_id).await {
-                Ok(thing) => Ok(ToolResult::success(serde_json::json!({
-                    "type": "thing",
-                    "id": thing.id,
-                    "name": thing.name,
-                    "description": thing.description,
-                    "content": thing.content,
-                }))),
-                Err(e) => Ok(ToolResult::error(format!("Failed to fetch thing: {}", e))),
-            }
         } else if let Some(notebook_id) = item_url.strip_prefix("/notebook/") {
             match crate::api::notebooks::get_notebook(pool, notebook_id).await {
                 Ok(detail) => {
@@ -613,7 +602,7 @@ impl ToolExecutor {
             })))
         } else {
             Ok(ToolResult::error(format!(
-                "Unsupported item URL type: {}. Supported: /page/, /chat/, /notebook/, /person/, /place/, /org/, /thing/, or https://",
+                "Unsupported item URL type: {}. Supported: /page/, /chat/, /notebook/, /person/, /place/, /org/, or https://",
                 item_url
             )))
         }

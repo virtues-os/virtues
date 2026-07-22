@@ -188,23 +188,6 @@ async fn build_prompt(pool: &PgPool, thin: bool) -> String {
         append(&mut p, "Organizations", &lines.join("\n"));
     }
 
-    // Things / projects.
-    let things: Vec<(String, Option<String>)> =
-        sqlx::query_as("SELECT name, category FROM wiki_things LIMIT 8")
-            .fetch_all(pool)
-            .await
-            .unwrap_or_default();
-    if !things.is_empty() {
-        let lines: Vec<String> = things
-            .iter()
-            .map(|(name, cat)| match cat {
-                Some(c) => format!("- {} ({})", name, c),
-                None => format!("- {}", name),
-            })
-            .collect();
-        append(&mut p, "Things and projects", &lines.join("\n"));
-    }
-
     // Recent day biographies — already-distilled meaning, the richest signal.
     let days: Vec<(chrono::NaiveDate, Option<String>, Option<String>)> = sqlx::query_as(
         "SELECT date, epigraph, autobiography FROM wiki_days \
