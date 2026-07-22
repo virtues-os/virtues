@@ -35,6 +35,17 @@ const BOX_IROH_SECRET: &str = "iroh_secret_key";
 /// Process-wide "iroh endpoint is bound and homed on the relay" flag. Read by
 /// pairing to advertise the box's reach ticket only when it's actually up.
 static ENDPOINT_UP: OnceLock<Arc<AtomicBool>> = OnceLock::new();
+/// Set when `maybe_spawn` gives up (secret load or endpoint bind failed) so
+/// `/api/setup/state` can report an honest failure instead of leaving the
+/// `remote_access` step reading "Connecting…" forever — the endpoint task
+/// exits on either failure and nothing else would ever move the state again.
+///
+/// Holds a FIXED, operator-facing sentence — never the underlying error. This
+/// value is rendered by `/api/setup/state`, which is public-on-LAN (the wizard
+/// and appliance panel read it pre-auth) and documents itself as carrying only
+/// booleans and step copy. The real cause is logged via `tracing::error!` at
+/// each failure site, where it belongs.
+static ENDPOINT_ERROR: OnceLock<RwLock<Option<&'static str>>> = OnceLock::new();
 /// This box's own `EndpointId` (hex), set once the endpoint binds — handed to
 /// devices at pairing so they can dial by it.
 static BOX_ENDPOINT_ID: OnceLock<RwLock<Option<String>>> = OnceLock::new();
@@ -53,6 +64,19 @@ fn endpoint_up_flag() -> Arc<AtomicBool> {
 /// name so pairing call sites are unchanged; Step 7 renames to `endpoint_up`.
 pub fn is_relay_registered() -> bool {
     ENDPOINT_UP.get().map(|f| f.load(Ordering::Relaxed)).unwrap_or(false)
+}
+
+/// The reason `maybe_spawn` gave up, if it did. `None` while still starting up
+/// (or once bound) — `is_relay_registered()` distinguishes those two.
+pub fn endpoint_error() -> Option<&'static str> {
+    ENDPOINT_ERROR.get().and_then(|c| c.read().ok().and_then(|g| *g))
+}
+
+fn set_endpoint_error(msg: &'static str) {
+    let cell = ENDPOINT_ERROR.get_or_init(|| RwLock::new(None));
+    if let Ok(mut g) = cell.write() {
+        *g = Some(msg);
+    }
 }
 
 /// This box's iroh `EndpointId` (hex), once bound — for the pairing reach ticket.
@@ -151,7 +175,11 @@ pub fn maybe_spawn(db: PgPool, app: axum::Router) {
         let secret = match load_or_create_secret(&db).await {
             Ok(s) => s,
             Err(e) => {
-                tracing::error!(error = %format!("{e:#}"), "iroh: failed to load/create secret key — reach disabled");
+                let msg = format!("{e:#}");
+                tracing::error!(error = %msg, "iroh: failed to load/create secret key — reach disabled");
+                set_endpoint_error(
+                    "Couldn't set up this box's reach identity. See the box logs; a restart is needed.",
+                );
                 return;
             }
         };
@@ -169,7 +197,11 @@ pub fn maybe_spawn(db: PgPool, app: axum::Router) {
         let endpoint = match build_endpoint(secret, relay_url.clone(), Some(iroh_port())).await {
             Ok(e) => e,
             Err(e) => {
-                tracing::error!(error = %format!("{e:#}"), "iroh: failed to bind endpoint — reach disabled");
+                let msg = format!("{e:#}");
+                tracing::error!(error = %msg, "iroh: failed to bind endpoint — reach disabled");
+                set_endpoint_error(
+                    "Couldn't start reach networking on this box. See the box logs; a restart is needed.",
+                );
                 return;
             }
         };

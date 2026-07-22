@@ -199,13 +199,6 @@ fn get_table_metadata() -> HashMap<&'static str, TableMetadata> {
         join_hint: None,
     });
 
-    m.insert("wiki_things", TableMetadata {
-        description: "Catchall entities: pets, projects, concepts, tools, etc.",
-        category: "wiki_entity",
-        key_columns: &["name", "category", "description", "content"],
-        join_hint: None,
-    });
-
     // ============================================================================
     // WIKI TABLES - Temporal
     // ============================================================================
@@ -483,9 +476,19 @@ impl SqlQueryTool {
         })))
     }
 
-    /// Execute a read-only SQL query
+    /// Execute a read-only SQL query.
+    ///
+    /// Read-only is enforced by Postgres itself (`SET TRANSACTION READ ONLY`),
+    /// not by inspecting the query text. The keyword checks below are kept as a
+    /// fast, legible rejection for obvious misuse — but they are a courtesy, not
+    /// the boundary. A text blocklist cannot be the boundary: `SELECT ... INTO
+    /// new_table FROM ...` writes, starts with `select`, and contains none of
+    /// the forbidden tokens. This matters more here than in the human-facing
+    /// Developer console (`api::developer::execute_sql`, which uses the same
+    /// transaction guard) because `sql_query` is in APPLET_RUN_ALLOWED_TOOLS
+    /// and SUBAGENT_TOOLS — it runs unattended, over content nobody reviewed,
+    /// so the query text can be steered by ingested data.
     async fn execute_query(&self, sql: &str, limit: u32) -> Result<ToolResult, ToolError> {
-        // Validate query is read-only
         let sql_lower = sql.trim().to_lowercase();
 
         if !sql_lower.starts_with("select") && !sql_lower.starts_with("with") {
@@ -494,11 +497,11 @@ impl SqlQueryTool {
             ));
         }
 
-        // Check for dangerous keywords. Match whole tokens only — a substring
-        // check falsely rejects common columns like `created_at` ("create") and
-        // `updated_at` ("update"). Splitting on non-alphanumeric chars (which
-        // includes `_`) tokenizes `created_at` into ["created", "at"], so only a
-        // standalone `create`/`update`/etc. statement keyword trips the guard.
+        // Match whole tokens only — a substring check falsely rejects common
+        // columns like `created_at` ("create") and `updated_at` ("update").
+        // Splitting on non-alphanumeric chars (which includes `_`) tokenizes
+        // `created_at` into ["created", "at"], so only a standalone
+        // `create`/`update`/etc. statement keyword trips the guard.
         let forbidden = ["insert", "update", "delete", "drop", "create", "alter", "truncate"];
         if let Some(keyword) = sql_lower
             .split(|c: char| !c.is_alphanumeric())
@@ -524,11 +527,28 @@ impl SqlQueryTool {
             format!("{} LIMIT {}", sql, limit)
         };
 
-        // Execute query
-        let rows = sqlx::query(&query)
-            .fetch_all(self.pool.as_ref())
+        // The actual boundary: Postgres refuses any write in this transaction,
+        // whatever the text says. Mirrors `api::developer::execute_sql` and
+        // `server::faces::run_face_query`.
+        let mut tx = self
+            .pool
+            .begin()
             .await
             .map_err(|e| ToolError::ExecutionFailed(format!("Query failed: {}", e)))?;
+
+        sqlx::query("SET TRANSACTION READ ONLY")
+            .execute(&mut *tx)
+            .await
+            .map_err(|e| ToolError::ExecutionFailed(format!("Query failed: {}", e)))?;
+
+        let rows = sqlx::query(&query)
+            .fetch_all(&mut *tx)
+            .await
+            .map_err(|e| ToolError::ExecutionFailed(format!("Query failed: {}", e)))?;
+
+        // Read-only transaction: nothing to commit, and a rollback can't lose
+        // work. Dropping would do this anyway; explicit for legibility.
+        let _ = tx.rollback().await;
 
         // Convert rows to JSON
         let json_rows = convert_rows_to_json(&rows);
@@ -630,5 +650,66 @@ pub fn convert_rows_to_json(rows: &[sqlx::postgres::PgRow]) -> Vec<serde_json::V
 impl std::fmt::Debug for SqlQueryTool {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("SqlQueryTool").finish()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The boundary is Postgres, not the keyword blocklist.
+    ///
+    /// `SELECT ... INTO t ...` is the case that proves it: it creates and
+    /// populates a table, starts with `select`, and contains none of the
+    /// forbidden tokens — so the text checks pass it through. Only the
+    /// `SET TRANSACTION READ ONLY` guard stops it. If someone ever "simplifies"
+    /// that transaction away and leans on the blocklist alone, this fails.
+    ///
+    /// Requires a live Postgres: `#[sqlx::test]` provisions a scratch DB and
+    /// applies migrations automatically. Set DATABASE_URL when running.
+    #[sqlx::test]
+    async fn select_into_cannot_write_despite_passing_the_keyword_check(pool: sqlx::PgPool) {
+        let sql = "SELECT 1 AS n INTO smuggled_table";
+
+        // Precondition: the text checks do NOT catch this.
+        let lowered = sql.to_lowercase();
+        assert!(lowered.starts_with("select"), "guard assumes SELECT prefix");
+        let forbidden = ["insert", "update", "delete", "drop", "create", "alter", "truncate"];
+        assert!(
+            !lowered
+                .split(|c: char| !c.is_alphanumeric())
+                .any(|tok| forbidden.contains(&tok)),
+            "SELECT INTO must slip the blocklist — that's the point of this test",
+        );
+
+        let tool = SqlQueryTool::new(Arc::new(pool.clone()));
+        let result = tool.execute_query(sql, 100).await;
+
+        assert!(
+            result.is_err(),
+            "SELECT INTO must be rejected by the read-only transaction",
+        );
+
+        // And it must not have written: the table must not exist.
+        let exists: Option<bool> = sqlx::query_scalar(
+            "SELECT EXISTS (SELECT 1 FROM information_schema.tables \
+             WHERE table_name = 'smuggled_table')",
+        )
+        .fetch_one(&pool)
+        .await
+        .expect("existence check");
+        assert_eq!(
+            exists,
+            Some(false),
+            "read-only transaction must leave no table behind",
+        );
+    }
+
+    /// An ordinary SELECT still works — the guard rejects writes, not reads.
+    #[sqlx::test]
+    async fn plain_select_still_succeeds(pool: sqlx::PgPool) {
+        let tool = SqlQueryTool::new(Arc::new(pool));
+        let result = tool.execute_query("SELECT 1 AS n", 10).await;
+        assert!(result.is_ok(), "a plain SELECT must still run: {result:?}");
     }
 }

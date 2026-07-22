@@ -86,14 +86,30 @@ printf "  %s  Fetching installer (%s)...\n" "$MARK" "$VIRTUES_VERSION"
 curl -sSLfo "$INSTALLER" "$INSTALLER_URL" \
     || die "download failed: $INSTALLER_URL"
 
-# SHA256 verification. Sidecar is uploaded alongside the binary by CI.
-# Missing sidecar warns but continues — HTTPS is the primary trust layer.
-if curl -sSLfo "$INSTALLER.sha256" "$SHA_URL" 2>/dev/null; then
-    expected=$(awk '{print $1}' "$INSTALLER.sha256")
+# SHA256 verification. The sidecar is uploaded alongside the binary by CI, so
+# a missing one is a packaging bug, not an optional nicety — and this binary is
+# about to be executed as root. Hard-fail rather than run it unverified: a
+# soft-fail here means anything that can suppress just the sidecar request (a
+# captive portal, a CDN edge 404, an attacker serving a swapped binary while
+# dropping the .sha256) silently downgrades this to "we trust HTTPS alone".
+curl -sSLfo "$INSTALLER.sha256" "$SHA_URL" 2>/dev/null \
+    || die "could not fetch checksum: $SHA_URL - refusing to execute unverified"
+
+expected=$(awk '{print $1}' "$INSTALLER.sha256")
+[ -n "$expected" ] || die "malformed checksum sidecar for $NAME"
+
+# Verify the hasher exists before trusting its output — an absent sha256sum
+# would yield an empty `actual` and turn the comparison below into a no-op.
+if command -v sha256sum >/dev/null 2>&1; then
     actual=$(sha256sum "$INSTALLER" | awk '{print $1}')
-    [ "$expected" = "$actual" ] \
-        || die "SHA256 mismatch on $NAME - refusing to execute"
+elif command -v shasum >/dev/null 2>&1; then
+    actual=$(shasum -a 256 "$INSTALLER" | awk '{print $1}')
+else
+    die "no sha256sum/shasum available to verify $NAME - refusing to execute"
 fi
+
+[ "$expected" = "$actual" ] \
+    || die "SHA256 mismatch on $NAME - refusing to execute"
 
 chmod +x "$INSTALLER"
 exec "$INSTALLER" "$@"
