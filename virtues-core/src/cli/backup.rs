@@ -24,9 +24,41 @@ use sha2::{Digest, Sha256};
 use sqlx::PgPool;
 
 const DEFAULT_BACKUP_DIR: &str = "/var/lib/virtues/backups";
-const ENV_FILE: &str = "/etc/virtues/env";
 const LAKE_DIR: &str = "/var/lib/virtues/lake";
 const MANIFEST_VERSION: u32 = 1;
+
+/// Candidate locations for the env file that holds `VIRTUES_ENCRYPTION_KEY`,
+/// in preference order.
+///
+/// FHS says config lives in `/etc`, and the rest of the codebase (restore,
+/// diag, auth docs) assumes `/etc/virtues/env`. The installer disagreed: it
+/// writes `<data_dir>/virtues.env` and points the unit's `EnvironmentFile=`
+/// there. Every box built by that installer therefore has NO `/etc/virtues/env`
+/// — so a backup that only looked there captured no key at all, and said so
+/// with a `tracing::warn!` nobody sees. The resulting tarball has a perfect
+/// manifest, a full pg_dump, and no way to decrypt a single credential.
+///
+/// Read both until the installer is fixed; prefer the FHS path so boxes that
+/// have migrated win.
+pub const ENV_CANDIDATES: [&str; 2] = ["/etc/virtues/env", "/var/lib/virtues/virtues.env"];
+
+/// First existing env file, or `None` when the box has none.
+///
+/// `VIRTUES_ENV_FILE` overrides both candidates — the install prefix is
+/// configurable (`DATA_DIR`), and a box that moved its data dir would
+/// otherwise match neither path. It now fails loudly rather than backing up
+/// without a key, so an operator in that position gets told which paths were
+/// tried; this is the knob that lets them answer.
+pub fn find_env_file() -> Option<PathBuf> {
+    if let Ok(explicit) = std::env::var("VIRTUES_ENV_FILE") {
+        let p = PathBuf::from(explicit);
+        return p.is_file().then_some(p);
+    }
+    ENV_CANDIDATES
+        .iter()
+        .map(PathBuf::from)
+        .find(|p| p.is_file())
+}
 
 /// Public manifest persisted at the root of the tarball. Format is stable —
 /// `virtues restore` of older binaries must parse it. Bump `manifest_version`
@@ -52,6 +84,7 @@ pub async fn run(
     pool: &PgPool,
     output: Option<PathBuf>,
     force: bool,
+    allow_missing_key: bool,
 ) -> Result<PathBuf, crate::Error> {
     let now = Utc::now();
     let out_path = match output {
@@ -84,14 +117,34 @@ pub async fn run(
     println!("→ pg_dump (full database)…");
     pg_dump_into(staging_path.join("db/virtues.dump").as_path())?;
 
-    println!("→ copying /etc/virtues/env…");
-    if Path::new(ENV_FILE).exists() {
-        fs::copy(ENV_FILE, staging_path.join("env/virtues.env"))
-            .map_err(|e| crate::Error::Other(format!("copying env: {e}")))?;
-    } else {
-        // Non-fatal in dev (env may live in repo .env). Restore will warn
-        // if it sees no env file and the DB has encrypted credentials.
-        tracing::warn!("no {ENV_FILE} found; backup will not include encryption key");
+    // The encryption key is not optional baggage — without it every encrypted
+    // column in the dump above is permanently unreadable. A keyless backup is
+    // worse than no backup, because it looks complete and you only discover
+    // otherwise at restore time, which is the worst possible moment. So this
+    // is a hard failure, not a warning; `--allow-missing-key` is the explicit
+    // out for dev boxes that keep their key in a repo `.env`.
+    match find_env_file() {
+        Some(env_file) => {
+            println!("→ copying {}…", env_file.display());
+            fs::copy(env_file, staging_path.join("env/virtues.env"))
+                .map_err(|e| crate::Error::Other(format!("copying env: {e}")))?;
+        }
+        None if allow_missing_key => {
+            println!("→ no env file found — continuing without the encryption key");
+            eprintln!(
+                "warning: this backup CANNOT decrypt the database it contains \
+                 (--allow-missing-key was passed)"
+            );
+        }
+        None => {
+            return Err(crate::Error::Other(format!(
+                "no env file at any of {} — the backup would contain an \
+                 undecryptable database. Locate the file holding \
+                 VIRTUES_ENCRYPTION_KEY, or pass --allow-missing-key if you \
+                 genuinely want a keyless dump.",
+                ENV_CANDIDATES.join(" or ")
+            )));
+        }
     }
 
     println!("→ copying data lake at {LAKE_DIR}…");
