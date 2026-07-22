@@ -116,7 +116,35 @@ actions/
 
 apps/web/src/lib/action-views/
 └── index.ts                         # Vite glob loader; discovers actions/*/ui/*.svelte at build time
+
+/var/lib/virtues/applets/            # the WRITABLE applet root (state, not package data)
+├── user/<slug>/                     # chat-authored applets — manifest.toml, schema.sql, face/
+└── <imported-slug>/                 # Git packs cloned by /api/admin/actions/import-git
 ```
+
+---
+
+### Two applet roots
+
+Applets resolve from two trees with opposite lifecycles:
+
+| root | | |
+|---|---|---|
+| **shipped** — `/usr/local/share/virtues/applets` | package data: root-owned, read-only, replaced wholesale each release | `VIRTUES_APPLETS_DIR` |
+| **state** — `/var/lib/virtues/applets` | user data: service-owned, written at runtime, never touched by the installer | `VIRTUES_APPLET_STATE_DIR` |
+
+`resolve_applet_dir(dir)` checks state first, so an authored applet **shadows**
+a shipped one of the same dir and deleting it reverts to shipped. Everything
+written at runtime — chat authoring, Git pack import — goes to the state root
+only.
+
+They were one directory until authored applets started landing inside the tree
+the installer replaces: a slot flip would delete them, and on a fresh box
+authoring failed outright because nothing created a service-writable
+directory. Reconcile's system-GC guard keys on the **shipped** root's template
+count for the same reason — system rows come only from the shipped tree, so a
+state root with one applet in it must not make a failed shipped load look like
+a legitimately empty catalog.
 
 ---
 

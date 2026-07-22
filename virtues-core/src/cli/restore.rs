@@ -73,6 +73,18 @@ pub async fn run(path: PathBuf, force: bool) -> Result<(), crate::Error> {
         copy_tree(&staged_lake, Path::new(LAKE_DIR))?;
     }
 
+    // Authored applets. Replace wholesale like the lake: the tarball is the
+    // intended state, and a merge would resurrect applets the user deleted.
+    let staged_applets = staging.join("applets");
+    if staged_applets.is_dir() {
+        let applets_dst = crate::action_templates::state_root();
+        println!("→ restoring authored applets at {}…", applets_dst.display());
+        let _ = fs::remove_dir_all(&applets_dst);
+        fs::create_dir_all(&applets_dst)
+            .map_err(|e| crate::Error::Other(format!("create applets dir: {e}")))?;
+        copy_tree(&staged_applets, &applets_dst)?;
+    }
+
     let staged_env = staging.join("env/virtues.env");
     if staged_env.exists() {
         let env_file = restore_env_target();

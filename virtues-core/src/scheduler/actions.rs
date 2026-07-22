@@ -208,7 +208,7 @@ pub async fn delete_action(db: &PgPool, action_id: &str, drop_data: bool) -> Res
     }
 
     if let Some(d) = dir {
-        let path = crate::action_templates::actions_root().join(&d);
+        let path = crate::action_templates::resolve_applet_dir(&d);
         if let Err(e) = std::fs::remove_dir_all(&path) {
             return Err(crate::Error::Other(format!(
                 "applet row deleted but folder removal failed ({e}); it may reappear on \

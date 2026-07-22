@@ -147,6 +147,16 @@ struct ParsedTemplates {
     source: Vec<Source>,
     #[serde(default)]
     action: Vec<Template>,
+    /// How many templates came from the SHIPPED root specifically.
+    ///
+    /// Reconcile's system-GC deletes `owner='system'` rows absent from the
+    /// catalog, guarded on the catalog being non-empty so a load failure
+    /// can't wipe the table. Once the catalog merges two roots that guard
+    /// silently weakens: a shipped root that failed to load, plus one
+    /// authored applet in the state root, is a "non-empty" catalog — and
+    /// every system row would be deleted. The guard must key on THIS.
+    #[serde(skip)]
+    shipped_count: usize,
 }
 
 fn default_true() -> bool {
@@ -191,7 +201,7 @@ const SOURCES_TOML: &str = include_str!("../../../applets/sources.toml");
 /// Importers (`/api/admin/actions/import-git`) clone into whichever directory
 /// this resolves to, so the standard scanner picks the new folder up — there
 /// is no separate "imported actions" location.
-pub fn actions_root() -> std::path::PathBuf {
+pub fn shipped_root() -> std::path::PathBuf {
     for var in ["VIRTUES_APPLETS_DIR", "VIRTUES_ACTIONS_DIR"] {
         if let Ok(dir) = std::env::var(var) {
             if !dir.is_empty() {
@@ -213,10 +223,67 @@ pub fn actions_root() -> std::path::PathBuf {
     core_manifest.join(ACTIONS_DIR_FROM_CORE)
 }
 
+/// The WRITABLE applet tree: per-box state that must survive upgrades.
+///
+/// Everything this process creates goes here — chat-authored applets under
+/// `user/`, imported Git packs under their slug. Nothing the installer ships
+/// lives here, and the installer never rewrites it.
+///
+/// This exists because the two trees have opposite lifecycles. [`shipped_root`]
+/// is package data: root-owned, read-only, replaced wholesale on every
+/// release. Authored applets are irreplaceable user data. Keeping both under
+/// one path forced a single answer to "does upgrade delete this?", and the
+/// answer was wrong for one of them — the slot flip `remove_dir_all`'d the
+/// shipped tree with `user/` inside it, and applet authoring failed outright
+/// on a fresh box because nothing ever created a service-writable directory.
+///
+/// `/var/lib/virtues` is where the service's other durable state already lives
+/// (the lake, models), so this follows the existing convention rather than
+/// inventing one.
+pub fn state_root() -> std::path::PathBuf {
+    if let Ok(dir) = std::env::var("VIRTUES_APPLET_STATE_DIR") {
+        if !dir.is_empty() {
+            return std::path::PathBuf::from(dir);
+        }
+    }
+    std::path::PathBuf::from(WELL_KNOWN_APPLET_STATE_DIR)
+}
+
+/// Resolve a `dir` (as recorded on an `app_applets` row) to its folder on
+/// disk. State wins over shipped.
+///
+/// Precedence is a feature, not just conflict resolution: authoring an applet
+/// whose dir matches a shipped one shadows it, and deleting your copy reverts
+/// cleanly to the shipped version. Forking a system applet to tweak it becomes
+/// a first-class operation instead of an edit the next upgrade eats.
+///
+/// Falls back to the shipped path when neither exists, so error messages name
+/// the location a reader expects rather than a state dir they've never heard
+/// of.
+pub fn resolve_applet_dir(dir: &str) -> std::path::PathBuf {
+    let stateful = state_root().join(dir);
+    if stateful.is_dir() {
+        return stateful;
+    }
+    shipped_root().join(dir)
+}
+
+/// Back-compat alias. Prefer [`resolve_applet_dir`] for reads and
+/// [`state_root`] for writes — this returns only the shipped tree and will
+/// miss every authored applet.
+#[deprecated(note = "use resolve_applet_dir() to read, state_root() to write")]
+pub fn actions_root() -> std::path::PathBuf {
+    shipped_root()
+}
+
 /// Default deployed location, matching the installer's `share/virtues/web`
 /// convention (`InstallConfig::web_dir`). Kept in sync with the path the
 /// installer copies `actions/` to and sets `VIRTUES_ACTIONS_DIR` to.
 const WELL_KNOWN_APPLETS_DIR: &str = "/usr/local/share/virtues/applets";
+/// Writable applet state, alongside the lake and models under the service's
+/// data dir. The installer creates it `virtues:virtues`; systemd's
+/// `StateDirectory=` would be the more idiomatic owner of that guarantee.
+const WELL_KNOWN_APPLET_STATE_DIR: &str = "/var/lib/virtues/applets";
 /// Pre-rename deployments (transition fallback; removed once the fleet moves).
 const WELL_KNOWN_APPLETS_DIR_LEGACY: &str = "/usr/local/share/virtues/actions";
 
@@ -303,7 +370,7 @@ fn parse_template(manifest_path: &std::path::Path, dir: &str) -> Option<Template
 }
 
 fn load_catalog() -> ParsedTemplates {
-    let actions_dir = actions_root();
+    let actions_dir = shipped_root();
 
     // 1. Sources — prefer on-disk; fall back to baked.
     let sources_path = actions_dir.join("sources.toml");
@@ -338,8 +405,60 @@ fn load_catalog() -> ParsedTemplates {
     // actions root; reconcile writes it onto every `app_applets` row, and
     // `id_prefix` defaults to `action_<dir-with-/-as-__>` so different
     // namespaces never collide.
+    // Both roots, shipped first: the state root's entries override shipped
+    // ones with the same `dir`, so an authored applet shadows a system applet
+    // of that name and deleting it reverts to shipped.
+    let mut actions = scan_root(&actions_dir);
+    let shipped_count = actions.len();
+    for t in scan_root(&state_root()) {
+        match actions.iter().position(|e| e.dir == t.dir) {
+            Some(i) => actions[i] = t,
+            None => actions.push(t),
+        }
+    }
+
+    // Reject duplicate id_prefixes loudly but without crashing the process.
+    // The dir-based id derivation makes natural collisions almost impossible
+    // — to land here someone has either hand-set `id_prefix = "..."` to the
+    // same value in two manifests, or hand-edited `actions/<built-in>/` to
+    // shadow a shipped action. Either way: surface, drop the offender, keep
+    // the first occurrence, and let the rest of the catalog load.
+    let mut seen: std::collections::HashMap<String, String> = std::collections::HashMap::new();
+    let mut deduped: Vec<Template> = Vec::with_capacity(actions.len());
+    for t in actions {
+        let id = match t.id_prefix.as_deref() {
+            Some(s) => s.to_string(),
+            None => {
+                tracing::error!(dir = %t.dir, "manifest missing id_prefix; skipping");
+                continue;
+            }
+        };
+        if let Some(first_dir) = seen.get(&id) {
+            tracing::error!(
+                id_prefix = %id,
+                first_dir = %first_dir,
+                colliding_dir = %t.dir,
+                "two manifests claim the same id_prefix; keeping the first, dropping this one. \
+                 Rename `id_prefix` in one of the manifests, or change the folder so the dir-derived id differs."
+            );
+            continue;
+        }
+        seen.insert(id, t.dir.clone());
+        deduped.push(t);
+    }
+
+    ParsedTemplates {
+        source: sources_doc.source,
+        action: deduped,
+        shipped_count,
+    }
+}
+
+/// Walk one applet root and parse every manifest under it. Same rule for both
+/// roots — see the scanner notes in `load_catalog`.
+fn scan_root(root: &std::path::Path) -> Vec<Template> {
     let mut actions: Vec<Template> = Vec::new();
-    if let Ok(entries) = std::fs::read_dir(&actions_dir) {
+    if let Ok(entries) = std::fs::read_dir(root) {
         for entry in entries.flatten() {
             let path = entry.path();
             if !path.is_dir() {
@@ -385,40 +504,7 @@ fn load_catalog() -> ParsedTemplates {
         }
     }
 
-    // Reject duplicate id_prefixes loudly but without crashing the process.
-    // The dir-based id derivation makes natural collisions almost impossible
-    // — to land here someone has either hand-set `id_prefix = "..."` to the
-    // same value in two manifests, or hand-edited `actions/<built-in>/` to
-    // shadow a shipped action. Either way: surface, drop the offender, keep
-    // the first occurrence, and let the rest of the catalog load.
-    let mut seen: std::collections::HashMap<String, String> = std::collections::HashMap::new();
-    let mut deduped: Vec<Template> = Vec::with_capacity(actions.len());
-    for t in actions {
-        let id = match t.id_prefix.as_deref() {
-            Some(s) => s.to_string(),
-            None => {
-                tracing::error!(dir = %t.dir, "manifest missing id_prefix; skipping");
-                continue;
-            }
-        };
-        if let Some(first_dir) = seen.get(&id) {
-            tracing::error!(
-                id_prefix = %id,
-                first_dir = %first_dir,
-                colliding_dir = %t.dir,
-                "two manifests claim the same id_prefix; keeping the first, dropping this one. \
-                 Rename `id_prefix` in one of the manifests, or change the folder so the dir-derived id differs."
-            );
-            continue;
-        }
-        seen.insert(id, t.dir.clone());
-        deduped.push(t);
-    }
-
-    ParsedTemplates {
-        source: sources_doc.source,
-        action: deduped,
-    }
+    actions
 }
 
 /// Mirror an ai-owned applet's enabled flag into its manifest
@@ -432,7 +518,7 @@ pub fn mirror_enabled_to_manifest(action_id: &str, enabled: bool) {
     if !dir.starts_with("user/") {
         return;
     }
-    let path = actions_root().join(&dir).join("manifest.toml");
+    let path = resolve_applet_dir(&dir).join("manifest.toml");
     let Ok(text) = std::fs::read_to_string(&path) else {
         return;
     };
@@ -452,7 +538,7 @@ pub fn mirror_enabled_to_manifest(action_id: &str, enabled: bool) {
     }
 }
 
-/// Resolve the manifest folder (relative to `actions_root()`) that produced
+/// Resolve the manifest folder (relative to an applet root) that produced
 /// an action id. Matches the base id (`id_prefix`) and per-credential /
 /// per-device fan-out ids (`<id_prefix>_<anchor>`). Used by the face server
 /// to root static serving at the applet's folder.
@@ -648,9 +734,17 @@ pub async fn reconcile_templates(db: &PgPool) -> Result<usize> {
     // deleted template leaves dead rows pointing at a binary that no longer
     // ships: legacy cruft, and a 404 surface if a stale client still posts to
     // it. `user`-owned rows are never touched, and the pass is guarded on a
-    // non-empty catalog so a load failure can't wipe the table. Run-history FKs
-    // are nullified first so the history survives under `action_id = NULL`.
-    if !live_ids.is_empty() {
+    // non-empty SHIPPED catalog so a load failure can't wipe the table.
+    // Run-history FKs are nullified first so history survives under
+    // `action_id = NULL`.
+    //
+    // The guard keys on the shipped root specifically, NOT on `live_ids`.
+    // System rows come only from the shipped tree, so a shipped root that
+    // failed to load must never delete them — and `live_ids` can't tell you
+    // that, because one authored applet in the state root makes it non-empty.
+    // Keying on the wrong one deletes every system applet on a box whose
+    // shipped tree is briefly unreadable (mid-upgrade, bad mount, bad env).
+    if templates.shipped_count > 0 {
         sqlx::query(
             r#"UPDATE app_applet_runs SET action_id = NULL
                WHERE action_id IN (
@@ -817,6 +911,60 @@ async fn upsert_row(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Both roots are scanned, and an authored applet in the state root
+    /// SHADOWS a shipped applet with the same dir rather than colliding with
+    /// it. This is what makes "fork a system applet" work, and what makes
+    /// deleting your copy revert cleanly to shipped.
+    #[test]
+    fn state_root_shadows_shipped_root() {
+        let shipped = tempfile::tempdir().unwrap();
+        let state = tempfile::tempdir().unwrap();
+
+        let write = |root: &std::path::Path, dir: &str, name: &str| {
+            let d = root.join(dir);
+            std::fs::create_dir_all(&d).unwrap();
+            std::fs::write(
+                d.join("manifest.toml"),
+                format!("name = \"{name}\"\nowner = \"system\"\n"),
+            )
+            .unwrap();
+        };
+        write(shipped.path(), "day_summary_eod", "Shipped Summary");
+        write(shipped.path(), "weather_sync", "Weather");
+        write(state.path(), "day_summary_eod", "My Summary");
+        write(state.path(), "user/wife_week", "Wife Week");
+
+        let mut merged = scan_root(shipped.path());
+        let shipped_count = merged.len();
+        for t in scan_root(state.path()) {
+            match merged.iter().position(|e| e.dir == t.dir) {
+                Some(i) => merged[i] = t,
+                None => merged.push(t),
+            }
+        }
+
+        assert_eq!(shipped_count, 2, "shipped root parsed independently");
+        assert_eq!(merged.len(), 3, "shadowing must not duplicate a dir");
+
+        let by_dir = |d: &str| merged.iter().find(|t| t.dir == d).unwrap().name.clone();
+        assert_eq!(by_dir("day_summary_eod"), "My Summary", "state wins");
+        assert_eq!(by_dir("weather_sync"), "Weather", "unshadowed shipped survives");
+        assert_eq!(by_dir("user/wife_week"), "Wife Week", "authored applet is found");
+    }
+
+    /// A missing state root is the normal case on a box that has never
+    /// authored anything — it must not disturb the shipped catalog.
+    #[test]
+    fn absent_state_root_is_not_an_error() {
+        let shipped = tempfile::tempdir().unwrap();
+        let d = shipped.path().join("weather_sync");
+        std::fs::create_dir_all(&d).unwrap();
+        std::fs::write(d.join("manifest.toml"), "name = \"W\"\nowner = \"system\"\n").unwrap();
+
+        assert_eq!(scan_root(shipped.path()).len(), 1);
+        assert!(scan_root(&shipped.path().join("nope")).is_empty());
+    }
 
     /// Golden test: the baked templates.toml must parse cleanly with the
     /// current struct shape. If this fails, a TOML edit broke schema compat.
