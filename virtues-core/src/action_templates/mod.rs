@@ -240,13 +240,28 @@ pub fn shipped_root() -> std::path::PathBuf {
 /// `/var/lib/virtues` is where the service's other durable state already lives
 /// (the lake, models), so this follows the existing convention rather than
 /// inventing one.
+/// Resolution mirrors [`shipped_root`]: explicit env var, then the deployed
+/// location, then an in-tree path so `cargo run` works. Without that last tier
+/// a dev box resolved to `/var/lib/virtues/applets`, which is root-owned and
+/// not creatable — authoring failed with a permission error on a machine that
+/// has no box install at all.
+///
+/// The box-vs-dev discriminator is `/var/lib/virtues` existing, the same
+/// marker `main.rs` uses to detect a box install. Keying on the applets dir
+/// itself would be wrong: it legitimately doesn't exist yet on a box that has
+/// never authored anything, and falling back to a source path there would
+/// write applets somewhere production never reads.
 pub fn state_root() -> std::path::PathBuf {
     if let Ok(dir) = std::env::var("VIRTUES_APPLET_STATE_DIR") {
         if !dir.is_empty() {
             return std::path::PathBuf::from(dir);
         }
     }
-    std::path::PathBuf::from(WELL_KNOWN_APPLET_STATE_DIR)
+    let installed = std::path::PathBuf::from(WELL_KNOWN_APPLET_STATE_DIR);
+    if installed.parent().is_some_and(|p| p.is_dir()) {
+        return installed;
+    }
+    std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join(DEV_APPLET_STATE_DIR_FROM_CORE)
 }
 
 /// Resolve a `dir` (as recorded on an `app_applets` row) to its folder on
@@ -268,14 +283,6 @@ pub fn resolve_applet_dir(dir: &str) -> std::path::PathBuf {
     shipped_root().join(dir)
 }
 
-/// Back-compat alias. Prefer [`resolve_applet_dir`] for reads and
-/// [`state_root`] for writes — this returns only the shipped tree and will
-/// miss every authored applet.
-#[deprecated(note = "use resolve_applet_dir() to read, state_root() to write")]
-pub fn actions_root() -> std::path::PathBuf {
-    shipped_root()
-}
-
 /// Default deployed location, matching the installer's `share/virtues/web`
 /// convention (`InstallConfig::web_dir`). Kept in sync with the path the
 /// installer copies `actions/` to and sets `VIRTUES_ACTIONS_DIR` to.
@@ -284,6 +291,10 @@ const WELL_KNOWN_APPLETS_DIR: &str = "/usr/local/share/virtues/applets";
 /// data dir. The installer creates it `virtues:virtues`; systemd's
 /// `StateDirectory=` would be the more idiomatic owner of that guarantee.
 const WELL_KNOWN_APPLET_STATE_DIR: &str = "/var/lib/virtues/applets";
+/// Dev-only applet state, relative to virtues-core. Deliberately NOT
+/// `applets/user/` — that lives inside the shipped tree, which is the mixing
+/// this split exists to undo. Gitignored.
+const DEV_APPLET_STATE_DIR_FROM_CORE: &str = "../.applet-state";
 /// Pre-rename deployments (transition fallback; removed once the fleet moves).
 const WELL_KNOWN_APPLETS_DIR_LEGACY: &str = "/usr/local/share/virtues/actions";
 
@@ -951,6 +962,24 @@ mod tests {
         assert_eq!(by_dir("day_summary_eod"), "My Summary", "state wins");
         assert_eq!(by_dir("weather_sync"), "Weather", "unshadowed shipped survives");
         assert_eq!(by_dir("user/wife_week"), "Wife Week", "authored applet is found");
+    }
+
+    /// The state root must never resolve to a path the process cannot create.
+    /// It previously returned `/var/lib/virtues/applets` unconditionally, so
+    /// on a dev machine (no `/var/lib/virtues`, and `/var/lib` root-owned)
+    /// every authoring attempt died with a permission error.
+    #[test]
+    fn state_root_is_writable_on_this_machine() {
+        // Env override would mask what we're testing.
+        if std::env::var("VIRTUES_APPLET_STATE_DIR").is_ok() {
+            return;
+        }
+        let root = state_root();
+        let probe = root.join(".writability-probe");
+        std::fs::create_dir_all(&probe).unwrap_or_else(|e| {
+            panic!("state_root() resolved to {} which is not creatable: {e}", root.display())
+        });
+        let _ = std::fs::remove_dir(&probe);
     }
 
     /// A missing state root is the normal case on a box that has never
