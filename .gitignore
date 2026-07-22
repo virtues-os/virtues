@@ -148,3 +148,4 @@ tmp/*
 # Chat/AI-authored applets materialize here per-box at runtime — they are
 # local state, not shipped source (builtin applets live under applets/<name>/).
 /applets/user/
+/.applet-state/

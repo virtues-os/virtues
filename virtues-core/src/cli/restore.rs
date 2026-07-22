@@ -120,6 +120,23 @@ pub async fn run(path: PathBuf, force: bool) -> Result<(), crate::Error> {
     }
     pg_restore(&dump)?;
 
+    // Everything above was written by root (restore requires it — it stops the
+    // unit, writes the env file, and drives pg_restore). `copy_tree` is
+    // create_dir_all + fs::copy, neither of which preserves ownership, so the
+    // restored trees land root-owned while the service runs as `virtues`. Left
+    // that way, the box comes back up unable to write its own state: applet
+    // authoring fails with `mkdir failed: Permission denied` and lake writes
+    // fail the same way. Hand ownership back before declaring success.
+    //
+    // Runs last, and never fatally: aborting here would leave a fully restored
+    // box refusing to finish over a fixable permission, so a failure prints the
+    // exact command instead.
+    for dir in [Path::new(LAKE_DIR), crate::action_templates::state_root().as_path()] {
+        if dir.is_dir() {
+            give_to_service_user(dir);
+        }
+    }
+
     println!();
     println!("✓ restore complete.");
     println!("  Next steps:");
@@ -241,6 +258,32 @@ fn extract_into(archive: &Path, dest: &Path) -> Result<(), crate::Error> {
     t.unpack(dest)
         .map_err(|e| crate::Error::Other(format!("tar unpack: {e}")))?;
     Ok(())
+}
+
+/// `chown -R virtues:virtues <dir>`. Shells out to match how the installer
+/// does the same job; a pure-Rust walk would need the uid/gid lookup anyway.
+fn give_to_service_user(dir: &Path) {
+    let out = Command::new("chown")
+        .args(["-R", "virtues:virtues"])
+        .arg(dir)
+        .output();
+    match out {
+        Ok(o) if o.status.success() => {
+            println!("→ handed {} back to the virtues user", dir.display());
+        }
+        Ok(o) => eprintln!(
+            "warning: could not chown {} ({}). The service runs as `virtues` and \
+             will not be able to write there. Fix with:\n    sudo chown -R virtues:virtues {}",
+            dir.display(),
+            String::from_utf8_lossy(&o.stderr).trim(),
+            dir.display()
+        ),
+        Err(e) => eprintln!(
+            "warning: could not run chown on {dir:?} ({e}). Fix with:\n    \
+             sudo chown -R virtues:virtues {}",
+            dir.display()
+        ),
+    }
 }
 
 fn copy_tree(src: &Path, dst: &Path) -> Result<(), crate::Error> {
