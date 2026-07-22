@@ -104,7 +104,7 @@ pub async fn mint_face_token_handler(Path(action_id): Path<String>) -> Response 
 /// the manifest/prompt are not exposed to the iframe.
 pub fn face_dir_for(action_id: &str) -> Option<std::path::PathBuf> {
     let dir = crate::action_templates::dir_for_action_id(action_id)?;
-    let face = crate::action_templates::actions_root().join(dir).join("face");
+    let face = crate::action_templates::resolve_applet_dir(&dir).join("face");
     face.join("index.html").is_file().then_some(face)
 }
 

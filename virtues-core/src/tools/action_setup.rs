@@ -159,7 +159,9 @@ pub async fn execute(
     }
 
     // ---- 3. Resolve the folder (collision-safe) --------------------------
-    let root = crate::action_templates::actions_root();
+    // Authoring always writes to the state root — never the shipped tree,
+    // which is root-owned and replaced wholesale on upgrade.
+    let root = crate::action_templates::state_root();
     // A slug is "ours to update" only if an existing folder's manifest has the
     // same name. A different applet that merely collapses to the same slug
     // gets a numeric suffix instead of silently overwriting it.
