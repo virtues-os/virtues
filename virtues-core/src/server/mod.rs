@@ -574,7 +574,11 @@ pub async fn run(client: Virtues, host: &str, port: u16) -> Result<()> {
             "/api/wiki/org/:id",
             get(api::wiki_get_organization_handler).put(api::wiki_update_organization_handler),
         )
-        // Wiki - Thing: retired; things live under /api/things (single source)
+        // Wiki - Thing: retired. Things are gone entirely as of the wiki_things
+        // drop — topics are universals, things were particulars, and a
+        // particular now accumulates as a floating mention until something
+        // promotes it. This comment used to point at /api/things, which no
+        // longer exists.
         // Wiki - Narrative Identity
         .route(
             "/api/wiki/narrative-identity",
@@ -700,17 +704,6 @@ pub async fn run(client: Virtues, host: &str, port: u16) -> Result<()> {
         .route(
             "/api/pages/versions/:version_id",
             get(api::get_page_version_handler),
-        )
-        // Things API (long-running named anchors — projects, pets, goals, ...)
-        .route(
-            "/api/things",
-            get(api::list_things_handler).post(api::create_thing_handler),
-        )
-        .route(
-            "/api/things/:id",
-            get(api::get_thing_handler)
-                .patch(api::update_thing_handler)
-                .delete(api::delete_thing_handler),
         )
         // Box updates (Settings → Box)
         .route("/api/system/update", get(api::update_status_handler))

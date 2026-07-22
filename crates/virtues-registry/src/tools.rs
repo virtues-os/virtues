@@ -1263,7 +1263,7 @@ Use this when:
   if you actually need it.
 - An attached_project lists items and you need one's full content.
 
-Supported urls: /page/, /chat/, /space/, /person/, /place/, /org/, /thing/.
+Supported urls: /page/, /chat/, /notebook/, /person/, /place/, /org/.
 Returns the item's content (page text, recent chat messages, space members,
 person/place/org/thing details). Don't fetch a reference you don't need."#.to_string(),
         parameters: serde_json::json!({

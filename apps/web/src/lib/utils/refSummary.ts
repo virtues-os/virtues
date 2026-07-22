@@ -17,7 +17,7 @@ export interface RefSummary {
 	name: string;
 	subtitle?: string;
 	facts: RefFact[];
-	/** Person picture / place or thing cover — shown as a round/rect avatar. */
+	/** Person picture / place cover — shown as a round/rect avatar. */
 	avatarUrl?: string;
 	/** Place coordinates, if known — drives the (later) map, schematic for now. */
 	coords?: { lat: number; lng: number };
@@ -96,20 +96,6 @@ async function fetchByType(type: string, id: string): Promise<RefSummary | null>
 				name: o.canonical_name || id,
 				subtitle: o.role_title || o.organization_type || undefined,
 				facts,
-			};
-		}
-		case "thing": {
-			const r = await fetch(`${API}/things/${encodeURIComponent(id)}`);
-			if (!r.ok) return null;
-			const t = await r.json();
-			const facts: RefFact[] = [];
-			if (t.category) facts.push({ label: "Type", value: t.category });
-			return {
-				type,
-				name: t.name || id,
-				subtitle: t.description || t.category || undefined,
-				facts,
-				avatarUrl: t.cover_image || undefined,
 			};
 		}
 		default:

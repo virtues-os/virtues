@@ -656,8 +656,6 @@ impl SemanticSearchEngine {
                 entities.push(id.to_string());
             } else if let Some(id) = url.strip_prefix("/org/") {
                 entities.push(id.to_string());
-            } else if let Some(id) = url.strip_prefix("/thing/") {
-                entities.push(id.to_string());
             } else if let Some(id) = url.strip_prefix("/drive/") {
                 if id.starts_with("file_") {
                     // Strip any viewer params (?page=N) a stored route carries.

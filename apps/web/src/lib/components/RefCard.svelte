@@ -27,7 +27,7 @@
 		mimeType?: string;
 	}>();
 
-	const ENTITY_TYPES = new Set(["person", "place", "org", "thing"]);
+	const ENTITY_TYPES = new Set(["person", "place", "org"]);
 	const id = $derived(url ? url.slice(url.lastIndexOf("/") + 1) : "");
 
 	let summary = $state<RefSummary | null>(null);
@@ -60,7 +60,7 @@
 	const domain = $derived(type === "link" ? domainOf(url) : "");
 
 	const TYPE_LABEL: Record<string, string> = {
-		person: "Person", place: "Place", org: "Organization", thing: "Thing",
+		person: "Person", place: "Place", org: "Organization",
 		page: "Page", chat: "Chat", space: "Space", file: "File",
 		day: "Day", year: "Year", source: "Source", link: "Link",
 		record: "Record",
@@ -83,10 +83,10 @@
 	);
 
 	const hasMap = $derived(type === "place" && !!summary?.coords);
-	// Scene/content media → full-width figure: a file image, or a place/thing
+	// Scene/content media → full-width figure: a file image, or a place
 	// cover photo (when there's no map to show instead).
 	const figureImage = $derived(
-		fileImageUrl || (!hasMap && cover && (type === "place" || type === "thing") ? cover : ""),
+		fileImageUrl || (!hasMap && cover && type === "place" ? cover : ""),
 	);
 
 	// Monogram fallback so an image-less person/org still has a visual anchor
@@ -145,7 +145,7 @@
 	/* Title belongs to the writing — inherits the reader's page font at normal
 	   weight; never bold, never a hardcoded sans. */
 	.ref-title {
-		font-family: var(--editor-font-family, var(--font-serif, Georgia, serif));
+		font-family: var(--editor-font-family, var(--font-serif));
 		font-size: 1.0625rem;
 		font-weight: 400;
 		color: var(--color-foreground);
@@ -156,7 +156,7 @@
 	}
 	/* Caption — quiet natural case in the UI sans. */
 	.ref-meta {
-		font-family: var(--font-sans, ui-sans-serif, system-ui, sans-serif);
+		font-family: var(--font-sans);
 		font-size: 0.75rem;
 		font-weight: 400;
 		color: var(--color-foreground-subtle);
@@ -183,7 +183,7 @@
 		width: 100%;
 		border-radius: 6px;
 		overflow: hidden;
-		background: var(--color-surface-sunken, var(--color-border));
+		background: var(--color-surface-sunken);
 	}
 	.ref-figure-media img {
 		display: block;
@@ -228,9 +228,9 @@
 		display: inline-flex;
 		align-items: center;
 		justify-content: center;
-		background: var(--color-surface-sunken, var(--color-border));
+		background: var(--color-surface-sunken);
 		color: var(--color-foreground-muted);
-		font-family: var(--font-sans, ui-sans-serif, system-ui, sans-serif);
+		font-family: var(--font-sans);
 		font-size: 0.9375rem;
 		font-weight: 500;
 		letter-spacing: 0.02em;
@@ -240,7 +240,7 @@
 		display: inline-flex;
 		align-items: center;
 		justify-content: center;
-		background: var(--color-surface-sunken, var(--color-border));
+		background: var(--color-surface-sunken);
 		color: var(--color-foreground-subtle);
 	}
 	.ref-line-text {
