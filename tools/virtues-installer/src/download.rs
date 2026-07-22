@@ -54,24 +54,36 @@ pub async fn download_binary(cfg: &mut InstallConfig, arch: &str) -> Result<()> 
     fs::write(&tar_path, &bytes).context("writing tarball to tempdir")?;
     ui::ok(&format!("Downloaded ({} MB)", bytes.len() / 1024 / 1024));
 
-    // SHA verification (defense-in-depth over HTTPS).
-    if let Ok(resp) = client.get(&sha_url).send().await.and_then(|r| r.error_for_status()) {
-        let expected = resp.text().await?;
-        let expected = expected
-            .split_whitespace()
-            .next()
-            .ok_or_else(|| anyhow!("malformed sha256 sidecar"))?;
-        let actual = sha256_hex(&bytes);
-        if expected.eq_ignore_ascii_case(&actual) {
-            ui::ok("SHA256 verified");
-        } else {
-            return Err(anyhow!(
-                "SHA256 mismatch on {tar_name} — refusing to install"
-            ));
-        }
-    } else {
-        ui::warn("SHA256 sidecar missing — proceeding without verification");
+    // SHA verification. This tarball is extracted and installed as root, so it
+    // is the MOST privileged artifact we fetch — it gets the same hard-fail the
+    // model downloader below already uses, for the same reason: the release is
+    // ours, so a missing sidecar is a packaging bug, not an optional nicety.
+    //
+    // This previously warned and continued when the sidecar fetch failed, which
+    // meant anything that could suppress that one request (a captive portal, a
+    // CDN edge 404, or an attacker serving a swapped tarball while dropping the
+    // sidecar) silently downgraded verification to "HTTPS only" — the weakest
+    // guarantee of the three download paths in this file, on the one artifact
+    // that runs as root.
+    let expected = client
+        .get(&sha_url)
+        .send()
+        .await
+        .and_then(|r| r.error_for_status())
+        .with_context(|| format!("GET {sha_url} — release must ship a .sha256 sidecar"))?
+        .text()
+        .await?;
+    let expected = expected
+        .split_whitespace()
+        .next()
+        .ok_or_else(|| anyhow!("malformed sha256 sidecar"))?;
+    let actual = sha256_hex(&bytes);
+    if !expected.eq_ignore_ascii_case(&actual) {
+        return Err(anyhow!(
+            "SHA256 mismatch on {tar_name} — refusing to install"
+        ));
     }
+    ui::ok("SHA256 verified");
 
     // Extract.
     let mut cmd = Command::new("tar");
