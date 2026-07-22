@@ -16,7 +16,7 @@ use virtues_registry::models::{default_model_for_slot, ModelSlot};
 // The audio model is the registry's Omni slot (currently google/gemini-3-flash),
 // resolved at call time — never a hardcoded id here. "Omni" = an audio-native
 // model that ingests audio as native tokens (~25/sec, ~7.5K for a 5-min clip —
-// cheap) and does full scene understanding (speech + ambient + music + mood +
+// cheap) and does scene understanding (speech + ambient sounds + music +
 // setting), which is what a life-log wants, NOT bare speech-to-text. gemini-3
 // won a controlled 5-clip bench on cost/speed/accuracy/JSON-validity; see
 // ModelSlot::Omni. Audio requires reasoning_effort:low (below) — it's the only
@@ -40,22 +40,36 @@ const MAX_TRANSCRIBE_ATTEMPTS: i64 = 4;
 /// backoff window also lets the queue flow past it to fresh records meanwhile.
 const RETRY_BACKOFF_BASE_SECS: i64 = 120;
 
-const SYSTEM_PROMPT: &str = r#"You are an audio SCENE-UNDERSTANDING engine for a personal life-log. You hear a slice of someone's real life: speech, but also music, ambient sound, room tone, the feel of a place. Capture BOTH the words AND the essence of the moment. Output ONLY a raw JSON object — no markdown, no code fences, no prose.
+/// Post-transcription hallucination guard. Gemini's failure mode on near-silent
+/// audio is fluent narration of nothing — a "morning routine" invented over a
+/// quiet room. We catch it by proportion: a transcript should be roughly as long
+/// as there was speech to justify it. Allowed length ≈ measured speech-seconds ×
+/// MAX_CHARS_PER_SPEECH_SEC + SLACK; a transcript longer than that, over a chunk
+/// the VAD actually measured, is suppressed to a silent row. 40 chars/sec is ~2×
+/// real fast speech (~20/sec), so dense legitimate speech clears it comfortably;
+/// only text with no acoustic basis trips it. Fires only when the VAD produced a
+/// measurement — a missing measurement never suppresses (fail-open).
+const MAX_CHARS_PER_SPEECH_SEC: f32 = 40.0;
+const HALLUCINATION_SLACK_CHARS: f32 = 80.0;
+
+const SYSTEM_PROMPT: &str = r#"You transcribe short audio clips from a personal wearable mic. Your output is the SOLE source of truth for an automated event timeline and daily summary a person reads about their own life — they never hear the audio; they read what you write as fact. One invented detail — an event that didn't happen, a word no one said, a name no one spoke — is accepted as true and quietly destroys trust in the whole system. Omissions are safe and recoverable: the audio is kept and can be re-processed. Fabrications are not. So report only what you actually hear, and when unsure, leave it out.
+
+Output ONLY a raw JSON object — no markdown, no code fences, no prose.
 
 Schema:
-{"title":"string, max 10 words, what this moment is","summary":"1-2 sentence narrative of what was happening and how it felt","text":"verbatim speech transcript, empty string if no speech","language":"ISO 639-1","confidence":0.0-1.0,"speaker_count":integer,"tags":["max 8 topical + scene tags"],"entities":{"people":[{"name":"string","said":"the sentence they were named in"}],"places":[{"name":"string","said":"..."}],"organizations":[{"name":"string","said":"..."}]},"scene":{"sounds":["non-speech sounds heard: music, laughter, dog barking, traffic, dishes, footsteps, TV..."],"music":"description of any music (genre/energy) or null","mood":"the emotional tone/energy of the moment","setting":"likely place/context (e.g. home kitchen, bar, car, outdoors)"}}
+{"title":"<=10 words, literal label of what is audible","summary":"1 sentence, only what is actually heard; '' or 'Mostly quiet' if little is audible","text":"verbatim speech, '' if none","language":"ISO 639-1","confidence":0.0-1.0 in the speech transcript,"speaker_count":integer,"tags":["<=8, for content actually present"],"entities":{"people":[{"name":"string","said":"verbatim clause they were named in, <=15 words"}],"places":[{"name":"string","said":"..."}],"organizations":[{"name":"string","said":"..."}]},"scene":{"sounds":["only distinctly identifiable non-speech sounds actually heard"],"music":"description only if music is clearly present, else null","setting":"place ONLY if a distinctive sound proves it, else 'unknown'"}}
 
 Rules:
-- text: exact words spoken, no paraphrasing, keep fillers (um, uh). Use "[Speaker 1]:", "[Speaker 2]:" when multiple voices. Empty "" if no intelligible speech.
-- ALWAYS fill scene.* even when there is no speech — ambient-only moments are valuable. Describe what you actually hear; do not invent.
-- entities: only names/places/orgs explicitly spoken or clearly identifiable. Omit if ambiguous — do NOT guess.
-- entities[].said: quote the clause the name appears in, verbatim, <= 15 words. A bare name is useless to a human reviewer later; the quote is what makes it recognizable.
-- confidence: confidence in the SPEECH transcript (0.0 if no speech, 0.9+ if clear).
-- tags: blend topic (what's discussed) and scene (sounds/mood/setting) labels.
-- SUNG or hummed vocals ARE speech — transcribe the lyrics verbatim into "text". NEVER leave text empty just because words are sung or set to music.
-- Speakers often discuss technology and AI tools — prefer real names (Claude, Cursor, Codex, GPT, Gemini, terminal, repo, agent) over acoustically-similar non-words: write "Claude", not "claw"/"cloud".
-- Do NOT fabricate names (people, songs, places, orgs) you are unsure of — omit rather than guess a plausible-sounding one.
-- Truly silent/empty audio (no speech AND no discernible ambient sound): {"title":"Silence","summary":"Silent audio","text":"","language":"en","confidence":0.0,"speaker_count":0,"tags":["silence"],"entities":{"people":[],"places":[],"organizations":[]},"scene":{"sounds":[],"music":null,"mood":"quiet","setting":"unknown"}}
+- REPORT, DON'T INFER. Write what you hear, never what it implies. A sound is not an activity: list "grinding noise" in scene.sounds, but never write "making coffee"; footsteps are not "a walk"; typing is not "working". Activities enter the record ONLY if spoken aloud.
+- text: exact words, keep fillers (um, uh). Use "[Speaker 1]:", "[Speaker 2]:" for multiple voices. Mark unclear speech "[inaudible]" — never substitute a plausible guess. Sung or hummed vocals ARE speech — transcribe the lyrics verbatim.
+- Never repeat a phrase more than twice, even if the audio seems to loop — that is a transcription error, not speech.
+- Background TV, radio, or podcast is NOT the wearer speaking. Note it as a "background_media" sound; never attribute its words as first-person speech.
+- entities: only names explicitly spoken and unambiguous. entities[].said quotes the clause verbatim, <=15 words. Omit anything uncertain — never guess a plausible-sounding name. For tech/AI terms prefer real names (Claude, Cursor, Codex, GPT, Gemini, repo, agent) over acoustically-similar non-words: "Claude", not "claw"/"cloud".
+- confidence: confidence in the SPEECH transcript only (0.0 if no speech, 0.9+ if clear).
+- MOSTLY-QUIET audio (no clear speech, only faint or indistinct sound): text:"", confidence:0.0, list only sounds you can distinctly name (often none), summary:"Mostly quiet". Do NOT build a narrative, routine, or agenda from faint ambience.
+- SILENT audio (no speech, no distinct sound): {"title":"Silence","summary":"Silent audio","text":"","language":"en","confidence":0.0,"speaker_count":0,"tags":["silence"],"entities":{"people":[],"places":[],"organizations":[]},"scene":{"sounds":[],"music":null,"setting":"unknown"}}
+
+OVERRIDING RULE: better to report too little than to add anything unclear. Never trade accuracy for completeness. A short, true record is a success; a rich, embellished one is a failure.
 "#;
 
 #[derive(Debug, thiserror::Error)]
@@ -84,7 +98,7 @@ struct TranscriptionResponse {
     speaker_count: Option<i32>,
     tags: Option<Vec<String>>,
     entities: Option<Value>,
-    /// Audio scene block (sounds/music/mood/setting) — the non-speech "essence"
+    /// Audio scene block (sounds/music/setting) — the non-speech "essence"
     /// of the moment. Stored in the transcription row's metadata JSONB.
     scene: Option<Value>,
 }
@@ -199,6 +213,21 @@ pub async fn drain(db: &PgPool, batch_size: i64) -> Result<(usize, usize, usize)
         }
     }
 
+    // The box's home timezone, for the per-call ground-truth time anchor. A
+    // missing/unparseable profile falls back to UTC — the anchor is only a
+    // consistency hint, never load-bearing. Same source as the nightly
+    // maintenance-hour logic (app_user_profile.home_timezone).
+    let tz: chrono_tz::Tz = sqlx::query_as::<_, (Option<String>,)>(
+        "SELECT home_timezone FROM app_user_profile LIMIT 1",
+    )
+    .fetch_optional(db)
+    .await
+    .ok()
+    .flatten()
+    .and_then(|(s,)| s)
+    .and_then(|s| s.parse().ok())
+    .unwrap_or(chrono_tz::UTC);
+
     // Build the virtues-api client lazily — only if we have at least one
     // non-silent recording to process.
     let mut virtues_api: Option<BearerClient> = None;
@@ -292,43 +321,84 @@ pub async fn drain(db: &PgPool, batch_size: i64) -> Result<(usize, usize, usize)
                 }
             }
         }
-        if let Some(v) = vad.as_ref() {
-            if !v.has_speech(&audio_bytes) {
-                tracing::info!(
-                    stream_id = %rec.source_stream_id,
-                    "no speech detected (VAD); recording silent, skipping Gemini"
-                );
-                match insert_silent_transcript(db, rec).await {
-                    Ok(_) => skipped += 1,
-                    Err(e) => {
-                        tracing::warn!(stream_id = %rec.source_stream_id, error = %e,
-                            "failed to insert silent transcript (VAD gate)");
-                        record_attempt_failure(db, &rec.source_stream_id).await;
-                        failed += 1;
-                    }
+        // Measure speech seconds once. It both gates the Gemini call (below the
+        // minimum → silent, no call) and, when we do call, primes the model's
+        // honesty ground-truth and the post-transcription hallucination guard.
+        // None = VAD unavailable/errored → fail-open (proceed, never suppress).
+        let speech_secs: Option<f32> = vad.as_ref().and_then(|v| v.speech_seconds(&audio_bytes));
+        if matches!(speech_secs, Some(s) if s < crate::vad::MIN_SPEECH_SECS) {
+            tracing::info!(
+                stream_id = %rec.source_stream_id,
+                speech_secs = ?speech_secs,
+                "no speech detected (VAD); recording silent, skipping Gemini"
+            );
+            match insert_silent_transcript(db, rec).await {
+                Ok(_) => skipped += 1,
+                Err(e) => {
+                    tracing::warn!(stream_id = %rec.source_stream_id, error = %e,
+                        "failed to insert silent transcript (VAD gate)");
+                    record_attempt_failure(db, &rec.source_stream_id).await;
+                    failed += 1;
                 }
-                continue;
             }
+            continue;
         }
 
         let audio_b64 =
             base64::Engine::encode(&base64::engine::general_purpose::STANDARD, &audio_bytes);
 
-        match transcribe(client, &audio_b64, &rec.audio_format).await {
+        // Deterministic ground-truth anchor: local time + measured silence, fed
+        // as a fenced consistency hint (never as content). Stops the model from
+        // stamping a "morning routine" onto an evening chunk, and tells it up
+        // front when it is being handed near-silence.
+        let ground_truth = build_ground_truth(rec, &tz, speech_secs);
+
+        match transcribe(client, &audio_b64, &rec.audio_format, &ground_truth).await {
             // Cost is captured at the BearerClient chokepoint (post_json records
             // the gateway usage.cost into app_ai_calls, tagged "transcription").
-            Ok(t) => match insert_transcription(db, rec, &t).await {
-                Ok(_) => transcribed += 1,
-                Err(e) => {
+            Ok(t) => {
+                // Hallucination guard: a transcript far longer than the measured
+                // speech could justify is fluent narration of near-silence — the
+                // exact failure that wrote a fake morning routine over a quiet
+                // room. Suppress to a silent row rather than trust it. Fires only
+                // when the VAD gave a measurement (Some); None never suppresses.
+                let text_len = t.text.trim().chars().count() as f32;
+                let over_budget = matches!(
+                    speech_secs,
+                    Some(s) if text_len > s * MAX_CHARS_PER_SPEECH_SEC + HALLUCINATION_SLACK_CHARS
+                );
+                if over_budget {
                     tracing::warn!(
                         stream_id = %rec.source_stream_id,
-                        error = %e,
-                        "failed to insert transcription"
+                        speech_secs = ?speech_secs,
+                        text_len = text_len as usize,
+                        title = %t.title.as_deref().unwrap_or("(none)"),
+                        "suppressing likely hallucination: transcript far exceeds measured speech"
                     );
-                    record_attempt_failure(db, &rec.source_stream_id).await;
-                    failed += 1;
+                    match insert_silent_transcript(db, rec).await {
+                        Ok(_) => skipped += 1,
+                        Err(e) => {
+                            tracing::warn!(stream_id = %rec.source_stream_id, error = %e,
+                                "failed to insert silent transcript (hallucination guard)");
+                            record_attempt_failure(db, &rec.source_stream_id).await;
+                            failed += 1;
+                        }
+                    }
+                    continue;
                 }
-            },
+                match insert_transcription(db, rec, &t).await {
+                    Ok(_) => transcribed += 1,
+                    Err(e) => {
+                        tracing::warn!(
+                            stream_id = %rec.source_stream_id,
+                            error = %e,
+                            "failed to insert transcription"
+                        );
+                        record_attempt_failure(db, &rec.source_stream_id).await;
+                        failed += 1;
+                    }
+                }
+            }
             Err(TranscribeError::RateLimited) => {
                 let remaining = pending.len() - transcribed - skipped - failed;
                 tracing::warn!(
@@ -438,7 +508,7 @@ async fn insert_transcription(
         .map(|tags| serde_json::json!(tags))
         .unwrap_or_else(|| serde_json::json!([]));
     let entities_json = t.entities.clone().unwrap_or_else(|| serde_json::json!({}));
-    // Persist the audio scene (sounds/music/mood/setting) in metadata so the
+    // Persist the audio scene (sounds/music/setting) in metadata so the
     // non-speech "essence" is queryable alongside the transcript.
     let metadata_json = serde_json::json!({
         "scene": t.scene.clone().unwrap_or(serde_json::Value::Null)
@@ -480,6 +550,46 @@ async fn insert_transcription(
     Ok(())
 }
 
+/// Build the fenced GROUND TRUTH block prepended to the transcription request.
+/// Deterministic facts only — local time and measured silence — framed as a
+/// consistency/disambiguation hint the model must never treat as content. The
+/// time anchor is what catches a "morning routine" hallucinated onto an evening
+/// chunk; the speech measurement primes the model for near-silence up front.
+fn build_ground_truth(
+    rec: &PendingRecording,
+    tz: &chrono_tz::Tz,
+    speech_secs: Option<f32>,
+) -> String {
+    let local = rec.started_at.with_timezone(tz);
+    let hour: u32 = local.format("%H").to_string().parse().unwrap_or(12);
+    let part = match hour {
+        5..=11 => "morning",
+        12..=16 => "afternoon",
+        17..=20 => "evening",
+        _ => "night",
+    };
+    let time_line = format!("- Local time: {} ({part})", local.format("%a %H:%M"));
+
+    let speech_line = match speech_secs {
+        Some(s) => {
+            let quiet = if s < 2.0 { " — mostly quiet" } else { "" };
+            match rec.duration_seconds {
+                Some(d) => format!("\n- Measured speech in this clip: {s:.1}s of {d:.0}s{quiet}"),
+                None => format!("\n- Measured speech in this clip: {s:.1}s{quiet}"),
+            }
+        }
+        None => String::new(),
+    };
+
+    format!(
+        "GROUND TRUTH — for consistency and disambiguation ONLY. Never transcribe, \
+describe, or infer content from these; if the audio contradicts them, transcribe the \
+audio and lower confidence.\n{time_line}{speech_line}\nDo not narrate any scene or \
+routine these imply — they exist only to catch contradictions and disambiguate words \
+you actually hear."
+    )
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Transcription call (bearer-authed, System purpose → OS reserve)
 // ─────────────────────────────────────────────────────────────────────────────
@@ -488,6 +598,7 @@ async fn transcribe(
     client: &BearerClient,
     audio_b64: &str,
     audio_format: &str,
+    ground_truth: &str,
 ) -> std::result::Result<TranscriptionResponse, TranscribeError> {
     let mime_type = audio_mime_type(audio_format);
     let request_body = serde_json::json!({
@@ -503,7 +614,7 @@ async fn transcribe(
                     },
                     {
                         "type": "text",
-                        "text": "Transcribe this audio recording and extract structured data."
+                        "text": format!("{ground_truth}\n\nTranscribe this audio recording and extract structured data.")
                     }
                 ]
             }

@@ -65,12 +65,14 @@ const MIN_RUN_SECS: f32 = 0.0;
 /// A chunk counts as "speech" if qualifying runs total at least this many
 /// seconds. Deliberately low: the goal is only to skip chunks with NO
 /// speech — anything with a real utterance must reach Gemini.
-const MIN_SPEECH_SECS: f32 = 0.25;
+pub const MIN_SPEECH_SECS: f32 = 0.25;
 
-/// The speech/no-speech decision over per-frame probabilities: frames ≥
-/// `p_speech` form runs; runs shorter than `min_run_secs` are discarded;
-/// the survivors' total must reach `min_speech_secs`.
-pub fn gate(probs: &[f32], dur: f32, p_speech: f32, min_run_secs: f32, min_speech_secs: f32) -> bool {
+/// Total qualifying speech seconds over per-frame probabilities: frames ≥
+/// `p_speech` form runs; runs shorter than `min_run_secs` are discarded; the
+/// survivors' seconds are summed. The drain treats a recording as no-speech when
+/// this total is below `MIN_SPEECH_SECS` (skip Gemini), and otherwise feeds the
+/// magnitude into the honesty ground-truth and the hallucination guard.
+pub fn speech_total(probs: &[f32], dur: f32, p_speech: f32, min_run_secs: f32) -> f32 {
     let frame_secs = dur / probs.len().max(1) as f32;
     let mut total = 0f32;
     let mut run = 0usize;
@@ -82,14 +84,11 @@ pub fn gate(probs: &[f32], dur: f32, p_speech: f32, min_run_secs: f32, min_speec
             let run_secs = run as f32 * frame_secs;
             if run_secs >= min_run_secs {
                 total += run_secs;
-                if total >= min_speech_secs {
-                    return true;
-                }
             }
             run = 0;
         }
     }
-    false
+    total
 }
 
 pub struct Vad {
@@ -118,25 +117,23 @@ impl Vad {
         })
     }
 
-    /// Whether this recording contains any speech. Fail-open: on any decode or
-    /// inference error we return `true`, so a VAD problem can never silently
-    /// drop real speech — the worst case is one unnecessary Gemini call.
-    pub fn has_speech(&self, m4a: &[u8]) -> bool {
-        match self.detect(m4a) {
-            Ok(v) => v,
+    /// Total measured speech seconds in the recording. Drives the drain's
+    /// no-speech skip (total < `MIN_SPEECH_SECS` → silent, no Gemini call), the
+    /// honesty ground-truth handed to the model, and the post-transcription
+    /// hallucination guard. `None` on any decode/inference error — callers treat
+    /// that as "unknown" and never suppress on it (fail-open: a VAD problem can
+    /// never silently drop real speech, at worst one unnecessary Gemini call).
+    pub fn speech_seconds(&self, m4a: &[u8]) -> Option<f32> {
+        match self.speech_probs(m4a) {
+            Ok(Some((probs, dur))) => {
+                Some(speech_total(&probs, dur, SPEECH_PROB, MIN_RUN_SECS))
+            }
+            Ok(None) => Some(0.0), // too short to contain speech
             Err(e) => {
-                tracing::warn!(error = %e, "VAD failed; defaulting to has-speech (Gemini call proceeds)");
-                true
+                tracing::warn!(error = %e, "VAD speech_seconds failed; measurement unknown");
+                None
             }
         }
-    }
-
-    fn detect(&self, m4a: &[u8]) -> Result<bool> {
-        let (probs, dur) = match self.speech_probs(m4a)? {
-            Some(v) => v,
-            None => return Ok(false), // too short to contain speech
-        };
-        Ok(gate(&probs, dur, SPEECH_PROB, MIN_RUN_SECS, MIN_SPEECH_SECS))
     }
 
     /// Per-frame speech probability for the whole recording, plus its duration
@@ -273,3 +270,4 @@ fn decode_m4a_16k_mono(bytes: &[u8]) -> Result<Vec<f32>> {
     }
     Ok(out)
 }
+
