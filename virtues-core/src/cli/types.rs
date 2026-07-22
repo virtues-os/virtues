@@ -113,9 +113,10 @@ pub enum Commands {
     /// Snapshot the box's state into a single tarball.
     ///
     /// Includes the Postgres database (full `pg_dump`), the data-lake (action
-    /// stream archives + drive files at `/var/lib/virtues/lake/`), and
-    /// `/etc/virtues/env` (the encryption key — required to decrypt
-    /// credentials in the DB).
+    /// stream archives + drive files at `/var/lib/virtues/lake/`), and the env
+    /// file holding the encryption key — required to decrypt credentials in
+    /// the DB. Refuses to produce a backup when no env file can be found,
+    /// since the result would be an undecryptable dump.
     ///
     /// Because the env file is included, the tarball is **as sensitive as
     /// the box itself**. Store backups with the same care.
@@ -127,6 +128,12 @@ pub enum Commands {
         /// Overwrite an existing file at the output path.
         #[arg(long)]
         force: bool,
+
+        /// Produce a backup even when no encryption key can be found. The
+        /// resulting tarball CANNOT decrypt its own database — only useful
+        /// for dev boxes that keep the key elsewhere.
+        #[arg(long)]
+        allow_missing_key: bool,
     },
 
     /// Restore the box's state from a backup tarball.

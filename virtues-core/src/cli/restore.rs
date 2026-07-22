@@ -20,7 +20,16 @@ use sha2::{Digest, Sha256};
 
 use super::backup::{Artifact, Manifest};
 
-const ENV_FILE: &str = "/etc/virtues/env";
+/// Where to put the restored env file. Must be the path the running service
+/// actually reads, not the FHS-correct one — restoring the key to a file
+/// systemd never loads leaves a box that boots fine (the unit's
+/// `EnvironmentFile=-` prefix makes a missing file non-fatal) and cannot
+/// decrypt anything. Prefer an env file that already exists on this box;
+/// fall back to the FHS path for a bare-metal restore onto a fresh machine.
+fn restore_env_target() -> PathBuf {
+    crate::cli::backup::find_env_file()
+        .unwrap_or_else(|| PathBuf::from(crate::cli::backup::ENV_CANDIDATES[0]))
+}
 const LAKE_DIR: &str = "/var/lib/virtues/lake";
 
 pub async fn run(path: PathBuf, force: bool) -> Result<(), crate::Error> {
@@ -66,19 +75,28 @@ pub async fn run(path: PathBuf, force: bool) -> Result<(), crate::Error> {
 
     let staged_env = staging.join("env/virtues.env");
     if staged_env.exists() {
-        println!("→ restoring env at {ENV_FILE}…");
-        if let Some(parent) = Path::new(ENV_FILE).parent() {
+        let env_file = restore_env_target();
+        println!("→ restoring env at {}…", env_file.display());
+        if let Some(parent) = env_file.parent() {
             fs::create_dir_all(parent)
                 .map_err(|e| crate::Error::Other(format!("env parent: {e}")))?;
         }
-        fs::copy(&staged_env, ENV_FILE)
+        fs::copy(&staged_env, &env_file)
             .map_err(|e| crate::Error::Other(format!("write env: {e}")))?;
         // Lock the env down — encryption key inside.
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
-            let _ = fs::set_permissions(ENV_FILE, fs::Permissions::from_mode(0o600));
+            let _ = fs::set_permissions(env_file, fs::Permissions::from_mode(0o600));
         }
+    } else {
+        // The tarball carries no key. Everything encrypted in the dump we are
+        // about to load is unreadable; say so plainly rather than reporting a
+        // clean restore.
+        eprintln!(
+            "warning: backup contains no env file — restored credentials will \
+             NOT be decryptable without VIRTUES_ENCRYPTION_KEY from the source box"
+        );
     }
 
     println!("→ restoring Postgres database…");

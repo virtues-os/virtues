@@ -389,18 +389,59 @@ fn atomic_flip(share: &Path, slot: &Path) -> Result<()> {
 /// Replace whatever exists at `link` (file, dir, or old symlink) with a
 /// symlink to `target`. The dir case is the one-time adoption of a pre-slot
 /// install, whose web/actions were real directories.
+///
+/// That dir case used to be `remove_dir_all` — a recursive delete of whatever
+/// the pre-slot install had there. Correct for a tree the installer owns
+/// outright, catastrophic once anything else lives inside it: chat-authored
+/// applets land in `<applets>/user/`, so adopting the slot layout would have
+/// silently deleted every applet the user had written, along with its face
+/// HTML and schema. The result discarded (`let _ =`), so a partial failure
+/// wasn't even reported.
+///
+/// Now it renames the directory aside and says so. The upgrade still proceeds,
+/// nothing is lost, and the operator has a recoverable copy. That does not
+/// make it correct to keep user state under a versioned prefix — it makes the
+/// blast radius survivable while that gets fixed properly.
 fn force_symlink(target: &Path, link: &Path) -> Result<()> {
     if let Some(parent) = link.parent() {
         fs::create_dir_all(parent)?;
     }
     if link.is_symlink() || link.is_file() {
-        let _ = fs::remove_file(link);
+        fs::remove_file(link)
+            .with_context(|| format!("removing {}", link.display()))?;
     } else if link.is_dir() {
-        let _ = fs::remove_dir_all(link);
+        let aside = preserved_path(link);
+        fs::rename(link, &aside).with_context(|| {
+            format!(
+                "preserving existing directory {} as {}",
+                link.display(),
+                aside.display()
+            )
+        })?;
+        ui::warn(&format!(
+            "{} was a real directory — moved to {} (contents preserved)",
+            link.display(),
+            aside.display()
+        ));
     }
     std::os::unix::fs::symlink(target, link)
         .with_context(|| format!("symlink {} -> {}", link.display(), target.display()))?;
     Ok(())
+}
+
+/// A non-colliding sibling path to park a displaced directory at. Suffixes
+/// with a counter rather than a timestamp so repeated runs stay deterministic
+/// and an operator can see the order things were displaced in.
+fn preserved_path(link: &Path) -> std::path::PathBuf {
+    let base = format!("{}.preserved", link.display());
+    let first = std::path::PathBuf::from(&base);
+    if !first.exists() {
+        return first;
+    }
+    (2..)
+        .map(|n| std::path::PathBuf::from(format!("{base}.{n}")))
+        .find(|p| !p.exists())
+        .expect("an unused .preserved suffix exists")
 }
 
 /// Delete release slots beyond the newest `keep` (never the one `current`
@@ -430,5 +471,67 @@ fn prune_slots(share: &Path, keep: usize) {
             continue;
         }
         let _ = fs::remove_dir_all(&slot);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The regression that matters: adopting the slot layout must not destroy
+    /// a pre-slot `applets/` directory, because chat-authored applets live in
+    /// `applets/user/`. Before the fix this was `remove_dir_all` and the file
+    /// below was simply gone.
+    #[test]
+    fn force_symlink_preserves_an_existing_directory() {
+        let tmp = tempfile::tempdir().unwrap();
+        let link = tmp.path().join("applets");
+        let authored = link.join("user").join("wife_week");
+        fs::create_dir_all(&authored).unwrap();
+        fs::write(authored.join("manifest.toml"), b"name = \"Wife Week\"").unwrap();
+
+        let target = tmp.path().join("releases/slot-1/applets");
+        fs::create_dir_all(&target).unwrap();
+
+        force_symlink(&target, &link).unwrap();
+
+        assert!(link.is_symlink(), "link should now be a symlink");
+        let preserved = tmp.path().join("applets.preserved");
+        assert_eq!(
+            fs::read_to_string(preserved.join("user/wife_week/manifest.toml")).unwrap(),
+            "name = \"Wife Week\"",
+            "authored applet must survive the flip"
+        );
+    }
+
+    /// A second adoption must not clobber the first rescue.
+    #[test]
+    fn preserved_path_does_not_collide() {
+        let tmp = tempfile::tempdir().unwrap();
+        let link = tmp.path().join("applets");
+
+        fs::create_dir_all(&link).unwrap();
+        assert_eq!(preserved_path(&link), tmp.path().join("applets.preserved"));
+
+        fs::create_dir_all(tmp.path().join("applets.preserved")).unwrap();
+        assert_eq!(preserved_path(&link), tmp.path().join("applets.preserved.2"));
+    }
+
+    /// Replacing an existing symlink stays a plain swap — no stray
+    /// `.preserved` clutter on every routine upgrade.
+    #[test]
+    fn force_symlink_replaces_a_symlink_without_preserving() {
+        let tmp = tempfile::tempdir().unwrap();
+        let old = tmp.path().join("old");
+        let new = tmp.path().join("new");
+        fs::create_dir_all(&old).unwrap();
+        fs::create_dir_all(&new).unwrap();
+        let link = tmp.path().join("applets");
+
+        force_symlink(&old, &link).unwrap();
+        force_symlink(&new, &link).unwrap();
+
+        assert_eq!(fs::read_link(&link).unwrap(), new);
+        assert!(!tmp.path().join("applets.preserved").exists());
     }
 }

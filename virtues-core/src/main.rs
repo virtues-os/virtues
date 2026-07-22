@@ -408,10 +408,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Produces a single tarball of the full box state (DB + lake + env +
     // manifest). Detailed in `virtues::cli::backup`. Runs against a bare DB
     // pool — does not need the full app stack.
-    if let Some(Commands::Backup { output, force }) = &cli.command {
+    if let Some(Commands::Backup { output, force, allow_missing_key }) = &cli.command {
         let database_url = virtues::database::normalize_database_url()?;
         let db = virtues::database::Database::new(&database_url)?;
-        match virtues::cli::backup::run(db.pool(), output.clone(), *force).await {
+        match virtues::cli::backup::run(db.pool(), output.clone(), *force, *allow_missing_key).await {
             Ok(_) => return Ok(()),
             Err(e) => {
                 eprintln!("error: backup failed: {e}");
