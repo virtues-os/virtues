@@ -639,10 +639,16 @@ pub async fn create_user(cfg: &InstallConfig) -> Result<()> {
         .await?;
     }
 
-    for sub in &["lake", "models", "secrets"] {
+    // `applets` is the writable applet tree. It MUST exist and MUST be owned
+    // by the service user before first boot: chat authoring does
+    // `create_dir_all` under it as `virtues`, and when nothing created it the
+    // failure was a bare `mkdir failed: Permission denied` with no indication
+    // of which directory or why.
+    for sub in &["lake", "models", "secrets", "applets"] {
         fs::create_dir_all(cfg.data_dir.join(sub))
             .with_context(|| format!("creating {}/{sub}", cfg.data_dir.display()))?;
     }
+    migrate_applets_out_of_shipped_tree(cfg)?;
     // chown -R virtues:virtues + 0700 on secrets
     let mut cmd = Command::new("chown");
     cmd.args([
@@ -938,6 +944,7 @@ pub async fn write_env_file(
          VIRTUES_MODELS_DIR={models_dir}\n\
          VIRTUES_PDFIUM_PATH={pdfium_path}\n\
          VIRTUES_ACTIONS_DIR={actions_dir}\n\
+         VIRTUES_APPLET_STATE_DIR={applet_state_dir}\n\
          VIRTUES_ACTIONS_BIN_DIR={actions_bin_dir}\n",
         static_dir = cfg.web_dir().display(),
         pdfium_path = cfg.pdfium_lib_path().display(),
@@ -946,6 +953,7 @@ pub async fn write_env_file(
         api = cfg.virtues_api_url,
         models_dir = cfg.models_dir().display(),
         actions_dir = cfg.actions_dir().display(),
+        applet_state_dir = cfg.applet_state_dir().display(),
         actions_bin_dir = cfg.actions_bin_dir().display(),
     );
     for (k, v) in inference_env_keys(cfg, mode, validation) {
@@ -1001,6 +1009,7 @@ async fn merge_env_file(
         ("VIRTUES_API_URL", cfg.virtues_api_url.clone()),
         ("VIRTUES_MODELS_DIR", cfg.models_dir().display().to_string()),
         ("VIRTUES_ACTIONS_DIR", cfg.actions_dir().display().to_string()),
+        ("VIRTUES_APPLET_STATE_DIR", cfg.applet_state_dir().display().to_string()),
         ("VIRTUES_ACTIONS_BIN_DIR", cfg.actions_bin_dir().display().to_string()),
     ];
     want.extend(inference_env_keys(cfg, mode, validation));
@@ -1266,5 +1275,63 @@ pub fn write_install_manifest(cfg: &InstallConfig, mode: &InferenceMode) -> Resu
     fs::write(&path, serde_json::to_vec_pretty(&manifest).expect("manifest serializes"))
         .with_context(|| format!("writing {}", path.display()))?;
     ui::ok(&format!("Wrote topology manifest → {}", path.display()));
+    Ok(())
+}
+
+/// One-time rescue: move authored applets out of the shipped tree.
+///
+/// Before the state root existed, chat-authored applets were written into
+/// `<share>/virtues/{applets,actions}/user/` — inside the tree the installer
+/// replaces on every release. Boxes built that way still have them there, and
+/// leaving them puts user data one slot-flip away from being displaced.
+///
+/// Runs as root, which is what makes it possible at all: the shipped tree is
+/// root-owned, so virtues-core (running as `virtues`) cannot move anything out
+/// of it itself. Merges rather than clobbers, and never overwrites something
+/// already in the state root — a slug present in both means the state copy is
+/// the live one.
+fn migrate_applets_out_of_shipped_tree(cfg: &InstallConfig) -> Result<()> {
+    let dest_root = cfg.applet_state_dir().join("user");
+    let mut moved = 0usize;
+
+    for legacy_parent in ["applets", "actions"] {
+        let src_root = cfg.share_virtues_dir().join(legacy_parent).join("user");
+        if !src_root.is_dir() {
+            continue;
+        }
+        for entry in fs::read_dir(&src_root)
+            .with_context(|| format!("reading {}", src_root.display()))?
+            .flatten()
+        {
+            let src = entry.path();
+            if !src.is_dir() {
+                continue;
+            }
+            let dest = dest_root.join(entry.file_name());
+            if dest.exists() {
+                ui::warn(&format!(
+                    "applet {} already present in the state dir — leaving the copy at {} alone",
+                    dest.display(),
+                    src.display()
+                ));
+                continue;
+            }
+            fs::create_dir_all(&dest_root)
+                .with_context(|| format!("creating {}", dest_root.display()))?;
+            fs::rename(&src, &dest)
+                .with_context(|| format!("moving {} -> {}", src.display(), dest.display()))?;
+            moved += 1;
+        }
+        // Only removes the now-empty `user/` shell; a non-empty one (something
+        // was skipped above) is left for the operator to look at.
+        let _ = fs::remove_dir(&src_root);
+    }
+
+    if moved > 0 {
+        ui::ok(&format!(
+            "Moved {moved} authored applet(s) into {}",
+            dest_root.display()
+        ));
+    }
     Ok(())
 }

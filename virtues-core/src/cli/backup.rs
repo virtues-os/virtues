@@ -6,6 +6,7 @@
 //!   db/virtues.dump          (pg_dump --format=custom output)
 //!   env/virtues.env          (a copy of /etc/virtues/env)
 //!   lake/<file...>           (rsync-style copy of the data lake)
+//!   applets/<file...>        (chat-authored applets + imported packs)
 //!
 //! Manifest records the binary version, the schema migration version, distro
 //! info, UTC timestamp, and sha256 of every artifact. `virtues restore`
@@ -112,6 +113,7 @@ pub async fn run(
     fs::create_dir_all(staging_path.join("db"))
         .and_then(|_| fs::create_dir_all(staging_path.join("env")))
         .and_then(|_| fs::create_dir_all(staging_path.join("lake")))
+        .and_then(|_| fs::create_dir_all(staging_path.join("applets")))
         .map_err(|e| crate::Error::Other(format!("staging dirs: {e}")))?;
 
     println!("→ pg_dump (full database)…");
@@ -153,6 +155,16 @@ pub async fn run(
         copy_tree_recursive(lake_src, &staging_path.join("lake"))?;
     }
 
+    // Authored applets are user data with no other copy: the manifest, the
+    // schema DDL, and the face HTML the model wrote. The DB row and the
+    // applet's Postgres schema survive on their own, but these files don't —
+    // losing them leaves exactly the half-state of a row with no folder.
+    let applets_src = crate::action_templates::state_root();
+    println!("→ copying authored applets at {}…", applets_src.display());
+    if applets_src.is_dir() {
+        copy_tree_recursive(&applets_src, &staging_path.join("applets"))?;
+    }
+
     println!("→ building manifest…");
     let schema_version = current_schema_version(pool).await?;
     let mut artifacts = vec![];
@@ -168,6 +180,7 @@ pub async fn run(
     // Lake is many files; record one entry per file so restore can verify
     // each one individually. Skip if the lake is empty.
     walk_for_artifacts(staging_path.join("lake").as_path(), "lake", &mut artifacts)?;
+    walk_for_artifacts(staging_path.join("applets").as_path(), "applets", &mut artifacts)?;
 
     let manifest = Manifest {
         manifest_version: MANIFEST_VERSION,
