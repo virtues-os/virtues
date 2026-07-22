@@ -55,7 +55,10 @@ cd apps/web && pnpm check   # Svelte
 
 ## Conventions
 
-- `applets/user/` is per-box runtime state. It is gitignored and must not be
-  committed.
+- Authored applets (chat/AI-created) are per-box runtime state and live in the
+  **state root**, never in `applets/`: `/var/lib/virtues/applets` on a box,
+  `.applet-state/` in a dev checkout. `applets/` is shipped, read-only package
+  data that the installer replaces wholesale. Both state paths are gitignored
+  and must not be committed.
 - Model selection goes through the slot system and registry — no model-id
   literals in code.
