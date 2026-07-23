@@ -397,6 +397,18 @@ impl HttpEmbedder {
         vecs.pop().ok_or_else(|| anyhow!("embedding sidecar returned no embedding"))
     }
 
+    /// Embed a batch of **queries** (query prompt) in one sidecar call — the
+    /// batched sibling of `embed_query_async`, for multi-query fan-out. Returns
+    /// one vector per input, in input order.
+    pub async fn embed_query_batch(self: &Arc<Self>, texts: &[String]) -> Result<Vec<Vec<f32>>> {
+        if texts.is_empty() {
+            return Ok(Vec::new());
+        }
+        let prompted: Vec<String> =
+            texts.iter().map(|t| format!("{}{t}", self.query_prompt)).collect();
+        self.request(prompted).await
+    }
+
     /// The model this endpoint is serving — stamped on every indexed row.
     pub fn model_id(&self) -> String {
         self.served_model.clone()
@@ -527,6 +539,11 @@ impl LocalEmbedder {
     /// for symmetric models like gte).
     pub async fn embed_query_async(&self, text: &str) -> Result<Vec<f32>> {
         self.inner.embed_query_async(text).await
+    }
+
+    /// Embed a batch of search **queries** in one call (multi-query fan-out).
+    pub async fn embed_query_batch(&self, texts: &[String]) -> Result<Vec<Vec<f32>>> {
+        self.inner.embed_query_batch(texts).await
     }
 
     /// Embed a single stored **document/content** string.

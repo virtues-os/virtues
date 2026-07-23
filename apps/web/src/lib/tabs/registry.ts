@@ -33,7 +33,6 @@ import DogJumpView from '$lib/components/tabs/views/DogJumpView.svelte';
 import PagesView from '$lib/components/tabs/views/PagesView.svelte';
 import PageDetailView from '$lib/components/tabs/views/PageDetailView.svelte';
 import NotebooksListView from '$lib/components/tabs/views/NotebooksListView.svelte';
-import StoriesView from '$lib/components/tabs/views/StoriesView.svelte';
 import NotebookDetailView from '$lib/components/tabs/views/NotebookDetailView.svelte';
 import NarrativeIdentityView from '$lib/components/tabs/views/NarrativeIdentityView.svelte';
 import OntologyIndexView from '$lib/components/tabs/views/OntologyIndexView.svelte';
@@ -336,29 +335,6 @@ export const tabRegistry: Record<TabType, TabDefinition> = {
 		defaultLabel: 'Notebooks',
 		component: NotebooksListView,
 		detailComponent: NotebookDetailView,
-	},
-
-	// ========================================================================
-	// STORY NAMESPACE: /stories — PLACEHOLDER route, no feature behind it yet.
-	//
-	// A story is a CLAIM ("how I act differently on rainy days"), where a notebook
-	// is a CONTAINER. The table and the magnet that gathers a story's evidence are
-	// built; the rendering is not, and waits until events/entities/days are
-	// verified — a story is an argument made out of them.
-	// ========================================================================
-	story: {
-		match: (path) => path === '/stories' || path === '/story',
-		parse: () => ({
-			type: 'story',
-			label: 'Stories',
-			icon: 'ri:git-branch-line',
-			normalizedRoute: '/stories',
-		}),
-		serialize: () => 'story', // token must equal registry key so it round-trips via KNOWN_TYPES
-		deserialize: () => '/stories',
-		icon: 'ri:git-branch-line',
-		defaultLabel: 'Stories',
-		component: StoriesView,
 	},
 
 	// ========================================================================
@@ -894,7 +870,6 @@ export function parseRoute(route: string): ParsedRoute {
 		'notebook',
 		'day',
 		'year',
-		'story', // Exact /stories | /story — deep-link resolves to StoriesView
 		'narrative-identity',
 		// Easter eggs last
 		'conway',

@@ -340,7 +340,8 @@
 
 		<!-- NEEDS: "Alongside" (a recurring theme across chats+pages → "privacy surfaced
 		     in 3 chats + 2 pages, a notebook?"). Needs an aggregation query + an LLM pass
-		     to name the thread (wiki_stories origin='discovered' scaffolding is unused). Omitted. -->
+		     to name the thread. Omitted — the discovered-story scaffolding it would have
+		     hung on was cut with wiki_stories. -->
 
 		{#if (placeAsk && !placeNamed) || theAsk || !examenSaved}
 			<section class="dialogue rv" style="animation-delay:.18s">

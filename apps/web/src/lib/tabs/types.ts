@@ -20,7 +20,6 @@ export type TabType =
 	| 'place' // Wiki places: /place, /place/place_{id}
 	| 'org' // Wiki organizations: /org, /org/org_{id}
 	| 'notebook' // Notebooks (rooms a chat lives in): /notebooks, /notebook/{id}
-	| 'story' // Stories (a claim, gathered from across time): /stories — PLACEHOLDER
 	| 'day' // Wiki days: /day, /day/day_{date}
 	| 'year' // Wiki years: /year, /year/{year}
 	| 'narrative-identity' // Wiki narrative identity: /narrative-identity

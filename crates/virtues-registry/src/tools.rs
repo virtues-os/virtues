@@ -367,14 +367,25 @@ notebook, ALWAYS omit `domains`: the notebook already scopes the results, and an
 extra domain filter will wrongly exclude the notebook's materials.
 
 Returns ranked results with title, preview, author, timestamp, and a similarity score.
-Use sql_query with the returned record_ids to get full details."#.to_string(),
+Use sql_query with the returned record_ids to get full details.
+
+RECALL TIP: for a broad, vague, or many-worded need, pass 2-4 phrasings in `queries`
+(e.g. ["how my relationship with Sam changed", "tension or arguments with Sam", "good
+times with Sam"]) — they run together and their results are fused, catching evidence a
+single wording would miss. Use one phrasing for a precise lookup."#.to_string(),
         parameters: serde_json::json!({
             "type": "object",
-            "required": ["query"],
             "properties": {
+                "queries": {
+                    "type": "array",
+                    "items": { "type": "string" },
+                    "minItems": 1,
+                    "maxItems": 4,
+                    "description": "One to four natural-language phrasings/facets of the SAME information need. Provide multiple to widen recall on broad or vague questions; use one for a precise lookup. Preferred over `query`."
+                },
                 "query": {
                     "type": "string",
-                    "description": "Natural language search query describing what you're looking for"
+                    "description": "Single natural-language query. Back-compat alias for a one-element `queries`; prefer `queries`."
                 },
                 "domains": {
                     "type": "array",

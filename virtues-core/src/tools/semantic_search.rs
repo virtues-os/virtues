@@ -35,10 +35,34 @@ impl SemanticSearchTool {
         notebook_id: Option<&str>,
         scope_mode: crate::search::ScopeMode,
     ) -> Result<ToolResult, ToolError> {
-        let query = arguments
-            .get("query")
-            .and_then(|v| v.as_str())
-            .ok_or_else(|| ToolError::InvalidParameters("query is required".into()))?;
+        // Prefer `queries` (multi-facet recall); fall back to the single `query`
+        // for back-compat. Blank phrasings are dropped; cap at 4.
+        let mut queries: Vec<String> = arguments
+            .get("queries")
+            .and_then(|v| v.as_array())
+            .map(|arr| {
+                arr.iter()
+                    .filter_map(|v| v.as_str())
+                    .map(str::trim)
+                    .filter(|s| !s.is_empty())
+                    .map(str::to_string)
+                    .collect()
+            })
+            .unwrap_or_default();
+        if queries.is_empty() {
+            if let Some(q) = arguments.get("query").and_then(|v| v.as_str()) {
+                let q = q.trim();
+                if !q.is_empty() {
+                    queries.push(q.to_string());
+                }
+            }
+        }
+        if queries.is_empty() {
+            return Err(ToolError::InvalidParameters(
+                "queries (or query) is required".into(),
+            ));
+        }
+        queries.truncate(4);
 
         // The tool advertises friendly domain names (email, calendar, document…)
         // that do NOT equal the real ontology names (calendar_event,
@@ -69,8 +93,8 @@ impl SemanticSearchTool {
 
         let results = self
             .engine
-            .search(
-                query,
+            .search_multi(
+                &queries,
                 domains.as_deref(),
                 date_after,
                 date_before,
