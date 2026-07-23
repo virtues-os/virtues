@@ -15,6 +15,9 @@
 		provider?: string;
 		input_cost_per_1k?: number | null;
 		output_cost_per_1k?: number | null;
+		/** true for the curated "Virtues Recommended" set; false/undefined for
+		 *  the rest of the live gateway catalog (capabilities gateway-declared). */
+		recommended?: boolean;
 	}
 
 	interface SlotConfig {
@@ -138,6 +141,19 @@
 		return models.find((m) => modelId(m) === id);
 	}
 
+	/** Section label for the dropdown. Empty = the ungrouped "default" row.
+	 *  Models arrive Recommended-first from the box, so a single pass groups
+	 *  them cleanly. */
+	function groupOf(model: Model): string {
+		if (modelId(model) === DEFAULT) return "";
+		return model.recommended ? "Recommended" : "All models";
+	}
+
+	/** What a search query matches: name, provider, and id. */
+	function searchTextOf(model: Model): string {
+		return [modelName(model), model.provider ?? "", modelId(model)].join(" ");
+	}
+
 	function modelId(model: Model): string {
 		return model.model_id ?? model.id ?? "";
 	}
@@ -207,6 +223,10 @@
 						onSelect={(m) => saveSlot(slot, m)}
 						width="w-full"
 						maxHeight="max-h-64"
+						searchable={true}
+						getSearchText={searchTextOf}
+						getGroup={groupOf}
+						searchPlaceholder="Search models…"
 					>
 						{#snippet trigger(currentModel, disabled, open)}
 							<div
@@ -239,15 +259,19 @@
 						{#snippet item(model, isSelected)}
 							{@const isDefaultRow = modelId(model) === DEFAULT}
 							<div
-								class="px-3 py-2 flex items-center justify-between {isDefaultRow
+								class="px-3 py-2 flex items-center justify-between gap-2 {isDefaultRow
 									? 'border-b border-border'
 									: ''}"
 							>
 								<span
-									class="text-sm truncate {isDefaultRow
+									class="text-sm truncate min-w-0 {isDefaultRow
 										? 'text-foreground-muted'
 										: 'text-foreground'}"
-									>{modelName(model)}</span
+									>{modelName(model)}{#if model.provider && !isDefaultRow}<span
+											class="text-foreground-subtle"
+										>
+											· {model.provider}</span
+										>{/if}</span
 								>
 								{#if isSelected}
 									<svg

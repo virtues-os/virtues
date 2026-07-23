@@ -2,9 +2,11 @@
 //! compiled in.
 //!
 //! virtues-api keeps a live mirror of the Vercel AI Gateway catalog (prices,
-//! context windows, which ids actually exist) and serves the curated subset at
-//! `GET /v1/ai/models`, together with the slot map. This module caches that
-//! response and is the box's ONLY source of model facts.
+//! context windows, which ids actually exist) and serves the full picker at
+//! `GET /v1/ai/models` — the curated "Virtues Recommended" set (`recommended:
+//! true`) followed by the rest of the live gateway catalog (`recommended:
+//! false`) — together with the slot map. This module caches that response and
+//! is the box's ONLY source of model facts.
 //!
 //! # Slot resolution
 //!
@@ -57,6 +59,11 @@ pub struct CatalogModel {
     pub input_cost_per_1k: Option<f64>,
     #[serde(default)]
     pub output_cost_per_1k: Option<f64>,
+    /// `true` for the curated "Virtues Recommended" set (vouched capabilities,
+    /// slot defaults); `false` for the rest of the live gateway catalog. The
+    /// picker sections on this. Absent on older cloud responses → `false`.
+    #[serde(default)]
+    pub recommended: bool,
 }
 
 /// Which model fills each slot, per the cloud. Ids only — the models
@@ -131,6 +138,8 @@ pub fn models() -> Vec<CatalogModel> {
             // Honest: we do not know. A blank beats a confident lie.
             input_cost_per_1k: None,
             output_cost_per_1k: None,
+            // The compiled floor IS the Recommended set.
+            recommended: true,
         })
         .collect()
 }

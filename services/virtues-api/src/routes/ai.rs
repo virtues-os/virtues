@@ -302,8 +302,10 @@ async fn embeddings(
 
 /// The models a box should offer, and which one fills each slot.
 ///
-/// `data` is `curated ∩ catalog` — our taste, the gateway's facts, with any
-/// model the gateway no longer carries already removed (see `catalog.rs`).
+/// `data` is the full picker: the curated Recommended set (`recommended:true`
+/// — our taste, the gateway's facts, phantom ids already removed) followed by
+/// the rest of the live gateway catalog (`recommended:false`, priced language
+/// models, gateway-declared capabilities). The box sections on the flag.
 ///
 /// `slots` is the live slot map. Boxes resolve a slot as:
 ///
@@ -322,7 +324,7 @@ async fn list_models(
 
     let payload = json!({
         "object": "list",
-        "data": state.catalog.curated(),
+        "data": state.catalog.picker(),
         "slots": {
             "chat":   default_model_for_slot(ModelSlot::Chat),
             "lite":   default_model_for_slot(ModelSlot::Lite),
