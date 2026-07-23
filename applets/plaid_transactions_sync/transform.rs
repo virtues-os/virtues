@@ -7,7 +7,7 @@ use chrono::{DateTime, Utc};
 use serde_json::Value;
 use sqlx::PgPool;
 use uuid::Uuid;
-use virtues_helpers::dedup::{build_batch_upsert_query, BATCH_SIZE};
+use virtues_helpers::dedup::{build_batch_upsert_query, dedup_refs_keep_last, BATCH_SIZE};
 
 #[allow(clippy::type_complexity)]
 type TxRow = (
@@ -165,6 +165,10 @@ async fn flush(db: &PgPool, records: &[TxRow]) -> Result<usize> {
     if records.is_empty() {
         return Ok(0);
     }
+    // `/transactions/sync` can return the same txn in both `added` and `modified`,
+    // colliding on the conflict key (source_stream_id, r.14). Keep the last so the
+    // ON CONFLICT DO UPDATE doesn't abort ("cannot affect row a second time").
+    let records = dedup_refs_keep_last(records, |r| &r.14);
     let columns: &[&str] = &[
         "id",
         "account_id",

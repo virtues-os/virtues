@@ -360,12 +360,17 @@ async fn plaid_start(
         Ok(t) => t,
         Err(e) => return err(StatusCode::BAD_GATEWAY, &format!("plaid link_token failed: {e}")),
     };
+    // NB: do NOT set `receivedRedirectUri` on the *initial* Hosted Link launch.
+    // That param is Plaid's OAuth-resume signal — present, it makes Link try to
+    // resume a nonexistent OAuth session and hang on the spinner. The
+    // `redirect_uri` is already baked into the link_token via link/token/create
+    // above; it belongs only on the post-bank-OAuth resume leg (see the plaid
+    // branch in `callback`), carrying the *full* received URL with its params.
     let mut hosted = reqwest::Url::parse("https://cdn.plaid.com/link/v2/stable/link.html").unwrap();
     hosted
         .query_pairs_mut()
         .append_pair("isWebview", "true")
         .append_pair("token", &link_token)
-        .append_pair("receivedRedirectUri", &cfg.redirect_uri)
         .append_pair("state", proxy_state);
     Redirect::to(hosted.as_str()).into_response()
 }

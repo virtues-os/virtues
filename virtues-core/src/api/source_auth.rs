@@ -132,6 +132,12 @@ pub async fn oauth_start_handler(
 pub struct OauthCallbackQuery {
     pub state: String,
     pub exchange_token: String,
+    /// `"native"` when the connect was started from a Tauri shell (Mac/iOS),
+    /// where OAuth ran in the system browser. A 302 to `/sources` would strand
+    /// the user on a second copy of the app in a browser tab, so we render a
+    /// terminal "return to Virtues" page instead. Absent for browser connects.
+    #[serde(default)]
+    pub shell: Option<String>,
 }
 
 pub async fn oauth_callback_handler(
@@ -199,7 +205,14 @@ pub async fn oauth_callback_handler(
         // reconcile (startup or another callback) will catch up.
     }
 
-    // 6. Redirect the browser to the Sources tab with a success marker.
+    // 6. Hand the browser back. A native (Tauri) connect ran OAuth in the system
+    //    browser, so a 302 into `/sources` would leave the user staring at a second
+    //    copy of the app in a browser tab with no way back. Render a terminal
+    //    success page instead; the app's own focus handler refreshes the source
+    //    list when the user switches back to it. Browser connects keep the 302.
+    if claims_shell_is_native(q.shell.as_deref()) {
+        return oauth_return_page(&claims.source_id).into_response();
+    }
     let location = format!("/sources?connected={}", claims.source_id);
     let mut headers = HeaderMap::new();
     headers.insert(
@@ -207,6 +220,53 @@ pub async fn oauth_callback_handler(
         HeaderValue::from_str(&location).unwrap_or(HeaderValue::from_static("/")),
     );
     (StatusCode::FOUND, headers).into_response()
+}
+
+fn claims_shell_is_native(shell: Option<&str>) -> bool {
+    shell == Some("native")
+}
+
+/// Terminal page shown after a native-shell OAuth connect finishes in the system
+/// browser. Self-contained (no asset deps, CSP-safe) so it renders anywhere.
+fn oauth_return_page(source_id: &str) -> Response {
+    let source = lookup_source(source_id)
+        .map(|s| s.display_name.to_string())
+        .unwrap_or_else(|| "Your account".to_string());
+    let safe_source = source
+        .replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;");
+    let body = format!(
+        r#"<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="referrer" content="no-referrer">
+  <title>Connected — Virtues</title>
+  <style>
+    body {{ font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto,
+            "Helvetica Neue", Arial, sans-serif; max-width: 480px; margin: 0 auto;
+            padding: 64px 24px; color: #1f2937; background: #f9fafb; line-height: 1.5;
+            text-align: center; }}
+    .mark {{ font-size: 40px; line-height: 1; margin-bottom: 16px; }}
+    h1 {{ font-size: 22px; margin: 0 0 8px; }}
+    p  {{ font-size: 15px; color: #4b5563; margin: 0; }}
+  </style>
+</head>
+<body>
+  <div class="mark">✓</div>
+  <h1>{safe_source} connected</h1>
+  <p>You can close this tab and return to Virtues.</p>
+</body>
+</html>"#,
+    );
+    (
+        StatusCode::OK,
+        [(axum::http::header::CONTENT_TYPE, "text/html; charset=utf-8")],
+        body,
+    )
+        .into_response()
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

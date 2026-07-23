@@ -13,7 +13,7 @@ use chrono::{DateTime, Utc};
 use serde_json::Value;
 use sqlx::PgPool;
 use uuid::Uuid;
-use virtues_helpers::dedup::BATCH_SIZE;
+use virtues_helpers::dedup::{dedup_refs_keep_last, BATCH_SIZE};
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Accounts
@@ -104,6 +104,9 @@ pub async fn write_accounts(db: &PgPool, wrapper_records: &[Value]) -> Result<us
 
 async fn flush_accounts(db: &PgPool, records: &[AccountRow]) -> Result<usize> {
     // FinanceKit uses UPSERT (not INSERT OR IGNORE) because balances update frequently.
+    // Collapse repeats of the conflict key (id) within the batch, or the whole
+    // ON CONFLICT DO UPDATE aborts — FinanceKit re-sends an account in one payload.
+    let records = dedup_refs_keep_last(records, |r| &r.0);
     let query_str = format!(
         "INSERT INTO data_financial_account (
             id, account_name, account_type, institution_name, current_balance, currency,
@@ -253,6 +256,9 @@ pub async fn write_transactions(db: &PgPool, wrapper_records: &[Value]) -> Resul
 }
 
 async fn flush_transactions(db: &PgPool, records: &[TransactionRow]) -> Result<usize> {
+    // Collapse repeats of the conflict key (id) within the batch — FinanceKit ships a
+    // transaction as both pending and posted — or the ON CONFLICT DO UPDATE aborts.
+    let records = dedup_refs_keep_last(records, |r| &r.0);
     let query_str = format!(
         "INSERT INTO data_financial_transaction (
             id, account_id, transaction_id, amount, merchant_name, category, description,
