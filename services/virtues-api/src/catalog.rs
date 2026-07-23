@@ -70,6 +70,80 @@ pub struct GatewayModel {
     pub model_type: Option<String>,
     #[serde(default)]
     pub pricing: Option<GatewayPricing>,
+    /// Free-form capability tags, e.g. `tool-use`, `reasoning`, `vision`,
+    /// `file-input`. The gateway's own declaration — informative, not gospel:
+    /// Gemini 3 tags `tool-use` and still 400s on parallel calls through the
+    /// gateway's OpenAI-compat shim. Good enough for the unvouched tier.
+    #[serde(default)]
+    pub tags: Vec<String>,
+    #[serde(default)]
+    pub modalities: Option<GatewayModalities>,
+    /// e.g. `tools`, `tool_choice`, `reasoning`. A second signal for tool use.
+    #[serde(default)]
+    pub supported_parameters: Vec<String>,
+}
+
+/// Input/output modality lists as the gateway reports them (`text`, `image`,
+/// `pdf`, `audio`, …). We read `input` to derive vision/pdf/audio support.
+#[derive(Debug, Clone, Default, Deserialize)]
+pub struct GatewayModalities {
+    #[serde(default)]
+    pub input: Vec<String>,
+    #[serde(default)]
+    pub output: Vec<String>,
+}
+
+impl GatewayModel {
+    fn input_modalities(&self) -> &[String] {
+        self.modalities
+            .as_ref()
+            .map(|m| m.input.as_slice())
+            .unwrap_or(&[])
+    }
+    fn is_language(&self) -> bool {
+        self.model_type.as_deref() == Some("language")
+    }
+    /// Gateway-declared tool support: a `tool-use` tag OR a `tools` parameter.
+    fn supports_tools(&self) -> bool {
+        self.tags.iter().any(|t| t == "tool-use")
+            || self.supported_parameters.iter().any(|p| p == "tools")
+    }
+    fn supports_vision(&self) -> bool {
+        self.input_modalities().iter().any(|m| m == "image")
+    }
+    fn supports_pdf(&self) -> bool {
+        self.input_modalities().iter().any(|m| m == "pdf")
+    }
+    fn supports_audio(&self) -> bool {
+        self.input_modalities().iter().any(|m| m == "audio")
+    }
+    fn display_name(&self) -> String {
+        self.name.clone().unwrap_or_else(|| self.id.clone())
+    }
+    /// A presentable provider label from `owned_by`, with the handful of
+    /// lowercase/opaque slugs mapped to how the provider brands itself.
+    fn provider_label(&self) -> String {
+        let raw = self
+            .owned_by
+            .clone()
+            .or_else(|| self.id.split('/').next().map(str::to_string))
+            .unwrap_or_default();
+        match raw.as_str() {
+            "xai" => "xAI".to_string(),
+            "zai" => "Z.AI".to_string(),
+            "openai" => "OpenAI".to_string(),
+            "moonshotai" => "Moonshot AI".to_string(),
+            "deepseek" => "DeepSeek".to_string(),
+            "" => "Other".to_string(),
+            other => {
+                let mut c = other.chars();
+                match c.next() {
+                    Some(f) => f.to_uppercase().collect::<String>() + c.as_str(),
+                    None => other.to_string(),
+                }
+            }
+        }
+    }
 }
 
 /// Gateway pricing is **per token**, and arrives as **strings** (e.g.
@@ -167,9 +241,71 @@ impl Catalog {
                     supports_pdf: m.supports_pdf,
                     supports_audio: m.supports_audio,
                     is_default: m.is_default,
+                    recommended: true,
                 }
             })
             .collect()
+    }
+
+    /// Every priced language model the gateway currently carries, EXCLUDING the
+    /// curated ids (those are served as `recommended`). `recommended: false`;
+    /// capability flags are the gateway's own declaration, not our testing, so
+    /// some will misbehave through the OpenAI-compat shim (tool calls, audio).
+    /// The picker surfaces these as an "All models" tier, clearly unvouched.
+    ///
+    /// Priced-only on purpose: a model we can't read a price for would bill at
+    /// the fallback floor, which is misleading to show as a first-class choice.
+    /// Empty when the catalog is cold — the box still has the curated picker.
+    pub fn all_selectable(&self) -> Vec<CuratedModel> {
+        let curated_ids: std::collections::HashSet<String> =
+            virtues_registry::models::default_models()
+                .into_iter()
+                .map(|m| m.model_id)
+                .collect();
+        let guard = match self.inner.read() {
+            Ok(g) => g,
+            Err(_) => return Vec::new(),
+        };
+        let mut out: Vec<CuratedModel> = guard
+            .values()
+            .filter(|m| m.is_language() && !curated_ids.contains(&m.id))
+            .filter_map(|m| {
+                let (input, output) = m.pricing.as_ref().and_then(|p| p.per_1k())?;
+                Some(CuratedModel {
+                    model_id: m.id.clone(),
+                    display_name: m.display_name(),
+                    provider: m.provider_label(),
+                    // After every curated entry; the picker orders the tier
+                    // itself (by provider, then name) — see the sort below.
+                    sort_order: 1000,
+                    context_window: m.context_window.unwrap_or(0),
+                    max_output_tokens: m.max_tokens.unwrap_or(0),
+                    supports_tools: m.supports_tools(),
+                    supports_vision: m.supports_vision(),
+                    supports_pdf: m.supports_pdf(),
+                    supports_audio: m.supports_audio(),
+                    is_default: false,
+                    input_cost_per_1k: Some(input),
+                    output_cost_per_1k: Some(output),
+                    recommended: false,
+                })
+            })
+            .collect();
+        out.sort_by(|a, b| {
+            a.provider
+                .cmp(&b.provider)
+                .then_with(|| a.display_name.cmp(&b.display_name))
+        });
+        out
+    }
+
+    /// The full picker as served to boxes: the curated Recommended set first,
+    /// then the rest of the live gateway catalog. One flat list; each entry's
+    /// `recommended` flag lets the box section it.
+    pub fn picker(&self) -> Vec<CuratedModel> {
+        let mut models = self.curated();
+        models.extend(self.all_selectable());
+        models
     }
 
     /// Replace the snapshot and enforce `curated ⊆ catalog`.
@@ -264,6 +400,12 @@ pub struct CuratedModel {
     /// From the live catalog. `None` only when the catalog is cold.
     pub input_cost_per_1k: Option<f64>,
     pub output_cost_per_1k: Option<f64>,
+    /// `true` for the curated "Virtues Recommended" set — vouched capability
+    /// flags, slot defaults, offline-boot floor. `false` for the rest of the
+    /// live gateway catalog, whose capability flags are the gateway's own
+    /// declaration. The picker sections on this.
+    #[serde(default)]
+    pub recommended: bool,
 }
 
 #[cfg(test)]
@@ -289,6 +431,60 @@ mod tests {
             output: None,
         };
         assert!(p.per_1k().is_none());
+    }
+
+    fn gw(id: &str, input: &str, tags: &[&str], modal_in: &[&str]) -> GatewayModel {
+        GatewayModel {
+            id: id.to_string(),
+            name: Some(id.to_string()),
+            owned_by: id.split('/').next().map(str::to_string),
+            context_window: Some(128_000),
+            max_tokens: Some(8_000),
+            model_type: Some("language".to_string()),
+            pricing: Some(GatewayPricing {
+                input: Some(input.to_string()),
+                output: Some("0.000002".to_string()),
+            }),
+            tags: tags.iter().map(|s| s.to_string()).collect(),
+            modalities: Some(GatewayModalities {
+                input: modal_in.iter().map(|s| s.to_string()).collect(),
+                output: vec!["text".to_string()],
+            }),
+            supported_parameters: vec![],
+        }
+    }
+
+    #[test]
+    fn picker_splits_recommended_from_the_rest() {
+        let c = Catalog::new();
+        // A curated id (Opus) hydrated, one non-curated priced language model
+        // (Grok), plus an embedding model that must never reach the picker.
+        c.store(vec![
+            gw("anthropic/claude-opus-4.8", "0.000005", &["tool-use", "vision"], &["text", "image", "pdf"]),
+            gw("xai/grok-4.20-multi-agent", "0.00000125", &["tool-use", "vision"], &["text", "image", "pdf"]),
+            GatewayModel {
+                model_type: Some("embedding".to_string()),
+                ..gw("openai/text-embedding-3-large", "0.00000013", &[], &["text"])
+            },
+        ]);
+
+        let picker = c.picker();
+        let grok = picker.iter().find(|m| m.model_id == "xai/grok-4.20-multi-agent");
+        let grok = grok.expect("grok should be selectable");
+        assert!(!grok.recommended, "non-curated model is unvouched");
+        assert!(grok.supports_tools && grok.supports_vision && grok.supports_pdf);
+        assert_eq!(grok.provider, "xAI");
+
+        let opus = picker.iter().find(|m| m.model_id == "anthropic/claude-opus-4.8");
+        assert!(opus.expect("opus curated").recommended, "curated model is recommended");
+
+        // Embeddings and other non-language types never appear.
+        assert!(!picker.iter().any(|m| m.model_id.contains("embedding")));
+        // The curated id is not duplicated into the unvouched tier.
+        assert_eq!(
+            picker.iter().filter(|m| m.model_id == "anthropic/claude-opus-4.8").count(),
+            1
+        );
     }
 
     #[test]

@@ -6,6 +6,7 @@
 	import {
 		getSelectedModel,
 		getDefaultModel,
+		setSelectedModel,
 		initializeSelectedModel,
 		getInitializationPromise,
 	} from "$lib/stores/models.svelte";
@@ -386,6 +387,25 @@
 	function switchToCapableModel() {
 		const candidate = capabilityIssue?.candidate;
 		if (candidate) selectedModelValue = candidate;
+	}
+
+	// Runtime recovery: when a picked model errors (unsupported tools, context
+	// overflow, a gateway quirk), let the user drop to the Recommended model and
+	// re-run in one click — a plain retry would just re-hit the same model.
+	const recommendedFallback = $derived.by(() => {
+		const rec = getDefaultModel();
+		const currentId = selectedModelValue?.id ?? getDefaultModel()?.id;
+		// Only worth offering when we'd actually change models.
+		return rec && rec.id !== currentId ? rec : null;
+	});
+
+	function switchToRecommendedAndRetry() {
+		const rec = getDefaultModel();
+		if (rec) {
+			selectedModelValue = rec;
+			setSelectedModel(rec);
+		}
+		chat.regenerate();
 	}
 	let loadedMessages = $state<any[]>([]);
 
@@ -1921,7 +1941,14 @@
 								</div>
 							{/if}
 
-							<ChatError error={chat.error ?? null} onRetry={() => chat.regenerate()} />
+							<ChatError
+											error={chat.error ?? null}
+											onRetry={() => chat.regenerate()}
+											recommendedName={recommendedFallback?.displayName}
+											onSwitchAndRetry={recommendedFallback
+												? switchToRecommendedAndRetry
+												: undefined}
+										/>
 						</div>
 					</div>
 
