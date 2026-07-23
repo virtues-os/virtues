@@ -199,6 +199,18 @@ impl Database {
                 "ALTER TABLE search_topic_cache ALTER COLUMN embedding \
                  TYPE halfvec({target}) USING embedding::halfvec({target})"
             ),
+            // The notebook magnet's centroid rides the same geometry as
+            // `search_vectors` — a width mismatch fails every centroid write and
+            // read (migration 0060 pins a default width, but the live dimension
+            // is set here). Migrations run before this, so the column exists.
+            // Unlike the derived vectors above it is NOT wiped by reindex, so NULL
+            // it first: the centroid is re-derivable (the mean of a notebook's
+            // members) and the next magnet run rebuilds it.
+            "UPDATE app_notebooks SET centroid = NULL WHERE centroid IS NOT NULL".to_string(),
+            format!(
+                "ALTER TABLE app_notebooks ALTER COLUMN centroid \
+                 TYPE halfvec({target}) USING centroid::halfvec({target})"
+            ),
             "CREATE INDEX search_vectors_hnsw ON search_vectors \
              USING hnsw (embedding halfvec_cosine_ops)"
                 .to_string(),

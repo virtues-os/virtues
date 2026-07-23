@@ -1,5 +1,18 @@
 # Stories: Resolution, Significance, and the Narrative Architecture
 
+> **SHELVED — cut from v1 on 2026-07-22.** The claim-style story (a thesis whose
+> body is a rendered, cited account gathered by the magnet) is not being built:
+> a spike on real data could not establish who it helps, and the plumbing needed
+> real work before that value was ever proven. `wiki_stories` + `wiki_story_members`
+> are dropped (migration 0060); `app_notebooks` is the surviving primitive, kept
+> under the name "notebooks". Significance (the six-witness quorum) was already
+> cut on its merits in migration 0038. This document is retained as design
+> history — the reasoning and the vocabulary are still worth having if the
+> feature is ever revisited — but nothing here is live. The durable technical
+> findings from the spike (the magnet's dead centroid dimension, the reranker
+> scale mismatch, and "don't semantically index structured data") live with the
+> magnet code and the notebook fix, not here.
+
 *Design document — 2026-07-11. Captures the full design exploration of entity resolution, temporal resolution, significance, and the `wiki_stories` unification. Extends and partially supersedes [notebooks-plan.md](notebooks-plan.md) (Notebooks fold into Stories) and builds on [the-day.md](the-day.md) (the day page / event timeline is the temporal spine this attaches to).*
 
 ---

@@ -101,13 +101,6 @@ const NOTEBOOKS: SystemSection = {
 	href: '/notebooks',
 };
 
-// STORIES — deferred. `wiki_stories` and its magnet are built (0038/0039) but
-// the rendering isn't, so there is no sidebar link yet (the /stories route
-// still resolves for deep links). A notebook is a CONTAINER; a story is a
-// CLAIM ("I got fat", "I act differently on rainy days") that gathers evidence
-// across years — peers, not variants. It returns to the Create cluster once the
-// layer beneath it (events, entities, days) is verified.
-
 const DRIVE: SystemSection = {
 	id: 'sys_drive',
 	name: 'Drive',
