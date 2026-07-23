@@ -36,9 +36,14 @@ export type ConnectIntent =
  */
 export async function startOAuth(sourceId: string): Promise<{ external: boolean }> {
 	const origin = getBackendOrigin() || window.location.origin;
-	const { redirect_url } = await oauthStart(sourceId, {
-		return_url: `${origin}/oauth/callback`
-	});
+	// Tauri hands OAuth to the system browser, so the callback's usual 302 into
+	// `/sources` would strand the user on a second copy of the app in a browser
+	// tab. `shell=native` tells the box to render a terminal "return to Virtues"
+	// page instead; the query param round-trips through the proxy untouched.
+	const returnUrl = isTauri
+		? `${origin}/oauth/callback?shell=native`
+		: `${origin}/oauth/callback`;
+	const { redirect_url } = await oauthStart(sourceId, { return_url: returnUrl });
 	if (isTauri) {
 		await openExternal(redirect_url);
 		return { external: true };
