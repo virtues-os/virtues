@@ -68,6 +68,28 @@ pub enum ScopeMode {
     Exclusive,
 }
 
+/// The scoping applied to a recall pass, resolved and owned so a single set can
+/// be reused across many recall calls (e.g. multi-query fan-out) without
+/// re-resolving. Empty collections mean "no filter". Notebook membership is
+/// pre-resolved into `nb_records`/`nb_entities` by `resolve_notebook_scope`, so
+/// `recall_and_fuse` does no I/O of its own.
+#[derive(Debug, Clone, Default)]
+pub struct SearchFilters {
+    pub ontologies: Vec<String>,
+    pub date_after: Option<String>,
+    pub date_before: Option<String>,
+    pub entities: Vec<String>,
+    pub nb_records: Vec<String>,
+    pub nb_entities: Vec<String>,
+    pub scope_mode: ScopeMode,
+    /// Record routes (`/record/{ontology}/{record_id}`) to exclude from recall
+    /// BEFORE the fused LIMIT. The magnet passes a container's existing members
+    /// and own-chat here: they are the nearest neighbours of the container's own
+    /// centroid, so filtering them *after* recall would let them consume the
+    /// whole budget and starve fresh candidates. Empty means no exclusion.
+    pub exclude_urls: Vec<String>,
+}
+
 /// Cap each reranker candidate so a (query, doc) pair fits the rerank model's
 /// window (~512 tok for the cross-encoder, 256 for ColBERT). A document's lead
 /// carries the relevance signal, so truncating to ~1000 chars (~256 tok) is
@@ -107,6 +129,43 @@ fn normalize_scores(candidates: &mut [SearchResult]) {
     for c in candidates.iter_mut() {
         c.score = if span > 0.0 { (c.score - lo) / span } else { 1.0 };
     }
+}
+
+/// Reciprocal Rank Fusion constant. A document's fused weight is
+/// `Σ 1/(RRF_K + rank)` across the lists it appears in; the standard `k=60`
+/// damps how much any single list's top ranks dominate.
+const RRF_K: f64 = 60.0;
+
+/// How many fused candidates survive into the single rerank pass. Wider than one
+/// query's recall (multiple variants contribute), but still a shortlist.
+const RRF_POOL: usize = 30;
+
+/// Merge several ranked candidate lists into one by Reciprocal Rank Fusion.
+///
+/// Each per-query list is z-normalized *within its own pool*, so scores are not
+/// comparable across queries — RRF merges by **rank**, which is. A record that
+/// several variants rank highly rises; the surviving `SearchResult` keeps its
+/// first-seen fields (its `content` still feeds the downstream reranker). The
+/// returned `score` is the RRF weight, replaced by Stage B's normalization.
+fn rrf_merge(lists: Vec<Vec<SearchResult>>, k: f64, pool: usize) -> Vec<SearchResult> {
+    let mut acc: HashMap<(String, String), (f64, SearchResult)> = HashMap::new();
+    for list in lists {
+        for (rank, hit) in list.into_iter().enumerate() {
+            let key = (hit.ontology.clone(), hit.record_id.clone());
+            let entry = acc.entry(key).or_insert_with(|| (0.0, hit.clone()));
+            entry.0 += 1.0 / (k + rank as f64 + 1.0);
+        }
+    }
+    let mut merged: Vec<(f64, SearchResult)> = acc.into_values().collect();
+    merged.sort_by(|a, b| b.0.total_cmp(&a.0));
+    merged
+        .into_iter()
+        .take(pool)
+        .map(|(w, mut hit)| {
+            hit.score = w;
+            hit
+        })
+        .collect()
 }
 
 impl SemanticSearchEngine {
@@ -175,6 +234,7 @@ impl SemanticSearchEngine {
     }
 
     /// Search for similar documents by natural language query.
+    #[allow(clippy::too_many_arguments)]
     pub async fn search(
         &self,
         query: &str,
@@ -195,13 +255,7 @@ impl SemanticSearchEngine {
         let query_vector = Vector::from(query_vec);
         let limit = limit.unwrap_or(10).clamp(1, 50);
         let recall_limit = (limit * 2).clamp(10, 20);
-
-        // Lexical arm inputs: BM25 query terms (same tokenizer as ingest) and the
-        // adaptive fusion weight (+ corpus stats reused in the scoring SQL).
         let terms = bm25::tokens(query);
-        let (alpha, n_docs, avg_len) = self.fusion_alpha(&terms).await?;
-        let w_dense = 1.0 - alpha;
-        let w_lex = alpha;
 
         // Notebook scoping: resolve the active notebook's members into a set of
         // record_ids (page/day/source/chat + document chunks for /drive/file_
@@ -217,6 +271,127 @@ impl SemanticSearchEngine {
         if notebook_id.is_some() && scope_mode == ScopeMode::Exclusive && !notebook_scoped {
             return Ok(Vec::new());
         }
+
+        let filters = SearchFilters {
+            ontologies: ontologies.map(<[String]>::to_vec).unwrap_or_default(),
+            date_after: date_after.map(str::to_string),
+            date_before: date_before.map(str::to_string),
+            entities: entities.map(<[String]>::to_vec).unwrap_or_default(),
+            nb_records,
+            nb_entities,
+            scope_mode,
+            exclude_urls: Vec::new(),
+        };
+
+        let candidates = self
+            .recall_and_fuse(&query_vector, &terms, &filters, recall_limit)
+            .await?;
+        self.rerank_and_finalize(query, candidates, limit as usize)
+            .await
+    }
+
+    /// Multi-query retrieval (RAG-fusion). Runs recall for several phrasings of
+    /// one information need in parallel and fuses them with RRF, then reranks the
+    /// merged pool ONCE against the primary query (`queries[0]`). Widens recall on
+    /// vague or many-worded questions where a single phrasing misses.
+    ///
+    /// Cheap on-box: the variants embed in ONE batched sidecar call and their
+    /// recalls run concurrently (Postgres parallelizes); only the final rerank
+    /// touches the reranker, once. A single-element `queries` delegates to
+    /// `search()` unchanged.
+    #[allow(clippy::too_many_arguments)]
+    pub async fn search_multi(
+        &self,
+        queries: &[String],
+        ontologies: Option<&[String]>,
+        date_after: Option<&str>,
+        date_before: Option<&str>,
+        entities: Option<&[String]>,
+        notebook_id: Option<&str>,
+        scope_mode: ScopeMode,
+        limit: Option<i64>,
+    ) -> Result<Vec<SearchResult>> {
+        // One phrasing (or none) is just a plain search — no fan-out overhead.
+        let non_empty: Vec<&String> = queries.iter().filter(|q| !q.trim().is_empty()).collect();
+        if non_empty.len() <= 1 {
+            let q = non_empty.first().map(|s| s.as_str()).unwrap_or("");
+            return self
+                .search(
+                    q, ontologies, date_after, date_before, entities, notebook_id, scope_mode,
+                    limit,
+                )
+                .await;
+        }
+        let queries: Vec<String> = non_empty.into_iter().cloned().collect();
+
+        let limit = limit.unwrap_or(10).clamp(1, 50);
+        let recall_limit = (limit * 2).clamp(10, 20); // per-variant
+
+        // Resolve notebook scope ONCE and share it across all variants.
+        let (nb_records, nb_entities): (Vec<String>, Vec<String>) = match notebook_id {
+            Some(nb) => self.resolve_notebook_scope(nb).await?,
+            None => (Vec::new(), Vec::new()),
+        };
+        let notebook_scoped = !nb_records.is_empty() || !nb_entities.is_empty();
+        if notebook_id.is_some() && scope_mode == ScopeMode::Exclusive && !notebook_scoped {
+            return Ok(Vec::new());
+        }
+        let filters = SearchFilters {
+            ontologies: ontologies.map(<[String]>::to_vec).unwrap_or_default(),
+            date_after: date_after.map(str::to_string),
+            date_before: date_before.map(str::to_string),
+            entities: entities.map(<[String]>::to_vec).unwrap_or_default(),
+            nb_records,
+            nb_entities,
+            scope_mode,
+            exclude_urls: Vec::new(),
+        };
+
+        // One batched embed call for every variant.
+        let embedder = get_embedder().await?;
+        let vecs = embedder.embed_query_batch(&queries).await?;
+
+        // Recall each variant concurrently (shared &filters, immutable &self).
+        let recalls = queries.iter().zip(vecs.into_iter()).map(|(q, v)| {
+            let qv = Vector::from(v);
+            let terms = bm25::tokens(q);
+            let filters = &filters;
+            async move { self.recall_and_fuse(&qv, &terms, filters, recall_limit).await }
+        });
+        let lists = futures::future::try_join_all(recalls).await?;
+
+        // Fuse by rank, then one rerank against the user's actual question.
+        let merged = rrf_merge(lists, RRF_K, RRF_POOL);
+        self.rerank_and_finalize(&queries[0], merged, limit as usize)
+            .await
+    }
+
+    /// Stage A — recall + z-fusion for one query VECTOR. Returns fused, deduped
+    /// candidates ordered by the fused z-score, WITHOUT reranking or [0,1]
+    /// normalization (that is Stage B, `rerank_and_finalize`).
+    ///
+    /// Takes a vector, not text, so a centroid or an event embedding is a
+    /// first-class query — the magnet's centroid ANN and multi-query fan-out are
+    /// both callers. `terms` are the BM25 tokens of the source query (empty for a
+    /// pure-vector query, which degenerates cleanly to dense-only: the lexical
+    /// arm matches nothing and `bz` normalizes to 0). Scope resolution is the
+    /// caller's job (see `SearchFilters`); this method does no notebook I/O and
+    /// does not enforce Exclusive honest-zero — `search()` does that before
+    /// calling in.
+    pub(crate) async fn recall_and_fuse(
+        &self,
+        query_vector: &Vector,
+        terms: &[String],
+        filters: &SearchFilters,
+        recall_limit: i64,
+    ) -> Result<Vec<SearchResult>> {
+        // Adaptive fusion weight + corpus stats reused in the scoring SQL.
+        let (alpha, n_docs, avg_len) = self.fusion_alpha(terms).await?;
+        let w_dense = 1.0 - alpha;
+        let w_lex = alpha;
+
+        let notebook_scoped =
+            !filters.nb_records.is_empty() || !filters.nb_entities.is_empty();
         let notebook_boost = notebook_scoped;
 
         // Shared filters (applied to both arms). $1 = query vector, $2 = query
@@ -224,27 +399,36 @@ impl SemanticSearchEngine {
         // recall limit.
         let mut filter_sql = String::new();
         let mut next = 3usize;
-        if let Some(onts) = ontologies {
-            if !onts.is_empty() {
-                let ph: Vec<String> = (0..onts.len()).map(|i| format!("${}", next + i)).collect();
-                filter_sql.push_str(&format!(" AND se.ontology IN ({})", ph.join(",")));
-                next += onts.len();
-            }
+        if !filters.ontologies.is_empty() {
+            let ph: Vec<String> = (0..filters.ontologies.len())
+                .map(|i| format!("${}", next + i))
+                .collect();
+            filter_sql.push_str(&format!(" AND se.ontology IN ({})", ph.join(",")));
+            next += filters.ontologies.len();
         }
-        if date_after.is_some() {
+        if filters.date_after.is_some() {
             filter_sql.push_str(&format!(" AND se.timestamp >= ${next}"));
             next += 1;
         }
-        if date_before.is_some() {
+        if filters.date_before.is_some() {
             filter_sql.push_str(&format!(" AND se.timestamp <= ${next}"));
             next += 1;
         }
-        let entity_filter = entities.map(|e| !e.is_empty()).unwrap_or(false);
+        let entity_filter = !filters.entities.is_empty();
         if entity_filter {
             filter_sql.push_str(&format!(
                 " AND EXISTS (SELECT 1 FROM wiki_entity_refs er \
                   WHERE er.source_table = se.source_table AND er.source_id = se.record_id \
                   AND er.entity_id = ANY(${next}))",
+            ));
+            next += 1;
+        }
+        // Exclude specific record routes BEFORE the fused LIMIT, so filtered rows
+        // don't consume the recall budget (see `SearchFilters::exclude_urls`).
+        let exclude_filter = !filters.exclude_urls.is_empty();
+        if exclude_filter {
+            filter_sql.push_str(&format!(
+                " AND ('/record/' || se.ontology || '/' || se.record_id) <> ALL(${next})"
             ));
             next += 1;
         }
@@ -262,7 +446,7 @@ impl SemanticSearchEngine {
         // joins filter_sql, which dense and lex share). Weighted: the additive
         // z-boost as before. Placeholder numbers were allocated above in bind
         // order, so using them inside filter_sql is safe.
-        if notebook_boost && scope_mode == ScopeMode::Exclusive {
+        if notebook_boost && filters.scope_mode == ScopeMode::Exclusive {
             filter_sql.push_str(&format!(
                 " AND (se.record_id = ANY(${r}) OR EXISTS (SELECT 1 FROM wiki_entity_refs er2 \
                   WHERE er2.source_table = se.source_table AND er2.source_id = se.record_id \
@@ -271,7 +455,7 @@ impl SemanticSearchEngine {
                 e = p_nb_ent,
             ));
         }
-        let boost_sql = if notebook_boost && scope_mode == ScopeMode::Weighted {
+        let boost_sql = if notebook_boost && filters.scope_mode == ScopeMode::Weighted {
             format!(
                 " + CASE WHEN se.record_id = ANY(${r}) OR EXISTS (SELECT 1 FROM wiki_entity_refs er2 \
                   WHERE er2.source_table = se.source_table AND er2.source_id = se.record_id \
@@ -354,22 +538,20 @@ impl SemanticSearchEngine {
                 f64,             // fused score
             ),
         >(&sql)
-        .bind(&query_vector)
-        .bind(&terms);
+        .bind(query_vector)
+        .bind(terms);
 
-        if let Some(onts) = ontologies {
-            for ont in onts {
-                db_query = db_query.bind(ont);
-            }
+        for ont in &filters.ontologies {
+            db_query = db_query.bind(ont);
         }
-        if let Some(da) = date_after {
+        if let Some(da) = &filters.date_after {
             db_query = db_query.bind(
                 chrono::DateTime::parse_from_rfc3339(da)
                     .map(|d| d.with_timezone(&chrono::Utc))
                     .ok(),
             );
         }
-        if let Some(db) = date_before {
+        if let Some(db) = &filters.date_before {
             db_query = db_query.bind(
                 chrono::DateTime::parse_from_rfc3339(db)
                     .map(|d| d.with_timezone(&chrono::Utc))
@@ -377,17 +559,20 @@ impl SemanticSearchEngine {
             );
         }
         if entity_filter {
-            db_query = db_query.bind(entities.unwrap().to_vec());
+            db_query = db_query.bind(filters.entities.clone());
+        }
+        if exclude_filter {
+            db_query = db_query.bind(filters.exclude_urls.clone());
         }
         if notebook_boost {
-            db_query = db_query.bind(nb_records);
-            db_query = db_query.bind(nb_entities);
+            db_query = db_query.bind(filters.nb_records.clone());
+            db_query = db_query.bind(filters.nb_entities.clone());
         }
         db_query = db_query.bind(recall_limit);
 
         let rows = db_query.fetch_all(self.pool.as_ref()).await?;
 
-        let mut candidates: Vec<SearchResult> = rows
+        Ok(rows
             .into_iter()
             .map(|row| SearchResult {
                 ontology: row.0,
@@ -397,38 +582,43 @@ impl SemanticSearchEngine {
                 author: row.4,
                 timestamp: row.5,
                 content: row.6,
-                score: row.7, // fused score; reranked or normalized below
+                score: row.7, // fused score; reranked or normalized in Stage B
             })
-            .collect();
+            .collect())
+    }
 
-        // Conditional rerank: only when the fused top-1/top-2 margin is tight.
+    /// Stage B — conditional rerank, then min-max normalize to [0,1] and truncate
+    /// to `limit`. Reranks only when the fused top-1/top-2 margin is tight (the
+    /// ordering is ambiguous and a rerank can reorder it); a dominant top-1 skips
+    /// the reranker entirely. `query` is the text the reranker scores against.
+    pub(crate) async fn rerank_and_finalize(
+        &self,
+        query: &str,
+        mut candidates: Vec<SearchResult>,
+        limit: usize,
+    ) -> Result<Vec<SearchResult>> {
         let ambiguous = candidates.len() > 1 && {
             let gap = candidates[0].score - candidates[1].score;
             gap < rerank_gap_threshold()
         };
-        let reranked = if ambiguous {
+        if ambiguous {
             match self.rerank_candidates(query, &mut candidates).await {
                 Ok(did) => {
                     if did {
                         let q: String = query.chars().take(60).collect();
                         tracing::debug!("Reranked {} candidates for: {}", candidates.len(), q);
                     }
-                    did
                 }
                 Err(e) => {
                     tracing::warn!("Reranker unavailable, using fused ranking: {}", e);
-                    false
                 }
             }
-        } else {
-            false
-        };
-        let _ = reranked;
+        }
 
         // Normalize to [0, 1] for the caller/LLM (order already set — by rerank
         // if it ran, else by the fused SQL).
         normalize_scores(&mut candidates);
-        candidates.truncate(limit as usize);
+        candidates.truncate(limit);
         Ok(candidates)
     }
 
@@ -573,5 +763,51 @@ impl SemanticSearchEngine {
                 .unwrap_or(std::cmp::Ordering::Equal)
         });
         Ok(true)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn sr(ontology: &str, record_id: &str) -> SearchResult {
+        SearchResult {
+            ontology: ontology.to_string(),
+            record_id: record_id.to_string(),
+            score: 0.0,
+            title: None,
+            preview: None,
+            author: None,
+            timestamp: None,
+            content: Some(format!("{ontology}/{record_id}")),
+        }
+    }
+
+    #[test]
+    fn rrf_ranks_shared_top_hits_first_and_dedupes() {
+        // A is rank-0 in BOTH lists; it must win. B/D are each a single rank-1;
+        // C/E each a single rank-2.
+        let list1 = vec![sr("m", "A"), sr("m", "B"), sr("m", "C")];
+        let list2 = vec![sr("m", "A"), sr("m", "D"), sr("m", "E")];
+
+        let merged = rrf_merge(vec![list1, list2], RRF_K, RRF_POOL);
+
+        // Deduped to 5 distinct records, A first.
+        assert_eq!(merged.len(), 5);
+        assert_eq!(merged[0].record_id, "A");
+        assert_eq!(merged.iter().filter(|r| r.record_id == "A").count(), 1);
+
+        // A's fused weight is strictly greater than any single-list rank-1.
+        let a = merged[0].score;
+        let b = merged.iter().find(|r| r.record_id == "B").unwrap().score;
+        assert!(a > b, "shared top hit must outweigh a single rank-1");
+    }
+
+    #[test]
+    fn rrf_respects_the_pool_cap() {
+        let list = vec![sr("m", "A"), sr("m", "B"), sr("m", "C")];
+        let merged = rrf_merge(vec![list], RRF_K, 2);
+        assert_eq!(merged.len(), 2);
+        assert_eq!(merged[0].record_id, "A");
     }
 }
