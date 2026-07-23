@@ -33,22 +33,6 @@
 	import { chatSessions } from "$lib/stores/chatSessions.svelte";
 	import { windowShellStore } from "$lib/stores/window-shell.svelte";
 
-	// The entity-resolution backlog ("who is 'J'?") — real endpoint, no frontend
-	// helper existed yet, so a thin typed fetch here.
-	type SurfaceCandidate = { entity_type: string; entity_id: string; name: string; reason: string };
-	type SurfaceGroup = {
-		normalized: string; surface: string; mention_type: string;
-		count: number; sources: number; snippets: string[];
-		candidates: SurfaceCandidate[];
-	};
-	async function getMentionsQueue(): Promise<SurfaceGroup[]> {
-		try {
-			const r = await fetch("/api/mentions/queue");
-			if (!r.ok) return [];
-			return await r.json();
-		} catch { return []; }
-	}
-
 	// ---- dates ----
 	const reduce =
 		typeof window !== "undefined" && window.matchMedia &&
@@ -75,7 +59,6 @@
 	let points = $state<TimelineDayPoint[]>([]);
 	let streams = $state<TodayStreamsView | null>(null);
 	let people = $state<WikiPersonListItem[]>([]);
-	let asks = $state<SurfaceGroup[]>([]);
 	let examenText = $state("");
 	let examenSaved = $state(false);
 	let weather = $state<WeatherNow | null>(null);
@@ -90,7 +73,6 @@
 		getDayTimeline(todayDate).then((t) => { if (t?.points) points = t.points; }).catch(() => {});
 		getTodayStreams(todayDate).then((s) => (streams = s)).catch(() => {});
 		listPeople().then((p) => (people = p)).catch(() => {});
-		getMentionsQueue().then((m) => (asks = m)).catch(() => {});
 		getWeatherNow().then((w) => (weather = w)).catch(() => {});
 		getCalendarUpcoming(4).then((e) => (upcoming = e)).catch(() => {});
 		getUnnamedPlaces(3).then((u) => (unnamed = u)).catch(() => {});
@@ -176,27 +158,6 @@
 		if (d.toDateString() === n.toDateString()) return "today";
 		if (d.toDateString() === new Date(n.getTime() + 86400000).toDateString()) return "tmrw";
 		return d.toLocaleDateString(undefined, { weekday: "short" });
-	}
-
-	// ---- the box asking: top unresolved surface ----
-	const theAsk = $derived.by(() => asks.find((a) => a.candidates?.length) ?? asks[0] ?? null);
-	async function resolveAsk(cand: SurfaceCandidate | null) {
-		const a = theAsk;
-		if (!a) return;
-		try {
-			if (cand) {
-				await fetch("/api/mentions/link", {
-					method: "POST", headers: { "Content-Type": "application/json" },
-					body: JSON.stringify({ normalized: a.normalized, entity_id: cand.entity_id }),
-				});
-			} else {
-				await fetch("/api/mentions/dismiss", {
-					method: "POST", headers: { "Content-Type": "application/json" },
-					body: JSON.stringify({ normalized: a.normalized }),
-				});
-			}
-		} catch { /* best-effort */ }
-		asks = asks.filter((x) => x.normalized !== a.normalized);
 	}
 
 	// ---- examen: writes into today's reflection (the grounded SEED needs an LLM) ----
@@ -343,7 +304,7 @@
 		     to name the thread. Omitted — the discovered-story scaffolding it would have
 		     hung on was cut with wiki_stories. -->
 
-		{#if (placeAsk && !placeNamed) || theAsk || !examenSaved}
+		{#if (placeAsk && !placeNamed) || !examenSaved}
 			<section class="dialogue rv" style="animation-delay:.18s">
 				{#if placeAsk && !placeNamed}
 					<div class="panel">
@@ -351,17 +312,6 @@
 						<p class="q">{#if placeAsk.visit_count > 1}You've stopped somewhere <span class="m">{placeAsk.visit_count} times</span> but never named it. What is that place?{:else}There's a place near you the box keeps seeing but hasn't named. What is it?{/if}</p>
 						<input type="text" bind:value={placeName} placeholder="name this place…" aria-label="Name this place"
 							onkeydown={(e) => { if (e.key === 'Enter') namePlace(); }} />
-					</div>
-				{:else if theAsk}
-					<div class="panel">
-						<div class="k">The box is asking</div>
-						<p class="q">There's a <span class="m">“{theAsk.surface}”</span> in {theAsk.count} {theAsk.count === 1 ? "mention" : "mentions"}{#if theAsk.candidates?.length}. Is that {theAsk.candidates[0].name}, or someone new?{:else} the box hasn't met. Who is it?{/if}</p>
-						<div class="chips">
-							{#each theAsk.candidates.slice(0, 2) as cand}
-								<button type="button" onclick={() => resolveAsk(cand)}>{cand.name}</button>
-							{/each}
-							<button type="button" onclick={() => resolveAsk(null)}>Someone new</button>
-						</div>
 					</div>
 				{/if}
 				<div class="panel">
