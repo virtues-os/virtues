@@ -20,9 +20,6 @@
 //! let stats = entity_resolution::resolve_entities(db, window).await?;
 //! ```
 
-pub mod extract;
-pub mod mentions;
-pub mod prose;
 pub mod people;
 pub mod places;
 
@@ -55,19 +52,8 @@ impl TimeWindow {
 pub struct ResolutionStats {
     pub places_resolved: usize,
     pub people_resolved: usize,
-    /// Mentions drained out of prose into `er_mentions` (the evidence layer).
-    pub mentions_extracted: usize,
-    /// Mentions that matched exactly one entity and are now linked.
-    pub mentions_linked: usize,
-    /// Mentions still floating — nothing matched, or the surface is ambiguous.
-    /// These are the review queue. They are dust, not failures.
-    pub mentions_floating: usize,
     pub duration_ms: u128,
 }
-
-/// How many un-extracted source records one sweep will read. Bounds a cold
-/// start over years of backlog; the next tick continues where this stopped.
-const EXTRACT_BATCH: i64 = 500;
 
 /// Main entry point: Resolve all entities in time window
 ///
@@ -88,44 +74,21 @@ pub async fn resolve_entities(db: &Database, window: TimeWindow) -> Result<Resol
     // 2. Resolve people (calendar attendees, email senders)
     let people_resolved = people::resolve_people(db, window).await?;
 
-    // 3. Drain prose mentions into the evidence layer. Steps 1-2 read STRUCTURED
-    //    columns — an email's From: header is already an identity, a GPS fix is
-    //    already a place. Those are joins, and they are where most links come
-    //    from. This step handles what only appears as prose: a name spoken in a
-    //    transcript. Different problem, different guarantees.
+    // Semantic ER (prose/NER extraction into `er_mentions`, then mention
+    // linking) used to run here as steps 3-4. It is gone deliberately.
     //
-    //    Not time-windowed, deliberately. A mention floats until a human writes
-    //    the alias that resolves it, and that can happen months after the
-    //    recording — so the sweep must be able to reach the whole backlog.
-    let extracted = extract::extract_from_transcriptions(db, EXTRACT_BATCH).await?;
-
-    //    ...and out of the four ontologies that carry prose but have no
-    //    extraction of their own (email, messages, documents, AI chats). One
-    //    component, driven by the ontology registry — never a per-source branch.
-    //    A new source (Slack, Fastmail) normalizes into an existing ontology and
-    //    is extracted with no code change. Best-effort: an LLM hiccup must not
-    //    take down the deterministic resolvers above it.
-    let prose = match prose::extract_from_prose(db).await {
-        Ok(p) => p,
-        Err(e) => {
-            tracing::warn!("prose extraction failed (deterministic resolution unaffected): {e}");
-            prose::ProseStats::default()
-        }
-    };
-
-    // 4. Resolve those mentions — but ONLY on an exact, unambiguous match
-    //    (canonical name, nickname, or a human-written alias). One candidate
-    //    links; zero or many stay floating. The machine never picks which Sarah.
-    let mention_stats = mentions::resolve_mentions(db).await?;
-
+    // The graph is deterministic + user-authored, and the numbers were decisive:
+    // of 130,777 entity refs on a real box, the semantic path produced 189
+    // (0.14%) — and even those linked only via a human-written alias, never by
+    // the machine. Meanwhile it accrued 11,113 permanently-floating mentions, a
+    // review queue that was never cleared, 172k extraction-log rows, and a
+    // per-sweep LLM call. Handle matching, merchant resolution and place
+    // clustering above produced the other 99.86% for free.
     let duration_ms = start.elapsed().as_millis();
 
     tracing::info!(
         places_resolved,
         people_resolved,
-        mentions_extracted = extracted.mentions + prose.mentions,
-        mentions_linked = mention_stats.linked,
-        mentions_floating = mention_stats.unmatched + mention_stats.ambiguous,
         duration_ms,
         "Entity resolution completed"
     );
@@ -133,9 +96,6 @@ pub async fn resolve_entities(db: &Database, window: TimeWindow) -> Result<Resol
     Ok(ResolutionStats {
         places_resolved,
         people_resolved,
-        mentions_extracted: extracted.mentions + prose.mentions,
-        mentions_linked: mention_stats.linked,
-        mentions_floating: mention_stats.unmatched + mention_stats.ambiguous,
         duration_ms,
     })
 }
