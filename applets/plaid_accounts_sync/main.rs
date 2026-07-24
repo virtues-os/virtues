@@ -34,10 +34,16 @@ async fn main() -> Result<()> {
         .and_then(|m| m.get("item_id"))
         .and_then(|v| v.as_str())
         .unwrap_or("");
+    // Stamped on every account row, so it is the label the user actually reads.
+    // The connect flow resolves it from the Link session (falling back to
+    // /item/get + /institutions/get_by_id) and stores it on the credential;
+    // "Unknown" now means that lookup genuinely failed, not that nobody ever
+    // wrote the field.
     let institution = creds
         .get("metadata")
         .and_then(|m| m.get("institution_name"))
         .and_then(|v| v.as_str())
+        .filter(|s| !s.is_empty())
         .unwrap_or("Unknown");
 
     // Proxied through virtues-api: the box sends only the per-user access_token;
