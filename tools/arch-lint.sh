@@ -188,8 +188,30 @@ if [ -d "services/virtues-atlas/migrations" ]; then
     fi
 fi
 
+# Applets must not build a bare reqwest client.
+#
+# `applets/Cargo.toml` builds reqwest with `rustls-tls-no-provider`, so a bare
+# `reqwest::Client::new()` compiles fine and then PANICS ("No provider set") on
+# its first HTTPS call. That failure only surfaces at runtime, on a box, for a
+# source someone actually connected — which is how google/notion/strava sat
+# broken. `virtues_applets::http_client()` installs the ring provider (and adds
+# a timeout a bare client lacks).
+if [ -d "applets" ]; then
+    violations=$(grep -rEn 'reqwest::Client::(new|builder)\(\)' applets/ \
+        --include='*.rs' \
+        | grep -v '^applets/src/' \
+        | grep -vE ':[[:space:]]*//' \
+        || true)
+    if [ -n "$violations" ]; then
+        report \
+            "applet builds its own reqwest client" \
+            "reqwest is built rustls-tls-no-provider here, so a bare client panics 'No provider set' on first use — at runtime, on a box. Use virtues_applets::http_client()." \
+            "$violations"
+    fi
+fi
+
 if [ "$fail" -eq 0 ]; then
-    echo "arch_lint: OK (10 invariants enforced)"
+    echo "arch_lint: OK (11 invariants enforced)"
 else
     exit 1
 fi
