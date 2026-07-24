@@ -6,7 +6,7 @@ use anyhow::Result;
 use serde_json::Value;
 use sqlx::PgPool;
 use uuid::Uuid;
-use virtues_helpers::dedup::{build_batch_insert_query, BATCH_SIZE};
+use virtues_helpers::dedup::{build_batch_upsert_query, BATCH_SIZE};
 
 #[allow(clippy::type_complexity)]
 type AccountRow = (
@@ -110,7 +110,15 @@ async fn flush(db: &PgPool, records: &[AccountRow]) -> Result<usize> {
     if records.is_empty() {
         return Ok(0);
     }
-    let sql = build_batch_insert_query(
+    // UPSERT, not DO NOTHING. `source_stream_id` is `plaid:account:{id}` — stable
+    // for the life of the account by design — so under DO NOTHING every sync after
+    // the very first was discarded and `current_balance` stayed frozen at whatever
+    // it was the day Plaid was connected. A balance is the one field on this table
+    // that is *expected* to change; refusing the update made the column a lie.
+    //
+    // Only genuinely mutable fields are listed. `id`, `source_stream_id`,
+    // `account_type` and `currency` are identity and stay out of it.
+    let sql = build_batch_upsert_query(
         "data_financial_account",
         &[
             "id",
@@ -127,6 +135,14 @@ async fn flush(db: &PgPool, records: &[AccountRow]) -> Result<usize> {
             "metadata",
         ],
         "source_stream_id",
+        &[
+            "account_name",
+            "institution_name",
+            "current_balance",
+            "available_balance",
+            "mask",
+            "metadata",
+        ],
         records.len(),
     );
     let mut q = sqlx::query(&sql);
@@ -145,5 +161,6 @@ async fn flush(db: &PgPool, records: &[AccountRow]) -> Result<usize> {
             .bind("plaid")
             .bind(&r.9);
     }
-    Ok(q.execute(db).await?.rows_affected() as usize)
+    // The upsert builder appends RETURNING, so drain the rows.
+    Ok(q.fetch_all(db).await?.len())
 }

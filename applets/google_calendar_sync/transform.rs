@@ -9,7 +9,7 @@ use chrono::{DateTime, Utc};
 use serde_json::Value;
 use sqlx::PgPool;
 use uuid::Uuid;
-use virtues_helpers::dedup::{build_batch_insert_query, BATCH_SIZE};
+use virtues_helpers::dedup::{build_batch_upsert_query, BATCH_SIZE};
 
 #[allow(clippy::type_complexity)]
 type EventRow = (
@@ -26,6 +26,7 @@ type EventRow = (
     String,                    // source_stream_id
     Value,                     // metadata
     Option<DateTime<Utc>>,     // deleted_at_source
+    String,                    // status (confirmed | tentative | cancelled)
 );
 
 /// `events` is the array from `https://www.googleapis.com/calendar/v3/calendars/{cal_id}/events`.
@@ -124,6 +125,7 @@ pub async fn write_events(
             format!("{calendar_id}:{google_id}"),
             metadata,
             deleted_at_source,
+            status.to_string(),
         ));
 
         if pending.len() >= BATCH_SIZE {
@@ -167,7 +169,12 @@ async fn flush(db: &PgPool, records: &[EventRow]) -> Result<usize> {
     if records.is_empty() {
         return Ok(0);
     }
-    let sql = build_batch_insert_query(
+    // UPSERT, not DO NOTHING. A calendar event is mutable by nature — it gets
+    // renamed, rescheduled, and cancelled after we first see it — and the sync
+    // key is `{calendar_id}:{google_id}`, stable across all of that. Under
+    // DO NOTHING every correction Google sent was discarded on arrival, so a
+    // meeting cancelled after its first sync stayed on the calendar forever.
+    let sql = build_batch_upsert_query(
         "data_calendar_event",
         &[
             "id",
@@ -185,8 +192,21 @@ async fn flush(db: &PgPool, records: &[EventRow]) -> Result<usize> {
             "source_provider",
             "metadata",
             "deleted_at_source",
+            "status",
         ],
         "source_stream_id",
+        &[
+            "title",
+            "description",
+            "location_name",
+            "start_time",
+            "end_time",
+            "is_all_day",
+            "external_url",
+            "metadata",
+            "deleted_at_source",
+            "status",
+        ],
         records.len(),
     );
 
@@ -207,8 +227,9 @@ async fn flush(db: &PgPool, records: &[EventRow]) -> Result<usize> {
             .bind("google_calendar")
             .bind("google")
             .bind(&r.11)
-            .bind(r.12);
+            .bind(r.12)
+            .bind(&r.13);
     }
-    let result = q.execute(db).await?;
-    Ok(result.rows_affected() as usize)
+    // The upsert builder appends RETURNING, so drain the rows.
+    Ok(q.fetch_all(db).await?.len())
 }
