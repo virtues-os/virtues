@@ -131,7 +131,18 @@ pub async fn oauth_start_handler(
 #[derive(Debug, Deserialize)]
 pub struct OauthCallbackQuery {
     pub state: String,
-    pub exchange_token: String,
+    /// Absent whenever the proxy bounced back an `error` instead — a required
+    /// field here used to turn every such bounce into an opaque 422 from the
+    /// query extractor, before the handler could say what went wrong. Plaid's
+    /// Hosted Link makes that a routine path (Plaid redirects on user-cancel
+    /// exactly as it does on success), so the error leg has to be first-class.
+    #[serde(default)]
+    pub exchange_token: Option<String>,
+    /// Proxy-side failure code: `connect_cancelled` when the user backed out of
+    /// the provider's flow, `token_exchange_failed` / `provider_error` when the
+    /// provider itself refused.
+    #[serde(default)]
+    pub error: Option<String>,
     /// `"native"` when the connect was started from a Tauri shell (Mac/iOS),
     /// where OAuth ran in the system browser. A 302 to `/sources` would strand
     /// the user on a second copy of the app in a browser tab, so we render a
@@ -152,9 +163,25 @@ pub async fn oauth_callback_handler(
         Err(e) => return auth_error_response(e),
     };
 
+    // 1b. The provider leg didn't produce a token. Cancelling is a normal thing
+    //     to do, so hand the user back the same way a success does — no
+    //     credential is written and nothing is logged as a fault.
+    let exchange_token = match (&q.exchange_token, &q.error) {
+        (Some(t), _) if !t.is_empty() => t.clone(),
+        (_, reason) => {
+            let code = reason.as_deref().unwrap_or("no_exchange_token");
+            tracing::info!(
+                source_id = %claims.source_id,
+                reason = %code,
+                "oauth callback returned without an exchange token"
+            );
+            return oauth_incomplete_response(&claims.source_id, code, q.shell.as_deref());
+        }
+    };
+
     // 2. POST the exchange token to the proxy; receive normalized
     //    {secrets, metadata, expires_in, scopes}.
-    let resp = match proxy_exchange(&claims.source_id, &q.exchange_token).await {
+    let resp = match proxy_exchange(&claims.source_id, &exchange_token).await {
         Ok(r) => r,
         Err(e) => return auth_error_response(e),
     };
@@ -164,11 +191,15 @@ pub async fn oauth_callback_handler(
     let credential_id = match claims.existing_credential_id {
         Some(id) => id,
         None => {
-            // Default name = the user's email if metadata carries one,
-            // otherwise the source display_name + "account".
+            // Default name = whatever the provider gave us that identifies this
+            // particular connection: the account's email, or the proxy's
+            // `display_name` (Plaid puts the bank's name there — "Plaid account"
+            // tells the user nothing once they've connected three of them).
+            // Both keys are generic on purpose; core stays provider-agnostic.
             let default_name = resp
                 .metadata
                 .get("email")
+                .or_else(|| resp.metadata.get("display_name"))
                 .and_then(|v| v.as_str())
                 .map(String::from)
                 .unwrap_or_else(|| {
@@ -226,16 +257,60 @@ fn claims_shell_is_native(shell: Option<&str>) -> bool {
     shell == Some("native")
 }
 
+/// The connect ended without a credential. Mirrors the success path's two
+/// shells: a terminal page for native (the system browser has nowhere to go),
+/// a 302 back into the app for browser connects. Never an HTTP error — the
+/// user didn't do anything wrong, and most of the time they simply cancelled.
+fn oauth_incomplete_response(source_id: &str, reason: &str, shell: Option<&str>) -> Response {
+    if claims_shell_is_native(shell) {
+        let source = source_display_name(source_id);
+        let (heading, detail) = if reason == "connect_cancelled" {
+            (
+                format!("{source} wasn't connected"),
+                "You closed the connection flow before it finished. You can close this tab and try again from Virtues.",
+            )
+        } else {
+            (
+                format!("Couldn't finish connecting {source}"),
+                "Nothing was connected. You can close this tab and try again from Virtues.",
+            )
+        };
+        return terminal_page("Not connected — Virtues", "—", &heading, detail);
+    }
+    let location = format!(
+        "/sources?source={}&error={}",
+        urlencoding::encode(source_id),
+        urlencoding::encode(reason)
+    );
+    let mut headers = HeaderMap::new();
+    headers.insert(
+        axum::http::header::LOCATION,
+        HeaderValue::from_str(&location).unwrap_or(HeaderValue::from_static("/sources")),
+    );
+    (StatusCode::FOUND, headers).into_response()
+}
+
 /// Terminal page shown after a native-shell OAuth connect finishes in the system
 /// browser. Self-contained (no asset deps, CSP-safe) so it renders anywhere.
 fn oauth_return_page(source_id: &str) -> Response {
-    let source = lookup_source(source_id)
+    let heading = format!("{} connected", source_display_name(source_id));
+    terminal_page(
+        "Connected — Virtues",
+        "✓",
+        &heading,
+        "You can close this tab and return to Virtues.",
+    )
+}
+
+fn source_display_name(source_id: &str) -> String {
+    lookup_source(source_id)
         .map(|s| s.display_name.to_string())
-        .unwrap_or_else(|| "Your account".to_string());
-    let safe_source = source
-        .replace('&', "&amp;")
-        .replace('<', "&lt;")
-        .replace('>', "&gt;");
+        .unwrap_or_else(|| "Your account".to_string())
+}
+
+fn terminal_page(title: &str, mark: &str, heading: &str, detail: &str) -> Response {
+    let esc = |s: &str| s.replace('&', "&amp;").replace('<', "&lt;").replace('>', "&gt;");
+    let (title, heading, detail) = (esc(title), esc(heading), esc(detail));
     let body = format!(
         r#"<!DOCTYPE html>
 <html lang="en">
@@ -243,7 +318,7 @@ fn oauth_return_page(source_id: &str) -> Response {
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <meta name="referrer" content="no-referrer">
-  <title>Connected — Virtues</title>
+  <title>{title}</title>
   <style>
     body {{ font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto,
             "Helvetica Neue", Arial, sans-serif; max-width: 480px; margin: 0 auto;
@@ -255,9 +330,9 @@ fn oauth_return_page(source_id: &str) -> Response {
   </style>
 </head>
 <body>
-  <div class="mark">✓</div>
-  <h1>{safe_source} connected</h1>
-  <p>You can close this tab and return to Virtues.</p>
+  <div class="mark">{mark}</div>
+  <h1>{heading}</h1>
+  <p>{detail}</p>
 </body>
 </html>"#,
     );
