@@ -86,6 +86,17 @@ async fn main() -> Result<()> {
     // wire. The collector now says which, so refuse to report a clean run when
     // a source is actually shut off: state it in the summary (the run history
     // is where someone looks) and warn in the log.
+    // Park the collector's self-report on the device row so the UI can show it.
+    // `device_info` already carries the client's build identity the same way;
+    // permissions belong beside it, as a property of the device rather than of
+    // any one run — a run scrolls out of history, a revoked permission persists.
+    if let Some(health) = payload.get("collector_health").filter(|h| h.is_object()) {
+        if let Err(e) = record_device_permissions(&pool, device_id, health).await {
+            // Never fail an ingest over telemetry — the records matter more.
+            tracing::warn!(device_id, error = %e, "could not record collector permissions");
+        }
+    }
+
     let denied = denied_capabilities(payload);
     let summary = format!(
         "apps: {app_written} sessions, browser: {browser_written} visits, imessages: {imessage_written}"
@@ -102,6 +113,26 @@ async fn main() -> Result<()> {
         format!("{summary} — DENIED: {} (grant on the Mac)", denied.join(", "))
     };
     output(&summary, &input.config)
+}
+
+/// Store the collector's self-reported permissions on its device row, beside
+/// the build identity that already lives in `device_info`.
+async fn record_device_permissions(
+    pool: &sqlx::PgPool,
+    device_id: &str,
+    health: &Value,
+) -> anyhow::Result<()> {
+    sqlx::query(
+        "UPDATE app_device
+            SET device_info = jsonb_set(
+                COALESCE(device_info, '{}'::jsonb), '{permissions}', $2::jsonb, true)
+          WHERE id = $1",
+    )
+    .bind(device_id)
+    .bind(health)
+    .execute(pool)
+    .await?;
+    Ok(())
 }
 
 /// Capabilities the Mac collector reports it does NOT currently have.

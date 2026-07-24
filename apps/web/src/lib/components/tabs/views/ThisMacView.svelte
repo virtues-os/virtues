@@ -183,6 +183,24 @@
 		<div class="text-xs font-medium uppercase tracking-wide text-foreground-subtle mb-2">
 			Permissions
 		</div>
+		{#if !status.permissionsReportedByDaemon}
+			<!-- These ticks describe whichever process answered, and macOS grants
+			     access per process — so without the daemon's own report they can
+			     say "granted" while the daemon is being denied and collection is
+			     silently dead. Say so rather than showing a confident wrong tick. -->
+			<div
+				class="mb-2 flex items-start gap-2 rounded-md border border-warning/40 bg-warning/10 px-3 py-2 text-xs"
+			>
+				<Icon icon="ri:information-line" width="16" class="text-warning shrink-0 mt-0.5" />
+				<div>
+					<span class="text-foreground">Unverified.</span>
+					<span class="text-foreground-muted">
+						The collector hasn't reported its own access, so the state below may not match what
+						it can actually read. Update the collector to confirm.
+					</span>
+				</div>
+			</div>
+		{/if}
 		<ul class="rounded-lg border border-border bg-surface divide-y divide-border mb-6">
 			<!-- Full Disk Access — required for Messages. -->
 			<li class="p-4 flex items-start gap-3">
