@@ -111,20 +111,20 @@ pub async fn run(client: Virtues, host: &str, port: u16) -> Result<()> {
     let scheduler_yjs = yjs_state.clone();
     let _scheduler_handle = tokio::spawn(async move {
         match crate::Scheduler::new(db_pool, scheduler_yjs).await {
-            Ok(sched) => {
-                if let Err(e) = sched.schedule_all().await {
-                    tracing::warn!("Failed to schedule cron actions: {}", e);
+            Ok(mut sched) => {
+                match sched.sync_jobs().await {
+                    Ok(n) => tracing::info!("Scheduled {n} cron actions"),
+                    Err(e) => tracing::warn!("Failed to schedule cron actions: {}", e),
                 }
                 if let Err(e) = sched.start().await {
                     tracing::warn!("Failed to start scheduler: {}", e);
                 } else {
                     tracing::info!("Scheduler started successfully");
-                    // Keep the scheduler handle alive — tokio-cron-scheduler
-                    // runs background tasks on its own tokio tasks, but the
-                    // JobScheduler itself needs to stay in scope.
-                    loop {
-                        tokio::time::sleep(tokio::time::Duration::from_secs(3600)).await;
-                    }
+                    // Never returns: re-derives the job set on a timer (so a
+                    // source connected while the box is running gets scheduled
+                    // without a restart) and owns the JobScheduler, which must
+                    // stay in scope for its jobs to keep firing.
+                    sched.run_refresh_loop().await;
                 }
             }
             Err(e) => {
