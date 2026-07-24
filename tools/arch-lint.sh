@@ -29,7 +29,15 @@ report() {
 # ─── Lint 1: No `match … source_id` in virtues-core/src/api/ ───────────────────────
 # Catches `match source_id { "google" => ..., "plaid" => ... }` provider-
 # specific branching. Quirks belong in proxy routes or sync binaries.
-violations=$(grep -rEn 'match[[:space:]]+[a-zA-Z_]*source_id' virtues-core/src/api/ --include='*.rs' || true)
+# The trailing filter drops `match resolve_source_id(…)` and friends: a `(`
+# right after the name means we are matching on a function's RESULT (a
+# Result/Option), not branching on a provider id. Without it the lint was
+# permanently red on `pair.rs`, and a lint that always fails is one everybody
+# learns to ignore — worse than no lint. `match source_id {` and
+# `match source_id.as_str() {` are still caught.
+violations=$(grep -rEn 'match[[:space:]]+[a-zA-Z_]*source_id' virtues-core/src/api/ --include='*.rs' \
+    | grep -vE 'match[[:space:]]+[a-zA-Z_]*source_id[[:space:]]*\(' \
+    || true)
 if [ -n "$violations" ]; then
     report \
         "provider-specific 'match … source_id' detected in virtues-core/src/api/" \

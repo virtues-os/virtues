@@ -37,12 +37,6 @@ pub async fn write_accounts(
         if plaid_id.is_empty() {
             continue;
         }
-        let name = acct
-            .get("official_name")
-            .or_else(|| acct.get("name"))
-            .and_then(|v| v.as_str())
-            .unwrap_or("Unnamed Account")
-            .to_string();
         let acct_type = acct
             .get("subtype")
             .or_else(|| acct.get("type"))
@@ -50,6 +44,23 @@ pub async fn write_accounts(
             .unwrap_or("other")
             .to_string();
         let mask = acct.get("mask").and_then(|v| v.as_str()).map(String::from);
+
+        // Plaid does not always send a name — business accounts in particular
+        // often carry neither `official_name` nor `name`, and three identical
+        // rows reading "Unnamed Account" are indistinguishable to the person who
+        // owns them. Subtype plus the last four is what a bank statement would
+        // print, and we already hold both, so fall back to that and keep the
+        // literal for when even those are missing.
+        let name = acct
+            .get("official_name")
+            .or_else(|| acct.get("name"))
+            .and_then(|v| v.as_str())
+            .filter(|s| !s.trim().is_empty())
+            .map(str::to_string)
+            .unwrap_or_else(|| match &mask {
+                Some(m) => format!("{acct_type} ••{m}"),
+                None => "Unnamed Account".to_string(),
+            });
 
         let balances = acct.get("balances");
         let current_dollars = balances
