@@ -81,10 +81,45 @@ async fn main() -> Result<()> {
     let browser_written = transform::write_browser_history(&pool, &browser).await?;
     let imessage_written = transform::write_imessages(&pool, &imessages).await?;
 
+    // A batch with zero messages because the Mac has none, and one with zero
+    // because macOS is denying the collector `chat.db`, are identical on the
+    // wire. The collector now says which, so refuse to report a clean run when
+    // a source is actually shut off: state it in the summary (the run history
+    // is where someone looks) and warn in the log.
+    let denied = denied_capabilities(payload);
     let summary = format!(
         "apps: {app_written} sessions, browser: {browser_written} visits, imessages: {imessage_written}"
     );
+    let summary = if denied.is_empty() {
+        summary
+    } else {
+        tracing::warn!(
+            device_id,
+            denied = %denied.join(", "),
+            "mac collector is missing permissions — affected streams cannot be read \
+             and will look merely idle until this is granted"
+        );
+        format!("{summary} — DENIED: {} (grant on the Mac)", denied.join(", "))
+    };
     output(&summary, &input.config)
+}
+
+/// Capabilities the Mac collector reports it does NOT currently have.
+///
+/// Absent for collectors older than the health field — which is not the same as
+/// "everything is fine", so it maps to "nothing reported" rather than a
+/// fabricated all-clear.
+fn denied_capabilities(payload: &Value) -> Vec<String> {
+    payload
+        .get("collector_health")
+        .and_then(|h| h.get("denied"))
+        .and_then(|d| d.as_array())
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|v| v.as_str().map(str::to_string))
+                .collect()
+        })
+        .unwrap_or_default()
 }
 
 /// Every top-level key of the body that no transform reads — `device_id`, a
