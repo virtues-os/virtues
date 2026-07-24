@@ -96,50 +96,43 @@ with 0 records rather than going red.
 **Stop here if the field names drifted.** P0's logging tells you within one
 attempt, and the fix is local to `extract_public_token`.
 
-## P3 — Multi-collector accounts (the real design work, ~1 wk)
+## P3 — Multi-collector accounts — ❌ NOT NEEDED (researched 2026-07-24)
 
-The problem: Plaid and FinanceKit write the same two tables in disjoint
-namespaces (`plaid:*` vs `apple_finance:*`). Connect Plaid to a bank Apple
-already covers and every account and transaction exists twice. As more
-collectors arrive, this gets worse, not better.
+The feared problem: Plaid and FinanceKit write the same two tables in disjoint
+namespaces (`plaid:*` vs `apple_finance:*`), so a bank covered by both would
+appear twice. **That overlap cannot happen.** The two collectors are disjoint by
+construction, not by luck:
 
-Solve it at the **account** layer. Then the transaction problem disappears,
-because each real-world account has exactly one feed.
+- **FinanceKit only ever returns Apple Card, Apple Cash, and Apple Savings**
+  (US-only). It is an Apple-products API, not a bank aggregator — it cannot
+  surface a Chase or Ally account no matter what the user has.
+- Dragon confirms it exactly: `data_financial_account` holds 3 rows, all
+  `source_provider = apple_finance`, all `institution_name = "Apple"` — Apple
+  Cash, Savings, Apple Card.
+- Plaid, conversely, cannot reach Apple's products; they are not connectable
+  institutions.
 
-### P3.0 — Spike: is there a join key? (~2 hrs, blocking)
+So the intersection is empty and stays empty. Building account identity +
+ownership arbitration to reconcile two sets that can never intersect would be
+pure speculative machinery.
 
-Plaid gives `mask`. FinanceKit does not columnize one, though it stores Apple's
-full payload under `metadata.raw`.
+The P3.0 spike also came back negative, which independently kills the design as
+drafted: FinanceKit's stored payload carries only four keys — `name`,
+`currencyCode`, `institutionName`, `id`. **No mask, no last-4, no account
+number.** The proposed join key (institution + mask + type + currency) was not
+derivable, and `account_type` is `"other"` for all three rows.
 
-Query real rows on Dragon: does the Apple payload carry a last-4 or any stable
-discriminator? If yes, the key below works today. If no, P3.1 needs a different
-discriminator (or account identity becomes user-confirmed rather than derived,
-which is still covenant-legal — just more UI).
+**Revisit only if a genuinely overlapping pair of collectors appears** — a
+second aggregator alongside Plaid, a CSV/OFX import, or manual entry. The one
+real duplicate risk that exists *today* is narrower and cheaper: linking the
+**same institution twice through Plaid** yields two Items with different
+`account_id`s and thus duplicate rows. If that ever bites, guard it at connect
+time (warn on an institution_id already held by an active credential) — not with
+an ownership layer.
 
-**This spike gates P3.1's shape. Do not design past it.**
-
-### P3.1 — Deterministic account identity
-
-Add an identity for the *real-world* account — normalized institution + mask +
-type + currency — kept separate from `source_stream_id`, which stays the
-per-collector id. Derived by rule, never inferred. Backfill existing rows.
-
-### P3.2 — Exclusive ownership per account
-
-When two collectors resolve to the same identity, one is authoritative; the
-other's writes for that account are suppressed at write time.
-
-- Deterministic + user-authored, so it stays inside the covenant.
-- Default: **first collector to claim an account keeps it.** Not "newest wins",
-  which silently churns data every time someone connects a source.
-- The collision is surfaced in the UI, and the choice is flippable.
-
-### P3.3 — Explicit non-goal: transaction matching
-
-Do **not** fuzzy-match the same purchase across providers (equal amounts, dates
-off by a day for pending-vs-posted, different merchant strings). That is exactly
-the semantic ER the Deterministic Covenant killed. Account-level ownership makes
-it unnecessary.
+Standing non-goal either way: do **not** fuzzy-match transactions across
+providers (equal amounts, dates off by a day for pending-vs-posted, differing
+merchant strings). That is the semantic ER the Deterministic Covenant killed.
 
 ## Deferred, deliberately
 
