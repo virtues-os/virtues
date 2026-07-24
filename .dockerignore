@@ -2,6 +2,11 @@
 .git/
 .github/
 .vscode/
+# Host cargo config: untracked, and points build.target-dir at a machine-local
+# shared cache. Inside a build it would send the binary to a path that doesn't
+# exist in the image. The Dockerfile also pins CARGO_TARGET_DIR; this keeps the
+# host's config out of the context in the first place.
+.cargo/
 
 # Documentation
 docs/
