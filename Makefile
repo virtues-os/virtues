@@ -362,6 +362,11 @@ _ecr-push:
 	  || { echo "error: AWS CLI not configured — run \`aws configure\`"; exit 1; }; \
 	reg="$$acct.dkr.ecr.$(AWS_REGION).amazonaws.com"; \
 	echo "→ pushing $(SVC) to $$reg"; \
-	aws ecr get-login-password --region $(AWS_REGION) | docker login --username AWS --password-stdin "$$reg"; \
-	docker build --platform linux/amd64 -f $(DOCKERFILE) -t "$$reg/$(SVC):latest" .; \
+	aws ecr get-login-password --region $(AWS_REGION) | docker login --username AWS --password-stdin "$$reg" && \
+	docker build --platform linux/amd64 -f $(DOCKERFILE) -t "$$reg/$(SVC):latest" . && \
 	docker push "$$reg/$(SVC):latest"
+# NB: `&&`, not `;`. With `;` a FAILED build still ran the push, which happily
+# re-uploaded whatever stale image was already tagged `:latest` locally and
+# printed a digest — a deploy that looks successful and changes nothing. That
+# is the worst possible failure mode for a manual deploy path, and it is how a
+# broken build sat here unnoticed.

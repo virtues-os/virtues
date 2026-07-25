@@ -30,6 +30,11 @@ pub struct ModelInfo {
     /// never reached the cloud) — render blank, never `$0.00`.
     pub input_cost_per_1k: Option<f64>,
     pub output_cost_per_1k: Option<f64>,
+    /// `true` for the curated "Virtues Recommended" set (vouched capabilities,
+    /// slot defaults); `false` for the rest of the live gateway catalog, whose
+    /// capability flags are the gateway's own declaration. The picker sections
+    /// on this and labels the unvouched tier.
+    pub recommended: bool,
 }
 
 impl From<CatalogModel> for ModelInfo {
@@ -38,8 +43,8 @@ impl From<CatalogModel> for ModelInfo {
             model_id: m.model_id,
             display_name: m.display_name,
             provider: m.provider,
-            // The catalog only ever carries models we curate AND the gateway
-            // still serves — anything else has already been filtered out.
+            // Every model the catalog carries is selectable: the Recommended set
+            // is curated ∩ gateway, and the rest are live gateway entries.
             enabled: true,
             sort_order: m.sort_order,
             context_window: Some(m.context_window),
@@ -51,6 +56,7 @@ impl From<CatalogModel> for ModelInfo {
             is_default: Some(m.is_default),
             input_cost_per_1k: m.input_cost_per_1k,
             output_cost_per_1k: m.output_cost_per_1k,
+            recommended: m.recommended,
         }
     }
 }

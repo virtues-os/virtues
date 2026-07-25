@@ -20,7 +20,9 @@ use chrono::{DateTime, Utc};
 use serde_json::Value;
 use sqlx::PgPool;
 use uuid::Uuid;
-use virtues_helpers::dedup::{build_batch_insert_query, build_batch_upsert_query, BATCH_SIZE};
+use virtues_helpers::dedup::{
+    build_batch_insert_query, build_batch_upsert_query, dedup_refs_keep_last, BATCH_SIZE,
+};
 
 const PROVIDER: &str = "mac";
 
@@ -432,6 +434,10 @@ async fn flush_imessage(db: &PgPool, rows: &[Msg]) -> Result<usize> {
     if rows.is_empty() {
         return Ok(0);
     }
+    // The GUID is the conflict key (source_stream_id). A chat.db read can surface the
+    // same GUID twice in one batch; collapse to the last so the ON CONFLICT DO UPDATE
+    // doesn't abort the whole flush ("cannot affect row a second time").
+    let rows = dedup_refs_keep_last(rows, |r| &r.guid);
     // UPSERT, not DO NOTHING — the one stream where that matters.
     //
     // There is no upstream to re-fetch a message from: chat.db is the only copy, and a

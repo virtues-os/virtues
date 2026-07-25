@@ -18,6 +18,14 @@ RUN apt-get update && apt-get install -y \
 
 WORKDIR /repo
 COPY . .
+# Pin the target dir explicitly. A developer checkout carries an untracked
+# `.cargo/config.toml` pointing `build.target-dir` at a shared cache outside the
+# repo (~/.cargo/shared-target — see CLAUDE.md), and if that file reaches the
+# build context, cargo writes the binary to a host path that does not exist in
+# this image and the COPY below fails. CI never saw it (fresh checkouts have no
+# such file), so only local `make deploy-virtues-api` broke — the one path that
+# builds the image prod actually pulls. The env var wins over any config.
+ENV CARGO_TARGET_DIR=/repo/target
 RUN cargo build --release -p virtues-api
 
 # ── Stage 2: runtime ─────────────────────────────────────────────────────────

@@ -29,7 +29,15 @@ report() {
 # ─── Lint 1: No `match … source_id` in virtues-core/src/api/ ───────────────────────
 # Catches `match source_id { "google" => ..., "plaid" => ... }` provider-
 # specific branching. Quirks belong in proxy routes or sync binaries.
-violations=$(grep -rEn 'match[[:space:]]+[a-zA-Z_]*source_id' virtues-core/src/api/ --include='*.rs' || true)
+# The trailing filter drops `match resolve_source_id(…)` and friends: a `(`
+# right after the name means we are matching on a function's RESULT (a
+# Result/Option), not branching on a provider id. Without it the lint was
+# permanently red on `pair.rs`, and a lint that always fails is one everybody
+# learns to ignore — worse than no lint. `match source_id {` and
+# `match source_id.as_str() {` are still caught.
+violations=$(grep -rEn 'match[[:space:]]+[a-zA-Z_]*source_id' virtues-core/src/api/ --include='*.rs' \
+    | grep -vE 'match[[:space:]]+[a-zA-Z_]*source_id[[:space:]]*\(' \
+    || true)
 if [ -n "$violations" ]; then
     report \
         "provider-specific 'match … source_id' detected in virtues-core/src/api/" \
@@ -188,8 +196,30 @@ if [ -d "services/virtues-atlas/migrations" ]; then
     fi
 fi
 
+# Applets must not build a bare reqwest client.
+#
+# `applets/Cargo.toml` builds reqwest with `rustls-tls-no-provider`, so a bare
+# `reqwest::Client::new()` compiles fine and then PANICS ("No provider set") on
+# its first HTTPS call. That failure only surfaces at runtime, on a box, for a
+# source someone actually connected — which is how google/notion/strava sat
+# broken. `virtues_applets::http_client()` installs the ring provider (and adds
+# a timeout a bare client lacks).
+if [ -d "applets" ]; then
+    violations=$(grep -rEn 'reqwest::Client::(new|builder)\(\)' applets/ \
+        --include='*.rs' \
+        | grep -v '^applets/src/' \
+        | grep -vE ':[[:space:]]*//' \
+        || true)
+    if [ -n "$violations" ]; then
+        report \
+            "applet builds its own reqwest client" \
+            "reqwest is built rustls-tls-no-provider here, so a bare client panics 'No provider set' on first use — at runtime, on a box. Use virtues_applets::http_client()." \
+            "$violations"
+    fi
+fi
+
 if [ "$fail" -eq 0 ]; then
-    echo "arch_lint: OK (10 invariants enforced)"
+    echo "arch_lint: OK (11 invariants enforced)"
 else
     exit 1
 fi

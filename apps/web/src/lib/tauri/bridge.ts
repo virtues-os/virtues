@@ -50,6 +50,18 @@ export interface CollectorStatus {
 	lastSync: string | null;
 	hasFullDiskAccess: boolean;
 	hasAccessibility: boolean;
+	/**
+	 * Whether the two permission flags above describe the DAEMON.
+	 *
+	 * macOS TCC grants are per-process, so a `status` probe run inside another
+	 * process (this app, a terminal) reports that process's access, not the
+	 * collector daemon's — which is how a revoked grant once showed as granted
+	 * while collection was silently dead. False means the collector is too old
+	 * to self-report, or hasn't recently, and the flags are a best guess.
+	 */
+	permissionsReportedByDaemon: boolean;
+	/** When the daemon last checked, if it ever has. */
+	permissionsCheckedAt: string | null;
 }
 
 // ============================================================================
@@ -72,6 +84,8 @@ export async function getCollectorStatus(): Promise<CollectorStatus | null> {
 			last_sync: string | null;
 			has_full_disk_access: boolean;
 			has_accessibility: boolean;
+			permissions_reported_by_daemon?: boolean;
+			permissions_checked_at?: string | null;
 		}>('get_collector_status');
 
 		// Convert snake_case to camelCase
@@ -82,7 +96,11 @@ export async function getCollectorStatus(): Promise<CollectorStatus | null> {
 			pendingMessages: status.pending_messages,
 			lastSync: status.last_sync,
 			hasFullDiskAccess: status.has_full_disk_access,
-			hasAccessibility: status.has_accessibility
+			hasAccessibility: status.has_accessibility,
+			// Absent on collector builds predating the self-report — treat as
+			// "not from the daemon" rather than assuming the flags are authoritative.
+			permissionsReportedByDaemon: status.permissions_reported_by_daemon ?? false,
+			permissionsCheckedAt: status.permissions_checked_at ?? null
 		};
 	} catch (e) {
 		console.error('[Tauri] Failed to get collector status:', e);
