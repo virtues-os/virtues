@@ -30,7 +30,11 @@ async fn main() -> Result<()> {
         .to_string();
 
     let storage = lake::storage_from_env()?;
-    let client = reqwest::Client::new();
+    // Must be the shared client, not `reqwest::Client::new()`: reqwest here is
+    // built `rustls-tls-no-provider`, so a bare client panics "No provider set"
+    // on the first HTTPS call. `http_client()` installs the ring provider (and
+    // adds a timeout a bare client lacks entirely).
+    let client = virtues_applets::http_client();
 
     // Per-calendar sync tokens live under config.sync_tokens (map cal_id → token).
     let mut sync_tokens: HashMap<String, String> = input

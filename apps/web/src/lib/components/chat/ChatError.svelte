@@ -4,9 +4,14 @@
 	interface Props {
 		error: { message?: string } | null;
 		onRetry: () => void;
+		/** Display name of the Recommended model to fall back to. When set (with
+		 *  `onSwitchAndRetry`), a model-side error offers a one-click switch
+		 *  instead of a plain Retry that would just re-hit the same broken model. */
+		recommendedName?: string;
+		onSwitchAndRetry?: () => void;
 	}
 
-	let { error, onRetry }: Props = $props();
+	let { error, onRetry, recommendedName, onSwitchAndRetry }: Props = $props();
 
 	// Core embeds the upstream HTTP status as "(status NNN)" in LLM error messages
 	// (see StreamError::LlmError). Classify by the real status — not loose text-matching,
@@ -34,6 +39,10 @@
 		// Genuine upstream rate limit (the shared gateway 429s), not a billing 402.
 		if (status === 429 || (status === undefined && /rate limit|too many requests|\b429\b/i.test(raw)))
 			return "rate_limit";
+		// A 4xx the model itself raised — unsupported tools/modality, context
+		// overflow, bad request. Retrying the SAME model just re-fails, so this
+		// kind offers a switch to the Recommended model rather than a plain retry.
+		if (status === 400 || status === 404 || status === 422) return "model_error";
 		return "generic";
 	});
 
@@ -41,7 +50,12 @@
 		["wallet_empty", "card_declined", "monthly_cap", "topup_disabled", "subscription"].includes(kind)
 	);
 	// "Warning" styling (amber) for soft, user-fixable states; hard error (red) otherwise.
-	const isSoft = $derived(isBilling || kind === "rate_limit" || kind === "reconnect");
+	const isSoft = $derived(
+		isBilling || kind === "rate_limit" || kind === "reconnect" || kind === "model_error"
+	);
+	// Can we actually offer the switch? Only when a fallback model was passed and
+	// the error is a model-side one; otherwise fall back to a plain retry.
+	const canSwitch = $derived(kind === "model_error" && !!onSwitchAndRetry && !!recommendedName);
 
 	// Strip our "LLM error (status NNN): " wrapper and, when the remainder is the
 	// provider's JSON error, surface just its human-readable message.
@@ -90,7 +104,12 @@
 	};
 
 	const title = $derived(
-		COPY[kind]?.title ?? (status ? `Request failed (HTTP ${status})` : "An error occurred")
+		COPY[kind]?.title ??
+			(kind === "model_error"
+				? "This model couldn't handle that"
+				: status
+					? `Request failed (HTTP ${status})`
+					: "An error occurred")
 	);
 	const billingMessage = $derived(COPY[kind]?.message);
 </script>
@@ -103,7 +122,7 @@
 		>
 			<div class="error-icon">
 				<Icon
-					icon={isBilling ? "ri:wallet-3-line" : kind === "rate_limit" ? "ri:time-line" : kind === "reconnect" ? "ri:link" : "ri:error-warning-line"}
+					icon={isBilling ? "ri:wallet-3-line" : kind === "rate_limit" ? "ri:time-line" : kind === "reconnect" ? "ri:link" : kind === "model_error" ? "ri:shuffle-line" : "ri:error-warning-line"}
 					width="20"
 				/>
 			</div>
@@ -125,6 +144,15 @@
 							<Icon icon="ri:link" width="16" />
 							Reconnect subscription
 						</a>
+					{:else if canSwitch}
+						<button
+							type="button"
+							class="retry-button"
+							onclick={onSwitchAndRetry}
+						>
+							<Icon icon="ri:shuffle-line" width="16" />
+							Switch to {recommendedName} &amp; retry
+						</button>
 					{:else}
 						<button
 							type="button"

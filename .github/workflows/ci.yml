@@ -57,6 +57,41 @@ jobs:
       - name: Clippy
         run: cargo clippy -p virtues -p virtues-installer
 
+      # Create the one thing `#[sqlx::test]`'s throwaway databases SHARE.
+      #
+      # Roles are cluster-wide, not per-database, and migration 0052 does
+      # check-then-create on `virtues_face_reader`. So N tests migrating their
+      # scratch DBs in parallel can all see the role missing and race to CREATE
+      # it: one wins, the losers die with `duplicate key value violates unique
+      # constraint "pg_authid_rolname_index"`, and that takes the whole suite
+      # down. It is timing-dependent, so it shows up as a flaky `cargo test`
+      # that passes on re-run — the worst kind of red.
+      #
+      # Creating it once, serially, before the suite makes that IF NOT EXISTS
+      # short-circuit in every test, so no test ever mutates a cluster-wide
+      # object. Cheaper than serialising the tests (`--test-threads=1` would
+      # slow every run to fix a two-statement problem) and it keeps the sqlx
+      # tests exercising real migrations against a real schema.
+      #
+      # Why here and not in the migration: 0052 is already applied on live
+      # boxes, so editing it changes its checksum and `sqlx::migrate` refuses to
+      # run on the next upgrade. It also never races in production, where
+      # migrations run once, serially — this is a test-harness artifact, so the
+      # test harness is where it belongs.
+      #
+      # (Locally this is invisible: a dev box has already run migrations, so the
+      # role exists and the same tests pass — which is exactly why this reached
+      # CI unnoticed.)
+      - name: Pre-create the shared cluster role
+        run: |
+          psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -c "DO \$\$ BEGIN
+            IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'virtues_face_reader') THEN
+              CREATE ROLE virtues_face_reader NOLOGIN;
+            END IF;
+          END \$\$;"
+          psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -c \
+            "GRANT virtues_face_reader TO CURRENT_USER;"
+
       # api::code::tests::test_timeout needs the code-execution sandbox
       # runtime, which isn't provisioned on a bare runner — it's an
       # environment-dependent timing test, not a unit test. Everything else

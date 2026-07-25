@@ -49,19 +49,38 @@ async fn main() -> Result<()> {
         None => {
             let (tz, hour) = load_user_maintenance(&pool).await;
             let now_local = chrono::Utc::now().with_timezone(&tz);
-            if now_local.hour() as i32 != hour {
-                // Any other hour: nothing to do. The chain only runs on a completed
-                // day, at the maintenance hour.
-                let skip = format!(
-                    "skipped: local hour {}, maintenance {}",
-                    now_local.hour(),
-                    hour
-                );
-                tracing::info!(%skip, "not the maintenance hour — no-op");
-                return output(&skip, &input.config);
+            let yesterday = now_local.date_naive() - chrono::Duration::days(1);
+
+            // Catch-up first. `narrated_at` has been written since day segmentation
+            // shipped and never read as a work queue, so a box that was asleep,
+            // restarting, or erroring during the maintenance hour lost that day
+            // *permanently* — the chain only ever looked at `yesterday`, and
+            // nothing ever went back. Days older than yesterday are definitively
+            // settled, so they can be fused at any hour; the maintenance hour only
+            // needs to gate the freshest day, whose late collector data (audio
+            // still transcribing, final visits) has not landed yet.
+            //
+            // One day per tick, oldest first: the chain is two LLM calls deep, and
+            // an hourly cron drains a backlog soon enough without risking a run
+            // that blows its timeout.
+            if let Some(pending) = oldest_unnarrated_day(&pool, yesterday).await {
+                tracing::info!(date = %pending, "catching up an unnarrated day");
+                pending
+            } else {
+                if now_local.hour() as i32 != hour {
+                    // Any other hour, nothing pending: no-op. The chain only runs
+                    // on a completed day, at the maintenance hour.
+                    let skip = format!(
+                        "skipped: local hour {}, maintenance {}",
+                        now_local.hour(),
+                        hour
+                    );
+                    tracing::info!(%skip, "not the maintenance hour — no-op");
+                    return output(&skip, &input.config);
+                }
+                // The maintenance hour: yesterday is complete. Run the whole chain.
+                yesterday
             }
-            // The maintenance hour: yesterday is complete. Run the whole chain.
-            resolve_user_yesterday(&pool).await
         }
     };
 
@@ -185,10 +204,59 @@ async fn main() -> Result<()> {
 }
 
 /// Pick "yesterday" in the user's configured timezone. Falls back to UTC.
+#[allow(dead_code)]
 async fn resolve_user_yesterday(pool: &sqlx::PgPool) -> NaiveDate {
     let (tz, _hour) = load_user_maintenance(pool).await;
     let now_local = chrono::Utc::now().with_timezone(&tz);
     now_local.date_naive() - chrono::Duration::days(1)
+}
+
+/// How far back catch-up will reach. Bounded on purpose: this is a repair path
+/// for a missed maintenance hour, not a backfill tool. A box returning from a
+/// month offline should not silently spend a month of LLM calls reconstructing
+/// autobiography nobody asked for — that is an explicit-date decision.
+const CATCHUP_HORIZON_DAYS: i64 = 14;
+
+/// Narration's own floor, mirrored from `day_summary::MIN_EVENTS_TO_NARRATE`.
+/// The queue must not offer a day narration would refuse, or catch-up jams.
+const MIN_EVENTS_TO_NARRATE: i64 = 4;
+
+/// The oldest settled day inside the horizon that *should* have narrated and
+/// didn't — i.e. it has a real day's worth of events but no `narrated_at`.
+///
+/// Strictly BEFORE `yesterday`: yesterday belongs to the maintenance-hour path
+/// so its late-arriving collector data keeps its settle window.
+///
+/// The event-count floor is load-bearing, not a nicety. Narration refuses a day
+/// under `MIN_EVENTS_TO_NARRATE` and — correctly — leaves `narrated_at` NULL. A
+/// queue that selected on `narrated_at IS NULL` alone would therefore hand the
+/// same empty day back every hour forever and, being oldest-first, block every
+/// real failure behind it. On the box this was written against, five such days
+/// (0–1 events, from setup week) sat exactly where that jam would form.
+async fn oldest_unnarrated_day(pool: &sqlx::PgPool, yesterday: NaiveDate) -> Option<NaiveDate> {
+    let start = yesterday - chrono::Duration::days(CATCHUP_HORIZON_DAYS);
+    let end = yesterday - chrono::Duration::days(1);
+    if end < start {
+        return None;
+    }
+    sqlx::query_scalar::<_, NaiveDate>(
+        "SELECT w.date \
+         FROM wiki_days w \
+         WHERE w.date BETWEEN $1 AND $2 \
+           AND w.narrated_at IS NULL \
+           AND (SELECT count(*) FROM wiki_events e WHERE e.day_id = w.id) >= $3 \
+         ORDER BY w.date ASC LIMIT 1",
+    )
+    .bind(start)
+    .bind(end)
+    .bind(MIN_EVENTS_TO_NARRATE)
+    .fetch_optional(pool)
+    .await
+    .unwrap_or_else(|e| {
+        // Never let the repair path take down the normal path.
+        tracing::warn!(error = %e, "catch-up scan failed; falling back to the maintenance hour");
+        None
+    })
 }
 
 /// The local hour the nightly chain runs at. 4am: the day is definitively over,

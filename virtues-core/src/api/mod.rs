@@ -32,7 +32,6 @@ pub mod internal;
 pub mod lake;
 pub mod media;
 pub mod metrics;
-pub mod mentions;
 pub mod model_catalog;
 pub mod models;
 pub mod narrative_identity_gen;
@@ -46,6 +45,7 @@ pub mod notebooks;
 pub mod records;
 pub mod source_auth;
 pub mod subscription;
+pub mod stream_health;
 pub mod system_telemetry;
 pub mod system_update;
 pub mod terminal;
@@ -109,6 +109,7 @@ pub use media::{
     get_media, is_audio_type, is_image_type, is_supported_media_type, is_video_type, upload_media,
     MediaFile, UploadMediaRequest,
 };
+pub use stream_health::{stream_health, StreamHealth};
 pub use metrics::{
     get_activity_metrics, ActivityMetrics, JobTypeStats, MetricsSummary, PeriodStats, RecentError,
     StreamStats, TimeWindowMetrics,

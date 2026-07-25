@@ -493,6 +493,28 @@ export async function listSourceCatalog(): Promise<SourceCatalogItem[]> {
 	return res.json();
 }
 
+/** One ingest stream's freshness. `status` is worst-first from the API. */
+export interface StreamHealth {
+	name: string;
+	display_name: string;
+	/** never = source never connected · live = data in last 24h ·
+	 *  stalled = was flowing this week, silent for a day · idle = nothing in 7d */
+	status: 'never' | 'live' | 'stalled' | 'idle';
+	total: number;
+	count_24h: number;
+	count_7d: number;
+	last_event: string | null;
+	last_ingest: string | null;
+}
+
+/**
+ * Per-stream ingest freshness, worst-first. The signal that was missing while
+ * messages, the calendar sync, and finance each went dark unnoticed.
+ */
+export async function getStreamHealth(): Promise<StreamHealth[]> {
+	return apiGet<StreamHealth[]>('/streams/health');
+}
+
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Source-connect flows (drive the 5 thin handlers in virtues-core/src/api/source_auth.rs)
@@ -1956,9 +1978,6 @@ export function getSudoStatus<T = unknown>(id: string): Promise<T> {
 }
 
 // ── Mentions queue ───────────────────────────────────────────────────────────
-export function getMentionQueue<T = unknown>(): Promise<T> {
-	return apiGet<T>('/mentions/queue');
-}
 export function resolveMention<T = unknown>(path: string, body: Record<string, unknown>): Promise<T> {
 	return apiSend<T>('POST', `/mentions/${encodeURIComponent(path)}`, body);
 }

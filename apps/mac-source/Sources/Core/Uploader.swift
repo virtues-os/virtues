@@ -167,6 +167,13 @@ class Uploader {
                 "app_events": appEvents,
                 "browser_history": browserHistory,
                 "imessages": imessages,
+                // Why the box needs this: an upload carrying zero messages
+                // because the user has no new messages and one carrying zero
+                // because macOS is denying us `chat.db` are otherwise
+                // byte-identical. Without this field the box can only notice
+                // the silence, days later, and never learn the reason — which
+                // is exactly how a four-day iMessage outage looked "healthy".
+                "collector_health": collectorHealthPayload(),
             ]
 
             // Host is ignored over iroh (the box is dialed by EndpointId); only
@@ -294,5 +301,23 @@ class Uploader {
             out["from_handle"] = handle
         }
         return out
+    }
+
+    /// The daemon's last self-reported capabilities, for the box.
+    ///
+    /// Read from the record rather than probed here so that what the box is
+    /// told is the same thing `virtues-collector status` shows — one source of
+    /// truth, no chance of the two disagreeing. Omitted entirely when no record
+    /// exists, so the box can tell "denied" apart from "this collector is too
+    /// old to say".
+    private func collectorHealthPayload() -> [String: Any] {
+        guard let health = CollectorHealth.load() else { return [:] }
+        return [
+            "full_disk_access": health.fullDiskAccess,
+            "accessibility": health.accessibility,
+            "denied": health.deniedCapabilities,
+            "checked_at": ISO8601DateFormatter().string(from: health.updatedAt),
+            "stale": health.isStale,
+        ]
     }
 }

@@ -111,20 +111,20 @@ pub async fn run(client: Virtues, host: &str, port: u16) -> Result<()> {
     let scheduler_yjs = yjs_state.clone();
     let _scheduler_handle = tokio::spawn(async move {
         match crate::Scheduler::new(db_pool, scheduler_yjs).await {
-            Ok(sched) => {
-                if let Err(e) = sched.schedule_all().await {
-                    tracing::warn!("Failed to schedule cron actions: {}", e);
+            Ok(mut sched) => {
+                match sched.sync_jobs().await {
+                    Ok(n) => tracing::info!("Scheduled {n} cron actions"),
+                    Err(e) => tracing::warn!("Failed to schedule cron actions: {}", e),
                 }
                 if let Err(e) = sched.start().await {
                     tracing::warn!("Failed to start scheduler: {}", e);
                 } else {
                     tracing::info!("Scheduler started successfully");
-                    // Keep the scheduler handle alive — tokio-cron-scheduler
-                    // runs background tasks on its own tokio tasks, but the
-                    // JobScheduler itself needs to stay in scope.
-                    loop {
-                        tokio::time::sleep(tokio::time::Duration::from_secs(3600)).await;
-                    }
+                    // Never returns: re-derives the job set on a timer (so a
+                    // source connected while the box is running gets scheduled
+                    // without a restart) and owns the JobScheduler, which must
+                    // stay in scope for its jobs to keep firing.
+                    sched.run_refresh_loop().await;
                 }
             }
             Err(e) => {
@@ -444,6 +444,9 @@ pub async fn run(client: Virtues, host: &str, port: u16) -> Result<()> {
             "/api/metrics/activity",
             get(api::get_activity_metrics_handler),
         )
+        // Per-stream ingest freshness — surfaces a stalled source instead of
+        // letting it rot silently.
+        .route("/api/streams/health", get(api::stream_health_handler))
         // Subscription & Billing API
         .route("/api/subscription", get(api::get_subscription_handler))
         .route(
@@ -540,10 +543,6 @@ pub async fn run(client: Virtues, host: &str, port: u16) -> Result<()> {
         .route("/api/wiki/resolve/:id", get(api::wiki_resolve_id_handler))
         // Wiki - Person
         // Mention review queue (entity resolution HITL)
-        .route("/api/mentions/queue", get(api::list_floating_surfaces_handler))
-        .route("/api/mentions/link", post(api::link_surface_handler))
-        .route("/api/mentions/create", post(api::create_from_surface_handler))
-        .route("/api/mentions/dismiss", post(api::dismiss_surface_handler))
         .route("/api/wiki/people", get(api::wiki_list_people_handler))
         .route(
             "/api/wiki/person/:id",

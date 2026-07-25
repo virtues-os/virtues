@@ -9,7 +9,14 @@
 
 mod transform;
 
-use anyhow::Result;
+// Share the accounts writer rather than duplicate it — same package, so a path
+// module is enough. `/transactions/sync` returns the full `accounts` array
+// alongside the transactions, so this binary can satisfy its own foreign key
+// instead of depending on when `plaid_accounts_sync` last ran (see main()).
+#[path = "../plaid_accounts_sync/transform.rs"]
+mod accounts_transform;
+
+use anyhow::{Context, Result};
 use serde_json::{json, Value};
 use virtues::storage::lake;
 use virtues_helpers::{connect_from_env, output, read_input};
@@ -25,6 +32,25 @@ async fn main() -> Result<()> {
     let pool = connect_from_env("virtues-action-plaid_transactions_sync").await?;
 
     let access_token = virtues_applets::secret(&input, "access_token")?
+        .to_string();
+
+    // Identity for any account rows this run has to create (below).
+    let creds = input
+        .credentials
+        .as_ref()
+        .context("plaid credentials missing")?;
+    let item_id = creds
+        .get("metadata")
+        .and_then(|m| m.get("item_id"))
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .to_string();
+    let institution = creds
+        .get("metadata")
+        .and_then(|m| m.get("institution_name"))
+        .and_then(|v| v.as_str())
+        .filter(|s| !s.is_empty())
+        .unwrap_or("Unknown")
         .to_string();
 
     let mut cursor = input
@@ -76,6 +102,26 @@ async fn main() -> Result<()> {
 
         let mut combined = added;
         combined.extend(modified);
+
+        // Write the accounts this page's transactions point at, FIRST.
+        //
+        // `data_financial_transaction.account_id` is a foreign key, and on a
+        // freshly connected Item no account rows exist yet: `plaid_accounts_sync`
+        // is on a 6-hour cron, so the first several transaction runs used to die
+        // on a FK violation and nothing landed until that cron happened to fire.
+        // `/transactions/sync` returns the same `accounts` array that
+        // `/accounts/get` does, so the dependency is satisfiable from this very
+        // response — no ordering between the two applets required. The write is
+        // an idempotent upsert keyed on `plaid:account:{id}`, exactly what
+        // `plaid_accounts_sync` writes, so the two agree rather than fight.
+        let accounts = resp
+            .get("accounts")
+            .and_then(|v| v.as_array())
+            .cloned()
+            .unwrap_or_default();
+        if !accounts.is_empty() {
+            accounts_transform::write_accounts(&pool, &item_id, &institution, &accounts).await?;
+        }
 
         let written = transform::write_transactions(&pool, &combined).await?;
         total_written += written;
