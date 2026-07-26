@@ -25,7 +25,6 @@ use sha2::{Digest, Sha256};
 use sqlx::PgPool;
 
 const DEFAULT_BACKUP_DIR: &str = "/var/lib/virtues/backups";
-const LAKE_DIR: &str = "/var/lib/virtues/lake";
 const MANIFEST_VERSION: u32 = 1;
 
 /// Candidate locations for the env file that holds `VIRTUES_ENCRYPTION_KEY`,
@@ -149,10 +148,13 @@ pub async fn run(
         }
     }
 
-    println!("→ copying data lake at {LAKE_DIR}…");
-    let lake_src = Path::new(LAKE_DIR);
+    // Resolved, never hardcoded. A backup that copied a fixed path while the box
+    // wrote somewhere else would succeed, report success, and contain no lake at
+    // all — the failure only surfacing at restore, when it is far too late.
+    let lake_src = crate::storage::lake::lake_root();
+    println!("→ copying data lake at {}…", lake_src.display());
     if lake_src.exists() {
-        copy_tree_recursive(lake_src, &staging_path.join("lake"))?;
+        copy_tree_recursive(&lake_src, &staging_path.join("lake"))?;
     }
 
     // Authored applets are user data with no other copy: the manifest, the

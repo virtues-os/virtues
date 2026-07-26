@@ -30,7 +30,43 @@ fn restore_env_target() -> PathBuf {
     crate::cli::backup::find_env_file()
         .unwrap_or_else(|| PathBuf::from(crate::cli::backup::ENV_CANDIDATES[0]))
 }
-const LAKE_DIR: &str = "/var/lib/virtues/lake";
+/// Directories that only ever exist inside a lake. Presence of any one of them
+/// is what distinguishes "this is the lake, replace it" from "the resolver
+/// pointed somewhere else entirely".
+const LAKE_MARKERS: &[&str] = &["streams", "media", ".media", ".uploads"];
+
+/// Refuse to delete a directory that does not look like a lake.
+///
+/// Restore replaces the lake wholesale, and the path now comes from
+/// configuration rather than a constant. Configuration is precisely the thing
+/// that can be wrong: on a box where `STORAGE_PATH` was set to a home directory
+/// or a mount root, an unguarded `remove_dir_all` would destroy it — during the
+/// one command an operator runs *to recover data*.
+///
+/// Empty or absent is fine; we are about to create it. Non-empty with no marker
+/// is refused. A lake that has only ever held Drive files and no ingested
+/// streams would be refused too — the cost of that false positive is a message
+/// telling the operator to check `STORAGE_PATH`, which is survivable in a way
+/// that deleting the wrong tree is not.
+fn assert_replaceable_lake(lake: &Path) -> Result<(), crate::Error> {
+    let Ok(entries) = fs::read_dir(lake) else {
+        return Ok(()); // absent — restore creates it
+    };
+    let mut names = Vec::new();
+    for entry in entries.flatten() {
+        names.push(entry.file_name().to_string_lossy().into_owned());
+    }
+    if names.is_empty() || names.iter().any(|n| LAKE_MARKERS.contains(&n.as_str())) {
+        return Ok(());
+    }
+    Err(crate::Error::Other(format!(
+        "refusing to replace {}: it is not empty and contains none of {:?}, so it \
+         does not look like a data lake. Check STORAGE_PATH — restore replaces \
+         this directory wholesale.",
+        lake.display(),
+        LAKE_MARKERS
+    )))
+}
 
 pub async fn run(path: PathBuf, force: bool) -> Result<(), crate::Error> {
     if !path.exists() {
@@ -64,13 +100,15 @@ pub async fn run(path: PathBuf, force: bool) -> Result<(), crate::Error> {
     println!("⚠  About to overwrite live box state. Press Ctrl-C in 5s to abort.");
     std::thread::sleep(std::time::Duration::from_secs(5));
 
-    println!("→ restoring data lake at {LAKE_DIR}…");
+    let lake_dst = crate::storage::lake::lake_root();
+    println!("→ restoring data lake at {}…", lake_dst.display());
     let staged_lake = staging.join("lake");
     if staged_lake.exists() {
-        let _ = fs::remove_dir_all(LAKE_DIR);
-        fs::create_dir_all(LAKE_DIR)
+        assert_replaceable_lake(&lake_dst)?;
+        let _ = fs::remove_dir_all(&lake_dst);
+        fs::create_dir_all(&lake_dst)
             .map_err(|e| crate::Error::Other(format!("create lake dir: {e}")))?;
-        copy_tree(&staged_lake, Path::new(LAKE_DIR))?;
+        copy_tree(&staged_lake, &lake_dst)?;
     }
 
     // Authored applets. Replace wholesale like the lake: the tarball is the
@@ -131,7 +169,7 @@ pub async fn run(path: PathBuf, force: bool) -> Result<(), crate::Error> {
     // Runs last, and never fatally: aborting here would leave a fully restored
     // box refusing to finish over a fixable permission, so a failure prints the
     // exact command instead.
-    for dir in [Path::new(LAKE_DIR), crate::action_templates::state_root().as_path()] {
+    for dir in [lake_dst.as_path(), crate::action_templates::state_root().as_path()] {
         if dir.is_dir() {
             give_to_service_user(dir);
         }
