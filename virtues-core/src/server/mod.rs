@@ -913,9 +913,12 @@ fn build_transport(
 
 /// Validate required environment variables at startup
 fn validate_environment() -> Result<()> {
-    // Log storage path being used
-    let storage_path = env::var("STORAGE_PATH").unwrap_or_else(|_| "./data/lake".to_string());
-    tracing::info!("Using storage path: {}", storage_path);
+    // Log storage path being used. Resolved, not re-derived — a log line that
+    // disagreed with the writer would be worse than no log line at all.
+    tracing::info!(
+        "Using storage path: {}",
+        crate::storage::lake::lake_root().display()
+    );
 
     tracing::debug!("Environment validation passed");
     Ok(())

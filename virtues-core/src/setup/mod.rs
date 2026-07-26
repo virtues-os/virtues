@@ -27,8 +27,9 @@ pub struct SetupConfig {
 pub fn recommended_config() -> Result<SetupConfig> {
     let database_url =
         std::env::var("DATABASE_URL").unwrap_or_else(|_| "postgres:///virtues".to_string());
-    let storage_path =
-        std::env::var("STORAGE_PATH").unwrap_or_else(|_| "/var/lib/virtues/lake".to_string());
+    let storage_path = crate::storage::lake::lake_root()
+        .to_string_lossy()
+        .into_owned();
     // If VIRTUES_ENCRYPTION_KEY is already in env, the binary uses it directly.
     let encryption_key = std::env::var("VIRTUES_ENCRYPTION_KEY").ok();
     Ok(SetupConfig {

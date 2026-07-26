@@ -15,7 +15,6 @@
 //! Handled in `main.rs` (not `cli::run`) because it manages the schema itself
 //! and must run against a bare pool, like restore/uninstall.
 
-use std::path::Path;
 use std::process::Command;
 
 pub async fn run(keep_data: bool, yes: bool, force: bool) -> Result<(), crate::Error> {
@@ -27,9 +26,7 @@ pub async fn run(keep_data: bool, yes: bool, force: bool) -> Result<(), crate::E
         return run_keep_data(&database_url, yes).await;
     }
 
-    // Same precedence the client uses on a box (setup::recommended_config).
-    let lake =
-        std::env::var("STORAGE_PATH").unwrap_or_else(|_| "/var/lib/virtues/lake".to_string());
+    let lake = crate::storage::lake::lake_root();
 
     if !force {
         check_service_inactive()?;
@@ -39,7 +36,7 @@ pub async fn run(keep_data: bool, yes: bool, force: bool) -> Result<(), crate::E
     println!("⚠  virtues reset — this DESTROYS everything on this box:");
     println!("     • the entire Postgres database: all data AND the box's");
     println!("       identity (iroh secret, paired devices, billing link)");
-    println!("     • the data lake at {lake}");
+    println!("     • the data lake at {}", lake.display());
     println!("   The box will re-register with atlas and you must re-pair every");
     println!("   device afterward. The encryption key in the env file is kept.");
     println!("   Consider `virtues backup` first.");
@@ -102,8 +99,8 @@ pub async fn run(keep_data: bool, yes: bool, force: bool) -> Result<(), crate::E
         .map_err(|e| crate::Error::Other(format!("migrate: {e}")))?;
 
     // ── Clear the data lake ─────────────────────────────────────────────────
-    if Path::new(&lake).exists() {
-        println!("→ clearing data lake at {lake}…");
+    if lake.exists() {
+        println!("→ clearing data lake at {}…", lake.display());
         std::fs::remove_dir_all(&lake)
             .map_err(|e| crate::Error::Other(format!("remove lake: {e}")))?;
     }

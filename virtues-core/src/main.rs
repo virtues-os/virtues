@@ -536,16 +536,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // It's already in the process env, so subprocess actions inherit it as-is.
     let database_url = virtues::database::normalize_database_url()?;
 
-    // Initialize Virtues client
-    // Storage path: STORAGE_PATH env var or ./data/lake default
-    let mut builder = VirtuesBuilder::new().database(&database_url);
-
-    // Configure storage path if specified
-    if let Ok(storage_path) = env::var("STORAGE_PATH") {
-        builder = builder.storage_path(&storage_path);
-    }
-
-    let virtues = builder.build().await?;
+    // Initialize Virtues client. The lake location resolves inside the builder,
+    // via `storage::lake::lake_root`. Reading STORAGE_PATH here as well would be
+    // a second expression of the same rule — exactly the divergence that
+    // resolver exists to prevent.
+    let virtues = VirtuesBuilder::new().database(&database_url).build().await?;
 
     // Default to server with auto-migrate if no command specified
     let cli = if cli.command.is_none() {
