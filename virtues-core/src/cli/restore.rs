@@ -136,13 +136,14 @@ pub async fn run(
 
     check_schema_compatible(&manifest)?;
     verify_sha256(staging, &manifest.artifacts)?;
+    let targets = Targets::from_env()?;
+    preflight_database(&targets.database_url)?;
 
     // We've validated everything. Past this line is destructive.
     println!();
     println!("⚠  About to overwrite live box state. Press Ctrl-C in 5s to abort.");
     std::thread::sleep(std::time::Duration::from_secs(5));
 
-    let targets = Targets::from_env()?;
     apply(staging, &targets)?;
 
     // Everything above was written by root (restore requires it — it stops the
@@ -163,6 +164,38 @@ pub async fn run(
     }
 
     print_next_steps();
+    Ok(())
+}
+
+/// Prove the database is reachable before destroying anything.
+///
+/// `apply` replaces the lake, the applet state and the env file, and only THEN
+/// loads the database. A connection failure at that last step therefore leaves
+/// a box with restored files and an untouched database — a half-restored state
+/// that looks like a completed restore until someone looks closely. It happened
+/// on real hardware.
+///
+/// So prove the connection first, using the same user and URL the restore will
+/// actually use. This is the same preflight-then-mutate shape `upgrade` uses,
+/// and for the same reason: a clean refusal beats a partial write.
+pub(crate) fn preflight_database(database_url: &str) -> Result<(), crate::Error> {
+    let out = Command::new("sudo")
+        .args(["-u", "virtues", "psql", database_url, "-tAc", "SELECT 1"])
+        .output()
+        .map_err(|e| {
+            crate::Error::Other(format!(
+                "could not run psql to check the database ({e}); refusing to \
+                 restore, box untouched"
+            ))
+        })?;
+    if !out.status.success() {
+        return Err(crate::Error::Other(format!(
+            "cannot reach the database as the `virtues` user, so the restore \
+             would replace your files and then fail to load the database. \
+             Refusing; box untouched.\n\n{}",
+            String::from_utf8_lossy(&out.stderr).trim()
+        )));
+    }
     Ok(())
 }
 
@@ -342,11 +375,33 @@ fn verify_sha256(staging: &Path, artifacts: &[Artifact]) -> Result<(), crate::Er
 }
 
 fn pg_restore(dump: &Path, database_url: &str) -> Result<(), crate::Error> {
+    // Runs as `virtues`, not root. Restore requires root — it stops the unit,
+    // writes the env file, and hands directories back — and is deliberately
+    // absent from main.rs's DB_COMMANDS re-exec list. So an inherited
+    // pg_restore authenticates to a peer-auth cluster as `root` and is refused
+    // outright. This is why restore had never once completed on a real box.
+    //
+    // The staged dump was written by root, so hand it over first or the
+    // service user cannot read what it is being asked to load.
+    for path in [
+        dump.parent().and_then(|p| p.parent()),
+        dump.parent(),
+        Some(dump),
+    ]
+    .into_iter()
+    .flatten()
+    {
+        let _ = Command::new("chown")
+            .arg("virtues:virtues")
+            .arg(path)
+            .status();
+    }
     // Drop + recreate the schema cleanly. `--clean --if-exists` makes the
     // pg_restore drop all existing objects before recreating. `--no-owner`
     // + `--no-acl` skip privilege replays that would fail in a peer-auth
     // setup.
-    let status = Command::new("pg_restore")
+    let status = Command::new("sudo")
+        .args(["-u", "virtues", "pg_restore"])
         .arg("--clean")
         .arg("--if-exists")
         .arg("--no-owner")
@@ -850,12 +905,13 @@ async fn run_from_volume(
     identity: Option<&age::x25519::Identity>,
 ) -> Result<(), crate::Error> {
     let root = resolve_volume_root(path)?;
+    let targets = Targets::from_env()?;
+    preflight_database(&targets.database_url)?;
 
     println!();
     println!("⚠  About to overwrite live box state. Press Ctrl-C in 5s to abort.");
     std::thread::sleep(std::time::Duration::from_secs(5));
 
-    let targets = Targets::from_env()?;
     apply_from_volume(&root, &targets, identity)?;
     for dir in [targets.lake.as_path(), targets.applets.as_path()] {
         if dir.is_dir() {
