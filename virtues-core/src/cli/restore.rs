@@ -167,6 +167,32 @@ pub async fn run(
     Ok(())
 }
 
+/// Build a command that talks to Postgres as whoever can actually authenticate.
+///
+/// On a box the cluster uses peer auth and restore runs as root, so the call has
+/// to drop to `virtues` or be refused. Anywhere else — a dev machine, CI, a test
+/// — there is no `virtues` user and the URL carries explicit credentials, so
+/// dropping would break what already works. Decide from the environment rather
+/// than assuming either one.
+fn db_command(program: &str) -> Command {
+    // Reuses upgrade's EUID probe rather than a second copy. It reads
+    // /proc/self/status, so it is false on macOS — which is the right answer
+    // there anyway, since a dev machine has no service user to drop to.
+    let am_root = super::upgrade::running_as_root();
+    let service_user_exists = Command::new("id")
+        .args(["-u", "virtues"])
+        .output()
+        .map(|o| o.status.success())
+        .unwrap_or(false);
+    if am_root && service_user_exists {
+        let mut c = Command::new("sudo");
+        c.args(["-u", "virtues", program]);
+        c
+    } else {
+        Command::new(program)
+    }
+}
+
 /// Prove the database is reachable before destroying anything.
 ///
 /// `apply` replaces the lake, the applet state and the env file, and only THEN
@@ -179,8 +205,8 @@ pub async fn run(
 /// actually use. This is the same preflight-then-mutate shape `upgrade` uses,
 /// and for the same reason: a clean refusal beats a partial write.
 pub(crate) fn preflight_database(database_url: &str) -> Result<(), crate::Error> {
-    let out = Command::new("sudo")
-        .args(["-u", "virtues", "psql", database_url, "-tAc", "SELECT 1"])
+    let out = db_command("psql")
+        .args([database_url, "-tAc", "SELECT 1"])
         .output()
         .map_err(|e| {
             crate::Error::Other(format!(
@@ -396,12 +422,12 @@ fn pg_restore(dump: &Path, database_url: &str) -> Result<(), crate::Error> {
             .arg(path)
             .status();
     }
+
     // Drop + recreate the schema cleanly. `--clean --if-exists` makes the
     // pg_restore drop all existing objects before recreating. `--no-owner`
     // + `--no-acl` skip privilege replays that would fail in a peer-auth
     // setup.
-    let status = Command::new("sudo")
-        .args(["-u", "virtues", "pg_restore"])
+    let status = db_command("pg_restore")
         .arg("--clean")
         .arg("--if-exists")
         .arg("--no-owner")
