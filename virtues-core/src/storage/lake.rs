@@ -169,7 +169,10 @@ fn free_bytes() -> Option<u64> {
     free_bytes_at(&std::fs::canonicalize(lake_root()).ok()?)
 }
 
-fn free_bytes_at(root: &std::path::Path) -> Option<u64> {
+/// Shared rather than reimplemented: `upgrade`'s pre-migration dump needs the
+/// same "which mount actually holds this path" answer, and a second copy of the
+/// longest-prefix logic would be a third one in this tree.
+pub(crate) fn free_bytes_at(root: &std::path::Path) -> Option<u64> {
     sysinfo::Disks::new_with_refreshed_list()
         .iter()
         .filter(|d| root.starts_with(d.mount_point()))
