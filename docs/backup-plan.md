@@ -298,14 +298,41 @@ here is reversible; this is not.
 
 ## Open decisions
 
-**1. Key escrow — blocks step 3.** An encrypted archive needs a recovery key that is
-not inside it (the current tarball's problem: it contains
-`VIRTUES_ENCRYPTION_KEY`). Lose the key and the owner's entire archive is permanently
-unreadable; leak it and the archive is fully exposed. Candidates: a printed recovery
-code at onboarding (Synology and Home Assistant both force this), a Shamir split
-across paired devices, derivation from the box's iroh identity, or escrow at
-virtues-api — which breaks the trust model. No obvious right answer; needs a decision
-before any format work.
+**1. Key escrow — DECIDED 2026-07-25.** An encrypted archive needs a recovery key
+that is not inside it (the current tarball's flaw: it contains
+`VIRTUES_ENCRYPTION_KEY`).
+
+**Virtues never holds that key. Not for any user, not opt-in, not "for
+convenience."** The invariant is absolute on purpose: the moment it holds keys for
+*some* users, a hosted archive service can no longer say *we cannot read your data*,
+only *we choose not to*. The first claim is a property of the system; the second is a
+promise, and promises erode. Keeping the invariant absolute is what makes an
+S3-backed offering safe by construction — the service stores ciphertext it provably
+cannot read, which is a feature to sell rather than a liability to manage.
+
+The cost of that invariant is real: recovery codes get lost, and "write this down"
+has a high failure rate even among people who know better. But the answer to a lost
+code is not a better code — it is **more places the key lives that are not the box
+and not virtues.** The box is specifically not a safe place for it, since the whole
+point is surviving the box.
+
+So: generate on the box, and get it *off* the box into places the owner already
+controls.
+
+1. **Paired devices, automatically.** Write the key into the platform keychain of
+   each paired device (iOS/macOS Keychain). Apple syncs and backs that up; virtues
+   does not. Zero user effort, and it is the layer that actually moves the loss rate.
+2. **Password manager, deliberately.** Show the code once with a save-to-manager
+   affordance and an explicit acknowledgement gate before backups can be enabled.
+3. **Track copies, don't track compliance.** Settings reports *how many independent
+   copies exist* — "recovery key: 2 devices" vs "only on this box — losing it loses
+   the archive." Same honest-status pattern as backup age. Asking "did you write it
+   down?" measures nothing; counting copies measures the thing that matters.
+
+Still open below this decision: which KDF and format (argon2id + `age` passphrase
+mode is the obvious default), and whether a user-chosen passphrase is offered as an
+alternative to a generated code — it is more memorable and much weaker, so it would
+need a strength floor.
 
 **2. Box identity on restore-to-new-hardware.** `restore.rs` ends by printing `virtues
 pair`, implying devices must re-enroll — but the env file is restored, so what
