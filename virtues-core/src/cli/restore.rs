@@ -427,7 +427,7 @@ fn pg_restore(dump: &Path, database_url: &str) -> Result<(), crate::Error> {
     // pg_restore drop all existing objects before recreating. `--no-owner`
     // + `--no-acl` skip privilege replays that would fail in a peer-auth
     // setup.
-    let status = db_command("pg_restore")
+    let out = db_command("pg_restore")
         .arg("--clean")
         .arg("--if-exists")
         .arg("--no-owner")
@@ -435,15 +435,48 @@ fn pg_restore(dump: &Path, database_url: &str) -> Result<(), crate::Error> {
         .arg("-d")
         .arg(database_url)
         .arg(dump)
-        .status()
+        .output()
         .map_err(|e| crate::Error::Other(format!("invoke pg_restore: {e}")))?;
-    if !status.success() {
-        return Err(crate::Error::Other(format!(
-            "pg_restore exited {status}; backup not fully restored. \
-             Service should remain stopped until the cause is fixed."
-        )));
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    if !stderr.trim().is_empty() {
+        eprint!("{stderr}");
     }
-    Ok(())
+    if out.status.success() {
+        return Ok(());
+    }
+
+    // `--clean` emits DROP EXTENSION and COMMENT ON EXTENSION for pgvector,
+    // which the `virtues` role cannot execute: the extension was installed by a
+    // superuser, and a role does not own an extension it did not create. Those
+    // statements are cosmetic — the extension already exists and is left
+    // untouched — but pg_restore exits non-zero for ANY skipped object. So a
+    // restore that had in fact succeeded completely reported failure and told
+    // the operator to leave the service stopped, which is a worse outcome than
+    // the thing it was warning about.
+    //
+    // pg_restore continues past errors and prints the total at the end. If that
+    // total is exactly the number of extension-ownership complaints, nothing
+    // else was skipped and the data is whole. Any other error stays fatal.
+    let reported: Option<usize> = stderr.lines().find_map(|l| {
+        l.rsplit_once("errors ignored on restore: ")
+            .and_then(|(_, n)| n.trim().parse().ok())
+    });
+    let extension_only = stderr.matches("must be owner of extension").count();
+    if extension_only > 0 && reported == Some(extension_only) {
+        eprintln!(
+            "note: {extension_only} statement(s) about database extensions were \
+             skipped — those are owned by the cluster superuser rather than by \
+             `virtues`, and the extensions themselves are untouched. Everything \
+             else restored."
+        );
+        return Ok(());
+    }
+
+    Err(crate::Error::Other(format!(
+        "pg_restore exited {}; backup not fully restored. \
+         Service should remain stopped until the cause is fixed.",
+        out.status
+    )))
 }
 
 // ─── Tar extraction + copy helpers ─────────────────────────────────────────
