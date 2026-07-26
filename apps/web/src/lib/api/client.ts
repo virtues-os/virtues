@@ -1366,11 +1366,43 @@ export interface NotebookSummary extends Notebook {
 	chat_count: number;
 }
 
+/**
+ * What a member is to the notebook.
+ *  - `library`    grounds chat (the default for anything you add)
+ *  - `manuscript` yours to write — kept out of retrieval, so a draft is never
+ *                 cited back at you as if it were a source
+ *  - `pin`        nav-only shortcut
+ */
+export type NotebookItemRole = 'library' | 'manuscript' | 'pin';
+
 /** A single URL-native member of a Notebook. */
 export interface NotebookItem {
 	url: string;
 	sort_order: number;
+	role: NotebookItemRole;
 	added_at: string;
+}
+
+/** One entity referenced across a notebook's members. */
+export interface NotebookGraphNode {
+	/** Ref URL, e.g. `/person/pe_abc` — also the node's identity. */
+	url: string;
+	entity_type: string;
+	name: string;
+	/** Member urls referencing this entity; drives click-to-filter. */
+	item_urls: string[];
+}
+
+/** Two entities that share at least one member. */
+export interface NotebookGraphEdge {
+	source: string;
+	target: string;
+	weight: number;
+}
+
+export interface NotebookGraph {
+	nodes: NotebookGraphNode[];
+	edges: NotebookGraphEdge[];
 }
 
 /** GET /api/notebooks/:id — a Notebook plus its ordered members. */
@@ -1514,6 +1546,32 @@ export async function reorderNotebookItems(notebookId: string, urls: string[]): 
 		body: JSON.stringify({ urls })
 	});
 	if (!res.ok) throw new Error(`Failed to reorder notebook items: ${res.statusText}`);
+}
+
+/** PUT /api/notebooks/:id/items/role — set what a member is to the notebook. */
+export async function setNotebookItemRole(
+	notebookId: string,
+	url: string,
+	role: NotebookItemRole
+): Promise<NotebookItem> {
+	const res = await fetch(`${API_BASE}/notebooks/${encodeURIComponent(notebookId)}/items/role`, {
+		method: 'PUT',
+		headers: { 'Content-Type': 'application/json' },
+		body: JSON.stringify({ url, role })
+	});
+	if (!res.ok) throw new Error(`Failed to set member role: ${res.statusText}`);
+	return res.json();
+}
+
+/**
+ * GET /api/notebooks/:id/graph — entities referenced across the members.
+ * Built only from things explicitly filed or linked (`[@ref]`); nothing is
+ * inferred, so an entity merely mentioned inside a PDF will not appear.
+ */
+export async function getNotebookGraph(notebookId: string): Promise<NotebookGraph> {
+	const res = await fetch(`${API_BASE}/notebooks/${encodeURIComponent(notebookId)}/graph`);
+	if (!res.ok) throw new Error(`Failed to load notebook graph: ${res.statusText}`);
+	return res.json();
 }
 
 // =============================================================================
