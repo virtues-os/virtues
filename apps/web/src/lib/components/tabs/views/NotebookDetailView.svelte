@@ -8,8 +8,12 @@
 	import { contextMenu } from '$lib/stores/contextMenu.svelte';
 	import RefPicker from '$lib/components/RefPicker.svelte';
 	import ColorPickerModal from '$lib/components/sidebar/ColorPickerModal.svelte';
+	import IconPicker from '$lib/components/IconPicker.svelte';
+	import { Popover } from '$lib/floating';
+	import { confirmAction } from '$lib/stores/dialog.svelte';
+	import { toast } from 'svelte-sonner';
 	import { getRefSummary } from '$lib/utils/refSummary';
-	import { getPage, getDriveFile, uploadDriveFile, addNotebookItem, reextractDriveFile, listNotebookAnnotations, exportNotebookAnnotations, downloadMarkdown, type NotebookAnnotation } from '$lib/api/client';
+	import { getPage, getDriveFile, uploadDriveFile, addNotebookItem, reextractDriveFile } from '$lib/api/client';
 	import { askVirtues } from '$lib/stores/pendingPrompt.svelte';
 
 	let { tab }: { tab: Tab; active?: boolean } = $props();
@@ -43,65 +47,6 @@
 	$effect(() => {
 		if (notebookId) load();
 	});
-
-	// ---- Highlights across the notebook's documents (D2.5) -------------------
-	// Every annotation on the notebook's library files, grouped by file so the
-	// notebook reads as one marked-up corpus.
-	let highlights = $state<NotebookAnnotation[]>([]);
-	async function loadHighlights() {
-		const id = notebookId;
-		if (!id) {
-			highlights = [];
-			return;
-		}
-		try {
-			highlights = await listNotebookAnnotations(id);
-		} catch (e) {
-			console.error('[NotebookDetailView] Failed to load highlights:', e);
-			highlights = [];
-		}
-	}
-	$effect(() => {
-		if (notebookId) loadHighlights();
-	});
-	// [{ file_id, filename, items: [...] }] in the query's file/reading order.
-	const highlightGroups = $derived.by(() => {
-		const groups: { file_id: string; filename: string; items: NotebookAnnotation[] }[] = [];
-		for (const h of highlights) {
-			let g = groups.at(-1);
-			if (!g || g.file_id !== h.file_id) {
-				g = { file_id: h.file_id, filename: h.filename, items: [] };
-				groups.push(g);
-			}
-			g.items.push(h);
-		}
-		return groups;
-	});
-	const HL_TINT: Record<string, string> = {
-		yellow: '#ffd54a',
-		green: '#7ee081',
-		blue: '#6fb5ff',
-		pink: '#ff8fc7',
-	};
-	/** Download every highlight in this notebook as markdown (D4.3). */
-	async function exportHighlights() {
-		const id = notebookId;
-		if (!id) return;
-		try {
-			const md = await exportNotebookAnnotations(id);
-			downloadMarkdown(`${(detail?.name ?? 'notebook')}-highlights`, md);
-		} catch (e) {
-			console.error('[NotebookDetailView] export failed:', e);
-		}
-	}
-
-	function openHighlight(h: NotebookAnnotation) {
-		let route = `/drive/${h.file_id}`;
-		const params = new URLSearchParams();
-		if (h.page_num) params.set('page', String(h.page_num));
-		params.set('hl', h.id);
-		windowShellStore.openTabFromRoute(`${route}?${params.toString()}`);
-	}
 
 	// Chats filed into this room — sourced from the authoritative session list,
 	// not from membership rows, so removing a pinned member can't desync a chat.
@@ -242,7 +187,6 @@
 			}
 		}
 		await load(true);
-		await loadHighlights();
 	}
 
 	function openUrl(url: string) {
@@ -257,42 +201,54 @@
 		windowShellStore.openTabFromRoute(`/chat/${conversationId}`);
 	}
 
-	// ---- Inline name edit ----------------------------------------------------
-	let editingName = $state(false);
+	// ---- Title + description: always live, no edit mode ----------------------
+	// Both fields are directly typeable (matching the page editor). Drafts hold
+	// what's on screen; a blur or Escape settles them against the server.
 	let nameDraft = $state('');
-	function startRename() {
+	let memoDraft = $state('');
+	// Re-seed the drafts whenever a different notebook loads — but never while
+	// the user is mid-edit in that field, or their keystrokes would be reverted.
+	let nameFocused = $state(false);
+	let memoFocused = $state(false);
+	$effect(() => {
 		if (!detail) return;
-		nameDraft = detail.name;
-		editingName = true;
-	}
-	async function commitRename() {
-		editingName = false;
+		if (!nameFocused) nameDraft = detail.name;
+		if (!memoFocused) memoDraft = detail.current_status ?? '';
+	});
+
+	async function commitName() {
+		nameFocused = false;
 		const id = notebookId;
 		if (!id || !detail) return;
 		const name = nameDraft.trim();
-		if (!name || name === detail.name) return;
+		// An emptied title is a slip, not an intent — restore the stored name.
+		if (!name) {
+			nameDraft = detail.name;
+			return;
+		}
+		if (name === detail.name) return;
 		await notebookStore.update(id, { name });
-		await load(true);
 	}
 
-	// ---- Catch-up memo -------------------------------------------------------
-	let editingMemo = $state(false);
-	let memoDraft = $state('');
-	function startMemo() {
-		if (!detail) return;
-		memoDraft = detail.current_status ?? '';
-		editingMemo = true;
-	}
 	async function commitMemo() {
-		editingMemo = false;
+		memoFocused = false;
+		const id = notebookId;
+		if (!id || !detail) return;
+		const memo = memoDraft.trim() || null;
+		if (memo === (detail.current_status ?? null)) return;
+		await notebookStore.update(id, { current_status: memo });
+	}
+
+	// ---- Icon + accent color -------------------------------------------------
+	let colorOpen = $state(false);
+	let iconOpen = $state(false);
+	let overflowOpen = $state(false);
+	async function setIcon(icon: string | null) {
 		const id = notebookId;
 		if (!id) return;
-		await notebookStore.update(id, { current_status: memoDraft.trim() || null });
+		await notebookStore.update(id, { icon });
 		await load(true);
 	}
-
-	// ---- Accent color --------------------------------------------------------
-	let colorOpen = $state(false);
 	async function setAccent(color: string | null) {
 		colorOpen = false;
 		const id = notebookId;
@@ -325,13 +281,33 @@
 	}
 
 	// ---- Delete --------------------------------------------------------------
-	async function deleteNotebook() {
+	// confirmAction, not window.confirm(): the native dialog is unreliable in the
+	// Tauri/WKWebView shell (`prompt()` is already a known no-op there), so a
+	// falsy return silently swallowed the delete.
+	async function doDelete() {
 		const id = notebookId;
 		if (!id || !detail) return;
-		contextMenu.hide?.();
-		if (!confirm(`Delete the Notebook "${detail.name}"? Chats and pages stay; they're just unfiled.`)) return;
-		await notebookStore.remove(id);
-		windowShellStore.openTabFromRoute('/notebooks');
+		const ok = await confirmAction({
+			title: 'Delete notebook?',
+			body: `"${detail.name}" will be deleted. Its chats, pages and files stay where they are — they just stop being filed here.`,
+			confirmLabel: 'Delete',
+			danger: true,
+		});
+		if (!ok) return;
+		try {
+			await notebookStore.remove(id);
+			// Close every tab pointed at the now-deleted notebook before
+			// navigating, or the stale detail tab stays open and it reads as
+			// "delete didn't work".
+			windowShellStore.closeTabsByRoute(`/notebook/${id}`);
+			// focusExisting, not the default in-place navigate: closing our own
+			// tab hands focus to whatever tab was next, and navigating that in
+			// place would hijack an unrelated notebook the user still had open.
+			windowShellStore.openTabFromRoute('/notebooks', { focusExisting: true });
+		} catch (e) {
+			console.error('[NotebookDetailView] delete failed:', e);
+			toast.error('Failed to delete notebook');
+		}
 	}
 
 	const accent = $derived(detail?.accent_color || null);
@@ -346,42 +322,61 @@
 		<div class="inner">
 			<header class="head">
 				<div class="head-top">
-					<button class="nb-icon" class:tinted={!!accent} title="Set color" onclick={() => (colorOpen = true)}>
-						<Icon icon={detail.icon || 'ri:booklet-line'} width="22" />
-					</button>
+					<Popover bind:open={iconOpen} placement="bottom-start">
+						{#snippet trigger({ toggle }: { toggle: () => void })}
+							<button class="nb-icon" class:tinted={!!accent} title="Change icon" onclick={toggle}>
+								<Icon icon={detail?.icon || 'ri:booklet-line'} width="22" />
+							</button>
+						{/snippet}
+						{#snippet children({ close }: { close: () => void })}
+							<IconPicker value={detail?.icon ?? null} onSelect={setIcon} {close} />
+						{/snippet}
+					</Popover>
 					<div class="head-actions">
-						<button class="icon-btn" title="Rename" onclick={startRename}><Icon icon="ri:edit-line" width="15" /></button>
-						<button class="icon-btn danger" title="Delete Notebook" onclick={deleteNotebook}><Icon icon="ri:delete-bin-line" width="15" /></button>
+						<Popover bind:open={overflowOpen} placement="bottom-end">
+							{#snippet trigger({ toggle }: { toggle: () => void })}
+								<button class="icon-btn" title="More" onclick={toggle}><Icon icon="ri:more-line" width="16" /></button>
+							{/snippet}
+							{#snippet children({ close }: { close: () => void })}
+								<div class="menu">
+									<button class="menu-item" onclick={() => { close(); colorOpen = true; }}>
+										<Icon icon="ri:palette-line" width="15" /> Change color
+									</button>
+									<button class="menu-item danger" onclick={() => { close(); doDelete(); }}>
+										<Icon icon="ri:delete-bin-line" width="15" /> Delete notebook
+									</button>
+								</div>
+							{/snippet}
+						</Popover>
 					</div>
 				</div>
 
-				{#if editingName}
-					<!-- svelte-ignore a11y_autofocus -->
-					<input
-						class="title-input font-serif"
-						bind:value={nameDraft}
-						autofocus
-						onblur={commitRename}
-						onkeydown={(e) => { if (e.key === 'Enter') commitRename(); if (e.key === 'Escape') editingName = false; }}
-					/>
-				{:else}
-					<h1 class="title font-serif" ondblclick={startRename}>{detail.name}</h1>
-				{/if}
+				<!-- Title + description are always live: click the text and type.
+				     No edit mode, no pencil — the page editor's pattern. -->
+				<textarea
+					class="title-input font-serif"
+					bind:value={nameDraft}
+					rows="1"
+					placeholder="Untitled notebook"
+					onfocus={() => (nameFocused = true)}
+					onblur={commitName}
+					onkeydown={(e) => {
+						if (e.key === 'Enter') { e.preventDefault(); e.currentTarget.blur(); }
+						if (e.key === 'Escape') { nameDraft = detail?.name ?? ''; e.currentTarget.blur(); }
+					}}
+				></textarea>
 
-				{#if editingMemo}
-					<!-- svelte-ignore a11y_autofocus -->
-					<textarea
-						class="desc-input"
-						bind:value={memoDraft}
-						autofocus
-						placeholder="Add a description — what this notebook is for. It also gives the assistant context."
-						onblur={commitMemo}
-					></textarea>
-				{:else if detail.current_status}
-					<button class="desc" onclick={startMemo}>{detail.current_status}</button>
-				{:else}
-					<button class="desc desc-empty" onclick={startMemo}>Add a description…</button>
-				{/if}
+				<textarea
+					class="desc-input"
+					bind:value={memoDraft}
+					rows="1"
+					placeholder="Add a description — what this notebook is for. It also gives the assistant context."
+					onfocus={() => (memoFocused = true)}
+					onblur={commitMemo}
+					onkeydown={(e) => {
+						if (e.key === 'Escape') { memoDraft = detail?.current_status ?? ''; e.currentTarget.blur(); }
+					}}
+				></textarea>
 
 				<div class="meta font-mono">
 					{pinnedItems.length} {pinnedItems.length === 1 ? 'item' : 'items'}
@@ -439,54 +434,6 @@
 					</ul>
 				{/if}
 			</section>
-
-			<!-- Highlights across the notebook's documents. Shown even when empty
-			     (once there are documents) so the read→highlight→write loop is
-			     discoverable rather than hidden. -->
-			{#if highlights.length > 0 || pinnedItems.some((i) => i.url.startsWith('/drive/'))}
-				<section class="section">
-					<div class="eyebrow font-mono">
-						<span>Highlights</span>
-						<span class="eyebrow-right">
-							<span class="eyebrow-count">{highlights.length}</span>
-							{#if highlights.length}
-								<button class="add-btn" title="Export highlights as markdown" onclick={exportHighlights}>
-									<Icon icon="ri:download-line" width="13" />
-								</button>
-							{/if}
-						</span>
-					</div>
-					{#if highlights.length === 0}
-						<p class="empty">
-							Open a document and select text to highlight it. Highlights collect here,
-							and can be sent into a page as quotes with citations.
-						</p>
-					{/if}
-					{#each highlightGroups as g (g.file_id)}
-						<div class="hl-group">
-							<button class="hl-file" onclick={() => openUrl(`/drive/${g.file_id}`)} title={g.filename}>
-								<Icon icon="ri:file-line" width="13" class="hl-file-ic" />
-								<span class="hl-file-name">{g.filename}</span>
-								<span class="hl-file-count font-mono">{g.items.length}</span>
-							</button>
-							<ul class="ledger">
-								{#each g.items as h (h.id)}
-									<li class="hl-row">
-										<button class="hl-item" onclick={() => openHighlight(h)}>
-											<span class="hl-bar" style="background:{HL_TINT[h.color] ?? HL_TINT.yellow}"></span>
-											<span class="hl-body">
-												<span class="hl-quote">{h.quote_text}</span>
-												{#if h.note_md}<span class="hl-note">{h.note_md}</span>{/if}
-											</span>
-											{#if h.page_num}<span class="hl-page font-mono">p{h.page_num}</span>{/if}
-										</button>
-									</li>
-								{/each}
-							</ul>
-						</div>
-					{/each}
-				</section>
-			{/if}
 
 			<!-- Chats filed here -->
 			<section class="section">
@@ -573,31 +520,39 @@
 		color: var(--color-foreground-subtle, #9ca3af); cursor: pointer;
 	}
 	.icon-btn:hover { background: var(--color-surface-elevated); color: var(--color-foreground); }
-	.icon-btn.danger:hover { color: var(--color-error, #dc2626); }
 
-	.title {
-		font-size: 2rem; font-weight: 500; line-height: 1.12; margin: 0;
-		color: var(--color-foreground); cursor: text;
+	/* Title + description read as text and edit in place — no box at rest, no
+	   edit mode. Only the caret and a faint baseline on focus say "editable". */
+	.title-input, .desc-input {
+		display: block; width: 100%; resize: none; overflow: hidden;
+		border: none; background: transparent; outline: none;
+		field-sizing: content;
 	}
 	.title-input {
-		font-size: 2rem; font-weight: 500; line-height: 1.12; width: 100%;
-		border: none; background: transparent; color: var(--color-foreground); outline: none; padding: 0 0 2px;
-		border-bottom: 1.5px solid color-mix(in srgb, var(--room-accent, var(--color-foreground)) 45%, var(--color-border));
+		font-size: 2rem; font-weight: 500; line-height: 1.12;
+		color: var(--color-foreground); padding: 0 0 2px;
+		border-bottom: 1.5px solid transparent;
 	}
-	.desc {
-		display: block; width: 100%; text-align: left; margin-top: 0.6rem;
-		border: none; background: transparent; cursor: text; padding: 0;
-		font: inherit; font-size: 0.95rem; line-height: 1.55; color: var(--color-foreground-muted);
+	.title-input:focus {
+		border-bottom-color: color-mix(in srgb, var(--room-accent, var(--color-foreground)) 45%, var(--color-border));
 	}
-	.desc:hover { color: var(--color-foreground); }
-	.desc-empty { color: var(--color-foreground-subtle, #9ca3af); }
 	.desc-input {
-		width: 100%; margin-top: 0.6rem; min-height: 3rem; resize: vertical;
-		border: none; border-left: 2px solid var(--room-accent, var(--color-border));
-		background: var(--color-surface-elevated); border-radius: 0 8px 8px 0;
-		padding: 0.55rem 0.7rem; font: inherit; font-size: 0.95rem; line-height: 1.55;
-		color: var(--color-foreground); outline: none;
+		margin-top: 0.6rem; min-height: 1.5rem; padding: 0;
+		font: inherit; font-size: 0.95rem; line-height: 1.55;
+		color: var(--color-foreground-muted);
 	}
+	.desc-input:focus { color: var(--color-foreground); }
+	.title-input::placeholder, .desc-input::placeholder { color: var(--color-foreground-subtle, #9ca3af); }
+
+	/* Overflow menu (••• in the header) */
+	.menu { display: flex; flex-direction: column; min-width: 190px; padding: 4px; }
+	.menu-item {
+		display: flex; align-items: center; gap: 9px; width: 100%; text-align: left;
+		padding: 7px 9px; border: none; border-radius: 7px; background: transparent;
+		font: inherit; font-size: 0.85rem; color: var(--color-foreground); cursor: pointer;
+	}
+	.menu-item:hover { background: var(--color-surface-elevated); }
+	.menu-item.danger { color: var(--color-error, #dc2626); }
 	.meta {
 		margin-top: 1rem; font-size: 11px; letter-spacing: 0.04em;
 		text-transform: uppercase; color: var(--color-foreground-subtle, #9ca3af);
@@ -673,45 +628,6 @@
 	}
 	.ledger-row:hover .ledger-remove { opacity: 1; }
 	.ledger-remove:hover { color: var(--color-foreground); }
-
-	/* Highlights — grouped by file, each a quiet quote row that opens the
-	   viewer at the mark. */
-	.eyebrow-count {
-		font-size: 10px; padding: 1px 7px; border-radius: 999px;
-		background: var(--color-surface-elevated); color: var(--color-foreground-subtle, #9ca3af);
-	}
-	.eyebrow-right { display: flex; align-items: center; gap: 4px; }
-	.hl-group { margin-top: 0.9rem; }
-	.hl-file {
-		display: flex; align-items: center; gap: 7px; width: 100%; text-align: left;
-		padding: 0.3rem 0.25rem; border: none; background: transparent; cursor: pointer;
-		color: var(--color-foreground-muted);
-	}
-	.hl-file:hover { color: var(--color-foreground); }
-	.hl-file :global(.hl-file-ic) { color: var(--color-foreground-subtle, #9ca3af); flex-shrink: 0; }
-	.hl-file-name {
-		min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-		font-size: 0.78rem; font-weight: 500; letter-spacing: 0.01em;
-	}
-	.hl-file-count { flex-shrink: 0; font-size: 10px; color: var(--color-foreground-subtle, #9ca3af); }
-	.hl-row { display: flex; }
-	.hl-item {
-		display: flex; align-items: flex-start; gap: 10px; width: 100%; text-align: left;
-		padding: 0.45rem 0.25rem 0.45rem 0.4rem; border: none; background: transparent;
-		cursor: pointer; font: inherit; border-radius: 6px;
-	}
-	.hl-item:hover { background: color-mix(in srgb, var(--color-border) 30%, transparent); }
-	.hl-bar { flex-shrink: 0; width: 3px; align-self: stretch; border-radius: 2px; min-height: 1.1rem; }
-	.hl-body { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
-	.hl-quote {
-		font-size: 0.875rem; line-height: 1.4; color: var(--color-foreground);
-		display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
-	}
-	.hl-note {
-		font-size: 0.78rem; line-height: 1.4; color: var(--color-foreground-muted);
-		display: -webkit-box; -webkit-line-clamp: 1; -webkit-box-orient: vertical; overflow: hidden;
-	}
-	.hl-page { flex-shrink: 0; font-size: 10px; color: var(--color-foreground-subtle, #9ca3af); padding-top: 2px; }
 
 	:global(.spin) { animation: spin 0.8s linear infinite; }
 	@keyframes spin { to { transform: rotate(360deg); } }
