@@ -113,15 +113,21 @@ jobs:
             exit 1
           fi
 
-      - name: Pre-create the shared cluster role
+      - name: Pre-create the shared cluster roles
         run: |
-          psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -c "DO \$\$ BEGIN
-            IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'virtues_face_reader') THEN
-              CREATE ROLE virtues_face_reader NOLOGIN;
-            END IF;
-          END \$\$;"
-          psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -c \
-            "GRANT virtues_face_reader TO CURRENT_USER;"
+          # BOTH roles the migrations create, not just one. 0052 makes
+          # virtues_face_reader and 0054 makes virtues_applet_writer, and each
+          # races the same way — this step originally covered only the first,
+          # so the second stayed latent until enough parallel sqlx tests
+          # existed to hit it. Adding tests is what surfaced it.
+          for role in virtues_face_reader virtues_applet_writer; do
+            psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -c "DO \$\$ BEGIN
+              IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = '$role') THEN
+                CREATE ROLE $role NOLOGIN;
+              END IF;
+            END \$\$;"
+            psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -c "GRANT $role TO CURRENT_USER;"
+          done
 
       # api::code::tests::test_timeout needs the code-execution sandbox
       # runtime, which isn't provisioned on a bare runner — it's an
