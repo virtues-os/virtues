@@ -1,9 +1,14 @@
 # Backup paradigm — surviving the loss of the box
 
-> **Status:** Plan (2026-07-25). Not built. Scopes a durability story for box data:
-> an upgrade-owned pre-migration dump, and a single encrypted backup artifact on an
-> external drive. Explicitly **excludes** storage tiering, volume routing, and object
-> storage — see [Not building](#not-building) for why.
+> **Status:** Partly built (2026-07-25, branch `feat/backup-durability`). Pillars
+> 1–5 and the volume path have landed; see [Sequence](#sequence) for exactly what
+> shipped and what remains. **Phase A is the gate — both ends of the pipeline are
+> still missing.** Explicitly **excludes** storage tiering, volume routing, and
+> object storage — see [Not building](#not-building) for why.
+>
+> [The gap](#the-gap) and [A live bug](#a-live-bug-this-plan-must-fix-first) below
+> are the original diagnosis, kept as written. Both are now fixed; they are the
+> record of why, not a description of today.
 >
 > Complements `data-durability.md`, which covers getting data *in* without loss. This
 > doc covers keeping it once it's in.
@@ -100,49 +105,62 @@ Naming: `pre-upgrade-<from>-<to>.dump`, pruned in lockstep with slots.
 
 ---
 
-## Pillar 2 — One backup artifact, split by mutability
+## Pillar 2 — One artifact type, split by mutability
 
-Not two tiers. One destination, one format, one restore path, one CI drill.
+> **Amended 2026-07-25 (BUILT).** This pillar originally specified an *additive
+> mirror* of the lake — each file copied and encrypted individually. Encryption
+> changed the arithmetic: an age header and an encrypt call per object, on a lake
+> of many small stream files, is both slower than bundling and the worst possible
+> USB write pattern. Replaced with incremental archives before building. The
+> reasoning below is the amended version.
+
+Not two tiers. One format, one restore path, one drill.
 
 But a full archive re-copies the entire immutable lake every run. The lake is
-append-mostly — ~95% of archive N+1 is byte-identical to archive N. Writing 200 GB
-over USB to capture 1 GB of change is hours on a bus that drops under sustained load
-on ARM.
+append-only — ~95% of archive N+1 is byte-identical to archive N. Writing 200 GB
+over USB to capture 1 GB of change is hours, on a bus that drops under sustained
+load on ARM.
 
-So split the artifact by **mutability**, not by tier:
+So split by **mutability**, into two artifact kinds with opposite lifetimes:
 
 ```
-/mnt/<drive>/virtues/<box-id>/
-  lake/                      additive mirror — each file encrypted once, never
-                             rewritten, never pruned
-  archives/
-    2026-07-25T03:00Z.age    DB + applet state + env + manifest — small, encrypted,
-                             chained
+<mount>/<prefix>/archives/
+  full-<ts>.tar.gz.age    DB + applet state + env + manifest.
+                          Complete every run. Pruned freely — newest supersedes.
+  lake-<ts>.tar.gz.age    Lake files added since the last run.
+                          NEVER pruned.
 ```
 
-**The lake half is a sync, not a chain.** Files are append-only with unique keys, so
-there is no diffing, no dedup, no chunk store — only *"does this key exist on the
-drive."* Lake files are plaintext at rest (`lake_objects.content_encoding` is only
-`none | zstd`; `storage/lake.rs` does no encryption), so each is encrypted exactly
-once on the way out and never touched again.
+**Increments are never pruned, and that is structural rather than cautious.** The
+lake is append-only, so each file exists in exactly one increment; deleting one
+loses everything it holds with no other copy anywhere. When a volume fills, the
+run refuses loudly instead of pruning, because by then the only things left to
+prune are the irreplaceable ones.
 
-**The archive half is small**, which makes retention trivial and restore cheap:
-decrypt archive N → `pg_restore` → point at the lake mirror.
+**The box cannot read its own increments.** Archives are encrypted to a key it
+does not hold ([open decision 1](#open-decisions)), so it cannot inspect a drive to learn what is already
+there. `backup_archived_file` (migration 0064) is the box-side record of what has
+shipped where — a direct cost of the encryption decision, not a convenience.
 
-This is *simpler* than full-copy, not more complex: the expensive path becomes
-incremental for free, weekly cadence becomes viable, and the "how many full copies
-fit" question disappears.
+**The drive stays authoritative about which increments exist.** Filenames are
+plain timestamps and leak nothing, so each run reconciles against the directory:
+any increment the table references that is no longer present has its rows dropped
+and its files re-sent. A wiped or swapped drive heals itself rather than leaving
+a hole that would surface only as a short restore.
 
 ### Consequence to state explicitly
 
-An additive mirror never deletes, so the drive is **not a point-in-time copy of the
-lake**. Restoring a 60-day-old archive gives a 60-day-old DB against a current lake —
-the same orphan-bytes condition the dump-then-copy ordering already produces, and
-coherent for the same reason. The drive can roll the *DB* back, not the lake.
+Restoring means the newest `full-*` **plus every increment, in order** — not a
+single file. A missing increment is a real hole, and must fail loudly naming the
+window it covered rather than restoring short and silent.
 
-Given the lake is immutable raw capture and nothing has ever deleted from it
-(`cli/lake_adopt.rs:11` — "nothing has ever deleted a recording"), this is correct.
-Document it rather than let someone discover it during an incident.
+The drive is also not a point-in-time copy of the lake: increments accumulate, so
+an old `full-*` replayed against all increments gives an old DB and a current
+lake. That is the same orphan-bytes condition the dump-then-copy ordering already
+produces, and coherent for the same reason — the drive rolls the *database* back,
+not the lake. Given the lake is immutable raw capture and nothing has ever deleted
+from it (`cli/lake_adopt.rs:11`), this is correct. Document it rather than let
+someone discover it mid-incident.
 
 ---
 
@@ -270,29 +288,71 @@ default, always an escape hatch.
 
 ## Sequence
 
-1. **One path resolver.** Delete both `LAKE_DIR` constants and the nine ad-hoc
-   `STORAGE_PATH` reads; single `storage::lake_root()`, one default. Fixes the live
-   data-loss bug and unblocks everything else.
-2. **Restore drill in CI.** `sqlx::test` already exists in the workspace. Seed → backup
-   → restore into a scratch DB → assert row counts and file digests. **Until this is
-   green, treat backups as unproven.**
-3. **Format v2.** Streaming tar (kills the 2× staging copy at `backup.rs:111` and the
-   whole-file hashing at `:271`), `age` encryption, signed manifest, stable naming.
-   **Must land before scheduling ships** — see [one-way door](#one-way-door).
-4. **Pre-migration dump** in `upgrade.rs` + free-space preflight + `rollback` hint.
-   Independent of 1–3; can land in parallel.
-5. **`storage_volume` table**, role `{backup}` only, UUID-keyed, mount unit generation.
-6. **Backup applet** — scheduled through the existing scheduler primitive, not a
-   systemd timer. Retention lives with it.
-7. **UI** + `backup verify`.
+### Shipped (branch `feat/backup-durability`, 2026-07-25)
+
+1. **One path resolver** — `storage::lake::lake_root()`; both hardcoded `LAKE_DIR`
+   constants and nine ad-hoc `STORAGE_PATH` reads gone. Fixed the live bug where a
+   custom `STORAGE_PATH` made backup ship an empty lake and restore `rm -rf` the
+   wrong directory.
+2. **Round-trip drill** — real functions, real Postgres, state destroyed before
+   restore so it cannot pass without restore working.
+3. **Streaming archive** — no staging copy, digests computed in flight, manifest
+   written last.
+4. **Pre-migration dump** in `upgrade`, pruned with `KEEP_SLOTS`, surfaced by
+   `rollback`.
+5. **Encryption** — `age`, box holds only the public half.
+6. **Volume registry** — `storage_volume` (0063), UUID-keyed.
+7. **Incremental volume backups** — `full-*` + `lake-*`, box-side tracking (0064),
+   drive-authoritative reconciliation, pre-write space guard.
+
+### Phase A — close the loop
+
+Both ends of the pipeline are missing; the middle works. **Nothing else matters
+until this is done, because a write path whose restore half is unproven is the
+exact failure this document was written to remove — and this one looks finished.**
+
+8. **`virtues restore --from-volume`** — newest `full-*`, then every `lake-*` in
+   order, verifying each manifest. A missing increment fails loudly, naming the
+   window.
+9. **`virtues backup --add-volume <path>`** — derive the UUID via `uuid_for_path`,
+   set the prefix, write the row. Without it the registry is unreachable.
+10. **Extend the drill to the volume round trip** — the test that would have caught
+    the gap above.
+
+Merge to `staging` at the end of Phase A. This branch is already nine commits;
+CLAUDE.md records `feat/composability` reaching 181 behind and having to be
+largely dropped.
+
+### Phase B — run it without a human
+
+11. **Scheduler wiring** through the applet system (one-scheduler doctrine), not a
+    systemd timer.
+12. **`virtues backup verify`** — digests without a restore; verify one at random
+    on a schedule so rot surfaces before an incident.
+
+### Phase C — make it visible
+
+13. **Settings** — backup age, drive state, last error.
+14. **Home** — a line only when it is bad.
+
+### Phase D — housekeeping
+
+15. `docs/recovery.md:274` still documents the deleted `/usr/local/bin/virtues.bak`
+    rollback mechanism.
 
 ### One-way door
 
-**The archive format.** Once encrypted archives exist on owners' drives, the layout
-cannot change without a compatibility shim forever. Right now nothing schedules
-backups and restore has never been tested, so there are effectively no artifacts in
-the wild worth preserving. That freedom ends the day step 6 ships. Everything else
-here is reversible; this is not.
+**The archive format — CLOSED 2026-07-25.** Encryption, streaming, and the
+manifest-last ordering all landed before anything schedules a backup, which was
+the point: there were no artifacts in the wild worth preserving, so the format
+could change freely. That window is now shut. Any future change to the archive
+layout needs a compatibility shim, and `restore` already carries the first one —
+it sniffs the age magic so pre-encryption archives still open.
+
+Manifest signing was dropped from this door rather than built. age's AEAD
+authenticates the whole archive, so tampering fails at decryption; the per-member
+digests catch corruption inside a validly-decrypted archive — our own bugs — not
+tampering.
 
 ---
 
