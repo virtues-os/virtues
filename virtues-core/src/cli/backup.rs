@@ -154,15 +154,26 @@ pub async fn run(
 ) -> Result<PathBuf, crate::Error> {
     let sources = Sources::from_env(allow_missing_key)?;
     let recipient = load_or_create_recipient()?;
-    write_archive(pool, output, force, &sources, &recipient).await
+    // A standalone `virtues backup` is one self-contained file, so it carries
+    // the lake. Volume backups do not — see `include_lake`.
+    write_archive(pool, output, force, &sources, &recipient, true).await
 }
 
+/// Write a full archive.
+///
+/// `include_lake` is the difference between the two callers, and getting it
+/// wrong is silent and expensive. A standalone backup is a single complete file
+/// and must contain the lake. A volume `full-*` must NOT: the lake reaches the
+/// volume through `lake-*` increments, and bundling it here would re-archive
+/// hundreds of gigabytes on every run — precisely the cost increments exist to
+/// avoid, and invisible except as a backup that takes hours.
 pub(crate) async fn write_archive(
     pool: &PgPool,
     output: Option<PathBuf>,
     force: bool,
     sources: &Sources,
     recipient: &age::x25519::Recipient,
+    include_lake: bool,
 ) -> Result<PathBuf, crate::Error> {
     let now = Utc::now();
     let out_path = match output {
@@ -203,8 +214,10 @@ pub(crate) async fn write_archive(
     // Resolved, never hardcoded. A backup that read a fixed path while the box
     // wrote somewhere else would succeed, report success, and contain no lake at
     // all — the failure only surfacing at restore, when it is far too late.
-    println!("→ scanning data lake at {}…", sources.lake.display());
-    collect_files(&sources.lake, "lake", &mut members)?;
+    if include_lake {
+        println!("→ scanning data lake at {}…", sources.lake.display());
+        collect_files(&sources.lake, "lake", &mut members)?;
+    }
 
     // Authored applets are user data with no other copy: the manifest, the
     // schema DDL, and the face HTML the model wrote. The DB row and the
@@ -317,7 +330,7 @@ pub(crate) const RECIPIENT_PATH: &str = "/var/lib/virtues/backup-recipient";
 /// The file lives beside the lake rather than inside it, so it is never swept
 /// into the archive. A recovery key sealed inside the thing it unseals would be
 /// no recovery key at all.
-fn load_or_create_recipient() -> Result<age::x25519::Recipient, crate::Error> {
+pub(crate) fn load_or_create_recipient() -> Result<age::x25519::Recipient, crate::Error> {
     use std::str::FromStr;
 
     if let Ok(existing) = fs::read_to_string(RECIPIENT_PATH) {
@@ -605,7 +618,7 @@ pub(crate) async fn write_archive_to(
     sources: &Sources,
     recipient: &age::x25519::Recipient,
 ) -> Result<PathBuf, crate::Error> {
-    write_archive(pool, Some(dest.to_path_buf()), true, sources, recipient).await
+    write_archive(pool, Some(dest.to_path_buf()), true, sources, recipient, false).await
 }
 
 /// Archive an arbitrary member list — used for lake increments.

@@ -408,11 +408,30 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Produces a single tarball of the full box state (DB + lake + env +
     // manifest). Detailed in `virtues::cli::backup`. Runs against a bare DB
     // pool — does not need the full app stack.
-    if let Some(Commands::Backup { output, force, allow_missing_key }) = &cli.command {
+    if let Some(Commands::Backup {
+        output,
+        force,
+        allow_missing_key,
+        volume,
+    }) = &cli.command
+    {
         let database_url = virtues::database::normalize_database_url()?;
         let db = virtues::database::Database::new(&database_url)?;
-        match virtues::cli::backup::run(db.pool(), output.clone(), *force, *allow_missing_key).await {
-            Ok(_) => return Ok(()),
+        let result = match volume {
+            Some(target) => {
+                virtues::cli::backup_volume::run_cli(db.pool().clone(), target, *allow_missing_key).await
+            }
+            None => virtues::cli::backup::run(
+                db.pool(),
+                output.clone(),
+                *force,
+                *allow_missing_key,
+            )
+            .await
+            .map(|_| ()),
+        };
+        match result {
+            Ok(()) => return Ok(()),
             Err(e) => {
                 eprintln!("error: backup failed: {e}");
                 std::process::exit(1);
@@ -427,10 +446,18 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     if let Some(Commands::Restore {
         path,
         force,
+        from_volume,
         key_file,
     }) = &cli.command
     {
-        match virtues::cli::restore::run(path.clone(), *force, key_file.clone()).await {
+        match virtues::cli::restore::run(
+            path.clone(),
+            *force,
+            from_volume.clone(),
+            key_file.clone(),
+        )
+        .await
+        {
             Ok(()) => return Ok(()),
             Err(e) => {
                 eprintln!("error: restore failed: {e}");
