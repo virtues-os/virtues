@@ -6,6 +6,8 @@ pub mod ai_calls;
 pub mod ai_complete;
 pub mod assistant_profile;
 pub mod audit;
+pub mod backup_status;
+pub use backup_status::get_backup_status;
 pub mod auth;
 pub mod billing_state;
 pub mod box_status;

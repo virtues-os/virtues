@@ -2226,6 +2226,11 @@ pub async fn get_drive_usage_handler(State(state): State<AppState>) -> Response 
     api_response(crate::api::get_drive_usage(state.db.pool(), &state.drive_config).await)
 }
 
+/// GET /api/backup/status - age of the newest good backup, per volume
+pub async fn get_backup_status_handler(State(state): State<AppState>) -> Response {
+    api_response(crate::api::get_backup_status(state.db.pool()).await)
+}
+
 /// GET /api/drive/warnings - Get quota warnings
 pub async fn get_drive_warnings_handler(State(state): State<AppState>) -> Response {
     api_response(crate::api::check_drive_warnings(state.db.pool(), &state.drive_config).await)

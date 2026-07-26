@@ -501,6 +501,7 @@ pub async fn run(client: Virtues, host: &str, port: u16) -> Result<()> {
             post(api::reextract_drive_file_handler),
         )
         .route("/api/drive/usage", get(api::get_drive_usage_handler))
+        .route("/api/backup/status", get(api::get_backup_status_handler))
         .route("/api/drive/warnings", get(api::get_drive_warnings_handler))
         .route("/api/drive/files", get(api::list_drive_files_handler))
         .route(
