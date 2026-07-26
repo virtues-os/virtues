@@ -57,7 +57,9 @@
 		expandDetail?: Snippet<[T, RowMeta]>;
 		/** Auto-refresh interval in ms. If set, shows a toggle in the toolbar. */
 		refreshInterval?: number;
-		/** Diagonal fade-in stagger on first paint and on dataset identity change. Default true. */
+		/** Diagonal fade-in stagger on first paint and on dataset identity change.
+		 *  Default false: a per-cell staggered animation makes every list feel slow
+		 *  and replays on each sort/filter change. Opt in per grid. */
 		animateMount?: boolean;
 		/** Enable built-in column sort. Default true. Set false to opt out per-grid. */
 		sortable?: boolean;
@@ -88,7 +90,7 @@
 		gridMinWidth = '200px',
 		expandDetail,
 		refreshInterval,
-		animateMount = true,
+		animateMount = false,
 		sortable = true,
 		filters,
 		onItemClick,
@@ -364,6 +366,9 @@
 	let lastIdentity = $state<string>('');
 
 	$effect(() => {
+		// Without the animation there's nothing to replay, and bumping the token
+		// would tear down and rebuild every row on each sort/filter for nothing.
+		if (!animateMount) return;
 		const fsig = JSON.stringify(filterValues);
 		// NOTE: searchQuery intentionally excluded — search shouldn't replay the cascade.
 		const sig = `${items.length}|${String(sortKey)}|${String(sortDir)}|${viewMode}|${fsig}`;
@@ -777,19 +782,22 @@
 		white-space: nowrap;
 	}
 
+	/* Recovery actions, not calls to action — an outline in the primary colour
+	   gave "Clear search" the same weight as a submit button. */
 	.clear-search-btn {
 		margin-top: 0.5rem;
 		padding: 0.375rem 0.75rem;
 		font-size: 0.8125rem;
-		color: var(--color-primary);
+		color: var(--color-foreground-muted);
 		background: transparent;
-		border: 1px solid var(--color-primary);
+		border: 1px solid var(--color-border);
 		border-radius: 8px;
 		cursor: pointer;
 	}
 
 	.clear-search-btn:hover {
-		background: color-mix(in srgb, var(--color-primary) 10%, transparent);
+		background: var(--color-background-hover);
+		color: var(--color-foreground);
 	}
 
 	/* Toolbar control buttons (density, view, filter) — share visual weight */
@@ -901,15 +909,16 @@
 	.retry-btn {
 		padding: 0.375rem 0.75rem;
 		font-size: 0.8125rem;
-		color: var(--color-primary);
+		color: var(--color-foreground-muted);
 		background: transparent;
-		border: 1px solid var(--color-primary);
+		border: 1px solid var(--color-border);
 		border-radius: 8px;
 		cursor: pointer;
 	}
 
 	.retry-btn:hover {
-		background: color-mix(in srgb, var(--color-primary) 10%, transparent);
+		background: var(--color-background-hover);
+		color: var(--color-foreground);
 	}
 
 	.empty-state :global(svg) {
@@ -957,31 +966,35 @@
 	.data-table {
 		width: 100%;
 		border-collapse: collapse;
-		font-size: 0.75rem;
+		/* 13.5px. Was 12px — caption size doing primary-content work, which
+		   consumers were already overriding to 13px in their own cells. */
+		font-size: 0.84375rem;
+		font-variant-numeric: tabular-nums;
 	}
 
-	thead tr {
-		position: relative;
-	}
-
-	thead tr::after {
-		content: '';
-		position: absolute;
-		left: 0;
-		right: 0;
-		bottom: 0;
-		height: 1px;
-		background: var(--color-border);
-	}
-
+	/* Header carries a single hairline, not a fill AND a rule. The label takes
+	   the app's mono eyebrow treatment so it reads as a column name rather than
+	   as a first row of data. */
 	th {
 		text-align: left;
-		font-weight: 500;
-		font-size: 0.75rem;
-		color: var(--color-foreground-muted);
-		padding: 0.625rem 0.75rem;
+		font-family: var(--font-mono);
+		font-weight: 400;
+		font-size: 0.65625rem;
+		letter-spacing: 0.08em;
+		text-transform: uppercase;
+		color: var(--color-foreground-subtle);
+		padding: 0.5rem 0.75rem;
 		white-space: nowrap;
-		background: color-mix(in srgb, var(--color-foreground) 4%, transparent);
+		background: transparent;
+		border-bottom: 1px solid var(--color-border);
+	}
+
+	/* Column icons are sized for the old 12px sans label; bring them down to
+	   the eyebrow's optical size. */
+	.th-content :global(svg),
+	.th-sort :global(svg) {
+		width: 12px;
+		height: 12px;
 	}
 
 	/* First/last cells keep their natural cell padding so table content
@@ -1028,30 +1041,33 @@
 	}
 
 
+	/* Separators are real borders now. As ::after overlays they sat inside the
+	   row box, so the hover wash painted over them and the grid lines dropped
+	   out as the pointer moved down the table.
+	   The border must sit on the row, not on td: cells come from consumer
+	   `tableRow` snippets and carry the *consumer's* Svelte scope hash, so a
+	   `td` rule here would never match them. `border-collapse: collapse` paints
+	   the row border full width, and a border draws above its own background,
+	   so the hover wash can no longer erase it. */
 	.data-row {
 		cursor: pointer;
 		position: relative;
-		transition: background-color 0.1s ease;
+		border-bottom: 1px solid var(--color-border);
+		box-shadow: inset 2px 0 0 transparent;
+		transition: background-color 0.1s ease, box-shadow 0.1s ease;
 	}
 
-	.data-row::after {
-		content: '';
-		position: absolute;
-		left: 0;
-		right: 0;
-		bottom: 0;
-		height: 1px;
-		background: var(--color-border);
-	}
-
+	/* Half the previous wash, plus a leading accent edge: reads as a pointer
+	   rather than a selection. */
 	.data-row:hover {
-		background: color-mix(in srgb, var(--color-foreground) 6%, transparent);
+		background: color-mix(in srgb, var(--color-foreground) 3.5%, transparent);
+		box-shadow: inset 2px 0 0 var(--color-primary);
 	}
 
 	.data-row:focus-visible {
 		outline: 2px solid var(--color-primary);
 		outline-offset: -2px;
-		background: color-mix(in srgb, var(--color-foreground) 6%, transparent);
+		background: color-mix(in srgb, var(--color-foreground) 3.5%, transparent);
 	}
 
 	.cell-text {
@@ -1066,7 +1082,7 @@
 	}
 
 	.datagrid-wrapper[data-density='compact'] .data-table {
-		font-size: 0.6875rem;
+		font-size: 0.78125rem;
 	}
 
 	.datagrid-wrapper[data-density='compact'] .card-grid {
