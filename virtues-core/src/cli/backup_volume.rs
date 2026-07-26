@@ -30,7 +30,7 @@ use crate::storage::volumes::Volume;
 /// increments, and those are irreplaceable.
 const MIN_FREE_BYTES: u64 = 1024 * 1024 * 1024;
 
-pub struct VolumeBackup {
+pub(crate) struct VolumeBackup {
     pub full: PathBuf,
     pub increment: Option<PathBuf>,
     pub new_files: usize,
@@ -44,7 +44,7 @@ pub struct VolumeBackup {
 /// skipped run, never a failure — a box whose backup destination is unplugged
 /// must keep working, which is the entire reason removable media is acceptable
 /// for backups and not for live storage.
-pub async fn run(
+pub(crate) async fn run(
     pool: &PgPool,
     volume: &Volume,
     sources: &Sources,
@@ -382,7 +382,141 @@ mod tests {
             "reconciliation did not re-send files whose increment was gone"
         );
 
+        // ── The half that was missing: can any of this be restored? ──────
+        // Files are spread across three increments plus whatever the full
+        // archive carries, so a restore that only reads one artifact would
+        // come back short and look like it worked.
+        std::fs::remove_dir_all(&lake).unwrap();
+
+        crate::cli::restore::apply_from_volume(
+            &drive,
+            &crate::cli::restore::Targets {
+                database_url: sources.database_url.clone(),
+                lake: lake.clone(),
+                applets: state.join("applets"),
+                env_file: state.join("virtues.env"),
+            },
+            Some(&identity),
+        )
+        .expect("restore from volume");
+
+        for name in ["a", "b", "c"] {
+            let f = lake.join(format!("streams/{name}.jsonl"));
+            assert_eq!(
+                std::fs::read_to_string(&f).unwrap_or_default(),
+                name,
+                "{name} did not come back — an increment was not replayed"
+            );
+        }
+
         let _ = std::fs::remove_dir_all(&state);
         let _ = std::fs::remove_dir_all(&drive);
     }
+
+    #[sqlx::test]
+    async fn a_volume_with_no_full_archive_refuses_rather_than_half_restores(
+        _pool: sqlx::PgPool,
+    ) {
+        let drive = scratch("empty-drive");
+        std::fs::create_dir_all(drive.join("archives")).unwrap();
+        let err = crate::cli::restore::apply_from_volume(
+            &drive,
+            &crate::cli::restore::Targets {
+                database_url: "postgres:///nope".into(),
+                lake: drive.join("lake"),
+                applets: drive.join("applets"),
+                env_file: drive.join("env"),
+            },
+            None,
+        )
+        .unwrap_err();
+        assert!(
+            format!("{err}").contains("no full archive"),
+            "unexpected error: {err}"
+        );
+        let _ = std::fs::remove_dir_all(&drive);
+    }
+}
+
+/// `virtues backup --volume <id|all>`.
+///
+/// A volume that is not attached is skipped, never an error. The box has to keep
+/// working with its drive unplugged — that asymmetry is the reason removable
+/// media is acceptable for backups and not for live storage.
+pub async fn run_cli(
+    pool: PgPool,
+    target: &str,
+    allow_missing_key: bool,
+) -> Result<(), crate::Error> {
+    let sources = Sources::from_env(allow_missing_key)?;
+    let recipient = backup::load_or_create_recipient()?;
+    let all = crate::storage::volumes::backup_volumes(&pool).await?;
+    let selected: Vec<_> = if target == "all" {
+        all
+    } else {
+        all.into_iter().filter(|v| v.id == target).collect()
+    };
+    if selected.is_empty() {
+        return Err(crate::Error::Other(format!(
+            "no registered backup volume matches `{target}`. \
+             Register one with `virtues volumes add <path>`."
+        )));
+    }
+
+    let now = chrono::Utc::now();
+    let mut any = false;
+    for volume in &selected {
+        match run(&pool, volume, &sources, &recipient, now).await {
+            Ok(None) => {
+                super::ui::warn(&format!("{} is not attached — skipped", volume.name));
+            }
+            Ok(Some(r)) => {
+                any = true;
+                super::ui::ok(&format!(
+                    "{}: {} new lake file(s), {:.1} MB{}",
+                    volume.name,
+                    r.new_files,
+                    r.new_bytes as f64 / (1024.0 * 1024.0),
+                    if r.pruned > 0 {
+                        format!(", pruned {} old full archive(s)", r.pruned)
+                    } else {
+                        String::new()
+                    }
+                ));
+                mark_ok(&pool, &volume.id).await;
+            }
+            Err(e) => {
+                // Record and keep going: one failing drive must not stop the
+                // others, and the error has to outlive this terminal session
+                // to be worth anything.
+                mark_error(&pool, &volume.id, &format!("{e}")).await;
+                super::ui::warn(&format!("{}: {e}", volume.name));
+            }
+        }
+    }
+    if !any {
+        super::ui::warn("no volume was written to — nothing is backed up off this box");
+    }
+    Ok(())
+}
+
+async fn mark_ok(pool: &PgPool, id: &str) {
+    let _ = sqlx::query(
+        "UPDATE storage_volume SET last_ok_at = NOW(), last_error = NULL, \
+         last_error_at = NULL, updated_at = NOW() WHERE id = $1",
+    )
+    .bind(id)
+    .execute(pool)
+    .await;
+}
+
+async fn mark_error(pool: &PgPool, id: &str, err: &str) {
+    let _ = sqlx::query(
+        "UPDATE storage_volume SET last_error = $2, last_error_at = NOW(), \
+         updated_at = NOW() WHERE id = $1",
+    )
+    .bind(id)
+    .bind(err)
+    .execute(pool)
+    .await;
 }

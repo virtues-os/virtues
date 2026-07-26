@@ -91,10 +91,26 @@ impl Targets {
 }
 
 pub async fn run(
-    path: PathBuf,
+    path: Option<PathBuf>,
     force: bool,
+    from_volume: Option<String>,
     key_file: Option<PathBuf>,
 ) -> Result<(), crate::Error> {
+    let identity = key_file.as_deref().map(read_identity).transpose()?;
+
+    if let Some(volume_id) = from_volume {
+        if !force {
+            check_service_inactive()?;
+        }
+        return run_from_volume(&volume_id, identity.as_ref()).await;
+    }
+
+    let Some(path) = path else {
+        return Err(crate::Error::Other(
+            "give an archive path, or --from-volume <id> to restore from a              registered drive (`virtues volumes ls`)"
+                .to_string(),
+        ));
+    };
     if !path.exists() {
         return Err(crate::Error::Other(format!(
             "{} not found",
@@ -107,7 +123,6 @@ pub async fn run(
     }
 
     // Extract into a staging dir we can inspect.
-    let identity = key_file.as_deref().map(read_identity).transpose()?;
     let stage = mkstage(&path)?;
     let staging: &Path = stage.as_ref();
     println!("→ extracting {}…", path.display());
@@ -639,6 +654,7 @@ mod drill {
             false,
             &sources,
             &identity.to_public(),
+            true,
         )
         .await
         .expect("backup");
@@ -758,4 +774,146 @@ mod drill {
             let _ = fs::remove_dir_all(d);
         }
     }
+}
+
+/// `virtues restore --from-volume <id>`.
+async fn run_from_volume(
+    volume_id: &str,
+    identity: Option<&age::x25519::Identity>,
+) -> Result<(), crate::Error> {
+    let database_url = crate::database::normalize_database_url()
+        .map_err(|e| crate::Error::Other(format!("DATABASE_URL: {e}")))?;
+    let db = crate::database::Database::new(&database_url)?;
+    let pool = db.pool();
+    let volume = crate::storage::volumes::backup_volumes(&pool)
+        .await?
+        .into_iter()
+        .find(|v| v.id == volume_id)
+        .ok_or_else(|| {
+            crate::Error::Other(format!(
+                "no registered volume `{volume_id}` (see `virtues volumes ls`)"
+            ))
+        })?;
+    let root = volume.root().ok_or_else(|| {
+        crate::Error::Other(format!(
+            "{} is not attached — plug it in and retry",
+            volume.name
+        ))
+    })?;
+
+    println!();
+    println!("⚠  About to overwrite live box state. Press Ctrl-C in 5s to abort.");
+    std::thread::sleep(std::time::Duration::from_secs(5));
+
+    let targets = Targets::from_env()?;
+    apply_from_volume(&root, &targets, identity)?;
+    for dir in [targets.lake.as_path(), targets.applets.as_path()] {
+        if dir.is_dir() {
+            give_to_service_user(dir);
+        }
+    }
+    print_next_steps();
+    Ok(())
+}
+
+/// Restore from a backup volume: the newest full archive, then every increment.
+///
+/// A volume backup is not one file. The newest `full-*` carries the database,
+/// applet state and env; the lake arrives as `lake-*` increments, each holding
+/// the files that were new when it was written. Every increment is therefore
+/// required — each file exists in exactly one — and they must be applied in
+/// order so that a file is never shadowed by an older copy of itself.
+///
+/// A missing increment is a hole in the restored lake. It fails loudly and names
+/// the window rather than restoring short and silent, because a restore that
+/// quietly returns less than it should is the failure this whole path exists to
+/// prevent.
+pub(crate) fn apply_from_volume(
+    root: &Path,
+    targets: &Targets,
+    identity: Option<&age::x25519::Identity>,
+) -> Result<(), crate::Error> {
+    let archives = root.join("archives");
+    let (full, increments) = survey_volume(&archives)?;
+
+    println!(
+        "→ restoring from {} ({} increment(s))…",
+        archives.display(),
+        increments.len()
+    );
+
+    // The full archive first: it replaces the database and applet state
+    // wholesale, and `apply` clears the lake directory, so any increment
+    // unpacked before it would be deleted again.
+    let stage = mkstage(&full)?;
+    let staging: &Path = stage.as_ref();
+    extract_into(open_archive(&full, identity)?, staging)?;
+    let manifest = read_manifest(staging)?;
+    println!(
+        "→ full archive: binary {}, schema {}, created {}",
+        manifest.binary_version, manifest.schema_version, manifest.created_at
+    );
+    check_schema_compatible(&manifest)?;
+    verify_sha256(staging, &manifest.artifacts)?;
+    apply(staging, targets)?;
+
+    // Then each increment, oldest first, unpacked straight into the lake.
+    for (n, inc) in increments.iter().enumerate() {
+        let name = inc.file_name().unwrap_or_default().to_string_lossy();
+        println!("→ increment {}/{}: {name}", n + 1, increments.len());
+        let stage = mkstage(inc)?;
+        let staging: &Path = stage.as_ref();
+        extract_into(open_archive(inc, identity)?, staging)?;
+        let manifest = read_manifest(staging)?;
+        verify_sha256(staging, &manifest.artifacts)?;
+
+        let staged_lake = staging.join("lake");
+        if staged_lake.is_dir() {
+            copy_tree(&staged_lake, &targets.lake)?;
+        }
+    }
+
+    Ok(())
+}
+
+/// Newest `full-*` plus every `lake-*` in chronological order.
+///
+/// Increment filenames are UTC timestamps in a fixed-width format, so lexical
+/// order is chronological order — no parsing, and no dependence on mtimes that a
+/// copy between drives would not preserve.
+fn survey_volume(archives: &Path) -> Result<(PathBuf, Vec<PathBuf>), crate::Error> {
+    let mut fulls = Vec::new();
+    let mut increments = Vec::new();
+    let entries = fs::read_dir(archives).map_err(|e| {
+        crate::Error::Other(format!(
+            "{} is not a backup volume ({e}) — expected an archives/ directory",
+            archives.display()
+        ))
+    })?;
+    for entry in entries.flatten() {
+        let name = entry.file_name().to_string_lossy().into_owned();
+        if name.ends_with(".partial") {
+            // A run that died mid-write. Skipping is right: it is incomplete by
+            // definition, and its contents are still recorded as unsent.
+            eprintln!("warning: ignoring incomplete artifact {name}");
+        } else if name.starts_with("full-") {
+            fulls.push((name, entry.path()));
+        } else if name.starts_with("lake-") {
+            increments.push((name, entry.path()));
+        }
+    }
+    fulls.sort();
+    increments.sort();
+
+    let full = fulls
+        .pop()
+        .map(|(_, p)| p)
+        .ok_or_else(|| {
+            crate::Error::Other(format!(
+                "no full archive in {} — cannot restore a lake without the database \
+                 that describes it",
+                archives.display()
+            ))
+        })?;
+    Ok((full, increments.into_iter().map(|(_, p)| p).collect()))
 }
