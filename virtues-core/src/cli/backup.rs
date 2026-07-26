@@ -13,7 +13,7 @@
 //! verifies the manifest before touching anything live.
 
 use std::fs::{self, File};
-use std::io::Write;
+use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
@@ -166,83 +166,54 @@ pub(crate) async fn write_archive(
         )));
     }
 
-    // Stage into a temp directory we can inspect + checksum before tarring.
-    // Live writes happen inside this dir; nothing touches the final path
-    // until the tar is closed cleanly.
+    // Only the database dump is materialized, because it is the one member with
+    // no original on disk. Everything else streams from where it already lives.
+    //
+    // The old path staged a full COPY of the lake beside the output before
+    // tarring it, so a backup needed twice the lake's size in free space and
+    // wrote every byte twice — on the box least able to afford either. The
+    // staging dir is now bounded by the database, not by the archive.
     let staging = tempfile_dir(&out_path)?;
-    let staging_path = staging.path();
-    fs::create_dir_all(staging_path.join("db"))
-        .and_then(|_| fs::create_dir_all(staging_path.join("env")))
-        .and_then(|_| fs::create_dir_all(staging_path.join("lake")))
-        .and_then(|_| fs::create_dir_all(staging_path.join("applets")))
-        .map_err(|e| crate::Error::Other(format!("staging dirs: {e}")))?;
+    let dump = staging.path().join("virtues.dump");
 
     println!("→ pg_dump (full database)…");
-    pg_dump_into(
-        staging_path.join("db/virtues.dump").as_path(),
-        &sources.database_url,
-    )?;
+    pg_dump_into(&dump, &sources.database_url)?;
 
-    if let Some(env_file) = &sources.env_file {
-        println!("→ copying {}…", env_file.display());
-        fs::copy(env_file, staging_path.join("env/virtues.env"))
-            .map_err(|e| crate::Error::Other(format!("copying env: {e}")))?;
-    } else {
-        println!("→ no env file found — continuing without the encryption key");
+    let mut members: Vec<(PathBuf, String)> = vec![(dump, "db/virtues.dump".to_string())];
+    match &sources.env_file {
+        Some(env_file) => members.push((env_file.clone(), "env/virtues.env".to_string())),
+        None => println!("→ no env file found — continuing without the encryption key"),
     }
-
-    // Resolved, never hardcoded. A backup that copied a fixed path while the box
+    // Resolved, never hardcoded. A backup that read a fixed path while the box
     // wrote somewhere else would succeed, report success, and contain no lake at
     // all — the failure only surfacing at restore, when it is far too late.
-    println!("→ copying data lake at {}…", sources.lake.display());
-    if sources.lake.exists() {
-        copy_tree_recursive(&sources.lake, &staging_path.join("lake"))?;
-    }
+    println!("→ scanning data lake at {}…", sources.lake.display());
+    collect_files(&sources.lake, "lake", &mut members)?;
 
     // Authored applets are user data with no other copy: the manifest, the
     // schema DDL, and the face HTML the model wrote. The DB row and the
     // applet's Postgres schema survive on their own, but these files don't —
     // losing them leaves exactly the half-state of a row with no folder.
     println!(
-        "→ copying authored applets at {}…",
+        "→ scanning authored applets at {}…",
         sources.applets.display()
     );
-    if sources.applets.is_dir() {
-        copy_tree_recursive(&sources.applets, &staging_path.join("applets"))?;
-    }
+    collect_files(&sources.applets, "applets", &mut members)?;
 
-    println!("→ building manifest…");
     let schema_version = current_schema_version(pool).await?;
-    let mut artifacts = vec![];
-    for rel in [
-        "db/virtues.dump",
-        "env/virtues.env",
-    ] {
-        let abs = staging_path.join(rel);
-        if abs.exists() {
-            artifacts.push(artifact_for(&abs, rel)?);
-        }
-    }
-    // Lake is many files; record one entry per file so restore can verify
-    // each one individually. Skip if the lake is empty.
-    walk_for_artifacts(staging_path.join("lake").as_path(), "lake", &mut artifacts)?;
-    walk_for_artifacts(staging_path.join("applets").as_path(), "applets", &mut artifacts)?;
-
-    let manifest = Manifest {
-        manifest_version: MANIFEST_VERSION,
-        binary_version: env!("CARGO_PKG_VERSION").to_string(),
-        schema_version,
-        created_at: now.to_rfc3339(),
-        distro: read_distro(),
-        artifacts,
-    };
-    let manifest_json = serde_json::to_vec_pretty(&manifest)
-        .map_err(|e| crate::Error::Other(format!("encode manifest: {e}")))?;
-    fs::write(staging_path.join("manifest.json"), &manifest_json)
-        .map_err(|e| crate::Error::Other(format!("write manifest: {e}")))?;
-
-    println!("→ writing tarball at {}…", out_path.display());
-    create_tarball(staging_path, &out_path)?;
+    println!(
+        "→ writing {} member(s) to {}…",
+        members.len(),
+        out_path.display()
+    );
+    stream_archive(
+        &members,
+        ManifestMeta {
+            schema_version,
+            created_at: now.to_rfc3339(),
+        },
+        &out_path,
+    )?;
 
     let size = fs::metadata(&out_path)
         .map(|m| m.len())
@@ -311,75 +282,158 @@ fn read_distro() -> Option<String> {
     }
 }
 
-fn artifact_for(abs: &Path, rel: &str) -> Result<Artifact, crate::Error> {
-    let bytes = fs::read(abs)
-        .map_err(|e| crate::Error::Other(format!("reading {}: {e}", abs.display())))?;
-    let size_bytes = bytes.len() as u64;
-    let mut h = Sha256::new();
-    h.update(&bytes);
-    let sha256 = format!("{:x}", h.finalize());
-    Ok(Artifact {
-        path: rel.to_string(),
-        size_bytes,
-        sha256,
-    })
-}
-
-fn walk_for_artifacts(
-    abs: &Path,
+/// Walk `root`, recording every file as `(absolute, archive-relative)`.
+///
+/// Records paths only — nothing is read here. An absent root is not an error:
+/// a box that has never ingested has no lake, and that is a legitimate backup.
+fn collect_files(
+    root: &Path,
     rel_prefix: &str,
-    out: &mut Vec<Artifact>,
+    out: &mut Vec<(PathBuf, String)>,
 ) -> Result<(), crate::Error> {
-    if !abs.exists() {
+    if !root.is_dir() {
         return Ok(());
     }
-    let read = fs::read_dir(abs)
-        .map_err(|e| crate::Error::Other(format!("read {}: {e}", abs.display())))?;
+    let read =
+        fs::read_dir(root).map_err(|e| crate::Error::Other(format!("read {}: {e}", root.display())))?;
     for entry in read {
-        let entry =
-            entry.map_err(|e| crate::Error::Other(format!("dir entry: {e}")))?;
-        let path = entry.path();
-        let name = entry.file_name();
-        let name = name.to_string_lossy();
-        let rel = format!("{rel_prefix}/{name}");
-        if path.is_dir() {
-            walk_for_artifacts(&path, &rel, out)?;
-        } else {
-            out.push(artifact_for(&path, &rel)?);
-        }
-    }
-    Ok(())
-}
-
-fn copy_tree_recursive(src: &Path, dst: &Path) -> Result<(), crate::Error> {
-    fs::create_dir_all(dst)
-        .map_err(|e| crate::Error::Other(format!("mkdir {}: {e}", dst.display())))?;
-    for entry in fs::read_dir(src)
-        .map_err(|e| crate::Error::Other(format!("read {}: {e}", src.display())))?
-    {
         let entry = entry.map_err(|e| crate::Error::Other(format!("dir entry: {e}")))?;
         let path = entry.path();
-        let dest = dst.join(entry.file_name());
+        let name = entry.file_name();
+        let rel = format!("{rel_prefix}/{}", name.to_string_lossy());
         if path.is_dir() {
-            copy_tree_recursive(&path, &dest)?;
+            collect_files(&path, &rel, out)?;
         } else {
-            fs::copy(&path, &dest)
-                .map_err(|e| crate::Error::Other(format!("copy {}: {e}", path.display())))?;
+            out.push((path, rel));
         }
     }
     Ok(())
 }
 
-fn create_tarball(staging: &Path, out: &Path) -> Result<(), crate::Error> {
+/// The manifest fields that are not derived from the members themselves.
+struct ManifestMeta {
+    schema_version: String,
+    created_at: String,
+}
+
+/// A reader that digests and counts what passes through it.
+///
+/// The point is that a member's sha256 costs no extra read: the bytes are
+/// already streaming into the tar, so they are hashed on the way. Previously
+/// each artifact was `fs::read` into memory in full purely to hash it — the
+/// database dump included.
+struct HashingReader<R> {
+    inner: R,
+    hasher: Sha256,
+    len: u64,
+}
+
+impl<R: Read> HashingReader<R> {
+    fn new(inner: R) -> Self {
+        Self {
+            inner,
+            hasher: Sha256::new(),
+            len: 0,
+        }
+    }
+}
+
+impl<R: Read> Read for HashingReader<R> {
+    fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+        let n = self.inner.read(buf)?;
+        self.hasher.update(&buf[..n]);
+        self.len += n as u64;
+        Ok(n)
+    }
+}
+
+/// Stream every member into a gzipped tar, digesting as we go, and close with
+/// the manifest.
+///
+/// **The manifest is written last, and that is load-bearing.** It names the
+/// digest of every other member, which is only known once those bytes have been
+/// read — so writing it first is what forced the old staging copy to exist. Tar
+/// is a sequential format with no central directory, so member order is free;
+/// restore extracts the whole archive before reading the manifest and does not
+/// care where in the stream it appeared. Archives written by the previous
+/// implementation, with the manifest first, still restore unchanged.
+fn stream_archive(
+    members: &[(PathBuf, String)],
+    meta: ManifestMeta,
+    out: &Path,
+) -> Result<(), crate::Error> {
     let tmp = out.with_extension("tar.gz.partial");
     {
         let file = File::create(&tmp)
             .map_err(|e| crate::Error::Other(format!("create {}: {e}", tmp.display())))?;
         let gz = GzEncoder::new(file, Compression::default());
         let mut builder = tar::Builder::new(gz);
+        let mut artifacts = Vec::with_capacity(members.len());
+
+        for (src, rel) in members {
+            // Open first, then size the OPEN handle. Sizing the path and then
+            // opening it leaves a window in which the file changes, and tar
+            // writes a header declaring a length it then cannot fill.
+            let f = match File::open(src) {
+                Ok(f) => f,
+                // The lake is live. A file that vanished between the walk and
+                // here was never part of this backup; recording it in the
+                // manifest would make restore fail a digest check for a file
+                // that legitimately does not exist.
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+                    eprintln!("warning: {} disappeared during backup — skipped", src.display());
+                    continue;
+                }
+                Err(e) => {
+                    return Err(crate::Error::Other(format!("open {}: {e}", src.display())))
+                }
+            };
+            let size = f
+                .metadata()
+                .map_err(|e| crate::Error::Other(format!("stat {}: {e}", src.display())))?
+                .len();
+
+            let mut header = tar::Header::new_gnu();
+            header.set_size(size);
+            header.set_mode(0o600);
+            header.set_cksum();
+            let mut reader = HashingReader::new(f);
+            builder
+                .append_data(&mut header, rel, &mut reader)
+                .map_err(|e| crate::Error::Other(format!("archiving {rel}: {e}")))?;
+
+            if reader.len != size {
+                return Err(crate::Error::Other(format!(
+                    "{} changed size while being archived ({size} → {}); backup aborted",
+                    src.display(),
+                    reader.len
+                )));
+            }
+            artifacts.push(Artifact {
+                path: rel.clone(),
+                size_bytes: reader.len,
+                sha256: format!("{:x}", reader.hasher.finalize()),
+            });
+        }
+
+        let manifest = Manifest {
+            manifest_version: MANIFEST_VERSION,
+            binary_version: env!("CARGO_PKG_VERSION").to_string(),
+            schema_version: meta.schema_version,
+            created_at: meta.created_at,
+            distro: read_distro(),
+            artifacts,
+        };
+        let json = serde_json::to_vec_pretty(&manifest)
+            .map_err(|e| crate::Error::Other(format!("encode manifest: {e}")))?;
+        let mut header = tar::Header::new_gnu();
+        header.set_size(json.len() as u64);
+        header.set_mode(0o600);
+        header.set_cksum();
         builder
-            .append_dir_all(".", staging)
-            .map_err(|e| crate::Error::Other(format!("tar append: {e}")))?;
+            .append_data(&mut header, "manifest.json", json.as_slice())
+            .map_err(|e| crate::Error::Other(format!("archiving manifest: {e}")))?;
+
         let mut gz = builder
             .into_inner()
             .map_err(|e| crate::Error::Other(format!("tar finalize: {e}")))?;

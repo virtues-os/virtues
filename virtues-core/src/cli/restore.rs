@@ -285,19 +285,31 @@ fn verify_sha256(staging: &Path, artifacts: &[Artifact]) -> Result<(), crate::Er
     println!("→ verifying sha256 of {} artifact(s)…", artifacts.len());
     for art in artifacts {
         let abs = staging.join(&art.path);
-        let bytes = fs::read(&abs).map_err(|e| {
-            crate::Error::Other(format!("read artifact {}: {e}", art.path))
-        })?;
-        if bytes.len() as u64 != art.size_bytes {
+        // Streamed, not slurped. Verification runs over every artifact in the
+        // archive — the database dump included — and reading each one into
+        // memory in full to hash it put the peak footprint of a *restore* at the
+        // size of its largest member.
+        let mut f = File::open(&abs)
+            .map_err(|e| crate::Error::Other(format!("read artifact {}: {e}", art.path)))?;
+        let mut h = Sha256::new();
+        let mut buf = vec![0u8; 64 * 1024];
+        let mut len: u64 = 0;
+        loop {
+            let n = f
+                .read(&mut buf)
+                .map_err(|e| crate::Error::Other(format!("read artifact {}: {e}", art.path)))?;
+            if n == 0 {
+                break;
+            }
+            h.update(&buf[..n]);
+            len += n as u64;
+        }
+        if len != art.size_bytes {
             return Err(crate::Error::Other(format!(
-                "{} size mismatch (manifest {}, actual {})",
-                art.path,
-                art.size_bytes,
-                bytes.len()
+                "{} size mismatch (manifest {}, actual {len})",
+                art.path, art.size_bytes,
             )));
         }
-        let mut h = Sha256::new();
-        h.update(&bytes);
         let got = format!("{:x}", h.finalize());
         if got != art.sha256 {
             return Err(crate::Error::Other(format!(
@@ -501,6 +513,17 @@ mod drill {
         // `streams/` is also what `assert_replaceable_lake` looks for, so this
         // doubles as coverage that a real lake passes the guard.
         write(&lake.join("streams/ios/records_deadbeef.jsonl"), "{\"v\":1}\n");
+        // Deep nesting matters: the archive no longer carries directory
+        // entries, only files, so every intermediate directory has to be
+        // reconstructed from the member path on extract.
+        write(
+            &lake.join("streams/ios/date=2026-07-25/nested/deep.jsonl"),
+            "{\"deep\":true}\n",
+        );
+        // Binary, and containing bytes that a text-mode path would mangle.
+        let blob: Vec<u8> = (0u8..=255).collect();
+        fs::create_dir_all(lake.join("media/ios")).unwrap();
+        fs::write(lake.join("media/ios/clip.bin"), &blob).unwrap();
         write(&applets.join("user/drill/manifest.json"), "{\"name\":\"drill\"}");
         write(&env_file, "VIRTUES_ENCRYPTION_KEY=drill-key\n");
         sqlx::query(
@@ -569,6 +592,17 @@ mod drill {
             fs::read_to_string(lake.join("streams/ios/records_deadbeef.jsonl")).unwrap(),
             "{\"v\":1}\n",
             "lake bytes differ after restore"
+        );
+        assert_eq!(
+            fs::read_to_string(lake.join("streams/ios/date=2026-07-25/nested/deep.jsonl")).unwrap(),
+            "{\"deep\":true}\n",
+            "a deeply nested lake file did not survive — intermediate directories \
+             are reconstructed from member paths, not from directory entries"
+        );
+        assert_eq!(
+            fs::read(lake.join("media/ios/clip.bin")).unwrap(),
+            blob,
+            "binary lake content differs after restore"
         );
         assert_eq!(
             fs::read_to_string(applets.join("user/drill/manifest.json")).unwrap(),
