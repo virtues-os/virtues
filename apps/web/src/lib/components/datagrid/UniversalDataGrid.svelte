@@ -1136,7 +1136,7 @@
 
 	/* Expand detail row */
 	.data-row.expanded td {
-		background: var(--color-background-hover, #f9fafb);
+		background: var(--color-background-hover);
 	}
 	.expand-row td {
 		padding: 0;

@@ -138,7 +138,7 @@
 		padding: 0.3125rem 0.375rem;
 	}
 	.pin-row:hover {
-		background: var(--color-background-hover, #f3f4f6);
+		background: var(--color-background-hover);
 	}
 	.pin-label {
 		flex: 1;
