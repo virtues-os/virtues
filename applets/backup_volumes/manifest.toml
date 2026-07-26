@@ -1,0 +1,7 @@
+name = "Backup to Volumes"
+description = "Ships a full archive plus a lake increment to every attached backup volume. A volume that is not plugged in is skipped, not an error."
+owner = "system"
+runtime = "function"
+command = ["backup_volumes"]
+triggers = ["cron", "manual"]
+default_cron = "0 0 4 * * *"

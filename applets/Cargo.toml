@@ -17,6 +17,10 @@ path = "src/lib.rs"
 # fans it to the right ontology table; see ios_ingest/main.rs.
 
 [[bin]]
+name = "backup_volumes"
+path = "backup_volumes/main.rs"
+
+[[bin]]
 name = "ios_ingest"
 path = "ios_ingest/main.rs"
 
