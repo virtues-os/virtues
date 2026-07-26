@@ -899,9 +899,15 @@ pub(crate) fn apply_from_volume(
         increments.len()
     );
 
+    // Guard first, before anything destructive runs. A volume `full-*` carries
+    // no `lake/` member (the lake arrives as increments), so `apply` never
+    // reaches its own clearing branch and never runs this check — the volume
+    // path has to do it itself.
+    assert_replaceable_lake(&targets.lake)?;
+
     // The full archive first: it replaces the database and applet state
-    // wholesale, and `apply` clears the lake directory, so any increment
-    // unpacked before it would be deleted again.
+    // wholesale, so increments unpacked before it would survive into a restore
+    // whose database does not describe them.
     let stage = mkstage(&full)?;
     let staging: &Path = stage.as_ref();
     extract_into(open_archive(&full, identity)?, staging)?;
@@ -913,6 +919,16 @@ pub(crate) fn apply_from_volume(
     check_schema_compatible(&manifest)?;
     verify_sha256(staging, &manifest.artifacts)?;
     apply(staging, targets)?;
+
+    // Clear the lake explicitly. `apply` only does this when the archive it was
+    // given contains a `lake/` member, which a volume full never does — so
+    // without this a restore would MERGE the archived lake into whatever was
+    // already on the box. Files belonging to no archive would survive, be
+    // indistinguishable from restored ones, and quietly make the result
+    // something other than the state that was backed up.
+    let _ = fs::remove_dir_all(&targets.lake);
+    fs::create_dir_all(&targets.lake)
+        .map_err(|e| crate::Error::Other(format!("create lake dir: {e}")))?;
 
     // Then each increment, oldest first, unpacked straight into the lake.
     for (n, inc) in increments.iter().enumerate() {

@@ -30,6 +30,7 @@ use crate::storage::volumes::Volume;
 /// increments, and those are irreplaceable.
 const MIN_FREE_BYTES: u64 = 1024 * 1024 * 1024;
 
+#[derive(Debug)]
 pub(crate) struct VolumeBackup {
     pub full: PathBuf,
     pub increment: Option<PathBuf>,
@@ -75,16 +76,33 @@ pub(crate) async fn run_at(
     let archives = root.join("archives");
     std::fs::create_dir_all(&archives)
         .map_err(|e| crate::Error::Other(format!("create {}: {e}", archives.display())))?;
+    verify_volume_marker(pool, volume, root).await?;
 
     reconcile(pool, volume, &archives).await?;
 
     let stamp = now.format("%Y%m%dT%H%M%SZ").to_string();
-
-    // The lake increment first: it is the artifact that cannot be recreated, so
-    // if space runs out it should be the one that already landed.
     let pending = pending_files(pool, volume, &sources.lake).await?;
     let new_bytes: u64 = pending.iter().map(|(_, _, size)| size).sum();
-    ensure_room(&archives, new_bytes)?;
+
+    // Prune BEFORE writing, not after. Pruning afterwards can never free space
+    // for the write that needed it: a run that fails with ENOSPC returns early
+    // and never reaches the cleanup that would have made room, so the next run
+    // hits the same wall. Safe to do first because `prune_full_archives` always
+    // keeps the newest, so the previous good full survives until the new one
+    // lands.
+    let pruned = prune_full_archives(&archives)?;
+
+    // Budget BOTH artifacts. Counting only the lake increment left the full
+    // archive — which carries the entire pg_dump — completely unaccounted, so
+    // the guard would wave through a run that then filled the volume.
+    ensure_room(&archives, new_bytes + estimate_full_bytes(pool, sources).await)?;
+
+    // The full archive FIRST. It is what makes a restore possible at all: an
+    // increment without one is unusable, since nothing describes the lake it
+    // holds. Writing it first means a failure here leaves the volume exactly as
+    // it was rather than holding lake data that cannot be restored.
+    let full = archives.join(format!("full-{stamp}.tar.gz.age"));
+    backup::write_archive_to(pool, &full, sources, recipient).await?;
 
     let mut increment = None;
     if !pending.is_empty() {
@@ -94,17 +112,18 @@ pub(crate) async fn run_at(
             .iter()
             .map(|(abs, rel, _)| (abs.clone(), rel.clone()))
             .collect();
-        backup::write_members(&members, &dest, recipient, &format!("lake increment {stamp}"))?;
-        record_increment(pool, volume, &name, &pending).await?;
+        // Record what the writer ACTUALLY archived. Files that vanish mid-run
+        // are skipped by `stream_archive`; recording the planned list instead
+        // would mark them shipped forever and they would never be re-sent.
+        let written = backup::write_members(
+            &members,
+            &dest,
+            recipient,
+            &format!("lake increment {stamp}"),
+        )?;
+        record_increment(pool, volume, &name, &pending, &written).await?;
         increment = Some(dest);
     }
-
-    // Then the full artifact. Cheap relative to the lake and complete every
-    // time, so a restore only ever needs the newest one plus every increment.
-    let full = archives.join(format!("full-{stamp}.tar.gz.age"));
-    backup::write_archive_to(pool, &full, sources, recipient).await?;
-
-    let pruned = prune_full_archives(&archives)?;
 
     Ok(VolumeBackup {
         full,
@@ -184,9 +203,15 @@ async fn record_increment(
     volume: &Volume,
     increment: &str,
     files: &[(PathBuf, String, u64)],
+    written: &[String],
 ) -> Result<(), crate::Error> {
-    let rels: Vec<String> = files.iter().map(|(_, r, _)| r.clone()).collect();
-    let sizes: Vec<i64> = files.iter().map(|(_, _, s)| *s as i64).collect();
+    let written: std::collections::HashSet<&str> = written.iter().map(String::as_str).collect();
+    let kept: Vec<&(PathBuf, String, u64)> = files
+        .iter()
+        .filter(|(_, rel, _)| written.contains(rel.as_str()))
+        .collect();
+    let rels: Vec<String> = kept.iter().map(|(_, r, _)| r.clone()).collect();
+    let sizes: Vec<i64> = kept.iter().map(|(_, _, s)| *s as i64).collect();
     sqlx::query(
         "INSERT INTO backup_archived_file (volume_id, rel_path, increment, size_bytes) \
          SELECT $1, r, $3, s FROM UNNEST($2::TEXT[], $4::BIGINT[]) AS t(r, s) \
@@ -413,6 +438,130 @@ mod tests {
         let _ = std::fs::remove_dir_all(&drive);
     }
 
+    /// Regression: a volume restore must REPLACE the lake, not merge into it.
+    /// A volume `full-*` carries no lake/ member, so `apply` never reaches its
+    /// own clearing branch — the volume path has to clear it explicitly. Without
+    /// that, files belonging to no archive survived and were indistinguishable
+    /// from restored ones.
+    #[sqlx::test]
+    async fn volume_restore_replaces_the_lake_rather_than_merging(pool: sqlx::PgPool) {
+        let base = std::env::var("DATABASE_URL").expect("DATABASE_URL");
+        let db = format!(
+            "{}/{}",
+            base.split('?').next().unwrap().rsplit_once('/').unwrap().0,
+            pool.connect_options().get_database().unwrap()
+        );
+        let state = scratch("replace-state");
+        let drive = scratch("replace-drive");
+        let lake = state.join("lake");
+        let env_file = state.join("virtues.env");
+        write(&env_file, "K=1\n");
+        write(&lake.join("streams/archived.jsonl"), "archived");
+
+        let sources = Sources {
+            database_url: db.clone(),
+            lake: lake.clone(),
+            applets: state.join("applets"),
+            env_file: Some(env_file.clone()),
+        };
+        let identity = age::x25519::Identity::generate();
+        let volume = seed_volume(&pool, "vol_replace").await;
+        let t0 = chrono::DateTime::parse_from_rfc3339("2026-07-25T03:00:00Z")
+            .unwrap()
+            .with_timezone(&chrono::Utc);
+        run_at(&pool, &volume, &drive, &sources, &identity.to_public(), t0)
+            .await
+            .unwrap();
+
+        // Present on the box, in no archive on the drive.
+        write(&lake.join("streams/never_archived.jsonl"), "stale");
+
+        crate::cli::restore::apply_from_volume(
+            &drive,
+            &crate::cli::restore::Targets {
+                database_url: db,
+                lake: lake.clone(),
+                applets: state.join("applets"),
+                env_file,
+            },
+            Some(&identity),
+        )
+        .unwrap();
+
+        assert!(
+            lake.join("streams/archived.jsonl").exists(),
+            "the archived file did not come back"
+        );
+        assert!(
+            !lake.join("streams/never_archived.jsonl").exists(),
+            "restore merged: a file belonging to no archive survived"
+        );
+        let _ = std::fs::remove_dir_all(&state);
+        let _ = std::fs::remove_dir_all(&drive);
+    }
+
+    /// Regression: resolution happens once, up front. If the drive is pulled
+    /// before the write, the mount point is still a directory on the ROOT
+    /// filesystem — so the run would recreate the tree there, conclude every
+    /// increment had vanished, and write the whole lake onto the box's own disk.
+    #[sqlx::test]
+    async fn a_vanished_drive_is_refused_not_written_to_the_root_filesystem(
+        pool: sqlx::PgPool,
+    ) {
+        let base = std::env::var("DATABASE_URL").expect("DATABASE_URL");
+        let db = format!(
+            "{}/{}",
+            base.split('?').next().unwrap().rsplit_once('/').unwrap().0,
+            pool.connect_options().get_database().unwrap()
+        );
+        let state = scratch("marker-state");
+        let drive = scratch("marker-drive");
+        let lake = state.join("lake");
+        let env_file = state.join("virtues.env");
+        write(&env_file, "K=1\n");
+        write(&lake.join("streams/a.jsonl"), "a");
+
+        let sources = Sources {
+            database_url: db,
+            lake: lake.clone(),
+            applets: state.join("applets"),
+            env_file: Some(env_file),
+        };
+        let identity = age::x25519::Identity::generate();
+        let volume = seed_volume(&pool, "vol_marker").await;
+        let t0 = chrono::DateTime::parse_from_rfc3339("2026-07-25T03:00:00Z")
+            .unwrap()
+            .with_timezone(&chrono::Utc);
+        run_at(&pool, &volume, &drive, &sources, &identity.to_public(), t0)
+            .await
+            .expect("first backup");
+        assert!(drive.join(MARKER).exists(), "no marker written on first use");
+
+        // The drive is gone; what remains is a bare mount point.
+        std::fs::remove_dir_all(&drive).unwrap();
+        std::fs::create_dir_all(&drive).unwrap();
+
+        let err = run_at(
+            &pool,
+            &volume,
+            &drive,
+            &sources,
+            &identity.to_public(),
+            t0 + chrono::Duration::days(1),
+        )
+        .await
+        .expect_err("writing to a vanished drive must be refused");
+        assert!(
+            format!("{err}").contains("probably not mounted"),
+            "unexpected error: {err}"
+        );
+        // And nothing was written to the bare directory.
+        assert!(!drive.join("archives").join("full-20260726T030000Z.tar.gz.age").exists());
+
+        let _ = std::fs::remove_dir_all(&state);
+        let _ = std::fs::remove_dir_all(&drive);
+    }
+
     #[sqlx::test]
     async fn a_volume_with_no_full_archive_refuses_rather_than_half_restores(
         _pool: sqlx::PgPool,
@@ -469,6 +618,13 @@ pub async fn run_cli(
         match run(&pool, volume, &sources, &recipient, now).await {
             Ok(None) => {
                 super::ui::warn(&format!("{} is not attached — skipped", volume.name));
+                // Clear any error from a previous run. "Not attached" is the
+                // current truth; leaving a stale error in place pinned the UI to
+                // `failing` (which derive_state ranks above everything) for as
+                // long as the drive stayed unplugged, and made the nightly
+                // applet exit non-zero forever. Staleness is already carried
+                // honestly by the backup's age.
+                mark_detached(&pool, &volume.id).await;
             }
             Ok(Some(r)) => {
                 any = true;
@@ -510,6 +666,16 @@ async fn mark_ok(pool: &PgPool, id: &str) {
     .await;
 }
 
+async fn mark_detached(pool: &PgPool, id: &str) {
+    let _ = sqlx::query(
+        "UPDATE storage_volume SET state = 'absent', last_error = NULL, \
+         last_error_at = NULL, updated_at = NOW() WHERE id = $1",
+    )
+    .bind(id)
+    .execute(pool)
+    .await;
+}
+
 async fn mark_error(pool: &PgPool, id: &str, err: &str) {
     let _ = sqlx::query(
         "UPDATE storage_volume SET last_error = $2, last_error_at = NOW(), \
@@ -519,4 +685,89 @@ async fn mark_error(pool: &PgPool, id: &str, err: &str) {
     .bind(err)
     .execute(pool)
     .await;
+}
+
+/// Marker file proving this directory is the volume we think it is.
+const MARKER: &str = ".virtues-volume";
+
+/// Refuse to write unless the drive is still the one that was resolved.
+///
+/// Resolution happens once, up front, via `/proc/self/mountinfo`. If the drive
+/// is pulled between then and the write, the mount point remains as an ordinary
+/// directory on the ROOT filesystem — so `create_dir_all` cheerfully recreates
+/// the tree there, `read_dir` reports it empty, reconciliation concludes every
+/// increment is gone, and the run proceeds to write the entire lake onto the
+/// box's own disk. On a box whose lake is most of its storage, that fills the
+/// disk that Postgres and every collector depend on.
+///
+/// A marker written on first use closes it: if this box has ever backed up here
+/// the marker must be present, and its absence means the directory is not the
+/// volume — whatever else it may be.
+async fn verify_volume_marker(
+    pool: &PgPool,
+    volume: &Volume,
+    root: &Path,
+) -> Result<(), crate::Error> {
+    let marker = root.join(MARKER);
+    match std::fs::read_to_string(&marker) {
+        Ok(found) if found.trim() == volume.fs_uuid => return Ok(()),
+        Ok(found) => {
+            return Err(crate::Error::Other(format!(
+                "{} belongs to volume {} , not {}. Refusing to write: this is \
+                 not the drive that was registered.",
+                root.display(),
+                found.trim(),
+                volume.fs_uuid
+            )))
+        }
+        Err(_) => {}
+    }
+
+    // No marker. Either this is genuinely the first backup, or the drive is not
+    // mounted and we are looking at a bare mount point.
+    let shipped: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM backup_archived_file WHERE volume_id = $1",
+    )
+    .bind(&volume.id)
+    .fetch_one(pool)
+    .await
+    .map_err(|e| crate::Error::Database(format!("check prior backups: {e}")))?;
+
+    if shipped > 0 || volume.last_ok_at.is_some() {
+        return Err(crate::Error::Other(format!(
+            "{} has no {MARKER}, but this box has backed up to {} before. The \
+             drive is probably not mounted — writing here would fill the box's \
+             own disk instead. Check the mount and retry.",
+            root.display(),
+            volume.name
+        )));
+    }
+    std::fs::write(&marker, format!("{}\n", volume.fs_uuid))
+        .map_err(|e| crate::Error::Other(format!("write {}: {e}", marker.display())))?;
+    Ok(())
+}
+
+/// Conservative size estimate for the full archive, for the space guard.
+///
+/// `pg_database_size` plus the applet tree. Both are pre-compression figures and
+/// the archive is gzipped, so this over-estimates — which is the correct
+/// direction for a guard. Falls back to a fixed allowance rather than zero when
+/// the database cannot be measured: a guard that silently becomes a no-op is
+/// worse than one that is merely approximate.
+async fn estimate_full_bytes(pool: &PgPool, sources: &Sources) -> u64 {
+    let db: u64 = sqlx::query_scalar::<_, i64>("SELECT pg_database_size(current_database())")
+        .fetch_one(pool)
+        .await
+        .ok()
+        .and_then(|v| u64::try_from(v).ok())
+        .unwrap_or(MIN_FREE_BYTES);
+
+    let mut applets = Vec::new();
+    let _ = backup::collect_files_pub(&sources.applets, "applets", &mut applets);
+    let applet_bytes: u64 = applets
+        .iter()
+        .filter_map(|(abs, _)| std::fs::metadata(abs).ok().map(|m| m.len()))
+        .sum();
+
+    db.saturating_add(applet_bytes)
 }
