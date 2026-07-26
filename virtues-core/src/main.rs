@@ -424,8 +424,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Destructive. Refuses if the service is running (unless --force), if
     // the manifest's schema is newer than this binary's, or if any sha256
     // doesn't match. Detailed in `virtues::cli::restore`.
-    if let Some(Commands::Restore { path, force }) = &cli.command {
-        match virtues::cli::restore::run(path.clone(), *force).await {
+    if let Some(Commands::Restore {
+        path,
+        force,
+        key_file,
+    }) = &cli.command
+    {
+        match virtues::cli::restore::run(path.clone(), *force, key_file.clone()).await {
             Ok(()) => return Ok(()),
             Err(e) => {
                 eprintln!("error: restore failed: {e}");

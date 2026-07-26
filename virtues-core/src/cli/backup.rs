@@ -1,16 +1,30 @@
-//! `virtues backup` — produce a single tarball of the box state.
+//! `virtues backup` — produce a single encrypted archive of the box state.
 //!
-//! Layout inside the tarball:
+//! The archive is `tar → gzip → age`, written straight to its destination:
 //!
-//!   manifest.json
 //!   db/virtues.dump          (pg_dump --format=custom output)
-//!   env/virtues.env          (a copy of /etc/virtues/env)
-//!   lake/<file...>           (rsync-style copy of the data lake)
+//!   env/virtues.env          (holds VIRTUES_ENCRYPTION_KEY)
+//!   lake/<file...>           (the data lake)
 //!   applets/<file...>        (chat-authored applets + imported packs)
+//!   manifest.json            (LAST — see `stream_archive`)
 //!
-//! Manifest records the binary version, the schema migration version, distro
-//! info, UTC timestamp, and sha256 of every artifact. `virtues restore`
-//! verifies the manifest before touching anything live.
+//! The manifest records the binary version, the schema migration version,
+//! distro, a UTC timestamp, and the sha256 of every member. `virtues restore`
+//! verifies all of it before touching anything live.
+//!
+//! Two properties worth knowing before changing anything here:
+//!
+//! **Nothing is staged.** Members stream from where they already live, digested
+//! in flight. Only the pg_dump is materialized, because it has no original on
+//! disk. The manifest goes last precisely because it names digests that are not
+//! known until the bytes have been read — writing it first is what used to force
+//! a full copy of the lake onto the disk beside the archive.
+//!
+//! **The box cannot read what it writes.** Archives are encrypted to an age
+//! recipient whose secret half was printed once and never stored. A stolen box
+//! yields an encryption key with nothing to decrypt; a stolen drive yields
+//! ciphertext with no key. Restore therefore needs `--key-file`, and that is
+//! working as intended rather than an oversight.
 
 use std::fs::{self, File};
 use std::io::{Read, Write};
@@ -139,7 +153,8 @@ pub async fn run(
     allow_missing_key: bool,
 ) -> Result<PathBuf, crate::Error> {
     let sources = Sources::from_env(allow_missing_key)?;
-    write_archive(pool, output, force, &sources).await
+    let recipient = load_or_create_recipient()?;
+    write_archive(pool, output, force, &sources, &recipient).await
 }
 
 pub(crate) async fn write_archive(
@@ -147,6 +162,7 @@ pub(crate) async fn write_archive(
     output: Option<PathBuf>,
     force: bool,
     sources: &Sources,
+    recipient: &age::x25519::Recipient,
 ) -> Result<PathBuf, crate::Error> {
     let now = Utc::now();
     let out_path = match output {
@@ -156,7 +172,7 @@ pub(crate) async fn write_archive(
             let dir = Path::new(DEFAULT_BACKUP_DIR);
             fs::create_dir_all(dir)
                 .map_err(|e| crate::Error::Other(format!("creating backup dir: {e}")))?;
-            dir.join(format!("virtues-{stamp}.tar.gz"))
+            dir.join(format!("virtues-{stamp}.tar.gz.age"))
         }
     };
     if out_path.exists() && !force {
@@ -213,6 +229,7 @@ pub(crate) async fn write_archive(
             created_at: now.to_rfc3339(),
         },
         &out_path,
+        recipient,
     )?;
 
     let size = fs::metadata(&out_path)
@@ -280,6 +297,71 @@ fn read_distro() -> Option<String> {
         (Some(n), None) => Some(n),
         _ => None,
     }
+}
+
+/// The box's age recipient — a **public** key. The matching secret is printed
+/// once, when it is minted, and never written here.
+pub(crate) const RECIPIENT_PATH: &str = "/var/lib/virtues/backup-recipient";
+
+/// Load the recipient every backup encrypts to, minting one on first use.
+///
+/// The box stores only the public half, so **it cannot read its own backups.**
+/// That is the point, and it is what makes "virtues never holds the key" a
+/// property rather than a promise: a stolen box yields an encryption key and
+/// nothing to decrypt, a stolen drive yields ciphertext and no key.
+///
+/// It also means the recovery secret is printed exactly once. There is no way to
+/// recover it afterwards — by construction, since anywhere we could stash it for
+/// later would be somewhere an attacker with the box could read it too.
+///
+/// The file lives beside the lake rather than inside it, so it is never swept
+/// into the archive. A recovery key sealed inside the thing it unseals would be
+/// no recovery key at all.
+fn load_or_create_recipient() -> Result<age::x25519::Recipient, crate::Error> {
+    use std::str::FromStr;
+
+    if let Ok(existing) = fs::read_to_string(RECIPIENT_PATH) {
+        let existing = existing.trim();
+        if !existing.is_empty() {
+            return age::x25519::Recipient::from_str(existing).map_err(|e| {
+                crate::Error::Other(format!(
+                    "{RECIPIENT_PATH} does not contain a valid age recipient ({e}). \
+                     Refusing to back up rather than write an archive nobody can \
+                     open. Fix or remove the file — removing it mints a NEW key, \
+                     which will not open existing archives."
+                ))
+            });
+        }
+    }
+
+    let identity = age::x25519::Identity::generate();
+    let recipient = identity.to_public();
+    fs::write(RECIPIENT_PATH, format!("{recipient}\n"))
+        .map_err(|e| crate::Error::Other(format!("writing {RECIPIENT_PATH}: {e}")))?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let _ = fs::set_permissions(RECIPIENT_PATH, fs::Permissions::from_mode(0o600));
+    }
+
+    use age::secrecy::ExposeSecret;
+    println!();
+    println!("┌─ SAVE THIS — it is shown once and cannot be recovered ─────────────");
+    println!("│");
+    println!("│  Backup recovery key:");
+    println!("│");
+    println!("│    {}", identity.to_string().expose_secret());
+    println!("│");
+    println!("│  This box keeps only the public half, so it CANNOT decrypt its own");
+    println!("│  backups. If the box is lost, this key is the only way to read them.");
+    println!("│");
+    println!("│  Put it somewhere that is not this box — a password manager, or");
+    println!("│  printed and filed. Restore with:");
+    println!("│    virtues restore --key-file <file> <archive>");
+    println!("└────────────────────────────────────────────────────────────────────");
+    println!();
+
+    Ok(recipient)
 }
 
 /// Walk `root`, recording every file as `(absolute, archive-relative)`.
@@ -361,12 +443,26 @@ fn stream_archive(
     members: &[(PathBuf, String)],
     meta: ManifestMeta,
     out: &Path,
+    recipient: &age::x25519::Recipient,
 ) -> Result<(), crate::Error> {
-    let tmp = out.with_extension("tar.gz.partial");
+    // Appended, not `with_extension`, which would replace `.age` and turn
+    // `virtues-….tar.gz.age` into `virtues-….tar.gz.partial`.
+    let tmp = out.with_file_name(format!(
+        "{}.partial",
+        out.file_name().unwrap_or_default().to_string_lossy()
+    ));
     {
         let file = File::create(&tmp)
             .map_err(|e| crate::Error::Other(format!("create {}: {e}", tmp.display())))?;
-        let gz = GzEncoder::new(file, Compression::default());
+        // tar → gzip → age → disk. Compress before encrypting: ciphertext does
+        // not compress, so the other order would produce a much larger archive.
+        let encryptor =
+            age::Encryptor::with_recipients(std::iter::once(recipient as &dyn age::Recipient))
+                .map_err(|e| crate::Error::Other(format!("age encryptor: {e}")))?;
+        let sealed = encryptor
+            .wrap_output(file)
+            .map_err(|e| crate::Error::Other(format!("age wrap: {e}")))?;
+        let gz = GzEncoder::new(sealed, Compression::default());
         let mut builder = tar::Builder::new(gz);
         let mut artifacts = Vec::with_capacity(members.len());
 
@@ -439,8 +535,15 @@ fn stream_archive(
             .map_err(|e| crate::Error::Other(format!("tar finalize: {e}")))?;
         gz.flush()
             .map_err(|e| crate::Error::Other(format!("flush gz: {e}")))?;
-        gz.finish()
+        let sealed = gz
+            .finish()
             .map_err(|e| crate::Error::Other(format!("finish gz: {e}")))?;
+        // Without this the age stream's final chunk is never written and the
+        // archive decrypts to a truncated tar — a corruption that only surfaces
+        // at restore.
+        sealed
+            .finish()
+            .map_err(|e| crate::Error::Other(format!("finish age stream: {e}")))?;
     }
     // Atomic rename so a crashed backup never leaves a half-written file
     // at the final path.

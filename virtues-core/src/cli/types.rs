@@ -151,6 +151,16 @@ pub enum Commands {
         /// checks are never bypassable.
         #[arg(long)]
         force: bool,
+
+        /// File holding the age recovery key printed when this box took its
+        /// first backup.
+        ///
+        /// Required for encrypted archives. The box keeps only the public half
+        /// of that keypair, so it cannot decrypt its own backups — which is
+        /// exactly what stops a stolen box from reading them, and why this
+        /// cannot be recovered from the box if you lose it.
+        #[arg(long)]
+        key_file: Option<std::path::PathBuf>,
     },
 
     /// Remove Virtues from this machine (box installs; requires root).

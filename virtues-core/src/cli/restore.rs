@@ -11,7 +11,7 @@
 //!   3. Every artifact's sha256 must match the manifest. (Not `--force`-able.)
 
 use std::fs::{self, File};
-use std::io::Read;
+use std::io::{Read, Seek};
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
@@ -90,7 +90,11 @@ impl Targets {
     }
 }
 
-pub async fn run(path: PathBuf, force: bool) -> Result<(), crate::Error> {
+pub async fn run(
+    path: PathBuf,
+    force: bool,
+    key_file: Option<PathBuf>,
+) -> Result<(), crate::Error> {
     if !path.exists() {
         return Err(crate::Error::Other(format!(
             "{} not found",
@@ -103,10 +107,11 @@ pub async fn run(path: PathBuf, force: bool) -> Result<(), crate::Error> {
     }
 
     // Extract into a staging dir we can inspect.
+    let identity = key_file.as_deref().map(read_identity).transpose()?;
     let stage = mkstage(&path)?;
     let staging: &Path = stage.as_ref();
     println!("→ extracting {}…", path.display());
-    extract_into(&path, staging)?;
+    extract_into(open_archive(&path, identity.as_ref())?, staging)?;
 
     let manifest = read_manifest(staging)?;
     println!(
@@ -347,10 +352,92 @@ fn pg_restore(dump: &Path, database_url: &str) -> Result<(), crate::Error> {
 
 // ─── Tar extraction + copy helpers ─────────────────────────────────────────
 
-fn extract_into(archive: &Path, dest: &Path) -> Result<(), crate::Error> {
-    let file = File::open(archive)
+/// Every age v1 file starts with this, armored or not.
+const AGE_MAGIC: &[u8] = b"age-encryption.org/v1";
+
+/// Open the archive, decrypting it when it is encrypted.
+///
+/// Sniffed rather than assumed from the filename, for two reasons: archives
+/// written before encryption existed must still restore, and an operator who
+/// renames a file should not thereby change how it is read.
+fn open_archive(
+    archive: &Path,
+    identity: Option<&age::x25519::Identity>,
+) -> Result<Box<dyn Read>, crate::Error> {
+    let mut file = File::open(archive)
         .map_err(|e| crate::Error::Other(format!("open {}: {e}", archive.display())))?;
-    let gz = GzDecoder::new(file);
+    let mut magic = [0u8; AGE_MAGIC.len()];
+    let n = read_up_to(&mut file, &mut magic)?;
+    file.rewind()
+        .map_err(|e| crate::Error::Other(format!("rewind {}: {e}", archive.display())))?;
+
+    if n < AGE_MAGIC.len() || magic != AGE_MAGIC {
+        // Plaintext archive from before encryption landed.
+        return Ok(Box::new(file));
+    }
+    let Some(identity) = identity else {
+        return Err(crate::Error::Other(format!(
+            "{} is encrypted and no key was given. Pass --key-file <path> with the \
+             recovery key printed when this box took its first backup. The box does \
+             not hold it — that is deliberate, and it is why a stolen box cannot \
+             read this archive.",
+            archive.display()
+        )));
+    };
+    let decryptor = age::Decryptor::new(file)
+        .map_err(|e| crate::Error::Other(format!("reading age header: {e}")))?;
+    let reader = decryptor
+        .decrypt(std::iter::once(identity as &dyn age::Identity))
+        .map_err(|e| {
+            crate::Error::Other(format!(
+                "could not decrypt {} ({e}). This key does not match the archive — \
+                 a box that re-minted its recipient cannot open archives written \
+                 before that.",
+                archive.display()
+            ))
+        })?;
+    Ok(Box::new(reader))
+}
+
+/// `Read::read` may return short; fill as much of `buf` as the file has.
+fn read_up_to(f: &mut File, buf: &mut [u8]) -> Result<usize, crate::Error> {
+    let mut filled = 0;
+    while filled < buf.len() {
+        let n = f
+            .read(&mut buf[filled..])
+            .map_err(|e| crate::Error::Other(format!("read: {e}")))?;
+        if n == 0 {
+            break;
+        }
+        filled += n;
+    }
+    Ok(filled)
+}
+
+/// Read the recovery key from a file. Whitespace-tolerant, because it will have
+/// been copied out of a password manager or typed off paper.
+fn read_identity(path: &Path) -> Result<age::x25519::Identity, crate::Error> {
+    use std::str::FromStr;
+    let text = fs::read_to_string(path)
+        .map_err(|e| crate::Error::Other(format!("read key file {}: {e}", path.display())))?;
+    let line = text
+        .lines()
+        .map(str::trim)
+        .find(|l| !l.is_empty() && !l.starts_with('#'))
+        .ok_or_else(|| {
+            crate::Error::Other(format!("{} contains no key", path.display()))
+        })?;
+    age::x25519::Identity::from_str(line).map_err(|e| {
+        crate::Error::Other(format!(
+            "{} is not a valid age recovery key ({e}) — expected one starting \
+             AGE-SECRET-KEY-1",
+            path.display()
+        ))
+    })
+}
+
+fn extract_into(reader: Box<dyn Read>, dest: &Path) -> Result<(), crate::Error> {
+    let gz = GzDecoder::new(reader);
     let mut t = tar::Archive::new(gz);
     t.unpack(dest)
         .map_err(|e| crate::Error::Other(format!("tar unpack: {e}")))?;
@@ -542,11 +629,37 @@ mod drill {
             applets: applets.clone(),
             env_file: Some(env_file.clone()),
         };
-        let archive = scratch_dir("out").join("backup.tar.gz");
-        crate::cli::backup::write_archive(&pool, Some(archive.clone()), false, &sources)
-            .await
-            .expect("backup");
+        // A throwaway keypair standing in for the box's. The test holds the
+        // secret half; production never does.
+        let identity = age::x25519::Identity::generate();
+        let archive = scratch_dir("out").join("backup.tar.gz.age");
+        crate::cli::backup::write_archive(
+            &pool,
+            Some(archive.clone()),
+            false,
+            &sources,
+            &identity.to_public(),
+        )
+        .await
+        .expect("backup");
         assert!(archive.exists(), "archive was not written");
+
+        // Encrypted at rest: the plaintext key we seeded must not be findable
+        // by scanning the bytes on disk.
+        let raw = fs::read(&archive).unwrap();
+        assert!(
+            raw.starts_with(b"age-encryption.org/v1"),
+            "archive is not age-encrypted"
+        );
+        assert!(
+            !raw.windows(9).any(|w| w == b"drill-key"),
+            "the encryption key appears in cleartext inside the archive"
+        );
+        // And it must not open without the key.
+        assert!(
+            open_archive(&archive, None).is_err(),
+            "an encrypted archive opened with no key"
+        );
 
         // ── Lose it ──────────────────────────────────────────────────────────
         sqlx::query("DELETE FROM credentials WHERE id = 'cred_drill'")
@@ -560,7 +673,11 @@ mod drill {
         // ── Restore, through the real gates ──────────────────────────────────
         let stage = mkstage(&archive).expect("stage");
         let staging: &Path = stage.as_ref();
-        extract_into(&archive, staging).expect("extract");
+        extract_into(
+            open_archive(&archive, Some(&identity)).expect("decrypt"),
+            staging,
+        )
+        .expect("extract");
         let manifest = read_manifest(staging).expect("manifest");
         check_schema_compatible(&manifest).expect("schema gate");
         verify_sha256(staging, &manifest.artifacts).expect("digest gate");

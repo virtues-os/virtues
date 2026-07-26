@@ -222,6 +222,7 @@ similar = "2.7.0"
 pulldown-cmark = { version = "0.10", default-features = false, features = ["simd"] }
 
 bytes = "1.7"
+age = { version = "0.12.1", features = ["armor"] }
 
 [target.'cfg(target_os = "linux")'.dependencies]
 # getifaddrs(3) for the BYO-transport auto-notice in net_check (already in the
