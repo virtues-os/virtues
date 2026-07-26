@@ -314,7 +314,29 @@ fn read_distro() -> Option<String> {
 
 /// The box's age recipient — a **public** key. The matching secret is printed
 /// once, when it is minted, and never written here.
-pub(crate) const RECIPIENT_PATH: &str = "/var/lib/virtues/backup-recipient";
+const WELL_KNOWN_RECIPIENT_PATH: &str = "/var/lib/virtues/backup-recipient";
+/// Dev-only, relative to virtues-core. Gitignored alongside `.applet-state`.
+const DEV_RECIPIENT_PATH_FROM_CORE: &str = "../.backup-recipient";
+
+/// Where this box keeps its backup recipient.
+///
+/// Same precedence as `storage::lake::lake_root` and
+/// `action_templates::state_root`, and for the same reason: a hardcoded box path
+/// makes the command unusable anywhere else. `/var/lib` is root-owned, so a dev
+/// machine cannot even create the directory — `virtues backup --output /tmp/x`
+/// failed outright until this resolved properly.
+pub(crate) fn recipient_path() -> PathBuf {
+    if let Ok(explicit) = std::env::var("VIRTUES_BACKUP_RECIPIENT") {
+        if !explicit.is_empty() {
+            return PathBuf::from(explicit);
+        }
+    }
+    let installed = PathBuf::from(WELL_KNOWN_RECIPIENT_PATH);
+    if installed.parent().is_some_and(|p| p.is_dir()) {
+        return installed;
+    }
+    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join(DEV_RECIPIENT_PATH_FROM_CORE)
+}
 
 /// Load the recipient every backup encrypts to, minting one on first use.
 ///
@@ -333,15 +355,17 @@ pub(crate) const RECIPIENT_PATH: &str = "/var/lib/virtues/backup-recipient";
 pub(crate) fn load_or_create_recipient() -> Result<age::x25519::Recipient, crate::Error> {
     use std::str::FromStr;
 
-    if let Ok(existing) = fs::read_to_string(RECIPIENT_PATH) {
+    let path = recipient_path();
+    if let Ok(existing) = fs::read_to_string(&path) {
         let existing = existing.trim();
         if !existing.is_empty() {
             return age::x25519::Recipient::from_str(existing).map_err(|e| {
                 crate::Error::Other(format!(
-                    "{RECIPIENT_PATH} does not contain a valid age recipient ({e}). \
+                    "{} does not contain a valid age recipient ({e}). \
                      Refusing to back up rather than write an archive nobody can \
                      open. Fix or remove the file — removing it mints a NEW key, \
-                     which will not open existing archives."
+                     which will not open existing archives.",
+                    path.display()
                 ))
             });
         }
@@ -349,12 +373,12 @@ pub(crate) fn load_or_create_recipient() -> Result<age::x25519::Recipient, crate
 
     let identity = age::x25519::Identity::generate();
     let recipient = identity.to_public();
-    fs::write(RECIPIENT_PATH, format!("{recipient}\n"))
-        .map_err(|e| crate::Error::Other(format!("writing {RECIPIENT_PATH}: {e}")))?;
+    fs::write(&path, format!("{recipient}\n"))
+        .map_err(|e| crate::Error::Other(format!("writing {}: {e}", path.display())))?;
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
-        let _ = fs::set_permissions(RECIPIENT_PATH, fs::Permissions::from_mode(0o600));
+        let _ = fs::set_permissions(&path, fs::Permissions::from_mode(0o600));
     }
 
     use age::secrecy::ExposeSecret;
@@ -457,13 +481,38 @@ fn stream_archive(
     meta: ManifestMeta,
     out: &Path,
     recipient: &age::x25519::Recipient,
-) -> Result<(), crate::Error> {
+) -> Result<Vec<String>, crate::Error> {
+    match stream_archive_inner(members, meta, out, recipient) {
+        Ok(v) => Ok(v),
+        Err(e) => {
+            // Otherwise every failed run leaves a `.partial` of whatever it had
+            // written — on a backup volume, which is exactly where free space is
+            // the binding constraint, and which nothing else reclaims.
+            let _ = fs::remove_file(out.with_file_name(format!(
+                "{}.partial",
+                out.file_name().unwrap_or_default().to_string_lossy()
+            )));
+            Err(e)
+        }
+    }
+}
+
+fn stream_archive_inner(
+    members: &[(PathBuf, String)],
+    meta: ManifestMeta,
+    out: &Path,
+    recipient: &age::x25519::Recipient,
+) -> Result<Vec<String>, crate::Error> {
     // Appended, not `with_extension`, which would replace `.age` and turn
     // `virtues-….tar.gz.age` into `virtues-….tar.gz.partial`.
     let tmp = out.with_file_name(format!(
         "{}.partial",
         out.file_name().unwrap_or_default().to_string_lossy()
     ));
+    // Paths the writer ACTUALLY archived. Not the same as the paths it was
+    // asked to: members that vanish mid-run are skipped, and recording those as
+    // shipped would mark them backed up forever.
+    let archived: Vec<String>;
     {
         let file = File::create(&tmp)
             .map_err(|e| crate::Error::Other(format!("create {}: {e}", tmp.display())))?;
@@ -525,6 +574,7 @@ fn stream_archive(
             });
         }
 
+        archived = artifacts.iter().map(|a| a.path.clone()).collect();
         let manifest = Manifest {
             manifest_version: MANIFEST_VERSION,
             binary_version: env!("CARGO_PKG_VERSION").to_string(),
@@ -562,7 +612,7 @@ fn stream_archive(
     // at the final path.
     fs::rename(&tmp, out)
         .map_err(|e| crate::Error::Other(format!("rename to {}: {e}", out.display())))?;
-    Ok(())
+    Ok(archived)
 }
 
 // ─── Local staging dir helper (no extra dep) ───────────────────────────────
@@ -631,7 +681,7 @@ pub(crate) fn write_members(
     dest: &Path,
     recipient: &age::x25519::Recipient,
     label: &str,
-) -> Result<(), crate::Error> {
+) -> Result<Vec<String>, crate::Error> {
     println!("→ writing {} ({} member(s))…", label, members.len());
     stream_archive(
         members,

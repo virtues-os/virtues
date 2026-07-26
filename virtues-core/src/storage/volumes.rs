@@ -75,7 +75,13 @@ pub fn resolve_mount(fs_uuid: &str) -> Option<PathBuf> {
 /// point, but the source has to be located relative to the `-` separator.
 fn mount_point_for_source(mountinfo: &str, source: &Path) -> Option<PathBuf> {
     for line in mountinfo.lines() {
-        let (left, right) = line.split_once(" - ")?;
+        // `continue`, not `?`. A `?` here would abandon the whole scan on the
+        // first unparseable line rather than the line itself — and since a
+        // partial read of /proc truncates the LAST line, a bail-out would be
+        // silent and order-dependent. Matches `source_for_mount` below.
+        let Some((left, right)) = line.split_once(" - ") else {
+            continue;
+        };
         let left: Vec<&str> = left.split_whitespace().collect();
         let right: Vec<&str> = right.split_whitespace().collect();
         // left[4] = mount point, right[1] = mount source.
@@ -125,7 +131,15 @@ pub fn uuid_for_path(path: &Path) -> Option<String> {
     let canonical = std::fs::canonicalize(path).ok()?;
     let source = source_for_mount(&mountinfo, &canonical)?;
     for entry in std::fs::read_dir("/dev/disk/by-uuid").ok()?.flatten() {
-        if std::fs::canonicalize(entry.path()).ok()? == source {
+        // Skip entries that will not resolve instead of abandoning the scan.
+        // `/dev/disk/by-uuid` routinely keeps a dangling symlink after a
+        // hot-unplug, and directory order is arbitrary — with `?` here, whether
+        // a healthy drive could be registered came down to which entry the
+        // kernel happened to list first.
+        let Ok(resolved) = std::fs::canonicalize(entry.path()) else {
+            continue;
+        };
+        if resolved == source {
             return Some(entry.file_name().to_string_lossy().into_owned());
         }
     }
@@ -228,6 +242,22 @@ mod tests {
         assert_eq!(
             mount_point_for_source(MOUNTINFO, Path::new("/dev/sdb1")),
             Some(PathBuf::from("/media/My Backup"))
+        );
+    }
+
+    #[test]
+    fn a_malformed_line_does_not_abandon_the_scan() {
+        // This used `?`, which returned from the whole function on the first
+        // line without a " - " separator. Whether a mounted drive was found
+        // then depended on where the bad line happened to sit.
+        let with_junk = format!("41 36 8:17 / /media/x rw shared:5\n{MOUNTINFO}");
+        assert_eq!(
+            mount_point_for_source(&with_junk, Path::new("/dev/sdc1")),
+            Some(PathBuf::from("/var/lib/virtues"))
+        );
+        assert_eq!(
+            source_for_mount(&with_junk, Path::new("/var/lib/virtues/lake")),
+            Some(PathBuf::from("/dev/sdc1"))
         );
     }
 
