@@ -583,3 +583,50 @@ fn tempfile_dir(near: &Path) -> Result<LocalTempDir, crate::Error> {
         .map_err(|e| crate::Error::Other(format!("staging dir: {e}")))?;
     Ok(LocalTempDir { path })
 }
+
+// ─── Entry points for volume-targeted backups (see cli/backup_volume.rs) ────
+
+/// Walk a tree into `(absolute, archive-relative)` pairs.
+///
+/// Same walker the archive writer uses, exposed so the volume path can diff a
+/// lake against what a drive already holds without a second implementation.
+pub(crate) fn collect_files_pub(
+    root: &Path,
+    rel_prefix: &str,
+    out: &mut Vec<(PathBuf, String)>,
+) -> Result<(), crate::Error> {
+    collect_files(root, rel_prefix, out)
+}
+
+/// Write a full archive to an explicit path.
+pub(crate) async fn write_archive_to(
+    pool: &PgPool,
+    dest: &Path,
+    sources: &Sources,
+    recipient: &age::x25519::Recipient,
+) -> Result<PathBuf, crate::Error> {
+    write_archive(pool, Some(dest.to_path_buf()), true, sources, recipient).await
+}
+
+/// Archive an arbitrary member list — used for lake increments.
+///
+/// `schema_version` is "unknown" rather than the live one on purpose: an
+/// increment carries no database, so claiming a schema would invite restore's
+/// compatibility gate to reason about one that is not there.
+pub(crate) fn write_members(
+    members: &[(PathBuf, String)],
+    dest: &Path,
+    recipient: &age::x25519::Recipient,
+    label: &str,
+) -> Result<(), crate::Error> {
+    println!("→ writing {} ({} member(s))…", label, members.len());
+    stream_archive(
+        members,
+        ManifestMeta {
+            schema_version: "unknown".to_string(),
+            created_at: Utc::now().to_rfc3339(),
+        },
+        dest,
+        recipient,
+    )
+}

@@ -1,6 +1,7 @@
 //! CLI module - command-line interface for Virtues
 
 pub mod backup;
+pub mod backup_volume;
 pub mod commands;
 pub mod configure_inference;
 pub mod diag;
