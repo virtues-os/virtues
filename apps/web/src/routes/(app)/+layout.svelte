@@ -9,6 +9,7 @@
 	import MobileOnboarding from "$lib/components/mobile/MobileOnboarding.svelte";
 	import { mobileLayout } from "$lib/stores/mobileLayout.svelte";
 	import { ContextMenuProvider } from "$lib/components/contextMenu";
+	import DialogHost from "$lib/components/DialogHost.svelte";
 	import ServerProvisioning from "$lib/components/ServerProvisioning.svelte";
 	import Modal from "$lib/components/Modal.svelte";
 	import IconPicker from "$lib/components/IconPicker.svelte";
@@ -282,6 +283,9 @@
 
 <!-- Global Context Menu Provider -->
 <ContextMenuProvider />
+
+<!-- Global confirm/prompt dialogs (replaces window.confirm/prompt) -->
+<DialogHost />
 
 <div
 	class="app-shell flex h-screen w-full bg-surface-elevated"
