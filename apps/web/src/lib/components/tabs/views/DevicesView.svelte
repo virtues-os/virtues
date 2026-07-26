@@ -10,6 +10,7 @@
 	import type { Tab } from "$lib/tabs/types";
 	import { Page, Button, Badge, EmptyState, LoadingState, ErrorState } from "$lib";
 	import Icon from "$lib/components/Icon.svelte";
+	import { confirmAction } from "$lib/stores/dialog.svelte";
 	import {
 		listDevices,
 		pairMint,
@@ -80,10 +81,15 @@
 	let pollHandle: ReturnType<typeof setInterval> | null = null;
 
 	async function revoke(device: Device) {
-		const confirmText = device.is_current
-			? `Revoke THIS device? You will be signed out immediately.\n\n${device.label}`
-			: `Revoke "${device.label}"? It will lose access to the box right away.`;
-		if (!window.confirm(confirmText)) return;
+		const ok = await confirmAction({
+			title: device.is_current ? 'Revoke this device?' : `Revoke "${device.label}"?`,
+			body: device.is_current
+				? `${device.label} is the device you're using. You'll be signed out immediately.`
+				: 'It loses access to the box right away.',
+			confirmLabel: 'Revoke',
+			danger: true,
+		});
+		if (!ok) return;
 
 		try {
 			const resp = await fetch(`/api/devices/${device.id}`, { method: "DELETE" });

@@ -13,6 +13,7 @@
 	import Icon from "$lib/components/Icon.svelte";
 	import MobileKeyboardProbe from "$lib/components/mobile/MobileKeyboardProbe.svelte";
 	import { mobileLayout } from "$lib/stores/mobileLayout.svelte";
+	import { confirmAction } from "$lib/stores/dialog.svelte";
 	import { invoke } from "@tauri-apps/api/core";
 	import { getVersion } from "@tauri-apps/api/app";
 	import { onMount } from "svelte";
@@ -304,12 +305,13 @@
 	/// (Keychain), this is the only way to fully reset — useful for switching boxes
 	/// or a clean re-pair. Reloads into the pairing flow afterward.
 	async function unpairDevice() {
-		if (
-			!confirm(
-				"Unpair this device? This clears the saved connection to your box. You'll need to pair again to reconnect. Your data on the box is untouched.",
-			)
-		)
-			return;
+		const ok = await confirmAction({
+			title: "Unpair this device?",
+			body: "This clears the saved connection to your box. You'll need to pair again to reconnect. Your data on the box is untouched.",
+			confirmLabel: "Unpair",
+			danger: true,
+		});
+		if (!ok) return;
 		forgetting = true;
 		error = null;
 		try {

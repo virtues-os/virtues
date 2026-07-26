@@ -4,6 +4,7 @@
 	import { getAssistantProfile, updateAssistantProfile } from '$lib/api/client';
 	import Icon from '$lib/components/Icon.svelte';
 	import Modal from '$lib/components/Modal.svelte';
+	import { confirmAction } from '$lib/stores/dialog.svelte';
 
 	// Active persona state (from assistant profile)
 	let activePersonaId = $state<string | null>(null);
@@ -90,17 +91,29 @@
 	async function handleDelete() {
 		if (!editingPersona) return;
 
-		const action = editingPersona.is_system ? 'hide' : 'delete';
-		if (!confirm(`Are you sure you want to ${action} "${editingPersona.title}"?`)) return;
+		const isSystem = editingPersona.is_system;
+		const ok = await confirmAction({
+			title: isSystem ? `Hide "${editingPersona.title}"?` : `Delete "${editingPersona.title}"?`,
+			body: isSystem
+				? 'A built-in persona — hiding it removes it from the picker. Reset personas restores it.'
+				: 'This persona is removed from the picker for good.',
+			confirmLabel: isSystem ? 'Hide' : 'Delete',
+			danger: !isSystem,
+		});
+		if (!ok) return;
 
 		await personaStore.hide(editingPersona.id);
 		closeModal();
 	}
 
 	async function handleReset() {
-		if (confirm('Reset all personas to defaults? This removes custom personas and restores hidden ones.')) {
-			await personaStore.reset();
-		}
+		const ok = await confirmAction({
+			title: 'Reset personas to defaults?',
+			body: 'Your custom personas are removed and hidden built-ins come back.',
+			confirmLabel: 'Reset',
+			danger: true,
+		});
+		if (ok) await personaStore.reset();
 	}
 
 	const modalTitle = $derived(isCreating ? 'New Persona' : 'Edit Persona');

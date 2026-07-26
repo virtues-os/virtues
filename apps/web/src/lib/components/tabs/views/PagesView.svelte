@@ -6,6 +6,7 @@
 	import { contextMenu } from "$lib/stores/contextMenu.svelte";
 	import type { ContextMenuItem } from "$lib/stores/contextMenu.svelte";
 	import { getNotebookMenuItems } from "$lib/utils/contextMenuItems";
+	import { confirmAction } from "$lib/stores/dialog.svelte";
 	import { Page, Button } from "$lib";
 	import { onMount } from "svelte";
 	import Icon from "$lib/components/Icon.svelte";
@@ -90,9 +91,13 @@
 				variant: "destructive",
 				dividerBefore: true,
 				action: async () => {
-					if (confirm("Delete this page?")) {
-						await pagesStore.removePage(page.id);
-					}
+					const ok = await confirmAction({
+						title: "Delete page?",
+						body: `"${page.title}" will be deleted. Notebooks that reference it will drop the link.`,
+						confirmLabel: "Delete",
+						danger: true,
+					});
+					if (ok) await pagesStore.removePage(page.id);
 				},
 			},
 		];
