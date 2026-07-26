@@ -97,7 +97,21 @@ jobs:
             | sudo tee /etc/apt/sources.list.d/pgdg.list
           sudo apt-get update
           sudo apt-get install -y postgresql-client-18
-          pg_dump --version
+          # Installing the package is not enough: the runner already ships an
+          # older postgresql-client, and /usr/bin/pg_dump keeps resolving to it.
+          # Put the versioned bindir ahead of it for every later step.
+          echo "/usr/lib/postgresql/18/bin" >> "$GITHUB_PATH"
+          export PATH="/usr/lib/postgresql/18/bin:$PATH"
+          # Assert, do not merely print. The first version of this step ended
+          # with a bare `pg_dump --version`, which faithfully reported 14.20 and
+          # was read by nobody; the failure surfaced two steps later as an
+          # unrelated-looking test failure.
+          got="$(pg_dump --version | grep -oE '[0-9]+' | head -1)"
+          echo "pg_dump major: $got"
+          if [ "$got" != "18" ]; then
+            echo "::error::pg_dump is $got, but the service container is 18 — pg_dump refuses to dump from a newer server"
+            exit 1
+          fi
 
       - name: Pre-create the shared cluster role
         run: |
