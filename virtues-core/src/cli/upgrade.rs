@@ -255,6 +255,11 @@ pub async fn run(
         }
     }
 
+    // Last thing before the box changes. Preflight has passed, so this release
+    // is going in; a dump taken earlier would be paid for on releases we were
+    // about to refuse anyway.
+    let pre_dump = pre_migration_dump(current, target)?;
+
     // Relay migration: an upgrade from a WireGuard-era release has an orphaned
     // `virtues-wireguard.service`. Best-effort; no-op on boxes that never had it.
     disable_legacy_wireguard();
@@ -285,6 +290,13 @@ pub async fn run(
         for unit in &sidecars {
             let _ = service_start(unit);
         }
+        // The flip restored the binary. If the failure was the migration, the
+        // schema is still forward of it — say where the undo lives rather than
+        // leaving the operator to discover that rollback does not cover data.
+        ui::warn(&format!(
+            "if the schema is the problem, the pre-migration dump is at {}",
+            pre_dump.display()
+        ));
         crate::Error::Other(why)
     };
 
@@ -472,6 +484,20 @@ pub async fn rollback() -> Result<(), crate::Error> {
 
     println!();
     ui::ok("rolled back — the previous release is active");
+
+    // Rollback moves code, never schema: migrations only roll forward, and the
+    // older binary boots against the newer schema by design. So a rollback
+    // prompted by *data* damage is only half a recovery, and the operator has no
+    // way to know the other half exists unless it is named here.
+    if let Some(dump) = newest_pre_upgrade_dump() {
+        println!();
+        ui::warn("the schema was NOT rolled back — migrations only roll forward.");
+        println!("  If a migration is what went wrong, restore the pre-upgrade dump:");
+        println!(
+            "    sudo -u virtues pg_restore --clean --if-exists --no-owner --no-acl \\\n       -d \"$DATABASE_URL\" {}",
+            dump.display()
+        );
+    }
     Ok(())
 }
 
@@ -1189,5 +1215,215 @@ TimeoutStartSec=120
     #[test]
     fn no_execstart_at_all() {
         assert_eq!(parse_port_from_unit("[Unit]\nDescription=x\n"), None);
+    }
+}
+
+/// Pre-upgrade dumps live beside `virtues backup`'s output: an operator hunting
+/// for "the thing that can undo this" should find both in one directory.
+const PRE_UPGRADE_DIR: &str = "/var/lib/virtues/backups";
+
+/// Floor for the free-space guard when the database size cannot be measured.
+/// Filling the disk and *then* failing a migration is strictly worse than not
+/// upgrading, so an unmeasurable box gets a conservative fixed requirement.
+const PRE_UPGRADE_MIN_FREE: u64 = 2 * 1024 * 1024 * 1024;
+
+/// Dump the database before migrations run, and return the dump's path.
+///
+/// `virtues rollback` re-flips `current` and restarts. It does not touch the
+/// schema, because migrations only ever roll forward — `database::run_migrations`
+/// sets `ignore_missing`, and an older binary is expected to boot against a newer
+/// schema. So a migration that destroys data leaves rollback restoring *code onto
+/// damaged data*, which is the one failure the slot system cannot cover on its own.
+/// This closes it.
+///
+/// It is the data half of a release slot, not a backup: no encryption (the box
+/// already holds the key, and this never leaves it), no manifest, no lake, and it
+/// is pruned in lockstep with the slots it corresponds to.
+///
+/// Runs as `virtues`, not root. `upgrade` requires root and is deliberately
+/// absent from main.rs's `DB_COMMANDS` re-exec list, so a pg_dump inheriting this
+/// process's identity would authenticate to a peer-auth cluster as `root` and be
+/// refused.
+fn pre_migration_dump(from: &str, to: &str) -> Result<PathBuf, crate::Error> {
+    let dir = PathBuf::from(PRE_UPGRADE_DIR);
+    fs::create_dir_all(&dir)
+        .map_err(|e| crate::Error::Other(format!("creating {PRE_UPGRADE_DIR}: {e}")))?;
+
+    let need = database_size_bytes().unwrap_or(PRE_UPGRADE_MIN_FREE);
+    if let Some(free) = crate::storage::lake::free_bytes_at(&dir) {
+        if free < need {
+            return Err(crate::Error::Other(format!(
+                "refusing to upgrade: the pre-migration dump needs ~{} MB and {} has \
+                 {} MB free. Migrations roll forward only, so upgrading without this \
+                 dump means `virtues rollback` could not undo a migration that ate \
+                 data. Free some space, or re-run with --force to skip the guard.",
+                need / (1024 * 1024),
+                dir.display(),
+                free / (1024 * 1024),
+            )));
+        }
+    }
+
+    let dest = dir.join(format!(
+        "pre-upgrade-{}-{}.dump",
+        sanitize_tag(from),
+        sanitize_tag(to)
+    ));
+    ui::step("preflight: dumping database before migration…");
+    let status = Command::new("sudo")
+        .args(["-u", "virtues", "pg_dump", "--format=custom", "--no-owner", "--no-acl", "-f"])
+        .arg(&dest)
+        .status()
+        .map_err(|e| crate::Error::Other(format!("invoking pg_dump: {e}")))?;
+    if !status.success() {
+        let _ = fs::remove_file(&dest);
+        return Err(crate::Error::Other(format!(
+            "pre-migration pg_dump exited {status}; box untouched"
+        )));
+    }
+    let size = fs::metadata(&dest).map(|m| m.len()).unwrap_or(0);
+    ui::ok(&format!(
+        "dumped {} ({:.1} MB)",
+        dest.display(),
+        size as f64 / (1024.0 * 1024.0)
+    ));
+    prune_pre_upgrade_dumps(slots::KEEP_SLOTS);
+    Ok(dest)
+}
+
+/// Database size, as `virtues`, for the free-space guard. `None` when it cannot
+/// be measured — the caller falls back to a fixed floor rather than skipping the
+/// check.
+fn database_size_bytes() -> Option<u64> {
+    let out = Command::new("sudo")
+        .args([
+            "-u",
+            "virtues",
+            "psql",
+            "-tAc",
+            "SELECT pg_database_size(current_database())",
+        ])
+        .output()
+        .ok()?;
+    if !out.status.success() {
+        return None;
+    }
+    String::from_utf8_lossy(&out.stdout).trim().parse().ok()
+}
+
+/// Tags become filenames; keep them to characters that survive that.
+fn sanitize_tag(tag: &str) -> String {
+    tag.chars()
+        .map(|c| if c.is_ascii_alphanumeric() || c == '.' || c == '-' { c } else { '_' })
+        .collect()
+}
+
+/// Keep the same number of dumps as release slots. They are two halves of one
+/// thing: a slot you can flip back to, and the data that slot expects.
+fn prune_pre_upgrade_dumps(keep: usize) {
+    prune_dumps_in(Path::new(PRE_UPGRADE_DIR), keep)
+}
+
+/// Split from `prune_pre_upgrade_dumps` so it can be tested against a scratch
+/// directory. This function deletes files, and it does so in the directory that
+/// also holds `virtues backup` output — the prefix/suffix filter is the only
+/// thing standing between a prune and someone's actual backup.
+fn prune_dumps_in(dir: &Path, keep: usize) {
+    let Ok(entries) = fs::read_dir(dir) else {
+        return;
+    };
+    let mut dumps: Vec<(std::time::SystemTime, PathBuf)> = entries
+        .flatten()
+        .map(|e| e.path())
+        .filter(|p| {
+            p.file_name()
+                .and_then(|n| n.to_str())
+                .is_some_and(|n| n.starts_with("pre-upgrade-") && n.ends_with(".dump"))
+        })
+        .filter_map(|p| {
+            let t = fs::metadata(&p).and_then(|m| m.modified()).ok()?;
+            Some((t, p))
+        })
+        .collect();
+    dumps.sort_by(|a, b| b.0.cmp(&a.0)); // newest first
+    for (_, path) in dumps.into_iter().skip(keep) {
+        let _ = fs::remove_file(path);
+    }
+}
+
+/// The newest pre-upgrade dump, if any. `rollback` surfaces it: restoring the
+/// binary while leaving a bad migration in place is exactly the case where the
+/// operator needs to know this file exists.
+fn newest_pre_upgrade_dump() -> Option<PathBuf> {
+    let entries = fs::read_dir(PRE_UPGRADE_DIR).ok()?;
+    entries
+        .flatten()
+        .map(|e| e.path())
+        .filter(|p| {
+            p.file_name()
+                .and_then(|n| n.to_str())
+                .is_some_and(|n| n.starts_with("pre-upgrade-") && n.ends_with(".dump"))
+        })
+        .filter_map(|p| {
+            let t = fs::metadata(&p).and_then(|m| m.modified()).ok()?;
+            Some((t, p))
+        })
+        .max_by(|a, b| a.0.cmp(&b.0))
+        .map(|(_, p)| p)
+}
+
+#[cfg(test)]
+mod pre_upgrade_dump_tests {
+    use super::*;
+
+    fn touch(dir: &Path, name: &str, age_secs: u64) -> PathBuf {
+        let p = dir.join(name);
+        fs::write(&p, b"x").unwrap();
+        let when = std::time::SystemTime::now() - Duration::from_secs(age_secs);
+        let f = File::options().write(true).open(&p).unwrap();
+        f.set_times(fs::FileTimes::new().set_modified(when)).unwrap();
+        p
+    }
+
+    #[test]
+    fn prune_keeps_the_newest_and_never_eats_a_real_backup() {
+        let dir = std::env::temp_dir().join(format!("virtues-prune-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+
+        let newest = touch(&dir, "pre-upgrade-0.1.0-0.4.0.dump", 10);
+        let middle = touch(&dir, "pre-upgrade-0.1.0-0.3.0.dump", 100);
+        let oldest = touch(&dir, "pre-upgrade-0.1.0-0.2.0.dump", 1000);
+        // Shares the directory, and is the one thing that must never be pruned
+        // by the upgrade path — it is the user's actual backup.
+        let backup = touch(&dir, "virtues-20260725T030000Z.tar.gz", 5000);
+
+        prune_dumps_in(&dir, 2);
+
+        assert!(newest.exists(), "newest dump was pruned");
+        assert!(middle.exists(), "second-newest dump was pruned");
+        assert!(!oldest.exists(), "oldest dump should have been pruned");
+        assert!(
+            backup.exists(),
+            "prune ate a virtues backup sharing the directory"
+        );
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn prune_on_a_missing_directory_is_a_no_op() {
+        prune_dumps_in(Path::new("/nonexistent/virtues/backups"), 2);
+    }
+
+    #[test]
+    fn tags_survive_becoming_filenames() {
+        assert_eq!(sanitize_tag("v0.1.0-staging.56"), "v0.1.0-staging.56");
+        assert_eq!(sanitize_tag("edge"), "edge");
+        // Dots are legal in tags and stay; the separators are what matter, and
+        // without one the result cannot escape the directory it is joined to.
+        let escaped = sanitize_tag("../../etc/passwd");
+        assert_eq!(escaped, ".._.._etc_passwd");
+        assert!(!escaped.contains('/'), "sanitized tag can still traverse");
     }
 }

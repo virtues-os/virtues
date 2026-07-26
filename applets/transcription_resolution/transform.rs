@@ -122,14 +122,15 @@ struct PendingRecording {
 /// audio outside the configured lake entirely. Try the lake first, then fall back,
 /// so the ~858 existing recordings keep transcribing without a data migration.
 ///
-/// The root MUST be resolved exactly as the writer does (`storage::lake`): default
-/// included. If the reader skipped the default while the writer used it, then on
-/// any box without STORAGE_PATH set every new recording would be written to the
-/// lake and then looked for relative to cwd — never found, "audio file missing",
-/// and silently never transcribed.
+/// The root MUST be resolved exactly as the writer does — default included. A
+/// reader that omitted the default while the writer applied it would look for
+/// recordings relative to the cwd that had been written to the lake: never
+/// found, "audio file missing", silently never transcribed.
+///
+/// That invariant used to rest on this comment. It now rests on
+/// `storage::lake::lake_root`, which both sides call.
 fn read_audio(audio_url: &str) -> std::io::Result<Vec<u8>> {
-    let root = std::env::var("STORAGE_PATH").unwrap_or_else(|_| "./data/lake".to_string());
-    let in_lake = std::path::Path::new(&root).join(audio_url);
+    let in_lake = virtues::storage::lake::lake_root().join(audio_url);
     if in_lake.exists() {
         return std::fs::read(in_lake);
     }

@@ -501,6 +501,7 @@ pub async fn run(client: Virtues, host: &str, port: u16) -> Result<()> {
             post(api::reextract_drive_file_handler),
         )
         .route("/api/drive/usage", get(api::get_drive_usage_handler))
+        .route("/api/backup/status", get(api::get_backup_status_handler))
         .route("/api/drive/warnings", get(api::get_drive_warnings_handler))
         .route("/api/drive/files", get(api::list_drive_files_handler))
         .route(
@@ -913,9 +914,12 @@ fn build_transport(
 
 /// Validate required environment variables at startup
 fn validate_environment() -> Result<()> {
-    // Log storage path being used
-    let storage_path = env::var("STORAGE_PATH").unwrap_or_else(|_| "./data/lake".to_string());
-    tracing::info!("Using storage path: {}", storage_path);
+    // Log storage path being used. Resolved, not re-derived — a log line that
+    // disagreed with the writer would be worse than no log line at all.
+    tracing::info!(
+        "Using storage path: {}",
+        crate::storage::lake::lake_root().display()
+    );
 
     tracing::debug!("Environment validation passed");
     Ok(())

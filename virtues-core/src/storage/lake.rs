@@ -73,15 +73,72 @@ pub struct LakeRef {
     pub record_count: usize,
 }
 
-/// Resolve the storage root the same way `VirtuesBuilder` does (STORAGE_PATH,
-/// else ./data/lake). Actions are separate processes that inherit the box's env
-/// but never build a `Virtues` client, so they need this to reach the lake.
+/// Resolve the storage root. Actions are separate processes that inherit the
+/// box's env but never build a `Virtues` client, so they need this to reach the
+/// lake.
 pub fn storage_from_env() -> Result<Storage> {
-    Storage::file(storage_root())
+    Storage::file(lake_root().to_string_lossy().into_owned())
 }
 
-fn storage_root() -> String {
-    std::env::var("STORAGE_PATH").unwrap_or_else(|_| "./data/lake".to_string())
+/// Well-known lake location on an installed box, alongside `models/` and
+/// `applets/` under the service's data dir. Kept in sync with the installer,
+/// which writes `STORAGE_PATH=<data_dir>/lake` into the env file
+/// (`tools/virtues-installer/src/install.rs`).
+const WELL_KNOWN_LAKE_DIR: &str = "/var/lib/virtues/lake";
+
+/// Dev-only lake, relative to virtues-core. Resolved against
+/// `CARGO_MANIFEST_DIR`, never the cwd — see `lake_root`.
+const DEV_LAKE_DIR_FROM_CORE: &str = "../data/lake";
+
+/// The one place the lake's location is decided.
+///
+/// **Every reader and every writer must resolve this identically, default
+/// included.** That is not style advice; skipping it has cost real data twice:
+///
+/// - A collector that built its own cwd-relative path parked ~763 MB of audio
+///   *outside* the configured lake, invisible to every accounting and GC pass
+///   (`cli/lake_adopt.rs` exists solely to rescue it).
+/// - A reader that omitted the default while the writer applied it looked for
+///   recordings relative to the cwd that had been written to the lake — so on
+///   any box without `STORAGE_PATH` set, audio landed fine and then silently
+///   never transcribed.
+///
+/// Both are the same bug: two path expressions that agree on one machine and
+/// diverge on another. One function is the fix.
+///
+/// Precedence:
+/// 1. `STORAGE_PATH` — what the installer writes and systemd hands every
+///    process, server and applet subprocess alike.
+/// 2. The well-known box path, chosen when `/var/lib/virtues` exists. Keying on
+///    the **parent** matters: the lake legitimately does not exist yet on a box
+///    that has never ingested anything, and falling back to a source path there
+///    would write data somewhere production never reads. (Same reasoning as
+///    `action_templates::state_root`.)
+/// 3. A dev path fixed relative to this crate. Manifest-relative rather than
+///    cwd-relative so that `cargo run`, a `cargo test` with its own working
+///    directory, and an applet binary invoked from anywhere all name the same
+///    directory — which is precisely what the cwd-relative default did not do.
+pub fn lake_root() -> std::path::PathBuf {
+    let on_a_box = std::path::Path::new(WELL_KNOWN_LAKE_DIR)
+        .parent()
+        .is_some_and(|p| p.is_dir());
+    resolve_lake_root(std::env::var("STORAGE_PATH").ok().as_deref(), on_a_box)
+}
+
+/// The decision itself, with both inputs passed in so it can be tested. Reading
+/// the environment and stat-ing the disk stay in `lake_root`; a resolver whose
+/// only coverage is the machine it happens to run on is how the two historical
+/// divergences went unnoticed in the first place.
+fn resolve_lake_root(configured: Option<&str>, on_a_box: bool) -> std::path::PathBuf {
+    if let Some(dir) = configured {
+        if !dir.is_empty() {
+            return std::path::PathBuf::from(dir);
+        }
+    }
+    if on_a_box {
+        return std::path::PathBuf::from(WELL_KNOWN_LAKE_DIR);
+    }
+    std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join(DEV_LAKE_DIR_FROM_CORE)
 }
 
 /// Below this much free disk, the lake stops accepting new raw-stream archives.
@@ -109,10 +166,13 @@ const MIN_FREE_BYTES: u64 = 2 * 1024 * 1024 * 1024;
 /// `None` means proceed. A guard that cannot read the disk must not be the reason
 /// ingest stops — that would trade a rare failure for a certain one.
 fn free_bytes() -> Option<u64> {
-    free_bytes_at(&std::fs::canonicalize(storage_root()).ok()?)
+    free_bytes_at(&std::fs::canonicalize(lake_root()).ok()?)
 }
 
-fn free_bytes_at(root: &std::path::Path) -> Option<u64> {
+/// Shared rather than reimplemented: `upgrade`'s pre-migration dump needs the
+/// same "which mount actually holds this path" answer, and a second copy of the
+/// longest-prefix logic would be a third one in this tree.
+pub(crate) fn free_bytes_at(root: &std::path::Path) -> Option<u64> {
     sysinfo::Disks::new_with_refreshed_list()
         .iter()
         .filter(|d| root.starts_with(d.mount_point()))
@@ -464,5 +524,49 @@ mod tests {
                 "a nested mount resolved to the root filesystem's free space"
             );
         }
+    }
+
+    #[test]
+    fn configured_path_wins_everywhere() {
+        for on_a_box in [true, false] {
+            assert_eq!(
+                resolve_lake_root(Some("/mnt/archive/lake"), on_a_box),
+                std::path::Path::new("/mnt/archive/lake"),
+                "STORAGE_PATH must win regardless of what is on disk"
+            );
+        }
+    }
+
+    #[test]
+    fn empty_configured_value_falls_through() {
+        // systemd hands down `STORAGE_PATH=` as an empty string, not an absent
+        // var. Treating that as a configured path would resolve the lake to the
+        // process's working directory.
+        assert_eq!(
+            resolve_lake_root(Some(""), true),
+            std::path::Path::new(WELL_KNOWN_LAKE_DIR)
+        );
+    }
+
+    #[test]
+    fn box_uses_the_well_known_path() {
+        assert_eq!(
+            resolve_lake_root(None, true),
+            std::path::Path::new(WELL_KNOWN_LAKE_DIR)
+        );
+    }
+
+    #[test]
+    fn dev_fallback_is_absolute_and_cwd_independent() {
+        let root = resolve_lake_root(None, false);
+        // The property that matters. A cwd-relative default is what parked
+        // ~763 MB outside the lake and what made a reader and a writer disagree
+        // about where audio lived.
+        assert!(
+            root.is_absolute(),
+            "dev fallback must not depend on the working directory, got {}",
+            root.display()
+        );
+        assert!(root.ends_with("data/lake"), "unexpected dev path: {root:?}");
     }
 }

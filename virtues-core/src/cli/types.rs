@@ -134,6 +134,26 @@ pub enum Commands {
         /// for dev boxes that keep the key elsewhere.
         #[arg(long)]
         allow_missing_key: bool,
+
+        /// Verify an existing archive instead of writing one: decrypt it,
+        /// re-hash every member, and compare against its manifest.
+        ///
+        /// Reads nothing else and writes nothing. A backup nobody has ever
+        /// opened is a hope; this is the cheap way to stop it being one.
+        #[arg(long, value_name = "ARCHIVE", conflicts_with_all = ["output", "volume"])]
+        verify: Option<std::path::PathBuf>,
+
+        /// Recovery key file, for `--verify` on an encrypted archive.
+        #[arg(long, requires = "verify")]
+        key_file: Option<std::path::PathBuf>,
+
+        /// Back up to a registered volume instead of a local file.
+        ///
+        /// Writes a full archive plus an increment carrying only the lake files
+        /// that volume has not already received. `all` targets every registered
+        /// volume; one that is not attached is skipped, not an error.
+        #[arg(long, value_name = "ID|all")]
+        volume: Option<String>,
     },
 
     /// Restore the box's state from a backup tarball.
@@ -144,13 +164,34 @@ pub enum Commands {
     /// if the tarball was produced by a binary newer than this one (upgrade
     /// the binary first; we never restore-into-older-schema).
     Restore {
-        /// Path to the tarball.
-        path: std::path::PathBuf,
+        /// Path to the archive. Omit when using `--from-volume`.
+        path: Option<std::path::PathBuf>,
 
         /// Bypass the "service is running" check. The schema-version + sha256
         /// checks are never bypassable.
         #[arg(long)]
         force: bool,
+
+        /// Restore from a registered volume rather than a single archive:
+        /// its newest full archive, then every increment in order.
+        #[arg(long, value_name = "ID", conflicts_with = "path")]
+        from_volume: Option<String>,
+
+        /// File holding the age recovery key printed when this box took its
+        /// first backup.
+        ///
+        /// Required for encrypted archives. The box keeps only the public half
+        /// of that keypair, so it cannot decrypt its own backups — which is
+        /// exactly what stops a stolen box from reading them, and why this
+        /// cannot be recovered from the box if you lose it.
+        #[arg(long)]
+        key_file: Option<std::path::PathBuf>,
+    },
+
+    /// Register and inspect backup destinations.
+    Volumes {
+        #[command(subcommand)]
+        cmd: VolumesCmd,
     },
 
     /// Remove Virtues from this machine (box installs; requires root).
@@ -427,5 +468,30 @@ pub enum Commands {
         /// Lookback window in hours (default: 24)
         #[arg(long, default_value_t = 24)]
         hours: i64,
+    },
+}
+
+/// `virtues volumes <action>` — the backup destinations, as a CLI.
+#[derive(Subcommand)]
+pub enum VolumesCmd {
+    /// Show every registered destination, whether it is attached, and how old
+    /// its newest good backup is.
+    #[command(alias = "list")]
+    Ls,
+
+    /// Register a mounted filesystem as a backup destination.
+    ///
+    /// Identity is the filesystem UUID, read from the given path — not the path
+    /// itself, which moves between boots. Nothing outside the box's own
+    /// subdirectory on that volume is ever read, written, or removed, so the
+    /// drive stays usable for whatever else lives on it and never needs
+    /// formatting.
+    Add {
+        /// Any path on the mounted volume, e.g. `/media/backup`.
+        path: std::path::PathBuf,
+
+        /// Human label shown in `volumes ls`. Defaults to the mount point.
+        #[arg(long)]
+        name: Option<String>,
     },
 }
