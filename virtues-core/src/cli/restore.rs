@@ -461,7 +461,7 @@ fn extract_into(reader: Box<dyn Read>, dest: &Path) -> Result<(), crate::Error> 
 
 /// `chown -R virtues:virtues <dir>`. Shells out to match how the installer
 /// does the same job; a pure-Rust walk would need the uid/gid lookup anyway.
-fn give_to_service_user(dir: &Path) {
+pub(crate) fn give_to_service_user(dir: &Path) {
     let out = Command::new("chown")
         .args(["-R", "virtues:virtues"])
         .arg(dir)

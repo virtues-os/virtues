@@ -1246,8 +1246,19 @@ const PRE_UPGRADE_MIN_FREE: u64 = 2 * 1024 * 1024 * 1024;
 /// refused.
 fn pre_migration_dump(from: &str, to: &str) -> Result<PathBuf, crate::Error> {
     let dir = PathBuf::from(PRE_UPGRADE_DIR);
+    let existed = dir.is_dir();
     fs::create_dir_all(&dir)
         .map_err(|e| crate::Error::Other(format!("creating {PRE_UPGRADE_DIR}: {e}")))?;
+    // `upgrade` runs as root, so a directory it creates lands root-owned — but
+    // the dump below is written by `pg_dump` running as `virtues` (peer auth
+    // requires it), which then cannot write there. Every sibling under the data
+    // dir is virtues-owned for the same reason; this one has to match.
+    //
+    // Also repairs a directory an earlier build left root-owned, which
+    // additionally broke `virtues backup`, since that writes here too.
+    if !existed || !dir_is_service_owned(&dir) {
+        crate::cli::restore::give_to_service_user(&dir);
+    }
 
     let need = database_size_bytes().unwrap_or(PRE_UPGRADE_MIN_FREE);
     if let Some(free) = crate::storage::lake::free_bytes_at(&dir) {
@@ -1289,6 +1300,26 @@ fn pre_migration_dump(from: &str, to: &str) -> Result<PathBuf, crate::Error> {
     ));
     prune_pre_upgrade_dumps(slots::KEEP_SLOTS);
     Ok(dest)
+}
+
+/// Is the directory already owned by the service user? Avoids shelling out to
+/// `chown` on every upgrade once it is correct.
+fn dir_is_service_owned(dir: &Path) -> bool {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt;
+        let Ok(meta) = fs::metadata(dir) else {
+            return false;
+        };
+        let uid = Command::new("id")
+            .args(["-u", "virtues"])
+            .output()
+            .ok()
+            .and_then(|o| String::from_utf8_lossy(&o.stdout).trim().parse::<u32>().ok());
+        return uid.is_some_and(|u| meta.uid() == u);
+    }
+    #[cfg(not(unix))]
+    true
 }
 
 /// Database size, as `virtues`, for the free-space guard. `None` when it cannot
