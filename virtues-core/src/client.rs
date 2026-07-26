@@ -110,7 +110,9 @@ impl VirtuesBuilder {
 
     /// Set storage path for stream archives and drive files.
     ///
-    /// Defaults to `STORAGE_PATH` env var, then `./data/lake`.
+    /// An explicit path here wins; otherwise the location comes from
+    /// `storage::lake::lake_root`, the same resolver every reader and writer
+    /// uses.
     pub fn storage_path(mut self, path: &str) -> Self {
         self.storage_path = Some(path.to_string());
         self
@@ -127,11 +129,11 @@ impl VirtuesBuilder {
 
         let file_storage_path = self
             .storage_path
-            .or_else(|| std::env::var("STORAGE_PATH").ok())
-            .unwrap_or_else(|| "./data/lake".to_string());
+            .map(std::path::PathBuf::from)
+            .unwrap_or_else(crate::storage::lake::lake_root);
 
-        tracing::info!(path = %file_storage_path, "Using file storage backend");
-        let storage = Storage::file(file_storage_path)?;
+        tracing::info!(path = %file_storage_path.display(), "Using file storage backend");
+        let storage = Storage::file(file_storage_path.to_string_lossy().into_owned())?;
 
         Ok(Virtues {
             database: Arc::new(database),

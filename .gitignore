@@ -149,3 +149,7 @@ tmp/*
 # local state, not shipped source (builtin applets live under applets/<name>/).
 /applets/user/
 /.applet-state/
+
+# Dev-only age recipient for `virtues backup` (public half; the secret is
+# printed once and never stored). The box equivalent lives in the state root.
+.backup-recipient

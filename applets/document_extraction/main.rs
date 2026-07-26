@@ -22,11 +22,13 @@ async fn main() -> Result<()> {
     let input = read_input()?;
     let pool = connect_from_env("virtues-action-document_extraction").await?;
 
-    // Same storage resolution as the server (client.rs): STORAGE_PATH env or
-    // the dev default.
-    let storage_path =
-        std::env::var("STORAGE_PATH").unwrap_or_else(|_| "./data/lake".to_string());
-    let storage = Storage::file(storage_path)?;
+    // The server's resolver, called rather than re-implemented — this applet is a
+    // separate process, and a second expression of the rule is how the two drift.
+    let storage = Storage::file(
+        virtues::storage::lake::lake_root()
+            .to_string_lossy()
+            .into_owned(),
+    )?;
     let config = DriveConfig::new(Arc::new(storage));
 
     let processed = run_extraction_job(&pool, &config).await?;

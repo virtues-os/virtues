@@ -948,6 +948,34 @@ export async function getDriveUsage(): Promise<DriveUsage> {
 	return res.json();
 }
 
+export interface BackupVolumeStatus {
+	id: string;
+	name: string;
+	/** Whether the drive is plugged in right now, resolved live. */
+	attached: boolean;
+	last_ok_at: string | null;
+	age_seconds: number | null;
+	last_error: string | null;
+}
+
+export interface BackupStatus {
+	/** none | never | ok | stale | failing */
+	state: string;
+	/** Seconds since the newest successful backup on any volume. */
+	age_seconds: number | null;
+	volumes: BackupVolumeStatus[];
+}
+
+/**
+ * Backup freshness. The one number that matters is `age_seconds` — if the box
+ * died now, that is how much would be lost.
+ */
+export async function getBackupStatus(): Promise<BackupStatus> {
+	const res = await fetch(`${API_BASE}/backup/status`);
+	if (!res.ok) throw new Error(`Failed to get backup status: ${res.statusText}`);
+	return res.json();
+}
+
 /**
  * List files in a directory
  * @param path - Directory path (empty string for root)

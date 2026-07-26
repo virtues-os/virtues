@@ -1,6 +1,8 @@
 //! CLI module - command-line interface for Virtues
 
 pub mod backup;
+pub mod backup_volume;
+pub mod volumes;
 pub mod commands;
 pub mod configure_inference;
 pub mod diag;
@@ -56,6 +58,17 @@ pub async fn run(cli: Cli, virtues: Virtues) -> Result<(), Box<dyn std::error::E
         Commands::Restore { .. } => {
             // Same.
             unreachable!("Restore command should be handled in main.rs");
+        }
+
+        Commands::Volumes { cmd } => {
+            virtues.database.initialize().await?;
+            let pool = virtues.database.pool();
+            match cmd {
+                types::VolumesCmd::Ls => volumes::list(&pool).await?,
+                types::VolumesCmd::Add { path, name } => {
+                    volumes::add(&pool, &path, name).await?
+                }
+            }
         }
 
         Commands::Upgrade { .. } => {
