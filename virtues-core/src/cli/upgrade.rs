@@ -836,7 +836,7 @@ fn acquire_lock() -> Result<UpgradeLock, crate::Error> {
     }
 }
 
-fn running_as_root() -> bool {
+pub(crate) fn running_as_root() -> bool {
     // Avoids pulling in `nix` or `libc` crates — we read EUID from the
     // `/proc/self/status` file. Falls back to false (refuse to run) if
     // we can't tell.
