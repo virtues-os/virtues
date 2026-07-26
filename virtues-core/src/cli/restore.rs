@@ -751,6 +751,63 @@ mod drill {
         let _ = fs::remove_dir_all(archive.parent().unwrap());
     }
 
+    #[sqlx::test]
+    async fn verify_accepts_a_good_archive_and_rejects_a_damaged_one(pool: sqlx::PgPool) {
+        require_pg_tools();
+        let url = scratch_url(&pool);
+        let root = scratch_dir("verify");
+        let lake = root.join("lake");
+        let env_file = root.join("virtues.env");
+        write(&env_file, "VIRTUES_ENCRYPTION_KEY=k\n");
+        write(&lake.join("streams/x.jsonl"), "payload");
+
+        let identity = age::x25519::Identity::generate();
+        let key_path = root.join("key.txt");
+        {
+            use age::secrecy::ExposeSecret;
+            fs::write(&key_path, identity.to_string().expose_secret()).unwrap();
+        }
+        let archive = scratch_dir("verify-out").join("a.tar.gz.age");
+        crate::cli::backup::write_archive(
+            &pool,
+            Some(archive.clone()),
+            false,
+            &crate::cli::backup::Sources {
+                database_url: url,
+                lake,
+                applets: root.join("applets"),
+                env_file: Some(env_file),
+            },
+            &identity.to_public(),
+            true,
+        )
+        .await
+        .expect("backup");
+
+        verify(archive.clone(), Some(key_path.clone()))
+            .await
+            .expect("a freshly written archive must verify");
+
+        // Without the key it cannot even be opened, let alone verified.
+        assert!(verify(archive.clone(), None).await.is_err());
+
+        // Flip bytes in the middle of the ciphertext. age authenticates the
+        // stream, so this must fail — if it passed, verification would be
+        // theatre.
+        let mut bytes = fs::read(&archive).unwrap();
+        let mid = bytes.len() / 2;
+        bytes[mid] ^= 0xFF;
+        let damaged = archive.with_extension("damaged");
+        fs::write(&damaged, &bytes).unwrap();
+        assert!(
+            verify(damaged, Some(key_path)).await.is_err(),
+            "a corrupted archive verified clean"
+        );
+
+        let _ = fs::remove_dir_all(&root);
+        let _ = fs::remove_dir_all(archive.parent().unwrap());
+    }
+
     #[test]
     fn refuses_to_replace_a_directory_that_is_not_a_lake() {
         // The guard that stands between a mis-set STORAGE_PATH and someone's
@@ -916,4 +973,43 @@ fn survey_volume(archives: &Path) -> Result<(PathBuf, Vec<PathBuf>), crate::Erro
             ))
         })?;
     Ok((full, increments.into_iter().map(|(_, p)| p).collect()))
+}
+
+/// `virtues backup --verify <archive>` — prove an archive is readable without
+/// restoring anything.
+///
+/// Decrypts, extracts to a scratch directory, and re-hashes every member against
+/// the manifest. Deliberately shares `open_archive`, `read_manifest` and
+/// `verify_sha256` with the restore path: a verifier that checked the archive its
+/// own way could pass something restore would reject.
+pub async fn verify(
+    archive: PathBuf,
+    key_file: Option<PathBuf>,
+) -> Result<(), crate::Error> {
+    if !archive.exists() {
+        return Err(crate::Error::Other(format!("{} not found", archive.display())));
+    }
+    let identity = key_file.as_deref().map(read_identity).transpose()?;
+    println!("→ verifying {}…", archive.display());
+
+    let stage = mkstage(&archive)?;
+    let staging: &Path = stage.as_ref();
+    extract_into(open_archive(&archive, identity.as_ref())?, staging)?;
+    let manifest = read_manifest(staging)?;
+    println!(
+        "→ manifest: binary {}, schema {}, created {}",
+        manifest.binary_version, manifest.schema_version, manifest.created_at
+    );
+    verify_sha256(staging, &manifest.artifacts)?;
+
+    let total: u64 = manifest.artifacts.iter().map(|a| a.size_bytes).sum();
+    println!(
+        "✓ {} member(s), {:.1} MB, all digests match",
+        manifest.artifacts.len(),
+        total as f64 / (1024.0 * 1024.0)
+    );
+    // Says nothing about whether the CONTENTS restore cleanly — that is what the
+    // round-trip drill is for. This proves the bytes are intact and readable,
+    // which is the failure mode an unattended backup actually has.
+    Ok(())
 }

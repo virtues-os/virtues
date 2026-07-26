@@ -412,9 +412,21 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         output,
         force,
         allow_missing_key,
+        verify,
+        key_file,
         volume,
     }) = &cli.command
     {
+        // Verification needs no database at all — it reads one file.
+        if let Some(archive) = verify {
+            match virtues::cli::restore::verify(archive.clone(), key_file.clone()).await {
+                Ok(()) => return Ok(()),
+                Err(e) => {
+                    eprintln!("error: verification failed: {e}");
+                    std::process::exit(1);
+                }
+            }
+        }
         let database_url = virtues::database::normalize_database_url()?;
         let db = virtues::database::Database::new(&database_url)?;
         let result = match volume {

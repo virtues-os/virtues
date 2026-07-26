@@ -135,6 +135,18 @@ pub enum Commands {
         #[arg(long)]
         allow_missing_key: bool,
 
+        /// Verify an existing archive instead of writing one: decrypt it,
+        /// re-hash every member, and compare against its manifest.
+        ///
+        /// Reads nothing else and writes nothing. A backup nobody has ever
+        /// opened is a hope; this is the cheap way to stop it being one.
+        #[arg(long, value_name = "ARCHIVE", conflicts_with_all = ["output", "volume"])]
+        verify: Option<std::path::PathBuf>,
+
+        /// Recovery key file, for `--verify` on an encrypted archive.
+        #[arg(long, requires = "verify")]
+        key_file: Option<std::path::PathBuf>,
+
         /// Back up to a registered volume instead of a local file.
         ///
         /// Writes a full archive plus an increment carrying only the lake files
