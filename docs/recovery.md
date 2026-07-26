@@ -199,27 +199,41 @@ where it broke without a support ticket.
 sudo -u virtues virtues backup
 ```
 
-Writes a single tarball to `/var/lib/virtues/backups/virtues-<utc-iso>.tar.gz`.
-Contents:
+Writes one encrypted archive to
+`/var/lib/virtues/backups/virtues-<utc-iso>.tar.gz.age`. Contents:
 
 - Full Postgres dump (chat, sources, devices, credentials, day pages,
   events, everything)
-- The data lake (`/var/lib/virtues/lake/` — raw stream archives, drive
-  files)
-- `/etc/virtues/env` (the encryption key — required to decrypt
+- The data lake (raw stream archives, drive files) — from wherever
+  `STORAGE_PATH` actually points, not a fixed path
+- The env file (`VIRTUES_ENCRYPTION_KEY` — required to decrypt
   credentials in the DB)
-- `manifest.json` (version, schema migration, sha256 of every artifact)
+- `manifest.json` (version, schema migration, sha256 of every member)
 
-**Security note:** the env file is in the tarball, so the tarball is **as
-sensitive as the box itself**. Store it where you'd store the box's
-encryption key — encrypted offsite storage, a USB drive in a safe, etc.
-Don't commit it to a repo, don't drop it in shared cloud storage
-unencrypted.
+### The recovery key — read this once, properly
+
+The **first** `virtues backup` on a box mints an age keypair, prints the
+secret half, and stores only the **public** half at
+`/var/lib/virtues/backup-recipient`.
+
+That means the box **cannot decrypt its own backups**, deliberately. A
+stolen box gives an attacker an encryption key and nothing to decrypt; a
+stolen backup drive gives them ciphertext and no key.
+
+It also means **the secret is shown exactly once and cannot be recovered.**
+There is nowhere on the box it could have been kept that an attacker with
+the box could not also read. Put it in a password manager, or print it and
+file it. Without it, every archive this box has ever written is
+permanently unreadable.
+
+Archives are standard [age](https://age-encryption.org) files, so they can
+also be opened with the `age` CLI on any machine — a backup that only
+Virtues can read would be a poor backup.
 
 To customize the output path:
 
 ```bash
-sudo -u virtues virtues backup --output /mnt/external/virtues.tar.gz
+sudo -u virtues virtues backup --output /mnt/external/virtues.tar.gz.age
 ```
 
 ---
@@ -228,9 +242,13 @@ sudo -u virtues virtues backup --output /mnt/external/virtues.tar.gz
 
 ```bash
 sudo systemctl stop virtues
-sudo -u virtues virtues restore /path/to/virtues-...tar.gz
+sudo virtues restore --key-file /path/to/recovery-key /path/to/virtues-...tar.gz.age
 sudo systemctl start virtues
 ```
+
+`--key-file` holds the recovery key printed at first backup. Archives
+written before encryption landed still restore without it — the format is
+sniffed, not assumed from the filename.
 
 `virtues restore` enforces three checks before touching anything:
 
