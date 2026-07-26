@@ -569,6 +569,34 @@ mod tests {
         let _ = std::fs::remove_dir_all(&drive);
     }
 
+    /// Regression: `--from-volume` takes a path and must locate the box
+    /// directory whether the operator points at it or at the mount point above
+    /// it. On replacement hardware they know where they plugged the drive in,
+    /// not what the old box called itself.
+    #[test]
+    fn volume_root_resolves_from_the_mount_point_or_the_box_directory() {
+        use crate::cli::restore::resolve_volume_root;
+        let mount = scratch("resolve");
+        let box_dir = mount.join("virtues/dragon");
+        std::fs::create_dir_all(box_dir.join("archives")).unwrap();
+
+        assert_eq!(resolve_volume_root(&box_dir).unwrap(), box_dir);
+        assert_eq!(resolve_volume_root(&mount).unwrap(), box_dir);
+
+        // Two boxes sharing a drive must be named, not guessed between.
+        let second = mount.join("virtues/other");
+        std::fs::create_dir_all(second.join("archives")).unwrap();
+        let err = resolve_volume_root(&mount).unwrap_err();
+        assert!(format!("{err}").contains("more than one box"), "{err}");
+
+        let empty = scratch("resolve-empty");
+        let err = resolve_volume_root(&empty).unwrap_err();
+        assert!(format!("{err}").contains("no backups under"), "{err}");
+
+        let _ = std::fs::remove_dir_all(&mount);
+        let _ = std::fs::remove_dir_all(&empty);
+    }
+
     #[sqlx::test]
     async fn a_volume_with_no_full_archive_refuses_rather_than_half_restores(
         _pool: sqlx::PgPool,
