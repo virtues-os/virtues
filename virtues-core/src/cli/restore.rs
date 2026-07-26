@@ -93,16 +93,16 @@ impl Targets {
 pub async fn run(
     path: Option<PathBuf>,
     force: bool,
-    from_volume: Option<String>,
+    from_volume: Option<PathBuf>,
     key_file: Option<PathBuf>,
 ) -> Result<(), crate::Error> {
     let identity = key_file.as_deref().map(read_identity).transpose()?;
 
-    if let Some(volume_id) = from_volume {
+    if let Some(volume_path) = from_volume {
         if !force {
             check_service_inactive()?;
         }
-        return run_from_volume(&volume_id, identity.as_ref()).await;
+        return run_from_volume(&volume_path, identity.as_ref()).await;
     }
 
     let Some(path) = path else {
@@ -833,30 +833,23 @@ mod drill {
     }
 }
 
-/// `virtues restore --from-volume <id>`.
+/// `virtues restore --from-volume <path>`.
+///
+/// Takes a PATH, not a registered volume id, and that is the whole point. The
+/// volume registry lives in `storage_volume` — inside the database being
+/// restored — so on the scenario that matters most, a fresh box with an empty
+/// database, there is no row to look up. The drive is physically present; the
+/// operator can point at it.
+///
+/// It also has to work as root, which restore requires (it stops the unit,
+/// writes the env file, drives pg_restore). `restore` is deliberately absent
+/// from main.rs's DB_COMMANDS re-exec list, so on a peer-auth box a database
+/// query from here authenticates as `root` and is refused outright.
 async fn run_from_volume(
-    volume_id: &str,
+    path: &Path,
     identity: Option<&age::x25519::Identity>,
 ) -> Result<(), crate::Error> {
-    let database_url = crate::database::normalize_database_url()
-        .map_err(|e| crate::Error::Other(format!("DATABASE_URL: {e}")))?;
-    let db = crate::database::Database::new(&database_url)?;
-    let pool = db.pool();
-    let volume = crate::storage::volumes::backup_volumes(&pool)
-        .await?
-        .into_iter()
-        .find(|v| v.id == volume_id)
-        .ok_or_else(|| {
-            crate::Error::Other(format!(
-                "no registered volume `{volume_id}` (see `virtues volumes ls`)"
-            ))
-        })?;
-    let root = volume.root().ok_or_else(|| {
-        crate::Error::Other(format!(
-            "{} is not attached — plug it in and retry",
-            volume.name
-        ))
-    })?;
+    let root = resolve_volume_root(path)?;
 
     println!();
     println!("⚠  About to overwrite live box state. Press Ctrl-C in 5s to abort.");
@@ -871,6 +864,58 @@ async fn run_from_volume(
     }
     print_next_steps();
     Ok(())
+}
+
+/// Accept either the box directory itself or the mount point above it.
+///
+/// An operator restoring onto replacement hardware knows where they plugged the
+/// drive in, not what the old box called itself, so pointing at `/mnt/backup`
+/// has to work — or at minimum say exactly what to point at instead.
+pub(crate) fn resolve_volume_root(path: &Path) -> Result<PathBuf, crate::Error> {
+    if path.join("archives").is_dir() {
+        return Ok(path.to_path_buf());
+    }
+    // One or two levels down: <mount>/virtues/<box>/archives.
+    let mut found = Vec::new();
+    for depth1 in read_dirs(path) {
+        if depth1.join("archives").is_dir() {
+            found.push(depth1.clone());
+        }
+        for depth2 in read_dirs(&depth1) {
+            if depth2.join("archives").is_dir() {
+                found.push(depth2);
+            }
+        }
+    }
+    match found.len() {
+        1 => Ok(found.remove(0)),
+        0 => Err(crate::Error::Other(format!(
+            "no backups under {}. Expected an `archives/` directory, or a box \
+             directory containing one. Is the drive mounted?",
+            path.display()
+        ))),
+        _ => Err(crate::Error::Other(format!(
+            "{} holds backups from more than one box; name the one to restore:\n{}",
+            path.display(),
+            found
+                .iter()
+                .map(|p| format!("    {}", p.display()))
+                .collect::<Vec<_>>()
+                .join("\n")
+        ))),
+    }
+}
+
+fn read_dirs(path: &Path) -> Vec<PathBuf> {
+    fs::read_dir(path)
+        .map(|entries| {
+            entries
+                .flatten()
+                .map(|e| e.path())
+                .filter(|p| p.is_dir())
+                .collect()
+        })
+        .unwrap_or_default()
 }
 
 /// Restore from a backup volume: the newest full archive, then every increment.

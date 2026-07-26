@@ -181,10 +181,14 @@ pub enum Commands {
         #[arg(long)]
         force: bool,
 
-        /// Restore from a registered volume rather than a single archive:
-        /// its newest full archive, then every increment in order.
-        #[arg(long, value_name = "ID", conflicts_with = "path")]
-        from_volume: Option<String>,
+        /// Restore from a backup drive rather than a single archive: its
+        /// newest full archive, then every increment in order.
+        ///
+        /// Takes a PATH — the mount point, or the box directory on it. Not a
+        /// registered volume id: the registry lives in the database being
+        /// restored, so on replacement hardware there is nothing to look up.
+        #[arg(long, value_name = "PATH", conflicts_with = "path")]
+        from_volume: Option<std::path::PathBuf>,
 
         /// File holding the age recovery key printed when this box took its
         /// first backup.
