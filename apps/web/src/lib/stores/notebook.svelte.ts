@@ -18,6 +18,8 @@ import {
 	addNotebookItem,
 	removeNotebookItem,
 	reorderNotebookItems,
+	setNotebookItemRole,
+	type NotebookItemRole,
 	updateChat,
 	type Notebook,
 	type NotebookSummary,
@@ -145,6 +147,18 @@ export class NotebookStore {
 				})
 				.filter((i): i is (typeof cached.items)[number] => i !== null);
 			this.setDetail({ ...cached, items: reordered });
+		}
+	}
+
+	/** PUT /api/notebooks/:id/items/role — change what a member is to the notebook. */
+	async setItemRole(id: string, url: string, role: NotebookItemRole): Promise<void> {
+		const updated = await setNotebookItemRole(id, url, role);
+		const cached = this.details.get(id);
+		if (cached) {
+			this.setDetail({
+				...cached,
+				items: cached.items.map((i) => (i.url === url ? updated : i))
+			});
 		}
 	}
 

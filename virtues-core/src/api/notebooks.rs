@@ -61,6 +61,9 @@ pub struct NotebookSummary {
 pub struct NotebookItem {
     pub url: String,
     pub sort_order: i32,
+    /// `library` (grounds chat) | `manuscript` (yours to write; excluded from
+    /// retrieval so a draft is never cited back at you) | `pin` (nav-only).
+    pub role: String,
     pub added_at: Timestamp,
 }
 
@@ -103,6 +106,38 @@ pub struct AddNotebookItemRequest {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ReorderNotebookItemsRequest {
     pub urls: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SetNotebookItemRoleRequest {
+    pub url: String,
+    /// `library` | `manuscript` | `pin`.
+    pub role: String,
+}
+
+/// One entity referenced across a notebook's members.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct NotebookGraphNode {
+    /// Ref URL for the entity, e.g. `/person/pe_abc` — also the node's identity.
+    pub url: String,
+    pub entity_type: String,
+    pub name: String,
+    /// Member urls that reference this entity. Drives click-to-filter.
+    pub item_urls: Vec<String>,
+}
+
+/// Two entities that appear together in at least one member.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct NotebookGraphEdge {
+    pub source: String,
+    pub target: String,
+    pub weight: i64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct NotebookGraph {
+    pub nodes: Vec<NotebookGraphNode>,
+    pub edges: Vec<NotebookGraphEdge>,
 }
 
 // ============================================================================
@@ -148,7 +183,7 @@ pub async fn get_notebook(pool: &PgPool, id: &str) -> Result<NotebookDetail> {
 
     let items = sqlx::query_as::<_, NotebookItem>(
         r#"
-        SELECT url, sort_order, added_at
+        SELECT url, sort_order, role, added_at
         FROM app_notebook_items
         WHERE notebook_id = $1
         ORDER BY sort_order ASC, added_at ASC
@@ -316,8 +351,12 @@ pub async fn add_notebook_item(pool: &PgPool, notebook_id: &str, req: AddNoteboo
             (SELECT COALESCE(MAX(sort_order), -1) + 1 FROM app_notebook_items WHERE notebook_id = $1),
             'library'
         )
-        ON CONFLICT (notebook_id, url) DO UPDATE SET role = 'library'
-        RETURNING url, sort_order, added_at
+        -- Re-adding an existing member upgrades a legacy nav-only 'pin' to
+        -- 'library', but must not demote a 'manuscript' back to source material.
+        ON CONFLICT (notebook_id, url) DO UPDATE SET
+            role = CASE WHEN app_notebook_items.role = 'pin'
+                        THEN 'library' ELSE app_notebook_items.role END
+        RETURNING url, sort_order, role, added_at
         "#,
     )
     .bind(notebook_id)
@@ -448,4 +487,210 @@ pub async fn set_chat_notebook(pool: &PgPool, chat_id: &str, notebook_id: Option
         .map_err(|e| Error::Database(format!("Failed to commit chat notebook binding: {}", e)))?;
 
     Ok(())
+}
+
+/// Set a member's role. `library` grounds chat, `manuscript` is yours to write
+/// (kept out of retrieval), `pin` is nav-only.
+pub async fn set_notebook_item_role(
+    pool: &PgPool,
+    notebook_id: &str,
+    req: SetNotebookItemRoleRequest,
+) -> Result<NotebookItem> {
+    if !matches!(req.role.as_str(), "library" | "manuscript" | "pin") {
+        return Err(Error::InvalidInput(format!(
+            "Unknown notebook item role: {}",
+            req.role
+        )));
+    }
+
+    let item = sqlx::query_as::<_, NotebookItem>(
+        r#"
+        UPDATE app_notebook_items SET role = $3
+        WHERE notebook_id = $1 AND url = $2
+        RETURNING url, sort_order, role, added_at
+        "#,
+    )
+    .bind(notebook_id)
+    .bind(&req.url)
+    .bind(&req.role)
+    .fetch_optional(pool)
+    .await
+    .map_err(|e| Error::Database(format!("Failed to set notebook item role: {}", e)))?
+    .ok_or_else(|| Error::NotFound(format!("Notebook member not found: {}", req.url)))?;
+
+    touch_notebook(pool, notebook_id).await.ok();
+    Ok(item)
+}
+
+/// Entity ref-URL prefixes that can appear as a notebook member or inside a
+/// page's markdown. Kept in sync with the frontend's ref routes.
+const ENTITY_PREFIXES: [&str; 4] = ["/person/", "/place/", "/org/", "/thing/"];
+
+/// Pull entity ref URLs out of markdown. Refs are stored inline as
+/// `[@Label](/person/pe_x)` — there is no link table — so this scans for the
+/// closing `](` of a link and reads the URL, mirroring `get_page_backlinks`.
+fn extract_entity_urls(content: &str) -> std::collections::HashSet<String> {
+    let mut out = std::collections::HashSet::new();
+    for prefix in ENTITY_PREFIXES {
+        let needle = format!("]({}", prefix);
+        let mut from = 0usize;
+        while let Some(hit) = content[from..].find(&needle) {
+            let start = from + hit + 2; // skip "]("
+            let rest = &content[start..];
+            match rest.find(')') {
+                Some(end) => {
+                    let url = &rest[..end];
+                    // Ignore anything with a fragment/query — a ref is a bare route.
+                    if !url.is_empty() && !url.contains(['#', '?', ' ']) {
+                        out.insert(url.to_string());
+                    }
+                    from = start + end;
+                }
+                None => break,
+            }
+        }
+    }
+    out
+}
+
+/// The entities referenced across a notebook's members, with co-occurrence
+/// edges. Nodes come only from things the user explicitly wrote or filed —
+/// entity members, and `[@ref]` links inside member pages. Nothing is inferred:
+/// there is no NER over free text, so an entity that is merely *mentioned* in a
+/// PDF does not appear here.
+pub async fn notebook_graph(pool: &PgPool, notebook_id: &str) -> Result<NotebookGraph> {
+    use std::collections::{HashMap, HashSet};
+
+    // Nav-only pins are excluded: they are shortcuts, not content.
+    let members: Vec<String> = sqlx::query_scalar(
+        r#"
+        SELECT url FROM app_notebook_items
+        WHERE notebook_id = $1 AND role <> 'pin'
+        ORDER BY sort_order ASC, added_at ASC
+        "#,
+    )
+    .bind(notebook_id)
+    .fetch_all(pool)
+    .await
+    .map_err(|e| Error::Database(format!("Failed to load notebook members: {}", e)))?;
+
+    if members.is_empty() {
+        return Ok(NotebookGraph { nodes: Vec::new(), edges: Vec::new() });
+    }
+
+    // item url -> the entity urls it references.
+    let mut per_item: Vec<(String, HashSet<String>)> = Vec::new();
+
+    // Page members contribute whatever they link to; fetch their content in one go.
+    let page_ids: Vec<String> = members
+        .iter()
+        .filter_map(|u| u.strip_prefix("/page/").map(str::to_string))
+        .collect();
+    let mut page_content: HashMap<String, String> = HashMap::new();
+    if !page_ids.is_empty() {
+        let rows: Vec<(String, String)> =
+            sqlx::query_as(r#"SELECT id, content FROM app_pages WHERE id = ANY($1)"#)
+                .bind(&page_ids)
+                .fetch_all(pool)
+                .await
+                .map_err(|e| Error::Database(format!("Failed to load member pages: {}", e)))?;
+        page_content.extend(rows);
+    }
+
+    for url in &members {
+        let mut refs = HashSet::new();
+        if ENTITY_PREFIXES.iter().any(|p| url.starts_with(p)) {
+            // An entity filed directly in the notebook is a node in its own right.
+            refs.insert(url.clone());
+        } else if let Some(pid) = url.strip_prefix("/page/") {
+            if let Some(content) = page_content.get(pid) {
+                refs = extract_entity_urls(content);
+            }
+        }
+        if !refs.is_empty() {
+            per_item.push((url.clone(), refs));
+        }
+    }
+
+    // Resolve display names. Ids are prefixed and unique across types, so one
+    // id array filters every table.
+    let entity_ids: Vec<String> = per_item
+        .iter()
+        .flat_map(|(_, refs)| refs.iter())
+        .filter_map(|u| u.rsplit('/').next().map(str::to_string))
+        .collect::<HashSet<_>>()
+        .into_iter()
+        .collect();
+
+    let mut names: HashMap<String, String> = HashMap::new();
+    if !entity_ids.is_empty() {
+        let rows: Vec<(String, String)> = sqlx::query_as(
+            r#"
+            SELECT id, canonical_name AS name FROM wiki_people WHERE id = ANY($1)
+            UNION ALL SELECT id, name FROM wiki_places WHERE id = ANY($1)
+            UNION ALL SELECT id, canonical_name AS name FROM wiki_orgs WHERE id = ANY($1)
+            UNION ALL SELECT id, name FROM wiki_things WHERE id = ANY($1)
+            "#,
+        )
+        .bind(&entity_ids)
+        .fetch_all(pool)
+        .await
+        .map_err(|e| Error::Database(format!("Failed to resolve entity names: {}", e)))?;
+        names.extend(rows);
+    }
+
+    // Nodes, in descending reference count so the caller can size them.
+    let mut node_items: HashMap<String, Vec<String>> = HashMap::new();
+    for (item_url, refs) in &per_item {
+        for ent in refs {
+            node_items.entry(ent.clone()).or_default().push(item_url.clone());
+        }
+    }
+
+    let mut nodes: Vec<NotebookGraphNode> = node_items
+        .into_iter()
+        .filter_map(|(url, item_urls)| {
+            let mut parts = url.trim_start_matches('/').splitn(2, '/');
+            let entity_type = parts.next()?.to_string();
+            let id = parts.next()?.to_string();
+            // An unresolvable id is a dangling ref (entity deleted, stale link).
+            // Drop it rather than render a node with no name.
+            let name = names.get(&id)?.clone();
+            Some(NotebookGraphNode { url, entity_type, name, item_urls })
+        })
+        .collect();
+    nodes.sort_by(|a, b| {
+        b.item_urls
+            .len()
+            .cmp(&a.item_urls.len())
+            .then_with(|| a.name.cmp(&b.name))
+    });
+
+    let live: HashSet<&str> = nodes.iter().map(|n| n.url.as_str()).collect();
+
+    // Edges: entities sharing a member. Undirected, deduped by sorted pair.
+    let mut pair_weight: HashMap<(String, String), i64> = HashMap::new();
+    for (_, refs) in &per_item {
+        let mut present: Vec<&str> = refs
+            .iter()
+            .map(String::as_str)
+            .filter(|u| live.contains(u))
+            .collect();
+        present.sort_unstable();
+        for i in 0..present.len() {
+            for j in (i + 1)..present.len() {
+                *pair_weight
+                    .entry((present[i].to_string(), present[j].to_string()))
+                    .or_insert(0) += 1;
+            }
+        }
+    }
+
+    let mut edges: Vec<NotebookGraphEdge> = pair_weight
+        .into_iter()
+        .map(|((source, target), weight)| NotebookGraphEdge { source, target, weight })
+        .collect();
+    edges.sort_by(|a, b| b.weight.cmp(&a.weight).then_with(|| a.source.cmp(&b.source)));
+
+    Ok(NotebookGraph { nodes, edges })
 }
