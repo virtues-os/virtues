@@ -415,8 +415,18 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         verify,
         key_file,
         volume,
+        init_key,
     }) = &cli.command
     {
+        if *init_key {
+            match virtues::cli::backup::init_key() {
+                Ok(()) => return Ok(()),
+                Err(e) => {
+                    eprintln!("error: {e}");
+                    std::process::exit(1);
+                }
+            }
+        }
         // Verification needs no database at all — it reads one file.
         if let Some(archive) = verify {
             match virtues::cli::restore::verify(archive.clone(), key_file.clone()).await {

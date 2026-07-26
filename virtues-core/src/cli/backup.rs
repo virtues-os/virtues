@@ -338,7 +338,7 @@ pub(crate) fn recipient_path() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join(DEV_RECIPIENT_PATH_FROM_CORE)
 }
 
-/// Load the recipient every backup encrypts to, minting one on first use.
+/// Load the recipient every backup encrypts to. Never mints — see `init_key`.
 ///
 /// The box stores only the public half, so **it cannot read its own backups.**
 /// That is the point, and it is what makes "virtues never holds the key" a
@@ -353,6 +353,43 @@ pub(crate) fn recipient_path() -> PathBuf {
 /// into the archive. A recovery key sealed inside the thing it unseals would be
 /// no recovery key at all.
 pub(crate) fn load_or_create_recipient() -> Result<age::x25519::Recipient, crate::Error> {
+    load_recipient(false)
+}
+
+/// `virtues backup --init-key` — the one place a backup key is created.
+///
+/// Refuses when one already exists rather than replacing it: a new key does not
+/// open old archives, so silently rotating would strand every backup the box has
+/// ever written.
+pub fn init_key() -> Result<(), crate::Error> {
+    let path = recipient_path();
+    if path.is_file() {
+        return Err(crate::Error::Other(format!(
+            "{} already exists. A new key would not open the archives this box \
+             has already written, so this refuses rather than strand them. To \
+             deliberately start over, remove that file first — and know that \
+             every existing archive becomes unreadable.",
+            path.display()
+        )));
+    }
+    load_recipient(true)?;
+    Ok(())
+}
+
+/// `mint` is the caller asserting a human is watching.
+///
+/// Minting prints a secret exactly once and can never reproduce it, so doing it
+/// anywhere the output is not being read produces archives nobody can ever open
+/// — and says nothing is wrong. That is not hypothetical: the nightly applet
+/// runs with its stdout captured as a JSON contract, and a first backup from
+/// cron would have minted a key straight into a void. It also happened to an
+/// operator, whose terminal pipeline truncated the banner and silently cost
+/// 4 GB of archives.
+///
+/// So auto-minting is gone. `virtues backup --init-key` is the only way to
+/// create one, it refuses to overwrite, and everything else fails loudly when
+/// no recipient exists.
+pub(crate) fn load_recipient(mint: bool) -> Result<age::x25519::Recipient, crate::Error> {
     use std::str::FromStr;
 
     let path = recipient_path();
@@ -369,6 +406,16 @@ pub(crate) fn load_or_create_recipient() -> Result<age::x25519::Recipient, crate
                 ))
             });
         }
+    }
+
+    if !mint {
+        return Err(crate::Error::Other(format!(
+            "no backup key on this box ({} is missing).\n\n    \
+             Run `virtues backup --init-key` from a terminal you are watching. \
+             It prints a recovery key once and cannot ever print it again — so \
+             it is never created automatically, and never by a scheduled run.",
+            path.display()
+        )));
     }
 
     let identity = age::x25519::Identity::generate();

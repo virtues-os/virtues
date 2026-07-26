@@ -390,13 +390,20 @@ mod tests {
         // Run 4: the first increment disappears — wiped drive, swapped drive,
         // operator tidying up. Its files have no other copy, so the box must
         // notice and re-send them rather than believe its own bookkeeping.
-        let first = std::fs::read_dir(&archives)
+        // By NAME, not mtime. Both increments are written seconds apart, so on a
+        // filesystem with coarse timestamps their mtimes can tie and `min_by_key`
+        // picks arbitrarily — which made this test flaky, deleting the newer
+        // increment and changing how many files reconciliation re-sent. Increment
+        // names are fixed-width UTC stamps, so lexical order IS chronological;
+        // this is the same reason `survey_volume` orders by name in production.
+        let mut names: Vec<PathBuf> = std::fs::read_dir(&archives)
             .unwrap()
             .flatten()
             .map(|e| e.path())
             .filter(|p| p.file_name().unwrap().to_string_lossy().starts_with("lake-"))
-            .min_by_key(|p| p.metadata().unwrap().modified().unwrap())
-            .unwrap();
+            .collect();
+        names.sort();
+        let first = names.into_iter().next().unwrap();
         std::fs::remove_file(&first).unwrap();
 
         let r4 = run_at(&pool, &volume, &drive, &sources, &recipient, t0 + chrono::Duration::days(3))

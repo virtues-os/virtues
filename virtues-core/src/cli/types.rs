@@ -135,6 +135,15 @@ pub enum Commands {
         #[arg(long)]
         allow_missing_key: bool,
 
+        /// Mint this box's backup key and print the recovery secret.
+        ///
+        /// Run it from a terminal you are watching: the secret is shown once
+        /// and cannot be recovered. Nothing else creates it — not a first
+        /// backup, and never a scheduled run — because a key minted where
+        /// nobody is reading produces archives nobody can ever open.
+        #[arg(long, conflicts_with_all = ["verify", "volume", "output"])]
+        init_key: bool,
+
         /// Verify an existing archive instead of writing one: decrypt it,
         /// re-hash every member, and compare against its manifest.
         ///
