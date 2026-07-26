@@ -68,6 +68,28 @@ fn assert_replaceable_lake(lake: &Path) -> Result<(), crate::Error> {
     )))
 }
 
+/// Where a restore writes. The mirror of `backup::Sources`, and testable for the
+/// same reason: the drill has to be able to aim a real restore at scratch paths
+/// and a scratch database instead of at the box it is running on.
+pub(crate) struct Targets {
+    pub database_url: String,
+    pub lake: PathBuf,
+    pub applets: PathBuf,
+    pub env_file: PathBuf,
+}
+
+impl Targets {
+    pub(crate) fn from_env() -> Result<Self, crate::Error> {
+        Ok(Self {
+            database_url: crate::database::normalize_database_url()
+                .map_err(|e| crate::Error::Other(format!("DATABASE_URL: {e}")))?,
+            lake: crate::storage::lake::lake_root(),
+            applets: crate::action_templates::state_root(),
+            env_file: restore_env_target(),
+        })
+    }
+}
+
 pub async fn run(path: PathBuf, force: bool) -> Result<(), crate::Error> {
     if !path.exists() {
         return Err(crate::Error::Other(format!(
@@ -100,44 +122,74 @@ pub async fn run(path: PathBuf, force: bool) -> Result<(), crate::Error> {
     println!("⚠  About to overwrite live box state. Press Ctrl-C in 5s to abort.");
     std::thread::sleep(std::time::Duration::from_secs(5));
 
-    let lake_dst = crate::storage::lake::lake_root();
-    println!("→ restoring data lake at {}…", lake_dst.display());
+    let targets = Targets::from_env()?;
+    apply(staging, &targets)?;
+
+    // Everything above was written by root (restore requires it — it stops the
+    // unit, writes the env file, and drives pg_restore). `copy_tree` is
+    // create_dir_all + fs::copy, neither of which preserves ownership, so the
+    // restored trees land root-owned while the service runs as `virtues`. Left
+    // that way, the box comes back up unable to write its own state: applet
+    // authoring fails with `mkdir failed: Permission denied` and lake writes
+    // fail the same way. Hand ownership back before declaring success.
+    //
+    // Runs last, and never fatally: aborting here would leave a fully restored
+    // box refusing to finish over a fixable permission, so a failure prints the
+    // exact command instead.
+    for dir in [targets.lake.as_path(), targets.applets.as_path()] {
+        if dir.is_dir() {
+            give_to_service_user(dir);
+        }
+    }
+
+    print_next_steps();
+    Ok(())
+}
+
+/// The destructive half: everything that writes box state, and nothing else.
+///
+/// Split out from `run` so the round-trip drill can exercise the real code
+/// rather than a reimplementation of it. `run` keeps the parts a test must not
+/// perform — the service check, the abort window, and the ownership handback.
+pub(crate) fn apply(staging: &Path, targets: &Targets) -> Result<(), crate::Error> {
+    println!("→ restoring data lake at {}…", targets.lake.display());
     let staged_lake = staging.join("lake");
     if staged_lake.exists() {
-        assert_replaceable_lake(&lake_dst)?;
-        let _ = fs::remove_dir_all(&lake_dst);
-        fs::create_dir_all(&lake_dst)
+        assert_replaceable_lake(&targets.lake)?;
+        let _ = fs::remove_dir_all(&targets.lake);
+        fs::create_dir_all(&targets.lake)
             .map_err(|e| crate::Error::Other(format!("create lake dir: {e}")))?;
-        copy_tree(&staged_lake, &lake_dst)?;
+        copy_tree(&staged_lake, &targets.lake)?;
     }
 
     // Authored applets. Replace wholesale like the lake: the tarball is the
     // intended state, and a merge would resurrect applets the user deleted.
     let staged_applets = staging.join("applets");
     if staged_applets.is_dir() {
-        let applets_dst = crate::action_templates::state_root();
-        println!("→ restoring authored applets at {}…", applets_dst.display());
-        let _ = fs::remove_dir_all(&applets_dst);
-        fs::create_dir_all(&applets_dst)
+        println!(
+            "→ restoring authored applets at {}…",
+            targets.applets.display()
+        );
+        let _ = fs::remove_dir_all(&targets.applets);
+        fs::create_dir_all(&targets.applets)
             .map_err(|e| crate::Error::Other(format!("create applets dir: {e}")))?;
-        copy_tree(&staged_applets, &applets_dst)?;
+        copy_tree(&staged_applets, &targets.applets)?;
     }
 
     let staged_env = staging.join("env/virtues.env");
     if staged_env.exists() {
-        let env_file = restore_env_target();
-        println!("→ restoring env at {}…", env_file.display());
-        if let Some(parent) = env_file.parent() {
+        println!("→ restoring env at {}…", targets.env_file.display());
+        if let Some(parent) = targets.env_file.parent() {
             fs::create_dir_all(parent)
                 .map_err(|e| crate::Error::Other(format!("env parent: {e}")))?;
         }
-        fs::copy(&staged_env, &env_file)
+        fs::copy(&staged_env, &targets.env_file)
             .map_err(|e| crate::Error::Other(format!("write env: {e}")))?;
         // Lock the env down — encryption key inside.
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
-            let _ = fs::set_permissions(env_file, fs::Permissions::from_mode(0o600));
+            let _ = fs::set_permissions(&targets.env_file, fs::Permissions::from_mode(0o600));
         }
     } else {
         // The tarball carries no key. Everything encrypted in the dump we are
@@ -156,7 +208,11 @@ pub async fn run(path: PathBuf, force: bool) -> Result<(), crate::Error> {
             "manifest declared no db dump — refusing to leave you with empty data".to_string(),
         ));
     }
-    pg_restore(&dump)?;
+    pg_restore(&dump, &targets.database_url)?;
+    Ok(())
+}
+
+fn print_next_steps() {
 
     // Everything above was written by root (restore requires it — it stops the
     // unit, writes the env file, and drives pg_restore). `copy_tree` is
@@ -169,18 +225,11 @@ pub async fn run(path: PathBuf, force: bool) -> Result<(), crate::Error> {
     // Runs last, and never fatally: aborting here would leave a fully restored
     // box refusing to finish over a fixable permission, so a failure prints the
     // exact command instead.
-    for dir in [lake_dst.as_path(), crate::action_templates::state_root().as_path()] {
-        if dir.is_dir() {
-            give_to_service_user(dir);
-        }
-    }
-
     println!();
     println!("✓ restore complete.");
     println!("  Next steps:");
     println!("    sudo systemctl start virtues");
     println!("    sudo -u virtues virtues pair");
-    Ok(())
 }
 
 fn check_service_inactive() -> Result<(), crate::Error> {
@@ -260,9 +309,7 @@ fn verify_sha256(staging: &Path, artifacts: &[Artifact]) -> Result<(), crate::Er
     Ok(())
 }
 
-fn pg_restore(dump: &Path) -> Result<(), crate::Error> {
-    let database_url = crate::database::normalize_database_url()
-        .map_err(|e| crate::Error::Other(format!("DATABASE_URL: {e}")))?;
+fn pg_restore(dump: &Path, database_url: &str) -> Result<(), crate::Error> {
     // Drop + recreate the schema cleanly. `--clean --if-exists` makes the
     // pg_restore drop all existing objects before recreating. `--no-owner`
     // + `--no-acl` skip privilege replays that would fail in a peer-auth
@@ -273,7 +320,7 @@ fn pg_restore(dump: &Path) -> Result<(), crate::Error> {
         .arg("--no-owner")
         .arg("--no-acl")
         .arg("-d")
-        .arg(&database_url)
+        .arg(database_url)
         .arg(dump)
         .status()
         .map_err(|e| crate::Error::Other(format!("invoke pg_restore: {e}")))?;
@@ -378,4 +425,186 @@ fn read_all(path: &Path) -> Result<Vec<u8>, crate::Error> {
     f.read_to_end(&mut buf)
         .map_err(|e| crate::Error::Other(format!("read {}: {e}", path.display())))?;
     Ok(buf)
+}
+
+/// The round-trip drill.
+///
+/// Backup and restore had no test coverage of any kind: no unit tests, and no
+/// integration test referencing either command. That is the worst possible
+/// place to have none, because the failure is silent by construction — a broken
+/// backup reports success, and you learn otherwise at restore, which is the one
+/// moment you cannot afford to.
+///
+/// So this exercises the real functions, not a reimplementation: seed a box,
+/// `backup::write_archive`, destroy the state, run the actual manifest gates,
+/// `apply`, and assert the bytes came back.
+///
+/// Requires a live Postgres (`#[sqlx::test]` provisions a scratch DB and applies
+/// `migrations/`; set `DATABASE_URL`) and `pg_dump`/`pg_restore` on PATH. Missing
+/// tools panic rather than skip: a drill that quietly passes when it did not run
+/// is the same false comfort this test exists to remove.
+#[cfg(test)]
+mod drill {
+    use super::*;
+    use std::process::Command as Cmd;
+
+    /// Rebuild a URL for the scratch database `#[sqlx::test]` made for us.
+    ///
+    /// `pg_dump` and `pg_restore` are separate processes, so they need a URL
+    /// rather than the pool. Swapping the database component of `DATABASE_URL`
+    /// keeps whatever credentials the test environment uses, which reconstructing
+    /// from `PgConnectOptions` would drop (it does not expose the password).
+    fn scratch_url(pool: &sqlx::PgPool) -> String {
+        let base =
+            std::env::var("DATABASE_URL").expect("DATABASE_URL must be set to run the drill");
+        let base = base.split('?').next().unwrap().to_string();
+        let db = pool
+            .connect_options()
+            .get_database()
+            .expect("scratch database name")
+            .to_string();
+        let (prefix, _) = base
+            .rsplit_once('/')
+            .expect("DATABASE_URL with a database path");
+        format!("{prefix}/{db}")
+    }
+
+    fn require_pg_tools() {
+        for tool in ["pg_dump", "pg_restore"] {
+            let ok = Cmd::new(tool).arg("--version").output().is_ok();
+            assert!(ok, "{tool} must be on PATH to run the backup drill");
+        }
+    }
+
+    fn scratch_dir(name: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!("virtues-drill-{}-{name}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).expect("scratch dir");
+        dir
+    }
+
+    fn write(path: &Path, contents: &str) {
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        fs::write(path, contents).unwrap();
+    }
+
+    #[sqlx::test]
+    async fn round_trip_restores_database_lake_applets_and_env(pool: sqlx::PgPool) {
+        require_pg_tools();
+        let url = scratch_url(&pool);
+        let root = scratch_dir("state");
+
+        // ── A box with something worth losing ────────────────────────────────
+        let lake = root.join("lake");
+        let applets = root.join("applets");
+        let env_file = root.join("virtues.env");
+        // `streams/` is also what `assert_replaceable_lake` looks for, so this
+        // doubles as coverage that a real lake passes the guard.
+        write(&lake.join("streams/ios/records_deadbeef.jsonl"), "{\"v\":1}\n");
+        write(&applets.join("user/drill/manifest.json"), "{\"name\":\"drill\"}");
+        write(&env_file, "VIRTUES_ENCRYPTION_KEY=drill-key\n");
+        sqlx::query(
+            "INSERT INTO credentials (id, source_id, name, status, secrets_ciphertext) \
+             VALUES ($1, 'ios', 'drill', 'active', 'x')",
+        )
+        .bind("cred_drill")
+        .execute(&pool)
+        .await
+        .expect("seed credential");
+
+        // ── Back it up ───────────────────────────────────────────────────────
+        let sources = crate::cli::backup::Sources {
+            database_url: url.clone(),
+            lake: lake.clone(),
+            applets: applets.clone(),
+            env_file: Some(env_file.clone()),
+        };
+        let archive = scratch_dir("out").join("backup.tar.gz");
+        crate::cli::backup::write_archive(&pool, Some(archive.clone()), false, &sources)
+            .await
+            .expect("backup");
+        assert!(archive.exists(), "archive was not written");
+
+        // ── Lose it ──────────────────────────────────────────────────────────
+        sqlx::query("DELETE FROM credentials WHERE id = 'cred_drill'")
+            .execute(&pool)
+            .await
+            .unwrap();
+        fs::remove_dir_all(&lake).unwrap();
+        fs::remove_dir_all(&applets).unwrap();
+        fs::remove_file(&env_file).unwrap();
+
+        // ── Restore, through the real gates ──────────────────────────────────
+        let stage = mkstage(&archive).expect("stage");
+        let staging: &Path = stage.as_ref();
+        extract_into(&archive, staging).expect("extract");
+        let manifest = read_manifest(staging).expect("manifest");
+        check_schema_compatible(&manifest).expect("schema gate");
+        verify_sha256(staging, &manifest.artifacts).expect("digest gate");
+        assert!(
+            !manifest.artifacts.is_empty(),
+            "manifest recorded no artifacts, so the digest gate proved nothing"
+        );
+
+        apply(
+            staging,
+            &Targets {
+                database_url: url,
+                lake: lake.clone(),
+                applets: applets.clone(),
+                env_file: env_file.clone(),
+            },
+        )
+        .expect("restore");
+
+        // ── Assert it came back ──────────────────────────────────────────────
+        let (name,): (String,) = sqlx::query_as("SELECT name FROM credentials WHERE id = $1")
+            .bind("cred_drill")
+            .fetch_one(&pool)
+            .await
+            .expect("credential row did not survive the round trip");
+        assert_eq!(name, "drill");
+
+        assert_eq!(
+            fs::read_to_string(lake.join("streams/ios/records_deadbeef.jsonl")).unwrap(),
+            "{\"v\":1}\n",
+            "lake bytes differ after restore"
+        );
+        assert_eq!(
+            fs::read_to_string(applets.join("user/drill/manifest.json")).unwrap(),
+            "{\"name\":\"drill\"}",
+            "applet state differs after restore"
+        );
+        assert!(
+            fs::read_to_string(&env_file).unwrap().contains("drill-key"),
+            "env file (and therefore the encryption key) did not survive"
+        );
+
+        let _ = fs::remove_dir_all(&root);
+        let _ = fs::remove_dir_all(archive.parent().unwrap());
+    }
+
+    #[test]
+    fn refuses_to_replace_a_directory_that_is_not_a_lake() {
+        // The guard that stands between a mis-set STORAGE_PATH and someone's
+        // home directory.
+        let dir = scratch_dir("not-a-lake");
+        write(&dir.join("thesis.pdf"), "important");
+        assert!(assert_replaceable_lake(&dir).is_err());
+
+        let lake = scratch_dir("real-lake");
+        write(&lake.join("streams/ios/x.jsonl"), "{}");
+        assert!(assert_replaceable_lake(&lake).is_ok());
+
+        let empty = scratch_dir("empty");
+        assert!(assert_replaceable_lake(&empty).is_ok(), "an empty lake is replaceable");
+        assert!(
+            assert_replaceable_lake(&empty.join("absent")).is_ok(),
+            "an absent lake is created, not refused"
+        );
+
+        for d in [dir, lake, empty] {
+            let _ = fs::remove_dir_all(d);
+        }
+    }
 }

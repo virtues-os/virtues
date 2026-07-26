@@ -80,11 +80,73 @@ pub struct Artifact {
     pub sha256: String,
 }
 
+/// Everything a backup reads off the box, resolved once and passed down.
+///
+/// Exists so the archive writer takes its inputs as arguments rather than
+/// re-deriving them from the environment at each use. That is what lets the
+/// round-trip drill in `tests/backup_restore.rs` run against scratch paths and
+/// a scratch database — and a backup path that cannot be exercised in a test is
+/// the thing this whole area was missing.
+pub(crate) struct Sources {
+    pub database_url: String,
+    pub lake: PathBuf,
+    pub applets: PathBuf,
+    /// `None` only when `--allow-missing-key` was passed.
+    pub env_file: Option<PathBuf>,
+}
+
+impl Sources {
+    pub(crate) fn from_env(allow_missing_key: bool) -> Result<Self, crate::Error> {
+        // The encryption key is not optional baggage — without it every encrypted
+        // column in the dump is permanently unreadable. A keyless backup is worse
+        // than no backup, because it looks complete and you only discover
+        // otherwise at restore time, which is the worst possible moment. So this
+        // is a hard failure, not a warning; `--allow-missing-key` is the explicit
+        // out for dev boxes that keep their key in a repo `.env`.
+        let env_file = match find_env_file() {
+            Some(f) => Some(f),
+            None if allow_missing_key => {
+                eprintln!(
+                    "warning: this backup CANNOT decrypt the database it contains \
+                     (--allow-missing-key was passed)"
+                );
+                None
+            }
+            None => {
+                return Err(crate::Error::Other(format!(
+                    "no env file at any of {} — the backup would contain an \
+                     undecryptable database. Locate the file holding \
+                     VIRTUES_ENCRYPTION_KEY, or pass --allow-missing-key if you \
+                     genuinely want a keyless dump.",
+                    ENV_CANDIDATES.join(" or ")
+                )));
+            }
+        };
+        Ok(Self {
+            database_url: crate::database::normalize_database_url()
+                .map_err(|e| crate::Error::Other(format!("DATABASE_URL: {e}")))?,
+            lake: crate::storage::lake::lake_root(),
+            applets: crate::action_templates::state_root(),
+            env_file,
+        })
+    }
+}
+
 pub async fn run(
     pool: &PgPool,
     output: Option<PathBuf>,
     force: bool,
     allow_missing_key: bool,
+) -> Result<PathBuf, crate::Error> {
+    let sources = Sources::from_env(allow_missing_key)?;
+    write_archive(pool, output, force, &sources).await
+}
+
+pub(crate) async fn write_archive(
+    pool: &PgPool,
+    output: Option<PathBuf>,
+    force: bool,
+    sources: &Sources,
 ) -> Result<PathBuf, crate::Error> {
     let now = Utc::now();
     let out_path = match output {
@@ -116,55 +178,37 @@ pub async fn run(
         .map_err(|e| crate::Error::Other(format!("staging dirs: {e}")))?;
 
     println!("→ pg_dump (full database)…");
-    pg_dump_into(staging_path.join("db/virtues.dump").as_path())?;
+    pg_dump_into(
+        staging_path.join("db/virtues.dump").as_path(),
+        &sources.database_url,
+    )?;
 
-    // The encryption key is not optional baggage — without it every encrypted
-    // column in the dump above is permanently unreadable. A keyless backup is
-    // worse than no backup, because it looks complete and you only discover
-    // otherwise at restore time, which is the worst possible moment. So this
-    // is a hard failure, not a warning; `--allow-missing-key` is the explicit
-    // out for dev boxes that keep their key in a repo `.env`.
-    match find_env_file() {
-        Some(env_file) => {
-            println!("→ copying {}…", env_file.display());
-            fs::copy(env_file, staging_path.join("env/virtues.env"))
-                .map_err(|e| crate::Error::Other(format!("copying env: {e}")))?;
-        }
-        None if allow_missing_key => {
-            println!("→ no env file found — continuing without the encryption key");
-            eprintln!(
-                "warning: this backup CANNOT decrypt the database it contains \
-                 (--allow-missing-key was passed)"
-            );
-        }
-        None => {
-            return Err(crate::Error::Other(format!(
-                "no env file at any of {} — the backup would contain an \
-                 undecryptable database. Locate the file holding \
-                 VIRTUES_ENCRYPTION_KEY, or pass --allow-missing-key if you \
-                 genuinely want a keyless dump.",
-                ENV_CANDIDATES.join(" or ")
-            )));
-        }
+    if let Some(env_file) = &sources.env_file {
+        println!("→ copying {}…", env_file.display());
+        fs::copy(env_file, staging_path.join("env/virtues.env"))
+            .map_err(|e| crate::Error::Other(format!("copying env: {e}")))?;
+    } else {
+        println!("→ no env file found — continuing without the encryption key");
     }
 
     // Resolved, never hardcoded. A backup that copied a fixed path while the box
     // wrote somewhere else would succeed, report success, and contain no lake at
     // all — the failure only surfacing at restore, when it is far too late.
-    let lake_src = crate::storage::lake::lake_root();
-    println!("→ copying data lake at {}…", lake_src.display());
-    if lake_src.exists() {
-        copy_tree_recursive(&lake_src, &staging_path.join("lake"))?;
+    println!("→ copying data lake at {}…", sources.lake.display());
+    if sources.lake.exists() {
+        copy_tree_recursive(&sources.lake, &staging_path.join("lake"))?;
     }
 
     // Authored applets are user data with no other copy: the manifest, the
     // schema DDL, and the face HTML the model wrote. The DB row and the
     // applet's Postgres schema survive on their own, but these files don't —
     // losing them leaves exactly the half-state of a row with no folder.
-    let applets_src = crate::action_templates::state_root();
-    println!("→ copying authored applets at {}…", applets_src.display());
-    if applets_src.is_dir() {
-        copy_tree_recursive(&applets_src, &staging_path.join("applets"))?;
+    println!(
+        "→ copying authored applets at {}…",
+        sources.applets.display()
+    );
+    if sources.applets.is_dir() {
+        copy_tree_recursive(&sources.applets, &staging_path.join("applets"))?;
     }
 
     println!("→ building manifest…");
@@ -211,20 +255,18 @@ pub async fn run(
     Ok(out_path)
 }
 
-fn pg_dump_into(dest: &Path) -> Result<(), crate::Error> {
+fn pg_dump_into(dest: &Path, database_url: &str) -> Result<(), crate::Error> {
     // `pg_dump --format=custom` produces a binary, compressed, parallel-
-    // restorable archive. Connection uses the same DATABASE_URL the daemon
-    // uses; on a normally-installed box that's peer-auth as the `virtues`
-    // user against the local socket.
-    let database_url = crate::database::normalize_database_url()
-        .map_err(|e| crate::Error::Other(format!("DATABASE_URL: {e}")))?;
+    // restorable archive. The URL is passed in rather than read here: it must be
+    // the database the caller already holds a pool to, not whatever the ambient
+    // environment happens to name.
     let status = Command::new("pg_dump")
         .arg("--format=custom")
         .arg("--no-owner")
         .arg("--no-acl")
         .arg("-f")
         .arg(dest)
-        .arg(&database_url)
+        .arg(database_url)
         .status()
         .map_err(|e| crate::Error::Other(format!("invoking pg_dump: {e}")))?;
     if !status.success() {
