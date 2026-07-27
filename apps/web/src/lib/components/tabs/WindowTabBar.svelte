@@ -646,14 +646,14 @@
 		display: flex;
 		align-items: center;
 		justify-content: center;
-		width: 16px;
-		height: 16px;
+		width: 20px;
+		height: 20px;
 		padding: 0;
 		border: none;
 		border-radius: 4px;
 		background: transparent;
 		color: var(--color-foreground-muted);
-		font-size: 12px;
+		font-size: 13px;
 		cursor: pointer;
 		opacity: 0;
 		transition:
@@ -667,14 +667,23 @@
 		opacity: 1;
 	}
 
+	/* Neutral, not red. Red is for destructive-with-consequence; closing a tab
+	   loses nothing and is one ⌘⇧T away from undone. The old error-tinted
+	   treatment (plus a red wash over the whole tab) read as a warning for an
+	   action that doesn't warrant one. */
 	.tab-close:hover {
-		background: var(--error-subtle);
-		color: var(--error);
+		background: color-mix(in srgb, var(--color-foreground) 10%, transparent);
+		color: var(--color-foreground);
 	}
 
-	/* Tint tab background when hovering close button */
-	.tab:has(.tab-close:hover) {
-		background: color-mix(in srgb, var(--error-subtle) 50%, var(--color-surface));
+	.tab-close:active {
+		background: color-mix(in srgb, var(--color-foreground) 16%, transparent);
+	}
+
+	.tab-close:focus-visible {
+		opacity: 1;
+		outline: 2px solid var(--color-primary);
+		outline-offset: -2px;
 	}
 
 	.sidebar-toggle,
@@ -704,12 +713,34 @@
 		margin-right: 2px;
 	}
 
+	/* Hover used to be `--color-surface-elevated` over a `--color-background`
+	   toolbar — #F5F4EF on #FDFCF9 in the default theme, a ~3% shift that read
+	   as nothing happening. A foreground mix is legible in every theme instead
+	   of depending on two surface tokens staying far enough apart. */
 	.sidebar-toggle:hover,
 	.split-toggle:hover,
 	.merge-toggle:hover,
 	.nav-btn:hover:not(:disabled),
 	.new-tab-btn:hover {
-		background: var(--color-surface-elevated);
+		background: color-mix(in srgb, var(--color-foreground) 8%, transparent);
+		color: var(--color-foreground);
+	}
+
+	.sidebar-toggle:active,
+	.split-toggle:active,
+	.merge-toggle:active,
+	.nav-btn:active:not(:disabled),
+	.new-tab-btn:active {
+		background: color-mix(in srgb, var(--color-foreground) 14%, transparent);
+	}
+
+	.sidebar-toggle:focus-visible,
+	.split-toggle:focus-visible,
+	.merge-toggle:focus-visible,
+	.nav-btn:focus-visible,
+	.new-tab-btn:focus-visible {
+		outline: 2px solid var(--color-primary);
+		outline-offset: -2px;
 		color: var(--color-foreground);
 	}
 
