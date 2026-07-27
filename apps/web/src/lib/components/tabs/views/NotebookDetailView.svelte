@@ -7,7 +7,6 @@
 	import { windowShellStore } from '$lib/stores/window-shell.svelte';
 	import { contextMenu } from '$lib/stores/contextMenu.svelte';
 	import RefPicker from '$lib/components/RefPicker.svelte';
-	import ColorPickerModal from '$lib/components/sidebar/ColorPickerModal.svelte';
 	import IconPicker from '$lib/components/IconPicker.svelte';
 	import UniversalDataGrid, { type Column } from '$lib/components/datagrid/UniversalDataGrid.svelte';
 	import { Popover } from '$lib/floating';
@@ -184,15 +183,19 @@
 
 	/**
 	 * What this member is to the notebook, in the user's terms rather than the
-	 * schema's. `manuscript` and `pin` are stored roles; "Bible" is derived —
+	 * schema's. `manuscript` and `pin` are stored roles; Reference is derived —
 	 * a filed person or place is reference material by nature, not by a flag.
+	 *
+	 * Deliberately NOT "Source": that word already means a credential connection
+	 * elsewhere in the app. And not "Bible", which is author jargon that reads as
+	 * nonsense in a notebook about a kitchen remodel.
 	 */
 	function roleLabel(url: string, role: NotebookItemRole): string {
 		if (role === 'manuscript') return 'Manuscript';
 		if (role === 'pin') return 'Pin';
 		const t = url.split('/')[1] ?? '';
-		if (ENTITY_TYPES.includes(t)) return 'Bible';
-		return 'Source';
+		if (ENTITY_TYPES.includes(t)) return 'Reference';
+		return 'Material';
 	}
 
 	function statusLabel(url: string): string {
@@ -264,10 +267,10 @@
 			url: `/chat/${c.conversation_id}`,
 			name: c.title ?? 'Untitled chat',
 			kind: 'Chat',
-			// A chat grounds retrieval like any other member, so its role is
-			// honestly 'Source'; the Kind column carries that it's a thread.
+			// A chat grounds retrieval like any other member, so it is material;
+			// the row icon carries that it's a thread.
 			role: 'library',
-			roleText: 'Source',
+			roleText: 'Material',
 			status: `${c.message_count} ${c.message_count === 1 ? 'message' : 'messages'}`,
 			added: formatAdded(c.last_message_at ?? c.first_message_at),
 			icon: c.icon || 'ri:chat-3-line'
@@ -300,7 +303,7 @@
 				width: '16%',
 				minWidth: '90px',
 				groupable: true,
-				groupOrder: ['Manuscript', 'Source', 'Bible', 'Pin']
+				groupOrder: ['Manuscript', 'Material', 'Reference', 'Pin']
 			},
 			// Groupable but not rendered: the row icon already says what a thing is.
 			{ key: 'kind', label: 'Kind', groupable: true, hidden: true }
@@ -339,6 +342,48 @@
 		}
 	}
 
+	/** Apply a role to a selection, skipping entities whose role is derived. */
+	async function setRoleFor(rows: MemberRow[], role: NotebookItemRole, clear: () => void) {
+		const id = notebookId;
+		if (!id) return;
+		const targets = rows.filter((r) => !ENTITY_TYPES.includes(r.url.split('/')[1] ?? ''));
+		const skipped = rows.length - targets.length;
+		try {
+			for (const r of targets) await notebookStore.setItemRole(id, r.url, role);
+			await load(true);
+			await loadGraph();
+			if (skipped > 0) {
+				toast(`${targets.length} changed · ${skipped} skipped (people and places are always reference)`);
+			}
+		} catch (e) {
+			console.error('[NotebookDetailView] bulk role failed:', e);
+			toast.error('Could not change every role');
+		} finally {
+			clear();
+		}
+	}
+
+	async function removeMembers(rows: MemberRow[], clear: () => void) {
+		const id = notebookId;
+		if (!id) return;
+		const ok = await confirmAction({
+			title: rows.length === 1 ? 'Remove item?' : `Remove ${rows.length} items?`,
+			body: 'They stay where they are — they just stop being filed in this notebook.',
+			confirmLabel: 'Remove',
+			danger: true
+		});
+		if (!ok) return;
+		try {
+			for (const r of rows) await notebookStore.removeItem(id, r.url);
+			await loadGraph();
+		} catch (e) {
+			console.error('[NotebookDetailView] bulk remove failed:', e);
+			toast.error('Could not remove every item');
+		} finally {
+			clear();
+		}
+	}
+
 	async function removeMember(url: string) {
 		const id = notebookId;
 		if (!id) return;
@@ -357,7 +402,7 @@
 			if (row.role === 'manuscript') {
 				items.push({
 					id: 'source',
-					label: 'Treat as source',
+					label: 'Treat as material',
 					icon: 'ri:book-open-line',
 					action: () => setRole(row.url, 'library')
 				});
@@ -457,21 +502,13 @@
 		await notebookStore.update(id, { current_status: memo });
 	}
 
-	// ---- Icon + accent colour ------------------------------------------------
-	let colorOpen = $state(false);
+	// ---- Icon ----------------------------------------------------------------
 	let iconOpen = $state(false);
 	let overflowOpen = $state(false);
 	async function setIcon(icon: string | null) {
 		const id = notebookId;
 		if (!id) return;
 		await notebookStore.update(id, { icon });
-		await load(true);
-	}
-	async function setAccent(color: string | null) {
-		colorOpen = false;
-		const id = notebookId;
-		if (!id) return;
-		await notebookStore.update(id, { accent_color: color });
 		await load(true);
 	}
 
@@ -509,11 +546,10 @@
 		}
 	}
 
-	const accent = $derived(detail?.accent_color || null);
 	const manuscriptCount = $derived(memberItems.filter((i) => i.role === 'manuscript').length);
 </script>
 
-<div class="notebook-detail" style={accent ? `--room-accent: ${accent}` : ''}>
+<div class="notebook-detail">
 	{#if loading && !detail}
 		<div class="state"><Icon icon="ri:loader-4-line" width="18" class="spin" /> Loading…</div>
 	{:else if error}
@@ -535,7 +571,7 @@
 				<div class="head-main">
 					<Popover bind:open={iconOpen} placement="bottom-start">
 						{#snippet trigger({ toggle }: { toggle: () => void })}
-							<button class="nb-icon" class:tinted={!!accent} title="Change icon" onclick={toggle}>
+							<button class="nb-icon" title="Change icon" onclick={toggle}>
 								<Icon icon={detail?.icon || 'ri:booklet-line'} width="22" />
 							</button>
 						{/snippet}
@@ -588,15 +624,6 @@
 							{/snippet}
 							{#snippet children({ close }: { close: () => void })}
 								<div class="menu">
-									<button
-										class="menu-item"
-										onclick={() => {
-											close();
-											colorOpen = true;
-										}}
-									>
-										<Icon icon="ri:palette-line" width="15" /> Change color
-									</button>
 									<button
 										class="menu-item danger"
 										onclick={() => {
@@ -668,9 +695,33 @@
 						emptyMessage="No members reference that entity"
 						searchPlaceholder="Search this notebook…"
 						defaultGroupBy="roleText"
+						selectable
 						onItemClick={(row) => openUrl(row.url)}
 						onItemContextMenu={rowMenu}
 					>
+						{#snippet bulkActions(rows: MemberRow[], clear: () => void)}
+							<button class="bulk-btn" onclick={() => setRoleFor(rows, 'manuscript', clear)}>
+								Treat as manuscript
+							</button>
+							<button class="bulk-btn" onclick={() => setRoleFor(rows, 'library', clear)}>
+								Treat as material
+							</button>
+							<button class="bulk-btn danger" onclick={() => removeMembers(rows, clear)}>
+								Remove
+							</button>
+						{/snippet}
+
+						{#snippet rowActions(row: MemberRow)}
+							<button
+								class="row-act"
+								title="Actions"
+								aria-label={`Actions for ${row.name}`}
+								onclick={(e) => rowMenu(row, e)}
+							>
+								<Icon icon="ri:more-line" width="15" />
+							</button>
+						{/snippet}
+
 						{#snippet toolbarActions()}
 							<button
 								class="ctrl-add"
@@ -748,12 +799,6 @@
 	/>
 {/if}
 
-<ColorPickerModal
-	open={colorOpen}
-	value={accent}
-	onSelect={setAccent}
-	onClose={() => (colorOpen = false)}
-/>
 
 <style>
 	.notebook-detail { width: 100%; height: 100%; overflow-y: auto; }
@@ -765,7 +810,7 @@
 		flex-direction: column;
 		gap: 1.6rem;
 	}
-	.inner.drop-active { outline: 1.5px dashed var(--room-accent, var(--color-primary)); outline-offset: 10px; border-radius: 10px; }
+	.inner.drop-active { outline: 1.5px dashed var(--color-primary); outline-offset: 10px; border-radius: 10px; }
 	.state { display: flex; align-items: center; gap: 8px; padding: 3rem 2rem; color: var(--color-foreground-muted); }
 	.state.error { color: var(--color-error, #dc2626); }
 
@@ -777,11 +822,6 @@
 		display: grid; place-items: center; width: 46px; height: 46px; flex-shrink: 0;
 		border-radius: 12px; border: 1px solid var(--color-border);
 		background: var(--color-surface-elevated); color: var(--color-foreground); cursor: pointer;
-	}
-	.nb-icon.tinted {
-		background: color-mix(in srgb, var(--room-accent) 14%, var(--color-surface-elevated));
-		border-color: color-mix(in srgb, var(--room-accent) 32%, var(--color-border));
-		color: color-mix(in srgb, var(--room-accent) 80%, var(--color-foreground));
 	}
 	.head-actions { display: flex; gap: 2px; flex-shrink: 0; }
 	.icon-btn {
@@ -802,7 +842,7 @@
 		border-bottom: 1.5px solid transparent;
 	}
 	.title-input:focus {
-		border-bottom-color: color-mix(in srgb, var(--room-accent, var(--color-foreground)) 45%, var(--color-border));
+		border-bottom-color: color-mix(in srgb, var(--color-foreground) 45%, var(--color-border));
 	}
 	.desc-input {
 		margin-top: 0.4rem; min-height: 1.5rem; padding: 0;
@@ -837,8 +877,8 @@
 		transition: border-color 120ms, box-shadow 120ms;
 	}
 	.ask:focus-within {
-		border-color: color-mix(in srgb, var(--room-accent, var(--color-foreground-subtle)) 55%, var(--color-border));
-		box-shadow: 0 0 0 3px color-mix(in srgb, var(--room-accent, var(--color-foreground-subtle)) 13%, transparent);
+		border-color: color-mix(in srgb, var(--color-foreground-subtle) 55%, var(--color-border));
+		box-shadow: 0 0 0 3px color-mix(in srgb, var(--color-foreground-subtle) 13%, transparent);
 	}
 	.ask > :global(svg) { color: var(--color-foreground-subtle); flex-shrink: 0; }
 	.ask-input {
@@ -849,7 +889,7 @@
 	.ask-send {
 		display: grid; place-items: center; width: 32px; height: 32px; flex-shrink: 0;
 		border: none; border-radius: 9px; cursor: pointer;
-		background: var(--room-accent, var(--color-foreground)); color: var(--color-background, #fff);
+		background: var(--color-foreground); color: var(--color-background, #fff);
 	}
 	.ask-send:disabled { opacity: 0.35; cursor: default; }
 
@@ -866,14 +906,14 @@
 		background: color-mix(in srgb, var(--color-foreground) 8%, var(--color-surface-elevated));
 		color: var(--color-foreground);
 	}
-	.ctrl-add:focus-visible { outline: 2px solid var(--room-accent, var(--color-primary)); outline-offset: 1px; }
+	.ctrl-add:focus-visible { outline: 2px solid var(--color-primary); outline-offset: 1px; }
 	.add-row {
 		display: flex; align-items: center; gap: 8px; width: 100%; text-align: left;
 		padding: 1rem 0.6rem; border: 1px dashed var(--color-border); border-radius: 8px;
 		background: transparent; cursor: pointer;
 		font: inherit; font-size: 0.9rem; color: var(--color-foreground-subtle);
 	}
-	.add-row:hover { color: var(--color-foreground); border-color: var(--room-accent, var(--color-primary)); }
+	.add-row:hover { color: var(--color-foreground); border-color: var(--color-primary); }
 
 	/* Grid cells */
 	.c-name { padding: 0.5rem 0.75rem; padding-left: 0; }
@@ -892,14 +932,28 @@
 	.facet :global(svg) { color: var(--color-foreground-subtle); flex-shrink: 0; }
 	.facet:hover { border-color: var(--color-foreground-subtle); color: var(--color-foreground); }
 	.facet.on {
-		background: color-mix(in srgb, var(--room-accent, var(--color-primary)) 12%, transparent);
-		border-color: color-mix(in srgb, var(--room-accent, var(--color-primary)) 38%, transparent);
-		color: var(--room-accent, var(--color-primary));
+		background: color-mix(in srgb, var(--color-primary) 12%, transparent);
+		border-color: color-mix(in srgb, var(--color-primary) 38%, transparent);
+		color: var(--color-primary);
 	}
 	.facet.on :global(svg), .facet.on .facet-n { color: inherit; }
-	.facet:focus-visible { outline: 2px solid var(--room-accent, var(--color-primary)); outline-offset: 1px; }
+	.facet:focus-visible { outline: 2px solid var(--color-primary); outline-offset: 1px; }
 	.facet-n { font-size: 0.5625rem; color: var(--color-foreground-subtle); }
 	.facet.clear { border-style: dashed; color: var(--color-foreground-subtle); }
+
+	.bulk-btn {
+		border: 1px solid var(--color-border); border-radius: 6px;
+		background: var(--color-background-hover); padding: 3px 10px;
+		font: inherit; font-size: 0.75rem; color: var(--color-foreground-muted); cursor: pointer;
+	}
+	.bulk-btn:hover { color: var(--color-foreground); }
+	.bulk-btn.danger { color: var(--color-error, #dc2626); }
+	.row-act {
+		display: grid; place-items: center; width: 24px; height: 24px;
+		border: none; border-radius: 6px; background: transparent;
+		color: var(--color-foreground-subtle); cursor: pointer;
+	}
+	.row-act:hover { background: var(--color-surface-elevated); color: var(--color-foreground); }
 
 	.role-chip {
 		display: inline-block; font-size: 10px; letter-spacing: 0.04em;
@@ -908,8 +962,8 @@
 		white-space: nowrap;
 	}
 	.role-chip.manuscript {
-		color: var(--room-accent, var(--color-primary));
-		border-color: color-mix(in srgb, var(--room-accent, var(--color-primary)) 40%, var(--color-border));
+		color: var(--color-primary);
+		border-color: color-mix(in srgb, var(--color-primary) 40%, var(--color-border));
 	}
 	.retry {
 		border: none; background: none; padding: 0; font: inherit; font-size: inherit;
@@ -929,7 +983,7 @@
 	}
 	:global(.card:hover) .nb-card {
 		background: var(--color-background-hover);
-		border-color: color-mix(in srgb, var(--room-accent, var(--color-primary)) 32%, var(--color-border));
+		border-color: color-mix(in srgb, var(--color-primary) 32%, var(--color-border));
 	}
 	.nb-card-top { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
 	.nb-card-top :global(svg) { color: var(--color-foreground-subtle); flex-shrink: 0; }

@@ -15,8 +15,22 @@
 use crate::error::{Error, Result};
 use crate::ids::{generate_id, NOTEBOOK_PREFIX};
 use crate::types::Timestamp;
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize};
 use sqlx::PgPool;
+
+/// Distinguishes a missing field from an explicit `null` for `Option<Option<T>>`:
+/// missing → `None` (leave alone), `null` → `Some(None)` (clear), value → set.
+/// Without this, serde folds an explicit `null` into `None`, so a field can be
+/// set but never cleared — which is why "Remove icon" silently did nothing.
+fn deserialize_double_option<'de, D, T>(
+    deserializer: D,
+) -> std::result::Result<Option<Option<T>>, D::Error>
+where
+    D: Deserializer<'de>,
+    T: Deserialize<'de>,
+{
+    Ok(Some(Option::deserialize(deserializer)?))
+}
 
 // ============================================================================
 // Types
@@ -91,9 +105,13 @@ pub struct CreateNotebookRequest {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct UpdateNotebookRequest {
     pub name: Option<String>,
+    #[serde(default, deserialize_with = "deserialize_double_option")]
     pub icon: Option<Option<String>>,
+    #[serde(default, deserialize_with = "deserialize_double_option")]
     pub accent_color: Option<Option<String>>,
+    #[serde(default, deserialize_with = "deserialize_double_option")]
     pub current_status: Option<Option<String>>,
+    #[serde(default, deserialize_with = "deserialize_double_option")]
     pub instructions: Option<Option<String>>,
     pub sort_order: Option<i32>,
 }
