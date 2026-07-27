@@ -9,7 +9,6 @@
 	import RefPicker from '$lib/components/RefPicker.svelte';
 	import ColorPickerModal from '$lib/components/sidebar/ColorPickerModal.svelte';
 	import IconPicker from '$lib/components/IconPicker.svelte';
-	import NotebookGraphBand from '$lib/components/notebook/NotebookGraphBand.svelte';
 	import UniversalDataGrid, { type Column } from '$lib/components/datagrid/UniversalDataGrid.svelte';
 	import { Popover } from '$lib/floating';
 	import { confirmAction } from '$lib/stores/dialog.svelte';
@@ -56,7 +55,10 @@
 		if (notebookId) load();
 	});
 
-	// ---- The entity graph over the members -----------------------------------
+	// ---- Entity facets over the members --------------------------------------
+	// Same endpoint as before; it is a filter source now, not a picture. A graph
+	// of three unconnected nodes cost the top of the page to say less than a row
+	// of chips does.
 	let graph = $state<NotebookGraph>({ nodes: [], edges: [] });
 	let selectedEntity = $state<string | null>(null);
 
@@ -292,7 +294,16 @@
 	const columns = $derived.by<Column<MemberRow>[]>(() => {
 		const cols: Column<MemberRow>[] = [
 			{ key: 'name', label: 'Name', width: '52%', minWidth: '220px' },
-			{ key: 'roleText', label: 'Role', width: '16%', minWidth: '90px' }
+			{
+				key: 'roleText',
+				label: 'Role',
+				width: '16%',
+				minWidth: '90px',
+				groupable: true,
+				groupOrder: ['Manuscript', 'Source', 'Bible', 'Pin']
+			},
+			// Groupable but not rendered: the row icon already says what a thing is.
+			{ key: 'kind', label: 'Kind', groupable: true, hidden: true }
 		];
 		if (anyStatus) {
 			cols.push({ key: 'status', label: 'Status', width: '18%', minWidth: '110px', hideOnMobile: true });
@@ -302,12 +313,17 @@
 	});
 
 	// ---- Actions -------------------------------------------------------------
+	/**
+	 * Open a member *beside* the notebook rather than over it. This is the whole
+	 * of "work mode": the notebook narrows to a rail and stays reachable while
+	 * you read or write the thing you picked, so there is no mode to switch.
+	 */
 	function openUrl(url: string) {
 		if (url.startsWith('http://') || url.startsWith('https://')) {
 			window.open(url, '_blank', 'noopener,noreferrer');
 			return;
 		}
-		windowShellStore.openTabFromRoute(url);
+		windowShellStore.openRouteBeside(url);
 	}
 
 	async function setRole(url: string, role: NotebookItemRole) {
@@ -596,14 +612,13 @@
 					</div>
 				</div>
 
+				<!-- Counts the same set the grid counts, now that chats are rows in it. -->
 				<div class="props font-mono">
-					<span>{memberItems.length} {memberItems.length === 1 ? 'item' : 'items'}</span>
+					<span>{allRows.length} {allRows.length === 1 ? 'item' : 'items'}</span>
 					{#if manuscriptCount > 0}
 						<span class="dot">·</span>
 						<span>{manuscriptCount} manuscript</span>
 					{/if}
-					<span class="dot">·</span>
-					<span>{roomChats.length} {roomChats.length === 1 ? 'chat' : 'chats'}</span>
 				</div>
 			</header>
 
@@ -620,12 +635,23 @@
 			</form>
 
 			{#if graph.nodes.length > 0}
-				<NotebookGraphBand
-					nodes={graph.nodes}
-					edges={graph.edges}
-					selected={selectedEntity}
-					onSelect={(url) => (selectedEntity = url)}
-				/>
+				<div class="facets" aria-label="Filter by entity">
+					{#each graph.nodes as node (node.url)}
+						<button
+							class="facet"
+							class:on={selectedEntity === node.url}
+							onclick={() => (selectedEntity = selectedEntity === node.url ? null : node.url)}
+							aria-pressed={selectedEntity === node.url}
+						>
+							<Icon icon={iconForUrl(node.url)} width="13" />
+							{node.name}
+							<span class="facet-n font-mono">{node.item_urls.length}</span>
+						</button>
+					{/each}
+					{#if selectedEntity}
+						<button class="facet clear" onclick={() => (selectedEntity = null)}>Clear</button>
+					{/if}
+				</div>
 			{/if}
 
 			<section class="grid-section">
@@ -641,6 +667,7 @@
 						emptyIcon="ri:filter-line"
 						emptyMessage="No members reference that entity"
 						searchPlaceholder="Search this notebook…"
+						defaultGroupBy="roleText"
 						onItemClick={(row) => openUrl(row.url)}
 						onItemContextMenu={rowMenu}
 					>
@@ -854,6 +881,26 @@
 	.name-cell { display: inline-flex; align-items: center; gap: 0.55rem; min-width: 0; }
 	.name-cell :global(svg) { flex-shrink: 0; color: var(--color-foreground-subtle); }
 	.name-text { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 450; }
+	/* Entity facets — what the graph band used to be, at an eighth the height. */
+	.facets { display: flex; flex-wrap: wrap; gap: 6px; }
+	.facet {
+		display: inline-flex; align-items: center; gap: 6px;
+		padding: 3px 10px; border-radius: 999px;
+		border: 1px solid var(--color-border); background: transparent;
+		font: inherit; font-size: 0.75rem; color: var(--color-foreground-muted); cursor: pointer;
+	}
+	.facet :global(svg) { color: var(--color-foreground-subtle); flex-shrink: 0; }
+	.facet:hover { border-color: var(--color-foreground-subtle); color: var(--color-foreground); }
+	.facet.on {
+		background: color-mix(in srgb, var(--room-accent, var(--color-primary)) 12%, transparent);
+		border-color: color-mix(in srgb, var(--room-accent, var(--color-primary)) 38%, transparent);
+		color: var(--room-accent, var(--color-primary));
+	}
+	.facet.on :global(svg), .facet.on .facet-n { color: inherit; }
+	.facet:focus-visible { outline: 2px solid var(--room-accent, var(--color-primary)); outline-offset: 1px; }
+	.facet-n { font-size: 0.5625rem; color: var(--color-foreground-subtle); }
+	.facet.clear { border-style: dashed; color: var(--color-foreground-subtle); }
+
 	.role-chip {
 		display: inline-block; font-size: 10px; letter-spacing: 0.04em;
 		padding: 1.5px 8px; border-radius: 999px;
