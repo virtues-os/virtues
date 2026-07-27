@@ -185,13 +185,16 @@ attractive: the mode belongs to the sidebar and is entered and left
 deliberately, so it is never derived from which tab happens to hold focus. Two
 panes can show whatever they want while the sidebar is in settings mode.
 
+**Developer leaves Settings.** It becomes its own top-level sidebar entry
+sitting directly above Settings, with its own sidebar mode — so the pattern has
+two consumers from day one and should be built as a general "sub-navigation
+mode", not hardcoded to settings. This also disposes of the two-stacked-
+underline-rows problem by removing its cause rather than restyling it.
+
 Consequences:
 
-- `SettingsView.svelte`'s horizontal `SubNav` (a primary row, plus a second
-  underline row for Developer) is replaced by sidebar rows. Developer's
-  sub-nav becomes nesting rather than a second underline — which is the actual
-  problem being solved; two stacked underline rows is the smell that says the
-  nav outgrew its container.
+- `SettingsView.svelte`'s horizontal `SubNav` is replaced by sidebar rows, and
+  its Developer branch moves out entirely.
 - The mode needs an explicit exit row at the top of the settings sidebar
   (`← Virtues` or similar), since there's no other way out.
 - Reuse item 7's stagger for the transition — same easing, opposite direction.
@@ -255,6 +258,19 @@ plugin, rebindable from the registry. Revisit the event tap only on demand.
 ### 19 — ⌘K on the IR stack · ship
 
 This is a build, not a hookup (see finding 2).
+
+**Scope — decided: everything local, nothing external.** Pages, chats,
+notebooks, entities, days, *and* asset content (PDF text, images) — anything the
+box has indexed. The one exclusion is external web results; `/api/search/web`
+(Exa) stays a separate, explicitly-invoked thing and never leaks into ⌘K.
+
+That makes result *shape* the design problem rather than result *scope*. Two
+kinds of hit coexist: objects (a notebook, a person — you want to go there) and
+content (a paragraph inside a PDF — you want to see it in place). They rank on
+incomparable scales, which is the same score-scale schism already documented in
+the IR notes; interleaving them by raw score would reproduce that bug in the
+palette. So: **group, don't interleave** — objects first, content beneath,
+each ranked within its own group.
 
 1. **New HTTP route** exposing the existing `SemanticSearchEngine` from
    `server/mod.rs:77`. Name it distinctly — `/api/search/local` or similar —
