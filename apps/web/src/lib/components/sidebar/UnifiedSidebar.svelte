@@ -9,6 +9,7 @@
 	import PinnedSection from "./PinnedSection.svelte";
 	import { SECTION_GROUPS } from "$lib/sidebar/sections";
 	import SearchModal from "./SearchModal.svelte";
+	import { shortcuts } from "$lib/shortcuts/registry.svelte";
 
 	// Collapsed state from shared store (also consumed by WindowTabBar)
 	const isCollapsed = $derived(sidebarState.collapsed);
@@ -31,47 +32,55 @@
 				storeReady = true;
 			});
 
-		window.addEventListener("keydown", handleKeydown);
-
-		return () => {
-			window.removeEventListener("keydown", handleKeydown);
-		};
+		// Global shortcuts live in the registry, not in a hand-rolled if-chain.
+		// Besides discoverability, the registry matches modifiers exactly — the
+		// old chain tested `metaKey && key === 's'` without excluding Shift, so
+		// ⌘⇧S collapsed the sidebar as a side effect.
+		return shortcuts.register(
+			{
+				id: "chat.new-temporary",
+				keys: "mod+shift+t",
+				label: "New temporary chat",
+				group: "Create",
+				run: handleNewTemporaryChat,
+			},
+			{
+				id: "page.new",
+				keys: "mod+shift+n",
+				label: "New page",
+				group: "Create",
+				run: handleNewPage,
+			},
+			{
+				id: "chat.new",
+				keys: "mod+n",
+				label: "New chat",
+				group: "Create",
+				run: handleNewChat,
+			},
+			{
+				id: "sidebar.toggle",
+				keys: "mod+s",
+				label: "Show or hide the sidebar",
+				group: "Window",
+				run: toggleCollapse,
+			},
+			{
+				id: "search.toggle",
+				keys: "mod+k",
+				label: "Ask or search",
+				group: "Window",
+				run: toggleSearch,
+			},
+			{
+				id: "wiki.open",
+				keys: "mod+w",
+				label: "Open the wiki",
+				group: "Go to",
+				run: handleWikiOverview,
+			},
+		);
 	});
-
-	function handleKeydown(e: KeyboardEvent) {
-		// Cmd+Shift+T - New temporary (ghost) chat
-		if ((e.metaKey || e.ctrlKey) && e.shiftKey && e.key.toLowerCase() === "t") {
-			e.preventDefault();
-			handleNewTemporaryChat();
-			return;
-		}
-		// Cmd+Shift+N - New page
-		if ((e.metaKey || e.ctrlKey) && e.shiftKey && e.key.toLowerCase() === "n") {
-			e.preventDefault();
-			handleNewPage();
-			return;
-		}
-		// Cmd+N or Ctrl+N - New chat
-		if ((e.metaKey || e.ctrlKey) && e.key === "n") {
-			e.preventDefault();
-			handleNewChat();
-		}
-		// Cmd+S or Ctrl+S - Toggle sidebar collapse
-		if ((e.metaKey || e.ctrlKey) && e.key === "s") {
-			e.preventDefault();
-			toggleCollapse();
-		}
-		// Cmd+K or Ctrl+K - Toggle search/command center
-		if ((e.metaKey || e.ctrlKey) && e.key === "k") {
-			e.preventDefault();
-			toggleSearch();
-		}
-		// Cmd+W or Ctrl+W - Open wiki overview
-		if ((e.metaKey || e.ctrlKey) && e.key === "w") {
-			e.preventDefault();
-			handleWikiOverview();
-		}
-	}
 
 	function handleSearch() {
 		isSearchOpen = true;
