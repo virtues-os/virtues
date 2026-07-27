@@ -331,6 +331,14 @@ pub async fn add_notebook_item(pool: &PgPool, notebook_id: &str, req: AddNoteboo
         return Err(Error::InvalidInput("Member url cannot be empty".into()));
     }
 
+    // A notebook must not contain itself. Scope resolution walks members, so a
+    // self-reference is a cycle, and it shows up in its own contents list.
+    if url == format!("/notebook/{}", notebook_id) {
+        return Err(Error::InvalidInput(
+            "A notebook cannot be added to itself".into(),
+        ));
+    }
+
     let exists: Option<String> = sqlx::query_scalar(r#"SELECT id FROM app_notebooks WHERE id = $1"#)
         .bind(notebook_id)
         .fetch_optional(pool)
@@ -340,27 +348,34 @@ pub async fn add_notebook_item(pool: &PgPool, notebook_id: &str, req: AddNoteboo
         return Err(Error::NotFound(format!("Notebook not found: {}", notebook_id)));
     }
 
-    // role='library' = grounds chat — the default and only v1 role ("Library"
-    // as a noun is retired; membership itself means in-scope). 'pin' survives
-    // schema-only for future nav-only edges.
+    // role='library' = grounds chat, which is what membership means. The one
+    // exception is another notebook: it is a nav-only edge ('pin'), because
+    // resolving one notebook's scope through another invites cycles.
+    let role = if url.starts_with("/notebook/") { "pin" } else { "library" };
+
     let item = sqlx::query_as::<_, NotebookItem>(
         r#"
         INSERT INTO app_notebook_items (notebook_id, url, sort_order, role)
         VALUES (
             $1, $2,
             (SELECT COALESCE(MAX(sort_order), -1) + 1 FROM app_notebook_items WHERE notebook_id = $1),
-            'library'
+            $3
         )
         -- Re-adding an existing member upgrades a legacy nav-only 'pin' to
-        -- 'library', but must not demote a 'manuscript' back to source material.
+        -- 'library', but must not demote a 'manuscript' back to source material,
+        -- nor promote a nested notebook out of its nav-only role.
         ON CONFLICT (notebook_id, url) DO UPDATE SET
-            role = CASE WHEN app_notebook_items.role = 'pin'
-                        THEN 'library' ELSE app_notebook_items.role END
+            role = CASE
+                WHEN $3 = 'pin' THEN 'pin'
+                WHEN app_notebook_items.role = 'pin' THEN 'library'
+                ELSE app_notebook_items.role
+            END
         RETURNING url, sort_order, role, added_at
         "#,
     )
     .bind(notebook_id)
     .bind(url)
+    .bind(role)
     .fetch_one(pool)
     .await
     .map_err(|e| Error::Database(format!("Failed to add notebook item: {}", e)))?;

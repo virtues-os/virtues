@@ -17,6 +17,13 @@
 		badgeColors?: Record<string, string>;
 		getValue?: (item: T) => string | number | null | undefined;
 		sortable?: boolean;
+		/** Offer this column in the Group control. Its rendered value is the group key. */
+		groupable?: boolean;
+		/** Keep the field available for grouping, sorting and search, but don't
+		 *  render a column for it — e.g. Kind, which the row icon already says. */
+		hidden?: boolean;
+		/** Order group keys explicitly; anything unlisted follows, alphabetically. */
+		groupOrder?: string[];
 	}
 
 	export interface RowMeta {
@@ -54,6 +61,8 @@
 		pageSize?: number;
 		/** Default view mode when no stored preference exists for this entityType. */
 		defaultViewMode?: ViewMode;
+		/** Column key to group by when no stored preference exists. '' = ungrouped. */
+		defaultGroupBy?: string;
 		/** Minimum card width in grid mode (CSS value). Default: '200px'. */
 		gridMinWidth?: string;
 		/** If provided, row click toggles an inline detail row instead of firing onItemClick. */
@@ -93,6 +102,7 @@
 		searchPlaceholder = 'Search...',
 		pageSize = 16,
 		defaultViewMode = 'table',
+		defaultGroupBy,
 		gridMinWidth = '200px',
 		expandDetail,
 		refreshInterval,
@@ -322,8 +332,24 @@
 			: 'comfortable';
 	});
 
+	const groupableCols = $derived(columns.filter((c) => c.groupable));
+	/** Columns that actually get a header and a cell. */
+	const visibleColumns = $derived(columns.filter((c) => !c.hidden));
+
+	/** table -> cards -> board -> table. Board is only offered when something
+	 *  is groupable, since a board with one column is just a card list. */
+	const viewCycle = $derived<ViewMode[]>(
+		groupableCols.length > 0 ? ['table', 'grid', 'board'] : ['table', 'grid'],
+	);
+	const VIEW_META: Record<ViewMode, { icon: string; label: string }> = {
+		table: { icon: 'ri:list-check-2', label: 'Table' },
+		grid: { icon: 'ri:layout-grid-line', label: 'Cards' },
+		board: { icon: 'ri:layout-column-line', label: 'Board' },
+	};
+
 	function toggleViewMode() {
-		const next: ViewMode = viewMode === 'table' ? 'grid' : 'table';
+		const i = viewCycle.indexOf(viewMode);
+		const next = viewCycle[(i + 1) % viewCycle.length] ?? 'table';
 		viewMode = next;
 		dataGridPrefs.setViewMode(entityType, next);
 	}
@@ -405,8 +431,69 @@
 		return Math.min((rowIndex * 0.6 + colIndex * 0.4) * 200, 600);
 	}
 
+	// ────────────────────────────────────────────────────────────────────────
+	// Grouping. `board` is the card renderer with groups as columns, so it
+	// forces a grouping on; table and cards render groups as sections.
+	// ────────────────────────────────────────────────────────────────────────
+	let groupKey = $state('');
+	let groupInitialized = $state(false);
+	$effect(() => {
+		if (groupInitialized) return;
+		groupInitialized = true;
+		const stored = dataGridPrefs.hasGroupBy(entityType)
+			? dataGridPrefs.getGroupBy(entityType)
+			: (defaultGroupBy ?? '');
+		// A stored key whose column has since gone away must not strand the grid
+		// in a grouping the user can no longer see or clear.
+		groupKey = groupableCols.some((c) => String(c.key) === stored) ? stored : '';
+	});
+
+	function setGroupKey(next: string) {
+		groupKey = next;
+		dataGridPrefs.setGroupBy(entityType, next);
+	}
+
+	const activeGroupCol = $derived(
+		groupableCols.find((c) => String(c.key) === groupKey) ??
+			(viewMode === 'board' ? groupableCols[0] : undefined),
+	);
+
+	let collapsedGroups = $state<Set<string>>(new Set());
+	function toggleGroup(key: string) {
+		const next = new Set(collapsedGroups);
+		if (next.has(key)) next.delete(key);
+		else next.add(key);
+		collapsedGroups = next;
+	}
+
+	const groupedItems = $derived.by<{ key: string; items: T[] }[]>(() => {
+		const col = activeGroupCol;
+		if (!col) return [{ key: '', items: displayedItems }];
+		const buckets = new Map<string, T[]>();
+		for (const item of displayedItems) {
+			const key = getValue(item, col) || '—';
+			const bucket = buckets.get(key);
+			if (bucket) bucket.push(item);
+			else buckets.set(key, [item]);
+		}
+		const order = col.groupOrder ?? [];
+		return [...buckets.entries()]
+			.map(([key, items]) => ({ key, items }))
+			.sort((a, b) => {
+				const ai = order.indexOf(a.key);
+				const bi = order.indexOf(b.key);
+				if (ai !== -1 || bi !== -1) return (ai === -1 ? 999 : ai) - (bi === -1 ? 999 : bi);
+				return a.key.localeCompare(b.key);
+			});
+	});
+
+	const isGrouped = $derived(!!activeGroupCol);
+	/** Stable row index across groups, for RowMeta and the stagger. */
+	const rowIndexById = $derived(new Map(displayedItems.map((item, i) => [item.id, i])));
+
 	const isTable = $derived(viewMode === 'table');
 	const isGrid = $derived(viewMode === 'grid');
+	const isBoard = $derived(viewMode === 'board');
 
 	// Motion duration, zeroed when the OS asks for reduced motion. Svelte's JS
 	// transitions don't honour the media query on their own — the CSS-only
@@ -480,14 +567,41 @@
 						</Popover>
 					</div>
 				{/if}
-				<button
-					class="ctrl-btn"
-					onclick={toggleViewMode}
-					aria-label={isTable ? 'Switch to card view' : 'Switch to table view'}
-					title={isTable ? 'Table' : 'Cards'}
-				>
-					<Icon icon={isTable ? 'ri:list-check-2' : 'ri:layout-grid-line'} width="16" />
-				</button>
+				{#if groupableCols.length > 0}
+					{@const nextView = viewCycle[(viewCycle.indexOf(viewMode) + 1) % viewCycle.length]}
+					<label class="group-ctrl">
+						<span class="group-ctrl-label">Group</span>
+						<select
+							value={groupKey}
+							onchange={(e) => setGroupKey(e.currentTarget.value)}
+							disabled={isBoard}
+							title={isBoard ? 'Board groups by its columns' : 'Group by'}
+							aria-label="Group by"
+						>
+							<option value="">None</option>
+							{#each groupableCols as col (String(col.key))}
+								<option value={String(col.key)}>{col.label}</option>
+							{/each}
+						</select>
+					</label>
+					<button
+						class="ctrl-btn"
+						onclick={toggleViewMode}
+						aria-label={`Switch to ${VIEW_META[nextView].label.toLowerCase()} view`}
+						title={VIEW_META[viewMode].label}
+					>
+						<Icon icon={VIEW_META[viewMode].icon} width="16" />
+					</button>
+				{:else}
+					<button
+						class="ctrl-btn"
+						onclick={toggleViewMode}
+						aria-label={isTable ? 'Switch to card view' : 'Switch to table view'}
+						title={VIEW_META[viewMode].label}
+					>
+						<Icon icon={VIEW_META[viewMode].icon} width="16" />
+					</button>
+				{/if}
 				{#if toolbarActions}
 					{@render toolbarActions()}
 				{/if}
@@ -537,7 +651,7 @@
 			<table class="data-table">
 				<thead>
 					<tr>
-						{#each columns as col}
+						{#each visibleColumns as col}
 							{@const isColSortable = sortable && col.sortable !== false}
 							{@const isActive = sortKey === col.key}
 							<th
@@ -581,7 +695,26 @@
 				</thead>
 				{#key mountToken}
 					<tbody>
-						{#each displayedItems as item, i (item.id)}
+						{#each groupedItems as group (group.key)}
+							{#if isGrouped}
+								<tr class="group-row">
+									<td colspan={visibleColumns.length}>
+										<button
+											class="group-toggle"
+											class:closed={collapsedGroups.has(group.key)}
+											onclick={() => toggleGroup(group.key)}
+											aria-expanded={!collapsedGroups.has(group.key)}
+										>
+											<Icon icon="ri:arrow-down-s-line" width="14" class="group-chev" />
+											<span class="group-name">{group.key}</span>
+											<span class="group-count">{group.items.length}</span>
+										</button>
+									</td>
+								</tr>
+							{/if}
+							{#if !collapsedGroups.has(group.key)}
+						{#each group.items as item (item.id)}
+							{@const i = rowIndexById.get(item.id) ?? 0}
 							{@const meta = { rowIndex: i, colIndex: 0, total } as RowMeta}
 							<tr
 								class="data-row"
@@ -599,7 +732,7 @@
 								{#if tableRow}
 									{@render tableRow(item, meta)}
 								{:else}
-									{#each columns as col, ci}
+									{#each visibleColumns as col, ci}
 										<td
 											class:hide-mobile={col.hideOnMobile}
 											class:animate-in={animateMount}
@@ -626,10 +759,12 @@
 							</tr>
 							{#if expandDetail && expandedId === item.id}
 								<tr class="expand-row">
-									<td colspan={columns.length}>
+									<td colspan={visibleColumns.length}>
 										{@render expandDetail(item, meta)}
 									</td>
 								</tr>
+							{/if}
+						{/each}
 							{/if}
 						{/each}
 					</tbody>
@@ -641,11 +776,34 @@
 		{@const cardCols = 4}
 		{#key mountToken}
 			<div
-				class="card-grid"
-				style:--grid-min={gridMinWidth}
+				class:card-groups={!isBoard}
+				class:board={isBoard}
 				in:fly={{ y: 6, duration: motionMs, easing: cubicOut }}
 			>
-				{#each displayedItems as item, i (item.id)}
+			{#each groupedItems as group (group.key)}
+				<div class:card-group={!isBoard} class:board-col={isBoard}>
+					{#if isGrouped}
+						<button
+							class="group-toggle"
+							class:closed={collapsedGroups.has(group.key)}
+							onclick={() => toggleGroup(group.key)}
+							aria-expanded={!collapsedGroups.has(group.key)}
+						>
+							{#if !isBoard}
+								<Icon icon="ri:arrow-down-s-line" width="14" class="group-chev" />
+							{/if}
+							<span class="group-name">{group.key}</span>
+							<span class="group-count">{group.items.length}</span>
+						</button>
+					{/if}
+					{#if !collapsedGroups.has(group.key)}
+					<div
+						class:card-grid={!isBoard}
+						class:board-stack={isBoard}
+						style:--grid-min={gridMinWidth}
+					>
+				{#each group.items as item (item.id)}
+					{@const i = rowIndexById.get(item.id) ?? 0}
 					{@const meta = {
 						rowIndex: Math.floor(i / cardCols),
 						colIndex: i % cardCols,
@@ -665,7 +823,7 @@
 							{@render card(item, meta)}
 						{:else}
 							<div class="card-content">
-								{#each columns.slice(0, 2) as col, ci}
+								{#each visibleColumns.slice(0, 2) as col, ci}
 									{@const value = getValue(item, col)}
 									{#if ci === 0}
 										<span class="card-title">{value || '—'}</span>
@@ -679,6 +837,10 @@
 						{/if}
 					</button>
 				{/each}
+					</div>
+					{/if}
+				</div>
+			{/each}
 			</div>
 		{/key}
 	{/if}
@@ -852,6 +1014,34 @@
 	.ctrl-btn.has-active {
 		color: var(--color-primary);
 	}
+
+	/* Group-by control — a plain select, so it stays keyboard- and
+	   screen-reader-native rather than a bespoke menu. */
+	.group-ctrl {
+		display: inline-flex;
+		align-items: center;
+		gap: 6px;
+		font-family: var(--font-mono);
+		font-size: 0.625rem;
+		letter-spacing: 0.09em;
+		text-transform: uppercase;
+		color: var(--color-foreground-subtle);
+	}
+	.group-ctrl select {
+		font-family: var(--font-sans);
+		font-size: 0.75rem;
+		letter-spacing: 0;
+		text-transform: none;
+		color: var(--color-foreground-muted);
+		background: var(--color-background-secondary);
+		border: 1px solid var(--color-border);
+		border-radius: 6px;
+		padding: 3px 6px;
+		cursor: pointer;
+	}
+	.group-ctrl select:hover:not(:disabled) { color: var(--color-foreground); }
+	.group-ctrl select:disabled { opacity: 0.45; cursor: not-allowed; }
+	.group-ctrl select:focus-visible { outline: 2px solid var(--color-primary); outline-offset: 1px; }
 
 	/* Filter add: button + popover wrapper */
 	.filter-add {
@@ -1107,6 +1297,69 @@
 	.datagrid-wrapper[data-density='compact'] .card-grid {
 		gap: 0.5rem;
 	}
+
+	/* ============================================
+	   GROUPING
+	   ============================================ */
+	/* One control, one look, in all three renderers: a disclosure, the group's
+	   value, and its count. In a board it becomes the column head. */
+	.group-toggle {
+		display: flex;
+		align-items: center;
+		gap: 7px;
+		width: 100%;
+		padding: 0.35rem 0.1rem;
+		border: none;
+		background: transparent;
+		color: var(--color-foreground-muted);
+		font: inherit;
+		font-size: 0.78125rem;
+		font-weight: 600;
+		text-align: left;
+		cursor: pointer;
+	}
+	.group-toggle:hover { color: var(--color-foreground); }
+	.group-toggle:focus-visible { outline: 2px solid var(--color-primary); outline-offset: -2px; }
+	.group-toggle :global(.group-chev) {
+		color: var(--color-foreground-subtle);
+		transition: transform 0.16s ease;
+		flex-shrink: 0;
+	}
+	.group-toggle.closed :global(.group-chev) { transform: rotate(-90deg); }
+	.group-count {
+		font-family: var(--font-mono);
+		font-size: 0.625rem;
+		font-weight: 400;
+		font-variant-numeric: tabular-nums;
+		color: var(--color-foreground-subtle);
+		background: var(--color-surface-elevated);
+		border-radius: 3px;
+		padding: 1px 6px;
+	}
+
+	.group-row td {
+		padding: 0.55rem 0.75rem 0.15rem 0;
+		border-bottom: none;
+		background: transparent;
+	}
+	/* The first group head sits directly under the column head; later ones need
+	   air so the groups read as separate blocks. */
+	.group-row:not(:first-child) td { padding-top: 1.25rem; }
+
+	.card-groups { display: flex; flex-direction: column; gap: 1.25rem; padding-top: 0.75rem; }
+	.card-group { display: flex; flex-direction: column; gap: 0.35rem; }
+
+	/* Board: the card renderer with the groups laid out as columns. */
+	.board {
+		display: grid;
+		grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
+		gap: 0.85rem;
+		padding-top: 1rem;
+		align-items: start;
+		overflow-x: auto;
+	}
+	.board-col { display: flex; flex-direction: column; gap: 0.5rem; min-width: 0; }
+	.board-stack { display: flex; flex-direction: column; gap: 0.5rem; }
 
 	/* ============================================
 	   CARD GRID VIEW
