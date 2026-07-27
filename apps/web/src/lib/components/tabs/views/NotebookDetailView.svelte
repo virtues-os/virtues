@@ -1,6 +1,6 @@
 <script lang="ts">
 	import type { Tab } from '$lib/tabs/types';
-	import type { NotebookDetail, NotebookGraph, NotebookItemRole } from '$lib/api/client';
+	import type { NotebookDetail, NotebookGraph } from '$lib/api/client';
 	import Icon from '$lib/components/Icon.svelte';
 	import { notebookStore } from '$lib/stores/notebook.svelte';
 	import { chatSessions } from '$lib/stores/chatSessions.svelte';
@@ -145,7 +145,6 @@
 	});
 
 	// ---- Member rows ---------------------------------------------------------
-	const ENTITY_TYPES = ['person', 'place', 'org', 'thing'];
 
 	function memberType(url: string): string {
 		if (url.startsWith('http://') || url.startsWith('https://')) return 'Link';
@@ -190,14 +189,6 @@
 	 * elsewhere in the app. And not "Bible", which is author jargon that reads as
 	 * nonsense in a notebook about a kitchen remodel.
 	 */
-	function roleLabel(url: string, role: NotebookItemRole): string {
-		if (role === 'manuscript') return 'Manuscript';
-		if (role === 'pin') return 'Pin';
-		const t = url.split('/')[1] ?? '';
-		if (ENTITY_TYPES.includes(t)) return 'Reference';
-		return 'Material';
-	}
-
 	function statusLabel(url: string): string {
 		const s = memberStatus[url];
 		if (!s || s === 'skipped') return '—';
@@ -233,8 +224,6 @@
 		url: string;
 		name: string;
 		kind: string;
-		role: NotebookItemRole;
-		roleText: string;
 		status: string;
 		added: string;
 		icon: string;
@@ -255,8 +244,6 @@
 			url: it.url,
 			name: memberNames[it.url] || memberType(it.url),
 			kind: memberType(it.url),
-			role: it.role,
-			roleText: roleLabel(it.url, it.role),
 			status: statusLabel(it.url),
 			added: formatAdded(it.added_at),
 			icon: iconForUrl(it.url)
@@ -267,10 +254,6 @@
 			url: `/chat/${c.conversation_id}`,
 			name: c.title ?? 'Untitled chat',
 			kind: 'Chat',
-			// A chat grounds retrieval like any other member, so it is material;
-			// the row icon carries that it's a thread.
-			role: 'library',
-			roleText: 'Material',
 			status: `${c.message_count} ${c.message_count === 1 ? 'message' : 'messages'}`,
 			added: formatAdded(c.last_message_at ?? c.first_message_at),
 			icon: c.icon || 'ri:chat-3-line'
@@ -296,15 +279,7 @@
 
 	const columns = $derived.by<Column<MemberRow>[]>(() => {
 		const cols: Column<MemberRow>[] = [
-			{ key: 'name', label: 'Name', width: '52%', minWidth: '220px' },
-			{
-				key: 'roleText',
-				label: 'Role',
-				width: '16%',
-				minWidth: '90px',
-				groupable: true,
-				groupOrder: ['Manuscript', 'Material', 'Reference', 'Pin']
-			},
+			{ key: 'name', label: 'Name', width: '62%', minWidth: '220px' },
 			// Groupable but not rendered: the row icon already says what a thing is.
 			{ key: 'kind', label: 'Kind', groupable: true, hidden: true }
 		];
@@ -327,40 +302,6 @@
 			return;
 		}
 		windowShellStore.openRouteBeside(url);
-	}
-
-	async function setRole(url: string, role: NotebookItemRole) {
-		const id = notebookId;
-		if (!id) return;
-		try {
-			await notebookStore.setItemRole(id, url, role);
-			await load(true);
-			await loadGraph();
-		} catch (e) {
-			console.error('[NotebookDetailView] set role failed:', e);
-			toast.error('Could not change the role');
-		}
-	}
-
-	/** Apply a role to a selection, skipping entities whose role is derived. */
-	async function setRoleFor(rows: MemberRow[], role: NotebookItemRole, clear: () => void) {
-		const id = notebookId;
-		if (!id) return;
-		const targets = rows.filter((r) => !ENTITY_TYPES.includes(r.url.split('/')[1] ?? ''));
-		const skipped = rows.length - targets.length;
-		try {
-			for (const r of targets) await notebookStore.setItemRole(id, r.url, role);
-			await load(true);
-			await loadGraph();
-			if (skipped > 0) {
-				toast(`${targets.length} changed · ${skipped} skipped (people and places are always reference)`);
-			}
-		} catch (e) {
-			console.error('[NotebookDetailView] bulk role failed:', e);
-			toast.error('Could not change every role');
-		} finally {
-			clear();
-		}
 	}
 
 	async function removeMembers(rows: MemberRow[], clear: () => void) {
@@ -396,25 +337,6 @@
 		const items = [
 			{ id: 'open', label: 'Open', icon: 'ri:external-link-line', action: () => openUrl(row.url) }
 		];
-		// Only things that can actually ground or be written have a role worth
-		// changing; a filed person is reference material either way.
-		if (!ENTITY_TYPES.includes(row.url.split('/')[1] ?? '')) {
-			if (row.role === 'manuscript') {
-				items.push({
-					id: 'source',
-					label: 'Treat as material',
-					icon: 'ri:book-open-line',
-					action: () => setRole(row.url, 'library')
-				});
-			} else {
-				items.push({
-					id: 'manuscript',
-					label: 'Treat as manuscript',
-					icon: 'ri:quill-pen-line',
-					action: () => setRole(row.url, 'manuscript')
-				});
-			}
-		}
 		items.push({
 			id: 'remove',
 			label: 'Remove from notebook',
@@ -546,7 +468,6 @@
 		}
 	}
 
-	const manuscriptCount = $derived(memberItems.filter((i) => i.role === 'manuscript').length);
 </script>
 
 <div class="notebook-detail">
@@ -642,10 +563,6 @@
 				<!-- Counts the same set the grid counts, now that chats are rows in it. -->
 				<div class="props font-mono">
 					<span>{allRows.length} {allRows.length === 1 ? 'item' : 'items'}</span>
-					{#if manuscriptCount > 0}
-						<span class="dot">·</span>
-						<span>{manuscriptCount} manuscript</span>
-					{/if}
 				</div>
 			</header>
 
@@ -694,18 +611,11 @@
 						emptyIcon="ri:filter-line"
 						emptyMessage="No members reference that entity"
 						searchPlaceholder="Search this notebook…"
-						defaultGroupBy="roleText"
 						selectable
 						onItemClick={(row) => openUrl(row.url)}
 						onItemContextMenu={rowMenu}
 					>
 						{#snippet bulkActions(rows: MemberRow[], clear: () => void)}
-							<button class="bulk-btn" onclick={() => setRoleFor(rows, 'manuscript', clear)}>
-								Treat as manuscript
-							</button>
-							<button class="bulk-btn" onclick={() => setRoleFor(rows, 'library', clear)}>
-								Treat as material
-							</button>
 							<button class="bulk-btn danger" onclick={() => removeMembers(rows, clear)}>
 								Remove
 							</button>
@@ -740,11 +650,6 @@
 									<span class="name-text">{row.name}</span>
 								</span>
 							</td>
-							<td>
-								<span class="role-chip" class:manuscript={row.role === 'manuscript'}>
-									{row.roleText}
-								</span>
-							</td>
 							{#if anyStatus}
 								<td class="c-dim hide-mobile">
 									{#if row.status === 'Failed'}
@@ -769,9 +674,6 @@
 							<div class="nb-card">
 								<span class="nb-card-top">
 									<Icon icon={row.icon} width="15" />
-									<span class="role-chip" class:manuscript={row.role === 'manuscript'}>
-										{row.roleText}
-									</span>
 								</span>
 								<span class="nb-card-name">{row.name}</span>
 								<span class="nb-card-meta font-mono">
@@ -856,7 +758,6 @@
 		font-size: 11px; letter-spacing: 0.04em; text-transform: uppercase;
 		color: var(--color-foreground-subtle); padding-left: 60px;
 	}
-	.props .dot { margin: 0 0.6ch; opacity: 0.5; }
 
 	/* Overflow menu */
 	.menu { display: flex; flex-direction: column; min-width: 190px; padding: 4px; }
@@ -955,16 +856,6 @@
 	}
 	.row-act:hover { background: var(--color-surface-elevated); color: var(--color-foreground); }
 
-	.role-chip {
-		display: inline-block; font-size: 10px; letter-spacing: 0.04em;
-		padding: 1.5px 8px; border-radius: 999px;
-		border: 1px solid var(--color-border); color: var(--color-foreground-subtle);
-		white-space: nowrap;
-	}
-	.role-chip.manuscript {
-		color: var(--color-primary);
-		border-color: color-mix(in srgb, var(--color-primary) 40%, var(--color-border));
-	}
 	.retry {
 		border: none; background: none; padding: 0; font: inherit; font-size: inherit;
 		color: var(--color-error, #dc2626); cursor: pointer; text-decoration: underline;
