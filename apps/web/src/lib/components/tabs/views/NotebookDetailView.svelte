@@ -281,13 +281,25 @@
 		return allRows.filter((r) => keep.has(r.url));
 	});
 
-	const columns: Column<MemberRow>[] = [
-		{ key: 'name', label: 'Name', icon: 'ri:file-list-line', width: '40%', minWidth: '200px' },
-		{ key: 'kind', label: 'Kind', width: '12%', minWidth: '80px' },
-		{ key: 'roleText', label: 'Role', width: '14%', minWidth: '90px' },
-		{ key: 'status', label: 'Status', width: '18%', minWidth: '110px', hideOnMobile: true },
-		{ key: 'added', label: 'Added', width: '16%', minWidth: '90px', hideOnMobile: true }
-	];
+	/**
+	 * Kind has no column: the row icon already says what a thing is, and a word
+	 * repeating the glyph beside it was one of five competing text styles.
+	 * Status only earns its column when something in the set actually has one —
+	 * otherwise it's a column of em-dashes.
+	 */
+	const anyStatus = $derived(allRows.some((r) => r.status !== '—'));
+
+	const columns = $derived.by<Column<MemberRow>[]>(() => {
+		const cols: Column<MemberRow>[] = [
+			{ key: 'name', label: 'Name', width: '52%', minWidth: '220px' },
+			{ key: 'roleText', label: 'Role', width: '16%', minWidth: '90px' }
+		];
+		if (anyStatus) {
+			cols.push({ key: 'status', label: 'Status', width: '18%', minWidth: '110px', hideOnMobile: true });
+		}
+		cols.push({ key: 'added', label: 'Added', width: '14%', minWidth: '90px', hideOnMobile: true });
+		return cols;
+	});
 
 	// ---- Actions -------------------------------------------------------------
 	function openUrl(url: string) {
@@ -617,13 +629,6 @@
 			{/if}
 
 			<section class="grid-section">
-				<div class="section-head">
-					<h2 class="eyebrow font-mono">Contents</h2>
-					<button class="add-btn" onclick={openPicker} title="Add a page, person, place, file, or link">
-						<Icon icon="ri:add-line" width="14" />
-					</button>
-				</div>
-
 				{#if allRows.length === 0}
 					<button class="add-row" onclick={openPicker}>
 						<Icon icon="ri:add-line" width="15" /> Add pages, people, places, or links — or drop files here
@@ -639,6 +644,17 @@
 						onItemClick={(row) => openUrl(row.url)}
 						onItemContextMenu={rowMenu}
 					>
+						{#snippet toolbarActions()}
+							<button
+								class="ctrl-add"
+								onclick={openPicker}
+								title="Add a page, person, place, file, or link"
+								aria-label="Add to notebook"
+							>
+								<Icon icon="ri:add-line" width="16" />
+							</button>
+						{/snippet}
+
 						{#snippet tableRow(row: MemberRow)}
 							<td class="c-name">
 								<span class="name-cell">
@@ -646,27 +662,28 @@
 									<span class="name-text">{row.name}</span>
 								</span>
 							</td>
-							<td class="c-dim">{row.kind}</td>
 							<td>
 								<span class="role-chip" class:manuscript={row.role === 'manuscript'}>
 									{row.roleText}
 								</span>
 							</td>
-							<td class="c-dim hide-mobile">
-								{#if row.status === 'Failed'}
-									<button
-										class="retry"
-										onclick={(e) => {
-											e.stopPropagation();
-											retryExtraction(row.url);
-										}}
-									>
-										Failed — retry
-									</button>
-								{:else}
-									{row.status}
-								{/if}
-							</td>
+							{#if anyStatus}
+								<td class="c-dim hide-mobile">
+									{#if row.status === 'Failed'}
+										<button
+											class="retry"
+											onclick={(e) => {
+												e.stopPropagation();
+												retryExtraction(row.url);
+											}}
+										>
+											Failed — retry
+										</button>
+									{:else}
+										{row.status}
+									{/if}
+								</td>
+							{/if}
 							<td class="c-dim hide-mobile">{row.added}</td>
 						{/snippet}
 
@@ -809,21 +826,20 @@
 	}
 	.ask-send:disabled { opacity: 0.35; cursor: default; }
 
-	/* Sections */
-	.section-head {
-		display: flex; align-items: center; justify-content: space-between;
-		padding-bottom: 0.4rem;
+	/* The add control sits in the grid's own toolbar, so the page no longer
+	   carries a section header whose only job was to host it. */
+	.ctrl-add {
+		display: grid; place-items: center; width: 30px; height: 30px;
+		border: 1px solid var(--color-border); border-radius: 8px;
+		background: var(--color-background-hover);
+		color: var(--color-foreground-muted); cursor: pointer;
+		transition: background-color 0.12s ease, color 0.12s ease;
 	}
-	.eyebrow {
-		margin: 0; font-size: 11px; font-weight: 400; letter-spacing: 0.09em;
-		text-transform: uppercase; color: var(--color-foreground-subtle);
+	.ctrl-add:hover {
+		background: color-mix(in srgb, var(--color-foreground) 8%, var(--color-surface-elevated));
+		color: var(--color-foreground);
 	}
-	.add-btn {
-		display: grid; place-items: center; width: 22px; height: 22px;
-		border: none; border-radius: 6px; background: transparent;
-		color: var(--color-foreground-subtle); cursor: pointer;
-	}
-	.add-btn:hover { background: var(--color-surface-elevated); color: var(--color-foreground); }
+	.ctrl-add:focus-visible { outline: 2px solid var(--room-accent, var(--color-primary)); outline-offset: 1px; }
 	.add-row {
 		display: flex; align-items: center; gap: 8px; width: 100%; text-align: left;
 		padding: 1rem 0.6rem; border: 1px dashed var(--color-border); border-radius: 8px;
