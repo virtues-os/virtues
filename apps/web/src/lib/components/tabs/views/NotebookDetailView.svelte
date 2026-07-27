@@ -235,8 +235,17 @@
 		icon: string;
 	}
 
-	const allRows = $derived.by<MemberRow[]>(() =>
-		memberItems.map((it) => ({
+	/**
+	 * Everything the notebook holds, in one table. Chats used to live in their
+	 * own list below; they are members like any other and splitting them made
+	 * the page two near-identical lists.
+	 *
+	 * Chats are still sourced from the authoritative session list rather than
+	 * from membership rows, so a stale `/chat/` member row can't resurrect a
+	 * deleted conversation.
+	 */
+	const allRows = $derived.by<MemberRow[]>(() => {
+		const members: MemberRow[] = memberItems.map((it) => ({
 			id: it.url,
 			url: it.url,
 			name: memberNames[it.url] || memberType(it.url),
@@ -246,8 +255,24 @@
 			status: statusLabel(it.url),
 			added: formatAdded(it.added_at),
 			icon: iconForUrl(it.url)
-		}))
-	);
+		}));
+
+		const chats: MemberRow[] = roomChats.map((c) => ({
+			id: `/chat/${c.conversation_id}`,
+			url: `/chat/${c.conversation_id}`,
+			name: c.title ?? 'Untitled chat',
+			kind: 'Chat',
+			// A chat grounds retrieval like any other member, so its role is
+			// honestly 'Source'; the Kind column carries that it's a thread.
+			role: 'library',
+			roleText: 'Source',
+			status: `${c.message_count} ${c.message_count === 1 ? 'message' : 'messages'}`,
+			added: formatAdded(c.last_message_at ?? c.first_message_at),
+			icon: c.icon || 'ri:chat-3-line'
+		}));
+
+		return [...members, ...chats];
+	});
 
 	// The graph is a filter over this list — that's what earns it the top slot.
 	const rows = $derived.by(() => {
@@ -271,10 +296,6 @@
 			return;
 		}
 		windowShellStore.openTabFromRoute(url);
-	}
-
-	function openChat(conversationId: string) {
-		windowShellStore.openTabFromRoute(`/chat/${conversationId}`);
 	}
 
 	async function setRole(url: string, role: NotebookItemRole) {
@@ -575,7 +596,6 @@
 			</header>
 
 			<form class="ask" onsubmit={submitAsk}>
-				<Icon icon="ri:sparkling-2-line" width="16" />
 				<input class="ask-input" bind:value={askDraft} placeholder="Ask this notebook…" />
 				<button
 					class="ask-send"
@@ -598,7 +618,7 @@
 
 			<section class="grid-section">
 				<div class="section-head">
-					<h2 class="eyebrow font-mono">Materials</h2>
+					<h2 class="eyebrow font-mono">Contents</h2>
 					<button class="add-btn" onclick={openPicker} title="Add a page, person, place, file, or link">
 						<Icon icon="ri:add-line" width="14" />
 					</button>
@@ -615,7 +635,7 @@
 						entityType="notebook-item"
 						emptyIcon="ri:filter-line"
 						emptyMessage="No members reference that entity"
-						searchPlaceholder="Search materials…"
+						searchPlaceholder="Search this notebook…"
 						onItemClick={(row) => openUrl(row.url)}
 						onItemContextMenu={rowMenu}
 					>
@@ -649,31 +669,22 @@
 							</td>
 							<td class="c-dim hide-mobile">{row.added}</td>
 						{/snippet}
-					</UniversalDataGrid>
-				{/if}
-			</section>
 
-			<section class="chats-section">
-				<div class="section-head">
-					<h2 class="eyebrow font-mono">Chats</h2>
-				</div>
-				{#if roomChats.length === 0}
-					<p class="empty">No chats yet — ask something above to start one here.</p>
-				{:else}
-					<ul class="ledger">
-						{#each roomChats as c (c.conversation_id)}
-							<li class="ledger-row">
-								<button
-									class="ledger-item"
-									onclick={() => openChat(c.conversation_id)}
-									title={c.title ?? 'Untitled chat'}
-								>
-									<Icon icon={c.icon || 'ri:chat-3-line'} width="16" class="ledger-ic" />
-									<span class="ledger-name">{c.title ?? 'Untitled chat'}</span>
-								</button>
-							</li>
-						{/each}
-					</ul>
+						{#snippet card(row: MemberRow)}
+							<div class="nb-card">
+								<span class="nb-card-top">
+									<Icon icon={row.icon} width="15" />
+									<span class="role-chip" class:manuscript={row.role === 'manuscript'}>
+										{row.roleText}
+									</span>
+								</span>
+								<span class="nb-card-name">{row.name}</span>
+								<span class="nb-card-meta font-mono">
+									{row.kind}{row.status !== '—' ? ` · ${row.status}` : ''}
+								</span>
+							</div>
+						{/snippet}
+					</UniversalDataGrid>
 				{/if}
 			</section>
 		</div>
@@ -820,7 +831,6 @@
 		font: inherit; font-size: 0.9rem; color: var(--color-foreground-subtle);
 	}
 	.add-row:hover { color: var(--color-foreground); border-color: var(--room-accent, var(--color-primary)); }
-	.empty { margin: 0; padding: 0.85rem 0; font-size: 0.9rem; color: var(--color-foreground-muted); }
 
 	/* Grid cells */
 	.c-name { padding: 0.5rem 0.75rem; padding-left: 0; }
@@ -846,20 +856,26 @@
 		.hide-mobile { display: none; }
 	}
 
-	/* Chats ledger */
-	.ledger { list-style: none; margin: 0; padding: 0; }
-	.ledger-row {
-		display: flex; align-items: center;
-		border-bottom: 1px solid color-mix(in srgb, var(--color-border) 55%, transparent);
+	/* Card view */
+	.nb-card {
+		display: flex; flex-direction: column; gap: 0.4rem;
+		width: 100%; height: 100%; padding: 0.85rem 0.9rem;
+		border: 1px solid var(--color-border); border-radius: 10px;
+		background: var(--color-surface);
+		transition: background-color 0.12s ease, border-color 0.12s ease;
 	}
-	.ledger-item {
-		display: flex; align-items: center; gap: 12px; width: 100%;
-		padding: 0.7rem 0.25rem; border: none; background: transparent;
-		color: var(--color-foreground); font: inherit; font-size: 0.95rem;
-		text-align: left; cursor: pointer;
+	:global(.card:hover) .nb-card {
+		background: var(--color-background-hover);
+		border-color: color-mix(in srgb, var(--room-accent, var(--color-primary)) 32%, var(--color-border));
 	}
-	.ledger-item :global(.ledger-ic) { color: var(--color-foreground-subtle); flex-shrink: 0; }
-	.ledger-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+	.nb-card-top { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+	.nb-card-top :global(svg) { color: var(--color-foreground-subtle); flex-shrink: 0; }
+	.nb-card-name {
+		font-size: 0.875rem; font-weight: 550; line-height: 1.35; color: var(--color-foreground);
+		display: -webkit-box; -webkit-line-clamp: 2; line-clamp: 2;
+		-webkit-box-orient: vertical; overflow: hidden;
+	}
+	.nb-card-meta { font-size: 10px; letter-spacing: 0.03em; color: var(--color-foreground-subtle); }
 
 	:global(.spin) { animation: spin 0.8s linear infinite; }
 	@keyframes spin { to { transform: rotate(360deg); } }

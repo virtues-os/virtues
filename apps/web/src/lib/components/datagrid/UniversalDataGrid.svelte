@@ -1053,15 +1053,11 @@
 		cursor: pointer;
 		position: relative;
 		border-bottom: 1px solid var(--color-border);
-		box-shadow: inset 2px 0 0 transparent;
-		transition: background-color 0.1s ease, box-shadow 0.1s ease;
+		transition: background-color 0.1s ease;
 	}
 
-	/* Half the previous wash, plus a leading accent edge: reads as a pointer
-	   rather than a selection. */
 	.data-row:hover {
 		background: color-mix(in srgb, var(--color-foreground) 3.5%, transparent);
-		box-shadow: inset 2px 0 0 var(--color-primary);
 	}
 
 	.data-row:focus-visible {
@@ -1120,25 +1116,48 @@
 		border-radius: 8px;
 	}
 
+	/* The default card body. `.card` itself stays an unstyled button because
+	   consumers passing a `card` snippet draw their own surface inside it —
+	   giving the button a border would double it. So the surface lives here,
+	   which only the built-in branch renders. Left-aligned: these are records,
+	   and centred text makes ragged columns of them. */
 	.card-content {
 		display: flex;
 		flex-direction: column;
-		align-items: center;
-		gap: 0.5rem;
-		text-align: center;
+		align-items: flex-start;
+		gap: 0.3rem;
+		text-align: left;
 		width: 100%;
+		height: 100%;
+		padding: 0.85rem 0.9rem;
+		border: 1px solid var(--color-border);
+		border-radius: 10px;
+		background: var(--color-surface);
+		transition: background-color 0.12s ease, border-color 0.12s ease;
+	}
+
+	.card:hover .card-content {
+		background: var(--color-background-hover);
+		border-color: var(--color-border-strong, var(--color-border));
 	}
 
 	.card-title {
-		font-weight: 600;
-		font-size: 0.9375rem;
+		font-weight: 550;
+		font-size: 0.875rem;
 		color: var(--color-foreground);
-		line-height: 1.3;
+		line-height: 1.35;
+		/* Long names must not stretch the column or run to five lines. */
+		display: -webkit-box;
+		-webkit-line-clamp: 2;
+		line-clamp: 2;
+		-webkit-box-orient: vertical;
+		overflow: hidden;
 	}
 
 	.card-meta {
-		font-size: 0.8125rem;
-		color: var(--color-foreground-muted);
+		font-size: 0.75rem;
+		color: var(--color-foreground-subtle);
+		font-variant-numeric: tabular-nums;
 	}
 
 	/* ============================================
