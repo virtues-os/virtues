@@ -263,11 +263,13 @@
 	});
 </script>
 
-<!-- offset clears the notch/Dynamic Island on the edge-to-edge mobile shell
-     (env() is 0 on desktop, so this is the stock 16px gap there). -->
+<!-- Desktop: bottom-right, out of the way of the pane toolbar and the ⌘K modal.
+     Mobile keeps top-center — it's the platform convention there, and the
+     offset clears the notch/Dynamic Island on the edge-to-edge shell (env() is
+     0 on desktop, so the desktop offset is the stock 16px gap). -->
 <Toaster
-	position="top-center"
-	offset="max(16px, env(safe-area-inset-top))"
+	position={mobileLayout.isMobile ? "top-center" : "bottom-right"}
+	offset="max(16px, env(safe-area-inset-bottom))"
 	mobileOffset="max(16px, env(safe-area-inset-top))"
 	toastOptions={{
 		style: `

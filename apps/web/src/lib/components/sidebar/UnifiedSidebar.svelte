@@ -125,6 +125,18 @@
 	// Stagger delay per item
 	const STAGGER_DELAY = 30;
 
+	// Running offset of each group's first row, so the waterfall reads as one
+	// continuous fall down the panel rather than restarting per group. Slot 1
+	// is the masthead, so nav rows start at 2 and land under it rather than
+	// alongside it. The footer sits at slot 10, after the longest nav list.
+	const GROUP_OFFSETS = SECTION_GROUPS.reduce<number[]>(
+		(acc, group) => [...acc, acc[acc.length - 1] + group.items.length],
+		[2],
+	);
+
+	const navDelay = (groupIndex: number, itemIndex: number) =>
+		(GROUP_OFFSETS[groupIndex] + itemIndex) * STAGGER_DELAY;
+
 	// Tailwind utility class strings
 	const sidebarClass = $derived.by(() =>
 		[
@@ -146,7 +158,7 @@
 	<!-- Book Spine: When collapsed, show expand button on hover -->
 	{#if isCollapsed}
 		<button
-			class="sidebar-expand-button group absolute top-0 left-0 w-[36px] z-30 flex h-full cursor-pointer items-center justify-center border-none bg-transparent"
+			class="sidebar-expand-button group absolute top-0 left-0 w-[14px] z-30 flex h-full cursor-pointer items-center justify-center border-none bg-transparent"
 			onclick={toggleCollapse}
 			aria-label="Expand sidebar"
 		>
@@ -189,16 +201,17 @@
 
 				<!-- System destinations, grouped nouns-vs-verbs (from constants).
 				     The sidebar is a stable contents-page, not a mode rail. -->
-				{#each SECTION_GROUPS as group (group.id)}
+				{#each SECTION_GROUPS as group, groupIndex (group.id)}
 					<div class="nav-group">
 						{#if group.label && !isCollapsed}
 							<div class="nav-group-header">{group.label}</div>
 						{/if}
-						{#each group.items as section (section.id)}
+						{#each group.items as section, itemIndex (section.id)}
 							<SystemSection
 								{section}
 								collapsed={isCollapsed}
 								accentColor={null}
+								animationDelay={navDelay(groupIndex, itemIndex)}
 							/>
 						{/each}
 					</div>
@@ -226,27 +239,36 @@
 		/* Transition handled by Tailwind classes on parent */
 	}
 
-	/* Hover zone extends through the mini state + page padding area */
+	/* Hover zone. Deliberately narrow: the pane toolbar's own sidebar-toggle
+	   sits immediately to the right, so a wide zone gets swiped through on the
+	   way to that button and the peek fires when nobody asked for it. 14px is
+	   the window edge and nothing else. */
 	.sidebar-collapsed::before {
 		content: "";
 		position: absolute;
 		top: 0;
 		left: 0;
-		width: 36px; /* 20px mini state + padding area */
+		width: 14px;
 		height: 100%;
 		z-index: 20;
 		pointer-events: auto;
 		cursor: pointer;
 	}
 
-	/* On hover, expand to show the open icon */
-	.sidebar-collapsed:hover {
-		width: 20px;
-	}
-
-	/* Show icon when sidebar is hovered */
+	/* The peek reveals the icon; it must NOT change width. The collapsed aside
+	   is a flex child, so any width here shoves the whole pane sideways — which
+	   is exactly the shift that made the toolbar's toggle button crawl away
+	   from the cursor as you reached for it. The expand button is absolutely
+	   positioned, so opacity alone is enough to show it. */
 	.sidebar-collapsed:hover .sidebar-expand-icon {
 		opacity: 1;
+		transition-delay: 120ms; /* intent delay — a pass-through shouldn't flash */
+	}
+
+	@media (prefers-reduced-motion: reduce) {
+		.sidebar-collapsed:hover .sidebar-expand-icon {
+			transition-delay: 0ms;
+		}
 	}
 
 	@keyframes fadeSlideIn {

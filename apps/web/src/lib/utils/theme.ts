@@ -28,6 +28,9 @@ export type Theme =
 
 const THEME_STORAGE_KEY = 'virtues-theme';
 
+/** Resolved `--background` for the active theme; read by app.html pre-paint. */
+const THEME_BG_STORAGE_KEY = 'virtues-theme-bg';
+
 // Fallback theme used only before the API responds (flash prevention).
 // The real default is set in virtues-registry (Rust) and delivered via /api/assistant-profile.
 const FALLBACK_THEME: Theme = 'pemberley';
@@ -60,6 +63,25 @@ export function applyTheme(theme: Theme): void {
 
 	document.documentElement.setAttribute('data-theme', theme);
 	localStorage.setItem(THEME_STORAGE_KEY, theme);
+
+	// Cache the resolved background so the pre-paint script in app.html can
+	// paint the right colour on the very first frame — otherwise a cold start
+	// (notably the Tauri webview) flashes white before the stylesheet lands,
+	// which is worst for anyone on a dark theme. Read back from the cascade
+	// rather than duplicating the palette here, so it can't drift.
+	const bg = getComputedStyle(document.documentElement)
+		.getPropertyValue('--background')
+		.trim();
+	if (bg) {
+		localStorage.setItem(THEME_BG_STORAGE_KEY, bg);
+	}
+
+	// Hand the background back to the stylesheet. The bootstrap sets it as an
+	// inline style, which outranks any rule — leaving it in place would pin the
+	// page to whatever was cached (or to the light fallback on a first run)
+	// even after the real theme loaded.
+	document.documentElement.style.backgroundColor = '';
+
 	window.dispatchEvent(new CustomEvent('themechange', { detail: { theme } }));
 }
 
