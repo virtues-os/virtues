@@ -46,6 +46,25 @@ export interface Shortcut {
 
 const MODIFIERS = ['mod', 'meta', 'ctrl', 'alt', 'shift'] as const;
 
+/**
+ * Physical punctuation keys by `code`, so a binding can say `]` and still match
+ * when Shift turns the emitted `key` into `}`. Without this, `mod+shift+]`
+ * could never fire.
+ */
+const PUNCTUATION: Record<string, string> = {
+	BracketLeft: '[',
+	BracketRight: ']',
+	Comma: ',',
+	Period: '.',
+	Slash: '/',
+	Backslash: '\\',
+	Semicolon: ';',
+	Quote: "'",
+	Backquote: '`',
+	Minus: '-',
+	Equal: '=',
+};
+
 /** Normalise so `Mod+Shift+N`, `shift+mod+n` and `mod+shift+n` are one chord. */
 function normalize(keys: Chord): Chord {
 	const parts = keys
@@ -72,12 +91,14 @@ function chordOf(event: KeyboardEvent): Chord {
 	if (event.altKey) parts.push('alt');
 	if (event.shiftKey) parts.push('shift');
 
-	// `event.key` shifts with modifiers ("N" vs "n", "†" for ⌥T on macOS), so
-	// the chord is keyed off physical position via `code` where we can get it.
-	// Falls back to `key` for synthetic events and non-alphanumerics.
+	// `event.key` shifts with modifiers ("N" vs "n", "†" for ⌥T on macOS, "}"
+	// for ⇧]), so the chord is keyed off physical position via `code` where we
+	// can get it. Falls back to `key` for synthetic events and everything not
+	// covered below.
 	let base = '';
 	if (event.code?.startsWith('Key')) base = event.code.slice(3).toLowerCase();
 	else if (event.code?.startsWith('Digit')) base = event.code.slice(5);
+	else if (event.code && event.code in PUNCTUATION) base = PUNCTUATION[event.code];
 	else if (event.key) base = event.key.toLowerCase();
 
 	if (base) parts.push(base);
