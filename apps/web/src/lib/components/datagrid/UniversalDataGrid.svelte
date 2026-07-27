@@ -1531,13 +1531,54 @@
 	   SELECTION + ROW ACTIONS
 	   ============================================ */
 	.sel-col { width: 34px; padding-right: 0; }
+	/* Custom control rather than accent-color on the native widget: the platform
+	   checkbox is a different shape, weight and blue in every theme, and it was
+	   the one element on the page that didn't belong to the app. The real input
+	   is still underneath — only its painting is replaced — so focus, keyboard
+	   and screen readers are untouched. */
 	.sel-box {
-		width: 14px;
-		height: 14px;
+		appearance: none;
+		-webkit-appearance: none;
+		width: 15px;
+		height: 15px;
 		margin: 0;
-		accent-color: var(--color-primary);
-		cursor: pointer;
+		flex: none;
+		display: inline-grid;
+		place-content: center;
 		vertical-align: middle;
+		border: 1.5px solid var(--color-border-strong, var(--color-border));
+		border-radius: 4px;
+		background: var(--color-surface);
+		cursor: pointer;
+		transition: background-color 0.12s ease, border-color 0.12s ease;
+	}
+	.sel-box::before {
+		content: '';
+		width: 9px;
+		height: 9px;
+		transform: scale(0);
+		transition: transform 0.12s cubic-bezier(0.2, 0.7, 0.3, 1);
+		background: var(--color-background);
+		clip-path: polygon(14% 44%, 0 65%, 50% 100%, 100% 16%, 80% 0%, 43% 62%);
+	}
+	.sel-box:hover { border-color: var(--color-foreground-subtle); }
+	.sel-box:checked,
+	.sel-box:indeterminate {
+		background: var(--color-foreground);
+		border-color: var(--color-foreground);
+	}
+	.sel-box:checked::before { transform: scale(1); }
+	/* Indeterminate reuses the mark box as a dash — one shape, two states. */
+	.sel-box:indeterminate::before {
+		transform: scale(1);
+		clip-path: inset(42% 8% 42% 8%);
+	}
+	.sel-box:focus-visible {
+		outline: 2px solid var(--color-primary);
+		outline-offset: 2px;
+	}
+	@media (prefers-reduced-motion: reduce) {
+		.sel-box, .sel-box::before { transition: none; }
 	}
 	.data-row.selected {
 		background: color-mix(in srgb, var(--color-primary) 8%, transparent);
