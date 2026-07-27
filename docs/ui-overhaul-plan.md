@@ -39,6 +39,17 @@ Five things the code says that the item list assumed otherwise:
    looks; token collapse is justified. Do it *after* the theme count drops so
    the audit covers 16 themes, not 17.
 
+6. **The invisible-hover problem is systemic, not one button.** Item 17 turned
+   out not to be a missing rule — the rule set `--color-surface-elevated` on a
+   `--color-background` parent, which is #F5F4EF on #FDFCF9 in the default
+   theme: a ~3% shift that reads as nothing happening. **39 hover rules across
+   52 components use `surface-elevated` the same way.** Any of them sitting on
+   a `background`-coloured parent is equally dead. This belongs to item 20:
+   the token set needs a defined interaction ramp (a foreground mix at
+   8/14%, as used in the sidebar masthead and now the tab bar) rather than
+   components reaching for whichever surface token looks close. Audit as part
+   of the token collapse.
+
 ---
 
 ## Batch A — surface fixes
@@ -116,8 +127,10 @@ background colour on the HTML shell. That is not an animation task.
 On desktop, native webview zoom already does this correctly for ⌘+ / ⌘− / ⌘0,
 and it scales everything. In the browser, the browser owns it.
 
-So the actual work is **making the layout survive zoom** — fixed-px heights in
-the tab bar and sidebar will break first. Audit and relativise those.
+Which means there is essentially nothing to build. Native zoom scales the CSS
+pixel itself, so fixed-px heights scale with everything else — the
+layout-hardening this plan originally called for applies to *rem-scaling*, not
+to zoom, and rem-scaling is the option being declined.
 
 Build a custom `--app-zoom` rem scale *only* if the size should persist
 per-account and sync across devices. That is a product decision, not a
