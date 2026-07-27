@@ -3281,6 +3281,23 @@ pub async fn delete_thing_handler(
 }
 
 // ============================================================================
+// Local content search (⌘K)
+// ============================================================================
+
+/// POST /api/search/local — content hits for the command palette.
+///
+/// POST rather than GET because the query is user text: a GET would put what
+/// someone is searching their own life for into the URL, where it lands in
+/// history and any access log. Same reason the rest of the search surface
+/// posts.
+pub async fn search_local_handler(
+    State(state): State<AppState>,
+    Json(request): Json<crate::api::LocalSearchRequest>,
+) -> Response {
+    api_response(crate::api::search_local(state.db.pool(), request).await)
+}
+
+// ============================================================================
 // Pins Handlers (sidebar pinned URLs)
 // ============================================================================
 

@@ -191,6 +191,49 @@ export async function getAction(id: string): Promise<Action> {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Local content search (⌘K)
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** One content hit — a matched chunk inside an indexed record. */
+export interface LocalSearchHit {
+	ontology: string;
+	record_id: string;
+	score: number;
+	title: string | null;
+	preview: string | null;
+	author: string | null;
+	timestamp: string | null;
+}
+
+export interface LocalSearchResponse {
+	hits: LocalSearchHit[];
+	/** Echoed back so callers can drop responses that lost a race. */
+	query: string;
+}
+
+/**
+ * Content search across everything the box has indexed. Never leaves the box —
+ * `searchWeb` (Exa) is the separate, explicit thing.
+ *
+ * POST, not GET: the query is what someone is searching their own life for, and
+ * a GET would put it in the URL, browser history, and every access log along the
+ * way.
+ */
+export async function searchLocal(
+	q: string,
+	opts: { limit?: number; signal?: AbortSignal } = {},
+): Promise<LocalSearchResponse> {
+	const res = await fetch(`${API_BASE}/search/local`, {
+		method: 'POST',
+		headers: { 'Content-Type': 'application/json' },
+		body: JSON.stringify({ q, limit: opts.limit }),
+		signal: opts.signal,
+	});
+	if (!res.ok) throw new Error(`Search failed: ${res.statusText}`);
+	return res.json();
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Sidebar pins
 // ─────────────────────────────────────────────────────────────────────────────
 
