@@ -40,6 +40,7 @@ pub mod narrative_identity_gen;
 pub mod pages;
 pub mod personas;
 pub mod pins;
+pub mod search_local;
 pub mod things;
 pub mod places;
 pub mod profile;
@@ -177,6 +178,7 @@ pub use places::{
     autocomplete, get_place_details, AutocompletePrediction, AutocompleteRequest,
     AutocompleteResponse, PlaceDetailsRequest, PlaceDetailsResponse,
 };
+pub use search_local::{search_local, LocalSearchRequest, LocalSearchResponse};
 pub use pins::{
     create_pin, delete_pin, list_pins, reorder_pins, update_pin, CreatePinRequest, Pin,
     UpdatePinRequest,
