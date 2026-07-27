@@ -655,6 +655,19 @@
 <div class="datagrid-wrapper" data-density={density}>
 	<div class="datagrid-header">
 		<div class="datagrid-toolbar">
+			{#if selectable && selectedItems.length > 0}
+				<!-- Selection takes over the toolbar rather than inserting a bar above
+				     the table: an extra row would push every result down the moment you
+				     tick a box, and back up again when you untick it. -->
+				<span class="bulk-count mono" role="status" aria-live="polite">
+					{selectedItems.length} selected
+				</span>
+				<span class="bulk-sp"></span>
+				{#if bulkActions}
+					{@render bulkActions(selectedItems, clearSelection)}
+				{/if}
+				<button class="bulk-clear" onclick={clearSelection}>Clear</button>
+			{:else}
 			<div class="search-container">
 				<Icon icon="ri:search-line" width="16" />
 				<input
@@ -754,20 +767,9 @@
 					{@render toolbarActions()}
 				{/if}
 			</div>
+			{/if}
 		</div>
 
-		{#if selectable && selectedItems.length > 0}
-			<div class="bulk-bar" role="status" aria-live="polite">
-				<span class="bulk-count mono">
-					{selectedItems.length} selected
-				</span>
-				<span class="bulk-sp"></span>
-				{#if bulkActions}
-					{@render bulkActions(selectedItems, clearSelection)}
-				{/if}
-				<button class="bulk-clear" onclick={clearSelection}>Clear</button>
-			</div>
-		{/if}
 
 		{#if filters && filters.length > 0}
 			<DataGridFilterRail
@@ -1107,6 +1109,9 @@
 		align-items: center;
 		gap: 1rem;
 		padding: 0.5rem 0;
+		/* 34px control + 2 x 8px padding. Pinned because the row swaps between
+		   search and selection controls, and everything below it would jump. */
+		min-height: 50px;
 	}
 
 	.toolbar-meta {
@@ -1134,7 +1139,10 @@
 
 	.search-input {
 		width: 100%;
-		padding: 7px 30px 7px 30px;
+		/* Fixed so the toolbar's height is a known quantity: the row swaps between
+		   this and the selection controls, and it must not resize when it does. */
+		height: 34px;
+		padding: 0 30px;
 		font-family: var(--font-sans);
 		font-size: 0.875rem;
 		color: var(--color-foreground);
@@ -1530,7 +1538,9 @@
 	/* ============================================
 	   SELECTION + ROW ACTIONS
 	   ============================================ */
-	.sel-col { width: 34px; padding-right: 0; }
+	/* Room around the control: the box needs a comfortable target and clear air
+	   between it and the row's own icon. */
+	.sel-col { width: 42px; padding: 0 0.75rem 0 0.35rem; text-align: left; }
 	/* Custom control rather than accent-color on the native widget: the platform
 	   checkbox is a different shape, weight and blue in every theme, and it was
 	   the one element on the page that didn't belong to the app. The real input
@@ -1604,17 +1614,7 @@
 		.row-actions { opacity: 1; }
 	}
 
-	.bulk-bar {
-		display: flex;
-		align-items: center;
-		gap: 10px;
-		margin-top: 0.4rem;
-		padding: 0.45rem 0.75rem;
-		border: 1px solid color-mix(in srgb, var(--color-primary) 35%, var(--color-border));
-		border-radius: 8px;
-		background: color-mix(in srgb, var(--color-primary) 8%, transparent);
-	}
-	.bulk-count { font-size: 0.75rem; color: var(--color-foreground); }
+	.bulk-count { font-size: 0.75rem; color: var(--color-foreground); white-space: nowrap; }
 	.bulk-sp { flex: 1; }
 	.bulk-clear {
 		border: none;
