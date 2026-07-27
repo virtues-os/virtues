@@ -88,6 +88,14 @@
 		/** Grid-level actions (add, import…) rendered beside the view controls,
 		 *  so a consumer doesn't need its own header row above the toolbar. */
 		toolbarActions?: Snippet;
+		/** Multi-select with checkboxes, shift-range, ⌘A and a bulk action bar. */
+		selectable?: boolean;
+		/** Rendered in the bulk bar while rows are selected. */
+		bulkActions?: Snippet<[T[], () => void]>;
+		onSelectionChange?: (items: T[]) => void;
+		/** Trailing per-row controls, revealed on hover/focus. Discoverable in a
+		 *  way a right-click-only menu never is. */
+		rowActions?: Snippet<[T]>;
 	}
 
 	let {
@@ -115,7 +123,11 @@
 		onRetry,
 		tableRow,
 		card,
-		toolbarActions
+		toolbarActions,
+		selectable = false,
+		bulkActions,
+		onSelectionChange,
+		rowActions
 	}: Props = $props();
 
 	// ────────────────────────────────────────────────────────────────────────
@@ -367,10 +379,136 @@
 		}
 	}
 
+	// ────────────────────────────────────────────────────────────────────────
+	// Selection. A table that can't operate on a set is a viewer, not a tool:
+	// click to toggle, shift-click for a range, header box for all-visible.
+	// ────────────────────────────────────────────────────────────────────────
+	let selectedIds = $state<Set<string>>(new Set());
+	/** Anchor for shift-range, as an index into the flat visible order. */
+	let selectionAnchor = $state<number | null>(null);
+
+	const selectedItems = $derived(displayedItems.filter((i) => selectedIds.has(i.id)));
+	const allVisibleSelected = $derived(
+		displayedItems.length > 0 && displayedItems.every((i) => selectedIds.has(i.id)),
+	);
+	const someVisibleSelected = $derived(
+		!allVisibleSelected && displayedItems.some((i) => selectedIds.has(i.id)),
+	);
+
+	function setSelection(next: Set<string>) {
+		selectedIds = next;
+		onSelectionChange?.(displayedItems.filter((i) => next.has(i.id)));
+	}
+
+	function toggleSelected(item: T, index: number, extend = false) {
+		const next = new Set(selectedIds);
+		if (extend && selectionAnchor !== null) {
+			const [from, to] = index < selectionAnchor ? [index, selectionAnchor] : [selectionAnchor, index];
+			for (let i = from; i <= to; i++) {
+				const it = visualOrder[i];
+				if (it) next.add(it.id);
+			}
+		} else {
+			if (next.has(item.id)) next.delete(item.id);
+			else next.add(item.id);
+			selectionAnchor = index;
+		}
+		setSelection(next);
+	}
+
+	function toggleAllVisible() {
+		if (allVisibleSelected) setSelection(new Set());
+		else setSelection(new Set(displayedItems.map((i) => i.id)));
+		selectionAnchor = null;
+	}
+
+	function clearSelection() {
+		selectionAnchor = null;
+		setSelection(new Set());
+	}
+
+	// Selecting is per-result-set: a row you can no longer see must not stay
+	// silently selected and get swept up by a bulk action.
+	//
+	// Keyed on the visible ids, NOT on `items` identity — consumers commonly pass
+	// a `$derived` array, which is a fresh object on every render including the
+	// render that selecting itself triggers. Watching identity made a selection
+	// clear itself the instant it was made.
+	let lastVisibleSig = $state('');
+	$effect(() => {
+		const sig = displayedItems.map((i) => i.id).join(',');
+		if (sig === lastVisibleSig) return;
+		lastVisibleSig = sig;
+		if (selectedIds.size) clearSelection();
+	});
+
+	// ────────────────────────────────────────────────────────────────────────
+	// Keyboard. Roving focus over the flat visible order, so the grid is
+	// operable without reaching for the mouse.
+	// ────────────────────────────────────────────────────────────────────────
+	let focusedIndex = $state(-1);
+
+	function focusRow(index: number) {
+		const clamped = Math.max(0, Math.min(index, visualOrder.length - 1));
+		focusedIndex = clamped;
+		const item = visualOrder[clamped];
+		if (!item) return;
+		// The DOM order matches the flat order within each group, so target by id.
+		gridEl
+			?.querySelector<HTMLElement>(`[data-row-id="${CSS.escape(item.id)}"]`)
+			?.focus({ preventScroll: false });
+	}
+
+	let gridEl = $state<HTMLElement | null>(null);
+
 	function handleKeyDown(e: KeyboardEvent, item: T) {
-		if (e.key === 'Enter' || e.key === ' ') {
-			e.preventDefault();
-			handleRowClick(item);
+		const index = visualOrder.findIndex((i) => i.id === item.id);
+		switch (e.key) {
+			case 'Enter':
+				e.preventDefault();
+				handleRowClick(item);
+				break;
+			case ' ':
+				// Space selects; Enter opens. Conflating them is why so many
+				// tables can't be driven from the keyboard at all.
+				if (selectable) {
+					e.preventDefault();
+					toggleSelected(item, index, e.shiftKey);
+				} else {
+					e.preventDefault();
+					handleRowClick(item);
+				}
+				break;
+			case 'ArrowDown':
+				e.preventDefault();
+				focusRow(index + 1);
+				if (e.shiftKey && selectable) toggleSelected(visualOrder[index + 1] ?? item, index + 1, true);
+				break;
+			case 'ArrowUp':
+				e.preventDefault();
+				focusRow(index - 1);
+				if (e.shiftKey && selectable) toggleSelected(visualOrder[index - 1] ?? item, index - 1, true);
+				break;
+			case 'Home':
+				e.preventDefault();
+				focusRow(0);
+				break;
+			case 'End':
+				e.preventDefault();
+				focusRow(visualOrder.length - 1);
+				break;
+			case 'a':
+				if (selectable && (e.metaKey || e.ctrlKey)) {
+					e.preventDefault();
+					setSelection(new Set(displayedItems.map((i) => i.id)));
+				}
+				break;
+			case 'Escape':
+				if (selectedIds.size) {
+					e.preventDefault();
+					clearSelection();
+				}
+				break;
 		}
 	}
 
@@ -488,8 +626,18 @@
 	});
 
 	const isGrouped = $derived(!!activeGroupCol);
-	/** Stable row index across groups, for RowMeta and the stagger. */
-	const rowIndexById = $derived(new Map(displayedItems.map((item, i) => [item.id, i])));
+
+	/**
+	 * The rows as they actually appear: group order, collapsed groups omitted.
+	 * Keyboard travel and shift-ranges must follow what's on screen — indexing
+	 * into the ungrouped data order makes a range from row 1 to row 3 select
+	 * whatever happens to sit between them in the underlying array instead.
+	 */
+	const visualOrder = $derived(
+		groupedItems.filter((g) => !collapsedGroups.has(g.key)).flatMap((g) => g.items),
+	);
+	/** Row index in visual order, for RowMeta, the stagger, and range selection. */
+	const rowIndexById = $derived(new Map(visualOrder.map((item, i) => [item.id, i])));
 
 	const isTable = $derived(viewMode === 'table');
 	const isGrid = $derived(viewMode === 'grid');
@@ -608,6 +756,19 @@
 			</div>
 		</div>
 
+		{#if selectable && selectedItems.length > 0}
+			<div class="bulk-bar" role="status" aria-live="polite">
+				<span class="bulk-count mono">
+					{selectedItems.length} selected
+				</span>
+				<span class="bulk-sp"></span>
+				{#if bulkActions}
+					{@render bulkActions(selectedItems, clearSelection)}
+				{/if}
+				<button class="bulk-clear" onclick={clearSelection}>Clear</button>
+			</div>
+		{/if}
+
 		{#if filters && filters.length > 0}
 			<DataGridFilterRail
 				{filters}
@@ -622,9 +783,17 @@
 	</div>
 
 	{#if loading}
-		<div class="loading-state" role="status" aria-live="polite">
-			<Icon icon="ri:loader-4-line" width="24" />
-			<span>{loadingMessage}</span>
+		<!-- Skeleton rows in the table's own shape: nothing reflows when the data
+		     lands, which is the difference between "loading" and "jumping". -->
+		<div class="skeleton" role="status" aria-live="polite" aria-label={loadingMessage}>
+			{#each Array(6) as _, i}
+				<div class="sk-row" style:--sk-delay="{i * 60}ms">
+					{#if selectable}<span class="sk-box"></span>{/if}
+					<span class="sk-bar" style:width="{58 - ((i * 7) % 22)}%"></span>
+					<span class="sk-bar sk-narrow"></span>
+					<span class="sk-bar sk-narrow"></span>
+				</div>
+			{/each}
 		</div>
 	{:else if error}
 		<div class="error-state" role="alert">
@@ -647,10 +816,22 @@
 		</div>
 	{:else if isTable}
 		{@const total = displayedItems.length}
-		<div class="table-view" in:fly={{ y: 6, duration: motionMs, easing: cubicOut }}>
+		<div class="table-view" bind:this={gridEl} in:fly={{ y: 6, duration: motionMs, easing: cubicOut }}>
 			<table class="data-table">
 				<thead>
 					<tr>
+						{#if selectable}
+							<th class="sel-col">
+								<input
+									type="checkbox"
+									class="sel-box"
+									checked={allVisibleSelected}
+									indeterminate={someVisibleSelected}
+									onchange={toggleAllVisible}
+									aria-label={allVisibleSelected ? 'Deselect all' : 'Select all'}
+								/>
+							</th>
+						{/if}
 						{#each visibleColumns as col}
 							{@const isColSortable = sortable && col.sortable !== false}
 							{@const isActive = sortKey === col.key}
@@ -691,6 +872,9 @@
 								{/if}
 							</th>
 						{/each}
+						{#if rowActions}
+							<th class="row-actions-col" aria-label="Actions"></th>
+						{/if}
 					</tr>
 				</thead>
 				{#key mountToken}
@@ -698,7 +882,7 @@
 						{#each groupedItems as group (group.key)}
 							{#if isGrouped}
 								<tr class="group-row">
-									<td colspan={visibleColumns.length}>
+									<td colspan={visibleColumns.length + (selectable ? 1 : 0) + (rowActions ? 1 : 0)}>
 										<button
 											class="group-toggle"
 											class:closed={collapsedGroups.has(group.key)}
@@ -719,22 +903,49 @@
 							<tr
 								class="data-row"
 								class:expanded={expandedId === item.id}
+								class:selected={selectedIds.has(item.id)}
 								class:animate-in={animateMount && !!tableRow}
 								style:--stagger="{staggerMs(i, 0)}ms"
-								onclick={() => handleRowClick(item)}
+								data-row-id={item.id}
+								onclick={(e) => {
+									// Shift-click extends a selection rather than opening; without
+									// this the only way to select a range is one row at a time.
+									if (selectable && (e.shiftKey || e.metaKey || e.ctrlKey)) {
+										e.preventDefault();
+										toggleSelected(item, i, e.shiftKey);
+									} else handleRowClick(item);
+								}}
 								oncontextmenu={onItemContextMenu ? (e) => onItemContextMenu(item, e) : undefined}
 								onkeydown={(e) => handleKeyDown(e, item)}
-								tabindex="0"
-								role="button"
+								onfocus={() => (focusedIndex = i)}
+								tabindex={focusedIndex === i || (focusedIndex === -1 && i === 0) ? 0 : -1}
+								role={selectable ? 'row' : 'button'}
 								aria-label={`Open ${getItemLabel(item)}`}
+								aria-selected={selectable ? selectedIds.has(item.id) : undefined}
 								aria-expanded={expandDetail ? expandedId === item.id : undefined}
 							>
+								{#if selectable}
+									<td class="sel-col">
+										<!-- svelte-ignore a11y_click_events_have_key_events a11y_no_noninteractive_element_interactions -->
+										<input
+											type="checkbox"
+											class="sel-box"
+											checked={selectedIds.has(item.id)}
+											onclick={(e) => {
+												e.stopPropagation();
+												toggleSelected(item, i, e.shiftKey);
+											}}
+											aria-label={`Select ${getItemLabel(item)}`}
+										/>
+									</td>
+								{/if}
 								{#if tableRow}
 									{@render tableRow(item, meta)}
 								{:else}
 									{#each visibleColumns as col, ci}
 										<td
 											class:hide-mobile={col.hideOnMobile}
+											class:numeric={col.format === 'number'}
 											class:animate-in={animateMount}
 											style:--stagger="{staggerMs(i, ci)}ms"
 										>
@@ -756,10 +967,21 @@
 										</td>
 									{/each}
 								{/if}
+								{#if rowActions}
+									<td class="row-actions-cell">
+										<div
+											class="row-actions"
+											role="presentation"
+											onclick={(e) => e.stopPropagation()}
+										>
+											{@render rowActions(item)}
+										</div>
+									</td>
+								{/if}
 							</tr>
 							{#if expandDetail && expandedId === item.id}
 								<tr class="expand-row">
-									<td colspan={visibleColumns.length}>
+									<td colspan={visibleColumns.length + (selectable ? 1 : 0) + (rowActions ? 1 : 0)}>
 										{@render expandDetail(item, meta)}
 									</td>
 								</tr>
@@ -1198,9 +1420,16 @@
 		color: var(--color-foreground-subtle);
 		padding: 0.5rem 0.75rem;
 		white-space: nowrap;
-		background: transparent;
 		border-bottom: 1px solid var(--color-border);
+		/* Pinned: past a screenful of rows, a header that scrolls away turns
+		   every column into a guess. Needs an opaque fill to cover rows. */
+		position: sticky;
+		top: 0;
+		z-index: 2;
+		background: var(--color-background);
 	}
+
+	td.numeric { text-align: right; font-variant-numeric: tabular-nums; }
 
 	/* Column icons are sized for the old 12px sans label; bring them down to
 	   the eyebrow's optical size. */
@@ -1296,6 +1525,101 @@
 
 	.datagrid-wrapper[data-density='compact'] .card-grid {
 		gap: 0.5rem;
+	}
+
+	/* ============================================
+	   SELECTION + ROW ACTIONS
+	   ============================================ */
+	.sel-col { width: 34px; padding-right: 0; }
+	.sel-box {
+		width: 14px;
+		height: 14px;
+		margin: 0;
+		accent-color: var(--color-primary);
+		cursor: pointer;
+		vertical-align: middle;
+	}
+	.data-row.selected {
+		background: color-mix(in srgb, var(--color-primary) 8%, transparent);
+	}
+	.data-row.selected:hover {
+		background: color-mix(in srgb, var(--color-primary) 12%, transparent);
+	}
+
+	/* Trailing controls: present in the DOM at all times for keyboard reach,
+	   revealed on hover so they don't add permanent visual noise. */
+	.row-actions-col { width: 40px; }
+	.row-actions-cell { padding: 0 0.5rem 0 0; text-align: right; }
+	.row-actions {
+		display: inline-flex;
+		align-items: center;
+		gap: 2px;
+		opacity: 0;
+		transition: opacity 0.12s ease;
+	}
+	.data-row:hover .row-actions,
+	.data-row:focus-within .row-actions { opacity: 1; }
+	@media (hover: none) {
+		.row-actions { opacity: 1; }
+	}
+
+	.bulk-bar {
+		display: flex;
+		align-items: center;
+		gap: 10px;
+		margin-top: 0.4rem;
+		padding: 0.45rem 0.75rem;
+		border: 1px solid color-mix(in srgb, var(--color-primary) 35%, var(--color-border));
+		border-radius: 8px;
+		background: color-mix(in srgb, var(--color-primary) 8%, transparent);
+	}
+	.bulk-count { font-size: 0.75rem; color: var(--color-foreground); }
+	.bulk-sp { flex: 1; }
+	.bulk-clear {
+		border: none;
+		background: none;
+		padding: 0;
+		font: inherit;
+		font-size: 0.75rem;
+		color: var(--color-foreground-muted);
+		cursor: pointer;
+		text-decoration: underline;
+	}
+	.bulk-clear:hover { color: var(--color-foreground); }
+
+	/* ============================================
+	   SKELETON
+	   ============================================ */
+	.skeleton { display: flex; flex-direction: column; padding-top: 0.75rem; }
+	.sk-row {
+		display: flex;
+		align-items: center;
+		gap: 14px;
+		padding: 0.62rem 0.75rem 0.62rem 0;
+		border-bottom: 1px solid var(--color-border);
+	}
+	.sk-box, .sk-bar {
+		display: block;
+		height: 9px;
+		border-radius: 4px;
+		background: linear-gradient(
+			90deg,
+			var(--color-surface-elevated) 0%,
+			color-mix(in srgb, var(--color-foreground) 8%, var(--color-surface-elevated)) 50%,
+			var(--color-surface-elevated) 100%
+		);
+		background-size: 200% 100%;
+		animation: sk-sweep 1.4s ease-in-out infinite;
+		animation-delay: var(--sk-delay, 0ms);
+	}
+	.sk-box { width: 14px; height: 14px; border-radius: 3px; flex: none; }
+	.sk-narrow { width: 68px; flex: none; }
+	@keyframes sk-sweep {
+		from { background-position: 200% 0; }
+		to { background-position: -200% 0; }
+	}
+	@media (prefers-reduced-motion: reduce) {
+		.sk-box, .sk-bar { animation: none; }
 	}
 
 	/* ============================================
