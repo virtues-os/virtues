@@ -30,6 +30,9 @@
 
 <script lang="ts" generics="T extends { id: string }">
 	import type { Snippet } from 'svelte';
+	import { fly } from 'svelte/transition';
+	import { flip } from 'svelte/animate';
+	import { cubicOut } from 'svelte/easing';
 	import Icon from '$lib/components/Icon.svelte';
 	import { dataGridPrefs, type ViewMode, type Density } from '$lib/stores/dataGridPrefs.svelte';
 	import { mobileLayout } from '$lib/stores/mobileLayout.svelte';
@@ -73,6 +76,9 @@
 		// Custom renderers — receive RowMeta for stagger / index-aware rendering.
 		tableRow?: Snippet<[T, RowMeta]>;
 		card?: Snippet<[T, RowMeta]>;
+		/** Grid-level actions (add, import…) rendered beside the view controls,
+		 *  so a consumer doesn't need its own header row above the toolbar. */
+		toolbarActions?: Snippet;
 	}
 
 	let {
@@ -98,7 +104,8 @@
 		onRefresh,
 		onRetry,
 		tableRow,
-		card
+		card,
+		toolbarActions
 	}: Props = $props();
 
 	// ────────────────────────────────────────────────────────────────────────
@@ -400,6 +407,14 @@
 
 	const isTable = $derived(viewMode === 'table');
 	const isGrid = $derived(viewMode === 'grid');
+
+	// Motion duration, zeroed when the OS asks for reduced motion. Svelte's JS
+	// transitions don't honour the media query on their own — the CSS-only
+	// `@media (prefers-reduced-motion)` block can't reach them.
+	const prefersReducedMotion =
+		typeof window !== 'undefined' &&
+		window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
+	const motionMs = prefersReducedMotion ? 0 : 180;
 </script>
 
 <div class="datagrid-wrapper" data-density={density}>
@@ -473,6 +488,9 @@
 				>
 					<Icon icon={isTable ? 'ri:list-check-2' : 'ri:layout-grid-line'} width="16" />
 				</button>
+				{#if toolbarActions}
+					{@render toolbarActions()}
+				{/if}
 			</div>
 		</div>
 
@@ -515,7 +533,7 @@
 		</div>
 	{:else if isTable}
 		{@const total = displayedItems.length}
-		<div class="table-view">
+		<div class="table-view" in:fly={{ y: 6, duration: motionMs, easing: cubicOut }}>
 			<table class="data-table">
 				<thead>
 					<tr>
@@ -622,7 +640,11 @@
 		{@const total = displayedItems.length}
 		{@const cardCols = 4}
 		{#key mountToken}
-			<div class="card-grid" style:--grid-min={gridMinWidth}>
+			<div
+				class="card-grid"
+				style:--grid-min={gridMinWidth}
+				in:fly={{ y: 6, duration: motionMs, easing: cubicOut }}
+			>
 				{#each displayedItems as item, i (item.id)}
 					{@const meta = {
 						rowIndex: Math.floor(i / cardCols),
@@ -632,6 +654,7 @@
 					<button
 						class="card"
 						class:animate-in={animateMount}
+						animate:flip={{ duration: motionMs, easing: cubicOut }}
 						style:--stagger="{staggerMs(meta.rowIndex, meta.colIndex)}ms"
 						onclick={() => handleRowClick(item)}
 						oncontextmenu={onItemContextMenu ? (e) => onItemContextMenu(item, e) : undefined}
