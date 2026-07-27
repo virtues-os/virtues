@@ -30,6 +30,7 @@
 	import type { Snippet } from "svelte";
 
 	import { installClientHeader } from "$lib/build";
+	import { shortcuts } from "$lib/shortcuts/registry.svelte";
 
 	// @ts-ignore — Vite compile-time constant (see vite.config.ts + app.d.ts)
 	const BUILD_COMMIT: string = __BUILD_COMMIT__;
@@ -100,6 +101,44 @@
 
 		// Mark as initialized
 		initialized = true;
+
+		// Window-level shortcuts. These live here rather than in the sidebar
+		// because they're about panes and tabs, and the sidebar isn't mounted on
+		// the phone shell.
+		//
+		// ⌘1/⌘2 address *panes*, not tabs — there are only ever two, so ⌘3-9
+		// stay free. Tab cycling takes ⌘⇧[ / ⌘⇧] instead, which is the browser
+		// convention and collides with nothing.
+		shortcuts.register(
+			{
+				id: "pane.focus-left",
+				keys: "mod+1",
+				label: "Focus the left pane",
+				group: "Window",
+				run: () => windowShellStore.focusPane("left"),
+			},
+			{
+				id: "pane.focus-right",
+				keys: "mod+2",
+				label: "Focus the right pane (splits if needed)",
+				group: "Window",
+				run: () => windowShellStore.focusPane("right"),
+			},
+			{
+				id: "tab.next",
+				keys: "mod+shift+]",
+				label: "Next tab",
+				group: "Window",
+				run: () => windowShellStore.cycleTab(1),
+			},
+			{
+				id: "tab.previous",
+				keys: "mod+shift+[",
+				label: "Previous tab",
+				group: "Window",
+				run: () => windowShellStore.cycleTab(-1),
+			},
+		);
 
 		// Start polling for subscription status
 		subscriptionStore.start();
