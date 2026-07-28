@@ -289,6 +289,17 @@
 		} else if (e.key === "ArrowUp") {
 			e.preventDefault();
 			selectedIndex = Math.max(selectedIndex - 1, 0);
+		} else if (e.key === "Tab") {
+			// Tab asks, from anywhere in the list — the two things you can want
+			// from a query get one key each, instead of both hiding behind Enter
+			// and whichever row happened to be selected. preventDefault is
+			// load-bearing: Tab's default is focus-next, which would leave the
+			// input and strand the palette.
+			e.preventDefault();
+			const q = effectiveQuery.trim();
+			if (!q) return;
+			askVirtues(q);
+			onClose();
 		} else if (e.key === "Enter") {
 			e.preventDefault();
 			selectCurrentItem();
@@ -385,10 +396,20 @@
 	});
 
 	// Keep the highlighted row valid as the result set changes with the query.
+	//
+	// Lands on the first *navigable* row, not on Ask. Enter is the common case —
+	// "take me to the thing I'm typing the name of" — and defaulting to Ask made
+	// the palette answer a question nobody had asked yet. Ask keeps its row (and
+	// its click target); it's just no longer what Enter means. With nothing to
+	// navigate to, Ask is the only row and gets the selection by default.
 	$effect(() => {
 		void searchQuery;
-		selectedIndex = 0;
+		selectedIndex = defaultIndex();
 	});
+
+	function defaultIndex(): number {
+		return orderedRows.length > askOffset ? askOffset : 0;
+	}
 
 	// Focus input when modal is open and input is available
 	$effect(() => {
@@ -673,6 +694,16 @@
 					</div>
 				{/if}
 			</div>
+
+			<!-- Tab's whole discoverability. Nothing about a text field suggests
+			     Tab does anything but move focus, so the split has to be stated
+			     or it doesn't exist. -->
+			<div class="palette-hints">
+				<span class="hint"><kbd>↵</kbd> open</span>
+				<span class="hint"><kbd>⇥</kbd> ask</span>
+				<span class="hint hint-nav"><kbd>↑↓</kbd> navigate</span>
+				<span class="hint"><kbd>esc</kbd> close</span>
+			</div>
 			{/if}
 		</div>
 	</div>
@@ -806,6 +837,41 @@
 		white-space: nowrap;
 		overflow: hidden;
 		text-overflow: ellipsis;
+	}
+
+	.palette-hints {
+		display: flex;
+		align-items: center;
+		gap: 14px;
+		padding: 8px 14px;
+		border-top: 1px solid var(--color-border);
+		font-size: 11px;
+		color: var(--color-foreground-subtle);
+		user-select: none;
+	}
+
+	.hint {
+		display: inline-flex;
+		align-items: center;
+		gap: 5px;
+	}
+
+	.palette-hints kbd {
+		font-family: var(--font-sans);
+		font-size: 11px;
+		line-height: 1;
+		padding: 2px 5px;
+		border-radius: 4px;
+		background: color-mix(in srgb, var(--color-foreground) 8%, transparent);
+		color: var(--color-foreground-muted);
+	}
+
+	/* Arrow keys are the least surprising of the four — first to go when the
+	   palette is narrow. */
+	@media (max-width: 480px) {
+		.hint-nav {
+			display: none;
+		}
 	}
 
 	/* Content rows carry a second line, so they can't be a single flex row of
