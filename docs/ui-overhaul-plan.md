@@ -35,9 +35,17 @@ Five things the code says that the item list assumed otherwise:
    these, so the updater can't pull a rolling test build." Mac edge updates
    require reversing this.
 
-5. **125 unique theme tokens across 36 `data-theme` blocks.** Larger than it
-   looks; token collapse is justified. Do it *after* the theme count drops so
-   the audit covers 16 themes, not 17.
+5. ~~**125 unique theme tokens across 36 `data-theme` blocks.**~~ **Wrong — and
+   the correction kills the item.** Measured against physical declarations
+   (2026-07-28): **679 declarations, 80 unique tokens, 16 themes.** The "36
+   blocks" counted grouped selectors once per listed theme, which inflated
+   every downstream number.
+
+   Total redundancy is **145 declarations spread across ~40 tokens** — the
+   worst single token is `--shiki-theme` at 6. There is no large offender.
+   Capturing that 20% would mean inventing ~10-15 new cross-cutting group
+   selectors, which makes any individual theme harder to read and retune than
+   the duplication does. **Token collapse is not worth doing.** See item 20.
 
 6. **The invisible-hover problem is systemic, not one button.** Item 17 turned
    out not to be a missing rule — the rule set `--color-surface-elevated` on a
@@ -382,9 +390,29 @@ fallback and the new-user default in place of `pemberley`. Note this is
 two-sided: the real default lives in `virtues-registry` (Rust), delivered via
 `/api/assistant-profile` — the TS `FALLBACK_THEME` is only flash-prevention.
 
-**Token collapse.** 125 unique tokens × 36 blocks. Audit usage and collapse —
-but *after* the theme count drops, so the audit covers 16 themes. Don't target
-Linear's 4; that's their number, not ours.
+**Token collapse — dropped 2026-07-28, on the numbers.** See finding 5. The
+real shape is 679 declarations / 80 tokens / 16 themes, with 145 redundant
+declarations smeared thinly across ~40 tokens rather than concentrated
+anywhere. The one family that *was* worth grouping — the twelve `--cat-*`
+category hues — is already collapsed to a `:root` light set plus one nine-theme
+dark override (`themes.css`, "CATEGORICAL PALETTE"). That block is the pattern;
+there is no second candidate big enough to repeat it for.
+
+What the audit *did* surface, and what shipped instead:
+
+- **`app.html`'s pre-paint fallback was Pemberley's `#FDFCF9`** while the
+  default theme is Caladan `#FFFFFF`. Only a first run reaches the fallback, so
+  every new box flashed cream before settling white — the exact flash the
+  bootstrap exists to prevent. Now tracks Caladan.
+- **`:root` is Pemberley, but the default is Caladan.** Two different jobs that
+  used to name one theme and no longer do. Documented in the `themes.css`
+  header rather than restructured; moving Pemberley out of `:root` would touch
+  all sixteen themes to fix a naming confusion, not a rendering one.
+- **Borghese's `--error: #FFFFFF` is not a bug** — it is deliberately
+  monochrome (`--primary`/`--success`/`--error` white, `--warning`/`--info`
+  `#CCCCCC`). Noted in the header so the next audit doesn't "fix" it.
+- The header comment still advertised **Gatsby** (retired) and omitted
+  **Netherfield**. Corrected.
 
 ---
 

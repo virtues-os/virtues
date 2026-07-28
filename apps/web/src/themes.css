@@ -5,12 +5,13 @@
    These colors are available as Tailwind utilities (e.g., bg-primary, text-foreground)
    and as CSS variables (e.g., var(--color-primary))
 
-   Themes (literary places):
+   Themes (literary places) — sixteen, seven light and nine dark:
    Light:
-   - Pemberley (default) - Austen elegance, pristine
-   - Caladan - Atreides ocean world
+   - Pemberley - Austen elegance, pristine. Occupies :root (see below).
+   - Caladan (default) - Atreides ocean world
    - Rivendell - Elven refuge, warm light
    - Oxford - Academic, studious
+   - Netherfield - Flat white, blue accent
    - Hogwarts - Warm parchment, candlelit
    - Tatooine - Twin suns, desert warmth
 
@@ -19,12 +20,20 @@
    - Baker Street - Victorian gaslight
    - Narnia - Magical lamppost glow
    - Canterbury - Pilgrim earth tones
-   - Borghese - Dramatic light and shadow
-   - Gatsby - Jazz age vivid glamour
+   - Borghese - Dramatic light and shadow (deliberately monochrome: its
+     --primary/--success/--error are all #FFFFFF, --warning/--info #CCCCCC.
+     Not a bug — it is the one theme with no hue at all.)
    - The Lyceum - Aristotle's school, cool blues
    - Asgard - Norse realm, cold majesty
    - Agora - Greek marketplace purple
    - The Shire - Cozy hobbit pastels
+
+   NOTE ON :root — Pemberley is the base layer, but Caladan is the default
+   theme (virtues-registry DEFAULT_THEME). Those are two different jobs and
+   they no longer name the same theme: every other theme, Caladan included,
+   is an override on top of Pemberley's values. The practical consequence is
+   that app.html's pre-paint fallback must track *Caladan's* --background,
+   not :root's, or a new box flashes Pemberley cream before settling white.
 
    IMPORTANT: @theme must be top-level, not nested.
    We define theme variables once, then override CSS variables per theme.
