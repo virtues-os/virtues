@@ -260,6 +260,35 @@ export async function setUpdateChannel(channel: 'stable' | 'prerelease'): Promis
 	if (!res.ok) throw new Error(`Failed to set channel: ${res.statusText}`);
 }
 
+export interface ApplyUpdateResponse {
+	unit: string;
+	detail: string;
+}
+
+/**
+ * Start an upgrade. Resolves as soon as the box has *accepted* the job (202),
+ * not when it finishes — the upgrade restarts the box, so there is no response
+ * to wait for. Watch `boxReachable` for the box going away and coming back.
+ *
+ * The error text is the box's own, because "update failed" with nothing behind
+ * it is what sends someone to SSH in to find out why.
+ */
+export async function applyUpdate(): Promise<ApplyUpdateResponse> {
+	const res = await fetch(`${API_BASE}/system/update/apply`, { method: 'POST' });
+	if (!res.ok) {
+		let detail = res.statusText;
+		try {
+			const body = await res.json();
+			if (body?.error) detail = body.error;
+			else if (body?.message) detail = body.message;
+		} catch {
+			/* non-JSON body — the status text is all we have */
+		}
+		throw new Error(detail);
+	}
+	return res.json();
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // App history (sidebar "Recents")
 // ─────────────────────────────────────────────────────────────────────────────

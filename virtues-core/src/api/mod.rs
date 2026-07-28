@@ -180,7 +180,9 @@ pub use places::{
     autocomplete, get_place_details, AutocompletePrediction, AutocompleteRequest,
     AutocompleteResponse, PlaceDetailsRequest, PlaceDetailsResponse,
 };
-pub use updates::{set_channel, status as update_status, SetChannelRequest};
+pub use updates::{
+    apply as apply_update, set_channel, status as update_status, ApplyResponse, SetChannelRequest,
+};
 pub use history::{
     clear_history, forget_url, list_history, record_visit, HistoryEntry, HistoryQuery,
     RecordVisitRequest,

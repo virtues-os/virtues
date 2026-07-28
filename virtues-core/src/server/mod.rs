@@ -718,6 +718,10 @@ pub async fn run(client: Virtues, host: &str, port: u16) -> Result<()> {
             "/api/system/update/channel",
             put(api::set_channel_handler),
         )
+        .route(
+            "/api/system/update/apply",
+            post(api::apply_update_handler),
+        )
         // Sidebar history API ("Recents")
         .route(
             "/api/history",

@@ -573,6 +573,49 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     }
 
+    // ─── `virtues channel` ──────────────────────────────────────────────────
+    // Read or write the followed release channel. Sits with upgrade/rollback
+    // above the DB setup because it must work on a box whose database is
+    // unhealthy — the channel file is in the state root precisely so that
+    // upgrading a broken box doesn't depend on the broken part.
+    if let Some(Commands::Channel { channel }) = &cli.command {
+        use virtues::cli::channel::{self, Channel};
+        match channel {
+            None => {
+                println!("{}", channel::current());
+                return Ok(());
+            }
+            Some(raw) => match Channel::parse(raw) {
+                Some(c) => match channel::set(c) {
+                    Ok(()) => {
+                        virtues::cli::ui::ok(&format!("following the {c} channel"));
+                        if c == Channel::Prerelease {
+                            virtues::cli::ui::skip(
+                                "`virtues upgrade` now takes prereleases without --pre",
+                            );
+                        } else {
+                            // Going back to stable does not roll anything back;
+                            // say so here rather than letting it look like the
+                            // next upgrade silently did nothing.
+                            virtues::cli::ui::skip(
+                                "a box ahead of stable stays put until stable catches up",
+                            );
+                        }
+                        return Ok(());
+                    }
+                    Err(e) => {
+                        eprintln!("error: could not set channel: {e}");
+                        std::process::exit(1);
+                    }
+                },
+                None => {
+                    eprintln!("error: unknown channel {raw:?} — expected 'stable' or 'prerelease'");
+                    std::process::exit(1);
+                }
+            },
+        }
+    }
+
     // ─── `virtues rollback` ─────────────────────────────────────────────────
     // Flip `current` back to the previous release slot and restart — the
     // atomic inverse of an upgrade's activation. Like Upgrade, needs no DB.
