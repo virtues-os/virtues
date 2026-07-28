@@ -234,6 +234,33 @@ export async function searchLocal(
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Box updates (Settings → Box)
+// ─────────────────────────────────────────────────────────────────────────────
+
+export interface UpdateStatus {
+	current: string;
+	channel: string;
+	latest: string | null;
+	update_available: boolean;
+	check_error: string | null;
+}
+
+export async function getUpdateStatus(): Promise<UpdateStatus> {
+	const res = await fetch(`${API_BASE}/system/update`);
+	if (!res.ok) throw new Error(`Failed to get update status: ${res.statusText}`);
+	return res.json();
+}
+
+export async function setUpdateChannel(channel: 'stable' | 'prerelease'): Promise<void> {
+	const res = await fetch(`${API_BASE}/system/update/channel`, {
+		method: 'PUT',
+		headers: { 'Content-Type': 'application/json' },
+		body: JSON.stringify({ channel }),
+	});
+	if (!res.ok) throw new Error(`Failed to set channel: ${res.statusText}`);
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // App history (sidebar "Recents")
 // ─────────────────────────────────────────────────────────────────────────────
 

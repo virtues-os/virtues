@@ -712,6 +712,12 @@ pub async fn run(client: Virtues, host: &str, port: u16) -> Result<()> {
                 .patch(api::update_thing_handler)
                 .delete(api::delete_thing_handler),
         )
+        // Box updates (Settings → Box)
+        .route("/api/system/update", get(api::update_status_handler))
+        .route(
+            "/api/system/update/channel",
+            put(api::set_channel_handler),
+        )
         // Sidebar history API ("Recents")
         .route(
             "/api/history",

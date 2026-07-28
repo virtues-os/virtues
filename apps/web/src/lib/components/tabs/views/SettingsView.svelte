@@ -32,6 +32,7 @@
 	import { windowShellStore } from '$lib/stores/window-shell.svelte';
 	import { isMacOS } from '$lib/utils/platform';
 	import SubNav, { type SubNavItem } from '$lib/components/SubNav.svelte';
+	import UpdateSection from '$lib/components/settings/UpdateSection.svelte';
 
 	import ProfileView from '$lib/components/tabs/views/ProfileView.svelte';
 	import AssistantView from '$lib/components/tabs/views/AssistantView.svelte';
@@ -167,6 +168,7 @@
 				<UsageTab {tab} {active} />
 			</div>
 		{:else if section === 'box'}
+			<UpdateSection />
 			<SystemInfoView {tab} {active} />
 		{:else if section === 'devices'}
 			<DevicesView {tab} {active} />
