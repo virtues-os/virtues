@@ -38,13 +38,23 @@
 //! # Slot resolution
 //!
 //!   1. the user's `app_assistant_profile` override — their choice always wins
-//!   2. the cloud slot map served on `/v1/ai/models` — a swap without a release
+//!   2. the cloud slot map served on `/v1/ai/models` — a swap without a *box*
+//!      release; boxes pick it up within their 6-hourly refresh
 //!   3. the compiled floor below — so a box with no cloud reach still boots
 //!
 //! Layer 3 stays compiled rather than seeded into SQL on purpose: a seeded row
 //! is written once and then diverges forever, while a constant ships fresh with
 //! every box upgrade. For a value whose whole job is to still be safe years
 //! later, that difference is the point.
+//!
+//! **Layers 2 and 3 currently share this source.** virtues-api builds the slot
+//! map it serves by calling `default_model_for_slot` below, so changing a slot
+//! is a virtues-api deploy — no box release, but not a config toggle either.
+//! Giving layer 2 its own store (a table in virtues-api) was considered and
+//! deferred: it is a migration plus an admin surface to move five strings that
+//! change a few times a year, and the lesson this file exists to record is that
+//! unused machinery rots faster than it earns. Revisit if slot changes ever
+//! become frequent enough to feel the deploy.
 
 use serde::{Deserialize, Serialize};
 
@@ -96,11 +106,21 @@ impl ModelSlot {
 ///
 /// These five ids are the whole of our curation. Promoting a model into a slot
 /// is a real decision with a real failure mode, so verify it against the
-/// gateway's OpenAI-compatible endpoint FIRST — single tool call, parallel tool
-/// calls, streaming-with-tools, and the tool_result follow-up round. The
-/// gateway's `tool-use` tag does not prove a model works through that shim:
-/// Gemini 3 advertises it and still 400s on parallel calls, needing a
-/// thought_signature the gateway never forwards (vercel/ai #11590/#10344).
+/// gateway's OpenAI-compatible endpoint FIRST — the gateway's `tool-use` tag
+/// describes the model, not the shim it is reached through. Run:
+///
+///     cargo test -p virtues --lib slot_model_smoke -- --ignored
+///
+/// which drives the candidate with our real tool set: tool selection, valid
+/// tool names, parseable arguments, and parallel calls in one turn.
+///
+/// The precedent is Gemini 3, kept out of the chat slots because it 400'd on
+/// parallel tool calls — it wanted a `thought_signature` the gateway did not
+/// forward (vercel/ai #11590/#10344). **That may no longer be true**: on
+/// 2026-07-28 `gemini-3-flash` emitted parallel calls cleanly against our tool
+/// set. The exclusion is now tracked by
+/// `report_whether_the_gemini_3_exclusion_still_holds` rather than asserted
+/// here, and wants re-evaluating before the next slot decision.
 pub fn default_model_for_slot(slot: ModelSlot) -> &'static str {
     match slot {
         // Verified against the shim on 2026-07-28: all four legs pass, and it
