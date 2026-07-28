@@ -68,8 +68,33 @@ pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 mod tests {
     use super::*;
 
+    /// VERSION is well-formed semver.
+    ///
+    /// This used to be `assert_eq!(VERSION, "0.1.0")` — a test that asserts the
+    /// version is a particular old number, so it fails on every release and
+    /// teaches whoever hits it to edit the literal without thinking. It sat at
+    /// 0.1.0 through the whole v0.2.0 release for exactly that reason, and then
+    /// went red the moment the crate was versioned for v0.3.0.
+    ///
+    /// What is actually worth protecting is the shape, because
+    /// `GET /api/system/update` compares this string against the newest release
+    /// tag to decide whether a box is behind. A malformed or empty version
+    /// makes that comparison meaningless rather than merely wrong.
     #[test]
-    fn test_version() {
-        assert_eq!(VERSION, "0.1.0");
+    fn version_is_semver() {
+        assert!(!VERSION.is_empty(), "VERSION must not be empty");
+
+        let parts: Vec<&str> = VERSION.split('-').next().unwrap().split('.').collect();
+        assert_eq!(
+            parts.len(),
+            3,
+            "VERSION must be major.minor.patch, got {VERSION:?}"
+        );
+        for p in parts {
+            assert!(
+                !p.is_empty() && p.chars().all(|c| c.is_ascii_digit()),
+                "VERSION component {p:?} is not numeric in {VERSION:?}"
+            );
+        }
     }
 }
