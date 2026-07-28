@@ -542,11 +542,49 @@ struct ReadyUpdate {
 /// surfaces the "Restart to update" line. Silent best-effort — `None`/errors are
 /// no-ops (up to date, or offline; retried next tick). The actual download runs
 /// on the user's click ([`apply_update`]) so we don't hold an `Update` in state.
+/// Which release channel this install follows. Stored beside the app's other
+/// config; absent means Main, so an existing install keeps its behaviour.
+///
+/// Read at check time rather than cached, so flipping the channel takes effect
+/// on the next poll instead of on the next launch.
+fn updater_endpoint() -> Option<String> {
+    let path = dirs::config_dir()?.join("virtues").join("channel");
+    let channel = std::fs::read_to_string(path).ok()?;
+    match channel.trim().to_ascii_lowercase().as_str() {
+        // Only Nightly overrides; anything else (including a corrupt file)
+        // falls through to the configured stable endpoint.
+        "prerelease" | "pre" | "edge" | "nightly" => Some(
+            "https://github.com/virtues-os/virtues/releases/download/mac-edge/latest.json"
+                .to_string(),
+        ),
+        _ => None,
+    }
+}
+
 async fn check_for_update(app: &AppHandle) {
     use tauri_plugin_notification::NotificationExt;
     use tauri_plugin_updater::UpdaterExt;
 
-    let Ok(updater) = app.updater() else { return };
+    // Point the updater at the followed channel's manifest. `mac-edge` only
+    // started publishing one alongside the channel selector — before that,
+    // anyone on an edge build had no update path at all.
+    let updater = match updater_endpoint() {
+        Some(url) => match url::Url::parse(&url) {
+            Ok(parsed) => match app.updater_builder().endpoints(vec![parsed]) {
+                Ok(b) => match b.build() {
+                    Ok(u) => u,
+                    Err(_) => return,
+                },
+                Err(_) => return,
+            },
+            Err(_) => return,
+        },
+        None => match app.updater() {
+            Ok(u) => u,
+            Err(_) => return,
+        },
+    };
+
     let update = match updater.check().await {
         Ok(Some(u)) => u,
         _ => return,

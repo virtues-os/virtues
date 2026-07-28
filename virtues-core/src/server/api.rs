@@ -3298,6 +3298,22 @@ pub async fn search_local_handler(
 }
 
 // ============================================================================
+// Update Handlers (Settings → Box)
+// ============================================================================
+
+/// GET /api/system/update — current version, channel, and what's available.
+pub async fn update_status_handler() -> Response {
+    (StatusCode::OK, Json(crate::api::update_status().await)).into_response()
+}
+
+/// PUT /api/system/update/channel — follow stable or prerelease.
+pub async fn set_channel_handler(
+    Json(request): Json<crate::api::SetChannelRequest>,
+) -> Response {
+    api_response(crate::api::set_channel(request))
+}
+
+// ============================================================================
 // History Handlers (sidebar "Recents")
 // ============================================================================
 

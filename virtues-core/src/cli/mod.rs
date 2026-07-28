@@ -1,6 +1,7 @@
 //! CLI module - command-line interface for Virtues
 
 pub mod backup;
+pub mod channel;
 pub mod backup_volume;
 pub mod volumes;
 pub mod commands;

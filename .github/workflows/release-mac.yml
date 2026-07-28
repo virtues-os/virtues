@@ -242,14 +242,19 @@ jobs:
           cp "${{ steps.dmg.outputs.path }}" "$STABLE"
           echo "path=$STABLE" >> "$GITHUB_OUTPUT"
 
-      # Updater manifest (STABLE only). `tauri build` already emitted a signed
-      # `*.app.tar.gz` + `.sig` (createUpdaterArtifacts + TAURI_SIGNING_*). We
-      # copy them to fixed names and compose `latest.json` pointing at the
-      # `mac-latest` download URL — the endpoint the app's updater polls. Edge
-      # never produces these, so the updater can't pull a rolling test build.
+      # Updater manifest, now for BOTH channels. `tauri build` already emitted a
+      # signed `*.app.tar.gz` + `.sig` (createUpdaterArtifacts + TAURI_SIGNING_*).
+      # We copy them to fixed names and compose `latest.json` pointing at the
+      # channel's own rolling tag — the endpoint the app's updater polls.
+      #
+      # Edge used to be skipped so the updater could not pull a rolling test
+      # build. The app now picks its endpoint from a stored channel, so that
+      # guard has moved to where it belongs: nothing reaches mac-edge/latest.json
+      # unless the user has explicitly selected Nightly. Skipping it here only
+      # meant edge users had no update path at all.
+      #
       # One universal artifact serves both arches.
       - name: Generate updater manifest (latest.json)
-        if: steps.version.outputs.IS_EDGE == 'false'
         id: updater
         run: |
           BUNDLE="apps/web/src-tauri/target/universal-apple-darwin/release/bundle"
@@ -264,7 +269,8 @@ jobs:
           # a rename is actually needed (cp onto itself errors under `set -e`).
           [ "$TARGZ" = "$DIR/Virtues.app.tar.gz" ] || cp "$TARGZ" "$DIR/Virtues.app.tar.gz"
           [ "$SIG" = "$DIR/Virtues.app.tar.gz.sig" ] || cp "$SIG" "$DIR/Virtues.app.tar.gz.sig"
-          URL="https://github.com/virtues-os/virtues/releases/download/mac-latest/Virtues.app.tar.gz"
+          CHANNEL_TAG=$([ "${{ steps.version.outputs.IS_EDGE }}" = "true" ] && echo "mac-edge" || echo "mac-latest")
+          URL="https://github.com/virtues-os/virtues/releases/download/$CHANNEL_TAG/Virtues.app.tar.gz"
           jq -n \
             --arg version "${{ steps.version.outputs.VERSION }}" \
             --arg notes "Performance, reliability, and self-update improvements." \
@@ -305,9 +311,16 @@ jobs:
             ### Install
             1. Download the `.dmg`, open it, drag **Virtues** to Applications.
             2. Launch it and enter the 6-char code from `virtues pair` on your server.
+          # `mac-edge` is its own rolling pointer, so the updater artifacts have
+          # to ride on this release for Nightly to have anything to poll. On a
+          # stable build these same files also go to `mac-latest` below, which
+          # is the endpoint the Main channel reads.
           files: |
             ${{ steps.dmg.outputs.path }}
             ${{ steps.stable.outputs.path }}
+            ${{ steps.updater.outputs.targz }}
+            ${{ steps.updater.outputs.sig }}
+            ${{ steps.updater.outputs.manifest }}
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
