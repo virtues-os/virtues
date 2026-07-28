@@ -519,6 +519,90 @@ async fn open_accessibility_settings(app: AppHandle) -> Result<(), String> {
 }
 
 // ============================================================================
+// Global summon shortcut
+// ============================================================================
+
+/// Default chord. `CmdOrCtrl+Shift+Space` because:
+///
+///  · ⌘Space is Spotlight, and on the machines our users have, Raycast has
+///    usually taken it instead;
+///  · ⌥Space is Alfred's default and a common Raycast rebind — the collision
+///    risk is highest with exactly the power users most likely to run this;
+///  · ⌥⌘Space is Spotlight's Finder-search window.
+///
+/// ⌘⇧Space is free on a stock macOS and reads as adjacent to ⌘Space, which is
+/// already what "summon a thing" means to most people.
+///
+/// ## Why not double-⌘
+///
+/// It cannot be a registered hotkey at all. `RegisterEventHotKey` (which this
+/// plugin sits on) takes a non-modifier key plus a modifier mask; modifiers
+/// alone are not expressible. Detecting either double-tap-⌘ or
+/// left-⌘-plus-right-⌘ means watching `flagsChanged` globally — an event tap or
+/// an `NSEvent` global monitor — and both need Accessibility permission, whose
+/// prompt says the app will be able to control your computer. That is a bad
+/// first-launch trade on an appliance holding someone's entire life, so if it
+/// ships it ships as an opt-in the user goes looking for, never as the default.
+/// (Left and right ⌘ *are* distinguishable once you're there —
+/// `NX_DEVICELCMDKEYMASK` / `NX_DEVICERCMDKEYMASK` — so the idea is sound; it is
+/// the permission, not the detection, that is the obstacle.)
+const DEFAULT_SUMMON_CHORD: &str = "CmdOrCtrl+Shift+Space";
+
+/// Event the webview listens for. Carries no payload — the frontend decides
+/// what summoning means (today: focus the window and open the ⌘K palette), so
+/// changing that is not a native change.
+const SUMMON_EVENT: &str = "virtues://summon";
+
+#[cfg(not(any(target_os = "ios", target_os = "android")))]
+fn bring_to_front(app: &AppHandle) {
+    use tauri::Emitter;
+    if let Some(w) = app.get_webview_window("main") {
+        let _ = w.show();
+        let _ = w.unminimize();
+        let _ = w.set_focus();
+    }
+    let _ = app.emit(SUMMON_EVENT, ());
+}
+
+/// Rebind the summon chord at runtime.
+///
+/// The frontend owns the stored preference and calls this on startup, so the
+/// binding is data rather than a rebuild. Unregisters everything first: leaving
+/// the old chord live would mean two chords summoning the app and no way to
+/// take the first one back.
+///
+/// Returns the accelerator actually in force, so a rejected chord doesn't leave
+/// the settings UI showing something that isn't bound.
+#[cfg(not(any(target_os = "ios", target_os = "android")))]
+#[tauri::command]
+async fn set_summon_shortcut(app: AppHandle, accelerator: String) -> Result<String, String> {
+    use tauri_plugin_global_shortcut::GlobalShortcutExt;
+
+    let wanted = if accelerator.trim().is_empty() {
+        DEFAULT_SUMMON_CHORD.to_string()
+    } else {
+        accelerator.trim().to_string()
+    };
+
+    let gs = app.global_shortcut();
+    let _ = gs.unregister_all();
+
+    match gs.register(wanted.as_str()) {
+        Ok(()) => Ok(wanted),
+        Err(e) => {
+            // Fall back rather than leaving the app with no summon at all. A
+            // chord already held by another app is the common case here, and it
+            // is the user's to resolve — but not at the cost of the feature
+            // silently disappearing.
+            let _ = gs.register(DEFAULT_SUMMON_CHORD);
+            Err(format!(
+                "could not bind {wanted}: {e} — kept {DEFAULT_SUMMON_CHORD}"
+            ))
+        }
+    }
+}
+
+// ============================================================================
 // Self-updater
 // ============================================================================
 
@@ -1113,6 +1197,19 @@ fn main() {
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_notification::init())
+        // OS-global summon chord. The handler fires for whichever accelerator
+        // is currently registered, so rebinding needs no new handler — see
+        // `set_summon_shortcut`. Guard on Pressed: the plugin reports press and
+        // release, and without it every summon fires twice.
+        .plugin(
+            tauri_plugin_global_shortcut::Builder::new()
+                .with_handler(|app, _shortcut, event| {
+                    if event.state() == tauri_plugin_global_shortcut::ShortcutState::Pressed {
+                        bring_to_front(app);
+                    }
+                })
+                .build(),
+        )
         // In-process iroh reach: pairs + serves the box on :7117 within the app
         // (replaces the retired virtues-client proxy sidecar).
         .plugin(tauri_plugin_reach::init())
@@ -1134,8 +1231,26 @@ fn main() {
             stop_collector,
             open_full_disk_access,
             open_accessibility_settings,
+            set_summon_shortcut,
         ])
         .setup(|app| {
+            // Bind the default summon chord here rather than waiting for the
+            // webview: the whole point is reaching the app from another app, and
+            // that has to work while the window is closed — which is precisely
+            // when no frontend is running to ask for it. A stored rebind arrives
+            // later via `set_summon_shortcut` and replaces this one.
+            {
+                use tauri_plugin_global_shortcut::GlobalShortcutExt;
+                if let Err(e) = app.global_shortcut().register(DEFAULT_SUMMON_CHORD) {
+                    // Not fatal. Another app holding the chord costs us the
+                    // shortcut, not the product.
+                    eprintln!(
+                        "[summon] could not bind {DEFAULT_SUMMON_CHORD}: {e} \
+                         (another app probably holds it)"
+                    );
+                }
+            }
+
             // Keep the installed collector matching what this app bundle ships
             // (a stale collector after an app update is the only reconcile case
             // left now that the proxy runs in-process). macOS-only: the collector

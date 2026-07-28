@@ -254,14 +254,36 @@ Extract a registry: declarative bindings, one listener, scope-aware
 (modal/editor/global). Unlocks a shortcuts cheat-sheet and user rebinding for
 free, and is a hard prerequisite for 12 and 18.
 
-**OS-global hotkey — scope down.** Double-tap-⌘ is not registerable as a
-normal global hotkey; Raycast and Spotlight implement it with an
-accessibility-level event tap. That means prompting for Accessibility
-permission on an appliance holding someone's entire life — a bad trade, and
-⌘⌘ is frequently already taken by Raycast on the same machines.
+**OS-global hotkey — shipped as `⌘⇧Space`.**
 
-Ship a real chord (`⌥Space` or `⌘⇧Space`) via the Tauri global-shortcut
-plugin, rebindable from the registry. Revisit the event tap only on demand.
+`tauri-plugin-global-shortcut`, bound natively at `setup()` rather than from the
+webview: the point is reaching the app from another app, which has to work while
+the window is closed — exactly when no frontend is running to ask for it. A
+stored rebind replaces it later via `set_summon_shortcut`. Summoning focuses the
+window *and* opens ⌘K, since reaching for Virtues from another app is nearly
+always reaching for something in it.
+
+Chord choice, from a collision survey: ⌘Space is Spotlight (or Raycast, on our
+users' machines); **⌥Space is Alfred's default and a common Raycast rebind**, so
+the plan's suggestion is the riskiest option for exactly the power users most
+likely to run this; ⌥⌘Space is Spotlight's Finder window. `⌘⇧Space` is free on
+stock macOS and reads as adjacent to ⌘Space.
+
+**On ⌘⌘, including the left-⌘+right-⌘ variant.** Neither is registerable *at
+all*: `RegisterEventHotKey`, which every hotkey API on macOS sits on, takes a
+non-modifier key plus a modifier mask — modifiers alone are not expressible. Both
+double-tap-⌘ and both-⌘s-together therefore need global `flagsChanged`
+observation (a `CGEventTap` or an `NSEvent` global monitor), and both need
+**Accessibility permission**, whose prompt says the app will be able to control
+your computer.
+
+The detection itself is sound — left and right ⌘ are distinguishable via
+`NX_DEVICELCMDKEYMASK` / `NX_DEVICERCMDKEYMASK`. It is the permission, not the
+mechanism, that is the obstacle. **Not shipped**, and deliberately not shipped
+blind: it is unsafe objc2 code whose only meaningful test is granting
+Accessibility on a real Mac and pressing keys. If it lands it should be an
+opt-in the user goes looking for in Settings, never a first-launch prompt —
+which is the shape Raycast uses for the same feature.
 
 ### 19 — ⌘K on the IR stack · ship
 

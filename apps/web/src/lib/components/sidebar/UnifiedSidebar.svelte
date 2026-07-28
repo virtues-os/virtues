@@ -13,6 +13,7 @@
 	import SidebarModePanel from "./SidebarModePanel.svelte";
 	import { sidebarMode } from "$lib/stores/sidebarMode.svelte";
 	import { shortcuts } from "$lib/shortcuts/registry.svelte";
+	import { onSummon, setSummonShortcut, storedSummonChord } from "$lib/tauri/bridge";
 
 	// Collapsed state from shared store (also consumed by WindowTabBar)
 	const isCollapsed = $derived(sidebarState.collapsed);
@@ -35,11 +36,35 @@
 				storeReady = true;
 			});
 
+		// The OS-global chord. Native has already focused the window by the time
+		// this fires; summoning the app and then making you press ⌘K is two
+		// steps for one intent, so it opens the palette. Reaching for Virtues
+		// from another app is nearly always reaching for something *in* it.
+		//
+		// `open`, not `toggle`: the chord arrives from outside, where you can't
+		// see whether the palette is already up, and a toggle would close it
+		// half the time for no reason the user could have predicted.
+		let unlistenSummon: (() => void) | null = null;
+		let disposed = false;
+		void onSummon(() => {
+			isSearchOpen = true;
+		}).then((un) => {
+			// onMount's cleanup may already have run — this resolves a tick late.
+			if (disposed) un();
+			else unlistenSummon = un;
+		});
+
+		// Re-apply the stored rebind. Native binds the default at startup so the
+		// chord works before any window exists; this replaces it if the user has
+		// chosen another.
+		const chord = storedSummonChord();
+		void setSummonShortcut(chord);
+
 		// Global shortcuts live in the registry, not in a hand-rolled if-chain.
 		// Besides discoverability, the registry matches modifiers exactly — the
 		// old chain tested `metaKey && key === 's'` without excluding Shift, so
 		// ⌘⇧S collapsed the sidebar as a side effect.
-		return shortcuts.register(
+		const unregisterShortcuts = shortcuts.register(
 			{
 				id: "chat.new-temporary",
 				keys: "mod+shift+t",
@@ -83,6 +108,12 @@
 				run: handleWikiOverview,
 			},
 		);
+
+		return () => {
+			disposed = true;
+			unlistenSummon?.();
+			unregisterShortcuts();
+		};
 	});
 
 	function handleSearch() {

@@ -245,3 +245,70 @@ export async function openAccessibilitySettings(): Promise<boolean> {
 		return false;
 	}
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Global summon shortcut
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Default chord, mirrored from `DEFAULT_SUMMON_CHORD` in main.rs so Settings can
+ * show it without a round-trip. ⌘Space is Spotlight (or Raycast, on the machines
+ * our users have), ⌥Space is Alfred's default, ⌥⌘Space is Spotlight's Finder
+ * window — ⌘⇧Space is the one that's actually free.
+ */
+export const DEFAULT_SUMMON_CHORD = 'CmdOrCtrl+Shift+Space';
+
+const SUMMON_CHORD_KEY = 'virtues-summon-chord';
+
+/** The stored chord, or the default. Per-device: it's about this keyboard. */
+export function storedSummonChord(): string {
+	try {
+		return localStorage.getItem(SUMMON_CHORD_KEY) || DEFAULT_SUMMON_CHORD;
+	} catch {
+		return DEFAULT_SUMMON_CHORD;
+	}
+}
+
+/**
+ * Bind the OS-global summon chord. Returns the accelerator actually in force,
+ * which is not always the one asked for — a chord another app already holds is
+ * rejected, and the native side falls back to the default rather than leaving
+ * the app with no summon at all.
+ *
+ * No-op outside Tauri: a browser tab has no business claiming an OS hotkey.
+ */
+export async function setSummonShortcut(accelerator: string): Promise<string | null> {
+	const invoke = await getInvoke();
+	if (!invoke) return null;
+
+	try {
+		const bound = await invoke<string>('set_summon_shortcut', { accelerator });
+		try {
+			localStorage.setItem(SUMMON_CHORD_KEY, bound);
+		} catch {
+			/* private mode — the binding holds for this session regardless */
+		}
+		return bound;
+	} catch (e) {
+		console.error('[tauri] could not bind summon chord:', e);
+		return null;
+	}
+}
+
+/**
+ * Run `onSummon` when the OS-global chord fires. Returns an unlisten function.
+ *
+ * The native side has already shown and focused the window by the time this
+ * runs; what summoning *means* beyond that is the frontend's call, which is why
+ * the event carries no payload.
+ */
+export async function onSummon(handler: () => void): Promise<() => void> {
+	if (!isTauri) return () => {};
+	try {
+		const { listen } = await import('@tauri-apps/api/event');
+		return await listen('virtues://summon', () => handler());
+	} catch (e) {
+		console.error('[tauri] could not listen for summon:', e);
+		return () => {};
+	}
+}

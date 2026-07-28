@@ -36,6 +36,21 @@ export default defineConfig(({ mode }) => {
 					target: env.BACKEND_URL || 'http://localhost:8000',
 					changeOrigin: true
 				},
+				// The box's liveness probe. Unproxied, this fell through to
+				// SvelteKit and answered every request with index.html — so in
+				// dev, /health returned 200 and "<!doctype html>" forever. That is
+				// worse than a 404: anything asking "is the box up?" got a
+				// confident yes with the box stopped. It already broke
+				// SystemInfoView's version panel, and it would have broken the
+				// update watcher, which waits to see the box go down before it
+				// accepts it coming back. In both real deployments (a browser
+				// served by the box, and the Tauri window on the :7117 reach
+				// proxy) /health is same-origin and reaches the box; only dev was
+				// the odd one out.
+				'/health': {
+					target: env.BACKEND_URL || 'http://localhost:8000',
+					changeOrigin: true
+				},
 				// Applet face runtime — sandboxed-iframe HTML/JS/CSS served by
 				// core (the `/api/face/query` bridge already rides `/api`). The
 				// `/service` proxy fronts service-URL faces the same way.
