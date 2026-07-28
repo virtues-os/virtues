@@ -9,7 +9,12 @@ use crate::tools::default_enabled_tools;
 
 /// The canonical default theme for the application.
 /// This is the single source of truth — frontend and spaces.rs reference this.
-pub const DEFAULT_THEME: &str = "pemberley";
+///
+/// `paper` rather than a named theme: the sixteen literary themes are choices,
+/// and a new box shouldn't arrive having already made one on the owner's
+/// behalf. Plain white is the absence of a choice, which is the honest state
+/// before anybody has picked.
+pub const DEFAULT_THEME: &str = "paper";
 
 /// Assistant profile defaults
 #[derive(Debug, Clone, Deserialize, Serialize)]

@@ -8,6 +8,7 @@
 import { getAssistantProfile, updateAssistantProfile } from '$lib/api/client';
 
 export type Theme =
+	| 'paper'
 	| 'pemberley'
 	| 'caladan'
 	| 'rivendell'
@@ -20,7 +21,6 @@ export type Theme =
 	| 'narnia'
 	| 'canterbury'
 	| 'borghese'
-	| 'gatsby'
 	| 'lyceum'
 	| 'asgard'
 	| 'agora'
@@ -33,7 +33,27 @@ const THEME_BG_STORAGE_KEY = 'virtues-theme-bg';
 
 // Fallback theme used only before the API responds (flash prevention).
 // The real default is set in virtues-registry (Rust) and delivered via /api/assistant-profile.
-const FALLBACK_THEME: Theme = 'pemberley';
+const FALLBACK_THEME: Theme = 'paper';
+
+/**
+ * Themes that no longer exist, and where their users go instead.
+ *
+ * A removed theme can't just fail `isValidTheme` and fall through to the
+ * default: someone who chose a dark theme would be dropped onto a white one
+ * with no explanation, which reads as the app losing their settings. Gatsby was
+ * dark olive with a magenta accent, so Borghese (dark, dramatic) is the nearest
+ * surviving neighbour.
+ */
+const RETIRED_THEMES: Record<string, Theme> = {
+	gatsby: 'borghese',
+};
+
+/** Resolve a stored theme name, following retirements. */
+function resolveTheme(stored: string | null | undefined): Theme | null {
+	if (!stored) return null;
+	if (isValidTheme(stored)) return stored;
+	return RETIRED_THEMES[stored] ?? null;
+}
 
 /**
  * Get the current theme from localStorage cache
@@ -43,12 +63,7 @@ export function getTheme(): Theme {
 		return FALLBACK_THEME;
 	}
 
-	const stored = localStorage.getItem(THEME_STORAGE_KEY) as Theme | null;
-	if (stored && isValidTheme(stored)) {
-		return stored;
-	}
-
-	return FALLBACK_THEME;
+	return resolveTheme(localStorage.getItem(THEME_STORAGE_KEY)) ?? FALLBACK_THEME;
 }
 
 /**
@@ -57,9 +72,9 @@ export function getTheme(): Theme {
 export function applyTheme(theme: Theme): void {
 	if (typeof window === 'undefined') return;
 
-	if (!isValidTheme(theme)) {
-		theme = FALLBACK_THEME;
-	}
+	// Follows retirements, so a stored `gatsby` lands on its successor and is
+	// rewritten below rather than silently becoming the default every load.
+	theme = resolveTheme(theme) ?? FALLBACK_THEME;
 
 	document.documentElement.setAttribute('data-theme', theme);
 	localStorage.setItem(THEME_STORAGE_KEY, theme);
@@ -126,9 +141,16 @@ export async function loadThemeFromDB(): Promise<Theme> {
 
 	try {
 		const profile = await getAssistantProfile<{ ui_preferences?: { theme?: string } }>();
-		const theme = profile.ui_preferences?.theme as Theme;
-		if (theme && isValidTheme(theme)) {
-			applyTheme(theme);
+		// Through `resolveTheme`, so a retired theme stored in the DB lands on
+		// its successor. `setTheme` then writes the successor back, retiring the
+		// old name for good rather than remapping it on every load.
+		const theme = resolveTheme(profile.ui_preferences?.theme);
+		if (theme) {
+			if (theme !== profile.ui_preferences?.theme) {
+				void setTheme(theme);
+			} else {
+				applyTheme(theme);
+			}
 			return theme;
 		}
 	} catch (error) {
@@ -161,6 +183,7 @@ export function initTheme(): void {
  */
 export function isValidTheme(theme: string): theme is Theme {
 	return [
+		'paper',
 		'pemberley',
 		'caladan',
 		'rivendell',
@@ -173,7 +196,6 @@ export function isValidTheme(theme: string): theme is Theme {
 		'narnia',
 		'canterbury',
 		'borghese',
-		'gatsby',
 		'lyceum',
 		'asgard',
 		'agora',
@@ -202,6 +224,7 @@ export function isThemeDark(theme: Theme): boolean {
  */
 export function getAvailableThemes(): Theme[] {
 	return [
+		'paper',
 		'pemberley',
 		'caladan',
 		'rivendell',
@@ -214,7 +237,6 @@ export function getAvailableThemes(): Theme[] {
 		'narnia',
 		'canterbury',
 		'borghese',
-		'gatsby',
 		'lyceum',
 		'asgard',
 		'agora',
@@ -227,6 +249,7 @@ export function getAvailableThemes(): Theme[] {
  */
 export function getThemeDisplayName(theme: Theme): string {
 	const names: Record<Theme, string> = {
+		paper: 'Paper',
 		pemberley: 'Pemberley',
 		caladan: 'Caladan',
 		rivendell: 'Rivendell',
@@ -239,7 +262,6 @@ export function getThemeDisplayName(theme: Theme): string {
 		narnia: 'Narnia',
 		canterbury: 'Canterbury',
 		borghese: 'Borghese',
-		gatsby: 'Gatsby',
 		lyceum: 'The Lyceum',
 		asgard: 'Asgard',
 		agora: 'Agora',
@@ -264,6 +286,15 @@ export const themePreviewColors: Record<
 		syntax: string[];
 	}
 > = {
+	paper: {
+		background: '#FFFFFF',
+		surface: '#FFFFFF',
+		surfaceElevated: '#F6F6F7',
+		foreground: '#16181D',
+		foregroundMuted: '#494D57',
+		primary: '#2A2F3A',
+		syntax: ['#A32F2F', '#2A2F3A', '#4A5160', '#23558F', '#767B86', '#16181D']
+	},
 	pemberley: {
 		background: '#FDFCF9',
 		surface: '#FFFFFF',
@@ -372,15 +403,6 @@ export const themePreviewColors: Record<
 		primary: '#FFFFFF',
 		syntax: ['#ff9492', '#addcff', '#dcbdfb', '#91cbff', '#9198a1', '#f0f3f6']
 	},
-	gatsby: {
-		background: '#272822',
-		surface: '#2d2a2e',
-		surfaceElevated: '#3e3d32',
-		foreground: '#F8F8F2',
-		foregroundMuted: '#908E82',
-		primary: '#F92672',
-		syntax: ['#f92672', '#e6db74', '#a6e22e', '#ae81ff', '#75715e', '#f8f8f2']
-	},
 	lyceum: {
 		background: '#292d34',
 		surface: '#2f333d',
@@ -429,6 +451,10 @@ export const themeMetadata: Record<
 		description: string;
 	}
 > = {
+	paper: {
+		icon: 'ph:file-bold',
+		description: 'Plain white, no character'
+	},
 	pemberley: {
 		icon: 'ph:feather-bold',
 		description: 'American heritage, navy & claret'
@@ -476,10 +502,6 @@ export const themeMetadata: Record<
 	borghese: {
 		icon: 'ph:circle-half-bold',
 		description: 'Dramatic light and shadow'
-	},
-	gatsby: {
-		icon: 'ph:champagne-bold',
-		description: 'Jazz age vivid glamour'
 	},
 	lyceum: {
 		icon: 'ph:student-bold',
