@@ -105,8 +105,13 @@ pub async fn list_history(db: &PgPool, query: HistoryQuery) -> Result<Vec<Histor
                    visited_at,
                    COUNT(*) OVER (PARTITION BY url) AS visit_count
             FROM app_history
-            WHERE ($1::text[] IS NULL OR kind = ANY($1))
-              AND ($2::timestamptz IS NULL OR visited_at >= $2)
+            -- Every occurrence carries its cast, not just the first. Postgres
+            -- infers a bare `$n` from its surrounding context, so `kind = ANY($1)`
+            -- and `visited_at >= $2` were being typed from the *bind* (text)
+            -- rather than from the column, which failed with
+            -- "operator does not exist: timestamp with time zone >= text".
+            WHERE ($1::text[] IS NULL OR kind = ANY($1::text[]))
+              AND ($2::timestamptz IS NULL OR visited_at >= $2::timestamptz)
             ORDER BY url, visited_at DESC
         ) collapsed
         ORDER BY visited_at DESC
