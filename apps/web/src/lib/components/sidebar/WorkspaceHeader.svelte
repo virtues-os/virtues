@@ -57,13 +57,18 @@
 		}
 	}
 
+	/* Two things have to agree for the seam to read straight, and only fixing
+	   one of them fixes nothing:
+	     · the row HEIGHT (--chrome-row-h), previously 30 here and 40 there;
+	     · the row's OFFSET from the top of the window. The pane is a card inset
+	       by --pane-inset; the sidebar is full-bleed. Matching heights while the
+	       sidebar started 13px higher left the centrelines exactly as far apart
+	       as before. */
 	.masthead {
 		padding: 0 8px;
+		margin-top: var(--pane-inset);
 		display: flex;
 		align-items: center;
-		/* The shared chrome height. The sidebar's top edge and the pane
-		   toolbar's now come from one token instead of two numbers (30 and 40)
-		   that a comment claimed were equal. */
 		height: var(--chrome-row-h);
 		box-sizing: border-box;
 	}

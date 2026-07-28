@@ -119,25 +119,34 @@ impl ModelSlot {
 /// No pricing lives here. See the module docs.
 pub fn default_models() -> Vec<ModelConfig> {
     vec![
-        // CHAT + CODING: Default conversational model.
-        // Claude Opus over GLM-5: GLM-5 is a reasoning model that runs a
-        // (non-streamed, ~6s) chain-of-thought before every turn, which stacks
-        // across the agent's tool-call rounds into 20s+ stalls in chat. Opus
-        // answers directly — no reasoning pass, streams immediately — and
-        // handles parallel tool calls cleanly.
+        // CHAT + CODING: Grok 4.5 fills both slots.
         //
-        // Gemini 3 stays OUT of the picker entirely: via the gateway's
-        // OpenAI-compatible endpoint it 400s on parallel tool calls, needing a
-        // thought_signature the gateway doesn't pass through (vercel/ai
-        // #11590/#10344). Gemini 2.5 Pro covers Google multimodal — including
-        // audio — and its tool calls actually work.
+        // Verified against the gateway's OpenAI-compatible endpoint BEFORE
+        // being made the default (2026-07-28): single tool call, parallel tool
+        // calls, streaming-with-tools, and the tool_result follow-up round all
+        // pass, and it beat Opus 4.8 on every leg (2.1s vs 2.3s on the
+        // parallel-call turn). Run that battery for any model promoted to a
+        // slot — the gateway's `tool-use` tag does not prove a model works
+        // through the OpenAI-compat shim. Gemini 3 advertises `tool-use` and
+        // still 400s on parallel calls, needing a thought_signature the gateway
+        // never forwards (vercel/ai #11590/#10344), which is why it is out of
+        // the picker entirely.
+        //
+        // Accepted cost: Grok reasons on every turn (~180-200 tokens, measured
+        // over 3 runs) and NO reasoning_effort value reduces it — none/minimal/
+        // low/high all land in the same range. It is a fixed per-round tax we
+        // cannot tune, taken because it is small and Grok is ~4x cheaper on
+        // output than Opus. GLM-5.1 is the counterexample and the reason it
+        // stays selectable but is never a slot default: ~300-460 reasoning
+        // tokens per turn, equally uncontrollable, which stacks across an
+        // agent's tool rounds into 20s+ stalls in chat.
         ModelConfig {
-            model_id: "anthropic/claude-opus-4.8".to_string(),
-            display_name: "Claude Opus 4.8".to_string(),
-            provider: "Anthropic".to_string(),
+            model_id: "xai/grok-4.5".to_string(),
+            display_name: "Grok 4.5".to_string(),
+            provider: "xAI".to_string(),
             sort_order: 1,
             enabled: true,
-            context_window: 200000,
+            context_window: 500000,
             max_output_tokens: 32000,
             supports_tools: true,
             supports_vision: true,
@@ -145,12 +154,33 @@ pub fn default_models() -> Vec<ModelConfig> {
             supports_audio: false,
             is_default: true,
         },
+        // Anthropic Opus — the previous chat/coding default. Answers directly
+        // with no reasoning pass at any effort level (measured: 0 reasoning
+        // tokens even at effort:high), so it is the fallback of choice when a
+        // turn must not pay a thinking tax at all.
+        //
+        // Gemini 2.5 Pro below covers Google multimodal — including audio —
+        // and its tool calls actually work.
+        ModelConfig {
+            model_id: "anthropic/claude-opus-4.8".to_string(),
+            display_name: "Claude Opus 4.8".to_string(),
+            provider: "Anthropic".to_string(),
+            sort_order: 2,
+            enabled: true,
+            context_window: 200000,
+            max_output_tokens: 32000,
+            supports_tools: true,
+            supports_vision: true,
+            supports_pdf: true,
+            supports_audio: false,
+            is_default: false,
+        },
         // LITE: Fast model for background tasks (titles, summaries, extraction).
         ModelConfig {
             model_id: "zai/glm-4.7-flash".to_string(),
             display_name: "GLM 4.7 Flash".to_string(),
             provider: "Z.AI".to_string(),
-            sort_order: 2,
+            sort_order: 3,
             enabled: true,
             context_window: 203000,
             max_output_tokens: 131000,
@@ -165,7 +195,7 @@ pub fn default_models() -> Vec<ModelConfig> {
             model_id: "zai/glm-5.1".to_string(),
             display_name: "GLM 5.1".to_string(),
             provider: "Z.AI".to_string(),
-            sort_order: 3,
+            sort_order: 4,
             enabled: true,
             context_window: 203000,
             max_output_tokens: 131000,
@@ -180,7 +210,7 @@ pub fn default_models() -> Vec<ModelConfig> {
             model_id: "anthropic/claude-sonnet-4.6".to_string(),
             display_name: "Claude Sonnet 4.6".to_string(),
             provider: "Anthropic".to_string(),
-            sort_order: 4,
+            sort_order: 5,
             enabled: true,
             context_window: 200000,
             max_output_tokens: 64000,
@@ -196,7 +226,7 @@ pub fn default_models() -> Vec<ModelConfig> {
             model_id: "google/gemini-2.5-pro".to_string(),
             display_name: "Gemini 2.5 Pro".to_string(),
             provider: "Google".to_string(),
-            sort_order: 5,
+            sort_order: 6,
             enabled: true,
             context_window: 1000000,
             max_output_tokens: 65000,
@@ -211,7 +241,7 @@ pub fn default_models() -> Vec<ModelConfig> {
             model_id: "google/gemini-2.5-flash".to_string(),
             display_name: "Gemini 2.5 Flash".to_string(),
             provider: "Google".to_string(),
-            sort_order: 6,
+            sort_order: 7,
             enabled: true,
             context_window: 1000000,
             max_output_tokens: 65000,
@@ -227,9 +257,9 @@ pub fn default_models() -> Vec<ModelConfig> {
 /// Get the default model ID for a given slot
 pub fn default_model_for_slot(slot: ModelSlot) -> &'static str {
     match slot {
-        ModelSlot::Chat => "anthropic/claude-opus-4.8",
+        ModelSlot::Chat => "xai/grok-4.5",
         ModelSlot::Lite => "zai/glm-4.7-flash",
-        ModelSlot::Coding => "anthropic/claude-opus-4.8",
+        ModelSlot::Coding => "xai/grok-4.5",
         ModelSlot::Image => "google/gemini-3-pro-image",
         // gemini-3-flash: the audio-native model that won a controlled 5-clip
         // bench — fastest + cheapest whose thinking budget the gateway actually
