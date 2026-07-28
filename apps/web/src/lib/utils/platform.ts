@@ -16,6 +16,16 @@ const platformStr =
  */
 export const isMacOS = isTauri && platformStr.includes('mac');
 
+/**
+ * Apple keyboard layout, Tauri or not — a Mac user in a plain browser still
+ * expects ⌘ and still reads ⌥ as Option. Shortcut binding and rendering key off
+ * this, never off `isMacOS` (which is deliberately Tauri-gated).
+ */
+export const isAppleKeyboard =
+	platformStr.includes('mac') ||
+	platformStr.includes('iphone') ||
+	platformStr.includes('ipad');
+
 /** Running on Windows (only meaningful in Tauri). */
 export const isWindows = isTauri && platformStr.includes('win');
 

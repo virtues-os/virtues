@@ -331,7 +331,7 @@
 	}
 
 	.apply-btn:hover:not(:disabled) {
-		background: var(--color-surface-elevated);
+		background: var(--hover-bg);
 	}
 
 	.apply-btn:disabled {

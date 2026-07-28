@@ -237,7 +237,7 @@
 		width: 100%; height: 100%;
 		transition: border-color 0.12s ease, background 0.12s ease;
 	}
-	.nb-card:hover { background: var(--color-surface-elevated); }
+	.nb-card:hover { background: var(--hover-bg); }
 	.nb-card.tinted { box-shadow: inset 3px 0 0 var(--room-accent); border-color: color-mix(in srgb, var(--room-accent) 30%, var(--color-border)); }
 	.nb-card-icon {
 		display: grid; place-items: center; width: 36px; height: 36px;

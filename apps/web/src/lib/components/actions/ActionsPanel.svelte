@@ -522,7 +522,7 @@
 		cursor: pointer;
 	}
 	.attention-item:hover {
-		background: var(--color-surface-elevated);
+		background: var(--hover-bg);
 	}
 	.attention-why {
 		color: var(--color-foreground-subtle);

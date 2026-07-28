@@ -252,7 +252,7 @@
 	}
 
 	.allow-btn:hover:not(:disabled) {
-		background: var(--color-surface-elevated);
+		background: var(--hover-bg);
 		border-color: var(--color-border-strong);
 	}
 

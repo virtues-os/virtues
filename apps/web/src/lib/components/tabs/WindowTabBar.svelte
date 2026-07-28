@@ -18,6 +18,8 @@
 	import { updatePage, updateChat } from "$lib/api/client";
 	import { pagesStore } from "$lib/stores/pages.svelte";
 	import { pinsStore } from "$lib/stores/pins.svelte";
+	import { paneActions } from "$lib/stores/paneActions.svelte";
+	import { modifierHint } from "$lib/stores/modifierHint.svelte";
 	import { chatSessions } from "$lib/stores/chatSessions.svelte";
 	import { isEmoji } from "$lib/utils/iconHelpers";
 	import type { ContextMenuItem } from "$lib/stores/contextMenu.svelte";
@@ -63,7 +65,38 @@
 	const isActivePane = $derived(
 		paneId ? windowShellStore.activePaneId === paneId : true,
 	);
+
+	// Whatever the view showing in this pane has published (item 5's slot).
+	const viewActions = $derived(paneActions.for(activeTabId));
+
+	// Two inline, the rest behind a `···`. A pane can be dragged to a third of
+	// the window, and the toolbar already carries split/merge/new-tab — without
+	// a cap, a view with four actions would push the tabs out of their own bar.
+	const INLINE_ACTION_LIMIT = 2;
+	const inlineActions = $derived(viewActions.slice(0, INLINE_ACTION_LIMIT));
+	const overflowActions = $derived(viewActions.slice(INLINE_ACTION_LIMIT));
+
+	function showActionOverflow(e: MouseEvent) {
+		e.stopPropagation();
+		contextMenu.show(
+			{ x: e.clientX, y: e.clientY },
+			overflowActions.map((a) => ({
+				id: a.id,
+				label: a.label,
+				icon: a.icon,
+				disabled: a.disabled,
+				checked: a.active,
+				action: a.run,
+			})),
+		);
+	}
 	const isSplitMode = $derived(windowShellStore.isSplit);
+
+	// ⌘1/⌘2 badge, shown only while ⌘ is held. Single-pane mode is always ⌘1.
+	const paneNumber = $derived(paneId === "right" ? "2" : "1");
+	const showPaneHint = $derived(
+		modifierHint.visible && !mobileLayout.isMobile,
+	);
 
 	// Per-tab history (browser model): back/forward act on this pane's active tab.
 	const canGoBack = $derived(windowShellStore.canGoBack(paneId));
@@ -366,6 +399,13 @@
 	aria-label="Tab bar"
 	tabindex="0"
 >
+	{#if showPaneHint}
+		<!-- Flips up into place so the change registers as *something happened
+		     here* rather than as a badge that was always there. aria-hidden: it
+		     restates a shortcut, and announcing it on every ⌘ hold would be
+		     noise to a screen reader. -->
+		<span class="pane-hint" aria-hidden="true">⌘{paneNumber}</span>
+	{/if}
 	{#if showSidebarToggle}
 		<button
 			class="sidebar-toggle"
@@ -499,14 +539,52 @@
 			<Icon icon="ri:layout-right-line" />
 		</button>
 	{/if}
+
+	<!-- The view's own actions, published into the slot rather than rendered
+	     wherever each view felt like putting them. Last in the row, after the
+	     window controls, so the shell's controls stay in one place as views
+	     come and go beneath them. -->
+	{#if viewActions.length > 0}
+		<div class="pane-actions">
+			{#each inlineActions as action (action.id)}
+				<button
+					class="pane-action"
+					class:primary={action.primary}
+					class:toggled={action.active}
+					aria-pressed={action.active !== undefined ? action.active : undefined}
+					disabled={action.disabled}
+					onclick={action.run}
+					aria-label={action.label}
+					title={action.label}
+				>
+					<Icon icon={action.icon} />
+					{#if action.primary}<span class="pane-action-label">{action.label}</span>{/if}
+				</button>
+			{/each}
+
+			{#if overflowActions.length > 0}
+				<button
+					class="pane-action"
+					onclick={showActionOverflow}
+					aria-label="More actions"
+					title="More actions"
+				>
+					<Icon icon="ri:more-line" />
+				</button>
+			{/if}
+		</div>
+	{/if}
 </div>
 
 <style>
 	.tab-bar {
+		container-type: inline-size;
+		container-name: tabbar;
 		display: flex;
-		align-items: center;
+		align-items: stretch;
 		gap: 4px;
-		padding: 6px 8px;
+		padding: 6px 8px 0;
+		min-height: 40px;
 		border-bottom: 1px solid var(--color-border);
 		background: var(--color-background);
 		flex-shrink: 0;
@@ -539,14 +617,22 @@
 		display: none;
 	}
 
+	/* Full-height, not a floating pill. A tab that spans the bar reads as a
+	   container for what's below it; a pill reads as a chip that happens to sit
+	   nearby. Squaring the bottom corners is what makes the active tab join the
+	   pane rather than hover over it. */
 	.tab {
 		display: flex;
 		align-items: center;
 		gap: 6px;
-		padding: 5px 8px;
-		height: 24px;
+		padding: 0 8px;
+		align-self: stretch;
+		/* Positioning context for the swoop flares. */
+		position: relative;
+		height: auto;
+		min-height: 28px;
 		border: none;
-		border-radius: 6px;
+		border-radius: 6px 6px 0 0;
 		background: transparent;
 		color: var(--color-foreground-muted);
 		font-size: 12px;
@@ -562,18 +648,73 @@
 	}
 
 	.tab:hover {
-		background: var(--color-surface-elevated);
+		background: var(--hover-bg);
 		color: var(--color-foreground);
 	}
 
+	/* The active tab's fill goes through a custom property so the swoop flares
+	   below can inherit it. Binding both to one token is what stops a theme (or
+	   the active-pane modifier) changing the tab without changing the curve that
+	   joins it to the pane — the failure mode that makes the swoop look broken
+	   rather than absent. */
+	/* The active tab in an UNFOCUSED pane sits slightly proud of its pane —
+	   raised, not joined. The swoop still draws, but against a surface it
+	   doesn't match, which is the correct reading: that pane isn't the one
+	   you're working in. */
 	.tab.active {
-		background: var(--color-surface-elevated);
+		--tab-fill: var(--color-surface-elevated);
+		background: var(--tab-fill);
 		color: var(--color-foreground);
 	}
 
-	/* Active tab in the active pane gets darker background */
+	/* The focused pane's active tab takes the pane's own colour, so tab and pane
+	   become one surface and the swoop closes.
+	   
+	   This used to be `--color-border` — #2a2a2a against a #181818 pane in the
+	   default dark theme. The curve drew correctly and then joined the tab to a
+	   colour the pane never had, which read as a gap in the swoop. Matching the
+	   pane is the whole premise of the effect, so the focus distinction moves to
+	   the tab that is NOT joined rather than to a third colour. */
 	.tab.active-in-active-pane {
-		background: var(--color-border);
+		--tab-fill: var(--color-surface);
+		background: var(--tab-fill);
+	}
+
+	/* ── Swoop ──────────────────────────────────────────────────────────────
+	   Concave corners flaring out of the active tab's base, so the tab grows
+	   out of the pane instead of resting on it. Each flare is a small box
+	   filled with the tab colour and masked by a radial gradient that removes
+	   the outer quarter-disc, leaving the curve. */
+	.tab.active::before,
+	.tab.active::after {
+		content: "";
+		position: absolute;
+		bottom: 0;
+		width: 8px;
+		height: 8px;
+		background: var(--tab-fill);
+		pointer-events: none;
+	}
+
+	.tab.active::before {
+		left: -8px;
+		-webkit-mask-image: radial-gradient(circle 8px at 0 0, transparent 8px, #000 8.5px);
+		mask-image: radial-gradient(circle 8px at 0 0, transparent 8px, #000 8.5px);
+	}
+
+	.tab.active::after {
+		right: -8px;
+		-webkit-mask-image: radial-gradient(circle 8px at 100% 0, transparent 8px, #000 8.5px);
+		mask-image: radial-gradient(circle 8px at 100% 0, transparent 8px, #000 8.5px);
+	}
+
+	/* An edge tab has no room for its outer flare — it would overhang the pane.
+	   This is the split-pane case that kept the swoop a spike: a pane can be
+	   dragged narrow, and the flares cost a fixed 16px however little width is
+	   left. `.tabs-scroll` is the flex row the tabs live in. */
+	.tab.active:first-child::before,
+	.tab.active:last-child::after {
+		display: none;
 	}
 
 	/* Dragging state - svelte-dnd-action applies aria-grabbed */
@@ -642,18 +783,127 @@
 		flex-shrink: 0;
 	}
 
+	@keyframes paneHintIn {
+		from {
+			opacity: 0;
+			transform: translateY(6px) rotateX(-40deg);
+		}
+		to {
+			opacity: 1;
+			transform: translateY(0) rotateX(0);
+		}
+	}
+
+	.pane-hint {
+		display: inline-flex;
+		align-items: center;
+		align-self: center;
+		padding: 2px 6px;
+		margin-right: 2px;
+		border-radius: 4px;
+		background: var(--color-primary);
+		color: var(--color-surface);
+		font-family: var(--font-sans);
+		font-size: 10px;
+		font-weight: 600;
+		line-height: 1.4;
+		flex-shrink: 0;
+		transform-origin: bottom center;
+		animation: paneHintIn 180ms cubic-bezier(0.2, 0, 0, 1);
+	}
+
+	@media (prefers-reduced-motion: reduce) {
+		.pane-hint {
+			animation: none;
+		}
+	}
+
+	.pane-actions {
+		display: flex;
+		align-items: center;
+		align-self: center;
+		gap: 2px;
+		margin-left: 2px;
+		padding-left: 6px;
+		border-left: 1px solid var(--color-border);
+	}
+
+	.pane-action {
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		width: 24px;
+		height: 24px;
+		padding: 0;
+		border: none;
+		border-radius: 6px;
+		background: transparent;
+		color: var(--color-foreground-muted);
+		font-size: 15px;
+		cursor: pointer;
+		flex-shrink: 0;
+		transition: background-color 150ms ease, color 150ms ease;
+	}
+
+	.pane-action:hover:not(:disabled) {
+		background: color-mix(in srgb, var(--color-foreground) 8%, transparent);
+		color: var(--color-foreground);
+	}
+
+	.pane-action.primary {
+		color: var(--color-primary);
+		width: auto;
+		gap: 5px;
+		padding: 0 8px;
+	}
+
+	.pane-action-label {
+		font-size: 12px;
+		white-space: nowrap;
+	}
+
+	/* The primary action keeps its label while there's room and drops to an
+	   icon when there isn't. A container query, not a viewport one: what runs
+	   out of space is the pane, and in split view a pane is nothing like the
+	   window. */
+	@container tabbar (max-width: 520px) {
+		.pane-action-label {
+			display: none;
+		}
+		.pane-action.primary {
+			width: 24px;
+			padding: 0;
+		}
+	}
+
+	/* A toggle that's on reads as held down, not as merely hovered. */
+	.pane-action.toggled {
+		background: var(--active-bg);
+		color: var(--color-foreground);
+	}
+
+	.pane-action:disabled {
+		opacity: 0.4;
+		cursor: default;
+	}
+
+	.pane-action:focus-visible {
+		outline: 2px solid var(--color-primary);
+		outline-offset: -2px;
+	}
+
 	.tab-close {
 		display: flex;
 		align-items: center;
 		justify-content: center;
-		width: 16px;
-		height: 16px;
+		width: 20px;
+		height: 20px;
 		padding: 0;
 		border: none;
 		border-radius: 4px;
 		background: transparent;
 		color: var(--color-foreground-muted);
-		font-size: 12px;
+		font-size: 13px;
 		cursor: pointer;
 		opacity: 0;
 		transition:
@@ -667,14 +917,23 @@
 		opacity: 1;
 	}
 
+	/* Neutral, not red. Red is for destructive-with-consequence; closing a tab
+	   loses nothing and is one ⌘⇧T away from undone. The old error-tinted
+	   treatment (plus a red wash over the whole tab) read as a warning for an
+	   action that doesn't warrant one. */
 	.tab-close:hover {
-		background: var(--error-subtle);
-		color: var(--error);
+		background: color-mix(in srgb, var(--color-foreground) 10%, transparent);
+		color: var(--color-foreground);
 	}
 
-	/* Tint tab background when hovering close button */
-	.tab:has(.tab-close:hover) {
-		background: color-mix(in srgb, var(--error-subtle) 50%, var(--color-surface));
+	.tab-close:active {
+		background: color-mix(in srgb, var(--color-foreground) 16%, transparent);
+	}
+
+	.tab-close:focus-visible {
+		opacity: 1;
+		outline: 2px solid var(--color-primary);
+		outline-offset: -2px;
 	}
 
 	.sidebar-toggle,
@@ -685,6 +944,9 @@
 		display: flex;
 		align-items: center;
 		justify-content: center;
+		/* The bar stretches its children so tabs can be full-height; the window
+		   controls opt back out and centre themselves. */
+		align-self: center;
 		width: 24px;
 		height: 24px;
 		padding: 0;
@@ -704,12 +966,34 @@
 		margin-right: 2px;
 	}
 
+	/* Hover used to be `--color-surface-elevated` over a `--color-background`
+	   toolbar — #F5F4EF on #FDFCF9 in the default theme, a ~3% shift that read
+	   as nothing happening. A foreground mix is legible in every theme instead
+	   of depending on two surface tokens staying far enough apart. */
 	.sidebar-toggle:hover,
 	.split-toggle:hover,
 	.merge-toggle:hover,
 	.nav-btn:hover:not(:disabled),
 	.new-tab-btn:hover {
-		background: var(--color-surface-elevated);
+		background: color-mix(in srgb, var(--color-foreground) 8%, transparent);
+		color: var(--color-foreground);
+	}
+
+	.sidebar-toggle:active,
+	.split-toggle:active,
+	.merge-toggle:active,
+	.nav-btn:active:not(:disabled),
+	.new-tab-btn:active {
+		background: color-mix(in srgb, var(--color-foreground) 14%, transparent);
+	}
+
+	.sidebar-toggle:focus-visible,
+	.split-toggle:focus-visible,
+	.merge-toggle:focus-visible,
+	.nav-btn:focus-visible,
+	.new-tab-btn:focus-visible {
+		outline: 2px solid var(--color-primary);
+		outline-offset: -2px;
 		color: var(--color-foreground);
 	}
 
@@ -717,6 +1001,7 @@
 	.nav-cluster {
 		display: flex;
 		align-items: center;
+		align-self: center;
 		gap: 0;
 		flex-shrink: 0;
 	}

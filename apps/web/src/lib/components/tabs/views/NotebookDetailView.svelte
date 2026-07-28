@@ -572,7 +572,7 @@
 		border: none; border-radius: 8px; background: transparent;
 		color: var(--color-foreground-subtle, #9ca3af); cursor: pointer;
 	}
-	.icon-btn:hover { background: var(--color-surface-elevated); color: var(--color-foreground); }
+	.icon-btn:hover { background: var(--hover-bg); color: var(--color-foreground); }
 	.icon-btn.danger:hover { color: var(--color-error, #dc2626); }
 
 	.title {
@@ -642,7 +642,7 @@
 		border: none; border-radius: 6px; background: transparent;
 		color: var(--color-foreground-subtle, #9ca3af); cursor: pointer;
 	}
-	.add-btn:hover { background: var(--color-surface-elevated); color: var(--color-foreground); }
+	.add-btn:hover { background: var(--hover-bg); color: var(--color-foreground); }
 	.empty { margin: 0; padding: 0.85rem 0; font-size: 0.9rem; color: var(--color-foreground-muted); }
 	.add-row {
 		display: flex; align-items: center; gap: 8px; width: 100%; text-align: left;

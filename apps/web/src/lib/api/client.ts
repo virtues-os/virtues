@@ -191,6 +191,141 @@ export async function getAction(id: string): Promise<Action> {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Local content search (⌘K)
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** One content hit — a matched chunk inside an indexed record. */
+export interface LocalSearchHit {
+	ontology: string;
+	record_id: string;
+	score: number;
+	title: string | null;
+	preview: string | null;
+	author: string | null;
+	timestamp: string | null;
+}
+
+export interface LocalSearchResponse {
+	hits: LocalSearchHit[];
+	/** Echoed back so callers can drop responses that lost a race. */
+	query: string;
+}
+
+/**
+ * Content search across everything the box has indexed. Never leaves the box —
+ * `searchWeb` (Exa) is the separate, explicit thing.
+ *
+ * POST, not GET: the query is what someone is searching their own life for, and
+ * a GET would put it in the URL, browser history, and every access log along the
+ * way.
+ */
+export async function searchLocal(
+	q: string,
+	opts: { limit?: number; signal?: AbortSignal } = {},
+): Promise<LocalSearchResponse> {
+	const res = await fetch(`${API_BASE}/search/local`, {
+		method: 'POST',
+		headers: { 'Content-Type': 'application/json' },
+		body: JSON.stringify({ q, limit: opts.limit }),
+		signal: opts.signal,
+	});
+	if (!res.ok) throw new Error(`Search failed: ${res.statusText}`);
+	return res.json();
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Box updates (Settings → Box)
+// ─────────────────────────────────────────────────────────────────────────────
+
+export interface UpdateStatus {
+	current: string;
+	channel: string;
+	latest: string | null;
+	update_available: boolean;
+	check_error: string | null;
+}
+
+export async function getUpdateStatus(): Promise<UpdateStatus> {
+	const res = await fetch(`${API_BASE}/system/update`);
+	if (!res.ok) throw new Error(`Failed to get update status: ${res.statusText}`);
+	return res.json();
+}
+
+export async function setUpdateChannel(channel: 'stable' | 'prerelease'): Promise<void> {
+	const res = await fetch(`${API_BASE}/system/update/channel`, {
+		method: 'PUT',
+		headers: { 'Content-Type': 'application/json' },
+		body: JSON.stringify({ channel }),
+	});
+	if (!res.ok) throw new Error(`Failed to set channel: ${res.statusText}`);
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// App history (sidebar "Recents")
+// ─────────────────────────────────────────────────────────────────────────────
+
+export interface HistoryEntry {
+	url: string;
+	label: string | null;
+	icon: string | null;
+	kind: string | null;
+	visited_at: string;
+	visit_count: number;
+}
+
+export interface HistoryQuery {
+	kinds?: string[];
+	since?: string;
+	limit?: number;
+}
+
+/**
+ * Record a visit. Deliberately swallows failures: history is a convenience, and
+ * nothing about navigating should be able to fail because of it.
+ */
+export async function recordVisit(entry: {
+	url: string;
+	label?: string | null;
+	icon?: string | null;
+	kind?: string | null;
+}): Promise<void> {
+	try {
+		await fetch(`${API_BASE}/history`, {
+			method: 'POST',
+			headers: { 'Content-Type': 'application/json' },
+			body: JSON.stringify(entry),
+			keepalive: true,
+		});
+	} catch {
+		/* history is best-effort by design */
+	}
+}
+
+export async function listHistory(query: HistoryQuery = {}): Promise<HistoryEntry[]> {
+	const res = await fetch(`${API_BASE}/history/list`, {
+		method: 'POST',
+		headers: { 'Content-Type': 'application/json' },
+		body: JSON.stringify(query),
+	});
+	if (!res.ok) throw new Error(`Failed to list history: ${res.statusText}`);
+	return res.json();
+}
+
+export async function clearHistory(): Promise<void> {
+	const res = await fetch(`${API_BASE}/history`, { method: 'DELETE' });
+	if (!res.ok) throw new Error(`Failed to clear history: ${res.statusText}`);
+}
+
+export async function forgetHistoryUrl(url: string): Promise<void> {
+	const res = await fetch(`${API_BASE}/history/forget`, {
+		method: 'POST',
+		headers: { 'Content-Type': 'application/json' },
+		body: JSON.stringify({ url }),
+	});
+	if (!res.ok) throw new Error(`Failed to forget: ${res.statusText}`);
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Sidebar pins
 // ─────────────────────────────────────────────────────────────────────────────
 
