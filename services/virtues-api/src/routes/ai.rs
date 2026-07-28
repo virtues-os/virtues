@@ -13,9 +13,11 @@
 //! `/v1/chat/*` route.
 //!
 //! Cost model: authoritative cost is Vercel AI Gateway's `usage.cost`
-//! (see `extract_cost_micros`); when absent we fall back to token counts ×
-//! the live gateway catalog price (`catalog.rs`), and only if THAT is cold to
-//! `FALLBACK_PRICING`. USD → micros → charge after success.
+//! (see `extract_cost_micros`), present on every response on both the
+//! streaming and non-streaming paths; when absent we fall back to token counts
+//! × the live gateway catalog price (`catalog.rs`), and if THAT is cold we
+//! serve the call **unbilled** rather than invent a rate. USD → micros →
+//! charge after success.
 //! Charge race window (between successful response and DB UPDATE) is
 //! tolerated; failed charges are logged but do not propagate back to
 //! the customer.
@@ -279,12 +281,23 @@ async fn embeddings(
                 .get("model")
                 .and_then(|m| m.as_str())
                 .unwrap_or_default();
-            let (input_per_1k, _) = state
-                .catalog
-                .pricing(model)
-                .unwrap_or(virtues_registry::models::FALLBACK_PRICING);
-            let cost_usd = (total_tokens as f64 / 1000.0) * input_per_1k;
-            entitlement::usd_to_micros(cost_usd)
+            // No catalog price = unknown rate. Serve unbilled rather than
+            // invent one; see providers::calculate_cost for why.
+            match state.catalog.pricing(model) {
+                Some((input_per_1k, _)) => {
+                    let cost_usd = (total_tokens as f64 / 1000.0) * input_per_1k;
+                    entitlement::usd_to_micros(cost_usd)
+                }
+                None => {
+                    tracing::error!(
+                        model,
+                        total_tokens,
+                        "no gateway cost and no catalog price for embeddings — \
+                         serving UNBILLED rather than inventing a rate"
+                    );
+                    0
+                }
+            }
         };
         if cost_micros > 0 {
             if let Err(e) = entitlement::settle(pool, &ent.account_id, cost_micros).await {
@@ -302,10 +315,11 @@ async fn embeddings(
 
 /// The models a box should offer, and which one fills each slot.
 ///
-/// `data` is the full picker: the curated Recommended set (`recommended:true`
-/// — our taste, the gateway's facts, phantom ids already removed) followed by
-/// the rest of the live gateway catalog (`recommended:false`, priced language
-/// models, gateway-declared capabilities). The box sections on the flag.
+/// `data` is the picker: every priced language model the gateway carries, its
+/// facts derived from the gateway for all of them equally. `recommended:true`
+/// marks the five slot models — the whole of what we vouch for. Everything
+/// else is the BYO path: selectable, with the provider's own capability claims.
+/// The box sections on the flag.
 ///
 /// `slots` is the live slot map. Boxes resolve a slot as:
 ///
@@ -403,9 +417,13 @@ fn extract_cost_micros(catalog: &crate::catalog::Catalog, body: &Value, model: &
             )
         })
         .unwrap_or((0, 0));
-    let cost_usd = calculate_cost(catalog, model, prompt, completion);
-    // Shared formula — no local duplicate (see entitlement::usd_to_micros).
-    entitlement::usd_to_micros(cost_usd)
+    // `None` = we don't know the rate. Charge nothing rather than invent one;
+    // `calculate_cost` has already logged the blind spot.
+    match calculate_cost(catalog, model, prompt, completion) {
+        // Shared formula — no local duplicate (see entitlement::usd_to_micros).
+        Some(cost_usd) => entitlement::usd_to_micros(cost_usd),
+        None => 0,
+    }
 }
 
 fn err(status: StatusCode, code: &str, message: &str) -> Response {

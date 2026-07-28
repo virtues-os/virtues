@@ -35,9 +35,17 @@ Five things the code says that the item list assumed otherwise:
    these, so the updater can't pull a rolling test build." Mac edge updates
    require reversing this.
 
-5. **125 unique theme tokens across 36 `data-theme` blocks.** Larger than it
-   looks; token collapse is justified. Do it *after* the theme count drops so
-   the audit covers 16 themes, not 17.
+5. ~~**125 unique theme tokens across 36 `data-theme` blocks.**~~ **Wrong — and
+   the correction kills the item.** Measured against physical declarations
+   (2026-07-28): **679 declarations, 80 unique tokens, 16 themes.** The "36
+   blocks" counted grouped selectors once per listed theme, which inflated
+   every downstream number.
+
+   Total redundancy is **145 declarations spread across ~40 tokens** — the
+   worst single token is `--shiki-theme` at 6. There is no large offender.
+   Capturing that 20% would mean inventing ~10-15 new cross-cutting group
+   selectors, which makes any individual theme harder to read and retune than
+   the duplication does. **Token collapse is not worth doing.** See item 20.
 
 6. **The invisible-hover problem is systemic, not one button.** Item 17 turned
    out not to be a missing rule — the rule set `--color-surface-elevated` on a
@@ -246,14 +254,36 @@ Extract a registry: declarative bindings, one listener, scope-aware
 (modal/editor/global). Unlocks a shortcuts cheat-sheet and user rebinding for
 free, and is a hard prerequisite for 12 and 18.
 
-**OS-global hotkey — scope down.** Double-tap-⌘ is not registerable as a
-normal global hotkey; Raycast and Spotlight implement it with an
-accessibility-level event tap. That means prompting for Accessibility
-permission on an appliance holding someone's entire life — a bad trade, and
-⌘⌘ is frequently already taken by Raycast on the same machines.
+**OS-global hotkey — shipped as `⌘⇧Space`.**
 
-Ship a real chord (`⌥Space` or `⌘⇧Space`) via the Tauri global-shortcut
-plugin, rebindable from the registry. Revisit the event tap only on demand.
+`tauri-plugin-global-shortcut`, bound natively at `setup()` rather than from the
+webview: the point is reaching the app from another app, which has to work while
+the window is closed — exactly when no frontend is running to ask for it. A
+stored rebind replaces it later via `set_summon_shortcut`. Summoning focuses the
+window *and* opens ⌘K, since reaching for Virtues from another app is nearly
+always reaching for something in it.
+
+Chord choice, from a collision survey: ⌘Space is Spotlight (or Raycast, on our
+users' machines); **⌥Space is Alfred's default and a common Raycast rebind**, so
+the plan's suggestion is the riskiest option for exactly the power users most
+likely to run this; ⌥⌘Space is Spotlight's Finder window. `⌘⇧Space` is free on
+stock macOS and reads as adjacent to ⌘Space.
+
+**On ⌘⌘, including the left-⌘+right-⌘ variant.** Neither is registerable *at
+all*: `RegisterEventHotKey`, which every hotkey API on macOS sits on, takes a
+non-modifier key plus a modifier mask — modifiers alone are not expressible. Both
+double-tap-⌘ and both-⌘s-together therefore need global `flagsChanged`
+observation (a `CGEventTap` or an `NSEvent` global monitor), and both need
+**Accessibility permission**, whose prompt says the app will be able to control
+your computer.
+
+The detection itself is sound — left and right ⌘ are distinguishable via
+`NX_DEVICELCMDKEYMASK` / `NX_DEVICERCMDKEYMASK`. It is the permission, not the
+mechanism, that is the obstacle. **Not shipped**, and deliberately not shipped
+blind: it is unsafe objc2 code whose only meaningful test is granting
+Accessibility on a real Mac and pressing keys. If it lands it should be an
+opt-in the user goes looking for in Settings, never a first-launch prompt —
+which is the shape Raycast uses for the same feature.
 
 ### 19 — ⌘K on the IR stack · ship
 
@@ -382,9 +412,29 @@ fallback and the new-user default in place of `pemberley`. Note this is
 two-sided: the real default lives in `virtues-registry` (Rust), delivered via
 `/api/assistant-profile` — the TS `FALLBACK_THEME` is only flash-prevention.
 
-**Token collapse.** 125 unique tokens × 36 blocks. Audit usage and collapse —
-but *after* the theme count drops, so the audit covers 16 themes. Don't target
-Linear's 4; that's their number, not ours.
+**Token collapse — dropped 2026-07-28, on the numbers.** See finding 5. The
+real shape is 679 declarations / 80 tokens / 16 themes, with 145 redundant
+declarations smeared thinly across ~40 tokens rather than concentrated
+anywhere. The one family that *was* worth grouping — the twelve `--cat-*`
+category hues — is already collapsed to a `:root` light set plus one nine-theme
+dark override (`themes.css`, "CATEGORICAL PALETTE"). That block is the pattern;
+there is no second candidate big enough to repeat it for.
+
+What the audit *did* surface, and what shipped instead:
+
+- **`app.html`'s pre-paint fallback was Pemberley's `#FDFCF9`** while the
+  default theme is Caladan `#FFFFFF`. Only a first run reaches the fallback, so
+  every new box flashed cream before settling white — the exact flash the
+  bootstrap exists to prevent. Now tracks Caladan.
+- **`:root` is Pemberley, but the default is Caladan.** Two different jobs that
+  used to name one theme and no longer do. Documented in the `themes.css`
+  header rather than restructured; moving Pemberley out of `:root` would touch
+  all sixteen themes to fix a naming confusion, not a rendering one.
+- **Borghese's `--error: #FFFFFF` is not a bug** — it is deliberately
+  monochrome (`--primary`/`--success`/`--error` white, `--warning`/`--info`
+  `#CCCCCC`). Noted in the header so the next audit doesn't "fix" it.
+- The header comment still advertised **Gatsby** (retired) and omitted
+  **Netherfield**. Corrected.
 
 ---
 
@@ -429,17 +479,38 @@ New `api/updates.rs`:
 
 - `GET /api/system/update` → `{current, channel, available: {tag, notes}|null}`
 - `PUT /api/system/update/channel`
-- `POST /api/system/update/apply`
+- `POST /api/system/update/apply` — 202, not 200. The upgrade restarts the
+  process serving the request, so no handler can report its result.
 
-**Privilege — decided.** The server runs as `virtues`; upgrade needs root. A
-narrow sudoers grant for exactly `/usr/local/bin/virtues upgrade`, installed by
-the installer. There's precedent for both halves — `upgrade.rs:321` already
-removes a stale setup grant, so the install/cleanup pattern exists.
+**`systemd-run` is mandatory, not stylistic.** `upgrade` does
+`systemctl stop virtues` → flip → migrate → `systemctl start virtues`, and the
+server *is* `virtues.service`. A plain child process inherits the service
+cgroup, so stopping the unit kills the upgrade itself — midway, with the
+symlink possibly already flipped and migrations not yet run. It would reliably
+kill itself at its most dangerous moment. The transient unit gets its own
+cgroup and survives.
 
-Constraints on the grant, since this is standing root-adjacent surface on an
-appliance: the grant covers that one binary path and that one subcommand, takes
-no user-supplied arguments (channel comes from the state-root file, not the
-request), and is removed on uninstall.
+**Privilege — the premise was wrong.** This called for installing a narrow
+sudoers grant. The installer *already* writes
+`/etc/sudoers.d/virtues: virtues ALL=(ALL) NOPASSWD: ALL`
+([install.rs:672](../tools/virtues-installer/src/install.rs)) — unrestricted
+passwordless root for the service account, deliberately, because the auth-gated
+web terminal is an admin shell and `virtues` is a passwordless system account
+with nothing to authenticate against interactively.
+
+So apply needed **no installer change at all**: the capability was already
+there. And adding the narrow grant anyway would have been worse than useless —
+it would sit *alongside* the broad one rather than replacing it, and read as if
+the surface were narrower than it is.
+
+The constraint that does still hold, and is implemented: **no user-supplied
+argument reaches the command line.** The argv is fixed; the channel comes from
+the state-root file that `virtues upgrade` reads itself, never from the request.
+
+Worth stating plainly since it is now load-bearing: an RCE in the web server is
+an instant root compromise on the box. That was already true before this change
+— apply doesn't widen it — but narrowing the terminal's grant is real work that
+someone should own.
 
 ### Phase 3 — Settings → Box
 

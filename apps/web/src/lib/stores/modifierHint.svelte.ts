@@ -1,22 +1,31 @@
 /**
- * "Hold ⌘ to see what the number keys do."
+ * "Press ⌘ to see what the number keys do."
  *
- * Reveals the ⌘1/⌘2 pane labels while the accelerator is held down, so the
- * shortcut is discoverable without a permanent badge cluttering the toolbar.
+ * Reveals the ⌘1/⌘2 pane labels while the accelerator is down, so the shortcut
+ * is discoverable without a permanent badge cluttering the toolbar.
  *
- * Gated on a hold, not on keydown. ⌘ is the first half of ⌘S, ⌘K, ⌘N and every
- * other chord in the app, so firing immediately would flash the labels dozens
- * of times an hour at people who were never asking. 400ms is long enough that
- * only a deliberate hold reaches it.
+ * FIRES ON KEYDOWN, with no hold delay. A hint you have to wait for isn't a
+ * hint — by the time a 400ms gate opened, anyone reaching for ⌘1 had already
+ * pressed 1, so the reveal only ever appeared for people who were hesitating.
+ *
+ * The delay was there to stop the labels flashing during ordinary chords (⌘S,
+ * ⌘K, ⌘N all start with ⌘). Two things make that cheap enough to accept:
+ *
+ *  · the moment a non-modifier key joins, `#onKeydown` cancels — so a chord
+ *    shows the label for only the ~80ms between the two presses;
+ *  · the flip is a transition, not a jump, so an aborted chord reads as a
+ *    label that started to move and settled back, rather than a blink.
+ *
+ * The guard that matters is not duration but PURITY: only a bare accelerator
+ * arms the hint. ⌘⇧4 holds ⌘ for as long as it takes to drag a screenshot
+ * marquee, which is why the old badge kept turning up in screenshots of this
+ * very app.
  */
 
 import { isAppleKeyboard } from '$lib/utils/platform';
 
-const HOLD_MS = 400;
-
 class ModifierHintStore {
 	visible = $state(false);
-	#timer: ReturnType<typeof setTimeout> | null = null;
 	#listening = false;
 
 	start(): () => void {
@@ -48,11 +57,21 @@ class ModifierHintStore {
 			this.#cancel();
 			return;
 		}
-		if (this.#timer || this.visible) return;
-		this.#timer = setTimeout(() => {
-			this.visible = true;
-			this.#timer = null;
-		}, HOLD_MS);
+		// ...and only a BARE one. Duration alone can't tell "thinking about
+		// panes" apart from "using the OS": ⌘⇧4 holds ⌘ for as long as it takes
+		// to drag a screenshot marquee, and ⌘⌥/⌘⌃ chords hold it too. Every one
+		// of those was firing the hint, which is why it kept appearing in
+		// screenshots of the app — the act of capturing one triggered it.
+		if (e.shiftKey || e.altKey || (isAppleKeyboard ? e.ctrlKey : e.metaKey)) {
+			this.#cancel();
+			return;
+		}
+		// Synchronously, in the keydown handler — not on a timer, not on a
+		// microtask. Anything deferred costs a frame the user can feel, and the
+		// whole point is that the labels are already there when you look.
+		// keydown repeats while a modifier is held; the guard makes that a no-op.
+		if (this.visible) return;
+		this.visible = true;
 	};
 
 	#onKeyup = (e: KeyboardEvent) => {
@@ -60,10 +79,6 @@ class ModifierHintStore {
 	};
 
 	#cancel = () => {
-		if (this.#timer) {
-			clearTimeout(this.#timer);
-			this.#timer = null;
-		}
 		this.visible = false;
 	};
 }

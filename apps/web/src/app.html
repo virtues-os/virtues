@@ -7,14 +7,21 @@
 		<!-- Pre-paint theme bootstrap. Runs before the stylesheet lands, so a
 		     cold start doesn't flash white on its way to a dark theme — most
 		     visible in the Tauri webview, where there's no browser chrome to
-		     hide behind. Both values are written by applyTheme(); the fallback
-		     matches :root --background in themes.css. -->
+		     hide behind. Both values are written by applyTheme().
+
+		     The fallback tracks the DEFAULT theme (Caladan, #FFFFFF), not
+		     :root — :root is Pemberley's cream #FDFCF9, and it stopped being
+		     the default when Caladan took over. Only a first run reaches this
+		     line (afterwards localStorage has the real value), so getting it
+		     wrong meant every new box flashed cream on its very first paint
+		     and then settled to white. Keep this in step with
+		     virtues-registry DEFAULT_THEME. -->
 		<script>
 			(function () {
 				try {
 					var t = localStorage.getItem("virtues-theme");
 					if (t) document.documentElement.setAttribute("data-theme", t);
-					var bg = localStorage.getItem("virtues-theme-bg") || "#FDFCF9";
+					var bg = localStorage.getItem("virtues-theme-bg") || "#FFFFFF";
 					document.documentElement.style.backgroundColor = bg;
 				} catch (e) {
 					/* private mode / storage disabled — the stylesheet still wins */

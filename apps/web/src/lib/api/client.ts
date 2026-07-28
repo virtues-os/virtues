@@ -260,69 +260,33 @@ export async function setUpdateChannel(channel: 'stable' | 'prerelease'): Promis
 	if (!res.ok) throw new Error(`Failed to set channel: ${res.statusText}`);
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// App history (sidebar "Recents")
-// ─────────────────────────────────────────────────────────────────────────────
-
-export interface HistoryEntry {
-	url: string;
-	label: string | null;
-	icon: string | null;
-	kind: string | null;
-	visited_at: string;
-	visit_count: number;
-}
-
-export interface HistoryQuery {
-	kinds?: string[];
-	since?: string;
-	limit?: number;
+export interface ApplyUpdateResponse {
+	unit: string;
+	detail: string;
 }
 
 /**
- * Record a visit. Deliberately swallows failures: history is a convenience, and
- * nothing about navigating should be able to fail because of it.
+ * Start an upgrade. Resolves as soon as the box has *accepted* the job (202),
+ * not when it finishes — the upgrade restarts the box, so there is no response
+ * to wait for. Watch `boxReachable` for the box going away and coming back.
+ *
+ * The error text is the box's own, because "update failed" with nothing behind
+ * it is what sends someone to SSH in to find out why.
  */
-export async function recordVisit(entry: {
-	url: string;
-	label?: string | null;
-	icon?: string | null;
-	kind?: string | null;
-}): Promise<void> {
-	try {
-		await fetch(`${API_BASE}/history`, {
-			method: 'POST',
-			headers: { 'Content-Type': 'application/json' },
-			body: JSON.stringify(entry),
-			keepalive: true,
-		});
-	} catch {
-		/* history is best-effort by design */
+export async function applyUpdate(): Promise<ApplyUpdateResponse> {
+	const res = await fetch(`${API_BASE}/system/update/apply`, { method: 'POST' });
+	if (!res.ok) {
+		let detail = res.statusText;
+		try {
+			const body = await res.json();
+			if (body?.error) detail = body.error;
+			else if (body?.message) detail = body.message;
+		} catch {
+			/* non-JSON body — the status text is all we have */
+		}
+		throw new Error(detail);
 	}
-}
-
-export async function listHistory(query: HistoryQuery = {}): Promise<HistoryEntry[]> {
-	const res = await fetch(`${API_BASE}/history/list`, {
-		method: 'POST',
-		headers: { 'Content-Type': 'application/json' },
-		body: JSON.stringify(query),
-	});
-	if (!res.ok) throw new Error(`Failed to list history: ${res.statusText}`);
 	return res.json();
-}
-
-export async function clearHistory(): Promise<void> {
-	const res = await fetch(`${API_BASE}/history`, { method: 'DELETE' });
-	if (!res.ok) throw new Error(`Failed to clear history: ${res.statusText}`);
-}
-
-export async function forgetHistoryUrl(url: string): Promise<void> {
-	const res = await fetch(`${API_BASE}/history/forget`, {
-		method: 'POST',
-		headers: { 'Content-Type': 'application/json' },
-		body: JSON.stringify({ url }),
-	});
-	if (!res.ok) throw new Error(`Failed to forget: ${res.statusText}`);
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -336,6 +300,8 @@ export interface Pin {
 	icon: string | null;
 	sort_order: number;
 	pinned_at: string;
+	/** A `--cat-*` token key ('orange', 'emerald'…), never a hex. See CAT_COLORS. */
+	color: string | null;
 }
 
 export async function listPins(): Promise<Pin[]> {
@@ -348,6 +314,7 @@ export async function createPin(req: {
 	url: string;
 	label?: string | null;
 	icon?: string | null;
+	color?: string | null;
 }): Promise<Pin> {
 	const res = await fetch(`${API_BASE}/pins`, {
 		method: 'POST',
@@ -360,7 +327,7 @@ export async function createPin(req: {
 
 export async function updatePin(
 	id: string,
-	req: { label?: string | null; icon?: string | null; sort_order?: number }
+	req: { label?: string | null; icon?: string | null; sort_order?: number; color?: string | null }
 ): Promise<Pin> {
 	const res = await fetch(`${API_BASE}/pins/${encodeURIComponent(id)}`, {
 		method: 'PATCH',

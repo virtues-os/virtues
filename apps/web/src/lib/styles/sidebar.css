@@ -21,6 +21,9 @@
 	background: transparent;
 	color: var(--sidebar-interactive-color);
 	font-size: var(--sidebar-interactive-font-size);
+	/* Destinations carry a touch more weight than their children. This is the
+	   first of the four registers — see --sidebar-child-* in themes.css. */
+	font-weight: 500;
 	border: none;
 	cursor: pointer;
 	width: 100%;
@@ -30,9 +33,21 @@
 		color var(--sidebar-transition-duration) var(--sidebar-transition-easing);
 }
 
-/* Indent levels for nested items */
+/* Indent levels for nested items.
+   A child is smaller, lighter, shorter and muted — four differences, so the
+   hierarchy survives even when a child's label is longer than its parent's. */
 .sidebar-interactive--indent-1 {
 	padding-left: calc(var(--sidebar-padding-left-base) + var(--sidebar-indent-width));
+	height: var(--sidebar-child-height);
+	font-size: var(--sidebar-child-font-size);
+	font-weight: 400;
+	color: var(--color-foreground-muted);
+}
+
+.sidebar-interactive--indent-1 .sidebar-icon {
+	width: var(--sidebar-interactive-icon-size-small);
+	height: var(--sidebar-interactive-icon-size-small);
+	opacity: var(--sidebar-child-icon-opacity);
 }
 
 .sidebar-interactive--indent-2 {
@@ -68,12 +83,18 @@
 	width: var(--sidebar-interactive-icon-size);
 	height: var(--sidebar-interactive-icon-size);
 	color: var(--color-foreground-muted);
-	transition: color var(--sidebar-transition-duration) var(--sidebar-transition-easing);
+	opacity: var(--sidebar-icon-opacity);
+	transition:
+		color var(--sidebar-transition-duration) var(--sidebar-transition-easing),
+		opacity var(--sidebar-transition-duration) var(--sidebar-transition-easing);
 }
 
+/* Full strength where you're pointing and where you are. Everywhere else the
+   icon is a hint, not a headline. */
 .sidebar-interactive:hover .sidebar-icon,
 .sidebar-interactive.active .sidebar-icon {
 	color: var(--color-foreground);
+	opacity: 1;
 }
 
 /* Sub-folder styling - smaller text and icons for nested items */

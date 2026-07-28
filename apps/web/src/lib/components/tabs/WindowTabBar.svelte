@@ -234,28 +234,6 @@
 			});
 		}
 
-		// Pin / Unpin to sidebar (any tab with a route)
-		if (tab.route) {
-			const route = tab.route;
-			const existing = pinsStore.getByUrl(route);
-			items.push({
-				id: "pin-sidebar",
-				label: existing ? "Unpin from Sidebar" : "Pin to Sidebar",
-				icon: existing ? "ri:pushpin-fill" : "ri:pushpin-line",
-				dividerBefore: true,
-				action: async () => {
-					try {
-						if (existing) {
-							await pinsStore.remove(existing.id);
-						} else {
-							await pinsStore.add(route, tab.label, tab.icon ?? null);
-						}
-					} catch (err) {
-						console.error("[WindowTabBar] Failed to toggle pin:", err);
-					}
-				},
-			});
-		}
 
 		// Divider + Close actions
 		items.push({
@@ -399,13 +377,6 @@
 	aria-label="Tab bar"
 	tabindex="0"
 >
-	{#if showPaneHint}
-		<!-- Flips up into place so the change registers as *something happened
-		     here* rather than as a badge that was always there. aria-hidden: it
-		     restates a shortcut, and announcing it on every ⌘ hold would be
-		     noise to a screen reader. -->
-		<span class="pane-hint" aria-hidden="true">⌘{paneNumber}</span>
-	{/if}
 	{#if showSidebarToggle}
 		<button
 			class="sidebar-toggle"
@@ -493,7 +464,20 @@
 							autofocus
 						/>
 					{:else}
-						<span class="tab-label">{tab.label}</span>
+						<!-- On a ⌘ hold the ACTIVE tab's own label becomes its pane
+						     number: the title slides up and out, ⌘1 slides up and
+						     in. Nothing new enters the screen, which is the point —
+						     the old version floated a saturated blue chip into the
+						     toolbar, the loudest object in an otherwise quiet
+						     window, and it announced the shortcut instead of
+						     teaching which label it belongs to.
+						     Only the active tab flips: every tab in a pane shares
+						     the pane's number, so flipping all of them would say
+						     the same thing five times. -->
+						<span class="tab-label" class:flipping={showPaneHint && tab.id === activeTabId}>
+							<span class="tab-label-text">{tab.label}</span>
+							<span class="tab-label-hint" aria-hidden="true">⌘{paneNumber}</span>
+						</span>
 					{/if}
 				{/if}
 				{#if !tab.pinned && tab.id !== renamingTabId}
@@ -583,10 +567,16 @@
 		display: flex;
 		align-items: stretch;
 		gap: 4px;
-		padding: 6px 8px 0;
-		min-height: 40px;
+		padding: 0 8px;
+		min-height: var(--chrome-row-h);
+		align-items: center;
 		border-bottom: 1px solid var(--color-border);
-		background: var(--color-background);
+		/* Page colour, not a recessed strip. The browser model needs the strip
+		   to be darker so the active tab can read as a hole cut in it — but a
+		   recessed band next to a large recessed sidebar made the whole left
+		   half of the window a slab. Pills carry the state instead, so the strip
+		   has no reason to be a different colour from what it sits on. */
+		background: var(--color-surface);
 		flex-shrink: 0;
 		position: relative;
 		z-index: var(--z-overlay); /* Above global drag overlays */
@@ -598,7 +588,8 @@
 		border-top-right-radius: var(--card-radius, 6px);
 	}
 
-	/* Active pane in split mode gets elevated background */
+	/* The focused pane's strip lifts a touch, so "which pane am I in" is legible
+	   from the chrome and not only from the tab. */
 	.tab-bar.active-pane {
 		background: var(--color-surface-elevated);
 	}
@@ -606,33 +597,32 @@
 	.tabs-scroll {
 		display: flex;
 		align-items: center;
-		gap: 4px;
+		gap: 2px;
 		overflow-x: auto;
 		flex: 1;
 		scrollbar-width: none;
-		height: 28px;
+		height: var(--chrome-tab-h);
 	}
 
 	.tabs-scroll::-webkit-scrollbar {
 		display: none;
 	}
 
-	/* Full-height, not a floating pill. A tab that spans the bar reads as a
-	   container for what's below it; a pill reads as a chip that happens to sit
-	   nearby. Squaring the bottom corners is what makes the active tab join the
-	   pane rather than hover over it. */
+	/* A pill. Inset, rounded on all four corners, centred in the strip with real
+	   air above and below. Both alternatives were tried and rejected: the
+	   full-height container needed a recessed strip it never had, and the
+	   bottom-anchored browser tab needed one badly enough to turn the sidebar
+	   into a slab. A pill states what it is and costs nothing around it. */
 	.tab {
 		display: flex;
 		align-items: center;
 		gap: 6px;
-		padding: 0 8px;
-		align-self: stretch;
-		/* Positioning context for the swoop flares. */
+		padding: 0 10px;
+		align-self: center;
 		position: relative;
-		height: auto;
-		min-height: 28px;
+		height: 28px;
 		border: none;
-		border-radius: 6px 6px 0 0;
+		border-radius: 6px;
 		background: transparent;
 		color: var(--color-foreground-muted);
 		font-size: 12px;
@@ -652,69 +642,20 @@
 		color: var(--color-foreground);
 	}
 
-	/* The active tab's fill goes through a custom property so the swoop flares
-	   below can inherit it. Binding both to one token is what stops a theme (or
-	   the active-pane modifier) changing the tab without changing the curve that
-	   joins it to the pane — the failure mode that makes the swoop look broken
-	   rather than absent. */
-	/* The active tab in an UNFOCUSED pane sits slightly proud of its pane —
-	   raised, not joined. The swoop still draws, but against a surface it
-	   doesn't match, which is the correct reading: that pane isn't the one
-	   you're working in. */
+	/* Fill from the interaction ramp, not a surface token. A surface token is
+	   what made the active tab #FFFFFF on #FFFFFF; the ramp is defined against
+	   the text colour, so it is legible in all sixteen themes. */
 	.tab.active {
-		--tab-fill: var(--color-surface-elevated);
-		background: var(--tab-fill);
+		background: var(--tab-active-bg-focused);
 		color: var(--color-foreground);
+		font-weight: 500;
 	}
 
-	/* The focused pane's active tab takes the pane's own colour, so tab and pane
-	   become one surface and the swoop closes.
-	   
-	   This used to be `--color-border` — #2a2a2a against a #181818 pane in the
-	   default dark theme. The curve drew correctly and then joined the tab to a
-	   colour the pane never had, which read as a gap in the swoop. Matching the
-	   pane is the whole premise of the effect, so the focus distinction moves to
-	   the tab that is NOT joined rather than to a third colour. */
-	.tab.active-in-active-pane {
-		--tab-fill: var(--color-surface);
-		background: var(--tab-fill);
-	}
-
-	/* ── Swoop ──────────────────────────────────────────────────────────────
-	   Concave corners flaring out of the active tab's base, so the tab grows
-	   out of the pane instead of resting on it. Each flare is a small box
-	   filled with the tab colour and masked by a radial gradient that removes
-	   the outer quarter-disc, leaving the curve. */
-	.tab.active::before,
-	.tab.active::after {
-		content: "";
-		position: absolute;
-		bottom: 0;
-		width: 8px;
-		height: 8px;
-		background: var(--tab-fill);
-		pointer-events: none;
-	}
-
-	.tab.active::before {
-		left: -8px;
-		-webkit-mask-image: radial-gradient(circle 8px at 0 0, transparent 8px, #000 8.5px);
-		mask-image: radial-gradient(circle 8px at 0 0, transparent 8px, #000 8.5px);
-	}
-
-	.tab.active::after {
-		right: -8px;
-		-webkit-mask-image: radial-gradient(circle 8px at 100% 0, transparent 8px, #000 8.5px);
-		mask-image: radial-gradient(circle 8px at 100% 0, transparent 8px, #000 8.5px);
-	}
-
-	/* An edge tab has no room for its outer flare — it would overhang the pane.
-	   This is the split-pane case that kept the swoop a spike: a pane can be
-	   dragged narrow, and the flares cost a fixed 16px however little width is
-	   left. `.tabs-scroll` is the flex row the tabs live in. */
-	.tab.active:first-child::before,
-	.tab.active:last-child::after {
-		display: none;
+	/* In split view two tabs are "active" at once and only one takes your
+	   typing. The unfocused pane's sits at the lighter step. */
+	.tab.active:not(.active-in-active-pane) {
+		background: var(--tab-active-bg);
+		color: var(--color-foreground-muted);
 	}
 
 	/* Dragging state - svelte-dnd-action applies aria-grabbed */
@@ -722,22 +663,18 @@
 		opacity: 0.5;
 	}
 
-	/* Pinned tabs are compact (icon only) with subtle tint */
+	/* A compacted tab — the "Compact / Expand" context action, which shrinks a
+	   tab to its icon. Nothing to do with sidebar pins despite the class name.
+
+	   It used to be filled with --color-primary at 15% and its icon set to the
+	   accent outright, which made a merely-narrow tab the most saturated object
+	   in the window — a theme accent asserting meaning where the only fact is
+	   "this tab is short". Narrow is legible from being narrow. */
 	.tab.pinned {
 		min-width: auto;
 		max-width: none;
-		padding: 5px 8px;
+		padding: 0 8px;
 		gap: 0;
-		background: color-mix(in srgb, var(--color-primary) 15%, transparent);
-	}
-
-	.tab.pinned:hover {
-		background: color-mix(in srgb, var(--color-primary) 25%, transparent);
-	}
-
-	.tab.pinned :global(.tab-icon) {
-		color: var(--color-primary);
-		opacity: 1;
 	}
 
 	:global(.tab-icon) {
@@ -750,11 +687,55 @@
 		opacity: 1;
 	}
 
+	/* An odometer: two lines stacked in a one-line window, shifted by 100% to
+	   swap which one shows. The hint is neutral text, not an accent chip —
+	   nothing in this shell should be more saturated than the work. */
 	.tab-label {
+		position: relative;
 		overflow: hidden;
 		text-overflow: ellipsis;
 		flex: 1;
 		text-align: left;
+		height: 1.35em;
+		line-height: 1.35em;
+	}
+
+	.tab-label-text,
+	.tab-label-hint {
+		display: block;
+		overflow: hidden;
+		text-overflow: ellipsis;
+		white-space: nowrap;
+		transition: transform 140ms cubic-bezier(0.2, 0, 0, 1);
+	}
+
+	/* Same face and size as the label it replaces. It was monospace, which is
+	   decoration standing in for meaning — the shortcut isn't code, and a
+	   different typeface for one word makes the swap read as a glitch rather
+	   than as the same label saying something else. */
+	.tab-label-hint {
+		position: absolute;
+		inset: 0;
+		transform: translateY(100%);
+		font-weight: 600;
+		color: var(--color-foreground);
+	}
+
+	.tab-label.flipping .tab-label-text {
+		transform: translateY(-100%);
+	}
+
+	.tab-label.flipping .tab-label-hint {
+		transform: translateY(0);
+	}
+
+	/* Reduced motion still swaps — the information matters — it just doesn't
+	   travel to get there. */
+	@media (prefers-reduced-motion: reduce) {
+		.tab-label-text,
+		.tab-label-hint {
+			transition: none;
+		}
 	}
 
 	.tab-rename-input {
@@ -783,40 +764,7 @@
 		flex-shrink: 0;
 	}
 
-	@keyframes paneHintIn {
-		from {
-			opacity: 0;
-			transform: translateY(6px) rotateX(-40deg);
-		}
-		to {
-			opacity: 1;
-			transform: translateY(0) rotateX(0);
-		}
-	}
 
-	.pane-hint {
-		display: inline-flex;
-		align-items: center;
-		align-self: center;
-		padding: 2px 6px;
-		margin-right: 2px;
-		border-radius: 4px;
-		background: var(--color-primary);
-		color: var(--color-surface);
-		font-family: var(--font-sans);
-		font-size: 10px;
-		font-weight: 600;
-		line-height: 1.4;
-		flex-shrink: 0;
-		transform-origin: bottom center;
-		animation: paneHintIn 180ms cubic-bezier(0.2, 0, 0, 1);
-	}
-
-	@media (prefers-reduced-motion: reduce) {
-		.pane-hint {
-			animation: none;
-		}
-	}
 
 	.pane-actions {
 		display: flex;
@@ -944,8 +892,8 @@
 		display: flex;
 		align-items: center;
 		justify-content: center;
-		/* The bar stretches its children so tabs can be full-height; the window
-		   controls opt back out and centre themselves. */
+		/* The bar bottom-aligns its children so tabs meet the pane; the window
+		   controls opt back out and centre themselves in the strip. */
 		align-self: center;
 		width: 24px;
 		height: 24px;

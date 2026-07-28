@@ -1,77 +1,67 @@
 <script lang="ts">
 	import Icon from "$lib/components/Icon.svelte";
+	import { isAppleKeyboard } from "$lib/utils/platform";
 
 	interface Props {
 		collapsed?: boolean;
 		animationDelay?: number;
 		/** Opens the search / command modal. */
 		onSearch?: () => void;
-		/** Starts a new chat. */
-		onNewChat?: () => void;
-		/** Goes Home — the ∴ mark's job. */
-		onHome?: () => void;
 	}
 
-	let {
-		collapsed = false,
-		animationDelay = 0,
-		onSearch,
-		onNewChat,
-		onHome,
-	}: Props = $props();
+	let { collapsed = false, animationDelay = 0, onSearch }: Props = $props();
 
-	// Three affordances, not one. The masthead used to be a single full-width
-	// button — ∴ on the left, a ⌘K chip on the right — which read as a label
-	// rather than a control: it was the only row in the sidebar carrying a
-	// keyboard hint, so it looked like chrome. Now the mark goes Home (and Home
-	// leaves the nav list below, where it was redundant), and search and new-chat
-	// get their own targets on the right. The ⌘K hint moves into the tooltip,
-	// where hints belong.
+	// The mark, then the search. Identity above utility.
+	//
+	// Two wrong versions preceded this one, and they were wrong the same way.
+	// First the ∴ was a button that went Home — a wordmark behaving like a
+	// control, which is a pattern used nowhere else in software, so nobody read
+	// it as the way home. Then it was replaced with a bordered, input-shaped
+	// search field, which was worse: a border is a hard edge and nothing else
+	// in the sidebar has one, so a utility you touch twenty times a day became
+	// the highest-contrast object in the panel, outranking the user's entire
+	// life beneath it.
+	//
+	// Both mistakes were the same mistake: the top of the sidebar is the most
+	// valuable space in the app, and putting a *control* there spends it.
+	//
+	// So: one row. The mark on the left, inert — no hover, no cursor, no tab
+	// stop — and search as a small icon button flexed to the right of it. The
+	// mark is the one place the serif appears in the chrome, which concentrates
+	// the typographic identity in a single deliberate spot instead of spreading
+	// it thin.
+	//
+	// `virtues` is set at the SAME size as the nav labels below. A wordmark that
+	// is bigger than everything around it is a logo demanding attention, and
+	// this one has no job to do beyond saying whose desk this is. The serif and
+	// the ∴ carry the identity; scale would just make it loud.
+	const hint = $derived(isAppleKeyboard ? "⌘K" : "Ctrl K");
 </script>
 
 <div class="masthead" class:collapsed>
 	<div
 		class="masthead-row animate-row"
-		style="animation-delay: {animationDelay}ms; --stagger-delay: {animationDelay}ms"
+		style="animation-delay: {animationDelay}ms"
 	>
+		<!-- Inert. aria-hidden because "∴ virtues" read aloud between the window
+		     title and the first destination is noise, not information. -->
+		<div class="mark" aria-hidden="true">
+			<span class="mark-glyph">∴</span><span class="mark-word">virtues</span>
+		</div>
+
 		<button
 			type="button"
-			class="mark-btn"
-			onclick={() => onHome?.()}
-			title="Home"
-			aria-label="Home"
+			class="search-btn"
+			onclick={() => onSearch?.()}
+			aria-label="Search"
+			title="Search ({hint})"
 		>
-			<span class="mark">∴</span>
+			<Icon icon="ri:search-line" width="16" />
 		</button>
-
-		<div class="masthead-actions">
-			<button
-				type="button"
-				class="masthead-action"
-				onclick={() => onSearch?.()}
-				title="Ask or search (⌘K)"
-				aria-label="Ask or search"
-			>
-				<Icon icon="ri:search-line" width="15" />
-			</button>
-			<button
-				type="button"
-				class="masthead-action"
-				onclick={() => onNewChat?.()}
-				title="New chat (⌘N)"
-				aria-label="New chat"
-			>
-				<Icon icon="ri:add-line" width="16" />
-			</button>
-		</div>
 	</div>
 </div>
 
 <style>
-	:root {
-		--ease-premium: cubic-bezier(0.2, 0, 0, 1);
-	}
-
 	@keyframes fadeSlideIn {
 		from {
 			opacity: 0;
@@ -83,10 +73,43 @@
 		}
 	}
 
-	/* Right inset 0 to match .workspace-nav (12px 0 12px 8px) so the row's
-	   hover pill spans the same width as the nav rows below. */
+	/* One chrome row, shared height with the pane toolbar so the two sides of
+	   the seam sit on one centreline. */
 	.masthead {
-		padding: 14px 0 8px 8px;
+		padding: 0 8px;
+		margin-top: var(--pane-inset);
+		box-sizing: border-box;
+	}
+
+	.masthead-row {
+		display: flex;
+		align-items: center;
+		justify-content: space-between;
+		gap: 8px;
+		height: var(--chrome-row-h);
+		padding-left: var(--sidebar-padding-left-base);
+	}
+
+	.mark {
+		display: flex;
+		align-items: baseline;
+		gap: 6px;
+		user-select: none;
+		color: var(--color-foreground);
+	}
+
+	.mark-glyph {
+		font-family: var(--font-serif, serif);
+		font-size: 15px;
+		line-height: 1;
+	}
+
+	/* Same size as the nav labels. See the note in the script block. */
+	.mark-word {
+		font-family: var(--font-serif, serif);
+		font-size: var(--sidebar-interactive-font-size);
+		line-height: 1;
+		letter-spacing: 0.01em;
 	}
 
 	.masthead.collapsed {
@@ -102,75 +125,39 @@
 		animation: fadeSlideIn 200ms var(--ease-premium) backwards;
 	}
 
-	/* Height matches the pane toolbar's row so the sidebar's top edge and the
-	   toolbar's share a baseline across the seam. */
-	.masthead-row {
-		display: flex;
-		align-items: center;
-		justify-content: space-between;
-		width: 100%;
-		height: 30px;
-		box-sizing: border-box;
-		padding: 0 6px 0 calc(var(--sidebar-padding-left-base) - 4px);
-	}
-
-	/* The mark keeps the nav rows' icon column, so ∴ sits directly above the
-	   icons below it rather than floating in its own margin. */
-	.mark-btn {
+	.search-btn {
 		display: flex;
 		align-items: center;
 		justify-content: center;
 		width: 24px;
 		height: 24px;
-		padding: 0;
+		flex-shrink: 0;
 		border: none;
-		border-radius: 6px;
-		background: none;
+		border-radius: var(--sidebar-interactive-radius);
+		background: transparent;
+		color: var(--color-foreground-muted);
+		opacity: var(--sidebar-icon-opacity);
 		cursor: pointer;
-		transition: background 0.15s ease;
+		transition: background 150ms ease, opacity 150ms ease;
 	}
 
-	.mark-btn:hover {
-		background: color-mix(in srgb, var(--color-foreground) 8%, transparent);
+	.search-btn:hover {
+		background: var(--sidebar-hover-bg);
+		opacity: 1;
 	}
 
-	.mark {
-		font-family: var(--font-serif, serif);
-		font-size: 18px;
-		line-height: 1;
-		color: var(--color-foreground);
-		letter-spacing: 0.02em;
+	.search-btn:focus-visible {
+		opacity: 1;
+		outline: 2px solid var(--color-border-focus);
+		outline-offset: 1px;
 	}
 
-	.masthead-actions {
-		display: flex;
-		align-items: center;
-		gap: 2px;
-	}
-
-	.masthead-action {
-		display: flex;
-		align-items: center;
-		justify-content: center;
-		width: 24px;
-		height: 24px;
-		padding: 0;
-		border: none;
-		border-radius: 6px;
-		background: none;
-		cursor: pointer;
-		color: var(--color-foreground-subtle);
-		transition: background 0.15s ease, color 0.15s ease;
-	}
-
-	.masthead-action:hover {
-		background: color-mix(in srgb, var(--color-foreground) 8%, transparent);
-		color: var(--color-foreground);
-	}
-
-	.mark-btn:focus-visible,
-	.masthead-action:focus-visible {
-		outline: 2px solid var(--color-primary);
-		outline-offset: -2px;
+	@media (prefers-reduced-motion: reduce) {
+		.animate-row {
+			animation: none;
+		}
+		.search-btn {
+			transition: none;
+		}
 	}
 </style>

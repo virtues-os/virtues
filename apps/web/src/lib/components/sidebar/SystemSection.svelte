@@ -2,7 +2,7 @@
 	import Icon from "$lib/components/Icon.svelte";
 	import { windowShellStore } from "$lib/stores/window-shell.svelte";
 	import { pagesStore } from "$lib/stores/pages.svelte";
-	import { listPages, listChats, type ViewEntity } from "$lib/api/client";
+	import { listPages, listChats, listNotebooks, createNotebook, type ViewEntity } from "$lib/api/client";
 	import { chatSessions } from "$lib/stores/chatSessions.svelte";
 	import type { SystemSection } from "$lib/sidebar/sections";
 	import SidebarNavItem from "./SidebarNavItem.svelte";
@@ -23,7 +23,7 @@
 	}: Props = $props();
 
 	// Local expand state (folder/view expansion no longer lives in the window shell store)
-	let isExpanded = $state(false);
+	let isExpanded = $state(section.defaultExpanded ?? false);
 
 	// Smart section data
 	let smartItems = $state<ViewEntity[]>([]);
@@ -125,6 +125,19 @@
 					icon: p.icon || 'ri:file-text-line',
 					updated_at: p.updated_at,
 				}));
+			} else if (section.namespace === 'notebook') {
+				// Uncapped and in the user's own `sort_order`, not by recency:
+				// notebooks are a curated shelf, and reshuffling a shelf every
+				// time you open one is how a stable list stops being a place.
+				const data = await listNotebooks();
+				const all = data.notebooks || [];
+				entities = (section.limit ? all.slice(0, section.limit) : all).map((n) => ({
+					id: `/notebooks/${n.id}`,
+					name: n.name,
+					namespace: 'notebook',
+					icon: n.icon || 'ri:booklet-line',
+					updated_at: n.updated_at,
+				}));
 			}
 
 			smartItems = entities;
@@ -140,17 +153,49 @@
 		isExpanded = !isExpanded;
 	}
 
+	/**
+	 * The row navigates. The chevron expands. Two hit targets, not one.
+	 *
+	 * This row used to toggle expansion, which meant "Notebooks" could not take
+	 * you to Notebooks — the only way to the index was the `···` overflow. That
+	 * is the classic failure of this pattern: the label of a destination has to
+	 * go to the destination, or the sidebar stops being navigation and becomes
+	 * a set of drawers.
+	 */
 	function handleClick(e: MouseEvent) {
 		e.preventDefault();
 		e.stopPropagation();
-		toggleExpanded();
+		if (section.href) {
+			windowShellStore.openTabFromRoute(section.href, {
+				label: section.name,
+				focusExisting: true,
+			});
+		} else {
+			toggleExpanded();
+		}
 	}
 
 	function handleKeydown(e: KeyboardEvent) {
 		if (e.key === "Enter" || e.key === " ") {
 			e.preventDefault();
+			handleClick(e as unknown as MouseEvent);
+		}
+		// The chevron's job, reachable without leaving the row: the arrow keys
+		// are what people already press to open a tree node.
+		if (e.key === "ArrowRight" && !isExpanded) {
+			e.preventDefault();
 			toggleExpanded();
 		}
+		if (e.key === "ArrowLeft" && isExpanded) {
+			e.preventDefault();
+			toggleExpanded();
+		}
+	}
+
+	function handleToggleClick(e: MouseEvent) {
+		e.preventDefault();
+		e.stopPropagation();
+		toggleExpanded();
 	}
 
 	function handleQuickAdd(e: MouseEvent) {
@@ -158,7 +203,15 @@
 		e.stopPropagation();
 		if (section.quickAdd === 'chat') handleNewChat();
 		else if (section.quickAdd === 'page') handleNewPage();
+		else if (section.quickAdd === 'notebook') handleNewNotebook();
 	}
+
+	/** Label for the `+`, in the app's own vocabulary. */
+	const QUICK_ADD_LABEL: Record<string, string> = {
+		chat: 'New chat',
+		page: 'New page',
+		notebook: 'New notebook',
+	};
 
 	function handleNewChat() {
 		windowShellStore.openTabFromRoute("/", {
@@ -178,6 +231,19 @@
 			});
 		} catch (e) {
 			console.error("[SystemSection] Failed to create page:", e);
+		}
+	}
+
+	async function handleNewNotebook() {
+		try {
+			const notebook = await createNotebook({ name: 'Untitled notebook' });
+			windowShellStore.openTabFromRoute(`/notebooks/${notebook.id}`, {
+				label: notebook.name,
+				forceNew: true,
+				preferEmptyPane: true,
+			});
+		} catch (e) {
+			console.error("[SystemSection] Failed to create notebook:", e);
 		}
 	}
 
@@ -205,7 +271,7 @@
 				{accentColor}
 				isSystemItem={true}
 				onQuickAdd={section.quickAdd ? handleQuickAdd : undefined}
-				quickAddTitle={section.quickAdd === 'chat' ? 'New Chat' : section.quickAdd === 'page' ? 'New Page' : undefined}
+				quickAddTitle={section.quickAdd ? QUICK_ADD_LABEL[section.quickAdd] : undefined}
 			/>
 		</div>
 	{:else}
@@ -217,7 +283,15 @@
 			onclick={handleClick}
 			onkeydown={handleKeydown}
 		>
-			<span class="folder-toggle" class:expanded={isExpanded}>
+			<button
+				type="button"
+				class="folder-toggle"
+				class:expanded={isExpanded}
+				onclick={handleToggleClick}
+				aria-expanded={isExpanded}
+				aria-label={isExpanded ? `Collapse ${section.name}` : `Expand ${section.name}`}
+				title={isExpanded ? "Collapse" : "Expand"}
+			>
 				<span class="folder-toggle-icon">
 					<Icon icon={section.icon} width="16" class="sidebar-icon" />
 				</span>
@@ -236,12 +310,17 @@
 						stroke-linejoin="round"
 					/>
 				</svg>
-			</span>
+			</button>
 
 			<span class="sidebar-label">{section.name}</span>
 
 			<span class="sidebar-item-actions">
-				{#if section.moreRoute}
+				<!-- The `···` only appears when the row itself CANNOT take you to
+				     the index. Once the row navigates, an overflow button
+				     pointing at the same route is a control whose entire function
+				     is to send you where you already are — which is exactly how
+				     it read: as a button that does nothing. -->
+				{#if section.moreRoute && !section.href}
 					<button class="sidebar-item-action" title="View All" onclick={handleMoreClick}>
 						<svg
 							width="14"
@@ -258,7 +337,7 @@
 				{#if section.quickAdd}
 					<button
 						class="sidebar-item-action"
-						title="New {section.quickAdd === 'chat' ? 'Chat' : 'Page'}"
+						title={QUICK_ADD_LABEL[section.quickAdd]}
 						onclick={handleQuickAdd}
 					>
 						<svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor">
@@ -285,6 +364,7 @@
 								}}
 								{collapsed}
 								indent={1}
+								showIcon={false}
 								{accentColor}
 								isSystemItem={true}
 							/>
@@ -306,6 +386,7 @@
 									}}
 									{collapsed}
 									indent={1}
+								showIcon={false}
 									{accentColor}
 									isSystemItem={true}
 								/>
@@ -349,19 +430,50 @@
 	}
 
 	/* ------- Icon ↔ Chevron slide toggle (matches UnifiedFolder) ------- */
+	/* A real button now, not a span: it is the expand control and the row around
+	   it navigates, so it needs its own hit target, its own focus ring and its
+	   own name for a screen reader. */
 	.folder-toggle {
 		position: relative;
 		width: 16px;
 		height: 16px;
 		flex-shrink: 0;
-		overflow: hidden;
 		cursor: pointer;
+		padding: 0;
+		border: none;
+		background: none;
+		color: inherit;
+		border-radius: 3px;
+	}
+
+	/* The chevron must LOOK like its own target. The row navigates to the index
+	   and the chevron expands the list — two different outcomes from two places
+	   a few pixels apart, and without its own hover you cannot tell which one
+	   you are about to get. A box slightly larger than the glyph, filled on
+	   hover, is the whole affordance. */
+	.folder-toggle::after {
+		content: "";
+		position: absolute;
+		inset: -5px -4px;
+		border-radius: 4px;
+		background: transparent;
+		transition: background 120ms ease;
+	}
+
+	.folder-toggle:hover::after {
+		background: var(--sidebar-active-bg);
+	}
+
+	.folder-toggle:focus-visible {
+		outline: 2px solid var(--color-border-focus, currentColor);
+		outline-offset: 2px;
 	}
 
 	.folder-toggle-icon,
 	.folder-toggle-chevron {
 		position: absolute;
 		inset: 0;
+		z-index: 1;
 		display: flex;
 		align-items: center;
 		justify-content: center;
