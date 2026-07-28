@@ -18,6 +18,7 @@
 	import { updatePage, updateChat } from "$lib/api/client";
 	import { pagesStore } from "$lib/stores/pages.svelte";
 	import { pinsStore } from "$lib/stores/pins.svelte";
+	import { paneActions } from "$lib/stores/paneActions.svelte";
 	import { chatSessions } from "$lib/stores/chatSessions.svelte";
 	import { isEmoji } from "$lib/utils/iconHelpers";
 	import type { ContextMenuItem } from "$lib/stores/contextMenu.svelte";
@@ -63,6 +64,9 @@
 	const isActivePane = $derived(
 		paneId ? windowShellStore.activePaneId === paneId : true,
 	);
+
+	// Whatever the view showing in this pane has published (item 5's slot).
+	const viewActions = $derived(paneActions.for(activeTabId));
 	const isSplitMode = $derived(windowShellStore.isSplit);
 
 	// Per-tab history (browser model): back/forward act on this pane's active tab.
@@ -499,14 +503,36 @@
 			<Icon icon="ri:layout-right-line" />
 		</button>
 	{/if}
+
+	<!-- The view's own actions, published into the slot rather than rendered
+	     wherever each view felt like putting them. Last in the row, after the
+	     window controls, so the shell's controls stay in one place as views
+	     come and go beneath them. -->
+	{#if viewActions.length > 0}
+		<div class="pane-actions">
+			{#each viewActions as action (action.id)}
+				<button
+					class="pane-action"
+					class:primary={action.primary}
+					disabled={action.disabled}
+					onclick={action.run}
+					aria-label={action.label}
+					title={action.label}
+				>
+					<Icon icon={action.icon} />
+				</button>
+			{/each}
+		</div>
+	{/if}
 </div>
 
 <style>
 	.tab-bar {
 		display: flex;
-		align-items: center;
+		align-items: stretch;
 		gap: 4px;
-		padding: 6px 8px;
+		padding: 6px 8px 0;
+		min-height: 40px;
 		border-bottom: 1px solid var(--color-border);
 		background: var(--color-background);
 		flex-shrink: 0;
@@ -539,14 +565,20 @@
 		display: none;
 	}
 
+	/* Full-height, not a floating pill. A tab that spans the bar reads as a
+	   container for what's below it; a pill reads as a chip that happens to sit
+	   nearby. Squaring the bottom corners is what makes the active tab join the
+	   pane rather than hover over it. */
 	.tab {
 		display: flex;
 		align-items: center;
 		gap: 6px;
-		padding: 5px 8px;
-		height: 24px;
+		padding: 0 8px;
+		align-self: stretch;
+		height: auto;
+		min-height: 28px;
 		border: none;
-		border-radius: 6px;
+		border-radius: 6px 6px 0 0;
 		background: transparent;
 		color: var(--color-foreground-muted);
 		font-size: 12px;
@@ -642,6 +674,52 @@
 		flex-shrink: 0;
 	}
 
+	.pane-actions {
+		display: flex;
+		align-items: center;
+		align-self: center;
+		gap: 2px;
+		margin-left: 2px;
+		padding-left: 6px;
+		border-left: 1px solid var(--color-border);
+	}
+
+	.pane-action {
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		width: 24px;
+		height: 24px;
+		padding: 0;
+		border: none;
+		border-radius: 6px;
+		background: transparent;
+		color: var(--color-foreground-muted);
+		font-size: 15px;
+		cursor: pointer;
+		flex-shrink: 0;
+		transition: background-color 150ms ease, color 150ms ease;
+	}
+
+	.pane-action:hover:not(:disabled) {
+		background: color-mix(in srgb, var(--color-foreground) 8%, transparent);
+		color: var(--color-foreground);
+	}
+
+	.pane-action.primary {
+		color: var(--color-primary);
+	}
+
+	.pane-action:disabled {
+		opacity: 0.4;
+		cursor: default;
+	}
+
+	.pane-action:focus-visible {
+		outline: 2px solid var(--color-primary);
+		outline-offset: -2px;
+	}
+
 	.tab-close {
 		display: flex;
 		align-items: center;
@@ -694,6 +772,9 @@
 		display: flex;
 		align-items: center;
 		justify-content: center;
+		/* The bar stretches its children so tabs can be full-height; the window
+		   controls opt back out and centre themselves. */
+		align-self: center;
 		width: 24px;
 		height: 24px;
 		padding: 0;
@@ -748,6 +829,7 @@
 	.nav-cluster {
 		display: flex;
 		align-items: center;
+		align-self: center;
 		gap: 0;
 		flex-shrink: 0;
 	}
