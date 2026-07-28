@@ -1,10 +1,11 @@
 //! Model list served to the web app.
 //!
-//! Facts (prices, context windows, which ids actually exist) come from the live
-//! Vercel AI Gateway catalog, fetched from virtues-api and cached by
-//! `api::model_catalog`. Taste (which models we surface, which one fills each
-//! slot) comes from `virtues-registry`. Nothing here is a hand-maintained
-//! mirror — see `api::model_catalog` for what happened the last time it was.
+//! Facts (prices, context windows, capabilities, which ids exist) come from the
+//! live Vercel AI Gateway catalog, fetched from virtues-api and cached by
+//! `api::model_catalog` — for every model, including the ones we recommend.
+//! The only taste in the system is which model fills each slot, five ids in
+//! `virtues-registry`. Nothing here is a hand-maintained mirror — see
+//! `api::model_catalog` for what happened the last time it was.
 
 use serde::{Deserialize, Serialize};
 
@@ -30,10 +31,10 @@ pub struct ModelInfo {
     /// never reached the cloud) — render blank, never `$0.00`.
     pub input_cost_per_1k: Option<f64>,
     pub output_cost_per_1k: Option<f64>,
-    /// `true` for the curated "Virtues Recommended" set (vouched capabilities,
-    /// slot defaults); `false` for the rest of the live gateway catalog, whose
-    /// capability flags are the gateway's own declaration. The picker sections
-    /// on this and labels the unvouched tier.
+    /// `true` when this model fills one of our five slots — the entire set we
+    /// vouch for. `false` for everything else the gateway carries, which is the
+    /// BYO path: selectable, but its capability flags are the provider's own
+    /// claim. The picker sections on this and labels the unvouched tier.
     pub recommended: bool,
 }
 
@@ -44,7 +45,7 @@ impl From<CatalogModel> for ModelInfo {
             display_name: m.display_name,
             provider: m.provider,
             // Every model the catalog carries is selectable: the Recommended set
-            // is curated ∩ gateway, and the rest are live gateway entries.
+            // is the five slot models; every entry comes from the gateway.
             enabled: true,
             sort_order: m.sort_order,
             context_window: Some(m.context_window),
@@ -73,7 +74,7 @@ pub struct ModelsResponse {
     pub slots: SlotMap,
 }
 
-/// List the curated models, hydrated with live catalog facts.
+/// List the picker — the gateway's language models, slot models flagged.
 ///
 /// Dedupes by `model_id`: one model can fill several slots (Opus is both chat
 /// and coding) and the picker's keyed `{#each}` throws on duplicate keys.

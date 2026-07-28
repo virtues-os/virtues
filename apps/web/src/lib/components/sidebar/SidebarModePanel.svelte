@@ -86,39 +86,55 @@
 	.mode-row {
 		display: flex;
 		align-items: center;
-		gap: 10px;
+		gap: var(--sidebar-interactive-gap);
 		width: 100%;
-		padding: 6px 10px;
+		height: var(--sidebar-interactive-height);
+		padding: 0 var(--sidebar-padding-left-base);
 		border: none;
-		border-radius: 6px;
+		border-radius: var(--sidebar-interactive-radius);
 		background: none;
 		cursor: pointer;
 		text-align: left;
+		font-size: var(--sidebar-interactive-font-size);
 		color: var(--color-foreground-muted);
 		animation: modeRowIn 200ms cubic-bezier(0.2, 0, 0, 1) backwards;
 	}
 
+	.exit-row :global(svg),
+	.mode-row :global(svg) {
+		opacity: var(--sidebar-icon-opacity);
+		transition: opacity var(--sidebar-transition-duration) ease;
+	}
+
+	/* The way out, and nothing more.
+	   This used to be 11px uppercase serif at 0.14em tracking — the exact
+	   costume that signals "considered" while doing no work, and absurd on a
+	   back affordance: an exit should be the quietest thing in the panel, not
+	   its masthead. It is now a row like the rows it sits above, sentence case,
+	   distinguished only by the chevron and by being slightly quieter. */
 	.exit-row {
 		color: var(--color-foreground-subtle);
-		margin-bottom: 4px;
+		margin-bottom: 6px;
 	}
 
 	.exit-label {
-		font-family: var(--font-serif);
-		font-size: 11px;
 		font-weight: 500;
-		text-transform: uppercase;
-		letter-spacing: 0.14em;
 	}
 
 	.mode-row {
-		font-size: 13px;
+		font-weight: 500;
 	}
 
 	.exit-row:hover,
 	.mode-row:hover {
-		background: color-mix(in srgb, var(--color-foreground) 6%, transparent);
+		background: var(--sidebar-hover-bg);
 		color: var(--color-foreground);
+	}
+
+	.exit-row:hover :global(svg),
+	.mode-row:hover :global(svg),
+	.mode-row.active :global(svg) {
+		opacity: 1;
 	}
 
 	.mode-row.active {

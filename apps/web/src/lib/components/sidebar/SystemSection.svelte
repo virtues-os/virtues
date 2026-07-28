@@ -2,7 +2,7 @@
 	import Icon from "$lib/components/Icon.svelte";
 	import { windowShellStore } from "$lib/stores/window-shell.svelte";
 	import { pagesStore } from "$lib/stores/pages.svelte";
-	import { listPages, listChats, createNotebook, type ViewEntity } from "$lib/api/client";
+	import { listPages, listChats, listNotebooks, createNotebook, type ViewEntity } from "$lib/api/client";
 	import { chatSessions } from "$lib/stores/chatSessions.svelte";
 	import type { SystemSection } from "$lib/sidebar/sections";
 	import SidebarNavItem from "./SidebarNavItem.svelte";
@@ -23,7 +23,7 @@
 	}: Props = $props();
 
 	// Local expand state (folder/view expansion no longer lives in the window shell store)
-	let isExpanded = $state(false);
+	let isExpanded = $state(section.defaultExpanded ?? false);
 
 	// Smart section data
 	let smartItems = $state<ViewEntity[]>([]);
@@ -125,6 +125,19 @@
 					icon: p.icon || 'ri:file-text-line',
 					updated_at: p.updated_at,
 				}));
+			} else if (section.namespace === 'notebook') {
+				// Uncapped and in the user's own `sort_order`, not by recency:
+				// notebooks are a curated shelf, and reshuffling a shelf every
+				// time you open one is how a stable list stops being a place.
+				const data = await listNotebooks();
+				const all = data.notebooks || [];
+				entities = (section.limit ? all.slice(0, section.limit) : all).map((n) => ({
+					id: `/notebooks/${n.id}`,
+					name: n.name,
+					namespace: 'notebook',
+					icon: n.icon || 'ri:booklet-line',
+					updated_at: n.updated_at,
+				}));
 			}
 
 			smartItems = entities;
@@ -140,17 +153,49 @@
 		isExpanded = !isExpanded;
 	}
 
+	/**
+	 * The row navigates. The chevron expands. Two hit targets, not one.
+	 *
+	 * This row used to toggle expansion, which meant "Notebooks" could not take
+	 * you to Notebooks — the only way to the index was the `···` overflow. That
+	 * is the classic failure of this pattern: the label of a destination has to
+	 * go to the destination, or the sidebar stops being navigation and becomes
+	 * a set of drawers.
+	 */
 	function handleClick(e: MouseEvent) {
 		e.preventDefault();
 		e.stopPropagation();
-		toggleExpanded();
+		if (section.href) {
+			windowShellStore.openTabFromRoute(section.href, {
+				label: section.name,
+				focusExisting: true,
+			});
+		} else {
+			toggleExpanded();
+		}
 	}
 
 	function handleKeydown(e: KeyboardEvent) {
 		if (e.key === "Enter" || e.key === " ") {
 			e.preventDefault();
+			handleClick(e as unknown as MouseEvent);
+		}
+		// The chevron's job, reachable without leaving the row: the arrow keys
+		// are what people already press to open a tree node.
+		if (e.key === "ArrowRight" && !isExpanded) {
+			e.preventDefault();
 			toggleExpanded();
 		}
+		if (e.key === "ArrowLeft" && isExpanded) {
+			e.preventDefault();
+			toggleExpanded();
+		}
+	}
+
+	function handleToggleClick(e: MouseEvent) {
+		e.preventDefault();
+		e.stopPropagation();
+		toggleExpanded();
 	}
 
 	function handleQuickAdd(e: MouseEvent) {
@@ -238,7 +283,15 @@
 			onclick={handleClick}
 			onkeydown={handleKeydown}
 		>
-			<span class="folder-toggle" class:expanded={isExpanded}>
+			<button
+				type="button"
+				class="folder-toggle"
+				class:expanded={isExpanded}
+				onclick={handleToggleClick}
+				aria-expanded={isExpanded}
+				aria-label={isExpanded ? `Collapse ${section.name}` : `Expand ${section.name}`}
+				title={isExpanded ? "Collapse" : "Expand"}
+			>
 				<span class="folder-toggle-icon">
 					<Icon icon={section.icon} width="16" class="sidebar-icon" />
 				</span>
@@ -257,7 +310,7 @@
 						stroke-linejoin="round"
 					/>
 				</svg>
-			</span>
+			</button>
 
 			<span class="sidebar-label">{section.name}</span>
 
@@ -370,6 +423,9 @@
 	}
 
 	/* ------- Icon ↔ Chevron slide toggle (matches UnifiedFolder) ------- */
+	/* A real button now, not a span: it is the expand control and the row around
+	   it navigates, so it needs its own hit target, its own focus ring and its
+	   own name for a screen reader. */
 	.folder-toggle {
 		position: relative;
 		width: 16px;
@@ -377,6 +433,16 @@
 		flex-shrink: 0;
 		overflow: hidden;
 		cursor: pointer;
+		padding: 0;
+		border: none;
+		background: none;
+		color: inherit;
+		border-radius: 3px;
+	}
+
+	.folder-toggle:focus-visible {
+		outline: 2px solid var(--color-border-focus, currentColor);
+		outline-offset: 2px;
 	}
 
 	.folder-toggle-icon,
