@@ -27,13 +27,59 @@ type EventRow = (
     Value,                     // metadata
     Option<DateTime<Utc>>,     // deleted_at_source
     String,                    // status (confirmed | tentative | cancelled)
+    Option<String>,            // calendar_access_role (owner | writer | reader | freeBusyReader)
+    Option<String>,            // response_status — the OWNER's RSVP, not anyone else's
+    Value,                     // attendee_identifiers (jsonb array of emails)
+    Option<String>,            // organizer_identifier
 );
+
+/// Pull the owner's own RSVP out of the attendee list. Google flags exactly one
+/// attendee `self: true`; everyone else's answer is none of this column's business.
+///
+/// Returns None far more often than not, and that is correct: a self-created
+/// event has no attendee list at all, so there is no RSVP to read. None means
+/// "not asked", never "did not go".
+fn self_response_status(event: &Value) -> Option<String> {
+    event
+        .get("attendees")?
+        .as_array()?
+        .iter()
+        .find(|a| a.get("self").and_then(|v| v.as_bool()).unwrap_or(false))
+        .and_then(|a| a.get("responseStatus"))
+        .and_then(|v| v.as_str())
+        .map(String::from)
+}
+
+/// Everyone invited, by email (falling back to display name). Rooms and
+/// equipment come back in the same array flagged `resource: true` — they are not
+/// people and would corrupt any "who was I with" reading of this column.
+fn attendee_identifiers(event: &Value) -> Value {
+    let list: Vec<String> = event
+        .get("attendees")
+        .and_then(|v| v.as_array())
+        .map(|arr| {
+            arr.iter()
+                .filter(|a| !a.get("resource").and_then(|v| v.as_bool()).unwrap_or(false))
+                .filter_map(|a| {
+                    a.get("email")
+                        .or_else(|| a.get("displayName"))
+                        .and_then(|v| v.as_str())
+                        .map(String::from)
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    serde_json::json!(list)
+}
 
 /// `events` is the array from `https://www.googleapis.com/calendar/v3/calendars/{cal_id}/events`.
 /// `calendar_id` is the calendar this batch came from (used for `calendar_name`).
+/// `access_role` is that calendar's role from the calendarList — the flag that
+/// says whether these are the owner's own plans or a calendar they subscribe to.
 pub async fn write_events(
     db: &PgPool,
     calendar_id: &str,
+    access_role: Option<&str>,
     events: &[Value],
 ) -> Result<usize> {
     let mut pending: Vec<EventRow> = Vec::new();
@@ -126,6 +172,14 @@ pub async fn write_events(
             metadata,
             deleted_at_source,
             status.to_string(),
+            access_role.map(String::from),
+            self_response_status(event),
+            attendee_identifiers(event),
+            event
+                .get("organizer")
+                .and_then(|o| o.get("email").or_else(|| o.get("displayName")))
+                .and_then(|v| v.as_str())
+                .map(String::from),
         ));
 
         if pending.len() >= BATCH_SIZE {
@@ -193,6 +247,10 @@ async fn flush(db: &PgPool, records: &[EventRow]) -> Result<usize> {
             "metadata",
             "deleted_at_source",
             "status",
+            "calendar_access_role",
+            "response_status",
+            "attendee_identifiers",
+            "organizer_identifier",
         ],
         "source_stream_id",
         &[
@@ -206,6 +264,17 @@ async fn flush(db: &PgPool, records: &[EventRow]) -> Result<usize> {
             "metadata",
             "deleted_at_source",
             "status",
+            // All four are mutable and must be re-projected on every sync, for the
+            // same reason the row is an UPSERT at all: an RSVP flips from
+            // needsAction to declined days after the invite lands, attendees are
+            // added and removed, and a calendar can be shared or unshared, which
+            // moves it between `owner` and `reader`. Leaving them out of the
+            // update list would freeze the first answer we ever saw — and for
+            // `response_status` the first answer is almost always the useless one.
+            "calendar_access_role",
+            "response_status",
+            "attendee_identifiers",
+            "organizer_identifier",
         ],
         records.len(),
     );
@@ -228,7 +297,11 @@ async fn flush(db: &PgPool, records: &[EventRow]) -> Result<usize> {
             .bind("google")
             .bind(&r.11)
             .bind(r.12)
-            .bind(&r.13);
+            .bind(&r.13)
+            .bind(&r.14)
+            .bind(&r.15)
+            .bind(&r.16)
+            .bind(&r.17);
     }
     // The upsert builder appends RETURNING, so drain the rows.
     Ok(q.fetch_all(db).await?.len())

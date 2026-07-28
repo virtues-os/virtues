@@ -33,12 +33,24 @@ Output format:
 
 HOW TO READ THE DOSSIER:
 The dossier is a time-ordered list of the day's evidence, each item formatted for its kind. The kinds play different roles:
-- **Location visits** and **calendar events** are your PRIMARY boundaries. A change of place, or the start/end of a scheduled block, is the strongest evidence that one event ended and another began.
+- **Location visits** are your PRIMARY boundary and your single strongest line: a change of place was MEASURED, not claimed.
+- **Calendar events are PLANS, NOT EVIDENCE.** They are the weakest line in the dossier and are never a boundary on their own — see CALENDAR EVENTS ARE INTENTIONS below.
+- **Device presence** (`[device]` lines) is a stretch the owner was demonstrably AT a machine — typing, clicking, or holding the screen awake. It is weak evidence of WHAT they were doing and strong evidence of WHERE THEY WERE NOT: a body at a keyboard is not a body at a dinner. Read the tail of the line — `screen locked` and `machine slept` mean they stopped; `collector stopped` means WE stopped watching and says nothing at all about them.
 - **Sleep** spans are hard boundaries, BUT DO NOT EMIT YOUR OWN "Sleep" EVENT. The system stamps the authoritative sleep block separately from deterministic sleep-tracking data. Treat the overnight sleep span as a boundary and leave that stretch as "Unknown" — do not label it "Sleep" yourself.
 - **Audio sessions** and **messages** COLOUR the day and are CANDIDATE boundaries — weigh them, do not obey them. An audio session's content tells you what a stretch actually was (a conversation, a drive, airport noise, quiet work, sickness in bed) even when there is no location or calendar to anchor it. This is how you name a day spent entirely at home, or entirely on the road, where location never changes.
 - **Health** (heart rate, steps) is texture, never a boundary on its own.
 - **Purchases** (`[purchase]` / `[refund]` lines) are precise evidence of what a stretch was — a meal, a shop, a checkout; the merchant names the activity.
 - **Movement** (`[movement]` lines) tell you when, and how fast, the owner was actually travelling — see MOVEMENT AND TRANSIT.
+
+CALENDAR EVENTS ARE INTENTIONS, NOT ATTENDANCE:
+A `[calendar]` line records what was SCHEDULED. It is not evidence that anyone went. Treating it as evidence is the worst failure you can produce here — it writes a confident, detailed memory of a day that did not happen, and the owner cannot tell it from a real one. Hard rules:
+- A calendar line may NEVER, on its own, name a stretch of the timeline. It needs corroboration from a TRACE — something that exists only if the owner's body was there: a `[visit]` at or near the event's place, `[movement]` toward it, a `[purchase]` there, or `[audio]` whose content actually matches the occasion.
+- Corroborated → name the stretch by the calendar title. Uncorroborated → the stretch is "Unknown". An honest gap where a plan was is CORRECT output. Never fall back to the title.
+- CONTRADICTED beats uncorroborated. If `[device]` puts the owner at a machine, or `[visit]` puts them somewhere else, for the bulk of a calendar block, THEY DID NOT GO. Name the stretch by what the device, visit and audio show, and do not mention the calendar entry at all.
+- `SUBSCRIBED — someone else's calendar` means these are NOT the owner's plans; it is another household's or organisation's schedule that they can merely see. NEVER narrate a subscribed event as something the owner did, however well-corroborated the hour looks — evidence at that hour shows they were somewhere, not that they were HERE.
+- `owner DECLINED` means they did not go. Full stop.
+- `owner never replied`, or NO RSVP tag at all, means NOTHING in either direction — most events carry no RSVP, so its absence is not evidence. Do not read silence as attendance OR as absence.
+- NEVER move detail from one source onto a block named by another. If the `[audio]` inside a calendar block is a piano and a dog at home, then the block IS a piano and a dog at home — it is not a scheduled dinner that happened to have piano music. Detail belongs to the source that recorded it, and borrowing it across sources is how a plan grows false sensory memories.
 
 WHAT MAKES A BOUNDARY:
 A boundary is a change of CONTEXT — where you are, what is scheduled, who you are with — never a change of TOPIC. A single conversation at one desk that drifts from work to lunch to weekend plans is ONE event, not three. Do not split on what is being talked about; split on the situation changing.
@@ -733,6 +745,137 @@ async fn day_movement_segments(
     segs
 }
 
+/// Runs of time the owner was demonstrably AT a machine.
+///
+/// The dossier was missing the one signal that settles attendance. Location says
+/// where a PHONE was, and a phone left on a counter reads identically to a phone
+/// in a pocket. A keyboard cannot be used from another building: an active app
+/// session is a body in a chair, and a body in a chair is not a body at the event
+/// its calendar claims. This is deliberately a NEGATIVE instrument — it is far
+/// better at proving where someone wasn't than at describing what they did.
+///
+/// Sessions are already correctly built upstream (`applets/mac_ingest/sessionize.rs`
+/// holds them open across upload batches), so this only has to merge them into
+/// runs. Individual sessions are useless here — a working hour is a hundred app
+/// switches, which would bury the dossier — so consecutive sessions are folded
+/// into one presence run and described by the apps that filled it.
+///
+/// Returns `(start, end, top apps by time, any input observed, how the run ended)`.
+async fn day_device_presence(
+    pool: &PgPool,
+    start_str: &str,
+    end_str: &str,
+) -> Vec<(
+    chrono::DateTime<chrono::Utc>,
+    chrono::DateTime<chrono::Utc>,
+    Vec<String>,
+    bool,
+    String,
+)> {
+    use sqlx::Row;
+
+    /// A short break is still presence — someone who steps away for coffee and
+    /// comes back never left the building. Longer than this and the gap is real,
+    /// so the runs stay separate and the stretch between them is genuinely open.
+    const MERGE_GAP_S: i64 = 600;
+    /// A run this short is a glance at a notification, not evidence of anything.
+    const MIN_RUN_S: i64 = 120;
+    /// Enough to characterise a stretch; more is noise in a prompt.
+    const TOP_APPS: usize = 4;
+
+    let rows = sqlx::query(
+        "SELECT app_name, start_time, end_time, attention, closed_by, is_open \
+         FROM data_activity_app_session \
+         WHERE end_time >= $1::timestamptz AND start_time <= $2::timestamptz \
+         ORDER BY start_time",
+    )
+    .bind(start_str)
+    .bind(end_str)
+    .fetch_all(pool)
+    .await
+    .unwrap_or_default();
+
+    struct Run {
+        start: chrono::DateTime<chrono::Utc>,
+        end: chrono::DateTime<chrono::Utc>,
+        apps: Vec<(String, i64)>,
+        /// `active` means keys and clicks — a person, present. `watching` means
+        /// the app merely held the display awake, which a video can do to an
+        /// empty room. Both are usage; only one is a body. Worth a word in the
+        /// dossier, because a run with no input at all is much weaker evidence
+        /// of where someone was.
+        any_active: bool,
+        ended: String,
+    }
+    let mut runs: Vec<Run> = Vec::new();
+
+    for r in &rows {
+        let s: chrono::DateTime<chrono::Utc> = r.get("start_time");
+        let e: chrono::DateTime<chrono::Utc> = r.get("end_time");
+        if e < s {
+            continue;
+        }
+        let app: String = r.try_get("app_name").unwrap_or_default();
+        let secs = (e - s).num_seconds().max(0);
+        let active = r
+            .try_get::<String, _>("attention")
+            .map(|a| a == "active")
+            .unwrap_or(true);
+        // `closed_by` explains the gap that FOLLOWS the run, which is the whole
+        // reason it is worth carrying: `stale` means the collector died, so the
+        // silence after it is our failure and not the owner walking away. Reading
+        // that silence as absence would be the same category error this file
+        // exists to stop, just pointed at a different source.
+        let ended = if r.try_get::<bool, _>("is_open").unwrap_or(false) {
+            "open".to_string()
+        } else {
+            r.try_get::<Option<String>, _>("closed_by")
+                .ok()
+                .flatten()
+                .unwrap_or_else(|| "unknown".to_string())
+        };
+
+        let extend = runs
+            .last()
+            .is_some_and(|last| (s - last.end).num_seconds() <= MERGE_GAP_S);
+        if extend {
+            let last = runs.last_mut().expect("checked by `extend`");
+            if e > last.end {
+                last.end = e;
+            }
+            last.ended = ended;
+            last.any_active |= active;
+            match last.apps.iter_mut().find(|(n, _)| n == &app) {
+                Some((_, t)) => *t += secs,
+                None => last.apps.push((app, secs)),
+            }
+        } else {
+            runs.push(Run {
+                start: s,
+                end: e,
+                apps: vec![(app, secs)],
+                any_active: active,
+                ended,
+            });
+        }
+    }
+
+    runs.into_iter()
+        .filter(|r| (r.end - r.start).num_seconds() >= MIN_RUN_S)
+        .map(|mut r| {
+            r.apps.sort_by(|a, b| b.1.cmp(&a.1));
+            let apps = r
+                .apps
+                .into_iter()
+                .take(TOP_APPS)
+                .map(|(n, _)| n)
+                .filter(|n| !n.trim().is_empty())
+                .collect();
+            (r.start, r.end, apps, r.any_active, r.ended)
+        })
+        .collect()
+}
+
 /// Build the DOSSIER: one compact, time-ordered feature list of the day's
 /// evidence, drawn from the CLEAN rollups (visits, calendar, sleep, audio
 /// sessions) plus a messages roll-up and a health snapshot. Each item is capped
@@ -809,10 +952,49 @@ async fn build_dossier(
         spine.push((s, line));
     }
 
-    // Calendar — title, start→end. All-day events bound nothing; flag them so the
+    // Device presence — the negative instrument. A keyboard in use is a body that
+    // was not at whatever the calendar scheduled for that hour.
+    for (s, e, apps, any_active, ended) in day_device_presence(pool, start_str, end_str).await {
+        // Spell the close reason out. `stale` in particular MUST read as "we
+        // stopped watching", never as "they left" — the sessionizer went to real
+        // trouble to keep those two apart and a terse code would throw it away.
+        let tail = match ended.as_str() {
+            "lock" => " — ended: screen locked",
+            "suspend" => " — ended: machine slept",
+            "idle" => " — ended: went idle",
+            "quit" => " — ended: app quit",
+            "stale" => " — ended: COLLECTOR STOPPED; the gap after this is our blind spot, not evidence they left",
+            "open" => " — still open at the day's end",
+            _ => "",
+        };
+        let what = if apps.is_empty() {
+            String::new()
+        } else {
+            format!(" ({})", apps.join(", "))
+        };
+        let presence = if any_active {
+            "typing/clicking at a machine"
+        } else {
+            "a machine held awake, NO input observed — weaker: a video plays to an empty room too"
+        };
+        spine.push((
+            s,
+            format!(
+                "- [device] {}–{} — {}{}{}",
+                fmt(&s),
+                fmt(&e),
+                presence,
+                what,
+                tail
+            ),
+        ));
+    }
+
+    // Calendar — title, start→end, plus the two tags that say whether this line
+    // is even ABOUT the owner. All-day events bound nothing; flag them so the
     // detective does not treat a 24h block as a boundary.
     let cal = sqlx::query(
-        "SELECT title, start_time, end_time, is_all_day \
+        "SELECT title, start_time, end_time, is_all_day, calendar_access_role, response_status \
          FROM data_calendar_event \
          WHERE start_time >= $1::timestamptz AND start_time <= $2::timestamptz \
            AND (status IS NULL OR status <> 'cancelled') \
@@ -828,10 +1010,42 @@ async fn build_dossier(
         let s: chrono::DateTime<chrono::Utc> = r.get("start_time");
         let e: chrono::DateTime<chrono::Utc> = r.get("end_time");
         let all_day: bool = r.try_get("is_all_day").unwrap_or(false);
+        let access: Option<String> = r.try_get("calendar_access_role").ok().flatten();
+        let rsvp: Option<String> = r.try_get("response_status").ok().flatten();
+
+        let mut tags: Vec<&str> = vec!["calendar"];
+        // Both tags are OMITTED when unknown rather than defaulted. An iOS-synced
+        // row has no access role and most events have no RSVP, and inventing
+        // "own calendar" or "no reply" for those would manufacture exactly the
+        // false confidence this whole line is meant to remove.
+        match access.as_deref() {
+            Some("reader") | Some("freeBusyReader") => {
+                tags.push("SUBSCRIBED — someone else's calendar")
+            }
+            Some("owner") | Some("writer") => tags.push("own calendar"),
+            _ => {}
+        }
+        match rsvp.as_deref() {
+            Some("declined") => tags.push("owner DECLINED"),
+            Some("accepted") => tags.push("owner accepted the invite in advance"),
+            Some("tentative") => tags.push("owner replied tentative"),
+            Some("needsAction") => tags.push("owner never replied — means nothing either way"),
+            _ => {}
+        }
+        if all_day {
+            tags.push("all-day, bounds nothing");
+        }
+
         let line = if all_day {
-            format!("- [calendar, all-day, bounds nothing] {}", cap(&title, 100))
+            format!("- [{}] {}", tags.join(", "), cap(&title, 100))
         } else {
-            format!("- [calendar] {}–{} — {}", fmt(&s), fmt(&e), cap(&title, 100))
+            format!(
+                "- [{}] {}–{} — {}",
+                tags.join(", "),
+                fmt(&s),
+                fmt(&e),
+                cap(&title, 100)
+            )
         };
         spine.push((s, line));
     }
@@ -1609,3 +1823,101 @@ fn parse_hhmm_to_utc(
     }
 }
 
+
+#[cfg(test)]
+mod dossier_tests {
+    use super::*;
+
+    /// The GAP regression: a subscribed calendar said "Community Dinner" while the
+    /// owner sat at a Mac the whole evening, and the dossier showed only the plan.
+    /// Both corrections have to reach the prompt or the detective cannot possibly
+    /// get this right — it can only reason about lines it is given.
+    ///
+    /// ```sh
+    /// DATABASE_URL=postgres://virtues:virtues@localhost:5432/virtues_mig_check \
+    ///   cargo test -p virtues dossier_ -- --ignored --nocapture
+    /// ```
+    #[tokio::test]
+    #[ignore = "needs Postgres with the migration chain applied"]
+    async fn dossier_carries_device_presence_and_calendar_provenance() {
+        let url = std::env::var("DATABASE_URL").expect("DATABASE_URL");
+        let pool = PgPool::connect(&url).await.expect("connect");
+
+        let date = NaiveDate::from_ymd_opt(2026, 7, 26).unwrap();
+        let (start_str, end_str) = day_boundaries_utc(date, Some("UTC"));
+
+        for t in ["data_calendar_event", "data_activity_app_session"] {
+            sqlx::query(&format!("DELETE FROM {t}"))
+                .execute(&pool)
+                .await
+                .expect("clean");
+        }
+
+        sqlx::query(
+            "INSERT INTO data_calendar_event \
+             (id,title,start_time,end_time,is_all_day,source_stream_id,source_table, \
+              source_provider,calendar_access_role,response_status) \
+             VALUES ('g1','GAP Community Dinner','2026-07-26T18:30:00Z','2026-07-26T20:30:00Z', \
+                     false,'gs1','google_calendar','google','reader',NULL)",
+        )
+        .execute(&pool)
+        .await
+        .expect("seed calendar");
+
+        // Three sessions with sub-10-minute gaps: one presence RUN, not three lines.
+        for (i, (app, s, e)) in [
+            ("Claude", "18:34:00", "19:10:00"),
+            ("Steam", "19:14:00", "19:40:00"),
+            ("Slack", "19:45:00", "20:07:00"),
+        ]
+        .iter()
+        .enumerate()
+        {
+            sqlx::query(
+                "INSERT INTO data_activity_app_session \
+                 (id,app_name,start_time,end_time,source_stream_id,source_table, \
+                  source_provider,attention,is_open,closed_by) \
+                 VALUES ($1,$2,$3::timestamptz,$4::timestamptz,$5,'mac_apps','mac','active',false,$6)",
+            )
+            .bind(format!("a{i}"))
+            .bind(app)
+            .bind(format!("2026-07-26T{s}Z"))
+            .bind(format!("2026-07-26T{e}Z"))
+            .bind(format!("as{i}"))
+            .bind(if i == 2 { "lock" } else { "switch" })
+            .execute(&pool)
+            .await
+            .expect("seed session");
+        }
+
+        let dossier =
+            build_dossier(&pool, date, &start_str, &end_str, Some("UTC"), None).await;
+        println!("{dossier}");
+
+        assert!(
+            dossier.contains("SUBSCRIBED — someone else's calendar"),
+            "a read-only calendar must be flagged as not the owner's plan"
+        );
+        assert!(
+            dossier.contains("[device]"),
+            "app sessions must reach the dossier at all — this is the whole fix"
+        );
+        assert!(
+            dossier.contains("18:34–20:07"),
+            "the three sessions must merge into ONE presence run spanning the event"
+        );
+        assert!(
+            dossier.contains("ended: screen locked"),
+            "the run's close reason explains the silence that follows it"
+        );
+        assert!(
+            dossier.contains("typing/clicking"),
+            "observed input is the strong form of presence and must be said so"
+        );
+        // No RSVP was recorded, and silence is not evidence in either direction.
+        assert!(
+            !dossier.contains("owner never replied") && !dossier.contains("accepted"),
+            "a NULL response_status must produce NO rsvp claim"
+        );
+    }
+}
