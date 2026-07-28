@@ -455,6 +455,6 @@
 	.focus-exit:hover {
 		opacity: 1;
 		color: var(--color-foreground);
-		background: var(--color-surface-elevated);
+		background: var(--hover-bg);
 	}
 </style>

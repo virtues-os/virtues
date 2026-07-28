@@ -567,7 +567,7 @@
 			border-color 0.15s ease;
 	}
 	.edit-btn:hover {
-		background: var(--color-surface-elevated);
+		background: var(--hover-bg);
 		color: var(--color-foreground);
 		border-color: var(--color-border-strong);
 	}

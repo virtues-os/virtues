@@ -138,7 +138,7 @@
 
 	.references-close:hover {
 		color: var(--color-foreground);
-		background: var(--color-surface-elevated);
+		background: var(--hover-bg);
 	}
 
 	.references-body {
@@ -205,7 +205,7 @@
 	}
 
 	.reference-item:hover {
-		background: var(--color-surface-elevated);
+		background: var(--hover-bg);
 	}
 
 	.reference-item-head {

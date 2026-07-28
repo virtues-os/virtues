@@ -143,7 +143,7 @@
 	}
 	.refresh:hover:not(:disabled) {
 		color: var(--color-foreground);
-		background: var(--color-surface-elevated);
+		background: var(--hover-bg);
 	}
 	.refresh:disabled {
 		opacity: 0.5;
@@ -172,7 +172,7 @@
 		font-size: 13px;
 	}
 	li:hover {
-		background: var(--color-surface-elevated);
+		background: var(--hover-bg);
 	}
 	.dot {
 		width: 7px;

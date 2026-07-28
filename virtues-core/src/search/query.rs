@@ -119,7 +119,7 @@ fn rerank_gap_threshold() -> f64 {
 }
 
 /// Min-max rescale candidate scores into [0, 1] in place, preserving order.
-fn normalize_scores(candidates: &mut [SearchResult]) {
+pub(crate) fn normalize_scores(candidates: &mut [SearchResult]) {
     let (mut lo, mut hi) = (f64::INFINITY, f64::NEG_INFINITY);
     for c in candidates.iter() {
         lo = lo.min(c.score);

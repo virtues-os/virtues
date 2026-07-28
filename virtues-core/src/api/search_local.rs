@@ -78,10 +78,17 @@ pub async fn search_local(
     // is the notebook's own surface, not this one.
     let filters = SearchFilters::default();
 
-    let hits = engine
+    let mut hits = engine
         .recall_and_fuse(&query_vector, &terms, &filters, limit)
         .await
         .map_err(|e| Error::Other(format!("recall: {e}")))?;
+
+    // `SearchResult` documents its score as normalized to [0, 1]; that
+    // normalization lives in `rerank_and_finalize`, which this path skips.
+    // Without this the endpoint returns raw fused scores while claiming
+    // otherwise — harmless for the palette, which ignores score, and a trap
+    // for anything that later believes the type's own contract.
+    crate::search::query::normalize_scores(&mut hits);
 
     Ok(LocalSearchResponse { hits, query })
 }
