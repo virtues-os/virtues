@@ -208,13 +208,17 @@ where
                                 if let Some(cost_usd) = u.cost {
                                     (cost_usd * 1_000_000.0).round() as i64
                                 } else if u.prompt_tokens + u.completion_tokens > 0 {
-                                    let cost_usd = calculate_cost(
+                                    // `None` = unknown rate; serve unbilled
+                                    // rather than invent one (see
+                                    // providers::calculate_cost).
+                                    calculate_cost(
                                         &catalog,
                                         &model,
                                         u.prompt_tokens,
                                         u.completion_tokens,
-                                    );
-                                    (cost_usd * 1_000_000.0).round() as i64
+                                    )
+                                    .map(|c| (c * 1_000_000.0).round() as i64)
+                                    .unwrap_or(0)
                                 } else {
                                     0
                                 }

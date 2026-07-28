@@ -389,13 +389,6 @@
 	aria-label="Tab bar"
 	tabindex="0"
 >
-	{#if showPaneHint}
-		<!-- Flips up into place so the change registers as *something happened
-		     here* rather than as a badge that was always there. aria-hidden: it
-		     restates a shortcut, and announcing it on every ⌘ hold would be
-		     noise to a screen reader. -->
-		<span class="pane-hint" aria-hidden="true">⌘{paneNumber}</span>
-	{/if}
 	{#if showSidebarToggle}
 		<button
 			class="sidebar-toggle"
@@ -483,7 +476,20 @@
 							autofocus
 						/>
 					{:else}
-						<span class="tab-label">{tab.label}</span>
+						<!-- On a ⌘ hold the ACTIVE tab's own label becomes its pane
+						     number: the title slides up and out, ⌘1 slides up and
+						     in. Nothing new enters the screen, which is the point —
+						     the old version floated a saturated blue chip into the
+						     toolbar, the loudest object in an otherwise quiet
+						     window, and it announced the shortcut instead of
+						     teaching which label it belongs to.
+						     Only the active tab flips: every tab in a pane shares
+						     the pane's number, so flipping all of them would say
+						     the same thing five times. -->
+						<span class="tab-label" class:flipping={showPaneHint && tab.id === activeTabId}>
+							<span class="tab-label-text">{tab.label}</span>
+							<span class="tab-label-hint" aria-hidden="true">⌘{paneNumber}</span>
+						</span>
 					{/if}
 				{/if}
 				{#if !tab.pinned && tab.id !== renamingTabId}
@@ -573,10 +579,15 @@
 		display: flex;
 		align-items: stretch;
 		gap: 4px;
+		/* No bottom padding: the tabs sit ON the bottom edge. */
 		padding: 0 8px;
 		min-height: var(--chrome-row-h);
+		align-items: flex-end;
 		border-bottom: 1px solid var(--color-border);
-		background: var(--color-background);
+		/* The strip is desk, not page. This is the whole premise of the tab
+		   model every browser uses: the strip recedes, and the active tab
+		   reads as a hole cut in it revealing the page beneath. */
+		background: var(--color-desk);
 		flex-shrink: 0;
 		position: relative;
 		z-index: var(--z-overlay); /* Above global drag overlays */
@@ -588,15 +599,17 @@
 		border-top-right-radius: var(--card-radius, 6px);
 	}
 
-	/* Active pane in split mode gets elevated background */
+	/* The focused pane's strip lifts a touch toward its page — still recessed,
+	   but less so, so "which pane am I in" is legible from the chrome and not
+	   only from the tab. */
 	.tab-bar.active-pane {
-		background: var(--color-surface-elevated);
+		background: color-mix(in srgb, var(--color-surface) 35%, var(--color-desk));
 	}
 
 	.tabs-scroll {
 		display: flex;
-		align-items: center;
-		gap: 4px;
+		align-items: flex-end;
+		gap: 2px;
 		overflow-x: auto;
 		flex: 1;
 		scrollbar-width: none;
@@ -607,21 +620,22 @@
 		display: none;
 	}
 
-	/* An inset pill, not a full-height container.
-	   Full-height + squared bottom corners was the swoop's premise: a tab that
-	   grows out of the pane. That premise needs the bar to be a different colour
-	   from the pane, which it never was — so the effect had no visual output and
-	   the "container" reading never landed either. A pill states what it is. */
+	/* Bottom-anchored, rounded top, square bottom — the shape every browser
+	   uses, and the reason it works is that the tab TOUCHES the bottom of the
+	   strip. A vertically-centred tab floats and reads as a chip that happens
+	   to be nearby; that centring is exactly why the old tabs looked like they
+	   were awkwardly grazing the top of their container. Contact is the point,
+	   it just has to be contact with the right edge. */
 	.tab {
 		display: flex;
 		align-items: center;
 		gap: 6px;
-		padding: 0 8px;
-		align-self: center;
+		padding: 0 10px;
+		align-self: flex-end;
 		position: relative;
 		height: var(--chrome-tab-h);
 		border: none;
-		border-radius: 6px;
+		border-radius: 8px 8px 0 0;
 		background: transparent;
 		color: var(--color-foreground-muted);
 		font-size: 12px;
@@ -641,26 +655,26 @@
 		color: var(--color-foreground);
 	}
 
-	/* Three cues, not one: fill, a hairline, and full-strength text against the
-	   muted text of every other tab. One cue was what left the active tab
-	   indistinguishable — and the one cue chosen resolved to no difference at
-	   all (see --tab-active-bg in themes.css).
-
-	   The fill is on the interaction ramp rather than a surface token, so it is
-	   defined against the text colour and stays legible in all sixteen themes
-	   instead of depending on --surface and --background disagreeing. */
+	/* The active tab takes the PAGE's colour, not a grey fill — that is what
+	   makes it read as a cutout rather than a highlighted chip. It also sits
+	   1px below the strip's bottom border so it covers that border across its
+	   own width, which is the join. Cover the seam and the tab and the pane are
+	   one surface; leave it and the tab is a box resting on a line. */
 	.tab.active {
-		background: var(--tab-active-bg);
+		background: var(--color-surface);
 		color: var(--color-foreground);
 		font-weight: 500;
-		box-shadow: inset 0 0 0 1px var(--color-border);
+		margin-bottom: -1px;
+		padding-bottom: 1px;
 	}
 
-	/* The focused pane's active tab is denser still. In split view two tabs are
-	   "active" at once and only one of them is where your typing goes; that
-	   difference has to be visible without reading the pane borders. */
-	.tab.active-in-active-pane {
-		background: var(--tab-active-bg-focused);
+	/* An unfocused pane's active tab stops short of the full page colour: it is
+	   still the tab you'd return to, but it isn't the surface you're working
+	   on. In split view two tabs are "active" at once and only one of them
+	   takes your typing. */
+	.tab.active:not(.active-in-active-pane) {
+		background: color-mix(in srgb, var(--color-surface) 65%, var(--color-desk));
+		color: var(--color-foreground-muted);
 	}
 
 	/* Dragging state - svelte-dnd-action applies aria-grabbed */
@@ -692,11 +706,53 @@
 		opacity: 1;
 	}
 
+	/* An odometer: two lines stacked in a one-line window, shifted by 100% to
+	   swap which one shows. The hint is neutral text, not an accent chip —
+	   nothing in this shell should be more saturated than the work. */
 	.tab-label {
+		position: relative;
 		overflow: hidden;
 		text-overflow: ellipsis;
 		flex: 1;
 		text-align: left;
+		height: 1.35em;
+		line-height: 1.35em;
+	}
+
+	.tab-label-text,
+	.tab-label-hint {
+		display: block;
+		overflow: hidden;
+		text-overflow: ellipsis;
+		white-space: nowrap;
+		transition: transform 140ms cubic-bezier(0.2, 0, 0, 1);
+	}
+
+	.tab-label-hint {
+		position: absolute;
+		inset: 0;
+		transform: translateY(100%);
+		font-family: var(--font-mono, monospace);
+		font-size: 11px;
+		letter-spacing: 0.02em;
+		color: var(--color-foreground);
+	}
+
+	.tab-label.flipping .tab-label-text {
+		transform: translateY(-100%);
+	}
+
+	.tab-label.flipping .tab-label-hint {
+		transform: translateY(0);
+	}
+
+	/* Reduced motion still swaps — the information matters — it just doesn't
+	   travel to get there. */
+	@media (prefers-reduced-motion: reduce) {
+		.tab-label-text,
+		.tab-label-hint {
+			transition: none;
+		}
 	}
 
 	.tab-rename-input {
@@ -725,40 +781,7 @@
 		flex-shrink: 0;
 	}
 
-	@keyframes paneHintIn {
-		from {
-			opacity: 0;
-			transform: translateY(6px) rotateX(-40deg);
-		}
-		to {
-			opacity: 1;
-			transform: translateY(0) rotateX(0);
-		}
-	}
 
-	.pane-hint {
-		display: inline-flex;
-		align-items: center;
-		align-self: center;
-		padding: 2px 6px;
-		margin-right: 2px;
-		border-radius: 4px;
-		background: var(--color-primary);
-		color: var(--color-surface);
-		font-family: var(--font-sans);
-		font-size: 10px;
-		font-weight: 600;
-		line-height: 1.4;
-		flex-shrink: 0;
-		transform-origin: bottom center;
-		animation: paneHintIn 180ms cubic-bezier(0.2, 0, 0, 1);
-	}
-
-	@media (prefers-reduced-motion: reduce) {
-		.pane-hint {
-			animation: none;
-		}
-	}
 
 	.pane-actions {
 		display: flex;
@@ -886,8 +909,8 @@
 		display: flex;
 		align-items: center;
 		justify-content: center;
-		/* The bar stretches its children so tabs can be full-height; the window
-		   controls opt back out and centre themselves. */
+		/* The bar bottom-aligns its children so tabs meet the pane; the window
+		   controls opt back out and centre themselves in the strip. */
 		align-self: center;
 		width: 24px;
 		height: 24px;

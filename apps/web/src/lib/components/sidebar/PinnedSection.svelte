@@ -6,31 +6,19 @@
 	navigates; right-click → unpin; drag (or ⌥↑/⌥↓) reorders via
 	`PUT /api/pins/reorder`.
 
-	THE RIBBON. Each pin can carry a colour, drawn as a 2px bar on the row's
-	leading edge — the sewn-in ribbon of a book you've marked. It does four
-	jobs at once, which is why it is the one flourish in here:
+	Pins are deliberately plain. An earlier pass gave each one a coloured
+	"ribbon" on its leading edge; it was solving the wrong problem and it looked
+	it. Pins don't read as confusing because they lack colour — they read as
+	confusing because a pinned "Pages" and a nav "Pages" render identically. That
+	is a structural collision, and decoration is not an answer to it. Worse, a
+	2px sliver on a 28px row three pixels from a 16px icon isn't identity, it's
+	lint. The real fix is that pins should be a different SHAPE from nav rows,
+	which is a change worth making properly rather than tinting around.
 
-	  · it's the only colour in the sidebar, so the section stops reading as an
-	    extension of the nav below it — your marks against the system's rooms;
-	  · it identifies a pin at a glance AND at icon size, which is what makes
-	    the icons display mode viable at all (two unlabelled 14px glyphs are
-	    indistinguishable; two coloured tiles are not);
-	  · it replaces the "PINNED" header, which was an 11px uppercase label
-	    heavier than the two-to-six items beneath it;
-	  · it comes from the subject — a book you keep your place in — rather than
-	    from what other apps' sidebars look like.
-
-	Colours are `--cat-*` token keys, never hex: that palette is already
-	documented as non-semantic and already carries a light/dark pair, so a
-	ribbon adapts across all sixteen themes for free. This is the one place the
-	app's no-non-semantic-colour rule is deliberately broken, and the exception
-	is principled — the rule stops the SYSTEM asserting meaning through hue; a
-	pin's colour is the owner's own index, where colour means "mine".
-
-	Two display modes, Arc-style: `list` (ribbon + icon + label, one per row)
-	and `icons` (a wrapping grid of ribboned tiles, for people who keep enough
-	pins that labels stop earning their vertical space). The choice persists in
-	localStorage — it's a per-device reading preference, not account state.
+	Two display modes, Arc-style: `list` (icon + label, one per row) and `icons`
+	(a wrapping grid of tiles, for people who keep enough pins that labels stop
+	earning their vertical space). The choice persists in localStorage — it's a
+	per-device reading preference, not account state.
 
 	NOT "Bookmarks". `data_content_bookmark` already owns that word for
 	*ingested* saved links (GitHub stars, browser bookmarks) — a separate
@@ -57,26 +45,6 @@
 
 	type DisplayMode = 'list' | 'icons';
 	const DISPLAY_KEY = 'virtues-pins-display';
-
-	/**
-	 * The ribbon palette — keys into `--cat-*` in themes.css.
-	 *
-	 * Deliberately a subset of the twelve: the light/dark siblings
-	 * (`*-light`) are there so a chart can shade a series, and offering both
-	 * halves of a pair here would mean two swatches most people can't tell
-	 * apart. Eight distinguishable hues is more than anyone needs for a list
-	 * that tops out around six items.
-	 */
-	const RIBBON_COLORS = [
-		'rose',
-		'orange',
-		'yellow',
-		'emerald',
-		'cyan',
-		'indigo',
-		'violet',
-		'pink',
-	] as const;
 
 	const pins = $derived(pinsStore.pins);
 
@@ -137,28 +105,6 @@
 				action: () => void move(index, index + 1)
 			},
 			{
-				id: 'color',
-				label: 'Ribbon',
-				icon: 'ri:bookmark-line',
-				submenu: [
-					{
-						id: 'color-none',
-						label: 'None',
-						icon: pin.color ? 'ri:close-line' : 'ri:check-line',
-						action: () => void setColor(pin, null)
-					},
-					...RIBBON_COLORS.map((c) => ({
-						id: `color-${c}`,
-						// Capitalised name rather than a swatch-only row: a context
-						// menu is a list of words, and a colour with no name can't be
-						// read out, searched, or described to anyone.
-						label: c.charAt(0).toUpperCase() + c.slice(1),
-						icon: pin.color === c ? 'ri:check-line' : 'ri:circle-fill',
-						action: () => void setColor(pin, c)
-					}))
-				]
-			},
-			{
 				id: 'display',
 				label: display === 'list' ? 'Show as icons' : 'Show as list',
 				icon: display === 'list' ? 'ri:grid-fill' : 'ri:list-unordered',
@@ -195,14 +141,6 @@
 	 * second press does nothing. Which makes moving an item two places
 	 * impossible by keyboard, i.e. the keyboard path is only notionally there.
 	 */
-	async function setColor(pin: Pin, color: string | null) {
-		try {
-			await pinsStore.setColor(pin.id, color);
-		} catch {
-			/* the store has already put the previous colour back */
-		}
-	}
-
 	async function move(from: number, to: number, keepFocus = false) {
 		if (to < 0 || to >= pins.length) return;
 		try {
@@ -262,7 +200,7 @@
 	<!-- No section header. "PINNED" in 11px uppercase with 0.06em tracking was
 	     a heavier label than the two-to-six items under it, and it made the
 	     group read as another system section rather than as the user's own.
-	     The ribbons say whose these are; a hairline says where they end. -->
+	     A hairline says where the group ends; that is all it needs. -->
 	<div class="pinned-section" class:collapsed aria-label="Pinned">
 		<ul bind:this={listEl} class="pin-list" class:icons={effectiveDisplay === 'icons'}>
 			{#each pins as pin, index (pin.id)}
@@ -276,8 +214,6 @@
 						type="button"
 						class="pin-row"
 						class:icon-only={effectiveDisplay === 'icons'}
-						class:ribboned={!!pin.color}
-						style={pin.color ? `--ribbon: var(--cat-${pin.color})` : undefined}
 						draggable="true"
 						title={pin.label ?? pin.url}
 						ondragstart={(e) => onDragStart(e, index)}
@@ -363,23 +299,6 @@
 		padding: 0.375rem;
 	}
 
-	/* The ribbon: a bar sewn into the leading edge, not a dot beside the icon.
-	   An edge mark scans as a column down the group — you read the set of
-	   ribbons in one glance — where dots would just be more icons.
-	   Inset rather than a border so the row's own box doesn't shift when a
-	   colour is set or cleared. */
-	.pin-row.ribboned {
-		box-shadow: inset 2px 0 0 0 var(--ribbon);
-	}
-	.pin-row.ribboned:not(.icon-only) {
-		padding-left: calc(0.5rem + 3px);
-	}
-	/* At icon size the ribbon runs along the bottom instead: a 2px bar on the
-	   left of a 26px square reads as a rendering artefact, while an underline
-	   reads as a tab marker — and it leaves the glyph centred. */
-	.pin-row.ribboned.icon-only {
-		box-shadow: inset 0 -2px 0 0 var(--ribbon);
-	}
 
 	/* The interaction ramp, not --color-background-hover. That token resolves
 	   to --surface-elevated, which sits ~3% off --background in the light

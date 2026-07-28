@@ -48,6 +48,15 @@ class ModifierHintStore {
 			this.#cancel();
 			return;
 		}
+		// ...and only a BARE one. Duration alone can't tell "thinking about
+		// panes" apart from "using the OS": ⌘⇧4 holds ⌘ for as long as it takes
+		// to drag a screenshot marquee, and ⌘⌥/⌘⌃ chords hold it too. Every one
+		// of those was firing the hint, which is why it kept appearing in
+		// screenshots of the app — the act of capturing one triggered it.
+		if (e.shiftKey || e.altKey || (isAppleKeyboard ? e.ctrlKey : e.metaKey)) {
+			this.#cancel();
+			return;
+		}
 		if (this.#timer || this.visible) return;
 		this.#timer = setTimeout(() => {
 			this.visible = true;

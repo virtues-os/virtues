@@ -47,6 +47,30 @@
 	--color-surface-elevated: var(--surface-elevated);
 	--color-surface-overlay: var(--surface-overlay);
 
+	/* THE DESK — what the pane floats on. The sidebar and the tab strip.
+	 *
+	 * This exists because --surface-elevated was being asked to mean two
+	 * opposite things: "raised above the page" (cards, hovers, popovers) and
+	 * "behind the page" (the app shell). A card lifting off the paper and the
+	 * desk the paper rests on cannot be the same colour, and asking one token
+	 * to be both is why the shell reads flat — the desk could never recede
+	 * without dragging every card and hover down with it, so it stayed 4% off
+	 * white and read as nothing at all.
+	 *
+	 * In the dark themes it was worse than subtle, it was inverted:
+	 * --surface-elevated is *lighter* than --surface there (correctly, for a
+	 * raised card), so the desk was rendering ABOVE the page it was meant to
+	 * sit behind.
+	 *
+	 * --desk is darker than --surface in every theme, light and dark alike,
+	 * because recessed is recessed in both. That single relationship is what
+	 * makes the Chrome tab model work: the active tab takes the pane's colour
+	 * and reads as a hole cut in the strip.
+	 *
+	 * Hand-set per theme rather than a foreground mix — a mix lightens in dark
+	 * themes, which is the wrong direction on nine of the sixteen. */
+	--color-desk: var(--desk);
+
 	/* Interaction surfaces. These two were referenced across the app (datagrid,
 	   filter chips, pinned sidebar rows) but never bridged, so they resolved to
 	   nothing: toolbar buttons rendered unfilled with no hover response, and the
@@ -144,6 +168,7 @@
 	--surface: #FFFFFF;
 	--surface-elevated: #F5F4EF;
 	--surface-overlay: #FFFFFF;
+	--desk: #EBE8DF;
 
 	/* Background Treatment - Flat warm ivory */
 	--background-image: none;
@@ -203,7 +228,19 @@
 	--sidebar-interactive-font-size: 13px;
 	--sidebar-interactive-icon-size: 16px;
 	--sidebar-interactive-icon-size-small: 14px;
-	--sidebar-interactive-height: 28px;
+	--sidebar-interactive-height: 30px;
+	/* Four registers instead of one. Every row used to be 28px / 13px / one
+	   weight / one colour, so pins read like destinations read like utilities —
+	   ten items all shouting at the same volume, which gives the eye nothing to
+	   follow and makes every glance cost the same effort. */
+	--sidebar-child-height: 26px;
+	--sidebar-child-font-size: 12.5px;
+	/* The specific thing that made this look like every SaaS menu: eight
+	   identical 16px icons at full contrast in a column. The words should carry
+	   a contents page; icon and label at equal weight turn it into a toolbar
+	   stood on end. Icons recede and come back on hover and for the active row. */
+	--sidebar-icon-opacity: 0.5;
+	--sidebar-child-icon-opacity: 0.4;
 	--sidebar-interactive-color: var(--color-foreground);
 	--sidebar-padding-left-base: 10px;
 	--sidebar-indent-width: 12px;
@@ -264,6 +301,7 @@
 	--surface: #FFFFFF;
 	--surface-elevated: #F5F5F5;
 	--surface-overlay: #FFFFFF;
+	--desk: #E8E8E8;
 
 	/* Background Treatment - Film grain + subtle navy gradient */
 	--background-image: none;
@@ -334,6 +372,7 @@
 	--surface: #FFFFFF;
 	--surface-elevated: #F5F5F5;
 	--surface-overlay: #FFFFFF;
+	--desk: #E8E8E8;
 
 	/* Background Treatment - Blue to peach gradient */
 	--background-image: none;
@@ -404,6 +443,7 @@
 	--surface: #FAF9F6;
 	--surface-elevated: #F2F1EE;
 	--surface-overlay: #FFFFFF;
+	--desk: #E8E5DC;
 
 	/* Background Treatment - Paper texture */
 	--background-image: url('/textures/paper.webp');
@@ -469,6 +509,7 @@
 	--surface: #FFFFFF;
 	--surface-elevated: #F5F5F5;
 	--surface-overlay: #FFFFFF;
+	--desk: #E8E8E8;
 
 	/* Background Treatment - Flat for this theme */
 	--background-image: none;
@@ -534,6 +575,7 @@
 	--surface: #1f1f35;
 	--surface-elevated: #25253d;
 	--surface-overlay: #2a2a45;
+	--desk: #141426;
 
 	/* Background Treatment - Dark blue to warm gradient */
 	--background-image: none;
@@ -604,6 +646,7 @@
 	--surface: #FFFFFF;
 	--surface-elevated: #F0EFE9;
 	--surface-overlay: #FFFFFF;
+	--desk: #E6E3D9;
 
 	/* Background Treatment - Flat for this theme */
 	--background-image: none;
@@ -668,6 +711,7 @@
 	--surface: #171717;
 	--surface-elevated: #262626;
 	--surface-overlay: #2a2a2a;
+	--desk: #0a0a0a;
 
 	/* Background Treatment - Subtle dark gradient with hint of warmth */
 	--background-image: none;
@@ -735,6 +779,7 @@
 	--surface: #161820;
 	--surface-elevated: #1e2028;
 	--surface-overlay: #262830;
+	--desk: #0A0C10;
 
 	/* Content Colors */
 	--foreground: #FAF9F5;
@@ -795,6 +840,7 @@
 	--surface: #1B1913;
 	--surface-elevated: #221E15;
 	--surface-overlay: #261F14;
+	--desk: #100E08;
 
 	/* Content Colors */
 	--foreground: #EDECEC;
@@ -855,6 +901,7 @@
 	--surface: #000000;
 	--surface-elevated: #1a1a1a;
 	--surface-overlay: #1a1a1a;
+	--desk: #000000;  /* Pure black has nothing beneath it; this theme accepts a flat seam. */
 
 	/* Content Colors - Pure white */
 	--foreground: #FFFFFF;
@@ -916,6 +963,7 @@
 	--surface: #2f333d;
 	--surface-elevated: #383e4a;
 	--surface-overlay: #3e4451;
+	--desk: #20232a;
 
 	/* Content Colors - Slightly lighter for readability */
 	--foreground: #c8cdd6;
@@ -976,6 +1024,7 @@
 	--surface: #181818;
 	--surface-elevated: #1e1e1e;
 	--surface-overlay: #242424;
+	--desk: #0a0a0a;
 
 	/* Content Colors */
 	--foreground: #D4D4D4;
@@ -1036,6 +1085,7 @@
 	--surface: #fdf6e3;
 	--surface-elevated: #eee8d5;
 	--surface-overlay: #ffffff;
+	--desk: #e8e1cd;  /* Solarized base2 — the recessed step in that palette. */
 
 	/* Content Colors - Warm text hierarchy */
 	--foreground: #2d3632;
@@ -1096,6 +1146,7 @@
 	--surface: #2d303e;
 	--surface-elevated: #343746;
 	--surface-overlay: #3c3f52;
+	--desk: #21222c;  /* Dracula's own darker background. */
 
 	/* Content Colors */
 	--foreground: #f8f8f2;
@@ -1156,6 +1207,7 @@
 	--surface: #2a273f;
 	--surface-elevated: #312e47;
 	--surface-overlay: #393552;
+	--desk: #191724;  /* Rose Pine `base`, the canonical recessed value. */
 
 	/* Content Colors */
 	--foreground: #e0def4;
