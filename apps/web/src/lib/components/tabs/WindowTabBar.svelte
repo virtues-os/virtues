@@ -19,6 +19,7 @@
 	import { pagesStore } from "$lib/stores/pages.svelte";
 	import { pinsStore } from "$lib/stores/pins.svelte";
 	import { paneActions } from "$lib/stores/paneActions.svelte";
+	import { modifierHint } from "$lib/stores/modifierHint.svelte";
 	import { chatSessions } from "$lib/stores/chatSessions.svelte";
 	import { isEmoji } from "$lib/utils/iconHelpers";
 	import type { ContextMenuItem } from "$lib/stores/contextMenu.svelte";
@@ -68,6 +69,12 @@
 	// Whatever the view showing in this pane has published (item 5's slot).
 	const viewActions = $derived(paneActions.for(activeTabId));
 	const isSplitMode = $derived(windowShellStore.isSplit);
+
+	// ⌘1/⌘2 badge, shown only while ⌘ is held. Single-pane mode is always ⌘1.
+	const paneNumber = $derived(paneId === "right" ? "2" : "1");
+	const showPaneHint = $derived(
+		modifierHint.visible && !mobileLayout.isMobile,
+	);
 
 	// Per-tab history (browser model): back/forward act on this pane's active tab.
 	const canGoBack = $derived(windowShellStore.canGoBack(paneId));
@@ -370,6 +377,13 @@
 	aria-label="Tab bar"
 	tabindex="0"
 >
+	{#if showPaneHint}
+		<!-- Flips up into place so the change registers as *something happened
+		     here* rather than as a badge that was always there. aria-hidden: it
+		     restates a shortcut, and announcing it on every ⌘ hold would be
+		     noise to a screen reader. -->
+		<span class="pane-hint" aria-hidden="true">⌘{paneNumber}</span>
+	{/if}
 	{#if showSidebarToggle}
 		<button
 			class="sidebar-toggle"
@@ -672,6 +686,41 @@
 		width: 14px;
 		text-align: center;
 		flex-shrink: 0;
+	}
+
+	@keyframes paneHintIn {
+		from {
+			opacity: 0;
+			transform: translateY(6px) rotateX(-40deg);
+		}
+		to {
+			opacity: 1;
+			transform: translateY(0) rotateX(0);
+		}
+	}
+
+	.pane-hint {
+		display: inline-flex;
+		align-items: center;
+		align-self: center;
+		padding: 2px 6px;
+		margin-right: 2px;
+		border-radius: 4px;
+		background: var(--color-primary);
+		color: var(--color-surface);
+		font-family: var(--font-sans);
+		font-size: 10px;
+		font-weight: 600;
+		line-height: 1.4;
+		flex-shrink: 0;
+		transform-origin: bottom center;
+		animation: paneHintIn 180ms cubic-bezier(0.2, 0, 0, 1);
+	}
+
+	@media (prefers-reduced-motion: reduce) {
+		.pane-hint {
+			animation: none;
+		}
 	}
 
 	.pane-actions {

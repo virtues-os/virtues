@@ -31,6 +31,7 @@
 
 	import { installClientHeader } from "$lib/build";
 	import { shortcuts } from "$lib/shortcuts/registry.svelte";
+	import { modifierHint } from "$lib/stores/modifierHint.svelte";
 
 	// @ts-ignore — Vite compile-time constant (see vite.config.ts + app.d.ts)
 	const BUILD_COMMIT: string = __BUILD_COMMIT__;
@@ -139,6 +140,9 @@
 				run: () => windowShellStore.cycleTab(-1),
 			},
 		);
+
+		// Hold-⌘ reveals the ⌘1/⌘2 pane badges.
+		modifierHint.start();
 
 		// Start polling for subscription status
 		subscriptionStore.start();
