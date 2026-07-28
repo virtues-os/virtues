@@ -267,7 +267,7 @@
 
 	.toolbar-action:hover {
 		color: var(--color-foreground);
-		background: var(--color-surface-elevated);
+		background: var(--hover-bg);
 	}
 
 	.toolbar-action.active {
@@ -311,7 +311,7 @@
 	}
 
 	.overflow-item:hover {
-		background: var(--color-surface-elevated);
+		background: var(--hover-bg);
 	}
 
 	.overflow-item-danger {

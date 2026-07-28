@@ -23,18 +23,16 @@ import ConnectionsPanel from '$lib/components/actions/ConnectionsPanel.svelte';
 import CredentialDetailView from '$lib/components/tabs/views/CredentialDetailView.svelte';
 import ActionsView from '$lib/components/tabs/views/ActionsView.svelte';
 import ActionDetailView from '$lib/components/tabs/views/ActionDetailView.svelte';
+import AppletView from '$lib/components/tabs/views/AppletView.svelte';
 import DevelopersView from '$lib/components/tabs/views/DevelopersView.svelte';
 import SettingsView from '$lib/components/tabs/views/SettingsView.svelte';
-import DriveView from '$lib/components/tabs/views/DriveView.svelte';
 import StorageView from '$lib/components/tabs/views/StorageView.svelte';
 import AssetView from '$lib/components/tabs/views/AssetView.svelte';
-import TrashView from '$lib/components/tabs/views/TrashView.svelte';
 import ConwayView from '$lib/components/tabs/views/ConwayView.svelte';
 import DogJumpView from '$lib/components/tabs/views/DogJumpView.svelte';
 import PagesView from '$lib/components/tabs/views/PagesView.svelte';
 import PageDetailView from '$lib/components/tabs/views/PageDetailView.svelte';
 import NotebooksListView from '$lib/components/tabs/views/NotebooksListView.svelte';
-import StoriesView from '$lib/components/tabs/views/StoriesView.svelte';
 import NotebookDetailView from '$lib/components/tabs/views/NotebookDetailView.svelte';
 import NarrativeIdentityView from '$lib/components/tabs/views/NarrativeIdentityView.svelte';
 import OntologyIndexView from '$lib/components/tabs/views/OntologyIndexView.svelte';
@@ -340,29 +338,6 @@ export const tabRegistry: Record<TabType, TabDefinition> = {
 	},
 
 	// ========================================================================
-	// STORY NAMESPACE: /stories — PLACEHOLDER route, no feature behind it yet.
-	//
-	// A story is a CLAIM ("how I act differently on rainy days"), where a notebook
-	// is a CONTAINER. The table and the magnet that gathers a story's evidence are
-	// built; the rendering is not, and waits until events/entities/days are
-	// verified — a story is an argument made out of them.
-	// ========================================================================
-	story: {
-		match: (path) => path === '/stories' || path === '/story',
-		parse: () => ({
-			type: 'story',
-			label: 'Stories',
-			icon: 'ri:git-branch-line',
-			normalizedRoute: '/stories',
-		}),
-		serialize: () => 'story', // token must equal registry key so it round-trips via KNOWN_TYPES
-		deserialize: () => '/stories',
-		icon: 'ri:git-branch-line',
-		defaultLabel: 'Stories',
-		component: StoriesView,
-	},
-
-	// ========================================================================
 	// DAY NAMESPACE: /day, /day/day_{date}
 	// ========================================================================
 	day: {
@@ -499,41 +474,67 @@ export const tabRegistry: Record<TabType, TabDefinition> = {
 	// ========================================================================
 	actions: {
 		match: (path) =>
+			path === '/applets' ||
 			path === '/actions' || /^\/actions\/(actions|templates|history)$/.test(path),
 		parse: () => ({
 			type: 'actions',
-			label: 'Actions',
+			label: 'Applets',
 			icon: 'ri:flashlight-line',
 		}),
 		serialize: () => 'actions',
-		deserialize: () => '/actions',
+		deserialize: () => '/applets',
 		icon: 'ri:flashlight-line',
-		defaultLabel: 'Actions',
+		defaultLabel: 'Applets',
 		component: ActionsView,
 	},
 
 	// ========================================================================
-	// ACTION DETAIL: /action/action_{id}
-	// Singular namespace — no list view; actions list lives under `actions`.
+	// APPLET VIEW: /applet/action_{id}/view — the applet's face, full-page.
+	// Must precede `action` (whose match ends at $, so order is belt-and-braces).
+	// ========================================================================
+	'applet-view': {
+		match: (path) => /^\/(?:applet|action)\/action_[^/]+\/view$/.test(path),
+		parse: (path) => {
+			const match = path.match(/^\/(?:applet|action)\/(action_[^/]+)\/view$/);
+			return {
+				type: 'applet-view',
+				label: 'Applet',
+				icon: 'ri:layout-2-line',
+				entityId: match?.[1],
+			};
+		},
+		serialize: (id) => (id ? `${id}__view` : 'applet-view'),
+		deserialize: (serialized) => {
+			const id = serialized.replace(/__view$/, '');
+			if (id.startsWith('action_')) return `/applet/${id}/view`;
+			return '/applets';
+		},
+		icon: 'ri:layout-2-line',
+		defaultLabel: 'Applet',
+		component: AppletView,
+	},
+
+	// ========================================================================
+	// ACTION DETAIL: /applet/action_{id} — settings, prompt, runs (no face).
 	// ========================================================================
 	action: {
-		match: (path) => /^\/action\/action_[^/]+$/.test(path),
+		match: (path) => /^\/(applet|action)\/action_[^/]+$/.test(path),
 		parse: (path) => {
-			const match = path.match(/^\/action\/(action_[^/]+)$/);
+			const match = path.match(/^\/(?:applet|action)\/(action_[^/]+)$/);
 			return {
 				type: 'action',
-				label: 'Action',
+				label: 'Applet',
 				icon: 'ri:flashlight-line',
 				entityId: match?.[1],
 			};
 		},
 		serialize: (id) => (id ? `action_${id}` : 'action'),
 		deserialize: (serialized) => {
-			if (serialized.startsWith('action_')) return `/action/${serialized}`;
-			return '/actions';
+			if (serialized.startsWith('action_')) return `/applet/${serialized}`;
+			return '/applets';
 		},
 		icon: 'ri:flashlight-line',
-		defaultLabel: 'Action',
+		defaultLabel: 'Applet',
 		component: ActionDetailView,
 		detailComponent: ActionDetailView,
 	},
@@ -848,6 +849,7 @@ export function parseRoute(route: string): ParsedRoute {
 		// Specific patterns first
 		'source', // Source list and detail views
 		'actions', // Actions list page (must come before singular 'action')
+		'applet-view', // Applet full-page face (must come before 'action')
 		'action', // Action detail page
 		'developers', // Developers tab group (SQL/Terminal/Lake)
 		'ontology', // Ontology data browsing
@@ -868,7 +870,6 @@ export function parseRoute(route: string): ParsedRoute {
 		'notebook',
 		'day',
 		'year',
-		'story', // Exact /stories | /story — deep-link resolves to StoriesView
 		'narrative-identity',
 		// Easter eggs last
 		'conway',

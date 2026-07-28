@@ -1,18 +1,33 @@
-//! `virtues backup` — produce a single tarball of the box state.
+//! `virtues backup` — produce a single encrypted archive of the box state.
 //!
-//! Layout inside the tarball:
+//! The archive is `tar → gzip → age`, written straight to its destination:
 //!
-//!   manifest.json
 //!   db/virtues.dump          (pg_dump --format=custom output)
-//!   env/virtues.env          (a copy of /etc/virtues/env)
-//!   lake/<file...>           (rsync-style copy of the data lake)
+//!   env/virtues.env          (holds VIRTUES_ENCRYPTION_KEY)
+//!   lake/<file...>           (the data lake)
+//!   applets/<file...>        (chat-authored applets + imported packs)
+//!   manifest.json            (LAST — see `stream_archive`)
 //!
-//! Manifest records the binary version, the schema migration version, distro
-//! info, UTC timestamp, and sha256 of every artifact. `virtues restore`
-//! verifies the manifest before touching anything live.
+//! The manifest records the binary version, the schema migration version,
+//! distro, a UTC timestamp, and the sha256 of every member. `virtues restore`
+//! verifies all of it before touching anything live.
+//!
+//! Two properties worth knowing before changing anything here:
+//!
+//! **Nothing is staged.** Members stream from where they already live, digested
+//! in flight. Only the pg_dump is materialized, because it has no original on
+//! disk. The manifest goes last precisely because it names digests that are not
+//! known until the bytes have been read — writing it first is what used to force
+//! a full copy of the lake onto the disk beside the archive.
+//!
+//! **The box cannot read what it writes.** Archives are encrypted to an age
+//! recipient whose secret half was printed once and never stored. A stolen box
+//! yields an encryption key with nothing to decrypt; a stolen drive yields
+//! ciphertext with no key. Restore therefore needs `--key-file`, and that is
+//! working as intended rather than an oversight.
 
 use std::fs::{self, File};
-use std::io::Write;
+use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
@@ -24,9 +39,40 @@ use sha2::{Digest, Sha256};
 use sqlx::PgPool;
 
 const DEFAULT_BACKUP_DIR: &str = "/var/lib/virtues/backups";
-const ENV_FILE: &str = "/etc/virtues/env";
-const LAKE_DIR: &str = "/var/lib/virtues/lake";
 const MANIFEST_VERSION: u32 = 1;
+
+/// Candidate locations for the env file that holds `VIRTUES_ENCRYPTION_KEY`,
+/// in preference order.
+///
+/// FHS says config lives in `/etc`, and the rest of the codebase (restore,
+/// diag, auth docs) assumes `/etc/virtues/env`. The installer disagreed: it
+/// writes `<data_dir>/virtues.env` and points the unit's `EnvironmentFile=`
+/// there. Every box built by that installer therefore has NO `/etc/virtues/env`
+/// — so a backup that only looked there captured no key at all, and said so
+/// with a `tracing::warn!` nobody sees. The resulting tarball has a perfect
+/// manifest, a full pg_dump, and no way to decrypt a single credential.
+///
+/// Read both until the installer is fixed; prefer the FHS path so boxes that
+/// have migrated win.
+pub const ENV_CANDIDATES: [&str; 2] = ["/etc/virtues/env", "/var/lib/virtues/virtues.env"];
+
+/// First existing env file, or `None` when the box has none.
+///
+/// `VIRTUES_ENV_FILE` overrides both candidates — the install prefix is
+/// configurable (`DATA_DIR`), and a box that moved its data dir would
+/// otherwise match neither path. It now fails loudly rather than backing up
+/// without a key, so an operator in that position gets told which paths were
+/// tried; this is the knob that lets them answer.
+pub fn find_env_file() -> Option<PathBuf> {
+    if let Ok(explicit) = std::env::var("VIRTUES_ENV_FILE") {
+        let p = PathBuf::from(explicit);
+        return p.is_file().then_some(p);
+    }
+    ENV_CANDIDATES
+        .iter()
+        .map(PathBuf::from)
+        .find(|p| p.is_file())
+}
 
 /// Public manifest persisted at the root of the tarball. Format is stable —
 /// `virtues restore` of older binaries must parse it. Bump `manifest_version`
@@ -48,10 +94,86 @@ pub struct Artifact {
     pub sha256: String,
 }
 
+/// Everything a backup reads off the box, resolved once and passed down.
+///
+/// Exists so the archive writer takes its inputs as arguments rather than
+/// re-deriving them from the environment at each use. That is what lets the
+/// round-trip drill in `tests/backup_restore.rs` run against scratch paths and
+/// a scratch database — and a backup path that cannot be exercised in a test is
+/// the thing this whole area was missing.
+pub(crate) struct Sources {
+    pub database_url: String,
+    pub lake: PathBuf,
+    pub applets: PathBuf,
+    /// `None` only when `--allow-missing-key` was passed.
+    pub env_file: Option<PathBuf>,
+}
+
+impl Sources {
+    pub(crate) fn from_env(allow_missing_key: bool) -> Result<Self, crate::Error> {
+        // The encryption key is not optional baggage — without it every encrypted
+        // column in the dump is permanently unreadable. A keyless backup is worse
+        // than no backup, because it looks complete and you only discover
+        // otherwise at restore time, which is the worst possible moment. So this
+        // is a hard failure, not a warning; `--allow-missing-key` is the explicit
+        // out for dev boxes that keep their key in a repo `.env`.
+        let env_file = match find_env_file() {
+            Some(f) => Some(f),
+            None if allow_missing_key => {
+                eprintln!(
+                    "warning: this backup CANNOT decrypt the database it contains \
+                     (--allow-missing-key was passed)"
+                );
+                None
+            }
+            None => {
+                return Err(crate::Error::Other(format!(
+                    "no env file at any of {} — the backup would contain an \
+                     undecryptable database. Locate the file holding \
+                     VIRTUES_ENCRYPTION_KEY, or pass --allow-missing-key if you \
+                     genuinely want a keyless dump.",
+                    ENV_CANDIDATES.join(" or ")
+                )));
+            }
+        };
+        Ok(Self {
+            database_url: crate::database::normalize_database_url()
+                .map_err(|e| crate::Error::Other(format!("DATABASE_URL: {e}")))?,
+            lake: crate::storage::lake::lake_root(),
+            applets: crate::action_templates::state_root(),
+            env_file,
+        })
+    }
+}
+
 pub async fn run(
     pool: &PgPool,
     output: Option<PathBuf>,
     force: bool,
+    allow_missing_key: bool,
+) -> Result<PathBuf, crate::Error> {
+    let sources = Sources::from_env(allow_missing_key)?;
+    let recipient = load_or_create_recipient()?;
+    // A standalone `virtues backup` is one self-contained file, so it carries
+    // the lake. Volume backups do not — see `include_lake`.
+    write_archive(pool, output, force, &sources, &recipient, true).await
+}
+
+/// Write a full archive.
+///
+/// `include_lake` is the difference between the two callers, and getting it
+/// wrong is silent and expensive. A standalone backup is a single complete file
+/// and must contain the lake. A volume `full-*` must NOT: the lake reaches the
+/// volume through `lake-*` increments, and bundling it here would re-archive
+/// hundreds of gigabytes on every run — precisely the cost increments exist to
+/// avoid, and invisible except as a backup that takes hours.
+pub(crate) async fn write_archive(
+    pool: &PgPool,
+    output: Option<PathBuf>,
+    force: bool,
+    sources: &Sources,
+    recipient: &age::x25519::Recipient,
+    include_lake: bool,
 ) -> Result<PathBuf, crate::Error> {
     let now = Utc::now();
     let out_path = match output {
@@ -61,7 +183,7 @@ pub async fn run(
             let dir = Path::new(DEFAULT_BACKUP_DIR);
             fs::create_dir_all(dir)
                 .map_err(|e| crate::Error::Other(format!("creating backup dir: {e}")))?;
-            dir.join(format!("virtues-{stamp}.tar.gz"))
+            dir.join(format!("virtues-{stamp}.tar.gz.age"))
         }
     };
     if out_path.exists() && !force {
@@ -71,66 +193,57 @@ pub async fn run(
         )));
     }
 
-    // Stage into a temp directory we can inspect + checksum before tarring.
-    // Live writes happen inside this dir; nothing touches the final path
-    // until the tar is closed cleanly.
+    // Only the database dump is materialized, because it is the one member with
+    // no original on disk. Everything else streams from where it already lives.
+    //
+    // The old path staged a full COPY of the lake beside the output before
+    // tarring it, so a backup needed twice the lake's size in free space and
+    // wrote every byte twice — on the box least able to afford either. The
+    // staging dir is now bounded by the database, not by the archive.
     let staging = tempfile_dir(&out_path)?;
-    let staging_path = staging.path();
-    fs::create_dir_all(staging_path.join("db"))
-        .and_then(|_| fs::create_dir_all(staging_path.join("env")))
-        .and_then(|_| fs::create_dir_all(staging_path.join("lake")))
-        .map_err(|e| crate::Error::Other(format!("staging dirs: {e}")))?;
+    let dump = staging.path().join("virtues.dump");
 
     println!("→ pg_dump (full database)…");
-    pg_dump_into(staging_path.join("db/virtues.dump").as_path())?;
+    pg_dump_into(&dump, &sources.database_url)?;
 
-    println!("→ copying /etc/virtues/env…");
-    if Path::new(ENV_FILE).exists() {
-        fs::copy(ENV_FILE, staging_path.join("env/virtues.env"))
-            .map_err(|e| crate::Error::Other(format!("copying env: {e}")))?;
-    } else {
-        // Non-fatal in dev (env may live in repo .env). Restore will warn
-        // if it sees no env file and the DB has encrypted credentials.
-        tracing::warn!("no {ENV_FILE} found; backup will not include encryption key");
+    let mut members: Vec<(PathBuf, String)> = vec![(dump, "db/virtues.dump".to_string())];
+    match &sources.env_file {
+        Some(env_file) => members.push((env_file.clone(), "env/virtues.env".to_string())),
+        None => println!("→ no env file found — continuing without the encryption key"),
+    }
+    // Resolved, never hardcoded. A backup that read a fixed path while the box
+    // wrote somewhere else would succeed, report success, and contain no lake at
+    // all — the failure only surfacing at restore, when it is far too late.
+    if include_lake {
+        println!("→ scanning data lake at {}…", sources.lake.display());
+        collect_files(&sources.lake, "lake", &mut members)?;
     }
 
-    println!("→ copying data lake at {LAKE_DIR}…");
-    let lake_src = Path::new(LAKE_DIR);
-    if lake_src.exists() {
-        copy_tree_recursive(lake_src, &staging_path.join("lake"))?;
-    }
+    // Authored applets are user data with no other copy: the manifest, the
+    // schema DDL, and the face HTML the model wrote. The DB row and the
+    // applet's Postgres schema survive on their own, but these files don't —
+    // losing them leaves exactly the half-state of a row with no folder.
+    println!(
+        "→ scanning authored applets at {}…",
+        sources.applets.display()
+    );
+    collect_files(&sources.applets, "applets", &mut members)?;
 
-    println!("→ building manifest…");
     let schema_version = current_schema_version(pool).await?;
-    let mut artifacts = vec![];
-    for rel in [
-        "db/virtues.dump",
-        "env/virtues.env",
-    ] {
-        let abs = staging_path.join(rel);
-        if abs.exists() {
-            artifacts.push(artifact_for(&abs, rel)?);
-        }
-    }
-    // Lake is many files; record one entry per file so restore can verify
-    // each one individually. Skip if the lake is empty.
-    walk_for_artifacts(staging_path.join("lake").as_path(), "lake", &mut artifacts)?;
-
-    let manifest = Manifest {
-        manifest_version: MANIFEST_VERSION,
-        binary_version: env!("CARGO_PKG_VERSION").to_string(),
-        schema_version,
-        created_at: now.to_rfc3339(),
-        distro: read_distro(),
-        artifacts,
-    };
-    let manifest_json = serde_json::to_vec_pretty(&manifest)
-        .map_err(|e| crate::Error::Other(format!("encode manifest: {e}")))?;
-    fs::write(staging_path.join("manifest.json"), &manifest_json)
-        .map_err(|e| crate::Error::Other(format!("write manifest: {e}")))?;
-
-    println!("→ writing tarball at {}…", out_path.display());
-    create_tarball(staging_path, &out_path)?;
+    println!(
+        "→ writing {} member(s) to {}…",
+        members.len(),
+        out_path.display()
+    );
+    stream_archive(
+        &members,
+        ManifestMeta {
+            schema_version,
+            created_at: now.to_rfc3339(),
+        },
+        &out_path,
+        recipient,
+    )?;
 
     let size = fs::metadata(&out_path)
         .map(|m| m.len())
@@ -143,20 +256,18 @@ pub async fn run(
     Ok(out_path)
 }
 
-fn pg_dump_into(dest: &Path) -> Result<(), crate::Error> {
+fn pg_dump_into(dest: &Path, database_url: &str) -> Result<(), crate::Error> {
     // `pg_dump --format=custom` produces a binary, compressed, parallel-
-    // restorable archive. Connection uses the same DATABASE_URL the daemon
-    // uses; on a normally-installed box that's peer-auth as the `virtues`
-    // user against the local socket.
-    let database_url = crate::database::normalize_database_url()
-        .map_err(|e| crate::Error::Other(format!("DATABASE_URL: {e}")))?;
+    // restorable archive. The URL is passed in rather than read here: it must be
+    // the database the caller already holds a pool to, not whatever the ambient
+    // environment happens to name.
     let status = Command::new("pg_dump")
         .arg("--format=custom")
         .arg("--no-owner")
         .arg("--no-acl")
         .arg("-f")
         .arg(dest)
-        .arg(&database_url)
+        .arg(database_url)
         .status()
         .map_err(|e| crate::Error::Other(format!("invoking pg_dump: {e}")))?;
     if !status.success() {
@@ -201,88 +312,354 @@ fn read_distro() -> Option<String> {
     }
 }
 
-fn artifact_for(abs: &Path, rel: &str) -> Result<Artifact, crate::Error> {
-    let bytes = fs::read(abs)
-        .map_err(|e| crate::Error::Other(format!("reading {}: {e}", abs.display())))?;
-    let size_bytes = bytes.len() as u64;
-    let mut h = Sha256::new();
-    h.update(&bytes);
-    let sha256 = format!("{:x}", h.finalize());
-    Ok(Artifact {
-        path: rel.to_string(),
-        size_bytes,
-        sha256,
-    })
+/// The box's age recipient — a **public** key. The matching secret is printed
+/// once, when it is minted, and never written here.
+const WELL_KNOWN_RECIPIENT_PATH: &str = "/var/lib/virtues/backup-recipient";
+/// Dev-only, relative to virtues-core. Gitignored alongside `.applet-state`.
+const DEV_RECIPIENT_PATH_FROM_CORE: &str = "../.backup-recipient";
+
+/// Where this box keeps its backup recipient.
+///
+/// Same precedence as `storage::lake::lake_root` and
+/// `action_templates::state_root`, and for the same reason: a hardcoded box path
+/// makes the command unusable anywhere else. `/var/lib` is root-owned, so a dev
+/// machine cannot even create the directory — `virtues backup --output /tmp/x`
+/// failed outright until this resolved properly.
+pub(crate) fn recipient_path() -> PathBuf {
+    if let Ok(explicit) = std::env::var("VIRTUES_BACKUP_RECIPIENT") {
+        if !explicit.is_empty() {
+            return PathBuf::from(explicit);
+        }
+    }
+    let installed = PathBuf::from(WELL_KNOWN_RECIPIENT_PATH);
+    if installed.parent().is_some_and(|p| p.is_dir()) {
+        return installed;
+    }
+    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join(DEV_RECIPIENT_PATH_FROM_CORE)
 }
 
-fn walk_for_artifacts(
-    abs: &Path,
+/// Load the recipient every backup encrypts to. Never mints — see `init_key`.
+///
+/// The box stores only the public half, so **it cannot read its own backups.**
+/// That is the point, and it is what makes "virtues never holds the key" a
+/// property rather than a promise: a stolen box yields an encryption key and
+/// nothing to decrypt, a stolen drive yields ciphertext and no key.
+///
+/// It also means the recovery secret is printed exactly once. There is no way to
+/// recover it afterwards — by construction, since anywhere we could stash it for
+/// later would be somewhere an attacker with the box could read it too.
+///
+/// The file lives beside the lake rather than inside it, so it is never swept
+/// into the archive. A recovery key sealed inside the thing it unseals would be
+/// no recovery key at all.
+pub(crate) fn load_or_create_recipient() -> Result<age::x25519::Recipient, crate::Error> {
+    load_recipient(false)
+}
+
+/// `virtues backup --init-key` — the one place a backup key is created.
+///
+/// Refuses when one already exists rather than replacing it: a new key does not
+/// open old archives, so silently rotating would strand every backup the box has
+/// ever written.
+pub fn init_key() -> Result<(), crate::Error> {
+    let path = recipient_path();
+    if path.is_file() {
+        return Err(crate::Error::Other(format!(
+            "{} already exists. A new key would not open the archives this box \
+             has already written, so this refuses rather than strand them. To \
+             deliberately start over, remove that file first — and know that \
+             every existing archive becomes unreadable.",
+            path.display()
+        )));
+    }
+    load_recipient(true)?;
+    Ok(())
+}
+
+/// `mint` is the caller asserting a human is watching.
+///
+/// Minting prints a secret exactly once and can never reproduce it, so doing it
+/// anywhere the output is not being read produces archives nobody can ever open
+/// — and says nothing is wrong. That is not hypothetical: the nightly applet
+/// runs with its stdout captured as a JSON contract, and a first backup from
+/// cron would have minted a key straight into a void. It also happened to an
+/// operator, whose terminal pipeline truncated the banner and silently cost
+/// 4 GB of archives.
+///
+/// So auto-minting is gone. `virtues backup --init-key` is the only way to
+/// create one, it refuses to overwrite, and everything else fails loudly when
+/// no recipient exists.
+pub(crate) fn load_recipient(mint: bool) -> Result<age::x25519::Recipient, crate::Error> {
+    use std::str::FromStr;
+
+    let path = recipient_path();
+    if let Ok(existing) = fs::read_to_string(&path) {
+        let existing = existing.trim();
+        if !existing.is_empty() {
+            return age::x25519::Recipient::from_str(existing).map_err(|e| {
+                crate::Error::Other(format!(
+                    "{} does not contain a valid age recipient ({e}). \
+                     Refusing to back up rather than write an archive nobody can \
+                     open. Fix or remove the file — removing it mints a NEW key, \
+                     which will not open existing archives.",
+                    path.display()
+                ))
+            });
+        }
+    }
+
+    if !mint {
+        return Err(crate::Error::Other(format!(
+            "no backup key on this box ({} is missing).\n\n    \
+             Run `virtues backup --init-key` from a terminal you are watching. \
+             It prints a recovery key once and cannot ever print it again — so \
+             it is never created automatically, and never by a scheduled run.",
+            path.display()
+        )));
+    }
+
+    let identity = age::x25519::Identity::generate();
+    let recipient = identity.to_public();
+    fs::write(&path, format!("{recipient}\n"))
+        .map_err(|e| crate::Error::Other(format!("writing {}: {e}", path.display())))?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let _ = fs::set_permissions(&path, fs::Permissions::from_mode(0o600));
+    }
+
+    use age::secrecy::ExposeSecret;
+    println!();
+    println!("┌─ SAVE THIS — it is shown once and cannot be recovered ─────────────");
+    println!("│");
+    println!("│  Backup recovery key:");
+    println!("│");
+    println!("│    {}", identity.to_string().expose_secret());
+    println!("│");
+    println!("│  This box keeps only the public half, so it CANNOT decrypt its own");
+    println!("│  backups. If the box is lost, this key is the only way to read them.");
+    println!("│");
+    println!("│  Put it somewhere that is not this box — a password manager, or");
+    println!("│  printed and filed. Restore with:");
+    println!("│    virtues restore --key-file <file> <archive>");
+    println!("└────────────────────────────────────────────────────────────────────");
+    println!();
+
+    Ok(recipient)
+}
+
+/// Walk `root`, recording every file as `(absolute, archive-relative)`.
+///
+/// Records paths only — nothing is read here. An absent root is not an error:
+/// a box that has never ingested has no lake, and that is a legitimate backup.
+fn collect_files(
+    root: &Path,
     rel_prefix: &str,
-    out: &mut Vec<Artifact>,
+    out: &mut Vec<(PathBuf, String)>,
 ) -> Result<(), crate::Error> {
-    if !abs.exists() {
+    if !root.is_dir() {
         return Ok(());
     }
-    let read = fs::read_dir(abs)
-        .map_err(|e| crate::Error::Other(format!("read {}: {e}", abs.display())))?;
+    let read =
+        fs::read_dir(root).map_err(|e| crate::Error::Other(format!("read {}: {e}", root.display())))?;
     for entry in read {
-        let entry =
-            entry.map_err(|e| crate::Error::Other(format!("dir entry: {e}")))?;
-        let path = entry.path();
-        let name = entry.file_name();
-        let name = name.to_string_lossy();
-        let rel = format!("{rel_prefix}/{name}");
-        if path.is_dir() {
-            walk_for_artifacts(&path, &rel, out)?;
-        } else {
-            out.push(artifact_for(&path, &rel)?);
-        }
-    }
-    Ok(())
-}
-
-fn copy_tree_recursive(src: &Path, dst: &Path) -> Result<(), crate::Error> {
-    fs::create_dir_all(dst)
-        .map_err(|e| crate::Error::Other(format!("mkdir {}: {e}", dst.display())))?;
-    for entry in fs::read_dir(src)
-        .map_err(|e| crate::Error::Other(format!("read {}: {e}", src.display())))?
-    {
         let entry = entry.map_err(|e| crate::Error::Other(format!("dir entry: {e}")))?;
         let path = entry.path();
-        let dest = dst.join(entry.file_name());
+        let name = entry.file_name();
+        let rel = format!("{rel_prefix}/{}", name.to_string_lossy());
         if path.is_dir() {
-            copy_tree_recursive(&path, &dest)?;
+            collect_files(&path, &rel, out)?;
         } else {
-            fs::copy(&path, &dest)
-                .map_err(|e| crate::Error::Other(format!("copy {}: {e}", path.display())))?;
+            out.push((path, rel));
         }
     }
     Ok(())
 }
 
-fn create_tarball(staging: &Path, out: &Path) -> Result<(), crate::Error> {
-    let tmp = out.with_extension("tar.gz.partial");
+/// The manifest fields that are not derived from the members themselves.
+struct ManifestMeta {
+    schema_version: String,
+    created_at: String,
+}
+
+/// A reader that digests and counts what passes through it.
+///
+/// The point is that a member's sha256 costs no extra read: the bytes are
+/// already streaming into the tar, so they are hashed on the way. Previously
+/// each artifact was `fs::read` into memory in full purely to hash it — the
+/// database dump included.
+struct HashingReader<R> {
+    inner: R,
+    hasher: Sha256,
+    len: u64,
+}
+
+impl<R: Read> HashingReader<R> {
+    fn new(inner: R) -> Self {
+        Self {
+            inner,
+            hasher: Sha256::new(),
+            len: 0,
+        }
+    }
+}
+
+impl<R: Read> Read for HashingReader<R> {
+    fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+        let n = self.inner.read(buf)?;
+        self.hasher.update(&buf[..n]);
+        self.len += n as u64;
+        Ok(n)
+    }
+}
+
+/// Stream every member into a gzipped tar, digesting as we go, and close with
+/// the manifest.
+///
+/// **The manifest is written last, and that is load-bearing.** It names the
+/// digest of every other member, which is only known once those bytes have been
+/// read — so writing it first is what forced the old staging copy to exist. Tar
+/// is a sequential format with no central directory, so member order is free;
+/// restore extracts the whole archive before reading the manifest and does not
+/// care where in the stream it appeared. Archives written by the previous
+/// implementation, with the manifest first, still restore unchanged.
+fn stream_archive(
+    members: &[(PathBuf, String)],
+    meta: ManifestMeta,
+    out: &Path,
+    recipient: &age::x25519::Recipient,
+) -> Result<Vec<String>, crate::Error> {
+    match stream_archive_inner(members, meta, out, recipient) {
+        Ok(v) => Ok(v),
+        Err(e) => {
+            // Otherwise every failed run leaves a `.partial` of whatever it had
+            // written — on a backup volume, which is exactly where free space is
+            // the binding constraint, and which nothing else reclaims.
+            let _ = fs::remove_file(out.with_file_name(format!(
+                "{}.partial",
+                out.file_name().unwrap_or_default().to_string_lossy()
+            )));
+            Err(e)
+        }
+    }
+}
+
+fn stream_archive_inner(
+    members: &[(PathBuf, String)],
+    meta: ManifestMeta,
+    out: &Path,
+    recipient: &age::x25519::Recipient,
+) -> Result<Vec<String>, crate::Error> {
+    // Appended, not `with_extension`, which would replace `.age` and turn
+    // `virtues-….tar.gz.age` into `virtues-….tar.gz.partial`.
+    let tmp = out.with_file_name(format!(
+        "{}.partial",
+        out.file_name().unwrap_or_default().to_string_lossy()
+    ));
+    // Paths the writer ACTUALLY archived. Not the same as the paths it was
+    // asked to: members that vanish mid-run are skipped, and recording those as
+    // shipped would mark them backed up forever.
+    let archived: Vec<String>;
     {
         let file = File::create(&tmp)
             .map_err(|e| crate::Error::Other(format!("create {}: {e}", tmp.display())))?;
-        let gz = GzEncoder::new(file, Compression::default());
+        // tar → gzip → age → disk. Compress before encrypting: ciphertext does
+        // not compress, so the other order would produce a much larger archive.
+        let encryptor =
+            age::Encryptor::with_recipients(std::iter::once(recipient as &dyn age::Recipient))
+                .map_err(|e| crate::Error::Other(format!("age encryptor: {e}")))?;
+        let sealed = encryptor
+            .wrap_output(file)
+            .map_err(|e| crate::Error::Other(format!("age wrap: {e}")))?;
+        let gz = GzEncoder::new(sealed, Compression::default());
         let mut builder = tar::Builder::new(gz);
+        let mut artifacts = Vec::with_capacity(members.len());
+
+        for (src, rel) in members {
+            // Open first, then size the OPEN handle. Sizing the path and then
+            // opening it leaves a window in which the file changes, and tar
+            // writes a header declaring a length it then cannot fill.
+            let f = match File::open(src) {
+                Ok(f) => f,
+                // The lake is live. A file that vanished between the walk and
+                // here was never part of this backup; recording it in the
+                // manifest would make restore fail a digest check for a file
+                // that legitimately does not exist.
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+                    eprintln!("warning: {} disappeared during backup — skipped", src.display());
+                    continue;
+                }
+                Err(e) => {
+                    return Err(crate::Error::Other(format!("open {}: {e}", src.display())))
+                }
+            };
+            let size = f
+                .metadata()
+                .map_err(|e| crate::Error::Other(format!("stat {}: {e}", src.display())))?
+                .len();
+
+            let mut header = tar::Header::new_gnu();
+            header.set_size(size);
+            header.set_mode(0o600);
+            header.set_cksum();
+            let mut reader = HashingReader::new(f);
+            builder
+                .append_data(&mut header, rel, &mut reader)
+                .map_err(|e| crate::Error::Other(format!("archiving {rel}: {e}")))?;
+
+            if reader.len != size {
+                return Err(crate::Error::Other(format!(
+                    "{} changed size while being archived ({size} → {}); backup aborted",
+                    src.display(),
+                    reader.len
+                )));
+            }
+            artifacts.push(Artifact {
+                path: rel.clone(),
+                size_bytes: reader.len,
+                sha256: format!("{:x}", reader.hasher.finalize()),
+            });
+        }
+
+        archived = artifacts.iter().map(|a| a.path.clone()).collect();
+        let manifest = Manifest {
+            manifest_version: MANIFEST_VERSION,
+            binary_version: env!("CARGO_PKG_VERSION").to_string(),
+            schema_version: meta.schema_version,
+            created_at: meta.created_at,
+            distro: read_distro(),
+            artifacts,
+        };
+        let json = serde_json::to_vec_pretty(&manifest)
+            .map_err(|e| crate::Error::Other(format!("encode manifest: {e}")))?;
+        let mut header = tar::Header::new_gnu();
+        header.set_size(json.len() as u64);
+        header.set_mode(0o600);
+        header.set_cksum();
         builder
-            .append_dir_all(".", staging)
-            .map_err(|e| crate::Error::Other(format!("tar append: {e}")))?;
+            .append_data(&mut header, "manifest.json", json.as_slice())
+            .map_err(|e| crate::Error::Other(format!("archiving manifest: {e}")))?;
+
         let mut gz = builder
             .into_inner()
             .map_err(|e| crate::Error::Other(format!("tar finalize: {e}")))?;
         gz.flush()
             .map_err(|e| crate::Error::Other(format!("flush gz: {e}")))?;
-        gz.finish()
+        let sealed = gz
+            .finish()
             .map_err(|e| crate::Error::Other(format!("finish gz: {e}")))?;
+        // Without this the age stream's final chunk is never written and the
+        // archive decrypts to a truncated tar — a corruption that only surfaces
+        // at restore.
+        sealed
+            .finish()
+            .map_err(|e| crate::Error::Other(format!("finish age stream: {e}")))?;
     }
     // Atomic rename so a crashed backup never leaves a half-written file
     // at the final path.
     fs::rename(&tmp, out)
         .map_err(|e| crate::Error::Other(format!("rename to {}: {e}", out.display())))?;
-    Ok(())
+    Ok(archived)
 }
 
 // ─── Local staging dir helper (no extra dep) ───────────────────────────────
@@ -315,4 +692,51 @@ fn tempfile_dir(near: &Path) -> Result<LocalTempDir, crate::Error> {
     fs::create_dir_all(&path)
         .map_err(|e| crate::Error::Other(format!("staging dir: {e}")))?;
     Ok(LocalTempDir { path })
+}
+
+// ─── Entry points for volume-targeted backups (see cli/backup_volume.rs) ────
+
+/// Walk a tree into `(absolute, archive-relative)` pairs.
+///
+/// Same walker the archive writer uses, exposed so the volume path can diff a
+/// lake against what a drive already holds without a second implementation.
+pub(crate) fn collect_files_pub(
+    root: &Path,
+    rel_prefix: &str,
+    out: &mut Vec<(PathBuf, String)>,
+) -> Result<(), crate::Error> {
+    collect_files(root, rel_prefix, out)
+}
+
+/// Write a full archive to an explicit path.
+pub(crate) async fn write_archive_to(
+    pool: &PgPool,
+    dest: &Path,
+    sources: &Sources,
+    recipient: &age::x25519::Recipient,
+) -> Result<PathBuf, crate::Error> {
+    write_archive(pool, Some(dest.to_path_buf()), true, sources, recipient, false).await
+}
+
+/// Archive an arbitrary member list — used for lake increments.
+///
+/// `schema_version` is "unknown" rather than the live one on purpose: an
+/// increment carries no database, so claiming a schema would invite restore's
+/// compatibility gate to reason about one that is not there.
+pub(crate) fn write_members(
+    members: &[(PathBuf, String)],
+    dest: &Path,
+    recipient: &age::x25519::Recipient,
+    label: &str,
+) -> Result<Vec<String>, crate::Error> {
+    println!("→ writing {} ({} member(s))…", label, members.len());
+    stream_archive(
+        members,
+        ManifestMeta {
+            schema_version: "unknown".to_string(),
+            created_at: Utc::now().to_rfc3339(),
+        },
+        dest,
+        recipient,
+    )
 }

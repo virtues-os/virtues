@@ -120,7 +120,7 @@
 <Page
 	title="Telemetry"
 	description="System history, background runs, and the AI-call log — all box-local, nothing leaves your machine."
-	maxWidth="full"
+	maxWidth="wide"
 >
 	{#if loading}
 		<div class="flex items-center justify-center h-40">

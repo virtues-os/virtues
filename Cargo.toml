@@ -7,7 +7,7 @@ members = [
     "crates/virtues-reach-client",
     "crates/virtues-registry",
     "crates/virtues-qnnd",
-    "actions",
+    "applets",
     "apps/desktop",
     "services/virtues-api",
     "services/virtues-atlas",
@@ -50,7 +50,7 @@ resolver = "2"
 noq-udp = { path = "vendor/noq-udp" }
 
 [workspace.package]
-version = "0.1.0"
+version = "0.3.0"
 edition = "2021"
 authors = ["Virtues Team <team@virtues.com>"]
 license = "MIT"

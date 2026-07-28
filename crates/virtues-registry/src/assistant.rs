@@ -9,7 +9,11 @@ use crate::tools::default_enabled_tools;
 
 /// The canonical default theme for the application.
 /// This is the single source of truth — frontend and spaces.rs reference this.
-pub const DEFAULT_THEME: &str = "pemberley";
+///
+/// Caladan: white surfaces, neutral greys, one blue accent. The plainest of
+/// the sixteen, so a new box lands somewhere quiet rather than arriving with a
+/// strong opinion already formed on the owner's behalf.
+pub const DEFAULT_THEME: &str = "caladan";
 
 /// Assistant profile defaults
 #[derive(Debug, Clone, Deserialize, Serialize)]

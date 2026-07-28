@@ -128,20 +128,18 @@ export interface ActionLastRun {
 }
 
 /**
- * Three-runtime model — see ARCHITECTURE.md.
+ * Two-runtime model — see ARCHITECTURE.md.
  *
  * - `function`: fork-per-trigger CLI; the default. Server forks the binary
  *   on every trigger, pipes ActionInput/Output JSON.
- * - `app`: long-running supervised HTTP server. Core proxies `/service/<id>/*`
- *   to it; cron/webhook triggers become `POST /__trigger`.
  * - `view`: pure Svelte component, never invoked server-side. Lives at
  *   `apps/web/src/lib/applets/<name>/`.
  */
-export type ActionRuntime = 'function' | 'service' | 'view';
+export type ActionRuntime = 'function' | 'view';
 
 export interface Action {
 	id: string;
-	owner: 'system' | 'user';
+	owner: 'system' | 'user' | 'ai';
 	name: string;
 	agent: string | null;
 	cron_schedule: string | null;
@@ -157,6 +155,13 @@ export interface Action {
 	 *  binary by `function_name`. Null when the action uses the function_name
 	 *  shortcut. */
 	command: string[] | null;
+	/** Lifecycle: null = forever · "once" = archive after first success ·
+	 *  anything else = SQL boolean checked after each success. */
+	until: string | null;
+	/** Set when the lifecycle completed; archived applets are disabled. */
+	archived_at: string | null;
+	/** True when the applet folder ships a face/ (sandboxed-iframe HTML UI). */
+	has_face: boolean;
 	is_system: boolean;
 	created_at: string;
 	updated_at: string;
@@ -167,15 +172,120 @@ export interface ActionDetail extends Action {
 	recent_runs?: ActionRun[];
 }
 
+export async function mintFaceToken(
+	actionId: string
+): Promise<{ token: string; expires_in_seconds: number }> {
+	return request(`/applets/${encodeURIComponent(actionId)}/face-token`);
+}
+
 export async function listActions(): Promise<Action[]> {
-	const res = await fetch(`${API_BASE}/actions`);
+	const res = await fetch(`${API_BASE}/applets`);
 	if (!res.ok) throw new Error(`Failed to list actions: ${res.statusText}`);
 	return res.json();
 }
 
 export async function getAction(id: string): Promise<Action> {
-	const res = await fetch(`${API_BASE}/actions/${encodeURIComponent(id)}`);
+	const res = await fetch(`${API_BASE}/applets/${encodeURIComponent(id)}`);
 	if (!res.ok) throw new Error(`Failed to get action: ${res.statusText}`);
+	return res.json();
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Local content search (⌘K)
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** One content hit — a matched chunk inside an indexed record. */
+export interface LocalSearchHit {
+	ontology: string;
+	record_id: string;
+	score: number;
+	title: string | null;
+	preview: string | null;
+	author: string | null;
+	timestamp: string | null;
+}
+
+export interface LocalSearchResponse {
+	hits: LocalSearchHit[];
+	/** Echoed back so callers can drop responses that lost a race. */
+	query: string;
+}
+
+/**
+ * Content search across everything the box has indexed. Never leaves the box —
+ * `searchWeb` (Exa) is the separate, explicit thing.
+ *
+ * POST, not GET: the query is what someone is searching their own life for, and
+ * a GET would put it in the URL, browser history, and every access log along the
+ * way.
+ */
+export async function searchLocal(
+	q: string,
+	opts: { limit?: number; signal?: AbortSignal } = {},
+): Promise<LocalSearchResponse> {
+	const res = await fetch(`${API_BASE}/search/local`, {
+		method: 'POST',
+		headers: { 'Content-Type': 'application/json' },
+		body: JSON.stringify({ q, limit: opts.limit }),
+		signal: opts.signal,
+	});
+	if (!res.ok) throw new Error(`Search failed: ${res.statusText}`);
+	return res.json();
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Box updates (Settings → Box)
+// ─────────────────────────────────────────────────────────────────────────────
+
+export interface UpdateStatus {
+	current: string;
+	channel: string;
+	latest: string | null;
+	update_available: boolean;
+	check_error: string | null;
+}
+
+export async function getUpdateStatus(): Promise<UpdateStatus> {
+	const res = await fetch(`${API_BASE}/system/update`);
+	if (!res.ok) throw new Error(`Failed to get update status: ${res.statusText}`);
+	return res.json();
+}
+
+export async function setUpdateChannel(channel: 'stable' | 'prerelease'): Promise<void> {
+	const res = await fetch(`${API_BASE}/system/update/channel`, {
+		method: 'PUT',
+		headers: { 'Content-Type': 'application/json' },
+		body: JSON.stringify({ channel }),
+	});
+	if (!res.ok) throw new Error(`Failed to set channel: ${res.statusText}`);
+}
+
+export interface ApplyUpdateResponse {
+	unit: string;
+	detail: string;
+}
+
+/**
+ * Start an upgrade. Resolves as soon as the box has *accepted* the job (202),
+ * not when it finishes — the upgrade restarts the box, so there is no response
+ * to wait for. Watch `boxReachable` for the box going away and coming back.
+ *
+ * The error text is the box's own, because "update failed" with nothing behind
+ * it is what sends someone to SSH in to find out why.
+ */
+export async function applyUpdate(): Promise<ApplyUpdateResponse> {
+	const res = await fetch(`${API_BASE}/system/update/apply`, { method: 'POST' });
+	if (!res.ok) {
+		let detail = res.statusText;
+		try {
+			const body = await res.json();
+			if (body?.error) detail = body.error;
+			else if (body?.message) detail = body.message;
+		} catch {
+			/* non-JSON body — the status text is all we have */
+		}
+		throw new Error(detail);
+	}
 	return res.json();
 }
 
@@ -190,6 +300,8 @@ export interface Pin {
 	icon: string | null;
 	sort_order: number;
 	pinned_at: string;
+	/** A `--cat-*` token key ('orange', 'emerald'…), never a hex. See CAT_COLORS. */
+	color: string | null;
 }
 
 export async function listPins(): Promise<Pin[]> {
@@ -202,6 +314,7 @@ export async function createPin(req: {
 	url: string;
 	label?: string | null;
 	icon?: string | null;
+	color?: string | null;
 }): Promise<Pin> {
 	const res = await fetch(`${API_BASE}/pins`, {
 		method: 'POST',
@@ -214,7 +327,7 @@ export async function createPin(req: {
 
 export async function updatePin(
 	id: string,
-	req: { label?: string | null; icon?: string | null; sort_order?: number }
+	req: { label?: string | null; icon?: string | null; sort_order?: number; color?: string | null }
 ): Promise<Pin> {
 	const res = await fetch(`${API_BASE}/pins/${encodeURIComponent(id)}`, {
 		method: 'PATCH',
@@ -239,57 +352,15 @@ export async function reorderPins(urls: string[]): Promise<void> {
 	if (!res.ok) throw new Error(`Failed to reorder pins: ${res.statusText}`);
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// System (operator surface for app-runtime actions — `/actions#system`)
-// ─────────────────────────────────────────────────────────────────────────────
-
-export type AppStatus = 'Starting' | 'Running' | 'Backoff' | 'Crashed' | 'Stopping';
-
-export interface RunningApp {
-	action_id: string;
-	port: number;
-	pid: number | null;
-	status: AppStatus;
-	started_at: string | null;
-	restart_count: number;
-}
-
-export type LogStream = 'stdout' | 'stderr';
-
-export interface LogLine {
-	stream: LogStream;
-	line: string;
-	at: string;
-}
-
-/** GET /api/system/apps — snapshot of supervised app-runtime children. */
-export async function listSystemApps(): Promise<RunningApp[]> {
-	const res = await fetch(`${API_BASE}/system/apps`);
-	if (!res.ok) throw new Error(`Failed to list system apps: ${res.statusText}`);
-	return res.json();
-}
-
-/** GET /api/actions/:id/logs — captured stdout/stderr ring buffer for an app. */
-export async function getActionLogs(id: string): Promise<LogLine[]> {
-	const res = await fetch(`${API_BASE}/actions/${encodeURIComponent(id)}/logs`);
-	if (!res.ok) throw new Error(`Failed to get action logs: ${res.statusText}`);
-	return res.json();
-}
-
-/** POST /api/admin/reconcile — picks up new manifests + diffs running apps. */
-export async function adminReconcile(): Promise<{
-	upserted: number;
-	added: string[];
-	removed: string[];
-	restarted: string[];
-}> {
+/** POST /api/admin/reconcile — re-reads manifests and upserts applet rows. */
+export async function adminReconcile(): Promise<{ upserted: number }> {
 	const res = await fetch(`${API_BASE}/admin/reconcile`, { method: 'POST' });
 	if (!res.ok) throw new Error(`Reconcile failed: ${res.statusText}`);
 	return res.json();
 }
 
 /**
- * POST /api/admin/actions/import-git — clones a repo into `actions/<slug>/`
+ * POST /api/admin/applets/import-git — clones a repo into `actions/<slug>/`
  * and runs the standard scanner. Any folder under the slug containing a
  * `manifest.toml` becomes an action. Returns added/updated/removed ids.
  */
@@ -297,7 +368,7 @@ export async function importActionsFromGit(body: {
 	url: string;
 	ref?: string;
 }): Promise<{ added: string[]; updated: string[]; removed: string[] }> {
-	const res = await fetch(`${API_BASE}/admin/actions/import-git`, {
+	const res = await fetch(`${API_BASE}/admin/applets/import-git`, {
 		method: 'POST',
 		headers: { 'Content-Type': 'application/json' },
 		body: JSON.stringify(body)
@@ -318,7 +389,7 @@ export interface CreateActionRequest {
 }
 
 export async function createAction(body: CreateActionRequest): Promise<Action> {
-	const res = await fetch(`${API_BASE}/actions`, {
+	const res = await fetch(`${API_BASE}/applets`, {
 		method: 'POST',
 		headers: { 'Content-Type': 'application/json' },
 		body: JSON.stringify(body)
@@ -342,7 +413,7 @@ export interface PatchActionBody {
 }
 
 export async function patchAction(id: string, patch: PatchActionBody): Promise<Action> {
-	const res = await fetch(`${API_BASE}/actions/${encodeURIComponent(id)}`, {
+	const res = await fetch(`${API_BASE}/applets/${encodeURIComponent(id)}`, {
 		method: 'PATCH',
 		headers: { 'Content-Type': 'application/json' },
 		body: JSON.stringify(patch)
@@ -354,14 +425,28 @@ export async function patchAction(id: string, patch: PatchActionBody): Promise<A
 	return res.json();
 }
 
-export async function deleteAction(id: string): Promise<void> {
-	const res = await fetch(`${API_BASE}/actions/${encodeURIComponent(id)}`, {
+export async function deleteAction(id: string, dropData = false): Promise<void> {
+	const q = dropData ? '?drop_data=true' : '';
+	const res = await fetch(`${API_BASE}/applets/${encodeURIComponent(id)}${q}`, {
 		method: 'DELETE'
 	});
 	if (!res.ok) {
 		const err = await res.json().catch(() => ({ error: res.statusText }));
 		throw new Error(err.error || `Failed to delete action: ${res.statusText}`);
 	}
+}
+
+/** The private tables an applet owns — shown on the delete confirm so the user
+ *  can choose whether to also drop its data. Empty when it owns none. */
+export interface AppletData {
+	schema: string | null;
+	tables: string[];
+}
+
+export async function getAppletData(id: string): Promise<AppletData> {
+	const res = await fetch(`${API_BASE}/applets/${encodeURIComponent(id)}/data`);
+	if (!res.ok) return { schema: null, tables: [] };
+	return (await res.json()) as AppletData;
 }
 
 export interface TriggerActionResponse {
@@ -376,7 +461,7 @@ export async function runAction(
 	id: string,
 	payload?: Record<string, unknown>
 ): Promise<TriggerActionResponse> {
-	const res = await fetch(`${API_BASE}/actions/${encodeURIComponent(id)}/run`, {
+	const res = await fetch(`${API_BASE}/applets/${encodeURIComponent(id)}/run`, {
 		method: 'POST',
 		headers: { 'Content-Type': 'application/json' },
 		body: JSON.stringify(payload ? { payload } : {})
@@ -397,7 +482,7 @@ export async function listActionRuns(
 	if (opts?.status) params.set('status', opts.status);
 	const qs = params.toString();
 	const res = await fetch(
-		`${API_BASE}/actions/${encodeURIComponent(id)}/runs${qs ? `?${qs}` : ''}`
+		`${API_BASE}/applets/${encodeURIComponent(id)}/runs${qs ? `?${qs}` : ''}`
 	);
 	if (!res.ok) throw new Error(`Failed to list runs: ${res.statusText}`);
 	return res.json();
@@ -422,7 +507,7 @@ export async function listRuns(opts?: {
 export async function getJobStatus(
 	jobId: string
 ): Promise<{ id: string; status: string; records_processed: number; error: string | null }> {
-	const res = await fetch(`${API_BASE}/actions/runs/${jobId}`);
+	const res = await fetch(`${API_BASE}/applets/runs/${jobId}`);
 	if (!res.ok) throw new Error(`Failed to get run status: ${res.statusText}`);
 	return res.json();
 }
@@ -508,6 +593,28 @@ export async function listSourceCatalog(): Promise<SourceCatalogItem[]> {
 	const res = await fetch(`${API_BASE}/sources`);
 	if (!res.ok) throw new Error(`Failed to list sources: ${res.statusText}`);
 	return res.json();
+}
+
+/** One ingest stream's freshness. `status` is worst-first from the API. */
+export interface StreamHealth {
+	name: string;
+	display_name: string;
+	/** never = source never connected · live = data in last 24h ·
+	 *  stalled = was flowing this week, silent for a day · idle = nothing in 7d */
+	status: 'never' | 'live' | 'stalled' | 'idle';
+	total: number;
+	count_24h: number;
+	count_7d: number;
+	last_event: string | null;
+	last_ingest: string | null;
+}
+
+/**
+ * Per-stream ingest freshness, worst-first. The signal that was missing while
+ * messages, the calendar sync, and finance each went dark unnoticed.
+ */
+export async function getStreamHealth(): Promise<StreamHealth[]> {
+	return apiGet<StreamHealth[]>('/streams/health');
 }
 
 
@@ -783,9 +890,136 @@ export interface DriveFile {
 	is_folder: boolean;
 	parent_id: string | null;
 	sha256_hash: string | null;
+	/** Universal-extraction state: pending | extracting | done | no_text | failed | skipped */
+	extraction_status: string;
 	deleted_at: string | null;
 	created_at: string;
 	updated_at: string;
+}
+
+/** Queue a file for (re-)extraction (retry after a failure, or after
+ * installing a missing extractor). */
+export async function reextractDriveFile(fileId: string): Promise<DriveFile> {
+	const res = await fetch(`${API_BASE}/drive/files/${fileId}/reextract`, { method: 'POST' });
+	if (!res.ok) {
+		const error = await res.json().catch(() => ({ error: res.statusText }));
+		throw new Error(error.error || 'Failed to queue extraction');
+	}
+	return res.json();
+}
+
+// ── Annotations (document highlights + margin notes, researcher-plan D2) ──
+
+export interface AnnotationRect {
+	x: number;
+	y: number;
+	w: number;
+	h: number;
+}
+
+export interface Annotation {
+	id: string;
+	file_id: string;
+	page_num: number | null;
+	quote_text: string;
+	quote_prefix: string;
+	quote_suffix: string;
+	rects: AnnotationRect[];
+	color: string;
+	note_md: string;
+	created_at: string;
+	updated_at: string;
+}
+
+export async function listAnnotations(fileId: string): Promise<Annotation[]> {
+	const res = await fetch(`${API_BASE}/annotations?file_id=${encodeURIComponent(fileId)}`);
+	if (!res.ok) throw new Error(`Failed to list annotations: ${res.statusText}`);
+	return res.json();
+}
+
+/** A highlight enriched with its file's name, for the notebook Highlights tab. */
+export interface NotebookAnnotation {
+	id: string;
+	file_id: string;
+	filename: string;
+	page_num: number | null;
+	quote_text: string;
+	color: string;
+	note_md: string;
+	created_at: string;
+	updated_at: string;
+}
+
+export async function listNotebookAnnotations(notebookId: string): Promise<NotebookAnnotation[]> {
+	const res = await fetch(`${API_BASE}/notebooks/${encodeURIComponent(notebookId)}/annotations`);
+	if (!res.ok) throw new Error(`Failed to list notebook annotations: ${res.statusText}`);
+	return res.json();
+}
+
+/** A file's highlights as markdown (blockquote + citation ref each). */
+export async function exportFileAnnotations(fileId: string): Promise<string> {
+	const res = await fetch(`${API_BASE}/annotations/export?file_id=${encodeURIComponent(fileId)}`);
+	if (!res.ok) throw new Error(`Failed to export annotations: ${res.statusText}`);
+	return res.text();
+}
+
+/** Every highlight across a notebook's documents, grouped by file. */
+export async function exportNotebookAnnotations(notebookId: string): Promise<string> {
+	const res = await fetch(
+		`${API_BASE}/notebooks/${encodeURIComponent(notebookId)}/annotations/export`
+	);
+	if (!res.ok) throw new Error(`Failed to export annotations: ${res.statusText}`);
+	return res.text();
+}
+
+/** Trigger a client-side download of markdown text. */
+export function downloadMarkdown(filename: string, markdown: string): void {
+	const url = URL.createObjectURL(new Blob([markdown], { type: 'text/markdown' }));
+	const a = document.createElement('a');
+	a.href = url;
+	a.download = filename.endsWith('.md') ? filename : `${filename}.md`;
+	a.click();
+	URL.revokeObjectURL(url);
+}
+
+export async function createAnnotation(body: {
+	file_id: string;
+	page_num?: number | null;
+	quote_text: string;
+	quote_prefix?: string;
+	quote_suffix?: string;
+	rects?: AnnotationRect[];
+	color?: string;
+	note_md?: string;
+}): Promise<Annotation> {
+	const res = await fetch(`${API_BASE}/annotations`, {
+		method: 'POST',
+		headers: { 'Content-Type': 'application/json' },
+		body: JSON.stringify(body)
+	});
+	if (!res.ok) {
+		const e = await res.json().catch(() => ({ error: res.statusText }));
+		throw new Error(e.error || 'Failed to create annotation');
+	}
+	return res.json();
+}
+
+export async function updateAnnotation(
+	id: string,
+	body: { color?: string; note_md?: string }
+): Promise<Annotation> {
+	const res = await fetch(`${API_BASE}/annotations/${id}`, {
+		method: 'PATCH',
+		headers: { 'Content-Type': 'application/json' },
+		body: JSON.stringify(body)
+	});
+	if (!res.ok) throw new Error(`Failed to update annotation: ${res.statusText}`);
+	return res.json();
+}
+
+export async function deleteAnnotation(id: string): Promise<void> {
+	const res = await fetch(`${API_BASE}/annotations/${id}`, { method: 'DELETE' });
+	if (!res.ok) throw new Error(`Failed to delete annotation: ${res.statusText}`);
 }
 
 export interface DriveUsage {
@@ -795,16 +1029,16 @@ export interface DriveUsage {
 	drive_bytes: number;
 	/** ELT archives in /home/user/data-lake/ */
 	data_lake_bytes: number;
-	/** Quota limit based on tier */
+	/** Total capacity of the box's disk */
 	quota_bytes: number;
+	/** Free space actually left on that disk (other data lives there too) */
+	available_bytes: number;
 	/** Number of user files */
 	file_count: number;
 	/** Number of user folders */
 	folder_count: number;
 	/** Usage percentage (total_bytes / quota_bytes * 100) */
 	usage_percent: number;
-	/** Tier name (standard, pro) */
-	tier: string;
 }
 
 /**
@@ -813,6 +1047,34 @@ export interface DriveUsage {
 export async function getDriveUsage(): Promise<DriveUsage> {
 	const res = await fetch(`${API_BASE}/drive/usage`);
 	if (!res.ok) throw new Error(`Failed to get drive usage: ${res.statusText}`);
+	return res.json();
+}
+
+export interface BackupVolumeStatus {
+	id: string;
+	name: string;
+	/** Whether the drive is plugged in right now, resolved live. */
+	attached: boolean;
+	last_ok_at: string | null;
+	age_seconds: number | null;
+	last_error: string | null;
+}
+
+export interface BackupStatus {
+	/** none | never | ok | stale | failing */
+	state: string;
+	/** Seconds since the newest successful backup on any volume. */
+	age_seconds: number | null;
+	volumes: BackupVolumeStatus[];
+}
+
+/**
+ * Backup freshness. The one number that matters is `age_seconds` — if the box
+ * died now, that is how much would be lost.
+ */
+export async function getBackupStatus(): Promise<BackupStatus> {
+	const res = await fetch(`${API_BASE}/backup/status`);
+	if (!res.ok) throw new Error(`Failed to get backup status: ${res.statusText}`);
 	return res.json();
 }
 
@@ -1206,11 +1468,43 @@ export interface NotebookSummary extends Notebook {
 	chat_count: number;
 }
 
+/**
+ * What a member is to the notebook.
+ *  - `library`    grounds chat (the default for anything you add)
+ *  - `manuscript` yours to write — kept out of retrieval, so a draft is never
+ *                 cited back at you as if it were a source
+ *  - `pin`        nav-only shortcut
+ */
+export type NotebookItemRole = 'library' | 'manuscript' | 'pin';
+
 /** A single URL-native member of a Notebook. */
 export interface NotebookItem {
 	url: string;
 	sort_order: number;
+	role: NotebookItemRole;
 	added_at: string;
+}
+
+/** One entity referenced across a notebook's members. */
+export interface NotebookGraphNode {
+	/** Ref URL, e.g. `/person/pe_abc` — also the node's identity. */
+	url: string;
+	entity_type: string;
+	name: string;
+	/** Member urls referencing this entity; drives click-to-filter. */
+	item_urls: string[];
+}
+
+/** Two entities that share at least one member. */
+export interface NotebookGraphEdge {
+	source: string;
+	target: string;
+	weight: number;
+}
+
+export interface NotebookGraph {
+	nodes: NotebookGraphNode[];
+	edges: NotebookGraphEdge[];
 }
 
 /** GET /api/notebooks/:id — a Notebook plus its ordered members. */
@@ -1354,6 +1648,32 @@ export async function reorderNotebookItems(notebookId: string, urls: string[]): 
 		body: JSON.stringify({ urls })
 	});
 	if (!res.ok) throw new Error(`Failed to reorder notebook items: ${res.statusText}`);
+}
+
+/** PUT /api/notebooks/:id/items/role — set what a member is to the notebook. */
+export async function setNotebookItemRole(
+	notebookId: string,
+	url: string,
+	role: NotebookItemRole
+): Promise<NotebookItem> {
+	const res = await fetch(`${API_BASE}/notebooks/${encodeURIComponent(notebookId)}/items/role`, {
+		method: 'PUT',
+		headers: { 'Content-Type': 'application/json' },
+		body: JSON.stringify({ url, role })
+	});
+	if (!res.ok) throw new Error(`Failed to set member role: ${res.statusText}`);
+	return res.json();
+}
+
+/**
+ * GET /api/notebooks/:id/graph — entities referenced across the members.
+ * Built only from things explicitly filed or linked (`[@ref]`); nothing is
+ * inferred, so an entity merely mentioned inside a PDF will not appear.
+ */
+export async function getNotebookGraph(notebookId: string): Promise<NotebookGraph> {
+	const res = await fetch(`${API_BASE}/notebooks/${encodeURIComponent(notebookId)}/graph`);
+	if (!res.ok) throw new Error(`Failed to load notebook graph: ${res.statusText}`);
+	return res.json();
 }
 
 // =============================================================================
@@ -1504,6 +1824,26 @@ export interface SharedPage {
 	icon: string | null;
 	cover_url: string | null;
 	share_token: string;
+}
+
+/**
+ * Append a markdown block to a page THROUGH Yjs (researcher-plan D4).
+ *
+ * Safe when the page is open in an editor: the server applies the insert to the
+ * authoritative Yjs doc and broadcasts it, so an open editor merges the block
+ * instead of being clobbered by a content replace.
+ */
+export async function appendToPage(pageId: string, markdown: string): Promise<{ content: string }> {
+	const res = await fetch(`${API_BASE}/pages/${encodeURIComponent(pageId)}/append`, {
+		method: 'POST',
+		headers: { 'Content-Type': 'application/json' },
+		body: JSON.stringify({ markdown })
+	});
+	if (!res.ok) {
+		const e = await res.json().catch(() => ({ error: res.statusText }));
+		throw new Error(e.error || 'Failed to append to page');
+	}
+	return res.json();
 }
 
 export async function createPageShare(pageId: string): Promise<PageShare> {
@@ -1709,10 +2049,7 @@ export function deleteByoKey<T = unknown>(sudoRequestId?: string): Promise<T> {
 	return apiSend<T>('DELETE', '/settings/byo-key', { sudo_request_id: sudoRequestId });
 }
 
-// ── MCP / tools ──────────────────────────────────────────────────────────────
-export function listTools<T = unknown>(): Promise<T> {
-	return apiGet<T>('/tools');
-}
+// ── MCP ──────────────────────────────────────────────────────────────────────
 export function listMcpServers<T = unknown>(): Promise<T> {
 	return apiGet<T>('/mcp/servers');
 }
@@ -1829,9 +2166,6 @@ export function getSudoStatus<T = unknown>(id: string): Promise<T> {
 }
 
 // ── Mentions queue ───────────────────────────────────────────────────────────
-export function getMentionQueue<T = unknown>(): Promise<T> {
-	return apiGet<T>('/mentions/queue');
-}
 export function resolveMention<T = unknown>(path: string, body: Record<string, unknown>): Promise<T> {
 	return apiSend<T>('POST', `/mentions/${encodeURIComponent(path)}`, body);
 }
@@ -1900,7 +2234,7 @@ export function getServerInfo<T = unknown>(): Promise<T> {
 	return apiGet<T>('/app/server-info');
 }
 export function triggerAction<T = unknown>(id: string): Promise<T> {
-	return apiSend<T>('POST', `/actions/${encodeURIComponent(id)}/trigger`);
+	return apiSend<T>('POST', `/applets/${encodeURIComponent(id)}/trigger`);
 }
 export function aiComplete<T = unknown>(req: Record<string, unknown>): Promise<T> {
 	return apiSend<T>('POST', '/ai/complete', req);

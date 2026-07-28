@@ -123,8 +123,21 @@ async fn recover_inner() -> i32 {
 // protection encrypts it at rest; keeping it a plain file (vs the Keychain)
 // keeps the BoxStore in pure Rust. Hardening to the iOS Keychain is a follow-up.
 
+/// Base dir injected from the plugin's `setup()` via Tauri's path API. Set on
+/// Android, where `dirs::data_dir()` is unreliable: with no XDG vars and no
+/// `HOME` it falls through to `"."`, and the process CWD on Android is `/` —
+/// read-only, so both `box.json` and `outbox.sqlite` fail to write. Tauri's
+/// `app_data_dir()` resolves the real app-private sandbox instead.
+///
+/// Left unset on desktop/iOS, which keep the `dirs`-derived path they already
+/// use (changing it would strand existing pairings).
+static BASE_DIR: std::sync::OnceLock<PathBuf> = std::sync::OnceLock::new();
+
 /// `<AppSupport>/virtues/` — the app container dir holding creds + the outbox.
 fn virtues_dir() -> PathBuf {
+  if let Some(base) = BASE_DIR.get() {
+    return base.join("virtues");
+  }
   let base = dirs::data_dir()
     .or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join("Library/Application Support")))
     .unwrap_or_else(|| PathBuf::from("."));
@@ -455,13 +468,22 @@ impl ReachState {
 
   pub async fn pair(&self, server: &str, code: &str) -> Result<ReachStatus> {
     let origin = normalize_server(server);
+    // Label the device by the platform it's actually pairing from, so the box's
+    // device list shows a Mac as desktop and a phone as mobile (was hardcoded to
+    // ios/mobile). `std::env::consts::OS` = "macos"/"windows"/"linux"/"ios"/
+    // "android"; `client_kind` picks the box's device class.
+    let (client_kind, device_name, client_id) = if cfg!(mobile) {
+      ("mobile_app", "Virtues Mobile", "virtues-mobile")
+    } else {
+      ("desktop_app", "Virtues Desktop", "virtues-desktop")
+    };
     let device_info = serde_json::json!({
-      "device_name": "Virtues Mobile",
-      "os": "ios",
-      "client": "virtues-mobile",
+      "device_name": device_name,
+      "os": std::env::consts::OS,
+      "client": client_id,
       "version": env!("CARGO_PKG_VERSION"),
     });
-    virtues_reach_client::pair::consume(self.store.as_ref(), &origin, code, "mobile_app", device_info)
+    virtues_reach_client::pair::consume(self.store.as_ref(), &origin, code, client_kind, device_info)
       .await?;
     self.ensure_serving().await?;
     Ok(self.status().await)
@@ -521,6 +543,18 @@ pub fn init<R: Runtime>() -> TauriPlugin<R> {
       commands::drain_now
     ])
     .setup(|app, _api| {
+      // Android: pin the storage base to the app-private sandbox BEFORE anything
+      // resolves virtues_dir() — both ReachState::new() (box.json) and
+      // init_outbox() (outbox.sqlite) read it below. See BASE_DIR.
+      #[cfg(target_os = "android")]
+      {
+        match app.path().app_data_dir() {
+          Ok(dir) => {
+            let _ = BASE_DIR.set(dir);
+          }
+          Err(e) => tracing::error!(error = %e, "app_data_dir unavailable — reach storage will fail"),
+        }
+      }
       // Keep the Swift-called C ABI (virtues_enqueue) in the linked static lib.
       ffi::keep_symbols();
       let state = ReachState::new();

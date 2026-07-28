@@ -6,6 +6,7 @@
 	 * Use inside a Popover primitive for proper positioning and dismiss behavior.
 	 */
 	import Icon from '$lib/components/Icon.svelte';
+	import { confirmAction } from '$lib/stores/dialog.svelte';
 	import { formatTimeAgo } from '$lib/utils/dateUtils';
 	import type { YjsDocument } from '$lib/yjs';
 	import { listVersions, restoreVersion, saveVersion, type PageVersion } from '$lib/yjs/versions';
@@ -62,7 +63,12 @@
 
 	async function handleRestore(versionId: string) {
 		if (!yjsDoc) return;
-		if (!confirm('Restore this version? Current content will be replaced.')) return;
+		const ok = await confirmAction({
+			title: 'Restore this version?',
+			body: 'The current content is replaced. A snapshot of it is saved first, so this is undoable.',
+			confirmLabel: 'Restore',
+		});
+		if (!ok) return;
 
 		restoringId = versionId;
 		error = null;
@@ -182,7 +188,7 @@
 	}
 
 	.save-btn:hover {
-		background: var(--color-surface-elevated);
+		background: var(--hover-bg);
 	}
 
 	.save-btn:disabled {
@@ -221,7 +227,7 @@
 	}
 
 	.version-row:hover {
-		background: var(--color-surface-elevated);
+		background: var(--hover-bg);
 	}
 
 	.version-info {

@@ -15,7 +15,7 @@
 //! On startup, `reconcile_templates`:
 //!   - Loads sources from sources.toml into a static catalog (lookup by `id`).
 //!   - Globs `actions/*/manifest.toml`, parses each, and upserts into
-//!     `app_actions`. Manifest-managed fields (name, owner, agent, runtime,
+//!     `app_applets`. Manifest-managed fields (name, owner, agent, runtime,
 //!     command, triggers, condition, source) are overwritten
 //!     on every system reconcile. User-managed runtime state (enabled,
 //!     cron_schedule, config, memory) is preserved.
@@ -84,12 +84,19 @@ struct Template {
     owner: String,
     #[serde(default)]
     triggers: Vec<String>,
-    #[serde(default)]
+    /// Cron seed for the live `cron_schedule` value (SQL-owned after seeding).
+    /// Canonical manifest key is `schedule`; `default_cron` accepted as the
+    /// legacy spelling.
+    #[serde(default, alias = "schedule")]
     default_cron: Option<String>,
     #[serde(default = "default_true")]
     default_enabled: bool,
     #[serde(default)]
     condition: Option<String>,
+    /// Lifecycle: absent = forever · `"once"` = archive after first success ·
+    /// SQL boolean = archive when true (evaluated post-success).
+    #[serde(default)]
+    until: Option<String>,
     #[serde(default)]
     agent: Option<String>,
     #[serde(default)]
@@ -103,8 +110,6 @@ struct Template {
     ///
     /// - `function` (default) — fork-per-trigger CLI; reads `ActionInput` JSON
     ///   from stdin, writes `ActionOutput` JSON to stdout, exits.
-    /// - `service` — long-running supervised HTTP server; core proxies external
-    ///   HTTP at `/service/<id>/*` and dispatches triggers via `POST /__trigger`.
     /// - `view` — pure Svelte component; never invoked server-side. The
     ///   runner skips `view` actions; the scheduler refuses to enqueue them.
     #[serde(default = "default_runtime")]
@@ -114,7 +119,7 @@ struct Template {
     /// via PATH. Used by both `function` and `service` runtimes; unset for `view`.
     #[serde(default)]
     command: Option<Vec<String>>,
-    /// Free-form config that flows from manifest into `app_actions.config`.
+    /// Free-form config that flows from manifest into `app_applets.config`.
     /// Notable use: `[config.view] name = "<applet>"` for view-runtime
     /// actions, which the frontend reads to dispatch the custom Card /
     /// Detail components from `apps/web/src/lib/applets/<applet>/`.
@@ -142,6 +147,16 @@ struct ParsedTemplates {
     source: Vec<Source>,
     #[serde(default)]
     action: Vec<Template>,
+    /// How many templates came from the SHIPPED root specifically.
+    ///
+    /// Reconcile's system-GC deletes `owner='system'` rows absent from the
+    /// catalog, guarded on the catalog being non-empty so a load failure
+    /// can't wipe the table. Once the catalog merges two roots that guard
+    /// silently weakens: a shipped root that failed to load, plus one
+    /// authored applet in the state root, is a "non-empty" catalog — and
+    /// every system row would be deleted. The guard must key on THIS.
+    #[serde(skip)]
+    shipped_count: usize,
 }
 
 fn default_true() -> bool {
@@ -169,7 +184,7 @@ fn default_runtime() -> String {
 
 /// Compile-time fallback for the source catalog — used when `actions/sources.toml`
 /// can't be read at runtime (binary shipped without the tree, tests, etc.).
-const SOURCES_TOML: &str = include_str!("../../../actions/sources.toml");
+const SOURCES_TOML: &str = include_str!("../../../applets/sources.toml");
 
 /// Absolute path to the on-disk `actions/` root. Resolved in priority order:
 ///
@@ -186,13 +201,21 @@ const SOURCES_TOML: &str = include_str!("../../../actions/sources.toml");
 /// Importers (`/api/admin/actions/import-git`) clone into whichever directory
 /// this resolves to, so the standard scanner picks the new folder up — there
 /// is no separate "imported actions" location.
-pub fn actions_root() -> std::path::PathBuf {
-    if let Ok(dir) = std::env::var("VIRTUES_ACTIONS_DIR") {
-        if !dir.is_empty() {
-            return std::path::PathBuf::from(dir);
+pub fn shipped_root() -> std::path::PathBuf {
+    for var in ["VIRTUES_APPLETS_DIR", "VIRTUES_ACTIONS_DIR"] {
+        if let Ok(dir) = std::env::var(var) {
+            if !dir.is_empty() {
+                return std::path::PathBuf::from(dir);
+            }
         }
     }
-    let installed = std::path::PathBuf::from(WELL_KNOWN_ACTIONS_DIR);
+    let installed = std::path::PathBuf::from(WELL_KNOWN_APPLETS_DIR);
+    let installed = if installed.is_dir() {
+        installed
+    } else {
+        let legacy = std::path::PathBuf::from(WELL_KNOWN_APPLETS_DIR_LEGACY);
+        if legacy.is_dir() { legacy } else { installed }
+    };
     if installed.is_dir() {
         return installed;
     }
@@ -200,15 +223,85 @@ pub fn actions_root() -> std::path::PathBuf {
     core_manifest.join(ACTIONS_DIR_FROM_CORE)
 }
 
+/// The WRITABLE applet tree: per-box state that must survive upgrades.
+///
+/// Everything this process creates goes here — chat-authored applets under
+/// `user/`, imported Git packs under their slug. Nothing the installer ships
+/// lives here, and the installer never rewrites it.
+///
+/// This exists because the two trees have opposite lifecycles. [`shipped_root`]
+/// is package data: root-owned, read-only, replaced wholesale on every
+/// release. Authored applets are irreplaceable user data. Keeping both under
+/// one path forced a single answer to "does upgrade delete this?", and the
+/// answer was wrong for one of them — the slot flip `remove_dir_all`'d the
+/// shipped tree with `user/` inside it, and applet authoring failed outright
+/// on a fresh box because nothing ever created a service-writable directory.
+///
+/// `/var/lib/virtues` is where the service's other durable state already lives
+/// (the lake, models), so this follows the existing convention rather than
+/// inventing one.
+/// Resolution mirrors [`shipped_root`]: explicit env var, then the deployed
+/// location, then an in-tree path so `cargo run` works. Without that last tier
+/// a dev box resolved to `/var/lib/virtues/applets`, which is root-owned and
+/// not creatable — authoring failed with a permission error on a machine that
+/// has no box install at all.
+///
+/// The box-vs-dev discriminator is `/var/lib/virtues` existing, the same
+/// marker `main.rs` uses to detect a box install. Keying on the applets dir
+/// itself would be wrong: it legitimately doesn't exist yet on a box that has
+/// never authored anything, and falling back to a source path there would
+/// write applets somewhere production never reads.
+pub fn state_root() -> std::path::PathBuf {
+    if let Ok(dir) = std::env::var("VIRTUES_APPLET_STATE_DIR") {
+        if !dir.is_empty() {
+            return std::path::PathBuf::from(dir);
+        }
+    }
+    let installed = std::path::PathBuf::from(WELL_KNOWN_APPLET_STATE_DIR);
+    if installed.parent().is_some_and(|p| p.is_dir()) {
+        return installed;
+    }
+    std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join(DEV_APPLET_STATE_DIR_FROM_CORE)
+}
+
+/// Resolve a `dir` (as recorded on an `app_applets` row) to its folder on
+/// disk. State wins over shipped.
+///
+/// Precedence is a feature, not just conflict resolution: authoring an applet
+/// whose dir matches a shipped one shadows it, and deleting your copy reverts
+/// cleanly to the shipped version. Forking a system applet to tweak it becomes
+/// a first-class operation instead of an edit the next upgrade eats.
+///
+/// Falls back to the shipped path when neither exists, so error messages name
+/// the location a reader expects rather than a state dir they've never heard
+/// of.
+pub fn resolve_applet_dir(dir: &str) -> std::path::PathBuf {
+    let stateful = state_root().join(dir);
+    if stateful.is_dir() {
+        return stateful;
+    }
+    shipped_root().join(dir)
+}
+
 /// Default deployed location, matching the installer's `share/virtues/web`
 /// convention (`InstallConfig::web_dir`). Kept in sync with the path the
 /// installer copies `actions/` to and sets `VIRTUES_ACTIONS_DIR` to.
-const WELL_KNOWN_ACTIONS_DIR: &str = "/usr/local/share/virtues/actions";
+const WELL_KNOWN_APPLETS_DIR: &str = "/usr/local/share/virtues/applets";
+/// Writable applet state, alongside the lake and models under the service's
+/// data dir. The installer creates it `virtues:virtues`; systemd's
+/// `StateDirectory=` would be the more idiomatic owner of that guarantee.
+const WELL_KNOWN_APPLET_STATE_DIR: &str = "/var/lib/virtues/applets";
+/// Dev-only applet state, relative to virtues-core. Deliberately NOT
+/// `applets/user/` — that lives inside the shipped tree, which is the mixing
+/// this split exists to undo. Gitignored.
+const DEV_APPLET_STATE_DIR_FROM_CORE: &str = "../.applet-state";
+/// Pre-rename deployments (transition fallback; removed once the fleet moves).
+const WELL_KNOWN_APPLETS_DIR_LEGACY: &str = "/usr/local/share/virtues/actions";
 
 /// The actions directory, relative to the repo root. Resolved against
 /// `CARGO_MANIFEST_DIR`'s parent at runtime so `cargo run` works regardless
 /// of the user's CWD.
-const ACTIONS_DIR_FROM_CORE: &str = "../actions";
+const ACTIONS_DIR_FROM_CORE: &str = "../applets";
 
 /// Cached merged catalog. Initialized lazily on first access; the inner
 /// `RwLock` allows `reload_catalog()` to replace the contents in-place when
@@ -225,6 +318,24 @@ fn catalog_lock() -> &'static RwLock<ParsedTemplates> {
 ///
 /// Called by the `/api/admin/reconcile` handler after a user (or LLM) edits
 /// a manifest on disk.
+/// Serializes every reload+reconcile pass (chat setups, admin endpoint, git
+/// import). Reconcile is global and non-transactional; concurrent passes can
+/// interleave GC with upserts. One mutex, one writer at a time.
+pub fn reconcile_lock() -> &'static tokio::sync::Mutex<()> {
+    static LOCK: std::sync::OnceLock<tokio::sync::Mutex<()>> = std::sync::OnceLock::new();
+    LOCK.get_or_init(|| tokio::sync::Mutex::new(()))
+}
+
+/// The one blessed way to apply on-disk changes: reload the catalog then
+/// reconcile rows. Serialization lives inside `reconcile_templates` itself,
+/// so EVERY caller (this wrapper, the admin endpoint, git import, OAuth/
+/// pairing fan-out, boot) is serialized — not just this path. `reload_catalog`
+/// is an atomic in-memory swap and needs no lock.
+pub async fn reload_and_reconcile(db: &PgPool) -> Result<usize> {
+    reload_catalog();
+    reconcile_templates(db).await
+}
+
 pub fn reload_catalog() {
     let fresh = load_catalog();
     let lock = catalog_lock();
@@ -270,7 +381,7 @@ fn parse_template(manifest_path: &std::path::Path, dir: &str) -> Option<Template
 }
 
 fn load_catalog() -> ParsedTemplates {
-    let actions_dir = actions_root();
+    let actions_dir = shipped_root();
 
     // 1. Sources — prefer on-disk; fall back to baked.
     let sources_path = actions_dir.join("sources.toml");
@@ -302,11 +413,63 @@ fn load_catalog() -> ParsedTemplates {
     //    - any imported slug (e.g. `team-pack/`) — owned by that import.
     //
     // The `dir` recorded on each Template is the folder path relative to the
-    // actions root; reconcile writes it onto every `app_actions` row, and
+    // actions root; reconcile writes it onto every `app_applets` row, and
     // `id_prefix` defaults to `action_<dir-with-/-as-__>` so different
     // namespaces never collide.
+    // Both roots, shipped first: the state root's entries override shipped
+    // ones with the same `dir`, so an authored applet shadows a system applet
+    // of that name and deleting it reverts to shipped.
+    let mut actions = scan_root(&actions_dir);
+    let shipped_count = actions.len();
+    for t in scan_root(&state_root()) {
+        match actions.iter().position(|e| e.dir == t.dir) {
+            Some(i) => actions[i] = t,
+            None => actions.push(t),
+        }
+    }
+
+    // Reject duplicate id_prefixes loudly but without crashing the process.
+    // The dir-based id derivation makes natural collisions almost impossible
+    // — to land here someone has either hand-set `id_prefix = "..."` to the
+    // same value in two manifests, or hand-edited `actions/<built-in>/` to
+    // shadow a shipped action. Either way: surface, drop the offender, keep
+    // the first occurrence, and let the rest of the catalog load.
+    let mut seen: std::collections::HashMap<String, String> = std::collections::HashMap::new();
+    let mut deduped: Vec<Template> = Vec::with_capacity(actions.len());
+    for t in actions {
+        let id = match t.id_prefix.as_deref() {
+            Some(s) => s.to_string(),
+            None => {
+                tracing::error!(dir = %t.dir, "manifest missing id_prefix; skipping");
+                continue;
+            }
+        };
+        if let Some(first_dir) = seen.get(&id) {
+            tracing::error!(
+                id_prefix = %id,
+                first_dir = %first_dir,
+                colliding_dir = %t.dir,
+                "two manifests claim the same id_prefix; keeping the first, dropping this one. \
+                 Rename `id_prefix` in one of the manifests, or change the folder so the dir-derived id differs."
+            );
+            continue;
+        }
+        seen.insert(id, t.dir.clone());
+        deduped.push(t);
+    }
+
+    ParsedTemplates {
+        source: sources_doc.source,
+        action: deduped,
+        shipped_count,
+    }
+}
+
+/// Walk one applet root and parse every manifest under it. Same rule for both
+/// roots — see the scanner notes in `load_catalog`.
+fn scan_root(root: &std::path::Path) -> Vec<Template> {
     let mut actions: Vec<Template> = Vec::new();
-    if let Ok(entries) = std::fs::read_dir(&actions_dir) {
+    if let Ok(entries) = std::fs::read_dir(root) {
         for entry in entries.flatten() {
             let path = entry.path();
             if !path.is_dir() {
@@ -352,40 +515,55 @@ fn load_catalog() -> ParsedTemplates {
         }
     }
 
-    // Reject duplicate id_prefixes loudly but without crashing the process.
-    // The dir-based id derivation makes natural collisions almost impossible
-    // — to land here someone has either hand-set `id_prefix = "..."` to the
-    // same value in two manifests, or hand-edited `actions/<built-in>/` to
-    // shadow a shipped action. Either way: surface, drop the offender, keep
-    // the first occurrence, and let the rest of the catalog load.
-    let mut seen: std::collections::HashMap<String, String> = std::collections::HashMap::new();
-    let mut deduped: Vec<Template> = Vec::with_capacity(actions.len());
-    for t in actions {
-        let id = match t.id_prefix.as_deref() {
-            Some(s) => s.to_string(),
-            None => {
-                tracing::error!(dir = %t.dir, "manifest missing id_prefix; skipping");
-                continue;
-            }
-        };
-        if let Some(first_dir) = seen.get(&id) {
-            tracing::error!(
-                id_prefix = %id,
-                first_dir = %first_dir,
-                colliding_dir = %t.dir,
-                "two manifests claim the same id_prefix; keeping the first, dropping this one. \
-                 Rename `id_prefix` in one of the manifests, or change the folder so the dir-derived id differs."
-            );
-            continue;
-        }
-        seen.insert(id, t.dir.clone());
-        deduped.push(t);
-    }
+    actions
+}
 
-    ParsedTemplates {
-        source: sources_doc.source,
-        action: deduped,
+/// Mirror an ai-owned applet's enabled flag into its manifest
+/// (`default_enabled`) so a DB rebuilt from disk restores the user's last
+/// choice. Best-effort — only chat-authored folders (`user/` namespace) are
+/// ever touched, and failures just log.
+pub fn mirror_enabled_to_manifest(action_id: &str, enabled: bool) {
+    let Some(dir) = dir_for_action_id(action_id) else {
+        return;
+    };
+    if !dir.starts_with("user/") {
+        return;
     }
+    let path = resolve_applet_dir(&dir).join("manifest.toml");
+    let Ok(text) = std::fs::read_to_string(&path) else {
+        return;
+    };
+    let Ok(mut doc) = text.parse::<toml::Value>() else {
+        return;
+    };
+    if let Some(table) = doc.as_table_mut() {
+        table.insert("default_enabled".into(), toml::Value::Boolean(enabled));
+        match toml::to_string_pretty(&doc) {
+            Ok(out) => {
+                if let Err(e) = std::fs::write(&path, out) {
+                    tracing::warn!(action_id, error = %e, "enabled mirror write failed");
+                }
+            }
+            Err(e) => tracing::warn!(action_id, error = %e, "enabled mirror serialize failed"),
+        }
+    }
+}
+
+/// Resolve the manifest folder (relative to an applet root) that produced
+/// an action id. Matches the base id (`id_prefix`) and per-credential /
+/// per-device fan-out ids (`<id_prefix>_<anchor>`). Used by the face server
+/// to root static serving at the applet's folder.
+pub fn dir_for_action_id(action_id: &str) -> Option<String> {
+    let guard = catalog_lock().read().expect("catalog rwlock poisoned");
+    guard
+        .action
+        .iter()
+        .find(|t| {
+            t.id_prefix.as_deref().is_some_and(|p| {
+                action_id == p || action_id.strip_prefix(p).is_some_and(|r| r.starts_with('_'))
+            })
+        })
+        .map(|t| t.dir.clone())
 }
 
 /// Look up a `[[source]]` entry by its id. Returns an owned clone so the
@@ -408,7 +586,7 @@ pub fn list_sources_sorted() -> Vec<Source> {
 // Reconciliation
 // ─────────────────────────────────────────────────────────────────────────────
 
-/// Reconcile `app_actions` rows against the on-disk catalog.
+/// Reconcile `app_applets` rows against the on-disk catalog.
 ///
 /// Snapshots the catalog under a brief read lock, releases the lock, then
 /// performs SQL writes against the snapshot. This avoids holding the
@@ -416,29 +594,42 @@ pub fn list_sources_sorted() -> Vec<Source> {
 ///
 /// Returns the number of rows upserted.
 pub async fn reconcile_templates(db: &PgPool) -> Result<usize> {
+    // Serialize the whole reconcile against every other caller — the pass is
+    // global and non-transactional, so concurrent GC-deletes + upserts (a chat
+    // setup racing an OAuth callback / admin reconcile / boot) would interleave.
+    // The lock lives here, not in a wrapper, so bare callers are covered too.
+    let _guard = reconcile_lock().lock().await;
+
     let templates: ParsedTemplates = {
         let guard = catalog_lock().read().expect("catalog rwlock poisoned");
         guard.clone()
     };
 
-    // GC pass: delete fan-out action rows whose anchor is gone — an inactive
-    // credential (OAuth/api actions) or a revoked/absent device (ingest
+    // GC pass: delete fan-out action rows whose anchor is GONE — a deleted
+    // credential row (OAuth/api actions) or a revoked/absent device (ingest
     // actions). The revoke paths handle this inline, but any state drift
     // (direct SQL, import, bug) leaves orphans. Nullify run FKs first so history
     // is preserved under `action_id = NULL`.
+    //
+    // Deliberately NOT keyed on credential status: a recoverable blip
+    // (`reauth_required`, refresh error) must not destroy the row's operational
+    // state (archived_at, memory, sync cursors in config). Inactive-but-present
+    // credentials just fail/skip at run time and surface in run status; the row
+    // survives to resume when the credential recovers. Device revocation is
+    // permanent, so the device clause still keys on revoked_at.
     const ORPHAN_PREDICATE: &str = "(credential_id IS NOT NULL \
-             AND credential_id NOT IN (SELECT id FROM credentials WHERE status = 'active')) \
+             AND credential_id NOT IN (SELECT id FROM credentials)) \
           OR (device_id IS NOT NULL \
              AND device_id NOT IN (SELECT id FROM app_device WHERE revoked_at IS NULL))";
     let pruned = sqlx::query(&format!(
-        "UPDATE app_action_runs SET action_id = NULL \
-         WHERE action_id IN (SELECT id FROM app_actions WHERE {ORPHAN_PREDICATE})"
+        "UPDATE app_applet_runs SET action_id = NULL \
+         WHERE action_id IN (SELECT id FROM app_applets WHERE {ORPHAN_PREDICATE})"
     ))
     .execute(db)
     .await?
     .rows_affected();
 
-    let deleted = sqlx::query(&format!("DELETE FROM app_actions WHERE {ORPHAN_PREDICATE}"))
+    let deleted = sqlx::query(&format!("DELETE FROM app_applets WHERE {ORPHAN_PREDICATE}"))
         .execute(db)
         .await?
         .rows_affected();
@@ -554,13 +745,21 @@ pub async fn reconcile_templates(db: &PgPool) -> Result<usize> {
     // deleted template leaves dead rows pointing at a binary that no longer
     // ships: legacy cruft, and a 404 surface if a stale client still posts to
     // it. `user`-owned rows are never touched, and the pass is guarded on a
-    // non-empty catalog so a load failure can't wipe the table. Run-history FKs
-    // are nullified first so the history survives under `action_id = NULL`.
-    if !live_ids.is_empty() {
+    // non-empty SHIPPED catalog so a load failure can't wipe the table.
+    // Run-history FKs are nullified first so history survives under
+    // `action_id = NULL`.
+    //
+    // The guard keys on the shipped root specifically, NOT on `live_ids`.
+    // System rows come only from the shipped tree, so a shipped root that
+    // failed to load must never delete them — and `live_ids` can't tell you
+    // that, because one authored applet in the state root makes it non-empty.
+    // Keying on the wrong one deletes every system applet on a box whose
+    // shipped tree is briefly unreadable (mid-upgrade, bad mount, bad env).
+    if templates.shipped_count > 0 {
         sqlx::query(
-            r#"UPDATE app_action_runs SET action_id = NULL
+            r#"UPDATE app_applet_runs SET action_id = NULL
                WHERE action_id IN (
-                   SELECT id FROM app_actions
+                   SELECT id FROM app_applets
                    WHERE owner = 'system' AND id <> ALL($1::text[])
                )"#,
         )
@@ -569,7 +768,7 @@ pub async fn reconcile_templates(db: &PgPool) -> Result<usize> {
         .await?;
 
         let removed = sqlx::query(
-            r#"DELETE FROM app_actions
+            r#"DELETE FROM app_applets
                WHERE owner = 'system' AND id <> ALL($1::text[])"#,
         )
         .bind(&live_ids)
@@ -641,25 +840,50 @@ async fn upsert_row(
     //   user:   ON CONFLICT DO NOTHING. Factory defaults are seeded the first time
     //           the template is added; after that the row is fully owned by
     //           the user and reconcile is a no-op.
+    //
+    //   ai:     the third branch (authoring plan §E). The folder is written by
+    //           setup_applet, so COMPILED fields (name, agent, condition,
+    //           until, triggers, schedule) overwrite on reconcile — re-setup
+    //           IS the edit path and must propagate. OPERATIONAL state is
+    //           never touched: `enabled` (the gate lives there; the user
+    //           toggle mirrors back into the manifest for restore fidelity),
+    //           `memory`, and non-manifest config keys — manifest config
+    //           merges OVER existing config so runtime keys survive.
     let sql = if template.owner == "user" {
         r#"
-        INSERT INTO app_actions (
+        INSERT INTO app_applets (
             id, name, owner, agent, cron_schedule, enabled, config, condition,
-            triggers, credential_id, runtime, command, dir, device_id
+            triggers, credential_id, command, device_id, until
         )
-        VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, $8, $9::jsonb, $10, $11, $12, $13, $14)
+        VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, $8, $9::jsonb, $10, $11, $12, $13)
         ON CONFLICT(id) DO UPDATE SET
-            dir            = EXCLUDED.dir,
             device_id      = EXCLUDED.device_id,
+            updated_at     = now()
+        "#
+    } else if template.owner == "ai" {
+        r#"
+        INSERT INTO app_applets (
+            id, name, owner, agent, cron_schedule, enabled, config, condition,
+            triggers, credential_id, command, device_id, until
+        )
+        VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, $8, $9::jsonb, $10, $11, $12, $13)
+        ON CONFLICT(id) DO UPDATE SET
+            name           = EXCLUDED.name,
+            agent          = EXCLUDED.agent,
+            cron_schedule  = EXCLUDED.cron_schedule,
+            config         = app_applets.config || EXCLUDED.config,
+            condition      = EXCLUDED.condition,
+            triggers       = EXCLUDED.triggers,
+            until          = EXCLUDED.until,
             updated_at     = now()
         "#
     } else {
         r#"
-        INSERT INTO app_actions (
+        INSERT INTO app_applets (
             id, name, owner, agent, cron_schedule, enabled, config, condition,
-            triggers, credential_id, runtime, command, dir, device_id
+            triggers, credential_id, command, device_id, until
         )
-        VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, $8, $9::jsonb, $10, $11, $12, $13, $14)
+        VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, $8, $9::jsonb, $10, $11, $12, $13)
         ON CONFLICT(id) DO UPDATE SET
             name           = EXCLUDED.name,
             owner          = EXCLUDED.owner,
@@ -668,10 +892,9 @@ async fn upsert_row(
             condition      = EXCLUDED.condition,
             triggers       = EXCLUDED.triggers,
             credential_id  = EXCLUDED.credential_id,
-            runtime        = EXCLUDED.runtime,
             command        = EXCLUDED.command,
-            dir            = EXCLUDED.dir,
             device_id      = EXCLUDED.device_id,
+            until          = EXCLUDED.until,
             updated_at     = now()
         "#
     };
@@ -687,10 +910,9 @@ async fn upsert_row(
         .bind(&template.condition)
         .bind(&triggers_json)
         .bind(credential_id)
-        .bind(&template.runtime)
         .bind(&command_json)
-        .bind(&template.dir)
         .bind(device_id)
+        .bind(&template.until)
         .execute(db)
         .await?;
 
@@ -700,6 +922,78 @@ async fn upsert_row(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Both roots are scanned, and an authored applet in the state root
+    /// SHADOWS a shipped applet with the same dir rather than colliding with
+    /// it. This is what makes "fork a system applet" work, and what makes
+    /// deleting your copy revert cleanly to shipped.
+    #[test]
+    fn state_root_shadows_shipped_root() {
+        let shipped = tempfile::tempdir().unwrap();
+        let state = tempfile::tempdir().unwrap();
+
+        let write = |root: &std::path::Path, dir: &str, name: &str| {
+            let d = root.join(dir);
+            std::fs::create_dir_all(&d).unwrap();
+            std::fs::write(
+                d.join("manifest.toml"),
+                format!("name = \"{name}\"\nowner = \"system\"\n"),
+            )
+            .unwrap();
+        };
+        write(shipped.path(), "day_summary_eod", "Shipped Summary");
+        write(shipped.path(), "weather_sync", "Weather");
+        write(state.path(), "day_summary_eod", "My Summary");
+        write(state.path(), "user/wife_week", "Wife Week");
+
+        let mut merged = scan_root(shipped.path());
+        let shipped_count = merged.len();
+        for t in scan_root(state.path()) {
+            match merged.iter().position(|e| e.dir == t.dir) {
+                Some(i) => merged[i] = t,
+                None => merged.push(t),
+            }
+        }
+
+        assert_eq!(shipped_count, 2, "shipped root parsed independently");
+        assert_eq!(merged.len(), 3, "shadowing must not duplicate a dir");
+
+        let by_dir = |d: &str| merged.iter().find(|t| t.dir == d).unwrap().name.clone();
+        assert_eq!(by_dir("day_summary_eod"), "My Summary", "state wins");
+        assert_eq!(by_dir("weather_sync"), "Weather", "unshadowed shipped survives");
+        assert_eq!(by_dir("user/wife_week"), "Wife Week", "authored applet is found");
+    }
+
+    /// The state root must never resolve to a path the process cannot create.
+    /// It previously returned `/var/lib/virtues/applets` unconditionally, so
+    /// on a dev machine (no `/var/lib/virtues`, and `/var/lib` root-owned)
+    /// every authoring attempt died with a permission error.
+    #[test]
+    fn state_root_is_writable_on_this_machine() {
+        // Env override would mask what we're testing.
+        if std::env::var("VIRTUES_APPLET_STATE_DIR").is_ok() {
+            return;
+        }
+        let root = state_root();
+        let probe = root.join(".writability-probe");
+        std::fs::create_dir_all(&probe).unwrap_or_else(|e| {
+            panic!("state_root() resolved to {} which is not creatable: {e}", root.display())
+        });
+        let _ = std::fs::remove_dir(&probe);
+    }
+
+    /// A missing state root is the normal case on a box that has never
+    /// authored anything — it must not disturb the shipped catalog.
+    #[test]
+    fn absent_state_root_is_not_an_error() {
+        let shipped = tempfile::tempdir().unwrap();
+        let d = shipped.path().join("weather_sync");
+        std::fs::create_dir_all(&d).unwrap();
+        std::fs::write(d.join("manifest.toml"), "name = \"W\"\nowner = \"system\"\n").unwrap();
+
+        assert_eq!(scan_root(shipped.path()).len(), 1);
+        assert!(scan_root(&shipped.path().join("nope")).is_empty());
+    }
 
     /// Golden test: the baked templates.toml must parse cleanly with the
     /// current struct shape. If this fails, a TOML edit broke schema compat.
@@ -803,7 +1097,7 @@ mod tests {
     }
 
     /// Reconcile must be idempotent: a second back-to-back call against the
-    /// same DB and templates produces zero `app_actions` row diffs.
+    /// same DB and templates produces zero `app_applets` row diffs.
     ///
     /// This is the precondition for triggering reconcile from auth handlers
     /// (Phase 3 + Phase 4). If reconcile churns rows, every double-callback
@@ -830,7 +1124,7 @@ mod tests {
         assert!(first > 0, "first reconcile should populate some rows");
 
         let snapshot_before: Vec<(String, String, String, String, Option<String>)> = sqlx::query_as(
-            "SELECT id, name, owner, triggers::text, credential_id FROM app_actions ORDER BY id",
+            "SELECT id, name, owner, triggers::text, credential_id FROM app_applets ORDER BY id",
         )
         .fetch_all(&pool)
         .await
@@ -844,7 +1138,7 @@ mod tests {
         );
 
         let snapshot_after: Vec<(String, String, String, String, Option<String>)> = sqlx::query_as(
-            "SELECT id, name, owner, triggers::text, credential_id FROM app_actions ORDER BY id",
+            "SELECT id, name, owner, triggers::text, credential_id FROM app_applets ORDER BY id",
         )
         .fetch_all(&pool)
         .await

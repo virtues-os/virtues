@@ -17,6 +17,13 @@
 		badgeColors?: Record<string, string>;
 		getValue?: (item: T) => string | number | null | undefined;
 		sortable?: boolean;
+		/** Offer this column in the Group control. Its rendered value is the group key. */
+		groupable?: boolean;
+		/** Keep the field available for grouping, sorting and search, but don't
+		 *  render a column for it — e.g. Kind, which the row icon already says. */
+		hidden?: boolean;
+		/** Order group keys explicitly; anything unlisted follows, alphabetically. */
+		groupOrder?: string[];
 	}
 
 	export interface RowMeta {
@@ -30,6 +37,9 @@
 
 <script lang="ts" generics="T extends { id: string }">
 	import type { Snippet } from 'svelte';
+	import { fly } from 'svelte/transition';
+	import { flip } from 'svelte/animate';
+	import { cubicOut } from 'svelte/easing';
 	import Icon from '$lib/components/Icon.svelte';
 	import { dataGridPrefs, type ViewMode, type Density } from '$lib/stores/dataGridPrefs.svelte';
 	import { mobileLayout } from '$lib/stores/mobileLayout.svelte';
@@ -51,13 +61,17 @@
 		pageSize?: number;
 		/** Default view mode when no stored preference exists for this entityType. */
 		defaultViewMode?: ViewMode;
+		/** Column key to group by when no stored preference exists. '' = ungrouped. */
+		defaultGroupBy?: string;
 		/** Minimum card width in grid mode (CSS value). Default: '200px'. */
 		gridMinWidth?: string;
 		/** If provided, row click toggles an inline detail row instead of firing onItemClick. */
 		expandDetail?: Snippet<[T, RowMeta]>;
 		/** Auto-refresh interval in ms. If set, shows a toggle in the toolbar. */
 		refreshInterval?: number;
-		/** Diagonal fade-in stagger on first paint and on dataset identity change. Default true. */
+		/** Diagonal fade-in stagger on first paint and on dataset identity change.
+		 *  Default false: a per-cell staggered animation makes every list feel slow
+		 *  and replays on each sort/filter change. Opt in per grid. */
 		animateMount?: boolean;
 		/** Enable built-in column sort. Default true. Set false to opt out per-grid. */
 		sortable?: boolean;
@@ -71,6 +85,21 @@
 		// Custom renderers — receive RowMeta for stagger / index-aware rendering.
 		tableRow?: Snippet<[T, RowMeta]>;
 		card?: Snippet<[T, RowMeta]>;
+		/** Grid-level actions (add, import…) rendered beside the view controls,
+		 *  so a consumer doesn't need its own header row above the toolbar. */
+		toolbarActions?: Snippet;
+		/** Multi-select with checkboxes, shift-range, ⌘A and a bulk action bar. */
+		selectable?: boolean;
+		/** Rendered in the bulk bar while rows are selected. */
+		bulkActions?: Snippet<[T[], () => void]>;
+		onSelectionChange?: (items: T[]) => void;
+		/** Trailing per-row controls, revealed on hover/focus. Discoverable in a
+		 *  way a right-click-only menu never is. */
+		rowActions?: Snippet<[T]>;
+		/** Leading glyph for a row. It shares one column with the select box:
+		 *  the icon is what you see at rest, the checkbox is what you see on
+		 *  hover — so selection costs no width and the icon isn't decoration. */
+		rowIcon?: (item: T) => string | null | undefined;
 	}
 
 	let {
@@ -85,10 +114,11 @@
 		searchPlaceholder = 'Search...',
 		pageSize = 16,
 		defaultViewMode = 'table',
+		defaultGroupBy,
 		gridMinWidth = '200px',
 		expandDetail,
 		refreshInterval,
-		animateMount = true,
+		animateMount = false,
 		sortable = true,
 		filters,
 		onItemClick,
@@ -96,8 +126,17 @@
 		onRefresh,
 		onRetry,
 		tableRow,
-		card
+		card,
+		toolbarActions,
+		selectable = false,
+		bulkActions,
+		onSelectionChange,
+		rowActions,
+		rowIcon
 	}: Props = $props();
+
+	/** The leading column exists if either thing needs it; they share it. */
+	const hasLeadCol = $derived(selectable || !!rowIcon);
 
 	// ────────────────────────────────────────────────────────────────────────
 	// Filters (declarative: filters[] declares; filterValues holds active state)
@@ -313,6 +352,22 @@
 			: 'comfortable';
 	});
 
+	const groupableCols = $derived(columns.filter((c) => c.groupable));
+	/** Columns that actually get a header and a cell. */
+	const visibleColumns = $derived(columns.filter((c) => !c.hidden));
+
+	/**
+	 * Two modes. There used to be a third — Board — but a board is precisely
+	 * the card view with a grouping applied, so it duplicated a state the Group
+	 * control could already express, and choosing it *without* a group left you
+	 * looking at cards in a single nameless column. Group is an orthogonal axis
+	 * now: set one in card view and the groups become the columns.
+	 */
+	const VIEW_META: Record<ViewMode, { icon: string; label: string }> = {
+		table: { icon: 'ri:list-check-2', label: 'Table' },
+		grid: { icon: 'ri:layout-grid-line', label: 'Cards' },
+	};
+
 	function toggleViewMode() {
 		const next: ViewMode = viewMode === 'table' ? 'grid' : 'table';
 		viewMode = next;
@@ -332,10 +387,136 @@
 		}
 	}
 
+	// ────────────────────────────────────────────────────────────────────────
+	// Selection. A table that can't operate on a set is a viewer, not a tool:
+	// click to toggle, shift-click for a range, header box for all-visible.
+	// ────────────────────────────────────────────────────────────────────────
+	let selectedIds = $state<Set<string>>(new Set());
+	/** Anchor for shift-range, as an index into the flat visible order. */
+	let selectionAnchor = $state<number | null>(null);
+
+	const selectedItems = $derived(displayedItems.filter((i) => selectedIds.has(i.id)));
+	const allVisibleSelected = $derived(
+		displayedItems.length > 0 && displayedItems.every((i) => selectedIds.has(i.id)),
+	);
+	const someVisibleSelected = $derived(
+		!allVisibleSelected && displayedItems.some((i) => selectedIds.has(i.id)),
+	);
+
+	function setSelection(next: Set<string>) {
+		selectedIds = next;
+		onSelectionChange?.(displayedItems.filter((i) => next.has(i.id)));
+	}
+
+	function toggleSelected(item: T, index: number, extend = false) {
+		const next = new Set(selectedIds);
+		if (extend && selectionAnchor !== null) {
+			const [from, to] = index < selectionAnchor ? [index, selectionAnchor] : [selectionAnchor, index];
+			for (let i = from; i <= to; i++) {
+				const it = visualOrder[i];
+				if (it) next.add(it.id);
+			}
+		} else {
+			if (next.has(item.id)) next.delete(item.id);
+			else next.add(item.id);
+			selectionAnchor = index;
+		}
+		setSelection(next);
+	}
+
+	function toggleAllVisible() {
+		if (allVisibleSelected) setSelection(new Set());
+		else setSelection(new Set(displayedItems.map((i) => i.id)));
+		selectionAnchor = null;
+	}
+
+	function clearSelection() {
+		selectionAnchor = null;
+		setSelection(new Set());
+	}
+
+	// Selecting is per-result-set: a row you can no longer see must not stay
+	// silently selected and get swept up by a bulk action.
+	//
+	// Keyed on the visible ids, NOT on `items` identity — consumers commonly pass
+	// a `$derived` array, which is a fresh object on every render including the
+	// render that selecting itself triggers. Watching identity made a selection
+	// clear itself the instant it was made.
+	let lastVisibleSig = $state('');
+	$effect(() => {
+		const sig = displayedItems.map((i) => i.id).join(',');
+		if (sig === lastVisibleSig) return;
+		lastVisibleSig = sig;
+		if (selectedIds.size) clearSelection();
+	});
+
+	// ────────────────────────────────────────────────────────────────────────
+	// Keyboard. Roving focus over the flat visible order, so the grid is
+	// operable without reaching for the mouse.
+	// ────────────────────────────────────────────────────────────────────────
+	let focusedIndex = $state(-1);
+
+	function focusRow(index: number) {
+		const clamped = Math.max(0, Math.min(index, visualOrder.length - 1));
+		focusedIndex = clamped;
+		const item = visualOrder[clamped];
+		if (!item) return;
+		// The DOM order matches the flat order within each group, so target by id.
+		gridEl
+			?.querySelector<HTMLElement>(`[data-row-id="${CSS.escape(item.id)}"]`)
+			?.focus({ preventScroll: false });
+	}
+
+	let gridEl = $state<HTMLElement | null>(null);
+
 	function handleKeyDown(e: KeyboardEvent, item: T) {
-		if (e.key === 'Enter' || e.key === ' ') {
-			e.preventDefault();
-			handleRowClick(item);
+		const index = visualOrder.findIndex((i) => i.id === item.id);
+		switch (e.key) {
+			case 'Enter':
+				e.preventDefault();
+				handleRowClick(item);
+				break;
+			case ' ':
+				// Space selects; Enter opens. Conflating them is why so many
+				// tables can't be driven from the keyboard at all.
+				if (selectable) {
+					e.preventDefault();
+					toggleSelected(item, index, e.shiftKey);
+				} else {
+					e.preventDefault();
+					handleRowClick(item);
+				}
+				break;
+			case 'ArrowDown':
+				e.preventDefault();
+				focusRow(index + 1);
+				if (e.shiftKey && selectable) toggleSelected(visualOrder[index + 1] ?? item, index + 1, true);
+				break;
+			case 'ArrowUp':
+				e.preventDefault();
+				focusRow(index - 1);
+				if (e.shiftKey && selectable) toggleSelected(visualOrder[index - 1] ?? item, index - 1, true);
+				break;
+			case 'Home':
+				e.preventDefault();
+				focusRow(0);
+				break;
+			case 'End':
+				e.preventDefault();
+				focusRow(visualOrder.length - 1);
+				break;
+			case 'a':
+				if (selectable && (e.metaKey || e.ctrlKey)) {
+					e.preventDefault();
+					setSelection(new Set(displayedItems.map((i) => i.id)));
+				}
+				break;
+			case 'Escape':
+				if (selectedIds.size) {
+					e.preventDefault();
+					clearSelection();
+				}
+				break;
 		}
 	}
 
@@ -364,6 +545,9 @@
 	let lastIdentity = $state<string>('');
 
 	$effect(() => {
+		// Without the animation there's nothing to replay, and bumping the token
+		// would tear down and rebuild every row on each sort/filter for nothing.
+		if (!animateMount) return;
 		const fsig = JSON.stringify(filterValues);
 		// NOTE: searchQuery intentionally excluded — search shouldn't replay the cascade.
 		const sig = `${items.length}|${String(sortKey)}|${String(sortDir)}|${viewMode}|${fsig}`;
@@ -393,13 +577,103 @@
 		return Math.min((rowIndex * 0.6 + colIndex * 0.4) * 200, 600);
 	}
 
+	// ────────────────────────────────────────────────────────────────────────
+	// Grouping. `board` is the card renderer with groups as columns, so it
+	// forces a grouping on; table and cards render groups as sections.
+	// ────────────────────────────────────────────────────────────────────────
+	let groupKey = $state('');
+	let groupOpen = $state(false);
+	let groupInitialized = $state(false);
+	$effect(() => {
+		if (groupInitialized) return;
+		groupInitialized = true;
+		const stored = dataGridPrefs.hasGroupBy(entityType)
+			? dataGridPrefs.getGroupBy(entityType)
+			: (defaultGroupBy ?? '');
+		// A stored key whose column has since gone away must not strand the grid
+		// in a grouping the user can no longer see or clear.
+		groupKey = groupableCols.some((c) => String(c.key) === stored) ? stored : '';
+	});
+
+	function setGroupKey(next: string) {
+		groupKey = next;
+		dataGridPrefs.setGroupBy(entityType, next);
+	}
+
+	const activeGroupCol = $derived(groupableCols.find((c) => String(c.key) === groupKey));
+
+	let collapsedGroups = $state<Set<string>>(new Set());
+	function toggleGroup(key: string) {
+		const next = new Set(collapsedGroups);
+		if (next.has(key)) next.delete(key);
+		else next.add(key);
+		collapsedGroups = next;
+	}
+
+	const groupedItems = $derived.by<{ key: string; items: T[] }[]>(() => {
+		const col = activeGroupCol;
+		if (!col) return [{ key: '', items: displayedItems }];
+		const buckets = new Map<string, T[]>();
+		for (const item of displayedItems) {
+			const key = getValue(item, col) || '—';
+			const bucket = buckets.get(key);
+			if (bucket) bucket.push(item);
+			else buckets.set(key, [item]);
+		}
+		const order = col.groupOrder ?? [];
+		return [...buckets.entries()]
+			.map(([key, items]) => ({ key, items }))
+			.sort((a, b) => {
+				const ai = order.indexOf(a.key);
+				const bi = order.indexOf(b.key);
+				if (ai !== -1 || bi !== -1) return (ai === -1 ? 999 : ai) - (bi === -1 ? 999 : bi);
+				return a.key.localeCompare(b.key);
+			});
+	});
+
+	const isGrouped = $derived(!!activeGroupCol);
+
+	/**
+	 * The rows as they actually appear: group order, collapsed groups omitted.
+	 * Keyboard travel and shift-ranges must follow what's on screen — indexing
+	 * into the ungrouped data order makes a range from row 1 to row 3 select
+	 * whatever happens to sit between them in the underlying array instead.
+	 */
+	const visualOrder = $derived(
+		groupedItems.filter((g) => !collapsedGroups.has(g.key)).flatMap((g) => g.items),
+	);
+	/** Row index in visual order, for RowMeta, the stagger, and range selection. */
+	const rowIndexById = $derived(new Map(visualOrder.map((item, i) => [item.id, i])));
+
 	const isTable = $derived(viewMode === 'table');
-	const isGrid = $derived(viewMode === 'grid');
+	/** Cards + a grouping = a board. That is the whole of what Board ever was. */
+	const asBoard = $derived(viewMode === 'grid' && isGrouped);
+
+	// Motion duration, zeroed when the OS asks for reduced motion. Svelte's JS
+	// transitions don't honour the media query on their own — the CSS-only
+	// `@media (prefers-reduced-motion)` block can't reach them.
+	const prefersReducedMotion =
+		typeof window !== 'undefined' &&
+		window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
+	const motionMs = prefersReducedMotion ? 0 : 180;
 </script>
 
 <div class="datagrid-wrapper" data-density={density}>
 	<div class="datagrid-header">
 		<div class="datagrid-toolbar">
+			{#if selectable && selectedItems.length > 0}
+				<!-- Selection takes over the toolbar rather than inserting a bar above
+				     the table: an extra row would push every result down the moment you
+				     tick a box, and back up again when you untick it. -->
+				<span class="bulk-count mono" role="status" aria-live="polite">
+					{selectedItems.length} selected
+				</span>
+				<span class="bulk-sp"></span>
+				{#if bulkActions}
+					{@render bulkActions(selectedItems, clearSelection)}
+				{/if}
+				<button class="bulk-clear" onclick={clearSelection}>Clear</button>
+			{:else}
 			<div class="search-container">
 				<Icon icon="ri:search-line" width="16" />
 				<input
@@ -417,7 +691,10 @@
 
 			<div class="toolbar-meta">
 				<span class="item-count">
-					{#if searchQuery && filteredCount !== totalCount}
+					<!-- Any narrowing counts, not just search. With a filter chip set, the
+					     count went on reporting the unfiltered total, so the number
+					     contradicted the rows directly beneath it. -->
+					{#if filteredCount !== totalCount}
 						{filteredCount} {filteredCount === 1 ? 'result' : 'results'}
 					{:else}
 						{totalCount} {totalCount === 1 ? 'item' : 'items'}
@@ -460,16 +737,74 @@
 						</Popover>
 					</div>
 				{/if}
+				{#if groupableCols.length > 0}
+					<!-- A menu, not a <select>. The native control paints OS chrome that
+					     ignores the app's type and colour entirely, and it can't show a
+					     checkmark against the active choice — so the one place the toolbar
+					     stated a *value* was the one place that didn't look like the app. -->
+					<Popover bind:open={groupOpen} placement="bottom-end" offset={4}>
+						{#snippet trigger({ toggle: triggerToggle })}
+							<button
+								class="ctrl-btn group-btn"
+								class:has-active={!!activeGroupCol}
+								onclick={triggerToggle}
+								aria-haspopup="menu"
+								aria-expanded={groupOpen}
+								title="Group by"
+							>
+								<Icon icon="ri:stack-line" width="16" />
+								{#if activeGroupCol}
+									<span class="group-btn-value">{activeGroupCol.label}</span>
+								{/if}
+							</button>
+						{/snippet}
+						{#snippet children({ close }: { close: () => void })}
+							<div class="menu-popover" role="menu">
+								<button
+									type="button"
+									class="menu-opt"
+									class:on={!activeGroupCol}
+									onclick={() => {
+										setGroupKey('');
+										close();
+									}}
+								>
+									<Icon icon="ri:check-line" width="14" />
+									<span>No grouping</span>
+								</button>
+								{#each groupableCols as col (String(col.key))}
+									<button
+										type="button"
+										class="menu-opt"
+										class:on={groupKey === String(col.key)}
+										onclick={() => {
+											setGroupKey(String(col.key));
+											close();
+										}}
+									>
+										<Icon icon="ri:check-line" width="14" />
+										<span>{col.label}</span>
+									</button>
+								{/each}
+							</div>
+						{/snippet}
+					</Popover>
+				{/if}
 				<button
 					class="ctrl-btn"
 					onclick={toggleViewMode}
 					aria-label={isTable ? 'Switch to card view' : 'Switch to table view'}
-					title={isTable ? 'Table' : 'Cards'}
+					title={VIEW_META[viewMode].label}
 				>
-					<Icon icon={isTable ? 'ri:list-check-2' : 'ri:layout-grid-line'} width="16" />
+					<Icon icon={VIEW_META[viewMode].icon} width="16" />
 				</button>
+				{#if toolbarActions}
+					{@render toolbarActions()}
+				{/if}
 			</div>
+			{/if}
 		</div>
+
 
 		{#if filters && filters.length > 0}
 			<DataGridFilterRail
@@ -485,9 +820,17 @@
 	</div>
 
 	{#if loading}
-		<div class="loading-state" role="status" aria-live="polite">
-			<Icon icon="ri:loader-4-line" width="24" />
-			<span>{loadingMessage}</span>
+		<!-- Skeleton rows in the table's own shape: nothing reflows when the data
+		     lands, which is the difference between "loading" and "jumping". -->
+		<div class="skeleton" role="status" aria-live="polite" aria-label={loadingMessage}>
+			{#each Array(6) as _, i}
+				<div class="sk-row" style:--sk-delay="{i * 60}ms">
+					{#if hasLeadCol}<span class="sk-box"></span>{/if}
+					<span class="sk-bar" style:width="{58 - ((i * 7) % 22)}%"></span>
+					<span class="sk-bar sk-narrow"></span>
+					<span class="sk-bar sk-narrow"></span>
+				</div>
+			{/each}
 		</div>
 	{:else if error}
 		<div class="error-state" role="alert">
@@ -510,11 +853,33 @@
 		</div>
 	{:else if isTable}
 		{@const total = displayedItems.length}
-		<div class="table-view">
+		<!-- Once anything is selected the boxes stay put: hunting for a checkbox
+		     that only exists under the cursor is fine for starting a selection and
+		     miserable for extending one. -->
+		<div
+			class="table-view"
+			class:sel-on={selectedIds.size > 0}
+			bind:this={gridEl}
+			in:fly={{ y: 6, duration: motionMs, easing: cubicOut }}
+		>
 			<table class="data-table">
 				<thead>
 					<tr>
-						{#each columns as col}
+						{#if hasLeadCol}
+							<th class="sel-col">
+								{#if selectable}
+									<input
+										type="checkbox"
+										class="sel-box sel-head"
+										checked={allVisibleSelected}
+										indeterminate={someVisibleSelected}
+										onchange={toggleAllVisible}
+										aria-label={allVisibleSelected ? 'Deselect all' : 'Select all'}
+									/>
+								{/if}
+							</th>
+						{/if}
+						{#each visibleColumns as col}
 							{@const isColSortable = sortable && col.sortable !== false}
 							{@const isActive = sortKey === col.key}
 							<th
@@ -554,31 +919,88 @@
 								{/if}
 							</th>
 						{/each}
+						{#if rowActions}
+							<th class="row-actions-col" aria-label="Actions"></th>
+						{/if}
 					</tr>
 				</thead>
 				{#key mountToken}
 					<tbody>
-						{#each displayedItems as item, i (item.id)}
+						{#each groupedItems as group (group.key)}
+							{#if isGrouped}
+								<tr class="group-row">
+									<td colspan={visibleColumns.length + (hasLeadCol ? 1 : 0) + (rowActions ? 1 : 0)}>
+										<button
+											class="group-toggle"
+											class:closed={collapsedGroups.has(group.key)}
+											onclick={() => toggleGroup(group.key)}
+											aria-expanded={!collapsedGroups.has(group.key)}
+										>
+											<Icon icon="ri:arrow-down-s-line" width="14" class="group-chev" />
+											<span class="group-name">{group.key}</span>
+											<span class="group-count">{group.items.length}</span>
+										</button>
+									</td>
+								</tr>
+							{/if}
+							{#if !collapsedGroups.has(group.key)}
+						{#each group.items as item (item.id)}
+							{@const i = rowIndexById.get(item.id) ?? 0}
 							{@const meta = { rowIndex: i, colIndex: 0, total } as RowMeta}
 							<tr
 								class="data-row"
 								class:expanded={expandedId === item.id}
+								class:selected={selectedIds.has(item.id)}
 								class:animate-in={animateMount && !!tableRow}
 								style:--stagger="{staggerMs(i, 0)}ms"
-								onclick={() => handleRowClick(item)}
+								data-row-id={item.id}
+								onclick={(e) => {
+									// Shift-click extends a selection rather than opening; without
+									// this the only way to select a range is one row at a time.
+									if (selectable && (e.shiftKey || e.metaKey || e.ctrlKey)) {
+										e.preventDefault();
+										toggleSelected(item, i, e.shiftKey);
+									} else handleRowClick(item);
+								}}
 								oncontextmenu={onItemContextMenu ? (e) => onItemContextMenu(item, e) : undefined}
 								onkeydown={(e) => handleKeyDown(e, item)}
-								tabindex="0"
-								role="button"
+								onfocus={() => (focusedIndex = i)}
+								tabindex={focusedIndex === i || (focusedIndex === -1 && i === 0) ? 0 : -1}
+								role={selectable ? 'row' : 'button'}
 								aria-label={`Open ${getItemLabel(item)}`}
+								aria-selected={selectable ? selectedIds.has(item.id) : undefined}
 								aria-expanded={expandDetail ? expandedId === item.id : undefined}
 							>
+								{#if hasLeadCol}
+									{@const glyph = rowIcon?.(item)}
+									<td class="sel-col">
+										<span class="lead" class:has-glyph={!!glyph}>
+											{#if glyph}
+												<Icon icon={glyph} width="15" class="lead-glyph" />
+											{/if}
+											{#if selectable}
+												<!-- svelte-ignore a11y_click_events_have_key_events a11y_no_noninteractive_element_interactions -->
+												<input
+													type="checkbox"
+													class="sel-box"
+													checked={selectedIds.has(item.id)}
+													onclick={(e) => {
+														e.stopPropagation();
+														toggleSelected(item, i, e.shiftKey);
+													}}
+													aria-label={`Select ${getItemLabel(item)}`}
+												/>
+											{/if}
+										</span>
+									</td>
+								{/if}
 								{#if tableRow}
 									{@render tableRow(item, meta)}
 								{:else}
-									{#each columns as col, ci}
+									{#each visibleColumns as col, ci}
 										<td
 											class:hide-mobile={col.hideOnMobile}
+											class:numeric={col.format === 'number'}
 											class:animate-in={animateMount}
 											style:--stagger="{staggerMs(i, ci)}ms"
 										>
@@ -600,13 +1022,26 @@
 										</td>
 									{/each}
 								{/if}
+								{#if rowActions}
+									<td class="row-actions-cell">
+										<div
+											class="row-actions"
+											role="presentation"
+											onclick={(e) => e.stopPropagation()}
+										>
+											{@render rowActions(item)}
+										</div>
+									</td>
+								{/if}
 							</tr>
 							{#if expandDetail && expandedId === item.id}
 								<tr class="expand-row">
-									<td colspan={columns.length}>
+									<td colspan={visibleColumns.length + (hasLeadCol ? 1 : 0) + (rowActions ? 1 : 0)}>
 										{@render expandDetail(item, meta)}
 									</td>
 								</tr>
+							{/if}
+						{/each}
 							{/if}
 						{/each}
 					</tbody>
@@ -617,8 +1052,35 @@
 		{@const total = displayedItems.length}
 		{@const cardCols = 4}
 		{#key mountToken}
-			<div class="card-grid" style:--grid-min={gridMinWidth}>
-				{#each displayedItems as item, i (item.id)}
+			<div
+				class:card-groups={!asBoard}
+				class:board={asBoard}
+				in:fly={{ y: 6, duration: motionMs, easing: cubicOut }}
+			>
+			{#each groupedItems as group (group.key)}
+				<div class:card-group={!asBoard} class:board-col={asBoard}>
+					{#if isGrouped}
+						<button
+							class="group-toggle"
+							class:closed={collapsedGroups.has(group.key)}
+							onclick={() => toggleGroup(group.key)}
+							aria-expanded={!collapsedGroups.has(group.key)}
+						>
+							{#if !asBoard}
+								<Icon icon="ri:arrow-down-s-line" width="14" class="group-chev" />
+							{/if}
+							<span class="group-name">{group.key}</span>
+							<span class="group-count">{group.items.length}</span>
+						</button>
+					{/if}
+					{#if !collapsedGroups.has(group.key)}
+					<div
+						class:card-grid={!asBoard}
+						class:board-stack={asBoard}
+						style:--grid-min={gridMinWidth}
+					>
+				{#each group.items as item (item.id)}
+					{@const i = rowIndexById.get(item.id) ?? 0}
 					{@const meta = {
 						rowIndex: Math.floor(i / cardCols),
 						colIndex: i % cardCols,
@@ -627,6 +1089,7 @@
 					<button
 						class="card"
 						class:animate-in={animateMount}
+						animate:flip={{ duration: motionMs, easing: cubicOut }}
 						style:--stagger="{staggerMs(meta.rowIndex, meta.colIndex)}ms"
 						onclick={() => handleRowClick(item)}
 						oncontextmenu={onItemContextMenu ? (e) => onItemContextMenu(item, e) : undefined}
@@ -637,7 +1100,7 @@
 							{@render card(item, meta)}
 						{:else}
 							<div class="card-content">
-								{#each columns.slice(0, 2) as col, ci}
+								{#each visibleColumns.slice(0, 2) as col, ci}
 									{@const value = getValue(item, col)}
 									{#if ci === 0}
 										<span class="card-title">{value || '—'}</span>
@@ -651,6 +1114,10 @@
 						{/if}
 					</button>
 				{/each}
+					</div>
+					{/if}
+				</div>
+			{/each}
 			</div>
 		{/key}
 	{/if}
@@ -695,6 +1162,9 @@
 		align-items: center;
 		gap: 1rem;
 		padding: 0.5rem 0;
+		/* 34px control + 2 x 8px padding. Pinned because the row swaps between
+		   search and selection controls, and everything below it would jump. */
+		min-height: 50px;
 	}
 
 	.toolbar-meta {
@@ -722,7 +1192,10 @@
 
 	.search-input {
 		width: 100%;
-		padding: 7px 30px 7px 30px;
+		/* Fixed so the toolbar's height is a known quantity: the row swaps between
+		   this and the selection controls, and it must not resize when it does. */
+		height: 34px;
+		padding: 0 30px;
 		font-family: var(--font-sans);
 		font-size: 0.875rem;
 		color: var(--color-foreground);
@@ -777,19 +1250,22 @@
 		white-space: nowrap;
 	}
 
+	/* Recovery actions, not calls to action — an outline in the primary colour
+	   gave "Clear search" the same weight as a submit button. */
 	.clear-search-btn {
 		margin-top: 0.5rem;
 		padding: 0.375rem 0.75rem;
 		font-size: 0.8125rem;
-		color: var(--color-primary);
+		color: var(--color-foreground-muted);
 		background: transparent;
-		border: 1px solid var(--color-primary);
+		border: 1px solid var(--color-border);
 		border-radius: 8px;
 		cursor: pointer;
 	}
 
 	.clear-search-btn:hover {
-		background: color-mix(in srgb, var(--color-primary) 10%, transparent);
+		background: var(--color-background-hover);
+		color: var(--color-foreground);
 	}
 
 	/* Toolbar control buttons (density, view, filter) — share visual weight */
@@ -821,6 +1297,49 @@
 	.ctrl-btn.has-active {
 		color: var(--color-primary);
 	}
+
+	/* Group-by: an icon button that grows a label once a grouping is on, so the
+	   toolbar stays quiet when it has nothing to say and states the grouping
+	   plainly when it does. */
+	.group-btn { width: auto; min-width: 32px; gap: 6px; padding: 0 8px; }
+	.group-btn-value {
+		font-size: 0.75rem;
+		color: var(--color-foreground);
+		white-space: nowrap;
+	}
+
+	/* Menu shared by the group control. Same surface as .add-popover — one
+	   popover look for the whole toolbar. */
+	.menu-popover {
+		min-width: 170px;
+		display: flex;
+		flex-direction: column;
+		padding: 0.25rem;
+		background: var(--color-background, #fff);
+		border: 1px solid var(--color-border);
+		border-radius: 8px;
+		box-shadow: 0 8px 24px rgba(0, 0, 0, 0.08);
+	}
+	.menu-opt {
+		display: flex;
+		align-items: center;
+		gap: 0.4rem;
+		padding: 0.375rem 0.5rem;
+		font: inherit;
+		font-size: 0.8125rem;
+		color: var(--color-foreground);
+		text-align: left;
+		background: transparent;
+		border: none;
+		border-radius: 4px;
+		cursor: pointer;
+	}
+	.menu-opt:hover { background: var(--color-background-hover); }
+	/* The checkmark holds its column whether or not it's shown, so the labels
+	   line up instead of shifting by 14px between states. */
+	.menu-opt :global(svg) { opacity: 0; flex-shrink: 0; color: var(--color-foreground-muted); }
+	.menu-opt.on :global(svg) { opacity: 1; }
+	.menu-opt:focus-visible { outline: 2px solid var(--color-primary); outline-offset: -2px; }
 
 	/* Filter add: button + popover wrapper */
 	.filter-add {
@@ -901,15 +1420,16 @@
 	.retry-btn {
 		padding: 0.375rem 0.75rem;
 		font-size: 0.8125rem;
-		color: var(--color-primary);
+		color: var(--color-foreground-muted);
 		background: transparent;
-		border: 1px solid var(--color-primary);
+		border: 1px solid var(--color-border);
 		border-radius: 8px;
 		cursor: pointer;
 	}
 
 	.retry-btn:hover {
-		background: color-mix(in srgb, var(--color-primary) 10%, transparent);
+		background: var(--color-background-hover);
+		color: var(--color-foreground);
 	}
 
 	.empty-state :global(svg) {
@@ -957,31 +1477,47 @@
 	.data-table {
 		width: 100%;
 		border-collapse: collapse;
-		font-size: 0.75rem;
+		/* 13.5px. Was 12px — caption size doing primary-content work, which
+		   consumers were already overriding to 13px in their own cells. */
+		font-size: 0.84375rem;
+		font-variant-numeric: tabular-nums;
 	}
 
-	thead tr {
-		position: relative;
-	}
-
-	thead tr::after {
-		content: '';
-		position: absolute;
-		left: 0;
-		right: 0;
-		bottom: 0;
-		height: 1px;
-		background: var(--color-border);
-	}
-
+	/* Header carries a single hairline, not a fill AND a rule. The label takes
+	   the app's mono eyebrow treatment so it reads as a column name rather than
+	   as a first row of data. */
 	th {
 		text-align: left;
-		font-weight: 500;
-		font-size: 0.75rem;
-		color: var(--color-foreground-muted);
-		padding: 0.625rem 0.75rem;
+		font-family: var(--font-mono);
+		font-weight: 400;
+		font-size: 0.65625rem;
+		letter-spacing: 0.08em;
+		text-transform: uppercase;
+		color: var(--color-foreground-subtle);
+		padding: 0.5rem 0.75rem;
 		white-space: nowrap;
-		background: color-mix(in srgb, var(--color-foreground) 4%, transparent);
+		border-bottom: 1px solid var(--color-border);
+		/* Pinned: past a screenful of rows, a header that scrolls away turns
+		   every column into a guess. It needs an opaque fill to cover the rows
+		   sliding under it — but the fill should be the PAGE's colour, so the
+		   header reads as clear and only its rule shows.
+		   It was --color-background (#FDFCF9) inside a card painted --surface
+		   (#FFFFFF), which drew a cream band across the top of every table for
+		   no reason anyone chose. */
+		position: sticky;
+		top: 0;
+		z-index: 2;
+		background: var(--color-surface);
+	}
+
+	td.numeric { text-align: right; font-variant-numeric: tabular-nums; }
+
+	/* Column icons are sized for the old 12px sans label; bring them down to
+	   the eyebrow's optical size. */
+	.th-content :global(svg),
+	.th-sort :global(svg) {
+		width: 12px;
+		height: 12px;
 	}
 
 	/* First/last cells keep their natural cell padding so table content
@@ -1028,30 +1564,29 @@
 	}
 
 
+	/* Separators are real borders now. As ::after overlays they sat inside the
+	   row box, so the hover wash painted over them and the grid lines dropped
+	   out as the pointer moved down the table.
+	   The border must sit on the row, not on td: cells come from consumer
+	   `tableRow` snippets and carry the *consumer's* Svelte scope hash, so a
+	   `td` rule here would never match them. `border-collapse: collapse` paints
+	   the row border full width, and a border draws above its own background,
+	   so the hover wash can no longer erase it. */
 	.data-row {
 		cursor: pointer;
 		position: relative;
+		border-bottom: 1px solid var(--color-border);
 		transition: background-color 0.1s ease;
 	}
 
-	.data-row::after {
-		content: '';
-		position: absolute;
-		left: 0;
-		right: 0;
-		bottom: 0;
-		height: 1px;
-		background: var(--color-border);
-	}
-
 	.data-row:hover {
-		background: color-mix(in srgb, var(--color-foreground) 6%, transparent);
+		background: color-mix(in srgb, var(--color-foreground) 3.5%, transparent);
 	}
 
 	.data-row:focus-visible {
 		outline: 2px solid var(--color-primary);
 		outline-offset: -2px;
-		background: color-mix(in srgb, var(--color-foreground) 6%, transparent);
+		background: color-mix(in srgb, var(--color-foreground) 3.5%, transparent);
 	}
 
 	.cell-text {
@@ -1066,12 +1601,245 @@
 	}
 
 	.datagrid-wrapper[data-density='compact'] .data-table {
-		font-size: 0.6875rem;
+		font-size: 0.78125rem;
 	}
 
 	.datagrid-wrapper[data-density='compact'] .card-grid {
 		gap: 0.5rem;
 	}
+
+	/* ============================================
+	   SELECTION + ROW ACTIONS
+	   ============================================ */
+	/* One column, two jobs. The row's type glyph is what's there at rest; the
+	   checkbox replaces it under the cursor. A dedicated checkbox column spends
+	   permanent width on a control that is empty most of the time, and pushes
+	   every row's real content in by the same amount.
+	   Flush left — the table's first column should start where the table does. */
+	.sel-col { width: 30px; padding: 0 0.5rem 0 0; text-align: left; }
+	.lead {
+		display: inline-grid;
+		place-items: center;
+		width: 16px;
+		height: 16px;
+		vertical-align: middle;
+	}
+	/* Stacked, not swapped: both occupy the same cell so nothing moves when the
+	   visible one changes. */
+	.lead > :global(*) { grid-area: 1 / 1; }
+	.lead :global(.lead-glyph) {
+		color: var(--color-foreground-subtle);
+		transition: opacity 0.1s ease;
+		/* Decoration only. Stacked over the checkbox it would otherwise take the
+		   click — `opacity: 0` hides an element, it does not excuse it from
+		   hit-testing — so ticking a box opened the row instead. */
+		pointer-events: none;
+	}
+	/* With a glyph behind it the box is hidden until wanted; with no glyph there
+	   is nothing to reveal, so it stays put. */
+	.lead.has-glyph .sel-box { opacity: 0; transition: opacity 0.1s ease; }
+	.data-row:hover .lead.has-glyph .sel-box,
+	.data-row:focus-within .lead.has-glyph .sel-box,
+	.sel-on .lead.has-glyph .sel-box { opacity: 1; }
+	.data-row:hover .lead.has-glyph :global(.lead-glyph),
+	.data-row:focus-within .lead.has-glyph :global(.lead-glyph),
+	.sel-on .lead.has-glyph :global(.lead-glyph) { opacity: 0; }
+	/* Select-all is the one control with no glyph to hide behind, so it appears
+	   when the pointer is anywhere in the table rather than never. */
+	.sel-head { opacity: 0; transition: opacity 0.1s ease; }
+	.table-view:hover .sel-head,
+	.sel-head:focus-visible,
+	.sel-on .sel-head { opacity: 1; }
+	/* No hover to reveal anything with. Keep the glyph — it's the fastest way to
+	   read a list — and make select-all the way in: tapping it turns every box
+	   on via .sel-on, and clearing turns them back off. */
+	@media (hover: none) {
+		.sel-head { opacity: 1; }
+	}
+	/* Custom control rather than accent-color on the native widget: the platform
+	   checkbox is a different shape, weight and blue in every theme, and it was
+	   the one element on the page that didn't belong to the app. The real input
+	   is still underneath — only its painting is replaced — so focus, keyboard
+	   and screen readers are untouched. */
+	.sel-box {
+		appearance: none;
+		-webkit-appearance: none;
+		width: 14px;
+		height: 14px;
+		margin: 0;
+		flex: none;
+		display: inline-grid;
+		place-content: center;
+		vertical-align: middle;
+		border: 1.5px solid var(--color-border-strong, var(--color-border));
+		border-radius: 4px;
+		background: var(--color-surface);
+		cursor: pointer;
+		transition: background-color 0.12s ease, border-color 0.12s ease;
+	}
+	.sel-box::before {
+		content: '';
+		width: 9px;
+		height: 9px;
+		transform: scale(0);
+		transition: transform 0.12s cubic-bezier(0.2, 0.7, 0.3, 1);
+		background: var(--color-background);
+		clip-path: polygon(14% 44%, 0 65%, 50% 100%, 100% 16%, 80% 0%, 43% 62%);
+	}
+	.sel-box:hover { border-color: var(--color-foreground-subtle); }
+	.sel-box:checked,
+	.sel-box:indeterminate {
+		background: var(--color-foreground);
+		border-color: var(--color-foreground);
+	}
+	.sel-box:checked::before { transform: scale(1); }
+	/* Indeterminate reuses the mark box as a dash — one shape, two states. */
+	.sel-box:indeterminate::before {
+		transform: scale(1);
+		clip-path: inset(42% 8% 42% 8%);
+	}
+	.sel-box:focus-visible {
+		outline: 2px solid var(--color-primary);
+		outline-offset: 2px;
+	}
+	@media (prefers-reduced-motion: reduce) {
+		.sel-box, .sel-box::before { transition: none; }
+	}
+	.data-row.selected {
+		background: color-mix(in srgb, var(--color-primary) 8%, transparent);
+	}
+	.data-row.selected:hover {
+		background: color-mix(in srgb, var(--color-primary) 12%, transparent);
+	}
+
+	/* Trailing controls: present in the DOM at all times for keyboard reach,
+	   revealed on hover so they don't add permanent visual noise. */
+	.row-actions-col { width: 40px; }
+	.row-actions-cell { padding: 0 0.5rem 0 0; text-align: right; }
+	.row-actions {
+		display: inline-flex;
+		align-items: center;
+		gap: 2px;
+		opacity: 0;
+		transition: opacity 0.12s ease;
+	}
+	.data-row:hover .row-actions,
+	.data-row:focus-within .row-actions { opacity: 1; }
+	@media (hover: none) {
+		.row-actions { opacity: 1; }
+	}
+
+	.bulk-count { font-size: 0.75rem; color: var(--color-foreground); white-space: nowrap; }
+	.bulk-sp { flex: 1; }
+	.bulk-clear {
+		border: none;
+		background: none;
+		padding: 0;
+		font: inherit;
+		font-size: 0.75rem;
+		color: var(--color-foreground-muted);
+		cursor: pointer;
+		text-decoration: underline;
+	}
+	.bulk-clear:hover { color: var(--color-foreground); }
+
+	/* ============================================
+	   SKELETON
+	   ============================================ */
+	.skeleton { display: flex; flex-direction: column; padding-top: 0.75rem; }
+	.sk-row {
+		display: flex;
+		align-items: center;
+		gap: 14px;
+		padding: 0.62rem 0.75rem 0.62rem 0;
+		border-bottom: 1px solid var(--color-border);
+	}
+	.sk-box, .sk-bar {
+		display: block;
+		height: 9px;
+		border-radius: 4px;
+		background: linear-gradient(
+			90deg,
+			var(--color-surface-elevated) 0%,
+			color-mix(in srgb, var(--color-foreground) 8%, var(--color-surface-elevated)) 50%,
+			var(--color-surface-elevated) 100%
+		);
+		background-size: 200% 100%;
+		animation: sk-sweep 1.4s ease-in-out infinite;
+		animation-delay: var(--sk-delay, 0ms);
+	}
+	.sk-box { width: 14px; height: 14px; border-radius: 3px; flex: none; }
+	.sk-narrow { width: 68px; flex: none; }
+	@keyframes sk-sweep {
+		from { background-position: 200% 0; }
+		to { background-position: -200% 0; }
+	}
+	@media (prefers-reduced-motion: reduce) {
+		.sk-box, .sk-bar { animation: none; }
+	}
+
+	/* ============================================
+	   GROUPING
+	   ============================================ */
+	/* One control, one look, in all three renderers: a disclosure, the group's
+	   value, and its count. In a board it becomes the column head. */
+	.group-toggle {
+		display: flex;
+		align-items: center;
+		gap: 7px;
+		width: 100%;
+		padding: 0.35rem 0.1rem;
+		border: none;
+		background: transparent;
+		color: var(--color-foreground-muted);
+		font: inherit;
+		font-size: 0.78125rem;
+		font-weight: 600;
+		text-align: left;
+		cursor: pointer;
+	}
+	.group-toggle:hover { color: var(--color-foreground); }
+	.group-toggle:focus-visible { outline: 2px solid var(--color-primary); outline-offset: -2px; }
+	.group-toggle :global(.group-chev) {
+		color: var(--color-foreground-subtle);
+		transition: transform 0.16s ease;
+		flex-shrink: 0;
+	}
+	.group-toggle.closed :global(.group-chev) { transform: rotate(-90deg); }
+	.group-count {
+		font-family: var(--font-mono);
+		font-size: 0.625rem;
+		font-weight: 400;
+		font-variant-numeric: tabular-nums;
+		color: var(--color-foreground-subtle);
+		background: var(--color-surface-elevated);
+		border-radius: 3px;
+		padding: 1px 6px;
+	}
+
+	.group-row td {
+		padding: 0.55rem 0.75rem 0.15rem 0;
+		border-bottom: none;
+		background: transparent;
+	}
+	/* The first group head sits directly under the column head; later ones need
+	   air so the groups read as separate blocks. */
+	.group-row:not(:first-child) td { padding-top: 1.25rem; }
+
+	.card-groups { display: flex; flex-direction: column; gap: 1.25rem; padding-top: 0.75rem; }
+	.card-group { display: flex; flex-direction: column; gap: 0.35rem; }
+
+	/* Board: the card renderer with the groups laid out as columns. */
+	.board {
+		display: grid;
+		grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
+		gap: 0.85rem;
+		padding-top: 1rem;
+		align-items: start;
+		overflow-x: auto;
+	}
+	.board-col { display: flex; flex-direction: column; gap: 0.5rem; min-width: 0; }
+	.board-stack { display: flex; flex-direction: column; gap: 0.5rem; }
 
 	/* ============================================
 	   CARD GRID VIEW
@@ -1104,25 +1872,48 @@
 		border-radius: 8px;
 	}
 
+	/* The default card body. `.card` itself stays an unstyled button because
+	   consumers passing a `card` snippet draw their own surface inside it —
+	   giving the button a border would double it. So the surface lives here,
+	   which only the built-in branch renders. Left-aligned: these are records,
+	   and centred text makes ragged columns of them. */
 	.card-content {
 		display: flex;
 		flex-direction: column;
-		align-items: center;
-		gap: 0.5rem;
-		text-align: center;
+		align-items: flex-start;
+		gap: 0.3rem;
+		text-align: left;
 		width: 100%;
+		height: 100%;
+		padding: 0.85rem 0.9rem;
+		border: 1px solid var(--color-border);
+		border-radius: 10px;
+		background: var(--color-surface);
+		transition: background-color 0.12s ease, border-color 0.12s ease;
+	}
+
+	.card:hover .card-content {
+		background: var(--color-background-hover);
+		border-color: var(--color-border-strong, var(--color-border));
 	}
 
 	.card-title {
-		font-weight: 600;
-		font-size: 0.9375rem;
+		font-weight: 550;
+		font-size: 0.875rem;
 		color: var(--color-foreground);
-		line-height: 1.3;
+		line-height: 1.35;
+		/* Long names must not stretch the column or run to five lines. */
+		display: -webkit-box;
+		-webkit-line-clamp: 2;
+		line-clamp: 2;
+		-webkit-box-orient: vertical;
+		overflow: hidden;
 	}
 
 	.card-meta {
-		font-size: 0.8125rem;
-		color: var(--color-foreground-muted);
+		font-size: 0.75rem;
+		color: var(--color-foreground-subtle);
+		font-variant-numeric: tabular-nums;
 	}
 
 	/* ============================================
@@ -1136,7 +1927,7 @@
 
 	/* Expand detail row */
 	.data-row.expanded td {
-		background: var(--color-background-hover, #f9fafb);
+		background: var(--color-background-hover);
 	}
 	.expand-row td {
 		padding: 0;

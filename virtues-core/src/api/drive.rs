@@ -5,16 +5,14 @@
 //! Files are stored on the local filesystem via the `Storage` trait; metadata
 //! lives in the `app_drive_files` Postgres table.
 //!
-//! Storage tiers:
-//! - Standard: 500 GB
-//! - Pro:      4 TB
+//! Capacity is the box's real disk: usage reporting and free-space checks read
+//! the filesystem holding the store — there are no storage tiers.
 
 use crate::error::{Error, Result};
 use crate::ids;
 use crate::storage::Storage;
 use crate::types::Timestamp;
 use axum::body::Bytes;
-use futures::Stream;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use sqlx::PgPool;
@@ -25,13 +23,9 @@ use std::sync::Arc;
 // Constants
 // =============================================================================
 
-/// Storage quota limits by tier (in bytes)
-pub mod quotas {
-    /// 500 GB for standard tier
-    pub const STANDARD_BYTES: i64 = 500 * 1024 * 1024 * 1024;
-    /// 4 TB for pro tier
-    pub const PRO_BYTES: i64 = 4 * 1024 * 1024 * 1024 * 1024;
-}
+/// Free space to keep untouched on the box's disk — uploads that would dip
+/// into this reserve are refused (the OS and other services need headroom).
+const DISK_RESERVE_BYTES: i64 = 2 * 1024 * 1024 * 1024;
 
 /// Default drive path for local file storage (development only)
 const DEFAULT_DRIVE_PATH: &str = "./data/drive";
@@ -58,53 +52,17 @@ pub const LAKE_FOLDER: &str = ".lake";
 // Types
 // =============================================================================
 
-/// Drive tier with quota information
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "lowercase")]
-pub enum DriveTier {
-    Standard,
-    Pro,
-}
-
-impl DriveTier {
-    /// Load tier from TIER environment variable
-    pub fn from_env() -> Self {
-        match std::env::var("TIER").as_deref() {
-            Ok("pro") | Ok("Pro") | Ok("PRO") => DriveTier::Pro,
-            _ => DriveTier::Standard,
-        }
-    }
-
-    /// Get quota in bytes for this tier
-    pub fn quota_bytes(&self) -> i64 {
-        match self {
-            DriveTier::Standard => quotas::STANDARD_BYTES,
-            DriveTier::Pro => quotas::PRO_BYTES,
-        }
-    }
-
-    pub fn as_str(&self) -> &'static str {
-        match self {
-            DriveTier::Standard => "standard",
-            DriveTier::Pro => "pro",
-        }
-    }
-}
-
 /// Drive configuration
 #[derive(Clone)]
 pub struct DriveConfig {
     /// Local-filesystem storage backend
     pub storage: Arc<Storage>,
-    /// Current tier for quota calculation
-    pub tier: DriveTier,
 }
 
 impl std::fmt::Debug for DriveConfig {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("DriveConfig")
             .field("storage", &"Storage")
-            .field("tier", &self.tier)
             .finish()
     }
 }
@@ -112,13 +70,7 @@ impl std::fmt::Debug for DriveConfig {
 impl DriveConfig {
     /// Create configuration with the given storage backend
     pub fn new(storage: Arc<Storage>) -> Self {
-        let tier = DriveTier::from_env();
-        Self { storage, tier }
-    }
-
-    /// Create configuration with storage and explicit tier
-    pub fn with_tier(storage: Arc<Storage>, tier: DriveTier) -> Self {
-        Self { storage, tier }
+        Self { storage }
     }
 
     /// Create configuration for local development (file storage)
@@ -127,10 +79,8 @@ impl DriveConfig {
     pub fn local_dev() -> Result<Self> {
         let path = std::env::var("DRIVE_PATH").unwrap_or_else(|_| DEFAULT_DRIVE_PATH.to_string());
         let storage = Storage::file(path)?;
-        let tier = DriveTier::from_env();
         Ok(Self {
             storage: Arc::new(storage),
-            tier,
         })
     }
 }
@@ -146,6 +96,9 @@ pub struct DriveFile {
     pub is_folder: bool,
     pub parent_id: Option<String>,
     pub sha256_hash: Option<String>,
+    /// Universal-extraction state (researcher-plan D1):
+    /// pending | extracting | done | no_text | failed | skipped
+    pub extraction_status: String,
     pub deleted_at: Option<Timestamp>,
     pub created_at: Timestamp,
     pub updated_at: Timestamp,
@@ -160,16 +113,16 @@ pub struct DriveUsage {
     pub drive_bytes: i64,
     /// ELT archives in /home/user/data-lake/
     pub data_lake_bytes: i64,
-    /// Quota limit based on tier
+    /// Total capacity of the box's disk (the filesystem holding the store)
     pub quota_bytes: i64,
+    /// Free space actually left on that disk (other data lives there too)
+    pub available_bytes: i64,
     /// Number of user files
     pub file_count: i64,
     /// Number of user folders
     pub folder_count: i64,
     /// Usage percentage (total_bytes / quota_bytes * 100)
     pub usage_percent: f64,
-    /// Tier name (standard, pro)
-    pub tier: String,
 }
 
 /// Upload request parameters
@@ -324,49 +277,19 @@ fn validate_filename(filename: &str) -> Result<()> {
 }
 
 // =============================================================================
-// Initialization
-// =============================================================================
-
-/// Initialize drive quota from TIER environment variable
-///
-/// Updates the app_drive_usage table with tier-appropriate quota
-pub async fn init_drive_quota(pool: &PgPool) -> Result<()> {
-    let tier = DriveTier::from_env();
-    let quota_bytes = tier.quota_bytes();
-
-    tracing::info!(
-        "Initializing drive quota for tier {}: {} bytes ({:.1} GB)",
-        tier.as_str(),
-        quota_bytes,
-        quota_bytes as f64 / (1024.0 * 1024.0 * 1024.0)
-    );
-
-    sqlx::query(
-        r#"
-        UPDATE app_drive_usage
-        SET quota_bytes = $1, updated_at = now()
-        WHERE id = $2
-        "#,
-    )
-    .bind(quota_bytes)
-    .bind(USAGE_SINGLETON_ID)
-    .execute(pool)
-    .await
-    .map_err(|e| Error::Database(format!("Failed to initialize drive quota: {e}")))?;
-
-    Ok(())
-}
-
-// =============================================================================
 // Usage Tracking
 // =============================================================================
 
-/// Get current drive usage statistics with breakdown
-pub async fn get_drive_usage(pool: &PgPool) -> Result<DriveUsage> {
+/// Get current drive usage statistics with breakdown.
+///
+/// Capacity comes from the box's real disk (the filesystem holding the
+/// store), not a stored quota — the `app_drive_usage.quota_bytes` column is a
+/// legacy of the tier system and is no longer read.
+pub async fn get_drive_usage(pool: &PgPool, config: &DriveConfig) -> Result<DriveUsage> {
     // Get drive usage from app_drive_usage table
-    let row = sqlx::query_as::<_, (i64, i64, i64, i64)>(
+    let row = sqlx::query_as::<_, (i64, i64, i64)>(
         r#"
-        SELECT drive_bytes, quota_bytes, file_count, folder_count
+        SELECT drive_bytes, file_count, folder_count
         FROM app_drive_usage
         WHERE id = $1
         "#,
@@ -376,7 +299,15 @@ pub async fn get_drive_usage(pool: &PgPool) -> Result<DriveUsage> {
     .await
     .map_err(|e| Error::Database(format!("Failed to get drive usage: {e}")))?;
 
-    let (drive_bytes, quota_bytes, file_count, folder_count) = row;
+    let (drive_bytes, file_count, folder_count) = row;
+
+    let (disk_total, disk_available) = config
+        .storage
+        .disk_stats()
+        .await
+        .map_err(|e| Error::Storage(format!("Failed to read disk stats: {e}")))?;
+    let quota_bytes = disk_total as i64;
+    let available_bytes = disk_available as i64;
 
     let data_lake_bytes: i64 = 0;
 
@@ -392,18 +323,20 @@ pub async fn get_drive_usage(pool: &PgPool) -> Result<DriveUsage> {
         drive_bytes,
         data_lake_bytes,
         quota_bytes,
+        available_bytes,
         file_count,
         folder_count,
         usage_percent,
-        tier: DriveTier::from_env().as_str().to_string(),
     })
 }
 
 /// Check if there's enough quota for an upload
 /// Checks against unified quota (drive + data lake)
-pub async fn check_quota(pool: &PgPool, size_bytes: i64) -> Result<bool> {
-    let usage = get_drive_usage(pool).await?;
-    Ok(usage.total_bytes + size_bytes <= usage.quota_bytes)
+pub async fn check_quota(config: &DriveConfig, size_bytes: i64) -> Result<bool> {
+    // Real free space on the box's disk, minus a reserve for the OS and other
+    // services — the only quota that means anything on a self-hosted appliance.
+    let (_, available) = config.storage.disk_stats().await?;
+    Ok(size_bytes <= (available as i64).saturating_sub(DISK_RESERVE_BYTES))
 }
 
 /// Update usage statistics after file operation
@@ -463,8 +396,8 @@ async fn update_usage_remove(pool: &PgPool, size_bytes: i64, is_folder: bool) ->
 // =============================================================================
 
 /// Check usage and return any warnings
-pub async fn check_usage_warnings(pool: &PgPool) -> Result<QuotaWarnings> {
-    let usage = get_drive_usage(pool).await?;
+pub async fn check_usage_warnings(pool: &PgPool, config: &DriveConfig) -> Result<QuotaWarnings> {
+    let usage = get_drive_usage(pool, config).await?;
     let mut warnings = Vec::new();
 
     // Get current warning state
@@ -483,9 +416,7 @@ pub async fn check_usage_warnings(pool: &PgPool) -> Result<QuotaWarnings> {
     let percent = usage.usage_percent;
 
     if percent >= 100.0 && !w100 {
-        warnings.push(
-            "Storage quota reached (100%). Delete files or upgrade to continue uploading.".into(),
-        );
+        warnings.push("The box's disk is full. Delete files to continue uploading.".into());
         sqlx::query("UPDATE app_drive_usage SET warning_100_sent = TRUE WHERE id = $1")
             .bind(USAGE_SINGLETON_ID)
             .execute(pool)
@@ -493,7 +424,7 @@ pub async fn check_usage_warnings(pool: &PgPool) -> Result<QuotaWarnings> {
             .ok();
     } else if percent >= 90.0 && !w90 {
         warnings.push(format!(
-            "Storage usage at {:.1}%. Consider upgrading or cleaning up.",
+            "Disk usage at {:.1}%. Consider cleaning up.",
             percent
         ));
         sqlx::query("UPDATE app_drive_usage SET warning_90_sent = TRUE WHERE id = $1")
@@ -545,7 +476,7 @@ pub async fn list_files(pool: &PgPool, path: &str) -> Result<Vec<DriveFile>> {
         sqlx::query_as::<_, DriveFile>(
             r#"
             SELECT id, path, filename, mime_type, size_bytes,
-                   is_folder, parent_id, sha256_hash, deleted_at, created_at, updated_at
+                   is_folder, parent_id, sha256_hash, extraction_status, deleted_at, created_at, updated_at
             FROM app_drive_files
             WHERE parent_id IS NULL
               AND deleted_at IS NULL
@@ -570,7 +501,7 @@ pub async fn list_files(pool: &PgPool, path: &str) -> Result<Vec<DriveFile>> {
             Some((parent_id,)) => sqlx::query_as::<_, DriveFile>(
                 r#"
                     SELECT id, path, filename, mime_type, size_bytes,
-                           is_folder, parent_id, sha256_hash, deleted_at, created_at, updated_at
+                           is_folder, parent_id, sha256_hash, extraction_status, deleted_at, created_at, updated_at
                     FROM app_drive_files
                     WHERE parent_id = $1
                       AND deleted_at IS NULL
@@ -621,6 +552,7 @@ pub async fn get_file_metadata(pool: &PgPool, file_id: &str) -> Result<DriveFile
             is_folder: true,
             parent_id: None,
             sha256_hash: None,
+            extraction_status: "skipped".to_string(),
             deleted_at: None,
             created_at: now,
             updated_at: now,
@@ -637,7 +569,7 @@ pub async fn get_file_metadata(pool: &PgPool, file_id: &str) -> Result<DriveFile
     let file = sqlx::query_as::<_, DriveFile>(
         r#"
         SELECT id, path, filename, mime_type, size_bytes,
-               is_folder, parent_id, sha256_hash, deleted_at, created_at, updated_at
+               is_folder, parent_id, sha256_hash, extraction_status, deleted_at, created_at, updated_at
         FROM app_drive_files
         WHERE id = $1
         "#,
@@ -651,23 +583,33 @@ pub async fn get_file_metadata(pool: &PgPool, file_id: &str) -> Result<DriveFile
     Ok(file)
 }
 
-/// Upload a file
+/// A fully-streamed upload staged on disk (same filesystem as the store, see
+/// `Storage::staging_dir`), with size and hash computed during the stream —
+/// the file is never held in memory.
+#[derive(Debug)]
+pub struct StagedUpload {
+    pub temp_path: PathBuf,
+    pub size_bytes: i64,
+    pub sha256: String,
+}
+
+/// Upload a file. `staged` is committed into storage by rename, not copy.
 pub async fn upload_file(
     pool: &PgPool,
     config: &DriveConfig,
     request: UploadRequest,
-    data: Bytes,
+    staged: StagedUpload,
 ) -> Result<DriveFile> {
     // Validate path and filename
     let validated_path = validate_drive_path(&request.path)?;
     validate_filename(&request.filename)?;
 
-    let size_bytes = data.len() as i64;
+    let size_bytes = staged.size_bytes;
 
     // Check quota
-    if !check_quota(pool, size_bytes).await? {
+    if !check_quota(config, size_bytes).await? {
         return Err(Error::InvalidInput(
-            "Storage quota exceeded. Delete files or upgrade to continue.".into(),
+            "Not enough free space on the box's disk.".into(),
         ));
     }
 
@@ -680,9 +622,13 @@ pub async fn upload_file(
     let mut file_path_str = file_path.to_string_lossy().to_string();
     let mut actual_filename = request.filename.clone();
 
-    // Check if file already exists (only non-deleted files)
+    // Check if the path is taken by ANY file, including a trashed one. The
+    // file id is derived from the path, so a trashed file at this path still
+    // holds the primary key — uploading the same name after trashing it would
+    // otherwise collide on the pkey. Renaming past trashed rows keeps the
+    // upload non-destructive (the trashed file stays recoverable).
     let existing = sqlx::query_scalar::<_, String>(
-        "SELECT id FROM app_drive_files WHERE path = $1 AND deleted_at IS NULL",
+        "SELECT id FROM app_drive_files WHERE path = $1",
     )
     .bind(&file_path_str)
     .fetch_optional(pool)
@@ -699,14 +645,11 @@ pub async fn upload_file(
             .unwrap_or(request.filename.clone());
     }
 
-    // Calculate SHA-256 hash
-    let mut hasher = Sha256::new();
-    hasher.update(&data);
-    let hash = format!("{:x}", hasher.finalize());
+    let hash = staged.sha256;
 
     config
         .storage
-        .upload(&file_path_str, data.to_vec())
+        .upload_from_file(&file_path_str, &staged.temp_path)
         .await
         .map_err(|e| Error::Storage(format!("Failed to upload file: {e}")))?;
 
@@ -718,19 +661,33 @@ pub async fn upload_file(
         get_or_create_folder_record(pool, &parent_path).await?
     };
 
-    // Determine MIME type
-    let mime_type = request.mime_type.or_else(|| {
-        mime_guess::from_path(&actual_filename)
-            .first()
-            .map(|m| m.to_string())
-    });
+    // Determine MIME type. A filename-based guess beats an absent, empty, or
+    // generic client declaration — browsers and curl default multipart parts
+    // to application/octet-stream, which would otherwise stick to the row.
+    let mime_type = request
+        .mime_type
+        .filter(|m| !m.is_empty() && m != "application/octet-stream")
+        .or_else(|| {
+            mime_guess::from_path(&actual_filename)
+                .first()
+                .map(|m| m.to_string())
+        });
+
+    // Universal extraction (researcher-plan D1): text-bearing uploads queue
+    // for the document_extraction cron; everything else is 'skipped'.
+    let extraction_status =
+        if crate::extraction::doc_kind(mime_type.as_deref(), &actual_filename).is_some() {
+            "pending"
+        } else {
+            "skipped"
+        };
 
     // Insert database record
     let file_id = ids::generate_id(ids::DRIVE_FILE_PREFIX, &[&file_path_str]);
     sqlx::query(
         r#"
-        INSERT INTO app_drive_files (id, path, filename, mime_type, size_bytes, parent_id, is_folder, sha256_hash)
-        VALUES ($1, $2, $3, $4, $5, $6, FALSE, $7)
+        INSERT INTO app_drive_files (id, path, filename, mime_type, size_bytes, parent_id, is_folder, sha256_hash, extraction_status)
+        VALUES ($1, $2, $3, $4, $5, $6, FALSE, $7, $8)
         "#,
     )
     .bind(&file_id)
@@ -740,6 +697,7 @@ pub async fn upload_file(
     .bind(size_bytes)
     .bind(&parent_id)
     .bind(&hash)
+    .bind(extraction_status)
     .execute(pool)
     .await
     .map_err(|e| Error::Database(format!("Failed to insert file record: {e}")))?;
@@ -749,6 +707,29 @@ pub async fn upload_file(
 
     // Return the created file
     get_file_metadata(pool, &file_id).await
+}
+
+/// Queue a file for (re-)extraction. Used by the UI's retry affordance on
+/// `failed` chips and after installing a missing extractor (e.g. pdfium).
+/// Only text-bearing files can queue; others stay `skipped`.
+pub async fn reextract_file(pool: &PgPool, file_id: &str) -> Result<DriveFile> {
+    let file = get_file_metadata(pool, file_id).await?;
+    if file.is_folder {
+        return Err(Error::InvalidInput("Cannot extract a folder".into()));
+    }
+    if crate::extraction::doc_kind(file.mime_type.as_deref(), &file.filename).is_none() {
+        return Err(Error::InvalidInput(
+            "This file type has no text to extract".into(),
+        ));
+    }
+    sqlx::query(
+        "UPDATE app_drive_files SET extraction_status = 'pending', updated_at = now() WHERE id = $1",
+    )
+    .bind(file_id)
+    .execute(pool)
+    .await
+    .map_err(|e| Error::Database(format!("Failed to queue extraction: {e}")))?;
+    get_file_metadata(pool, file_id).await
 }
 
 /// Upload a file to a system path (like `.media/`)
@@ -769,9 +750,9 @@ pub async fn upload_system_file(
     let size_bytes = data.len() as i64;
 
     // Check quota
-    if !check_quota(pool, size_bytes).await? {
+    if !check_quota(config, size_bytes).await? {
         return Err(Error::InvalidInput(
-            "Storage quota exceeded. Delete files or upgrade to continue.".into(),
+            "Not enough free space on the box's disk.".into(),
         ));
     }
 
@@ -787,7 +768,7 @@ pub async fn upload_system_file(
     let existing = sqlx::query_as::<_, DriveFile>(
         r#"
         SELECT id, path, filename, mime_type, size_bytes,
-               is_folder, parent_id, sha256_hash, deleted_at, created_at, updated_at
+               is_folder, parent_id, sha256_hash, extraction_status, deleted_at, created_at, updated_at
         FROM app_drive_files
         WHERE path = $1 AND deleted_at IS NULL
         "#,
@@ -927,7 +908,7 @@ pub async fn get_file_by_path(pool: &PgPool, path: &str) -> Result<DriveFile> {
     let file = sqlx::query_as::<_, DriveFile>(
         r#"
         SELECT id, path, filename, mime_type, size_bytes,
-               is_folder, parent_id, sha256_hash, deleted_at, created_at, updated_at
+               is_folder, parent_id, sha256_hash, extraction_status, deleted_at, created_at, updated_at
         FROM app_drive_files
         WHERE path = $1 AND deleted_at IS NULL
         "#,
@@ -1006,16 +987,20 @@ pub async fn download_lake_object(
 
 /// Download a file as a stream (for HTTP streaming responses)
 ///
-/// Returns the file metadata and a stream of bytes.
+/// Returns the file metadata, the total on-disk size, and a byte stream —
+/// ranged when `range = Some((start, len))` (pre-validated by the caller),
+/// full otherwise. The file is streamed from disk, never buffered whole.
 ///
 /// For lake objects, use `download_lake_object` instead (streaming not yet supported).
 pub async fn download_file_stream(
     pool: &PgPool,
     config: &DriveConfig,
     file_id: &str,
+    range: Option<(u64, u64)>,
 ) -> Result<(
     DriveFile,
-    impl Stream<Item = std::result::Result<Bytes, std::io::Error>>,
+    u64,
+    futures::stream::BoxStream<'static, std::io::Result<Bytes>>,
 )> {
     // Check if this is a lake object
     if is_lake_object_id(file_id) {
@@ -1040,16 +1025,13 @@ pub async fn download_file_stream(
         return Err(Error::NotFound("File is in trash".into()));
     }
 
-    let data = config
+    let (total, stream) = config
         .storage
-        .download(&file.path)
+        .read_stream(&file.path, range)
         .await
-        .map_err(|e| Error::Storage(format!("Failed to download file: {e}")))?;
+        .map_err(|e| Error::Storage(format!("Failed to open file stream: {e}")))?;
 
-    // Stream the data in chunks for HTTP response compatibility
-    let stream = futures::stream::once(async move { Ok(Bytes::from(data)) });
-
-    Ok((file, stream))
+    Ok((file, total, stream))
 }
 
 /// Soft delete a file or folder (moves to trash)
@@ -1113,7 +1095,7 @@ async fn soft_delete_folder_recursive(pool: &PgPool, folder_id: &str) -> Result<
     let children = sqlx::query_as::<_, DriveFile>(
         r#"
         SELECT id, path, filename, mime_type, size_bytes,
-               is_folder, parent_id, sha256_hash, deleted_at, created_at, updated_at
+               is_folder, parent_id, sha256_hash, extraction_status, deleted_at, created_at, updated_at
         FROM app_drive_files
         WHERE parent_id = $1 AND deleted_at IS NULL
         "#,
@@ -1166,7 +1148,7 @@ async fn hard_delete_folder_recursive(
     let children = sqlx::query_as::<_, DriveFile>(
         r#"
         SELECT id, path, filename, mime_type, size_bytes,
-               is_folder, parent_id, sha256_hash, deleted_at, created_at, updated_at
+               is_folder, parent_id, sha256_hash, extraction_status, deleted_at, created_at, updated_at
         FROM app_drive_files
         WHERE parent_id = $1
         "#,
@@ -1224,7 +1206,7 @@ pub async fn list_media(pool: &PgPool) -> Result<Vec<DriveFile>> {
     let files = sqlx::query_as::<_, DriveFile>(
         r#"
         SELECT id, path, filename, mime_type, size_bytes,
-               is_folder, parent_id, sha256_hash, deleted_at, created_at, updated_at
+               is_folder, parent_id, sha256_hash, extraction_status, deleted_at, created_at, updated_at
         FROM app_drive_files
         WHERE deleted_at IS NULL
           AND is_folder = false
@@ -1243,7 +1225,7 @@ pub async fn list_trash(pool: &PgPool) -> Result<Vec<DriveFile>> {
     let files = sqlx::query_as::<_, DriveFile>(
         r#"
         SELECT id, path, filename, mime_type, size_bytes,
-               is_folder, parent_id, sha256_hash, deleted_at, created_at, updated_at
+               is_folder, parent_id, sha256_hash, extraction_status, deleted_at, created_at, updated_at
         FROM app_drive_files
         WHERE deleted_at IS NOT NULL
           AND deleted_at > datetime('now', '-30 days')
@@ -1420,7 +1402,7 @@ pub async fn purge_old_trash(pool: &PgPool, config: &DriveConfig) -> Result<u64>
     let old_files = sqlx::query_as::<_, DriveFile>(
         r#"
         SELECT id, path, filename, mime_type, size_bytes,
-               is_folder, parent_id, sha256_hash, deleted_at, created_at, updated_at
+               is_folder, parent_id, sha256_hash, extraction_status, deleted_at, created_at, updated_at
         FROM app_drive_files
         WHERE deleted_at IS NOT NULL
           AND deleted_at < datetime('now', '-30 days')
@@ -1480,8 +1462,11 @@ async fn get_unique_path(pool: &PgPool, original_path: &str) -> Result<String> {
             format!("{}/{}", parent, new_filename)
         };
 
+        // Consider trashed rows too: their path-derived id still occupies the
+        // primary key, so a "free" path must be free of ALL rows or the caller
+        // will collide on insert.
         let exists = sqlx::query_scalar::<_, String>(
-            "SELECT id FROM app_drive_files WHERE path = $1 AND deleted_at IS NULL",
+            "SELECT id FROM app_drive_files WHERE path = $1",
         )
         .bind(&new_path)
         .fetch_optional(pool)
@@ -1671,7 +1656,7 @@ pub async fn move_file(
         let descendants = sqlx::query_as::<_, DriveFile>(
             r#"
             SELECT id, path, filename, mime_type, size_bytes,
-                   is_folder, parent_id, sha256_hash, deleted_at, created_at, updated_at
+                   is_folder, parent_id, sha256_hash, extraction_status, deleted_at, created_at, updated_at
             FROM app_drive_files
             WHERE path LIKE $1 AND is_folder = FALSE AND deleted_at IS NULL
             "#,
@@ -1789,7 +1774,7 @@ async fn get_or_create_folder_record(pool: &PgPool, path: &str) -> Result<Option
 ///
 /// Scans the filesystem and updates the usage table to match reality.
 /// Useful after manual file operations or crash recovery.
-pub async fn reconcile_usage(pool: &PgPool, _config: &DriveConfig) -> Result<DriveUsage> {
+pub async fn reconcile_usage(pool: &PgPool, config: &DriveConfig) -> Result<DriveUsage> {
     tracing::info!("Reconciling drive usage with filesystem");
 
     // Calculate actual drive usage from database records
@@ -1835,7 +1820,7 @@ pub async fn reconcile_usage(pool: &PgPool, _config: &DriveConfig) -> Result<Dri
         folder_count
     );
 
-    get_drive_usage(pool).await
+    get_drive_usage(pool, config).await
 }
 
 // =============================================================================
@@ -1880,12 +1865,6 @@ mod tests {
         assert!(validate_filename("path/to/file.txt").is_err());
         assert!(validate_filename("").is_err());
         assert!(validate_filename(".hidden").is_err());
-    }
-
-    #[test]
-    fn test_tier_quota() {
-        assert_eq!(DriveTier::Standard.quota_bytes(), 500 * 1024 * 1024 * 1024);
-        assert_eq!(DriveTier::Pro.quota_bytes(), 4 * 1024 * 1024 * 1024 * 1024);
     }
 
     #[test]

@@ -38,25 +38,47 @@ tauri-plugin-shell = "2"
 tauri-plugin-opener = "2"
 tauri-plugin-updater = "2"
 tauri-plugin-notification = "2"
+# Single-instance guard (registered only on Windows/Linux — see main.rs): a
+# second launch focuses the running window instead of spawning a duplicate that
+# would fail to bind :7117. macOS is single-instance natively (LaunchServices).
+tauri-plugin-single-instance = "2"
+# OS-global summon chord (⌘⇧Space by default). Registers through Carbon's
+# RegisterEventHotKey on macOS, which needs no Accessibility permission —
+# unlike anything that watches modifiers on their own. See `summon` in main.rs.
+tauri-plugin-global-shortcut = "2"
 dirs = "5"
+# Updater endpoints are typed as Url; needed to swap channels at runtime.
+url = "2"
 keyring = "3"
+# In-process iroh reach (pair + :7117 loopback) — replaces the retired
+# virtues-client proxy sidecar on desktop. Same crate the mobile app uses.
+tauri-plugin-reach = { path = "../plugins/reach" }
+# Reach core, for the LAN subnet scan behind `discover_servers` (the plugin's
+# discovery isn't exposed as a ReachExt method).
+virtues-reach-client = { path = "../../../crates/virtues-reach-client" }
 
 # iOS-only: raw objc for the appearance bridge (set_appearance flips the UIKit
 # windows' overrideUserInterfaceStyle so the status bar / keyboard track the
-# app theme's darkness — tao's set_theme is a no-op on iOS).
+# app theme's darkness — tao's set_theme is a no-op on iOS), plus the six native
+# collectors. The collectors are iOS-ONLY on purpose: each is a Rust shim over a
+# Swift half under `plugins/*/ios/`, with no Android Kotlin counterpart yet. The
+# Android app is a VIEWER — gating them here means Android never has to compile
+# (or link) collector crates that have no native implementation on that target.
+# Each one un-gates to `cfg(any(ios, android))` when its Kotlin half lands.
 [target.'cfg(target_os = "ios")'.dependencies]
 objc2 = "0.6"
-
-# Mobile-only: the native collectors plugin (CLLocationManager + SQLite) and the
-# in-process reach plugin (pair + iroh loopback).
-[target.'cfg(any(target_os = "ios", target_os = "android"))'.dependencies]
 tauri-plugin-location-probe = { path = "../plugins/location-probe" }
-tauri-plugin-reach = { path = "../plugins/reach" }
 tauri-plugin-health = { path = "../plugins/health" }
 tauri-plugin-eventkit = { path = "../plugins/eventkit" }
 tauri-plugin-contacts = { path = "../plugins/contacts" }
 tauri-plugin-finance = { path = "../plugins/finance" }
 tauri-plugin-audio = { path = "../plugins/audio" }
+
+# Mobile-only: the in-process reach plugin (pair + iroh loopback). This is the
+# whole Android app — reach + the webview — and the one plugin that must build
+# on both mobile targets.
+[target.'cfg(any(target_os = "ios", target_os = "android"))'.dependencies]
+tauri-plugin-reach = { path = "../plugins/reach" }
 
 [features]
 default = ["custom-protocol"]
@@ -68,3 +90,13 @@ codegen-units = 1
 lto = true
 opt-level = "s"
 strip = true
+
+# netdev 0.45.0 calls `nw_path_is_ultra_constrained` unconditionally on iOS.
+# That symbol is iOS 26.0+, so the stock crate makes the app unlaunchable on
+# every earlier iOS — dyld aborts at launch when strong-linked, and segfaults
+# on a null call when weak-linked. Both were observed on iOS 17. The vendored
+# copy resolves the symbol at runtime instead. netwatch (via iroh) pins
+# netdev "0.45.0" and 0.45.0 is the only 0.45.x published, so no version bump
+# avoids this. Drop the patch once upstream guards the call.
+[patch.crates-io]
+netdev = { path = "vendor/netdev" }

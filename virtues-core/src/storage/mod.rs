@@ -1,22 +1,43 @@
 //! Storage module — local filesystem backend.
 
 pub mod lake;
+pub mod volumes;
 pub mod models;
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use async_trait::async_trait;
+use bytes::Bytes;
+use futures::stream::BoxStream;
 use serde::{Deserialize, Serialize};
 
 use crate::error::{Error, Result};
+
+/// A byte stream plus the total size of the underlying object — what a ranged
+/// or streaming HTTP response needs without ever materializing the object.
+pub type ObjectStream = (u64, BoxStream<'static, std::io::Result<Bytes>>);
 
 /// Storage trait for different backends
 #[async_trait]
 pub trait StorageBackend: Send + Sync {
     async fn initialize(&self) -> Result<()>;
     async fn upload(&self, key: &str, data: Vec<u8>) -> Result<()>;
+    /// Move an already-materialized file into storage. Callers stage large
+    /// uploads on the same filesystem (see `staging_dir`) so this is a rename,
+    /// not a copy — the file is never held in memory.
+    async fn upload_from_file(&self, key: &str, src: &Path) -> Result<()>;
     async fn download(&self, key: &str) -> Result<Vec<u8>>;
+    /// Stream an object without loading it into memory. `range` is
+    /// `(start, len)` in bytes, already validated against the object size.
+    async fn read_stream(&self, key: &str, range: Option<(u64, u64)>) -> Result<ObjectStream>;
+    /// Directory on the same filesystem as the store for staging streamed
+    /// uploads, so `upload_from_file` can rename instead of copy.
+    async fn staging_dir(&self) -> Result<PathBuf>;
+    /// `(total, available)` bytes of the filesystem holding the store — the
+    /// box's real capacity, which is what quota displays and free-space checks
+    /// should reflect.
+    async fn disk_stats(&self) -> Result<(u64, u64)>;
     async fn delete(&self, key: &str) -> Result<()>;
     async fn list(&self, prefix: &str) -> Result<Vec<String>>;
     async fn list_with_pagination(
@@ -61,8 +82,24 @@ impl Storage {
         self.backend.upload(key, data).await
     }
 
+    pub async fn upload_from_file(&self, key: &str, src: &Path) -> Result<()> {
+        self.backend.upload_from_file(key, src).await
+    }
+
     pub async fn download(&self, key: &str) -> Result<Vec<u8>> {
         self.backend.download(key).await
+    }
+
+    pub async fn read_stream(&self, key: &str, range: Option<(u64, u64)>) -> Result<ObjectStream> {
+        self.backend.read_stream(key, range).await
+    }
+
+    pub async fn staging_dir(&self) -> Result<PathBuf> {
+        self.backend.staging_dir().await
+    }
+
+    pub async fn disk_stats(&self) -> Result<(u64, u64)> {
+        self.backend.disk_stats().await
     }
 
     pub async fn delete(&self, key: &str) -> Result<()> {
@@ -172,9 +209,68 @@ impl StorageBackend for FileStorage {
         Ok(())
     }
 
+    async fn upload_from_file(&self, key: &str, src: &Path) -> Result<()> {
+        let path = self.base_path.join(key);
+        if let Some(parent) = path.parent() {
+            tokio::fs::create_dir_all(parent).await?;
+        }
+        // Same-filesystem staging makes this a rename; fall back to copy if the
+        // source landed on another device (EXDEV).
+        if tokio::fs::rename(src, &path).await.is_err() {
+            tokio::fs::copy(src, &path).await?;
+            let _ = tokio::fs::remove_file(src).await;
+        }
+        Ok(())
+    }
+
     async fn download(&self, key: &str) -> Result<Vec<u8>> {
         let path = self.base_path.join(key);
         Ok(tokio::fs::read(path).await?)
+    }
+
+    async fn read_stream(&self, key: &str, range: Option<(u64, u64)>) -> Result<ObjectStream> {
+        use tokio::io::{AsyncReadExt, AsyncSeekExt};
+
+        let path = self.base_path.join(key);
+        let mut file = tokio::fs::File::open(path).await?;
+        let total = file.metadata().await?.len();
+        let stream: BoxStream<'static, std::io::Result<Bytes>> = match range {
+            Some((start, len)) => {
+                file.seek(std::io::SeekFrom::Start(start)).await?;
+                Box::pin(tokio_util::io::ReaderStream::new(file.take(len)))
+            }
+            None => Box::pin(tokio_util::io::ReaderStream::new(file)),
+        };
+        Ok((total, stream))
+    }
+
+    async fn staging_dir(&self) -> Result<PathBuf> {
+        // Hidden sibling of user content: same filesystem (rename-cheap), never
+        // listed (listings come from the DB) and never counted (usage is
+        // DB-tracked). Stale `.part` files from crashed uploads are harmless.
+        let dir = self.base_path.join(".uploads");
+        tokio::fs::create_dir_all(&dir).await?;
+        Ok(dir)
+    }
+
+    async fn disk_stats(&self) -> Result<(u64, u64)> {
+        // Resolve against the disk whose mount point is the longest prefix of
+        // the store's path — that filesystem's capacity is the real quota.
+        let base = tokio::fs::canonicalize(&self.base_path)
+            .await
+            .unwrap_or_else(|_| self.base_path.clone());
+        let disks = sysinfo::Disks::new_with_refreshed_list();
+        let best = disks
+            .iter()
+            .filter(|d| base.starts_with(d.mount_point()))
+            .max_by_key(|d| d.mount_point().as_os_str().len());
+        match best {
+            Some(d) => Ok((d.total_space(), d.available_space())),
+            None => Err(Error::Storage(format!(
+                "No mounted filesystem found for {:?}",
+                base
+            ))),
+        }
     }
 
     async fn delete(&self, key: &str) -> Result<()> {
@@ -322,6 +418,45 @@ mod tests {
 
         // Verify records
         assert_eq!(records, downloaded_records);
+    }
+
+    #[tokio::test]
+    async fn test_staged_upload_and_ranged_stream() {
+        use futures::StreamExt;
+
+        let temp_dir = TempDir::new().unwrap();
+        let storage = Storage::file(temp_dir.path().to_str().unwrap().to_string()).unwrap();
+        storage.initialize().await.unwrap();
+
+        // Stage a file and move it in — must not remain in staging afterwards.
+        let staging = storage.staging_dir().await.unwrap();
+        let part = staging.join("ten.part");
+        tokio::fs::write(&part, b"0123456789").await.unwrap();
+        storage
+            .upload_from_file("nested/dir/ten.bin", &part)
+            .await
+            .unwrap();
+        assert!(!part.exists());
+
+        async fn collect(stream: BoxStream<'static, std::io::Result<Bytes>>) -> Vec<u8> {
+            stream
+                .collect::<Vec<_>>()
+                .await
+                .into_iter()
+                .flat_map(|c| c.unwrap().to_vec())
+                .collect()
+        }
+
+        let (total, stream) = storage.read_stream("nested/dir/ten.bin", None).await.unwrap();
+        assert_eq!(total, 10);
+        assert_eq!(collect(stream).await, b"0123456789");
+
+        let (total, stream) = storage
+            .read_stream("nested/dir/ten.bin", Some((2, 5)))
+            .await
+            .unwrap();
+        assert_eq!(total, 10);
+        assert_eq!(collect(stream).await, b"23456");
     }
 
     #[tokio::test]

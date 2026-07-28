@@ -167,7 +167,7 @@
 		max-width: 220px;
 	}
 	.room-trigger:hover {
-		background: var(--color-surface-elevated);
+		background: var(--hover-bg);
 		color: var(--color-foreground);
 	}
 	.room-trigger.filed {
@@ -248,7 +248,7 @@
 		cursor: pointer;
 	}
 	.menu-item:hover {
-		background: var(--color-surface-elevated);
+		background: var(--hover-bg);
 	}
 	.menu-item.active {
 		background: color-mix(in srgb, var(--color-primary) 8%, transparent);

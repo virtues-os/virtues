@@ -268,6 +268,83 @@ pub async fn ensure_standing_code(pool: &PgPool) -> crate::Result<String> {
     Ok(ensure_standing(pool).await?.token)
 }
 
+// ─── Review code (App Store review boxes only) ──────────────────────────────
+
+/// Env var holding the persistent review pair code. Absent = no review row is
+/// ever created, which is the case on every customer box.
+const REVIEW_CODE_ENV: &str = "VIRTUES_REVIEW_PAIR_CODE";
+
+/// A review code must outlive the whole review process — submission, a
+/// reviewer opening the app days later, and any resubmission rounds — so it
+/// gets a nominal expiry far past any of that rather than a real TTL. It still
+/// has one because `claim_pair_token` filters on `expires_at > now()`, and the
+/// sweeper deletes expired tokens; a NULL would need both to grow a special
+/// case for a code that only exists on throwaway boxes.
+const REVIEW_TTL_DAYS: i64 = 3650;
+
+/// Install the persistent review pair code from the environment, if set.
+///
+/// Called once at startup. Without `VIRTUES_REVIEW_PAIR_CODE` this is a no-op,
+/// so a customer box never gains a non-expiring remote-pairing credential —
+/// the env gate is the entire safety boundary here.
+///
+/// Idempotent: re-running with the same code leaves the existing row alone
+/// (so a restart doesn't invalidate a code already sitting in App Review
+/// notes), and changing the code retires the old row.
+///
+/// The raw code is NOT stored encrypted the way a standing code is: the
+/// operator already knows it (they set it), and nothing needs to display it
+/// on a box-local surface. Only SHA-256 is persisted, as with every other kind.
+pub async fn ensure_review_code(pool: &PgPool) -> crate::Result<Option<String>> {
+    let Ok(code) = std::env::var(REVIEW_CODE_ENV) else {
+        return Ok(None);
+    };
+    let code = code.trim().to_string();
+    if code.is_empty() {
+        return Ok(None);
+    }
+
+    // Enforce the shape the mobile pairing screen can actually accept: its
+    // input is `inputmode="numeric"` with `maxlength="7"` and a 6-digit check
+    // (src-tauri/ui/mobile-pair.html). A longer or non-numeric code would be
+    // silently untypeable there — better to refuse to start the code than to
+    // hand a reviewer something that cannot be entered.
+    if code.len() != 6 || !code.chars().all(|c| c.is_ascii_digit()) {
+        return Err(crate::Error::Other(format!(
+            "{REVIEW_CODE_ENV} must be exactly 6 digits (the mobile pairing input accepts nothing else)"
+        )));
+    }
+
+    let token_hash = hash_token(&code);
+
+    // Retire any review code that is no longer the configured one, so rotating
+    // the env var actually revokes the old credential.
+    sqlx::query("DELETE FROM app_pair_token WHERE kind = 'review' AND token_hash <> $1")
+        .bind(&token_hash)
+        .execute(pool)
+        .await
+        .map_err(|e| crate::Error::Database(format!("retire stale review code: {e}")))?;
+
+    let id = crate::ids::generate_id(crate::ids::PAIR_TOKEN_PREFIX, &[&token_hash[..16]]);
+    let expires_at = Utc::now() + Duration::days(REVIEW_TTL_DAYS);
+    // ON CONFLICT on the token_hash unique index: an unchanged code keeps its
+    // original row (and its audit trail) across restarts.
+    sqlx::query(
+        "INSERT INTO app_pair_token \
+         (id, token_hash, minted_via, status, kind, authorized_at, expires_at) \
+         VALUES ($1, $2, 'cli', 'authorized', 'review', now(), $3) \
+         ON CONFLICT (token_hash) DO NOTHING",
+    )
+    .bind(&id)
+    .bind(&token_hash)
+    .bind(expires_at)
+    .execute(pool)
+    .await
+    .map_err(|e| crate::Error::Database(format!("insert review code: {e}")))?;
+
+    Ok(Some(code))
+}
+
 // ─── HTTP handlers ──────────────────────────────────────────────────────────
 
 #[derive(Debug, Deserialize)]
@@ -524,7 +601,7 @@ pub struct ConsumeRequest {
 pub struct ConsumeResponse {
     pub device_id: String,
     pub redirect: String,
-    /// Map of `binary-name → app_actions.id` for the per-device ingest fan-out,
+    /// Map of `binary-name → app_applets.id` for the per-device ingest fan-out,
     /// so the device knows which webhook id to POST each stream flush to. Empty
     /// for non-collector devices.
     #[serde(skip_serializing_if = "std::collections::HashMap::is_empty", default)]
@@ -800,7 +877,7 @@ pub async fn consume_handler(
     crate::relay::after_pairing_change(pool.clone());
 
     // Assemble the per-device action fan-out so the device knows which
-    // `app_actions.id` to POST each stream flush to. Post-commit best-effort: a
+    // `app_applets.id` to POST each stream flush to. Post-commit best-effort: a
     // failure here doesn't undo the pairing — the device shows up paired but with
     // no ingest actions until the next reconcile.
     let action_ids = match assemble_action_fanout(&pool, &device_id).await {
@@ -836,7 +913,7 @@ pub async fn consume_handler(
 // the pairing. Shaped as its own helper so the consume handler stays the
 // easy-to-read top-level flow.
 
-/// Reconcile action templates (so per-credential `app_actions` rows are
+/// Reconcile action templates (so per-credential `app_applets` rows are
 /// fanned out) and read back the binary-name → action-id map the device
 /// uses to route stream flushes to `POST /webhook/<action_id>`. Lifted
 /// out of the legacy `pair_complete_handler` so the unified pair flow

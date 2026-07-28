@@ -42,53 +42,66 @@ fn set_appearance(_dark: bool) {}
 #[tauri::mobile_entry_point]
 pub fn run() {
   use tauri::{WebviewUrl, WebviewWindowBuilder};
-  use tauri_plugin_audio::AudioExt;
-  use tauri_plugin_contacts::ContactsExt;
-  use tauri_plugin_eventkit::EventKitExt;
-  use tauri_plugin_finance::FinanceExt;
-  use tauri_plugin_health::HealthExt;
-  use tauri_plugin_location_probe::LocationProbeExt;
   use tauri_plugin_reach::ReachExt;
 
-  tauri::Builder::default()
-    .plugin(tauri_plugin_reach::init())
+  let builder = tauri::Builder::default().plugin(tauri_plugin_reach::init());
+
+  // The six collectors are iOS-only: Rust shims over Swift halves, with no
+  // Android counterpart yet (see Cargo.toml). Android boots reach + the webview
+  // alone — a viewer. Chained conditionally rather than `cfg`-ing each line, the
+  // same pattern main.rs uses for the single-instance plugin.
+  #[cfg(target_os = "ios")]
+  let builder = builder
     .plugin(tauri_plugin_location_probe::init())
     .plugin(tauri_plugin_health::init())
     .plugin(tauri_plugin_eventkit::init())
     .plugin(tauri_plugin_contacts::init())
     .plugin(tauri_plugin_finance::init())
-    .plugin(tauri_plugin_audio::init())
+    .plugin(tauri_plugin_audio::init());
+
+  builder
     .invoke_handler(tauri::generate_handler![set_appearance])
     .setup(|app| {
-      // Background location: install the CLLocationManager delegate as early as
-      // Tauri lets us (runs on every launch, incl. cold background relaunch).
-      // resume_probe only (re)starts if already authorized — it never prompts,
-      // so a fresh/unauthorized install isn't cold-slapped before onboarding.
-      // The explicit "Enable" opt-in calls start_probe (which prompts).
-      if let Err(e) = app.location_probe().resume_probe() {
-        eprintln!("[location-probe] resume failed: {e}");
-      }
-      // HealthKit: resume collecting only if already opted in (never prompts).
-      if let Err(e) = app.health().resume() {
-        eprintln!("[health] resume failed: {e}");
-      }
-      // Calendar: re-scan on launch if already authorized (never prompts).
-      if let Err(e) = app.eventkit().resume() {
-        eprintln!("[eventkit] resume failed: {e}");
-      }
-      // Contacts: re-snapshot on launch if already authorized (never prompts).
-      if let Err(e) = app.contacts().resume() {
-        eprintln!("[contacts] resume failed: {e}");
-      }
-      // Finance: re-sync on launch if already opted in (never prompts).
-      if let Err(e) = app.finance().resume() {
-        eprintln!("[finance] resume failed: {e}");
-      }
-      // Audio: resume recording only if already authorized + left enabled. The
-      // recording session doubles as the background keepalive; a significant-
-      // location wake also calls this path so it resurrects after suspension.
-      if let Err(e) = app.audio().resume() {
-        eprintln!("[audio] resume failed: {e}");
+      // Collector resume — iOS only, mirroring the plugin registrations above.
+      #[cfg(target_os = "ios")]
+      {
+        use tauri_plugin_audio::AudioExt;
+        use tauri_plugin_contacts::ContactsExt;
+        use tauri_plugin_eventkit::EventKitExt;
+        use tauri_plugin_finance::FinanceExt;
+        use tauri_plugin_health::HealthExt;
+        use tauri_plugin_location_probe::LocationProbeExt;
+
+        // Background location: install the CLLocationManager delegate as early as
+        // Tauri lets us (runs on every launch, incl. cold background relaunch).
+        // resume_probe only (re)starts if already authorized — it never prompts,
+        // so a fresh/unauthorized install isn't cold-slapped before onboarding.
+        // The explicit "Enable" opt-in calls start_probe (which prompts).
+        if let Err(e) = app.location_probe().resume_probe() {
+          eprintln!("[location-probe] resume failed: {e}");
+        }
+        // HealthKit: resume collecting only if already opted in (never prompts).
+        if let Err(e) = app.health().resume() {
+          eprintln!("[health] resume failed: {e}");
+        }
+        // Calendar: re-scan on launch if already authorized (never prompts).
+        if let Err(e) = app.eventkit().resume() {
+          eprintln!("[eventkit] resume failed: {e}");
+        }
+        // Contacts: re-snapshot on launch if already authorized (never prompts).
+        if let Err(e) = app.contacts().resume() {
+          eprintln!("[contacts] resume failed: {e}");
+        }
+        // Finance: re-sync on launch if already opted in (never prompts).
+        if let Err(e) = app.finance().resume() {
+          eprintln!("[finance] resume failed: {e}");
+        }
+        // Audio: resume recording only if already authorized + left enabled. The
+        // recording session doubles as the background keepalive; a significant-
+        // location wake also calls this path so it resurrects after suspension.
+        if let Err(e) = app.audio().resume() {
+          eprintln!("[audio] resume failed: {e}");
+        }
       }
 
       // Bundled-SPA architecture (Option A): the app IS the bundled SvelteKit

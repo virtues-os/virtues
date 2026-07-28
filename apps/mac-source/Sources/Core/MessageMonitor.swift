@@ -31,8 +31,11 @@ class MessageMonitor {
     init(queue: Queue) {
         self.queue = queue
         loadLastSyncDate()
-        // Check initial permission state
+        // Check initial permission state, and publish it: this process is the
+        // daemon, so its probe is the only one that describes the daemon. See
+        // CollectorHealth.
         hasFullDiskAccess = canAccessMessagesDB()
+        CollectorHealth.recordFromDaemon()
     }
     
     func start() {
@@ -83,6 +86,12 @@ class MessageMonitor {
                 lastPermissionCheck = now
                 permissionCheckAttempts += 1
                 
+                // Republish on every re-check so the record tracks reality
+                // within one interval — including the *good* transition, so a
+                // freshly granted permission clears the warning everywhere
+                // without waiting for a restart.
+                CollectorHealth.recordFromDaemon()
+
                 if canAccessMessagesDB() {
                     print("✅ Full Disk Access detected! Starting iMessage sync...")
                     hasFullDiskAccess = true

@@ -81,14 +81,14 @@ pub const PAGE_PREFIX: &str = "page";
 pub const PAGE_VERSION_PREFIX: &str = "ver";
 pub const PAGE_SHARE_PREFIX: &str = "share";
 
-// Wiki Things — long-running named anchors (projects, pets, goals, topics, ...)
-pub const THING_PREFIX: &str = "thg";
-
-// Sidebar pins (user's globally-pinned URLs, distinct from thing membership)
+// Sidebar pins (user's globally-pinned URLs)
 pub const PIN_PREFIX: &str = "pin";
 
 // Notebook Layer (Organization system)
 pub const NOTEBOOK_PREFIX: &str = "nb";
+
+// Document annotations (highlights + margin notes on drive files)
+pub const ANNOTATION_PREFIX: &str = "anno";
 
 // Chat Layer (Conversations)
 pub const CHAT_PREFIX: &str = "chat";

@@ -52,7 +52,7 @@ fn segmentation_runs_before_scoring() {
         Path::new(env!("CARGO_MANIFEST_DIR"))
             .parent()
             .expect("repo root")
-            .join("actions/day_summary_eod/main.rs"),
+            .join("applets/day_summary_eod/main.rs"),
     )
     .expect("read day_summary_eod/main.rs");
 
@@ -98,7 +98,7 @@ fn gaps_run_after_sleep_before_scoring() {
         Path::new(env!("CARGO_MANIFEST_DIR"))
             .parent()
             .expect("repo root")
-            .join("actions/day_summary_eod/main.rs"),
+            .join("applets/day_summary_eod/main.rs"),
     )
     .expect("read day_summary_eod/main.rs");
 
@@ -396,7 +396,7 @@ fn narration_comes_after_the_day_is_cut() {
         Path::new(env!("CARGO_MANIFEST_DIR"))
             .parent()
             .expect("repo root")
-            .join("actions/day_summary_eod/main.rs"),
+            .join("applets/day_summary_eod/main.rs"),
     )
     .expect("read day_summary_eod/main.rs");
 

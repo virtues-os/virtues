@@ -14,9 +14,7 @@
  * - Entity metadata registry (lazy-loaded cache)
  */
 
-import {
-	type ViewEntity
-} from '$lib/api/client';
+import { type ViewEntity } from '$lib/api/client';
 import {
 	type Tab,
 	type TabType,
@@ -252,6 +250,7 @@ class WindowShellStore {
 		} else {
 			replaceState(url, {});
 		}
+
 	}
 
 	handleDeepLink(path: string, rightRoute: string | null): void {
@@ -288,7 +287,12 @@ class WindowShellStore {
 		const searchParams = new URLSearchParams(window.location.search);
 		const rightRoute = searchParams.get('right');
 
-		this.handleDeepLink(path, rightRoute);
+		// Preserve route-level params (e.g. ?page=N) — only ?right= is the shell's.
+		const routeParams = new URLSearchParams(searchParams);
+		routeParams.delete('right');
+		const routeWithParams = routeParams.size > 0 ? `${path}?${routeParams}` : path;
+
+		this.handleDeepLink(routeWithParams, rightRoute);
 	};
 
 	// ============================================================================
@@ -1074,6 +1078,34 @@ class WindowShellStore {
 		if (!this.panes.some(p => p.id === paneId)) return;
 		this.activePaneId = paneId;
 		this.persistTabState();
+	}
+
+	/**
+	 * Focus a pane by position (⌘1/⌘2). Asking for the right pane when there
+	 * isn't one *creates* it, so the shortcut teaches the split rather than
+	 * doing nothing — the same way ⌘2 opens a second group in editors. On the
+	 * phone shell `enableSplit` refuses, so this correctly no-ops there.
+	 */
+	focusPane(paneId: 'left' | 'right'): void {
+		if (paneId === 'right' && !this.isSplit) {
+			this.enableSplit();
+		}
+		this.setActivePane(paneId);
+	}
+
+	/**
+	 * Move to the next/previous tab within the focused pane, wrapping at both
+	 * ends. No-ops on a pane with fewer than two tabs.
+	 */
+	cycleTab(direction: 1 | -1): void {
+		const pane = this.activePane;
+		if (!pane || pane.tabs.length < 2) return;
+
+		const current = pane.tabs.findIndex(t => t.id === pane.activeTabId);
+		if (current === -1) return;
+
+		const next = (current + direction + pane.tabs.length) % pane.tabs.length;
+		this.setActiveTabInPane(pane.tabs[next].id, pane.id as 'left' | 'right');
 	}
 
 	/**

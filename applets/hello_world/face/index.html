@@ -1,0 +1,224 @@
+<!doctype html>
+<html>
+<head>
+	<meta charset="utf-8" />
+	<title>Biscuit</title>
+	<link rel="stylesheet" href="virtues.css" />
+	<style>
+		body {
+			max-width: 26rem;
+			margin: 0 auto;
+			padding: 2rem 1.5rem;
+			text-align: center;
+		}
+		.yard {
+			position: relative;
+			display: inline-block;
+			margin: 0.5rem 0 0.25rem;
+		}
+		pre {
+			font-family: ui-monospace, Menlo, monospace;
+			font-size: 1rem;
+			line-height: 1.25;
+			margin: 0;
+			text-align: left;
+			user-select: none;
+			cursor: pointer;
+		}
+		.heart {
+			position: absolute;
+			font-size: 0.875rem;
+			color: var(--color-error);
+			animation: float 1.2s ease-out forwards;
+			pointer-events: none;
+		}
+		@keyframes float {
+			from { opacity: 1; transform: translateY(0); }
+			to   { opacity: 0; transform: translateY(-2.5rem); }
+		}
+		.says {
+			min-height: 2.5rem;
+			margin: 0.75rem 0 1rem;
+			font-family: Georgia, serif;
+			font-style: italic;
+			font-size: 0.875rem;
+			color: var(--color-foreground-subtle);
+		}
+		.paw-row {
+			display: flex;
+			gap: 0.5rem;
+			justify-content: center;
+		}
+		button {
+			padding: 0.375rem 0.875rem;
+			font: inherit;
+			font-size: 0.8125rem;
+			border: 1px solid var(--color-border);
+			border-radius: 999px;
+			background: var(--color-surface-elevated);
+			color: var(--color-foreground);
+			cursor: pointer;
+		}
+		button:hover { border-color: var(--color-foreground-subtle); }
+		button:active { transform: scale(0.96); }
+		.tag {
+			margin-top: 1.25rem;
+			font-size: 0.6875rem;
+			color: var(--color-foreground-subtle);
+		}
+	</style>
+</head>
+<body>
+	<div class="yard">
+		<pre id="dog"></pre>
+	</div>
+	<p class="says" id="says">…</p>
+	<div class="paw-row">
+		<button id="pet">Pet</button>
+		<button id="treat">Treat</button>
+		<button id="speak">Speak</button>
+	</div>
+	<p class="tag">Biscuit lives here. He does not persist between visits; he simply is.</p>
+
+	<script src="virtues.js"></script>
+	<script>
+		const dogEl = document.getElementById('dog');
+		const saysEl = document.getElementById('says');
+		const yard = document.querySelector('.yard');
+
+		// eye: ' awake · - asleep · ^ delighted    tail: (_ down · )_ mid · \ up
+		function art({ eye = "'", tail = 0, zzz = false, bone = 0 } = {}) {
+			const tails = [
+				['          __', ' (_____()'],
+				['          __', ' )_____()'],
+				[' \\        __', ' \\_____()'],
+			];
+			const [l1, back] = tails[tail];
+			const ground =
+				bone === 1 ? '  \\"--\\    }=={'
+				: bone === 2 ? '  \\"--\\    }={'
+				: bone === 3 ? '  \\"--\\     .:'
+				: '  \\"--\\';
+			return [
+				zzz ? l1 + '      z Z' : l1,
+				back + eye + '\\;',
+				'  /,    /\\',
+				ground,
+			].join('\n');
+		}
+
+		// ------- mood -------
+		const hour = new Date().getHours();
+		let sleeping = hour >= 23 || hour < 6;
+		let wag = null;
+		let flavor = [];
+
+		const LINES = [
+			'Biscuit wags. At you, specifically.',
+			'Biscuit is listening very hard for the word "walk."',
+			'Biscuit turned around three times before sitting down. Tradition.',
+			'woof. (affectionate)',
+			'Biscuit found a smell. It is a very important smell.',
+			'Biscuit believes you are the best one. He has done the research.',
+		];
+
+		function say(text) { saysEl.textContent = text; }
+
+		function startWag() {
+			stopWag();
+			let up = false;
+			wag = setInterval(() => {
+				up = !up;
+				dogEl.textContent = art({ tail: up ? 2 : 1 });
+			}, 320);
+		}
+		function stopWag() { if (wag) clearInterval(wag), (wag = null); }
+
+		function settle() {
+			stopWag();
+			if (sleeping) {
+				dogEl.textContent = art({ eye: '-', zzz: true });
+				say('Biscuit is dreaming. His paws are going.');
+			} else {
+				dogEl.textContent = art();
+				say('Biscuit is here. That is the whole news.');
+			}
+		}
+
+		// ------- interactions -------
+		function hearts(n = 3) {
+			for (let i = 0; i < n; i++) {
+				const h = document.createElement('span');
+				h.className = 'heart';
+				h.textContent = '♥';
+				h.style.left = 30 + Math.random() * 60 + '%';
+				h.style.top = '0';
+				h.style.animationDelay = i * 120 + 'ms';
+				yard.appendChild(h);
+				setTimeout(() => h.remove(), 1600 + i * 120);
+			}
+		}
+
+		let busy = false;
+		function wake() {
+			if (!sleeping) return false;
+			sleeping = false;
+			dogEl.textContent = art();
+			say('Biscuit un-sleeps. For you? Always.');
+			setTimeout(() => { sleeping = hour >= 23 || hour < 6; settle(); }, 4000);
+			return true;
+		}
+
+		document.getElementById('pet').onclick = () => {
+			if (busy) return;
+			if (wake()) return;
+			busy = true;
+			hearts();
+			dogEl.textContent = art({ eye: '^', tail: 2 });
+			say('Biscuit leans into it with his whole entire body.');
+			startWag();
+			setTimeout(() => { busy = false; settle(); }, 2600);
+		};
+
+		document.getElementById('treat').onclick = () => {
+			if (busy) return;
+			if (wake()) return;
+			busy = true;
+			dogEl.textContent = art({ tail: 1, bone: 1 });
+			say('A bone appears. Biscuit cannot believe this economy.');
+			setTimeout(() => { dogEl.textContent = art({ eye: '^', tail: 2, bone: 2 }); say('chomp.'); }, 900);
+			setTimeout(() => { dogEl.textContent = art({ eye: '^', tail: 2, bone: 3 }); say('chomp. gone.'); }, 1700);
+			setTimeout(() => { busy = false; hearts(2); settle(); }, 2600);
+		};
+
+		document.getElementById('speak').onclick = () => {
+			if (busy) return;
+			if (wake()) return;
+			busy = true;
+			startWag();
+			const pool = LINES.concat(flavor);
+			say(pool[Math.floor(Math.random() * pool.length)]);
+			setTimeout(() => { busy = false; settle(); }, 3000);
+		};
+
+		dogEl.onclick = () => document.getElementById('pet').click();
+
+		// ------- one gentle sniff of the real day (all optional) -------
+		(async () => {
+			settle();
+			try {
+				const [w] = await virtues.query(
+					"SELECT count(*)::int AS n FROM data_health_workout WHERE start_time >= date_trunc('day', now())"
+				);
+				if (w?.n > 0) flavor.push('Biscuit says you smell like a good long run. This is his highest honor.');
+			} catch {}
+			try {
+				const [c] = await virtues.query(
+					"SELECT count(*)::int AS n FROM data_calendar_event WHERE start_time >= date_trunc('day', now()) AND start_time < date_trunc('day', now()) + interval '1 day'"
+				);
+				if (c?.n >= 4) flavor.push('Biscuit watched all ' + c.n + ' of your meetings today. He was not invited. He is fine.');
+			} catch {}
+		})();
+	</script>
+</body>
+</html>

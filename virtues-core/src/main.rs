@@ -408,11 +408,52 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Produces a single tarball of the full box state (DB + lake + env +
     // manifest). Detailed in `virtues::cli::backup`. Runs against a bare DB
     // pool — does not need the full app stack.
-    if let Some(Commands::Backup { output, force }) = &cli.command {
+    if let Some(Commands::Backup {
+        output,
+        force,
+        allow_missing_key,
+        verify,
+        key_file,
+        volume,
+        init_key,
+    }) = &cli.command
+    {
+        if *init_key {
+            match virtues::cli::backup::init_key() {
+                Ok(()) => return Ok(()),
+                Err(e) => {
+                    eprintln!("error: {e}");
+                    std::process::exit(1);
+                }
+            }
+        }
+        // Verification needs no database at all — it reads one file.
+        if let Some(archive) = verify {
+            match virtues::cli::restore::verify(archive.clone(), key_file.clone()).await {
+                Ok(()) => return Ok(()),
+                Err(e) => {
+                    eprintln!("error: verification failed: {e}");
+                    std::process::exit(1);
+                }
+            }
+        }
         let database_url = virtues::database::normalize_database_url()?;
         let db = virtues::database::Database::new(&database_url)?;
-        match virtues::cli::backup::run(db.pool(), output.clone(), *force).await {
-            Ok(_) => return Ok(()),
+        let result = match volume {
+            Some(target) => {
+                virtues::cli::backup_volume::run_cli(db.pool().clone(), target, *allow_missing_key).await
+            }
+            None => virtues::cli::backup::run(
+                db.pool(),
+                output.clone(),
+                *force,
+                *allow_missing_key,
+            )
+            .await
+            .map(|_| ()),
+        };
+        match result {
+            Ok(()) => return Ok(()),
             Err(e) => {
                 eprintln!("error: backup failed: {e}");
                 std::process::exit(1);
@@ -424,8 +465,21 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Destructive. Refuses if the service is running (unless --force), if
     // the manifest's schema is newer than this binary's, or if any sha256
     // doesn't match. Detailed in `virtues::cli::restore`.
-    if let Some(Commands::Restore { path, force }) = &cli.command {
-        match virtues::cli::restore::run(path.clone(), *force).await {
+    if let Some(Commands::Restore {
+        path,
+        force,
+        from_volume,
+        key_file,
+    }) = &cli.command
+    {
+        match virtues::cli::restore::run(
+            path.clone(),
+            *force,
+            from_volume.clone(),
+            key_file.clone(),
+        )
+        .await
+        {
             Ok(()) => return Ok(()),
             Err(e) => {
                 eprintln!("error: restore failed: {e}");
@@ -508,11 +562,68 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Self-update from the latest GitHub Release (or a pinned --version
     // tag). Stops the service, swaps the binary, applies migrations,
     // restarts. Detailed in `virtues::cli::upgrade`.
-    if let Some(Commands::Upgrade { check, version, pre, force }) = &cli.command {
-        match virtues::cli::upgrade::run(*check, version.clone(), *pre, *force).await {
+    if let Some(Commands::Upgrade { check, version, pre, force, only }) = &cli.command {
+        match virtues::cli::upgrade::run(*check, version.clone(), *pre, *force, only.clone()).await
+        {
             Ok(()) => return Ok(()),
             Err(e) => {
                 eprintln!("error: upgrade failed: {e}");
+                std::process::exit(1);
+            }
+        }
+    }
+
+    // ─── `virtues channel` ──────────────────────────────────────────────────
+    // Read or write the followed release channel. Sits with upgrade/rollback
+    // above the DB setup because it must work on a box whose database is
+    // unhealthy — the channel file is in the state root precisely so that
+    // upgrading a broken box doesn't depend on the broken part.
+    if let Some(Commands::Channel { channel }) = &cli.command {
+        use virtues::cli::channel::{self, Channel};
+        match channel {
+            None => {
+                println!("{}", channel::current());
+                return Ok(());
+            }
+            Some(raw) => match Channel::parse(raw) {
+                Some(c) => match channel::set(c) {
+                    Ok(()) => {
+                        virtues::cli::ui::ok(&format!("following the {c} channel"));
+                        if c == Channel::Prerelease {
+                            virtues::cli::ui::skip(
+                                "`virtues upgrade` now takes prereleases without --pre",
+                            );
+                        } else {
+                            // Going back to stable does not roll anything back;
+                            // say so here rather than letting it look like the
+                            // next upgrade silently did nothing.
+                            virtues::cli::ui::skip(
+                                "a box ahead of stable stays put until stable catches up",
+                            );
+                        }
+                        return Ok(());
+                    }
+                    Err(e) => {
+                        eprintln!("error: could not set channel: {e}");
+                        std::process::exit(1);
+                    }
+                },
+                None => {
+                    eprintln!("error: unknown channel {raw:?} — expected 'stable' or 'prerelease'");
+                    std::process::exit(1);
+                }
+            },
+        }
+    }
+
+    // ─── `virtues rollback` ─────────────────────────────────────────────────
+    // Flip `current` back to the previous release slot and restart — the
+    // atomic inverse of an upgrade's activation. Like Upgrade, needs no DB.
+    if let Some(Commands::Rollback) = &cli.command {
+        match virtues::cli::upgrade::rollback().await {
+            Ok(()) => return Ok(()),
+            Err(e) => {
+                eprintln!("error: rollback failed: {e}");
                 std::process::exit(1);
             }
         }
@@ -522,16 +633,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // It's already in the process env, so subprocess actions inherit it as-is.
     let database_url = virtues::database::normalize_database_url()?;
 
-    // Initialize Virtues client
-    // Storage path: STORAGE_PATH env var or ./data/lake default
-    let mut builder = VirtuesBuilder::new().database(&database_url);
-
-    // Configure storage path if specified
-    if let Ok(storage_path) = env::var("STORAGE_PATH") {
-        builder = builder.storage_path(&storage_path);
-    }
-
-    let virtues = builder.build().await?;
+    // Initialize Virtues client. The lake location resolves inside the builder,
+    // via `storage::lake::lake_root`. Reading STORAGE_PATH here as well would be
+    // a second expression of the same rule — exactly the divergence that
+    // resolver exists to prevent.
+    let virtues = VirtuesBuilder::new().database(&database_url).build().await?;
 
     // Default to server with auto-migrate if no command specified
     let cli = if cli.command.is_none() {

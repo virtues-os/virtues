@@ -88,6 +88,33 @@ impl InstallConfig {
         }
     }
 
+    /// pdfium build version re-hosted on the models release (from
+    /// bblanchon/pdfium-binaries, BSD-licensed). Version is baked into the
+    /// asset name — updates ship under a NEW name + a config bump here,
+    /// never replaced in place (same doctrine as the GGUFs).
+    pub const PDFIUM_VERSION: &'static str = "7961";
+
+    /// Per-arch pdfium asset name on the models release. The installer is
+    /// compiled per-target, so the arch is a compile-time fact.
+    pub fn pdfium_asset(&self) -> String {
+        #[cfg(target_arch = "aarch64")]
+        let arch = "arm64";
+        #[cfg(target_arch = "x86_64")]
+        let arch = "x64";
+        format!("libpdfium-{}-linux-{arch}.so", Self::PDFIUM_VERSION)
+    }
+
+    /// Where libpdfium lands on the box. virtues-core's PDF extractor finds
+    /// it via the VIRTUES_PDFIUM_PATH env line (written at install) and via
+    /// its VIRTUES_MODELS_DIR/pdfium fallback.
+    pub fn pdfium_dir(&self) -> PathBuf {
+        self.models_dir().join("pdfium")
+    }
+
+    pub fn pdfium_lib_path(&self) -> PathBuf {
+        self.pdfium_dir().join("libpdfium.so")
+    }
+
     pub fn env_file_path(&self) -> PathBuf {
         self.data_dir.join("virtues.env")
     }
@@ -100,6 +127,12 @@ impl InstallConfig {
         self.install_prefix.join("share/virtues/web")
     }
 
+    /// The slot-layout root (`share/virtues`) — holds `releases/`, the
+    /// `current` flip link, the routing symlinks, and `install.json`.
+    pub fn share_virtues_dir(&self) -> PathBuf {
+        self.install_prefix.join("share/virtues")
+    }
+
     /// Where the action tree (manifests + UI + sources.toml) lands on the box.
     /// virtues-core reads this via `VIRTUES_ACTIONS_DIR` (see
     /// `action_templates::actions_root`); the default here must match
@@ -108,6 +141,20 @@ impl InstallConfig {
     /// copy here has no actions at all.
     pub fn actions_dir(&self) -> PathBuf {
         self.install_prefix.join("share/virtues/actions")
+    }
+
+    /// The WRITABLE applet tree — chat-authored applets and imported packs.
+    ///
+    /// Separate from [`Self::actions_dir`] because the two have opposite
+    /// lifecycles: that one is package data the installer replaces wholesale
+    /// on every release, this one is user data that must survive it. They
+    /// used to be the same directory, which meant the slot flip deleted
+    /// authored applets and a fresh box couldn't create them at all (nothing
+    /// made a service-writable directory). virtues-core reads this via
+    /// `VIRTUES_APPLET_STATE_DIR`; the default must match
+    /// `WELL_KNOWN_APPLET_STATE_DIR` in virtues-core.
+    pub fn applet_state_dir(&self) -> PathBuf {
+        self.data_dir.join("applets")
     }
 
     /// Where the compiled function-action executables land (libexec = helper
@@ -144,6 +191,15 @@ impl InstallConfig {
     /// `VIRTUES_QNND_MODELS_DIR` default that `search::qnn_client` reads.
     pub fn qnn_models_dir(&self) -> PathBuf {
         self.models_dir().join("qnn")
+    }
+
+    /// Root of the QAIRT runtime libs this installer fetches and owns, with
+    /// `host/` and `dsp/` beneath it — the two must stay separate directories
+    /// because `LD_LIBRARY_PATH` and `ADSP_LIBRARY_PATH` point at different
+    /// halves of the SDK. Under the models dir so backup/GC treat them like the
+    /// other fetched artifacts. See `qairt.rs` for why we fetch rather than ship.
+    pub fn qnn_managed_lib_dir(&self) -> PathBuf {
+        self.qnn_models_dir().join("lib")
     }
 
     /// Directory holding the Qualcomm QAIRT runtime libs (`libQnnHtp.so`,

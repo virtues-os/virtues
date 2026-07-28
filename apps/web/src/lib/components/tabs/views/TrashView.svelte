@@ -14,9 +14,23 @@
 		type Column,
 	} from "$lib/components/datagrid/UniversalDataGrid.svelte";
 	import { onMount } from "svelte";
+	import { paneActions } from "$lib/stores/paneActions.svelte";
 	import { windowShellStore } from "$lib/stores/window-shell.svelte";
 
 	let { tab, active }: { tab: Tab; active: boolean } = $props();
+
+	// Back-to-Drive is navigation, which belongs with the other navigation in
+	// the pane toolbar rather than floating beside the heading.
+	$effect(() =>
+		paneActions.set(tab.id, [
+			{
+				id: "trash.back",
+				label: "Back to Drive",
+				icon: "ri:arrow-left-line",
+				run: navigateToDrive,
+			},
+		]),
+	);
 
 	// State
 	let trashFiles = $state<DriveFile[]>([]);
@@ -301,16 +315,6 @@
 	description="Items in Trash are automatically deleted after 30 days"
 	maxWidth="wide"
 >
-	{#snippet actions()}
-		<button
-			class="text-foreground-muted hover:text-foreground transition-colors p-1"
-			onclick={navigateToDrive}
-			aria-label="Back to Drive"
-		>
-			<Icon icon="ri:arrow-left-line" class="text-lg" />
-		</button>
-	{/snippet}
-
 		<!-- Toolbar -->
 		<div class="flex items-center justify-between mb-4">
 			<span class="text-sm text-foreground-muted">

@@ -5,11 +5,30 @@
 	import { apiGet } from "$lib/api/client";
 	import { formatDate } from "$lib/utils/dateUtils";
 	import { onMount, onDestroy } from "svelte";
+	import { paneActions } from "$lib/stores/paneActions.svelte";
+	import { getBackupStatus } from "$lib/api/client";
 
 	// @ts-ignore — Vite compile-time constant (see vite.config.ts + app.d.ts)
 	const BUILD_COMMIT: string = __BUILD_COMMIT__;
 
 	let { tab, active }: { tab: Tab; active: boolean } = $props();
+
+	// A toggle, not an event — `active` renders it held down, so the toolbar can
+	// show what mode the view is in rather than just what you can do to it.
+	$effect(() =>
+		paneActions.set(tab.id, [
+			{
+				id: "system.detail",
+				label: "Detail",
+				icon: "ri:terminal-line",
+				active: detail,
+				run: () => {
+					detail = !detail;
+					loadTelemetry();
+				},
+			},
+		]),
+	);
 
 	let loading = $state(true);
 	let detail = $state(false); // dev-mode "Detail" layer
@@ -117,6 +136,28 @@
 			.join(" ");
 	}
 
+	// Backup freshness. Polled once on mount, not on the 3s telemetry cadence —
+	// it changes nightly, and a number that only moves once a day has no business
+	// on a live ticker.
+	let backup = $state<import("$lib/api/client").BackupStatus | null>(null);
+
+	async function loadBackup() {
+		try {
+			backup = await getBackupStatus();
+		} catch {
+			backup = null;
+		}
+	}
+
+	/** "4 hours", "9 days" — the only figure this surface really carries. */
+	function backupAge(secs: number | null): string {
+		if (secs === null) return "never";
+		const h = Math.floor(secs / 3600);
+		if (h < 1) return "under an hour ago";
+		if (h < 48) return `${h} hour${h === 1 ? "" : "s"} ago`;
+		return `${Math.floor(h / 24)} days ago`;
+	}
+
 	async function loadHealth() {
 		try {
 			const r = await fetch("/health");
@@ -157,7 +198,7 @@
 	}
 
 	onMount(async () => {
-		await Promise.all([loadHealth(), loadTelemetry()]);
+		await Promise.all([loadHealth(), loadTelemetry(), loadBackup()]);
 		loading = false;
 		// Calm cadence — the machine breathes, it doesn't twitch.
 		pollTimer = setInterval(loadTelemetry, 3000);
@@ -199,12 +240,13 @@
 {/snippet}
 
 <Page title="System" description="The machine, examined." maxWidth="wide">
+	<!-- The Detail toggle moved to the pane toolbar; the live pill stayed. It
+	     reports state rather than doing anything, and the action slot is for
+	     things you can press. Putting a status light in a row of buttons would
+	     invite people to click it. -->
 	{#snippet actions()}
 		<div class="head-actions">
 			<span class="live" class:on={live}><span class="dot"></span>{live ? "live" : "—"}</span>
-			<button class="toggle" class:active={detail} onclick={() => { detail = !detail; loadTelemetry(); }}>
-				<Icon icon="ri:terminal-line" width="13" /> Detail
-			</button>
 		</div>
 	{/snippet}
 
@@ -310,6 +352,54 @@
 						{/each}
 					</div>
 				</div>
+			</section>
+		{/if}
+
+		<!-- ─── BACKUP ─────────────────────────────────────────────────── -->
+		<!--
+			Deliberately above Storage: "how much would I lose" is a more urgent
+			question than "how full is it", and this is the only place the answer
+			appears. There is no restore button — restore needs the service
+			stopped, so the box cannot do it to itself, and a button would imply
+			a capability that cannot exist.
+		-->
+		{#if backup}
+			<section class="chapter">
+				<h2 class="chapter-title">Backup</h2>
+				<div class="cols">
+					<div class="col">
+						{#if backup.state === "none"}
+							{@render ledger("Off-box copies", "none", false, "crit")}
+						{:else}
+							{@render ledger(
+								"Last backup",
+								backupAge(backup.age_seconds),
+								false,
+								backup.state === "ok" ? "ok" : backup.state === "never" ? "crit" : "warn",
+							)}
+						{/if}
+					</div>
+					<div class="col">
+						{#each backup.volumes as v}
+							{@render ledger(
+								v.name,
+								v.last_error ? "failing" : v.attached ? "attached" : "not attached",
+								false,
+								v.last_error ? "crit" : v.attached ? "ok" : "warn",
+							)}
+						{/each}
+					</div>
+				</div>
+				{#if backup.state === "none"}
+					<p class="note">
+						This box holds one copy of its data. Register a drive with
+						<code>virtues volumes add &lt;path&gt;</code>.
+					</p>
+				{:else if backup.volumes.some((v) => v.last_error)}
+					<p class="note">
+						{backup.volumes.find((v) => v.last_error)?.last_error}
+					</p>
+				{/if}
 			</section>
 		{/if}
 
@@ -617,6 +707,20 @@
 	.ledger-value.ok { color: var(--success); }
 	.ledger-value.warn { color: var(--warning); }
 	.ledger-value.crit { color: var(--error); }
+
+	/* Prose under a chapter — the sentence a reading needs when the number
+	   alone does not tell you what to do about it. */
+	.note {
+		font-size: 12px;
+		color: var(--foreground-muted);
+		margin: 10px 0 0;
+		max-width: 60ch;
+	}
+	.note code {
+		font-family: var(--font-mono);
+		font-size: 11px;
+		color: var(--foreground);
+	}
 
 	/* ─── Drives ───────────────────────────────────────────────────────── */
 	.drives { display: flex; flex-direction: column; gap: 18px; }

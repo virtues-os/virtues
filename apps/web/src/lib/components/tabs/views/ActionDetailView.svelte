@@ -2,7 +2,7 @@
 	import Icon from '$lib/components/Icon.svelte';
 	import Badge from '$lib/components/Badge.svelte';
 	import Button from '$lib/components/Button.svelte';
-	import LogsPanel from '$lib/components/actions/LogsPanel.svelte';
+	import Modal from '$lib/components/Modal.svelte';
 	import { windowShellStore } from '$lib/stores/window-shell.svelte';
 	import { routeToEntityId } from '$lib/tabs/types';
 	import type { Tab } from '$lib/tabs/types';
@@ -11,12 +11,12 @@
 		listActionRuns,
 		patchAction,
 		deleteAction,
+		getAppletData,
 		runAction,
-		listSystemApps,
 		type Action,
 		type ActionRun,
-		type PatchActionBody,
-		type RunningApp
+		type AppletData,
+		type PatchActionBody
 	} from '$lib/api/client';
 	import { relativeTime, describeSchedule } from '$lib/actions/palette';
 
@@ -29,33 +29,6 @@
 	let loading = $state(false);
 	let saving = $state(false);
 	let err = $state<string | null>(null);
-	let appState = $state<RunningApp | null>(null);
-
-	$effect(() => {
-		if (action?.runtime !== 'service' || !action?.id) return;
-		const id = action.id;
-		const fetch = async () => {
-			try {
-				const apps = await listSystemApps();
-				appState = apps.find((a) => a.action_id === id) ?? null;
-			} catch {
-				// non-fatal — supervisor probe is optional context
-			}
-		};
-		void fetch();
-		const t = setInterval(fetch, 2000);
-		return () => clearInterval(t);
-	});
-
-	function appStatusVariant(s: RunningApp['status']): string {
-		switch (s) {
-			case 'Running': return 'badge-success';
-			case 'Starting': return 'badge-info';
-			case 'Backoff': return 'badge-warning';
-			case 'Crashed': return 'badge-error';
-			case 'Stopping': return 'badge-muted';
-		}
-	}
 
 	let edit = $state<{ name: string; agent: string; cron_schedule: string; memory: string }>({
 		name: '',
@@ -148,6 +121,11 @@
 		}
 	}
 
+	function openView() {
+		if (!action) return;
+		windowShellStore.openTabFromRoute(`/applet/${action.id}/view`);
+	}
+
 	async function runNow() {
 		if (!action) return;
 		saving = true;
@@ -162,18 +140,33 @@
 		}
 	}
 
-	async function confirmDelete() {
+	// Delete confirm. Loads the applet's owned tables so the user can decide
+	// whether to also drop its data (default: keep — data outlives the applet).
+	let deleteOpen = $state(false);
+	let deleteData = $state<AppletData | null>(null);
+	let dropData = $state(false);
+	let deleting = $state(false);
+
+	async function openDelete() {
 		if (!action) return;
-		if (!confirm(`Delete "${action.name}"? This can't be undone.`)) return;
-		saving = true;
+		deleteOpen = true;
+		dropData = false;
+		deleteData = null;
+		deleteData = await getAppletData(action.id);
+	}
+
+	async function doDelete() {
+		if (!action) return;
+		deleting = true;
 		err = null;
 		try {
-			await deleteAction(action.id);
+			await deleteAction(action.id, dropData);
+			deleteOpen = false;
 			windowShellStore.closeTab(tab.id);
 		} catch (e) {
 			err = e instanceof Error ? e.message : String(e);
 		} finally {
-			saving = false;
+			deleting = false;
 		}
 	}
 </script>
@@ -194,7 +187,19 @@
 					<h1 class="title">{action.name}</h1>
 					<div class="meta">
 						<span>{describeSchedule(action.cron_schedule ?? null)}</span>
-						{#if !action.enabled}
+						<span class="dot-sep">·</span>
+						<span class="muted-inline">
+							{#if action.archived_at}
+								archived {new Date(action.archived_at).toLocaleDateString()}
+							{:else if !action.until}
+								runs forever
+							{:else if action.until.toLowerCase() === 'once'}
+								runs once, then archives
+							{:else}
+								runs until: {action.until}
+							{/if}
+						</span>
+						{#if !action.enabled && !action.archived_at}
 							<span class="dot-sep">·</span>
 							<span class="muted-inline">disabled</span>
 						{/if}
@@ -212,6 +217,13 @@
 
 			{#if err}
 				<div class="error-banner">{err}</div>
+			{/if}
+			{#if action.has_face}
+				<div class="meta view-link">
+					<button type="button" class="open-view" onclick={openView}>
+						<Icon icon="ri:layout-2-line" width="13" /> Open view
+					</button>
+				</div>
 			{/if}
 		</header>
 
@@ -232,28 +244,32 @@
 					{/if}
 				</label>
 
-				<label class="field">
-					<span class="label">Agent prompt</span>
-					{#if isAgent || !isSystem}
-						<textarea
-							rows="10"
-							bind:value={edit.agent}
-							disabled={isSystem}
-							oninput={markDirty}
-							placeholder="What should this action do each run?"
-						></textarea>
-					{:else}
-						<div class="pipeline-note">
-							<Icon icon="ri:terminal-line" width="14" />
-							<span>Subprocess pipeline: <code>{action.function_name}</code></span>
-						</div>
-					{/if}
-					{#if isSystem && isAgent}
-						<span class="hint">
-							<Icon icon="ri:lock-line" width="12" /> System prompt — read only
-						</span>
-					{/if}
-				</label>
+				<!-- A pure View (a face with no agent) has no server-side run and
+				     no prompt — don't show an empty agent editor for it. -->
+				{#if isAgent || !action.has_face}
+					<label class="field">
+						<span class="label">Agent prompt</span>
+						{#if isAgent || !isSystem}
+							<textarea
+								rows="10"
+								bind:value={edit.agent}
+								disabled={isSystem}
+								oninput={markDirty}
+								placeholder="What should this action do each run?"
+							></textarea>
+						{:else}
+							<div class="pipeline-note">
+								<Icon icon="ri:terminal-line" width="14" />
+								<span>Subprocess pipeline: <code>{action.function_name}</code></span>
+							</div>
+						{/if}
+						{#if isSystem && isAgent}
+							<span class="hint">
+								<Icon icon="ri:lock-line" width="12" /> System prompt — read only
+							</span>
+						{/if}
+					</label>
+				{/if}
 
 				<label class="field">
 					<span class="label">Schedule</span>
@@ -278,7 +294,7 @@
 
 				<div class="save-row">
 					{#if !isSystem}
-						<Button variant="danger" onclick={confirmDelete} disabled={saving}>
+						<Button variant="danger" onclick={openDelete} disabled={saving}>
 							Delete action
 						</Button>
 					{:else}
@@ -329,29 +345,101 @@
 			</aside>
 		</div>
 
-		<!-- Logs panel — only meaningful for `app`-runtime actions, which
-		     have long-lived stdout/stderr captured in the supervisor's per-app
-		     ring buffer. `function` runs surface their output via runs above;
-		     `view` runtimes have no server-side execution. -->
-		{#if action.runtime === 'service'}
-			<div class="app-meta">
-				{#if appState}
-					<span class="meta-badge {appStatusVariant(appState.status)}">{appState.status}</span>
-					<span class="meta-item"><span class="meta-label">port</span> <span class="mono">{appState.port}</span></span>
-					<span class="meta-item"><span class="meta-label">pid</span> <span class="mono">{appState.pid ?? '—'}</span></span>
-					<span class="meta-item"><span class="meta-label">restarts</span> <span class="mono">{appState.restart_count}</span></span>
-				{:else}
-					<span class="meta-item dim">app not currently supervised</span>
-				{/if}
-			</div>
-			<div class="logs-section">
-				<LogsPanel actionId={action.id} />
-			</div>
-		{/if}
 	{/if}
 </div>
 
+{#if action}
+	<Modal open={deleteOpen} onClose={() => (deleteOpen = false)} title="Delete applet" width="sm">
+		<div class="del">
+			<p>
+				Delete <strong>{action.name}</strong>? This removes the applet and can't be undone.
+			</p>
+			{#if deleteData && deleteData.tables.length > 0}
+				<label class="drop-opt">
+					<input type="checkbox" bind:checked={dropData} />
+					<span>
+						Also permanently delete its data
+						<span class="dim"
+							>({deleteData.tables.length}
+							{deleteData.tables.length === 1 ? 'table' : 'tables'} in
+							<code>{deleteData.schema}</code>)</span
+						>
+					</span>
+				</label>
+				<ul class="tbl-list">
+					{#each deleteData.tables as t (t)}
+						<li><code>{t}</code></li>
+					{/each}
+				</ul>
+				{#if !dropData}
+					<p class="keep-note dim">Its data will be kept and can outlive the applet.</p>
+				{/if}
+			{/if}
+		</div>
+		{#snippet footer()}
+			<Button variant="ghost" onclick={() => (deleteOpen = false)} disabled={deleting}>Cancel</Button>
+			<Button variant="danger" onclick={doDelete} disabled={deleting}>
+				{deleting ? 'Deleting…' : dropData ? 'Delete applet + data' : 'Delete applet'}
+			</Button>
+		{/snippet}
+	</Modal>
+{/if}
+
 <style>
+	.del {
+		display: flex;
+		flex-direction: column;
+		gap: 0.75rem;
+		font-size: 0.875rem;
+	}
+	.del p {
+		margin: 0;
+	}
+	.drop-opt {
+		display: flex;
+		align-items: flex-start;
+		gap: 0.5rem;
+		cursor: pointer;
+	}
+	.drop-opt input {
+		margin-top: 0.15rem;
+	}
+	.tbl-list {
+		margin: 0;
+		padding-left: 1.5rem;
+		display: flex;
+		flex-direction: column;
+		gap: 0.15rem;
+		max-height: 8rem;
+		overflow-y: auto;
+	}
+	.del code {
+		font-size: 0.8125rem;
+	}
+	.keep-note {
+		margin: 0;
+		font-size: 0.8125rem;
+	}
+	.del .dim {
+		color: var(--color-foreground-subtle);
+	}
+	.view-link {
+		margin-top: 0.5rem;
+	}
+	.open-view {
+		display: inline-flex;
+		align-items: center;
+		gap: 0.3rem;
+		padding: 0.25rem 0.6rem;
+		font-size: 0.8125rem;
+		border: 1px solid var(--color-border);
+		border-radius: 6px;
+		background: var(--color-surface-elevated);
+		color: var(--color-foreground);
+		cursor: pointer;
+	}
+	.open-view:hover { border-color: var(--color-foreground-subtle); }
+
 	.detail {
 		display: flex;
 		flex-direction: column;
@@ -428,47 +516,6 @@
 		.body {
 			grid-template-columns: 1fr;
 		}
-	}
-
-	.logs-section {
-		padding: 0 2rem 2rem;
-		max-width: 1400px;
-		width: 100%;
-		margin: 0 auto;
-	}
-	.app-meta {
-		display: flex;
-		align-items: center;
-		gap: 0.875rem;
-		padding: 0 2rem 0.75rem;
-		max-width: 1400px;
-		width: 100%;
-		margin: 0 auto;
-		font-size: 0.75rem;
-		flex-wrap: wrap;
-	}
-	.meta-badge {
-		display: inline-block;
-		padding: 0.0625rem 0.375rem;
-		border-radius: 4px;
-		font-size: 0.6875rem;
-		font-weight: 500;
-	}
-	/* meta-badge inherits the global .badge-* color from app.css */
-	.meta-item {
-		display: inline-flex;
-		align-items: center;
-		gap: 0.375rem;
-	}
-	.meta-label {
-		color: var(--color-foreground-subtle, #9ca3af);
-	}
-	.meta-item .mono {
-		font-family: var(--font-mono, ui-monospace, monospace);
-	}
-	.meta-item.dim {
-		color: var(--color-foreground-subtle, #9ca3af);
-		font-style: italic;
 	}
 
 	.col {

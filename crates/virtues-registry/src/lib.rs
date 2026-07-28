@@ -7,7 +7,7 @@
 //! - Ontologies (normalized data schemas)
 //!
 //! Source/stream catalog data lives in `actions/` (TOML manifests reconciled
-//! into the `app_actions` table), not here — the former `sources`/`streams`
+//! into the `app_applets` table), not here — the former `sources`/`streams`
 //! modules were removed as dead code.
 //!
 //! # Design Principles
@@ -22,7 +22,6 @@
 //! - **Built-in tools** (this registry): web_search, query_ontology, semantic_search
 //! - **MCP tools** (Postgres `app_mcp_tools`): dynamically discovered from connected MCP servers
 
-pub mod agents;
 pub mod assistant;
 pub mod models;
 pub mod ontologies;
@@ -30,9 +29,8 @@ pub mod personas;
 pub mod tools;
 
 // Re-export main types for convenience
-pub use agents::{default_agents, AgentConfig};
 pub use assistant::{assistant_profile_defaults, AssistantProfileDefaults, DEFAULT_THEME};
-pub use models::{default_models, ModelConfig};
+pub use models::{default_model_for_slot, required_model_ids, ModelSlot};
 pub use ontologies::{registered_ontologies, EmbeddingConfig, OntologyDescriptor};
 pub use personas::{default_personas, get_persona, PersonaConfig};
 pub use tools::{default_tools, ToolConfig};

@@ -50,6 +50,9 @@ pub struct ToolContext {
     pub user_id: Option<String>,
     /// Notebook ID
     pub notebook_id: Option<String>,
+    /// How the notebook shapes retrieval: Weighted (Open chat) or Exclusive
+    /// (Scoped/grounded chat). Meaningless without a notebook_id.
+    pub scope_mode: crate::search::ScopeMode,
     /// Chat ID (for permission checking)
     pub chat_id: Option<String>,
     /// Action ID (set when running as an action — for action memory tool)
@@ -71,6 +74,7 @@ impl Default for ToolContext {
             page_id: None,
             user_id: None,
             notebook_id: None,
+            scope_mode: crate::search::ScopeMode::default(),
             chat_id: None,
             action_id: None,
             subagent_tx: None,
@@ -179,7 +183,8 @@ impl ToolExecutor {
     /// Tools that require an explicit "I allow" from the user before running, because they
     /// destroy something or take a real-world / outbound action. Everything else runs freely
     /// (reversible, local). The free/gated split is the whole permission model.
-    const PERMISSION_REQUIRED: &'static [&'static str] = &["run_action", "delete_action"];
+    const PERMISSION_REQUIRED: &'static [&'static str] =
+        &["run_applet", "delete_applet", "run_action", "delete_action"];
 
     /// If `tool_name` is gated and the user hasn't granted it for this chat, return a
     /// `permission_needed` result (the frontend then shows an inline allow/deny prompt and
@@ -221,7 +226,7 @@ impl ToolExecutor {
             .map(|a| a.name)
             .unwrap_or_else(|_| "this action".to_string());
 
-        let verb = if tool_name == "delete_action" { "delete" } else { "run" };
+        let verb = if tool_name.starts_with("delete_") { "delete" } else { "run" };
 
         Ok(Some(ToolResult::success(serde_json::json!({
             "permission_needed": true,
@@ -259,10 +264,11 @@ impl ToolExecutor {
             "web_search" => self.web_search.execute(arguments).await,
             "semantic_search" => {
                 self.semantic_search
-                    .execute(arguments, context.notebook_id.as_deref())
+                    .execute(arguments, context.notebook_id.as_deref(), context.scope_mode)
                     .await
             }
             "sql_query" => self.sql_query.execute(arguments).await,
+            "sql_write" => super::sql_write::execute(&self._pool, arguments).await,
             "code_interpreter" => self.execute_code_interpreter(arguments).await,
             // Deep Research fan-out: spawn read-only research workers in parallel.
             "dispatch_subagents" => {
@@ -273,15 +279,15 @@ impl ToolExecutor {
             "get_page_content" => self.page_editor.get_page_content(arguments, context).await,
             "edit_page" => self.page_editor.edit_page(arguments, context).await,
             // Action setup
-            "setup_action" => super::action_setup::execute(&self._pool, arguments, context).await,
+            "setup_applet" | "setup_action" => super::action_setup::execute(&self._pool, arguments, context).await,
             // Action memory (persistent scratchpad for actions across runs)
-            "update_action_memory" => self.execute_update_action_memory(arguments, context).await,
+            "update_applet_memory" | "update_action_memory" => self.execute_update_action_memory(arguments, context).await,
             // Action management — list / get / edit / delete / run
-            "list_actions" => super::action_management::list_actions(&self._pool, arguments).await,
-            "get_action" => super::action_management::get_action(&self._pool, arguments).await,
-            "edit_action" => super::action_management::edit_action(&self._pool, arguments).await,
-            "delete_action" => super::action_management::delete_action(&self._pool, arguments).await,
-            "run_action" => {
+            "list_applets" | "list_actions" => super::action_management::list_actions(&self._pool, arguments).await,
+            "get_applet" | "get_action" => super::action_management::get_action(&self._pool, arguments).await,
+            "edit_applet" | "edit_action" => super::action_management::edit_action(&self._pool, arguments).await,
+            "delete_applet" | "delete_action" => super::action_management::delete_action(&self._pool, arguments).await,
+            "run_applet" | "run_action" => {
                 let yjs = self.yjs_state.as_ref().ok_or_else(|| {
                     ToolError::ExecutionFailed(
                         "run_action tool requires YjsState — executor constructed without it".into(),
@@ -572,17 +578,6 @@ impl ToolExecutor {
                 }))),
                 Err(e) => Ok(ToolResult::error(format!("Failed to fetch organization: {}", e))),
             }
-        } else if let Some(thing_id) = item_url.strip_prefix("/thing/") {
-            match crate::api::things::get_thing(pool, thing_id).await {
-                Ok(thing) => Ok(ToolResult::success(serde_json::json!({
-                    "type": "thing",
-                    "id": thing.id,
-                    "name": thing.name,
-                    "description": thing.description,
-                    "content": thing.content,
-                }))),
-                Err(e) => Ok(ToolResult::error(format!("Failed to fetch thing: {}", e))),
-            }
         } else if let Some(notebook_id) = item_url.strip_prefix("/notebook/") {
             match crate::api::notebooks::get_notebook(pool, notebook_id).await {
                 Ok(detail) => {
@@ -607,7 +602,7 @@ impl ToolExecutor {
             })))
         } else {
             Ok(ToolResult::error(format!(
-                "Unsupported item URL type: {}. Supported: /page/, /chat/, /notebook/, /person/, /place/, /org/, /thing/, or https://",
+                "Unsupported item URL type: {}. Supported: /page/, /chat/, /notebook/, /person/, /place/, /org/, or https://",
                 item_url
             )))
         }
@@ -623,17 +618,18 @@ impl ToolExecutor {
             "web_search",
             "semantic_search",
             "sql_query",
+            "sql_write",
             "code_interpreter",
             "create_page",
             "get_page_content",
             "edit_page",
-            "setup_action",
-            "update_action_memory",
-            "list_actions",
-            "get_action",
-            "edit_action",
-            "delete_action",
-            "run_action",
+            "setup_applet",
+            "update_applet_memory",
+            "list_applets",
+            "get_applet",
+            "edit_applet",
+            "delete_applet",
+            "run_applet",
             "dayline_event",
             "get_project_item",
         ]

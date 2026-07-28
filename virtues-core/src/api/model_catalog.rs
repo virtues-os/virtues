@@ -2,9 +2,11 @@
 //! compiled in.
 //!
 //! virtues-api keeps a live mirror of the Vercel AI Gateway catalog (prices,
-//! context windows, which ids actually exist) and serves the curated subset at
-//! `GET /v1/ai/models`, together with the slot map. This module caches that
-//! response and is the box's ONLY source of model facts.
+//! context windows, which ids actually exist) and serves the picker at
+//! `GET /v1/ai/models` — every priced language model the gateway carries, with
+//! the five slot models flagged `recommended: true` — together with the slot
+//! map. This module caches that response and is the box's ONLY source of model
+//! facts.
 //!
 //! # Slot resolution
 //!
@@ -34,8 +36,9 @@ use crate::virtues_api::client::BearerClient;
 /// *box* lags a cloud-side model swap.
 const REFRESH_INTERVAL: Duration = Duration::from_secs(6 * 60 * 60);
 
-/// One curated model, as virtues-api hydrated it: our taste, the gateway's
-/// facts. Prices are `None` only when virtues-api's own catalog is cold.
+/// One picker entry, as virtues-api derived it from the gateway. Every field
+/// here is the gateway's, not ours. Prices are `None` only when virtues-api's
+/// own catalog is cold.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CatalogModel {
     pub model_id: String,
@@ -57,6 +60,12 @@ pub struct CatalogModel {
     pub input_cost_per_1k: Option<f64>,
     #[serde(default)]
     pub output_cost_per_1k: Option<f64>,
+    /// `true` when this model fills one of our five slots — the entire set we
+    /// vouch for. `false` for everything else the gateway carries, which is the
+    /// BYO path: selectable, but its capability flags are the provider's own
+    /// claim. The picker sections on this. Absent on older responses → `false`.
+    #[serde(default)]
+    pub recommended: bool,
 }
 
 /// Which model fills each slot, per the cloud. Ids only — the models
@@ -105,32 +114,57 @@ fn cache() -> &'static Arc<RwLock<Snapshot>> {
     CACHE.get_or_init(|| Arc::new(RwLock::new(Snapshot::default())))
 }
 
-/// The curated picker. Falls back to the compiled registry list — unhydrated,
-/// no prices — if we have never reached the cloud.
+/// The picker, as served by virtues-api. When we have never reached the cloud
+/// this degrades to the five slot ids and nothing else.
+///
+/// That degradation is deliberate. We know which model we'd pick — that is the
+/// compiled floor — but we know nothing else about it: no price, no context
+/// window, no verified capabilities. Rendering the id with blank facts is
+/// honest; rendering a hand-written description is how seven stale entries
+/// survived four model generations. A blank beats a confident lie.
 pub fn models() -> Vec<CatalogModel> {
     if let Ok(s) = cache().read() {
         if !s.models.is_empty() {
             return s.models.clone();
         }
     }
-    virtues_registry::models::default_models()
-        .into_iter()
-        .filter(|m| m.enabled)
-        .map(|m| CatalogModel {
-            model_id: m.model_id,
-            display_name: m.display_name,
-            provider: m.provider,
-            sort_order: m.sort_order,
-            context_window: m.context_window as i64,
-            max_output_tokens: m.max_output_tokens as i64,
-            supports_tools: m.supports_tools,
-            supports_vision: m.supports_vision,
-            supports_pdf: m.supports_pdf,
-            supports_audio: m.supports_audio,
-            is_default: m.is_default,
-            // Honest: we do not know. A blank beats a confident lie.
-            input_cost_per_1k: None,
-            output_cost_per_1k: None,
+    use virtues_registry::models::{default_model_for_slot, ModelSlot};
+    let chat = default_model_for_slot(ModelSlot::Chat);
+
+    // The chat-facing slots only. Image and Omni are system slots — their
+    // models are never picker options (Omni's is a Gemini 3 model, which 400s
+    // on parallel tool calls and must not be offered for chat).
+    let mut ids: Vec<String> = Vec::new();
+    for slot in [ModelSlot::Chat, ModelSlot::Lite, ModelSlot::Coding] {
+        let id = default_model_for_slot(slot).to_string();
+        if !ids.contains(&id) {
+            ids.push(id);
+        }
+    }
+
+    ids.into_iter()
+        .enumerate()
+        .map(|(i, id)| {
+            // `provider/model` — the only structure we can rely on offline.
+            let (provider, name) = id.split_once('/').unwrap_or(("", id.as_str()));
+            CatalogModel {
+                is_default: id == chat,
+                display_name: name.to_string(),
+                provider: provider.to_string(),
+                sort_order: i as i32,
+                model_id: id,
+                // Unknown, every one of them. Not zero — unknown.
+                context_window: 0,
+                max_output_tokens: 0,
+                supports_tools: false,
+                supports_vision: false,
+                supports_pdf: false,
+                supports_audio: false,
+                input_cost_per_1k: None,
+                output_cost_per_1k: None,
+                // These are the slot models, which is what `recommended` means.
+                recommended: true,
+            }
         })
         .collect()
 }
@@ -162,7 +196,7 @@ pub fn model_for_slot(slot: virtues_registry::models::ModelSlot) -> String {
 }
 
 /// `(input_per_1k, output_per_1k)` from the live catalog, or None when we are
-/// cold or the model is not curated. Callers must NOT substitute zero.
+/// cold or the model is unknown. Callers must NOT substitute zero.
 pub fn pricing(model_id: &str) -> Option<(f64, f64)> {
     let snap = cache().read().ok()?;
     let m = snap.models.iter().find(|m| m.model_id == model_id)?;

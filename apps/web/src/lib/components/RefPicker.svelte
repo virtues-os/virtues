@@ -237,7 +237,7 @@
 			org: 'Organizations',
 			thing: 'Things',
 			chat: 'Chats',
-			space: 'Spaces'
+			notebook: 'Notebooks'
 		};
 		return labels[type] || type;
 	}

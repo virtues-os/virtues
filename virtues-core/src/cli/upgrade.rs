@@ -1,10 +1,11 @@
-//! `virtues upgrade` — self-update from a GitHub Release.
+//! `virtues upgrade` — self-update from a GitHub Release, via atomic slots.
 //!
-//! Stops the service, swaps `/usr/local/bin/virtues` with the downloaded
-//! binary (keeping one `.bak` for rollback), applies any pending DB
-//! migrations under the new binary, restarts the service. On any failure
-//! mid-swap the rollback command is printed verbatim so a tired operator at
-//! 2 AM can paste it without thinking.
+//! A release is staged whole into `releases/<slot>/`, preflighted (the STAGED
+//! binary runs `migrate --check` + a `--version` smoke before anything is
+//! touched), then activated by flipping the `current` symlink — binary + web
+//! + actions move together, atomically. Any failure before the flip leaves
+//! the box byte-identical; any failure after flips straight back. `virtues
+//! rollback` is the same flip in reverse. See `cli/slots.rs` for the layout.
 //!
 //! Strictly opt-in. No background auto-upgrade — that lands when the
 //! upgrade path has been battle-tested.
@@ -14,12 +15,13 @@ use std::io::{Read, Write};
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::process::Command;
+use std::time::Duration;
 
 use semver::Version;
 
 use sha2::{Digest, Sha256};
 
-use super::ui;
+use super::{slots, ui};
 
 const BINARY_PATH: &str = "/usr/local/bin/virtues";
 const RELEASE_REPO: &str = "virtues-os/virtues";
@@ -30,22 +32,39 @@ pub async fn run(
     version: Option<String>,
     pre: bool,
     force: bool,
+    only: Option<String>,
 ) -> Result<(), crate::Error> {
+    // Resolution order: explicit --version, then --pre as a one-off override,
+    // then whatever channel this box is set to follow. `--pre` deliberately
+    // still works without touching the stored channel — it's the "just this
+    // once" escape hatch, and making it sticky would surprise anyone who has
+    // used it before.
+    let channel = super::channel::current();
     let target_tag = match version {
         Some(v) => v,
-        None if pre => fetch_latest_prerelease().await?,
+        None if pre || channel == super::channel::Channel::Prerelease => {
+            fetch_latest_prerelease().await?
+        }
         None => fetch_latest_tag().await?,
     };
+    let following_pre = pre || channel == super::channel::Channel::Prerelease;
     let current = env!("CARGO_PKG_VERSION");
     let target = target_tag.trim_start_matches('v');
 
     ui::section("Upgrade");
     ui::kv("current", current);
+    ui::kv("channel", channel.as_str());
     ui::kv("target", target);
     println!();
 
-    if target == current {
-        ui::ok(&format!("already on {current} — nothing to do"));
+    // Cheap no-op detection works only for STABLE tags, where the semver is
+    // the whole identity. Prerelease/edge builds all report the bare crate
+    // version, so equality there means nothing — those fall through to the
+    // SHA comparison after download (the fix for "edge→edge is impossible").
+    // `--force` bypasses every equality short-circuit.
+    let is_stable_tag = !target.contains('-') && target.chars().next().is_some_and(|c| c.is_ascii_digit());
+    if !force && is_stable_tag && target == current {
+        ui::ok(&format!("already on {current} — nothing to do (--force to reinstall)"));
         return Ok(());
     }
     if check {
@@ -61,7 +80,7 @@ pub async fn run(
     //    so semver would read every prerelease as "older" than stable.
     //  · `--force` — operator override.
     // Unparseable versions (dev builds) skip the check rather than block.
-    if !pre && !force {
+    if !following_pre && !force {
         if let (Ok(cur), Ok(tgt)) = (Version::parse(current), Version::parse(target)) {
             if tgt < cur {
                 return Err(crate::Error::Other(format!(
@@ -112,30 +131,155 @@ pub async fn run(
     let extracted = work_path.join("extracted");
 
     // Which artifacts this tarball actually carries. Older releases ship a
-    // subset — every one is optional and best-effort so an upgrade from any
-    // historical tarball still swaps whatever it can. `virtues` itself is the
-    // only mandatory member (already located by `extract_binary`).
+    // subset — every member but `virtues` itself is optional.
     let new_llama = find_named(&extracted, "llama-server").ok();
+    let new_qnnd = find_named(&extracted, "virtues-qnnd").ok();
     let web_src = find_dir_named(&extracted, "web").ok();
-    let actions_src = find_dir_named(&extracted, "actions").ok();
-    let actions_bin_src = find_dir_named(&extracted, "actions-bin").ok();
+    let actions_src = find_dir_named(&extracted, "applets")
+        .or_else(|_| find_dir_named(&extracted, "actions"))
+        .ok();
+    let actions_bin_src = find_dir_named(&extracted, "applets-bin")
+        .or_else(|_| find_dir_named(&extracted, "actions-bin"))
+        .ok();
 
-    let dirs = InstallDirs::resolve();
+    // Build identity from the tarball's BUILD.json (releases since the slot
+    // era carry one). The SHA is the only honest identity for prerelease
+    // builds — every edge build reports the same crate version.
+    let build = read_build_manifest(&extracted);
+    if !force {
+        if let Some(sha) = build.as_ref().and_then(|b| b.sha.as_deref()) {
+            let running = env!("GIT_COMMIT");
+            if !running.is_empty() && running != "unknown" && sha.starts_with(&running[..running.len().min(7)]) {
+                ui::ok(&format!(
+                    "already on this exact build ({}) — nothing to do (--force to reinstall)",
+                    &sha[..sha.len().min(7)]
+                ));
+                return Ok(());
+            }
+        }
+    }
+
+    // ── `--only web[,actions]` — the fast path ──────────────────────────────
+    // Refresh just the named components IN the current slot, no binary swap,
+    // no migration, no restart (web is static files; actions are re-globbed).
+    // Deliberately mutates the live slot: this is the dev/UI iteration loop,
+    // not a release activation.
+    if let Some(list) = only {
+        let dirs = InstallDirs::resolve();
+        for part in list.split(',').map(str::trim).filter(|s| !s.is_empty()) {
+            match part {
+                "web" => match &web_src {
+                    Some(src) => refresh_named("web UI", src, &canonical(&dirs.web)),
+                    None => ui::warn("tarball carries no web/ — skipped"),
+                },
+                "applets" | "actions" => {
+                    match &actions_src {
+                        Some(src) => refresh_named("applets", src, &canonical(&dirs.actions)),
+                        None => ui::warn("tarball carries no applets/ — skipped"),
+                    }
+                    match &actions_bin_src {
+                        Some(src) => {
+                            refresh_named("applet binaries", src, &canonical(&dirs.actions_bin))
+                        }
+                        None => ui::warn("tarball carries no applets-bin/ — skipped"),
+                    }
+                }
+                other => {
+                    return Err(crate::Error::Other(format!(
+                        "--only {other}: unknown component (web, applets)"
+                    )))
+                }
+            }
+        }
+        println!();
+        ui::ok(&format!("refreshed --only components from {target_tag}"));
+        return Ok(());
+    }
+
+    // ── Slot layout required from here on ───────────────────────────────────
+    let layout = slots::SlotLayout::system();
+    if !layout.exists() {
+        return Err(crate::Error::Other(
+            "this box predates release slots (no `current` link under \
+             /usr/local/share/virtues). Re-run the installer once to adopt the \
+             slot layout:\n\n  curl -sSL https://virtues.com/sh | sudo sh\n"
+                .to_string(),
+        ));
+    }
+    let prior_slot = layout.current_slot();
+
+    // ── Stage the whole release into its slot ───────────────────────────────
+    let slot_id = build
+        .as_ref()
+        .and_then(|b| b.slot_id(&target_tag))
+        .unwrap_or_else(|| format!("{target_tag}-{}", chrono::Utc::now().format("%Y%m%dT%H%M%S")));
+    let slot = layout.slot_dir(&slot_id);
+    ui::step(&format!("staging release into {}…", slot.display()));
+    stage_slot(&slot, &new_binary, &new_llama, &new_qnnd, &web_src, &actions_src, &actions_bin_src)?;
+
+    // ── Preflight — the STAGED binary must prove itself before any swap ────
+    // 1. `--version` smoke: the binary runs on this box at all.
+    // 2. `migrate --check`: lineage compatibility, applying nothing. This is
+    //    what turns "brick mid-swap on a migration mismatch" into a clean
+    //    refusal with the box untouched. `--force` skips only the lineage
+    //    gate (older targets don't know `--check`), never the smoke test.
+    let staged_bin = slot.join("virtues");
+    ui::step("preflight: staged binary smoke test…");
+    match Command::new(&staged_bin).arg("--version").output() {
+        Ok(o) if o.status.success() => {
+            ui::ok(&format!("staged: {}", String::from_utf8_lossy(&o.stdout).trim()));
+        }
+        Ok(o) => {
+            let _ = fs::remove_dir_all(&slot);
+            return Err(crate::Error::Other(format!(
+                "staged binary failed --version (exit {}); box untouched",
+                o.status
+            )));
+        }
+        Err(e) => {
+            let _ = fs::remove_dir_all(&slot);
+            return Err(crate::Error::Other(format!(
+                "staged binary would not run ({e}); box untouched"
+            )));
+        }
+    }
+    if !force {
+        ui::step("preflight: migration lineage check…");
+        match Command::new(&staged_bin).args(["migrate", "--check"]).output() {
+            Ok(o) if o.status.success() => ui::ok("lineage OK"),
+            Ok(o) => {
+                let _ = fs::remove_dir_all(&slot);
+                eprintln!("{}", String::from_utf8_lossy(&o.stderr).trim_end());
+                return Err(crate::Error::Other(
+                    "migration preflight refused this release — box untouched \
+                     (see reason above; `--force` overrides at your own risk)"
+                        .to_string(),
+                ));
+            }
+            Err(e) => {
+                let _ = fs::remove_dir_all(&slot);
+                return Err(crate::Error::Other(format!(
+                    "could not run migration preflight ({e}); box untouched"
+                )));
+            }
+        }
+    }
+
+    // Last thing before the box changes. Preflight has passed, so this release
+    // is going in; a dump taken earlier would be paid for on releases we were
+    // about to refuse anyway.
+    let pre_dump = pre_migration_dump(current, target)?;
 
     // Relay migration: an upgrade from a WireGuard-era release has an orphaned
-    // `virtues-wireguard.service` (the box now reaches via the relay). Stop +
-    // disable it so it doesn't idle forever reconciling a wg0 nothing creates.
-    // Best-effort; a no-op on boxes that never had it.
+    // `virtues-wireguard.service`. Best-effort; no-op on boxes that never had it.
     disable_legacy_wireguard();
 
-    // ── Stop affected services ──────────────────────────────────────────────
-    // The main app always. The inference sidecars only when we're actually
-    // replacing their binaries — restarting the sidecars reloads multi-GB GGUFs
-    // (slow), so don't pay that cost for a binary-only app upgrade. A running process holds the old inode until restarted, so the
-    // stop→swap→start ordering is what makes the new bytes take effect.
+    // ── Stop → flip → migrate → start ───────────────────────────────────────
+    // Sidecars restart only when the release replaces their binaries
+    // (reloading multi-GB GGUFs is slow; don't pay it for an app-only bump).
     ui::step("stopping virtues.service…");
     service_stop("virtues");
-    let sidecars = if new_llama.is_some() {
+    let sidecars = if new_llama.is_some() || new_qnnd.is_some() {
         installed_inference_units()
     } else {
         Vec::new()
@@ -144,103 +288,84 @@ pub async fn run(
         service_stop(unit);
     }
 
-    // Bring the sidecars we stopped back up. Called on every abort path below
-    // so a failed upgrade doesn't leave the box with dead search — without this,
-    // stopping `virtues-embed`/`-rerank` early then returning on a migrate or
-    // start failure left them down until a manual `systemctl start`. Idempotent
-    // and best-effort.
-    let to_revive = sidecars.clone();
-    let revive_sidecars = move || {
-        for unit in &to_revive {
+    // On any failure after this point: flip back to the prior slot and
+    // restart, so the box always runs a COMPLETE release (binary + web +
+    // actions together — the old per-component path could not promise that).
+    let flip_back = |layout: &slots::SlotLayout, why: String| -> crate::Error {
+        if let Some(prior) = &prior_slot {
+            let _ = layout.flip(prior);
+            ui::warn(&format!("rolled back to {}", prior.display()));
+        }
+        let _ = service_start("virtues");
+        for unit in &sidecars {
             let _ = service_start(unit);
         }
+        // The flip restored the binary. If the failure was the migration, the
+        // schema is still forward of it — say where the undo lives rather than
+        // leaving the operator to discover that rollback does not cover data.
+        ui::warn(&format!(
+            "if the schema is the problem, the pre-migration dump is at {}",
+            pre_dump.display()
+        ));
+        crate::Error::Other(why)
     };
 
-    // ── Swap the main binary (mandatory; keep .bak for rollback) ────────────
-    let bak = match swap_with_bak(&new_binary, Path::new(BINARY_PATH)) {
-        Ok(b) => b.unwrap_or_else(|| format!("{BINARY_PATH}.bak")),
-        Err(e) => {
-            // Nothing irreversible happened yet (swap_with_bak restores the
-            // original on failure), but be explicit about the manual path.
-            revive_sidecars();
-            print_rollback_hint(&format!("{BINARY_PATH}.bak"));
-            return Err(e);
-        }
-    };
-    ui::ok(&format!("swapped {BINARY_PATH} (rollback copy at {bak})"));
-
-    // ── Swap the sidecar binaries (best-effort; they sit next to `virtues`) ─
-    // A failed sidecar swap must not abort an otherwise-good app upgrade —
-    // swap_with_bak restores the prior binary on failure, so the box keeps a
-    // working sidecar. We warn and continue.
-    if let Some(src) = &new_llama {
-        let dst = dirs.bin_dir.join("llama-server");
-        match swap_with_bak(src, &dst) {
-            Ok(_) => ui::ok(&format!("swapped {}", dst.display())),
-            Err(e) => ui::warn(&format!("llama-server not swapped ({e}); prior binary kept")),
-        }
-    }
-
-    // ── Refresh the shipped directories (best-effort, atomic per-dir) ───────
-    // web/: a binary-only swap leaves the browser served a stale SvelteKit
-    // build. actions/: manifests + UI the server globs at runtime.
-    // actions-bin/: the compiled per-source action executables the box forks
-    // by name — the one whose staleness caused the rustls "No provider set"
-    // panic that motivated making this path complete.
-    if let Some(src) = &web_src {
-        refresh_named("web UI", src, &dirs.web);
-    }
-    if let Some(src) = &actions_src {
-        refresh_named("actions", src, &dirs.actions);
-    }
-    if let Some(src) = &actions_bin_src {
-        refresh_named("action binaries", src, &dirs.actions_bin);
+    ui::step("activating release (symlink flip)…");
+    if let Err(e) = layout.flip(&slot) {
+        return Err(flip_back(&layout, format!("could not flip current → {slot_id}: {e}")));
     }
 
     ui::step("running migrations under the new binary…");
-    let migrate = Command::new(BINARY_PATH).arg("migrate").status();
-    match migrate {
+    match Command::new(BINARY_PATH).arg("migrate").status() {
         Ok(s) if s.success() => {}
         Ok(s) => {
-            revive_sidecars();
-            print_rollback_hint(&bak);
-            return Err(crate::Error::Other(format!(
-                "new binary's `migrate` exited {s}"
-            )));
+            return Err(flip_back(
+                &layout,
+                format!("new binary's `migrate` exited {s} — rolled back"),
+            ))
         }
-        Err(e) => {
-            revive_sidecars();
-            print_rollback_hint(&bak);
-            return Err(crate::Error::Other(format!("invoke migrate: {e}")));
-        }
+        Err(e) => return Err(flip_back(&layout, format!("invoke migrate: {e} — rolled back"))),
     }
 
-    // The box keeps its default `virtues.local` name (no in-app rename step),
-    // so the old hostname-rename sudoers grant is dead. Remove it from boxes
-    // that were installed when the rename step still existed. Best-effort.
+    // The box keeps its default `virtues.local` name; remove the dead
+    // hostname-rename sudoers grant from older installs. Best-effort.
     remove_stale_setup_sudoers();
 
-    // ── Start services back up ──────────────────────────────────────────────
-    // The main app is the one whose failure aborts (and prints the rollback
-    // hint); the sidecars are best-effort restarts that won't undo a good app
-    // upgrade — but a sidecar that won't start means degraded search, so warn
-    // loudly.
     ui::step("starting virtues.service…");
     match service_start("virtues") {
         Ok(true) => {}
-        Ok(false) => {
-            revive_sidecars();
-            print_rollback_hint(&bak);
-            return Err(crate::Error::Other(
-                "systemctl start virtues failed".to_string(),
-            ));
-        }
-        Err(e) => {
-            revive_sidecars();
-            print_rollback_hint(&bak);
-            return Err(crate::Error::Other(format!("invoke systemctl: {e}")));
+        _ => {
+            return Err(flip_back(
+                &layout,
+                "systemctl start virtues failed on the new release — rolled back".to_string(),
+            ))
         }
     }
+
+    // `systemctl start` on a Type=simple unit returns as soon as the process is
+    // SPAWNED — it proves nothing about whether the new release can actually
+    // serve. A binary that panics on a migration it doesn't understand, or that
+    // can't reach Postgres, "starts" cleanly and then fails every request; with
+    // `Restart=on-failure` it crash-loops while the upgrade reports success.
+    //
+    // /health is the honest signal: it returns 200 only after a `SELECT 1`
+    // against the pool succeeds, so it covers both "bound its port" and "has a
+    // working database". Not becoming healthy is a failed upgrade, and gets the
+    // same slot flip-back as a failed start.
+    ui::step("waiting for the new release to serve…");
+    if !wait_healthy(service_port()).await {
+        // The unit is RUNNING (badly) on this path, unlike every other
+        // flip_back caller. Stop it first: flipping `current` only re-points
+        // the symlink, and the live process keeps its old inode open, so
+        // without this the box would go on serving the broken binary from a
+        // rolled-back slot.
+        service_stop("virtues");
+        return Err(flip_back(
+            &layout,
+            format!("{target_tag} started but never became healthy — rolled back"),
+        ));
+    }
+
     for unit in &sidecars {
         if let Ok(false) | Err(_) = service_start(unit) {
             ui::warn(&format!(
@@ -248,6 +373,9 @@ pub async fn run(
             ));
         }
     }
+
+    // Keep current + one previous; delete older slots.
+    layout.prune(slots::KEEP_SLOTS - 1);
 
     // Model-set drift check. `virtues upgrade` swaps binaries but does NOT
     // fetch model GGUFs or rewrite the sidecar `-m`/pooling in the unit files —
@@ -291,15 +419,172 @@ pub async fn run(
     }
 
     println!();
-    ui::ok(&format!("upgraded to {target_tag} — rollback copy kept at {bak}"));
+    ui::ok(&format!(
+        "upgraded to {target_tag} (slot {slot_id}) — `virtues rollback` restores the previous release"
+    ));
     println!();
     Ok(())
+}
+
+/// `virtues rollback` — flip `current` back to the previous release slot and
+/// restart. The inverse of an upgrade's activation: one atomic symlink flip
+/// moves binary + web + actions together. No migrations run — schema rolls
+/// FORWARD only; a rolled-back binary boots with `ignore_missing`, so a
+/// newer-schema DB is tolerated (features that need the newer binary are
+/// simply gone until you upgrade again).
+pub async fn rollback() -> Result<(), crate::Error> {
+    ui::section("Rollback");
+    let layout = slots::SlotLayout::system();
+    if !layout.exists() {
+        return Err(crate::Error::Other(
+            "no release slots on this box (re-run the installer once to adopt the slot layout)"
+                .to_string(),
+        ));
+    }
+    let current = layout
+        .current_slot()
+        .ok_or_else(|| crate::Error::Other("current release link dangles".to_string()))?;
+    let Some(previous) = layout.previous_slot() else {
+        return Err(crate::Error::Other(
+            "no previous release kept — nothing to roll back to".to_string(),
+        ));
+    };
+    ui::kv("current", &current.file_name().unwrap_or_default().to_string_lossy());
+    ui::kv("target", &previous.file_name().unwrap_or_default().to_string_lossy());
+    println!();
+
+    if !running_as_root() {
+        return Err(crate::Error::Other(
+            "virtues rollback must run as root (try with sudo)".to_string(),
+        ));
+    }
+    let _lock = acquire_lock()?;
+
+    ui::step("stopping services…");
+    service_stop("virtues");
+    let sidecars = installed_inference_units();
+    for unit in &sidecars {
+        service_stop(unit);
+    }
+
+    ui::step("flipping current → previous release…");
+    layout
+        .flip(&previous)
+        .map_err(|e| crate::Error::Other(format!("flip failed: {e}")))?;
+
+    ui::step("starting services…");
+    match service_start("virtues") {
+        Ok(true) => {}
+        _ => {
+            // Roll forward again rather than leave the box down on a release
+            // that won't boot.
+            let _ = layout.flip(&current);
+            let _ = service_start("virtues");
+            for unit in &sidecars {
+                let _ = service_start(unit);
+            }
+            return Err(crate::Error::Other(
+                "previous release would not start — flipped forward again".to_string(),
+            ));
+        }
+    }
+    for unit in &sidecars {
+        let _ = service_start(unit);
+    }
+
+    println!();
+    ui::ok("rolled back — the previous release is active");
+
+    // Rollback moves code, never schema: migrations only roll forward, and the
+    // older binary boots against the newer schema by design. So a rollback
+    // prompted by *data* damage is only half a recovery, and the operator has no
+    // way to know the other half exists unless it is named here.
+    if let Some(dump) = newest_pre_upgrade_dump() {
+        println!();
+        ui::warn("the schema was NOT rolled back — migrations only roll forward.");
+        println!("  If a migration is what went wrong, restore the pre-upgrade dump:");
+        println!(
+            "    sudo -u virtues pg_restore --clean --if-exists --no-owner --no-acl \\\n       -d \"$DATABASE_URL\" {}",
+            dump.display()
+        );
+    }
+    Ok(())
+}
+
+/// The tarball's build identity, written by CI next to the binaries.
+#[derive(serde::Deserialize)]
+struct BuildManifest {
+    version: Option<String>,
+    sha: Option<String>,
+}
+
+impl BuildManifest {
+    /// Directory name for this release's slot: `<tag>-<sha7>`. Unique per
+    /// build (two edge cuts differ by sha), stable per artifact (re-running
+    /// an upgrade re-stages the same slot).
+    fn slot_id(&self, tag: &str) -> Option<String> {
+        let sha = self.sha.as_deref()?;
+        Some(format!("{tag}-{}", &sha[..sha.len().min(7)]))
+    }
+}
+
+/// Read `BUILD.json` from the extracted tarball. Absent on pre-slot-era
+/// releases — every consumer treats it as optional.
+fn read_build_manifest(extracted: &Path) -> Option<BuildManifest> {
+    let p = find_named(extracted, "BUILD.json").ok()?;
+    serde_json::from_slice(&fs::read(p).ok()?).ok()
+}
+
+/// Copy one whole release into its slot dir. The slot is the unit of
+/// activation and rollback, so it carries EVERYTHING the tarball shipped;
+/// only `virtues` itself is mandatory.
+fn stage_slot(
+    slot: &Path,
+    binary: &Path,
+    llama: &Option<PathBuf>,
+    qnnd: &Option<PathBuf>,
+    web: &Option<PathBuf>,
+    actions: &Option<PathBuf>,
+    actions_bin: &Option<PathBuf>,
+) -> Result<(), crate::Error> {
+    // Re-staging the same slot id (a retried upgrade) starts clean.
+    let _ = fs::remove_dir_all(slot);
+    fs::create_dir_all(slot)
+        .map_err(|e| crate::Error::Other(format!("mkdir {}: {e}", slot.display())))?;
+
+    let copy_bin = |src: &Path, name: &str| -> Result<(), crate::Error> {
+        let dst = slot.join(name);
+        fs::copy(src, &dst)
+            .map_err(|e| crate::Error::Other(format!("stage {name}: {e}")))?;
+        fs::set_permissions(&dst, fs::Permissions::from_mode(0o755))
+            .map_err(|e| crate::Error::Other(format!("chmod {name}: {e}")))?;
+        Ok(())
+    };
+    copy_bin(binary, "virtues")?;
+    if let Some(p) = llama {
+        copy_bin(p, "llama-server")?;
+    }
+    if let Some(p) = qnnd {
+        copy_bin(p, "virtues-qnnd")?;
+    }
+    for (src, name) in [(web, "web"), (actions, "applets"), (actions_bin, "applets-bin")] {
+        if let Some(s) = src {
+            copy_dir_all(s, &slot.join(name))?;
+        }
+    }
+    Ok(())
+}
+
+/// Resolve a well-known path through its symlinks to the real directory —
+/// `--only` must write INTO the current slot, not replace the routing link.
+fn canonical(p: &Path) -> PathBuf {
+    p.canonicalize().unwrap_or_else(|_| p.to_path_buf())
 }
 
 /// Read a single `KEY=value` from the box env file (`/var/lib/virtues/virtues.env`).
 /// `sudo virtues upgrade` doesn't inherit the systemd EnvironmentFile, so this is
 /// how the upgrade path recovers box-specific settings (e.g. a custom models dir).
-fn read_box_env_var(key: &str) -> Option<String> {
+pub(crate) fn read_box_env_var(key: &str) -> Option<String> {
     let contents = fs::read_to_string("/var/lib/virtues/virtues.env").ok()?;
     for line in contents.lines() {
         let line = line.trim();
@@ -340,34 +625,33 @@ impl InstallDirs {
                 .map(PathBuf::from)
                 .unwrap_or_else(|| PathBuf::from(default))
         };
+        // Applets dir: honor whichever env var the box was provisioned with,
+        // in the SAME order the runtime resolves it (action_templates.rs /
+        // action_runner.rs try APPLETS_ first, then legacy ACTIONS_). A box
+        // installed before the actions→applets rename only sets the ACTIONS_
+        // vars; defaulting straight to /applets here would refresh into a dir
+        // the runtime never reads (the bug that stranded document_extraction
+        // on the dragon). Falls through to the new default only when neither
+        // is set.
+        let env_dir_multi = |vars: &[&str], default: &str| {
+            vars.iter()
+                .find_map(|v| std::env::var(v).ok().filter(|s| !s.is_empty()))
+                .map(PathBuf::from)
+                .unwrap_or_else(|| PathBuf::from(default))
+        };
         Self {
             bin_dir,
             web: env_dir("STATIC_DIR", "/usr/local/share/virtues/web"),
-            actions: env_dir("VIRTUES_ACTIONS_DIR", "/usr/local/share/virtues/actions"),
-            actions_bin: env_dir("VIRTUES_ACTIONS_BIN_DIR", "/usr/local/libexec/virtues"),
+            actions: env_dir_multi(
+                &["VIRTUES_APPLETS_DIR", "VIRTUES_ACTIONS_DIR"],
+                "/usr/local/share/virtues/applets",
+            ),
+            actions_bin: env_dir_multi(
+                &["VIRTUES_APPLETS_BIN_DIR", "VIRTUES_ACTIONS_BIN_DIR"],
+                "/usr/local/libexec/virtues",
+            ),
         }
     }
-}
-
-/// Replace `dest` with `new`, keeping the prior file as `dest.bak` for
-/// rollback. Restores the original if the swap fails partway, so a caller that
-/// treats a failure as non-fatal still has a working binary in place. Returns
-/// the `.bak` path when one was created (`None` for a fresh install).
-fn swap_with_bak(new: &Path, dest: &Path) -> Result<Option<String>, crate::Error> {
-    let bak = format!("{}.bak", dest.display());
-    let had_prior = dest.exists();
-    if had_prior {
-        let _ = fs::remove_file(&bak);
-        fs::rename(dest, &bak)
-            .map_err(|e| crate::Error::Other(format!("rename {} to {bak}: {e}", dest.display())))?;
-    }
-    if let Err(e) = swap_binary(new, dest) {
-        if had_prior {
-            let _ = fs::rename(&bak, dest); // put the working binary back
-        }
-        return Err(e);
-    }
-    Ok(had_prior.then_some(bak))
 }
 
 /// Atomically replace a shipped directory, logging a uniform success/skip line.
@@ -388,10 +672,24 @@ fn refresh_named(label: &str, src: &Path, dst: &Path) {
 /// set is wrong for the other — assuming llama.cpp made a healthy Q6A box print
 /// "Unit virtues-embed.service not loaded" and a false "search/embeddings degraded"
 /// on every upgrade. So ask the filesystem instead of guessing.
-fn installed_inference_units() -> Vec<&'static str> {
+fn installed_inference_units() -> Vec<String> {
+    // Prefer the installer's topology manifest — DECLARED shape, not a guess.
+    if let Ok(bytes) = fs::read("/usr/local/share/virtues/install.json") {
+        if let Ok(v) = serde_json::from_slice::<serde_json::Value>(&bytes) {
+            if let Some(units) = v.get("sidecars").and_then(|s| s.as_array()) {
+                return units
+                    .iter()
+                    .filter_map(|u| u.as_str().map(str::to_string))
+                    .collect();
+            }
+        }
+    }
+    // Fallback for boxes installed before the manifest existed: ask the
+    // filesystem which unit files are present.
     ["virtues-embed", "virtues-rerank", "virtues-qnnd"]
         .into_iter()
         .filter(|u| Path::new(&format!("/etc/systemd/system/{u}.service")).exists())
+        .map(str::to_string)
         .collect()
 }
 
@@ -424,6 +722,81 @@ fn service_start(unit: &str) -> std::io::Result<bool> {
         .arg(unit)
         .status()
         .map(|s| s.success())
+}
+
+/// The port `virtues.service` actually serves on, read from the installed
+/// unit's `ExecStart` (`… server --host [::] --port 8000`).
+///
+/// Parsed rather than hardcoded because the probe's failure mode is asymmetric:
+/// probing the wrong port would roll back a perfectly good upgrade. If the unit
+/// is unreadable or its ExecStart has no `--port`, fall back to the same 8000
+/// the installer writes.
+fn service_port() -> u16 {
+    fs::read_to_string("/etc/systemd/system/virtues.service")
+        .ok()
+        .and_then(|u| parse_port_from_unit(&u))
+        .unwrap_or(DEFAULT_SERVICE_PORT)
+}
+
+/// The port the installer writes into `virtues.service`.
+const DEFAULT_SERVICE_PORT: u16 = 8000;
+
+/// Pull `--port N` (or `--port=N`) out of a unit file's `ExecStart` line.
+/// Split out from [`service_port`] so it can be tested without a real
+/// `/etc/systemd/system`.
+fn parse_port_from_unit(unit: &str) -> Option<u16> {
+    let line = unit
+        .lines()
+        .find(|l| l.trim_start().starts_with("ExecStart="))?;
+    let mut it = line.split_whitespace();
+    while let Some(tok) = it.next() {
+        if tok == "--port" {
+            return it.next().and_then(|p| p.parse().ok());
+        }
+        if let Some(p) = tok.strip_prefix("--port=") {
+            return p.parse().ok();
+        }
+    }
+    None
+}
+
+/// Poll the box's own `/health` until it answers 200, or the budget runs out.
+///
+/// Retries rather than probing once: a fresh process has to bind its listener
+/// and open a Postgres pool, and the unit's `Restart=on-failure`/`RestartSec=5`
+/// means a crash-looping binary needs a few cycles before it's distinguishable
+/// from a slow-but-healthy start. 60s covers a cold start comfortably (the unit
+/// itself allows `TimeoutStartSec=120`) without hanging a broken upgrade for
+/// minutes before rolling it back.
+async fn wait_healthy(port: u16) -> bool {
+    const ATTEMPTS: u32 = 30;
+    const EVERY: Duration = Duration::from_secs(2);
+
+    let url = format!("http://127.0.0.1:{port}/health");
+    // Loopback plain HTTP — `base_builder` is the codebase's known-good builder
+    // and is already IPv4-only, which is exactly right for 127.0.0.1.
+    let Ok(client) = crate::http_client::base_builder()
+        .timeout(Duration::from_secs(3))
+        .build()
+    else {
+        // Can't probe → don't claim unhealthy and trigger a spurious rollback.
+        tracing::warn!("could not build health-probe client; skipping the probe");
+        return true;
+    };
+
+    for attempt in 1..=ATTEMPTS {
+        tokio::time::sleep(EVERY).await;
+        if let Ok(r) = client.get(&url).send().await {
+            if r.status().is_success() {
+                ui::ok(&format!(
+                    "health check passed after {}s",
+                    attempt * EVERY.as_secs() as u32
+                ));
+                return true;
+            }
+        }
+    }
+    false
 }
 
 /// Exclusive process lock for the duration of an upgrade. Created with
@@ -473,7 +846,7 @@ fn acquire_lock() -> Result<UpgradeLock, crate::Error> {
     }
 }
 
-fn running_as_root() -> bool {
+pub(crate) fn running_as_root() -> bool {
     // Avoids pulling in `nix` or `libc` crates — we read EUID from the
     // `/proc/self/status` file. Falls back to false (refuse to run) if
     // we can't tell.
@@ -593,7 +966,7 @@ fn is_draft(r: &serde_json::Value) -> bool {
 
 /// Newest stable (non-prerelease) Linux release tag. The releases list is
 /// newest-first, so the first match wins.
-async fn fetch_latest_tag() -> Result<String, crate::Error> {
+pub(crate) async fn fetch_latest_tag() -> Result<String, crate::Error> {
     let rels = list_releases().await?;
     rels.iter()
         .filter(|r| !is_draft(r) && !is_prerelease(r))
@@ -604,7 +977,7 @@ async fn fetch_latest_tag() -> Result<String, crate::Error> {
 }
 
 /// Newest *prerelease* Linux tag (the staging/edge channel). Skips macOS tags.
-async fn fetch_latest_prerelease() -> Result<String, crate::Error> {
+pub(crate) async fn fetch_latest_prerelease() -> Result<String, crate::Error> {
     let rels = list_releases().await?;
     rels.iter()
         .filter(|r| !is_draft(r) && is_prerelease(r))
@@ -783,30 +1156,6 @@ fn find_named(dir: &Path, name: &str) -> Result<PathBuf, crate::Error> {
     )))
 }
 
-fn swap_binary(new_binary: &Path, dest: &Path) -> Result<(), crate::Error> {
-    // `fs::rename` is atomic when src + dst share a filesystem. The
-    // extracted binary may not — fall back to copy + remove.
-    if fs::rename(new_binary, dest).is_err() {
-        fs::copy(new_binary, dest)
-            .map_err(|e| crate::Error::Other(format!("copy new binary to {}: {e}", dest.display())))?;
-    }
-    fs::set_permissions(dest, fs::Permissions::from_mode(0o755))
-        .map_err(|e| crate::Error::Other(format!("chmod {}: {e}", dest.display())))?;
-    Ok(())
-}
-
-/// Stays on stderr and deliberately unstyled beyond the marker: this is the
-/// paste-at-2AM block, and it must survive any capture/pipe intact.
-fn print_rollback_hint(bak: &str) {
-    eprintln!();
-    eprintln!("  ✖  upgrade failed mid-swap. Roll back with:");
-    eprintln!();
-    eprintln!("       sudo systemctl stop virtues");
-    eprintln!("       sudo mv {bak} {BINARY_PATH}");
-    eprintln!("       sudo systemctl start virtues");
-    eprintln!();
-}
-
 struct Stage(PathBuf);
 impl Drop for Stage {
     fn drop(&mut self) {
@@ -825,4 +1174,297 @@ fn mkstage() -> Result<Stage, crate::Error> {
     fs::create_dir_all(&path)
         .map_err(|e| crate::Error::Other(format!("staging dir: {e}")))?;
     Ok(Stage(path))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The unit the installer actually writes today.
+    const REAL_UNIT: &str = "\
+[Service]
+Type=simple
+ExecStartPre=/bin/sh -c 'until pg_isready -t 1; do sleep 1; done'
+ExecStart=/usr/local/bin/virtues server --host [::] --port 8000
+TimeoutStartSec=120
+";
+
+    #[test]
+    fn reads_the_port_the_installer_writes() {
+        assert_eq!(parse_port_from_unit(REAL_UNIT), Some(8000));
+    }
+
+    #[test]
+    fn reads_a_hand_edited_port() {
+        // The whole reason this is parsed and not hardcoded: probing the wrong
+        // port would roll back a healthy upgrade.
+        let unit = REAL_UNIT.replace("--port 8000", "--port 9123");
+        assert_eq!(parse_port_from_unit(&unit), Some(9123));
+    }
+
+    #[test]
+    fn accepts_the_equals_form() {
+        let unit = REAL_UNIT.replace("--port 8000", "--port=9123");
+        assert_eq!(parse_port_from_unit(&unit), Some(9123));
+    }
+
+    #[test]
+    fn ignores_a_port_outside_execstart() {
+        // ExecStartPre mentions no port, but a sloppier scan of the whole file
+        // could pick up an unrelated one. Only ExecStart counts.
+        let unit = "[Service]\nEnvironment=SOME_PORT=--port 1234\nExecStart=/usr/local/bin/virtues server --port 8000\n";
+        assert_eq!(parse_port_from_unit(unit), Some(8000));
+    }
+
+    #[test]
+    fn no_port_falls_back_to_the_caller_default() {
+        let unit = "[Service]\nExecStart=/usr/local/bin/virtues server\n";
+        assert_eq!(parse_port_from_unit(unit), None);
+    }
+
+    #[test]
+    fn no_execstart_at_all() {
+        assert_eq!(parse_port_from_unit("[Unit]\nDescription=x\n"), None);
+    }
+}
+
+/// Pre-upgrade dumps live beside `virtues backup`'s output: an operator hunting
+/// for "the thing that can undo this" should find both in one directory.
+const PRE_UPGRADE_DIR: &str = "/var/lib/virtues/backups";
+
+/// Floor for the free-space guard when the database size cannot be measured.
+/// Filling the disk and *then* failing a migration is strictly worse than not
+/// upgrading, so an unmeasurable box gets a conservative fixed requirement.
+const PRE_UPGRADE_MIN_FREE: u64 = 2 * 1024 * 1024 * 1024;
+
+/// Dump the database before migrations run, and return the dump's path.
+///
+/// `virtues rollback` re-flips `current` and restarts. It does not touch the
+/// schema, because migrations only ever roll forward — `database::run_migrations`
+/// sets `ignore_missing`, and an older binary is expected to boot against a newer
+/// schema. So a migration that destroys data leaves rollback restoring *code onto
+/// damaged data*, which is the one failure the slot system cannot cover on its own.
+/// This closes it.
+///
+/// It is the data half of a release slot, not a backup: no encryption (the box
+/// already holds the key, and this never leaves it), no manifest, no lake, and it
+/// is pruned in lockstep with the slots it corresponds to.
+///
+/// Runs as `virtues`, not root. `upgrade` requires root and is deliberately
+/// absent from main.rs's `DB_COMMANDS` re-exec list, so a pg_dump inheriting this
+/// process's identity would authenticate to a peer-auth cluster as `root` and be
+/// refused.
+fn pre_migration_dump(from: &str, to: &str) -> Result<PathBuf, crate::Error> {
+    let dir = PathBuf::from(PRE_UPGRADE_DIR);
+    let existed = dir.is_dir();
+    fs::create_dir_all(&dir)
+        .map_err(|e| crate::Error::Other(format!("creating {PRE_UPGRADE_DIR}: {e}")))?;
+    // `upgrade` runs as root, so a directory it creates lands root-owned — but
+    // the dump below is written by `pg_dump` running as `virtues` (peer auth
+    // requires it), which then cannot write there. Every sibling under the data
+    // dir is virtues-owned for the same reason; this one has to match.
+    //
+    // Also repairs a directory an earlier build left root-owned, which
+    // additionally broke `virtues backup`, since that writes here too.
+    if !existed || !dir_is_service_owned(&dir) {
+        crate::cli::restore::give_to_service_user(&dir);
+    }
+
+    let need = database_size_bytes().unwrap_or(PRE_UPGRADE_MIN_FREE);
+    if let Some(free) = crate::storage::lake::free_bytes_at(&dir) {
+        if free < need {
+            return Err(crate::Error::Other(format!(
+                "refusing to upgrade: the pre-migration dump needs ~{} MB and {} has \
+                 {} MB free. Migrations roll forward only, so upgrading without this \
+                 dump means `virtues rollback` could not undo a migration that ate \
+                 data. Free some space, or re-run with --force to skip the guard.",
+                need / (1024 * 1024),
+                dir.display(),
+                free / (1024 * 1024),
+            )));
+        }
+    }
+
+    let dest = dir.join(format!(
+        "pre-upgrade-{}-{}.dump",
+        sanitize_tag(from),
+        sanitize_tag(to)
+    ));
+    ui::step("preflight: dumping database before migration…");
+    let status = Command::new("sudo")
+        .args(["-u", "virtues", "pg_dump", "--format=custom", "--no-owner", "--no-acl", "-f"])
+        .arg(&dest)
+        .status()
+        .map_err(|e| crate::Error::Other(format!("invoking pg_dump: {e}")))?;
+    if !status.success() {
+        let _ = fs::remove_file(&dest);
+        return Err(crate::Error::Other(format!(
+            "pre-migration pg_dump exited {status}; box untouched"
+        )));
+    }
+    let size = fs::metadata(&dest).map(|m| m.len()).unwrap_or(0);
+    ui::ok(&format!(
+        "dumped {} ({:.1} MB)",
+        dest.display(),
+        size as f64 / (1024.0 * 1024.0)
+    ));
+    prune_pre_upgrade_dumps(slots::KEEP_SLOTS);
+    Ok(dest)
+}
+
+/// Is the directory already owned by the service user? Avoids shelling out to
+/// `chown` on every upgrade once it is correct.
+fn dir_is_service_owned(dir: &Path) -> bool {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt;
+        let Ok(meta) = fs::metadata(dir) else {
+            return false;
+        };
+        let uid = Command::new("id")
+            .args(["-u", "virtues"])
+            .output()
+            .ok()
+            .and_then(|o| String::from_utf8_lossy(&o.stdout).trim().parse::<u32>().ok());
+        return uid.is_some_and(|u| meta.uid() == u);
+    }
+    #[cfg(not(unix))]
+    true
+}
+
+/// Database size, as `virtues`, for the free-space guard. `None` when it cannot
+/// be measured — the caller falls back to a fixed floor rather than skipping the
+/// check.
+fn database_size_bytes() -> Option<u64> {
+    let out = Command::new("sudo")
+        .args([
+            "-u",
+            "virtues",
+            "psql",
+            "-tAc",
+            "SELECT pg_database_size(current_database())",
+        ])
+        .output()
+        .ok()?;
+    if !out.status.success() {
+        return None;
+    }
+    String::from_utf8_lossy(&out.stdout).trim().parse().ok()
+}
+
+/// Tags become filenames; keep them to characters that survive that.
+fn sanitize_tag(tag: &str) -> String {
+    tag.chars()
+        .map(|c| if c.is_ascii_alphanumeric() || c == '.' || c == '-' { c } else { '_' })
+        .collect()
+}
+
+/// Keep the same number of dumps as release slots. They are two halves of one
+/// thing: a slot you can flip back to, and the data that slot expects.
+fn prune_pre_upgrade_dumps(keep: usize) {
+    prune_dumps_in(Path::new(PRE_UPGRADE_DIR), keep)
+}
+
+/// Split from `prune_pre_upgrade_dumps` so it can be tested against a scratch
+/// directory. This function deletes files, and it does so in the directory that
+/// also holds `virtues backup` output — the prefix/suffix filter is the only
+/// thing standing between a prune and someone's actual backup.
+fn prune_dumps_in(dir: &Path, keep: usize) {
+    let Ok(entries) = fs::read_dir(dir) else {
+        return;
+    };
+    let mut dumps: Vec<(std::time::SystemTime, PathBuf)> = entries
+        .flatten()
+        .map(|e| e.path())
+        .filter(|p| {
+            p.file_name()
+                .and_then(|n| n.to_str())
+                .is_some_and(|n| n.starts_with("pre-upgrade-") && n.ends_with(".dump"))
+        })
+        .filter_map(|p| {
+            let t = fs::metadata(&p).and_then(|m| m.modified()).ok()?;
+            Some((t, p))
+        })
+        .collect();
+    dumps.sort_by(|a, b| b.0.cmp(&a.0)); // newest first
+    for (_, path) in dumps.into_iter().skip(keep) {
+        let _ = fs::remove_file(path);
+    }
+}
+
+/// The newest pre-upgrade dump, if any. `rollback` surfaces it: restoring the
+/// binary while leaving a bad migration in place is exactly the case where the
+/// operator needs to know this file exists.
+fn newest_pre_upgrade_dump() -> Option<PathBuf> {
+    let entries = fs::read_dir(PRE_UPGRADE_DIR).ok()?;
+    entries
+        .flatten()
+        .map(|e| e.path())
+        .filter(|p| {
+            p.file_name()
+                .and_then(|n| n.to_str())
+                .is_some_and(|n| n.starts_with("pre-upgrade-") && n.ends_with(".dump"))
+        })
+        .filter_map(|p| {
+            let t = fs::metadata(&p).and_then(|m| m.modified()).ok()?;
+            Some((t, p))
+        })
+        .max_by(|a, b| a.0.cmp(&b.0))
+        .map(|(_, p)| p)
+}
+
+#[cfg(test)]
+mod pre_upgrade_dump_tests {
+    use super::*;
+
+    fn touch(dir: &Path, name: &str, age_secs: u64) -> PathBuf {
+        let p = dir.join(name);
+        fs::write(&p, b"x").unwrap();
+        let when = std::time::SystemTime::now() - Duration::from_secs(age_secs);
+        let f = File::options().write(true).open(&p).unwrap();
+        f.set_times(fs::FileTimes::new().set_modified(when)).unwrap();
+        p
+    }
+
+    #[test]
+    fn prune_keeps_the_newest_and_never_eats_a_real_backup() {
+        let dir = std::env::temp_dir().join(format!("virtues-prune-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+
+        let newest = touch(&dir, "pre-upgrade-0.1.0-0.4.0.dump", 10);
+        let middle = touch(&dir, "pre-upgrade-0.1.0-0.3.0.dump", 100);
+        let oldest = touch(&dir, "pre-upgrade-0.1.0-0.2.0.dump", 1000);
+        // Shares the directory, and is the one thing that must never be pruned
+        // by the upgrade path — it is the user's actual backup.
+        let backup = touch(&dir, "virtues-20260725T030000Z.tar.gz", 5000);
+
+        prune_dumps_in(&dir, 2);
+
+        assert!(newest.exists(), "newest dump was pruned");
+        assert!(middle.exists(), "second-newest dump was pruned");
+        assert!(!oldest.exists(), "oldest dump should have been pruned");
+        assert!(
+            backup.exists(),
+            "prune ate a virtues backup sharing the directory"
+        );
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn prune_on_a_missing_directory_is_a_no_op() {
+        prune_dumps_in(Path::new("/nonexistent/virtues/backups"), 2);
+    }
+
+    #[test]
+    fn tags_survive_becoming_filenames() {
+        assert_eq!(sanitize_tag("v0.1.0-staging.56"), "v0.1.0-staging.56");
+        assert_eq!(sanitize_tag("edge"), "edge");
+        // Dots are legal in tags and stay; the separators are what matter, and
+        // without one the result cannot escape the directory it is joined to.
+        let escaped = sanitize_tag("../../etc/passwd");
+        assert_eq!(escaped, ".._.._etc_passwd");
+        assert!(!escaped.contains('/'), "sanitized tag can still traverse");
+    }
 }

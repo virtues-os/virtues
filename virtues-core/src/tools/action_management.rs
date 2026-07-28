@@ -38,9 +38,19 @@ pub async fn list_actions(
     let enabled_filter = arguments.get("enabled").and_then(|v| v.as_bool());
     let trigger_filter = arguments.get("trigger").and_then(|v| v.as_str());
 
+    let include_archived = arguments
+        .get("include_archived")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
+
     let all = actions::get_all_actions(pool).await.map_err(map_err)?;
     let mut items = Vec::with_capacity(all.len());
     for a in all {
+        // Archived applets (lifecycle complete) are hidden by default —
+        // the list holds living things.
+        if a.archived_at.is_some() && !include_archived {
+            continue;
+        }
         if let Some(o) = owner_filter {
             if a.owner != o {
                 continue;
@@ -116,6 +126,44 @@ pub async fn edit_action(
         .cloned()
         .ok_or_else(|| ToolError::InvalidParameters("patch is required".into()))?;
 
+    // The gate invariant: no path from model output to an enabled, scheduled
+    // ai-owned row without a user-surface action. Two vectors are closed here:
+    //   (1) enabling directly (enabled:true), and
+    //   (2) adding a boundary (schedule / api|webhook trigger) to an applet
+    //       that is ALREADY enabled — which would silently create the
+    //       forbidden enabled∧scheduled state without touching `enabled`.
+    let mut patch = patch;
+    if let Some(obj) = patch.as_object() {
+        let sets_enabled_true = obj.get("enabled").and_then(|v| v.as_bool()) == Some(true);
+        let adds_schedule = obj
+            .get("cron_schedule")
+            .is_some_and(|v| v.as_str().is_some_and(|s| !s.trim().is_empty()));
+        let adds_remote_trigger = obj
+            .get("triggers")
+            .and_then(|v| v.as_array())
+            .is_some_and(|arr| {
+                arr.iter().any(|t| matches!(t.as_str(), Some("api") | Some("webhook")))
+            });
+        if sets_enabled_true || adds_schedule || adds_remote_trigger {
+            let current = actions::get_action(pool, id).await.map_err(map_err)?;
+            if current.owner == "ai" {
+                if sets_enabled_true {
+                    return Ok(ToolResult::success(serde_json::json!({
+                        "status": "refused",
+                        "error": "enabling an AI-authored applet is a user action — ask the user to enable it on the applet page",
+                    })));
+                }
+                // Boundary added: force-disable so the user must re-enable
+                // (re-gate). Never leave an ai row enabled∧scheduled via a tool.
+                if current.enabled {
+                    if let Some(o) = patch.as_object_mut() {
+                        o.insert("enabled".into(), serde_json::Value::Bool(false));
+                    }
+                }
+            }
+        }
+    }
+
     let updated = actions::update_action(pool, id, &patch)
         .await
         .map_err(map_err)?;
@@ -134,7 +182,13 @@ pub async fn delete_action(
         .and_then(|v| v.as_str())
         .ok_or_else(|| ToolError::InvalidParameters("id is required".into()))?;
 
-    actions::delete_action(pool, id).await.map_err(map_err)?;
+    // Full teardown (row + on-disk folder) lives in `actions::delete_action`.
+    // The tool keeps the applet's data by default — dropping owned tables is a
+    // user decision made on the delete confirm, not something the model does.
+    actions::delete_action(pool, id, false)
+        .await
+        .map_err(map_err)?;
+
     Ok(ToolResult::success(serde_json::json!({
         "deleted": true,
         "id": id,

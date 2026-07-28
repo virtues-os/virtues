@@ -6,7 +6,7 @@
 //! collector) reach the box over iroh, so the transport proved their key and
 //! `AuthUser` resolves it — ingest is gated by the SAME allowlist as every other
 //! route, with no long-lived bearer anywhere. A proven device may only drive
-//! actions anchored to IT (`app_actions.device_id`); the on-box console
+//! actions anchored to IT (`app_applets.device_id`); the on-box console
 //! (loopback) may drive any action.
 //!
 //! The unified `action_runner::run_action` enforces trigger validation,
@@ -42,11 +42,6 @@ pub struct AppState {
     pub tool_executor: Option<Arc<crate::tools::ToolExecutor>>,
     pub yjs_state: super::yjs::YjsState,
     pub chat_cancel_state: ChatCancellationState,
-    /// Handle to the long-running app supervisor — needed by the
-    /// `/api/admin/reconcile` handler to diff/restart apps after the user
-    /// (or LLM) edits a manifest. Optional only because some test setups
-    /// don't boot the supervisor.
-    pub service_supervisor: Option<crate::services::ServiceSupervisor>,
 }
 
 impl axum::extract::FromRef<AppState> for sqlx::PgPool {
@@ -73,7 +68,7 @@ impl axum::extract::FromRef<AppState> for ChatCancellationState {
 /// 1. `AuthUser` (proven iroh key / loopback console) — a hard extractor, so an
 ///    unauthenticated caller is rejected before this runs.
 /// 2. Fetch action → 404 if missing.
-/// 3. Ownership: the proven device must own the action (`app_actions.device_id`);
+/// 3. Ownership: the proven device must own the action (`app_applets.device_id`);
 ///    the on-box console may drive any action → 403 otherwise.
 /// 4. Dispatch via `run_action(.., "webhook", payload)`.
 pub async fn webhook(
@@ -164,12 +159,12 @@ pub async fn webhook(
     }
 
     // Ownership: a proven device may only drive actions anchored to IT
-    // (`app_actions.device_id`). The on-box console (loopback) may drive any
+    // (`app_applets.device_id`). The on-box console (loopback) may drive any
     // action; an action with no device anchor (e.g. an OAuth action reachable
     // only from the owner's own devices) is likewise owner-level.
     if user.device_id != crate::middleware::auth::CONSOLE_DEVICE_ID {
         let action_device: Option<String> =
-            sqlx::query_scalar("SELECT device_id FROM app_actions WHERE id = $1")
+            sqlx::query_scalar("SELECT device_id FROM app_applets WHERE id = $1")
                 .bind(&action_id)
                 .fetch_one(state.db.pool())
                 .await

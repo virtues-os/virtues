@@ -10,7 +10,9 @@
 //!
 //! # Architecture
 //!
-//! - `embedder.rs` - sidecar client, :18181 (text → 256-dim vector, EmbeddingGemma-300M)
+//! - `embedder.rs` - inference-contract client, :18181 (`/v1/embeddings`; the
+//!   endpoint may be llama-server + EmbeddingGemma, the Dragon NPU daemon
+//!   serving gte-small, or any BYO OpenAI-compatible server — one path for all)
 //! - `indexer.rs`  - Background job that embeds new records
 //! - `query.rs`    - Vector search (query embedding + pgvector ANN lookup)
 //! - `reranker.rs` - sidecar client, :18182 (cross-encoder, gte-reranker-modernbert-base;
@@ -19,11 +21,10 @@
 pub mod bm25;
 pub mod embedder;
 pub mod indexer;
-pub mod qnn_client;
 pub mod query;
 pub mod reranker;
 
 pub use embedder::{get_embedder, Embedder, LocalEmbedder};
 pub use indexer::run_embedding_job;
-pub use query::SemanticSearchEngine;
+pub use query::{ScopeMode, SemanticSearchEngine};
 pub use reranker::{get_reranker, LocalReranker, RerankScore};

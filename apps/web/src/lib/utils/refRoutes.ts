@@ -3,27 +3,11 @@
  * Convert between entity IDs and their corresponding routes
  */
 
-// Entity type prefixes (for IDs like person_abc123)
-const ENTITY_PREFIXES: Record<string, string> = {
-	person_: 'person',
-	place_: 'place',
-	org_: 'org',
-	day_: 'day',
-	year_: 'year',
-	file_: 'file',
-	page_: 'page',
-	chat_: 'chat',
-	space_: 'notebook', // legacy notebook ids
-	nb_: 'notebook',
-	source_: 'source',
-};
-
 // Route bases to entity types (for URLs like /person/slug)
 const ROUTE_TO_TYPE: Record<string, string> = {
 	'/person': 'person',
 	'/place': 'place',
 	'/org': 'org',
-	'/thing': 'thing',
 	'/day': 'day',
 	'/year': 'year',
 	'/drive': 'file',
@@ -35,26 +19,11 @@ const ROUTE_TO_TYPE: Record<string, string> = {
 	'/record': 'record',
 };
 
-// Entity types to route bases
-const TYPE_TO_ROUTE: Record<string, string> = {
-	person: '/person',
-	place: '/place',
-	org: '/org',
-	day: '/day',
-	year: '/year',
-	file: '/drive',
-	page: '/page',
-	chat: '/chat',
-	notebook: '/notebook',
-	source: '/sources',
-};
-
 // Entity type → iconify icon name (for typed pills). All registered in icons.ts.
 const TYPE_TO_ICON: Record<string, string> = {
 	person: 'ri:user-line',
 	place: 'ri:map-pin-line',
 	org: 'ri:building-line',
-	thing: 'ri:lightbulb-line',
 	page: 'ri:file-text-line',
 	chat: 'ri:chat-3-line',
 	notebook: 'ri:booklet-line',
@@ -119,25 +88,6 @@ export function refIcon(type: string | null | undefined, hint?: RefIconHint): st
 	return entityTypeIcon(type);
 }
 
-// All valid entity prefixes (exported for backward compatibility)
-export const ENTITY_PREFIXES_LIST = Object.keys(ENTITY_PREFIXES);
-
-/**
- * Convert an entity ID to its route URL
- * @example getEntityRoute('person_abc123') → '/person/person_abc123'
- */
-export function getEntityRoute(entityId: string): string {
-	for (const [prefix, type] of Object.entries(ENTITY_PREFIXES)) {
-		if (entityId.startsWith(prefix)) {
-			const base = TYPE_TO_ROUTE[type];
-			if (base) {
-				return `${base}/${entityId}`;
-			}
-		}
-	}
-	return `/entity/${entityId}`; // fallback
-}
-
 /**
  * Parse a route URL to extract entity info
  * Returns the slug/id portion and entity type, or null if not an entity route
@@ -176,17 +126,4 @@ export function getEntityTypeFromRoute(route: string): string | null {
  */
 export function isEntityRoute(url: string): boolean {
 	return getEntityTypeFromRoute(url) !== null;
-}
-
-/**
- * Get entity type from entity ID (prefix-based)
- * @example getEntityType('person_abc123') → 'person'
- */
-export function getEntityType(entityId: string): string | null {
-	for (const [prefix, type] of Object.entries(ENTITY_PREFIXES)) {
-		if (entityId.startsWith(prefix)) {
-			return type;
-		}
-	}
-	return null;
 }

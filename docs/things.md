@@ -1,5 +1,14 @@
 # Things
 
+**Status: removed (2026-07-21).** Deprecated by `docs/stories-plan.md` §8
+(2026-07-13) and finished: the `wiki_things` table is dropped
+(migration `0060_drop_wiki_things.sql`), the `/api/things` write path and the
+`api::things` module are gone. Projects/hobbies now become stories, concepts
+become topics, and a rare mattering particular accumulates as a floating
+mention instead of its own entity. Kept below for history only.
+
+---
+
 A **thing** is a folder you can re-enter. A project, a pet, a goal, a topic — anything you want to keep loosely organized without forcing it into a rigid ontology.
 
 ## What a thing is

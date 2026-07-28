@@ -1,6 +1,7 @@
 //! HTTP server for data ingestion and API
 
 pub mod api;
+pub mod faces;
 pub mod webhook;
 pub mod yjs;
 
@@ -32,11 +33,6 @@ pub async fn run(client: Virtues, host: &str, port: u16) -> Result<()> {
         tracing::warn!("Failed to initialize usage limits: {}", e);
     }
 
-    // Initialize drive quota from TIER env var
-    if let Err(e) = crate::api::init_drive_quota(client.database.pool()).await {
-        tracing::warn!("Failed to initialize drive quota: {}", e);
-    }
-
     // Reap runs left in `running` by a crash/restart mid-execution, so a stale
     // lock doesn't survive a reboot. (The concurrency gate also age-bounds stale
     // runs at request time; this just keeps the runs table honest on boot.)
@@ -55,6 +51,12 @@ pub async fn run(client: Virtues, host: &str, port: u16) -> Result<()> {
     // scheduler resolves cron timezones. Idempotent. See docs/timezone-model.md.
     if let Err(e) = crate::api::profile::ensure_home_timezone(client.database.pool()).await {
         tracing::warn!("Failed to seed home_timezone: {}", e);
+    }
+
+    // Face-reader grants: idempotent default-deny SELECT surface for applet
+    // faces (data_*/wiki_* tables + applet_* schemas). Best-effort.
+    if let Err(e) = faces::ensure_applet_db_grants(client.database.pool()).await {
+        tracing::warn!("face reader grants failed: {e}");
     }
 
     // Eager identity bringup: ensure the loopback console device exists so the
@@ -98,25 +100,6 @@ pub async fn run(client: Virtues, host: &str, port: u16) -> Result<()> {
         tracing::warn!("Failed to reconcile action templates: {}", e);
     }
 
-    // Boot the `app`-runtime supervisor — spawns one long-running child per
-    // app-runtime action, watches/restarts on crash, exposes HTTP at
-    // `/service/<action_id>/*` via the proxy handler. See `virtues-core/src/services/`.
-    let service_supervisor = {
-        // Resolve repo root: core's manifest dir is `<repo>/core`, so repo
-        // root is one level up.
-        let repo_root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .parent()
-            .map(|p| p.to_path_buf())
-            .unwrap_or_else(|| std::path::PathBuf::from("."));
-        let api_base = std::env::var("VIRTUES_CORE_URL")
-            .unwrap_or_else(|_| "http://127.0.0.1:8000".to_string());
-        let supervisor = crate::services::ServiceSupervisor::new(repo_root, api_base);
-        if let Err(e) = supervisor.start(client.database.pool()).await {
-            tracing::warn!("app supervisor start failed: {}", e);
-        }
-        supervisor
-    };
-
     // Model facts (prices, context windows, which ids still exist) are fetched
     // from virtues-api, never compiled in. Refreshes on boot and 6-hourly; an
     // unreachable cloud keeps the last snapshot rather than emptying the
@@ -128,20 +111,20 @@ pub async fn run(client: Virtues, host: &str, port: u16) -> Result<()> {
     let scheduler_yjs = yjs_state.clone();
     let _scheduler_handle = tokio::spawn(async move {
         match crate::Scheduler::new(db_pool, scheduler_yjs).await {
-            Ok(sched) => {
-                if let Err(e) = sched.schedule_all().await {
-                    tracing::warn!("Failed to schedule cron actions: {}", e);
+            Ok(mut sched) => {
+                match sched.sync_jobs().await {
+                    Ok(n) => tracing::info!("Scheduled {n} cron actions"),
+                    Err(e) => tracing::warn!("Failed to schedule cron actions: {}", e),
                 }
                 if let Err(e) = sched.start().await {
                     tracing::warn!("Failed to start scheduler: {}", e);
                 } else {
                     tracing::info!("Scheduler started successfully");
-                    // Keep the scheduler handle alive — tokio-cron-scheduler
-                    // runs background tasks on its own tokio tasks, but the
-                    // JobScheduler itself needs to stay in scope.
-                    loop {
-                        tokio::time::sleep(tokio::time::Duration::from_secs(3600)).await;
-                    }
+                    // Never returns: re-derives the job set on a timer (so a
+                    // source connected while the box is running gets scheduled
+                    // without a restart) and owns the JobScheduler, which must
+                    // stay in scope for its jobs to keep firing.
+                    sched.run_refresh_loop().await;
                 }
             }
             Err(e) => {
@@ -160,6 +143,25 @@ pub async fn run(client: Virtues, host: &str, port: u16) -> Result<()> {
     // times (with an overlap window) so the panel and `virtues pair` always have
     // a valid code to display. See `crate::maintenance::pair_rotator`.
     crate::maintenance::pair_rotator::spawn(client.database.pool().clone());
+
+    // Persistent review pair code, for App Store review boxes only. No-op
+    // unless VIRTUES_REVIEW_PAIR_CODE is set, so customer boxes are untouched.
+    // A failure here is loud but not fatal: a demo box that came up without
+    // its code is useless to a reviewer, and the operator needs to see that,
+    // but it must not take down a box that is otherwise healthy.
+    {
+        let pool = client.database.pool().clone();
+        tokio::spawn(async move {
+            match crate::api::pair::ensure_review_code(&pool).await {
+                Ok(Some(_)) => tracing::warn!(
+                    "REVIEW PAIR CODE ACTIVE — this box accepts a permanent pairing code. \
+                     Only ever correct on a disposable box holding synthetic data."
+                ),
+                Ok(None) => {}
+                Err(e) => tracing::error!("review pair code not installed: {e:#}"),
+            }
+        });
+    }
 
     // Entity resolver: periodically turns raw lake primitives (location points,
     // transactions, calendar attendees) into ontology surfaces (visits/places,
@@ -192,7 +194,6 @@ pub async fn run(client: Virtues, host: &str, port: u16) -> Result<()> {
         tool_executor,
         yjs_state: yjs_state.clone(),
         chat_cancel_state,
-        service_supervisor: Some(service_supervisor.clone()),
     };
 
     // ============================================================
@@ -234,6 +235,17 @@ pub async fn run(client: Virtues, host: &str, port: u16) -> Result<()> {
             get(api::get_server_status_handler),
         )
         .route("/internal/mark-ready", post(api::mark_server_ready_handler))
+        // Applet faces — the CORS-permissive, token-gated leaves only. The
+        // mint route is AUTHENTICATED (in protected_routes): the token is the
+        // sole gate on the data door, so obtaining one must require owner auth.
+        // The query bridge validates the token; the file routes serve inert
+        // assets. These carry no data without a token minted by the authed app.
+        .route(
+            "/api/face/query",
+            post(faces::face_query_handler).options(faces::face_query_preflight),
+        )
+        .route("/face/:action_id/", get(faces::face_index_handler))
+        .route("/face/:action_id/*path", get(faces::face_file_handler))
         // Public page sharing (token-based access, no session needed)
         .route("/api/s/:token", get(api::get_shared_page_handler))
         .route(
@@ -275,6 +287,10 @@ pub async fn run(client: Virtues, host: &str, port: u16) -> Result<()> {
     // Protected routes (authentication required via route_layer)
     // ============================================================
     let protected_routes = Router::new()
+        // Face-token mint — AUTHENTICATED. The authed app mints a short-lived
+        // per-applet token and passes it into the iframe `src` (?vt=). This is
+        // the gate on the whole face data door (faces.rs).
+        .route("/api/applets/:id/face-token", get(faces::mint_face_token_handler))
         // Timeline day (location chunks for movement map)
         .route("/api/timeline/day/:date", get(api::timeline_get_day_handler))
         // Today streams — location/calendar/audio spans, pre-synthesis (homepage)
@@ -343,16 +359,17 @@ pub async fn run(client: Virtues, host: &str, port: u16) -> Result<()> {
         .route("/api/devices/health", get(api::device_health_check_handler))
         // Actions API
         .route(
-            "/api/actions",
+            "/api/applets",
             get(api::list_actions_handler).post(api::create_action_handler),
         )
         .route(
-            "/api/actions/:id",
+            "/api/applets/:id",
             get(api::get_action_handler)
                 .patch(api::patch_action_handler)
                 .delete(api::delete_action_handler),
         )
-        .route("/api/actions/:id/run", post(api::trigger_action_handler))
+        .route("/api/applets/:id/run", post(api::trigger_action_handler))
+        .route("/api/applets/:id/data", get(api::get_action_data_handler))
         // Chat-export upload (Tier 3 one-time import). Per-route body limit
         // overrides the router-wide 105MB cap — ChatGPT exports can be larger.
         .route(
@@ -360,8 +377,8 @@ pub async fn run(client: Virtues, host: &str, port: u16) -> Result<()> {
             post(api::chat_import_upload_handler)
                 .layer(DefaultBodyLimit::max(512 * 1024 * 1024)),
         )
-        .route("/api/actions/:id/runs", get(api::list_action_runs_handler))
-        .route("/api/actions/runs/:id", get(api::get_action_run_handler))
+        .route("/api/applets/:id/runs", get(api::list_action_runs_handler))
+        .route("/api/applets/runs/:id", get(api::get_action_run_handler))
         .route("/api/runs", get(api::list_runs_handler))
         // Credentials API
         .route("/api/credentials", get(api::list_credentials_handler))
@@ -404,9 +421,6 @@ pub async fn run(client: Virtues, host: &str, port: u16) -> Result<()> {
             "/api/assistant-profile",
             put(api::update_assistant_profile_handler),
         )
-        // Tools API
-        .route("/api/tools", get(api::list_tools_handler))
-        .route("/api/tools/:id", get(api::get_tool_handler))
         // Models API
         .route("/api/models", get(api::list_models_handler))
         .route(
@@ -414,9 +428,6 @@ pub async fn run(client: Virtues, host: &str, port: u16) -> Result<()> {
             get(api::list_models_with_slots_handler),
         )
         .route("/api/models/:id", get(api::get_model_handler))
-        // Agents API
-        .route("/api/agents", get(api::list_agents_handler))
-        .route("/api/agents/:id", get(api::get_agent_handler))
         // Personas API
         .route("/api/personas", get(api::list_personas_handler))
         .route("/api/personas", post(api::create_persona_handler))
@@ -428,20 +439,14 @@ pub async fn run(client: Virtues, host: &str, port: u16) -> Result<()> {
             post(api::unhide_persona_handler),
         )
         .route("/api/personas/reset", post(api::reset_personas_handler))
-        // Seed Testing API
-        .route(
-            "/api/seed/pipeline-status",
-            get(api::seed_pipeline_status_handler),
-        )
-        .route(
-            "/api/seed/data-quality",
-            get(api::seed_data_quality_handler),
-        )
         // Metrics API
         .route(
             "/api/metrics/activity",
             get(api::get_activity_metrics_handler),
         )
+        // Per-stream ingest freshness — surfaces a stalled source instead of
+        // letting it rot silently.
+        .route("/api/streams/health", get(api::stream_health_handler))
         // Subscription & Billing API
         .route("/api/subscription", get(api::get_subscription_handler))
         .route(
@@ -464,21 +469,41 @@ pub async fn run(client: Virtues, host: &str, port: u16) -> Result<()> {
             "/api/billing/link/status",
             get(api::billing_link_status_handler),
         )
-        // Search API (Exa)
+        // Search API (Exa) — reaches outside the box
         .route("/api/search/web", post(api::exa_search_handler))
+        // Local content search — the ⌘K palette. Never leaves the box.
+        .route("/api/search/local", post(api::search_local_handler))
         // Unsplash API (cover image search)
         .route("/api/unsplash/search", post(api::unsplash_search_handler))
-        // Storage API
+        // Annotations API (document highlights + margin notes)
         .route(
-            "/api/storage/objects",
-            get(api::list_storage_objects_handler),
+            "/api/annotations",
+            get(api::list_annotations_handler).post(api::create_annotation_handler),
         )
         .route(
-            "/api/storage/objects/:id/content",
-            get(api::get_storage_object_content_handler),
+            "/api/annotations/:id",
+            patch(api::update_annotation_handler).delete(api::delete_annotation_handler),
+        )
+        .route(
+            "/api/notebooks/:id/annotations",
+            get(api::list_notebook_annotations_handler),
+        )
+        // Bulk annotation export as markdown (D4.3)
+        .route(
+            "/api/annotations/export",
+            get(api::export_file_annotations_handler),
+        )
+        .route(
+            "/api/notebooks/:id/annotations/export",
+            get(api::export_notebook_annotations_handler),
         )
         // Drive API (user file storage)
+        .route(
+            "/api/drive/files/:id/reextract",
+            post(api::reextract_drive_file_handler),
+        )
         .route("/api/drive/usage", get(api::get_drive_usage_handler))
+        .route("/api/backup/status", get(api::get_backup_status_handler))
         .route("/api/drive/warnings", get(api::get_drive_warnings_handler))
         .route("/api/drive/files", get(api::list_drive_files_handler))
         .route(
@@ -521,10 +546,6 @@ pub async fn run(client: Virtues, host: &str, port: u16) -> Result<()> {
         .route("/api/wiki/resolve/:id", get(api::wiki_resolve_id_handler))
         // Wiki - Person
         // Mention review queue (entity resolution HITL)
-        .route("/api/mentions/queue", get(api::list_floating_surfaces_handler))
-        .route("/api/mentions/link", post(api::link_surface_handler))
-        .route("/api/mentions/create", post(api::create_from_surface_handler))
-        .route("/api/mentions/dismiss", post(api::dismiss_surface_handler))
         .route("/api/wiki/people", get(api::wiki_list_people_handler))
         .route(
             "/api/wiki/person/:id",
@@ -553,7 +574,11 @@ pub async fn run(client: Virtues, host: &str, port: u16) -> Result<()> {
             "/api/wiki/org/:id",
             get(api::wiki_get_organization_handler).put(api::wiki_update_organization_handler),
         )
-        // Wiki - Thing: retired; things live under /api/things (single source)
+        // Wiki - Thing: retired. Things are gone entirely as of the wiki_things
+        // drop — topics are universals, things were particulars, and a
+        // particular now accumulates as a floating mention until something
+        // promotes it. This comment used to point at /api/things, which no
+        // longer exists.
         // Wiki - Narrative Identity
         .route(
             "/api/wiki/narrative-identity",
@@ -610,17 +635,13 @@ pub async fn run(client: Virtues, host: &str, port: u16) -> Result<()> {
             "/api/wiki/day/:date/streams",
             get(api::wiki_get_day_streams_handler),
         )
-        // Code Execution API (AI Sandbox)
-        .route("/api/code/execute", post(api::execute_code_handler))
         // Admin API — LLM-authoring on-ramp for new actions
         .route("/api/admin/reconcile", post(api::admin_reconcile_handler))
         .route(
-            "/api/admin/actions/import-git",
+            "/api/admin/applets/import-git",
             post(api::import_git_actions_handler),
         )
         // System (operator surface — apps + logs)
-        .route("/api/system/apps", get(api::list_system_apps_handler))
-        .route("/api/actions/:id/logs", get(api::get_action_logs_handler))
         // Live host snapshot + persisted history for the System/Telemetry views.
         .route(
             "/api/system/telemetry",
@@ -665,6 +686,9 @@ pub async fn run(client: Virtues, host: &str, port: u16) -> Result<()> {
             "/api/pages/:id/backlinks",
             get(api::get_page_backlinks_handler),
         )
+        // Append a markdown block through Yjs (safe with an open editor) — the
+        // synthesis bridge's write path.
+        .route("/api/pages/:id/append", post(api::append_page_handler))
         // Page Share API
         .route(
             "/api/pages/:id/share",
@@ -681,16 +705,15 @@ pub async fn run(client: Virtues, host: &str, port: u16) -> Result<()> {
             "/api/pages/versions/:version_id",
             get(api::get_page_version_handler),
         )
-        // Things API (long-running named anchors — projects, pets, goals, ...)
+        // Box updates (Settings → Box)
+        .route("/api/system/update", get(api::update_status_handler))
         .route(
-            "/api/things",
-            get(api::list_things_handler).post(api::create_thing_handler),
+            "/api/system/update/channel",
+            put(api::set_channel_handler),
         )
         .route(
-            "/api/things/:id",
-            get(api::get_thing_handler)
-                .patch(api::update_thing_handler)
-                .delete(api::delete_thing_handler),
+            "/api/system/update/apply",
+            post(api::apply_update_handler),
         )
         // Sidebar pins API
         .route(
@@ -722,9 +745,11 @@ pub async fn run(client: Virtues, host: &str, port: u16) -> Result<()> {
             "/api/notebooks/:id/items/reorder",
             put(api::reorder_notebook_items_handler),
         )
-        // Namespaces API
-        .route("/api/namespaces", get(api::list_namespaces_handler))
-        .route("/api/namespaces/:name", get(api::get_namespace_handler))
+        .route(
+            "/api/notebooks/:id/items/role",
+            put(api::set_notebook_item_role_handler),
+        )
+        .route("/api/notebooks/:id/graph", get(api::notebook_graph_handler))
         // Chats API
         .route(
             "/api/chats",
@@ -777,26 +802,11 @@ pub async fn run(client: Virtues, host: &str, port: u16) -> Result<()> {
         .merge(protected_routes)
         .with_state(state.clone())
         .layer(middleware::from_fn(crate::middleware::security::headers_layer))
-        .layer(DefaultBodyLimit::max(105 * 1024 * 1024)); // 105MB (slightly above 100MB file limit for multipart overhead)
+        .layer(DefaultBodyLimit::max(260 * 1024 * 1024)); // 260MB (slightly above 250MB file limit for multipart overhead)
 
     // Add MCP routes to the same server
     let mcp_server = VirtuesMcpServer::new(client.database.pool().clone());
     let app = add_mcp_routes(app, mcp_server);
-
-    // App-runtime proxy: forwards `/service/:action_id/*` to the supervised
-    // localhost child. Has its own State (the supervisor), so we mount it
-    // as a separate sub-router with its own .with_state(...) before merging.
-    let service_proxy_routes = Router::new()
-        .route(
-            "/service/:action_id",
-            axum::routing::any(crate::services::proxy::handle_service_proxy),
-        )
-        .route(
-            "/service/:action_id/*path",
-            axum::routing::any(crate::services::proxy::handle_service_proxy_rest),
-        )
-        .with_state(service_supervisor.clone());
-    let app = app.merge(service_proxy_routes);
 
     tracing::info!("MCP endpoint enabled at /mcp");
 
@@ -863,16 +873,10 @@ pub async fn run(client: Virtues, host: &str, port: u16) -> Result<()> {
         tracing::info!("Open the Virtues web UI at {shown}  ·  run `virtues status` for setup steps");
     }
 
-    // Run the server with graceful shutdown — Ctrl+C / SIGTERM triggers
-    // SIGTERM to all `app`-runtime children before we exit.
-    let shutdown_supervisor = service_supervisor.clone();
+    // Run the server with graceful shutdown — Ctrl+C / SIGTERM.
     let shutdown_signal = async move {
         let _ = tokio::signal::ctrl_c().await;
         tracing::info!("shutdown signal received");
-        shutdown_supervisor.shutdown().await;
-        // Give children ~3s to flush state on SIGTERM before we drop them
-        // (which sends SIGKILL via `kill_on_drop(true)`).
-        tokio::time::sleep(tokio::time::Duration::from_secs(3)).await;
     };
 
     // Plain HTTP on :8000 is the only listener. The box has no TLS surface —
@@ -920,9 +924,12 @@ fn build_transport(
 
 /// Validate required environment variables at startup
 fn validate_environment() -> Result<()> {
-    // Log storage path being used
-    let storage_path = env::var("STORAGE_PATH").unwrap_or_else(|_| "./data/lake".to_string());
-    tracing::info!("Using storage path: {}", storage_path);
+    // Log storage path being used. Resolved, not re-derived — a log line that
+    // disagreed with the writer would be worse than no log line at all.
+    tracing::info!(
+        "Using storage path: {}",
+        crate::storage::lake::lake_root().display()
+    );
 
     tracing::debug!("Environment validation passed");
     Ok(())
@@ -949,7 +956,8 @@ async fn health(axum::extract::State(state): axum::extract::State<AppState>) -> 
         status_code,
         Json(serde_json::json!({
             "status": if is_healthy { "healthy" } else { "unhealthy" },
-            "version": env!("CARGO_PKG_VERSION"),
+            "version": crate::codename::version(),
+            "channel": crate::codename::channel(),
             "commit": env!("GIT_COMMIT"),
             "built_at": env!("BUILD_TIME"),
             "min_ios_version": min_ios_version,

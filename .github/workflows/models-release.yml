@@ -32,6 +32,14 @@ on:
         required: true
         default: 'https://huggingface.co/keisuke-miyako/gte-reranker-modernbert-base-gguf-q8_0/resolve/main/gte-reranker-modernbert-base-Q8_0.gguf'
         type: string
+      pdfium_version:
+        description: >
+          pdfium-binaries build to re-host for document extraction (vetted!).
+          Becomes assets libpdfium-<ver>-linux-{arm64,x64}.so — must match
+          PDFIUM_VERSION in tools/virtues-installer/src/config.rs.
+        required: true
+        default: '7961'
+        type: string
       tag:
         description: 'Models release tag to (create and) upload to'
         required: true
@@ -59,6 +67,24 @@ jobs:
             echo "fetching $name"
             curl -fSL --retry 3 -o "dist/$name" "$url"
             (cd dist && sha256sum "$name" > "$name.sha256")
+          done
+          ls -lh dist/
+
+      - name: Download + repack pdfium (document extraction)
+        run: |
+          # bblanchon/pdfium-binaries (BSD) ships per-arch tgz archives with
+          # lib/libpdfium.so inside. Re-host the bare .so under a versioned
+          # name so updates never replace an asset in place.
+          ver='${{ inputs.pdfium_version }}'
+          for arch in arm64 x64; do
+            url="https://github.com/bblanchon/pdfium-binaries/releases/download/chromium%2F${ver}/pdfium-linux-${arch}.tgz"
+            out="libpdfium-${ver}-linux-${arch}.so"
+            echo "fetching $url -> $out"
+            curl -fSL --retry 3 -o /tmp/pdfium-${arch}.tgz "$url"
+            tar -xzf /tmp/pdfium-${arch}.tgz -C /tmp lib/libpdfium.so
+            mv /tmp/lib/libpdfium.so "dist/$out"
+            rm -rf /tmp/lib
+            (cd dist && sha256sum "$out" > "$out.sha256")
           done
           ls -lh dist/
 
