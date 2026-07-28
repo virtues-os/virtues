@@ -12,6 +12,7 @@
 <script lang="ts">
 	import { type Tab, routeToEntityId } from '$lib/tabs/types';
 	import { windowShellStore } from '$lib/stores/window-shell.svelte';
+	import { confirmAction } from '$lib/stores/dialog.svelte';
 	import Icon from '$lib/components/Icon.svelte';
 	import Badge from '$lib/components/Badge.svelte';
 	import Button from '$lib/components/Button.svelte';
@@ -82,12 +83,13 @@
 
 	async function handleRevoke() {
 		if (!credential) return;
-		if (
-			!confirm(
-				`Revoke "${credential.name}"? This disables all ${credential.action_count} linked actions and requires reconnecting to restore.`
-			)
-		)
-			return;
+		const ok = await confirmAction({
+			title: `Revoke "${credential.name}"?`,
+			body: `This disables all ${credential.action_count} linked actions. You'll need to reconnect to restore them.`,
+			confirmLabel: 'Revoke',
+			danger: true,
+		});
+		if (!ok) return;
 		try {
 			await revokeCredential(credential.id);
 			await load();

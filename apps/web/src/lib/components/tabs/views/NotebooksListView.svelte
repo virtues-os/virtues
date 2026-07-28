@@ -114,7 +114,7 @@
 
 <Page
 	title="Notebooks"
-	description="Notebooks you return to — a project, pet, hobby, or goal. Each chat lives in one."
+	description="A notebook gathers the material for one piece of work — files, people, pages, days. Chats filed here are grounded in it."
 	maxWidth="wide"
 >
 	{#snippet actions()}

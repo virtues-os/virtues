@@ -627,8 +627,10 @@ impl SemanticSearchEngine {
     /// document CHUNKS of `/drive/file_` members — the uploaded_document
     /// ontology indexes per-chunk) and entity_ids (person/place/org/thing —
     /// matched via `wiki_entity_refs`). Filters to `role='library'` (= grounds
-    /// chat; nav-only 'pin' rows are ignored). External URLs and nested
-    /// notebooks aren't indexed and are skipped.
+    /// chat; nav-only 'pin' rows are ignored, and 'manuscript' rows are the
+    /// user's own draft — retrieving them would cite their unfinished prose
+    /// back at them as a source). External URLs and nested notebooks aren't
+    /// indexed and are skipped.
     async fn resolve_notebook_scope(&self, notebook_id: &str) -> Result<(Vec<String>, Vec<String>)> {
         let urls: Vec<String> = sqlx::query_scalar(
             "SELECT url FROM app_notebook_items WHERE notebook_id = $1 AND role = 'library'",

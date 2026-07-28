@@ -7,6 +7,7 @@
 
 import type { ContextMenuItem } from '$lib/stores/contextMenu.svelte';
 import { notebookStore } from '$lib/stores/notebook.svelte';
+import { promptText } from '$lib/stores/dialog.svelte';
 import { toast } from 'svelte-sonner';
 
 /**
@@ -46,10 +47,16 @@ export function getAddToNotebookMenuItems(
 		icon: 'ri:add-line',
 		dividerBefore: notebooks.length > 0,
 		action: async () => {
-			const notebookName = prompt('Notebook name:');
-			if (!notebookName || !notebookName.trim()) return;
+			// promptText, not window.prompt() — the latter is a no-op in the
+			// Tauri/WKWebView shell, so this menu item did nothing there.
+			const notebookName = await promptText({
+				title: 'New notebook',
+				placeholder: 'Name your notebook',
+				confirmLabel: 'Create',
+			});
+			if (!notebookName) return;
 			try {
-				const notebook = await notebookStore.create(notebookName.trim());
+				const notebook = await notebookStore.create(notebookName);
 				await notebookStore.addItem(notebook.id, url);
 				toast(`Created "${notebook.name}" and added item`);
 			} catch (e) {

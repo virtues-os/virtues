@@ -38,6 +38,14 @@
 	--color-surface-elevated: var(--surface-elevated);
 	--color-surface-overlay: var(--surface-overlay);
 
+	/* Interaction surfaces. These two were referenced across the app (datagrid,
+	   filter chips, pinned sidebar rows) but never bridged, so they resolved to
+	   nothing: toolbar buttons rendered unfilled with no hover response, and the
+	   two call sites carrying a hardcoded grey fallback painted a near-white
+	   hover in every dark theme. Every theme defines --surface-elevated. */
+	--color-background-hover: var(--surface-elevated);
+	--color-background-secondary: var(--surface-elevated);
+
 	/* Background Treatment (gradient/texture support) */
 	--color-background-image: var(--background-image);
 	--color-surface-elevated-image: var(--surface-elevated-image);
