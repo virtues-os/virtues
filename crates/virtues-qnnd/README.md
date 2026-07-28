@@ -86,14 +86,47 @@ polish for a plug-and-play box you sell).
   files from the lab Dragon. Regenerate from ONNX via **Qualcomm AI Hub** (free
   cloud compile, BYO model, artifacts yours) — recipes in the `models/` repo
   (`gte-small-q6a.toml`, `answerai-colbert-small-q6a.toml`).
-- **Runtime libs (on the box):** `libQnnHtp.so` + the v68 skel etc. come from
-  `pip install onnxruntime-qnn` (Qualcomm-maintained, PyPI — verified sufficient
-  on-device) or a Radxa QAIRT install. The installer auto-detects them and points
-  the unit's `LD_LIBRARY_PATH` + `ADSP_LIBRARY_PATH` there (`VIRTUES_QNN_LIB_DIR`
-  to override); a sold appliance image can bake them onto the ldconfig path.
+- **Runtime libs (on the box):** `libQnnHtp.so` + the v68 skel etc. come from the
+  same QAIRT **Community** SDK the daemon is built against — the public,
+  unauthenticated, version-pinned zip named by `QAIRT_VERSION`. Take the host
+  libs from `lib/aarch64-*-linux-*/` and the DSP skel from
+  `lib/hexagon-v68/unsigned/`; the four host libs the daemon actually needs
+  total ~6 MB and the skel ~9 MB, so a Range-extract beats pulling the 1.44 GB
+  zip. The installer auto-detects whatever is on the box and points the unit's
+  `LD_LIBRARY_PATH` + `ADSP_LIBRARY_PATH` there (`VIRTUES_QNN_LIB_DIR` to
+  override); a sold appliance image can bake them onto the ldconfig path. A
+  Radxa QAIRT install also works, with the caveat that its version must match
+  the QAIRT the `.bin` context binaries were compiled with.
 
-We do not re-host the Qualcomm libs; they're sourced from Qualcomm's own public
-distributions (PyPI wheel / QAIRT SDK).
+  **Why not `pip install onnxruntime-qnn`**, which this document recommended
+  until 2026-07-27: it is a real option — Qualcomm publishes that package
+  themselves and it *does* ship `manylinux_2_34_aarch64` wheels (from 2.3.0
+  onward) carrying `libQnnHtp.so`, `libQnnSystem.so`, the V68 stub and the V68
+  skel. Three reasons we don't use it. The wheel's libs are QAIRT
+  **2.48.40.260702** while the `.bin` context binaries are compiled against
+  **2.42.0.251225**, and that pairing is the one thing that must not drift. It
+  is a 78 MB wheel carrying six Hexagon skels (V68…V81) where we need one. And
+  it puts a Python environment in the boot path of the inference daemon.
+
+  The older advice also failed for a duller reason worth remembering: a README
+  telling a human to run `pip install` installs nothing. Nothing automated it,
+  so boxes simply had no runtime libs — which is what `qairt.rs` now fixes.
+
+We do not re-host the Qualcomm libs. That is a license constraint, not a
+preference: the SDK's `LICENSE.pdf` ("AI Stack License") grants distribution of
+the Software in object code as incorporated in your own application, and then
+expressly withholds any license to distribute it **on a standalone basis** —
+which is exactly what publishing bare `.so` assets to our `models-*` bucket
+would be. The libs come from Qualcomm's own public distribution, fetched per
+box.
+
+That reading is confirmed across both of Qualcomm's own channels: the
+`Qualcomm_LICENSE.pdf` bundled beside the binaries in the onnxruntime-qnn wheel
+is **byte-identical** (same SHA256) to the SDK's `LICENSE.pdf`. The wheel's own
+MIT licence covers the ONNX Runtime plugin code, not the `.so` files — the same
+terms follow the Qualcomm binaries down every path they ship. Qualcomm
+redistributing their own libraries is Qualcomm exercising rights they hold; it
+grants us nothing.
 
 ## Model-artifact contract
 
