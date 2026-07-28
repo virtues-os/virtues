@@ -332,20 +332,72 @@ pub async fn install_qnn(cfg: &InstallConfig) -> Result<()> {
     run_step("Start NPU daemon", cmd).await
 }
 
+/// Host-lib directories inside a QAIRT SDK, best first.
+///
+/// A QAIRT unpack ships the same `libQnnHtp.so` for every target it supports —
+/// the lab Dragon has SIX copies, including `x86_64-linux-clang` and
+/// `aarch64-android`. Order here is deliberate: `aarch64-oe-linux-gcc11.2` is
+/// the variant the lab box has actually been running against (Ubuntu 24.04,
+/// glibc 2.39), so it leads despite "oe" suggesting Yocto. The rest follow as
+/// plausible aarch64-Linux fallbacks.
+const QNN_HOST_LIB_DIRS: &[&str] = &[
+    "aarch64-oe-linux-gcc11.2",
+    "aarch64-ubuntu-gcc9.4",
+    "aarch64-oe-linux-gcc9.3",
+    "aarch64-oe-linux-gcc8.2",
+];
+
 /// The directory containing a named QNN `.so`, via a bounded `find` under the
 /// roots a QAIRT SDK unpack typically lands in (never a full-FS scan).
+///
+/// Ranked, not `head -1`. This used to take whatever the find emitted first,
+/// which is filesystem order — so on a box carrying a full SDK the winner was
+/// arbitrary among six candidates, and two of them (x86_64, android) would have
+/// pointed `LD_LIBRARY_PATH` at libraries that cannot load on this box at all.
+/// It happened to land on a working directory on the lab Dragon; nothing made
+/// that reproducible on the next one.
 async fn find_lib_dir(name: &str) -> Option<String> {
     let script = format!(
         "find /opt /usr/lib /usr/local/lib /qairt* \"$HOME\" \
          /usr/lib/python3*/dist-packages /usr/local/lib/python3*/dist-packages \
-         -maxdepth 8 -name {name} 2>/dev/null | head -1"
+         -maxdepth 8 -name {name} 2>/dev/null"
     );
     let out = Command::new("bash").arg("-c").arg(&script).output().await.ok()?;
-    let path = String::from_utf8_lossy(&out.stdout).trim().to_string();
-    if path.is_empty() {
-        return None;
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    rank_lib_dirs(stdout.lines())
+}
+
+/// Pick the best directory from `find` hits for a QNN `.so`. Split out from the
+/// shell-out so the ranking is testable; see `tests` below for the six-candidate
+/// case the lab Dragon actually presents.
+fn rank_lib_dirs<'a>(hits: impl Iterator<Item = &'a str>) -> Option<String> {
+    let dirs: Vec<&str> = hits
+        .map(str::trim)
+        .filter(|l| !l.is_empty())
+        .filter_map(|l| Path::new(l).parent()?.to_str())
+        // Wrong-platform builds are never a fallback — a mis-set
+        // LD_LIBRARY_PATH is worse than no LD_LIBRARY_PATH, because the failure
+        // surfaces as an opaque dlopen error at daemon start rather than as the
+        // clean "no libs" refusal.
+        .filter(|d| !d.contains("x86_64") && !d.contains("android") && !d.contains("windows"))
+        .collect();
+
+    // Preferred host triples first.
+    for want in QNN_HOST_LIB_DIRS {
+        if let Some(d) = dirs.iter().find(|d| d.ends_with(want)) {
+            return Some((*d).to_string());
+        }
     }
-    Path::new(&path).parent().map(|p| p.display().to_string())
+    // The DSP skel arrives through this same function and matches no host
+    // triple; its canonical home is the SDK's unsigned dir. Prefer that over a
+    // loose copy someone left in a working directory.
+    if let Some(d) = dirs.iter().find(|d| d.ends_with("hexagon-v68/unsigned")) {
+        return Some((*d).to_string());
+    }
+    dirs.iter()
+        .find(|d| d.contains("aarch64"))
+        .or_else(|| dirs.first())
+        .map(|d| (*d).to_string())
 }
 
 /// Can the dynamic loader resolve `name` with no help from us? `ldconfig -p`
@@ -1448,4 +1500,53 @@ fn migrate_applets_out_of_shipped_tree(cfg: &InstallConfig) -> Result<()> {
         ));
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::rank_lib_dirs;
+
+    /// The exact shape the lab Dragon presents: one QAIRT unpack, six copies of
+    /// `libQnnHtp.so`, emitted by `find` in filesystem order. The old `head -1`
+    /// took whichever came first, so a re-extract could silently hand the daemon
+    /// x86_64 or Android libraries.
+    #[test]
+    fn host_libs_never_resolve_to_the_wrong_platform() {
+        let base = "/qairt-extract/qairt/2.42.0.251225/lib";
+        // Deliberately worst-case order: the two unusable builds lead.
+        let hits = [
+            format!("{base}/x86_64-linux-clang/libQnnHtp.so"),
+            format!("{base}/aarch64-android/libQnnHtp.so"),
+            format!("{base}/aarch64-ubuntu-gcc9.4/libQnnHtp.so"),
+            format!("{base}/aarch64-oe-linux-gcc11.2/libQnnHtp.so"),
+            format!("{base}/aarch64-oe-linux-gcc9.3/libQnnHtp.so"),
+        ];
+        assert_eq!(
+            rank_lib_dirs(hits.iter().map(String::as_str)),
+            Some(format!("{base}/aarch64-oe-linux-gcc11.2")),
+            "must pick the variant proven on-device, not the first find hit"
+        );
+    }
+
+    /// The skel matches no host triple, and boxes accumulate loose copies next
+    /// to the context binaries. The SDK's unsigned dir is the canonical one.
+    #[test]
+    fn skel_prefers_the_sdk_dir_over_a_stray_copy() {
+        let hits = [
+            "/home/radxa/npu/libQnnHtpV68Skel.so",
+            "/qairt-extract/qairt/2.42.0.251225/lib/hexagon-v68/unsigned/libQnnHtpV68Skel.so",
+        ];
+        assert_eq!(
+            rank_lib_dirs(hits.into_iter()),
+            Some("/qairt-extract/qairt/2.42.0.251225/lib/hexagon-v68/unsigned".to_string())
+        );
+    }
+
+    /// An x86-only find result is "no usable libs", which must reach the caller
+    /// as None so install_qnn refuses rather than writing a broken unit.
+    #[test]
+    fn wrong_platform_only_is_not_a_fallback() {
+        let hits = ["/opt/qairt/lib/x86_64-linux-clang/libQnnHtp.so"];
+        assert_eq!(rank_lib_dirs(hits.into_iter()), None);
+    }
 }
