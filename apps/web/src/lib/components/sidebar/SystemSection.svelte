@@ -315,7 +315,12 @@
 			<span class="sidebar-label">{section.name}</span>
 
 			<span class="sidebar-item-actions">
-				{#if section.moreRoute}
+				<!-- The `···` only appears when the row itself CANNOT take you to
+				     the index. Once the row navigates, an overflow button
+				     pointing at the same route is a control whose entire function
+				     is to send you where you already are — which is exactly how
+				     it read: as a button that does nothing. -->
+				{#if section.moreRoute && !section.href}
 					<button class="sidebar-item-action" title="View All" onclick={handleMoreClick}>
 						<svg
 							width="14"
@@ -359,6 +364,7 @@
 								}}
 								{collapsed}
 								indent={1}
+								showIcon={false}
 								{accentColor}
 								isSystemItem={true}
 							/>
@@ -380,6 +386,7 @@
 									}}
 									{collapsed}
 									indent={1}
+								showIcon={false}
 									{accentColor}
 									isSystemItem={true}
 								/>
@@ -431,13 +438,30 @@
 		width: 16px;
 		height: 16px;
 		flex-shrink: 0;
-		overflow: hidden;
 		cursor: pointer;
 		padding: 0;
 		border: none;
 		background: none;
 		color: inherit;
 		border-radius: 3px;
+	}
+
+	/* The chevron must LOOK like its own target. The row navigates to the index
+	   and the chevron expands the list — two different outcomes from two places
+	   a few pixels apart, and without its own hover you cannot tell which one
+	   you are about to get. A box slightly larger than the glyph, filled on
+	   hover, is the whole affordance. */
+	.folder-toggle::after {
+		content: "";
+		position: absolute;
+		inset: -5px -4px;
+		border-radius: 4px;
+		background: transparent;
+		transition: background 120ms ease;
+	}
+
+	.folder-toggle:hover::after {
+		background: var(--sidebar-active-bg);
 	}
 
 	.folder-toggle:focus-visible {
@@ -449,6 +473,7 @@
 	.folder-toggle-chevron {
 		position: absolute;
 		inset: 0;
+		z-index: 1;
 		display: flex;
 		align-items: center;
 		justify-content: center;

@@ -8,7 +8,6 @@
 	import { chatSessions } from "$lib/stores/chatSessions.svelte";
 	import { iconPickerStore } from "$lib/stores/iconPicker.svelte";
 	import { getNotebookMenuItems } from "$lib/utils/contextMenuItems";
-	import { pinMenuItem } from "$lib/pins/pinAction";
 	import { isEmoji } from "$lib/utils/iconHelpers";
 	import type { ContextMenuItem } from "$lib/stores/contextMenu.svelte";
 	import type { SidebarNavItemData } from "./types";
@@ -25,6 +24,15 @@
 		onQuickAdd?: (e: MouseEvent) => void;
 		/** Tooltip for the quick-add button */
 		quickAddTitle?: string;
+		/**
+		 * Children of an expanded collection render without an icon.
+		 *
+		 * A notebook's icon next to a notebook's name, indented under a
+		 * Notebooks row that already has the same icon, is the icon said three
+		 * times. Indentation is what says "inside", and the label is what you
+		 * actually read — so the child rows drop the glyph and gain the space.
+		 */
+		showIcon?: boolean;
 	}
 
 	let {
@@ -35,6 +43,7 @@
 		accentColor = null,
 		onQuickAdd,
 		quickAddTitle,
+		showIcon = true,
 	}: Props = $props();
 
 	// Indent class for nested items
@@ -184,13 +193,6 @@
 		// Add "Add to Notebook" submenu
 		items.push(...getNotebookMenuItems(href));
 
-		// Pin to sidebar. Reaches every nav row — system destinations included,
-		// since "keep Wiki at the top where I can get at it" is exactly what
-		// pinning is for, and previously the only way to pin anything at all was
-		// to open it as a tab first.
-		items.push(
-			pinMenuItem({ url: href, label: item.label, icon: item.icon ?? null }),
-		);
 
 		// Add "Delete" option for deletable entities (pages, chats)
 		// Always available if the entity is a page or chat, regardless of isSystemItem
@@ -241,9 +243,9 @@
 		class:collapsed
 		title={collapsed ? item.label : undefined}
 	>
-		{#if item.icon && isEmoji(item.icon)}
+		{#if showIcon && item.icon && isEmoji(item.icon)}
 			<span class="sidebar-emoji">{item.icon}</span>
-		{:else if item.icon}
+		{:else if showIcon && item.icon}
 			<Icon icon={item.icon} width="16" class="sidebar-icon" />
 		{/if}
 		{#if !collapsed}
@@ -265,9 +267,9 @@
 		{#if accentColor && !collapsed}
 			<span class="sidebar-accent-dot" style="--dot-color: {accentColor}"></span>
 		{/if}
-		{#if item.icon && isEmoji(item.icon)}
+		{#if showIcon && item.icon && isEmoji(item.icon)}
 			<span class="sidebar-emoji">{item.icon}</span>
-		{:else if item.icon}
+		{:else if showIcon && item.icon}
 			<Icon icon={item.icon} width="16" class="sidebar-icon" />
 		{/if}
 		{#if !collapsed}

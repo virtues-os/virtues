@@ -25,32 +25,40 @@
 	// Both mistakes were the same mistake: the top of the sidebar is the most
 	// valuable space in the app, and putting a *control* there spends it.
 	//
-	// So: the mark returns and is inert — no hover, no cursor, no tab stop. It
-	// is the one place the serif appears in the chrome, which concentrates the
-	// typographic identity in a single deliberate spot instead of spreading it
-	// thin. Search sits below it as an ordinary row, borderless, with its hint
-	// revealed on hover rather than pinned open.
+	// So: one row. The mark on the left, inert — no hover, no cursor, no tab
+	// stop — and search as a small icon button flexed to the right of it. The
+	// mark is the one place the serif appears in the chrome, which concentrates
+	// the typographic identity in a single deliberate spot instead of spreading
+	// it thin.
+	//
+	// `virtues` is set at the SAME size as the nav labels below. A wordmark that
+	// is bigger than everything around it is a logo demanding attention, and
+	// this one has no job to do beyond saying whose desk this is. The serif and
+	// the ∴ carry the identity; scale would just make it loud.
 	const hint = $derived(isAppleKeyboard ? "⌘K" : "Ctrl K");
 </script>
 
 <div class="masthead" class:collapsed>
-	<!-- Inert. aria-hidden because "∴ virtues" read aloud between the window
-	     title and the first destination is noise, not information. -->
-	<div class="mark animate-row" style="animation-delay: {animationDelay}ms" aria-hidden="true">
-		<span class="mark-glyph">∴</span><span class="mark-word">virtues</span>
-	</div>
-
-	<button
-		type="button"
-		class="search-row animate-row"
-		style="animation-delay: {animationDelay + 30}ms"
-		onclick={() => onSearch?.()}
-		aria-label="Search"
+	<div
+		class="masthead-row animate-row"
+		style="animation-delay: {animationDelay}ms"
 	>
-		<Icon icon="ri:search-line" width="15" />
-		<span class="search-label">Search</span>
-		<kbd>{hint}</kbd>
-	</button>
+		<!-- Inert. aria-hidden because "∴ virtues" read aloud between the window
+		     title and the first destination is noise, not information. -->
+		<div class="mark" aria-hidden="true">
+			<span class="mark-glyph">∴</span><span class="mark-word">virtues</span>
+		</div>
+
+		<button
+			type="button"
+			class="search-btn"
+			onclick={() => onSearch?.()}
+			aria-label="Search"
+			title="Search ({hint})"
+		>
+			<Icon icon="ri:search-line" width="16" />
+		</button>
+	</div>
 </div>
 
 <style>
@@ -65,42 +73,41 @@
 		}
 	}
 
-	/* Two things have to agree for the seam to read straight, and only fixing
-	   one of them fixes nothing:
-	     · the row HEIGHT (--chrome-row-h), previously 30 here and 40 there;
-	     · the row's OFFSET from the top of the window. The pane is a card inset
-	       by --pane-inset; the sidebar is full-bleed. Matching heights while the
-	       sidebar started 13px higher left the centrelines exactly as far apart
-	       as before. */
-	/* The mark occupies the chrome row, so it and the pane toolbar share a
-	   centreline across the seam; search sits below in the panel proper. */
+	/* One chrome row, shared height with the pane toolbar so the two sides of
+	   the seam sit on one centreline. */
 	.masthead {
 		padding: 0 8px;
 		margin-top: var(--pane-inset);
-		display: flex;
-		flex-direction: column;
 		box-sizing: border-box;
+	}
+
+	.masthead-row {
+		display: flex;
+		align-items: center;
+		justify-content: space-between;
+		gap: 8px;
+		height: var(--chrome-row-h);
+		padding-left: var(--sidebar-padding-left-base);
 	}
 
 	.mark {
 		display: flex;
-		align-items: center;
+		align-items: baseline;
 		gap: 6px;
-		height: var(--chrome-row-h);
-		padding: 0 calc(var(--sidebar-padding-left-base) - 8px + 2px);
 		user-select: none;
 		color: var(--color-foreground);
 	}
 
 	.mark-glyph {
 		font-family: var(--font-serif, serif);
-		font-size: 17px;
+		font-size: 15px;
 		line-height: 1;
 	}
 
+	/* Same size as the nav labels. See the note in the script block. */
 	.mark-word {
 		font-family: var(--font-serif, serif);
-		font-size: 15px;
+		font-size: var(--sidebar-interactive-font-size);
 		line-height: 1;
 		letter-spacing: 0.01em;
 	}
@@ -118,78 +125,38 @@
 		animation: fadeSlideIn 200ms var(--ease-premium) backwards;
 	}
 
-	/* A row, not a field. No border — a border would be the only hard edge in
-	   the panel and would make search the loudest thing on the desk. It matches
-	   the nav rows below it in height, padding and radius, so it reads as the
-	   first row of the list rather than as a control bolted above it. */
-	.search-row {
+	.search-btn {
 		display: flex;
 		align-items: center;
-		gap: var(--sidebar-interactive-gap);
-		width: 100%;
-		height: var(--sidebar-interactive-height);
-		padding: 0 var(--sidebar-padding-left-base);
-		margin-left: -2px;
+		justify-content: center;
+		width: 24px;
+		height: 24px;
+		flex-shrink: 0;
 		border: none;
 		border-radius: var(--sidebar-interactive-radius);
 		background: transparent;
-		color: var(--color-foreground-subtle);
-		font: inherit;
-		font-size: var(--sidebar-interactive-font-size);
-		text-align: left;
-		cursor: pointer;
-		transition:
-			background 150ms ease,
-			color 150ms ease;
-	}
-
-	.search-row :global(svg) {
+		color: var(--color-foreground-muted);
 		opacity: var(--sidebar-icon-opacity);
+		cursor: pointer;
+		transition: background 150ms ease, opacity 150ms ease;
 	}
 
-	.search-row:hover {
+	.search-btn:hover {
 		background: var(--sidebar-hover-bg);
-		color: var(--color-foreground);
-	}
-
-	.search-row:hover :global(svg) {
 		opacity: 1;
 	}
 
-	.search-row:focus-visible {
+	.search-btn:focus-visible {
+		opacity: 1;
 		outline: 2px solid var(--color-border-focus);
 		outline-offset: 1px;
-	}
-
-	.search-label {
-		flex: 1;
-		min-width: 0;
-	}
-
-	/* Revealed on hover, not pinned open. A shortcut hint is a reminder for the
-	   moment you're reaching for the thing — permanently visible, it is one more
-	   object competing for attention every time you look at the panel. Bare
-	   type, no filled chip, for the same reason. */
-	kbd {
-		font-family: var(--font-mono, monospace);
-		font-size: 10px;
-		line-height: 1;
-		letter-spacing: 0.02em;
-		color: var(--color-foreground-disabled);
-		opacity: 0;
-		transition: opacity 150ms ease;
-	}
-
-	.search-row:hover kbd,
-	.search-row:focus-visible kbd {
-		opacity: 1;
 	}
 
 	@media (prefers-reduced-motion: reduce) {
 		.animate-row {
 			animation: none;
 		}
-		.search-row {
+		.search-btn {
 			transition: none;
 		}
 	}

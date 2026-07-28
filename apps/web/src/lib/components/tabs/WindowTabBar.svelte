@@ -18,7 +18,6 @@
 	import { updatePage, updateChat } from "$lib/api/client";
 	import { pagesStore } from "$lib/stores/pages.svelte";
 	import { pinsStore } from "$lib/stores/pins.svelte";
-	import { pinMenuItem } from "$lib/pins/pinAction";
 	import { paneActions } from "$lib/stores/paneActions.svelte";
 	import { modifierHint } from "$lib/stores/modifierHint.svelte";
 	import { chatSessions } from "$lib/stores/chatSessions.svelte";
@@ -235,17 +234,6 @@
 			});
 		}
 
-		// Pin / Unpin to sidebar (any tab with a route). Shared with every other
-		// surface that can pin — see lib/pins/pinAction.
-		if (tab.route) {
-			items.push(
-				pinMenuItem({
-					url: tab.route,
-					label: tab.label,
-					icon: tab.icon ?? null,
-				}),
-			);
-		}
 
 		// Divider + Close actions
 		items.push({
@@ -579,15 +567,16 @@
 		display: flex;
 		align-items: stretch;
 		gap: 4px;
-		/* No bottom padding: the tabs sit ON the bottom edge. */
 		padding: 0 8px;
 		min-height: var(--chrome-row-h);
-		align-items: flex-end;
+		align-items: center;
 		border-bottom: 1px solid var(--color-border);
-		/* The strip is desk, not page. This is the whole premise of the tab
-		   model every browser uses: the strip recedes, and the active tab
-		   reads as a hole cut in it revealing the page beneath. */
-		background: var(--color-desk);
+		/* Page colour, not a recessed strip. The browser model needs the strip
+		   to be darker so the active tab can read as a hole cut in it — but a
+		   recessed band next to a large recessed sidebar made the whole left
+		   half of the window a slab. Pills carry the state instead, so the strip
+		   has no reason to be a different colour from what it sits on. */
+		background: var(--color-surface);
 		flex-shrink: 0;
 		position: relative;
 		z-index: var(--z-overlay); /* Above global drag overlays */
@@ -599,16 +588,15 @@
 		border-top-right-radius: var(--card-radius, 6px);
 	}
 
-	/* The focused pane's strip lifts a touch toward its page — still recessed,
-	   but less so, so "which pane am I in" is legible from the chrome and not
-	   only from the tab. */
+	/* The focused pane's strip lifts a touch, so "which pane am I in" is legible
+	   from the chrome and not only from the tab. */
 	.tab-bar.active-pane {
-		background: color-mix(in srgb, var(--color-surface) 35%, var(--color-desk));
+		background: var(--color-surface-elevated);
 	}
 
 	.tabs-scroll {
 		display: flex;
-		align-items: flex-end;
+		align-items: center;
 		gap: 2px;
 		overflow-x: auto;
 		flex: 1;
@@ -620,22 +608,21 @@
 		display: none;
 	}
 
-	/* Bottom-anchored, rounded top, square bottom — the shape every browser
-	   uses, and the reason it works is that the tab TOUCHES the bottom of the
-	   strip. A vertically-centred tab floats and reads as a chip that happens
-	   to be nearby; that centring is exactly why the old tabs looked like they
-	   were awkwardly grazing the top of their container. Contact is the point,
-	   it just has to be contact with the right edge. */
+	/* A pill. Inset, rounded on all four corners, centred in the strip with real
+	   air above and below. Both alternatives were tried and rejected: the
+	   full-height container needed a recessed strip it never had, and the
+	   bottom-anchored browser tab needed one badly enough to turn the sidebar
+	   into a slab. A pill states what it is and costs nothing around it. */
 	.tab {
 		display: flex;
 		align-items: center;
 		gap: 6px;
 		padding: 0 10px;
-		align-self: flex-end;
+		align-self: center;
 		position: relative;
-		height: var(--chrome-tab-h);
+		height: 28px;
 		border: none;
-		border-radius: 8px 8px 0 0;
+		border-radius: 6px;
 		background: transparent;
 		color: var(--color-foreground-muted);
 		font-size: 12px;
@@ -655,25 +642,19 @@
 		color: var(--color-foreground);
 	}
 
-	/* The active tab takes the PAGE's colour, not a grey fill — that is what
-	   makes it read as a cutout rather than a highlighted chip. It also sits
-	   1px below the strip's bottom border so it covers that border across its
-	   own width, which is the join. Cover the seam and the tab and the pane are
-	   one surface; leave it and the tab is a box resting on a line. */
+	/* Fill from the interaction ramp, not a surface token. A surface token is
+	   what made the active tab #FFFFFF on #FFFFFF; the ramp is defined against
+	   the text colour, so it is legible in all sixteen themes. */
 	.tab.active {
-		background: var(--color-surface);
+		background: var(--tab-active-bg-focused);
 		color: var(--color-foreground);
 		font-weight: 500;
-		margin-bottom: -1px;
-		padding-bottom: 1px;
 	}
 
-	/* An unfocused pane's active tab stops short of the full page colour: it is
-	   still the tab you'd return to, but it isn't the surface you're working
-	   on. In split view two tabs are "active" at once and only one of them
-	   takes your typing. */
+	/* In split view two tabs are "active" at once and only one takes your
+	   typing. The unfocused pane's sits at the lighter step. */
 	.tab.active:not(.active-in-active-pane) {
-		background: color-mix(in srgb, var(--color-surface) 65%, var(--color-desk));
+		background: var(--tab-active-bg);
 		color: var(--color-foreground-muted);
 	}
 
@@ -728,13 +709,15 @@
 		transition: transform 140ms cubic-bezier(0.2, 0, 0, 1);
 	}
 
+	/* Same face and size as the label it replaces. It was monospace, which is
+	   decoration standing in for meaning — the shortcut isn't code, and a
+	   different typeface for one word makes the swap read as a glitch rather
+	   than as the same label saying something else. */
 	.tab-label-hint {
 		position: absolute;
 		inset: 0;
 		transform: translateY(100%);
-		font-family: var(--font-mono, monospace);
-		font-size: 11px;
-		letter-spacing: 0.02em;
+		font-weight: 600;
 		color: var(--color-foreground);
 	}
 
