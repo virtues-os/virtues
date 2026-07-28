@@ -39,6 +39,7 @@ pub mod models;
 pub mod narrative_identity_gen;
 pub mod pages;
 pub mod personas;
+pub mod history;
 pub mod pins;
 pub mod search_local;
 pub mod things;
@@ -177,6 +178,10 @@ pub use pages::{
 pub use places::{
     autocomplete, get_place_details, AutocompletePrediction, AutocompleteRequest,
     AutocompleteResponse, PlaceDetailsRequest, PlaceDetailsResponse,
+};
+pub use history::{
+    clear_history, forget_url, list_history, record_visit, HistoryEntry, HistoryQuery,
+    RecordVisitRequest,
 };
 pub use search_local::{search_local, LocalSearchRequest, LocalSearchResponse};
 pub use pins::{

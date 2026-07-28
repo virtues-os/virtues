@@ -3298,6 +3298,57 @@ pub async fn search_local_handler(
 }
 
 // ============================================================================
+// History Handlers (sidebar "Recents")
+// ============================================================================
+
+/// POST /api/history — record a visit. Always 204: a history write must never
+/// be able to interrupt navigation, so a failure is logged, not surfaced.
+pub async fn record_visit_handler(
+    State(state): State<AppState>,
+    Json(request): Json<crate::api::RecordVisitRequest>,
+) -> Response {
+    if let Err(e) = crate::api::record_visit(state.db.pool(), request).await {
+        tracing::warn!("failed to record visit: {e}");
+    }
+    StatusCode::NO_CONTENT.into_response()
+}
+
+/// POST /api/history/list — collapsed history, most recent first.
+///
+/// POST because the filter carries kinds and a time window, and because a GET
+/// would put the shape of someone's browsing into the URL and its logs.
+pub async fn list_history_handler(
+    State(state): State<AppState>,
+    Json(query): Json<crate::api::HistoryQuery>,
+) -> Response {
+    api_response(crate::api::list_history(state.db.pool(), query).await)
+}
+
+/// DELETE /api/history — clear it all.
+pub async fn clear_history_handler(State(state): State<AppState>) -> Response {
+    match crate::api::clear_history(state.db.pool()).await {
+        Ok(_) => success_message("History cleared"),
+        Err(e) => error_response(e),
+    }
+}
+
+/// POST /api/history/forget — drop every visit to one url.
+pub async fn forget_url_handler(
+    State(state): State<AppState>,
+    Json(request): Json<ForgetUrlRequest>,
+) -> Response {
+    match crate::api::forget_url(state.db.pool(), &request.url).await {
+        Ok(_) => success_message("Forgotten"),
+        Err(e) => error_response(e),
+    }
+}
+
+#[derive(serde::Deserialize)]
+pub struct ForgetUrlRequest {
+    pub url: String,
+}
+
+// ============================================================================
 // Pins Handlers (sidebar pinned URLs)
 // ============================================================================
 

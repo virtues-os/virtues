@@ -234,6 +234,71 @@ export async function searchLocal(
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// App history (sidebar "Recents")
+// ─────────────────────────────────────────────────────────────────────────────
+
+export interface HistoryEntry {
+	url: string;
+	label: string | null;
+	icon: string | null;
+	kind: string | null;
+	visited_at: string;
+	visit_count: number;
+}
+
+export interface HistoryQuery {
+	kinds?: string[];
+	since?: string;
+	limit?: number;
+}
+
+/**
+ * Record a visit. Deliberately swallows failures: history is a convenience, and
+ * nothing about navigating should be able to fail because of it.
+ */
+export async function recordVisit(entry: {
+	url: string;
+	label?: string | null;
+	icon?: string | null;
+	kind?: string | null;
+}): Promise<void> {
+	try {
+		await fetch(`${API_BASE}/history`, {
+			method: 'POST',
+			headers: { 'Content-Type': 'application/json' },
+			body: JSON.stringify(entry),
+			keepalive: true,
+		});
+	} catch {
+		/* history is best-effort by design */
+	}
+}
+
+export async function listHistory(query: HistoryQuery = {}): Promise<HistoryEntry[]> {
+	const res = await fetch(`${API_BASE}/history/list`, {
+		method: 'POST',
+		headers: { 'Content-Type': 'application/json' },
+		body: JSON.stringify(query),
+	});
+	if (!res.ok) throw new Error(`Failed to list history: ${res.statusText}`);
+	return res.json();
+}
+
+export async function clearHistory(): Promise<void> {
+	const res = await fetch(`${API_BASE}/history`, { method: 'DELETE' });
+	if (!res.ok) throw new Error(`Failed to clear history: ${res.statusText}`);
+}
+
+export async function forgetHistoryUrl(url: string): Promise<void> {
+	const res = await fetch(`${API_BASE}/history/forget`, {
+		method: 'POST',
+		headers: { 'Content-Type': 'application/json' },
+		body: JSON.stringify({ url }),
+	});
+	if (!res.ok) throw new Error(`Failed to forget: ${res.statusText}`);
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Sidebar pins
 // ─────────────────────────────────────────────────────────────────────────────
 

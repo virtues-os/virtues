@@ -712,6 +712,13 @@ pub async fn run(client: Virtues, host: &str, port: u16) -> Result<()> {
                 .patch(api::update_thing_handler)
                 .delete(api::delete_thing_handler),
         )
+        // Sidebar history API ("Recents")
+        .route(
+            "/api/history",
+            post(api::record_visit_handler).delete(api::clear_history_handler),
+        )
+        .route("/api/history/list", post(api::list_history_handler))
+        .route("/api/history/forget", post(api::forget_url_handler))
         // Sidebar pins API
         .route(
             "/api/pins",

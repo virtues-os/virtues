@@ -15,6 +15,7 @@
  */
 
 import {
+	recordVisit,
 	type ViewEntity
 } from '$lib/api/client';
 import {
@@ -252,6 +253,29 @@ class WindowShellStore {
 		} else {
 			replaceState(url, {});
 		}
+
+		this.noteVisit();
+	}
+
+	/**
+	 * Record where we just went, for the sidebar's Recents.
+	 *
+	 * Hangs off `syncActiveToUrl` because that is the one place every kind of
+	 * navigation converges — opening a tab, switching tabs, in-tab back/forward,
+	 * deep links. Its early-returns are exactly the ones history wants too: no
+	 * row while the shell is restoring state, and none when the url didn't
+	 * actually change (re-focusing the tab you're already on isn't a visit).
+	 */
+	private noteVisit(): void {
+		const tab = this.activeTab;
+		if (!tab?.route || tab.route === '/') return;
+
+		void recordVisit({
+			url: tab.route,
+			label: tab.label,
+			icon: tab.icon ?? null,
+			kind: tab.type ?? null,
+		});
 	}
 
 	handleDeepLink(path: string, rightRoute: string | null): void {
