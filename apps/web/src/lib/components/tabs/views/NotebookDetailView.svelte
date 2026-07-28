@@ -9,6 +9,7 @@
 	import RefPicker from '$lib/components/RefPicker.svelte';
 	import IconPicker from '$lib/components/IconPicker.svelte';
 	import UniversalDataGrid, { type Column } from '$lib/components/datagrid/UniversalDataGrid.svelte';
+	import type { FilterDef } from '$lib/components/datagrid/types';
 	import { Popover } from '$lib/floating';
 	import { confirmAction } from '$lib/stores/dialog.svelte';
 	import { toast } from 'svelte-sonner';
@@ -59,7 +60,6 @@
 	// of three unconnected nodes cost the top of the page to say less than a row
 	// of chips does.
 	let graph = $state<NotebookGraph>({ nodes: [], edges: [] });
-	let selectedEntity = $state<string | null>(null);
 
 	async function loadGraph() {
 		const id = notebookId;
@@ -78,15 +78,6 @@
 	$effect(() => {
 		if (notebookId) loadGraph();
 	});
-	// A filter pinned to an entity that no longer has a node would silently hide
-	// every row; drop it when the graph changes underneath us.
-	$effect(() => {
-		if (selectedEntity && !graph.nodes.some((n) => n.url === selectedEntity)) {
-			selectedEntity = null;
-		}
-	});
-
-	const selectedNode = $derived(graph.nodes.find((n) => n.url === selectedEntity) ?? null);
 
 	// Chats filed into this room — sourced from the authoritative session list,
 	// not from membership rows, so removing a member can't desync a chat.
@@ -262,11 +253,34 @@
 		return [...members, ...chats];
 	});
 
-	// The graph is a filter over this list — that's what earns it the top slot.
-	const rows = $derived.by(() => {
-		if (!selectedNode) return allRows;
-		const keep = new Set(selectedNode.item_urls);
-		return allRows.filter((r) => keep.has(r.url));
+	/**
+	 * The entity facets, expressed as one of the grid's own filters instead of a
+	 * bespoke chip rail above it. They were a second filtering surface in a
+	 * second visual language sitting 40px from the first — same job, nothing
+	 * shared. As a filter they get the grid's chip, its clear affordance and its
+	 * active-count badge for free.
+	 */
+	const nodeMembers = $derived(new Map(graph.nodes.map((n) => [n.url, new Set(n.item_urls)])));
+
+	const entityFilters = $derived.by<FilterDef<MemberRow>[]>(() => {
+		if (graph.nodes.length === 0) return [];
+		return [
+			{
+				id: 'entity',
+				kind: 'multi',
+				label: 'Mentions',
+				options: graph.nodes.map((n) => ({
+					value: n.url,
+					label: n.name,
+					icon: iconForUrl(n.url)
+				})),
+				predicate: (row, value) => {
+					const urls = Array.isArray(value) ? value : value ? [value] : [];
+					if (urls.length === 0) return true;
+					return urls.some((u) => nodeMembers.get(u)?.has(row.url));
+				}
+			}
+		];
 	});
 
 	/**
@@ -332,11 +346,55 @@
 		await loadGraph();
 	}
 
+	/**
+	 * Manual order. `app_notebook_items.sort_order` has always existed, has
+	 * always been the list's ORDER BY, and has never been settable from the UI —
+	 * so the notebook could only ever be in the order things happened to arrive.
+	 *
+	 * Order is also the only structure a notebook has that the user authors
+	 * rather than derives: groups come from properties, this comes from you.
+	 */
+	async function moveTo(url: string, edge: 'top' | 'bottom') {
+		const id = notebookId;
+		if (!id || !detail) return;
+		// The whole membership must go in the payload — reorder rewrites the list,
+		// so anything omitted would be dropped from the cached detail.
+		const rest = detail.items.map((i) => i.url).filter((u) => u !== url);
+		const next = edge === 'top' ? [url, ...rest] : [...rest, url];
+		try {
+			await notebookStore.reorderItems(id, next);
+			await load(true);
+		} catch (e) {
+			console.error('[NotebookDetailView] reorder failed:', e);
+			toast.error('Could not move that item');
+		}
+	}
+
 	function rowMenu(row: MemberRow, e: MouseEvent) {
 		e.preventDefault();
 		const items = [
 			{ id: 'open', label: 'Open', icon: 'ri:external-link-line', action: () => openUrl(row.url) }
 		];
+		// Chats are sourced from the session list, not from membership rows, so
+		// there is no sort_order of theirs to set.
+		const isMember = memberItems.some((i) => i.url === row.url);
+		if (isMember && memberItems.length > 1) {
+			items.push(
+				{
+					id: 'top',
+					label: 'Move to top',
+					icon: 'ri:skip-up-line',
+					dividerBefore: true,
+					action: () => moveTo(row.url, 'top')
+				} as (typeof items)[number],
+				{
+					id: 'bottom',
+					label: 'Move to bottom',
+					icon: 'ri:skip-down-line',
+					action: () => moveTo(row.url, 'bottom')
+				} as (typeof items)[number]
+			);
+		}
 		items.push({
 			id: 'remove',
 			label: 'Remove from notebook',
@@ -391,14 +449,30 @@
 		await loadGraph();
 	}
 
-	// ---- Title + description: always live, no edit mode ----------------------
+	// ---- Title + brief: always live, no edit mode ----------------------------
+	/**
+	 * The subtitle is the notebook's *brief* (`instructions`), not its memo.
+	 *
+	 * There are two text fields on a notebook and the wrong one was on screen.
+	 * `instructions` is a standing direction the assistant is told to follow in
+	 * every chat in this notebook — a real input — and it had no UI at all.
+	 * `current_status` is a transient catch-up note, and it was occupying the
+	 * header labelled "description".
+	 *
+	 * No auto-generated summary: the member list is directly below and fully
+	 * legible, so a generated description would only restate what's visible.
+	 * What can't be derived is what the notebook is *for*.
+	 */
 	let nameDraft = $state('');
+	let briefDraft = $state('');
 	let memoDraft = $state('');
 	let nameFocused = $state(false);
+	let briefFocused = $state(false);
 	let memoFocused = $state(false);
 	$effect(() => {
 		if (!detail) return;
 		if (!nameFocused) nameDraft = detail.name;
+		if (!briefFocused) briefDraft = detail.instructions ?? '';
 		if (!memoFocused) memoDraft = detail.current_status ?? '';
 	});
 
@@ -415,6 +489,15 @@
 		await notebookStore.update(id, { name });
 	}
 
+	async function commitBrief() {
+		briefFocused = false;
+		const id = notebookId;
+		if (!id || !detail) return;
+		const brief = briefDraft.trim() || null;
+		if (brief === (detail.instructions ?? null)) return;
+		await notebookStore.update(id, { instructions: brief });
+	}
+
 	async function commitMemo() {
 		memoFocused = false;
 		const id = notebookId;
@@ -423,6 +506,11 @@
 		if (memo === (detail.current_status ?? null)) return;
 		await notebookStore.update(id, { current_status: memo });
 	}
+
+	/** The memo is only on screen when it has something to say — otherwise it's
+	 *  a second empty field competing with the brief. Adding one is a menu item. */
+	let memoOpen = $state(false);
+	const showMemo = $derived(memoOpen || !!detail?.current_status);
 
 	// ---- Icon ----------------------------------------------------------------
 	let iconOpen = $state(false);
@@ -522,18 +610,37 @@
 						></textarea>
 						<textarea
 							class="desc-input"
-							bind:value={memoDraft}
+							bind:value={briefDraft}
 							rows="1"
-							placeholder="Add a description — what this notebook is for. It also gives the assistant context."
-							onfocus={() => (memoFocused = true)}
-							onblur={commitMemo}
+							placeholder="What this notebook is for. The assistant follows this in every chat here."
+							onfocus={() => (briefFocused = true)}
+							onblur={commitBrief}
 							onkeydown={(e) => {
 								if (e.key === 'Escape') {
-									memoDraft = detail?.current_status ?? '';
+									briefDraft = detail?.instructions ?? '';
 									e.currentTarget.blur();
 								}
 							}}
 						></textarea>
+						{#if showMemo}
+							<label class="memo">
+								<span class="memo-label font-mono">Where I left off</span>
+								<textarea
+									class="memo-input"
+									bind:value={memoDraft}
+									rows="1"
+									placeholder="A note to yourself about the current state."
+									onfocus={() => (memoFocused = true)}
+									onblur={commitMemo}
+									onkeydown={(e) => {
+										if (e.key === 'Escape') {
+											memoDraft = detail?.current_status ?? '';
+											e.currentTarget.blur();
+										}
+									}}
+								></textarea>
+							</label>
+						{/if}
 					</div>
 
 					<div class="head-actions">
@@ -545,6 +652,17 @@
 							{/snippet}
 							{#snippet children({ close }: { close: () => void })}
 								<div class="menu">
+									{#if !showMemo}
+										<button
+											class="menu-item"
+											onclick={() => {
+												close();
+												memoOpen = true;
+											}}
+										>
+											<Icon icon="ri:sticky-note-line" width="15" /> Add a status note
+										</button>
+									{/if}
 									<button
 										class="menu-item danger"
 										onclick={() => {
@@ -578,26 +696,6 @@
 				</button>
 			</form>
 
-			{#if graph.nodes.length > 0}
-				<div class="facets" aria-label="Filter by entity">
-					{#each graph.nodes as node (node.url)}
-						<button
-							class="facet"
-							class:on={selectedEntity === node.url}
-							onclick={() => (selectedEntity = selectedEntity === node.url ? null : node.url)}
-							aria-pressed={selectedEntity === node.url}
-						>
-							<Icon icon={iconForUrl(node.url)} width="13" />
-							{node.name}
-							<span class="facet-n font-mono">{node.item_urls.length}</span>
-						</button>
-					{/each}
-					{#if selectedEntity}
-						<button class="facet clear" onclick={() => (selectedEntity = null)}>Clear</button>
-					{/if}
-				</div>
-			{/if}
-
 			<section class="grid-section">
 				{#if allRows.length === 0}
 					<button class="add-row" onclick={openPicker}>
@@ -605,13 +703,15 @@
 					</button>
 				{:else}
 					<UniversalDataGrid
-						items={rows}
+						items={allRows}
 						{columns}
 						entityType="notebook-item"
 						emptyIcon="ri:filter-line"
-						emptyMessage="No members reference that entity"
+						emptyMessage="No members match that filter"
 						searchPlaceholder="Search this notebook…"
 						selectable
+						filters={entityFilters}
+						rowIcon={(row) => row.icon}
 						onItemClick={(row) => openUrl(row.url)}
 						onItemContextMenu={rowMenu}
 					>
@@ -644,11 +744,10 @@
 						{/snippet}
 
 						{#snippet tableRow(row: MemberRow)}
+							<!-- No icon here: it moved into the grid's leading column, where it
+							     shares a slot with the select box. -->
 							<td class="c-name">
-								<span class="name-cell">
-									<Icon icon={row.icon} width="15" />
-									<span class="name-text">{row.name}</span>
-								</span>
+								<span class="name-text">{row.name}</span>
 							</td>
 							{#if anyStatus}
 								<td class="c-dim hide-mobile">
@@ -676,9 +775,11 @@
 									<Icon icon={row.icon} width="15" />
 								</span>
 								<span class="nb-card-name">{row.name}</span>
-								<span class="nb-card-meta font-mono">
-									{row.kind}{row.status !== '—' ? ` · ${row.status}` : ''}
-								</span>
+								<!-- Not the kind: the glyph above says it, and when the cards are
+								     grouped by Kind the column header says it a third time. -->
+								{#if row.status !== '—'}
+									<span class="nb-card-meta font-mono">{row.status}</span>
+								{/if}
 							</div>
 						{/snippet}
 					</UniversalDataGrid>
@@ -754,6 +855,22 @@
 	.desc-input:focus { color: var(--color-foreground); }
 	.title-input::placeholder, .desc-input::placeholder { color: var(--color-foreground-subtle); }
 
+	/* The memo is a note to self, not identity — labelled so it can't be
+	   mistaken for the brief above it, and quieter than both. */
+	.memo { display: flex; align-items: baseline; gap: 8px; margin-top: 0.45rem; }
+	.memo-label {
+		flex-shrink: 0; font-size: 10px; letter-spacing: 0.06em;
+		text-transform: uppercase; color: var(--color-foreground-subtle);
+	}
+	.memo-input {
+		flex: 1; min-width: 0; display: block; resize: none; overflow: hidden;
+		border: none; background: transparent; outline: none; padding: 0;
+		field-sizing: content;
+		font: inherit; font-size: 0.85rem; line-height: 1.5;
+		color: var(--color-foreground-muted);
+	}
+	.memo-input::placeholder { color: var(--color-foreground-subtle); }
+
 	.props {
 		font-size: 11px; letter-spacing: 0.04em; text-transform: uppercase;
 		color: var(--color-foreground-subtle); padding-left: 60px;
@@ -769,30 +886,36 @@
 	.menu-item:hover { background: var(--color-surface-elevated); }
 	.menu-item.danger { color: var(--color-error, #dc2626); }
 
-	/* Ask bar */
+	/* Ask bar — a line, not a slab.
+	   It was the largest, highest-contrast object on the page and the least
+	   important one: a filled 46px card with its own radius and shadow, sitting
+	   above the content it asks about. It's an entry point, so it gets one rule
+	   and the weight of a caption until you're actually in it. */
 	.ask {
-		display: flex; align-items: center; gap: 10px; height: 46px;
-		padding: 0 6px 0 14px;
-		border: 1px solid var(--color-border); border-radius: 12px;
-		background: var(--color-surface-elevated);
-		transition: border-color 120ms, box-shadow 120ms;
+		display: flex; align-items: center; gap: 8px; height: 34px;
+		padding: 0;
+		border-bottom: 1px solid var(--color-border);
+		transition: border-color 120ms;
 	}
-	.ask:focus-within {
-		border-color: color-mix(in srgb, var(--color-foreground-subtle) 55%, var(--color-border));
-		box-shadow: 0 0 0 3px color-mix(in srgb, var(--color-foreground-subtle) 13%, transparent);
-	}
+	.ask:focus-within { border-bottom-color: var(--color-foreground-subtle); }
 	.ask > :global(svg) { color: var(--color-foreground-subtle); flex-shrink: 0; }
 	.ask-input {
 		flex: 1; min-width: 0; border: none; background: transparent; outline: none;
-		font: inherit; font-size: 0.95rem; color: var(--color-foreground);
+		font: inherit; font-size: 0.875rem; color: var(--color-foreground);
 	}
 	.ask-input::placeholder { color: var(--color-foreground-subtle); }
+	/* The send affordance only exists once there's something to send — an
+	   always-on filled button was the loudest pixel on the page for a control
+	   that does nothing 99% of the time. Return works regardless. */
 	.ask-send {
-		display: grid; place-items: center; width: 32px; height: 32px; flex-shrink: 0;
-		border: none; border-radius: 9px; cursor: pointer;
-		background: var(--color-foreground); color: var(--color-background, #fff);
+		display: grid; place-items: center; width: 24px; height: 24px; flex-shrink: 0;
+		border: none; border-radius: 6px; cursor: pointer;
+		background: transparent; color: var(--color-foreground-muted);
+		opacity: 0; transition: opacity 120ms, background-color 120ms;
 	}
-	.ask-send:disabled { opacity: 0.35; cursor: default; }
+	.ask-send:hover { background: var(--color-surface-elevated); color: var(--color-foreground); }
+	.ask-send:not(:disabled) { opacity: 1; }
+	.ask-send:disabled { cursor: default; pointer-events: none; }
 
 	/* The add control sits in the grid's own toolbar, so the page no longer
 	   carries a section header whose only job was to host it. */
@@ -817,30 +940,15 @@
 	.add-row:hover { color: var(--color-foreground); border-color: var(--color-primary); }
 
 	/* Grid cells */
-	.c-name { padding: 0.5rem 0.75rem; padding-left: 0; }
+	/* Matches the grid's own `th` padding so the column label sits over its
+	   values. The name cell used to start flush left to make room for the row
+	   icon; the icon has its own column now, so it aligns like any other. */
+	.c-name { padding: 0.5rem 0.75rem; }
 	.c-dim { padding: 0.5rem 0.75rem; color: var(--color-foreground-muted); }
-	.name-cell { display: inline-flex; align-items: center; gap: 0.55rem; min-width: 0; }
-	.name-cell :global(svg) { flex-shrink: 0; color: var(--color-foreground-subtle); }
-	.name-text { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 450; }
-	/* Entity facets — what the graph band used to be, at an eighth the height. */
-	.facets { display: flex; flex-wrap: wrap; gap: 6px; }
-	.facet {
-		display: inline-flex; align-items: center; gap: 6px;
-		padding: 3px 10px; border-radius: 999px;
-		border: 1px solid var(--color-border); background: transparent;
-		font: inherit; font-size: 0.75rem; color: var(--color-foreground-muted); cursor: pointer;
+	.name-text {
+		display: block; overflow: hidden; text-overflow: ellipsis;
+		white-space: nowrap; font-weight: 450;
 	}
-	.facet :global(svg) { color: var(--color-foreground-subtle); flex-shrink: 0; }
-	.facet:hover { border-color: var(--color-foreground-subtle); color: var(--color-foreground); }
-	.facet.on {
-		background: color-mix(in srgb, var(--color-primary) 12%, transparent);
-		border-color: color-mix(in srgb, var(--color-primary) 38%, transparent);
-		color: var(--color-primary);
-	}
-	.facet.on :global(svg), .facet.on .facet-n { color: inherit; }
-	.facet:focus-visible { outline: 2px solid var(--color-primary); outline-offset: 1px; }
-	.facet-n { font-size: 0.5625rem; color: var(--color-foreground-subtle); }
-	.facet.clear { border-style: dashed; color: var(--color-foreground-subtle); }
 
 	.bulk-btn {
 		border: 1px solid var(--color-border); border-radius: 6px;
