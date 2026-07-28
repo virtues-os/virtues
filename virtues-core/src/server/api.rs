@@ -3313,6 +3313,22 @@ pub async fn set_channel_handler(
     api_response(crate::api::set_channel(request))
 }
 
+/// POST /api/system/update/apply — start an upgrade.
+///
+/// 202, not 200: the work has been handed to a transient systemd unit and is
+/// still running when this returns. It cannot be otherwise — the upgrade
+/// restarts this very process, so a handler that waited for the result would be
+/// killed before it could report one. The client's next signal is the
+/// connection dropping and coming back.
+///
+/// Runs it detached and answers immediately for the same reason.
+pub async fn apply_update_handler() -> Response {
+    match crate::api::apply_update() {
+        Ok(body) => (StatusCode::ACCEPTED, Json(body)).into_response(),
+        Err(e) => api_response::<crate::api::ApplyResponse>(Err(e)),
+    }
+}
+
 // ============================================================================
 // History Handlers (sidebar "Recents")
 // ============================================================================

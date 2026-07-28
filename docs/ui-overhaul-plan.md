@@ -457,17 +457,38 @@ New `api/updates.rs`:
 
 - `GET /api/system/update` → `{current, channel, available: {tag, notes}|null}`
 - `PUT /api/system/update/channel`
-- `POST /api/system/update/apply`
+- `POST /api/system/update/apply` — 202, not 200. The upgrade restarts the
+  process serving the request, so no handler can report its result.
 
-**Privilege — decided.** The server runs as `virtues`; upgrade needs root. A
-narrow sudoers grant for exactly `/usr/local/bin/virtues upgrade`, installed by
-the installer. There's precedent for both halves — `upgrade.rs:321` already
-removes a stale setup grant, so the install/cleanup pattern exists.
+**`systemd-run` is mandatory, not stylistic.** `upgrade` does
+`systemctl stop virtues` → flip → migrate → `systemctl start virtues`, and the
+server *is* `virtues.service`. A plain child process inherits the service
+cgroup, so stopping the unit kills the upgrade itself — midway, with the
+symlink possibly already flipped and migrations not yet run. It would reliably
+kill itself at its most dangerous moment. The transient unit gets its own
+cgroup and survives.
 
-Constraints on the grant, since this is standing root-adjacent surface on an
-appliance: the grant covers that one binary path and that one subcommand, takes
-no user-supplied arguments (channel comes from the state-root file, not the
-request), and is removed on uninstall.
+**Privilege — the premise was wrong.** This called for installing a narrow
+sudoers grant. The installer *already* writes
+`/etc/sudoers.d/virtues: virtues ALL=(ALL) NOPASSWD: ALL`
+([install.rs:672](../tools/virtues-installer/src/install.rs)) — unrestricted
+passwordless root for the service account, deliberately, because the auth-gated
+web terminal is an admin shell and `virtues` is a passwordless system account
+with nothing to authenticate against interactively.
+
+So apply needed **no installer change at all**: the capability was already
+there. And adding the narrow grant anyway would have been worse than useless —
+it would sit *alongside* the broad one rather than replacing it, and read as if
+the surface were narrower than it is.
+
+The constraint that does still hold, and is implemented: **no user-supplied
+argument reaches the command line.** The argv is fixed; the channel comes from
+the state-root file that `virtues upgrade` reads itself, never from the request.
+
+Worth stating plainly since it is now load-bearing: an RCE in the web server is
+an instant root compromise on the box. That was already true before this change
+— apply doesn't widen it — but narrowing the terminal's grant is real work that
+someone should own.
 
 ### Phase 3 — Settings → Box
 

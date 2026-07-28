@@ -293,6 +293,22 @@ pub enum Commands {
         only: Option<String>,
     },
 
+    /// Show or set the release channel this box follows.
+    ///
+    /// With no argument, prints the current channel. With one, persists it to
+    /// the state root, so `virtues upgrade` follows that line from then on
+    /// without needing `--pre` every time — which is the whole point: `--pre`
+    /// is a one-off override and forgets itself, so a box meant to track
+    /// staging silently drifted back to stable the first time anyone typed a
+    /// bare `virtues upgrade`.
+    ///
+    /// Accepts `stable` or `prerelease` (`pre`, `edge` and `nightly` are taken
+    /// as prerelease — they are what people actually type).
+    Channel {
+        /// The channel to follow. Omit to print the current one.
+        channel: Option<String>,
+    },
+
     /// Flip back to the previous release slot and restart.
     ///
     /// The atomic inverse of `upgrade`: one symlink flip restores binary +
