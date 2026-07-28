@@ -200,7 +200,7 @@
 	<!-- No section header. "PINNED" in 11px uppercase with 0.06em tracking was
 	     a heavier label than the two-to-six items under it, and it made the
 	     group read as another system section rather than as the user's own.
-	     A hairline says where the group ends; that is all it needs. -->
+	     Space says where the group ends; that is all it needs. -->
 	<div class="pinned-section" class:collapsed aria-label="Pinned">
 		<ul bind:this={listEl} class="pin-list" class:icons={effectiveDisplay === 'icons'}>
 			{#each pins as pin, index (pin.id)}
@@ -222,7 +222,7 @@
 						onkeydown={(e) => onKeyDown(e, index)}
 						oncontextmenu={(e) => showContextMenu(e, pin, index)}
 					>
-						<Icon icon={pin.icon ?? 'ri:pushpin-line'} width="14" />
+						<Icon icon={pin.icon ?? 'ri:pushpin-line'} width="16" class="sidebar-icon" />
 						{#if effectiveDisplay === 'list'}
 							<span class="pin-label">{pin.label ?? pin.url}</span>
 						{/if}
@@ -234,18 +234,24 @@
 {/if}
 
 <style>
-	/* A hairline instead of a header. The group needs separating from the nav
-	   below it, not naming — the ribbons already say whose these are. */
+	/* Space, not a rule. Separation goes whitespace first, and you stop at the
+	   first thing that reads — a 1px line is the reflex that produces a boxed,
+	   machine-made panel. Nothing else in this sidebar draws a rule; this group
+	   doesn't need to be the exception. */
 	.pinned-section {
 		display: flex;
 		flex-direction: column;
-		gap: 0.125rem;
-		padding: 0.25rem 0.375rem 0.5rem;
-		margin-bottom: 0.375rem;
-		border-bottom: 1px solid var(--color-border-subtle, var(--color-border));
+		gap: var(--sidebar-item-gap);
+		/* No horizontal padding: .workspace-nav already insets its children by
+		   8px, and .system-section (the nav rows below) adds none. Adding 8px
+		   here double-inset the pins, putting them 8px right of the rows they
+		   stack above — the kind of near-miss the eye reads as sloppiness
+		   without being able to name it. */
+		padding: 0;
+		margin-bottom: 16px;
 	}
 	.pinned-section.collapsed {
-		padding: 0.25rem 0.25rem 0.5rem;
+		padding: 0;
 	}
 
 	.pin-list {
@@ -281,9 +287,10 @@
 	.pin-row {
 		display: flex;
 		align-items: center;
-		gap: 0.5rem;
+		gap: var(--sidebar-interactive-gap);
 		width: 100%;
-		padding: 0.3125rem 0.5rem;
+		height: var(--sidebar-interactive-height);
+		padding: 0 var(--sidebar-padding-left-base);
 		background: transparent;
 		border: none;
 		border-radius: 4px;
@@ -296,7 +303,7 @@
 	.pin-row.icon-only {
 		width: auto;
 		justify-content: center;
-		padding: 0.375rem;
+		padding: 0 8px;
 	}
 
 

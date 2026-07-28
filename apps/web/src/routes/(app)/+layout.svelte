@@ -333,7 +333,7 @@
 <DialogHost />
 
 <div
-	class="app-shell flex h-screen w-full bg-desk"
+	class="app-shell flex h-screen w-full bg-surface-elevated"
 	class:mobile-shell={mobileLayout.isMobile}
 	style="background-image: var(--surface-elevated-image); background-size: var(--surface-elevated-size);"
 >

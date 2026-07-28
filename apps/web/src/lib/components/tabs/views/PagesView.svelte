@@ -6,7 +6,6 @@
 	import { contextMenu } from "$lib/stores/contextMenu.svelte";
 	import type { ContextMenuItem } from "$lib/stores/contextMenu.svelte";
 	import { getNotebookMenuItems } from "$lib/utils/contextMenuItems";
-	import { pinMenuItem } from "$lib/pins/pinAction";
 	import { confirmAction } from "$lib/stores/dialog.svelte";
 	import { Page, Button } from "$lib";
 	import { onMount } from "svelte";
@@ -103,11 +102,6 @@
 				},
 			},
 			...getNotebookMenuItems(`/page/${page.id}`),
-			// Same pin action as the tab bar and the sidebar rows.
-			pinMenuItem(
-				{ url: `/page/${page.id}`, label: page.title, icon: "ri:file-text-line" },
-				{ dividerBefore: false },
-			),
 			{
 				id: "delete",
 				label: "Delete",

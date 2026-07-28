@@ -6,7 +6,6 @@
 	import WorkspaceHeader from "./WorkspaceHeader.svelte";
 	import SidebarFooter from "./SidebarFooter.svelte";
 	import SystemSection from "./SystemSection.svelte";
-	import PinnedSection from "./PinnedSection.svelte";
 	import { SECTION_GROUPS } from "$lib/sidebar/sections";
 	import SearchModal from "./SearchModal.svelte";
 	import SidebarModePanel from "./SidebarModePanel.svelte";
@@ -240,11 +239,6 @@
 			{:else if sidebarMode.active && !isCollapsed}
 				<SidebarModePanel mode={sidebarMode.active} stagger={STAGGER_DELAY} />
 			{:else}
-				<!-- Pinned sits above the system destinations: it's the user's own
-				     list, and burying their choices under ours had it read as an
-				     afterthought. Renders nothing when empty, so a new box still
-				     opens on Home. -->
-				<PinnedSection collapsed={isCollapsed} />
 
 				<!-- System destinations, grouped nouns-vs-verbs (from constants).
 				     The sidebar is a stable contents-page, not a mode rail. -->
