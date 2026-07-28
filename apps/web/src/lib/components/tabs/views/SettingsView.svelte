@@ -31,7 +31,7 @@
 	import type { Tab } from '$lib/tabs/types';
 	import { windowShellStore } from '$lib/stores/window-shell.svelte';
 	import { isMacOS } from '$lib/utils/platform';
-	import SubNav, { type SubNavItem } from '$lib/components/SubNav.svelte';
+	import UpdateSection from '$lib/components/settings/UpdateSection.svelte';
 
 	import ProfileView from '$lib/components/tabs/views/ProfileView.svelte';
 	import AssistantView from '$lib/components/tabs/views/AssistantView.svelte';
@@ -110,47 +110,17 @@
 	);
 	const sub = $derived(raw.split('/')[1] ?? '');
 
-	const primary = $derived<SubNavItem[]>([
-		{ id: 'you', label: 'You' },
-		{ id: 'assistant', label: 'Assistant' },
-		{ id: 'sources', label: 'Sources' },
-		{ id: 'billing', label: 'Billing' },
-		{ id: 'box', label: 'Box' },
-		{ id: 'devices', label: 'Devices' },
-		...(isMacOS ? [{ id: 'this-mac', label: 'This Mac' }] : []),
-		{ id: 'developer', label: 'Developer' },
-	]);
 
-	const developerSub: SubNavItem[] = [
-		{ id: 'sql', label: 'SQL' },
-		{ id: 'terminal', label: 'Terminal' },
-		{ id: 'lake', label: 'Lake' },
-		{ id: 'telemetry', label: 'Telemetry' },
-		{ id: 'activity', label: 'Activity' },
-	];
 </script>
 
+<!--
+	No SubNav. The sidebar carries this nav now (lib/sidebar/modes.ts) — keeping
+	the horizontal row too would mean two navigations for one set of sections,
+	side by side, disagreeing about which is in charge. Removing it is also what
+	retires the second underline row Developer used to add, which was the
+	original complaint.
+-->
 <div class="settings-view">
-	<SubNav
-		tabId={tab.id}
-		route={tab.route}
-		base="/virtues"
-		default="you"
-		items={primary}
-		ariaLabel="Settings sections"
-	/>
-
-	{#if section === 'developer'}
-		<SubNav
-			tabId={tab.id}
-			route={tab.route}
-			base="/virtues/developer"
-			default="sql"
-			items={developerSub}
-			ariaLabel="Developer sections"
-		/>
-	{/if}
-
 	<main class="content">
 		{#if section === 'you'}
 			<ProfileView {tab} {active} />
@@ -167,6 +137,7 @@
 				<UsageTab {tab} {active} />
 			</div>
 		{:else if section === 'box'}
+			<UpdateSection />
 			<SystemInfoView {tab} {active} />
 		{:else if section === 'devices'}
 			<DevicesView {tab} {active} />

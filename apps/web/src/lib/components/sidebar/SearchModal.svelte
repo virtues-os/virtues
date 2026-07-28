@@ -7,6 +7,7 @@
 	import { askVirtues } from "$lib/stores/pendingPrompt.svelte";
 	import { pagesStore } from "$lib/stores/pages.svelte";
 	import { notebookStore } from "$lib/stores/notebook.svelte";
+	import { searchLocal, type LocalSearchHit } from "$lib/api/client";
 	import {
 		getAvailableThemes,
 		getThemeDisplayName,
@@ -196,6 +197,53 @@
 	const showAsk = $derived(!scope && effectiveQuery.trim().length > 0);
 	const askOffset = $derived(showAsk ? 1 : 0);
 
+	// ── Content hits ────────────────────────────────────────────────────────
+	// Everything above this line matches *objects* the client already holds, so
+	// it's instant. Content lives on the box and needs a round trip, so it
+	// arrives late and sits in its own group — never interleaved with the
+	// objects. The two rank on incomparable scales; merging them by score is
+	// the score-scale schism the IR notes warn about.
+	let contentHits = $state<LocalSearchHit[]>([]);
+	let contentLoading = $state(false);
+	let contentSeq = 0;
+
+	$effect(() => {
+		const q = effectiveQuery.trim();
+		// `#scope` tokens filter the object lists, which content search has no
+		// equivalent for — so a scoped query asks for objects only.
+		if (!open || scope || q.length < 2) {
+			contentHits = [];
+			contentLoading = false;
+			return;
+		}
+
+		const seq = ++contentSeq;
+		const controller = new AbortController();
+		contentLoading = true;
+
+		// 180ms: long enough that ordinary typing issues one request per pause
+		// rather than one per keystroke, short enough to feel immediate.
+		const timer = setTimeout(async () => {
+			try {
+				const res = await searchLocal(q, { limit: 6, signal: controller.signal });
+				// Out-of-order responses: a slower earlier request must not
+				// overwrite a newer one's results.
+				if (seq === contentSeq) contentHits = res.hits;
+			} catch (err) {
+				if ((err as Error)?.name !== "AbortError" && seq === contentSeq) {
+					contentHits = [];
+				}
+			} finally {
+				if (seq === contentSeq) contentLoading = false;
+			}
+		}, 180);
+
+		return () => {
+			clearTimeout(timer);
+			controller.abort();
+		};
+	});
+
 	// One flat, ordered list of selectable rows — the single source of truth for
 	// keyboard nav and Enter. Order must match the render order below.
 	type Row =
@@ -203,14 +251,27 @@
 		| { kind: "action"; item: (typeof quickActions)[number] }
 		| { kind: "chat"; item: (typeof chatSessions.sessions)[number] }
 		| { kind: "page"; item: (typeof pagesStore.pages)[number] }
-		| { kind: "notebook"; item: (typeof notebookStore.notebooks)[number] };
+		| { kind: "notebook"; item: (typeof notebookStore.notebooks)[number] }
+		| { kind: "content"; item: LocalSearchHit };
 	const orderedRows = $derived.by<Row[]>(() => [
 		...(showAsk ? [{ kind: "ask" } as Row] : []),
 		...filteredResults.actions.map((item) => ({ kind: "action", item }) as Row),
 		...filteredResults.chats.map((item) => ({ kind: "chat", item }) as Row),
 		...filteredResults.pages.map((item) => ({ kind: "page", item }) as Row),
 		...filteredResults.notebooks.map((item) => ({ kind: "notebook", item }) as Row),
+		// Last: content arrives asynchronously, and rows appearing *above* the
+		// selection would move it out from under the user mid-keystroke.
+		...contentHits.map((item) => ({ kind: "content", item }) as Row),
 	]);
+
+	/** Index of the first content row, for the render block's numbering. */
+	const contentOffset = $derived(
+		askOffset +
+			filteredResults.actions.length +
+			filteredResults.chats.length +
+			filteredResults.pages.length +
+			filteredResults.notebooks.length,
+	);
 	const totalResults = $derived(orderedRows.length);
 
 	function handleKeydown(e: KeyboardEvent) {
@@ -228,6 +289,17 @@
 		} else if (e.key === "ArrowUp") {
 			e.preventDefault();
 			selectedIndex = Math.max(selectedIndex - 1, 0);
+		} else if (e.key === "Tab") {
+			// Tab asks, from anywhere in the list — the two things you can want
+			// from a query get one key each, instead of both hiding behind Enter
+			// and whichever row happened to be selected. preventDefault is
+			// load-bearing: Tab's default is focus-next, which would leave the
+			// input and strand the palette.
+			e.preventDefault();
+			const q = effectiveQuery.trim();
+			if (!q) return;
+			askVirtues(q);
+			onClose();
 		} else if (e.key === "Enter") {
 			e.preventDefault();
 			selectCurrentItem();
@@ -283,6 +355,13 @@
 				});
 				onClose();
 				break;
+			case "content":
+				windowShellStore.openTabFromRoute(
+					`/record/${row.item.ontology}/${row.item.record_id}`,
+					{ label: row.item.title || row.item.ontology },
+				);
+				onClose();
+				break;
 		}
 	}
 
@@ -317,10 +396,20 @@
 	});
 
 	// Keep the highlighted row valid as the result set changes with the query.
+	//
+	// Lands on the first *navigable* row, not on Ask. Enter is the common case —
+	// "take me to the thing I'm typing the name of" — and defaulting to Ask made
+	// the palette answer a question nobody had asked yet. Ask keeps its row (and
+	// its click target); it's just no longer what Enter means. With nothing to
+	// navigate to, Ask is the only row and gets the selection by default.
 	$effect(() => {
 		void searchQuery;
-		selectedIndex = 0;
+		selectedIndex = defaultIndex();
 	});
+
+	function defaultIndex(): number {
+		return orderedRows.length > askOffset ? askOffset : 0;
+	}
 
 	// Focus input when modal is open and input is available
 	$effect(() => {
@@ -563,11 +652,57 @@
 					</div>
 				{/if}
 
-				{#if totalResults === 0 && searchQuery}
+				<!-- Content: matched text inside indexed records. Its own group,
+				     below the objects — see the note on orderedRows. -->
+				{#if contentHits.length > 0}
+					<div class="result-group">
+						<span class="group-label">In your records</span>
+						{#each contentHits as hit, i}
+							{@const index = contentOffset + i}
+							<button
+								class="result-item content-item"
+								class:selected={selectedIndex === index}
+								data-result-index={index}
+								onclick={() => {
+									windowShellStore.openTabFromRoute(
+										`/record/${hit.ontology}/${hit.record_id}`,
+										{ label: hit.title || hit.ontology },
+									);
+									onClose();
+								}}
+								onmouseenter={() => (selectedIndex = index)}
+							>
+								<Icon icon="ri:file-text-line" width="16" class="result-icon" />
+								<span class="content-text">
+									<span class="result-label">{hit.title || "Untitled"}</span>
+									{#if hit.preview}
+										<span class="content-preview">{hit.preview}</span>
+									{/if}
+								</span>
+								<span class="content-ontology">{hit.ontology}</span>
+							</button>
+						{/each}
+					</div>
+				{/if}
+
+				<!-- Only honest once the async half has settled: saying "no
+				     results" while content is still in flight is a lie that
+				     corrects itself a moment later. -->
+				{#if totalResults === 0 && searchQuery && !contentLoading}
 					<div class="no-results">
 						<span>No results found for "{searchQuery}"</span>
 					</div>
 				{/if}
+			</div>
+
+			<!-- Tab's whole discoverability. Nothing about a text field suggests
+			     Tab does anything but move focus, so the split has to be stated
+			     or it doesn't exist. -->
+			<div class="palette-hints">
+				<span class="hint"><kbd>↵</kbd> open</span>
+				<span class="hint"><kbd>⇥</kbd> ask</span>
+				<span class="hint hint-nav"><kbd>↑↓</kbd> navigate</span>
+				<span class="hint"><kbd>esc</kbd> close</span>
 			</div>
 			{/if}
 		</div>
@@ -702,6 +837,73 @@
 		white-space: nowrap;
 		overflow: hidden;
 		text-overflow: ellipsis;
+	}
+
+	.palette-hints {
+		display: flex;
+		align-items: center;
+		gap: 14px;
+		padding: 8px 14px;
+		border-top: 1px solid var(--color-border);
+		font-size: 11px;
+		color: var(--color-foreground-subtle);
+		user-select: none;
+	}
+
+	.hint {
+		display: inline-flex;
+		align-items: center;
+		gap: 5px;
+	}
+
+	.palette-hints kbd {
+		font-family: var(--font-sans);
+		font-size: 11px;
+		line-height: 1;
+		padding: 2px 5px;
+		border-radius: 4px;
+		background: color-mix(in srgb, var(--color-foreground) 8%, transparent);
+		color: var(--color-foreground-muted);
+	}
+
+	/* Arrow keys are the least surprising of the four — first to go when the
+	   palette is narrow. */
+	@media (max-width: 480px) {
+		.hint-nav {
+			display: none;
+		}
+	}
+
+	/* Content rows carry a second line, so they can't be a single flex row of
+	   nowrap text like the object rows above. */
+	.content-item {
+		align-items: flex-start;
+	}
+
+	.content-text {
+		display: flex;
+		flex-direction: column;
+		gap: 2px;
+		min-width: 0;
+		flex: 1;
+	}
+
+	.content-preview {
+		font-size: 12px;
+		color: var(--color-foreground-subtle);
+		display: -webkit-box;
+		-webkit-line-clamp: 2;
+		line-clamp: 2;
+		-webkit-box-orient: vertical;
+		overflow: hidden;
+	}
+
+	.content-ontology {
+		font-size: 11px;
+		color: var(--color-foreground-subtle);
+		font-family: var(--font-mono, monospace);
+		flex-shrink: 0;
+		align-self: center;
 	}
 
 	.result-shortcut {

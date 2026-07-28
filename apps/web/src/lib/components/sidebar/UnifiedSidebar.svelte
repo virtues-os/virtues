@@ -7,8 +7,12 @@
 	import SidebarFooter from "./SidebarFooter.svelte";
 	import SystemSection from "./SystemSection.svelte";
 	import PinnedSection from "./PinnedSection.svelte";
-	import { SECTION_GROUPS } from "$lib/sidebar/sections";
+	import RecentsSection from "./RecentsSection.svelte";
+	import { SECTION_GROUPS, HOME_ROUTE } from "$lib/sidebar/sections";
 	import SearchModal from "./SearchModal.svelte";
+	import SidebarModePanel from "./SidebarModePanel.svelte";
+	import { sidebarMode } from "$lib/stores/sidebarMode.svelte";
+	import { shortcuts } from "$lib/shortcuts/registry.svelte";
 
 	// Collapsed state from shared store (also consumed by WindowTabBar)
 	const isCollapsed = $derived(sidebarState.collapsed);
@@ -31,47 +35,55 @@
 				storeReady = true;
 			});
 
-		window.addEventListener("keydown", handleKeydown);
-
-		return () => {
-			window.removeEventListener("keydown", handleKeydown);
-		};
+		// Global shortcuts live in the registry, not in a hand-rolled if-chain.
+		// Besides discoverability, the registry matches modifiers exactly — the
+		// old chain tested `metaKey && key === 's'` without excluding Shift, so
+		// ⌘⇧S collapsed the sidebar as a side effect.
+		return shortcuts.register(
+			{
+				id: "chat.new-temporary",
+				keys: "mod+shift+t",
+				label: "New temporary chat",
+				group: "Create",
+				run: handleNewTemporaryChat,
+			},
+			{
+				id: "page.new",
+				keys: "mod+shift+n",
+				label: "New page",
+				group: "Create",
+				run: handleNewPage,
+			},
+			{
+				id: "chat.new",
+				keys: "mod+n",
+				label: "New chat",
+				group: "Create",
+				run: handleNewChat,
+			},
+			{
+				id: "sidebar.toggle",
+				keys: "mod+s",
+				label: "Show or hide the sidebar",
+				group: "Window",
+				run: toggleCollapse,
+			},
+			{
+				id: "search.toggle",
+				keys: "mod+k",
+				label: "Ask or search",
+				group: "Window",
+				run: toggleSearch,
+			},
+			{
+				id: "wiki.open",
+				keys: "mod+w",
+				label: "Open the wiki",
+				group: "Go to",
+				run: handleWikiOverview,
+			},
+		);
 	});
-
-	function handleKeydown(e: KeyboardEvent) {
-		// Cmd+Shift+T - New temporary (ghost) chat
-		if ((e.metaKey || e.ctrlKey) && e.shiftKey && e.key.toLowerCase() === "t") {
-			e.preventDefault();
-			handleNewTemporaryChat();
-			return;
-		}
-		// Cmd+Shift+N - New page
-		if ((e.metaKey || e.ctrlKey) && e.shiftKey && e.key.toLowerCase() === "n") {
-			e.preventDefault();
-			handleNewPage();
-			return;
-		}
-		// Cmd+N or Ctrl+N - New chat
-		if ((e.metaKey || e.ctrlKey) && e.key === "n") {
-			e.preventDefault();
-			handleNewChat();
-		}
-		// Cmd+S or Ctrl+S - Toggle sidebar collapse
-		if ((e.metaKey || e.ctrlKey) && e.key === "s") {
-			e.preventDefault();
-			toggleCollapse();
-		}
-		// Cmd+K or Ctrl+K - Toggle search/command center
-		if ((e.metaKey || e.ctrlKey) && e.key === "k") {
-			e.preventDefault();
-			toggleSearch();
-		}
-		// Cmd+W or Ctrl+W - Open wiki overview
-		if ((e.metaKey || e.ctrlKey) && e.key === "w") {
-			e.preventDefault();
-			handleWikiOverview();
-		}
-	}
 
 	function handleSearch() {
 		isSearchOpen = true;
@@ -83,6 +95,13 @@
 
 	function closeSearch() {
 		isSearchOpen = false;
+	}
+
+	function handleHome() {
+		windowShellStore.openTabFromRoute(HOME_ROUTE, {
+			label: "Home",
+			focusExisting: true,
+		});
 	}
 
 	function handleWikiOverview() {
@@ -125,6 +144,18 @@
 	// Stagger delay per item
 	const STAGGER_DELAY = 30;
 
+	// Running offset of each group's first row, so the waterfall reads as one
+	// continuous fall down the panel rather than restarting per group. Slot 1
+	// is the masthead, so nav rows start at 2 and land under it rather than
+	// alongside it. The footer sits at slot 10, after the longest nav list.
+	const GROUP_OFFSETS = SECTION_GROUPS.reduce<number[]>(
+		(acc, group) => [...acc, acc[acc.length - 1] + group.items.length],
+		[2],
+	);
+
+	const navDelay = (groupIndex: number, itemIndex: number) =>
+		(GROUP_OFFSETS[groupIndex] + itemIndex) * STAGGER_DELAY;
+
 	// Tailwind utility class strings
 	const sidebarClass = $derived.by(() =>
 		[
@@ -146,7 +177,7 @@
 	<!-- Book Spine: When collapsed, show expand button on hover -->
 	{#if isCollapsed}
 		<button
-			class="sidebar-expand-button group absolute top-0 left-0 w-[36px] z-30 flex h-full cursor-pointer items-center justify-center border-none bg-transparent"
+			class="sidebar-expand-button group absolute top-0 left-0 w-[14px] z-30 flex h-full cursor-pointer items-center justify-center border-none bg-transparent"
 			onclick={toggleCollapse}
 			aria-label="Expand sidebar"
 		>
@@ -172,6 +203,8 @@
 			collapsed={isCollapsed}
 			animationDelay={STAGGER_DELAY}
 			onSearch={handleSearch}
+			onNewChat={handleNewChat}
+			onHome={handleHome}
 		/>
 
 		<nav
@@ -183,26 +216,40 @@
 					<Icon icon="ri:loader-4-line" width="16" class="spinner" />
 					<span>Loading...</span>
 				</div>
+			{:else if sidebarMode.active && !isCollapsed}
+				<SidebarModePanel mode={sidebarMode.active} stagger={STAGGER_DELAY} />
 			{:else}
-				<!-- Pinned (user-curated; renders nothing when empty) -->
+				<!-- Pinned sits above the system destinations: it's the user's own
+				     list, and burying their choices under ours had it read as an
+				     afterthought. Renders nothing when empty, so a new box still
+				     opens on Home. -->
 				<PinnedSection collapsed={isCollapsed} />
 
 				<!-- System destinations, grouped nouns-vs-verbs (from constants).
 				     The sidebar is a stable contents-page, not a mode rail. -->
-				{#each SECTION_GROUPS as group (group.id)}
+				{#each SECTION_GROUPS as group, groupIndex (group.id)}
 					<div class="nav-group">
 						{#if group.label && !isCollapsed}
 							<div class="nav-group-header">{group.label}</div>
 						{/if}
-						{#each group.items as section (section.id)}
+						{#each group.items as section, itemIndex (section.id)}
 							<SystemSection
 								{section}
 								collapsed={isCollapsed}
 								accentColor={null}
+								animationDelay={navDelay(groupIndex, itemIndex)}
 							/>
 						{/each}
 					</div>
 				{/each}
+
+				<!-- Recents last: it's the longest and most volatile list here, so
+				     it goes where growth doesn't push the fixed destinations
+				     around. -->
+				<RecentsSection
+					collapsed={isCollapsed}
+					animationDelay={9 * STAGGER_DELAY}
+				/>
 			{/if}
 		</nav>
 
@@ -226,27 +273,36 @@
 		/* Transition handled by Tailwind classes on parent */
 	}
 
-	/* Hover zone extends through the mini state + page padding area */
+	/* Hover zone. Deliberately narrow: the pane toolbar's own sidebar-toggle
+	   sits immediately to the right, so a wide zone gets swiped through on the
+	   way to that button and the peek fires when nobody asked for it. 14px is
+	   the window edge and nothing else. */
 	.sidebar-collapsed::before {
 		content: "";
 		position: absolute;
 		top: 0;
 		left: 0;
-		width: 36px; /* 20px mini state + padding area */
+		width: 14px;
 		height: 100%;
 		z-index: 20;
 		pointer-events: auto;
 		cursor: pointer;
 	}
 
-	/* On hover, expand to show the open icon */
-	.sidebar-collapsed:hover {
-		width: 20px;
-	}
-
-	/* Show icon when sidebar is hovered */
+	/* The peek reveals the icon; it must NOT change width. The collapsed aside
+	   is a flex child, so any width here shoves the whole pane sideways — which
+	   is exactly the shift that made the toolbar's toggle button crawl away
+	   from the cursor as you reached for it. The expand button is absolutely
+	   positioned, so opacity alone is enough to show it. */
 	.sidebar-collapsed:hover .sidebar-expand-icon {
 		opacity: 1;
+		transition-delay: 120ms; /* intent delay — a pass-through shouldn't flash */
+	}
+
+	@media (prefers-reduced-motion: reduce) {
+		.sidebar-collapsed:hover .sidebar-expand-icon {
+			transition-delay: 0ms;
+		}
 	}
 
 	@keyframes fadeSlideIn {

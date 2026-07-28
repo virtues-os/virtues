@@ -43,6 +43,8 @@ tauri-plugin-notification = "2"
 # would fail to bind :7117. macOS is single-instance natively (LaunchServices).
 tauri-plugin-single-instance = "2"
 dirs = "5"
+# Updater endpoints are typed as Url; needed to swap channels at runtime.
+url = "2"
 keyring = "3"
 # In-process iroh reach (pair + :7117 loopback) — replaces the retired
 # virtues-client proxy sidecar on desktop. Same crate the mobile app uses.

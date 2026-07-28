@@ -192,6 +192,16 @@
 	--sidebar-indent-width: 12px;
 	--sidebar-transition-duration: 150ms;
 	--sidebar-transition-easing: var(--ease-premium);
+	/* Interaction ramp. One definition for every hover/press in the app.
+	   Components used to reach for whichever surface token looked close —
+	   usually --color-surface-elevated — which is #F5F5F5 on a #FFFFFF parent
+	   in the default theme: a shift small enough to read as nothing happening.
+	   A foreground mix stays legible in all sixteen themes because it's defined
+	   against the text colour, not against another surface. */
+	--hover-bg: color-mix(in srgb, var(--color-foreground) 7%, transparent);
+	--active-bg: color-mix(in srgb, var(--color-foreground) 12%, transparent);
+	--press-bg: color-mix(in srgb, var(--color-foreground) 16%, transparent);
+
 	--sidebar-hover-bg: color-mix(in srgb, var(--color-foreground) 7%, transparent);
 	--sidebar-active-bg: color-mix(in srgb, var(--color-foreground) 9%, transparent);
 	--sidebar-item-gap: 4px;
@@ -848,65 +858,6 @@
 	--background-inverse: #000000;
 }
 
-/* ===================================
-   GATSBY
-   Jazz age vivid glamour
-   =================================== */
-[data-theme="gatsby"] {
-	/* Code Syntax Highlighting (Monokai) */
-	--shiki-theme: monokai;
-
-	/* Surface Colors - Dark olive-gray */
-	--background: #272822;
-	--surface: #2d2a2e;
-	--surface-elevated: #3e3d32;
-	--surface-overlay: #414339;
-
-	/* Content Colors */
-	--foreground: #F8F8F2;
-	--foreground-muted: #CFCFC2;
-	--foreground-subtle: #908E82;
-	--foreground-disabled: #75715E;
-
-	/* Interactive Colors - Monokai pink */
-	--primary: #F92672;
-	--primary-hover: #FA4D8A;
-	--primary-active: #E01E5E;
-	--primary-subtle: #3D1528;
-
-	--secondary: #F8F8F2;
-	--secondary-hover: #FFFFFF;
-	--secondary-active: #E8E8E2;
-
-	/* Status Colors */
-	--success: #A6E22E;
-	--success-subtle: #2A3D0E;
-	--warning: #E6DB74;
-	--warning-subtle: #3D3820;
-	--error: #F92672;
-	--error-subtle: #3D1528;
-	--info: #66D9EF;
-	--info-subtle: #1A363D;
-
-	/* Diff Colors - Monokai green/pink */
-	--diff-add: #A6E22E;
-	--diff-add-bg: #2A3D0E;
-	--diff-remove: #F92672;
-	--diff-remove-bg: #3D1528;
-
-	/* Border Colors */
-	--border: #49483E;
-	--border-subtle: #3E3D32;
-	--border-strong: #5E5D50;
-	--border-focus: #F92672;
-
-	/* Selection/Highlight - Yellow tinted */
-	--highlight: #49483E;
-	--highlight-foreground: #F8F8F2;
-
-	/* Background Inverse */
-	--background-inverse: #272822;
-}
 
 /* ===================================
    THE LYCEUM
@@ -1249,7 +1200,6 @@
 [data-theme="narnia"],
 [data-theme="canterbury"],
 [data-theme="borghese"],
-[data-theme="gatsby"],
 [data-theme="lyceum"],
 [data-theme="asgard"],
 [data-theme="agora"],
@@ -1286,7 +1236,6 @@
 [data-theme="narnia"],
 [data-theme="canterbury"],
 [data-theme="borghese"],
-[data-theme="gatsby"],
 [data-theme="lyceum"],
 [data-theme="asgard"],
 [data-theme="agora"],

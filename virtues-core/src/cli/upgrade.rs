@@ -34,16 +34,26 @@ pub async fn run(
     force: bool,
     only: Option<String>,
 ) -> Result<(), crate::Error> {
+    // Resolution order: explicit --version, then --pre as a one-off override,
+    // then whatever channel this box is set to follow. `--pre` deliberately
+    // still works without touching the stored channel — it's the "just this
+    // once" escape hatch, and making it sticky would surprise anyone who has
+    // used it before.
+    let channel = super::channel::current();
     let target_tag = match version {
         Some(v) => v,
-        None if pre => fetch_latest_prerelease().await?,
+        None if pre || channel == super::channel::Channel::Prerelease => {
+            fetch_latest_prerelease().await?
+        }
         None => fetch_latest_tag().await?,
     };
+    let following_pre = pre || channel == super::channel::Channel::Prerelease;
     let current = env!("CARGO_PKG_VERSION");
     let target = target_tag.trim_start_matches('v');
 
     ui::section("Upgrade");
     ui::kv("current", current);
+    ui::kv("channel", channel.as_str());
     ui::kv("target", target);
     println!();
 
@@ -70,7 +80,7 @@ pub async fn run(
     //    so semver would read every prerelease as "older" than stable.
     //  · `--force` — operator override.
     // Unparseable versions (dev builds) skip the check rather than block.
-    if !pre && !force {
+    if !following_pre && !force {
         if let (Ok(cur), Ok(tgt)) = (Version::parse(current), Version::parse(target)) {
             if tgt < cur {
                 return Err(crate::Error::Other(format!(
@@ -956,7 +966,7 @@ fn is_draft(r: &serde_json::Value) -> bool {
 
 /// Newest stable (non-prerelease) Linux release tag. The releases list is
 /// newest-first, so the first match wins.
-async fn fetch_latest_tag() -> Result<String, crate::Error> {
+pub(crate) async fn fetch_latest_tag() -> Result<String, crate::Error> {
     let rels = list_releases().await?;
     rels.iter()
         .filter(|r| !is_draft(r) && !is_prerelease(r))
@@ -967,7 +977,7 @@ async fn fetch_latest_tag() -> Result<String, crate::Error> {
 }
 
 /// Newest *prerelease* Linux tag (the staging/edge channel). Skips macOS tags.
-async fn fetch_latest_prerelease() -> Result<String, crate::Error> {
+pub(crate) async fn fetch_latest_prerelease() -> Result<String, crate::Error> {
     let rels = list_releases().await?;
     rels.iter()
         .filter(|r| !is_draft(r) && is_prerelease(r))

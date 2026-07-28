@@ -214,7 +214,7 @@
 	}
 
 	.toolbar-btn:hover {
-		background: var(--color-surface-elevated);
+		background: var(--hover-bg);
 		color: var(--color-foreground);
 	}
 
