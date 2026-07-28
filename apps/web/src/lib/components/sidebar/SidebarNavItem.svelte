@@ -8,6 +8,7 @@
 	import { chatSessions } from "$lib/stores/chatSessions.svelte";
 	import { iconPickerStore } from "$lib/stores/iconPicker.svelte";
 	import { getNotebookMenuItems } from "$lib/utils/contextMenuItems";
+	import { pinMenuItem } from "$lib/pins/pinAction";
 	import { isEmoji } from "$lib/utils/iconHelpers";
 	import type { ContextMenuItem } from "$lib/stores/contextMenu.svelte";
 	import type { SidebarNavItemData } from "./types";
@@ -182,6 +183,14 @@
 
 		// Add "Add to Notebook" submenu
 		items.push(...getNotebookMenuItems(href));
+
+		// Pin to sidebar. Reaches every nav row — system destinations included,
+		// since "keep Wiki at the top where I can get at it" is exactly what
+		// pinning is for, and previously the only way to pin anything at all was
+		// to open it as a tab first.
+		items.push(
+			pinMenuItem({ url: href, label: item.label, icon: item.icon ?? null }),
+		);
 
 		// Add "Delete" option for deletable entities (pages, chats)
 		// Always available if the entity is a page or chat, regardless of isSystemItem

@@ -18,6 +18,7 @@
 	import { updatePage, updateChat } from "$lib/api/client";
 	import { pagesStore } from "$lib/stores/pages.svelte";
 	import { pinsStore } from "$lib/stores/pins.svelte";
+	import { pinMenuItem } from "$lib/pins/pinAction";
 	import { paneActions } from "$lib/stores/paneActions.svelte";
 	import { modifierHint } from "$lib/stores/modifierHint.svelte";
 	import { chatSessions } from "$lib/stores/chatSessions.svelte";
@@ -234,27 +235,16 @@
 			});
 		}
 
-		// Pin / Unpin to sidebar (any tab with a route)
+		// Pin / Unpin to sidebar (any tab with a route). Shared with every other
+		// surface that can pin — see lib/pins/pinAction.
 		if (tab.route) {
-			const route = tab.route;
-			const existing = pinsStore.getByUrl(route);
-			items.push({
-				id: "pin-sidebar",
-				label: existing ? "Unpin from Sidebar" : "Pin to Sidebar",
-				icon: existing ? "ri:pushpin-fill" : "ri:pushpin-line",
-				dividerBefore: true,
-				action: async () => {
-					try {
-						if (existing) {
-							await pinsStore.remove(existing.id);
-						} else {
-							await pinsStore.add(route, tab.label, tab.icon ?? null);
-						}
-					} catch (err) {
-						console.error("[WindowTabBar] Failed to toggle pin:", err);
-					}
-				},
-			});
+			items.push(
+				pinMenuItem({
+					url: tab.route,
+					label: tab.label,
+					icon: tab.icon ?? null,
+				}),
+			);
 		}
 
 		// Divider + Close actions
