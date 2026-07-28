@@ -8,7 +8,6 @@
 import { getAssistantProfile, updateAssistantProfile } from '$lib/api/client';
 
 export type Theme =
-	| 'paper'
 	| 'pemberley'
 	| 'caladan'
 	| 'rivendell'
@@ -33,7 +32,7 @@ const THEME_BG_STORAGE_KEY = 'virtues-theme-bg';
 
 // Fallback theme used only before the API responds (flash prevention).
 // The real default is set in virtues-registry (Rust) and delivered via /api/assistant-profile.
-const FALLBACK_THEME: Theme = 'paper';
+const FALLBACK_THEME: Theme = 'caladan';
 
 /**
  * Themes that no longer exist, and where their users go instead.
@@ -183,7 +182,6 @@ export function initTheme(): void {
  */
 export function isValidTheme(theme: string): theme is Theme {
 	return [
-		'paper',
 		'pemberley',
 		'caladan',
 		'rivendell',
@@ -224,7 +222,6 @@ export function isThemeDark(theme: Theme): boolean {
  */
 export function getAvailableThemes(): Theme[] {
 	return [
-		'paper',
 		'pemberley',
 		'caladan',
 		'rivendell',
@@ -249,7 +246,6 @@ export function getAvailableThemes(): Theme[] {
  */
 export function getThemeDisplayName(theme: Theme): string {
 	const names: Record<Theme, string> = {
-		paper: 'Paper',
 		pemberley: 'Pemberley',
 		caladan: 'Caladan',
 		rivendell: 'Rivendell',
@@ -286,15 +282,6 @@ export const themePreviewColors: Record<
 		syntax: string[];
 	}
 > = {
-	paper: {
-		background: '#FFFFFF',
-		surface: '#FFFFFF',
-		surfaceElevated: '#F6F6F7',
-		foreground: '#16181D',
-		foregroundMuted: '#494D57',
-		primary: '#2A2F3A',
-		syntax: ['#A32F2F', '#2A2F3A', '#4A5160', '#23558F', '#767B86', '#16181D']
-	},
 	pemberley: {
 		background: '#FDFCF9',
 		surface: '#FFFFFF',
@@ -451,10 +438,6 @@ export const themeMetadata: Record<
 		description: string;
 	}
 > = {
-	paper: {
-		icon: 'ph:file-bold',
-		description: 'Plain white, no character'
-	},
 	pemberley: {
 		icon: 'ph:feather-bold',
 		description: 'American heritage, navy & claret'
