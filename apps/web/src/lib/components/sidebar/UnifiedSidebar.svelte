@@ -246,7 +246,10 @@
 				<!-- Recents last: it's the longest and most volatile list here, so
 				     it goes where growth doesn't push the fixed destinations
 				     around. -->
-				<RecentsSection collapsed={isCollapsed} />
+				<RecentsSection
+					collapsed={isCollapsed}
+					animationDelay={9 * STAGGER_DELAY}
+				/>
 			{/if}
 		</nav>
 

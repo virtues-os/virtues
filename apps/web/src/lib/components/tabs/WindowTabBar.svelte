@@ -619,15 +619,26 @@
 	   the active-pane modifier) changing the tab without changing the curve that
 	   joins it to the pane — the failure mode that makes the swoop look broken
 	   rather than absent. */
+	/* The active tab in an UNFOCUSED pane sits slightly proud of its pane —
+	   raised, not joined. The swoop still draws, but against a surface it
+	   doesn't match, which is the correct reading: that pane isn't the one
+	   you're working in. */
 	.tab.active {
 		--tab-fill: var(--color-surface-elevated);
 		background: var(--tab-fill);
 		color: var(--color-foreground);
 	}
 
-	/* Active tab in the active pane gets darker background */
+	/* The focused pane's active tab takes the pane's own colour, so tab and pane
+	   become one surface and the swoop closes.
+	   
+	   This used to be `--color-border` — #2a2a2a against a #181818 pane in the
+	   default dark theme. The curve drew correctly and then joined the tab to a
+	   colour the pane never had, which read as a gap in the swoop. Matching the
+	   pane is the whole premise of the effect, so the focus distinction moves to
+	   the tab that is NOT joined rather than to a third colour. */
 	.tab.active-in-active-pane {
-		--tab-fill: var(--color-border);
+		--tab-fill: var(--color-surface);
 		background: var(--tab-fill);
 	}
 
