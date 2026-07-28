@@ -19,9 +19,17 @@ export interface PaneAction {
 	label: string;
 	icon: string;
 	run: () => void;
-	/** Renders as the emphasised action. At most one per view. */
+	/** Renders as the emphasised action, and keeps its label when space allows.
+	    At most one per view. */
 	primary?: boolean;
 	disabled?: boolean;
+	/**
+	 * For actions that are a state rather than an event — SystemInfoView's
+	 * "Detail", say. Renders held-down. Without this the slot could only
+	 * express fire-and-forget buttons, and toggles would have had to stay
+	 * behind in their views, which defeats the point of having one place.
+	 */
+	active?: boolean;
 }
 
 class PaneActionsStore {
