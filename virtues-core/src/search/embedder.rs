@@ -592,7 +592,7 @@ impl Embedder for LocalEmbedder {
 // function that made "bring your own model" false. The width is now PROBED at
 // startup and checked against itself; see `HttpEmbedder::new`.
 
-fn resolve_base_url() -> String {
+pub(crate) fn resolve_base_url() -> String {
     std::env::var("VIRTUES_EMBED_URL")
         .map(|s| s.trim_end_matches('/').to_string())
         .unwrap_or_else(|_| DEFAULT_URL.to_string())
