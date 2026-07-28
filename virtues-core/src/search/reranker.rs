@@ -123,7 +123,7 @@ impl HttpReranker {
     }
 }
 
-fn resolve_base_url() -> String {
+pub(crate) fn resolve_base_url() -> String {
     std::env::var("VIRTUES_RERANK_URL")
         .map(|s| s.trim_end_matches('/').to_string())
         .unwrap_or_else(|_| DEFAULT_URL.to_string())

@@ -26,6 +26,7 @@ pub async fn run() -> i32 {
     let mut issues = ui::Issues::new();
     ui::section("Doctor");
     print_inference(&crate::inference_report::resolution_report(), &mut issues);
+    probe_inference(&mut issues).await;
     print_reach(&mut issues).await;
     issues.verdict()
 }
@@ -62,6 +63,100 @@ pub fn print_inference(r: &ResolutionReport, issues: &mut ui::Issues) {
         };
         ui::kv(m.name, &value);
     }
+}
+
+/// The liveness half of the Inference ledger: is anything actually SERVING?
+///
+/// `print_inference` above reports on-disk model artifacts, which is a different
+/// question and was for a long time the only one doctor asked. A box whose NPU
+/// daemon had been crash-looping for ten days still printed two green ticks,
+/// because both context binaries were exactly where the installer had put them.
+/// Files on disk are necessary and nowhere near sufficient, and a ✓ that can't
+/// tell the difference is worse than no row at all — it is what someone reads
+/// when they go looking for the cause of failing search.
+///
+/// `/health` is the honest signal, and it is uniform across both inference
+/// flavors: llama-server returns 200 once the GGUF is loaded, and `virtues-qnnd`
+/// implements the same route by running a real embed through the Hexagon
+/// (`crates/virtues-qnnd/src/http.rs`). Either way 200 means "this endpoint can
+/// answer right now", which is the thing being claimed.
+///
+/// Errors, not warnings: with no embed endpoint there is no indexing and no
+/// semantic retrieval, and doctor's exit code should say so.
+async fn probe_inference(issues: &mut ui::Issues) {
+    crate::http_client::ensure_crypto_provider();
+    let client = match reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(3))
+        .build()
+    {
+        Ok(c) => c,
+        Err(e) => {
+            ui::kv("endpoints", &format!("{} unprobed ({e})", style("⚠").yellow()));
+            return;
+        }
+    };
+
+    // The unit that owns these endpoints differs by profile, and a remedy that
+    // names the wrong service is a remedy that wastes someone's evening.
+    let dragon = crate::inference_report::is_dragon_profile();
+
+    // Row labels stay inside `ui::kv`'s 12-column leader so the values line up
+    // with the rows above them; the prose noun for the issue list is separate,
+    // because "embed live answered 503" is not a sentence.
+    for (label, noun, base, unit) in [
+        (
+            "embed live",
+            "embed endpoint",
+            endpoint("VIRTUES_EMBED_URL", crate::search::embedder::resolve_base_url()),
+            if dragon { "virtues-qnnd" } else { "virtues-embed" },
+        ),
+        (
+            "rerank live",
+            "rerank endpoint",
+            endpoint("VIRTUES_RERANK_URL", crate::search::reranker::resolve_base_url()),
+            if dragon { "virtues-qnnd" } else { "virtues-rerank" },
+        ),
+    ] {
+        let health = format!("{base}/health");
+        // Distinguish "nothing is listening" from "listening but not ready":
+        // the first is a dead unit, the second is a model that won't load, and
+        // they send the operator to different places.
+        let (mark, finding) = match client.get(&health).send().await {
+            Ok(r) if r.status().is_success() => (style("✓ serving").green().to_string(), None),
+            Ok(r) => (
+                style(format!("✖ unhealthy ({})", r.status())).red().to_string(),
+                Some(format!("{noun} answered {} at {base}", r.status())),
+            ),
+            Err(_) => (
+                style("✖ not serving").red().to_string(),
+                Some(format!("nothing serving at {base}")),
+            ),
+        };
+        ui::kv(label, &format!("{base}  {mark}"));
+        if let Some(what) = finding {
+            issues.error(
+                format!("{what} — semantic search and reranking are unavailable"),
+                Some(&format!("systemctl status {unit}; journalctl -u {unit} -n 50")),
+            );
+        }
+    }
+}
+
+/// The endpoint doctor should probe.
+///
+/// The search modules' `resolve_base_url` reads only the process environment.
+/// That is right for the server, which systemd starts with the box
+/// `EnvironmentFile`, and wrong here: `sudo virtues doctor` inherits none of it,
+/// so a box pointed at a remote endpoint would be probed at the loopback
+/// default and reported broken. Fall back to the box env file the way `upgrade`
+/// already does for its own paths.
+fn endpoint(key: &str, from_process_env: String) -> String {
+    if std::env::var(key).is_ok() {
+        return from_process_env;
+    }
+    super::upgrade::read_box_env_var(key)
+        .map(|s| s.trim_end_matches('/').to_string())
+        .unwrap_or(from_process_env)
 }
 
 /// The Reach ledger: local network facts, then the iroh legs read from the DB.

@@ -26,6 +26,13 @@ pub fn skip(msg: &str) {
     println!("  {}  {}", style("·").dim(), style(msg).dim());
 }
 
+/// Work about to happen, announced before it starts. For the few steps long
+/// enough that silence reads as a hang but which don't shell out to a command
+/// (those get `run_step`'s spinner instead).
+pub fn info(msg: &str) {
+    println!("  {}  {}", style("·").cyan(), msg);
+}
+
 /// A non-fatal warning.
 pub fn warn(msg: &str) {
     println!("  {}  {}", style("⚠").yellow(), style(msg).yellow());
