@@ -10,7 +10,10 @@
 //! answers "what did I last *change*" — a different and much less useful
 //! question than "what was I last *looking at*".
 //!
-//! Append-only, collapsed on read. See the migration for why.
+//! Append-only and never pruned — see migration 0068. A visit row is ~100
+//! bytes, so even heavy use costs single-digit megabytes a year, which is
+//! nothing next to what the box already holds. Read speed is protected by
+//! scanning a bounded recent window rather than by throwing history away.
 
 use serde::{Deserialize, Serialize};
 use sqlx::PgPool;
@@ -50,10 +53,14 @@ pub struct HistoryQuery {
 const DEFAULT_LIMIT: i64 = 20;
 const MAX_LIMIT: i64 = 200;
 
-/// Prune every N writes rather than on each one. The work is trivial but it's
-/// still two DELETEs, and navigation is the hot path.
-const PRUNE_EVERY: u64 = 200;
-static WRITE_COUNT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+/// How many recent visits the collapse considers.
+///
+/// The table grows forever, but "what was I just looking at" only ever needs
+/// the recent end of it. Taking the newest N rows off the index first, then
+/// collapsing within that, keeps the query flat whether the log holds a
+/// thousand rows or ten million. Generous enough that a genuinely recent
+/// destination can't fall outside it.
+const SCAN_WINDOW: i64 = 5000;
 
 /// Record a visit. Fire-and-forget from the client's perspective — a failure
 /// here must never interrupt navigation, so the caller ignores the result.
@@ -74,12 +81,6 @@ pub async fn record_visit(db: &PgPool, req: RecordVisitRequest) -> Result<()> {
     .execute(db)
     .await?;
 
-    let n = WRITE_COUNT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-    if n % PRUNE_EVERY == 0 {
-        // Best-effort: a failed prune is a bigger table, not a broken feature.
-        let _ = sqlx::query("SELECT prune_app_history()").execute(db).await;
-    }
-
     Ok(())
 }
 
@@ -95,6 +96,23 @@ pub async fn list_history(db: &PgPool, query: HistoryQuery) -> Result<Vec<Histor
 
     let rows = sqlx::query_as::<_, HistoryEntry>(
         r#"
+        WITH recent AS (
+            -- Bounded first, collapsed second. This is what lets the log grow
+            -- without bound: the planner takes these off idx_app_history_recent
+            -- and stops, so the work never scales with the archive's size.
+            --
+            -- Every occurrence carries its cast, not just the first. Postgres
+            -- infers a bare `$n` from its surrounding context, so `kind = ANY($1)`
+            -- and `visited_at >= $2` were being typed from the *bind* (text)
+            -- rather than from the column, which failed with
+            -- "operator does not exist: timestamp with time zone >= text".
+            SELECT url, label, icon, kind, visited_at
+            FROM app_history
+            WHERE ($1::text[] IS NULL OR kind = ANY($1::text[]))
+              AND ($2::timestamptz IS NULL OR visited_at >= $2::timestamptz)
+            ORDER BY visited_at DESC
+            LIMIT $4
+        )
         SELECT url, label, icon, kind, visited_at, visit_count
         FROM (
             SELECT DISTINCT ON (url)
@@ -103,15 +121,10 @@ pub async fn list_history(db: &PgPool, query: HistoryQuery) -> Result<Vec<Histor
                    icon,
                    kind,
                    visited_at,
+                   -- Visits within the scanned window, not for all time. For a
+                   -- recents list that's the more useful number anyway.
                    COUNT(*) OVER (PARTITION BY url) AS visit_count
-            FROM app_history
-            -- Every occurrence carries its cast, not just the first. Postgres
-            -- infers a bare `$n` from its surrounding context, so `kind = ANY($1)`
-            -- and `visited_at >= $2` were being typed from the *bind* (text)
-            -- rather than from the column, which failed with
-            -- "operator does not exist: timestamp with time zone >= text".
-            WHERE ($1::text[] IS NULL OR kind = ANY($1::text[]))
-              AND ($2::timestamptz IS NULL OR visited_at >= $2::timestamptz)
+            FROM recent
             ORDER BY url, visited_at DESC
         ) collapsed
         ORDER BY visited_at DESC
@@ -121,6 +134,7 @@ pub async fn list_history(db: &PgPool, query: HistoryQuery) -> Result<Vec<Histor
     .bind(kinds.as_deref())
     .bind(query.since.as_deref())
     .bind(limit)
+    .bind(SCAN_WINDOW)
     .fetch_all(db)
     .await?;
 
