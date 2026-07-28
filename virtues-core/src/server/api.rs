@@ -3506,6 +3506,29 @@ pub async fn reorder_notebook_items_handler(
     }
 }
 
+/// PUT /api/notebooks/:id/items/role - Set a member's role
+pub async fn set_notebook_item_role_handler(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    Json(request): Json<crate::api::notebooks::SetNotebookItemRoleRequest>,
+) -> Response {
+    match crate::api::notebooks::set_notebook_item_role(state.db.pool(), &id, request).await {
+        Ok(item) => Json(item).into_response(),
+        Err(e) => error_response(e),
+    }
+}
+
+/// GET /api/notebooks/:id/graph - Entities referenced across the members
+pub async fn notebook_graph_handler(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> Response {
+    match crate::api::notebooks::notebook_graph(state.db.pool(), &id).await {
+        Ok(graph) => Json(graph).into_response(),
+        Err(e) => error_response(e),
+    }
+}
+
 
 // ============================================================================
 // Lake API handlers

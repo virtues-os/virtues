@@ -755,6 +755,11 @@ pub async fn run(client: Virtues, host: &str, port: u16) -> Result<()> {
             "/api/notebooks/:id/items/reorder",
             put(api::reorder_notebook_items_handler),
         )
+        .route(
+            "/api/notebooks/:id/items/role",
+            put(api::set_notebook_item_role_handler),
+        )
+        .route("/api/notebooks/:id/graph", get(api::notebook_graph_handler))
         // Chats API
         .route(
             "/api/chats",
