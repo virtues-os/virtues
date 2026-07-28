@@ -34,8 +34,15 @@ export interface SystemSection {
 	namespace?: string;
 	/** Smart sections: max items to show */
 	limit?: number;
-	/** Smart sections: quick-add action type */
-	quickAdd?: 'chat' | 'page';
+	/**
+	 * The `+` on the row: what this collection creates.
+	 *
+	 * Declared here rather than per-component so that "a collection row offers
+	 * to add to it" is a property of the section, not a favour done to some
+	 * rows. Pages had one and Chats didn't, which read as a missing button on
+	 * Chats — but the real bug was that nothing made it a rule.
+	 */
+	quickAdd?: 'chat' | 'page' | 'notebook';
 	/** Smart sections: "View All" route */
 	moreRoute?: string;
 	/** Static sections: fixed child items */
@@ -49,10 +56,22 @@ export interface SectionGroup {
 	items: SystemSection[];
 }
 
-// Home is not a nav row. The ∴ mark in the masthead goes there, which is what
-// gives the mark a job — listing Home again directly beneath it was the same
-// destination twice in three rows.
 export const HOME_ROUTE = '/home';
+
+// Home is a nav row again.
+//
+// It was removed when the ∴ mark took the job, on the argument that the mark
+// needed one. That argument only holds if the mark belongs in the sidebar at
+// all — and a wordmark that behaves like a button is not a pattern used
+// anywhere else in software, so people didn't read it as the way home. The
+// mark is gone and the destination is back where it can be read.
+const HOME: SystemSection = {
+	id: 'sys_home_row',
+	name: 'Home',
+	icon: 'ri:home-4-line',
+	type: 'link',
+	href: HOME_ROUTE,
+};
 
 const TODAY: SystemSection = {
 	id: 'sys_home',
@@ -71,6 +90,7 @@ const CHATS: SystemSection = {
 	icon: 'ri:chat-1-line',
 	type: 'link',
 	href: '/chat-history',
+	quickAdd: 'chat',
 };
 
 const PAGES: SystemSection = {
@@ -96,6 +116,7 @@ const NOTEBOOKS: SystemSection = {
 	icon: 'ri:booklet-line',
 	type: 'link',
 	href: '/notebooks',
+	quickAdd: 'notebook',
 };
 
 const DRIVE: SystemSection = {
@@ -116,7 +137,7 @@ const ACTIONS: SystemSection = {
 
 export const SECTION_GROUPS: SectionGroup[] = [
 	// Rhythm — Create — Substrate, each separated by a blank gap (no headers).
-	{ id: 'grp_rhythm', label: null, items: [TODAY] },
+	{ id: 'grp_rhythm', label: null, items: [HOME, TODAY] },
 	{ id: 'grp_create', label: null, items: [CHATS, PAGES, NOTEBOOKS] },
 	{ id: 'grp_substrate', label: null, items: [WIKI, DRIVE, ACTIONS] },
 ];

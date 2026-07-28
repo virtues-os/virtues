@@ -39,7 +39,6 @@ pub mod models;
 pub mod narrative_identity_gen;
 pub mod pages;
 pub mod personas;
-pub mod history;
 pub mod updates;
 pub mod pins;
 pub mod search_local;
@@ -182,10 +181,6 @@ pub use places::{
 };
 pub use updates::{
     apply as apply_update, set_channel, status as update_status, ApplyResponse, SetChannelRequest,
-};
-pub use history::{
-    clear_history, forget_url, list_history, record_visit, HistoryEntry, HistoryQuery,
-    RecordVisitRequest,
 };
 pub use search_local::{search_local, LocalSearchRequest, LocalSearchResponse};
 pub use pins::{

@@ -583,8 +583,8 @@
 		display: flex;
 		align-items: stretch;
 		gap: 4px;
-		padding: 6px 8px 0;
-		min-height: 40px;
+		padding: 0 8px;
+		min-height: var(--chrome-row-h);
 		border-bottom: 1px solid var(--color-border);
 		background: var(--color-background);
 		flex-shrink: 0;
@@ -610,29 +610,28 @@
 		overflow-x: auto;
 		flex: 1;
 		scrollbar-width: none;
-		height: 28px;
+		height: var(--chrome-tab-h);
 	}
 
 	.tabs-scroll::-webkit-scrollbar {
 		display: none;
 	}
 
-	/* Full-height, not a floating pill. A tab that spans the bar reads as a
-	   container for what's below it; a pill reads as a chip that happens to sit
-	   nearby. Squaring the bottom corners is what makes the active tab join the
-	   pane rather than hover over it. */
+	/* An inset pill, not a full-height container.
+	   Full-height + squared bottom corners was the swoop's premise: a tab that
+	   grows out of the pane. That premise needs the bar to be a different colour
+	   from the pane, which it never was — so the effect had no visual output and
+	   the "container" reading never landed either. A pill states what it is. */
 	.tab {
 		display: flex;
 		align-items: center;
 		gap: 6px;
 		padding: 0 8px;
-		align-self: stretch;
-		/* Positioning context for the swoop flares. */
+		align-self: center;
 		position: relative;
-		height: auto;
-		min-height: 28px;
+		height: var(--chrome-tab-h);
 		border: none;
-		border-radius: 6px 6px 0 0;
+		border-radius: 6px;
 		background: transparent;
 		color: var(--color-foreground-muted);
 		font-size: 12px;
@@ -652,69 +651,26 @@
 		color: var(--color-foreground);
 	}
 
-	/* The active tab's fill goes through a custom property so the swoop flares
-	   below can inherit it. Binding both to one token is what stops a theme (or
-	   the active-pane modifier) changing the tab without changing the curve that
-	   joins it to the pane — the failure mode that makes the swoop look broken
-	   rather than absent. */
-	/* The active tab in an UNFOCUSED pane sits slightly proud of its pane —
-	   raised, not joined. The swoop still draws, but against a surface it
-	   doesn't match, which is the correct reading: that pane isn't the one
-	   you're working in. */
+	/* Three cues, not one: fill, a hairline, and full-strength text against the
+	   muted text of every other tab. One cue was what left the active tab
+	   indistinguishable — and the one cue chosen resolved to no difference at
+	   all (see --tab-active-bg in themes.css).
+
+	   The fill is on the interaction ramp rather than a surface token, so it is
+	   defined against the text colour and stays legible in all sixteen themes
+	   instead of depending on --surface and --background disagreeing. */
 	.tab.active {
-		--tab-fill: var(--color-surface-elevated);
-		background: var(--tab-fill);
+		background: var(--tab-active-bg);
 		color: var(--color-foreground);
+		font-weight: 500;
+		box-shadow: inset 0 0 0 1px var(--color-border);
 	}
 
-	/* The focused pane's active tab takes the pane's own colour, so tab and pane
-	   become one surface and the swoop closes.
-	   
-	   This used to be `--color-border` — #2a2a2a against a #181818 pane in the
-	   default dark theme. The curve drew correctly and then joined the tab to a
-	   colour the pane never had, which read as a gap in the swoop. Matching the
-	   pane is the whole premise of the effect, so the focus distinction moves to
-	   the tab that is NOT joined rather than to a third colour. */
+	/* The focused pane's active tab is denser still. In split view two tabs are
+	   "active" at once and only one of them is where your typing goes; that
+	   difference has to be visible without reading the pane borders. */
 	.tab.active-in-active-pane {
-		--tab-fill: var(--color-surface);
-		background: var(--tab-fill);
-	}
-
-	/* ── Swoop ──────────────────────────────────────────────────────────────
-	   Concave corners flaring out of the active tab's base, so the tab grows
-	   out of the pane instead of resting on it. Each flare is a small box
-	   filled with the tab colour and masked by a radial gradient that removes
-	   the outer quarter-disc, leaving the curve. */
-	.tab.active::before,
-	.tab.active::after {
-		content: "";
-		position: absolute;
-		bottom: 0;
-		width: 8px;
-		height: 8px;
-		background: var(--tab-fill);
-		pointer-events: none;
-	}
-
-	.tab.active::before {
-		left: -8px;
-		-webkit-mask-image: radial-gradient(circle 8px at 0 0, transparent 8px, #000 8.5px);
-		mask-image: radial-gradient(circle 8px at 0 0, transparent 8px, #000 8.5px);
-	}
-
-	.tab.active::after {
-		right: -8px;
-		-webkit-mask-image: radial-gradient(circle 8px at 100% 0, transparent 8px, #000 8.5px);
-		mask-image: radial-gradient(circle 8px at 100% 0, transparent 8px, #000 8.5px);
-	}
-
-	/* An edge tab has no room for its outer flare — it would overhang the pane.
-	   This is the split-pane case that kept the swoop a spike: a pane can be
-	   dragged narrow, and the flares cost a fixed 16px however little width is
-	   left. `.tabs-scroll` is the flex row the tabs live in. */
-	.tab.active:first-child::before,
-	.tab.active:last-child::after {
-		display: none;
+		background: var(--tab-active-bg-focused);
 	}
 
 	/* Dragging state - svelte-dnd-action applies aria-grabbed */
@@ -722,22 +678,18 @@
 		opacity: 0.5;
 	}
 
-	/* Pinned tabs are compact (icon only) with subtle tint */
+	/* A compacted tab — the "Compact / Expand" context action, which shrinks a
+	   tab to its icon. Nothing to do with sidebar pins despite the class name.
+
+	   It used to be filled with --color-primary at 15% and its icon set to the
+	   accent outright, which made a merely-narrow tab the most saturated object
+	   in the window — a theme accent asserting meaning where the only fact is
+	   "this tab is short". Narrow is legible from being narrow. */
 	.tab.pinned {
 		min-width: auto;
 		max-width: none;
-		padding: 5px 8px;
+		padding: 0 8px;
 		gap: 0;
-		background: color-mix(in srgb, var(--color-primary) 15%, transparent);
-	}
-
-	.tab.pinned:hover {
-		background: color-mix(in srgb, var(--color-primary) 25%, transparent);
-	}
-
-	.tab.pinned :global(.tab-icon) {
-		color: var(--color-primary);
-		opacity: 1;
 	}
 
 	:global(.tab-icon) {
