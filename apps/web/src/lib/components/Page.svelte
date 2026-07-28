@@ -16,7 +16,15 @@
     }: {
         title?: string;
         description?: string;
-        maxWidth?: "none" | "narrow" | "prose" | "wide" | "full";
+        /**
+         * Two measures, so views read as siblings: `prose` for reading, `wide`
+         * for tables and grids. (Was five — narrow/full were each used once or
+         * twice and only made neighbouring pages disagree by a few rem.)
+         *
+         * This is chrome, chosen by the view. The *reader's* width preference
+         * is a different thing and lives in `stores/pageDisplay.svelte.ts`.
+         */
+        maxWidth?: "none" | "prose" | "wide";
         padding?: "default" | "compact" | "none";
         scrollable?: boolean;
         class?: string;
@@ -33,10 +41,8 @@
 
     const maxWidthClass = $derived({
         none: "",
-        narrow: "max-w-2xl mx-auto",
         prose: "max-w-3xl mx-auto",
         wide: "max-w-6xl mx-auto",
-        full: "max-w-7xl mx-auto",
     }[maxWidth]);
 </script>
 

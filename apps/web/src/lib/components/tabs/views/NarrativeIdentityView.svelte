@@ -134,7 +134,7 @@
 <Page
 	title="Narrative"
 	description="How your Virtues understands you — where you've been, who you are now, and who you're becoming. You are its author."
-	maxWidth="narrow"
+	maxWidth="prose"
 >
 	{#if loading}
 		<div class="flex items-center justify-center text-foreground-muted" style="padding: 64px 0;">
@@ -567,7 +567,7 @@
 			border-color 0.15s ease;
 	}
 	.edit-btn:hover {
-		background: var(--color-surface-elevated);
+		background: var(--hover-bg);
 		color: var(--color-foreground);
 		border-color: var(--color-border-strong);
 	}

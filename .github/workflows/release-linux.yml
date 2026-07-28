@@ -142,13 +142,13 @@ jobs:
       # `command = ["<name>"]`. They are NOT compiled into `virtues`, so without
       # this step + the packaging below the box has manifest rows it can never
       # run (resolve_program finds nothing on PATH and every webhook 5xxs).
-      # `--bins` builds every [[bin]] in actions/Cargo.toml from one source of
+      # `--bins` builds every [[bin]] in applets/Cargo.toml from one source of
       # truth; the package is pure server-side Rust and cross-compiles like core.
       - name: Build action binaries
         env:
           SQLX_OFFLINE: 'true'
         run: |
-          cargo build --profile ${{ env.CARGO_PROFILE }} -p virtues-actions --bins --target ${{ matrix.target }}
+          cargo build --profile ${{ env.CARGO_PROFILE }} -p virtues-applets --bins --target ${{ matrix.target }}
 
       # llama-server — the engine behind the virtues-embed/-rerank sidecars
       # (one CPU binary per arch — the universal floor for Manual mode and the
@@ -240,6 +240,11 @@ jobs:
 
       - name: Build web UI (SvelteKit static)
         working-directory: apps/web
+        env:
+          # Bake the SPA's build identity so __BUILD_COMMIT__/__BUILD_VERSION__
+          # resolve to the real release (not 'dev'). Mirrors the box's build.rs.
+          GIT_COMMIT: ${{ github.sha }}
+          GIT_DESCRIBE: ${{ env.VIRTUES_BUILD_VERSION }}
         run: |
           pnpm install --frozen-lockfile
           pnpm build
@@ -265,31 +270,31 @@ jobs:
           #   virtues             box binary, installer moves to /usr/local/bin/
           #   llama-server        inference sidecar engine (CPU build), also to /usr/local/bin/
           #   web/                SvelteKit static build, → /usr/local/share/virtues/web/
-          #   actions/            action manifests + UI + sources.toml,
-          #                       → /usr/local/share/virtues/actions/ (VIRTUES_ACTIONS_DIR).
+          #   applets/            applet manifests + UI + sources.toml,
+          #                       → /usr/local/share/virtues/applets/ (VIRTUES_APPLETS_DIR).
           #                       Globbed at runtime by virtues-core; NOT baked into
           #                       the binary, so it must ship here or the box has no
           #                       actions.
-          #   actions-bin/        compiled function-action executables (ios_*, …),
-          #                       → /usr/local/libexec/virtues/ (VIRTUES_ACTIONS_BIN_DIR).
+          #   applets-bin/        compiled function-action executables (ios_*, …),
+          #                       → /usr/local/libexec/virtues/ (VIRTUES_APPLETS_BIN_DIR).
           #                       Forked by the box per webhook; without them the
           #                       manifests above exist but can never run.
           cp "$BIN_PATH" staging/virtues
           cp "$LLAMA_PATH" staging/llama-server
           cp -r apps/web/build staging/web
-          cp -r actions staging/actions
+          cp -r applets staging/applets
 
           # Stage every action binary. The list comes from cargo metadata so it
-          # tracks actions/Cargo.toml's [[bin]] entries automatically (no
+          # tracks applets/Cargo.toml's [[bin]] entries automatically (no
           # second list to keep in sync). Built into the same target/ dir above.
           REL="target/${{ matrix.target }}/${{ env.CARGO_PROFILE }}"
-          mkdir -p staging/actions-bin
+          mkdir -p staging/applets-bin
           ACTION_BINS=$(cargo metadata --format-version 1 --no-deps \
-            | jq -r '.packages[] | select(.name=="virtues-actions") | .targets[] | select(.kind[]=="bin") | .name')
+            | jq -r '.packages[] | select(.name=="virtues-applets") | .targets[] | select(.kind[]=="bin") | .name')
           test -n "$ACTION_BINS" || (echo "no action bins found via cargo metadata" >&2 && exit 1)
           for b in $ACTION_BINS; do
             test -x "$REL/$b" || (echo "action binary $b not built at $REL/$b" >&2 && exit 1)
-            cp "$REL/$b" "staging/actions-bin/$b"
+            cp "$REL/$b" "staging/applets-bin/$b"
           done
 
           # virtues-qnnd — Dragon NPU daemon, aarch64 only (built against QAIRT
@@ -301,8 +306,17 @@ jobs:
             TAR_EXTRA="virtues-qnnd"
           fi
 
+          # BUILD.json — the tarball's build identity. `virtues upgrade` reads
+          # it for SHA-based no-op detection (the only honest identity for
+          # prerelease builds, which all report the bare crate version) and to
+          # name the release slot (<tag>-<sha7>).
+          printf '{"version":"%s","sha":"%s","channel":"%s","built_at":"%s"}\n' \
+            "${{ steps.tag.outputs.version }}" "${GITHUB_SHA}" \
+            "$(case "${{ steps.tag.outputs.version }}" in *staging*) echo staging;; edge*) echo edge;; v*-*) echo dev;; v*) echo stable;; *) echo dev;; esac)" \
+            "$(date -u +%Y-%m-%dT%H:%M:%SZ)" > staging/BUILD.json
+
           TAR_NAME="virtues-${{ steps.tag.outputs.version }}-${{ matrix.arch }}-linux.tar.gz"
-          tar -czf "dist/${TAR_NAME}" -C staging virtues llama-server web actions actions-bin $TAR_EXTRA
+          tar -czf "dist/${TAR_NAME}" -C staging virtues llama-server web applets applets-bin BUILD.json $TAR_EXTRA
           (cd dist && sha256sum "${TAR_NAME}" > "${TAR_NAME}.sha256")
 
           # The installer ships as a standalone binary (NOT inside the

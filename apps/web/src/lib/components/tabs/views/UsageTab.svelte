@@ -77,7 +77,7 @@
 <Page
 	title="Usage"
 	description="What your Virtues wallet paid for this month — all figures stay on your box."
-	maxWidth="full"
+	maxWidth="wide"
 >
 	{#if res.loading}
 		<LoadingState message="Loading usage…" />

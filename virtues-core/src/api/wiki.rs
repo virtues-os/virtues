@@ -601,14 +601,6 @@ pub async fn update_organization(
 }
 
 // ============================================================================
-// Thing CRUD Operations
-// ============================================================================
-
-// Thing read/update moved to the single-source `api::things` module
-// (/api/things). The wiki thing endpoints were retired to avoid duplicating
-// queries over the same `wiki_things` table.
-
-// ============================================================================
 // Narrative Identity
 // ============================================================================
 
@@ -1283,7 +1275,7 @@ pub fn resolve_id(id: &str) -> Result<IdResolution> {
     let entity_type = parts[0];
 
     // Validate known entity types
-    let valid_types = ["person", "place", "org", "thing", "day", "telos", "act", "chapter", "page", "chat", "year", "source"];
+    let valid_types = ["person", "place", "org", "day", "telos", "act", "chapter", "page", "chat", "year", "source"];
     if !valid_types.contains(&entity_type) {
         return Err(Error::NotFound(format!(
             "Unknown entity type in ID: {}",

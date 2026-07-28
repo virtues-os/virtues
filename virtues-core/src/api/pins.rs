@@ -5,7 +5,7 @@
 //! Distinct from project membership (`app_project_items`): a pin is global to
 //! the user's sidebar, not scoped to a project.
 //!
-//! Same URL convention as the rest of the app: `/thing/thg_xxx`,
+//! Same URL convention as the rest of the app: `/person/per_xxx`,
 //! `/page/page_xxx`, `/person/p_xxx`, or `https://...` for externals.
 
 use crate::error::{Error, Result};
@@ -22,6 +22,9 @@ pub struct Pin {
     pub icon: Option<String>,
     pub sort_order: i32,
     pub pinned_at: Timestamp,
+    /// A `--cat-*` token key ('orange', 'emerald'…), never a hex — see
+    /// migration 0070. The sidebar renders it as the row's ribbon.
+    pub color: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -29,6 +32,8 @@ pub struct CreatePinRequest {
     pub url: String,
     pub label: Option<String>,
     pub icon: Option<String>,
+    #[serde(default)]
+    pub color: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -36,11 +41,12 @@ pub struct UpdatePinRequest {
     pub label: Option<Option<String>>,
     pub icon: Option<Option<String>>,
     pub sort_order: Option<i32>,
+    pub color: Option<Option<String>>,
 }
 
 pub async fn list_pins(db: &PgPool) -> Result<Vec<Pin>> {
     let pins = sqlx::query_as::<_, Pin>(
-        r#"SELECT id, url, label, icon, sort_order, pinned_at
+        r#"SELECT id, url, label, icon, sort_order, pinned_at, color
            FROM app_pins
            ORDER BY sort_order ASC, pinned_at DESC"#,
     )
@@ -53,7 +59,7 @@ pub async fn list_pins(db: &PgPool) -> Result<Vec<Pin>> {
 /// (idempotent — pinning twice is a no-op).
 pub async fn create_pin(db: &PgPool, req: CreatePinRequest) -> Result<Pin> {
     if let Some(existing) = sqlx::query_as::<_, Pin>(
-        r#"SELECT id, url, label, icon, sort_order, pinned_at
+        r#"SELECT id, url, label, icon, sort_order, pinned_at, color
            FROM app_pins WHERE url = $1"#,
     )
     .bind(&req.url)
@@ -70,19 +76,20 @@ pub async fn create_pin(db: &PgPool, req: CreatePinRequest) -> Result<Pin> {
         .unwrap_or(0);
 
     sqlx::query(
-        r#"INSERT INTO app_pins (id, url, label, icon, sort_order)
-           VALUES ($1, $2, $3, $4, $5)"#,
+        r#"INSERT INTO app_pins (id, url, label, icon, sort_order, color)
+           VALUES ($1, $2, $3, $4, $5, $6)"#,
     )
     .bind(&id)
     .bind(&req.url)
     .bind(&req.label)
     .bind(&req.icon)
     .bind(next_sort)
+    .bind(&req.color)
     .execute(db)
     .await?;
 
     sqlx::query_as::<_, Pin>(
-        r#"SELECT id, url, label, icon, sort_order, pinned_at FROM app_pins WHERE id = $1"#,
+        r#"SELECT id, url, label, icon, sort_order, pinned_at, color FROM app_pins WHERE id = $1"#,
     )
     .bind(&id)
     .fetch_one(db)
@@ -105,6 +112,13 @@ pub async fn update_pin(db: &PgPool, id: &str, req: UpdatePinRequest) -> Result<
             .execute(db)
             .await?;
     }
+    if let Some(color) = req.color {
+        sqlx::query("UPDATE app_pins SET color = $1 WHERE id = $2")
+            .bind(color)
+            .bind(id)
+            .execute(db)
+            .await?;
+    }
     if let Some(sort) = req.sort_order {
         sqlx::query("UPDATE app_pins SET sort_order = $1 WHERE id = $2")
             .bind(sort)
@@ -114,7 +128,7 @@ pub async fn update_pin(db: &PgPool, id: &str, req: UpdatePinRequest) -> Result<
     }
 
     sqlx::query_as::<_, Pin>(
-        r#"SELECT id, url, label, icon, sort_order, pinned_at FROM app_pins WHERE id = $1"#,
+        r#"SELECT id, url, label, icon, sort_order, pinned_at, color FROM app_pins WHERE id = $1"#,
     )
     .bind(id)
     .fetch_one(db)

@@ -14,7 +14,7 @@
 //! 6. Resolve credentials from the `credentials` Vault and decrypt secrets
 //!    (if `credential_id` set). Subprocess receives plaintext JSON.
 //! 7. **Subprocess phase**: if `command` set, resolve argv[0] + spawn, pipe stdin
-//!    JSON, read stdout JSON, save returned config back to `app_actions.config`.
+//!    JSON, read stdout JSON, save returned config back to `app_applets.config`.
 //! 8. **Agent phase**: if `agent` (instruction) set, run LLM agent loop with the
 //!    subprocess result as context.
 //! 9. Complete run row with final status + result summary.
@@ -191,14 +191,18 @@ async fn prepare_run(
         ))));
     }
 
-    // 2a. `view`-runtime actions are pure-frontend renderers; never invoked
-    // server-side. Skip silently so cron ticks don't churn the runs table.
-    if action.runtime == "view" {
-        tracing::debug!(action_id, "view runtime — never invoked server-side");
+    // 2a. Face-only applets (no command, no agent — the old `view` runtime,
+    // now derived from field presence) are pure-frontend renderers; never
+    // invoked server-side. Skip silently so cron ticks don't churn the runs
+    // table.
+    let has_agent = action.agent.as_deref().is_some_and(|s| !s.trim().is_empty());
+    let has_exec = has_agent || action.command.as_ref().is_some_and(|c| !c.is_empty());
+    if !has_exec {
+        tracing::debug!(action_id, "face-only applet — never invoked server-side");
         return Ok(PrepareOutcome::Early(ActionRunResult {
             run_id: None,
             status: ActionRunStatus::Skipped,
-            summary: "view runtime — not server-invoked".to_string(),
+            summary: "face-only applet — not server-invoked".to_string(),
             error: None,
         }));
     }
@@ -247,14 +251,27 @@ async fn prepare_run(
         }
     }
 
-    // 4. Concurrency gate.
+    // 4. Concurrency gate — every applet is a singleton. Unlike a falsy
+    // condition (silent by design: frequent polls would flood run history),
+    // an overlap skip is rare and diagnostically important, so it records a
+    // real `skipped` run row per the singleton doctrine.
     if actions::has_active_run(&deps.db, &action.id)
         .await
         .unwrap_or(false)
     {
         tracing::info!(action_id, "previous run still active; skipping");
+        let run = actions::create_run(&deps.db, Some(&action.id), trigger).await?;
+        actions::complete_run(
+            &deps.db,
+            &run.id,
+            "skipped",
+            0,
+            None,
+            Some("skipped — previous run still active"),
+        )
+        .await?;
         return Ok(PrepareOutcome::Early(ActionRunResult {
-            run_id: None,
+            run_id: Some(run.id),
             status: ActionRunStatus::Skipped,
             summary: "previous run still active".to_string(),
             error: None,
@@ -321,18 +338,7 @@ async fn execute_prepared(
     let mut subprocess_summary: Option<String> = None;
     let mut subprocess_records: i64 = 0;
     let has_command = action.command.as_ref().is_some_and(|c| !c.is_empty());
-    if action.runtime == "service" && has_command {
-        match run_app_trigger(&action, payload.as_ref()).await {
-            Ok(summary) => {
-                subprocess_summary = summary;
-            }
-            Err(e) => {
-                let msg = e.to_string();
-                tracing::error!(action_id, error = %msg, "app trigger failed");
-                return fail(&deps, &run_id, &action_id, msg).await;
-            }
-        }
-    } else if has_command {
+    if has_command {
         let command = action.command.clone().unwrap();
         match run_subprocess(
             &deps.db,
@@ -376,6 +382,7 @@ async fn execute_prepared(
                 {
                     tracing::error!(action_id, error = %e, "complete_run failed after agent success");
                 }
+                maybe_archive_on_until(&deps.db, &action).await;
                 return ActionRunResult {
                     run_id: Some(run_id),
                     status: ActionRunStatus::Success,
@@ -398,6 +405,7 @@ async fn execute_prepared(
     {
         tracing::error!(action_id, error = %e, "complete_run failed at end of run");
     }
+    maybe_archive_on_until(&deps.db, &action).await;
     ActionRunResult {
         run_id: Some(run_id),
         status: ActionRunStatus::Success,
@@ -407,19 +415,84 @@ async fn execute_prepared(
 }
 
 // ============================================================================
+// Lifecycle
+// ============================================================================
+
+/// Post-success lifecycle check. `until` semantics: NULL/empty = forever;
+/// the literal `once` = archive after this (first) success; anything else =
+/// a SQL boolean, archive when it evaluates true. Evaluation reuses the
+/// hardened `eval_condition` path (read-only tx, timeout, local timezone).
+/// Failures are logged, never fatal — a broken `until` must not fail a run
+/// that already succeeded.
+async fn maybe_archive_on_until(db: &PgPool, action: &Action) {
+    let Some(until) = action.until.as_deref().map(str::trim) else {
+        return;
+    };
+    if until.is_empty() {
+        return;
+    }
+    let done = if until.eq_ignore_ascii_case("once") {
+        true
+    } else {
+        match eval_condition(db, until).await {
+            Ok(v) => v,
+            Err(e) => {
+                tracing::warn!(action_id = %action.id, error = %e, "until evaluation failed; not archiving");
+                false
+            }
+        }
+    };
+    if done {
+        tracing::info!(action_id = %action.id, "lifecycle complete (until met); archiving");
+        if let Err(e) = actions::archive_action(db, &action.id).await {
+            tracing::error!(action_id = %action.id, error = %e, "archive_action failed");
+        }
+    }
+}
+
+// ============================================================================
 // Condition evaluation
 // ============================================================================
 
 /// Evaluate a SQL condition expression. Returns true if the expression is
-/// truthy, false otherwise. A truthy result is any non-zero, non-empty,
-/// non-null value.
+/// truthy, false otherwise (NULL is false).
+///
+/// The expression is LLM/user-authored, so it runs hardened: inside a
+/// READ ONLY transaction (rolled back regardless), under a short
+/// statement_timeout, with the session timezone set to the box's
+/// home_timezone so clock-based gates like
+/// `extract(hour from now()) < 6` mean the user's local time, not UTC.
+/// The result is cast to boolean, so both boolean and integer expressions
+/// evaluate correctly.
 async fn eval_condition(db: &PgPool, condition: &str) -> Result<bool> {
-    let sql = format!("SELECT ({}) AS result", condition);
-    let result: Option<i64> = sqlx::query_scalar(&sql)
-        .fetch_optional(db)
+    let mut tx = db
+        .begin()
+        .await
+        .map_err(|e| Error::Database(format!("condition tx begin failed: {e}")))?;
+    sqlx::query("SET TRANSACTION READ ONLY")
+        .execute(&mut *tx)
+        .await
+        .map_err(|e| Error::Database(format!("condition read-only set failed: {e}")))?;
+    sqlx::query("SET LOCAL statement_timeout = '5s'")
+        .execute(&mut *tx)
+        .await
+        .map_err(|e| Error::Database(format!("condition timeout set failed: {e}")))?;
+    sqlx::query(
+        "SELECT set_config('timezone', COALESCE(\
+             (SELECT home_timezone FROM app_user_profile LIMIT 1), \
+             current_setting('timezone')), true)",
+    )
+    .execute(&mut *tx)
+    .await
+    .map_err(|e| Error::Database(format!("condition timezone set failed: {e}")))?;
+
+    let sql = format!("SELECT (({}))::boolean AS result", condition);
+    let result: Option<bool> = sqlx::query_scalar(&sql)
+        .fetch_optional(&mut *tx)
         .await
         .map_err(|e| Error::Database(format!("condition sql failed: {e}")))?;
-    Ok(result.map(|v| v != 0).unwrap_or(false))
+    tx.rollback().await.ok();
+    Ok(result.unwrap_or(false))
 }
 
 // ============================================================================
@@ -500,104 +573,30 @@ async fn load_credentials(db: &PgPool, credential_id: &str) -> Result<serde_json
 // Subprocess phase
 // ============================================================================
 
-/// Dispatch a trigger to an `app`-runtime action via core's own proxy.
-///
-/// The supervised app is listening on a private port; we POST the
-/// `ActionInput` JSON to `http://127.0.0.1:<api_port>/service/<action_id>/__trigger`
-/// and let the proxy handler resolve the port. This keeps the runner from
-/// needing a direct handle to `ServiceSupervisor` and avoids passing it through
-/// every cron tick.
-///
-/// Conventions:
-///   - 200 with optional `result` field → Success; `result` becomes summary.
-///   - 404 → app doesn't implement `/__trigger` (UI-only app); treat as
-///     Skipped (Ok(None) summary, no error).
-///   - 503 → app not ready; surface as a soft error.
-///   - other 4xx/5xx → error with body as message.
-async fn run_app_trigger(
-    action: &Action,
-    payload: Option<&serde_json::Value>,
-) -> Result<Option<String>> {
-    let api_port = std::env::var("PORT").unwrap_or_else(|_| "8000".to_string());
-    let url = format!(
-        "http://127.0.0.1:{api_port}/service/{}/__trigger",
-        action.id
-    );
-
-    let body = serde_json::json!({
-        "config": action.config,
-        "credential_id": action.credential_id,
-        "payload": payload,
-    });
-
-    let client = reqwest::Client::builder()
-        .timeout(std::time::Duration::from_secs(60))
-        .build()
-        .map_err(|e| Error::Other(format!("build reqwest client: {e}")))?;
-
-    let resp = client
-        .post(&url)
-        .json(&body)
-        .send()
-        .await
-        .map_err(|e| Error::Other(format!("POST {url} failed: {e}")))?;
-
-    let status = resp.status();
-    if status == reqwest::StatusCode::NOT_FOUND {
-        // App didn't implement `/__trigger`. Not an error — UI-only apps
-        // don't need to handle cron/webhook fires.
-        tracing::debug!(
-            action_id = %action.id,
-            "app has no /__trigger handler; nothing to do"
-        );
-        return Ok(None);
-    }
-    if !status.is_success() {
-        let body_text = resp.text().await.unwrap_or_default();
-        return Err(Error::Other(format!(
-            "app /__trigger returned {}: {}",
-            status.as_u16(),
-            body_text
-        )));
-    }
-
-    let json: serde_json::Value = resp
-        .json()
-        .await
-        .map_err(|e| Error::Other(format!("/__trigger non-JSON: {e}")))?;
-
-    // Pull a summary string from the response if present.
-    let summary = json
-        .get("result")
-        .and_then(|v| v.as_str())
-        .map(|s| s.to_string())
-        .or_else(|| Some(json.to_string()));
-
-    Ok(summary)
-}
-
 /// Hard ceiling on a single action subprocess. Generous enough for the largest
 /// legitimate batch, short enough that a hung/wedged process frees the per-action
 /// run lock instead of blocking the action until the box restarts. (A device
 /// upload gives up far sooner; the box still finishes idempotently if it can.)
 const SUBPROCESS_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(300);
 
-/// Per-action ceiling override. The embedding indexer drains its whole backlog
-/// in one run (see `search::indexer`) — initial onboarding embeds an entire
-/// corpus, which is hours of legitimate work, not a hang. Its drain loop
-/// enforces its own 2-hour wall-clock ceiling and commits per record, so the
-/// subprocess gets that ceiling plus margin and the internal limit exits
-/// cleanly rather than being SIGKILLed mid-drain. Keyed on the manifest dir
-/// (stable), not the id (which gets collision-suffixed on rename).
+/// Per-applet ceiling: `config.limits.timeout_s` (the first limits-block
+/// field enforced), falling back to the global default. Actions with long
+/// legitimate runs declare their ceiling in their own manifest — e.g.
+/// embedding_index's initial-onboarding drain is hours of real work, so its
+/// manifest carries `[config.limits] timeout_s = 7500` and its internal
+/// 2-hour wall-clock limit exits cleanly rather than being SIGKILLed.
 fn subprocess_timeout(action: &Action) -> std::time::Duration {
-    match action.dir.as_str() {
-        "embedding_index" => std::time::Duration::from_secs(2 * 3600 + 300),
-        _ => SUBPROCESS_TIMEOUT,
-    }
+    action
+        .config
+        .get("limits")
+        .and_then(|l| l.get("timeout_s"))
+        .and_then(|v| v.as_u64())
+        .map(std::time::Duration::from_secs)
+        .unwrap_or(SUBPROCESS_TIMEOUT)
 }
 
 /// What a successful subprocess phase produced: the one-line summary plus the
-/// processed-record count (for `app_action_runs.records_processed`).
+/// processed-record count (for `app_applet_runs.records_processed`).
 struct SubprocessOutcome {
     summary: String,
     records: i64,
@@ -683,7 +682,7 @@ async fn run_subprocess(
     })?;
 
     // Persist returned config back to the action row (JSONB column)
-    sqlx::query("UPDATE app_actions SET config = $1, updated_at = now() WHERE id = $2")
+    sqlx::query("UPDATE app_applets SET config = $1, updated_at = now() WHERE id = $2")
         .bind(&action_output.config)
         .bind(&action.id)
         .execute(db)
@@ -712,7 +711,7 @@ async fn run_subprocess(
 /// `InstallConfig::actions_bin_dir` (`$INSTALL_PREFIX/libexec/virtues`). Kept
 /// in sync with where the installer copies `actions-bin/` and points
 /// `VIRTUES_ACTIONS_BIN_DIR`.
-const WELL_KNOWN_ACTIONS_BIN_DIR: &str = "/usr/local/libexec/virtues";
+const WELL_KNOWN_APPLETS_BIN_DIR: &str = "/usr/local/libexec/virtues";
 
 /// Resolve a command's program (argv[0]) to something spawnable.
 ///
@@ -727,20 +726,52 @@ fn resolve_program(argv0: &str) -> PathBuf {
         return PathBuf::from(argv0);
     }
 
-    if let Ok(actions_dir) = std::env::var("VIRTUES_ACTIONS_BIN_DIR") {
-        let p = PathBuf::from(actions_dir).join(argv0);
-        if p.exists() {
-            return p;
+    for var in ["VIRTUES_APPLETS_BIN_DIR", "VIRTUES_ACTIONS_BIN_DIR"] {
+        if let Ok(bin_dir) = std::env::var(var) {
+            let p = PathBuf::from(bin_dir).join(argv0);
+            if p.exists() {
+                return p;
+            }
         }
     }
 
     // Well-known install location (matches the installer's
-    // `InstallConfig::actions_bin_dir`), so a deployed box still resolves
-    // action binaries even if VIRTUES_ACTIONS_BIN_DIR didn't reach the process
+    // `InstallConfig::applets_bin_dir`), so a deployed box still resolves
+    // applet binaries even if VIRTUES_APPLETS_BIN_DIR didn't reach the process
     // environment. Dev builds fall through to the target/ walk below.
-    let installed = PathBuf::from(WELL_KNOWN_ACTIONS_BIN_DIR).join(argv0);
+    let installed = PathBuf::from(WELL_KNOWN_APPLETS_BIN_DIR).join(argv0);
     if installed.exists() {
         return installed;
+    }
+
+    // Dev: look beside the running binary. Applet binaries are built into the
+    // same profile directory as virtues-core itself, so this holds wherever
+    // cargo puts them — and it has to, because the target dir is not `./target`
+    // here: `.cargo/config.toml` redirects it to a shared cache so parallel
+    // worktrees don't each cold-build 67GB. The `target/` walk below assumed the
+    // default layout and silently missed, leaving a bare argv0 that the OS then
+    // failed to find on PATH ("No such file or directory") every cron tick.
+    if let Ok(exe) = std::env::current_exe() {
+        if let Some(dir) = exe.parent() {
+            let sibling = dir.join(argv0);
+            if sibling.exists() {
+                return sibling;
+            }
+        }
+    }
+
+    // Explicit override, and the conventional layout, for callers whose target
+    // dir neither matches the running binary's nor is configured.
+    let roots = std::env::var("CARGO_TARGET_DIR")
+        .map(|d| vec![PathBuf::from(d)])
+        .unwrap_or_default();
+    for root in roots {
+        for profile in ["release", "debug"] {
+            let p = root.join(profile).join(argv0);
+            if p.exists() {
+                return p;
+            }
+        }
     }
 
     if let Ok(cwd) = std::env::current_dir() {

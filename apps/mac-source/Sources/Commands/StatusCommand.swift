@@ -6,6 +6,12 @@ import Foundation
 struct CollectorStatus: Codable {
     let running: Bool
     let paused: Bool
+    /// True when the permission flags below came from the daemon's own
+    /// self-report and that report is fresh. False means we are falling back to
+    /// this process's probe, which describes THIS process — see CollectorHealth.
+    let permissionsReportedByDaemon: Bool
+    /// When the daemon last evaluated its permissions, if it ever has.
+    let permissionsCheckedAt: String?
     let pendingEvents: Int
     let pendingMessages: Int
     let lastSync: String?
@@ -57,12 +63,20 @@ struct StatusCommand: ParsableCommand {
             pendingMessages = (try? queue.pendingMessageCount()) ?? 0
         }
 
-        // Check permissions. Use a real read-open (not isReadableFile/stat):
-        // a stat doesn't trip TCC, so it both misreports FDA and fails to
-        // enroll this binary in the Full Disk Access list. canReadMessagesDB()
-        // does both correctly. (This is the status the onboarding card polls.)
-        let hasFullDiskAccess = MessageMonitor.canReadMessagesDB()
-        let hasAccessibility = checkAccessibility()
+        // Permissions are reported for the DAEMON, not for whoever is running
+        // this command. macOS TCC grants are per-process: run from a terminal
+        // that holds Full Disk Access, our own probe succeeds and we would
+        // cheerfully print "Full Disk Access: ✓" while the launchd daemon is
+        // being denied — which is exactly what hid a four-day iMessage outage.
+        //
+        // We still perform the live probe, because a *denied* real open is how
+        // macOS enrols this executable in the Full Disk Access list and gives
+        // the user a row to toggle. But its result only describes this process,
+        // so it is never what we report as the daemon's state.
+        let selfProbe = MessageMonitor.canReadMessagesDB()
+        let daemonHealth = CollectorHealth.load()
+        let hasFullDiskAccess = daemonHealth?.fullDiskAccess ?? selfProbe
+        let hasAccessibility = daemonHealth?.accessibility ?? checkAccessibility()
 
         // Get last sync time (from log or config)
         let lastSync = getLastSyncTime()
@@ -70,6 +84,8 @@ struct StatusCommand: ParsableCommand {
         return CollectorStatus(
             running: isRunning,
             paused: isPaused,
+            permissionsReportedByDaemon: daemonHealth != nil && !(daemonHealth?.isStale ?? true),
+            permissionsCheckedAt: daemonHealth.map { ISO8601DateFormatter().string(from: $0.updatedAt) },
             pendingEvents: pendingEvents,
             pendingMessages: pendingMessages,
             lastSync: lastSync,
@@ -110,10 +126,23 @@ struct StatusCommand: ParsableCommand {
 
         print("")
 
-        // Permissions
+        // Permissions — the daemon's, not this process's.
         print("Permissions:")
+        if !status.permissionsReportedByDaemon {
+            // Say so loudly. A number you cannot source is worse than no number:
+            // this is the line that would have prevented a four-day outage.
+            print("  \u{26A0} the daemon has not reported recently — showing THIS")
+            print("    process's permissions, which may differ from the daemon's.")
+            if status.running {
+                print("    (running an older collector build? restart it:")
+                print("     launchctl kickstart -k gui/$(id -u)/com.virtues.collector)")
+            }
+        }
         print("  Accessibility: \(status.hasAccessibility ? "\u{2713}" : "\u{2717}")")
         print("  Full Disk Access: \(status.hasFullDiskAccess ? "\u{2713}" : "\u{2717}")")
+        if status.permissionsReportedByDaemon, let checkedAt = status.permissionsCheckedAt {
+            print("    (as seen by the daemon at \(checkedAt))")
+        }
         if !status.hasFullDiskAccess {
             print("    \u{2192} System Settings \u{2192} Privacy & Security \u{2192} Full Disk Access \u{2192} turn on virtues-collector")
             print("      (not listed? click + and add ~/.virtues/bin/virtues-collector)")

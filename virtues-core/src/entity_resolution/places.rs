@@ -711,18 +711,38 @@ async fn write_visit_and_link_place(db: &Database, visit: &Visit) -> Result<()> 
     }
 
     // No existing stay here: a genuinely new visit.
-    let visit_id = generate_visit_id(visit.centroid_lat, visit.centroid_lon, visit.start_time)
+    let candidate_id = generate_visit_id(visit.centroid_lat, visit.centroid_lon, visit.start_time)
         .to_string();
     let duration_minutes = (visit.end_time - visit.start_time).num_minutes() as i32;
 
-    sqlx::query(
+    // Conflict on `source_stream_id`, NOT `id`. A stay carries two identities and
+    // only one of them is stable: `id` is derived from (centroid, start_time) and
+    // DRIFTS every time re-clustering nudges either, while `source_stream_id` (the
+    // first point) does not — and the stable one is what holds the UNIQUE
+    // constraint. Guarding `id` meant a re-clustered stay arrived with a fresh id,
+    // sailed past the guard, and died on `data_location_visit_source_stream_id_key`.
+    // That failed 606 times in one week and is why no visit was written for days.
+    //
+    // DO UPDATE widens to the union span instead of skipping, so a stay that grows
+    // across passes extends in place rather than spawning a rival row.
+    let visit_id: String = sqlx::query_scalar(
         "INSERT INTO data_location_visit \
          (id, latitude, longitude, arrival_time, departure_time, duration_minutes, \
           source_stream_id, source_table, source_provider, metadata) \
          VALUES ($1, $2, $3, $4, $5, $6, $7, 'location_point', 'ios', $8) \
-         ON CONFLICT (id) DO NOTHING",
+         ON CONFLICT (source_stream_id) DO UPDATE SET \
+           arrival_time   = LEAST(data_location_visit.arrival_time, EXCLUDED.arrival_time), \
+           departure_time = GREATEST(data_location_visit.departure_time, EXCLUDED.departure_time), \
+           duration_minutes = GREATEST(0, (EXTRACT(EPOCH FROM \
+             GREATEST(data_location_visit.departure_time, EXCLUDED.departure_time) \
+             - LEAST(data_location_visit.arrival_time, EXCLUDED.arrival_time)) / 60)::int), \
+           latitude = EXCLUDED.latitude, \
+           longitude = EXCLUDED.longitude, \
+           metadata = EXCLUDED.metadata, \
+           updated_at = now() \
+         RETURNING id",
     )
-    .bind(&visit_id)
+    .bind(&candidate_id)
     .bind(visit.centroid_lat)
     .bind(visit.centroid_lon)
     .bind(visit.start_time)
@@ -730,9 +750,13 @@ async fn write_visit_and_link_place(db: &Database, visit: &Visit) -> Result<()> 
     .bind(duration_minutes)
     .bind(visit.points.first().unwrap().id.to_string())
     .bind(&metadata)
-    .execute(pool)
+    .fetch_one(pool)
     .await?;
 
+    // On conflict the row keeps its ORIGINAL id, so the ref below must use what
+    // came back — never `candidate_id`. Binding the drifted id is how refs were
+    // orphaned, which in turn broke the overlap-merge above (it finds prior visits
+    // by ref), which is what let the collision recur every pass.
     let ref_id = ids::generate_id("eref", &[&visit_id, &place_id, "location"]);
     sqlx::query(
         "INSERT INTO wiki_entity_refs (id, entity_type, entity_id, source_table, source_id, role, timestamp) \

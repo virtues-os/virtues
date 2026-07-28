@@ -130,6 +130,37 @@ pub fn build_batch_upsert_query(
 /// this, but HealthKit initial sync (90 days) can send thousands of records per stream.
 pub const BATCH_SIZE: usize = 500;
 
+/// Collapse a batch to one row per conflict key, keeping the **last** occurrence,
+/// while preserving the order of everything that survives.
+///
+/// Postgres rejects a single `INSERT ... ON CONFLICT (k) DO UPDATE` whose VALUES
+/// list contains the same `k` twice — *"ON CONFLICT DO UPDATE command cannot
+/// affect row a second time"* — and aborts the entire statement, so one repeated
+/// key drops the whole batch on the floor and retries it forever. Sources do
+/// repeat keys inside a single payload: Apple FinanceKit ships a transaction as
+/// both pending and posted, and Plaid's `/transactions/sync` returns a txn in
+/// both `added` and `modified`. Dedup before the flush so the batch is legal.
+///
+/// Last-wins matches `DO UPDATE` semantics: within one payload the newest copy of
+/// a row is the one the update would have settled on anyway. (`DO NOTHING`
+/// batches are immune to the error and don't need this.)
+pub fn dedup_refs_keep_last<'a, T, K, F>(records: &'a [T], key: F) -> Vec<&'a T>
+where
+    K: Eq + std::hash::Hash,
+    F: Fn(&'a T) -> K,
+{
+    let mut last_idx: std::collections::HashMap<K, usize> =
+        std::collections::HashMap::with_capacity(records.len());
+    for (i, r) in records.iter().enumerate() {
+        last_idx.insert(key(r), i);
+    }
+    records
+        .iter()
+        .enumerate()
+        .filter_map(|(i, r)| (last_idx.get(&key(r)) == Some(&i)).then_some(r))
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -166,6 +197,18 @@ mod tests {
             1,
         );
         assert!(!sql.contains("from_name = EXCLUDED"));
+    }
+
+    #[test]
+    fn dedup_keeps_last_occurrence_in_order() {
+        // (key, tag) — two rows share key "a"; the batch must keep the *second*
+        // "a" (last-wins) and preserve the order of the survivors.
+        let rows = vec![("a", 1), ("b", 2), ("a", 3), ("c", 4)];
+        let kept: Vec<_> = dedup_refs_keep_last(&rows, |r| r.0)
+            .into_iter()
+            .copied()
+            .collect();
+        assert_eq!(kept, vec![("b", 2), ("a", 3), ("c", 4)]);
     }
 
     #[test]

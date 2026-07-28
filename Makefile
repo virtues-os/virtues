@@ -211,6 +211,22 @@ _embed-ensure:
 	  echo "→ downloading $(RERANK_GGUF) (~160 MB, one-time)…"; \
 	  curl -fL --progress-bar "$(RERANK_GGUF_URL)" -o "$(VIRTUES_MODELS_DIR)/$(RERANK_GGUF).part" \
 	    && mv "$(VIRTUES_MODELS_DIR)/$(RERANK_GGUF).part" "$(VIRTUES_MODELS_DIR)/$(RERANK_GGUF)"; }
+	@$(MAKE) --no-print-directory _pdfium-ensure
+
+# libpdfium for document extraction (dev-only convenience: direct from
+# pdfium-binaries; the box gets it SHA-verified from OUR models release via
+# the installer). Version must track PDFIUM_VERSION in
+# tools/virtues-installer/src/config.rs.
+PDFIUM_VERSION := 7961
+PDFIUM_DIR := $(VIRTUES_MODELS_DIR)/pdfium
+_pdfium-ensure:
+	@test -s "$(PDFIUM_DIR)/libpdfium.dylib" || { \
+	  echo "→ downloading pdfium $(PDFIUM_VERSION) (mac-arm64, one-time)…"; \
+	  mkdir -p "$(PDFIUM_DIR)"; \
+	  curl -fL --progress-bar "https://github.com/bblanchon/pdfium-binaries/releases/download/chromium%2F$(PDFIUM_VERSION)/pdfium-mac-arm64.tgz" -o "$(PDFIUM_DIR)/pdfium.tgz" \
+	    && tar -xzf "$(PDFIUM_DIR)/pdfium.tgz" -C "$(PDFIUM_DIR)" lib/libpdfium.dylib \
+	    && mv "$(PDFIUM_DIR)/lib/libpdfium.dylib" "$(PDFIUM_DIR)/libpdfium.dylib" \
+	    && rm -rf "$(PDFIUM_DIR)/pdfium.tgz" "$(PDFIUM_DIR)/lib"; }
 
 # Run the two sidecars (assumes models present; ~1 GB resident, ~0% CPU
 # idle). `-lv 1` quiets llama.cpp's startup spam (device-info/slot/warmup) while
@@ -346,6 +362,11 @@ _ecr-push:
 	  || { echo "error: AWS CLI not configured — run \`aws configure\`"; exit 1; }; \
 	reg="$$acct.dkr.ecr.$(AWS_REGION).amazonaws.com"; \
 	echo "→ pushing $(SVC) to $$reg"; \
-	aws ecr get-login-password --region $(AWS_REGION) | docker login --username AWS --password-stdin "$$reg"; \
-	docker build --platform linux/amd64 -f $(DOCKERFILE) -t "$$reg/$(SVC):latest" .; \
+	aws ecr get-login-password --region $(AWS_REGION) | docker login --username AWS --password-stdin "$$reg" && \
+	docker build --platform linux/amd64 -f $(DOCKERFILE) -t "$$reg/$(SVC):latest" . && \
 	docker push "$$reg/$(SVC):latest"
+# NB: `&&`, not `;`. With `;` a FAILED build still ran the push, which happily
+# re-uploaded whatever stale image was already tagged `:latest` locally and
+# printed a digest — a deploy that looks successful and changes nothing. That
+# is the worst possible failure mode for a manual deploy path, and it is how a
+# broken build sat here unnoticed.

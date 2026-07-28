@@ -214,10 +214,23 @@ pub async fn install_inference(cfg: &InstallConfig) -> Result<()> {
     run_step("Start inference sidecars", cmd).await
 }
 
+/// libpdfium — native PDF text extraction for the `document_extraction`
+/// action (researcher-plan D1). Mode-independent (CPU parse; runs the same on
+/// the Dragon and a DIY box), SHA-verified from the models bucket like every
+/// other model asset, skipped when already present.
+pub async fn install_pdfium(cfg: &InstallConfig) -> Result<()> {
+    crate::download::fetch_asset(cfg, &cfg.pdfium_asset(), cfg.pdfium_lib_path()).await?;
+    let mut cmd = Command::new("chown");
+    cmd.args(["-R", "virtues:virtues", cfg.pdfium_dir().to_str().unwrap()]);
+    let _ = cmd.output().await;
+    Ok(())
+}
+
 /// Provision the Dragon NPU daemon: fetch the QAIRT context binaries +
 /// tokenizers, then install + start `virtues-qnnd.service`. Replaces the
-/// llama-server sidecars on our board — the runtime talks to it natively (no
-/// HTTP) via `VIRTUES_QNND_ADDR`.
+/// llama-server sidecars on our board — but serves the SAME llama-compatible
+/// HTTP inference contract on :18181/:18182, so the runtime talks to it through
+/// `VIRTUES_EMBED_URL`/`VIRTUES_RERANK_URL` like any other endpoint.
 ///
 /// Depends on two things this installer does NOT produce: the `virtues-qnnd`
 /// binary in the tarball (CI must build it for aarch64 with `QNN_SDK_ROOT`) and
@@ -256,21 +269,57 @@ pub async fn install_qnn(cfg: &InstallConfig) -> Result<()> {
     };
     // QAIRT runtime libs (Qualcomm-proprietary — not shipped by us). Prefer an
     // explicit VIRTUES_QNN_LIB_DIR, else auto-detect libQnnHtp.so under the usual
-    // roots (a Radxa QAIRT install, an onnxruntime-qnn wheel, …). Both
+    // roots (a QAIRT SDK unpack, a Radxa QAIRT install, …). Both
     // LD_LIBRARY_PATH (host) and ADSP_LIBRARY_PATH (DSP skel) must point there.
+    //
+    // Missing libs is a REFUSAL to install the unit, not a warning we print on
+    // the way past. Enabling a daemon we have just proven cannot load its own
+    // runtime buys nothing and costs a permanent crash loop: `Restart=on-failure`
+    // at `RestartSec=5` is two starts per ten seconds, which never trips
+    // systemd's default rate limit, so it restarts every five seconds forever.
+    // One box ran that loop for ten days — 169k restarts, a 1GB journal, and a
+    // core of CPU burnt continuously — while the installer's warning sat far
+    // above in a scrollback nobody re-read.
     let qnn_env = match detect_qnn_libs(cfg).await {
         Some((host, adsp)) => {
             ui::ok(&format!("QNN runtime libs: {host}"));
             format!("Environment=LD_LIBRARY_PATH={host}\nEnvironment=ADSP_LIBRARY_PATH={adsp}\n")
         }
-        None => {
-            ui::warn(
-                "QNN runtime libs (libQnnHtp.so) not found — the daemon needs QAIRT on the \
-                 box. Install it (e.g. `pip install onnxruntime-qnn`, or the Radxa QAIRT SDK) \
-                 and set VIRTUES_QNN_LIB_DIR, or bake the libs into the appliance image.",
-            );
+        // `detect_qnn_libs` returning None spans two very different worlds: the
+        // baked appliance image, where the libs sit on the default loader path
+        // and the unit correctly needs no env at all, and a box that simply has
+        // no QAIRT on it. A bounded `find` cannot tell those apart, so ask the
+        // loader instead — that is the question that actually matters.
+        None if loader_has_lib("libQnnHtp.so").await => {
+            ui::ok("QNN runtime libs: on the default loader path");
             String::new()
         }
+        // Nothing on the box: fetch the libs from Qualcomm's own public
+        // distribution. This is the ordinary path for a DIY Dragon — the lab
+        // box only works because someone hand-unpacked a 1.44 GB SDK into
+        // /qairt-extract, which nobody else is going to do.
+        None => match crate::qairt::ensure_libs(cfg).await {
+            Ok((host, dsp)) => format!(
+                "Environment=LD_LIBRARY_PATH={host}\nEnvironment=ADSP_LIBRARY_PATH={dsp};/usr/lib/dsp/cdsp\n",
+                host = host.display(),
+                dsp = dsp.display(),
+            ),
+            Err(e) => {
+                // A previous install may have left the loop running; stopping
+                // it is the useful half of this branch.
+                let mut cmd = Command::new("systemctl");
+                cmd.args(["disable", "--now", "virtues-qnnd"]);
+                let _ = cmd.output().await;
+                ui::warn(&format!(
+                    "could not obtain the QAIRT runtime libs ({e}) — NPU daemon NOT installed, \
+                     so this box has no embedding or rerank endpoint and semantic search will \
+                     not work. Unpack the QAIRT Community SDK on the box by hand, point \
+                     VIRTUES_QNN_LIB_DIR at its lib/aarch64-*-linux-*/ directory, and re-run \
+                     this installer."
+                ));
+                return Ok(());
+            }
+        },
     };
 
     let body = QNN_UNIT_TEMPLATE
@@ -278,7 +327,8 @@ pub async fn install_qnn(cfg: &InstallConfig) -> Result<()> {
         .replace("__QNN_ENV__", &qnn_env)
         .replace("__BIN__", &bin.display().to_string())
         .replace("__EMBED_BIN__", &qnn_dir.join(&cfg.qnn_embed_bin).display().to_string())
-        .replace("__RERANK_BIN__", &qnn_dir.join(&cfg.qnn_rerank_bin).display().to_string());
+        .replace("__RERANK_BIN__", &qnn_dir.join(&cfg.qnn_rerank_bin).display().to_string())
+        .replace("__QNN_DIR__", &qnn_dir.display().to_string());
     fs::write("/etc/systemd/system/virtues-qnnd.service", body)
         .context("writing virtues-qnnd.service")?;
 
@@ -293,20 +343,84 @@ pub async fn install_qnn(cfg: &InstallConfig) -> Result<()> {
     run_step("Start NPU daemon", cmd).await
 }
 
+/// Host-lib directories inside a QAIRT SDK, best first.
+///
+/// A QAIRT unpack ships the same `libQnnHtp.so` for every target it supports —
+/// the lab Dragon has SIX copies, including `x86_64-linux-clang` and
+/// `aarch64-android`. Order here is deliberate: `aarch64-oe-linux-gcc11.2` is
+/// the variant the lab box has actually been running against (Ubuntu 24.04,
+/// glibc 2.39), so it leads despite "oe" suggesting Yocto. The rest follow as
+/// plausible aarch64-Linux fallbacks.
+const QNN_HOST_LIB_DIRS: &[&str] = &[
+    "aarch64-oe-linux-gcc11.2",
+    "aarch64-ubuntu-gcc9.4",
+    "aarch64-oe-linux-gcc9.3",
+    "aarch64-oe-linux-gcc8.2",
+];
+
 /// The directory containing a named QNN `.so`, via a bounded `find` under the
-/// roots QAIRT / onnxruntime-qnn typically land in (never a full-FS scan).
+/// roots a QAIRT SDK unpack typically lands in (never a full-FS scan).
+///
+/// Ranked, not `head -1`. This used to take whatever the find emitted first,
+/// which is filesystem order — so on a box carrying a full SDK the winner was
+/// arbitrary among six candidates, and two of them (x86_64, android) would have
+/// pointed `LD_LIBRARY_PATH` at libraries that cannot load on this box at all.
+/// It happened to land on a working directory on the lab Dragon; nothing made
+/// that reproducible on the next one.
 async fn find_lib_dir(name: &str) -> Option<String> {
     let script = format!(
         "find /opt /usr/lib /usr/local/lib /qairt* \"$HOME\" \
          /usr/lib/python3*/dist-packages /usr/local/lib/python3*/dist-packages \
-         -maxdepth 8 -name {name} 2>/dev/null | head -1"
+         -maxdepth 8 -name {name} 2>/dev/null"
     );
     let out = Command::new("bash").arg("-c").arg(&script).output().await.ok()?;
-    let path = String::from_utf8_lossy(&out.stdout).trim().to_string();
-    if path.is_empty() {
-        return None;
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    rank_lib_dirs(stdout.lines())
+}
+
+/// Pick the best directory from `find` hits for a QNN `.so`. Split out from the
+/// shell-out so the ranking is testable; see `tests` below for the six-candidate
+/// case the lab Dragon actually presents.
+fn rank_lib_dirs<'a>(hits: impl Iterator<Item = &'a str>) -> Option<String> {
+    let dirs: Vec<&str> = hits
+        .map(str::trim)
+        .filter(|l| !l.is_empty())
+        .filter_map(|l| Path::new(l).parent()?.to_str())
+        // Wrong-platform builds are never a fallback — a mis-set
+        // LD_LIBRARY_PATH is worse than no LD_LIBRARY_PATH, because the failure
+        // surfaces as an opaque dlopen error at daemon start rather than as the
+        // clean "no libs" refusal.
+        .filter(|d| !d.contains("x86_64") && !d.contains("android") && !d.contains("windows"))
+        .collect();
+
+    // Preferred host triples first.
+    for want in QNN_HOST_LIB_DIRS {
+        if let Some(d) = dirs.iter().find(|d| d.ends_with(want)) {
+            return Some((*d).to_string());
+        }
     }
-    Path::new(&path).parent().map(|p| p.display().to_string())
+    // The DSP skel arrives through this same function and matches no host
+    // triple; its canonical home is the SDK's unsigned dir. Prefer that over a
+    // loose copy someone left in a working directory.
+    if let Some(d) = dirs.iter().find(|d| d.ends_with("hexagon-v68/unsigned")) {
+        return Some((*d).to_string());
+    }
+    dirs.iter()
+        .find(|d| d.contains("aarch64"))
+        .or_else(|| dirs.first())
+        .map(|d| (*d).to_string())
+}
+
+/// Can the dynamic loader resolve `name` with no help from us? `ldconfig -p`
+/// prints the ld.so cache, which is the same thing the daemon's `dlopen` will
+/// consult — so this answers "would it load if the unit set no LD_LIBRARY_PATH",
+/// which a `find` over candidate directories cannot.
+async fn loader_has_lib(name: &str) -> bool {
+    let script = format!("ldconfig -p 2>/dev/null | grep -qF -- {name}");
+    match Command::new("bash").arg("-c").arg(&script).output().await {
+        Ok(out) => out.status.success(),
+        Err(_) => false,
+    }
 }
 
 /// Resolve `(LD_LIBRARY_PATH, ADSP_LIBRARY_PATH)` for the QNN daemon. These are
@@ -433,24 +547,38 @@ WantedBy=multi-user.target
 "#;
 
 /// The Dragon NPU daemon unit. `virtues-qnnd` loads the two QAIRT context
-/// binaries once and serves embed/rerank on loopback :7788 (see
-/// `crates/virtues-qnnd`). `--burst` pins the HTP to its performance power
-/// corners. `__SUPP_GROUPS__` grants access to the DSP device node
+/// binaries once and serves the box's llama-compatible HTTP inference contract
+/// on loopback :18181/:18182 (its internal engine loop stays on :7788 — see
+/// `crates/virtues-qnnd`); `--models-dir` points it at the tokenizers shipped
+/// next to the context binaries. `--burst` pins the HTP to its performance
+/// power corners. `__SUPP_GROUPS__` grants access to the DSP device node
 /// (`/dev/fastrpc-cdsp`, `render` group). `__QNN_ENV__` sets both
 /// `LD_LIBRARY_PATH` (host-side `libQnnHtp.so`/`libQnnSystem.so`) and
 /// `ADSP_LIBRARY_PATH` (the DSP-side `libQnnHtpV68Skel.so`, loaded onto the
 /// Hexagon) to the detected QAIRT lib dir — verified sufficient on-device. Empty
 /// when the libs are already on the default loader path (appliance image).
+///
+/// `StartLimit*` caps the restart loop. Without it `Restart=on-failure` at
+/// `RestartSec=5` is two starts per ten seconds, which stays under systemd's
+/// default burst of five, so a daemon that can never start restarts every five
+/// seconds indefinitely — observed at 169k restarts, a 1GB journal and a core
+/// of CPU burnt. The tradeoff is deliberate: five failures inside five minutes
+/// and the unit stops and stays stopped, which does mean a genuinely transient
+/// failure needs a manual `systemctl reset-failed`. A unit sitting visibly in
+/// `failed` is a better artifact than one hiding a permanent fault behind an
+/// `activating` that never lands.
 const QNN_UNIT_TEMPLATE: &str = r#"[Unit]
 Description=Virtues NPU inference daemon (virtues-qnnd, Hexagon v68)
 Documentation=https://virtues.com/docs
 After=network.target
+StartLimitIntervalSec=300
+StartLimitBurst=5
 
 [Service]
 Type=simple
 User=virtues
 Group=virtues
-__SUPP_GROUPS____QNN_ENV__ExecStart=__BIN__ __EMBED_BIN__ __RERANK_BIN__ --burst --port 7788
+__SUPP_GROUPS____QNN_ENV__ExecStart=__BIN__ __EMBED_BIN__ __RERANK_BIN__ --burst --port 7788 --models-dir __QNN_DIR__
 Restart=on-failure
 RestartSec=5
 
@@ -623,10 +751,16 @@ pub async fn create_user(cfg: &InstallConfig) -> Result<()> {
         .await?;
     }
 
-    for sub in &["lake", "models", "secrets"] {
+    // `applets` is the writable applet tree. It MUST exist and MUST be owned
+    // by the service user before first boot: chat authoring does
+    // `create_dir_all` under it as `virtues`, and when nothing created it the
+    // failure was a bare `mkdir failed: Permission denied` with no indication
+    // of which directory or why.
+    for sub in &["lake", "models", "secrets", "applets"] {
         fs::create_dir_all(cfg.data_dir.join(sub))
             .with_context(|| format!("creating {}/{sub}", cfg.data_dir.display()))?;
     }
+    migrate_applets_out_of_shipped_tree(cfg)?;
     // chown -R virtues:virtues + 0700 on secrets
     let mut cmd = Command::new("chown");
     cmd.args([
@@ -677,6 +811,8 @@ pub async fn provision_db() -> Result<()> {
         ui::skip("Postgres role 'virtues' already exists");
     }
 
+    provision_separation_roles().await?;
+
     if !psql_exists("SELECT 1 FROM pg_database WHERE datname='virtues'").await? {
         let mut cmd = Command::new("sudo");
         cmd.args(["-u", "postgres", "createdb", "-O", "virtues", "virtues"]);
@@ -693,7 +829,144 @@ pub async fn provision_db() -> Result<()> {
         "psql", "-d", "virtues",
         "-c", "CREATE EXTENSION IF NOT EXISTS vector",
     ]);
-    run_step("Install pgvector extension", cmd).await
+    run_step("Install pgvector extension", cmd).await?;
+
+    harden_postgres().await
+}
+
+/// The NOLOGIN privilege-separation roles the schema depends on — created here
+/// as `postgres`, not by the migrations that declare them.
+///
+/// These are CLUSTER objects, not database objects. Migration 0052
+/// (`virtues_face_reader`) and 0054 (`virtues_applet_writer`) each open with a
+/// guarded `CREATE ROLE … NOLOGIN`, and migrations run at pool connect as the
+/// `virtues` LOGIN role — which `provision_db` above deliberately creates with
+/// `--no-createrole`. So the installer handed the server a role and then the
+/// server's own schema demanded a privilege that same installer had just
+/// withheld: migration 52 aborts, the server exits, the box never comes up.
+/// Every box past 0052 hits it. Neither environment that could have caught it
+/// does, and for different reasons — dev makes `virtues` a SUPERUSER
+/// (`Makefile`), and CI pre-creates both roles as the superuser in its own
+/// setup step, added after this same failure surfaced there first.
+///
+/// Pre-creating as `postgres` keeps `--no-createrole` intact — the login role
+/// still cannot mint roles of its own — and turns each migration's guarded
+/// CREATE into the no-op it was written to be.
+///
+/// `WITH ADMIN OPTION` is load-bearing, not belt-and-braces. Each migration
+/// follows its CREATE with `GRANT <role> TO current_user` so the pool can
+/// `SET ROLE` into it, and since PG16 a GRANT on a role requires ADMIN OPTION
+/// on that role. Without it the roles exist, the CREATE is skipped, and the
+/// migration fails one line later on the GRANT — the same outage wearing a
+/// more confusing error.
+async fn provision_separation_roles() -> Result<()> {
+    // Must agree with virtues-core/migrations: 0052 (face reader), 0054
+    // (applet writer). A role declared there without a line here reintroduces
+    // exactly the failure this function exists to prevent.
+    for role in ["virtues_face_reader", "virtues_applet_writer"] {
+        if !psql_exists(&format!("SELECT 1 FROM pg_roles WHERE rolname='{role}'")).await? {
+            let mut cmd = Command::new("sudo");
+            cmd.args(["-u", "postgres", "psql", "-v", "ON_ERROR_STOP=1", "-c"]);
+            cmd.arg(format!("CREATE ROLE {role} NOLOGIN"));
+            run_step(&format!("Create Postgres role '{role}'"), cmd).await?;
+        } else {
+            ui::skip(&format!("Postgres role '{role}' already exists"));
+        }
+
+        // Unconditional rather than paired with the create above: a cluster
+        // that already carries the role may not carry the grant (a box someone
+        // unblocked by hand with `ALTER ROLE virtues CREATEROLE`, or a restore
+        // from a dump). Re-granting is idempotent.
+        let mut cmd = Command::new("sudo");
+        cmd.args(["-u", "postgres", "psql", "-v", "ON_ERROR_STOP=1", "-c"]);
+        cmd.arg(format!("GRANT {role} TO virtues WITH ADMIN OPTION"));
+        run_step(&format!("Grant '{role}' to 'virtues'"), cmd).await?;
+    }
+    Ok(())
+}
+
+/// Appliance-durability tuning for the Postgres cluster.
+///
+/// Two problems this fixes, both invisible until the day power is yanked from
+/// a box in someone's home:
+///
+///  1. **systemd kills recovery.** The default unit gives Postgres 90s to
+///     become ready; after an unclean shutdown WAL replay can take minutes on
+///     a large index, so systemd SIGKILLs the server mid-recovery — the exact
+///     path to "PANIC: could not locate a valid checkpoint record" that fills
+///     the Immich/Home-Assistant forums. A drop-in with `TimeoutStartSec=
+///     infinity` lets recovery finish. (The PGDG unit is already `Type=notify`,
+///     so it reports ready the instant recovery completes — no fixed guess.)
+///
+///  2. **Flash wear + WAL volume.** `wal_compression=lz4` shrinks the
+///     full-page images that dominate WAL on a write-heavy embedding backfill;
+///     stretched checkpoints cut the FPI rate further. Cheap CPU, real flash
+///     savings on eMMC/SD/consumer-NVMe without power-loss protection.
+///
+/// Data checksums (the cheap corruption detector for a hard-unplugged box) can
+/// only be set at initdb time, so they're not touched here — that belongs in
+/// the cluster-creation path (PG18 defaults them on; a note for the golden
+/// image). Idempotent: the drop-in is overwritten, the ALTER SYSTEM settings
+/// are last-writer-wins, and a reload (not restart) applies them without
+/// disturbing a running box.
+async fn harden_postgres() -> Result<()> {
+    // Resolve the running PG unit name (PGDG ships `postgresql@NN-main`; the
+    // distro meta-unit `postgresql.service` pulls it in). The drop-in has to
+    // land on the unit that actually runs the postmaster, so ask systemd which
+    // postgresql@* instance is active rather than hardcoding a version.
+    let instance = active_pg_instance().await;
+    let unit = instance.as_deref().unwrap_or("postgresql");
+    let dropin_dir = format!("/etc/systemd/system/{unit}.service.d");
+    fs::create_dir_all(&dropin_dir)
+        .with_context(|| format!("creating {dropin_dir}"))?;
+    fs::write(
+        format!("{dropin_dir}/virtues-durability.conf"),
+        "[Service]\n# Never SIGKILL Postgres mid-WAL-replay after an unclean\n# shutdown — recovery can exceed the 90s default on a large index.\nTimeoutStartSec=infinity\n",
+    )
+    .context("writing postgres durability drop-in")?;
+    let mut cmd = Command::new("systemctl");
+    cmd.arg("daemon-reload");
+    run_step("Postgres: recovery-safe startup timeout", cmd).await?;
+
+    // WAL/checkpoint tuning via ALTER SYSTEM (writes postgresql.auto.conf).
+    // All reloadable — no restart needed.
+    for (k, v) in [
+        ("wal_compression", "lz4"),
+        ("checkpoint_timeout", "15min"),
+        ("checkpoint_completion_target", "0.9"),
+        ("max_wal_size", "4GB"),
+        ("min_wal_size", "1GB"),
+    ] {
+        let mut cmd = Command::new("sudo");
+        cmd.args([
+            "-u", "postgres", "psql", "-c",
+            &format!("ALTER SYSTEM SET {k} = '{v}'"),
+        ]);
+        // Best-effort per setting: an older PG without lz4 WAL compression
+        // shouldn't abort the whole install — log and continue.
+        if run_step(&format!("Postgres: set {k}={v}"), cmd).await.is_err() {
+            ui::warn(&format!("Postgres: could not set {k} (older server?) — skipping"));
+        }
+    }
+    let mut cmd = Command::new("sudo");
+    cmd.args(["-u", "postgres", "psql", "-c", "SELECT pg_reload_conf()"]);
+    run_step("Postgres: reload config", cmd).await
+}
+
+/// The active `postgresql@NN-main` instance unit, if the box uses the PGDG
+/// multi-version layout. Returns None on distros where `postgresql.service`
+/// is itself the running unit (dnf/RHEL), in which case the caller falls back
+/// to that name.
+async fn active_pg_instance() -> Option<String> {
+    let out = Command::new("systemctl")
+        .args(["list-units", "--type=service", "--state=active", "--no-legend", "postgresql@*"])
+        .output()
+        .await
+        .ok()?;
+    let text = String::from_utf8_lossy(&out.stdout);
+    text.split_whitespace()
+        .find(|t| t.starts_with("postgresql@") && t.ends_with(".service"))
+        .map(|t| t.trim_end_matches(".service").to_string())
 }
 
 async fn psql_exists(sql: &str) -> Result<bool> {
@@ -728,13 +1001,17 @@ fn inference_env_keys(
     validation: Option<&ValidationReport>,
 ) -> Vec<(&'static str, String)> {
     match mode {
-        // Dragon: the native NPU daemon (`virtues-qnnd`) on loopback :7788. Its
-        // presence (`VIRTUES_QNND_ADDR`) is what switches core's embedder +
-        // reranker to the QNN path (gte-small 384-d + colbert MaxSim); no HTTP
-        // sidecar, no fingerprint pin (it's our compiled model).
+        // Dragon: `virtues-qnnd` serves the SAME llama-compatible HTTP contract
+        // as the llama-server sidecars (gte-small 384-d embed + colbert MaxSim
+        // rerank on the Hexagon NPU), so core needs nothing QNN-specific — just
+        // the standard URLs. No fingerprint pin (it's our compiled model; the
+        // runtime's /v1/models + dim probes cover identity).
+        // VIRTUES_QNND_MODELS_DIR stays for the resolution report (which
+        // context binaries to list) and the daemon's tokenizer default.
         InferenceMode::Dragon => vec![
             ("VIRTUES_INFERENCE", "dragon".to_string()),
-            ("VIRTUES_QNND_ADDR", "127.0.0.1:7788".to_string()),
+            ("VIRTUES_EMBED_URL", "http://127.0.0.1:18181".to_string()),
+            ("VIRTUES_RERANK_URL", "http://127.0.0.1:18182".to_string()),
             (
                 "VIRTUES_QNND_MODELS_DIR",
                 cfg.qnn_models_dir().display().to_string(),
@@ -830,14 +1107,18 @@ pub async fn write_env_file(
          VIRTUES_ATLAS_URL={atlas}\n\
          VIRTUES_API_URL={api}\n\
          VIRTUES_MODELS_DIR={models_dir}\n\
+         VIRTUES_PDFIUM_PATH={pdfium_path}\n\
          VIRTUES_ACTIONS_DIR={actions_dir}\n\
+         VIRTUES_APPLET_STATE_DIR={applet_state_dir}\n\
          VIRTUES_ACTIONS_BIN_DIR={actions_bin_dir}\n",
         static_dir = cfg.web_dir().display(),
+        pdfium_path = cfg.pdfium_lib_path().display(),
         storage_path = cfg.data_dir.join("lake").display(),
         atlas = cfg.atlas_url,
         api = cfg.virtues_api_url,
         models_dir = cfg.models_dir().display(),
         actions_dir = cfg.actions_dir().display(),
+        applet_state_dir = cfg.applet_state_dir().display(),
         actions_bin_dir = cfg.actions_bin_dir().display(),
     );
     for (k, v) in inference_env_keys(cfg, mode, validation) {
@@ -893,6 +1174,7 @@ async fn merge_env_file(
         ("VIRTUES_API_URL", cfg.virtues_api_url.clone()),
         ("VIRTUES_MODELS_DIR", cfg.models_dir().display().to_string()),
         ("VIRTUES_ACTIONS_DIR", cfg.actions_dir().display().to_string()),
+        ("VIRTUES_APPLET_STATE_DIR", cfg.applet_state_dir().display().to_string()),
         ("VIRTUES_ACTIONS_BIN_DIR", cfg.actions_bin_dir().display().to_string()),
     ];
     want.extend(inference_env_keys(cfg, mode, validation));
@@ -1049,21 +1331,35 @@ pub async fn health_check(cfg: &InstallConfig, mode: &InferenceMode) -> Result<u
     }
 
     if let InferenceMode::Dragon = mode {
-        // NPU daemon accepting connections on loopback :7788. It takes a few
-        // seconds to load both context binaries after `systemctl start` — retry.
-        let mut up = false;
-        for _ in 0..10 {
-            if tokio::net::TcpStream::connect("127.0.0.1:7788").await.is_ok() {
-                up = true;
-                break;
-            }
-            tokio::time::sleep(std::time::Duration::from_secs(2)).await;
-        }
-        if up {
-            ui::ok("NPU daemon responding on :7788");
-        } else {
-            ui::warn("virtues-qnnd not responding on :7788 — journalctl -u virtues-qnnd");
+        // `install_qnn` declines to install the unit at all when QAIRT is absent,
+        // and says so at length there. Repeating it here as "not responding, check
+        // journalctl" would send the operator to the logs of a unit that does not
+        // exist, so name the real state instead.
+        if !Path::new("/etc/systemd/system/virtues-qnnd.service").exists() {
+            ui::warn(
+                "NPU daemon not installed (no QAIRT runtime on this box) — no embedding or \
+                 rerank endpoint, so semantic search is unavailable",
+            );
             issues += 1;
+        } else {
+            // NPU daemon serving the HTTP contract on loopback. It takes a few
+            // seconds to load both context binaries after `systemctl start` — retry.
+            let mut up = false;
+            // :18181 is the daemon's HTTP contract listener, which only binds after
+            // its internal engine loop came up — so one probe proves the whole chain.
+            for _ in 0..10 {
+                if tokio::net::TcpStream::connect("127.0.0.1:18181").await.is_ok() {
+                    up = true;
+                    break;
+                }
+                tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+            }
+            if up {
+                ui::ok("NPU daemon serving the inference contract on :18181/:18182");
+            } else {
+                ui::warn("virtues-qnnd not responding on :18181 — journalctl -u virtues-qnnd");
+                issues += 1;
+            }
         }
         // Context binaries + tokenizers on disk.
         let qnn_dir = cfg.qnn_models_dir();
@@ -1131,4 +1427,137 @@ pub async fn health_check(cfg: &InstallConfig, mode: &InferenceMode) -> Result<u
     }
 
     Ok(issues)
+}
+
+/// Write `install.json` — the box's topology manifest, the single place that
+/// records what shape this install is (which inference profile, which sidecar
+/// units exist, where models live). `virtues upgrade`/`doctor` READ this
+/// instead of sniffing unit files, so what-to-restart is declared, not
+/// guessed (the guessing is what once restarted the wrong sidecars and never
+/// restarted qnnd). Rewritten on every install run — the installer is the
+/// only writer.
+pub fn write_install_manifest(cfg: &InstallConfig, mode: &InferenceMode) -> Result<()> {
+    let (profile, sidecars): (&str, Vec<&str>) = match mode {
+        InferenceMode::Dragon => ("dragon", vec!["virtues-qnnd"]),
+        InferenceMode::Bundled => ("bundled", vec!["virtues-embed", "virtues-rerank"]),
+        InferenceMode::Manual { .. } => ("manual", vec![]),
+    };
+    let manifest = serde_json::json!({
+        "profile": profile,
+        "sidecars": sidecars,
+        "models_dir": cfg.models_dir(),
+        "written_by": env!("CARGO_PKG_VERSION"),
+    });
+    let path = cfg.share_virtues_dir().join("install.json");
+    fs::write(&path, serde_json::to_vec_pretty(&manifest).expect("manifest serializes"))
+        .with_context(|| format!("writing {}", path.display()))?;
+    ui::ok(&format!("Wrote topology manifest → {}", path.display()));
+    Ok(())
+}
+
+/// One-time rescue: move authored applets out of the shipped tree.
+///
+/// Before the state root existed, chat-authored applets were written into
+/// `<share>/virtues/{applets,actions}/user/` — inside the tree the installer
+/// replaces on every release. Boxes built that way still have them there, and
+/// leaving them puts user data one slot-flip away from being displaced.
+///
+/// Runs as root, which is what makes it possible at all: the shipped tree is
+/// root-owned, so virtues-core (running as `virtues`) cannot move anything out
+/// of it itself. Merges rather than clobbers, and never overwrites something
+/// already in the state root — a slug present in both means the state copy is
+/// the live one.
+fn migrate_applets_out_of_shipped_tree(cfg: &InstallConfig) -> Result<()> {
+    let dest_root = cfg.applet_state_dir().join("user");
+    let mut moved = 0usize;
+
+    for legacy_parent in ["applets", "actions"] {
+        let src_root = cfg.share_virtues_dir().join(legacy_parent).join("user");
+        if !src_root.is_dir() {
+            continue;
+        }
+        for entry in fs::read_dir(&src_root)
+            .with_context(|| format!("reading {}", src_root.display()))?
+            .flatten()
+        {
+            let src = entry.path();
+            if !src.is_dir() {
+                continue;
+            }
+            let dest = dest_root.join(entry.file_name());
+            if dest.exists() {
+                ui::warn(&format!(
+                    "applet {} already present in the state dir — leaving the copy at {} alone",
+                    dest.display(),
+                    src.display()
+                ));
+                continue;
+            }
+            fs::create_dir_all(&dest_root)
+                .with_context(|| format!("creating {}", dest_root.display()))?;
+            fs::rename(&src, &dest)
+                .with_context(|| format!("moving {} -> {}", src.display(), dest.display()))?;
+            moved += 1;
+        }
+        // Only removes the now-empty `user/` shell; a non-empty one (something
+        // was skipped above) is left for the operator to look at.
+        let _ = fs::remove_dir(&src_root);
+    }
+
+    if moved > 0 {
+        ui::ok(&format!(
+            "Moved {moved} authored applet(s) into {}",
+            dest_root.display()
+        ));
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::rank_lib_dirs;
+
+    /// The exact shape the lab Dragon presents: one QAIRT unpack, six copies of
+    /// `libQnnHtp.so`, emitted by `find` in filesystem order. The old `head -1`
+    /// took whichever came first, so a re-extract could silently hand the daemon
+    /// x86_64 or Android libraries.
+    #[test]
+    fn host_libs_never_resolve_to_the_wrong_platform() {
+        let base = "/qairt-extract/qairt/2.42.0.251225/lib";
+        // Deliberately worst-case order: the two unusable builds lead.
+        let hits = [
+            format!("{base}/x86_64-linux-clang/libQnnHtp.so"),
+            format!("{base}/aarch64-android/libQnnHtp.so"),
+            format!("{base}/aarch64-ubuntu-gcc9.4/libQnnHtp.so"),
+            format!("{base}/aarch64-oe-linux-gcc11.2/libQnnHtp.so"),
+            format!("{base}/aarch64-oe-linux-gcc9.3/libQnnHtp.so"),
+        ];
+        assert_eq!(
+            rank_lib_dirs(hits.iter().map(String::as_str)),
+            Some(format!("{base}/aarch64-oe-linux-gcc11.2")),
+            "must pick the variant proven on-device, not the first find hit"
+        );
+    }
+
+    /// The skel matches no host triple, and boxes accumulate loose copies next
+    /// to the context binaries. The SDK's unsigned dir is the canonical one.
+    #[test]
+    fn skel_prefers_the_sdk_dir_over_a_stray_copy() {
+        let hits = [
+            "/home/radxa/npu/libQnnHtpV68Skel.so",
+            "/qairt-extract/qairt/2.42.0.251225/lib/hexagon-v68/unsigned/libQnnHtpV68Skel.so",
+        ];
+        assert_eq!(
+            rank_lib_dirs(hits.into_iter()),
+            Some("/qairt-extract/qairt/2.42.0.251225/lib/hexagon-v68/unsigned".to_string())
+        );
+    }
+
+    /// An x86-only find result is "no usable libs", which must reach the caller
+    /// as None so install_qnn refuses rather than writing a broken unit.
+    #[test]
+    fn wrong_platform_only_is_not_a_fallback() {
+        let hits = ["/opt/qairt/lib/x86_64-linux-clang/libQnnHtp.so"];
+        assert_eq!(rank_lib_dirs(hits.into_iter()), None);
+    }
 }

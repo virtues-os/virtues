@@ -1,8 +1,8 @@
 {
   "$schema": "https://schemas.tauri.app/capability/schema.json",
   "identifier": "mobile",
-  "description": "Capabilities for the iOS/Android probe build",
-  "platforms": ["iOS", "android"],
+  "description": "Capabilities for the iOS build (collectors + reach). Android is viewer-only — see android.json",
+  "platforms": ["iOS"],
   "windows": ["*"],
   "permissions": [
     "core:default",

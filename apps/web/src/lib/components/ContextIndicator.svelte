@@ -85,7 +85,7 @@
 	}
 
 	.context-indicator:hover {
-		background-color: var(--color-surface-elevated);
+		background-color: var(--hover-bg);
 	}
 
 	.ring-svg {

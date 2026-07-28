@@ -1,0 +1,13 @@
+name = "Document Extraction"
+description = "Extract native text from drive files (PDF, DOCX, text, HTML) into searchable chunks."
+owner = "system"
+runtime = "function"
+command = ["document_extraction"]
+triggers = ["cron"]
+schedule = "30 */5 * * * *"
+
+# A large backfill (whole drive on first run) is legitimate work, not a hang.
+# The drain loop claims one file at a time and commits per file, so a kill
+# mid-run loses nothing; stale 'extracting' claims recover by age.
+[config.limits]
+timeout_s = 3600

@@ -372,7 +372,7 @@
 	}
 
 	.history-action:hover:not(:disabled) {
-		background: var(--color-surface-elevated);
+		background: var(--hover-bg);
 		color: var(--color-foreground);
 	}
 

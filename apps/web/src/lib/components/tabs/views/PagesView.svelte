@@ -6,12 +6,31 @@
 	import { contextMenu } from "$lib/stores/contextMenu.svelte";
 	import type { ContextMenuItem } from "$lib/stores/contextMenu.svelte";
 	import { getNotebookMenuItems } from "$lib/utils/contextMenuItems";
+	import { confirmAction } from "$lib/stores/dialog.svelte";
 	import { Page, Button } from "$lib";
 	import { onMount } from "svelte";
+	import { paneActions } from "$lib/stores/paneActions.svelte";
 	import Icon from "$lib/components/Icon.svelte";
 	import UniversalDataGrid, { type Column } from "$lib/components/datagrid/UniversalDataGrid.svelte";
 
 	let { tab, active }: { tab: Tab; active: boolean } = $props();
+
+	// Published to the pane toolbar rather than rendered beside the title, so
+	// every view's actions sit in the same place. An $effect rather than
+	// onMount: `creating` changes while the tab is open, and the toolbar has to
+	// see it — a one-shot registration would freeze the disabled state.
+	$effect(() =>
+		paneActions.set(tab.id, [
+			{
+				id: "page.new",
+				label: "New page",
+				icon: "ri:add-line",
+				primary: true,
+				disabled: creating,
+				run: createNewPage,
+			},
+		]),
+	);
 
 	let creating = $state(false);
 
@@ -90,9 +109,13 @@
 				variant: "destructive",
 				dividerBefore: true,
 				action: async () => {
-					if (confirm("Delete this page?")) {
-						await pagesStore.removePage(page.id);
-					}
+					const ok = await confirmAction({
+						title: "Delete page?",
+						body: `"${page.title}" will be deleted. Notebooks that reference it will drop the link.`,
+						confirmLabel: "Delete",
+						danger: true,
+					});
+					if (ok) await pagesStore.removePage(page.id);
 				},
 			},
 		];
@@ -123,13 +146,6 @@
 	description={`${pages.length} page${pages.length !== 1 ? "s" : ""}`}
 	maxWidth="wide"
 >
-	{#snippet actions()}
-		<Button onclick={createNewPage} disabled={creating}>
-			<Icon icon="ri:add-line" width="14" />
-			<span class="ml-1">New Page</span>
-		</Button>
-	{/snippet}
-
 	<UniversalDataGrid
 		items={pages}
 		{columns}

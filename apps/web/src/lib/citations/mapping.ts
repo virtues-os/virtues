@@ -79,8 +79,6 @@ export const TOOL_DISPLAY: Record<string, DisplayInfo> = {
 	},
 	virtues_get_table_schema: { icon: 'ri:file-info-line', color: 'text-gray-400', label: 'Schema' },
 	web_search: { icon: 'ri:global-line', color: 'text-indigo-500', label: 'Web Search' },
-	// Google's native search grounding tool
-	googleSearch: { icon: 'ri:google-line', color: 'text-blue-500', label: 'Web Search' },
 	query_location_map: { icon: 'ri:map-2-line', color: 'text-blue-500', label: 'Map' }
 };
 
@@ -155,7 +153,6 @@ export function inferSourceType(
 		case 'virtues_query_narratives':
 			return 'narratives';
 		case 'web_search':
-		case 'googleSearch':
 			return 'web_search';
 		case 'query_location_map':
 			return 'location';

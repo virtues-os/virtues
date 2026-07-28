@@ -29,7 +29,15 @@ report() {
 # ─── Lint 1: No `match … source_id` in virtues-core/src/api/ ───────────────────────
 # Catches `match source_id { "google" => ..., "plaid" => ... }` provider-
 # specific branching. Quirks belong in proxy routes or sync binaries.
-violations=$(grep -rEn 'match[[:space:]]+[a-zA-Z_]*source_id' virtues-core/src/api/ --include='*.rs' || true)
+# The trailing filter drops `match resolve_source_id(…)` and friends: a `(`
+# right after the name means we are matching on a function's RESULT (a
+# Result/Option), not branching on a provider id. Without it the lint was
+# permanently red on `pair.rs`, and a lint that always fails is one everybody
+# learns to ignore — worse than no lint. `match source_id {` and
+# `match source_id.as_str() {` are still caught.
+violations=$(grep -rEn 'match[[:space:]]+[a-zA-Z_]*source_id' virtues-core/src/api/ --include='*.rs' \
+    | grep -vE 'match[[:space:]]+[a-zA-Z_]*source_id[[:space:]]*\(' \
+    || true)
 if [ -n "$violations" ]; then
     report \
         "provider-specific 'match … source_id' detected in virtues-core/src/api/" \
@@ -107,9 +115,9 @@ fi
 # ─── Lint 6: No AI provider SDKs in client code ────────────────────────────
 # AI provider keys live only on the server (virtues-api → Vercel AI Gateway).
 # Client code uses `@ai-sdk/*` (Vercel AI SDK) to talk to OUR backend, not
-# provider SDKs directly. Forbid direct-provider imports in web + iOS.
+# provider SDKs directly. Forbid direct-provider imports in web client code.
 violations=$(grep -rEn '@anthropic-ai/sdk|from[[:space:]]+["'\'']openai["'\'']|@google/generative-ai|@google-ai/generativelanguage|@aws-sdk/client-bedrock-runtime' \
-    apps/web/src/ apps/ios/Virtues/ 2>/dev/null \
+    apps/web/src/ 2>/dev/null \
     | grep -vE ':[[:space:]]*(///|//!|//|\*)' \
     || true)
 if [ -n "$violations" ]; then
@@ -121,11 +129,11 @@ fi
 
 # ─── Lint 7: No AI provider API keys in client code ────────────────────────
 # Catches both raw key formats and env-var refs that imply client-side keys.
-# virtues-api holds the AI_GATEWAY_API_KEY; nothing in apps/web or apps/ios
+# virtues-api holds the AI_GATEWAY_API_KEY; nothing in apps/web
 # should reference these names. Server-side code (virtues-core/, services/virtues-api/) is
 # excluded from this lint.
 violations=$(grep -rEn 'sk-ant-[A-Za-z0-9]|sk-proj-[A-Za-z0-9]|ANTHROPIC_API_KEY|OPENAI_API_KEY|GEMINI_API_KEY|GOOGLE_AI_API_KEY|AI_GATEWAY_API_KEY|XAI_API_KEY' \
-    apps/web/src/ apps/ios/Virtues/ 2>/dev/null \
+    apps/web/src/ 2>/dev/null \
     | grep -vE ':[[:space:]]*(///|//!|//|\*)' \
     || true)
 if [ -n "$violations" ]; then
@@ -148,23 +156,6 @@ if [ -n "$violations" ]; then
     report \
         "events/usage_log/request_log/audit_log table in virtues-api schema" \
         "virtues-api is counter-only by construction: per-token mutable integers, never an events ledger. A subpoena must yield 'token X has budget Y' — never a list of requests. Use counters in counters tables." \
-        "$violations"
-fi
-
-# ─── Lint 9: No stable device-ID as bearer token ───────────────────────────
-# The doc forbids using a stable device identifier (UUID, serial, etc.) as a
-# bearer token — that's a tracking identifier, not an entitlement proof.
-# WS-2 replaces apps/ios/Virtues/Models/DeviceConfiguration.swift:64 with
-# per-pair credentials from QR pairing; the file is excluded here until then.
-violations=$(grep -rEn 'deviceToken[[:space:]]*[:{=][[:space:]]*[^/]*\bdeviceId\b|\bdeviceToken\b[[:space:]]+\{[[:space:]]*deviceId' \
-    apps/ios/Virtues/ --include='*.swift' 2>/dev/null \
-    | grep -v 'apps/ios/Virtues/Models/DeviceConfiguration.swift' \
-    | grep -vE ':[[:space:]]*(///|//!|//|\*)' \
-    || true)
-if [ -n "$violations" ]; then
-    report \
-        "stable device-ID used as bearer token" \
-        "A stable device identifier (UUID, serial, etc.) used as a bearer is a tracking identifier — explicitly forbidden by the privacy charter. Use per-pair credentials provisioned at QR pairing (see WS-2)." \
         "$violations"
 fi
 
@@ -205,8 +196,30 @@ if [ -d "services/virtues-atlas/migrations" ]; then
     fi
 fi
 
+# Applets must not build a bare reqwest client.
+#
+# `applets/Cargo.toml` builds reqwest with `rustls-tls-no-provider`, so a bare
+# `reqwest::Client::new()` compiles fine and then PANICS ("No provider set") on
+# its first HTTPS call. That failure only surfaces at runtime, on a box, for a
+# source someone actually connected — which is how google/notion/strava sat
+# broken. `virtues_applets::http_client()` installs the ring provider (and adds
+# a timeout a bare client lacks).
+if [ -d "applets" ]; then
+    violations=$(grep -rEn 'reqwest::Client::(new|builder)\(\)' applets/ \
+        --include='*.rs' \
+        | grep -v '^applets/src/' \
+        | grep -vE ':[[:space:]]*//' \
+        || true)
+    if [ -n "$violations" ]; then
+        report \
+            "applet builds its own reqwest client" \
+            "reqwest is built rustls-tls-no-provider here, so a bare client panics 'No provider set' on first use — at runtime, on a box. Use virtues_applets::http_client()." \
+            "$violations"
+    fi
+fi
+
 if [ "$fail" -eq 0 ]; then
-    echo "arch_lint: OK (10 invariants enforced)"
+    echo "arch_lint: OK (11 invariants enforced)"
 else
     exit 1
 fi

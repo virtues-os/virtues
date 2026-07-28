@@ -73,7 +73,7 @@ pub struct CredentialListItem {
     pub device_info: Option<DeviceInfo>,
     pub last_seen_at: Option<String>,
     pub created_at: String,
-    /// Number of `app_actions` rows linked to this credential.
+    /// Number of `app_applets` rows linked to this credential.
     pub action_count: i64,
     /// Derived initial-sync lifecycle for active credentials (Tier 2 UX):
     /// `connected` (paired, no run yet) → `backfilling` (runs in flight, no
@@ -105,10 +105,10 @@ pub async fn list_credentials(db: &PgPool) -> Result<Vec<CredentialListItem>> {
               c.metadata::text,
               c.last_seen_at::text,
               c.created_at::text,
-              (SELECT COUNT(*) FROM app_actions WHERE credential_id = c.id) AS action_count,
-              (SELECT COUNT(*) FROM app_action_runs r JOIN app_actions a ON a.id = r.action_id
+              (SELECT COUNT(*) FROM app_applets WHERE credential_id = c.id) AS action_count,
+              (SELECT COUNT(*) FROM app_applet_runs r JOIN app_applets a ON a.id = r.action_id
                  WHERE a.credential_id = c.id) AS total_runs,
-              (SELECT COUNT(*) FROM app_action_runs r JOIN app_actions a ON a.id = r.action_id
+              (SELECT COUNT(*) FROM app_applet_runs r JOIN app_applets a ON a.id = r.action_id
                  WHERE a.credential_id = c.id AND r.status = 'success') AS success_runs
            FROM credentials c
            ORDER BY c.created_at DESC"#,
@@ -186,7 +186,7 @@ pub async fn rename_credential(db: &PgPool, credential_id: &str, new_name: &str)
     Ok(())
 }
 
-/// Revoke a credential and delete its fan-out `app_actions` rows.
+/// Revoke a credential and delete its fan-out `app_applets` rows.
 ///
 /// Flow:
 /// 1. Set `status = 'revoked'` so template reconcile skips this credential.
@@ -215,14 +215,14 @@ pub async fn revoke_credential(db: &PgPool, credential_id: &str) -> Result<()> {
     }
 
     sqlx::query(
-        r#"UPDATE app_action_runs SET action_id = NULL
-           WHERE action_id IN (SELECT id FROM app_actions WHERE credential_id = $1)"#,
+        r#"UPDATE app_applet_runs SET action_id = NULL
+           WHERE action_id IN (SELECT id FROM app_applets WHERE credential_id = $1)"#,
     )
     .bind(credential_id)
     .execute(db)
     .await?;
 
-    sqlx::query("DELETE FROM app_actions WHERE credential_id = $1")
+    sqlx::query("DELETE FROM app_applets WHERE credential_id = $1")
         .bind(credential_id)
         .execute(db)
         .await?;

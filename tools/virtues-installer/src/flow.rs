@@ -21,6 +21,7 @@ use crate::install;
 use crate::mode::{self, InferenceMode};
 use crate::preflight;
 use crate::steps;
+use crate::storage;
 use crate::ui;
 
 pub struct Config {
@@ -45,6 +46,14 @@ pub async fn run(cli: Config) -> Result<()> {
 
     let mut cfg = InstallConfig::recommended_defaults();
     cfg.pinned_version = cli.version.clone();
+
+    // Storage quality is decided by the DATA_DIR medium, which cfg has just
+    // resolved (default /var/lib/virtues, honoring the DATA_DIR env override).
+    // Runs inside pre-flight, after preflight::run, because a slow/lying/NFS
+    // disk is exactly the kind of thing the user should learn about before we
+    // start provisioning Postgres onto it. Non-blocking, like the rest of
+    // pre-flight — it warns with numbers, it never aborts.
+    storage::report(&cfg.data_dir).await?;
 
     if cli.dry_run {
         ui::skip("dry-run — system would be modified by the following steps");
@@ -100,14 +109,35 @@ pub async fn run(cli: Config) -> Result<()> {
             ui::skip("Manual inference — skipping local sidecar provisioning")
         }
     }
+    // libpdfium — document text extraction. Mode-independent (CPU parse):
+    // every path gets it, Dragon and DIY alike.
+    install::install_pdfium(&cfg).await?;
+    install::write_install_manifest(&cfg, &inference)?;
     install::write_env_file(&cfg, &inference, validation.as_ref()).await?;
     install::run_bringup(&cfg).await?;
     install::install_systemd_unit(&cfg).await?;
 
     // Start the service so init's pair-token mint sees a running daemon.
-    let mut start = tokio::process::Command::new("systemctl");
-    start.args(["enable", "--now", "virtues"]);
-    steps::run_step("Enable + start virtues service", start).await?;
+    //
+    // `enable --now` is a NO-OP on a unit that is already active, which is the
+    // normal case for a reinstall/upgrade — so the box kept running the OLD
+    // binary against a schema `run_bringup` had just migrated forward. Observed
+    // on a real upgrade: the previous process stayed alive with its exe showing
+    // `/usr/local/bin/virtues (deleted)`, and every applet query failed with
+    // `column t.supervise does not exist` (dropped by the migration the new
+    // binary shipped) plus `cached plan must not change result type` from the
+    // stale connection pool. The install reported success throughout.
+    //
+    // `enable` (no --now) then `restart` is unconditional: restart starts a
+    // stopped unit and replaces a running one, so both fresh installs and
+    // upgrades end up on the binary that was just installed.
+    let mut enable = tokio::process::Command::new("systemctl");
+    enable.args(["enable", "virtues"]);
+    steps::run_step("Enable virtues service", enable).await?;
+
+    let mut restart = tokio::process::Command::new("systemctl");
+    restart.args(["restart", "virtues"]);
+    steps::run_step("Start virtues service on the new binary", restart).await?;
 
     // ─── Verifying ──────────────────────────────────────────────────────
     ui::section("Verifying");

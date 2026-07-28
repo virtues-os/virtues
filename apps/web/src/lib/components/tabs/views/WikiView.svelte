@@ -15,9 +15,7 @@
 		PersonTable,
 		PlaceTable,
 		OrganizationTable,
-		MentionQueue,
 	} from '$lib/components/wiki';
-	import { fetchRecurringCount } from '$lib/components/wiki/MentionQueue.svelte';
 	import SubNav, { type SubNavItem } from '$lib/components/SubNav.svelte';
 	import UniversalDataGrid, { type Column } from '$lib/components/datagrid/UniversalDataGrid.svelte';
 	import { onMount } from 'svelte';
@@ -39,7 +37,6 @@
 	// Names seen in enough distinct records to be worth a decision. Only these
 	// carry a badge — badging every floating surface makes a count that never
 	// reaches zero, which is wallpaper, not a signal.
-	let recurringMentions = $state(0);
 
 	const sections = $derived<SubNavItem[]>([
 		{ id: 'overview', label: 'Overview' },
@@ -47,7 +44,6 @@
 		{ id: 'people', label: 'People' },
 		{ id: 'places', label: 'Places' },
 		{ id: 'orgs', label: 'Organizations' },
-		{ id: 'unlinked', label: 'Unlinked', badge: recurringMentions || undefined },
 	]);
 
 	// Active section is derived from the route (SubNav owns the writing side).
@@ -159,10 +155,6 @@
 
 	onMount(async () => {
 		loadAllEntities();
-
-		// The badge must be right before the tab is ever opened, so the count is
-		// fetched here rather than reported up by a mounted MentionQueue.
-		recurringMentions = await fetchRecurringCount();
 
 		// Load activity data for the past year
 		try {
@@ -333,10 +325,6 @@
 			<div class="grid-wrap"><PlaceTable /></div>
 		{:else if section === 'orgs'}
 			<div class="grid-wrap"><OrganizationTable /></div>
-		{:else if section === 'unlinked'}
-			<div class="grid-wrap">
-				<MentionQueue oncount={(n) => (recurringMentions = n)} />
-			</div>
 		{/if}
 	</main>
 </div>

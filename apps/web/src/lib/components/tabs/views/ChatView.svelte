@@ -6,6 +6,7 @@
 	import {
 		getSelectedModel,
 		getDefaultModel,
+		setSelectedModel,
 		initializeSelectedModel,
 		getInitializationPromise,
 	} from "$lib/stores/models.svelte";
@@ -40,6 +41,7 @@
 		getProfile,
 		setChatTitle,
 		cancelChat,
+		createPage,
 	} from "$lib/api/client";
 	import { contextMenu, type ContextMenuItem } from "$lib/stores/contextMenu.svelte";
 	import type { Chat } from "@ai-sdk/svelte";
@@ -386,6 +388,25 @@
 		const candidate = capabilityIssue?.candidate;
 		if (candidate) selectedModelValue = candidate;
 	}
+
+	// Runtime recovery: when a picked model errors (unsupported tools, context
+	// overflow, a gateway quirk), let the user drop to the Recommended model and
+	// re-run in one click — a plain retry would just re-hit the same model.
+	const recommendedFallback = $derived.by(() => {
+		const rec = getDefaultModel();
+		const currentId = selectedModelValue?.id ?? getDefaultModel()?.id;
+		// Only worth offering when we'd actually change models.
+		return rec && rec.id !== currentId ? rec : null;
+	});
+
+	function switchToRecommendedAndRetry() {
+		const rec = getDefaultModel();
+		if (rec) {
+			selectedModelValue = rec;
+			setSelectedModel(rec);
+		}
+		chat.regenerate();
+	}
 	let loadedMessages = $state<any[]>([]);
 
 	// Track tab route to reset state when switching conversations
@@ -567,6 +588,32 @@
 
 		// Open the page BESIDE the chat (Category A) — never navigate the chat in place.
 		windowShellStore.openRouteBeside(`/page/${pageId}`);
+	}
+
+	// ---- Save an answer into a Page (researcher-plan D4.2) ------------------
+	// The synthesis bridge's cheap half: a grounded, cited answer is already the
+	// draft — this just captures it as a page instead of a copy-paste. Ref links
+	// in the markdown survive, so citations stay clickable.
+	let savingAnswer = $state(false);
+	async function saveAnswerToPage(text: string) {
+		if (savingAnswer || !text.trim()) return;
+		savingAnswer = true;
+		try {
+			// Title from the first heading or sentence, trimmed to something sane.
+			const firstLine =
+				text
+					.split("\n")
+					.map((l) => l.replace(/^#+\s*/, "").trim())
+					.find((l) => l.length > 0) ?? "Untitled";
+			const title = firstLine.slice(0, 60);
+			const page = await createPage(title, text);
+			editAllowListStore.addPage(page.id, title);
+			windowShellStore.openRouteBeside(`/page/${page.id}`);
+		} catch (e) {
+			console.error("[ChatView] save answer to page failed:", e);
+		} finally {
+			savingAnswer = false;
+		}
 	}
 
 	// Effect to handle create_page side effects (auto-open new pages)
@@ -818,6 +865,7 @@
 				},
 				getPersona: () => selectedPersona,
 				getAgentMode: () => selectedAgentMode,
+				getChatMode: () => chatMode,
 				getTemporary: () => isGhost,
 			});
 			currentChatConversationId = conversationId;
@@ -1139,6 +1187,19 @@
 	// Agent mode and persona selection state - used for tool filtering on backend
 	let selectedAgentMode = $state<AgentModeId>('chat');
 	let selectedPersona = $state<string>('default');
+
+	// Retrieval scope for notebook chats: 'open' (whole graph, notebook items
+	// up-weighted) or 'scoped' (grounded — items only). Persisted per chat;
+	// meaningless (and hidden) outside a notebook.
+	let chatMode = $state<'open' | 'scoped'>('open');
+	$effect(() => {
+		const id = conversationId;
+		chatMode = localStorage.getItem(`chat-scope:${id}`) === 'scoped' ? 'scoped' : 'open';
+	});
+	function toggleChatMode() {
+		chatMode = chatMode === 'scoped' ? 'open' : 'scoped';
+		localStorage.setItem(`chat-scope:${conversationId}`, chatMode);
+	}
 
 	// Sync selected model with store (only on initial load)
 	$effect(() => {
@@ -1727,6 +1788,18 @@
 															citations={citationContext}
 															onCitationClick={openCitationPanel}
 														/>
+														{#if !isStreaming && message.role === "assistant" && part.text.trim().length > 80}
+															<div class="answer-actions">
+																<button
+																	class="answer-action"
+																	title="Save this answer as a page"
+																	disabled={savingAnswer}
+																	onclick={() => saveAnswerToPage(part.text)}
+																>
+																	<Icon icon="ri:file-add-line" width="13" /> Save to page
+																</button>
+															</div>
+														{/if}
 													</div>
 											{:else if part.type === "file"}
 												{@render renderFilePart(part as any)}
@@ -1868,7 +1941,14 @@
 								</div>
 							{/if}
 
-							<ChatError error={chat.error ?? null} onRetry={() => chat.regenerate()} />
+							<ChatError
+											error={chat.error ?? null}
+											onRetry={() => chat.regenerate()}
+											recommendedName={recommendedFallback?.displayName}
+											onSwitchAndRetry={recommendedFallback
+												? switchToRecommendedAndRetry
+												: undefined}
+										/>
 						</div>
 					</div>
 
@@ -1988,6 +2068,27 @@
 								{/each}
 							</div>
 						{/if}
+						{#if chatNotebookId}
+							<!-- Open vs Scoped: how this notebook shapes retrieval.
+							     Open = whole graph with the notebook up-weighted;
+							     Scoped = grounded in the notebook's items only. -->
+							<div class="scope-toggle-row max-w-3xl">
+								<button
+									class="scope-toggle"
+									class:scoped={chatMode === 'scoped'}
+									onclick={toggleChatMode}
+									title={chatMode === 'scoped'
+										? 'Grounded: answers only from this notebook\'s items. Click for Open.'
+										: 'Open: searches everything, this notebook weighted first. Click for Scoped.'}
+								>
+									<Icon
+										icon={chatMode === 'scoped' ? 'ri:focus-3-line' : 'ri:global-line'}
+										width="12"
+									/>
+									{chatMode === 'scoped' ? 'Scoped' : 'Open'}
+								</button>
+							</div>
+						{/if}
 						<ChatInput
 							allowEmptySubmit={stagedRefs.length > 0 || attachments.length > 0}
 							onAttach={addFiles}
@@ -2031,6 +2132,33 @@
 		border-top-color: var(--color-primary);
 		border-radius: 50%;
 		animation: spin 0.8s linear infinite;
+	}
+
+	/* Open/Scoped retrieval toggle (notebook chats only) */
+	.scope-toggle-row {
+		display: flex;
+		justify-content: flex-end;
+		margin: 0 auto 4px;
+		width: 100%;
+	}
+	.scope-toggle {
+		display: inline-flex;
+		align-items: center;
+		gap: 4px;
+		padding: 2px 8px;
+		font-size: 0.6875rem;
+		border-radius: 999px;
+		border: 1px solid var(--color-border);
+		background: transparent;
+		color: var(--color-foreground-subtle);
+		cursor: pointer;
+	}
+	.scope-toggle:hover {
+		color: var(--color-foreground);
+	}
+	.scope-toggle.scoped {
+		border-color: var(--color-primary);
+		color: var(--color-primary);
 	}
 
 	@keyframes spin {
@@ -2149,7 +2277,7 @@
 	}
 
 	.chat-title:hover {
-		background: var(--color-surface-elevated);
+		background: var(--hover-bg);
 	}
 
 	.title-input {
@@ -2195,7 +2323,7 @@
 
 	.ghost-toggle:hover:not(:disabled) {
 		color: var(--color-foreground);
-		background: var(--color-surface-elevated);
+		background: var(--hover-bg);
 	}
 
 	.ghost-toggle.active {
@@ -2226,7 +2354,7 @@
 
 	.chat-menu-btn:hover {
 		color: var(--color-foreground);
-		background: var(--color-surface-elevated);
+		background: var(--hover-bg);
 	}
 
 	.chat-topbar-right > :global(*) {
@@ -2724,6 +2852,39 @@
 	/* Assistant response text - spacing after thinking block */
 	.assistant-response {
 		padding-top: 4px;
+	}
+
+	/* Answer → page (D4.2): quiet until the answer is hovered. */
+	.answer-actions {
+		display: flex;
+		gap: 4px;
+		margin-top: 6px;
+		opacity: 0;
+		transition: opacity 120ms;
+	}
+	.assistant-response:hover .answer-actions,
+	.answer-actions:focus-within {
+		opacity: 1;
+	}
+	.answer-action {
+		display: inline-flex;
+		align-items: center;
+		gap: 4px;
+		padding: 3px 8px;
+		font-size: 0.6875rem;
+		border: 1px solid var(--color-border);
+		border-radius: 6px;
+		background: transparent;
+		color: var(--color-foreground-muted);
+		cursor: pointer;
+	}
+	.answer-action:hover {
+		background: var(--ref-pill-bg);
+		color: var(--color-primary);
+	}
+	.answer-action:disabled {
+		opacity: 0.4;
+		cursor: default;
 	}
 
 	.shiny-title {

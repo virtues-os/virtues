@@ -36,7 +36,6 @@ const KNOWN_TYPES: TabType[] = [
 	'asset',
 	'drive',
 	'trash',
-	'story',
 	'virtues',
 	'conway',
 ];

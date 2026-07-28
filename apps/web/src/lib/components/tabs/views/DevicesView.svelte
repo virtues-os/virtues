@@ -10,6 +10,7 @@
 	import type { Tab } from "$lib/tabs/types";
 	import { Page, Button, Badge, EmptyState, LoadingState, ErrorState } from "$lib";
 	import Icon from "$lib/components/Icon.svelte";
+	import { confirmAction } from "$lib/stores/dialog.svelte";
 	import {
 		listDevices,
 		pairMint,
@@ -40,11 +41,23 @@
 
 	type Device = {
 		id: string;
+		permissions: {
+			full_disk_access?: boolean;
+			accessibility?: boolean;
+			denied?: string[];
+			checked_at?: string;
+			stale?: boolean;
+		} | null;
 		kind: "browser" | "mobile_app" | "desktop_app" | "sensor" | "cli";
 		label: string;
 		paired_at: string;
 		last_seen_at: string | null;
 		paired_from_ip: string | null;
+		// Reported build identity (X-Virtues-Client header). Null until the
+		// device has checked in on a build that reports it.
+		version: string | null;
+		sha: string | null;
+		channel: string | null;
 		is_current: boolean;
 	};
 
@@ -68,10 +81,15 @@
 	let pollHandle: ReturnType<typeof setInterval> | null = null;
 
 	async function revoke(device: Device) {
-		const confirmText = device.is_current
-			? `Revoke THIS device? You will be signed out immediately.\n\n${device.label}`
-			: `Revoke "${device.label}"? It will lose access to the box right away.`;
-		if (!window.confirm(confirmText)) return;
+		const ok = await confirmAction({
+			title: device.is_current ? 'Revoke this device?' : `Revoke "${device.label}"?`,
+			body: device.is_current
+				? `${device.label} is the device you're using. You'll be signed out immediately.`
+				: 'It loses access to the box right away.',
+			confirmLabel: 'Revoke',
+			danger: true,
+		});
+		if (!ok) return;
 
 		try {
 			const resp = await fetch(`/api/devices/${device.id}`, { method: "DELETE" });
@@ -189,6 +207,26 @@
 		}
 	}
 
+	/// A denied macOS permission, in the owner's terms: what it costs and how to
+	/// fix it. The collector reports raw capability names; a name alone ("
+	/// accessibility") tells you nothing about what stopped working.
+	const PERMISSION_COPY: Record<string, { label: string; costs: string }> = {
+		full_disk_access: {
+			label: "Full Disk Access",
+			costs: "iMessages and Safari history can't be read"
+		},
+		accessibility: {
+			label: "Accessibility",
+			costs: "app events are recorded without window titles"
+		}
+	};
+
+	function deniedPermissions(device: Device) {
+		return (device.permissions?.denied ?? []).map(
+			(name) => PERMISSION_COPY[name] ?? { label: name, costs: "some data can't be read" }
+		);
+	}
+
 	function kindLabel(k: Device["kind"]) {
 		switch (k) {
 			case "browser":
@@ -266,12 +304,46 @@
 								{/if}
 							</div>
 							<div class="text-xs text-foreground-muted mt-1 flex flex-wrap gap-x-3 gap-y-1">
+								{#if device.version}
+									<span class="font-mono text-foreground"
+										>{device.version}{device.sha && device.sha !== "dev"
+											? ` · ${device.sha}`
+											: ""}{device.channel ? ` · ${device.channel}` : ""}</span
+									>
+								{:else}
+									<span class="italic">version unknown</span>
+								{/if}
 								<span>Last seen {formatTimeAgo(device.last_seen_at)}</span>
 								<span>Paired {formatTimeAgo(device.paired_at)}</span>
 								{#if device.paired_from_ip}
 									<span>from {device.paired_from_ip}</span>
 								{/if}
 							</div>
+							{#each deniedPermissions(device) as perm}
+								<!-- A collector missing a permission isn't an error — nothing
+								     crashed, and the rest of its streams are fine. It's a
+								     capability the box has been quietly denied, so it reads as
+								     a standing warning with the remedy attached, not a toast
+								     that can be dismissed and forgotten. -->
+								<div
+									class="mt-2 flex items-start gap-2 rounded-md border border-warning/40 bg-warning/10 px-3 py-2 text-xs"
+								>
+									<Icon icon="ri:lock-line" class="text-warning mt-0.5 flex-shrink-0" />
+									<div class="min-w-0">
+										<span class="text-foreground font-medium">{perm.label} is off</span>
+										<span class="text-foreground-muted"> — {perm.costs}.</span>
+										<div class="text-foreground-muted mt-0.5">
+											Grant it in System Settings → Privacy &amp; Security → {perm.label}, then
+											restart the collector.
+										</div>
+									</div>
+								</div>
+							{/each}
+							{#if device.permissions?.stale}
+								<div class="text-xs text-foreground-muted mt-2 italic">
+									Permission report is stale — the collector may not be running.
+								</div>
+							{/if}
 						</div>
 						<Button variant="ghost" onclick={() => revoke(device)}>
 							<Icon icon="ri:close-circle-line" />

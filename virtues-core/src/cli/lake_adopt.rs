@@ -35,7 +35,7 @@ pub async fn run(dry_run: bool) -> Result<()> {
     db.initialize().await?;
     let pool = db.pool();
 
-    let storage_root = std::env::var("STORAGE_PATH").unwrap_or_else(|_| "./data/lake".to_string());
+    let storage_root = crate::storage::lake::lake_root();
     // The legacy path is relative to the service's working directory, which is the
     // PARENT of the storage root — that adjacency is the whole bug.
     let cwd = std::env::current_dir()?;
@@ -57,7 +57,7 @@ pub async fn run(dry_run: bool) -> Result<()> {
     }
 
     ui::kv("recordings to adopt", &rows.len().to_string());
-    ui::kv("storage root", &storage_root);
+    ui::kv("storage root", &storage_root.to_string_lossy());
     if dry_run {
         ui::warn("dry run — no files copied, no rows rewritten");
     }

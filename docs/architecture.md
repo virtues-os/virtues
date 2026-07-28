@@ -1,16 +1,23 @@
 # Architecture
 
-This document is the **implementation contract** for Virtues' multi-runtime action system. It captures *what's true* and *why*. For the practical authoring guide, see [`actions/AUTHORING.md`](./actions/AUTHORING.md).
+This document is the **implementation contract** for Virtues' action system. It captures *what's true* and *why*. For the practical authoring guide, see [`actions/AUTHORING.md`](./actions/AUTHORING.md).
 
 ## TL;DR
 
-**Action** is the universal extension primitive in Virtues. Every action lives in a folder at `actions/<name>/` with a `manifest.toml` declaring its metadata. Three runtime flavors:
+**Action** is the universal extension primitive in Virtues. Every action lives in a folder at `actions/<name>/` with a `manifest.toml` declaring its metadata. Two runtime flavors:
 
 - **`function`** — Lambda-style. Fork-per-trigger CLI (any language). JSON in/out via stdin/stdout.
-- **`service`** — Heroku-style. Long-running supervised HTTP server (any language). Routed by core at `/service/<id>/*`.
 - **`view`** — Pure Svelte component. No server-side execution.
 
-Same authoring surface. Same dispatch infrastructure. Three contracts.
+Same authoring surface. Same dispatch infrastructure. Two contracts.
+
+> **Long-running applets.** A third `service` runtime — an in-process tokio
+> supervisor with a port allocator and a `/service/<id>` reverse proxy — was
+> built and removed. It shipped one applet (a demo), never ran successfully on
+> a box, and the supervised-work design moved to systemd units
+> (`virtues-applet-<id>`); see [`applets-overhaul-plan.md`](./applets-overhaul-plan.md).
+> The rationale below for *why* long-running work needs a different shape than
+> fork-per-trigger still holds — only the mechanism changed.
 
 > **Not an action: privileged system daemons.** Infrastructure like the
 > `virtues-wireguard` daemon (kernel `wg0`, `NET_ADMIN`, host networking) is
@@ -25,17 +32,19 @@ Same authoring surface. Same dispatch infrastructure. Three contracts.
 
 ## Why this shape
 
-### Why three runtimes (not one, not many)
+### Why two runtimes (not one, not many)
 
-Personal-AI workloads split cleanly into three needs:
+Personal-AI workloads split cleanly into distinct needs:
 
 | Need | Example | Right shape |
 |---|---|---|
 | Cron-driven sync, occasional webhook handler | iOS HealthKit ingest, Plaid sync | Fork-per-trigger CLI |
-| Latency-sensitive or persistent-connection backend | Hue light controller, MQTT subscriber, real-time chart | Long-running HTTP server |
 | Pure dashboard / chart over already-ingested data | Sleep trends, mail counter | Svelte component, no backend |
+| Latency-sensitive or persistent-connection backend | Hue light controller, MQTT subscriber | systemd unit (deferred) |
 
-Trying to force these into one runtime (everything's a Lambda, or everything's a service, or everything's an MCP server) makes the simple cases harder than they need to be. Three distinct contracts costs ~600 LOC of supervisor + dispatch in core; collapsing them taxes every author of every action forever.
+Trying to force these into one runtime (everything's a Lambda, or everything's an MCP server) makes the simple cases harder than they need to be. Distinct contracts cost dispatch code in core; collapsing them taxes every author of every action forever.
+
+The third need is real but is **not** served by an in-process supervisor: a supervisor that lives inside core dies with core, which is exactly wrong for work that must outlive a restart or upgrade. That is why supervised applets become systemd units rather than tokio children.
 
 ### Why not Docker
 
@@ -45,7 +54,7 @@ Considered and rejected for v1:
 - **Cold-start latency** of containerized cold-starts is ~200–500ms — *worse* than today's ~50–100ms subprocess fork. The "always-warm" feel requires keeping containers running, which has the same memory cost as the simpler `tokio::process` approach.
 - **Image build pipelines, registries, layer caching** — all real complexity for a use case where the user is the only person installing extensions.
 
-`tokio::process::Command` + an axum HTTP proxy + a small port allocator gives us 95% of what Docker-style supervision provides, with zero dependency cost.
+`tokio::process::Command` for fork-per-trigger work gives us what we need with zero dependency cost. For long-running work, systemd is already on the box and already solves supervision, restart, and boot ordering.
 
 If at some future point we want sandboxing or untrusted code execution, that's a separate discussion. Self-hosted single-user means the trust boundary is the user's own filesystem.
 
@@ -58,9 +67,9 @@ We considered "Practices," "Offices," "Droplets," "Extensions." Each has rough e
 - **Droplets** — borrowed from DigitalOcean.
 - **Extensions** — VS Code precedent; good but expensive rename across ~50 files.
 
-"Action" works because it's already in the codebase (`app_actions` table, `action_runner`, etc.) and it's neutral enough to cover all three runtimes. It's slightly weak for `view` (a chart isn't really an "action"), but every alternative has a worse fit somewhere. We accept the rough edge.
+"Action" works because it's already in the codebase (`app_actions` table, `action_runner`, etc.) and it's neutral enough to cover both runtimes. It's slightly weak for `view` (a chart isn't really an "action"), but every alternative has a worse fit somewhere. We accept the rough edge.
 
-User-facing UI uses runtime-specific words where they read better ("Functions", "Services", "Dashboards") — the parent noun appears in code and admin surfaces only.
+User-facing UI uses runtime-specific words where they read better ("Functions", "Dashboards") — the parent noun appears in code and admin surfaces only.
 
 ---
 
@@ -86,7 +95,7 @@ There is no field where both could disagree. The "dual source of truth" worry do
 ```
 actions/
 ├── sources.toml                     # [[source]] catalog rows only — auth providers
-├── Cargo.toml                       # [[bin]] entries for Rust function/service actions
+├── Cargo.toml                       # [[bin]] entries for Rust function actions
 ├── MANIFEST_SCHEMA.json             # JSON Schema for manifest.toml — LLM-validatable
 ├── AUTHORING.md                     # practical guide (link target)
 ├── ios_ingest/                      # one binary for all paired-iPhone streams
@@ -97,9 +106,6 @@ actions/
 │   └── …
 ├── morning_examen/
 │   └── manifest.toml                # agent-only; no binary
-├── echo_app/
-│   ├── manifest.toml                # runtime = "service"
-│   └── main.rs
 ├── hello_world/
 │   ├── manifest.toml                # runtime = "view"
 │   └── ui/
@@ -111,12 +117,34 @@ actions/
 apps/web/src/lib/action-views/
 └── index.ts                         # Vite glob loader; discovers actions/*/ui/*.svelte at build time
 
-virtues-core/src/services/                   # the service-runtime supervisor
-├── mod.rs
-├── registry.rs                      # in-memory `action_id → RunningService`, log ring buffers
-├── supervisor.rs                    # spawn / watch / restart / shutdown
-└── proxy.rs                         # axum reverse-proxy for /service/<id>/*
+/var/lib/virtues/applets/            # the WRITABLE applet root (state, not package data)
+├── user/<slug>/                     # chat-authored applets — manifest.toml, schema.sql, face/
+└── <imported-slug>/                 # Git packs cloned by /api/admin/actions/import-git
 ```
+
+---
+
+### Two applet roots
+
+Applets resolve from two trees with opposite lifecycles:
+
+| root | | |
+|---|---|---|
+| **shipped** — `/usr/local/share/virtues/applets` | package data: root-owned, read-only, replaced wholesale each release | `VIRTUES_APPLETS_DIR` |
+| **state** — `/var/lib/virtues/applets` | user data: service-owned, written at runtime, never touched by the installer | `VIRTUES_APPLET_STATE_DIR` |
+
+`resolve_applet_dir(dir)` checks state first, so an authored applet **shadows**
+a shipped one of the same dir and deleting it reverts to shipped. Everything
+written at runtime — chat authoring, Git pack import — goes to the state root
+only.
+
+They were one directory until authored applets started landing inside the tree
+the installer replaces: a slot flip would delete them, and on a fresh box
+authoring failed outright because nothing created a service-writable
+directory. Reconcile's system-GC guard keys on the **shipped** root's template
+count for the same reason — system rows come only from the shipped tree, so a
+state root with one applet in it must not make a failed shipped load look like
+a legitimately empty catalog.
 
 ---
 
@@ -137,33 +165,6 @@ runner reads stdout, completes run row with summary
 ```
 
 `command = [...]` is the argv to spawn. A bare `command[0]` (e.g. `["ios_ingest"]`) resolves to a Cargo-built action binary under `target/{debug,release}/`; anything else runs via `PATH` (e.g. `["python3", "main.py"]`, `["node", "server.js"]`). The contract is language-agnostic.
-
-### `service` runtime
-
-```
-core boots
-  ↓
-ServiceSupervisor::start
-  ↓ for each runtime='service' action:
-       allocate port, spawn child, capture stdout/stderr to ring buffer
-       health-probe /__health for 5s → mark Running
-  ↓
-external HTTP request to /service/<id>/<path>
-  ↓
-proxy::handle_service_proxy
-  ↓ look up port from registry
-  ↓ forward request via reqwest, stream response back
-```
-
-For cron / webhook / manual triggers on a `service`-runtime action, the runner POSTs the `ActionInput` to `/service/<id>/__trigger` (via the same proxy). 404 → action doesn't handle that trigger style (treated as a no-op, not an error).
-
-Crash + restart loop:
-
-```
-child exits unexpectedly → watchdog task records via mpsc → restart loop applies
-exponential backoff [1s, 2s, 5s, 15s, 60s, 300s cap] → respawn
-after MAX_RESTARTS (10) consecutive failures → mark Crashed, manual reconcile required
-```
 
 ### `view` runtime
 
@@ -209,18 +210,6 @@ Vite-glob registry at `apps/web/src/lib/action-views/index.ts` discovers `action
 - **Exit code**: 0 = success. Non-zero = failure; stderr becomes the error message.
 - **Env**: master key (`VIRTUES_ENCRYPTION_KEY`) + `VIRTUES_DB_URL` typically. See [`crates/virtues-helpers/src/lib.rs`](./crates/virtues-helpers/src/lib.rs) for available helpers.
 
-### `service` contract
-
-- **Spawned with env**:
-  - `PORT` — bind here (allocated by supervisor, starts at 3100, sequential)
-  - `VIRTUES_API_BASE` — call core's API at this URL (typically `http://127.0.0.1:8000`)
-  - `VIRTUES_ACTION_ID` — your action's id (for log correlation)
-- **Conventions** (optional but supervisor-aware):
-  - `GET /__health` — required for the readiness probe; supervisor polls until 2xx for 5s. Failed probe → service stays in `Starting`, traffic returns 503.
-  - `POST /__trigger` — fired when the action is invoked via cron/webhook/manual. Body is `ActionInput` JSON. 404 → treated as no-op (not an error).
-- **Lifecycle**: spawn at boot, watch for exit, restart on crash with exponential backoff, SIGTERM on shutdown, SIGKILL after 3s drain.
-- **Auth (v1)**: localhost trust. No service token. The service calls `VIRTUES_API_BASE/api/...` with no bearer; core's API allows unauthenticated requests when reached via 127.0.0.1.
-
 ### `view` contract
 
 - **No server-side execution.** Manifest's `triggers` should be `[]`.
@@ -244,13 +233,6 @@ Idempotency is required: back-to-back reconciles produce zero diffs. Verified by
 
 The catalog (sources + per-action manifests) is cached in an `OnceLock<RwLock<ParsedTemplates>>`. `reload_catalog()` re-globs from disk and replaces the inner state, so reconcile-on-demand picks up new manifests without restart.
 
-After SQL reconcile, the API handler also calls `ServiceSupervisor::reload(db)` to diff the running service processes:
-
-- Service in DB but not running → spawn
-- Service running but not in DB / disabled → stop and remove
-- Service in DB and Crashed (exceeded MAX_RESTARTS) → drop registry slot and respawn fresh — lets the user fix code, hit reconcile, recover
-- (v1.1) Both, command/config changed → restart with new args (today, edit a manifest's `command` or `config` and toggle enabled off→on, or restart core)
-
 ---
 
 ## What we deliberately don't do (yet)
@@ -258,18 +240,13 @@ After SQL reconcile, the API handler also calls `ServiceSupervisor::reload(db)` 
 | Deferred | Why | Trigger to revisit |
 |---|---|---|
 | Docker / sandboxed runtime | Self-hosted single-user; user trusts their own code | First "install untrusted community action" use case |
+| Long-running (supervised) applets | In-process supervisor removed; systemd units are the replacement design | Applets overhaul reaches the supervised-work phase |
 | Filesystem watcher (auto-reconcile on save) | Explicit reconcile is fine for v1 | Authoring volume justifies it (~once a day or more) |
-| MCP support on `service` runtime | Substrate works without it; existing MCP servers can be wrapped if needed | Want to install community MCP servers as actions |
 | Heartbeat (`request_heartbeat: true` on ActionOutput) | Useful but unproven need | Multi-step agent loops feel rate-limited |
-| Per-app token issuance | Localhost trust is sufficient | Multi-user or sandboxed runtime |
-| Hot-reload of running apps on file change | Restart core picks up code changes | Iteration friction becomes painful |
 | Cross-platform hard memory caps (cgroups) | macOS-only RSS watchdog is best-effort | Real OOM risk in production |
 | Recipe layer (high-level "create_action(recipe, slots)" abstraction) | LLMs author fine via Write + Bash + reconcile | LLM authoring failure rate becomes problematic |
 | Progressive disclosure for LLM tool exposure | Only matters at 50+ actions; we have ~20 | Action count grows |
 | Top-level dashboard page (UI surface for placed view widgets) | View runtime works without it | Demand for a personal dashboard surface |
-| Per-credential `service`-runtime fan-out | Single-user single-instance is sufficient | Multi-account use case |
-| WebSocket / HTTP Upgrade through the service proxy | No current service needs it; proxy is HTTP/1.1 request-response only | Real-time UI in a `service`-runtime action |
-| `stop_one` SIGTERM during reload | Child moved into watchdog task; relies on `kill_on_drop` at supervisor teardown. Removed services keep serving until core restart. | Manifest churn becomes routine |
 
 ---
 
@@ -277,12 +254,12 @@ After SQL reconcile, the API handler also calls `ServiceSupervisor::reload(db)` 
 
 The `/actions` page surfaces:
 
-- **Actions** — live list of `app_actions` rows (system + user + per-credential fan-out) in a filterable table: filter by Runtime (Function / Service / View), Owner, Status, Trigger, Last run. Service-runtime rows carry supervisor state (port, status, restart count); a "Reconcile now" control re-syncs manifests → SQL and respawns services.
+- **Actions** — live list of `app_applets` rows (system + user + per-credential fan-out) in a filterable table: filter by Runtime (Function / View), Owner, Status, Trigger, Last run. A "Reconcile now" control re-syncs manifests → SQL.
 - **Templates** — gallery of user-owned templates, card view. View-runtime actions show their custom Card.
 - **History** — flat run-log across all actions.
 - **Connections** — credential / source connection management.
 
-Action detail tab shows: header (name, description, status, controls) + body (config, runs, schedule editor) + (for `runtime = "service"` only) **Logs panel** tailing stdout/stderr from the supervisor's per-service ring buffer.
+Action detail tab shows: header (name, description, status, controls) + body (config, runs, schedule editor).
 
 ---
 
@@ -294,10 +271,6 @@ Action detail tab shows: header (name, description, status, controls) + body (co
 | Authoring guide | [`actions/AUTHORING.md`](./actions/AUTHORING.md) |
 | Action manifest parser + reconcile | [`virtues-core/src/action_templates/mod.rs`](./virtues-core/src/action_templates/mod.rs) |
 | Action runner + dispatch | [`virtues-core/src/action_runner/mod.rs`](./virtues-core/src/action_runner/mod.rs) |
-| Service supervisor | [`virtues-core/src/services/supervisor.rs`](./virtues-core/src/services/supervisor.rs) |
-| Service proxy | [`virtues-core/src/services/proxy.rs`](./virtues-core/src/services/proxy.rs) |
-| Service registry + log ring buffer | [`virtues-core/src/services/registry.rs`](./virtues-core/src/services/registry.rs) |
 | Frontend view loader | [`apps/web/src/lib/action-views/index.ts`](./apps/web/src/lib/action-views/index.ts) |
-| Actions page (incl. supervisor view) | [`apps/web/src/lib/components/actions/ActionsPanel.svelte`](./apps/web/src/lib/components/actions/ActionsPanel.svelte) |
-| Logs panel | [`apps/web/src/lib/components/actions/LogsPanel.svelte`](./apps/web/src/lib/components/actions/LogsPanel.svelte) |
+| Actions page | [`apps/web/src/lib/components/actions/ActionsPanel.svelte`](./apps/web/src/lib/components/actions/ActionsPanel.svelte) |
 | Admin reconcile endpoint | `POST /api/admin/reconcile` |

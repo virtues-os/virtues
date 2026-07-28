@@ -247,13 +247,13 @@ async fn collect_billing(pool: &PgPool) -> BillingSection {
 
 async fn collect_actions(pool: &PgPool) -> ActionsSection {
     let total: Option<(i64,)> =
-        sqlx::query_as("SELECT COUNT(*) FROM app_actions")
+        sqlx::query_as("SELECT COUNT(*) FROM app_applets")
             .fetch_optional(pool)
             .await
             .ok()
             .flatten();
     let enabled: Option<(i64,)> =
-        sqlx::query_as("SELECT COUNT(*) FROM app_actions WHERE enabled = TRUE")
+        sqlx::query_as("SELECT COUNT(*) FROM app_applets WHERE enabled = TRUE")
             .fetch_optional(pool)
             .await
             .ok()
@@ -261,7 +261,7 @@ async fn collect_actions(pool: &PgPool) -> ActionsSection {
     let counts: Vec<(String, i64)> = sqlx::query_as(
         "SELECT status, COUNT(*) FROM ( \
             SELECT DISTINCT ON (action_id) status \
-            FROM app_action_runs \
+            FROM app_applet_runs \
             WHERE action_id IS NOT NULL \
             ORDER BY action_id, created_at DESC \
          ) recent GROUP BY status",

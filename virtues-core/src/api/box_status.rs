@@ -300,7 +300,7 @@ pub async fn compute_setup_state(pool: &PgPool) -> Result<SetupState> {
     // recoverable from the dashboard backlog and survives a refresh. The action
     // row's id is `action_chat_import` (see server::api::chat_import_upload).
     let chat_imported: bool = sqlx::query_scalar(
-        "SELECT EXISTS(SELECT 1 FROM app_action_runs \
+        "SELECT EXISTS(SELECT 1 FROM app_applet_runs \
          WHERE action_id = 'action_chat_import' AND status = 'success')",
     )
     .fetch_one(pool)
@@ -309,7 +309,7 @@ pub async fn compute_setup_state(pool: &PgPool) -> Result<SetupState> {
 
     // First sync = any action run has ever succeeded (data actually landed).
     let first_sync: i64 = sqlx::query_scalar(
-        "SELECT count(*) FROM app_action_runs WHERE status = 'success'",
+        "SELECT count(*) FROM app_applet_runs WHERE status = 'success'",
     )
     .fetch_one(pool)
     .await
@@ -327,7 +327,7 @@ pub async fn compute_setup_state(pool: &PgPool) -> Result<SetupState> {
     .await
     .unwrap_or(false);
     let nid_running: bool = sqlx::query_scalar(
-        "SELECT EXISTS(SELECT 1 FROM app_action_runs \
+        "SELECT EXISTS(SELECT 1 FROM app_applet_runs \
          WHERE action_id = 'action_narrative_identity_draft' AND status = 'running')",
     )
     .fetch_one(pool)
@@ -340,8 +340,8 @@ pub async fn compute_setup_state(pool: &PgPool) -> Result<SetupState> {
     let living_source: bool = sqlx::query_scalar(
         "SELECT EXISTS( \
            SELECT 1 FROM credentials c \
-           JOIN app_actions a ON a.credential_id = c.id \
-           JOIN app_action_runs r ON r.action_id = a.id AND r.status = 'success' \
+           JOIN app_applets a ON a.credential_id = c.id \
+           JOIN app_applet_runs r ON r.action_id = a.id AND r.status = 'success' \
            WHERE c.status = 'active' AND c.device_id IS NULL \
              AND c.source_id NOT IN ($1, $2, $3))",
     )
@@ -482,7 +482,7 @@ pub async fn compute_setup_state(pool: &PgPool) -> Result<SetupState> {
             detail: None,
             kind: None,
         },
-        remote_access_step(crate::relay::is_relay_registered()),
+        remote_access_step(crate::relay::is_relay_registered(), crate::relay::endpoint_error()),
         SetupStep {
             id: "first_sync",
             title: "First data synced",
@@ -542,29 +542,37 @@ fn narrative_identity_kind(ready: bool, running: bool) -> Option<&'static str> {
 /// (Tailscale, a foreign WireGuard, …) IS reachable — at the overlay address —
 /// so the step is honestly `done`. `kind` qualifies the three states for
 /// renderers; behavior keys off `done`, copy off `detail`.
-fn remote_access_step(endpoint_up: bool) -> SetupStep {
+fn remote_access_step(endpoint_up: bool, endpoint_error: Option<&str>) -> SetupStep {
     // iroh model: "reachable from anywhere" == the box's iroh endpoint is bound
     // and homed on our relay. From there any paired device reaches it by
     // EndpointId — via the relay, upgrading to hole-punched direct when possible
     // — so NAT/IPv6 no longer gate reach (iroh traverses them).
+    //
+    // Three states, not two: the endpoint task runs once at boot and exits on
+    // either failure path (secret load, socket bind), so without an explicit
+    // error state a failed box reads identically to one that's still starting
+    // up — "Connecting…" forever, with no signal that reach is never coming
+    // back without a restart.
     let (done, kind, detail) = if endpoint_up {
         (
             true,
             "iroh_relay",
-            "Reachable from anywhere — connections go direct when possible, via the relay otherwise.",
+            "Reachable from anywhere — connections go direct when possible, via the relay otherwise.".to_string(),
         )
+    } else if let Some(err) = endpoint_error {
+        (false, "error", err.to_string())
     } else {
         (
             false,
             "pending",
-            "Connecting to the relay so your box is reachable from anywhere…",
+            "Connecting to the relay so your box is reachable from anywhere…".to_string(),
         )
     };
     SetupStep {
         id: "remote_access",
         title: "Reachable from anywhere",
         done,
-        detail: Some(detail.to_string()),
+        detail: Some(detail),
         kind: Some(kind),
     }
 }
@@ -595,14 +603,23 @@ mod tests {
     #[test]
     fn remote_access_reflects_iroh_endpoint() {
         // Endpoint up + homed on the relay → reachable from anywhere.
-        let step = remote_access_step(true);
+        let step = remote_access_step(true, None);
         assert!(step.done);
         assert_eq!(step.kind, Some("iroh_relay"));
 
-        // Endpoint not yet up → pending (a weather report, flips on its own).
-        let step = remote_access_step(false);
+        // Endpoint not yet up, no failure recorded → pending (a weather
+        // report, flips on its own).
+        let step = remote_access_step(false, None);
         assert!(!step.done);
         assert_eq!(step.kind, Some("pending"));
+
+        // Endpoint task gave up → error, not eternal pending. `done` still
+        // being false, an unrecognized `kind` frontend falls back to the
+        // same not-done treatment as "pending" — this is a strict refinement.
+        let step = remote_access_step(false, Some("bind failed: address in use"));
+        assert!(!step.done);
+        assert_eq!(step.kind, Some("error"));
+        assert_eq!(step.detail, Some("bind failed: address in use".to_string()));
 
         // id/title stable across states.
         assert_eq!(step.id, "remote_access");

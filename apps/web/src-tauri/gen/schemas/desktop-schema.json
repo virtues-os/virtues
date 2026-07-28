@@ -2571,6 +2571,72 @@
           "markdownDescription": "Denies the unminimize command without any pre-configured scope."
         },
         {
+          "description": "No features are enabled by default, as we believe\nthe shortcuts can be inherently dangerous and it is\napplication specific if specific shortcuts should be\nregistered or unregistered.\n",
+          "type": "string",
+          "const": "global-shortcut:default",
+          "markdownDescription": "No features are enabled by default, as we believe\nthe shortcuts can be inherently dangerous and it is\napplication specific if specific shortcuts should be\nregistered or unregistered.\n"
+        },
+        {
+          "description": "Enables the is_registered command without any pre-configured scope.",
+          "type": "string",
+          "const": "global-shortcut:allow-is-registered",
+          "markdownDescription": "Enables the is_registered command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the register command without any pre-configured scope.",
+          "type": "string",
+          "const": "global-shortcut:allow-register",
+          "markdownDescription": "Enables the register command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the register_all command without any pre-configured scope.",
+          "type": "string",
+          "const": "global-shortcut:allow-register-all",
+          "markdownDescription": "Enables the register_all command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the unregister command without any pre-configured scope.",
+          "type": "string",
+          "const": "global-shortcut:allow-unregister",
+          "markdownDescription": "Enables the unregister command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the unregister_all command without any pre-configured scope.",
+          "type": "string",
+          "const": "global-shortcut:allow-unregister-all",
+          "markdownDescription": "Enables the unregister_all command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the is_registered command without any pre-configured scope.",
+          "type": "string",
+          "const": "global-shortcut:deny-is-registered",
+          "markdownDescription": "Denies the is_registered command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the register command without any pre-configured scope.",
+          "type": "string",
+          "const": "global-shortcut:deny-register",
+          "markdownDescription": "Denies the register command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the register_all command without any pre-configured scope.",
+          "type": "string",
+          "const": "global-shortcut:deny-register-all",
+          "markdownDescription": "Denies the register_all command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the unregister command without any pre-configured scope.",
+          "type": "string",
+          "const": "global-shortcut:deny-unregister",
+          "markdownDescription": "Denies the unregister command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the unregister_all command without any pre-configured scope.",
+          "type": "string",
+          "const": "global-shortcut:deny-unregister-all",
+          "markdownDescription": "Denies the unregister_all command without any pre-configured scope."
+        },
+        {
           "description": "This permission set configures which\nnotification features are by default exposed.\n\n#### Granted Permissions\n\nIt allows all notification related features.\n\n\n#### This default permission set includes:\n\n- `allow-is-permission-granted`\n- `allow-request-permission`\n- `allow-notify`\n- `allow-register-action-types`\n- `allow-register-listener`\n- `allow-cancel`\n- `allow-get-pending`\n- `allow-remove-active`\n- `allow-get-active`\n- `allow-check-permissions`\n- `allow-show`\n- `allow-batch`\n- `allow-list-channels`\n- `allow-delete-channel`\n- `allow-create-channel`\n- `allow-permission-state`",
           "type": "string",
           "const": "notification:default",
@@ -2815,6 +2881,84 @@
           "type": "string",
           "const": "opener:deny-reveal-item-in-dir",
           "markdownDescription": "Denies the reveal_item_in_dir command without any pre-configured scope."
+        },
+        {
+          "description": "Default permissions for the reach plugin\n#### This default permission set includes:\n\n- `allow-pair`\n- `allow-reach-status`\n- `allow-forget`\n- `allow-discover`\n- `allow-outbox-stats`\n- `allow-drain-now`",
+          "type": "string",
+          "const": "reach:default",
+          "markdownDescription": "Default permissions for the reach plugin\n#### This default permission set includes:\n\n- `allow-pair`\n- `allow-reach-status`\n- `allow-forget`\n- `allow-discover`\n- `allow-outbox-stats`\n- `allow-drain-now`"
+        },
+        {
+          "description": "Enables the discover command without any pre-configured scope.",
+          "type": "string",
+          "const": "reach:allow-discover",
+          "markdownDescription": "Enables the discover command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the drain_now command without any pre-configured scope.",
+          "type": "string",
+          "const": "reach:allow-drain-now",
+          "markdownDescription": "Enables the drain_now command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the forget command without any pre-configured scope.",
+          "type": "string",
+          "const": "reach:allow-forget",
+          "markdownDescription": "Enables the forget command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the outbox_stats command without any pre-configured scope.",
+          "type": "string",
+          "const": "reach:allow-outbox-stats",
+          "markdownDescription": "Enables the outbox_stats command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the pair command without any pre-configured scope.",
+          "type": "string",
+          "const": "reach:allow-pair",
+          "markdownDescription": "Enables the pair command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the reach_status command without any pre-configured scope.",
+          "type": "string",
+          "const": "reach:allow-reach-status",
+          "markdownDescription": "Enables the reach_status command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the discover command without any pre-configured scope.",
+          "type": "string",
+          "const": "reach:deny-discover",
+          "markdownDescription": "Denies the discover command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the drain_now command without any pre-configured scope.",
+          "type": "string",
+          "const": "reach:deny-drain-now",
+          "markdownDescription": "Denies the drain_now command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the forget command without any pre-configured scope.",
+          "type": "string",
+          "const": "reach:deny-forget",
+          "markdownDescription": "Denies the forget command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the outbox_stats command without any pre-configured scope.",
+          "type": "string",
+          "const": "reach:deny-outbox-stats",
+          "markdownDescription": "Denies the outbox_stats command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the pair command without any pre-configured scope.",
+          "type": "string",
+          "const": "reach:deny-pair",
+          "markdownDescription": "Denies the pair command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the reach_status command without any pre-configured scope.",
+          "type": "string",
+          "const": "reach:deny-reach-status",
+          "markdownDescription": "Denies the reach_status command without any pre-configured scope."
         },
         {
           "description": "This permission set configures which\nshell functionality is exposed by default.\n\n#### Granted Permissions\n\nIt allows to use the `open` functionality with a reasonable\nscope pre-configured. It will allow opening `http(s)://`,\n`tel:` and `mailto:` links.\n\n#### This default permission set includes:\n\n- `allow-open`",

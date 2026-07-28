@@ -100,14 +100,23 @@ pub enum Commands {
     },
 
     /// Run database migrations
-    Migrate,
+    Migrate {
+        /// Check lineage only — apply NOTHING. Diffs the DB's applied
+        /// migrations against this binary's embedded set and exits non-zero
+        /// on divergence (applied-but-missing or checksum drift). The upgrade
+        /// preflight runs this under the STAGED binary before any swap, so a
+        /// lineage mismatch is a clean refusal instead of a mid-swap brick.
+        #[arg(long)]
+        check: bool,
+    },
 
     /// Snapshot the box's state into a single tarball.
     ///
     /// Includes the Postgres database (full `pg_dump`), the data-lake (action
-    /// stream archives + drive files at `/var/lib/virtues/lake/`), and
-    /// `/etc/virtues/env` (the encryption key — required to decrypt
-    /// credentials in the DB).
+    /// stream archives + drive files at `/var/lib/virtues/lake/`), and the env
+    /// file holding the encryption key — required to decrypt credentials in
+    /// the DB. Refuses to produce a backup when no env file can be found,
+    /// since the result would be an undecryptable dump.
     ///
     /// Because the env file is included, the tarball is **as sensitive as
     /// the box itself**. Store backups with the same care.
@@ -119,6 +128,41 @@ pub enum Commands {
         /// Overwrite an existing file at the output path.
         #[arg(long)]
         force: bool,
+
+        /// Produce a backup even when no encryption key can be found. The
+        /// resulting tarball CANNOT decrypt its own database — only useful
+        /// for dev boxes that keep the key elsewhere.
+        #[arg(long)]
+        allow_missing_key: bool,
+
+        /// Mint this box's backup key and print the recovery secret.
+        ///
+        /// Run it from a terminal you are watching: the secret is shown once
+        /// and cannot be recovered. Nothing else creates it — not a first
+        /// backup, and never a scheduled run — because a key minted where
+        /// nobody is reading produces archives nobody can ever open.
+        #[arg(long, conflicts_with_all = ["verify", "volume", "output"])]
+        init_key: bool,
+
+        /// Verify an existing archive instead of writing one: decrypt it,
+        /// re-hash every member, and compare against its manifest.
+        ///
+        /// Reads nothing else and writes nothing. A backup nobody has ever
+        /// opened is a hope; this is the cheap way to stop it being one.
+        #[arg(long, value_name = "ARCHIVE", conflicts_with_all = ["output", "volume"])]
+        verify: Option<std::path::PathBuf>,
+
+        /// Recovery key file, for `--verify` on an encrypted archive.
+        #[arg(long, requires = "verify")]
+        key_file: Option<std::path::PathBuf>,
+
+        /// Back up to a registered volume instead of a local file.
+        ///
+        /// Writes a full archive plus an increment carrying only the lake files
+        /// that volume has not already received. `all` targets every registered
+        /// volume; one that is not attached is skipped, not an error.
+        #[arg(long, value_name = "ID|all")]
+        volume: Option<String>,
     },
 
     /// Restore the box's state from a backup tarball.
@@ -129,13 +173,38 @@ pub enum Commands {
     /// if the tarball was produced by a binary newer than this one (upgrade
     /// the binary first; we never restore-into-older-schema).
     Restore {
-        /// Path to the tarball.
-        path: std::path::PathBuf,
+        /// Path to the archive. Omit when using `--from-volume`.
+        path: Option<std::path::PathBuf>,
 
         /// Bypass the "service is running" check. The schema-version + sha256
         /// checks are never bypassable.
         #[arg(long)]
         force: bool,
+
+        /// Restore from a backup drive rather than a single archive: its
+        /// newest full archive, then every increment in order.
+        ///
+        /// Takes a PATH — the mount point, or the box directory on it. Not a
+        /// registered volume id: the registry lives in the database being
+        /// restored, so on replacement hardware there is nothing to look up.
+        #[arg(long, value_name = "PATH", conflicts_with = "path")]
+        from_volume: Option<std::path::PathBuf>,
+
+        /// File holding the age recovery key printed when this box took its
+        /// first backup.
+        ///
+        /// Required for encrypted archives. The box keeps only the public half
+        /// of that keypair, so it cannot decrypt its own backups — which is
+        /// exactly what stops a stolen box from reading them, and why this
+        /// cannot be recovered from the box if you lose it.
+        #[arg(long)]
+        key_file: Option<std::path::PathBuf>,
+    },
+
+    /// Register and inspect backup destinations.
+    Volumes {
+        #[command(subcommand)]
+        cmd: VolumesCmd,
     },
 
     /// Remove Virtues from this machine (box installs; requires root).
@@ -188,11 +257,13 @@ pub enum Commands {
         force: bool,
     },
 
-    /// Self-update from the latest GitHub Release.
+    /// Self-update from the latest GitHub Release, via atomic release slots.
     ///
-    /// Stops the service, swaps `/usr/local/bin/virtues` with the new binary
-    /// (keeping one `.bak` for rollback), runs `virtues migrate` to apply
-    /// any schema changes, restarts the service.
+    /// Stages the whole release into `releases/<slot>/`, preflights it (the
+    /// staged binary must pass `migrate --check` + a version smoke test),
+    /// then activates by flipping the `current` symlink — binary + web +
+    /// actions move together. Failures before the flip leave the box
+    /// untouched; failures after flip straight back.
     Upgrade {
         /// Report the available version without changing anything.
         #[arg(long)]
@@ -214,7 +285,36 @@ pub enum Commands {
         /// `--pre`, where the prerelease channel is an explicit opt-in.)
         #[arg(long)]
         force: bool,
+
+        /// Refresh only the named components (comma-separated: `web`,
+        /// `actions`) in the CURRENT release — no binary swap, no migration,
+        /// no restart. The safe fast path for UI iteration.
+        #[arg(long)]
+        only: Option<String>,
     },
+
+    /// Show or set the release channel this box follows.
+    ///
+    /// With no argument, prints the current channel. With one, persists it to
+    /// the state root, so `virtues upgrade` follows that line from then on
+    /// without needing `--pre` every time — which is the whole point: `--pre`
+    /// is a one-off override and forgets itself, so a box meant to track
+    /// staging silently drifted back to stable the first time anyone typed a
+    /// bare `virtues upgrade`.
+    ///
+    /// Accepts `stable` or `prerelease` (`pre`, `edge` and `nightly` are taken
+    /// as prerelease — they are what people actually type).
+    Channel {
+        /// The channel to follow. Omit to print the current one.
+        channel: Option<String>,
+    },
+
+    /// Flip back to the previous release slot and restart.
+    ///
+    /// The atomic inverse of `upgrade`: one symlink flip restores binary +
+    /// web + actions together. Schema is not rolled back (migrations only go
+    /// forward); the previous binary tolerates a newer schema.
+    Rollback,
 
     /// Start the HTTP server
     #[command(hide = true)]
@@ -397,5 +497,30 @@ pub enum Commands {
         /// Lookback window in hours (default: 24)
         #[arg(long, default_value_t = 24)]
         hours: i64,
+    },
+}
+
+/// `virtues volumes <action>` — the backup destinations, as a CLI.
+#[derive(Subcommand)]
+pub enum VolumesCmd {
+    /// Show every registered destination, whether it is attached, and how old
+    /// its newest good backup is.
+    #[command(alias = "list")]
+    Ls,
+
+    /// Register a mounted filesystem as a backup destination.
+    ///
+    /// Identity is the filesystem UUID, read from the given path — not the path
+    /// itself, which moves between boots. Nothing outside the box's own
+    /// subdirectory on that volume is ever read, written, or removed, so the
+    /// drive stays usable for whatever else lives on it and never needs
+    /// formatting.
+    Add {
+        /// Any path on the mounted volume, e.g. `/media/backup`.
+        path: std::path::PathBuf,
+
+        /// Human label shown in `volumes ls`. Defaults to the mount point.
+        #[arg(long)]
+        name: Option<String>,
     },
 }

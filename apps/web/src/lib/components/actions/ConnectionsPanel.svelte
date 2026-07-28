@@ -19,6 +19,7 @@
 	import Modal from '$lib/components/Modal.svelte';
 	import ChatImportCard from '$lib/components/onboarding/ChatImportCard.svelte';
 	import SourceConnectButton from '$lib/components/sources/SourceConnectButton.svelte';
+	import StreamHealthPanel from '$lib/components/sources/StreamHealthPanel.svelte';
 	import UniversalDataGrid, {
 		type Column
 	} from '$lib/components/datagrid/UniversalDataGrid.svelte';
@@ -255,7 +256,7 @@
 		},
 		{
 			key: 'action_count',
-			label: 'Actions',
+			label: 'Applets',
 			icon: 'ri:flashlight-line',
 			width: '15%',
 			minWidth: '90px',
@@ -282,6 +283,13 @@
 	{#if err}
 		<div class="error">{err}</div>
 	{/if}
+
+	<!-- Connecting a source is only half the story; this is whether it's still
+	     delivering. Sits above the source list because a stopped stream is more
+	     urgent than the roster of what's plugged in. -->
+	<div class="flow-health">
+		<StreamHealthPanel />
+	</div>
 
 	{#if !loading && credentials.length === 0}
 		<div class="empty-hero">
@@ -495,6 +503,10 @@
 		background: var(--color-error-subtle);
 		color: color-mix(in srgb, var(--color-error) 75%, #000);
 		font-size: 0.8125rem;
+	}
+
+	.flow-health {
+		margin-bottom: 1.25rem;
 	}
 
 	/* ── Manage-connection modal ──────────────────────────────────────────── */

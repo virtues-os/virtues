@@ -68,7 +68,7 @@ pub async fn import(db: &PgPool, req: ImportRequest) -> Result<ImportOutcome> {
     validate_ref(git_ref)?;
 
     let slug = slug_for_url(url)?;
-    let actions_root = action_templates::actions_root();
+    let actions_root = action_templates::state_root();
     let target = actions_root.join(&slug);
 
     // Snapshot the existing row set under this slug so we can diff after
@@ -102,11 +102,11 @@ pub async fn import(db: &PgPool, req: ImportRequest) -> Result<ImportOutcome> {
     // zombie rows pointing to nothing — clean those up here.
     for id in &removed {
         // Preserve run history: nullify FK first.
-        sqlx::query("UPDATE app_action_runs SET action_id = NULL WHERE action_id = $1")
+        sqlx::query("UPDATE app_applet_runs SET action_id = NULL WHERE action_id = $1")
             .bind(id)
             .execute(db)
             .await?;
-        sqlx::query("DELETE FROM app_actions WHERE id = $1")
+        sqlx::query("DELETE FROM app_applets WHERE id = $1")
             .bind(id)
             .execute(db)
             .await?;
@@ -285,13 +285,13 @@ async fn run_git(cwd: &Path, args: &[&str]) -> Result<()> {
 }
 
 fn actions_root_buf() -> PathBuf {
-    action_templates::actions_root()
+    action_templates::state_root()
 }
 
 async fn ids_under_slug(db: &PgPool, slug: &str) -> Result<HashSet<String>> {
     let prefix = format!("{slug}/");
     let rows: Vec<(String,)> = sqlx::query_as(
-        "SELECT id FROM app_actions WHERE dir = $1 OR dir LIKE $2 || '%'",
+        "SELECT id FROM app_applets WHERE dir = $1 OR dir LIKE $2 || '%'",
     )
     .bind(slug)
     .bind(&prefix)

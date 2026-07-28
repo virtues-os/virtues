@@ -494,10 +494,10 @@
     function hideCallout() { document.getElementById('callout').classList.remove('show'); }
 
     const CALLOUT = {
-      stale_bearer: ["Your box was reset, so this Mac needs a fresh introduction. Type the new code below.", false],
-      needs_repair: ["This Mac's secure key is missing, so the private tunnel can't connect. Re-pair to restore it — type the code from your box below.", false],
+      stale_bearer: ["Your box was reset, so this device needs a fresh introduction. Type the new code below.", false],
+      needs_repair: ["This device's secure key is missing, so the connection can't authenticate. Re-pair to restore it — type the code from your box below.", false],
       box_unreachable: ["We can't reach your box — it may be off or asleep, or this network may be blocking it (common on work or café Wi-Fi). Try from home; you can move the box afterward.", true],
-      device_offline: ["This Mac isn't online. Reconnect to Wi-Fi and we'll pick up where we left off.", true],
+      device_offline: ["This device isn't online. Reconnect to the network and we'll pick up where we left off.", true],
     };
 
     // Self-scheduling poll with backoff — NOT setInterval. A fixed interval

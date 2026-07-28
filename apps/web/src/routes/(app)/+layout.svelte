@@ -9,6 +9,7 @@
 	import MobileOnboarding from "$lib/components/mobile/MobileOnboarding.svelte";
 	import { mobileLayout } from "$lib/stores/mobileLayout.svelte";
 	import { ContextMenuProvider } from "$lib/components/contextMenu";
+	import DialogHost from "$lib/components/DialogHost.svelte";
 	import ServerProvisioning from "$lib/components/ServerProvisioning.svelte";
 	import Modal from "$lib/components/Modal.svelte";
 	import IconPicker from "$lib/components/IconPicker.svelte";
@@ -29,8 +30,16 @@
 	import { page } from "$app/stores";
 	import type { Snippet } from "svelte";
 
+	import { installClientHeader } from "$lib/build";
+	import { shortcuts } from "$lib/shortcuts/registry.svelte";
+	import { modifierHint } from "$lib/stores/modifierHint.svelte";
+
 	// @ts-ignore — Vite compile-time constant (see vite.config.ts + app.d.ts)
 	const BUILD_COMMIT: string = __BUILD_COMMIT__;
+
+	// Stamp X-Virtues-Client on box requests so this browser's build shows up on
+	// the Devices page (update-manifold Phase 1). Idempotent, SSR-safe.
+	installClientHeader();
 
 	// Get session expiry from page data
 	// Note: children is intentionally not rendered - this app uses a custom tab-based routing system
@@ -81,13 +90,60 @@
 		// Note: searchParams.get() already decodes the value, no need for decodeURIComponent
 		const urlPath = $page.url.pathname;
 		const rightParam = $page.url.searchParams.get("right");
-		windowShellStore.handleDeepLink(urlPath, rightParam);
+		// Preserve route-level params (e.g. ?page=N for the PDF viewer) —
+		// only ?right= belongs to the shell itself.
+		const routeParams = new URLSearchParams($page.url.searchParams);
+		routeParams.delete("right");
+		const routeWithParams =
+			routeParams.size > 0 ? `${urlPath}?${routeParams}` : urlPath;
+		windowShellStore.handleDeepLink(routeWithParams, rightParam);
 
 		// Enable URL sync for future navigation
 		windowShellStore.initUrlSync();
 
 		// Mark as initialized
 		initialized = true;
+
+		// Window-level shortcuts. These live here rather than in the sidebar
+		// because they're about panes and tabs, and the sidebar isn't mounted on
+		// the phone shell.
+		//
+		// ⌘1/⌘2 address *panes*, not tabs — there are only ever two, so ⌘3-9
+		// stay free. Tab cycling takes ⌘⇧[ / ⌘⇧] instead, which is the browser
+		// convention and collides with nothing.
+		shortcuts.register(
+			{
+				id: "pane.focus-left",
+				keys: "mod+1",
+				label: "Focus the left pane",
+				group: "Window",
+				run: () => windowShellStore.focusPane("left"),
+			},
+			{
+				id: "pane.focus-right",
+				keys: "mod+2",
+				label: "Focus the right pane (splits if needed)",
+				group: "Window",
+				run: () => windowShellStore.focusPane("right"),
+			},
+			{
+				id: "tab.next",
+				keys: "mod+shift+]",
+				label: "Next tab",
+				group: "Window",
+				run: () => windowShellStore.cycleTab(1),
+			},
+			{
+				id: "tab.previous",
+				keys: "mod+shift+[",
+				label: "Previous tab",
+				group: "Window",
+				run: () => windowShellStore.cycleTab(-1),
+			},
+		);
+
+		// Hold-⌘ reveals the ⌘1/⌘2 pane badges.
+		modifierHint.start();
 
 		// Start polling for subscription status
 		subscriptionStore.start();
@@ -251,11 +307,13 @@
 	});
 </script>
 
-<!-- offset clears the notch/Dynamic Island on the edge-to-edge mobile shell
-     (env() is 0 on desktop, so this is the stock 16px gap there). -->
+<!-- Desktop: bottom-right, out of the way of the pane toolbar and the ⌘K modal.
+     Mobile keeps top-center — it's the platform convention there, and the
+     offset clears the notch/Dynamic Island on the edge-to-edge shell (env() is
+     0 on desktop, so the desktop offset is the stock 16px gap). -->
 <Toaster
-	position="top-center"
-	offset="max(16px, env(safe-area-inset-top))"
+	position={mobileLayout.isMobile ? "top-center" : "bottom-right"}
+	offset="max(16px, env(safe-area-inset-bottom))"
 	mobileOffset="max(16px, env(safe-area-inset-top))"
 	toastOptions={{
 		style: `
@@ -270,6 +328,9 @@
 
 <!-- Global Context Menu Provider -->
 <ContextMenuProvider />
+
+<!-- Global confirm/prompt dialogs (replaces window.confirm/prompt) -->
+<DialogHost />
 
 <div
 	class="app-shell flex h-screen w-full bg-surface-elevated"
@@ -398,6 +459,6 @@
 	.focus-exit:hover {
 		opacity: 1;
 		color: var(--color-foreground);
-		background: var(--color-surface-elevated);
+		background: var(--hover-bg);
 	}
 </style>

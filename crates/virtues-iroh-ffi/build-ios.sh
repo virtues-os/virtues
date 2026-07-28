@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 # Build virtues-iroh-ffi for iOS and assemble VirtuesIroh.xcframework + the
-# generated Swift bindings, consumed by the iOS app (apps/ios).
+# generated Swift bindings. The Tauri reach plugin links `virtues-iroh` directly
+# as a Rust dependency; this XCFramework is for any Swift consumer that needs the
+# uniffi wrapper without a Rust toolchain.
 #
 # Produces under crates/virtues-iroh-ffi/generated/:
 #   - VirtuesIroh.xcframework   (device slice + fat simulator slice)
@@ -64,13 +66,6 @@ xcodebuild -create-xcframework \
 
 echo "==> copying generated Swift wrapper"
 cp "$BIND"/*.swift "$OUT/$NAME.swift"
-# Also drop it into the iOS app's synchronized source tree so Xcode compiles it
-# (objectVersion-77 filesystem-synchronized groups auto-include files under it).
-APP_SWIFT="$WORKSPACE_ROOT/apps/ios/Virtues/Managers/Tunnel/$NAME.swift"
-if [ -d "$(dirname "$APP_SWIFT")" ]; then
-  cp "$BIND"/*.swift "$APP_SWIFT"
-  echo "    $APP_SWIFT"
-fi
 
 echo "==> done:"
 echo "    $OUT/$NAME.xcframework"
