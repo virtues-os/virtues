@@ -14,6 +14,8 @@
  * view's actions. A view registers on mount and clears on destroy.
  */
 
+import { untrack } from "svelte";
+
 export interface PaneAction {
 	id: string;
 	label: string;
@@ -50,25 +52,35 @@ class PaneActionsStore {
 	 * Publish this view's actions. Returns a teardown for `onMount` — without
 	 * one, a closed tab's actions would linger in the toolbar of whatever
 	 * replaced it.
+	 *
+	 * Views call this from an `$effect` (the disabled/active state has to stay
+	 * live), so the write must not also read. Rebuilding the map — `{ ...byTab,
+	 * [tabId]: actions }` — read every key, which made the effect depend on the
+	 * thing it was about to write: set → invalidate → set, until Svelte's depth
+	 * guard fired. Assign the one key, untracked.
 	 */
 	set(tabId: string, actions: PaneAction[]): () => void {
-		this.#byTab = { ...this.#byTab, [tabId]: actions };
+		untrack(() => {
+			this.#byTab[tabId] = actions;
+		});
 		return () => this.clear(tabId);
 	}
 
 	setCrumbs(tabId: string, crumbs: string[]): () => void {
-		this.#crumbs = { ...this.#crumbs, [tabId]: crumbs };
+		untrack(() => {
+			this.#crumbs[tabId] = crumbs;
+		});
 		return () => {
-			const next = { ...this.#crumbs };
-			delete next[tabId];
-			this.#crumbs = next;
+			untrack(() => {
+				delete this.#crumbs[tabId];
+			});
 		};
 	}
 
 	clear(tabId: string): void {
-		const next = { ...this.#byTab };
-		delete next[tabId];
-		this.#byTab = next;
+		untrack(() => {
+			delete this.#byTab[tabId];
+		});
 	}
 }
 

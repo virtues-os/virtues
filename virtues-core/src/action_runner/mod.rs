@@ -744,6 +744,36 @@ fn resolve_program(argv0: &str) -> PathBuf {
         return installed;
     }
 
+    // Dev: look beside the running binary. Applet binaries are built into the
+    // same profile directory as virtues-core itself, so this holds wherever
+    // cargo puts them — and it has to, because the target dir is not `./target`
+    // here: `.cargo/config.toml` redirects it to a shared cache so parallel
+    // worktrees don't each cold-build 67GB. The `target/` walk below assumed the
+    // default layout and silently missed, leaving a bare argv0 that the OS then
+    // failed to find on PATH ("No such file or directory") every cron tick.
+    if let Ok(exe) = std::env::current_exe() {
+        if let Some(dir) = exe.parent() {
+            let sibling = dir.join(argv0);
+            if sibling.exists() {
+                return sibling;
+            }
+        }
+    }
+
+    // Explicit override, and the conventional layout, for callers whose target
+    // dir neither matches the running binary's nor is configured.
+    let roots = std::env::var("CARGO_TARGET_DIR")
+        .map(|d| vec![PathBuf::from(d)])
+        .unwrap_or_default();
+    for root in roots {
+        for profile in ["release", "debug"] {
+            let p = root.join(profile).join(argv0);
+            if p.exists() {
+                return p;
+            }
+        }
+    }
+
     if let Ok(cwd) = std::env::current_dir() {
         for ancestor in cwd.ancestors() {
             let release = ancestor.join("target").join("release").join(argv0);
