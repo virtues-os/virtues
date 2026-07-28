@@ -242,6 +242,13 @@
 	   number. */
 	--chrome-row-h: 44px;
 	--chrome-tab-h: 32px;
+
+	/* How far the pane card is inset from the window: `m-3` (12px) plus its
+	   1px border. The sidebar is full-bleed, so without matching this its
+	   masthead sat 13px higher than the toolbar — equal heights, unequal
+	   centrelines, which is what you actually see across the seam. Equalising
+	   the heights alone did not fix the complaint. */
+	--pane-inset: 13px;
 }
 
 /* ===================================
