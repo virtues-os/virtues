@@ -300,6 +300,8 @@ export interface Pin {
 	icon: string | null;
 	sort_order: number;
 	pinned_at: string;
+	/** A `--cat-*` token key ('orange', 'emerald'…), never a hex. See CAT_COLORS. */
+	color: string | null;
 }
 
 export async function listPins(): Promise<Pin[]> {
@@ -312,6 +314,7 @@ export async function createPin(req: {
 	url: string;
 	label?: string | null;
 	icon?: string | null;
+	color?: string | null;
 }): Promise<Pin> {
 	const res = await fetch(`${API_BASE}/pins`, {
 		method: 'POST',
@@ -324,7 +327,7 @@ export async function createPin(req: {
 
 export async function updatePin(
 	id: string,
-	req: { label?: string | null; icon?: string | null; sort_order?: number }
+	req: { label?: string | null; icon?: string | null; sort_order?: number; color?: string | null }
 ): Promise<Pin> {
 	const res = await fetch(`${API_BASE}/pins/${encodeURIComponent(id)}`, {
 		method: 'PATCH',
