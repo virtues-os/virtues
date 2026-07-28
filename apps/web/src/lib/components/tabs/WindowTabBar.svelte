@@ -68,6 +68,28 @@
 
 	// Whatever the view showing in this pane has published (item 5's slot).
 	const viewActions = $derived(paneActions.for(activeTabId));
+
+	// Two inline, the rest behind a `···`. A pane can be dragged to a third of
+	// the window, and the toolbar already carries split/merge/new-tab — without
+	// a cap, a view with four actions would push the tabs out of their own bar.
+	const INLINE_ACTION_LIMIT = 2;
+	const inlineActions = $derived(viewActions.slice(0, INLINE_ACTION_LIMIT));
+	const overflowActions = $derived(viewActions.slice(INLINE_ACTION_LIMIT));
+
+	function showActionOverflow(e: MouseEvent) {
+		e.stopPropagation();
+		contextMenu.show(
+			{ x: e.clientX, y: e.clientY },
+			overflowActions.map((a) => ({
+				id: a.id,
+				label: a.label,
+				icon: a.icon,
+				disabled: a.disabled,
+				checked: a.active,
+				action: a.run,
+			})),
+		);
+	}
 	const isSplitMode = $derived(windowShellStore.isSplit);
 
 	// ⌘1/⌘2 badge, shown only while ⌘ is held. Single-pane mode is always ⌘1.
@@ -524,24 +546,40 @@
 	     come and go beneath them. -->
 	{#if viewActions.length > 0}
 		<div class="pane-actions">
-			{#each viewActions as action (action.id)}
+			{#each inlineActions as action (action.id)}
 				<button
 					class="pane-action"
 					class:primary={action.primary}
+					class:toggled={action.active}
+					aria-pressed={action.active !== undefined ? action.active : undefined}
 					disabled={action.disabled}
 					onclick={action.run}
 					aria-label={action.label}
 					title={action.label}
 				>
 					<Icon icon={action.icon} />
+					{#if action.primary}<span class="pane-action-label">{action.label}</span>{/if}
 				</button>
 			{/each}
+
+			{#if overflowActions.length > 0}
+				<button
+					class="pane-action"
+					onclick={showActionOverflow}
+					aria-label="More actions"
+					title="More actions"
+				>
+					<Icon icon="ri:more-line" />
+				</button>
+			{/if}
 		</div>
 	{/if}
 </div>
 
 <style>
 	.tab-bar {
+		container-type: inline-size;
+		container-name: tabbar;
 		display: flex;
 		align-items: stretch;
 		gap: 4px;
@@ -814,6 +852,34 @@
 
 	.pane-action.primary {
 		color: var(--color-primary);
+		width: auto;
+		gap: 5px;
+		padding: 0 8px;
+	}
+
+	.pane-action-label {
+		font-size: 12px;
+		white-space: nowrap;
+	}
+
+	/* The primary action keeps its label while there's room and drops to an
+	   icon when there isn't. A container query, not a viewport one: what runs
+	   out of space is the pane, and in split view a pane is nothing like the
+	   window. */
+	@container tabbar (max-width: 520px) {
+		.pane-action-label {
+			display: none;
+		}
+		.pane-action.primary {
+			width: 24px;
+			padding: 0;
+		}
+	}
+
+	/* A toggle that's on reads as held down, not as merely hovered. */
+	.pane-action.toggled {
+		background: var(--active-bg);
+		color: var(--color-foreground);
 	}
 
 	.pane-action:disabled {

@@ -5,12 +5,30 @@
 	import { apiGet } from "$lib/api/client";
 	import { formatDate } from "$lib/utils/dateUtils";
 	import { onMount, onDestroy } from "svelte";
+	import { paneActions } from "$lib/stores/paneActions.svelte";
 	import { getBackupStatus } from "$lib/api/client";
 
 	// @ts-ignore — Vite compile-time constant (see vite.config.ts + app.d.ts)
 	const BUILD_COMMIT: string = __BUILD_COMMIT__;
 
 	let { tab, active }: { tab: Tab; active: boolean } = $props();
+
+	// A toggle, not an event — `active` renders it held down, so the toolbar can
+	// show what mode the view is in rather than just what you can do to it.
+	$effect(() =>
+		paneActions.set(tab.id, [
+			{
+				id: "system.detail",
+				label: "Detail",
+				icon: "ri:terminal-line",
+				active: detail,
+				run: () => {
+					detail = !detail;
+					loadTelemetry();
+				},
+			},
+		]),
+	);
 
 	let loading = $state(true);
 	let detail = $state(false); // dev-mode "Detail" layer
@@ -222,12 +240,13 @@
 {/snippet}
 
 <Page title="System" description="The machine, examined." maxWidth="wide">
+	<!-- The Detail toggle moved to the pane toolbar; the live pill stayed. It
+	     reports state rather than doing anything, and the action slot is for
+	     things you can press. Putting a status light in a row of buttons would
+	     invite people to click it. -->
 	{#snippet actions()}
 		<div class="head-actions">
 			<span class="live" class:on={live}><span class="dot"></span>{live ? "live" : "—"}</span>
-			<button class="toggle" class:active={detail} onclick={() => { detail = !detail; loadTelemetry(); }}>
-				<Icon icon="ri:terminal-line" width="13" /> Detail
-			</button>
 		</div>
 	{/snippet}
 
