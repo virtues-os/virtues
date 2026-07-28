@@ -96,6 +96,10 @@
 		/** Trailing per-row controls, revealed on hover/focus. Discoverable in a
 		 *  way a right-click-only menu never is. */
 		rowActions?: Snippet<[T]>;
+		/** Leading glyph for a row. It shares one column with the select box:
+		 *  the icon is what you see at rest, the checkbox is what you see on
+		 *  hover — so selection costs no width and the icon isn't decoration. */
+		rowIcon?: (item: T) => string | null | undefined;
 	}
 
 	let {
@@ -127,8 +131,12 @@
 		selectable = false,
 		bulkActions,
 		onSelectionChange,
-		rowActions
+		rowActions,
+		rowIcon
 	}: Props = $props();
+
+	/** The leading column exists if either thing needs it; they share it. */
+	const hasLeadCol = $derived(selectable || !!rowIcon);
 
 	// ────────────────────────────────────────────────────────────────────────
 	// Filters (declarative: filters[] declares; filterValues holds active state)
@@ -348,20 +356,20 @@
 	/** Columns that actually get a header and a cell. */
 	const visibleColumns = $derived(columns.filter((c) => !c.hidden));
 
-	/** table -> cards -> board -> table. Board is only offered when something
-	 *  is groupable, since a board with one column is just a card list. */
-	const viewCycle = $derived<ViewMode[]>(
-		groupableCols.length > 0 ? ['table', 'grid', 'board'] : ['table', 'grid'],
-	);
+	/**
+	 * Two modes. There used to be a third — Board — but a board is precisely
+	 * the card view with a grouping applied, so it duplicated a state the Group
+	 * control could already express, and choosing it *without* a group left you
+	 * looking at cards in a single nameless column. Group is an orthogonal axis
+	 * now: set one in card view and the groups become the columns.
+	 */
 	const VIEW_META: Record<ViewMode, { icon: string; label: string }> = {
 		table: { icon: 'ri:list-check-2', label: 'Table' },
 		grid: { icon: 'ri:layout-grid-line', label: 'Cards' },
-		board: { icon: 'ri:layout-column-line', label: 'Board' },
 	};
 
 	function toggleViewMode() {
-		const i = viewCycle.indexOf(viewMode);
-		const next = viewCycle[(i + 1) % viewCycle.length] ?? 'table';
+		const next: ViewMode = viewMode === 'table' ? 'grid' : 'table';
 		viewMode = next;
 		dataGridPrefs.setViewMode(entityType, next);
 	}
@@ -574,6 +582,7 @@
 	// forces a grouping on; table and cards render groups as sections.
 	// ────────────────────────────────────────────────────────────────────────
 	let groupKey = $state('');
+	let groupOpen = $state(false);
 	let groupInitialized = $state(false);
 	$effect(() => {
 		if (groupInitialized) return;
@@ -591,10 +600,7 @@
 		dataGridPrefs.setGroupBy(entityType, next);
 	}
 
-	const activeGroupCol = $derived(
-		groupableCols.find((c) => String(c.key) === groupKey) ??
-			(viewMode === 'board' ? groupableCols[0] : undefined),
-	);
+	const activeGroupCol = $derived(groupableCols.find((c) => String(c.key) === groupKey));
 
 	let collapsedGroups = $state<Set<string>>(new Set());
 	function toggleGroup(key: string) {
@@ -640,8 +646,8 @@
 	const rowIndexById = $derived(new Map(visualOrder.map((item, i) => [item.id, i])));
 
 	const isTable = $derived(viewMode === 'table');
-	const isGrid = $derived(viewMode === 'grid');
-	const isBoard = $derived(viewMode === 'board');
+	/** Cards + a grouping = a board. That is the whole of what Board ever was. */
+	const asBoard = $derived(viewMode === 'grid' && isGrouped);
 
 	// Motion duration, zeroed when the OS asks for reduced motion. Svelte's JS
 	// transitions don't honour the media query on their own — the CSS-only
@@ -685,7 +691,10 @@
 
 			<div class="toolbar-meta">
 				<span class="item-count">
-					{#if searchQuery && filteredCount !== totalCount}
+					<!-- Any narrowing counts, not just search. With a filter chip set, the
+					     count went on reporting the unfiltered total, so the number
+					     contradicted the rows directly beneath it. -->
+					{#if filteredCount !== totalCount}
 						{filteredCount} {filteredCount === 1 ? 'result' : 'results'}
 					{:else}
 						{totalCount} {totalCount === 1 ? 'item' : 'items'}
@@ -729,40 +738,66 @@
 					</div>
 				{/if}
 				{#if groupableCols.length > 0}
-					{@const nextView = viewCycle[(viewCycle.indexOf(viewMode) + 1) % viewCycle.length]}
-					<label class="group-ctrl">
-						<span class="group-ctrl-label">Group</span>
-						<select
-							value={groupKey}
-							onchange={(e) => setGroupKey(e.currentTarget.value)}
-							disabled={isBoard}
-							title={isBoard ? 'Board groups by its columns' : 'Group by'}
-							aria-label="Group by"
-						>
-							<option value="">None</option>
-							{#each groupableCols as col (String(col.key))}
-								<option value={String(col.key)}>{col.label}</option>
-							{/each}
-						</select>
-					</label>
-					<button
-						class="ctrl-btn"
-						onclick={toggleViewMode}
-						aria-label={`Switch to ${VIEW_META[nextView].label.toLowerCase()} view`}
-						title={VIEW_META[viewMode].label}
-					>
-						<Icon icon={VIEW_META[viewMode].icon} width="16" />
-					</button>
-				{:else}
-					<button
-						class="ctrl-btn"
-						onclick={toggleViewMode}
-						aria-label={isTable ? 'Switch to card view' : 'Switch to table view'}
-						title={VIEW_META[viewMode].label}
-					>
-						<Icon icon={VIEW_META[viewMode].icon} width="16" />
-					</button>
+					<!-- A menu, not a <select>. The native control paints OS chrome that
+					     ignores the app's type and colour entirely, and it can't show a
+					     checkmark against the active choice — so the one place the toolbar
+					     stated a *value* was the one place that didn't look like the app. -->
+					<Popover bind:open={groupOpen} placement="bottom-end" offset={4}>
+						{#snippet trigger({ toggle: triggerToggle })}
+							<button
+								class="ctrl-btn group-btn"
+								class:has-active={!!activeGroupCol}
+								onclick={triggerToggle}
+								aria-haspopup="menu"
+								aria-expanded={groupOpen}
+								title="Group by"
+							>
+								<Icon icon="ri:stack-line" width="16" />
+								{#if activeGroupCol}
+									<span class="group-btn-value">{activeGroupCol.label}</span>
+								{/if}
+							</button>
+						{/snippet}
+						{#snippet children({ close }: { close: () => void })}
+							<div class="menu-popover" role="menu">
+								<button
+									type="button"
+									class="menu-opt"
+									class:on={!activeGroupCol}
+									onclick={() => {
+										setGroupKey('');
+										close();
+									}}
+								>
+									<Icon icon="ri:check-line" width="14" />
+									<span>No grouping</span>
+								</button>
+								{#each groupableCols as col (String(col.key))}
+									<button
+										type="button"
+										class="menu-opt"
+										class:on={groupKey === String(col.key)}
+										onclick={() => {
+											setGroupKey(String(col.key));
+											close();
+										}}
+									>
+										<Icon icon="ri:check-line" width="14" />
+										<span>{col.label}</span>
+									</button>
+								{/each}
+							</div>
+						{/snippet}
+					</Popover>
 				{/if}
+				<button
+					class="ctrl-btn"
+					onclick={toggleViewMode}
+					aria-label={isTable ? 'Switch to card view' : 'Switch to table view'}
+					title={VIEW_META[viewMode].label}
+				>
+					<Icon icon={VIEW_META[viewMode].icon} width="16" />
+				</button>
 				{#if toolbarActions}
 					{@render toolbarActions()}
 				{/if}
@@ -790,7 +825,7 @@
 		<div class="skeleton" role="status" aria-live="polite" aria-label={loadingMessage}>
 			{#each Array(6) as _, i}
 				<div class="sk-row" style:--sk-delay="{i * 60}ms">
-					{#if selectable}<span class="sk-box"></span>{/if}
+					{#if hasLeadCol}<span class="sk-box"></span>{/if}
 					<span class="sk-bar" style:width="{58 - ((i * 7) % 22)}%"></span>
 					<span class="sk-bar sk-narrow"></span>
 					<span class="sk-bar sk-narrow"></span>
@@ -818,20 +853,30 @@
 		</div>
 	{:else if isTable}
 		{@const total = displayedItems.length}
-		<div class="table-view" bind:this={gridEl} in:fly={{ y: 6, duration: motionMs, easing: cubicOut }}>
+		<!-- Once anything is selected the boxes stay put: hunting for a checkbox
+		     that only exists under the cursor is fine for starting a selection and
+		     miserable for extending one. -->
+		<div
+			class="table-view"
+			class:sel-on={selectedIds.size > 0}
+			bind:this={gridEl}
+			in:fly={{ y: 6, duration: motionMs, easing: cubicOut }}
+		>
 			<table class="data-table">
 				<thead>
 					<tr>
-						{#if selectable}
+						{#if hasLeadCol}
 							<th class="sel-col">
-								<input
-									type="checkbox"
-									class="sel-box"
-									checked={allVisibleSelected}
-									indeterminate={someVisibleSelected}
-									onchange={toggleAllVisible}
-									aria-label={allVisibleSelected ? 'Deselect all' : 'Select all'}
-								/>
+								{#if selectable}
+									<input
+										type="checkbox"
+										class="sel-box sel-head"
+										checked={allVisibleSelected}
+										indeterminate={someVisibleSelected}
+										onchange={toggleAllVisible}
+										aria-label={allVisibleSelected ? 'Deselect all' : 'Select all'}
+									/>
+								{/if}
 							</th>
 						{/if}
 						{#each visibleColumns as col}
@@ -884,7 +929,7 @@
 						{#each groupedItems as group (group.key)}
 							{#if isGrouped}
 								<tr class="group-row">
-									<td colspan={visibleColumns.length + (selectable ? 1 : 0) + (rowActions ? 1 : 0)}>
+									<td colspan={visibleColumns.length + (hasLeadCol ? 1 : 0) + (rowActions ? 1 : 0)}>
 										<button
 											class="group-toggle"
 											class:closed={collapsedGroups.has(group.key)}
@@ -926,19 +971,27 @@
 								aria-selected={selectable ? selectedIds.has(item.id) : undefined}
 								aria-expanded={expandDetail ? expandedId === item.id : undefined}
 							>
-								{#if selectable}
+								{#if hasLeadCol}
+									{@const glyph = rowIcon?.(item)}
 									<td class="sel-col">
-										<!-- svelte-ignore a11y_click_events_have_key_events a11y_no_noninteractive_element_interactions -->
-										<input
-											type="checkbox"
-											class="sel-box"
-											checked={selectedIds.has(item.id)}
-											onclick={(e) => {
-												e.stopPropagation();
-												toggleSelected(item, i, e.shiftKey);
-											}}
-											aria-label={`Select ${getItemLabel(item)}`}
-										/>
+										<span class="lead" class:has-glyph={!!glyph}>
+											{#if glyph}
+												<Icon icon={glyph} width="15" class="lead-glyph" />
+											{/if}
+											{#if selectable}
+												<!-- svelte-ignore a11y_click_events_have_key_events a11y_no_noninteractive_element_interactions -->
+												<input
+													type="checkbox"
+													class="sel-box"
+													checked={selectedIds.has(item.id)}
+													onclick={(e) => {
+														e.stopPropagation();
+														toggleSelected(item, i, e.shiftKey);
+													}}
+													aria-label={`Select ${getItemLabel(item)}`}
+												/>
+											{/if}
+										</span>
 									</td>
 								{/if}
 								{#if tableRow}
@@ -983,7 +1036,7 @@
 							</tr>
 							{#if expandDetail && expandedId === item.id}
 								<tr class="expand-row">
-									<td colspan={visibleColumns.length + (selectable ? 1 : 0) + (rowActions ? 1 : 0)}>
+									<td colspan={visibleColumns.length + (hasLeadCol ? 1 : 0) + (rowActions ? 1 : 0)}>
 										{@render expandDetail(item, meta)}
 									</td>
 								</tr>
@@ -1000,12 +1053,12 @@
 		{@const cardCols = 4}
 		{#key mountToken}
 			<div
-				class:card-groups={!isBoard}
-				class:board={isBoard}
+				class:card-groups={!asBoard}
+				class:board={asBoard}
 				in:fly={{ y: 6, duration: motionMs, easing: cubicOut }}
 			>
 			{#each groupedItems as group (group.key)}
-				<div class:card-group={!isBoard} class:board-col={isBoard}>
+				<div class:card-group={!asBoard} class:board-col={asBoard}>
 					{#if isGrouped}
 						<button
 							class="group-toggle"
@@ -1013,7 +1066,7 @@
 							onclick={() => toggleGroup(group.key)}
 							aria-expanded={!collapsedGroups.has(group.key)}
 						>
-							{#if !isBoard}
+							{#if !asBoard}
 								<Icon icon="ri:arrow-down-s-line" width="14" class="group-chev" />
 							{/if}
 							<span class="group-name">{group.key}</span>
@@ -1022,8 +1075,8 @@
 					{/if}
 					{#if !collapsedGroups.has(group.key)}
 					<div
-						class:card-grid={!isBoard}
-						class:board-stack={isBoard}
+						class:card-grid={!asBoard}
+						class:board-stack={asBoard}
 						style:--grid-min={gridMinWidth}
 					>
 				{#each group.items as item (item.id)}
@@ -1245,33 +1298,48 @@
 		color: var(--color-primary);
 	}
 
-	/* Group-by control — a plain select, so it stays keyboard- and
-	   screen-reader-native rather than a bespoke menu. */
-	.group-ctrl {
-		display: inline-flex;
-		align-items: center;
-		gap: 6px;
-		font-family: var(--font-mono);
-		font-size: 0.625rem;
-		letter-spacing: 0.09em;
-		text-transform: uppercase;
-		color: var(--color-foreground-subtle);
-	}
-	.group-ctrl select {
-		font-family: var(--font-sans);
+	/* Group-by: an icon button that grows a label once a grouping is on, so the
+	   toolbar stays quiet when it has nothing to say and states the grouping
+	   plainly when it does. */
+	.group-btn { width: auto; min-width: 32px; gap: 6px; padding: 0 8px; }
+	.group-btn-value {
 		font-size: 0.75rem;
-		letter-spacing: 0;
-		text-transform: none;
-		color: var(--color-foreground-muted);
-		background: var(--color-background-secondary);
+		color: var(--color-foreground);
+		white-space: nowrap;
+	}
+
+	/* Menu shared by the group control. Same surface as .add-popover — one
+	   popover look for the whole toolbar. */
+	.menu-popover {
+		min-width: 170px;
+		display: flex;
+		flex-direction: column;
+		padding: 0.25rem;
+		background: var(--color-background, #fff);
 		border: 1px solid var(--color-border);
-		border-radius: 6px;
-		padding: 3px 6px;
+		border-radius: 8px;
+		box-shadow: 0 8px 24px rgba(0, 0, 0, 0.08);
+	}
+	.menu-opt {
+		display: flex;
+		align-items: center;
+		gap: 0.4rem;
+		padding: 0.375rem 0.5rem;
+		font: inherit;
+		font-size: 0.8125rem;
+		color: var(--color-foreground);
+		text-align: left;
+		background: transparent;
+		border: none;
+		border-radius: 4px;
 		cursor: pointer;
 	}
-	.group-ctrl select:hover:not(:disabled) { color: var(--color-foreground); }
-	.group-ctrl select:disabled { opacity: 0.45; cursor: not-allowed; }
-	.group-ctrl select:focus-visible { outline: 2px solid var(--color-primary); outline-offset: 1px; }
+	.menu-opt:hover { background: var(--color-background-hover); }
+	/* The checkmark holds its column whether or not it's shown, so the labels
+	   line up instead of shifting by 14px between states. */
+	.menu-opt :global(svg) { opacity: 0; flex-shrink: 0; color: var(--color-foreground-muted); }
+	.menu-opt.on :global(svg) { opacity: 1; }
+	.menu-opt:focus-visible { outline: 2px solid var(--color-primary); outline-offset: -2px; }
 
 	/* Filter add: button + popover wrapper */
 	.filter-add {
@@ -1538,9 +1606,51 @@
 	/* ============================================
 	   SELECTION + ROW ACTIONS
 	   ============================================ */
-	/* Room around the control: the box needs a comfortable target and clear air
-	   between it and the row's own icon. */
-	.sel-col { width: 42px; padding: 0 0.75rem 0 0.35rem; text-align: left; }
+	/* One column, two jobs. The row's type glyph is what's there at rest; the
+	   checkbox replaces it under the cursor. A dedicated checkbox column spends
+	   permanent width on a control that is empty most of the time, and pushes
+	   every row's real content in by the same amount.
+	   Flush left — the table's first column should start where the table does. */
+	.sel-col { width: 30px; padding: 0 0.5rem 0 0; text-align: left; }
+	.lead {
+		display: inline-grid;
+		place-items: center;
+		width: 16px;
+		height: 16px;
+		vertical-align: middle;
+	}
+	/* Stacked, not swapped: both occupy the same cell so nothing moves when the
+	   visible one changes. */
+	.lead > :global(*) { grid-area: 1 / 1; }
+	.lead :global(.lead-glyph) {
+		color: var(--color-foreground-subtle);
+		transition: opacity 0.1s ease;
+		/* Decoration only. Stacked over the checkbox it would otherwise take the
+		   click — `opacity: 0` hides an element, it does not excuse it from
+		   hit-testing — so ticking a box opened the row instead. */
+		pointer-events: none;
+	}
+	/* With a glyph behind it the box is hidden until wanted; with no glyph there
+	   is nothing to reveal, so it stays put. */
+	.lead.has-glyph .sel-box { opacity: 0; transition: opacity 0.1s ease; }
+	.data-row:hover .lead.has-glyph .sel-box,
+	.data-row:focus-within .lead.has-glyph .sel-box,
+	.sel-on .lead.has-glyph .sel-box { opacity: 1; }
+	.data-row:hover .lead.has-glyph :global(.lead-glyph),
+	.data-row:focus-within .lead.has-glyph :global(.lead-glyph),
+	.sel-on .lead.has-glyph :global(.lead-glyph) { opacity: 0; }
+	/* Select-all is the one control with no glyph to hide behind, so it appears
+	   when the pointer is anywhere in the table rather than never. */
+	.sel-head { opacity: 0; transition: opacity 0.1s ease; }
+	.table-view:hover .sel-head,
+	.sel-head:focus-visible,
+	.sel-on .sel-head { opacity: 1; }
+	/* No hover to reveal anything with. Keep the glyph — it's the fastest way to
+	   read a list — and make select-all the way in: tapping it turns every box
+	   on via .sel-on, and clearing turns them back off. */
+	@media (hover: none) {
+		.sel-head { opacity: 1; }
+	}
 	/* Custom control rather than accent-color on the native widget: the platform
 	   checkbox is a different shape, weight and blue in every theme, and it was
 	   the one element on the page that didn't belong to the app. The real input
@@ -1549,8 +1659,8 @@
 	.sel-box {
 		appearance: none;
 		-webkit-appearance: none;
-		width: 15px;
-		height: 15px;
+		width: 14px;
+		height: 14px;
 		margin: 0;
 		flex: none;
 		display: inline-grid;
