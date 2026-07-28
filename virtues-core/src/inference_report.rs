@@ -81,7 +81,7 @@ fn models_dir() -> PathBuf {
 /// is purely a REPORTING distinction: which model artifacts to list. Keyed off
 /// the installer's `VIRTUES_INFERENCE=dragon`, with the qnnd unit file as a
 /// fallback for `sudo` CLI contexts that don't load the box env.
-fn is_dragon_profile() -> bool {
+pub(crate) fn is_dragon_profile() -> bool {
     std::env::var("VIRTUES_INFERENCE").map(|v| v == "dragon").unwrap_or(false)
         || std::path::Path::new("/etc/systemd/system/virtues-qnnd.service").exists()
 }

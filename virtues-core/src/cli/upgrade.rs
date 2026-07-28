@@ -584,7 +584,7 @@ fn canonical(p: &Path) -> PathBuf {
 /// Read a single `KEY=value` from the box env file (`/var/lib/virtues/virtues.env`).
 /// `sudo virtues upgrade` doesn't inherit the systemd EnvironmentFile, so this is
 /// how the upgrade path recovers box-specific settings (e.g. a custom models dir).
-fn read_box_env_var(key: &str) -> Option<String> {
+pub(crate) fn read_box_env_var(key: &str) -> Option<String> {
     let contents = fs::read_to_string("/var/lib/virtues/virtues.env").ok()?;
     for line in contents.lines() {
         let line = line.trim();
