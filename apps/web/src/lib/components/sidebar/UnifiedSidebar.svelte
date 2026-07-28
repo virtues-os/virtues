@@ -7,6 +7,7 @@
 	import SidebarFooter from "./SidebarFooter.svelte";
 	import SystemSection from "./SystemSection.svelte";
 	import PinnedSection from "./PinnedSection.svelte";
+	import RecentsSection from "./RecentsSection.svelte";
 	import { SECTION_GROUPS } from "$lib/sidebar/sections";
 	import SearchModal from "./SearchModal.svelte";
 	import { shortcuts } from "$lib/shortcuts/registry.svelte";
@@ -205,7 +206,10 @@
 					<span>Loading...</span>
 				</div>
 			{:else}
-				<!-- Pinned (user-curated; renders nothing when empty) -->
+				<!-- Pinned sits above the system destinations: it's the user's own
+				     list, and burying their choices under ours had it read as an
+				     afterthought. Renders nothing when empty, so a new box still
+				     opens on Home. -->
 				<PinnedSection collapsed={isCollapsed} />
 
 				<!-- System destinations, grouped nouns-vs-verbs (from constants).
@@ -225,6 +229,11 @@
 						{/each}
 					</div>
 				{/each}
+
+				<!-- Recents last: it's the longest and most volatile list here, so
+				     it goes where growth doesn't push the fixed destinations
+				     around. -->
+				<RecentsSection collapsed={isCollapsed} />
 			{/if}
 		</nav>
 
