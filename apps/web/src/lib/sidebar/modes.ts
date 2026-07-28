@@ -55,17 +55,23 @@ export const DEVELOPER_MODE: SidebarMode = {
 	rows: [
 		{ id: 'sql', label: 'SQL', icon: 'ri:terminal-box-line', href: '/virtues/developer/sql' },
 		{
+			id: 'terminal',
+			label: 'Terminal',
+			icon: 'ri:terminal-line',
+			href: '/virtues/developer/terminal',
+		},
+		{ id: 'lake', label: 'Lake', icon: 'ri:database-2-line', href: '/virtues/developer/lake' },
+		{
 			id: 'telemetry',
 			label: 'Telemetry',
 			icon: 'ri:pulse-line',
 			href: '/virtues/developer/telemetry',
 		},
-		{ id: 'usage', label: 'Usage', icon: 'ri:bar-chart-line', href: '/virtues/developer/usage' },
 		{
-			id: 'system',
-			label: 'System',
-			icon: 'ri:cpu-line',
-			href: '/virtues/developer/system',
+			id: 'activity',
+			label: 'Activity',
+			icon: 'ri:history-line',
+			href: '/virtues/developer/activity',
 		},
 	],
 };
