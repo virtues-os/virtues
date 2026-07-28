@@ -1,30 +1,70 @@
 <script lang="ts">
+	import Icon from "$lib/components/Icon.svelte";
+
 	interface Props {
 		collapsed?: boolean;
 		animationDelay?: number;
-		/** Opens the search / command modal (the whole masthead is the ⌘K trigger). */
+		/** Opens the search / command modal. */
 		onSearch?: () => void;
+		/** Starts a new chat. */
+		onNewChat?: () => void;
+		/** Goes Home — the ∴ mark's job. */
+		onHome?: () => void;
 	}
 
-	let { collapsed = false, animationDelay = 0, onSearch }: Props = $props();
+	let {
+		collapsed = false,
+		animationDelay = 0,
+		onSearch,
+		onNewChat,
+		onHome,
+	}: Props = $props();
 
-	// The masthead is one quiet control: the ∴ mark sits over the icon column
-	// below it, and the whole row opens the command palette (⌘K). No app menu —
-	// Account/System/Sign out live in the Settings folder at the foot.
+	// Three affordances, not one. The masthead used to be a single full-width
+	// button — ∴ on the left, a ⌘K chip on the right — which read as a label
+	// rather than a control: it was the only row in the sidebar carrying a
+	// keyboard hint, so it looked like chrome. Now the mark goes Home (and Home
+	// leaves the nav list below, where it was redundant), and search and new-chat
+	// get their own targets on the right. The ⌘K hint moves into the tooltip,
+	// where hints belong.
 </script>
 
 <div class="masthead" class:collapsed>
-	<button
-		type="button"
-		class="masthead-btn animate-row"
+	<div
+		class="masthead-row animate-row"
 		style="animation-delay: {animationDelay}ms; --stagger-delay: {animationDelay}ms"
-		onclick={() => onSearch?.()}
-		title="Ask or search (⌘K)"
-		aria-label="Ask or search"
 	>
-		<span class="mark">∴</span>
-		<kbd class="kbd">⌘K</kbd>
-	</button>
+		<button
+			type="button"
+			class="mark-btn"
+			onclick={() => onHome?.()}
+			title="Home"
+			aria-label="Home"
+		>
+			<span class="mark">∴</span>
+		</button>
+
+		<div class="masthead-actions">
+			<button
+				type="button"
+				class="masthead-action"
+				onclick={() => onSearch?.()}
+				title="Ask or search (⌘K)"
+				aria-label="Ask or search"
+			>
+				<Icon icon="ri:search-line" width="15" />
+			</button>
+			<button
+				type="button"
+				class="masthead-action"
+				onclick={() => onNewChat?.()}
+				title="New chat (⌘N)"
+				aria-label="New chat"
+			>
+				<Icon icon="ri:add-line" width="16" />
+			</button>
+		</div>
+	</div>
 </div>
 
 <style>
@@ -62,31 +102,39 @@
 		animation: fadeSlideIn 200ms var(--ease-premium) backwards;
 	}
 
-	/* One full-width row: ∴ left (flush over the nav icon column below —
-	   same --sidebar-padding-left-base + 16px column as the rows), ⌘K right. */
-	.masthead-btn {
+	/* Height matches the pane toolbar's row so the sidebar's top edge and the
+	   toolbar's share a baseline across the seam. */
+	.masthead-row {
 		display: flex;
 		align-items: center;
 		justify-content: space-between;
 		width: 100%;
 		height: 30px;
 		box-sizing: border-box;
-		padding: 0 10px 0 var(--sidebar-padding-left-base);
+		padding: 0 6px 0 calc(var(--sidebar-padding-left-base) - 4px);
+	}
+
+	/* The mark keeps the nav rows' icon column, so ∴ sits directly above the
+	   icons below it rather than floating in its own margin. */
+	.mark-btn {
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		width: 24px;
+		height: 24px;
+		padding: 0;
+		border: none;
 		border-radius: 6px;
 		background: none;
-		border: none;
 		cursor: pointer;
 		transition: background 0.15s ease;
 	}
 
-	.masthead-btn:hover {
-		background: color-mix(in srgb, var(--color-foreground) 6%, transparent);
+	.mark-btn:hover {
+		background: color-mix(in srgb, var(--color-foreground) 8%, transparent);
 	}
 
 	.mark {
-		display: inline-block;
-		width: 16px;
-		text-align: center;
 		font-family: var(--font-serif, serif);
 		font-size: 18px;
 		line-height: 1;
@@ -94,16 +142,35 @@
 		letter-spacing: 0.02em;
 	}
 
-	.kbd {
-		font-family: var(--font-sans);
-		font-size: 10px;
-		color: var(--color-foreground-subtle);
-		opacity: 0.7;
-		transition: opacity 0.15s ease, color 0.15s ease;
+	.masthead-actions {
+		display: flex;
+		align-items: center;
+		gap: 2px;
 	}
 
-	.masthead-btn:hover .kbd {
-		opacity: 1;
-		color: var(--color-foreground-muted);
+	.masthead-action {
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		width: 24px;
+		height: 24px;
+		padding: 0;
+		border: none;
+		border-radius: 6px;
+		background: none;
+		cursor: pointer;
+		color: var(--color-foreground-subtle);
+		transition: background 0.15s ease, color 0.15s ease;
+	}
+
+	.masthead-action:hover {
+		background: color-mix(in srgb, var(--color-foreground) 8%, transparent);
+		color: var(--color-foreground);
+	}
+
+	.mark-btn:focus-visible,
+	.masthead-action:focus-visible {
+		outline: 2px solid var(--color-primary);
+		outline-offset: -2px;
 	}
 </style>

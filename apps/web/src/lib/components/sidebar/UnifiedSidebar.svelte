@@ -8,8 +8,10 @@
 	import SystemSection from "./SystemSection.svelte";
 	import PinnedSection from "./PinnedSection.svelte";
 	import RecentsSection from "./RecentsSection.svelte";
-	import { SECTION_GROUPS } from "$lib/sidebar/sections";
+	import { SECTION_GROUPS, HOME_ROUTE } from "$lib/sidebar/sections";
 	import SearchModal from "./SearchModal.svelte";
+	import SidebarModePanel from "./SidebarModePanel.svelte";
+	import { sidebarMode } from "$lib/stores/sidebarMode.svelte";
 	import { shortcuts } from "$lib/shortcuts/registry.svelte";
 
 	// Collapsed state from shared store (also consumed by WindowTabBar)
@@ -93,6 +95,13 @@
 
 	function closeSearch() {
 		isSearchOpen = false;
+	}
+
+	function handleHome() {
+		windowShellStore.openTabFromRoute(HOME_ROUTE, {
+			label: "Home",
+			focusExisting: true,
+		});
 	}
 
 	function handleWikiOverview() {
@@ -194,6 +203,8 @@
 			collapsed={isCollapsed}
 			animationDelay={STAGGER_DELAY}
 			onSearch={handleSearch}
+			onNewChat={handleNewChat}
+			onHome={handleHome}
 		/>
 
 		<nav
@@ -205,6 +216,8 @@
 					<Icon icon="ri:loader-4-line" width="16" class="spinner" />
 					<span>Loading...</span>
 				</div>
+			{:else if sidebarMode.active && !isCollapsed}
+				<SidebarModePanel mode={sidebarMode.active} stagger={STAGGER_DELAY} />
 			{:else}
 				<!-- Pinned sits above the system destinations: it's the user's own
 				     list, and burying their choices under ours had it read as an
