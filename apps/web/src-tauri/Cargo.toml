@@ -86,3 +86,13 @@ codegen-units = 1
 lto = true
 opt-level = "s"
 strip = true
+
+# netdev 0.45.0 calls `nw_path_is_ultra_constrained` unconditionally on iOS.
+# That symbol is iOS 26.0+, so the stock crate makes the app unlaunchable on
+# every earlier iOS — dyld aborts at launch when strong-linked, and segfaults
+# on a null call when weak-linked. Both were observed on iOS 17. The vendored
+# copy resolves the symbol at runtime instead. netwatch (via iroh) pins
+# netdev "0.45.0" and 0.45.0 is the only 0.45.x published, so no version bump
+# avoids this. Drop the patch once upstream guards the call.
+[patch.crates-io]
+netdev = { path = "vendor/netdev" }
