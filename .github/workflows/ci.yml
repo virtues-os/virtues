@@ -135,3 +135,12 @@ jobs:
       # in --lib runs DB-free.
       - name: Unit tests
         run: cargo test -p virtues --lib -- --skip api::code::tests::test_timeout
+
+      # Audit the live models release against the installer's expected asset
+      # list (config.rs `models_release_assets`). Exists because libpdfium
+      # was wired into the install flow with no asset ever uploaded to
+      # models-1 — every real install then 404'd on its last step while CI
+      # stayed green. The test is #[ignore]d (network) so local `cargo test`
+      # stays offline; CI runs it by name here.
+      - name: Models-release asset audit
+        run: cargo test -p virtues-installer -- --ignored models_release_serves_every_expected_asset

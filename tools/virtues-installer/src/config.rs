@@ -101,7 +101,29 @@ impl InstallConfig {
         let arch = "arm64";
         #[cfg(target_arch = "x86_64")]
         let arch = "x64";
+        Self::pdfium_asset_for(arch)
+    }
+
+    fn pdfium_asset_for(arch: &str) -> String {
         format!("libpdfium-{}-linux-{arch}.so", Self::PDFIUM_VERSION)
+    }
+
+    /// Every asset name this installer can fetch from the models release,
+    /// across ALL target arches — one release tag serves every box, so the
+    /// release must carry the union, not just the current compile target's
+    /// slice. Anything fetched through `download::fetch_asset` belongs here;
+    /// the release audit test below holds the models release to this list.
+    #[cfg(test)]
+    pub fn models_release_assets(&self) -> Vec<String> {
+        let mut assets = vec![
+            self.embed_gguf.clone(),
+            self.rerank_gguf.clone(),
+            self.qnn_embed_bin.clone(),
+            self.qnn_rerank_bin.clone(),
+        ];
+        assets.extend(self.qnn_tokenizers.iter().map(|(_dest, asset)| asset.clone()));
+        assets.extend(["arm64", "x64"].map(Self::pdfium_asset_for));
+        assets
     }
 
     /// Where libpdfium lands on the box. virtues-core's PDF extractor finds
@@ -210,5 +232,49 @@ impl InstallConfig {
     /// which the daemon unit adds to `LD_LIBRARY_PATH`.
     pub fn qnn_lib_dir(&self) -> Option<String> {
         std::env::var("VIRTUES_QNN_LIB_DIR").ok().filter(|s| !s.trim().is_empty())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Audit the live models release against `models_release_assets`: every
+    /// asset must be downloadable WITH its `.sha256` sidecar (fetch_asset
+    /// hard-fails on a missing sidecar). Exists because libpdfium was wired
+    /// into the install flow without its assets ever being uploaded to
+    /// models-1 — every real install then died 404 on its last step while CI
+    /// stayed green. Network test: ignored by default, run explicitly by
+    /// ci.yml's "Models-release asset audit" step.
+    #[tokio::test]
+    #[ignore = "network: audits the live models release"]
+    async fn models_release_serves_every_expected_asset() {
+        // Same provider install main() does — rustls panics on first TLS use
+        // without it, and the test binary never runs main().
+        let _ = rustls::crypto::ring::default_provider().install_default();
+
+        let cfg = InstallConfig::recommended_defaults();
+        let client = reqwest::Client::builder()
+            .timeout(std::time::Duration::from_secs(60))
+            .build()
+            .unwrap();
+        let mut missing = Vec::new();
+        for name in cfg.models_release_assets() {
+            for url in [
+                format!("{}/{name}", cfg.models_base),
+                format!("{}/{name}.sha256", cfg.models_base),
+            ] {
+                match client.head(&url).send().await {
+                    Ok(resp) if resp.status().is_success() => {}
+                    Ok(resp) => missing.push(format!("{url} — HTTP {}", resp.status())),
+                    Err(e) => missing.push(format!("{url} — {e}")),
+                }
+            }
+        }
+        assert!(
+            missing.is_empty(),
+            "models release is missing assets the installer will 404 on:\n{}",
+            missing.join("\n")
+        );
     }
 }
