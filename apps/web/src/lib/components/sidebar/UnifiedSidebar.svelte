@@ -7,8 +7,7 @@
 	import SidebarFooter from "./SidebarFooter.svelte";
 	import SystemSection from "./SystemSection.svelte";
 	import PinnedSection from "./PinnedSection.svelte";
-	import RecentsSection from "./RecentsSection.svelte";
-	import { SECTION_GROUPS, HOME_ROUTE } from "$lib/sidebar/sections";
+	import { SECTION_GROUPS } from "$lib/sidebar/sections";
 	import SearchModal from "./SearchModal.svelte";
 	import SidebarModePanel from "./SidebarModePanel.svelte";
 	import { sidebarMode } from "$lib/stores/sidebarMode.svelte";
@@ -128,13 +127,6 @@
 		isSearchOpen = false;
 	}
 
-	function handleHome() {
-		windowShellStore.openTabFromRoute(HOME_ROUTE, {
-			label: "Home",
-			focusExisting: true,
-		});
-	}
-
 	function handleWikiOverview() {
 		windowShellStore.openTabFromRoute("/wiki", {
 			label: "Wiki",
@@ -234,8 +226,6 @@
 			collapsed={isCollapsed}
 			animationDelay={STAGGER_DELAY}
 			onSearch={handleSearch}
-			onNewChat={handleNewChat}
-			onHome={handleHome}
 		/>
 
 		<nav
@@ -274,13 +264,6 @@
 					</div>
 				{/each}
 
-				<!-- Recents last: it's the longest and most volatile list here, so
-				     it goes where growth doesn't push the fixed destinations
-				     around. -->
-				<RecentsSection
-					collapsed={isCollapsed}
-					animationDelay={9 * STAGGER_DELAY}
-				/>
 			{/if}
 		</nav>
 

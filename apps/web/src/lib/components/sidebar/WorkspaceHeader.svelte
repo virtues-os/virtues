@@ -1,77 +1,51 @@
 <script lang="ts">
 	import Icon from "$lib/components/Icon.svelte";
+	import { isAppleKeyboard } from "$lib/utils/platform";
 
 	interface Props {
 		collapsed?: boolean;
 		animationDelay?: number;
 		/** Opens the search / command modal. */
 		onSearch?: () => void;
-		/** Starts a new chat. */
-		onNewChat?: () => void;
-		/** Goes Home — the ∴ mark's job. */
-		onHome?: () => void;
 	}
 
-	let {
-		collapsed = false,
-		animationDelay = 0,
-		onSearch,
-		onNewChat,
-		onHome,
-	}: Props = $props();
+	let { collapsed = false, animationDelay = 0, onSearch }: Props = $props();
 
-	// Three affordances, not one. The masthead used to be a single full-width
-	// button — ∴ on the left, a ⌘K chip on the right — which read as a label
-	// rather than a control: it was the only row in the sidebar carrying a
-	// keyboard hint, so it looked like chrome. Now the mark goes Home (and Home
-	// leaves the nav list below, where it was redundant), and search and new-chat
-	// get their own targets on the right. The ⌘K hint moves into the tooltip,
-	// where hints belong.
+	// One control, not three.
+	//
+	// This row used to be a ∴ mark that went Home, plus two unlabelled 15px
+	// glyphs. Three problems in one row: a wordmark isn't a button anywhere else
+	// in software, so the mark read as a label that happened to be clickable; a
+	// logo in the sidebar of a single-owner appliance is pure chrome, since you
+	// know perfectly well which app you're in; and the two glyphs had no
+	// containers, so they read as decoration rather than targets.
+	//
+	// The mark's justification was "it gives the ∴ a job" — which only holds if
+	// the mark needs one. It doesn't, so Home goes back to being a labelled nav
+	// row where it can be read, and the mark leaves.
+	//
+	// What's left is the row's actual highest-traffic job: search. Shaped like
+	// the input it stands in for, because that is what makes it legible without
+	// a label explaining it. New chat moves to the + on the Chats row, with
+	// every other collection.
+	const hint = $derived(isAppleKeyboard ? "⌘K" : "Ctrl K");
 </script>
 
 <div class="masthead" class:collapsed>
-	<div
-		class="masthead-row animate-row"
+	<button
+		type="button"
+		class="search-row animate-row"
 		style="animation-delay: {animationDelay}ms; --stagger-delay: {animationDelay}ms"
+		onclick={() => onSearch?.()}
+		aria-label="Search"
 	>
-		<button
-			type="button"
-			class="mark-btn"
-			onclick={() => onHome?.()}
-			title="Home"
-			aria-label="Home"
-		>
-			<span class="mark">∴</span>
-		</button>
-
-		<div class="masthead-actions">
-			<button
-				type="button"
-				class="masthead-action"
-				onclick={() => onSearch?.()}
-				title="Ask or search (⌘K)"
-				aria-label="Ask or search"
-			>
-				<Icon icon="ri:search-line" width="15" />
-			</button>
-			<button
-				type="button"
-				class="masthead-action"
-				onclick={() => onNewChat?.()}
-				title="New chat (⌘N)"
-				aria-label="New chat"
-			>
-				<Icon icon="ri:add-line" width="16" />
-			</button>
-		</div>
-	</div>
+		<Icon icon="ri:search-line" width="15" />
+		<span class="search-label">Search</span>
+		<kbd>{hint}</kbd>
+	</button>
 </div>
 
 <style>
-	:root {
-		--ease-premium: cubic-bezier(0.2, 0, 0, 1);
-	}
-
 	@keyframes fadeSlideIn {
 		from {
 			opacity: 0;
@@ -83,10 +57,15 @@
 		}
 	}
 
-	/* Right inset 0 to match .workspace-nav (12px 0 12px 8px) so the row's
-	   hover pill spans the same width as the nav rows below. */
 	.masthead {
-		padding: 14px 0 8px 8px;
+		padding: 0 8px;
+		display: flex;
+		align-items: center;
+		/* The shared chrome height. The sidebar's top edge and the pane
+		   toolbar's now come from one token instead of two numbers (30 and 40)
+		   that a comment claimed were equal. */
+		height: var(--chrome-row-h);
+		box-sizing: border-box;
 	}
 
 	.masthead.collapsed {
@@ -102,75 +81,67 @@
 		animation: fadeSlideIn 200ms var(--ease-premium) backwards;
 	}
 
-	/* Height matches the pane toolbar's row so the sidebar's top edge and the
-	   toolbar's share a baseline across the seam. */
-	.masthead-row {
+	/* Input-shaped, but a button: it opens the palette rather than accepting
+	   typing in place. Borrowing the input's shape is what makes that legible
+	   without a caption — and the palette is where the real field lives, so a
+	   second one here would be two places to type the same query. */
+	.search-row {
 		display: flex;
 		align-items: center;
-		justify-content: space-between;
+		gap: 8px;
 		width: 100%;
-		height: 30px;
-		box-sizing: border-box;
-		padding: 0 6px 0 calc(var(--sidebar-padding-left-base) - 4px);
-	}
-
-	/* The mark keeps the nav rows' icon column, so ∴ sits directly above the
-	   icons below it rather than floating in its own margin. */
-	.mark-btn {
-		display: flex;
-		align-items: center;
-		justify-content: center;
-		width: 24px;
-		height: 24px;
-		padding: 0;
-		border: none;
+		height: 28px;
+		padding: 0 8px;
+		border: 1px solid var(--color-border);
 		border-radius: 6px;
-		background: none;
-		cursor: pointer;
-		transition: background 0.15s ease;
-	}
-
-	.mark-btn:hover {
-		background: color-mix(in srgb, var(--color-foreground) 8%, transparent);
-	}
-
-	.mark {
-		font-family: var(--font-serif, serif);
-		font-size: 18px;
-		line-height: 1;
-		color: var(--color-foreground);
-		letter-spacing: 0.02em;
-	}
-
-	.masthead-actions {
-		display: flex;
-		align-items: center;
-		gap: 2px;
-	}
-
-	.masthead-action {
-		display: flex;
-		align-items: center;
-		justify-content: center;
-		width: 24px;
-		height: 24px;
-		padding: 0;
-		border: none;
-		border-radius: 6px;
-		background: none;
-		cursor: pointer;
+		background: var(--color-background);
 		color: var(--color-foreground-subtle);
-		transition: background 0.15s ease, color 0.15s ease;
+		font: inherit;
+		font-size: 13px;
+		text-align: left;
+		cursor: pointer;
+		transition:
+			background 150ms ease,
+			border-color 150ms ease,
+			color 150ms ease;
 	}
 
-	.masthead-action:hover {
-		background: color-mix(in srgb, var(--color-foreground) 8%, transparent);
+	.search-row:hover {
+		background: var(--hover-bg);
+		border-color: var(--color-border-strong);
 		color: var(--color-foreground);
 	}
 
-	.mark-btn:focus-visible,
-	.masthead-action:focus-visible {
-		outline: 2px solid var(--color-primary);
-		outline-offset: -2px;
+	.search-row:focus-visible {
+		outline: 2px solid var(--color-border-focus);
+		outline-offset: 1px;
+	}
+
+	.search-label {
+		flex: 1;
+		min-width: 0;
+	}
+
+	/* The hint lives here rather than in a tooltip. On the old row it was the
+	   only keyboard hint in the sidebar and read as chrome; on a control shaped
+	   like a search field it reads as the field's shortcut, which is the one
+	   place people expect to find one. */
+	kbd {
+		font-family: var(--font-mono, monospace);
+		font-size: 10px;
+		line-height: 1;
+		padding: 3px 4px;
+		border-radius: 3px;
+		background: var(--hover-bg);
+		color: var(--color-foreground-subtle);
+	}
+
+	@media (prefers-reduced-motion: reduce) {
+		.animate-row {
+			animation: none;
+		}
+		.search-row {
+			transition: none;
+		}
 	}
 </style>

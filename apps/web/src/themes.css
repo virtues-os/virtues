@@ -222,6 +222,26 @@
 	--sidebar-hover-bg: color-mix(in srgb, var(--color-foreground) 7%, transparent);
 	--sidebar-active-bg: color-mix(in srgb, var(--color-foreground) 9%, transparent);
 	--sidebar-item-gap: 4px;
+
+	/* The active tab, on the same ramp and for the same reason.
+	   It used to be --surface for the focused pane and --surface-elevated for an
+	   unfocused one. In Caladan --surface IS #FFFFFF, the tab bar is #FFFFFF and
+	   the pane is #FFFFFF — so the active tab in the pane you were working in
+	   was white on white on white, while the tab in the pane you were ignoring
+	   (elevated, #F5F5F5) was the visible one. Exactly inverted, and invisible
+	   in every theme whose surface and background agree.
+	   Stepped above --hover-bg (7%) so hovering an inactive tab can't be
+	   mistaken for selecting it. */
+	--tab-active-bg: color-mix(in srgb, var(--color-foreground) 9%, transparent);
+	--tab-active-bg-focused: color-mix(in srgb, var(--color-foreground) 14%, transparent);
+
+	/* One height for both chrome rows — the sidebar masthead and the pane
+	   toolbar. They were 30px and 40px, under a comment in WorkspaceHeader
+	   claiming they matched, which put the sidebar's top edge 5px off the
+	   toolbar's centreline. Two numbers that must be equal should be one
+	   number. */
+	--chrome-row-h: 44px;
+	--chrome-tab-h: 32px;
 }
 
 /* ===================================

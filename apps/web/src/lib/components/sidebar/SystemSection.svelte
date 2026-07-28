@@ -2,7 +2,7 @@
 	import Icon from "$lib/components/Icon.svelte";
 	import { windowShellStore } from "$lib/stores/window-shell.svelte";
 	import { pagesStore } from "$lib/stores/pages.svelte";
-	import { listPages, listChats, type ViewEntity } from "$lib/api/client";
+	import { listPages, listChats, createNotebook, type ViewEntity } from "$lib/api/client";
 	import { chatSessions } from "$lib/stores/chatSessions.svelte";
 	import type { SystemSection } from "$lib/sidebar/sections";
 	import SidebarNavItem from "./SidebarNavItem.svelte";
@@ -158,7 +158,15 @@
 		e.stopPropagation();
 		if (section.quickAdd === 'chat') handleNewChat();
 		else if (section.quickAdd === 'page') handleNewPage();
+		else if (section.quickAdd === 'notebook') handleNewNotebook();
 	}
+
+	/** Label for the `+`, in the app's own vocabulary. */
+	const QUICK_ADD_LABEL: Record<string, string> = {
+		chat: 'New chat',
+		page: 'New page',
+		notebook: 'New notebook',
+	};
 
 	function handleNewChat() {
 		windowShellStore.openTabFromRoute("/", {
@@ -178,6 +186,19 @@
 			});
 		} catch (e) {
 			console.error("[SystemSection] Failed to create page:", e);
+		}
+	}
+
+	async function handleNewNotebook() {
+		try {
+			const notebook = await createNotebook({ name: 'Untitled notebook' });
+			windowShellStore.openTabFromRoute(`/notebooks/${notebook.id}`, {
+				label: notebook.name,
+				forceNew: true,
+				preferEmptyPane: true,
+			});
+		} catch (e) {
+			console.error("[SystemSection] Failed to create notebook:", e);
 		}
 	}
 
@@ -205,7 +226,7 @@
 				{accentColor}
 				isSystemItem={true}
 				onQuickAdd={section.quickAdd ? handleQuickAdd : undefined}
-				quickAddTitle={section.quickAdd === 'chat' ? 'New Chat' : section.quickAdd === 'page' ? 'New Page' : undefined}
+				quickAddTitle={section.quickAdd ? QUICK_ADD_LABEL[section.quickAdd] : undefined}
 			/>
 		</div>
 	{:else}
@@ -258,7 +279,7 @@
 				{#if section.quickAdd}
 					<button
 						class="sidebar-item-action"
-						title="New {section.quickAdd === 'chat' ? 'Chat' : 'Page'}"
+						title={QUICK_ADD_LABEL[section.quickAdd]}
 						onclick={handleQuickAdd}
 					>
 						<svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor">
