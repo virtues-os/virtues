@@ -31,6 +31,7 @@ mod flow;
 mod install;
 mod mode;
 mod preflight;
+mod qairt;
 mod steps;
 mod storage;
 mod ui;
