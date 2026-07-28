@@ -193,6 +193,15 @@ impl InstallConfig {
         self.models_dir().join("qnn")
     }
 
+    /// Root of the QAIRT runtime libs this installer fetches and owns, with
+    /// `host/` and `dsp/` beneath it — the two must stay separate directories
+    /// because `LD_LIBRARY_PATH` and `ADSP_LIBRARY_PATH` point at different
+    /// halves of the SDK. Under the models dir so backup/GC treat them like the
+    /// other fetched artifacts. See `qairt.rs` for why we fetch rather than ship.
+    pub fn qnn_managed_lib_dir(&self) -> PathBuf {
+        self.qnn_models_dir().join("lib")
+    }
+
     /// Directory holding the Qualcomm QAIRT runtime libs (`libQnnHtp.so`,
     /// `libQnnSystem.so`, the v68 skel/stub) that `virtues-qnnd` dlopen's at
     /// runtime. These are Qualcomm proprietary — NOT shipped by us — so the

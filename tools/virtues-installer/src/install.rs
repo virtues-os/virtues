@@ -294,21 +294,32 @@ pub async fn install_qnn(cfg: &InstallConfig) -> Result<()> {
             ui::ok("QNN runtime libs: on the default loader path");
             String::new()
         }
-        None => {
-            // A previous install may have left the loop running; stopping it is
-            // the useful half of this branch.
-            let mut cmd = Command::new("systemctl");
-            cmd.args(["disable", "--now", "virtues-qnnd"]);
-            let _ = cmd.output().await;
-            ui::warn(
-                "QNN runtime libs (libQnnHtp.so) not found — NPU daemon NOT installed, so \
-                 this box has no embedding or rerank endpoint and semantic search will not \
-                 work. Put the QAIRT Community SDK's runtime libs on the box (host libs from \
-                 lib/aarch64-*-linux-*/, the DSP skel from lib/hexagon-v68/unsigned/), point \
-                 VIRTUES_QNN_LIB_DIR at the host dir, and re-run this installer.",
-            );
-            return Ok(());
-        }
+        // Nothing on the box: fetch the libs from Qualcomm's own public
+        // distribution. This is the ordinary path for a DIY Dragon — the lab
+        // box only works because someone hand-unpacked a 1.44 GB SDK into
+        // /qairt-extract, which nobody else is going to do.
+        None => match crate::qairt::ensure_libs(cfg).await {
+            Ok((host, dsp)) => format!(
+                "Environment=LD_LIBRARY_PATH={host}\nEnvironment=ADSP_LIBRARY_PATH={dsp};/usr/lib/dsp/cdsp\n",
+                host = host.display(),
+                dsp = dsp.display(),
+            ),
+            Err(e) => {
+                // A previous install may have left the loop running; stopping
+                // it is the useful half of this branch.
+                let mut cmd = Command::new("systemctl");
+                cmd.args(["disable", "--now", "virtues-qnnd"]);
+                let _ = cmd.output().await;
+                ui::warn(&format!(
+                    "could not obtain the QAIRT runtime libs ({e}) — NPU daemon NOT installed, \
+                     so this box has no embedding or rerank endpoint and semantic search will \
+                     not work. Unpack the QAIRT Community SDK on the box by hand, point \
+                     VIRTUES_QNN_LIB_DIR at its lib/aarch64-*-linux-*/ directory, and re-run \
+                     this installer."
+                ));
+                return Ok(());
+            }
+        },
     };
 
     let body = QNN_UNIT_TEMPLATE
