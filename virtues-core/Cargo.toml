@@ -1,6 +1,6 @@
 [package]
 name = "virtues"
-version = "0.1.0"
+version = "0.3.0"
 edition = "2021"
 authors = ["Virtues Team <team@virtues.com>"]
 description = "Open source personal data ecosystem - High-performance Rust core"
