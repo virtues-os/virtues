@@ -5,12 +5,13 @@
    These colors are available as Tailwind utilities (e.g., bg-primary, text-foreground)
    and as CSS variables (e.g., var(--color-primary))
 
-   Themes (literary places):
+   Themes (literary places) — sixteen, seven light and nine dark:
    Light:
-   - Pemberley (default) - Austen elegance, pristine
-   - Caladan - Atreides ocean world
+   - Pemberley - Austen elegance, pristine. Occupies :root (see below).
+   - Caladan (default) - Atreides ocean world
    - Rivendell - Elven refuge, warm light
    - Oxford - Academic, studious
+   - Netherfield - Flat white, blue accent
    - Hogwarts - Warm parchment, candlelit
    - Tatooine - Twin suns, desert warmth
 
@@ -19,12 +20,20 @@
    - Baker Street - Victorian gaslight
    - Narnia - Magical lamppost glow
    - Canterbury - Pilgrim earth tones
-   - Borghese - Dramatic light and shadow
-   - Gatsby - Jazz age vivid glamour
+   - Borghese - Dramatic light and shadow (deliberately monochrome: its
+     --primary/--success/--error are all #FFFFFF, --warning/--info #CCCCCC.
+     Not a bug — it is the one theme with no hue at all.)
    - The Lyceum - Aristotle's school, cool blues
    - Asgard - Norse realm, cold majesty
    - Agora - Greek marketplace purple
    - The Shire - Cozy hobbit pastels
+
+   NOTE ON :root — Pemberley is the base layer, but Caladan is the default
+   theme (virtues-registry DEFAULT_THEME). Those are two different jobs and
+   they no longer name the same theme: every other theme, Caladan included,
+   is an override on top of Pemberley's values. The practical consequence is
+   that app.html's pre-paint fallback must track *Caladan's* --background,
+   not :root's, or a new box flashes Pemberley cream before settling white.
 
    IMPORTANT: @theme must be top-level, not nested.
    We define theme variables once, then override CSS variables per theme.
@@ -130,10 +139,15 @@
 	/* Code Syntax Highlighting */
 	--shiki-theme: github-light;
 
-	/* Surface Colors - Whiter warm paper, a whisper of cream (de-yellowed) */
+	/* Surface Colors - Whiter warm paper, a whisper of cream (de-yellowed).
+	   --surface-elevated is what the sidebar sits on, so it is the largest
+	   field of colour in the window. At #F5F4EF it was 23% saturation on a
+	   50° (yellow) hue — fine on a card, too much across a full-height panel,
+	   where it read as a wash rather than as paper. Held at the same lightness
+	   and taken down to ~12%. */
 	--background: #FDFCF9;
 	--surface: #FFFFFF;
-	--surface-elevated: #F5F4EF;
+	--surface-elevated: #F4F3F0;
 	--surface-overlay: #FFFFFF;
 
 	/* Background Treatment - Flat warm ivory */
@@ -168,10 +182,13 @@
 	--info: #1E4E8C;
 	--info-subtle: #E5EBF5;
 
-	/* Border Colors - Cool greige (de-yellowed) */
-	--border: #E7E3D9;
-	--border-subtle: #F2EFE8;
-	--border-strong: #D9D3C7;
+	/* Border Colors - Greige, and genuinely de-yellowed this time.
+	   They were ~42° hue at 19–28% saturation, which is gold, not greige — and
+	   a rule is a thin line, so saturation reads far more strongly on it than
+	   it does across a fill. Same lightness, saturation down to ~9%. */
+	--border: #E3E1DD;
+	--border-subtle: #EFEEEB;
+	--border-strong: #D4D1CC;
 	--border-focus: #1E3159;
 
 	/* Selection/Highlight - Soft claret wash */
@@ -190,13 +207,32 @@
 	/* Sidebar Component Tokens */
 	--sidebar-interactive-padding: 6px 10px;
 	--sidebar-interactive-radius: 6px;
-	--sidebar-interactive-gap: 10px;
+	--sidebar-interactive-gap: 8px;
 	--sidebar-interactive-font-size: 13px;
 	--sidebar-interactive-icon-size: 16px;
 	--sidebar-interactive-icon-size-small: 14px;
 	--sidebar-interactive-height: 28px;
+	/* Four registers instead of one. Every row used to be 28px / 13px / one
+	   weight / one colour, so pins read like destinations read like utilities —
+	   ten items all shouting at the same volume, which gives the eye nothing to
+	   follow and makes every glance cost the same effort. */
+	/* Children MATCH their parents rather than shrinking. Expressed as
+	   references, not as numbers that happen to coincide, so the decision
+	   survives the next tuning pass.
+	   A shorter, smaller child row broke the column's rhythm — two heights
+	   alternating down a narrow panel reads as unsettled, and the hierarchy
+	   never needed the size anyway. It is carried by four other things:
+	   indentation, no icon, regular weight against 500, and muted colour. */
+	--sidebar-child-height: var(--sidebar-interactive-height);
+	--sidebar-child-font-size: var(--sidebar-interactive-font-size);
+	/* The specific thing that made this look like every SaaS menu: eight
+	   identical 16px icons at full contrast in a column. The words should carry
+	   a contents page; icon and label at equal weight turn it into a toolbar
+	   stood on end. Icons recede and come back on hover and for the active row. */
+	--sidebar-icon-opacity: 0.5;
+	--sidebar-child-icon-opacity: 0.4;
 	--sidebar-interactive-color: var(--color-foreground);
-	--sidebar-padding-left-base: 10px;
+	--sidebar-padding-left-base: 12px;
 	--sidebar-indent-width: 12px;
 	--sidebar-transition-duration: 150ms;
 	--sidebar-transition-easing: var(--ease-premium);
@@ -213,6 +249,36 @@
 	--sidebar-hover-bg: color-mix(in srgb, var(--color-foreground) 7%, transparent);
 	--sidebar-active-bg: color-mix(in srgb, var(--color-foreground) 9%, transparent);
 	--sidebar-item-gap: 4px;
+
+	/* The active tab, on the same ramp and for the same reason.
+	   It used to be --surface for the focused pane and --surface-elevated for an
+	   unfocused one. In Caladan --surface IS #FFFFFF, the tab bar is #FFFFFF and
+	   the pane is #FFFFFF — so the active tab in the pane you were working in
+	   was white on white on white, while the tab in the pane you were ignoring
+	   (elevated, #F5F5F5) was the visible one. Exactly inverted, and invisible
+	   in every theme whose surface and background agree.
+	   Stepped above --hover-bg (7%) so hovering an inactive tab can't be
+	   mistaken for selecting it. */
+	--tab-active-bg: color-mix(in srgb, var(--color-foreground) 9%, transparent);
+	--tab-active-bg-focused: color-mix(in srgb, var(--color-foreground) 14%, transparent);
+
+	/* One height for both chrome rows — the sidebar masthead and the pane
+	   toolbar. They were 30px and 40px, under a comment in WorkspaceHeader
+	   claiming they matched, which put the sidebar's top edge 5px off the
+	   toolbar's centreline. Two numbers that must be equal should be one
+	   number. */
+	/* 8pt grid throughout. Off-grid values (13px, 26px, 30px, 34px, 12.5px) are
+	   one of the reliable tells of machine-generated UI, and every one of those
+	   was in here a commit ago. */
+	--chrome-row-h: 40px;
+	--chrome-tab-h: 32px;
+
+	/* How far the pane card is inset from the window: `m-3` (12px) plus its
+	   1px border. The sidebar is full-bleed, so without matching this its
+	   masthead sat 13px higher than the toolbar — equal heights, unequal
+	   centrelines, which is what you actually see across the seam. Equalising
+	   the heights alone did not fix the complaint. */
+	--pane-inset: 12px;
 }
 
 /* ===================================

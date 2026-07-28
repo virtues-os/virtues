@@ -83,6 +83,13 @@ pub async fn run(cli: Cli, virtues: Virtues) -> Result<(), Box<dyn std::error::E
             unreachable!("Rollback command should be handled in main.rs");
         }
 
+        Commands::Channel { .. } => {
+            // Same — reads/writes one file in the state root and must work on a
+            // box whose database is down, which is a common reason to be
+            // changing channel in the first place.
+            unreachable!("Channel command should be handled in main.rs");
+        }
+
         Commands::Uninstall { .. } => {
             // Same — must work even when the DB pool can't be built;
             // a broken install is uninstall's primary use case.

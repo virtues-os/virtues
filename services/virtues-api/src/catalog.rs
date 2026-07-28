@@ -20,10 +20,11 @@
 //! notice and no sunset field** — a model id can simply stop working (Cohere's
 //! Command R/R+ vanished exactly this way). Nothing checked, so nothing knew.
 //!
-//! `store()` now enforces `curated ⊆ catalog` on every refresh: a curated model
-//! that disappears from the gateway is logged loudly and dropped from what we
-//! serve, so it leaves the picker within the hour instead of 404ing a user
-//! mid-chat.
+//! `store()` enforces `slots ⊆ catalog` on every refresh: a *slot default* that
+//! disappears from the gateway is logged loudly, because that one is an outage
+//! — it's the model we pick on the user's behalf. Picker entries need no such
+//! check; the picker is the gateway's own list, so a model that vanishes simply
+//! stops being listed.
 //!
 //! # Cadence
 //!
@@ -35,10 +36,11 @@
 //!
 //! # Staleness
 //!
-//! A failed refresh keeps the last known-good snapshot. A gateway blip must not
-//! empty the picker or drop billing to the fallback floor. Only a cold start
-//! with no successful fetch leaves us empty, and that is the one case
-//! `FALLBACK_PRICING` exists for.
+//! A failed refresh keeps the last known-good snapshot — a gateway blip must
+//! not empty the picker. Only a cold start with no successful fetch leaves us
+//! empty, and we serve an empty picker for it rather than a compiled stand-in:
+//! slots still resolve from the compiled floor, so "Virtues default" keeps
+//! working, and billing is unaffected because `usage.cost` rides every response.
 
 use std::collections::HashMap;
 use std::sync::{Arc, RwLock};
@@ -71,9 +73,11 @@ pub struct GatewayModel {
     #[serde(default)]
     pub pricing: Option<GatewayPricing>,
     /// Free-form capability tags, e.g. `tool-use`, `reasoning`, `vision`,
-    /// `file-input`. The gateway's own declaration — informative, not gospel:
-    /// Gemini 3 tags `tool-use` and still 400s on parallel calls through the
-    /// gateway's OpenAI-compat shim. Good enough for the unvouched tier.
+    /// `file-input`. The gateway's own declaration — informative, not gospel.
+    /// It describes the model, not the OpenAI-compat shim we reach it through,
+    /// and those have diverged before (Gemini 3 tagged `tool-use` while 400ing
+    /// on parallel calls). Good enough for the BYO tier; slot models get
+    /// verified for real — see `virtues::tools::slot_model_smoke`.
     #[serde(default)]
     pub tags: Vec<String>,
     #[serde(default)]
@@ -185,9 +189,9 @@ impl Catalog {
         Self::default()
     }
 
-    /// Pricing as `(input_per_1k, output_per_1k)`, or None when the catalog is
-    /// cold or the model is unknown. Callers fall back to
-    /// `virtues_registry::models::FALLBACK_PRICING`.
+    /// Pricing as `(input_per_1k, output_per_1k)`, or `None` when the catalog
+    /// is cold or the model is unknown. Callers must NOT substitute a guess —
+    /// serve the call unbilled and log it. See `providers::calculate_cost`.
     pub fn pricing(&self, model_id: &str) -> Option<(f64, f64)> {
         let guard = self.inner.read().ok()?;
         guard.get(model_id)?.pricing.as_ref()?.per_1k()
@@ -201,119 +205,86 @@ impl Catalog {
         self.inner.read().map(|g| g.is_empty()).unwrap_or(true)
     }
 
-    /// The curated picker, hydrated with live facts, minus anything the gateway
-    /// no longer carries. This is `curated ∩ catalog` — the intersection is
-    /// load-bearing, not paranoid; see the module docs.
+    /// The picker: every priced language model the gateway currently carries.
     ///
-    /// A cold catalog yields the curated list unhydrated rather than an empty
-    /// one: a box that can't reach us should still show a working picker.
-    pub fn curated(&self) -> Vec<CuratedModel> {
-        let cold = self.is_cold();
-        virtues_registry::models::default_models()
-            .into_iter()
-            .filter(|m| m.enabled)
-            .filter(|m| cold || self.get(&m.model_id).is_some())
-            .map(|m| {
-                let live = self.get(&m.model_id);
-                let pricing = self.pricing(&m.model_id);
-                CuratedModel {
-                    // Live facts win where we have them.
-                    context_window: live
-                        .as_ref()
-                        .and_then(|l| l.context_window)
-                        .unwrap_or(m.context_window as i64),
-                    max_output_tokens: live
-                        .as_ref()
-                        .and_then(|l| l.max_tokens)
-                        .unwrap_or(m.max_output_tokens as i64),
-                    input_cost_per_1k: pricing.map(|p| p.0),
-                    output_cost_per_1k: pricing.map(|p| p.1),
-                    // Taste stays ours — especially the capability flags. The
-                    // gateway's `tags` say what a model can do, not what works
-                    // through its OpenAI-compatible shim (Gemini 3 advertises
-                    // tool use and 400s on parallel calls).
-                    model_id: m.model_id,
-                    display_name: m.display_name,
-                    provider: m.provider,
-                    sort_order: m.sort_order,
-                    supports_tools: m.supports_tools,
-                    supports_vision: m.supports_vision,
-                    supports_pdf: m.supports_pdf,
-                    supports_audio: m.supports_audio,
-                    is_default: m.is_default,
-                    recommended: true,
-                }
-            })
-            .collect()
-    }
+    /// This IS the gateway's list — we do not edit it, reorder it by taste, or
+    /// hand-describe entries in it. Display name, provider, context window, max
+    /// output, and all four capability flags are derived from what the gateway
+    /// reports, for every model equally.
+    ///
+    /// Two flags are ours, and both are *derived* rather than stored:
+    ///   - `recommended` — this model fills one of our five slots. That is the
+    ///     entire vouching surface. Everything else is the BYO path: the user
+    ///     picked it, the gateway's capability tags are the provider's own
+    ///     claim, and some will misbehave through the OpenAI-compat shim
+    ///     (Gemini 3 advertises tool use and 400s on parallel calls).
+    ///   - `is_default` — this model fills the Chat slot.
+    ///
+    /// Priced-only on purpose: a model whose price we can't read cannot be
+    /// billed honestly, so it is not offered. Empty when the catalog is cold —
+    /// slots still resolve from the compiled floor, so "Virtues default" keeps
+    /// working while the picker fills in on the next refresh (≤1h).
+    pub fn picker(&self) -> Vec<CuratedModel> {
+        use virtues_registry::models::{default_model_for_slot, ModelSlot};
 
-    /// Every priced language model the gateway currently carries, EXCLUDING the
-    /// curated ids (those are served as `recommended`). `recommended: false`;
-    /// capability flags are the gateway's own declaration, not our testing, so
-    /// some will misbehave through the OpenAI-compat shim (tool calls, audio).
-    /// The picker surfaces these as an "All models" tier, clearly unvouched.
-    ///
-    /// Priced-only on purpose: a model we can't read a price for would bill at
-    /// the fallback floor, which is misleading to show as a first-class choice.
-    /// Empty when the catalog is cold — the box still has the curated picker.
-    pub fn all_selectable(&self) -> Vec<CuratedModel> {
-        let curated_ids: std::collections::HashSet<String> =
-            virtues_registry::models::default_models()
-                .into_iter()
-                .map(|m| m.model_id)
-                .collect();
+        // Only the slots a user actually chats through. Image and Omni are
+        // system slots: Image is filtered out anyway (not a language model),
+        // but Omni's model IS one, and it is deliberately not a chat option —
+        // it's a Gemini 3 model, which 400s on parallel tool calls through the
+        // shim. Marking it "recommended" would put a known-broken chat model at
+        // the top of the picker.
+        let slot_ids: std::collections::HashSet<&str> = [ModelSlot::Chat, ModelSlot::Lite, ModelSlot::Coding]
+            .into_iter()
+            .map(default_model_for_slot)
+            .collect();
+        let chat_id = default_model_for_slot(ModelSlot::Chat);
+
         let guard = match self.inner.read() {
             Ok(g) => g,
             Err(_) => return Vec::new(),
         };
         let mut out: Vec<CuratedModel> = guard
             .values()
-            .filter(|m| m.is_language() && !curated_ids.contains(&m.id))
+            .filter(|m| m.is_language())
             .filter_map(|m| {
                 let (input, output) = m.pricing.as_ref().and_then(|p| p.per_1k())?;
+                let recommended = slot_ids.contains(m.id.as_str());
                 Some(CuratedModel {
                     model_id: m.id.clone(),
                     display_name: m.display_name(),
                     provider: m.provider_label(),
-                    // After every curated entry; the picker orders the tier
-                    // itself (by provider, then name) — see the sort below.
-                    sort_order: 1000,
+                    // Slot models first; the rest ordered by provider then name
+                    // (see the sort below).
+                    sort_order: if recommended { 0 } else { 1000 },
                     context_window: m.context_window.unwrap_or(0),
                     max_output_tokens: m.max_tokens.unwrap_or(0),
                     supports_tools: m.supports_tools(),
                     supports_vision: m.supports_vision(),
                     supports_pdf: m.supports_pdf(),
                     supports_audio: m.supports_audio(),
-                    is_default: false,
+                    is_default: m.id == chat_id,
                     input_cost_per_1k: Some(input),
                     output_cost_per_1k: Some(output),
-                    recommended: false,
+                    recommended,
                 })
             })
             .collect();
         out.sort_by(|a, b| {
-            a.provider
-                .cmp(&b.provider)
+            a.sort_order
+                .cmp(&b.sort_order)
+                .then_with(|| a.provider.cmp(&b.provider))
                 .then_with(|| a.display_name.cmp(&b.display_name))
         });
         out
     }
 
-    /// The full picker as served to boxes: the curated Recommended set first,
-    /// then the rest of the live gateway catalog. One flat list; each entry's
-    /// `recommended` flag lets the box section it.
-    pub fn picker(&self) -> Vec<CuratedModel> {
-        let mut models = self.curated();
-        models.extend(self.all_selectable());
-        models
-    }
-
-    /// Replace the snapshot and enforce `curated ⊆ catalog`.
+    /// Replace the snapshot and enforce `slots ⊆ catalog`.
     fn store(&self, models: Vec<GatewayModel>) {
         let map: HashMap<String, GatewayModel> =
             models.into_iter().map(|m| (m.id.clone(), m)).collect();
 
-        // The only deprecation warning we will ever get.
+        // The only deprecation warning we will ever get. Vercel publishes no
+        // sunset field, so polling is the whole early-warning system.
         let missing: Vec<String> = virtues_registry::models::required_model_ids()
             .into_iter()
             .filter(|id| !map.contains_key(id))
@@ -321,8 +292,9 @@ impl Catalog {
         if !missing.is_empty() {
             tracing::error!(
                 missing = ?missing,
-                "curated models are NOT in the gateway catalog — they will 404. \
-                 Dropped from the picker; fix crates/virtues-registry/src/models.rs"
+                "SLOT DEFAULTS are NOT in the gateway catalog — every request \
+                 routed to them will 404. Fix default_model_for_slot() in \
+                 crates/virtues-registry/src/models.rs"
             );
         }
 
@@ -357,7 +329,8 @@ pub async fn spawn(http: reqwest::Client, gateway_url: String) -> Catalog {
         }
         Err(e) => tracing::error!(
             "initial model catalog fetch failed: {e:#} — \
-             billing falls back to FALLBACK_PRICING until a refresh succeeds"
+             calls bill from usage.cost as normal; the picker stays empty \
+             until a refresh succeeds"
         ),
     }
 
@@ -383,7 +356,7 @@ pub async fn spawn(http: reqwest::Client, gateway_url: String) -> Catalog {
     catalog
 }
 
-/// The curated picker as served to boxes: our taste, the gateway's facts.
+/// One picker entry as served to boxes — entirely the gateway's facts.
 #[derive(Debug, Clone, serde::Serialize)]
 pub struct CuratedModel {
     pub model_id: String,
@@ -406,6 +379,46 @@ pub struct CuratedModel {
     /// declaration. The picker sections on this.
     #[serde(default)]
     pub recommended: bool,
+}
+
+/// Split a bare model name into its family stem and version, e.g. `grok-4.5`
+/// -> (`grok`, 4.5) and `claude-opus-4.8` -> (`claude-opus`, 4.8). Everything
+/// after the version (`-flash`, `-fast`, `-preview`) is dropped.
+///
+/// The version is a **decimal**, not a semver tuple, because these are
+/// marketing numbers rather than semantic versions. That distinction is
+/// load-bearing: xAI ships `grok-4.20` as its joke spelling of 4.2, and tuple
+/// comparison reads `[4, 20] > [4, 5]` — which reported our own current Chat
+/// model as behind a model it supersedes. As a decimal, 4.20 == 4.2 < 4.5.
+///
+/// A name with no parseable version yields 0.0, which sorts below everything.
+#[cfg(test)]
+fn split_version(name: &str) -> (String, f64) {
+    let mut stem: Vec<&str> = Vec::new();
+    for part in name.split('-') {
+        // The first parseable numeric part is the version; stop there.
+        if let Ok(v) = part.parse::<f64>() {
+            return (stem.join("-"), v);
+        }
+        stem.push(part);
+    }
+    (stem.join("-"), 0.0)
+}
+
+#[cfg(test)]
+#[test]
+fn version_split_treats_marketing_numbers_as_decimals() {
+    assert_eq!(split_version("grok-4.5"), ("grok".into(), 4.5));
+    assert_eq!(split_version("claude-opus-4.8"), ("claude-opus".into(), 4.8));
+    assert_eq!(split_version("glm-4.7-flash"), ("glm".into(), 4.7));
+    assert_eq!(split_version("gemini-3-flash"), ("gemini".into(), 3.0));
+    // The case that caught a real bug: xAI's 4.20 is 4.2, and must NOT sort
+    // above 4.5 the way a semver tuple would.
+    let (_, four_twenty) = split_version("grok-4.20-reasoning");
+    let (_, four_five) = split_version("grok-4.5");
+    assert!(four_twenty < four_five, "grok-4.20 must sort below grok-4.5");
+    // No version at all sorts below everything real.
+    assert_eq!(split_version("gpt-oss").1, 0.0);
 }
 
 #[cfg(test)]
@@ -455,13 +468,16 @@ mod tests {
     }
 
     #[test]
-    fn picker_splits_recommended_from_the_rest() {
+    fn recommended_marks_slot_models_and_nothing_else() {
+        use virtues_registry::models::{default_model_for_slot, ModelSlot};
+        let chat = default_model_for_slot(ModelSlot::Chat);
+
         let c = Catalog::new();
-        // A curated id (Opus) hydrated, one non-curated priced language model
-        // (Grok), plus an embedding model that must never reach the picker.
+        // The Chat slot model, one ordinary priced language model, and an
+        // embedding model that must never reach the picker.
         c.store(vec![
+            gw(chat, "0.000002", &["tool-use", "vision"], &["text", "image", "pdf"]),
             gw("anthropic/claude-opus-4.8", "0.000005", &["tool-use", "vision"], &["text", "image", "pdf"]),
-            gw("xai/grok-4.20-multi-agent", "0.00000125", &["tool-use", "vision"], &["text", "image", "pdf"]),
             GatewayModel {
                 model_type: Some("embedding".to_string()),
                 ..gw("openai/text-embedding-3-large", "0.00000013", &[], &["text"])
@@ -469,36 +485,127 @@ mod tests {
         ]);
 
         let picker = c.picker();
-        let grok = picker.iter().find(|m| m.model_id == "xai/grok-4.20-multi-agent");
-        let grok = grok.expect("grok should be selectable");
-        assert!(!grok.recommended, "non-curated model is unvouched");
-        assert!(grok.supports_tools && grok.supports_vision && grok.supports_pdf);
-        assert_eq!(grok.provider, "xAI");
 
-        let opus = picker.iter().find(|m| m.model_id == "anthropic/claude-opus-4.8");
-        assert!(opus.expect("opus curated").recommended, "curated model is recommended");
+        let slot_model = picker.iter().find(|m| m.model_id == chat).expect("chat slot model");
+        assert!(slot_model.recommended, "a slot model is the vouched set");
+        assert!(slot_model.is_default, "the Chat slot model is the default");
+
+        // Not a slot model — present and selectable, but unvouched. Its facts
+        // come from the gateway, not from us.
+        let opus = picker
+            .iter()
+            .find(|m| m.model_id == "anthropic/claude-opus-4.8")
+            .expect("non-slot models are still selectable");
+        assert!(!opus.recommended);
+        assert!(!opus.is_default);
+        assert!(opus.supports_tools && opus.supports_vision && opus.supports_pdf);
+        assert_eq!(opus.provider, "Anthropic");
+
+        // Slot models sort ahead of the rest.
+        assert_eq!(picker[0].model_id, chat);
 
         // Embeddings and other non-language types never appear.
         assert!(!picker.iter().any(|m| m.model_id.contains("embedding")));
-        // The curated id is not duplicated into the unvouched tier.
-        assert_eq!(
-            picker.iter().filter(|m| m.model_id == "anthropic/claude-opus-4.8").count(),
-            1
+        // No duplicates — one entry per gateway id.
+        assert_eq!(picker.iter().filter(|m| m.model_id == chat).count(), 1);
+    }
+
+    /// The Omni slot's model is a language model, so it reaches the picker —
+    /// but it is a Gemini 3 model, which 400s on parallel tool calls through
+    /// the shim. It is a system slot for transcription (which uses no tools),
+    /// never a chat recommendation. Marking it `recommended` would sort a
+    /// known-broken chat model to the top of the picker.
+    #[test]
+    fn system_slot_models_are_never_recommended() {
+        use virtues_registry::models::{default_model_for_slot, ModelSlot};
+        let omni = default_model_for_slot(ModelSlot::Omni);
+
+        let c = Catalog::new();
+        c.store(vec![gw(omni, "0.0000003", &["tool-use"], &["text", "audio"])]);
+
+        let entry = c
+            .picker()
+            .into_iter()
+            .find(|m| m.model_id == omni)
+            .expect("a language model still appears in the picker");
+        assert!(
+            !entry.recommended,
+            "the Omni transcription model must not be recommended for chat"
         );
+        assert!(!entry.is_default);
     }
 
     #[test]
-    fn cold_catalog_still_serves_the_picker() {
+    fn cold_catalog_yields_an_empty_picker_not_an_invented_one() {
+        // A cold catalog means we could not reach the gateway, so we know
+        // nothing about any model. Serving a hand-written list here is what
+        // let seven stale entries rot for months. Slots still resolve from the
+        // compiled floor, so "Virtues default" keeps working.
         let c = Catalog::new();
         assert!(c.is_cold());
-        assert!(
-            !c.curated().is_empty(),
-            "a box that can't reach the gateway must still get a usable picker"
-        );
+        assert!(c.picker().is_empty());
         assert!(c.pricing("anthropic/claude-opus-4.8").is_none());
     }
 
-    /// `curated ⊆ catalog` against the LIVE gateway. This is the check that was
+    /// Are our slot models behind their own family on the gateway?
+    ///
+    /// `slot_defaults_all_exist_on_the_gateway` is a LIVENESS check — it fires
+    /// when a model vanishes. It stayed green for months while every curated
+    /// entry fell a generation behind (`gemini-2.5-flash` while the gateway
+    /// carried `3.6-flash`). Liveness is not freshness, and nothing was
+    /// watching freshness, so the list rotted until someone happened to look.
+    ///
+    /// This is the missing half. It deliberately **never fails**: newer is not
+    /// better — Gemini 3 is newer than 2.5 and unusable for us — so the right
+    /// output is a decision prompt for a human, not a red build. A check that
+    /// cries wolf gets muted, and a muted check is exactly the disease.
+    ///
+    ///     cargo test -p virtues-api -- --ignored --nocapture
+    #[tokio::test]
+    #[ignore = "network: hits the live Vercel AI Gateway catalog"]
+    async fn report_slot_models_behind_their_family() {
+        let _ = rustls::crypto::ring::default_provider().install_default();
+
+        let http = reqwest::Client::new();
+        let live = fetch(&http, "https://ai-gateway.vercel.sh")
+            .await
+            .expect("fetch gateway catalog");
+
+        eprintln!("\n=== slot model freshness ===");
+        for id in virtues_registry::models::required_model_ids() {
+            let Some((provider, name)) = id.split_once('/') else { continue };
+            let (stem, ver) = split_version(name);
+            let mut newer: Vec<(String, &str)> = live
+                .iter()
+                .filter(|m| m.is_language() || m.id == id)
+                .filter_map(|m| {
+                    let (p, n) = m.id.split_once('/')?;
+                    if p != provider {
+                        return None;
+                    }
+                    let (s, v) = split_version(n);
+                    (s == stem && v > ver).then_some((format!("{v:>8.2}"), m.id.as_str()))
+                })
+                .collect();
+
+            if newer.is_empty() {
+                eprintln!("  {id:32} current");
+            } else {
+                newer.sort();
+                let names: Vec<&str> = newer.iter().map(|(_, id)| *id).collect();
+                eprintln!("  {id:32} v{ver} BEHIND {} newer:", names.len());
+                for n in names {
+                    eprintln!("  {:32}   {n}", "");
+                }
+            }
+        }
+        eprintln!(
+            "\nNewer is not automatically better. Before promoting anything, run \n\
+             `cargo test -p virtues --lib slot_model_smoke -- --ignored` against it.\n"
+        );
+    }
+
+    /// `slots ⊆ catalog` against the LIVE gateway. This is the check that was
     /// missing while `google/gemini-3-pro` and `openai/gpt-5.1` rotted in the
     /// picker — Vercel gives no deprecation notice, so polling is the only
     /// warning available.
@@ -506,7 +613,7 @@ mod tests {
     /// Networked, so ignored by default. CI runs `cargo test -- --ignored`.
     #[tokio::test]
     #[ignore = "network: hits the live Vercel AI Gateway catalog"]
-    async fn curated_models_all_exist_on_the_gateway() {
+    async fn slot_defaults_all_exist_on_the_gateway() {
         // `main()` installs this process-wide; tests don't run `main()`.
         let _ = rustls::crypto::ring::default_provider().install_default();
 
@@ -523,7 +630,8 @@ mod tests {
 
         assert!(
             missing.is_empty(),
-            "these curated model ids do not exist on the gateway and will 404: {missing:?}"
+            "these SLOT DEFAULTS do not exist on the gateway and will 404 for \
+             every user we route to them: {missing:?}"
         );
     }
 }

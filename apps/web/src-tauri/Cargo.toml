@@ -42,6 +42,10 @@ tauri-plugin-notification = "2"
 # second launch focuses the running window instead of spawning a duplicate that
 # would fail to bind :7117. macOS is single-instance natively (LaunchServices).
 tauri-plugin-single-instance = "2"
+# OS-global summon chord (⌘⇧Space by default). Registers through Carbon's
+# RegisterEventHotKey on macOS, which needs no Accessibility permission —
+# unlike anything that watches modifiers on their own. See `summon` in main.rs.
+tauri-plugin-global-shortcut = "2"
 dirs = "5"
 # Updater endpoints are typed as Url; needed to swap channels at runtime.
 url = "2"

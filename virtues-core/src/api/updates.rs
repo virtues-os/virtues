@@ -105,10 +105,102 @@ pub struct UpdateChannelResponse {
     pub channel: String,
 }
 
-// Applying an update from the UI needs root: `virtues upgrade` writes
-// /usr/local/bin and drives systemctl, while the server runs as `virtues`. The
-// agreed route is a narrow sudoers grant for exactly that one binary and
-// subcommand, installed by the installer and removed on uninstall. That grant
-// is standing root-adjacent surface on an appliance, so it ships as its own
-// change with the installer work rather than riding along here — and until it
-// does, the UI shows the command instead of running it.
+// ─────────────────────────────────────────────────────────────────────────────
+// Apply
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Transient unit the upgrade runs under. Named, so a second Apply while one is
+/// already running fails on the name collision instead of starting a second
+/// upgrade over the top of the first.
+const UPGRADE_UNIT: &str = "virtues-upgrade";
+
+const BINARY_PATH: &str = "/usr/local/bin/virtues";
+
+#[derive(Debug, Serialize)]
+pub struct ApplyResponse {
+    /// Transient unit the upgrade is running under, for `journalctl -u`.
+    pub unit: String,
+    /// What the client should expect next, in plain words.
+    pub detail: String,
+}
+
+/// Start an upgrade and return immediately.
+///
+/// ## Why this cannot just run `virtues upgrade` as a child
+///
+/// `upgrade` does `systemctl stop virtues` → flip → migrate →
+/// `systemctl start virtues`. This server *is* `virtues.service`. A child
+/// process inherits the service's cgroup, so the moment the upgrade stops the
+/// unit, systemd kills the whole cgroup — including the upgrade itself, midway
+/// through, with the symlink possibly already flipped and migrations not yet
+/// run. The upgrade would reliably kill itself at its most dangerous moment.
+///
+/// `systemd-run` puts it in its own transient unit and therefore its own
+/// cgroup, which survives the restart of ours. That is the whole reason it is
+/// here; it is not a stylistic choice.
+///
+/// ## Privilege
+///
+/// The `virtues` account already holds `NOPASSWD: ALL`
+/// (`/etc/sudoers.d/virtues`, written by the installer) because the auth-gated
+/// web terminal is an admin shell and the account has no password to
+/// authenticate against interactively. So this adds no privilege that the
+/// server did not already have — it is a *use* of an existing grant, not a new
+/// one. The overhaul plan called for installing a narrow grant for exactly this
+/// subcommand; that would be strictly worse than it sounds, because it would
+/// sit alongside the broad grant rather than replacing it, and read as if the
+/// surface were narrower than it is. Narrowing the existing grant is real work
+/// and belongs with the terminal, not here.
+///
+/// ## No user input reaches the command line
+///
+/// The argv is fixed. The channel comes from the state-root file that
+/// `virtues upgrade` reads for itself, never from the request — so there is no
+/// path from an HTTP body to a root command's arguments.
+pub fn apply() -> Result<ApplyResponse> {
+    if !std::path::Path::new(BINARY_PATH).exists() {
+        return Err(Error::Other(format!(
+            "{BINARY_PATH} is not installed — this looks like a dev checkout \
+             rather than a box, and there is nothing to upgrade"
+        )));
+    }
+
+    let output = std::process::Command::new("sudo")
+        // -n: never prompt. Without a grant this fails immediately with a
+        // readable error instead of blocking on a password prompt that no one
+        // is there to answer.
+        .args([
+            "-n",
+            "systemd-run",
+            "--unit",
+            UPGRADE_UNIT,
+            // Let systemd clean the unit up once it exits, so the next apply
+            // isn't refused by a leftover failed unit of the same name.
+            "--collect",
+            "--description",
+            "virtues upgrade (started from Settings)",
+            BINARY_PATH,
+            "upgrade",
+        ])
+        .output()
+        .map_err(|e| Error::Other(format!("could not invoke sudo systemd-run: {e}")))?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        let detail = stderr.trim();
+        // Surface the actual reason. "Update failed" with nothing behind it is
+        // the thing that sends someone to SSH into the box to find out why.
+        return Err(Error::Other(if detail.is_empty() {
+            format!("systemd-run exited {}", output.status)
+        } else {
+            detail.to_string()
+        }));
+    }
+
+    Ok(ApplyResponse {
+        unit: UPGRADE_UNIT.to_string(),
+        detail: "The box will stop serving for a moment while it restarts. \
+                 Every connected device drops, not just this one."
+            .to_string(),
+    })
+}

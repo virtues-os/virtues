@@ -10,7 +10,9 @@
 import {
 	listPins,
 	createPin,
+	updatePin,
 	deletePin,
+	reorderPins,
 	type Pin
 } from '$lib/api/client';
 
@@ -40,6 +42,57 @@ class PinsStore {
 	async remove(id: string) {
 		await deletePin(id);
 		this.pins = this.pins.filter((p) => p.id !== id);
+	}
+
+	/**
+	 * Move the pin at `from` to index `to`.
+	 *
+	 * Optimistic: the list reorders locally first, because a drag that only
+	 * settles after a round-trip reads as a dropped drag. On failure the
+	 * previous order is put back — silently accepting the reject would leave
+	 * the sidebar disagreeing with the box until the next load().
+	 *
+	 * `PUT /api/pins/reorder` takes the full url list and assigns sort_order
+	 * by position, so it has to be sent whole rather than as a delta.
+	 */
+	async reorder(from: number, to: number) {
+		if (from === to) return;
+		if (from < 0 || to < 0 || from >= this.pins.length || to >= this.pins.length) return;
+
+		const previous = this.pins;
+		const next = [...this.pins];
+		const [moved] = next.splice(from, 1);
+		next.splice(to, 0, moved);
+		// Keep sort_order in step with position so anything reading the field
+		// (rather than array order) doesn't see stale numbers before reload.
+		this.pins = next.map((p, i) => ({ ...p, sort_order: i }));
+
+		try {
+			await reorderPins(next.map((p) => p.url));
+		} catch (e) {
+			this.pins = previous;
+			console.error('[pinsStore] reorder failed', e);
+			throw e;
+		}
+	}
+
+	/**
+	 * Set (or clear, with null) a pin's ribbon colour.
+	 *
+	 * Optimistic like reorder, and for the same reason: the sidebar IS the
+	 * feedback, so a colour that only appears after a round-trip reads as the
+	 * click not registering.
+	 */
+	async setColor(id: string, color: string | null) {
+		const previous = this.pins;
+		this.pins = this.pins.map((p) => (p.id === id ? { ...p, color } : p));
+		try {
+			await updatePin(id, { color });
+		} catch (e) {
+			this.pins = previous;
+			console.error('[pinsStore] setColor failed', e);
+			throw e;
+		}
 	}
 
 	isPinned(url: string): boolean {

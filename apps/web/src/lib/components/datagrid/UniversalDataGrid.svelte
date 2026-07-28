@@ -1498,11 +1498,16 @@
 		white-space: nowrap;
 		border-bottom: 1px solid var(--color-border);
 		/* Pinned: past a screenful of rows, a header that scrolls away turns
-		   every column into a guess. Needs an opaque fill to cover rows. */
+		   every column into a guess. It needs an opaque fill to cover the rows
+		   sliding under it — but the fill should be the PAGE's colour, so the
+		   header reads as clear and only its rule shows.
+		   It was --color-background (#FDFCF9) inside a card painted --surface
+		   (#FFFFFF), which drew a cream band across the top of every table for
+		   no reason anyone chose. */
 		position: sticky;
 		top: 0;
 		z-index: 2;
-		background: var(--color-background);
+		background: var(--color-surface);
 	}
 
 	td.numeric { text-align: right; font-variant-numeric: tabular-nums; }

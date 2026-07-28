@@ -99,7 +99,45 @@ Why one EC2 + Caddy and not ECS/App Runner/Fargate: latency, cost, and avoiding 
 
 **Cloud releases:**
 - `make deploy-atlas` / `make deploy-virtues-api` build + push `:latest` to ECR.
-- The EC2 instance pulls the new `:latest` and restarts the container (manual today, candidate for a GitHub Action that SSH-runs `docker pull && docker restart` later).
+- The EC2 instance then pulls and **recreates** the container. Manual today;
+  candidate for a GitHub Action later.
+
+The instance is `i-0a0b34b72dac1ac59` ("virtues"), running both containers.
+Access is SSM only — no public SSH — so step two is a `send-command`:
+
+```sh
+ECR=172349361546.dkr.ecr.us-east-1.amazonaws.com/virtues-api:latest   # or virtues-atlas
+aws ssm send-command --instance-ids i-0a0b34b72dac1ac59 \
+  --document-name AWS-RunShellScript --parameters "commands=[
+    \"aws ecr get-login-password --region us-east-1 | docker login --username AWS --password-stdin 172349361546.dkr.ecr.us-east-1.amazonaws.com\",
+    \"docker pull $ECR\",
+    \"docker rm -f virtues-api\",
+    \"docker run -d --name virtues-api --restart unless-stopped --network host --env-file /etc/virtues/api.env $ECR\",
+    \"sleep 20\",
+    \"docker inspect virtues-api --format 'image={{.Image}} health={{.State.Health.Status}}'\"]"
+```
+
+**`docker restart` is not enough, twice over:** it re-runs the *existing*
+container, so it neither picks up the newly pulled image nor re-reads
+`/etc/virtues/api.env`. It must be `rm -f` + `run`. The run flags above are not
+optional decoration — they reconstruct the live container exactly (host network,
+no port bindings, no binds, `--env-file` only, no stray `-e`).
+
+**Verify the deploy actually changed something.** `:latest` deploys fail
+silently by design — the image ID before and after is the only proof:
+
+```sh
+docker inspect virtues-api --format '{{.Image}}'          # before and after
+docker logs virtues-api 2>&1 | grep -i "model catalog"    # want: catalog loaded count=NNN
+docker logs virtues-api 2>&1 | grep -ciE "ERROR|panic"    # want: 0
+curl -s https://api.virtues.com/health                    # want: 200
+```
+
+A zero error count is the check that matters most on a model change: virtues-api
+logs `SLOT DEFAULTS are NOT in the gateway catalog` at error level when a slot id
+no longer exists upstream, which is the one failure that 404s every user we route
+to it. Keep the previous image ID to hand — `docker run` against it is the
+rollback.
 
 ---
 
