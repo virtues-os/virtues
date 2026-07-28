@@ -57,9 +57,25 @@ async fn main() -> Result<()> {
             .and_then(|v| v.as_str())
             .unwrap_or("primary");
 
+        // `accessRole` is the whole reason we walk the calendarList rather than
+        // hitting `primary` directly: it is what distinguishes the owner's own
+        // calendar from one they merely SUBSCRIBE to. A `reader` calendar's
+        // events are other people's plans, and nothing downstream can work that
+        // out from the event resource alone — Google puts it here, once, per
+        // calendar. See migration 0066.
+        let access_role = cal.get("accessRole").and_then(|v| v.as_str());
+
         let prior_token = sync_tokens.get(cal_id).cloned();
-        let (written, new_token) =
-            sync_calendar(&client, &access_token, &pool, &storage, cal_id, prior_token.as_deref()).await?;
+        let (written, new_token) = sync_calendar(
+            &client,
+            &access_token,
+            &pool,
+            &storage,
+            cal_id,
+            access_role,
+            prior_token.as_deref(),
+        )
+        .await?;
         total_written += written;
 
         if let Some(t) = new_token {
@@ -103,6 +119,7 @@ async fn sync_calendar(
     db: &sqlx::PgPool,
     storage: &virtues::storage::Storage,
     calendar_id: &str,
+    access_role: Option<&str>,
     prior_sync_token: Option<&str>,
 ) -> Result<(usize, Option<String>)> {
     let mut written = 0usize;
@@ -145,7 +162,7 @@ async fn sync_calendar(
         lake::archive_cloud(db, storage, "google", ACTION, "calendar", &[resp.clone()]).await?;
 
         if let Some(items) = resp.get("items").and_then(|v| v.as_array()) {
-            written += transform::write_events(db, calendar_id, items).await?;
+            written += transform::write_events(db, calendar_id, access_role, items).await?;
         }
 
         if let Some(np) = resp.get("nextPageToken").and_then(|v| v.as_str()) {
