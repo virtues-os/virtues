@@ -170,7 +170,7 @@
 	}
 
 	.ai-action:hover {
-		background: var(--color-surface-elevated);
+		background: var(--hover-bg);
 		border-color: var(--color-border-strong);
 		color: var(--color-foreground);
 	}

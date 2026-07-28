@@ -561,7 +561,7 @@
 		color: var(--color-foreground-muted);
 	}
 	.attach-button:hover {
-		background: var(--color-surface-elevated);
+		background: var(--hover-bg);
 		color: var(--color-foreground);
 	}
 
@@ -608,7 +608,7 @@
 		color: var(--color-foreground-muted);
 	}
 	.mic-btn:hover {
-		background: var(--color-surface-elevated);
+		background: var(--hover-bg);
 		color: var(--color-foreground);
 	}
 	.mic-btn.recording {

@@ -232,7 +232,7 @@
 	}
 
 	.source-button:hover {
-		background: var(--color-surface-elevated);
+		background: var(--hover-bg);
 	}
 
 	.source-icon {

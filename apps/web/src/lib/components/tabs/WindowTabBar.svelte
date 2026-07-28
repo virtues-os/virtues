@@ -589,6 +589,8 @@
 		gap: 6px;
 		padding: 0 8px;
 		align-self: stretch;
+		/* Positioning context for the swoop flares. */
+		position: relative;
 		height: auto;
 		min-height: 28px;
 		border: none;
@@ -608,18 +610,62 @@
 	}
 
 	.tab:hover {
-		background: var(--color-surface-elevated);
+		background: var(--hover-bg);
 		color: var(--color-foreground);
 	}
 
+	/* The active tab's fill goes through a custom property so the swoop flares
+	   below can inherit it. Binding both to one token is what stops a theme (or
+	   the active-pane modifier) changing the tab without changing the curve that
+	   joins it to the pane — the failure mode that makes the swoop look broken
+	   rather than absent. */
 	.tab.active {
-		background: var(--color-surface-elevated);
+		--tab-fill: var(--color-surface-elevated);
+		background: var(--tab-fill);
 		color: var(--color-foreground);
 	}
 
 	/* Active tab in the active pane gets darker background */
 	.tab.active-in-active-pane {
-		background: var(--color-border);
+		--tab-fill: var(--color-border);
+		background: var(--tab-fill);
+	}
+
+	/* ── Swoop ──────────────────────────────────────────────────────────────
+	   Concave corners flaring out of the active tab's base, so the tab grows
+	   out of the pane instead of resting on it. Each flare is a small box
+	   filled with the tab colour and masked by a radial gradient that removes
+	   the outer quarter-disc, leaving the curve. */
+	.tab.active::before,
+	.tab.active::after {
+		content: "";
+		position: absolute;
+		bottom: 0;
+		width: 8px;
+		height: 8px;
+		background: var(--tab-fill);
+		pointer-events: none;
+	}
+
+	.tab.active::before {
+		left: -8px;
+		-webkit-mask-image: radial-gradient(circle 8px at 0 0, transparent 8px, #000 8.5px);
+		mask-image: radial-gradient(circle 8px at 0 0, transparent 8px, #000 8.5px);
+	}
+
+	.tab.active::after {
+		right: -8px;
+		-webkit-mask-image: radial-gradient(circle 8px at 100% 0, transparent 8px, #000 8.5px);
+		mask-image: radial-gradient(circle 8px at 100% 0, transparent 8px, #000 8.5px);
+	}
+
+	/* An edge tab has no room for its outer flare — it would overhang the pane.
+	   This is the split-pane case that kept the swoop a spike: a pane can be
+	   dragged narrow, and the flares cost a fixed 16px however little width is
+	   left. `.tabs-scroll` is the flex row the tabs live in. */
+	.tab.active:first-child::before,
+	.tab.active:last-child::after {
+		display: none;
 	}
 
 	/* Dragging state - svelte-dnd-action applies aria-grabbed */

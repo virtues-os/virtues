@@ -182,7 +182,7 @@
 	}
 
 	.save-btn:hover {
-		background: var(--color-surface-elevated);
+		background: var(--hover-bg);
 	}
 
 	.save-btn:disabled {
@@ -221,7 +221,7 @@
 	}
 
 	.version-row:hover {
-		background: var(--color-surface-elevated);
+		background: var(--hover-bg);
 	}
 
 	.version-info {

@@ -192,6 +192,16 @@
 	--sidebar-indent-width: 12px;
 	--sidebar-transition-duration: 150ms;
 	--sidebar-transition-easing: var(--ease-premium);
+	/* Interaction ramp. One definition for every hover/press in the app.
+	   Components used to reach for whichever surface token looked close —
+	   usually --color-surface-elevated — which is #F5F5F5 on a #FFFFFF parent
+	   in the default theme: a shift small enough to read as nothing happening.
+	   A foreground mix stays legible in all sixteen themes because it's defined
+	   against the text colour, not against another surface. */
+	--hover-bg: color-mix(in srgb, var(--color-foreground) 7%, transparent);
+	--active-bg: color-mix(in srgb, var(--color-foreground) 12%, transparent);
+	--press-bg: color-mix(in srgb, var(--color-foreground) 16%, transparent);
+
 	--sidebar-hover-bg: color-mix(in srgb, var(--color-foreground) 7%, transparent);
 	--sidebar-active-bg: color-mix(in srgb, var(--color-foreground) 9%, transparent);
 	--sidebar-item-gap: 4px;

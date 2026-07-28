@@ -2277,7 +2277,7 @@
 	}
 
 	.chat-title:hover {
-		background: var(--color-surface-elevated);
+		background: var(--hover-bg);
 	}
 
 	.title-input {
@@ -2323,7 +2323,7 @@
 
 	.ghost-toggle:hover:not(:disabled) {
 		color: var(--color-foreground);
-		background: var(--color-surface-elevated);
+		background: var(--hover-bg);
 	}
 
 	.ghost-toggle.active {
@@ -2354,7 +2354,7 @@
 
 	.chat-menu-btn:hover {
 		color: var(--color-foreground);
-		background: var(--color-surface-elevated);
+		background: var(--hover-bg);
 	}
 
 	.chat-topbar-right > :global(*) {
