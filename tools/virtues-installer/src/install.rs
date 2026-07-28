@@ -269,20 +269,45 @@ pub async fn install_qnn(cfg: &InstallConfig) -> Result<()> {
     };
     // QAIRT runtime libs (Qualcomm-proprietary — not shipped by us). Prefer an
     // explicit VIRTUES_QNN_LIB_DIR, else auto-detect libQnnHtp.so under the usual
-    // roots (a Radxa QAIRT install, an onnxruntime-qnn wheel, …). Both
+    // roots (a QAIRT SDK unpack, a Radxa QAIRT install, …). Both
     // LD_LIBRARY_PATH (host) and ADSP_LIBRARY_PATH (DSP skel) must point there.
+    //
+    // Missing libs is a REFUSAL to install the unit, not a warning we print on
+    // the way past. Enabling a daemon we have just proven cannot load its own
+    // runtime buys nothing and costs a permanent crash loop: `Restart=on-failure`
+    // at `RestartSec=5` is two starts per ten seconds, which never trips
+    // systemd's default rate limit, so it restarts every five seconds forever.
+    // One box ran that loop for ten days — 169k restarts, a 1GB journal, and a
+    // core of CPU burnt continuously — while the installer's warning sat far
+    // above in a scrollback nobody re-read.
     let qnn_env = match detect_qnn_libs(cfg).await {
         Some((host, adsp)) => {
             ui::ok(&format!("QNN runtime libs: {host}"));
             format!("Environment=LD_LIBRARY_PATH={host}\nEnvironment=ADSP_LIBRARY_PATH={adsp}\n")
         }
-        None => {
-            ui::warn(
-                "QNN runtime libs (libQnnHtp.so) not found — the daemon needs QAIRT on the \
-                 box. Install it (e.g. `pip install onnxruntime-qnn`, or the Radxa QAIRT SDK) \
-                 and set VIRTUES_QNN_LIB_DIR, or bake the libs into the appliance image.",
-            );
+        // `detect_qnn_libs` returning None spans two very different worlds: the
+        // baked appliance image, where the libs sit on the default loader path
+        // and the unit correctly needs no env at all, and a box that simply has
+        // no QAIRT on it. A bounded `find` cannot tell those apart, so ask the
+        // loader instead — that is the question that actually matters.
+        None if loader_has_lib("libQnnHtp.so").await => {
+            ui::ok("QNN runtime libs: on the default loader path");
             String::new()
+        }
+        None => {
+            // A previous install may have left the loop running; stopping it is
+            // the useful half of this branch.
+            let mut cmd = Command::new("systemctl");
+            cmd.args(["disable", "--now", "virtues-qnnd"]);
+            let _ = cmd.output().await;
+            ui::warn(
+                "QNN runtime libs (libQnnHtp.so) not found — NPU daemon NOT installed, so \
+                 this box has no embedding or rerank endpoint and semantic search will not \
+                 work. Put the QAIRT Community SDK's runtime libs on the box (host libs from \
+                 lib/aarch64-*-linux-*/, the DSP skel from lib/hexagon-v68/unsigned/), point \
+                 VIRTUES_QNN_LIB_DIR at the host dir, and re-run this installer.",
+            );
+            return Ok(());
         }
     };
 
@@ -308,7 +333,7 @@ pub async fn install_qnn(cfg: &InstallConfig) -> Result<()> {
 }
 
 /// The directory containing a named QNN `.so`, via a bounded `find` under the
-/// roots QAIRT / onnxruntime-qnn typically land in (never a full-FS scan).
+/// roots a QAIRT SDK unpack typically lands in (never a full-FS scan).
 async fn find_lib_dir(name: &str) -> Option<String> {
     let script = format!(
         "find /opt /usr/lib /usr/local/lib /qairt* \"$HOME\" \
@@ -321,6 +346,18 @@ async fn find_lib_dir(name: &str) -> Option<String> {
         return None;
     }
     Path::new(&path).parent().map(|p| p.display().to_string())
+}
+
+/// Can the dynamic loader resolve `name` with no help from us? `ldconfig -p`
+/// prints the ld.so cache, which is the same thing the daemon's `dlopen` will
+/// consult — so this answers "would it load if the unit set no LD_LIBRARY_PATH",
+/// which a `find` over candidate directories cannot.
+async fn loader_has_lib(name: &str) -> bool {
+    let script = format!("ldconfig -p 2>/dev/null | grep -qF -- {name}");
+    match Command::new("bash").arg("-c").arg(&script).output().await {
+        Ok(out) => out.status.success(),
+        Err(_) => false,
+    }
 }
 
 /// Resolve `(LD_LIBRARY_PATH, ADSP_LIBRARY_PATH)` for the QNN daemon. These are
@@ -457,10 +494,22 @@ WantedBy=multi-user.target
 /// `ADSP_LIBRARY_PATH` (the DSP-side `libQnnHtpV68Skel.so`, loaded onto the
 /// Hexagon) to the detected QAIRT lib dir — verified sufficient on-device. Empty
 /// when the libs are already on the default loader path (appliance image).
+///
+/// `StartLimit*` caps the restart loop. Without it `Restart=on-failure` at
+/// `RestartSec=5` is two starts per ten seconds, which stays under systemd's
+/// default burst of five, so a daemon that can never start restarts every five
+/// seconds indefinitely — observed at 169k restarts, a 1GB journal and a core
+/// of CPU burnt. The tradeoff is deliberate: five failures inside five minutes
+/// and the unit stops and stays stopped, which does mean a genuinely transient
+/// failure needs a manual `systemctl reset-failed`. A unit sitting visibly in
+/// `failed` is a better artifact than one hiding a permanent fault behind an
+/// `activating` that never lands.
 const QNN_UNIT_TEMPLATE: &str = r#"[Unit]
 Description=Virtues NPU inference daemon (virtues-qnnd, Hexagon v68)
 Documentation=https://virtues.com/docs
 After=network.target
+StartLimitIntervalSec=300
+StartLimitBurst=5
 
 [Service]
 Type=simple
@@ -699,6 +748,8 @@ pub async fn provision_db() -> Result<()> {
         ui::skip("Postgres role 'virtues' already exists");
     }
 
+    provision_separation_roles().await?;
+
     if !psql_exists("SELECT 1 FROM pg_database WHERE datname='virtues'").await? {
         let mut cmd = Command::new("sudo");
         cmd.args(["-u", "postgres", "createdb", "-O", "virtues", "virtues"]);
@@ -718,6 +769,57 @@ pub async fn provision_db() -> Result<()> {
     run_step("Install pgvector extension", cmd).await?;
 
     harden_postgres().await
+}
+
+/// The NOLOGIN privilege-separation roles the schema depends on — created here
+/// as `postgres`, not by the migrations that declare them.
+///
+/// These are CLUSTER objects, not database objects. Migration 0052
+/// (`virtues_face_reader`) and 0054 (`virtues_applet_writer`) each open with a
+/// guarded `CREATE ROLE … NOLOGIN`, and migrations run at pool connect as the
+/// `virtues` LOGIN role — which `provision_db` above deliberately creates with
+/// `--no-createrole`. So the installer handed the server a role and then the
+/// server's own schema demanded a privilege that same installer had just
+/// withheld: migration 52 aborts, the server exits, the box never comes up.
+/// Every box past 0052 hits it. Neither environment that could have caught it
+/// does, and for different reasons — dev makes `virtues` a SUPERUSER
+/// (`Makefile`), and CI pre-creates both roles as the superuser in its own
+/// setup step, added after this same failure surfaced there first.
+///
+/// Pre-creating as `postgres` keeps `--no-createrole` intact — the login role
+/// still cannot mint roles of its own — and turns each migration's guarded
+/// CREATE into the no-op it was written to be.
+///
+/// `WITH ADMIN OPTION` is load-bearing, not belt-and-braces. Each migration
+/// follows its CREATE with `GRANT <role> TO current_user` so the pool can
+/// `SET ROLE` into it, and since PG16 a GRANT on a role requires ADMIN OPTION
+/// on that role. Without it the roles exist, the CREATE is skipped, and the
+/// migration fails one line later on the GRANT — the same outage wearing a
+/// more confusing error.
+async fn provision_separation_roles() -> Result<()> {
+    // Must agree with virtues-core/migrations: 0052 (face reader), 0054
+    // (applet writer). A role declared there without a line here reintroduces
+    // exactly the failure this function exists to prevent.
+    for role in ["virtues_face_reader", "virtues_applet_writer"] {
+        if !psql_exists(&format!("SELECT 1 FROM pg_roles WHERE rolname='{role}'")).await? {
+            let mut cmd = Command::new("sudo");
+            cmd.args(["-u", "postgres", "psql", "-v", "ON_ERROR_STOP=1", "-c"]);
+            cmd.arg(format!("CREATE ROLE {role} NOLOGIN"));
+            run_step(&format!("Create Postgres role '{role}'"), cmd).await?;
+        } else {
+            ui::skip(&format!("Postgres role '{role}' already exists"));
+        }
+
+        // Unconditional rather than paired with the create above: a cluster
+        // that already carries the role may not carry the grant (a box someone
+        // unblocked by hand with `ALTER ROLE virtues CREATEROLE`, or a restore
+        // from a dump). Re-granting is idempotent.
+        let mut cmd = Command::new("sudo");
+        cmd.args(["-u", "postgres", "psql", "-v", "ON_ERROR_STOP=1", "-c"]);
+        cmd.arg(format!("GRANT {role} TO virtues WITH ADMIN OPTION"));
+        run_step(&format!("Grant '{role}' to 'virtues'"), cmd).await?;
+    }
+    Ok(())
 }
 
 /// Appliance-durability tuning for the Postgres cluster.
@@ -1166,23 +1268,35 @@ pub async fn health_check(cfg: &InstallConfig, mode: &InferenceMode) -> Result<u
     }
 
     if let InferenceMode::Dragon = mode {
-        // NPU daemon serving the HTTP contract on loopback. It takes a few
-        // seconds to load both context binaries after `systemctl start` — retry.
-        let mut up = false;
-        // :18181 is the daemon's HTTP contract listener, which only binds after
-        // its internal engine loop came up — so one probe proves the whole chain.
-        for _ in 0..10 {
-            if tokio::net::TcpStream::connect("127.0.0.1:18181").await.is_ok() {
-                up = true;
-                break;
-            }
-            tokio::time::sleep(std::time::Duration::from_secs(2)).await;
-        }
-        if up {
-            ui::ok("NPU daemon serving the inference contract on :18181/:18182");
-        } else {
-            ui::warn("virtues-qnnd not responding on :18181 — journalctl -u virtues-qnnd");
+        // `install_qnn` declines to install the unit at all when QAIRT is absent,
+        // and says so at length there. Repeating it here as "not responding, check
+        // journalctl" would send the operator to the logs of a unit that does not
+        // exist, so name the real state instead.
+        if !Path::new("/etc/systemd/system/virtues-qnnd.service").exists() {
+            ui::warn(
+                "NPU daemon not installed (no QAIRT runtime on this box) — no embedding or \
+                 rerank endpoint, so semantic search is unavailable",
+            );
             issues += 1;
+        } else {
+            // NPU daemon serving the HTTP contract on loopback. It takes a few
+            // seconds to load both context binaries after `systemctl start` — retry.
+            let mut up = false;
+            // :18181 is the daemon's HTTP contract listener, which only binds after
+            // its internal engine loop came up — so one probe proves the whole chain.
+            for _ in 0..10 {
+                if tokio::net::TcpStream::connect("127.0.0.1:18181").await.is_ok() {
+                    up = true;
+                    break;
+                }
+                tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+            }
+            if up {
+                ui::ok("NPU daemon serving the inference contract on :18181/:18182");
+            } else {
+                ui::warn("virtues-qnnd not responding on :18181 — journalctl -u virtues-qnnd");
+                issues += 1;
+            }
         }
         // Context binaries + tokenizers on disk.
         let qnn_dir = cfg.qnn_models_dir();
