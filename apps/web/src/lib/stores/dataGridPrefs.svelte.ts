@@ -7,11 +7,16 @@
 
 const STORAGE_KEY = 'virtues-datagrid-prefs';
 
-/** `board` is `grid` with the groups laid out as columns — same card renderer. */
-export type ViewMode = 'table' | 'grid' | 'board';
+/**
+ * Two modes, not three. A board *is* the card view with a grouping applied —
+ * it was a third mode that could only differ from cards by being grouped, so
+ * the user had to pick "board" and *then* pick a group to get anywhere.
+ * Grouping is an orthogonal axis now: set a group in cards and you get columns.
+ */
+export type ViewMode = 'table' | 'grid';
 export type Density = 'compact' | 'comfortable';
 
-const VALID_VIEW_MODES: ViewMode[] = ['table', 'grid', 'board'];
+const VALID_VIEW_MODES: ViewMode[] = ['table', 'grid'];
 const VALID_DENSITIES: Density[] = ['compact', 'comfortable'];
 
 function isValidViewMode(value: unknown): value is ViewMode {
@@ -47,7 +52,11 @@ class DataGridPrefsStore {
 			if (parsed.viewModes && typeof parsed.viewModes === 'object') {
 				const validatedModes: Record<string, ViewMode> = {};
 				for (const [key, value] of Object.entries(parsed.viewModes)) {
-					if (isValidViewMode(value)) validatedModes[key] = value;
+					// A stored 'board' becomes 'grid': board was cards-with-columns, so
+					// cards is what that preference meant. Dropping it as invalid would
+					// silently drop the user back to the table instead.
+					if (value === 'board') validatedModes[key] = 'grid';
+					else if (isValidViewMode(value)) validatedModes[key] = value;
 				}
 				this.prefs.viewModes = validatedModes;
 			}

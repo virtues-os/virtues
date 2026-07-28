@@ -349,21 +349,25 @@
 		color: var(--color-foreground-subtle);
 	}
 
+	/* Same control as the grid's row checkbox — size, radius, border weight and
+	   monochrome fill. They sit within 200px of each other and were two
+	   different checkboxes: one blue, one not. */
 	.checkbox {
 		display: inline-flex;
 		align-items: center;
 		justify-content: center;
 		width: 14px;
 		height: 14px;
-		border: 1px solid var(--color-border);
-		border-radius: 3px;
+		border: 1.5px solid var(--color-border-strong, var(--color-border));
+		border-radius: 4px;
+		background: var(--color-surface);
 		flex-shrink: 0;
 	}
 
 	.checkbox.checked {
-		background: var(--color-primary);
-		border-color: var(--color-primary);
-		color: white;
+		background: var(--color-foreground);
+		border-color: var(--color-foreground);
+		color: var(--color-background);
 	}
 
 	.dot {
