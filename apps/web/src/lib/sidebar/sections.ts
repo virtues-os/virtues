@@ -49,13 +49,10 @@ export interface SectionGroup {
 	items: SystemSection[];
 }
 
-const HOME: SystemSection = {
-	id: 'sys_landing',
-	name: 'Home',
-	icon: 'ri:home-5-line',
-	type: 'link',
-	href: '/home',
-};
+// Home is not a nav row. The ∴ mark in the masthead goes there, which is what
+// gives the mark a job — listing Home again directly beneath it was the same
+// destination twice in three rows.
+export const HOME_ROUTE = '/home';
 
 const TODAY: SystemSection = {
 	id: 'sys_home',
@@ -119,7 +116,7 @@ const ACTIONS: SystemSection = {
 
 export const SECTION_GROUPS: SectionGroup[] = [
 	// Rhythm — Create — Substrate, each separated by a blank gap (no headers).
-	{ id: 'grp_rhythm', label: null, items: [HOME, TODAY] },
+	{ id: 'grp_rhythm', label: null, items: [TODAY] },
 	{ id: 'grp_create', label: null, items: [CHATS, PAGES, NOTEBOOKS] },
 	{ id: 'grp_substrate', label: null, items: [WIKI, DRIVE, ACTIONS] },
 ];
