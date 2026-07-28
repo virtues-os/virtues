@@ -73,9 +73,11 @@ pub struct GatewayModel {
     #[serde(default)]
     pub pricing: Option<GatewayPricing>,
     /// Free-form capability tags, e.g. `tool-use`, `reasoning`, `vision`,
-    /// `file-input`. The gateway's own declaration — informative, not gospel:
-    /// Gemini 3 tags `tool-use` and still 400s on parallel calls through the
-    /// gateway's OpenAI-compat shim. Good enough for the unvouched tier.
+    /// `file-input`. The gateway's own declaration — informative, not gospel.
+    /// It describes the model, not the OpenAI-compat shim we reach it through,
+    /// and those have diverged before (Gemini 3 tagged `tool-use` while 400ing
+    /// on parallel calls). Good enough for the BYO tier; slot models get
+    /// verified for real — see `virtues::tools::slot_model_smoke`.
     #[serde(default)]
     pub tags: Vec<String>,
     #[serde(default)]
@@ -379,6 +381,46 @@ pub struct CuratedModel {
     pub recommended: bool,
 }
 
+/// Split a bare model name into its family stem and version, e.g. `grok-4.5`
+/// -> (`grok`, 4.5) and `claude-opus-4.8` -> (`claude-opus`, 4.8). Everything
+/// after the version (`-flash`, `-fast`, `-preview`) is dropped.
+///
+/// The version is a **decimal**, not a semver tuple, because these are
+/// marketing numbers rather than semantic versions. That distinction is
+/// load-bearing: xAI ships `grok-4.20` as its joke spelling of 4.2, and tuple
+/// comparison reads `[4, 20] > [4, 5]` — which reported our own current Chat
+/// model as behind a model it supersedes. As a decimal, 4.20 == 4.2 < 4.5.
+///
+/// A name with no parseable version yields 0.0, which sorts below everything.
+#[cfg(test)]
+fn split_version(name: &str) -> (String, f64) {
+    let mut stem: Vec<&str> = Vec::new();
+    for part in name.split('-') {
+        // The first parseable numeric part is the version; stop there.
+        if let Ok(v) = part.parse::<f64>() {
+            return (stem.join("-"), v);
+        }
+        stem.push(part);
+    }
+    (stem.join("-"), 0.0)
+}
+
+#[cfg(test)]
+#[test]
+fn version_split_treats_marketing_numbers_as_decimals() {
+    assert_eq!(split_version("grok-4.5"), ("grok".into(), 4.5));
+    assert_eq!(split_version("claude-opus-4.8"), ("claude-opus".into(), 4.8));
+    assert_eq!(split_version("glm-4.7-flash"), ("glm".into(), 4.7));
+    assert_eq!(split_version("gemini-3-flash"), ("gemini".into(), 3.0));
+    // The case that caught a real bug: xAI's 4.20 is 4.2, and must NOT sort
+    // above 4.5 the way a semver tuple would.
+    let (_, four_twenty) = split_version("grok-4.20-reasoning");
+    let (_, four_five) = split_version("grok-4.5");
+    assert!(four_twenty < four_five, "grok-4.20 must sort below grok-4.5");
+    // No version at all sorts below everything real.
+    assert_eq!(split_version("gpt-oss").1, 0.0);
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -503,6 +545,64 @@ mod tests {
         assert!(c.is_cold());
         assert!(c.picker().is_empty());
         assert!(c.pricing("anthropic/claude-opus-4.8").is_none());
+    }
+
+    /// Are our slot models behind their own family on the gateway?
+    ///
+    /// `slot_defaults_all_exist_on_the_gateway` is a LIVENESS check — it fires
+    /// when a model vanishes. It stayed green for months while every curated
+    /// entry fell a generation behind (`gemini-2.5-flash` while the gateway
+    /// carried `3.6-flash`). Liveness is not freshness, and nothing was
+    /// watching freshness, so the list rotted until someone happened to look.
+    ///
+    /// This is the missing half. It deliberately **never fails**: newer is not
+    /// better — Gemini 3 is newer than 2.5 and unusable for us — so the right
+    /// output is a decision prompt for a human, not a red build. A check that
+    /// cries wolf gets muted, and a muted check is exactly the disease.
+    ///
+    ///     cargo test -p virtues-api -- --ignored --nocapture
+    #[tokio::test]
+    #[ignore = "network: hits the live Vercel AI Gateway catalog"]
+    async fn report_slot_models_behind_their_family() {
+        let _ = rustls::crypto::ring::default_provider().install_default();
+
+        let http = reqwest::Client::new();
+        let live = fetch(&http, "https://ai-gateway.vercel.sh")
+            .await
+            .expect("fetch gateway catalog");
+
+        eprintln!("\n=== slot model freshness ===");
+        for id in virtues_registry::models::required_model_ids() {
+            let Some((provider, name)) = id.split_once('/') else { continue };
+            let (stem, ver) = split_version(name);
+            let mut newer: Vec<(String, &str)> = live
+                .iter()
+                .filter(|m| m.is_language() || m.id == id)
+                .filter_map(|m| {
+                    let (p, n) = m.id.split_once('/')?;
+                    if p != provider {
+                        return None;
+                    }
+                    let (s, v) = split_version(n);
+                    (s == stem && v > ver).then_some((format!("{v:>8.2}"), m.id.as_str()))
+                })
+                .collect();
+
+            if newer.is_empty() {
+                eprintln!("  {id:32} current");
+            } else {
+                newer.sort();
+                let names: Vec<&str> = newer.iter().map(|(_, id)| *id).collect();
+                eprintln!("  {id:32} v{ver} BEHIND {} newer:", names.len());
+                for n in names {
+                    eprintln!("  {:32}   {n}", "");
+                }
+            }
+        }
+        eprintln!(
+            "\nNewer is not automatically better. Before promoting anything, run \n\
+             `cargo test -p virtues --lib slot_model_smoke -- --ignored` against it.\n"
+        );
     }
 
     /// `slots ⊆ catalog` against the LIVE gateway. This is the check that was
