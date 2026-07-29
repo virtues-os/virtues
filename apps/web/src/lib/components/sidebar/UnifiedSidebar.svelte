@@ -177,9 +177,17 @@
 	// travel says the same thing (these are different contents) in under
 	// 200ms, and says it about the panel rather than about each row.
 	//
-	// Asymmetric on purpose: the outgoing layer leaves faster than the
-	// incoming arrives, so the eye lands on what's replacing it rather than on
-	// what's going.
+	// Sequential, not concurrent — this is the part that decides whether it
+	// feels good. Svelte runs `in:` and `out:` at the same time by default, so
+	// for the whole overlap you are looking at two half-transparent copies of
+	// a list sliding through each other. That reads as smeared, not as a
+	// swap; no amount of tuning the distance fixes it, because the problem is
+	// that both panels are visible at once.
+	//
+	// So the old panel leaves first (110ms, short travel — it is going away,
+	// it doesn't need to be watched), and the new one waits for it to finish
+	// before arriving (210ms over 18px). The grid cell holds the height
+	// throughout, so nothing collapses in the gap.
 	const swapKey = $derived(sidebarMode.activeId ?? "root");
 
 	// Tailwind utility class strings
@@ -247,8 +255,8 @@
 					{#key swapKey}
 						<div
 							class="nav-layer"
-							in:fly={{ x: 16, duration: 190, easing: cubicOut, opacity: 0 }}
-							out:fly={{ x: -16, duration: 130, easing: cubicIn, opacity: 0 }}
+							in:fly={{ x: 18, duration: 210, delay: 110, easing: cubicOut, opacity: 0 }}
+							out:fly={{ x: -10, duration: 110, easing: cubicIn, opacity: 0 }}
 						>
 							{#if sidebarMode.active && !isCollapsed}
 								<SidebarModePanel mode={sidebarMode.active} />

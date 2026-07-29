@@ -5,7 +5,7 @@
 	import { pagesStore } from "$lib/stores/pages.svelte";
 	import { contextMenu } from "$lib/stores/contextMenu.svelte";
 	import type { ContextMenuItem } from "$lib/stores/contextMenu.svelte";
-	import { getNotebookMenuItems } from "$lib/utils/contextMenuItems";
+	import { getKeepMenuItems } from "$lib/utils/contextMenuItems";
 	import { confirmAction } from "$lib/stores/dialog.svelte";
 	import { Page, Button } from "$lib";
 	import { onMount } from "svelte";
@@ -101,7 +101,11 @@
 					});
 				},
 			},
-			...getNotebookMenuItems(`/page/${page.id}`),
+			...getKeepMenuItems({
+				url: `/page/${page.id}`,
+				label: page.title,
+				icon: page.icon,
+			}),
 			{
 				id: "delete",
 				label: "Delete",

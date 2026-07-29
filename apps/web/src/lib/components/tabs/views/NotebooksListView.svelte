@@ -157,6 +157,7 @@
 			defaultViewMode="grid"
 			gridMinWidth="200px"
 			onItemClick={(nb) => open(nb.id)}
+			rowHref={(nb) => `/notebook/${nb.id}`}
 			onRetry={() => notebookStore.load()}
 		>
 			{#snippet tableRow(nb: NotebookSummary)}

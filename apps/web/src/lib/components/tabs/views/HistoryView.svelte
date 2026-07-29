@@ -99,6 +99,7 @@
 		loadingMessage="Loading conversations..."
 		searchPlaceholder="Search chats..."
 		onItemClick={handleItemClick}
+		rowHref={(c) => `/chat/${c.id}`}
 		onRetry={loadSessions}
 	>
 		{#snippet tableRow(item: ChatItem)}

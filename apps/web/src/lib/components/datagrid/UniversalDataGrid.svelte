@@ -44,6 +44,9 @@
 	import { dataGridPrefs, type ViewMode, type Density } from '$lib/stores/dataGridPrefs.svelte';
 	import { mobileLayout } from '$lib/stores/mobileLayout.svelte';
 	import DataGridFilterRail from './DataGridFilterRail.svelte';
+	import { contextMenu } from '$lib/stores/contextMenu.svelte';
+	import { windowShellStore } from '$lib/stores/window-shell.svelte';
+	import { getKeepMenuItems } from '$lib/utils/contextMenuItems';
 	import Popover from '$lib/floating/primitives/Popover.svelte';
 	import type { FilterDef, FilterOption, FilterValue } from './types';
 	import { applyFilter, isFilterActive } from './types';
@@ -100,6 +103,19 @@
 		 *  the icon is what you see at rest, the checkbox is what you see on
 		 *  hover — so selection costs no width and the icon isn't decoration. */
 		rowIcon?: (item: T) => string | null | undefined;
+		/**
+		 * The route a row points at.
+		 *
+		 * Supplying it gives every row a right-click menu for free — "Open
+		 * beside", "Add to notebook", "Add to desk" — without each of the
+		 * fifteen grids in the app assembling the same menu by hand. Eleven of
+		 * them had no menu at all, which meant whether you could keep a thing
+		 * depended on which list you happened to be looking at.
+		 *
+		 * A consumer with its own `onItemContextMenu` keeps full control; this
+		 * is the default, not an override.
+		 */
+		rowHref?: (item: T) => string | null | undefined;
 	}
 
 	let {
@@ -132,8 +148,46 @@
 		bulkActions,
 		onSelectionChange,
 		rowActions,
-		rowIcon
+		rowIcon,
+		rowHref
 	}: Props = $props();
+
+	/**
+	 * The row menu: the consumer's if it has one, otherwise the standard pair
+	 * built from `rowHref`, otherwise nothing (unchanged behaviour).
+	 */
+	const rowContextMenu = $derived(
+		onItemContextMenu ??
+			(rowHref
+				? (item: T, e: MouseEvent) => {
+						const url = rowHref(item);
+						if (!url) return;
+						e.preventDefault();
+						const label = getRowLabel(item);
+						contextMenu.show({ x: e.clientX, y: e.clientY }, [
+							{
+								id: 'open-beside',
+								label: 'Open beside',
+								icon: 'ri:layout-column-line',
+								action: () => {
+									windowShellStore.openRouteBeside(url, label);
+								},
+							},
+							...getKeepMenuItems({ url, label, icon: rowIcon?.(item) }),
+						]);
+					}
+				: undefined),
+	);
+
+	/** Best-effort display name for a row, for menu labels. */
+	function getRowLabel(item: T): string {
+		const rec = item as Record<string, unknown>;
+		for (const key of ['name', 'title', 'label']) {
+			const v = rec[key];
+			if (typeof v === 'string' && v.trim()) return v;
+		}
+		return 'Item';
+	}
 
 	/** The leading column exists if either thing needs it; they share it. */
 	const hasLeadCol = $derived(selectable || !!rowIcon);
@@ -962,7 +1016,7 @@
 										toggleSelected(item, i, e.shiftKey);
 									} else handleRowClick(item);
 								}}
-								oncontextmenu={onItemContextMenu ? (e) => onItemContextMenu(item, e) : undefined}
+								oncontextmenu={rowContextMenu ? (e) => rowContextMenu(item, e) : undefined}
 								onkeydown={(e) => handleKeyDown(e, item)}
 								onfocus={() => (focusedIndex = i)}
 								tabindex={focusedIndex === i || (focusedIndex === -1 && i === 0) ? 0 : -1}
@@ -1092,7 +1146,7 @@
 						animate:flip={{ duration: motionMs, easing: cubicOut }}
 						style:--stagger="{staggerMs(meta.rowIndex, meta.colIndex)}ms"
 						onclick={() => handleRowClick(item)}
-						oncontextmenu={onItemContextMenu ? (e) => onItemContextMenu(item, e) : undefined}
+						oncontextmenu={rowContextMenu ? (e) => rowContextMenu(item, e) : undefined}
 						onkeydown={(e) => handleKeyDown(e, item)}
 						aria-label={`Open ${getItemLabel(item)}`}
 					>
