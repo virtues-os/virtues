@@ -4,6 +4,7 @@
 	import { windowShellStore } from "$lib/stores/window-shell.svelte";
 	import { HOME_ROUTE } from "$lib/sidebar/sections";
 	import { pinsStore } from "$lib/stores/pins.svelte";
+	import { sidebarMode } from "$lib/stores/sidebarMode.svelte";
 
 	interface Props {
 		collapsed?: boolean;
@@ -40,11 +41,23 @@
 		return pane.tabs.find((t) => t.id === pane.activeTabId) ?? null;
 	});
 
-	// The tail names the pinned thing you're inside. Keyed on the pin list
-	// rather than on a route shape, so it follows the Desk wherever the Desk
-	// goes — a pinned PDF or applet gets a path segment exactly like a
-	// notebook does.
-	const tailLabel = $derived.by(() => {
+	// The tail is whatever the rail is currently showing you the inside of.
+	//
+	// Two sources, one grammar. A sub-navigation mode (Settings, Developer)
+	// wins, because when a mode is open the rail IS that mode — its rows are
+	// the only rows on screen. Otherwise the tail names the pinned thing you
+	// are in, keyed on the pin list rather than on a route shape, so it
+	// follows the Desk wherever the Desk goes: a pinned PDF or applet gets a
+	// segment exactly like a notebook does.
+	//
+	// This is why the mode panel no longer carries its own back row. A mode
+	// used to be the one place in the app you left by a bespoke control; now
+	// every "you are inside something" state is left the same way — by
+	// clicking the root of the path. One way in, one way out, and any future
+	// mode gets both for free.
+	const modeTitle = $derived(sidebarMode.active?.title ?? null);
+
+	const pinnedTail = $derived.by(() => {
 		const route = activeTab?.route;
 		if (!route) return null;
 		const pin = pinsStore.getByUrl(route);
@@ -52,7 +65,15 @@
 		return pin.label?.trim() || activeTab?.label || null;
 	});
 
+	const tailLabel = $derived(modeTitle ?? pinnedTail);
+
 	function goHome() {
+		// Inside a mode, the root is the way out of the mode — not a navigation.
+		// Leaving Settings should not also move the pane you were reading.
+		if (sidebarMode.activeId) {
+			sidebarMode.exit();
+			return;
+		}
 		windowShellStore.openTabFromRoute(HOME_ROUTE, {
 			label: "Home",
 			focusExisting: true,
@@ -76,7 +97,12 @@
 					<circle cx="9.4" cy="8.1" r="1.5" />
 				</svg>
 			</span>
-			<button type="button" class="mark-word" onclick={goHome} title="Home">
+			<button
+				type="button"
+				class="mark-word"
+				onclick={goHome}
+				title={modeTitle ? `Leave ${modeTitle}` : "Home"}
+			>
 				Virtues
 			</button>
 			{#if tailLabel}
