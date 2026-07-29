@@ -22,6 +22,10 @@ pub struct WikiPerson {
     pub id: String,
     pub canonical_name: String,
     pub content: Option<String>,
+    /// Machine-written wikipedia-style record (entity_summary applet). Never
+    /// user-edited — `content`/`notes` carry the user's own writing.
+    pub summary: Option<String>,
+    pub summarized_at: Option<DateTime<Utc>>,
     pub picture: Option<String>,
     pub cover_image: Option<String>,
     // vCard fields
@@ -49,6 +53,8 @@ pub struct WikiPlace {
     pub id: String,
     pub name: String,
     pub content: Option<String>,
+    pub summary: Option<String>,
+    pub summarized_at: Option<DateTime<Utc>>,
     pub cover_image: Option<String>,
     pub category: Option<String>,
     pub address: Option<String>,
@@ -67,6 +73,8 @@ pub struct WikiOrganization {
     pub id: String,
     pub canonical_name: String,
     pub content: Option<String>,
+    pub summary: Option<String>,
+    pub summarized_at: Option<DateTime<Utc>>,
     pub cover_image: Option<String>,
     pub organization_type: Option<String>,
     pub relationship_type: Option<String>,
@@ -279,7 +287,7 @@ pub async fn get_person(pool: &PgPool, id: String) -> Result<WikiPerson> {
     let row = sqlx::query!(
         r#"
         SELECT
-            id, canonical_name, content, picture, cover_image,
+            id, canonical_name, content, summary, summarized_at, picture, cover_image,
             emails, phones, birthday, instagram, facebook, linkedin, x,
             relationship_category, nickname, notes,
             first_interaction, last_interaction, interaction_count,
@@ -298,6 +306,8 @@ pub async fn get_person(pool: &PgPool, id: String) -> Result<WikiPerson> {
         id: row.id,
         canonical_name: row.canonical_name,
         content: row.content,
+        summary: row.summary,
+        summarized_at: row.summarized_at,
         picture: row.picture,
         cover_image: row.cover_image,
         emails: serde_json::from_value(row.emails).unwrap_or_default(),
@@ -406,7 +416,7 @@ pub async fn get_wiki_place(pool: &PgPool, id: String) -> Result<WikiPlace> {
     let row = sqlx::query!(
         r#"
         SELECT
-            id, name, content, cover_image, category, address,
+            id, name, content, summary, summarized_at, cover_image, category, address,
             latitude, longitude,
             visit_count, first_visit, last_visit,
             created_at, updated_at
@@ -424,6 +434,8 @@ pub async fn get_wiki_place(pool: &PgPool, id: String) -> Result<WikiPlace> {
         id: row.id,
         name: row.name.clone(),
         content: row.content.clone(),
+        summary: row.summary.clone(),
+        summarized_at: row.summarized_at,
         cover_image: row.cover_image.clone(),
         category: row.category.clone(),
         address: row.address.clone(),
@@ -504,7 +516,7 @@ pub async fn get_organization(pool: &PgPool, id: String) -> Result<WikiOrganizat
     let row = sqlx::query!(
         r#"
         SELECT
-            id, canonical_name, content, cover_image,
+            id, canonical_name, content, summary, summarized_at, cover_image,
             organization_type, relationship_type, role_title,
             start_date, end_date, interaction_count,
             first_interaction, last_interaction,
@@ -523,6 +535,8 @@ pub async fn get_organization(pool: &PgPool, id: String) -> Result<WikiOrganizat
         id: row.id,
         canonical_name: row.canonical_name,
         content: row.content,
+        summary: row.summary,
+        summarized_at: row.summarized_at,
         cover_image: row.cover_image,
         organization_type: row.organization_type,
         relationship_type: row.relationship_type,
@@ -654,11 +668,16 @@ pub async fn update_narrative_identity(
     pool: &PgPool,
     request: UpdateNarrativeIdentityRequest,
 ) -> Result<NarrativeIdentity> {
-    sqlx::query("UPDATE wiki_narrative_identity SET content = $1 WHERE id = 'nar_identity_001'")
-        .bind(&request.content)
-        .execute(pool)
-        .await
-        .map_err(|e| Error::Database(format!("Failed to update narrative identity: {}", e)))?;
+    // Upsert: the singleton row is not seeded by any migration, so a plain
+    // UPDATE on a fresh box would silently no-op and drop the user's writing.
+    sqlx::query(
+        "INSERT INTO wiki_narrative_identity (id, content) VALUES ('nar_identity_001', $1) \
+         ON CONFLICT (id) DO UPDATE SET content = EXCLUDED.content",
+    )
+    .bind(&request.content)
+    .execute(pool)
+    .await
+    .map_err(|e| Error::Database(format!("Failed to update narrative identity: {}", e)))?;
 
     get_narrative_identity(pool).await
 }
@@ -1237,14 +1256,131 @@ pub async fn list_days(
     .await
     .map_err(|e| Error::Database(format!("Failed to list days: {}", e)))?;
 
-    Ok(rows
-        .iter()
-        .filter_map(|row| {
-            let date_str: String = row.try_get("date").ok()?;
-            let date = NaiveDate::parse_from_str(&date_str, "%Y-%m-%d").ok()?;
-            wiki_day_from_row(row, date).ok()
+    rows.iter()
+        .map(|row| {
+            // `date` is a Postgres DATE — decode it as NaiveDate. (This used
+            // to try_get::<String> inside a filter_map, which failed to decode
+            // on every row and silently returned an empty list.)
+            let date: NaiveDate = row
+                .try_get("date")
+                .map_err(|e| Error::Database(format!("Failed to decode day date: {}", e)))?;
+            wiki_day_from_row(row, date)
         })
-        .collect())
+        .collect()
+}
+
+/// One day of the wiki activity calendar: how much recorded life the day
+/// holds. Event count is the honest signal — it exists as soon as the day is
+/// segmented, independent of whether the nightly narration has run yet.
+#[derive(Debug, Serialize)]
+pub struct DayActivity {
+    pub date: NaiveDate,
+    pub event_count: i64,
+    pub narrated: bool,
+}
+
+/// Per-day activity for a date range, for the wiki's calendar heatmap.
+/// Deliberately tiny — the full `WikiDay` list is heavyweight (narration
+/// text, snapshots) and this gets called for a year at a time.
+pub async fn day_activity(
+    pool: &PgPool,
+    start_date: NaiveDate,
+    end_date: NaiveDate,
+) -> Result<Vec<DayActivity>> {
+    use sqlx::Row;
+
+    let rows = sqlx::query(
+        r#"
+        SELECT
+            d.date,
+            COUNT(e.id) FILTER (WHERE e.user_hidden = false) AS event_count,
+            (d.autobiography IS NOT NULL) AS narrated
+        FROM wiki_days d
+        LEFT JOIN wiki_events e ON e.day_id = d.id
+        WHERE d.date >= $1 AND d.date <= $2
+        GROUP BY d.id, d.date, d.autobiography
+        ORDER BY d.date
+        "#,
+    )
+    .bind(start_date)
+    .bind(end_date)
+    .fetch_all(pool)
+    .await
+    .map_err(|e| Error::Database(format!("Failed to load day activity: {}", e)))?;
+
+    rows.iter()
+        .map(|row| {
+            Ok(DayActivity {
+                date: row
+                    .try_get("date")
+                    .map_err(|e| Error::Database(format!("Failed to decode date: {}", e)))?,
+                event_count: row
+                    .try_get("event_count")
+                    .map_err(|e| Error::Database(format!("Failed to decode event_count: {}", e)))?,
+                narrated: row
+                    .try_get("narrated")
+                    .map_err(|e| Error::Database(format!("Failed to decode narrated: {}", e)))?,
+            })
+        })
+        .collect()
+}
+
+
+/// A past year's entry for the same calendar date — the wiki front page's
+/// "on this day" register.
+#[derive(Debug, Serialize)]
+pub struct OnThisDayEntry {
+    pub date: NaiveDate,
+    pub epigraph: Option<String>,
+    pub narrated: bool,
+    pub event_count: i64,
+}
+
+/// Days from earlier years sharing `date`'s month and day, newest first.
+pub async fn on_this_day(pool: &PgPool, date: NaiveDate) -> Result<Vec<OnThisDayEntry>> {
+    use sqlx::Row;
+
+    let rows = sqlx::query(
+        r#"
+        SELECT
+            d.date,
+            d.epigraph,
+            (d.autobiography IS NOT NULL) AS narrated,
+            COUNT(e.id) FILTER (WHERE e.user_hidden = false) AS event_count
+        FROM wiki_days d
+        LEFT JOIN wiki_events e ON e.day_id = d.id
+        WHERE EXTRACT(MONTH FROM d.date) = $1
+          AND EXTRACT(DAY FROM d.date) = $2
+          AND d.date < $3
+        GROUP BY d.id, d.date, d.epigraph, d.autobiography
+        ORDER BY d.date DESC
+        "#,
+    )
+    .bind(chrono::Datelike::month(&date) as i32)
+    .bind(chrono::Datelike::day(&date) as i32)
+    .bind(date)
+    .fetch_all(pool)
+    .await
+    .map_err(|e| Error::Database(format!("Failed to load on-this-day: {}", e)))?;
+
+    rows.iter()
+        .map(|row| {
+            Ok(OnThisDayEntry {
+                date: row
+                    .try_get("date")
+                    .map_err(|e| Error::Database(format!("Failed to decode date: {}", e)))?,
+                epigraph: row
+                    .try_get("epigraph")
+                    .map_err(|e| Error::Database(format!("Failed to decode epigraph: {}", e)))?,
+                narrated: row
+                    .try_get("narrated")
+                    .map_err(|e| Error::Database(format!("Failed to decode narrated: {}", e)))?,
+                event_count: row
+                    .try_get("event_count")
+                    .map_err(|e| Error::Database(format!("Failed to decode event_count: {}", e)))?,
+            })
+        })
+        .collect()
 }
 
 
@@ -1938,6 +2074,169 @@ pub async fn get_day_sources(
 
     sources.sort_by(|a, b| a.timestamp.cmp(&b.timestamp));
     Ok(sources)
+}
+
+/// One raw record linked to an entity via `wiki_entity_refs` — the entity
+/// page's CRM-style evidence feed. Same shape as `DaySource` plus the ref's
+/// `role` (sender, attendee, merchant, location, …).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct EntityRecord {
+    pub source_type: String,
+    pub id: String,
+    pub timestamp: DateTime<Utc>,
+    pub label: String,
+    pub preview: Option<String>,
+    pub role: Option<String>,
+    pub continuous: bool,
+}
+
+/// Newest-first cap per source table. An entity page is a reading surface, not
+/// an export: a top correspondent can hold tens of thousands of message refs,
+/// and the grid pages client-side. The cap is per-table so one chatty ontology
+/// can't crowd out the others; hitting it logs loudly rather than lying.
+const ENTITY_RECORDS_PER_TABLE_LIMIT: usize = 500;
+
+/// All records linked to an entity, newest first (registry-driven).
+///
+/// Refs-driven, unlike `get_day_sources`: we only query the source tables that
+/// actually hold refs for this entity, and reuse each ontology's
+/// `DaySourceConfig` SQL to render label/preview identically to the day page.
+pub async fn get_entity_records(pool: &PgPool, entity_id: &str) -> Result<Vec<EntityRecord>> {
+    use sqlx::Row;
+    use virtues_registry::ontologies::registered_ontologies;
+
+    let tables: Vec<String> = sqlx::query_scalar(
+        "SELECT DISTINCT source_table FROM wiki_entity_refs WHERE entity_id = $1",
+    )
+    .bind(entity_id)
+    .fetch_all(pool)
+    .await
+    .map_err(|e| Error::Database(format!("Failed to list entity ref tables: {}", e)))?;
+
+    let mut records: Vec<EntityRecord> = Vec::new();
+
+    for table in &tables {
+        let Some(ont) = registered_ontologies()
+            .into_iter()
+            .find(|o| o.table_name == table.as_str() && o.day_source.is_some())
+        else {
+            // Refs exist but no ontology knows how to render them. Unlike the
+            // day pipeline (where a hole feeds an LLM), this only starves a
+            // reading surface — so skip loudly instead of failing the page,
+            // and treat the log line as the bug report it is.
+            tracing::warn!(
+                source_table = %table,
+                entity_id = %entity_id,
+                "entity refs point at a table with no day-source config; its records are invisible"
+            );
+            continue;
+        };
+        let cfg = ont.day_source.as_ref().unwrap();
+
+        let source_type_col = cfg
+            .source_type_sql
+            .map(|sql| format!("{} as source_type_dyn", sql))
+            .unwrap_or_else(|| format!("'{}' as source_type_dyn", cfg.source_type));
+
+        // `WHERE true` so `extra_where` (which carries its own leading AND)
+        // splices the same way it does in the day-source template.
+        // Unlike the day-source template, this query JOINs wiki_entity_refs,
+        // which has its own `timestamp` column — so the ontology's timestamp
+        // must be `t.`-qualified everywhere or Postgres calls it ambiguous.
+        let query = format!(
+            "SELECT {id} as src_id, t.{ts} as src_ts, {label} as src_label, \
+                    {preview} as src_preview, {st}, er.role as src_role \
+             FROM {table} t \
+             JOIN wiki_entity_refs er \
+               ON er.source_table = '{table}' AND er.source_id = {id} AND er.entity_id = $1 \
+             WHERE true \
+             {extra} \
+             ORDER BY t.{ts_col} DESC \
+             LIMIT {limit}",
+            id = cfg.id_sql,
+            ts = ont.timestamp_column,
+            label = cfg.label_sql,
+            preview = cfg.preview_sql,
+            st = source_type_col,
+            table = ont.table_name,
+            ts_col = ont.timestamp_column,
+            extra = cfg.extra_where.unwrap_or(""),
+            limit = ENTITY_RECORDS_PER_TABLE_LIMIT,
+        );
+
+        let rows = sqlx::query(&query)
+            .bind(entity_id)
+            .fetch_all(pool)
+            .await
+            .map_err(|e| {
+                Error::Database(format!(
+                    "entity records query failed for ontology `{}`: {e}",
+                    ont.name
+                ))
+            })?;
+
+        if rows.len() == ENTITY_RECORDS_PER_TABLE_LIMIT {
+            tracing::warn!(
+                ontology = ont.name,
+                entity_id = %entity_id,
+                limit = ENTITY_RECORDS_PER_TABLE_LIMIT,
+                "entity records truncated at the per-table cap"
+            );
+        }
+
+        for row in &rows {
+            let id: String = match row.try_get("src_id") {
+                Ok(v) => v,
+                Err(_) => continue,
+            };
+            // TIMESTAMPTZ — decode directly, never via String (see get_day_sources).
+            let ts: DateTime<Utc> = match row.try_get("src_ts") {
+                Ok(v) => v,
+                Err(_) => continue,
+            };
+            let label: String = row
+                .try_get("src_label")
+                .unwrap_or_else(|_| ont.display_name.to_string());
+            let preview: Option<String> = row.try_get("src_preview").ok().flatten();
+            let source_type: String = row
+                .try_get("source_type_dyn")
+                .unwrap_or_else(|_| cfg.source_type.to_string());
+            let role: Option<String> = row.try_get("src_role").ok().flatten();
+
+            // The refs unique key includes `role`, so a record can join twice
+            // (e.g. one person both sender and recipient). Merge the roles.
+            if let Some(existing) = records
+                .iter_mut()
+                .find(|r| r.id == id && r.source_type == source_type)
+            {
+                if let Some(new_role) = role {
+                    match &mut existing.role {
+                        Some(r) if !r.contains(&new_role) => {
+                            r.push_str(", ");
+                            r.push_str(&new_role);
+                        }
+                        None => existing.role = Some(new_role),
+                        _ => {}
+                    }
+                }
+                continue;
+            }
+
+            records.push(EntityRecord {
+                source_type,
+                id,
+                timestamp: ts,
+                label,
+                preview,
+                role,
+                continuous: ont.temporal_type
+                    == virtues_registry::ontologies::TemporalType::Continuous,
+            });
+        }
+    }
+
+    records.sort_by(|a, b| b.timestamp.cmp(&a.timestamp));
+    Ok(records)
 }
 
 // ============================================================================

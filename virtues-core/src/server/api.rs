@@ -1751,6 +1751,41 @@ pub async fn wiki_list_days_handler(
     api_response(crate::api::list_days(state.db.pool(), start_date, end_date).await)
 }
 
+/// Per-day activity counts for the wiki calendar heatmap
+pub async fn wiki_day_activity_handler(
+    State(state): State<AppState>,
+    Query(query): Query<WikiDayQuery>,
+) -> Response {
+    let today = chrono::Utc::now().date_naive();
+    let start_date = query
+        .start_date
+        .unwrap_or(today - chrono::Duration::days(365));
+    let end_date = query.end_date.unwrap_or(today);
+    api_response(crate::api::day_activity(state.db.pool(), start_date, end_date).await)
+}
+
+#[derive(Deserialize)]
+pub struct OnThisDayQuery {
+    pub date: Option<chrono::NaiveDate>,
+}
+
+/// Past years' entries for the same calendar date
+pub async fn wiki_on_this_day_handler(
+    State(state): State<AppState>,
+    Query(query): Query<OnThisDayQuery>,
+) -> Response {
+    let date = query.date.unwrap_or_else(|| chrono::Utc::now().date_naive());
+    api_response(crate::api::on_this_day(state.db.pool(), date).await)
+}
+
+/// All raw records linked to an entity (the entity page's evidence feed)
+pub async fn wiki_entity_records_handler(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> Response {
+    api_response(crate::api::get_entity_records(state.db.pool(), &id).await)
+}
+
 // =============================================================================
 // =============================================================================
 // Wiki Temporal Events API
