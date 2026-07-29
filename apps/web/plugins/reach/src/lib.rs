@@ -92,7 +92,11 @@ pub(crate) fn nudge_drain() {
 pub(crate) async fn park_endpoint(reason: &str) {
   let old = WARM_CLIENT.lock().ok().and_then(|mut g| g.take());
   if let Some(c) = old {
-    c.shutdown().await;
+    // Bound the graceful close: a slow QUIC teardown on flaky cellular must
+    // not outlive the caller's background-task budget. On timeout the client
+    // drops abruptly — the box's side just sees a vanished peer, which is
+    // exactly what an OS suspension would have produced anyway.
+    let _ = tokio::time::timeout(std::time::Duration::from_secs(3), c.shutdown()).await;
     stats::bump(|s| s.parks += 1);
     tracing::info!(reason, "reach endpoint parked");
   }
@@ -144,24 +148,31 @@ async fn recover_inner() -> i32 {
   // deliberately torn down so the radio can idle — background drains cold-build
   // their own. Rebuilding here (NWPathMonitor fires on every cellular↔Wi-Fi
   // hop in a pocket) would resurrect the keepalive chatter parking eliminated.
-  if app_backgrounded() && warm_client().is_none() {
-    return 0;
-  }
-  // L1: poke iroh to re-check the network.
-  if let Some(c) = warm_client() {
-    c.network_change().await;
-  }
-  // Let the rebind / relay reconnect settle, then probe for a live box.
-  tokio::time::sleep(Duration::from_millis(600)).await;
-  let alive = match warm_client() {
-    Some(c) => matches!(
-      tokio::time::timeout(Duration::from_secs(4), virtues_reach_client::probe_session(&c)).await,
-      Ok(SessionState::Authed) | Ok(SessionState::Rejected)
-    ),
-    None => false,
-  };
-  if alive {
-    return 0; // the poke healed it
+  if warm_client().is_none() {
+    if app_backgrounded() {
+      return 0;
+    }
+    // Parked, and the app just foregrounded: there is nothing to poke or
+    // probe — skip L1's 600ms settle + 4s probe and build immediately, so the
+    // resumed webview's first fetches find a client within dial time (the
+    // loopback holds connections up to ~3s waiting for exactly this).
+  } else {
+    // L1: poke iroh to re-check the network.
+    if let Some(c) = warm_client() {
+      c.network_change().await;
+    }
+    // Let the rebind / relay reconnect settle, then probe for a live box.
+    tokio::time::sleep(Duration::from_millis(600)).await;
+    let alive = match warm_client() {
+      Some(c) => matches!(
+        tokio::time::timeout(Duration::from_secs(4), virtues_reach_client::probe_session(&c)).await,
+        Ok(SessionState::Authed) | Ok(SessionState::Rejected)
+      ),
+      None => false,
+    };
+    if alive {
+      return 0; // the poke healed it
+    }
   }
   // L2: the socket is wedged — rebuild the whole endpoint.
   let store = FileStore::new();
@@ -442,7 +453,10 @@ impl ReachState {
     // (Background sync via BGTaskScheduler + sig-loc wake is wired separately.)
     let store = self.store.clone();
     let drain = tauri::async_runtime::spawn(async move {
-      let tick = std::time::Duration::from_secs(if cfg!(mobile) { 300 } else { 20 });
+      // iOS only, NOT cfg!(mobile): Android has no ReachMonitor feeding
+      // APP_BACKGROUNDED and no audio plugin firing nudges, so a 300s tick
+      // there would just make uploads 15x slower with zero parking benefit.
+      let tick = std::time::Duration::from_secs(if cfg!(target_os = "ios") { 300 } else { 20 });
       loop {
         tokio::select! {
           _ = tokio::time::sleep(tick) => {}
@@ -453,9 +467,12 @@ impl ReachState {
         }
         let Ok(Some(rec)) = store.load() else { continue };
         // Radio-quiet fast path: nothing due → no dial. Park a leftover warm
-        // endpoint if we're backgrounded with nothing to send.
-        if outbox::due_streams().map(|s| s.is_empty()).unwrap_or(false) {
-          if cfg!(mobile) && app_backgrounded() {
+        // endpoint if we're backgrounded with nothing to send. An outbox ERROR
+        // also takes this path (unwrap_or(true)): treating it as "something is
+        // due" would dial + fail + park every tick forever — a perpetual radio
+        // burn delivering nothing.
+        if outbox::due_streams().map(|s| s.is_empty()).unwrap_or(true) {
+          if cfg!(target_os = "ios") && app_backgrounded() {
             park_endpoint("idle").await;
           }
           continue;
@@ -476,7 +493,7 @@ impl ReachState {
         }
         // Backgrounded: the webview is suspended, nothing else needs the
         // endpoint — park it so the radio sleeps until the next wake.
-        if cfg!(mobile) && app_backgrounded() {
+        if cfg!(target_os = "ios") && app_backgrounded() {
           park_endpoint("post-drain").await;
         }
       }
@@ -551,6 +568,12 @@ impl ReachState {
       Some(r) => r,
       None => return Ok(0),
     };
+    // Explicit user action bypasses retry backoff AND the silent-chunk
+    // deferral grid — "Sync now" means everything, now. (Box dedups, so an
+    // early resend is harmless.)
+    if let Err(e) = outbox::clear_backoff() {
+      tracing::warn!(error = %format!("{e:#}"), "clear_backoff failed");
+    }
     // Cold-build if parked — "Sync now" must work even before a foreground
     // recovery has rebuilt the warm client.
     let client = match ensure_client(&rec).await {

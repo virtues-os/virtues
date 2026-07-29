@@ -227,10 +227,13 @@ public final class LocationProbe: NSObject, CLLocationManagerDelegate {
   private func updateMotion(_ l: CLLocation) {
     let moved: Bool
     if let a = moveAnchor {
-      // Coarse fixes carry km-scale accuracy — demand displacement beyond the
-      // error bar before calling it movement (spurious escalations self-correct
-      // anyway: 5 min stationary in precise drops right back).
-      let threshold = mode == .coarse ? max(200, l.horizontalAccuracy) : moveThreshold
+      // Coarse fixes are cell/Wi-Fi positioned with km-scale horizontalAccuracy
+      // and speed = -1, so an accuracy-sized threshold would be unreachable for
+      // any sub-3km trip (walk to a café, short drive) — coarse mode would
+      // never escalate back. Cap the threshold at 500m: real short trips
+      // escape, and a spurious tower-jitter escalation self-corrects (5 min
+      // stationary in precise drops right back to coarse).
+      let threshold = mode == .coarse ? max(200, min(l.horizontalAccuracy, 500)) : moveThreshold
       moved = l.distance(from: a) > threshold || l.speed > movingSpeed
     } else {
       moved = true

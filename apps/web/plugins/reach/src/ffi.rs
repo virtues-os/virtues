@@ -36,6 +36,20 @@ pub extern "C" fn virtues_enqueue(stream: *const c_char, record_json: *const c_c
     Ok(v) => v,
     Err(_) => return -3,
   };
+  // Silent chunks are ~1KB of metadata — not worth a dial of their own. Defer
+  // them to a wall-clock 30-min grid (all chunks in a window batch onto one
+  // dial) instead of nudging; overnight that's 2 dials/hour instead of 12.
+  let silent = stream == "microphone"
+    && record
+      .get("is_silent")
+      .and_then(serde_json::Value::as_bool)
+      .unwrap_or(false);
+  if silent {
+    return match outbox::enqueue_deferred(stream, record, 30 * 60) {
+      Ok(()) => 0,
+      Err(_) => -4,
+    };
+  }
   match outbox::enqueue(stream, record) {
     Ok(()) => {
       // Payload-align the radio: the ~5-min audio chunk is the dominant upload,
@@ -92,12 +106,23 @@ pub extern "C" fn virtues_drain_blocking(timeout_secs: i32) -> i32 {
     let rc = match tokio::time::timeout(timeout, crate::upload::drain(&client, &rec)).await {
       Ok(Ok(n)) => n as i32,
       Ok(Err(_)) => -3,
-      Err(_) => -4,
+      Err(_) => {
+        // The timeout dropped the drain future after claim_batch stamped rows
+        // as claimed — release them NOW, not at next launch, or they stay
+        // invisible to every drain for the process lifetime (which the audio
+        // session extends for days). A concurrent drain's claims get released
+        // too; the box dedups, so an early resend is harmless.
+        let _ = outbox::reset_stale();
+        -4
+      }
     };
-    // Every caller of this entry point is a background wake (sig-loc /
-    // BGTask), so park unconditionally: leaving the endpoint warm here means
-    // 5s keepalives for however long iOS lets the process live.
-    crate::park_endpoint("bg-drain").await;
+    // Park only if still backgrounded: this entry point is called from
+    // background wakes (sig-loc / BGTask), but the user may have foregrounded
+    // mid-drain — recovery has then rebuilt the warm client for the webview,
+    // and parking here would tear down the client the UI is actively using.
+    if crate::app_backgrounded() {
+      crate::park_endpoint("bg-drain").await;
+    }
     rc
   })
 }
