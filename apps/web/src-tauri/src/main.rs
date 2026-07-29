@@ -1307,6 +1307,15 @@ fn main() {
                 .min_inner_size(800.0, 600.0)
                 .center()
                 .visible(true)
+                // WKWebView binds no zoom hotkeys of its own (unlike WebView2),
+                // and the app ships only a tray menu — no menu bar to hang a
+                // View → Zoom accelerator on. So ⌘+/⌘-/⌘0 land nowhere here
+                // while they work fine against the same UI in a browser. This
+                // injects Tauri's hotkey polyfill, which invokes
+                // `webview|set_webview_zoom`; that command is permissioned
+                // separately in capabilities/default.json and is a silent
+                // no-op without it, so the two must move together.
+                .zoom_hotkeys_enabled(true)
                 // Tauri's native OS drag-drop handler is on by default and swallows
                 // file drops before they reach the webview, so the chat composer's
                 // HTML5 ondrop/dataTransfer.files never fires. Disable it to let
