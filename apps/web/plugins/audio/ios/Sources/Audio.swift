@@ -9,6 +9,13 @@ import UserNotifications
 @_silgen_name("virtues_enqueue")
 private func virtues_enqueue(_ stream: UnsafePointer<CChar>, _ json: UnsafePointer<CChar>) -> Int32
 
+// Push recording health to the location plugin (its @_cdecl, same one-static-lib
+// linkage). Location runs coarse (GNSS off) only while we record healthily; the
+// moment we're down it escalates to precise so its callbacks become the fast
+// re-arm heartbeat again. 0 = off, 1 = enabled but down, 2 = recording.
+@_silgen_name("virtues_location_audio_state")
+private func virtues_location_audio_state(_ state: Int32)
+
 private let isoMillis: ISO8601DateFormatter = {
   let f = ISO8601DateFormatter()
   f.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
@@ -135,6 +142,7 @@ public final class AudioRecorder: NSObject {
   public func disable() {
     UserDefaults.standard.set(false, forKey: enabledKey)
     stopWatchdog()
+    virtues_location_audio_state(0)
     q.async { [weak self] in self?.stopEngine(finalize: true) }
   }
 
@@ -277,11 +285,13 @@ public final class AudioRecorder: NSObject {
       try engine.start()
       recording = true
       startWatchdog()
+      virtues_location_audio_state(2)
       NSLog("[Audio] engine armed (%@) hw=%.0fHz/%dch", reason, hw.sampleRate, hw.channelCount)
     } catch {
       NSLog("[Audio] arm failed (%@): %@ — will retry on next wake/foreground",
             reason, error.localizedDescription)
       recording = false
+      virtues_location_audio_state(1)
     }
   }
 
@@ -318,6 +328,10 @@ public final class AudioRecorder: NSObject {
     // Pin the built-in mic BEFORE activating (belt-and-suspenders).
     try session.setCategory(
       .playAndRecord, mode: .default, options: [.mixWithOthers, .allowBluetoothA2DP])
+    // Largest IO buffer iOS grants (~93ms / 4096 frames vs the ~23ms default):
+    // ~4× fewer audio-thread wakeups, which matters for a 24/7 capture graph.
+    // Ambient recording has no latency requirement. Best-effort — iOS clamps.
+    try? session.setPreferredIOBufferDuration(0.093)
     if let builtIn = session.availableInputs?.first(where: { $0.portType == .builtInMic }) {
       try? session.setPreferredInput(builtIn)
     }
@@ -437,9 +451,8 @@ public final class AudioRecorder: NSObject {
     guard let data = try? Data(contentsOf: url), data.count > 1000 else {
       NSLog("[Audio] chunk too small / unreadable, dropping"); return
     }
-    let rec: [String: Any] = [
+    var rec: [String: Any] = [
       "id": UUID().uuidString,
-      "audio_data": data.base64EncodedString(),
       "audio_format": "m4a",
       "timestamp_start": isoMillis.string(from: start),
       "timestamp_end": isoMillis.string(from: end),
@@ -447,11 +460,21 @@ public final class AudioRecorder: NSObject {
       "is_silent": silent,
       "average_db_level": Double(avgDb),
     ]
+    // Silent chunks (avg < -60 dBFS AND peak < -50 — an empty room) ship
+    // metadata only: the timeline still shows the period was covered, but the
+    // ~900 KB of measured silence never rides the radio. The box inserts a NULL
+    // audio_url row and the transcriber skips it as before.
+    if silent {
+      let dropped = UserDefaults.standard.integer(forKey: "virtues.audio.silentDropped") + 1
+      UserDefaults.standard.set(dropped, forKey: "virtues.audio.silentDropped")
+    } else {
+      rec["audio_data"] = data.base64EncodedString()
+    }
     guard let json = try? JSONSerialization.data(withJSONObject: rec),
           let str = String(data: json, encoding: .utf8) else { return }
     let rc = "microphone".withCString { s in str.withCString { j in virtues_enqueue(s, j) } }
     NSLog("[Audio] enqueued chunk %d bytes, avg=%.0fdB silent=%@ rc=%d",
-          data.count, avgDb, silent ? "y" : "n", rc)
+          data.count, avgDb, silent ? "y (metadata-only)" : "n", rc)
   }
 
   // MARK: - Interruptions / route / config / foreground (resurrection vectors)
@@ -465,6 +488,7 @@ public final class AudioRecorder: NSObject {
       // Call/Siri deactivated our session + stopped the engine. Finalize the
       // partial chunk. Do NOT setActive(false) — keep it as recoverable as possible.
       NSLog("[Audio] interruption began")
+      virtues_location_audio_state(1)
       q.async { [weak self] in
         guard let self = self else { return }
         self.rotate(restart: false)
@@ -485,6 +509,7 @@ public final class AudioRecorder: NSObject {
   @objc private func handleConfigChange(_ note: Notification) {
     // Route/format change stopped the engine. Finalize + re-arm (new hw format).
     NSLog("[Audio] engine config change — re-arming")
+    virtues_location_audio_state(1)
     q.async { [weak self] in
       guard let self = self else { return }
       self.rotate(restart: false)
@@ -523,6 +548,7 @@ public final class AudioRecorder: NSObject {
   @objc private func handleMediaReset() {
     // Full audio-subsystem reset — rebuild everything.
     NSLog("[Audio] media services reset — rebuilding")
+    virtues_location_audio_state(1)
     q.async { [weak self] in
       guard let self = self else { return }
       if self.tapInstalled { self.engine.inputNode.removeTap(onBus: 0); self.tapInstalled = false }

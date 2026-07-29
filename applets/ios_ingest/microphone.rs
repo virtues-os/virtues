@@ -25,8 +25,10 @@
 //! `data_audio_recording` against `data_communication_transcription` and
 //! fills in the missing transcripts. Same resolver works for any device.
 //!
-//! Silent chunks (`is_silent=1`) still land in this table — they're real
-//! recordings — but the transcribe drainer skips them.
+//! Silent chunks (`is_silent=1`) still land in this table — the timeline shows
+//! the period was covered — but since the iOS battery pass the phone ships them
+//! metadata-only (timestamps + dB levels, no `audio_data`), so their rows carry
+//! a NULL `audio_url`. The transcribe drainer skips them either way.
 
 use anyhow::{anyhow, Context, Result};
 use base64::Engine;
@@ -160,12 +162,23 @@ pub async fn ingest_all(db: &PgPool, records: &[Value]) -> Result<(usize, usize)
 async fn ingest_one(db: &PgPool, record: &Value) -> Result<bool> {
     let stream_id = stream_id_of(record);
 
+    let is_silent = record
+        .get("is_silent")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
+
     // The bytes were already stored by `externalize_blobs`; we only record where.
+    // Silent chunks arrive metadata-only (no audio_data → no audio_ref) and
+    // insert with a NULL audio_url.
     let audio_url = record
         .get("audio_ref")
         .and_then(|v| v.as_str())
-        .ok_or_else(|| anyhow!("record missing audio_ref (externalize_blobs must run first)"))?
-        .to_string();
+        .map(str::to_string);
+    if audio_url.is_none() && !is_silent {
+        return Err(anyhow!(
+            "record missing audio_ref (externalize_blobs must run first)"
+        ));
+    }
 
     let audio_format = audio_format_of(record);
 
@@ -181,10 +194,6 @@ async fn ingest_one(db: &PgPool, record: &Value) -> Result<bool> {
         .and_then(|s| s.parse::<DateTime<Utc>>().ok());
     let duration_seconds = record.get("duration_seconds").and_then(|v| v.as_f64());
 
-    let is_silent = record
-        .get("is_silent")
-        .and_then(|v| v.as_bool())
-        .unwrap_or(false);
     let average_db_level = record.get("average_db_level").and_then(|v| v.as_f64());
 
     let id = row_id(MICROPHONE_STREAM_TABLE, &stream_id);
