@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "\n        SELECT\n            id, canonical_name, content, picture, cover_image,\n            emails, phones, birthday, instagram, facebook, linkedin, x,\n            relationship_category, nickname, notes,\n            first_interaction, last_interaction, interaction_count,\n            created_at, updated_at\n        FROM wiki_people\n        WHERE id = $1\n        ",
+  "query": "\n        SELECT\n            id, canonical_name, content, article, article_updated_at, picture, cover_image,\n            emails, phones, birthday, instagram, facebook, linkedin, x,\n            relationship_category, nickname, notes,\n            first_interaction, last_interaction, interaction_count,\n            created_at, updated_at\n        FROM wiki_people\n        WHERE id = $1\n        ",
   "describe": {
     "columns": [
       {
@@ -20,86 +20,96 @@
       },
       {
         "ordinal": 3,
-        "name": "picture",
+        "name": "article",
         "type_info": "Text"
       },
       {
         "ordinal": 4,
+        "name": "article_updated_at",
+        "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 5,
+        "name": "picture",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 6,
         "name": "cover_image",
         "type_info": "Text"
       },
       {
-        "ordinal": 5,
+        "ordinal": 7,
         "name": "emails",
         "type_info": "Jsonb"
       },
       {
-        "ordinal": 6,
+        "ordinal": 8,
         "name": "phones",
         "type_info": "Jsonb"
       },
       {
-        "ordinal": 7,
+        "ordinal": 9,
         "name": "birthday",
         "type_info": "Date"
       },
       {
-        "ordinal": 8,
+        "ordinal": 10,
         "name": "instagram",
         "type_info": "Text"
       },
       {
-        "ordinal": 9,
+        "ordinal": 11,
         "name": "facebook",
         "type_info": "Text"
       },
       {
-        "ordinal": 10,
+        "ordinal": 12,
         "name": "linkedin",
         "type_info": "Text"
       },
       {
-        "ordinal": 11,
+        "ordinal": 13,
         "name": "x",
         "type_info": "Text"
       },
       {
-        "ordinal": 12,
+        "ordinal": 14,
         "name": "relationship_category",
         "type_info": "Text"
       },
       {
-        "ordinal": 13,
+        "ordinal": 15,
         "name": "nickname",
         "type_info": "Text"
       },
       {
-        "ordinal": 14,
+        "ordinal": 16,
         "name": "notes",
         "type_info": "Text"
       },
       {
-        "ordinal": 15,
+        "ordinal": 17,
         "name": "first_interaction",
         "type_info": "Timestamptz"
       },
       {
-        "ordinal": 16,
+        "ordinal": 18,
         "name": "last_interaction",
         "type_info": "Timestamptz"
       },
       {
-        "ordinal": 17,
+        "ordinal": 19,
         "name": "interaction_count",
         "type_info": "Int8"
       },
       {
-        "ordinal": 18,
+        "ordinal": 20,
         "name": "created_at",
         "type_info": "Timestamptz"
       },
       {
-        "ordinal": 19,
+        "ordinal": 21,
         "name": "updated_at",
         "type_info": "Timestamptz"
       }
@@ -112,6 +122,8 @@
     "nullable": [
       false,
       false,
+      true,
+      true,
       true,
       true,
       true,
@@ -132,5 +144,5 @@
       false
     ]
   },
-  "hash": "abae6c2f157dd0bcf7034c60a4fe03c5753fd99e613635d673b17918b7e0b68f"
+  "hash": "5d1a046f84afb4424f18a2bf67b9e56c2b1b4dc8bf2b1e6853f2e79f2e200cfa"
 }

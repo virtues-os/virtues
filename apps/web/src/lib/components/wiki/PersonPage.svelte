@@ -7,8 +7,9 @@
 
 <script lang="ts">
 	import type { PersonPage as PersonPageType } from "$lib/wiki/types";
-	import WikiRightRail from "./WikiRightRail.svelte";
-	import Icon from "$lib/components/Icon.svelte";
+	import EntityArticleSection from "./EntityArticleSection.svelte";
+	import EntityRecordsSection from "./EntityRecordsSection.svelte";
+	import CitedMarkdown from "$lib/components/CitedMarkdown.svelte";
 
 	interface Props {
 		page: PersonPageType;
@@ -32,17 +33,22 @@
 		});
 	}
 
-	// Build content string for TOC
-	const fullContent = $derived(`## Contact
+	// Sections render only when they have content — a wiki article never
+	// prints an empty heading (the article stub is the one exception, as an
+	// honest invitation).
+	const hasContact = $derived(
+		Boolean(
+			page.emails?.length ||
+				page.phones?.length ||
+				page.socials?.linkedin ||
+				page.socials?.twitter ||
+				page.socials?.instagram
+		)
+	);
+	const hasAbout = $derived(
+		Boolean(page.location || page.company || page.role || page.birthday)
+	);
 
-## About
-
-## Connections
-
-## Notes
-
-${page.content || ''}
-`);
 </script>
 
 <div class="person-page-layout">
@@ -65,6 +71,22 @@ ${page.content || ''}
 
 			<hr class="divider" />
 
+			<!-- The article: machine-written prose about this entity -->
+			<section class="section" id="article">
+				<EntityArticleSection
+					article={page.article}
+					articleUpdatedAt={page.articleUpdatedAt}
+					name={page.title}
+				/>
+			</section>
+
+			<!-- The record: every data point that references this person -->
+			<section class="section" id="the-record">
+				<h2 class="section-title">The record</h2>
+				<EntityRecordsSection entityId={page.id} />
+			</section>
+
+			{#if hasContact}
 			<!-- Contact -->
 			<section class="section" id="contact">
 				<h2 class="section-title">Contact</h2>
@@ -113,7 +135,9 @@ ${page.content || ''}
 					<p class="empty-placeholder">No contact info</p>
 				{/if}
 			</section>
+			{/if}
 
+			{#if hasAbout}
 			<!-- About -->
 			<section class="section" id="about">
 				<h2 class="section-title">About</h2>
@@ -150,55 +174,35 @@ ${page.content || ''}
 					<p class="empty-placeholder">No info</p>
 				{/if}
 			</section>
+			{/if}
 
+			{#if page.linkedPages && page.linkedPages.length > 0}
 			<!-- Connections -->
 			<section class="section" id="connections">
 				<h2 class="section-title">Connections</h2>
-				{#if page.linkedPages && page.linkedPages.length > 0}
-					<ul class="footer-list">
-						{#each page.linkedPages as linked}
-							<li>
-								<a href="/wiki/{linked.pageId}" class="footer-link">
-									<span class="link-text">{linked.displayName}</span>
-								</a>
-							</li>
-						{/each}
-					</ul>
-				{:else}
-					<p class="empty-placeholder">No connections</p>
-				{/if}
+				<ul class="footer-list">
+					{#each page.linkedPages as linked}
+						<li>
+							<a href="/wiki/{linked.pageId}" class="footer-link">
+								<span class="link-text">{linked.displayName}</span>
+							</a>
+						</li>
+					{/each}
+				</ul>
 			</section>
+			{/if}
 
-			<!-- Notes -->
+			{#if page.content}
+			<!-- Notes: the user's own writing -->
 			<section class="section" id="notes">
 				<h2 class="section-title">Notes</h2>
-				{#if page.content}
-					<div class="notes-content">{page.content}</div>
-				{:else}
-					<p class="empty-placeholder">No notes</p>
-				{/if}
+				<div class="notes-content">
+					<CitedMarkdown content={page.content} refVariant="quiet" />
+				</div>
 			</section>
+			{/if}
 		</div>
 	</article>
-
-	<WikiRightRail content={fullContent}>
-		{#snippet metadata()}
-			<div class="sidebar-meta">
-				<div class="sidebar-avatar">
-					{#if page.cover}
-						<img src={page.cover} alt={page.title} />
-					{:else}
-						<span class="avatar-letter">{page.title.charAt(0).toUpperCase()}</span>
-					{/if}
-				</div>
-				<div class="meta-name">{page.title}</div>
-				<div class="meta-relationship">{page.relationship}</div>
-				{#if page.location}
-					<div class="meta-location">{page.location}</div>
-				{/if}
-			</div>
-		{/snippet}
-	</WikiRightRail>
 </div>
 
 <style>
@@ -374,54 +378,6 @@ ${page.content || ''}
 		color: var(--color-foreground-subtle);
 		font-style: italic;
 		margin: 0;
-	}
-
-	/* Sidebar metadata */
-	.sidebar-meta {
-		text-align: center;
-	}
-
-	.sidebar-avatar {
-		width: 48px;
-		height: 48px;
-		border-radius: 50%;
-		margin: 0 auto 0.5rem;
-		background: linear-gradient(135deg, var(--color-primary), color-mix(in srgb, var(--color-primary) 70%, #000));
-		display: flex;
-		align-items: center;
-		justify-content: center;
-		overflow: hidden;
-	}
-
-	.sidebar-avatar img {
-		width: 100%;
-		height: 100%;
-		object-fit: cover;
-	}
-
-	.avatar-letter {
-		color: white;
-		font-size: 1.25rem;
-		font-weight: 600;
-	}
-
-	.meta-name {
-		font-family: var(--font-serif, Georgia, serif);
-		font-size: 0.875rem;
-		font-weight: 500;
-		color: var(--color-foreground);
-		margin-bottom: 0.125rem;
-	}
-
-	.meta-relationship {
-		font-size: 0.75rem;
-		color: var(--color-foreground-muted);
-	}
-
-	.meta-location {
-		font-size: 0.6875rem;
-		color: var(--color-foreground-subtle);
-		margin-top: 0.25rem;
 	}
 
 	/* Responsive */

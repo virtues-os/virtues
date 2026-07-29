@@ -173,13 +173,15 @@ export const tabRegistry: Record<TabType, TabDefinition> = {
 	},
 
 	// ========================================================================
-	// WIKI: /wiki, /wiki/{entities|people|places|orgs|unlinked}
-	// (/entities is a legacy alias — the unified list now lives at /wiki/entities)
+	// WIKI: /wiki, /wiki/{days|entities|identity}
+	// Legacy paths still match so old pins/deep-links land in the wiki:
+	// /entities, and /wiki/{people|places|orgs|unlinked} (folded into the
+	// unified entities section).
 	// ========================================================================
 	wiki: {
 		match: (path) =>
 			path === '/wiki' ||
-			/^\/wiki\/(entities|people|places|orgs|unlinked)$/.test(path) ||
+			/^\/wiki\/(days|entities|identity|people|places|orgs|unlinked)$/.test(path) ||
 			path === '/entities',
 		parse: () => ({
 			type: 'wiki',

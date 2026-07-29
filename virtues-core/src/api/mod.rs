@@ -36,6 +36,7 @@ pub mod media;
 pub mod metrics;
 pub mod model_catalog;
 pub mod models;
+pub mod entity_article_gen;
 pub mod narrative_identity_gen;
 pub mod pages;
 pub mod personas;
@@ -245,6 +246,15 @@ pub use wiki::{
     get_person,
     get_telos,
     get_wiki_place,
+    day_activity,
+    DayActivity,
+    on_this_day,
+    OnThisDayEntry,
+    get_entity_records_page,
+    get_entity_record_facets,
+    EntityRecord,
+    EntityRecordsPage,
+    EntityRecordFacet,
     list_acts,
     list_chapters_for_act,
     list_days,

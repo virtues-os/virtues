@@ -602,6 +602,16 @@ pub async fn run(client: Virtues, host: &str, port: u16) -> Result<()> {
         )
         // Wiki - Day
         .route("/api/wiki/days", get(api::wiki_list_days_handler))
+        .route("/api/wiki/activity", get(api::wiki_day_activity_handler))
+        .route("/api/wiki/on-this-day", get(api::wiki_on_this_day_handler))
+        .route(
+            "/api/wiki/entity/:id/records",
+            get(api::wiki_entity_records_handler),
+        )
+        .route(
+            "/api/wiki/entity/:id/records/facets",
+            get(api::wiki_entity_record_facets_handler),
+        )
         .route(
             "/api/wiki/day/:date",
             get(api::wiki_get_day_handler).put(api::wiki_update_day_handler),
@@ -804,6 +814,15 @@ pub async fn run(client: Virtues, host: &str, port: u16) -> Result<()> {
         .layer(middleware::from_fn(crate::middleware::security::headers_layer))
         .layer(DefaultBodyLimit::max(260 * 1024 * 1024)); // 260MB (slightly above 250MB file limit for multipart overhead)
 
+    // API namespaces must NEVER fall through to the SPA fallback below: an
+    // unknown /api path answered with a cacheable 200 index.html poisons
+    // clients — the browser caches HTML against the API URL and keeps serving
+    // it after the route ships (same failure class as the /health story in
+    // apps/web/vite.config.ts). Unknown API routes are an honest JSON 404.
+    let app = app
+        .route("/api/*__unmatched", axum::routing::any(api_not_found_handler))
+        .route("/auth/*__unmatched", axum::routing::any(api_not_found_handler));
+
     // Add MCP routes to the same server
     let mcp_server = VirtuesMcpServer::new(client.database.pool().clone());
     let app = add_mcp_routes(app, mcp_server);
@@ -933,6 +952,19 @@ fn validate_environment() -> Result<()> {
 
     tracing::debug!("Environment validation passed");
     Ok(())
+}
+
+/// Honest 404 for unknown /api and /auth paths — see the comment where this
+/// is routed. `no-store` so a transient miss can never poison an HTTP cache.
+async fn api_not_found_handler(uri: axum::http::Uri) -> impl IntoResponse {
+    (
+        axum::http::StatusCode::NOT_FOUND,
+        [(axum::http::header::CACHE_CONTROL, "no-store")],
+        axum::Json(serde_json::json!({
+            "error": "not_found",
+            "path": uri.path(),
+        })),
+    )
 }
 
 async fn health(axum::extract::State(state): axum::extract::State<AppState>) -> impl IntoResponse {
