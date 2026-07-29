@@ -80,6 +80,19 @@ const PAGES: SystemSection = {
 // Bookmarks and Calendar are coming, and were briefly rendered here as inert
 // "soon" rows. Removed: the shelf is a set of places you can go, and a row
 // that cannot be gone to is furniture. They come back when their rooms exist.
+// Notebooks is a destination like any other. It briefly vanished from the
+// shelf because an early Desk fetched notebooks directly — but the Desk holds
+// whatever you pinned, which may be no notebooks at all, so the room still
+// needs its door.
+const NOTEBOOKS: SystemSection = {
+	id: 'sys_notebooks',
+	name: 'Notebooks',
+	icon: 'atlas:notebooks',
+	type: 'link',
+	href: '/notebooks',
+	quickAdd: 'notebook',
+};
+
 const WIKI: SystemSection = {
 	id: 'sys_wiki',
 	name: 'Wiki',
@@ -108,7 +121,7 @@ export const SECTION_GROUPS: SectionGroup[] = [
 	{
 		id: 'grp_library',
 		label: 'Library',
-		items: [CHATS, PAGES, WIKI, DRIVE, ACTIONS],
+		items: [NOTEBOOKS, CHATS, PAGES, WIKI, DRIVE, ACTIONS],
 	},
 ];
 
