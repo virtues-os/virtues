@@ -103,8 +103,8 @@ pub async fn mint_face_token_handler(Path(action_id): Path<String>) -> Response 
 /// Serving is rooted at `<applet folder>/face` — never the folder root, so
 /// the manifest/prompt are not exposed to the iframe.
 pub fn face_dir_for(action_id: &str) -> Option<std::path::PathBuf> {
-    let dir = crate::action_templates::dir_for_action_id(action_id)?;
-    let face = crate::action_templates::resolve_applet_dir(&dir).join("face");
+    let dir = crate::applet_templates::dir_for_action_id(action_id)?;
+    let face = crate::applet_templates::resolve_applet_dir(&dir).join("face");
     face.join("index.html").is_file().then_some(face)
 }
 

@@ -84,7 +84,7 @@ impl Targets {
             database_url: crate::database::normalize_database_url()
                 .map_err(|e| crate::Error::Other(format!("DATABASE_URL: {e}")))?,
             lake: crate::storage::lake::lake_root(),
-            applets: crate::action_templates::state_root(),
+            applets: crate::applet_templates::state_root(),
             env_file: restore_env_target(),
         })
     }

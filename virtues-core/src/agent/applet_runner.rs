@@ -1,7 +1,7 @@
 //! Agent loop runner for actions with an `agent` field set.
 //!
 //! This runs the LLM agent loop for an action. It is invoked by the unified
-//! `crate::action_runner::run_action` after any subprocess phase has completed.
+//! `crate::applet_runner::run_action` after any subprocess phase has completed.
 //! Trigger validation, condition evaluation, concurrency gating, and run-row
 //! lifecycle are all handled upstream — this function is pure execution.
 
@@ -12,7 +12,7 @@ use sqlx::PgPool;
 use crate::api::chats::{append_message, ChatMessage};
 use crate::api::compaction::build_context_for_llm;
 use crate::error::Result;
-use crate::scheduler::actions::Action;
+use crate::scheduler::applets::Action;
 use crate::server::yjs::YjsState;
 use crate::types::Timestamp;
 
@@ -30,7 +30,7 @@ pub struct AgentLoopResult {
 /// `prompt` is the action's `agent` field (the instruction). `context` is an
 /// optional dynamic context block — typically the result summary from a
 /// subprocess phase that ran immediately before. Concurrency/condition gating
-/// is handled upstream by `crate::action_runner::run_action`.
+/// is handled upstream by `crate::applet_runner::run_action`.
 pub async fn run_agent_loop(
     pool: &PgPool,
     yjs_state: &YjsState,

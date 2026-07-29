@@ -626,8 +626,8 @@ impl InstallDirs {
                 .unwrap_or_else(|| PathBuf::from(default))
         };
         // Applets dir: honor whichever env var the box was provisioned with,
-        // in the SAME order the runtime resolves it (action_templates.rs /
-        // action_runner.rs try APPLETS_ first, then legacy ACTIONS_). A box
+        // in the SAME order the runtime resolves it (applet_templates.rs /
+        // applet_runner.rs try APPLETS_ first, then legacy ACTIONS_). A box
         // installed before the actions→applets rename only sets the ACTIONS_
         // vars; defaulting straight to /applets here would refresh into a dir
         // the runtime never reads (the bug that stranded document_extraction

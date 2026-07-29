@@ -2,9 +2,9 @@
 //!
 //! High-performance data pipeline for personal data collection, storage, and analysis.
 
-pub mod action_git_import;
-pub mod action_runner;
-pub mod action_templates;
+pub mod applet_git_import;
+pub mod applet_runner;
+pub mod applet_templates;
 pub mod agent;
 pub mod api;
 pub mod cli;

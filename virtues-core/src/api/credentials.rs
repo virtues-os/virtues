@@ -158,7 +158,7 @@ fn sync_state_for(total_runs: i64, success_runs: i64) -> &'static str {
 /// Map a source id to the legacy `auth_type` string the frontend expects.
 /// Catalog-driven via `lookup_source` — no per-provider matching here.
 fn auth_type_for_source(source_id: &str) -> &'static str {
-    use crate::action_templates::{lookup_source, SourceAuth};
+    use crate::applet_templates::{lookup_source, SourceAuth};
     match lookup_source(source_id).map(|s| s.auth) {
         Some(SourceAuth::SelfIssuedBearer) => "device",
         Some(SourceAuth::ViaProxy { .. }) => "oauth",

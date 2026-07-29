@@ -16,7 +16,7 @@ use serde::Serialize;
 use sqlx::PgPool;
 
 use super::executor::{ToolContext, ToolError, ToolResult};
-use crate::scheduler::actions;
+use crate::scheduler::applets;
 
 const FACE_HTML_MAX: usize = 48 * 1024;
 const SCHEMA_SQL_MAX: usize = 16 * 1024;
@@ -161,7 +161,7 @@ pub async fn execute(
     // ---- 3. Resolve the folder (collision-safe) --------------------------
     // Authoring always writes to the state root — never the shipped tree,
     // which is root-owned and replaced wholesale on upgrade.
-    let root = crate::action_templates::state_root();
+    let root = crate::applet_templates::state_root();
     // A slug is "ours to update" only if an existing folder's manifest has the
     // same name. A different applet that merely collapses to the same slug
     // gets a numeric suffix instead of silently overwriting it.
@@ -178,7 +178,7 @@ pub async fn execute(
     // the user's enable choice AND force-disable when a boundary is newly
     // added to an already-enabled applet (the gate invariant).
     let (was_boundary, was_enabled) = if existed {
-        match actions::get_action(pool, &action_id).await {
+        match applets::get_action(pool, &action_id).await {
             Ok(a) => (
                 a.cron_schedule.is_some()
                     || a.triggers.iter().any(|t| t == "api" || t == "webhook"),
@@ -256,7 +256,7 @@ pub async fn execute(
             .map_err(|e| ToolError::ExecutionFailed(format!("face write failed: {e}")))?;
     }
 
-    crate::action_templates::reload_and_reconcile(pool)
+    crate::applet_templates::reload_and_reconcile(pool)
         .await
         .map_err(|e| ToolError::ExecutionFailed(format!("reconcile failed: {e}")))?;
 
@@ -264,14 +264,14 @@ pub async fn execute(
     // un-archives (that would resurrect one-shots on every boot), so clear it
     // here — this path is only ever reached by the user-driven authoring tool.
     if existed {
-        let _ = actions::unarchive_action(pool, &action_id).await;
+        let _ = applets::unarchive_action(pool, &action_id).await;
     }
 
     // Re-gate: reconcile deliberately preserves `enabled`, so an applet that
     // just gained a boundary while enabled is still enabled — flip it off so
     // the user must re-enable (the gate invariant holds on updates too).
     if re_gate {
-        let _ = actions::update_action(
+        let _ = applets::update_action(
             pool,
             &action_id,
             &serde_json::json!({ "enabled": false }),

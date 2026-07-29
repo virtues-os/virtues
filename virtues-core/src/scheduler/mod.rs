@@ -2,7 +2,7 @@
 //!
 //! Reads every enabled action with a cron schedule from `app_applets` and
 //! registers a job with `tokio-cron-scheduler`. Each firing calls
-//! [`crate::action_runner::run_action`] with `trigger = "cron"`; the unified
+//! [`crate::applet_runner::run_action`] with `trigger = "cron"`; the unified
 //! runner handles triggers validation, condition evaluation, concurrency, and
 //! dispatch to subprocess / LLM agent.
 //!
@@ -23,7 +23,7 @@
 //! set we fall back to UTC. (Note: the offset is captured when jobs register, so
 //! a DST change is picked up on the next restart/reschedule.)
 
-pub mod actions;
+pub mod applets;
 
 use chrono_tz::Tz;
 use sqlx::PgPool;
@@ -32,7 +32,7 @@ use std::time::Duration;
 use tokio_cron_scheduler::{Job, JobScheduler};
 use uuid::Uuid;
 
-use crate::action_runner::RunnerDeps;
+use crate::applet_runner::RunnerDeps;
 use crate::error::{Error, Result};
 use crate::server::yjs::YjsState;
 use crate::types::Timestamp;
@@ -142,7 +142,7 @@ impl Scheduler {
                 let action_id = action_id_for_job.clone();
                 Box::pin(async move {
                     if let Err(e) =
-                        crate::action_runner::run_action(&deps, &action_id, "cron", None).await
+                        crate::applet_runner::run_action(&deps, &action_id, "cron", None).await
                     {
                         tracing::error!(action_id, error = %e, "scheduled cron run failed");
                     }

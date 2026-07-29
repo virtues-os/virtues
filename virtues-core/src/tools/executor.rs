@@ -221,7 +221,7 @@ impl ToolExecutor {
             return Ok(None);
         }
 
-        let title = crate::scheduler::actions::get_action(self._pool.as_ref(), action_id)
+        let title = crate::scheduler::applets::get_action(self._pool.as_ref(), action_id)
             .await
             .map(|a| a.name)
             .unwrap_or_else(|_| "this action".to_string());
@@ -279,21 +279,21 @@ impl ToolExecutor {
             "get_page_content" => self.page_editor.get_page_content(arguments, context).await,
             "edit_page" => self.page_editor.edit_page(arguments, context).await,
             // Action setup
-            "setup_applet" | "setup_action" => super::action_setup::execute(&self._pool, arguments, context).await,
+            "setup_applet" | "setup_action" => super::applet_setup::execute(&self._pool, arguments, context).await,
             // Action memory (persistent scratchpad for actions across runs)
             "update_applet_memory" | "update_action_memory" => self.execute_update_action_memory(arguments, context).await,
             // Action management — list / get / edit / delete / run
-            "list_applets" | "list_actions" => super::action_management::list_actions(&self._pool, arguments).await,
-            "get_applet" | "get_action" => super::action_management::get_action(&self._pool, arguments).await,
-            "edit_applet" | "edit_action" => super::action_management::edit_action(&self._pool, arguments).await,
-            "delete_applet" | "delete_action" => super::action_management::delete_action(&self._pool, arguments).await,
+            "list_applets" | "list_actions" => super::applet_management::list_actions(&self._pool, arguments).await,
+            "get_applet" | "get_action" => super::applet_management::get_action(&self._pool, arguments).await,
+            "edit_applet" | "edit_action" => super::applet_management::edit_action(&self._pool, arguments).await,
+            "delete_applet" | "delete_action" => super::applet_management::delete_action(&self._pool, arguments).await,
             "run_applet" | "run_action" => {
                 let yjs = self.yjs_state.as_ref().ok_or_else(|| {
                     ToolError::ExecutionFailed(
                         "run_action tool requires YjsState — executor constructed without it".into(),
                     )
                 })?;
-                super::action_management::run_action(&self._pool, yjs, arguments, context).await
+                super::applet_management::run_action(&self._pool, yjs, arguments, context).await
             }
             // Dayline event CRUD (used by hourly/EOD actions)
             "dayline_event" => super::dayline_events::execute(&self._pool, arguments, context).await,
@@ -435,7 +435,7 @@ impl ToolExecutor {
             content
         };
 
-        crate::scheduler::actions::update_memory(&self._pool, &action_id, content)
+        crate::scheduler::applets::update_memory(&self._pool, &action_id, content)
             .await
             .map_err(|e| ToolError::ExecutionFailed(format!("Failed to update action memory: {}", e)))?;
 
