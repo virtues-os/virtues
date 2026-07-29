@@ -3347,6 +3347,14 @@ pub async fn apply_update_handler() -> Response {
 // Bookmarks Handlers (saved web content — data_content_bookmark)
 // ============================================================================
 
+/// GET /api/bookmarks — one page of saved bookmarks, newest first.
+pub async fn list_bookmarks_handler(
+    State(state): State<AppState>,
+    Query(query): Query<crate::api::ListBookmarksQuery>,
+) -> Response {
+    api_response(crate::api::list_bookmarks(state.db.pool(), query).await)
+}
+
 /// POST /api/bookmarks — save a URL (idempotent on canonical URL). The manual
 /// capture door; enrichment backfills titles/extraction later.
 pub async fn save_bookmark_handler(

@@ -502,29 +502,33 @@
 		min-height: 0;
 	}
 
+	/* Mirrors the Page shell's box model, not just its numbers: padding on the
+	   OUTER scroller, measure centred INSIDE it. Padding within the centred
+	   block instead (what this used to do) lands the text ~48px further in
+	   than every neighbouring room, so the columns don't line up when you move
+	   between tabs even though both claim 72rem. */
 	.content {
 		flex: 1;
 		overflow-y: auto;
 		min-height: 0;
+		padding: 3rem;
 	}
 
-	.grid-wrap {
-		padding: 1.25rem 1.5rem 2rem;
+	/* Two measures, not five — the same rule the Page shell states, applied to
+	   this room's hand-rolled wraps. `wide` (72rem) for anything gridded,
+	   `prose` (48rem) for reading, both on the shell's 3rem padding. These
+	   sections used to run 72 / 54 / 50 / 44rem at 1.5rem padding, so moving
+	   between the room's own tabs — and between the room and its neighbours —
+	   shifted the column every time. */
+	.grid-wrap,
+	.days-wrap {
 		max-width: 72rem;
 		width: 100%;
 		margin: 0 auto;
 	}
 
-	.days-wrap {
-		padding: 2rem 1.5rem 3rem;
-		max-width: 50rem;
-		width: 100%;
-		margin: 0 auto;
-	}
-
 	.identity-wrap {
-		padding: 2.5rem 1.5rem 3rem;
-		max-width: 44rem;
+		max-width: 48rem;
 		width: 100%;
 		margin: 0 auto;
 	}
@@ -532,10 +536,10 @@
 	/* ===== Overview: essay column + marginalia rail ===== */
 
 	.ovw {
-		max-width: 54rem;
+		max-width: 72rem;
 		width: 100%;
 		margin: 0 auto;
-		padding: 2.5rem 1.5rem 4rem;
+		padding-bottom: 1rem;
 	}
 
 	.mast {
