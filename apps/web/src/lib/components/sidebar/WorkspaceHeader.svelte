@@ -1,5 +1,5 @@
 <script lang="ts">
-	import Icon from "$lib/components/Icon.svelte";
+	import AtlasIcon from "./AtlasIcon.svelte";
 	import { isAppleKeyboard } from "$lib/utils/platform";
 	import { windowShellStore } from "$lib/stores/window-shell.svelte";
 	import { HOME_ROUTE } from "$lib/sidebar/sections";
@@ -24,9 +24,14 @@
 	// gained a tail.
 	//
 	// The tail appears only for things that carry a bookcloth color (today:
-	// notebooks), with the thing's dot riding beside its name — the same dot
-	// as on its Desk spine and nowhere else. Routes without a cloth get no
-	// tail: a path that narrated every room would be a status bar.
+	// notebooks). Routes without a cloth get no tail: a path that narrated
+	// every room would be a status bar.
+	//
+	// The tail carries no dot. The dot's job is to identify a thing in a LIST —
+	// on its Desk spine, among other spines, and on its tab among other tabs.
+	// A breadcrumb has no siblings to be distinguished from, so the dot there
+	// was decoration, and it was stealing width from the one element that
+	// actually needs it: the name, which was truncating to "Dog &…".
 	const hint = $derived(isAppleKeyboard ? "⌘K" : "Ctrl K");
 
 	const activeTab = $derived.by(() => {
@@ -67,21 +72,27 @@
 			</button>
 			{#if tailLabel}
 				<span class="path-sep" aria-hidden="true">/</span>
-				<span class="path-dot" style="background: {tailCloth}" aria-hidden="true"></span>
 				<span class="path-tail">{tailLabel}</span>
 			{/if}
 		</div>
-
-		<button
-			type="button"
-			class="search-btn"
-			onclick={() => onSearch?.()}
-			aria-label="Search"
-			title="Search ({hint})"
-		>
-			<Icon icon="ri:search-line" width="16" />
-		</button>
 	</div>
+
+	<!-- Search gets its own full-width row rather than an icon crowding the
+	     path. It is the most-used control in the panel and it was rendered as
+	     the smallest target in it, squeezed against a breadcrumb that needs
+	     every pixel of width it can get. A row can also say what it is and
+	     what key opens it, which an unlabelled magnifier cannot. -->
+	<button
+		type="button"
+		class="search-row animate-row"
+		style="animation-delay: {animationDelay + 20}ms"
+		onclick={() => onSearch?.()}
+		title="Search ({hint})"
+	>
+		<AtlasIcon name="search" />
+		<span class="search-label">Search</span>
+		<span class="search-hint" aria-hidden="true">{hint}</span>
+	</button>
 </div>
 
 <style>
@@ -113,10 +124,12 @@
 		padding-left: var(--sidebar-padding-left-base);
 	}
 
+	/* Gap and gutter are the row tokens, not hand-picked numbers, so the
+	   wordmark lands on exactly the same text edge as every label below it. */
 	.path {
 		display: flex;
 		align-items: center;
-		gap: 6px;
+		gap: var(--sidebar-interactive-gap);
 		min-width: 0;
 		user-select: none;
 		color: var(--color-foreground);
@@ -158,24 +171,20 @@
 
 	.path-sep {
 		font-family: var(--font-serif, serif);
-		font-size: 13px;
+		font-size: 15px;
 		color: var(--color-foreground-subtle);
 		flex-shrink: 0;
 	}
 
-	/* The thing's dot, riding beside its name — same cloth as its Desk spine. */
-	.path-dot {
-		width: 6px;
-		height: 6px;
-		border-radius: 999px;
-		flex-shrink: 0;
-		box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.12);
-	}
-
+	/* Same face, size, tracking and optical weight as the root — it is one
+	   path, not a title with a caption. Only the ink differs, one step down,
+	   so the root still reads as the thing you can click back to. */
 	.path-tail {
 		font-family: var(--font-serif, serif);
-		font-size: 13px;
+		font-size: 15px;
 		font-weight: 400;
+		letter-spacing: 0.025em;
+		-webkit-text-stroke: 0.2px currentColor;
 		color: var(--color-foreground-muted);
 		overflow: hidden;
 		text-overflow: ellipsis;
@@ -196,38 +205,64 @@
 		animation: fadeSlideIn 200ms var(--ease-premium) backwards;
 	}
 
-	.search-btn {
+	/* A destination-shaped row: same height, radius, gutter and text edge as
+	   every Library row, so it belongs to the column rather than hovering
+	   above it. Quieter than a destination, because it is a utility. */
+	.search-row {
 		display: flex;
 		align-items: center;
-		justify-content: center;
-		width: 24px;
-		height: 24px;
-		flex-shrink: 0;
+		gap: var(--sidebar-interactive-gap);
+		width: 100%;
+		height: var(--sidebar-interactive-height);
+		padding: 0 10px 0 var(--sidebar-padding-left-base);
+		margin-top: 2px;
 		border: none;
 		border-radius: var(--sidebar-interactive-radius);
 		background: transparent;
 		color: var(--color-foreground-muted);
-		opacity: var(--sidebar-icon-opacity);
+		font-size: var(--sidebar-interactive-font-size);
+		text-align: left;
 		cursor: pointer;
-		transition: background 150ms ease, opacity 150ms ease;
+		transition: background 150ms var(--ease-premium), color 150ms var(--ease-premium);
 	}
 
-	.search-btn:hover {
+	.search-row :global(.atlas-icon) {
+		opacity: var(--sidebar-icon-opacity);
+	}
+
+	.search-row:hover {
 		background: var(--sidebar-hover-bg);
+		color: var(--color-foreground);
+	}
+
+	.search-row:hover :global(.atlas-icon) {
 		opacity: 1;
 	}
 
-	.search-btn:focus-visible {
-		opacity: 1;
+	.search-row:focus-visible {
 		outline: 2px solid var(--color-border-focus);
-		outline-offset: 1px;
+		outline-offset: -2px;
+	}
+
+	.search-label {
+		flex: 1;
+	}
+
+	/* The chord, in the console's voice — mono, tabular, the quietest ink in
+	   the panel. It teaches the shortcut without competing with the label. */
+	.search-hint {
+		font-family: var(--font-mono);
+		font-size: 10px;
+		letter-spacing: 0.04em;
+		color: var(--color-foreground-disabled);
+		flex-shrink: 0;
 	}
 
 	@media (prefers-reduced-motion: reduce) {
 		.animate-row {
 			animation: none;
 		}
-		.search-btn {
+		.search-row {
 			transition: none;
 		}
 	}

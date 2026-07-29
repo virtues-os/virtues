@@ -132,77 +132,79 @@
 
 /* ===================================
    PEMBERLEY (DEFAULT)
-   American heritage — ivory, navy & claret
+   White on white — paper, hairlines, one blue
    Applied to :root so it's the default
    =================================== */
 :root {
 	/* Code Syntax Highlighting */
 	--shiki-theme: github-light;
 
-	/* Surface Colors - Whiter warm paper, a whisper of cream (de-yellowed).
-	   --surface-elevated is what the sidebar sits on, so it is the largest
-	   field of colour in the window. At #F5F4EF it was 23% saturation on a
-	   50° (yellow) hue — fine on a card, too much across a full-height panel,
-	   where it read as a wash rather than as paper. Held at the same lightness
-	   and taken down to ~12%. */
-	--background: #FDFCF9;
+	/* Surface Colors - One paper, top to bottom.
+	   Every surface is the same pure white, including --surface-elevated, which
+	   is what the sidebar sits on. Previous themes gave the rail a 4% step so it
+	   read as a separate region; here the seam is carried by a single hairline
+	   border and the pane card's shadow instead. With no tint anywhere, spacing
+	   and type do the organising — which is the whole point of the register, and
+	   the hardest one to fake. */
+	--background: #FFFFFF;
 	--surface: #FFFFFF;
-	--surface-elevated: #F4F3F0;
+	--surface-elevated: #FFFFFF;
 	--surface-overlay: #FFFFFF;
 
-	/* Background Treatment - Flat warm ivory */
+	/* Background Treatment - Nothing. No texture, no wash. */
 	--background-image: none;
 	--surface-elevated-image: none;
 	--surface-elevated-size: auto;
 
-	/* Content Colors - Navy-black ink on ivory */
-	--foreground: #1A2030;
-	--foreground-muted: #3E4459;
-	--foreground-subtle: #6C7185;
-	--foreground-disabled: #A8A395;
+	/* Content Colors - Four steps of graphite, never pure black.
+	   #000 on #FFF is a harsher contrast than print ever uses; the ink here is
+	   a near-black with a trace of blue so it sits with the accent. */
+	--foreground: #17171A;
+	--foreground-muted: #3F3F46;
+	--foreground-subtle: #71717A;
+	--foreground-disabled: #A1A1AA;
 
-	/* Interactive Colors - Deep heritage navy */
-	--primary: #1E3159;
-	--primary-hover: #294271;
-	--primary-active: #16243F;
-	--primary-subtle: #E9EDF4;
+	/* Interactive Colors - One blue, spent sparingly (links, focus, selection) */
+	--primary: #0A84FF;
+	--primary-hover: #3395FF;
+	--primary-active: #0060DF;
+	--primary-subtle: #EAF3FF;
 
-	/* Secondary - Claret heritage red (the signature accent) */
-	--secondary: #9A2B2E;
-	--secondary-hover: #B23639;
-	--secondary-active: #7E2225;
+	/* Secondary - Ink. Filled controls are graphite, not colour. */
+	--secondary: #17171A;
+	--secondary-hover: #2A2A2F;
+	--secondary-active: #000000;
 
-	/* Status Colors - Hunter green + goldenrod + claret */
-	--success: #2E6B43;
-	--success-subtle: #E3EDE5;
-	--warning: #B07514;
-	--warning-subtle: #F6ECD6;
-	--error: #9A2B2E;
-	--error-subtle: #F6E3E2;
-	--info: #1E4E8C;
-	--info-subtle: #E5EBF5;
+	/* Status Colors - Semantic only, and muted enough to sit on paper */
+	--success: #1A7F45;
+	--success-subtle: #E6F4EC;
+	--warning: #A56800;
+	--warning-subtle: #FBF0DC;
+	--error: #C4322B;
+	--error-subtle: #FBE9E7;
+	--info: #0A84FF;
+	--info-subtle: #EAF3FF;
 
-	/* Border Colors - Greige, and genuinely de-yellowed this time.
-	   They were ~42° hue at 19–28% saturation, which is gold, not greige — and
-	   a rule is a thin line, so saturation reads far more strongly on it than
-	   it does across a fill. Same lightness, saturation down to ~9%. */
-	--border: #E3E1DD;
-	--border-subtle: #EFEEEB;
-	--border-strong: #D4D1CC;
-	--border-focus: #1E3159;
+	/* Border Colors - Hairlines. On white these are the only structure there
+	   is, so they are neutral and thin rather than tinted: a coloured rule
+	   reads far louder than a coloured fill of the same saturation. */
+	--border: #E7E7E9;
+	--border-subtle: #F1F1F3;
+	--border-strong: #D4D4D8;
+	--border-focus: #0A84FF;
 
-	/* Selection/Highlight - Soft claret wash */
-	--highlight: rgba(154, 43, 46, 0.14);
-	--highlight-foreground: #1A2030;
+	/* Selection/Highlight - A soft wash of the one accent */
+	--highlight: rgba(10, 132, 255, 0.15);
+	--highlight-foreground: #17171A;
 
 	/* Diff Colors */
-	--diff-add: #2E6B43;
-	--diff-add-bg: #E3EDE5;
-	--diff-remove: #9A2B2E;
-	--diff-remove-bg: #F6E3E2;
+	--diff-add: #1A7F45;
+	--diff-add-bg: #E6F4EC;
+	--diff-remove: #C4322B;
+	--diff-remove-bg: #FBE9E7;
 
-	/* Background Inverse - Deep navy, never black */
-	--background-inverse: #14203A;
+	/* Background Inverse - Graphite, never pure black */
+	--background-inverse: #17171A;
 
 	/* Sidebar Component Tokens */
 	--sidebar-interactive-padding: 6px 10px;
@@ -423,67 +425,79 @@
 
 /* ===================================
    OXFORD
-   Academic, studious, paper texture
+   American heritage — ivory, navy & claret
+   (Formerly the Pemberley palette, moved here intact when Pemberley became
+   the white-on-white default. The old Oxford — neutral greys on a paper
+   texture — is gone: it was a near-duplicate of Caladan wearing a background
+   image, and the texture fought every hairline drawn over it.)
    =================================== */
 [data-theme="oxford"] {
 	/* Code Syntax Highlighting */
 	--shiki-theme: github-light;
 
-	/* Surface Colors - Warm paper sidebar, lighter content page */
-	--background: #FAF9F6;
-	--surface: #FAF9F6;
-	--surface-elevated: #F2F1EE;
+	/* Surface Colors - Warm paper, a whisper of cream (de-yellowed).
+	   --surface-elevated is what the sidebar sits on, so it is the largest
+	   field of colour in the window. At #F5F4EF it was 23% saturation on a
+	   50° (yellow) hue — fine on a card, too much across a full-height panel,
+	   where it read as a wash rather than as paper. Held at the same lightness
+	   and taken down to ~12%. */
+	--background: #FDFCF9;
+	--surface: #FFFFFF;
+	--surface-elevated: #F4F3F0;
 	--surface-overlay: #FFFFFF;
 
-	/* Background Treatment - Paper texture */
-	--background-image: url('/textures/paper.webp');
-	--surface-elevated-image: url('/textures/paper.webp');
+	/* Background Treatment - Flat warm ivory */
+	--background-image: none;
+	--surface-elevated-image: none;
 	--surface-elevated-size: auto;
 
-	/* Content Colors - Neutral grays */
-	--foreground: #171717;
-	--foreground-muted: #404040;
-	--foreground-subtle: #737373;
-	--foreground-disabled: #a3a3a3;
+	/* Content Colors - Navy-black ink on ivory */
+	--foreground: #1A2030;
+	--foreground-muted: #3E4459;
+	--foreground-subtle: #6C7185;
+	--foreground-disabled: #A8A395;
 
-	/* Interactive Colors - Blue accent */
-	--primary: #2883DE;
-	--primary-hover: #4a9ae5;
-	--primary-active: #1d6bb8;
-	--primary-subtle: #EFF6FF;
+	/* Interactive Colors - Deep heritage navy */
+	--primary: #1E3159;
+	--primary-hover: #294271;
+	--primary-active: #16243F;
+	--primary-subtle: #E9EDF4;
 
-	--secondary: #171717;
-	--secondary-hover: #262626;
-	--secondary-active: #0a0a0a;
+	/* Secondary - Claret heritage red (the signature accent) */
+	--secondary: #9A2B2E;
+	--secondary-hover: #B23639;
+	--secondary-active: #7E2225;
 
-	/* Status Colors */
-	--success: #16a34a;
-	--success-subtle: #dcfce7;
-	--warning: #ea580c;
-	--warning-subtle: #ffedd5;
-	--error: #dc2626;
-	--error-subtle: #fee2e2;
-	--info: #0284c7;
-	--info-subtle: #e0f2fe;
+	/* Status Colors - Hunter green + goldenrod + claret */
+	--success: #2E6B43;
+	--success-subtle: #E3EDE5;
+	--warning: #B07514;
+	--warning-subtle: #F6ECD6;
+	--error: #9A2B2E;
+	--error-subtle: #F6E3E2;
+	--info: #1E4E8C;
+	--info-subtle: #E5EBF5;
 
-	/* Border Colors - Neutral grays */
-	--border: #e5e5e5;
-	--border-subtle: #f5f5f5;
-	--border-strong: #d4d4d4;
-	--border-focus: #2883DE;
+	/* Border Colors - Greige, genuinely de-yellowed: they were ~42° hue at
+	   19–28% saturation, which is gold, not greige — and a rule is a thin line,
+	   so saturation reads far more strongly on it than across a fill. */
+	--border: #E3E1DD;
+	--border-subtle: #EFEEEB;
+	--border-strong: #D4D1CC;
+	--border-focus: #1E3159;
 
-	/* Selection/Highlight - Soft light yellow */
-	--highlight: rgba(253, 237, 178, 0.45);
-	--highlight-foreground: #171717;
+	/* Selection/Highlight - Soft claret wash */
+	--highlight: rgba(154, 43, 46, 0.14);
+	--highlight-foreground: #1A2030;
 
 	/* Diff Colors */
-	--diff-add: #16a34a;
-	--diff-add-bg: #dcfce7;
-	--diff-remove: #dc2626;
-	--diff-remove-bg: #fee2e2;
+	--diff-add: #2E6B43;
+	--diff-add-bg: #E3EDE5;
+	--diff-remove: #9A2B2E;
+	--diff-remove-bg: #F6E3E2;
 
-	/* Background Inverse */
-	--background-inverse: #0a0a0a;
+	/* Background Inverse - Deep navy, never black */
+	--background-inverse: #14203A;
 }
 
 /* ===================================

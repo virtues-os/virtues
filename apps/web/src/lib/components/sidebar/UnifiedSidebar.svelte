@@ -184,13 +184,13 @@
 		[
 			"sidebar-container relative h-full bg-transparent",
 			"transition-[width] duration-300 ease-[cubic-bezier(0.34,1.56,0.64,1)]",
-			isCollapsed ? "sidebar-collapsed" : "w-52 overflow-hidden",
+			isCollapsed ? "sidebar-collapsed" : "w-[220px] overflow-hidden",
 		].join(" "),
 	);
 
 	const sidebarInnerClass = $derived.by(() =>
 		[
-			"flex h-full min-w-52 w-52 flex-col",
+			"flex h-full min-w-[220px] w-[220px] flex-col",
 			isCollapsed ? "pointer-events-none" : "",
 		].join(" "),
 	);

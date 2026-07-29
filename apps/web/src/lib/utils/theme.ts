@@ -183,9 +183,9 @@ export function initTheme(): void {
 export function isValidTheme(theme: string): theme is Theme {
 	return [
 		'pemberley',
+		'oxford',
 		'caladan',
 		'rivendell',
-		'oxford',
 		'netherfield',
 		'lothlorien',
 		'hogwarts',
@@ -223,9 +223,9 @@ export function isThemeDark(theme: Theme): boolean {
 export function getAvailableThemes(): Theme[] {
 	return [
 		'pemberley',
+		'oxford',
 		'caladan',
 		'rivendell',
-		'oxford',
 		'netherfield',
 		'lothlorien',
 		'hogwarts',
@@ -283,13 +283,13 @@ export const themePreviewColors: Record<
 	}
 > = {
 	pemberley: {
-		background: '#FDFCF9',
+		background: '#FFFFFF',
 		surface: '#FFFFFF',
-		surfaceElevated: '#F5F4EF',
-		foreground: '#1A2030',
-		foregroundMuted: '#3E4459',
-		primary: '#1E3159',
-		syntax: ['#9A2B2E', '#1E3159', '#7E2225', '#1E4E8C', '#6C7185', '#1A2030']
+		surfaceElevated: '#FFFFFF',
+		foreground: '#17171A',
+		foregroundMuted: '#3F3F46',
+		primary: '#0A84FF',
+		syntax: ['#C4322B', '#0A84FF', '#7C3AED', '#0060DF', '#71717A', '#17171A']
 	},
 	caladan: {
 		background: '#FFFFFF',
@@ -310,13 +310,13 @@ export const themePreviewColors: Record<
 		syntax: ['#cf222e', '#0a3069', '#8250df', '#0550ae', '#6e7781', '#24292f']
 	},
 	oxford: {
-		background: '#FFFFFF',
+		background: '#FDFCF9',
 		surface: '#FFFFFF',
-		surfaceElevated: '#FAFAFA',
-		foreground: '#171717',
-		foregroundMuted: '#525252',
-		primary: '#2883DE',
-		syntax: ['#cf222e', '#0a3069', '#8250df', '#0550ae', '#6e7781', '#24292f']
+		surfaceElevated: '#F4F3F0',
+		foreground: '#1A2030',
+		foregroundMuted: '#3E4459',
+		primary: '#1E3159',
+		syntax: ['#9A2B2E', '#1E3159', '#7E2225', '#1E4E8C', '#6C7185', '#1A2030']
 	},
 	netherfield: {
 		background: '#FFFFFF',
@@ -439,8 +439,8 @@ export const themeMetadata: Record<
 	}
 > = {
 	pemberley: {
-		icon: 'ph:feather-bold',
-		description: 'American heritage, navy & claret'
+		icon: 'ph:circle-bold',
+		description: 'White on white, hairlines & one blue'
 	},
 	caladan: {
 		icon: 'ph:waves-bold',
@@ -451,8 +451,8 @@ export const themeMetadata: Record<
 		description: 'Elven refuge, warm light'
 	},
 	oxford: {
-		icon: 'ph:book-open-bold',
-		description: 'Academic, studious'
+		icon: 'ph:feather-bold',
+		description: 'American heritage, navy & claret'
 	},
 	netherfield: {
 		icon: 'ph:building-bold',
