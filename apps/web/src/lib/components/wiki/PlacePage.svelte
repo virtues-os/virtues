@@ -7,9 +7,10 @@
 
 <script lang="ts">
 	import type { PlacePage as PlacePageType } from "$lib/wiki/types";
-	import WikiRightRail from "./WikiRightRail.svelte";
 	import MovementMap from "$lib/components/timeline/MovementMap.svelte";
-	import Icon from "$lib/components/Icon.svelte";
+	import EntitySummarySection from "./EntitySummarySection.svelte";
+	import EntityRecordsSection from "./EntityRecordsSection.svelte";
+	import CitedMarkdown from "$lib/components/CitedMarkdown.svelte";
 
 	interface Props {
 		page: PlacePageType;
@@ -51,15 +52,6 @@
 			: [],
 	);
 
-	// Build content string for TOC
-	const fullContent = $derived(`${page.content || ''}
-
-## Location
-
-## Visit History
-
-## Connections
-`);
 </script>
 
 <div class="page-layout">
@@ -82,6 +74,15 @@
 
 			<hr class="divider" />
 
+			<!-- Summary: the machine-written article -->
+			<section class="section" id="summary">
+				<EntitySummarySection
+					summary={page.summary}
+					summarizedAt={page.summarizedAt}
+					name={page.title}
+				/>
+			</section>
+
 			<!-- Map -->
 			{#if page.coordinates}
 				<section class="section" id="map">
@@ -93,10 +94,18 @@
 				</section>
 			{/if}
 
-			<!-- Notes (main narrative content) -->
+			<!-- The record: every data point that references this place -->
+			<section class="section" id="the-record">
+				<h2 class="section-title">The record</h2>
+				<EntityRecordsSection entityId={page.id} />
+			</section>
+
+			<!-- Notes: the user's own writing -->
 			{#if page.content}
 				<section class="section" id="notes">
-					<div class="notes-content">{page.content}</div>
+					<div class="notes-content">
+						<CitedMarkdown content={page.content} refVariant="quiet" />
+					</div>
 				</section>
 			{/if}
 
@@ -198,24 +207,6 @@
 			{/if}
 		</div>
 	</article>
-
-	<WikiRightRail content={fullContent}>
-		{#snippet metadata()}
-			<div class="sidebar-meta">
-				<div class="meta-title">{formatPlaceType(page.placeType)}</div>
-				{#if page.city}
-					<div class="meta-city">{page.city}</div>
-				{/if}
-				<div class="meta-stats">
-					{#if page.visitCount}
-						<span class="stat">{page.visitCount} visits</span>
-						<span class="stat-sep">·</span>
-					{/if}
-					<span class="stat">{page.citations?.length || 0} sources</span>
-				</div>
-			</div>
-		{/snippet}
-	</WikiRightRail>
 </div>
 
 <style>
@@ -396,37 +387,6 @@
 		font-size: 0.875rem;
 		color: var(--color-foreground);
 		flex: 1;
-	}
-
-	/* Sidebar metadata */
-	.sidebar-meta {
-		text-align: center;
-	}
-
-	.meta-title {
-		font-family: var(--font-serif, Georgia, serif);
-		font-size: 0.875rem;
-		font-weight: 500;
-		color: var(--color-foreground);
-		margin-bottom: 0.125rem;
-	}
-
-	.meta-city {
-		font-size: 0.75rem;
-		color: var(--color-foreground-muted);
-		margin-bottom: 0.5rem;
-	}
-
-	.meta-stats {
-		display: flex;
-		justify-content: center;
-		gap: 0.375rem;
-		font-size: 0.6875rem;
-		color: var(--color-foreground-subtle);
-	}
-
-	.stat-sep {
-		color: var(--color-border-strong);
 	}
 
 	/* Responsive */

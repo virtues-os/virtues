@@ -167,6 +167,11 @@ export interface WikiPageBase {
 	// Content (markdown body)
 	content: string;
 
+	// Machine-written wikipedia-style article (entity pages; entity_summary
+	// applet). Separate from `content`, which is the user's own writing.
+	summary?: string;
+	summarizedAt?: Date;
+
 	// Timestamps
 	createdAt: Date;
 	updatedAt: Date;

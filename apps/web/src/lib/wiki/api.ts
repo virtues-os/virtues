@@ -13,6 +13,8 @@ export interface WikiPersonApi {
 	id: string;
 	canonical_name: string;
 	content: string | null;
+	summary: string | null;
+	summarized_at: string | null;
 	picture: string | null;
 	cover_image: string | null;
 	emails: string[];
@@ -36,6 +38,8 @@ export interface WikiPlaceApi {
 	id: string;
 	name: string;
 	content: string | null;
+	summary: string | null;
+	summarized_at: string | null;
 	cover_image: string | null;
 	category: string | null;
 	address: string | null;
@@ -52,6 +56,8 @@ export interface WikiOrganizationApi {
 	id: string;
 	canonical_name: string;
 	content: string | null;
+	summary: string | null;
+	summarized_at: string | null;
 	cover_image: string | null;
 	organization_type: string | null;
 	relationship_type: string | null;
@@ -380,6 +386,102 @@ export async function listDays(
 	const query = params.toString() ? `?${params}` : "";
 	const res = await fetchFn(`/api/wiki/days${query}`);
 	if (!res.ok) return [];
+	return res.json();
+}
+
+/** One heatmap cell: how much recorded life a day holds. */
+export interface DayActivityApi {
+	date: string;
+	event_count: number;
+	narrated: boolean;
+}
+
+export async function listDayActivity(
+	startDate: string,
+	endDate: string,
+	fetchFn: FetchFn = fetch
+): Promise<DayActivityApi[]> {
+	const res = await fetchFn(
+		`/api/wiki/activity?start_date=${startDate}&end_date=${endDate}`
+	);
+	if (!res.ok) return [];
+	return res.json();
+}
+
+/** One raw record linked to an entity via refs — the entity page's evidence feed. */
+export interface EntityRecordApi {
+	source_type: string;
+	id: string;
+	timestamp: string;
+	label: string;
+	preview: string | null;
+	role: string | null;
+	continuous: boolean;
+}
+
+export async function getEntityRecords(
+	entityId: string,
+	fetchFn: FetchFn = fetch
+): Promise<EntityRecordApi[]> {
+	// no-store: this endpoint predates some deployed boxes, whose SPA fallback
+	// used to answer unknown /api paths with cacheable HTML — never let a
+	// poisoned cache entry shadow the real data.
+	const res = await fetchFn(
+		`/api/wiki/entity/${encodeURIComponent(entityId)}/records`,
+		{ cache: "no-store" }
+	);
+	if (!res.ok) {
+		// A server error is not an empty history — let the caller show it.
+		throw new Error(`Failed to load entity records (${res.status})`);
+	}
+	return res.json();
+}
+
+/** A past year's entry sharing today's month and day. */
+export interface OnThisDayApi {
+	date: string;
+	epigraph: string | null;
+	narrated: boolean;
+	event_count: number;
+}
+
+export async function listOnThisDay(
+	date?: string,
+	fetchFn: FetchFn = fetch
+): Promise<OnThisDayApi[]> {
+	const query = date ? `?date=${encodeURIComponent(date)}` : "";
+	const res = await fetchFn(`/api/wiki/on-this-day${query}`);
+	if (!res.ok) return [];
+	return res.json();
+}
+
+// --- Narrative identity ---
+
+export interface NarrativeIdentityApi {
+	id: string;
+	content: string;
+	created_at: string;
+	updated_at: string;
+}
+
+export async function getNarrativeIdentity(
+	fetchFn: FetchFn = fetch
+): Promise<NarrativeIdentityApi | null> {
+	const res = await fetchFn(`/api/wiki/narrative-identity`);
+	if (!res.ok) return null;
+	return res.json();
+}
+
+export async function updateNarrativeIdentity(
+	content: string,
+	fetchFn: FetchFn = fetch
+): Promise<NarrativeIdentityApi | null> {
+	const res = await fetchFn(`/api/wiki/narrative-identity`, {
+		method: "PUT",
+		headers: { "Content-Type": "application/json" },
+		body: JSON.stringify({ content }),
+	});
+	if (!res.ok) return null;
 	return res.json();
 }
 
