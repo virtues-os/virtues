@@ -134,7 +134,10 @@ class Uploader {
             let eventsWithIds = try queue.getPendingEvents()
             let messagesWithIds = try queue.getPendingMessages()
             let visitsWithIds = try queue.getPendingBrowserVisits()
-            let pending = eventsWithIds.count + messagesWithIds.count + visitsWithIds.count
+            let snapshotsWithIds = try queue.getPendingBookmarkSnapshots()
+            let pending =
+                eventsWithIds.count + messagesWithIds.count + visitsWithIds.count
+                + snapshotsWithIds.count
             if pending == 0 {
                 return (0, 0)
             }
@@ -157,7 +160,25 @@ class Uploader {
             let appEvents = eventsWithIds.map { $0.event.toDictionary }
             let imessages = messagesWithIds.map { mapMessageForWebhook($0.message.toDictionary) }
             let browserHistory = visitsWithIds.map { $0.visit.toDictionary() }
-            let payload: [String: Any] = [
+            // Per-browser FULL snapshots (absence is the delete signal on the
+            // box, so a snapshot must never be sent partially). Rarely present —
+            // the monitor only queues one when a bookmark file's hash moved.
+            // Track WHICH ids made it into the payload: a row that fails to
+            // re-parse is dropped here, and marking it uploaded anyway would
+            // orphan it as sent-but-never-sent.
+            var sentSnapshotIds: [Int64] = []
+            var bookmarkSnapshots: [[String: Any]] = []
+            for snap in snapshotsWithIds {
+                guard let data = snap.recordsJSON.data(using: .utf8),
+                    let records = try? JSONSerialization.jsonObject(with: data)
+                else {
+                    print("⚠️ bookmark snapshot[\(snap.browser)] failed to re-parse — skipping")
+                    continue
+                }
+                bookmarkSnapshots.append(["browser": snap.browser, "records": records])
+                sentSnapshotIds.append(snap.id)
+            }
+            var payload: [String: Any] = [
                 // Sessions are stateful on the box: it holds an app's session open
                 // across batches and closes it when the matching unfocus arrives. So
                 // it has to know WHOSE session — two Macs (a laptop and a desktop)
@@ -175,6 +196,9 @@ class Uploader {
                 // is exactly how a four-day iMessage outage looked "healthy".
                 "collector_health": collectorHealthPayload(),
             ]
+            if !bookmarkSnapshots.isEmpty {
+                payload["bookmarks"] = bookmarkSnapshots
+            }
 
             // Host is ignored over iroh (the box is dialed by EndpointId); only
             // the path matters. Auth is this device's allowlisted key — no bearer.
@@ -194,9 +218,11 @@ class Uploader {
                 try queue.markEventsAsUploaded(eventsWithIds.map { $0.id })
                 try queue.markMessagesAsUploaded(messagesWithIds.map { $0.id })
                 try queue.markBrowserVisitsUploaded(ids: visitsWithIds.map { $0.id })
+                try queue.markBookmarkSnapshotsUploaded(ids: sentSnapshotIds)
                 try queue.cleanupOldEvents()
                 try queue.cleanupOldMessages()
                 try queue.cleanupOldBrowserVisits()
+                try queue.cleanupOldBookmarkSnapshots()
 
                 print(
                     "✓ Uploaded \(eventsWithIds.count) events + \(visitsWithIds.count) visits "

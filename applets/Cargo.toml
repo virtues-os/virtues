@@ -84,6 +84,12 @@ path = "notion_pages_sync/main.rs"
 name = "strava_activities_sync"
 path = "strava_activities_sync/main.rs"
 
+# ── GitHub (api_key / PAT) ──────────────────────────────────────────────────
+
+[[bin]]
+name = "github_stars_sync"
+path = "github_stars_sync/main.rs"
+
 # ── Plaid streams (via_proxy with Hosted Link) ──────────────────────────────
 
 [[bin]]

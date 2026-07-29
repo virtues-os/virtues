@@ -26,12 +26,13 @@
 //!   routes, not in helpers.
 
 pub mod auth;
+pub mod bookmarks;
 pub mod contract;
 pub mod crypto;
 pub mod db;
 pub mod dedup;
-pub mod handles;
 pub mod error;
+pub mod handles;
 pub mod ids;
 pub mod input;
 pub mod ios;

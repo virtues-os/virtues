@@ -1,0 +1,9 @@
+name = "GitHub Stars"
+description = "Sync starred repositories into bookmarks."
+owner = "system"
+runtime = "function"
+command = ["github_stars_sync"]
+triggers = ["cron", "manual"]
+default_cron = "0 15/30 * * * *"
+per_credential = true
+source = { id = "github" }
