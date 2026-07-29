@@ -48,12 +48,6 @@ export interface SystemSection {
 	moreRoute?: string;
 	/** Static sections: fixed child items */
 	items?: SystemSectionItem[];
-	/**
-	 * A shelf slot whose room isn't built yet. The row renders quiet and inert
-	 * — announced, not clickable — so the shelf's final shape is lived with
-	 * before every room behind it exists.
-	 */
-	comingSoon?: boolean;
 }
 
 /** A named cluster of destinations. `label: null` renders no header. */
@@ -83,27 +77,9 @@ const PAGES: SystemSection = {
 	quickAdd: 'page',
 };
 
-// Bookmarks and Calendar are shelf slots for rooms in flight. They live here
-// now because the shelf's shape is a decision, and you can only judge a
-// seven-row shelf by looking at seven rows.
-const BOOKMARKS: SystemSection = {
-	id: 'sys_bookmarks',
-	name: 'Bookmarks',
-	icon: 'atlas:bookmarks',
-	type: 'link',
-	href: '/bookmarks',
-	comingSoon: true,
-};
-
-const CALENDAR: SystemSection = {
-	id: 'sys_calendar',
-	name: 'Calendar',
-	icon: 'atlas:calendar',
-	type: 'link',
-	href: '/calendar',
-	comingSoon: true,
-};
-
+// Bookmarks and Calendar are coming, and were briefly rendered here as inert
+// "soon" rows. Removed: the shelf is a set of places you can go, and a row
+// that cannot be gone to is furniture. They come back when their rooms exist.
 const WIKI: SystemSection = {
 	id: 'sys_wiki',
 	name: 'Wiki',
@@ -132,7 +108,7 @@ export const SECTION_GROUPS: SectionGroup[] = [
 	{
 		id: 'grp_library',
 		label: 'Library',
-		items: [CHATS, PAGES, BOOKMARKS, CALENDAR, WIKI, DRIVE, ACTIONS],
+		items: [CHATS, PAGES, WIKI, DRIVE, ACTIONS],
 	},
 ];
 
