@@ -135,7 +135,7 @@
 		     the collections use, so a zone closing looks like every other
 		     thing that closes in this panel. -->
 		<div class="sidebar-expandable" class:expanded={!zoneCollapsed}>
-			<div class="sidebar-expandable-inner">
+			<div class="sidebar-expandable-inner desk-inner">
 				{#if pinsStore.loaded && pins.length === 0}
 					<div class="desk-empty">Nothing pinned yet</div>
 				{:else}
@@ -179,6 +179,13 @@
 	.desk {
 		display: flex;
 		flex-direction: column;
+	}
+
+	/* The seam between Desk and Library lives here, inside the fold, so that
+	   collapsing the Desk takes the space with it and the two subtitles sit
+	   together. Same row token as everywhere else in the column. */
+	.desk-inner {
+		padding-bottom: var(--sidebar-interactive-height);
 	}
 
 	/* Spines: the serif appears in the chrome exactly where ownership does.

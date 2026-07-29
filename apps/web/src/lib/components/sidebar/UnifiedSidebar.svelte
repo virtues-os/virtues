@@ -389,14 +389,10 @@
 	}
 
 	/* Group header — the "contents-page" treatment: serif smallcaps,
-	/* One row of air between zones — the same 28px a destination occupies, so
-	   the gap is part of the column's rhythm rather than a number chosen to
-	   look about right. It was 14px and only applied between two groups, which
-	   meant the Desk and the Library were touching: the last spine sat
-	   directly on top of the Library's subtitle. */
-	.nav-group {
-		margin-top: var(--sidebar-interactive-height);
-	}
+	/* No margin here. The row of air between the zones is owned by the Desk's
+	   own collapsible region, so it folds away with the pins — otherwise
+	   closing the Desk left a 28px hole between two adjacent subtitles, and
+	   the space read as belonging to nothing. */
 
 	.loading-state {
 		display: flex;
