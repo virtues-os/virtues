@@ -6,6 +6,7 @@
 	import WorkspaceHeader from "./WorkspaceHeader.svelte";
 	import SidebarFooter from "./SidebarFooter.svelte";
 	import SystemSection from "./SystemSection.svelte";
+	import DeskSection from "./DeskSection.svelte";
 	import { SECTION_GROUPS } from "$lib/sidebar/sections";
 	import SearchModal from "./SearchModal.svelte";
 	import SidebarModePanel from "./SidebarModePanel.svelte";
@@ -240,8 +241,14 @@
 				<SidebarModePanel mode={sidebarMode.active} stagger={STAGGER_DELAY} />
 			{:else}
 
-				<!-- System destinations, grouped nouns-vs-verbs (from constants).
-				     The sidebar is a stable contents-page, not a mode rail. -->
+				<!-- The Desk: what the user has taken off the shelf. Serif spines
+				     with bookcloth dots — the type distinction encodes ownership,
+				     which is what keeps pins from reading as a tinted nav row (the
+				     failure that retired them the first time). -->
+				<DeskSection collapsed={isCollapsed} animationDelay={2 * STAGGER_DELAY} />
+
+				<!-- The Library: the system's fixed shelf. Seven rows, stable
+				     forever, so muscle memory can live here. -->
 				{#each SECTION_GROUPS as group, groupIndex (group.id)}
 					<div class="nav-group">
 						{#if group.label && !isCollapsed}
@@ -354,15 +361,17 @@
 		margin-top: 14px;
 	}
 
+	/* Zone subtitle — a whisper, not a headline: a Capitalized word in the sans
+	   at label size, no smallcaps apparatus and no rule under it. The desk/
+	   library seam is carried by type (serif names vs sans destinations), so
+	   a hairline here would say the same thing louder. */
 	.nav-group-header {
-		font-family: var(--font-serif);
 		font-size: 11px;
 		font-weight: 500;
-		text-transform: uppercase;
-		letter-spacing: 0.14em;
+		letter-spacing: 0.015em;
 		color: var(--color-foreground-subtle);
-		padding: 0 8px;
-		margin: 16px 0 4px;
+		padding: 0 8px 0 var(--sidebar-padding-left-base);
+		margin: 18px 0 4px;
 		user-select: none;
 		animation: fadeSlideIn 200ms cubic-bezier(0.2, 0, 0, 1) backwards;
 	}

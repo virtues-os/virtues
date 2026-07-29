@@ -2,6 +2,7 @@
 	import { page } from "$app/state";
 	import { windowShellStore } from "$lib/stores/window-shell.svelte";
 	import Icon from "$lib/components/Icon.svelte";
+	import AtlasIcon from "./AtlasIcon.svelte";
 	import { contextMenu } from "$lib/stores/contextMenu.svelte";
 	import { deleteChat, updatePage, updateChat } from "$lib/api/client";
 	import { pagesStore } from "$lib/stores/pages.svelte";
@@ -245,6 +246,8 @@
 	>
 		{#if showIcon && item.icon && isEmoji(item.icon)}
 			<span class="sidebar-emoji">{item.icon}</span>
+		{:else if showIcon && item.icon && item.icon.startsWith("atlas:")}
+			<AtlasIcon name={item.icon.slice(6)} />
 		{:else if showIcon && item.icon}
 			<Icon icon={item.icon} width="16" class="sidebar-icon" />
 		{/if}
@@ -269,6 +272,8 @@
 		{/if}
 		{#if showIcon && item.icon && isEmoji(item.icon)}
 			<span class="sidebar-emoji">{item.icon}</span>
+		{:else if showIcon && item.icon && item.icon.startsWith("atlas:")}
+			<AtlasIcon name={item.icon.slice(6)} />
 		{:else if showIcon && item.icon}
 			<Icon icon={item.icon} width="16" class="sidebar-icon" />
 		{/if}
