@@ -32,6 +32,7 @@ import ConwayView from '$lib/components/tabs/views/ConwayView.svelte';
 import DogJumpView from '$lib/components/tabs/views/DogJumpView.svelte';
 import PagesView from '$lib/components/tabs/views/PagesView.svelte';
 import PageDetailView from '$lib/components/tabs/views/PageDetailView.svelte';
+import BookmarksView from '$lib/components/tabs/views/BookmarksView.svelte';
 import NotebooksListView from '$lib/components/tabs/views/NotebooksListView.svelte';
 import NotebookDetailView from '$lib/components/tabs/views/NotebookDetailView.svelte';
 import NarrativeIdentityView from '$lib/components/tabs/views/NarrativeIdentityView.svelte';
@@ -295,6 +296,29 @@ export const tabRegistry: Record<TabType, TabDefinition> = {
 		defaultLabel: 'Organizations',
 		component: WikiListView,
 		detailComponent: WikiDetailView,
+	},
+
+	// ========================================================================
+	// BOOKMARK NAMESPACE: /bookmarks
+	//
+	// Saved web content — browser bookmarks, GitHub stars, hand-saved links.
+	// No detail route: a bookmark's detail IS the page it points at, and the
+	// generic record view (/record/…) already renders the row for anyone who
+	// wants the provenance.
+	// ========================================================================
+	bookmarks: {
+		match: (path) => path === '/bookmarks',
+		parse: () => ({
+			type: 'bookmarks',
+			label: 'Bookmarks',
+			icon: 'ri:bookmark-line',
+			normalizedRoute: '/bookmarks',
+		}),
+		serialize: () => 'bookmarks',
+		deserialize: () => '/bookmarks',
+		icon: 'ri:bookmark-line',
+		defaultLabel: 'Bookmarks',
+		component: BookmarksView,
 	},
 
 	// ========================================================================
@@ -870,6 +894,7 @@ export function parseRoute(route: string): ParsedRoute {
 		'place',
 		'org',
 		'notebook',
+		'bookmarks',
 		'day',
 		'year',
 		'narrative-identity',

@@ -8,8 +8,8 @@
  *               notebooks; the species list grows (a page, a person, a day).
  *               Serif spines, bookcloth dots, the user's own order, uncapped.
  *               Rendered by DeskSection, not from these constants.
- *   - Library — the system's fixed shelf. Seven rows, stable forever, so
- *               muscle memory can live here. Sans labels, Atlas icons.
+ *   - Library — the system's fixed shelf. Stable forever, so muscle memory
+ *               can live here. Sans labels, Atlas icons.
  *
  * No Home row: the masthead is a path — `∴ Virtues / …` — and its root is the
  * way home. The earlier wordmark-as-home failed because a bare mark behaving
@@ -77,9 +77,10 @@ const PAGES: SystemSection = {
 	quickAdd: 'page',
 };
 
-// Bookmarks and Calendar are coming, and were briefly rendered here as inert
-// "soon" rows. Removed: the shelf is a set of places you can go, and a row
-// that cannot be gone to is furniture. They come back when their rooms exist.
+// Calendar is coming, and was briefly rendered here as an inert "soon" row.
+// Removed: the shelf is a set of places you can go, and a row that cannot be
+// gone to is furniture. It comes back when its room exists — which is what
+// Bookmarks just did.
 // Notebooks is a destination like any other. It briefly vanished from the
 // shelf because an early Desk fetched notebooks directly — but the Desk holds
 // whatever you pinned, which may be no notebooks at all, so the room still
@@ -91,6 +92,14 @@ const NOTEBOOKS: SystemSection = {
 	type: 'link',
 	href: '/notebooks',
 	quickAdd: 'notebook',
+};
+
+const BOOKMARKS: SystemSection = {
+	id: 'sys_bookmarks',
+	name: 'Bookmarks',
+	icon: 'atlas:bookmarks',
+	type: 'link',
+	href: '/bookmarks',
 };
 
 const WIKI: SystemSection = {
@@ -121,7 +130,7 @@ export const SECTION_GROUPS: SectionGroup[] = [
 	{
 		id: 'grp_library',
 		label: 'Library',
-		items: [NOTEBOOKS, CHATS, PAGES, WIKI, DRIVE, ACTIONS],
+		items: [NOTEBOOKS, CHATS, PAGES, BOOKMARKS, WIKI, DRIVE, ACTIONS],
 	},
 ];
 

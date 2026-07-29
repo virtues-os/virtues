@@ -371,14 +371,18 @@
 		gap: 1rem;
 		flex-wrap: wrap;
 	}
+	/* Matches PageHeading's level-1 title (text-3xl / font-serif / medium) and
+	   its description, so a hand-rolled header still reads as a page title. */
 	.section-header h2 {
 		margin: 0;
-		font-size: 1.25rem;
-		font-weight: 600;
+		font-family: var(--font-serif, ui-serif, Georgia, serif);
+		font-size: 1.875rem;
+		line-height: 2.25rem;
+		font-weight: 500;
 	}
 	.subtitle {
-		margin: 0.125rem 0 0;
-		font-size: 0.8125rem;
+		margin: 0.5rem 0 0;
+		font-size: 0.875rem;
 		color: var(--color-foreground-subtle, #9ca3af);
 	}
 	.header-actions {

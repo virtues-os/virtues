@@ -11,7 +11,9 @@
 
 <div class="actions-view">
 	<main class="content">
-		<ActionsPanel />
+		<div class="measure">
+			<ActionsPanel />
+		</div>
 	</main>
 </div>
 
@@ -23,10 +25,17 @@
 		min-height: 0;
 	}
 
+	/* Mirrors the Page shell's box model — padding on the outer scroller, the
+	   `wide` (72rem) measure centred inside it — so this hand-rolled view lines
+	   up with the rooms built from Page. It is hand-rolled only because
+	   ActionsPanel owns its own header row. */
 	.content {
 		flex: 1;
 		overflow-y: auto;
-		padding: 1.25rem 1.5rem 2rem;
+		padding: 3rem;
+	}
+
+	.measure {
 		max-width: 72rem;
 		width: 100%;
 		margin: 0 auto;

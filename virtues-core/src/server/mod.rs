@@ -726,7 +726,10 @@ pub async fn run(client: Virtues, host: &str, port: u16) -> Result<()> {
             post(api::apply_update_handler),
         )
         // Bookmarks API (saved web content — the manual capture door)
-        .route("/api/bookmarks", post(api::save_bookmark_handler))
+        .route(
+            "/api/bookmarks",
+            get(api::list_bookmarks_handler).post(api::save_bookmark_handler),
+        )
         // Sidebar pins API
         .route(
             "/api/pins",

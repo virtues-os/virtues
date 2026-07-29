@@ -24,6 +24,7 @@ const KNOWN_TYPES: TabType[] = [
 	'place',
 	'org',
 	'notebook',
+	'bookmarks',
 	'day',
 	'year',
 	'source',
