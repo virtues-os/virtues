@@ -1,14 +1,39 @@
 import { redirect } from '@sveltejs/kit';
 import type { LayoutLoad } from './$types';
 
+/** Degraded shell data for a transient box blip — keeps the app mounted. */
+const OFFLINE_DATA = {
+	session: null,
+	preferredName: null,
+	serverStatus: 'ready',
+	sessionExpires: null,
+	homeTimezone: null,
+	onboardingStatus: 'active'
+};
+
 export const load: LayoutLoad = async ({ fetch, url }) => {
 	// Check authentication via Rust auth API
 	try {
-		const sessionResponse = await fetch('/auth/session');
+		// One retry after a beat: on the mobile shell this fetch rides the iroh
+		// loopback, and right after an app resume the parked endpoint may still
+		// be rebuilding (~1-3s) — the first attempt can die in that window.
+		let sessionResponse: Response;
+		try {
+			sessionResponse = await fetch('/auth/session');
+		} catch {
+			await new Promise((r) => setTimeout(r, 1500));
+			sessionResponse = await fetch('/auth/session');
+		}
 
-		// Treat any non-OK response as unauthenticated
+		// Only a real rejection means unpaired. A 5xx / gateway failure is the
+		// box or the transport being momentarily unavailable — keep the shell
+		// (same philosophy as the setup-state probe below: a transient blip
+		// must never trap the user out of their app).
 		if (!sessionResponse.ok) {
-			throw redirect(303, '/pair');
+			if (sessionResponse.status === 401 || sessionResponse.status === 403) {
+				throw redirect(303, '/pair');
+			}
+			return OFFLINE_DATA;
 		}
 
 		const sessionData = await sessionResponse.json();
@@ -76,8 +101,11 @@ export const load: LayoutLoad = async ({ fetch, url }) => {
 		if (error && typeof error === 'object' && 'status' in error) {
 			throw error;
 		}
-		// Network errors or JSON parse errors - redirect to login
-		console.error('[Layout] Auth check failed:', error);
-		throw redirect(303, '/pair');
+		// Network / parse errors mean UNREACHABLE, not unpaired — redirecting
+		// to /pair here strands a validly-paired device on the pairing screen
+		// over a 2s transport blip (seen in the wild: theme switch re-ran this
+		// load while the mobile shell's parked endpoint was mid-rebuild).
+		console.error('[Layout] Auth check failed (treating as offline):', error);
+		return OFFLINE_DATA;
 	}
 };
