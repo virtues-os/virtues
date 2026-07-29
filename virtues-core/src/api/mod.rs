@@ -38,6 +38,7 @@ pub mod model_catalog;
 pub mod models;
 pub mod entity_article_gen;
 pub mod narrative_identity_gen;
+pub mod bookmarks;
 pub mod pages;
 pub mod personas;
 pub mod updates;
@@ -183,6 +184,7 @@ pub use updates::{
     apply as apply_update, set_channel, status as update_status, ApplyResponse, SetChannelRequest,
 };
 pub use search_local::{search_local, LocalSearchRequest, LocalSearchResponse};
+pub use bookmarks::{save_bookmark, SaveBookmarkRequest, SavedBookmark};
 pub use pins::{
     create_pin, delete_pin, list_pins, reorder_pins, update_pin, CreatePinRequest, Pin,
     UpdatePinRequest,

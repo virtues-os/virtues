@@ -3344,6 +3344,22 @@ pub async fn apply_update_handler() -> Response {
 
 
 // ============================================================================
+// Bookmarks Handlers (saved web content — data_content_bookmark)
+// ============================================================================
+
+/// POST /api/bookmarks — save a URL (idempotent on canonical URL). The manual
+/// capture door; enrichment backfills titles/extraction later.
+pub async fn save_bookmark_handler(
+    State(state): State<AppState>,
+    Json(request): Json<crate::api::SaveBookmarkRequest>,
+) -> Response {
+    match crate::api::save_bookmark(state.db.pool(), request).await {
+        Ok(saved) => (StatusCode::CREATED, Json(saved)).into_response(),
+        Err(e) => error_response(e),
+    }
+}
+
+// ============================================================================
 // Pins Handlers (sidebar pinned URLs)
 // ============================================================================
 
