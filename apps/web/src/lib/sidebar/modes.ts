@@ -76,7 +76,38 @@ export const DEVELOPER_MODE: SidebarMode = {
 	],
 };
 
+/**
+ * Wiki. The third mode, and the first one that isn't a settings surface — the
+ * wiki outgrew a row of underline tabs the same way Developer did.
+ *
+ * Ordered as the record reads rather than alphabetically: what it is
+ * (Overview), what you wrote about it (Stories, Narrative Identity), when it
+ * happened (Days, Years), and who/where/what it involved (People, Places,
+ * Orgs). People/Places/Orgs were one "Entities" tab with a filter; at eight
+ * rows there is room to name them.
+ */
+export const WIKI_MODE: SidebarMode = {
+	id: 'wiki',
+	title: 'Wiki',
+	rows: [
+		{ id: 'overview', label: 'Overview', icon: 'ri:book-2-line', href: '/wiki' },
+		{ id: 'stories', label: 'Stories', icon: 'ri:quill-pen-line', href: '/wiki/stories' },
+		{
+			id: 'identity',
+			label: 'Narrative Identity',
+			icon: 'ri:compass-3-line',
+			href: '/wiki/identity',
+		},
+		{ id: 'days', label: 'Days', icon: 'ri:calendar-line', href: '/wiki/days' },
+		{ id: 'years', label: 'Years', icon: 'ri:calendar-2-line', href: '/wiki/years' },
+		{ id: 'people', label: 'People', icon: 'ri:user-line', href: '/wiki/people' },
+		{ id: 'places', label: 'Places', icon: 'ri:map-pin-line', href: '/wiki/places' },
+		{ id: 'orgs', label: 'Orgs', icon: 'ri:building-line', href: '/wiki/orgs' },
+	],
+};
+
 export const SIDEBAR_MODES: Record<string, SidebarMode> = {
 	settings: SETTINGS_MODE,
 	developer: DEVELOPER_MODE,
+	wiki: WIKI_MODE,
 };

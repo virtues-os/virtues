@@ -594,6 +594,8 @@ pub async fn run(client: Virtues, host: &str, port: u16) -> Result<()> {
         // Wiki - Act
         .route("/api/wiki/acts", get(api::wiki_list_acts_handler))
         .route("/api/wiki/act/:id", get(api::wiki_get_act_handler))
+        .route("/api/wiki/stories", get(api::wiki_list_stories_handler))
+        .route("/api/wiki/story/:id", get(api::wiki_get_story_handler))
         // Wiki - Chapter
         .route("/api/wiki/chapter/:id", get(api::wiki_get_chapter_handler))
         .route(

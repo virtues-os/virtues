@@ -5,6 +5,7 @@
 	import { listPages, listChats, listNotebooks, createNotebook, type ViewEntity } from "$lib/api/client";
 	import { chatSessions } from "$lib/stores/chatSessions.svelte";
 	import type { SystemSection } from "$lib/sidebar/sections";
+	import { sidebarMode } from "$lib/stores/sidebarMode.svelte";
 	import SidebarNavItem from "./SidebarNavItem.svelte";
 
 	interface Props {
@@ -269,6 +270,7 @@
 				isSystemItem={true}
 				onQuickAdd={section.quickAdd ? handleQuickAdd : undefined}
 				quickAddTitle={section.quickAdd ? QUICK_ADD_LABEL[section.quickAdd] : undefined}
+				onActivate={section.mode ? () => sidebarMode.enter(section.mode!) : undefined}
 			/>
 		</div>
 	{:else}

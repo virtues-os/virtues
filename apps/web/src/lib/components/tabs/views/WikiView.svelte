@@ -41,7 +41,9 @@
 		listDays,
 		listDayActivity,
 		listOnThisDay,
+		listStories,
 		getNarrativeIdentity,
+		type WikiStoryApi,
 		type WikiPersonListItem,
 		type WikiPlaceListItem,
 		type WikiOrganizationListItem,
@@ -51,11 +53,13 @@
 
 	let { tab, active }: { tab: Tab; active: boolean } = $props();
 
-	type Section = 'overview' | 'days' | 'entities' | 'identity';
+	type Section = 'overview' | 'stories' | 'days' | 'years' | 'entities' | 'identity';
 
 	const sections = $derived<SubNavItem[]>([
 		{ id: 'overview', label: 'Overview' },
+		{ id: 'stories', label: 'Stories' },
 		{ id: 'days', label: 'Days' },
+		{ id: 'years', label: 'Years' },
 		{ id: 'entities', label: 'Entities' },
 		{ id: 'identity', label: 'Narrative Identity' },
 	]);
@@ -70,17 +74,80 @@
 
 	const routeSegment = $derived(
 		tab.route.match(
-			/^\/wiki\/(days|entities|identity|people|places|orgs|unlinked)$/
+			/^\/wiki\/(days|years|stories|entities|identity|people|places|orgs|unlinked)$/
 		)?.[1] ?? (tab.route === '/entities' ? 'entities' : null)
 	);
+
+	/** Sections that are their own route; everything else folds into entities. */
+	const OWN_SECTION = ['days', 'years', 'stories', 'identity'] as const;
 
 	const section = $derived<Section>(
 		routeSegment == null
 			? 'overview'
-			: routeSegment === 'days' || routeSegment === 'identity'
-				? routeSegment
+			: (OWN_SECTION as readonly string[]).includes(routeSegment)
+				? (routeSegment as Section)
 				: 'entities'
 	);
+
+	// --- Stories ---
+	//
+	// Hand-authored articles; nothing writes one yet, so an empty list is the
+	// expected state rather than a failure and the copy says so plainly.
+
+	let stories = $state<WikiStoryApi[]>([]);
+	let storiesLoaded = $state(false);
+
+	async function loadStories() {
+		if (storiesLoaded) return;
+		stories = await listStories();
+		storiesLoaded = true;
+	}
+
+	$effect(() => {
+		if (section === 'stories') void loadStories();
+	});
+
+	// --- Years ---
+	//
+	// Derived, not stored: there is no years endpoint, so the index is grouped
+	// from day activity. Only years with recorded days appear — an empty year
+	// is not a year of your life you'd want listed.
+
+	interface YearRow {
+		year: number;
+		recorded: number;
+		narrated: number;
+	}
+
+	let years = $state<YearRow[]>([]);
+	let yearsLoaded = $state(false);
+
+	async function loadYears() {
+		if (yearsLoaded) return;
+		// Wide enough to cover the record; the endpoint returns only real days.
+		const end = new Date();
+		const start = new Date(end.getFullYear() - 10, 0, 1);
+		const activity = await listDayActivity(
+			getLocalDateSlug(start),
+			getLocalDateSlug(end)
+		);
+
+		const byYear = new Map<number, YearRow>();
+		for (const d of activity) {
+			if (!d.event_count) continue;
+			const y = Number(d.date.slice(0, 4));
+			const row = byYear.get(y) ?? { year: y, recorded: 0, narrated: 0 };
+			row.recorded += 1;
+			if (d.narrated) row.narrated += 1;
+			byYear.set(y, row);
+		}
+		years = [...byYear.values()].sort((a, b) => b.year - a.year);
+		yearsLoaded = true;
+	}
+
+	$effect(() => {
+		if (section === 'years') void loadYears();
+	});
 
 	/** Type filter preset when arriving via a legacy per-type route. */
 	const entityTypePreset = $derived(
@@ -436,6 +503,46 @@
 					</aside>
 				</section>
 			</div>
+		{:else if section === 'stories'}
+			<div class="measure">
+				{#if !storiesLoaded}
+					<p class="quiet">Loading…</p>
+				{:else if stories.length === 0}
+					<p class="quiet">
+						No stories yet. A story is a themed article that spans time — the
+						story of a wedding, of starting a company, of a period you came
+						through. Unlike days and years, one is written on purpose.
+					</p>
+				{:else}
+					<ul class="stories">
+						{#each stories as story (story.id)}
+							<li>
+								<a href="/wiki/story/{story.id}">{story.title}</a>
+								{#if story.subtitle}<span class="quiet"> — {story.subtitle}</span>{/if}
+							</li>
+						{/each}
+					</ul>
+				{/if}
+			</div>
+		{:else if section === 'years'}
+			<div class="measure">
+				{#if !yearsLoaded}
+					<p class="quiet">Loading…</p>
+				{:else if years.length === 0}
+					<p class="quiet">No recorded days yet, so there are no years to show.</p>
+				{:else}
+					<ul class="years">
+						{#each years as y (y.year)}
+							<li>
+								<a href="/wiki/days">{y.year}</a>
+								<span class="quiet">
+									{y.recorded} day{y.recorded === 1 ? '' : 's'} · {y.narrated} narrated
+								</span>
+							</li>
+						{/each}
+					</ul>
+				{/if}
+			</div>
 		{:else if section === 'days'}
 			<div class="days-wrap">
 				<DaysChronicle onOpenDay={openDay} />
@@ -649,6 +756,40 @@
 		font-size: 0.875rem;
 		color: var(--color-foreground-subtle);
 		margin: 0;
+	}
+
+	/* Stories and Years: plain indexes, set to the reading measure. */
+	.measure {
+		max-width: 42rem;
+		padding: 1.5rem 0;
+	}
+
+	.stories,
+	.years {
+		list-style: none;
+		margin: 0;
+		padding: 0;
+	}
+
+	.stories li,
+	.years li {
+		display: flex;
+		justify-content: space-between;
+		gap: 1rem;
+		align-items: baseline;
+		padding: 0.5rem 0;
+		border-bottom: 1px solid var(--color-border-subtle);
+	}
+
+	.stories a,
+	.years a {
+		color: var(--color-foreground);
+		text-decoration: none;
+	}
+
+	.stories a:hover,
+	.years a:hover {
+		text-decoration: underline;
 	}
 
 	/* On this day */

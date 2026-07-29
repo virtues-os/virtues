@@ -39,6 +39,12 @@ export interface SystemSection {
 	/** Smart sections: max items to show */
 	limit?: number;
 	/**
+	 * When set, clicking the row also enters this sidebar mode (see
+	 * `lib/sidebar/modes.ts`). The row still navigates to `href` — the mode is
+	 * additional, so you land on the section's front page with its own rail.
+	 */
+	mode?: string;
+	/**
 	 * The `+` on the row: what this collection creates.
 	 */
 	quickAdd?: 'chat' | 'page' | 'notebook';
@@ -108,6 +114,10 @@ const WIKI: SystemSection = {
 	icon: 'atlas:wiki',
 	type: 'link',
 	href: '/wiki',
+	// The wiki is a room, not a page: clicking it lands on the Overview and
+	// swaps the rail for the wiki's own eight sections, the way Settings and
+	// Developer do. Leaving is the `∴ Virtues / Wiki` mast.
+	mode: 'wiki',
 };
 
 const DRIVE: SystemSection = {

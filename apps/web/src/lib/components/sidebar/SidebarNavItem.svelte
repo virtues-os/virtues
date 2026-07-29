@@ -27,6 +27,12 @@
 		/** Tooltip for the quick-add button */
 		quickAddTitle?: string;
 		/**
+		 * Fired after the row navigates. Rows that are also a door into a
+		 * sidebar mode use this to swap the rail — the navigation still
+		 * happens, so the pane lands on the section's front page.
+		 */
+		onActivate?: () => void;
+		/**
 		 * Children of an expanded collection render without an icon.
 		 *
 		 * A notebook's icon next to a notebook's name, indented under a
@@ -45,6 +51,7 @@
 		accentColor = null,
 		onQuickAdd,
 		quickAddTitle,
+		onActivate,
 		showIcon = true,
 	}: Props = $props();
 
@@ -104,6 +111,8 @@
 			label: item.label,
 			preferEmptyPane: true,
 		});
+
+		onActivate?.();
 	}
 
 	function handleKeydown(e: KeyboardEvent) {
