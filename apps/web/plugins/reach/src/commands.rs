@@ -58,3 +58,15 @@ pub(crate) async fn outbox_stats<R: Runtime>(
 pub(crate) async fn drain_now<R: Runtime>(app: AppHandle<R>) -> Result<usize> {
   app.reach().drain_now().await
 }
+
+/// Radio-hygiene counters (device screen's Sync section) — the on-device
+/// battery A/B harness. `parked` = no warm endpoint right now (radio idle).
+#[command]
+pub(crate) async fn radio_stats<R: Runtime>(_app: AppHandle<R>) -> Result<serde_json::Value> {
+  let s = crate::stats::snapshot();
+  let mut v = serde_json::to_value(&s).unwrap_or_else(|_| serde_json::json!({}));
+  if let Some(obj) = v.as_object_mut() {
+    obj.insert("parked".into(), serde_json::Value::Bool(crate::warm_client().is_none()));
+  }
+  Ok(v)
+}

@@ -9,6 +9,12 @@ import UIKit
 @_silgen_name("virtues_recover_connection")
 private func virtues_recover_connection() -> Int32
 
+// App-state flag for the Rust side (reach plugin's ffi.rs). Backgrounded is
+// what licenses endpoint parking after uploads — the only way to stop iroh's
+// keepalive chatter so the cell radio can idle between drains.
+@_silgen_name("virtues_app_background")
+private func virtues_app_background(_ backgrounded: Int32)
+
 /// Watches the two events that wedge iroh's UDP socket on iOS — **network path
 /// changes** (Wi-Fi↔cellular/LAN) and **app foreground** (after a suspend that
 /// killed the socket) — and kicks the Rust recovery. Lives in the always-on
@@ -33,15 +39,36 @@ final class ReachMonitor {
   func start() {
     if started { return }
     started = true
+    // Seed the flag with the LAUNCH state BEFORE the path monitor starts:
+    // NWPathMonitor delivers its initial path immediately on the utility queue,
+    // and the recovery it kicks reads this flag — an async seed loses that race
+    // and lets a cold background relaunch cold-build an endpoint it shouldn't.
+    // start() runs inside didFinishLaunching on the main thread, so the read is
+    // synchronous; the async branch is a defensive fallback only.
+    if Thread.isMainThread {
+      virtues_app_background(UIApplication.shared.applicationState == .background ? 1 : 0)
+    } else {
+      DispatchQueue.main.async {
+        virtues_app_background(UIApplication.shared.applicationState == .background ? 1 : 0)
+      }
+    }
     monitor.pathUpdateHandler = { [weak self] _ in self?.kick("path") }
     monitor.start(queue: queue)
     NotificationCenter.default.addObserver(
       self, selector: #selector(onForeground),
       name: UIApplication.didBecomeActiveNotification, object: nil)
-    NSLog("[ReachMonitor] started (NWPathMonitor + foreground)")
+    NotificationCenter.default.addObserver(
+      self, selector: #selector(onBackground),
+      name: UIApplication.didEnterBackgroundNotification, object: nil)
+    NSLog("[ReachMonitor] started (NWPathMonitor + fg/bg)")
   }
 
-  @objc private func onForeground() { kick("foreground") }
+  @objc private func onForeground() {
+    virtues_app_background(0)
+    kick("foreground")
+  }
+
+  @objc private func onBackground() { virtues_app_background(1) }
 
   private func kick(_ reason: String) {
     queue.async { [weak self] in

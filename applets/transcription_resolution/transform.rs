@@ -109,7 +109,8 @@ struct PendingRecording {
     started_at: DateTime<Utc>,
     ended_at: Option<DateTime<Utc>>,
     duration_seconds: Option<f64>,
-    audio_url: String,
+    /// `None` for metadata-only rows — silent chunks ship no audio bytes.
+    audio_url: Option<String>,
     audio_format: String,
     is_silent: bool,
 }
@@ -269,13 +270,26 @@ pub async fn drain(db: &PgPool, batch_size: i64) -> Result<(usize, usize, usize)
         }
         let client = virtues_api.as_ref().unwrap();
 
+        // Metadata-only rows can't normally reach here (is_silent short-circuits
+        // above), but a non-silent row with no audio is unrecoverable — mark the
+        // attempt and move on rather than aborting the drain.
+        let Some(audio_url) = rec.audio_url.as_deref() else {
+            tracing::warn!(
+                stream_id = %rec.source_stream_id,
+                "non-silent recording with no audio_url, skipping"
+            );
+            record_attempt_failure(db, &rec.source_stream_id).await;
+            failed += 1;
+            continue;
+        };
+
         // Read the audio file from disk.
-        let audio_bytes = match read_audio(&rec.audio_url) {
+        let audio_bytes = match read_audio(audio_url) {
             Ok(b) => b,
             Err(e) => {
                 tracing::warn!(
                     stream_id = %rec.source_stream_id,
-                    audio_url = %rec.audio_url,
+                    audio_url = %audio_url,
                     error = %e,
                     "audio file missing or unreadable, skipping"
                 );
