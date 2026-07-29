@@ -344,17 +344,6 @@
 		}
 	}
 
-	@keyframes fadeSlideIn {
-		from {
-			opacity: 0;
-			transform: translateX(-8px);
-		}
-		to {
-			opacity: 1;
-			transform: translateX(0);
-		}
-	}
-
 	@keyframes spin {
 		from {
 			transform: rotate(0deg);
@@ -392,25 +381,13 @@
 	}
 
 	/* Group header — the "contents-page" treatment: serif smallcaps,
-	   letterspaced, quiet. Carries the classical register of the panel. */
-	/* The reflect↔work seam: a blank gap between groups, no text header. */
-	.nav-group + .nav-group {
-		margin-top: 14px;
-	}
-
-	/* Zone subtitle — a whisper, not a headline: a Capitalized word in the sans
-	   at label size, no smallcaps apparatus and no rule under it. The desk/
-	   library seam is carried by type (serif names vs sans destinations), so
-	   a hairline here would say the same thing louder. */
-	.nav-group-header {
-		font-size: 11px;
-		font-weight: 500;
-		letter-spacing: 0.015em;
-		color: var(--color-foreground-subtle);
-		padding: 0 8px 0 var(--sidebar-padding-left-base);
-		margin: 18px 0 4px;
-		user-select: none;
-		animation: fadeSlideIn 200ms cubic-bezier(0.2, 0, 0, 1) backwards;
+	/* One row of air between zones — the same 28px a destination occupies, so
+	   the gap is part of the column's rhythm rather than a number chosen to
+	   look about right. It was 14px and only applied between two groups, which
+	   meant the Desk and the Library were touching: the last spine sat
+	   directly on top of the Library's subtitle. */
+	.nav-group {
+		margin-top: var(--sidebar-interactive-height);
 	}
 
 	.loading-state {
