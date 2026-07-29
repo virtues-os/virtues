@@ -44,15 +44,33 @@ export function textOnCloth(hex: string): string {
 	return luma > 0.55 ? '#17171A' : '#FFFFFF';
 }
 
-const NOTEBOOK_ROUTE = /^\/notebooks?\/([^/?#]+)/;
+/**
+ * A pin may carry an explicit `--cat-*` token key (the existing colour field).
+ * Resolved to hex here so luminance stays computable — `textOnCloth` has to
+ * measure the colour it is inverting against, which a `var()` can't be.
+ */
+const CAT_HEX: Record<string, string> = {
+	purple: '#a855f7',
+	indigo: '#6366f1',
+	violet: '#8b5cf6',
+	pink: '#ec4899',
+	rose: '#f43f5e',
+	orange: '#f97316',
+	yellow: '#eab308',
+	cyan: '#06b6d4',
+	emerald: '#10b981',
+};
 
 /**
- * The cloth for a tab route, or null when the route isn't a pinned thing.
- * Today only notebooks are pinnable; the desk's species list grows here.
+ * The cloth for a pinned thing: its chosen colour if it has one, otherwise
+ * bookcloth derived from its url.
+ *
+ * Keyed on the URL, not on a species. Anything with a route can sit on the
+ * Desk — a notebook, an applet, a PDF in Drive, a single day, a person, an
+ * external link — so asking "what kind of thing is this?" would be both
+ * fragile and beside the point. The url IS the identity.
  */
-export function routeCloth(route: string | undefined | null): string | null {
-	if (!route) return null;
-	const m = route.match(NOTEBOOK_ROUTE);
-	if (!m || m[1] === '') return null;
-	return pinColor(m[1]);
+export function clothFor(pin: { url: string; color?: string | null }): string {
+	if (pin.color && CAT_HEX[pin.color]) return CAT_HEX[pin.color];
+	return pinColor(pin.url);
 }

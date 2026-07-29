@@ -3,7 +3,7 @@
 	import { isAppleKeyboard } from "$lib/utils/platform";
 	import { windowShellStore } from "$lib/stores/window-shell.svelte";
 	import { HOME_ROUTE } from "$lib/sidebar/sections";
-	import { routeCloth } from "$lib/sidebar/pin-colors";
+	import { pinsStore } from "$lib/stores/pins.svelte";
 
 	interface Props {
 		collapsed?: boolean;
@@ -40,8 +40,17 @@
 		return pane.tabs.find((t) => t.id === pane.activeTabId) ?? null;
 	});
 
-	const tailCloth = $derived(routeCloth(activeTab?.route));
-	const tailLabel = $derived(tailCloth && activeTab ? activeTab.label : null);
+	// The tail names the pinned thing you're inside. Keyed on the pin list
+	// rather than on a route shape, so it follows the Desk wherever the Desk
+	// goes — a pinned PDF or applet gets a path segment exactly like a
+	// notebook does.
+	const tailLabel = $derived.by(() => {
+		const route = activeTab?.route;
+		if (!route) return null;
+		const pin = pinsStore.getByUrl(route);
+		if (!pin) return null;
+		return pin.label?.trim() || activeTab?.label || null;
+	});
 
 	function goHome() {
 		windowShellStore.openTabFromRoute(HOME_ROUTE, {
@@ -176,16 +185,17 @@
 		flex-shrink: 0;
 	}
 
-	/* Same face, size, tracking and optical weight as the root — it is one
-	   path, not a title with a caption. Only the ink differs, one step down,
-	   so the root still reads as the thing you can click back to. */
+	/* Identical to the root in every respect, ink included: it is one path,
+	   set once. The root is distinguished by being hoverable, not by being a
+	   different colour — a breadcrumb whose halves are styled differently
+	   reads as a title with a caption. */
 	.path-tail {
 		font-family: var(--font-serif, serif);
 		font-size: 15px;
 		font-weight: 400;
 		letter-spacing: 0.025em;
 		-webkit-text-stroke: 0.2px currentColor;
-		color: var(--color-foreground-muted);
+		color: var(--color-foreground);
 		overflow: hidden;
 		text-overflow: ellipsis;
 		white-space: nowrap;

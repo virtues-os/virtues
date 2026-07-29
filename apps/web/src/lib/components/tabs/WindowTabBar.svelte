@@ -22,26 +22,36 @@
 	import { modifierHint } from "$lib/stores/modifierHint.svelte";
 	import { chatSessions } from "$lib/stores/chatSessions.svelte";
 	import { isEmoji } from "$lib/utils/iconHelpers";
-	import { routeCloth, textOnCloth } from "$lib/sidebar/pin-colors";
+	import { clothFor, textOnCloth } from "$lib/sidebar/pin-colors";
 	import type { ContextMenuItem } from "$lib/stores/contextMenu.svelte";
 
 	const FLIP_DURATION_MS = 150;
 
 	/**
-	 * A tab for a thing that carries a bookcloth wears it.
+	 * A tab for something on the Desk wears its bookcloth.
 	 *
-	 * The color belongs to the THING, not to the window — which is why this is
+	 * The colour belongs to the THING, not to the window — which is why this is
 	 * per-tab and not a band across the pane. A pane holds tabs from several
 	 * worlds at once; painting the pane would claim the whole window for
 	 * whichever tab happened to be in front.
 	 *
+	 * Keyed on "is this route pinned?", not on what species it is: anything
+	 * with a url can sit on the Desk, so the pin list is the only thing that
+	 * knows. That also keeps a filled tab rare, which is the only reason it
+	 * can afford to be loud.
+	 *
 	 * Active tabs take the solid cloth with text inverted for legibility;
 	 * inactive ones drop to a wash so identity survives without competing with
-	 * focus. Only pinnable things (today: notebooks) have cloth at all, so a
-	 * filled tab stays rare — which is the only reason it can be loud.
+	 * focus.
 	 */
+	function tabCloth(route: string | undefined): string | null {
+		if (!route) return null;
+		const pin = pinsStore.getByUrl(route);
+		return pin ? clothFor(pin) : null;
+	}
+
 	function clothStyle(tab: Tab, isActive: boolean): string {
-		const cloth = routeCloth(tab.route);
+		const cloth = tabCloth(tab.route);
 		if (!cloth) return "";
 		if (isActive) {
 			return `background:${cloth};color:${textOnCloth(cloth)};`;
@@ -455,7 +465,7 @@
 					isActivePane}
 				class:pinned={tab.pinned}
 				class:renaming={tab.id === renamingTabId}
-				class:clothed={!!routeCloth(tab.route)}
+				class:clothed={!!tabCloth(tab.route)}
 				style={clothStyle(tab, tab.id === activeTabId && isActivePane)}
 				animate:flip={{ duration: FLIP_DURATION_MS }}
 				onclick={() =>

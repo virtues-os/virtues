@@ -24,6 +24,8 @@
 			'<circle cx="8" cy="7.5" r="5.2"/><path d="M4.6 11.9l-1.2 2"/><circle cx="5.9" cy="7.5" r="0.55" fill="currentColor" stroke="none"/><circle cx="8" cy="7.5" r="0.55" fill="currentColor" stroke="none"/><circle cx="10.1" cy="7.5" r="0.55" fill="currentColor" stroke="none"/>',
 		pages:
 			'<rect x="3.5" y="2.5" width="9" height="11" rx="1.2"/><path d="M6 6h5M6 8.5h5M6 11h3"/>',
+		notebooks:
+			'<path d="M5 2.5h7.5a1 1 0 0 1 1 1v9a1 1 0 0 1-1 1H5a1.5 1.5 0 0 1-1.5-1.5v-8A1.5 1.5 0 0 1 5 2.5z"/><path d="M3.5 5.5h2M3.5 8h2M3.5 10.5h2"/>',
 		bookmarks: '<path d="M4.5 2.5h7v11L8 11l-3.5 2.5z"/>',
 		calendar:
 			'<rect x="2.5" y="3.5" width="11" height="10" rx="1.2"/><path d="M2.5 6.5h11M5.5 2v2.5M10.5 2v2.5"/><circle cx="8" cy="10" r="0.7" fill="currentColor" stroke="none"/>',
