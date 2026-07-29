@@ -1,0 +1,123 @@
+name: Warm release caches
+
+# Builds `llama-server` on the DEFAULT BRANCH so that tag-triggered release
+# runs have a cache they are actually allowed to read.
+#
+# THE BUG THIS FIXES
+#
+# `release-linux.yml` caches its llama-server build keyed on the pinned
+# LLAMA_CPP_TAG, with a comment claiming the cache "hits on every run until
+# LLAMA_CPP_TAG is bumped". It never hits. Not once, ever.
+#
+# From GitHub's own caching reference:
+#
+#   "Workflow runs cannot restore caches created for different tag names."
+#   "Tags only have access to caches created in the default branch."
+#
+# `release-linux.yml` triggers ONLY on tag pushes. So:
+#
+#   v0.2.0 run  → writes a cache scoped to refs/tags/v0.2.0
+#   v0.3.0 run  → may read refs/tags/v0.3.0 (new, empty)
+#                 and refs/heads/main (nothing ever wrote there)
+#               → miss → full ~5 min C++ compile, on BOTH arches
+#
+# Tags are siblings, not ancestors. v0.3.0 has no more access to v0.2.0's cache
+# than a stranger's fork would. The key was always right; the SCOPE was never
+# reachable. Every release since the cache was added has compiled llama.cpp from
+# scratch twice.
+#
+# WHY A SCHEDULE AND NOT `push: branches: [main]`
+#
+# `main` is a release marker in this repo — it moves only when a release ships,
+# which is exactly when the cache is needed and far too late to populate it. And
+# GitHub evicts caches after 7 days without a read, while releases are weeks
+# apart, so a release-time write would be gone before the next one.
+#
+# Scheduled runs execute on the default branch, which is the one scope tags can
+# read. Twice weekly keeps the newest entry under the 7-day eviction window with
+# room to spare.
+#
+# WHY A SEPARATE WORKFLOW
+#
+# The alternative — adding a schedule to `release-linux.yml` and gating its ~20
+# publish steps on `startsWith(github.ref, 'refs/tags/')` — avoids duplicating
+# the cmake flags, but puts the release path itself at risk to fix a cache. This
+# workflow can be wrong without breaking a release.
+#
+# The cost is duplication: the cmake flags and the cache key below MUST stay
+# identical to `release-linux.yml`, or this warms a cache the release cannot
+# use and everything silently reverts to compiling twice. Both files carry a
+# pointer to the other. If this drifts, the symptom is invisible — a release
+# that quietly takes ten minutes longer — so treat the pair as one unit.
+
+on:
+  schedule:
+    # 06:00 UTC Monday and Thursday. Max gap 4 days, comfortably inside the
+    # 7-day eviction window.
+    - cron: '0 6 * * 1,4'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  # MUST match release-linux.yml. See the note above about drift.
+  LLAMA_CPP_TAG: b9606
+
+jobs:
+  llama:
+    name: Warm llama-server (${{ matrix.arch }})
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: x86_64
+            runner: blacksmith-8vcpu-ubuntu-2204
+          - arch: aarch64
+            runner: blacksmith-8vcpu-ubuntu-2204-arm
+
+    steps:
+      # Same key as release-linux.yml, including the -vN suffix. Bump both
+      # together or the release stops finding this.
+      - name: Cache llama-server (CPU)
+        id: llama_cpu
+        uses: actions/cache@v4
+        with:
+          path: /tmp/llama-bin
+          key: llama-server-${{ env.LLAMA_CPP_TAG }}-${{ matrix.arch }}-cpu-v1
+
+      # Same flags as release-linux.yml. GGML_NATIVE=OFF keeps the binary
+      # portable across the arch rather than tuned to whichever runner built it;
+      # static libs so the release tarball ships one self-contained executable.
+      - name: Build llama-server (pinned llama.cpp, CPU)
+        if: steps.llama_cpu.outputs.cache-hit != 'true'
+        run: |
+          git clone --depth 1 --branch "$LLAMA_CPP_TAG" \
+            https://github.com/ggml-org/llama.cpp /tmp/llama.cpp
+          cmake -S /tmp/llama.cpp -B /tmp/llama.cpp/build \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DGGML_NATIVE=OFF \
+            -DBUILD_SHARED_LIBS=OFF \
+            -DLLAMA_CURL=OFF \
+            -DLLAMA_BUILD_TESTS=OFF \
+            -DLLAMA_BUILD_EXAMPLES=OFF \
+            -DLLAMA_BUILD_SERVER=ON
+          cmake --build /tmp/llama.cpp/build --target llama-server -j "$(nproc)"
+          mkdir -p /tmp/llama-bin
+          cp /tmp/llama.cpp/build/bin/llama-server /tmp/llama-bin/
+
+      # Proves a restored cache isn't corrupt, same as the release job does.
+      - name: Smoke llama-server
+        run: |
+          test -x /tmp/llama-bin/llama-server || {
+            echo "llama-server missing after build/restore" >&2; exit 1; }
+          /tmp/llama-bin/llama-server --version
+
+      - name: Report outcome
+        run: |
+          if [ "${{ steps.llama_cpu.outputs.cache-hit }}" = "true" ]; then
+            echo "HIT — cache already warm for $LLAMA_CPP_TAG/${{ matrix.arch }}"
+          else
+            echo "MISS — rebuilt and re-cached $LLAMA_CPP_TAG/${{ matrix.arch }}"
+          fi

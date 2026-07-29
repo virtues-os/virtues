@@ -157,10 +157,19 @@ jobs:
       # so the tarball ships one self-contained executable.
       #
       # The binary is byte-determined by (LLAMA_CPP_TAG, arch, cmake flags), so
-      # we cache the OUTPUT keyed on the pinned tag — no source hash. It hits on
-      # every run until LLAMA_CPP_TAG is bumped, then misses exactly once and
-      # rebuilds. Bump the `-vN` suffix by hand if the cmake flags above change.
-      # Saves the ~5 min compile on every cache hit.
+      # we cache the OUTPUT keyed on the pinned tag — no source hash. Bump the
+      # `-vN` suffix by hand if the cmake flags above change.
+      #
+      # This used to claim the cache "hits on every run until LLAMA_CPP_TAG is
+      # bumped". It never hit once. This workflow runs ONLY on tag pushes, and
+      # per GitHub's caching reference a tag can only read caches created in the
+      # DEFAULT BRANCH — never another tag's. Every release wrote a cache scoped
+      # to its own tag that the next release could not see, so llama.cpp was
+      # compiled from scratch on both arches every single time.
+      #
+      # `warm-release-caches.yml` now builds the same key on the default branch
+      # on a schedule, which is the one scope tag runs are allowed to read. The
+      # flags below and the key must stay identical to that file.
       - name: Cache llama-server (CPU)
         id: llama_cpu
         uses: actions/cache@v4
@@ -184,6 +193,15 @@ jobs:
           cmake --build /tmp/llama.cpp/build --target llama-server -j "$(nproc)"
           mkdir -p /tmp/llama-bin
           cp /tmp/llama.cpp/build/bin/llama-server /tmp/llama-bin/
+
+      # Say out loud whether the cache worked. `cache-hit` was always available
+      # and never surfaced, which is how a cache that never hit went unnoticed
+      # across every release since it was added — a miss looks exactly like a
+      # slow build unless something names it.
+      - name: Report llama cache outcome
+        run: |
+          echo "llama-server cache: ${{ steps.llama_cpu.outputs.cache-hit == 'true' && 'HIT' || 'MISS (rebuilt)' }}"
+          echo "key: llama-server-${{ env.LLAMA_CPP_TAG }}-${{ matrix.arch }}-cpu-v1"
 
       # Smoke runs on cache HIT and MISS alike: the binary must start and report
       # its version (also proves a restored cache isn't corrupt).
