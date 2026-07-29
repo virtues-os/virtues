@@ -84,5 +84,9 @@
 	</array>
 	<key>NSHealthUpdateUsageDescription</key>
 	<string>Virtues does not write anything to Health. It only reads your health data to build your personal timeline, stored on your own box.</string>
+	<key>NSCameraUsageDescription</key>
+	<string>Virtues uses the camera when you attach a photo or video in chat — sent to your own box, not Virtues&apos; servers.</string>
+	<key>NSPhotoLibraryUsageDescription</key>
+	<string>Virtues accesses photos you choose to attach in chat — sent to your own box, not Virtues&apos; servers.</string>
 </dict>
 </plist>
