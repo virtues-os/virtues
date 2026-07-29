@@ -135,7 +135,7 @@
 		     the collections use, so a zone closing looks like every other
 		     thing that closes in this panel. -->
 		<div class="sidebar-expandable" class:expanded={!zoneCollapsed}>
-			<div class="sidebar-expandable-inner desk-inner">
+			<div class="sidebar-expandable-inner">
 				{#if pinsStore.loaded && pins.length === 0}
 					<div class="desk-empty">Nothing pinned yet</div>
 				{:else}
@@ -156,6 +156,13 @@
 						</div>
 					{/each}
 				{/if}
+				<!-- The seam as content, not as padding. Padding on the clipping
+				     box would sit OUTSIDE the collapsed content box — and
+				     `overflow: hidden` clips at the padding box — so 28px of the
+				     list stayed visible with the Desk shut, which is exactly one
+				     row: the first pin appeared to survive the fold. A spacer is
+				     inside the thing being folded, so it folds. -->
+				<div class="desk-tail" aria-hidden="true"></div>
 			</div>
 		</div>
 	</div>
@@ -181,11 +188,11 @@
 		flex-direction: column;
 	}
 
-	/* The seam between Desk and Library lives here, inside the fold, so that
-	   collapsing the Desk takes the space with it and the two subtitles sit
-	   together. Same row token as everywhere else in the column. */
-	.desk-inner {
-		padding-bottom: var(--sidebar-interactive-height);
+	/* The seam between Desk and Library, as a row of air the fold can carry
+	   away. Same token as every other interval in the column. */
+	.desk-tail {
+		height: var(--sidebar-interactive-height);
+		flex: none;
 	}
 
 	/* Spines: the serif appears in the chrome exactly where ownership does.
