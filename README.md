@@ -97,7 +97,7 @@ All of it runs on a single Rust server with a Postgres database and S3 storage. 
 | iOS | HealthKit, Location, Microphone, Contacts, FinanceKit, EventKit | Device |
 | macOS | Apps, Browser, iMessage | Device |
 
-Extensible: add a new source as an action in `actions/<name>/` with a `manifest.toml` — see [`actions/AUTHORING.md`](actions/AUTHORING.md).
+Extensible: add a new source as an applet in `applets/<name>/` with a `manifest.toml` — see [`applets/AUTHORING.md`](applets/AUTHORING.md).
 
 <a id="overview"></a>
 ## <picture><source media="(prefers-color-scheme: dark)" srcset=".github/images/headings/h2-overview-dark.svg"><img alt="Overview" src=".github/images/headings/h2-overview-light.svg" height="28"></picture>
