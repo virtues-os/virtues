@@ -213,7 +213,7 @@ The box side was built for the old Swift app and is still live/registered. **Not
 - `actions/ios_ingest/main.rs` — `"microphone"` case → `microphone::ingest_all` (`microphone.rs`):
   decodes base64 `audio_data`, writes `.m4a` to `data/lake/ios_microphone/{id}.{ext}`, inserts
   `data_audio_recording` (`audio_url` = that relative path), `ON CONFLICT (source_stream_id) DO NOTHING`.
-- `actions/transcription_resolution/` — live cron action (`0 */2 * * * *`): `LEFT JOIN` finds
+- `applets/transcription_resolution/` — live cron applet (`0 */2 * * * *`): `LEFT JOIN` finds
   untranscribed `data_audio_recording`, calls **`google/gemini-2.5-flash`** (hardcoded, sanctioned
   exception), writes `data_communication_transcription` (text, title, summary, mood, entities, scene).
   Handles silent (skip Gemini, empty text), poison (no loop-bill), flash-lite-returns-empty.

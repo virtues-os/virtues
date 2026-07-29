@@ -121,7 +121,7 @@ actions/
     ├── manifest.toml
     └── ui/                   # UI co-located with the action
         ├── Card.svelte       # optional — overrides TemplateCard
-        └── Detail.svelte     # optional — overrides ActionDetailView
+        └── Detail.svelte     # optional — overrides AppletDetailView
 ```
 
 `actions/my_view/manifest.toml`:
@@ -152,7 +152,7 @@ name = "my_view"               # the view bundle key — folder name under actio
 </div>
 ```
 
-After reconcile, this view replaces the generic `TemplateCard` for this action on the Templates page. If you also drop `Detail.svelte`, it replaces `ActionDetailView` when the user clicks through.
+After reconcile, this view replaces the generic `TemplateCard` for this action on the Templates page. If you also drop `Detail.svelte`, it replaces `AppletDetailView` when the user clicks through.
 
 ---
 

@@ -1,12 +1,12 @@
 /**
- * Action view registry — Vite-glob loader for view-runtime action UIs.
+ * Applet view registry — Vite-glob loader for view-runtime applet UIs.
  *
- * View-runtime actions are self-contained under `applets/<name>/`. Their UI
+ * View-runtime applets are self-contained under `applets/<name>/`. Their UI
  * lives next to the manifest at `applets/<name>/ui/`:
  *
  *   applets/<name>/manifest.toml          (declares config.view.name)
- *   applets/<name>/ui/Card.svelte         (optional — overrides ActionCard)
- *   applets/<name>/ui/Detail.svelte       (optional — overrides ActionDetailView)
+ *   applets/<name>/ui/Card.svelte         (optional — overrides AppletCard)
+ *   applets/<name>/ui/Detail.svelte       (optional — overrides AppletDetailView)
  *   applets/<name>/ui/Output.svelte       (future — for run-output rendering)
  *
  * The host web app discovers them at build time via `import.meta.glob` and
@@ -22,7 +22,7 @@ import type { Component } from 'svelte';
 
 // Glob is relative to this file. Path walks up to the repo root and into
 // `applets/<name>/ui/`:
-//   action-views/ → lib/ → src/ → web/ → apps/ → <repo root>
+//   applet-views/ → lib/ → src/ → web/ → apps/ → <repo root>
 const cardModules = import.meta.glob<{ default: Component }>(
 	'../../../../../applets/*/ui/Card.svelte',
 	{ eager: true }
