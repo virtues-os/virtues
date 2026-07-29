@@ -64,6 +64,8 @@ export function apiToPersonPage(api: WikiPersonApi): PersonPage {
 
 		// Content
 		content: api.content ?? "",
+		summary: api.summary ?? undefined,
+		summarizedAt: api.summarized_at ? new Date(api.summarized_at) : undefined,
 
 		// Metadata (empty for now - will be computed from entity_edges)
 		citations: [],
@@ -109,6 +111,8 @@ export function apiToPlacePage(api: WikiPlaceApi): PlacePage {
 
 		// Content
 		content: api.content ?? "",
+		summary: api.summary ?? undefined,
+		summarizedAt: api.summarized_at ? new Date(api.summarized_at) : undefined,
 
 		// Connections (populated from entity_edges later)
 		associatedPeople: [],
@@ -164,6 +168,8 @@ export function apiToOrganizationPage(api: WikiOrganizationApi): OrganizationPag
 
 		// Content
 		content: api.content ?? "",
+		summary: api.summary ?? undefined,
+		summarizedAt: api.summarized_at ? new Date(api.summarized_at) : undefined,
 
 		// Connections (populated from entity_edges later)
 		keyContacts: [],

@@ -275,23 +275,36 @@
 	// person toggles them on, or filters discrete ontologies off, per chip.
 	type SourceTypeChip = {
 		type: string;
+		/** Every raw source_type this chip covers (they share one label). */
+		types: Set<string>;
 		name: string;
 		count: number;
 		continuous: boolean;
 	};
 
+	// Keyed by DISPLAY name, not raw source_type: some ontologies carry a
+	// sub-discriminator in source_type ("message:imessage" + "message:sms",
+	// "email" + "email_sent") that collapses to one label — keying on the raw
+	// type rendered two identical "Messages" chips. Each chip carries the set
+	// of raw types it covers, so toggling toggles the whole group.
 	const sourceTypeChips = $derived.by<SourceTypeChip[]>(() => {
 		const map = new Map<string, SourceTypeChip>();
 		for (const s of dataSources) {
-			const existing = map.get(s.source_type);
-			if (existing) existing.count++;
-			else
-				map.set(s.source_type, {
+			const name = getOntologyName(s.source_type);
+			const existing = map.get(name);
+			if (existing) {
+				existing.count++;
+				existing.types.add(s.source_type);
+				existing.continuous = existing.continuous && s.continuous;
+			} else {
+				map.set(name, {
 					type: s.source_type,
-					name: getOntologyName(s.source_type),
+					types: new Set([s.source_type]),
+					name,
 					count: 1,
 					continuous: s.continuous,
 				});
+			}
 		}
 		return [...map.values()].sort((a, b) => a.name.localeCompare(b.name));
 	});
@@ -301,14 +314,18 @@
 	let activeSourceTypes = $state<Set<string>>(new Set());
 	$effect(() => {
 		const next = new Set<string>();
-		for (const chip of sourceTypeChips) if (!chip.continuous) next.add(chip.type);
+		for (const chip of sourceTypeChips)
+			if (!chip.continuous) for (const t of chip.types) next.add(t);
 		activeSourceTypes = next;
 	});
 
-	function toggleSourceType(type: string) {
+	function toggleSourceChip(chip: SourceTypeChip) {
 		const next = new Set(activeSourceTypes);
-		if (next.has(type)) next.delete(type);
-		else next.add(type);
+		const anyOn = [...chip.types].some((t) => next.has(t));
+		for (const t of chip.types) {
+			if (anyOn) next.delete(t);
+			else next.add(t);
+		}
 		activeSourceTypes = next;
 	}
 
@@ -612,13 +629,13 @@
 						<h2 class="section-title">Data Ontologies</h2>
 						{#if sourceTypeChips.length > 0}
 							<div class="source-filters" role="group" aria-label="Filter data points by ontology">
-								{#each sourceTypeChips as chip (chip.type)}
+								{#each sourceTypeChips as chip (chip.name)}
 									<button
 										type="button"
 										class="source-chip"
 										class:active={activeSourceTypes.has(chip.type)}
 										aria-pressed={activeSourceTypes.has(chip.type)}
-										onclick={() => toggleSourceType(chip.type)}
+										onclick={() => toggleSourceChip(chip)}
 									>
 										{chip.name}
 										<span class="source-chip-count">{chip.count}</span>

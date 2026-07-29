@@ -108,24 +108,18 @@
 		// because they're about panes and tabs, and the sidebar isn't mounted on
 		// the phone shell.
 		//
-		// ⌘1/⌘2 address *panes*, not tabs — there are only ever two, so ⌘3-9
-		// stay free. Tab cycling takes ⌘⇧[ / ⌘⇧] instead, which is the browser
-		// convention and collides with nothing.
+		// ⌘1-⌘9 address *tabs*, browser-style: leftmost tab is 1, counting
+		// across both panes left-to-right. Activating a tab focuses its pane,
+		// so pane switching falls out for free. Tab cycling takes ⌘⇧[ / ⌘⇧],
+		// which is the browser convention and collides with nothing.
 		shortcuts.register(
-			{
-				id: "pane.focus-left",
-				keys: "mod+1",
-				label: "Focus the left pane",
+			...Array.from({ length: 9 }, (_, i) => ({
+				id: `tab.focus-${i + 1}`,
+				keys: `mod+${i + 1}`,
+				label: `Go to tab ${i + 1}`,
 				group: "Window",
-				run: () => windowShellStore.focusPane("left"),
-			},
-			{
-				id: "pane.focus-right",
-				keys: "mod+2",
-				label: "Focus the right pane (splits if needed)",
-				group: "Window",
-				run: () => windowShellStore.focusPane("right"),
-			},
+				run: () => windowShellStore.activateTabByOrdinal(i + 1),
+			})),
 			{
 				id: "tab.next",
 				keys: "mod+shift+]",
@@ -142,7 +136,7 @@
 			},
 		);
 
-		// Hold-⌘ reveals the ⌘1/⌘2 pane badges.
+		// Hold-⌘ reveals the per-tab ⌘N badges.
 		modifierHint.start();
 
 		// Start polling for subscription status
