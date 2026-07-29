@@ -4,7 +4,7 @@
 //! which is incremental — we pass the cursor from our last sync, Plaid returns
 //! `added`, `modified`, `removed`, and a new cursor.
 //!
-//! Cursor stored in `app_actions.config.plaid_cursor`. First run: empty string
+//! Cursor stored in `app_applets.config.plaid_cursor`. First run: empty string
 //! (Plaid interprets as "give me everything").
 
 mod transform;

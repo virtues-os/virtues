@@ -102,7 +102,7 @@ pub async fn import(db: &PgPool, req: ImportRequest) -> Result<ImportOutcome> {
     // zombie rows pointing to nothing — clean those up here.
     for id in &removed {
         // Preserve run history: nullify FK first.
-        sqlx::query("UPDATE app_applet_runs SET action_id = NULL WHERE action_id = $1")
+        sqlx::query("UPDATE app_applet_runs SET applet_id = NULL WHERE applet_id = $1")
             .bind(id)
             .execute(db)
             .await?;

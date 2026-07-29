@@ -260,10 +260,10 @@ async fn collect_applets(pool: &PgPool) -> AppletsSection {
             .flatten();
     let counts: Vec<(String, i64)> = sqlx::query_as(
         "SELECT status, COUNT(*) FROM ( \
-            SELECT DISTINCT ON (action_id) status \
+            SELECT DISTINCT ON (applet_id) status \
             FROM app_applet_runs \
-            WHERE action_id IS NOT NULL \
-            ORDER BY action_id, created_at DESC \
+            WHERE applet_id IS NOT NULL \
+            ORDER BY applet_id, created_at DESC \
          ) recent GROUP BY status",
     )
     .fetch_all(pool)

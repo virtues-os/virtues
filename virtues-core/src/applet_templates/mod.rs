@@ -522,8 +522,8 @@ fn scan_root(root: &std::path::Path) -> Vec<Template> {
 /// (`default_enabled`) so a DB rebuilt from disk restores the user's last
 /// choice. Best-effort — only chat-authored folders (`user/` namespace) are
 /// ever touched, and failures just log.
-pub fn mirror_enabled_to_manifest(action_id: &str, enabled: bool) {
-    let Some(dir) = dir_for_applet_id(action_id) else {
+pub fn mirror_enabled_to_manifest(applet_id: &str, enabled: bool) {
+    let Some(dir) = dir_for_applet_id(applet_id) else {
         return;
     };
     if !dir.starts_with("user/") {
@@ -541,10 +541,10 @@ pub fn mirror_enabled_to_manifest(action_id: &str, enabled: bool) {
         match toml::to_string_pretty(&doc) {
             Ok(out) => {
                 if let Err(e) = std::fs::write(&path, out) {
-                    tracing::warn!(action_id, error = %e, "enabled mirror write failed");
+                    tracing::warn!(applet_id, error = %e, "enabled mirror write failed");
                 }
             }
-            Err(e) => tracing::warn!(action_id, error = %e, "enabled mirror serialize failed"),
+            Err(e) => tracing::warn!(applet_id, error = %e, "enabled mirror serialize failed"),
         }
     }
 }
@@ -553,14 +553,14 @@ pub fn mirror_enabled_to_manifest(action_id: &str, enabled: bool) {
 /// an action id. Matches the base id (`id_prefix`) and per-credential /
 /// per-device fan-out ids (`<id_prefix>_<anchor>`). Used by the face server
 /// to root static serving at the applet's folder.
-pub fn dir_for_applet_id(action_id: &str) -> Option<String> {
+pub fn dir_for_applet_id(applet_id: &str) -> Option<String> {
     let guard = catalog_lock().read().expect("catalog rwlock poisoned");
     guard
         .action
         .iter()
         .find(|t| {
             t.id_prefix.as_deref().is_some_and(|p| {
-                action_id == p || action_id.strip_prefix(p).is_some_and(|r| r.starts_with('_'))
+                applet_id == p || applet_id.strip_prefix(p).is_some_and(|r| r.starts_with('_'))
             })
         })
         .map(|t| t.dir.clone())
@@ -609,7 +609,7 @@ pub async fn reconcile_templates(db: &PgPool) -> Result<usize> {
     // credential row (OAuth/api actions) or a revoked/absent device (ingest
     // actions). The revoke paths handle this inline, but any state drift
     // (direct SQL, import, bug) leaves orphans. Nullify run FKs first so history
-    // is preserved under `action_id = NULL`.
+    // is preserved under `applet_id = NULL`.
     //
     // Deliberately NOT keyed on credential status: a recoverable blip
     // (`reauth_required`, refresh error) must not destroy the row's operational
@@ -622,8 +622,8 @@ pub async fn reconcile_templates(db: &PgPool) -> Result<usize> {
           OR (device_id IS NOT NULL \
              AND device_id NOT IN (SELECT id FROM app_device WHERE revoked_at IS NULL))";
     let pruned = sqlx::query(&format!(
-        "UPDATE app_applet_runs SET action_id = NULL \
-         WHERE action_id IN (SELECT id FROM app_applets WHERE {ORPHAN_PREDICATE})"
+        "UPDATE app_applet_runs SET applet_id = NULL \
+         WHERE applet_id IN (SELECT id FROM app_applets WHERE {ORPHAN_PREDICATE})"
     ))
     .execute(db)
     .await?
@@ -702,7 +702,7 @@ pub async fn reconcile_templates(db: &PgPool) -> Result<usize> {
 
             if matches!(source.auth, SourceAuth::SelfIssuedBearer) {
                 // Device source (iOS/Mac/sensor): fan out per DEVICE. The device's
-                // allowlisted iroh key authorizes its `/webhook/:action_id` posts,
+                // allowlisted iroh key authorizes its `/webhook/:applet_id` posts,
                 // so the action is anchored on device_id — no credential/bearer.
                 let device_ids: Vec<(String,)> = sqlx::query_as(
                     "SELECT id FROM app_device WHERE source_id = $1 AND revoked_at IS NULL",
@@ -711,9 +711,9 @@ pub async fn reconcile_templates(db: &PgPool) -> Result<usize> {
                 .fetch_all(db)
                 .await?;
                 for (device_id,) in device_ids {
-                    let action_id = format!("{}_{}", id_prefix, device_id);
-                    upsert_row(db, template, &action_id, None, Some(&device_id)).await?;
-                    live_ids.push(action_id);
+                    let applet_id = format!("{}_{}", id_prefix, device_id);
+                    upsert_row(db, template, &applet_id, None, Some(&device_id)).await?;
+                    live_ids.push(applet_id);
                     upserted += 1;
                 }
             } else {
@@ -726,9 +726,9 @@ pub async fn reconcile_templates(db: &PgPool) -> Result<usize> {
                 .fetch_all(db)
                 .await?;
                 for (cred_id,) in credential_ids {
-                    let action_id = format!("{}_{}", id_prefix, cred_id);
-                    upsert_row(db, template, &action_id, Some(&cred_id), None).await?;
-                    live_ids.push(action_id);
+                    let applet_id = format!("{}_{}", id_prefix, cred_id);
+                    upsert_row(db, template, &applet_id, Some(&cred_id), None).await?;
+                    live_ids.push(applet_id);
                     upserted += 1;
                 }
             }
@@ -747,7 +747,7 @@ pub async fn reconcile_templates(db: &PgPool) -> Result<usize> {
     // it. `user`-owned rows are never touched, and the pass is guarded on a
     // non-empty SHIPPED catalog so a load failure can't wipe the table.
     // Run-history FKs are nullified first so history survives under
-    // `action_id = NULL`.
+    // `applet_id = NULL`.
     //
     // The guard keys on the shipped root specifically, NOT on `live_ids`.
     // System rows come only from the shipped tree, so a shipped root that
@@ -757,8 +757,8 @@ pub async fn reconcile_templates(db: &PgPool) -> Result<usize> {
     // shipped tree is briefly unreadable (mid-upgrade, bad mount, bad env).
     if templates.shipped_count > 0 {
         sqlx::query(
-            r#"UPDATE app_applet_runs SET action_id = NULL
-               WHERE action_id IN (
+            r#"UPDATE app_applet_runs SET applet_id = NULL
+               WHERE applet_id IN (
                    SELECT id FROM app_applets
                    WHERE owner = 'system' AND id <> ALL($1::text[])
                )"#,
@@ -791,7 +791,7 @@ pub async fn reconcile_templates(db: &PgPool) -> Result<usize> {
 async fn upsert_row(
     db: &PgPool,
     template: &Template,
-    action_id: &str,
+    applet_id: &str,
     credential_id: Option<&str>,
     device_id: Option<&str>,
 ) -> Result<()> {
@@ -804,7 +804,7 @@ async fn upsert_row(
         other => {
             return Err(Error::Other(format!(
                 "template {} has invalid runtime '{}' (must be function, service, or view)",
-                action_id, other
+                applet_id, other
             )));
         }
     }
@@ -900,7 +900,7 @@ async fn upsert_row(
     };
 
     sqlx::query(sql)
-        .bind(action_id)
+        .bind(applet_id)
         .bind(&template.name)
         .bind(&template.owner)
         .bind(&template.agent)

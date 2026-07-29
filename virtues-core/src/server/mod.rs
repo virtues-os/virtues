@@ -244,8 +244,8 @@ pub async fn run(client: Virtues, host: &str, port: u16) -> Result<()> {
             "/api/face/query",
             post(faces::face_query_handler).options(faces::face_query_preflight),
         )
-        .route("/face/:action_id/", get(faces::face_index_handler))
-        .route("/face/:action_id/*path", get(faces::face_file_handler))
+        .route("/face/:applet_id/", get(faces::face_index_handler))
+        .route("/face/:applet_id/*path", get(faces::face_file_handler))
         // Public page sharing (token-based access, no session needed)
         .route("/api/s/:token", get(api::get_shared_page_handler))
         .route(
@@ -263,10 +263,10 @@ pub async fn run(client: Virtues, host: &str, port: u16) -> Result<()> {
         // handler runs, which historically surfaced as a bogus "no stream
         // selector" action error. See webhook.rs for the rejection handling.
         .route(
-            "/webhook/:action_id",
+            "/webhook/:applet_id",
             post(webhook::webhook).layer(DefaultBodyLimit::max(512 * 1024 * 1024)),
         )
-        // Device re-fetch for stream → action_id map. Used by paired devices
+        // Device re-fetch for stream → applet_id map. Used by paired devices
         // whose Keychain entry predates the webhook unification, or after
         // templates.toml adds a new stream. Same device-token bearer auth as
         // the webhook endpoint.

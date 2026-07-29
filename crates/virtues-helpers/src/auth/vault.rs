@@ -263,7 +263,7 @@ pub async fn mark_credential_status(
 /// Return the per-device fan-out map: `command-name → app_applets.id` for every
 /// ingest action row anchored to this device. The key is `command[0]` (the
 /// action's program name, e.g. `ios_ingest`), which the device uses to route a
-/// flush to `POST /webhook/{action_id}`. All iOS streams share the single
+/// flush to `POST /webhook/{applet_id}`. All iOS streams share the single
 /// `ios_ingest` action and disambiguate via the `stream` field in the body.
 pub async fn fanout_applet_ids(
     db: &PgPool,

@@ -33,7 +33,7 @@ pub struct PairedBox {
     pub device_secret_hex: Option<String>,
     /// Device-anchored webhook action ids from consume, e.g.
     /// `{"ios_ingest": "act_…"}`. The upload coordinator POSTs collector batches
-    /// to `/webhook/{action_id}`. Empty on the desktop (it only proxies).
+    /// to `/webhook/{applet_id}`. Empty on the desktop (it only proxies).
     #[serde(default)]
     pub action_ids: std::collections::HashMap<String, String>,
 }

@@ -1108,18 +1108,18 @@ pub async fn write_env_file(
          VIRTUES_API_URL={api}\n\
          VIRTUES_MODELS_DIR={models_dir}\n\
          VIRTUES_PDFIUM_PATH={pdfium_path}\n\
-         VIRTUES_ACTIONS_DIR={actions_dir}\n\
+         VIRTUES_ACTIONS_DIR={applets_dir}\n\
          VIRTUES_APPLET_STATE_DIR={applet_state_dir}\n\
-         VIRTUES_ACTIONS_BIN_DIR={actions_bin_dir}\n",
+         VIRTUES_ACTIONS_BIN_DIR={applets_bin_dir}\n",
         static_dir = cfg.web_dir().display(),
         pdfium_path = cfg.pdfium_lib_path().display(),
         storage_path = cfg.data_dir.join("lake").display(),
         atlas = cfg.atlas_url,
         api = cfg.virtues_api_url,
         models_dir = cfg.models_dir().display(),
-        actions_dir = cfg.actions_dir().display(),
+        applets_dir = cfg.applets_dir().display(),
         applet_state_dir = cfg.applet_state_dir().display(),
-        actions_bin_dir = cfg.actions_bin_dir().display(),
+        applets_bin_dir = cfg.applets_bin_dir().display(),
     );
     for (k, v) in inference_env_keys(cfg, mode, validation) {
         body.push_str(&format!("{k}={v}\n"));
@@ -1173,9 +1173,9 @@ async fn merge_env_file(
         ("VIRTUES_ATLAS_URL", cfg.atlas_url.clone()),
         ("VIRTUES_API_URL", cfg.virtues_api_url.clone()),
         ("VIRTUES_MODELS_DIR", cfg.models_dir().display().to_string()),
-        ("VIRTUES_ACTIONS_DIR", cfg.actions_dir().display().to_string()),
+        ("VIRTUES_ACTIONS_DIR", cfg.applets_dir().display().to_string()),
         ("VIRTUES_APPLET_STATE_DIR", cfg.applet_state_dir().display().to_string()),
-        ("VIRTUES_ACTIONS_BIN_DIR", cfg.actions_bin_dir().display().to_string()),
+        ("VIRTUES_ACTIONS_BIN_DIR", cfg.applets_bin_dir().display().to_string()),
     ];
     want.extend(inference_env_keys(cfg, mode, validation));
 

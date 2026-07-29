@@ -19,7 +19,7 @@ use crate::types::Timestamp;
 /// Result of a single agent loop run.
 #[derive(Debug, Serialize)]
 pub struct AgentLoopResult {
-    pub action_id: String,
+    pub applet_id: String,
     pub chat_id: Option<String>,
     pub steps: u32,
     pub message: Option<String>,
@@ -38,7 +38,7 @@ pub async fn run_agent_loop(
     prompt: &str,
     context: Option<&str>,
 ) -> Result<AgentLoopResult> {
-    let action_id = &action.id;
+    let applet_id = &action.id;
 
     // Extract optional chat_id and model from config
     let chat_id = action.config.get("chat_id").and_then(|v| v.as_str()).map(|s| s.to_string());
@@ -94,13 +94,13 @@ pub async fn run_agent_loop(
     let tool_context = crate::tools::ToolContext {
         user_id: Some("system".to_string()),
         chat_id: chat_id.clone(),
-        action_id: Some(action_id.to_string()),
+        applet_id: Some(applet_id.to_string()),
         ..Default::default()
     };
 
     let agent_loop = crate::agent::AgentLoop::new_with_yjs(pool.clone(), yjs_state.clone());
 
-    tracing::info!(action_id, model = %model, chat_id = ?chat_id, "Starting action run");
+    tracing::info!(applet_id, model = %model, chat_id = ?chat_id, "Starting action run");
 
     // 7. Consume the event stream
     use futures::StreamExt;
@@ -125,7 +125,7 @@ pub async fn run_agent_loop(
                 step_count = step;
             }
             crate::agent::AgentEvent::Error { message, .. } => {
-                tracing::error!(action_id, error = %message, "Applet run error");
+                tracing::error!(applet_id, error = %message, "Applet run error");
                 if let Some(cid) = &chat_id {
                     let error_msg = ChatMessage {
                         id: None,
@@ -171,10 +171,10 @@ pub async fn run_agent_loop(
         }
     }
 
-    tracing::info!(action_id, steps = step_count, "Applet run complete");
+    tracing::info!(applet_id, steps = step_count, "Applet run complete");
 
     Ok(AgentLoopResult {
-        action_id: action_id.to_string(),
+        applet_id: applet_id.to_string(),
         chat_id,
         steps: step_count,
         message: if assistant_content.is_empty() {

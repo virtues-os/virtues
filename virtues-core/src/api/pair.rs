@@ -915,7 +915,7 @@ pub async fn consume_handler(
 
 /// Reconcile action templates (so per-credential `app_applets` rows are
 /// fanned out) and read back the binary-name → action-id map the device
-/// uses to route stream flushes to `POST /webhook/<action_id>`. Lifted
+/// uses to route stream flushes to `POST /webhook/<applet_id>`. Lifted
 /// out of the legacy `pair_complete_handler` so the unified pair flow
 /// produces identical device-side behavior.
 pub(crate) async fn assemble_applet_fanout(
