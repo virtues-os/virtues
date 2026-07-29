@@ -6,7 +6,7 @@
 //! ```text
 //! virtues_helpers::crypto       AES-256-GCM, HMAC, OAuth state primitives
 //! virtues_helpers::auth         OAuth state signing, proxy exchange, Vault writes
-//! virtues_helpers::contract     ActionInput / ActionOutput wire format
+//! virtues_helpers::contract     AppletInput / AppletOutput wire format
 //! virtues_helpers::db           DB pool from env, batch upsert helpers
 //! virtues_helpers::dedup        SQL builders for batch ON CONFLICT inserts
 //! virtues_helpers::ids          deterministic ID generation, prefix constants
@@ -15,7 +15,7 @@
 //!
 //! Hot-path shortcuts (used by every action binary) are re-exported at
 //! the crate root: `read_input`, `output`, `connect_from_env`,
-//! `ActionInput`, `ActionOutput`.
+//! `AppletInput`, `AppletOutput`.
 //!
 //! # Anti-patterns the lints catch
 //!
@@ -39,6 +39,6 @@ pub mod ios;
 pub mod transport;
 
 // Hot-path re-exports (used by every action subprocess binary).
-pub use contract::{ActionInput, ActionOutput};
+pub use contract::{AppletInput, AppletOutput};
 pub use db::connect_from_env;
 pub use input::{output, output_with_records, read_input};

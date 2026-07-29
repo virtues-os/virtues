@@ -1,7 +1,7 @@
-//! Action + ActionRun models and CRUD operations
+//! Applet + AppletRun models and CRUD operations
 //!
-//! An `Action` is a scheduled unit of work: pure configuration, no runtime
-//! state. An `ActionRun` is one execution of an action with full history.
+//! An `Applet` is a scheduled unit of work: pure configuration, no runtime
+//! state. An `AppletRun` is one execution of an action with full history.
 //!
 //! Behavior is inferred from which fields are populated on the row:
 //! - `command` set  → spawn it (subprocess for `function`, daemon for `service`)
@@ -56,7 +56,7 @@ fn truncate_utf8_bytes(s: &str, max: usize) -> String {
 /// `target/{debug,release}`; anything else (`./x`, `python3`, `node`) runs via
 /// PATH. Same field for both the `function` runner and the `service` supervisor.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
-pub struct Action {
+pub struct Applet {
     pub id: String,
     pub owner: String,
     pub name: String,
@@ -85,7 +85,7 @@ pub struct Action {
 
 /// One execution of an action.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
-pub struct ActionRun {
+pub struct AppletRun {
     pub id: String,
     pub action_id: Option<String>,
     pub status: String,
@@ -101,40 +101,40 @@ pub struct ActionRun {
 }
 
 // ============================================================================
-// Action CRUD
+// Applet CRUD
 // ============================================================================
 
 /// Get all enabled actions.
-pub async fn get_enabled_actions(db: &PgPool) -> Result<Vec<Action>> {
+pub async fn get_enabled_applets(db: &PgPool) -> Result<Vec<Applet>> {
     let rows = sqlx::query("SELECT * FROM app_applets WHERE enabled = TRUE ORDER BY name")
         .fetch_all(db)
         .await?;
 
-    rows.iter().map(action_from_row).collect()
+    rows.iter().map(applet_from_row).collect()
 }
 
 /// Get all actions (for API listing).
-pub async fn get_all_actions(db: &PgPool) -> Result<Vec<Action>> {
+pub async fn get_all_applets(db: &PgPool) -> Result<Vec<Applet>> {
     let rows = sqlx::query("SELECT * FROM app_applets ORDER BY name")
         .fetch_all(db)
         .await?;
 
-    rows.iter().map(action_from_row).collect()
+    rows.iter().map(applet_from_row).collect()
 }
 
 /// Get an action by ID.
-pub async fn get_action(db: &PgPool, action_id: &str) -> Result<Action> {
+pub async fn get_applet(db: &PgPool, action_id: &str) -> Result<Applet> {
     let row = sqlx::query("SELECT * FROM app_applets WHERE id = $1")
         .bind(action_id)
         .fetch_optional(db)
         .await?
-        .ok_or_else(|| Error::NotFound(format!("Action not found: {}", action_id)))?;
+        .ok_or_else(|| Error::NotFound(format!("Applet not found: {}", action_id)))?;
 
-    action_from_row(&row)
+    applet_from_row(&row)
 }
 
 /// Toggle an action's enabled state.
-pub async fn toggle_action(db: &PgPool, action_id: &str, enabled: bool) -> Result<()> {
+pub async fn toggle_applet(db: &PgPool, action_id: &str, enabled: bool) -> Result<()> {
     let affected = sqlx::query("UPDATE app_applets SET enabled = $1 WHERE id = $2")
         .bind(enabled)
         .bind(action_id)
@@ -143,7 +143,7 @@ pub async fn toggle_action(db: &PgPool, action_id: &str, enabled: bool) -> Resul
         .rows_affected();
 
     if affected == 0 {
-        return Err(Error::NotFound(format!("Action not found: {}", action_id)));
+        return Err(Error::NotFound(format!("Applet not found: {}", action_id)));
     }
     Ok(())
 }
@@ -159,7 +159,7 @@ pub async fn update_memory(db: &PgPool, action_id: &str, memory: &str) -> Result
     .await?
     .rows_affected();
     if affected == 0 {
-        return Err(Error::NotFound(format!("Action not found: {}", action_id)));
+        return Err(Error::NotFound(format!("Applet not found: {}", action_id)));
     }
     Ok(())
 }
@@ -172,7 +172,7 @@ pub async fn update_memory(db: &PgPool, action_id: &str, memory: &str) -> Result
 /// Folder + schema teardown live here so BOTH the HTTP delete and the chat
 /// `delete_applet` tool tear down identically (one door). `drop_data` defaults
 /// to keeping data: an applet's tables outlive it unless the user opts in.
-pub async fn delete_action(db: &PgPool, action_id: &str, drop_data: bool) -> Result<()> {
+pub async fn delete_applet(db: &PgPool, action_id: &str, drop_data: bool) -> Result<()> {
     let owner: Option<String> = sqlx::query_scalar("SELECT owner FROM app_applets WHERE id = $1")
         .bind(action_id)
         .fetch_optional(db)
@@ -185,7 +185,7 @@ pub async fn delete_action(db: &PgPool, action_id: &str, drop_data: bool) -> Res
     // folders (under user/) are ours to remove; builtin/imported folders are
     // managed by their own lanes.
     let dir =
-        crate::applet_templates::dir_for_action_id(action_id).filter(|d| d.starts_with("user/"));
+        crate::applet_templates::dir_for_applet_id(action_id).filter(|d| d.starts_with("user/"));
 
     sqlx::query("UPDATE app_applet_runs SET action_id = NULL WHERE action_id = $1")
         .bind(action_id)
@@ -263,7 +263,7 @@ pub const SYSTEM_EDITABLE_FIELDS: &[&str] = &["enabled", "cron_schedule", "confi
 /// Create a new user-owned action. Used by chat tools + the HTTP POST
 /// endpoint. `id` is generated from the name if not provided.
 #[allow(clippy::too_many_arguments)]
-pub async fn create_user_action(
+pub async fn create_user_applet(
     db: &PgPool,
     id: Option<&str>,
     name: &str,
@@ -271,7 +271,7 @@ pub async fn create_user_action(
     cron_schedule: Option<&str>,
     triggers: &[String],
     config: Option<&serde_json::Value>,
-) -> Result<Action> {
+) -> Result<Applet> {
     if name.trim().is_empty() {
         return Err(Error::InvalidInput("name cannot be empty".into()));
     }
@@ -322,7 +322,7 @@ pub async fn create_user_action(
         .await;
 
         match result {
-            Ok(_) => return get_action(db, &action_id).await,
+            Ok(_) => return get_applet(db, &action_id).await,
             Err(sqlx::Error::Database(dbe)) if is_unique_violation(&*dbe) => {
                 if id.is_some() {
                     // Caller supplied an explicit id — don't silently rename.
@@ -355,19 +355,19 @@ fn is_unique_violation(dbe: &dyn sqlx::error::DatabaseError) -> bool {
 ///
 /// Unknown field names are rejected (400). Null values are allowed for
 /// nullable columns (`agent`, `cron_schedule`, `condition`, `memory`).
-pub async fn update_action(
+pub async fn update_applet(
     db: &PgPool,
     action_id: &str,
     patch: &serde_json::Value,
-) -> Result<Action> {
+) -> Result<Applet> {
     let obj = patch
         .as_object()
         .ok_or_else(|| Error::InvalidInput("patch must be a JSON object".into()))?;
     if obj.is_empty() {
-        return get_action(db, action_id).await;
+        return get_applet(db, action_id).await;
     }
 
-    let current = get_action(db, action_id).await?;
+    let current = get_applet(db, action_id).await?;
     let is_system = current.owner == "system";
 
     // Validate every field name up front so we either apply the whole patch
@@ -550,7 +550,7 @@ pub async fn update_action(
         .await
         .map_err(|e| Error::Database(format!("failed to update action: {e}")))?;
     if res.rows_affected() == 0 {
-        return Err(Error::NotFound(format!("Action not found: {action_id}")));
+        return Err(Error::NotFound(format!("Applet not found: {action_id}")));
     }
 
     // Restore fidelity for chat-authored applets: the user's enable/disable
@@ -562,7 +562,7 @@ pub async fn update_action(
         }
     }
 
-    get_action(db, action_id).await
+    get_applet(db, action_id).await
 }
 
 /// Slugify a name into a lowercase `a-z0-9_` identifier suitable for use as
@@ -601,7 +601,7 @@ fn validate_cron(cron: &str) -> Result<()> {
 }
 
 // ============================================================================
-// ActionRun CRUD
+// AppletRun CRUD
 // ============================================================================
 
 /// Create a new run for an action.
@@ -609,7 +609,7 @@ pub async fn create_run(
     db: &PgPool,
     action_id: Option<&str>,
     trigger: &str,
-) -> Result<ActionRun> {
+) -> Result<AppletRun> {
     let run_id = generate_id(
         RUN_PREFIX,
         &[
@@ -654,7 +654,7 @@ pub async fn create_child_run(
     parent_run_id: &str,
     transform_stage: &str,
     trigger: &str,
-) -> Result<ActionRun> {
+) -> Result<AppletRun> {
     let run_id = generate_id(
         RUN_PREFIX,
         &[
@@ -748,7 +748,7 @@ pub async fn has_active_run(db: &PgPool, action_id: &str) -> Result<bool> {
 }
 
 /// Get the most recent run for an action.
-pub async fn last_run(db: &PgPool, action_id: &str) -> Result<Option<ActionRun>> {
+pub async fn last_run(db: &PgPool, action_id: &str) -> Result<Option<AppletRun>> {
     let row = sqlx::query(
         "SELECT * FROM app_applet_runs WHERE action_id = $1 ORDER BY created_at DESC LIMIT 1",
     )
@@ -760,7 +760,7 @@ pub async fn last_run(db: &PgPool, action_id: &str) -> Result<Option<ActionRun>>
 }
 
 /// Get a run by ID.
-pub async fn get_run(db: &PgPool, run_id: &str) -> Result<ActionRun> {
+pub async fn get_run(db: &PgPool, run_id: &str) -> Result<AppletRun> {
     let row = sqlx::query("SELECT * FROM app_applet_runs WHERE id = $1")
         .bind(run_id)
         .fetch_optional(db)
@@ -776,7 +776,7 @@ pub async fn query_runs(
     action_id: Option<&str>,
     status: Option<&str>,
     limit: i64,
-) -> Result<Vec<ActionRun>> {
+) -> Result<Vec<AppletRun>> {
     let rows = sqlx::query(
         r#"SELECT * FROM app_applet_runs
            WHERE ($1 IS NULL OR action_id = $2)
@@ -830,7 +830,7 @@ pub async fn cleanup_stale_runs(db: &PgPool) -> Result<u64> {
 }
 
 /// Get child runs for a parent run.
-pub async fn get_child_runs(db: &PgPool, parent_run_id: &str) -> Result<Vec<ActionRun>> {
+pub async fn get_child_runs(db: &PgPool, parent_run_id: &str) -> Result<Vec<AppletRun>> {
     let rows = sqlx::query(
         "SELECT * FROM app_applet_runs WHERE parent_run_id = $1 ORDER BY created_at ASC",
     )
@@ -845,7 +845,7 @@ pub async fn get_child_runs(db: &PgPool, parent_run_id: &str) -> Result<Vec<Acti
 // Row mapping helpers
 // ============================================================================
 
-pub fn action_from_row(row: &sqlx::postgres::PgRow) -> Result<Action> {
+pub fn applet_from_row(row: &sqlx::postgres::PgRow) -> Result<Applet> {
     let triggers_val: serde_json::Value = row
         .try_get("triggers")
         .unwrap_or_else(|_| serde_json::json!([]));
@@ -862,7 +862,7 @@ pub fn action_from_row(row: &sqlx::postgres::PgRow) -> Result<Action> {
         .as_deref()
         .and_then(|s| serde_json::from_str(s).ok());
 
-    Ok(Action {
+    Ok(Applet {
         id: row.try_get("id")?,
         owner: row.try_get("owner")?,
         name: row.try_get("name")?,
@@ -886,7 +886,7 @@ pub fn action_from_row(row: &sqlx::postgres::PgRow) -> Result<Action> {
 /// Derived display shape — the old `runtime` taxonomy, computed from fields:
 /// no command and no agent ⇒ view (face-only); otherwise function.
 /// Presentation only; nothing executes off this.
-pub fn derived_runtime(a: &Action) -> &'static str {
+pub fn derived_runtime(a: &Applet) -> &'static str {
     if a.command.as_ref().is_none_or(|c| c.is_empty())
         && a.agent.as_deref().is_none_or(|s| s.trim().is_empty())
     {
@@ -899,19 +899,19 @@ pub fn derived_runtime(a: &Action) -> &'static str {
 /// Clear the archived state — used when a user explicitly re-authors a
 /// completed applet (re-arm). Distinct from reconcile, which must NOT
 /// un-archive (that would resurrect completed one-shots on every boot).
-pub async fn unarchive_action(db: &PgPool, action_id: &str) -> Result<()> {
+pub async fn unarchive_applet(db: &PgPool, action_id: &str) -> Result<()> {
     sqlx::query("UPDATE app_applets SET archived_at = NULL WHERE id = $1")
         .bind(action_id)
         .execute(db)
         .await
-        .map_err(|e| Error::Database(format!("unarchive_action failed: {e}")))?;
+        .map_err(|e| Error::Database(format!("unarchive_applet failed: {e}")))?;
     Ok(())
 }
 
 /// Archive an applet whose lifecycle completed: stamp `archived_at` and
 /// disable it (the scheduler only loads `enabled = TRUE`, so an archived
 /// applet stops waking without any scheduler-side special case).
-pub async fn archive_action(db: &PgPool, action_id: &str) -> Result<()> {
+pub async fn archive_applet(db: &PgPool, action_id: &str) -> Result<()> {
     sqlx::query(
         "UPDATE app_applets SET archived_at = now(), enabled = FALSE \
          WHERE id = $1 AND archived_at IS NULL",
@@ -919,12 +919,12 @@ pub async fn archive_action(db: &PgPool, action_id: &str) -> Result<()> {
     .bind(action_id)
     .execute(db)
     .await
-    .map_err(|e| Error::Database(format!("archive_action failed: {e}")))?;
+    .map_err(|e| Error::Database(format!("archive_applet failed: {e}")))?;
     Ok(())
 }
 
-fn run_from_row(row: &sqlx::postgres::PgRow) -> Result<ActionRun> {
-    Ok(ActionRun {
+fn run_from_row(row: &sqlx::postgres::PgRow) -> Result<AppletRun> {
+    Ok(AppletRun {
         id: row.try_get("id")?,
         action_id: row.try_get("action_id")?,
         status: row.try_get("status")?,

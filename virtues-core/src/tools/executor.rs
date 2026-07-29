@@ -55,7 +55,7 @@ pub struct ToolContext {
     pub scope_mode: crate::search::ScopeMode,
     /// Chat ID (for permission checking)
     pub chat_id: Option<String>,
-    /// Action ID (set when running as an action — for action memory tool)
+    /// Applet ID (set when running as an action — for action memory tool)
     pub action_id: Option<String>,
     /// Side-channel for streaming Deep Research subagent status to the live panel.
     /// Set by the chat handler; `None` for headless/action runs.
@@ -162,7 +162,7 @@ impl ToolExecutor {
     }
 
     /// Create a new tool executor with YjsState for real-time page editing
-    /// and action dispatch (required by the `run_action` tool).
+    /// and action dispatch (required by the `run_applet` tool).
     pub fn new_with_yjs(pool: PgPool, yjs_state: YjsState) -> Self {
         let pool = Arc::new(pool);
         Self {
@@ -184,7 +184,7 @@ impl ToolExecutor {
     /// destroy something or take a real-world / outbound action. Everything else runs freely
     /// (reversible, local). The free/gated split is the whole permission model.
     const PERMISSION_REQUIRED: &'static [&'static str] =
-        &["run_applet", "delete_applet", "run_action", "delete_action"];
+        &["run_applet", "delete_applet", "run_applet", "delete_applet"];
 
     /// If `tool_name` is gated and the user hasn't granted it for this chat, return a
     /// `permission_needed` result (the frontend then shows an inline allow/deny prompt and
@@ -221,7 +221,7 @@ impl ToolExecutor {
             return Ok(None);
         }
 
-        let title = crate::scheduler::applets::get_action(self._pool.as_ref(), action_id)
+        let title = crate::scheduler::applets::get_applet(self._pool.as_ref(), action_id)
             .await
             .map(|a| a.name)
             .unwrap_or_else(|_| "this action".to_string());
@@ -278,22 +278,22 @@ impl ToolExecutor {
             "create_page" => self.page_editor.create_page(arguments).await,
             "get_page_content" => self.page_editor.get_page_content(arguments, context).await,
             "edit_page" => self.page_editor.edit_page(arguments, context).await,
-            // Action setup
+            // Applet setup
             "setup_applet" | "setup_action" => super::applet_setup::execute(&self._pool, arguments, context).await,
-            // Action memory (persistent scratchpad for actions across runs)
-            "update_applet_memory" | "update_action_memory" => self.execute_update_action_memory(arguments, context).await,
-            // Action management — list / get / edit / delete / run
-            "list_applets" | "list_actions" => super::applet_management::list_actions(&self._pool, arguments).await,
-            "get_applet" | "get_action" => super::applet_management::get_action(&self._pool, arguments).await,
-            "edit_applet" | "edit_action" => super::applet_management::edit_action(&self._pool, arguments).await,
-            "delete_applet" | "delete_action" => super::applet_management::delete_action(&self._pool, arguments).await,
-            "run_applet" | "run_action" => {
+            // Applet memory (persistent scratchpad for actions across runs)
+            "update_applet_memory" | "update_action_memory" => self.execute_update_applet_memory(arguments, context).await,
+            // Applet management — list / get / edit / delete / run
+            "list_applets" | "list_applets" => super::applet_management::list_applets(&self._pool, arguments).await,
+            "get_applet" | "get_applet" => super::applet_management::get_applet(&self._pool, arguments).await,
+            "edit_applet" | "edit_applet" => super::applet_management::edit_applet(&self._pool, arguments).await,
+            "delete_applet" | "delete_applet" => super::applet_management::delete_applet(&self._pool, arguments).await,
+            "run_applet" | "run_applet" => {
                 let yjs = self.yjs_state.as_ref().ok_or_else(|| {
                     ToolError::ExecutionFailed(
-                        "run_action tool requires YjsState — executor constructed without it".into(),
+                        "run_applet tool requires YjsState — executor constructed without it".into(),
                     )
                 })?;
-                super::applet_management::run_action(&self._pool, yjs, arguments, context).await
+                super::applet_management::run_applet(&self._pool, yjs, arguments, context).await
             }
             // Dayline event CRUD (used by hourly/EOD actions)
             "dayline_event" => super::dayline_events::execute(&self._pool, arguments, context).await,
@@ -410,7 +410,7 @@ impl ToolExecutor {
 
     /// Update an action's persistent memory (markdown scratchpad across runs).
     /// Only works when called from an action context (chat_id must map to an action).
-    async fn execute_update_action_memory(
+    async fn execute_update_applet_memory(
         &self,
         arguments: serde_json::Value,
         context: &ToolContext,

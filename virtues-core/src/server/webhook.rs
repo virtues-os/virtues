@@ -9,7 +9,7 @@
 //! actions anchored to IT (`app_applets.device_id`); the on-box console
 //! (loopback) may drive any action.
 //!
-//! The unified `applet_runner::run_action` enforces trigger validation,
+//! The unified `applet_runner::run_applet` enforces trigger validation,
 //! condition evaluation, and dispatch. This handler only does auth + routing.
 
 use std::sync::Arc;
@@ -22,7 +22,7 @@ use axum::{
 use serde::Serialize;
 use serde_json::Value;
 
-use crate::applet_runner::{ActionRunStatus, RunnerDeps};
+use crate::applet_runner::{AppletRunStatus, RunnerDeps};
 use crate::api::chat::ChatCancellationState;
 use crate::database::Database;
 use crate::middleware::auth::AuthUser;
@@ -70,7 +70,7 @@ impl axum::extract::FromRef<AppState> for ChatCancellationState {
 /// 2. Fetch action → 404 if missing.
 /// 3. Ownership: the proven device must own the action (`app_applets.device_id`);
 ///    the on-box console may drive any action → 403 otherwise.
-/// 4. Dispatch via `run_action(.., "webhook", payload)`.
+/// 4. Dispatch via `run_applet(.., "webhook", payload)`.
 pub async fn webhook(
     State(state): State<AppState>,
     Path(action_id): Path<String>,
@@ -147,7 +147,7 @@ pub async fn webhook(
     // console). Confirm the action exists, then that this device owns it.
     tracing::debug!(device_id = %user.device_id, action_id = %action_id, "webhook authed by proven key");
 
-    if crate::scheduler::applets::get_action(state.db.pool(), &action_id)
+    if crate::scheduler::applets::get_applet(state.db.pool(), &action_id)
         .await
         .is_err()
     {
@@ -191,9 +191,9 @@ pub async fn webhook(
         yjs: state.yjs_state.clone(),
     };
 
-    match crate::applet_runner::run_action(&deps, &action_id, "webhook", Some(&body)).await {
+    match crate::applet_runner::run_applet(&deps, &action_id, "webhook", Some(&body)).await {
         Ok(result) => match result.status {
-            ActionRunStatus::Success => (
+            AppletRunStatus::Success => (
                 StatusCode::OK,
                 Json(WebhookResponse {
                     run_id: result.run_id,
@@ -208,7 +208,7 @@ pub async fn webhook(
             // 409 so the client keeps the records and resends on the next
             // cycle. `skipped` is not a 5xx, so it never trips the device's
             // server-error circuit breaker.
-            ActionRunStatus::Skipped => (
+            AppletRunStatus::Skipped => (
                 StatusCode::CONFLICT,
                 Json(WebhookResponse {
                     run_id: result.run_id,
@@ -216,19 +216,19 @@ pub async fn webhook(
                 }),
             )
                 .into_response(),
-            ActionRunStatus::Forbidden => (
+            AppletRunStatus::Forbidden => (
                 StatusCode::FORBIDDEN,
                 Json(serde_json::json!({
                     "error": result.error.unwrap_or_else(|| "webhook trigger not allowed".into()),
                 })),
             )
                 .into_response(),
-            ActionRunStatus::NotFound => (
+            AppletRunStatus::NotFound => (
                 StatusCode::NOT_FOUND,
                 Json(serde_json::json!({ "error": "action disabled or not found" })),
             )
                 .into_response(),
-            ActionRunStatus::Failed => (
+            AppletRunStatus::Failed => (
                 StatusCode::INTERNAL_SERVER_ERROR,
                 Json(serde_json::json!({
                     "error": "webhook action failed",
@@ -237,9 +237,9 @@ pub async fn webhook(
                 })),
             )
                 .into_response(),
-            // Webhook dispatch awaits via `run_action`, never `_detached`,
+            // Webhook dispatch awaits via `run_applet`, never `_detached`,
             // so this arm is unreachable in practice.
-            ActionRunStatus::Running => (
+            AppletRunStatus::Running => (
                 StatusCode::ACCEPTED,
                 Json(WebhookResponse {
                     run_id: result.run_id,

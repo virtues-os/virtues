@@ -15,7 +15,7 @@ pub use proxy::{proxy_exchange, proxy_refresh, proxy_url, ProxyExchangeResponse}
 pub use refresh::{ensure_fresh, RefreshOutcome};
 pub use state::{sign_oauth_state, verify_oauth_state};
 pub use vault::{
-    fanout_action_ids, finalize_apikey_credential, finalize_credential, mark_credential_status,
+    fanout_applet_ids, finalize_apikey_credential, finalize_credential, mark_credential_status,
     mint_pending_credential, read_credential_secrets, update_credential_secrets,
     CredentialStatus,
 };

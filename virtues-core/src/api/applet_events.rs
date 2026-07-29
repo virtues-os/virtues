@@ -1,12 +1,12 @@
-//! Action Event Broadcasting
+//! Applet Event Broadcasting
 //!
 //! Provides a persistent SSE channel for real-time action event updates.
 //! Follows the same pattern as ChatCancellationState — per-chat broadcast channels
 //! stored in an Arc<RwLock<HashMap>>.
 //!
 //! Architecture:
-//! - `ActionBroadcastState` holds broadcast::Sender per chat_id
-//! - `run_action()` sends AgentEvents to the broadcast channel
+//! - `AppletBroadcastState` holds broadcast::Sender per chat_id
+//! - `run_applet()` sends AgentEvents to the broadcast channel
 //! - `GET /api/chats/{id}/action/events` subscribes to the channel via SSE
 
 use std::collections::HashMap;
@@ -35,11 +35,11 @@ const BROADCAST_CAPACITY: usize = 256;
 /// can listen to the same channel. Channels are created lazily and cleaned up
 /// when the last sender is dropped (no active action run).
 #[derive(Clone, Default)]
-pub struct ActionBroadcastState {
+pub struct AppletBroadcastState {
     channels: Arc<std::sync::RwLock<HashMap<String, broadcast::Sender<AgentEvent>>>>,
 }
 
-impl ActionBroadcastState {
+impl AppletBroadcastState {
     pub fn new() -> Self {
         Self {
             channels: Arc::new(std::sync::RwLock::new(HashMap::new())),
@@ -47,7 +47,7 @@ impl ActionBroadcastState {
     }
 
     /// Get or create a broadcast sender for a chat.
-    /// Called by `run_action()` to broadcast events.
+    /// Called by `run_applet()` to broadcast events.
     pub fn get_or_create(&self, chat_id: &str) -> broadcast::Sender<AgentEvent> {
         // Try read lock first
         {
@@ -105,8 +105,8 @@ impl ActionBroadcastState {
 /// Subscribes to the action event broadcast channel for a chat and streams
 /// events as SSE. The connection stays open until the client disconnects
 /// or the action run completes (Done/Error event).
-pub async fn subscribe_action_events(
-    State(broadcast_state): State<ActionBroadcastState>,
+pub async fn subscribe_applet_events(
+    State(broadcast_state): State<AppletBroadcastState>,
     Path(chat_id): Path<String>,
     _user: AuthUser,
 ) -> Sse<impl Stream<Item = Result<SseEvent, Infallible>>> {

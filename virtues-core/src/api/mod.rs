@@ -1,6 +1,6 @@
 //! Library-level API functions.
 
-pub mod action_events;
+pub mod applet_events;
 pub mod annotations;
 pub mod ai_calls;
 pub mod ai_complete;

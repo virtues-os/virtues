@@ -43,11 +43,11 @@ pub struct ImportOutcome {
     pub slug: String,
     /// Resolved commit SHA after fetch.
     pub commit: Option<String>,
-    /// Action ids newly inserted by this import.
+    /// Applet ids newly inserted by this import.
     pub added: Vec<String>,
-    /// Action ids that already existed under this slug and were re-upserted.
+    /// Applet ids that already existed under this slug and were re-upserted.
     pub updated: Vec<String>,
-    /// Action ids that disappeared from the repo since the last import; their
+    /// Applet ids that disappeared from the repo since the last import; their
     /// rows are deleted (run history preserved via FK nullification).
     pub removed: Vec<String>,
 }
@@ -218,7 +218,7 @@ async fn clone_or_update(target: &Path, url: &str, git_ref: &str) -> Result<()> 
             )));
         }
         run_git(
-            &actions_root_buf(),
+            &applets_root_buf(),
             &[
                 "clone",
                 "--depth",
@@ -284,7 +284,7 @@ async fn run_git(cwd: &Path, args: &[&str]) -> Result<()> {
     Ok(())
 }
 
-fn actions_root_buf() -> PathBuf {
+fn applets_root_buf() -> PathBuf {
     applet_templates::state_root()
 }
 

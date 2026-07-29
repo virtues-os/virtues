@@ -31,7 +31,7 @@ use serde::{Deserialize, Serialize};
 
 /// Input piped to the action subprocess via stdin.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ActionInput {
+pub struct AppletInput {
     /// Settings + code-managed state from `app_applets.config`.
     pub config: serde_json::Value,
 
@@ -46,7 +46,7 @@ pub struct ActionInput {
     pub payload: Option<serde_json::Value>,
 }
 
-impl ActionInput {
+impl AppletInput {
     pub fn new(config: serde_json::Value) -> Self {
         Self {
             config,
@@ -68,7 +68,7 @@ impl ActionInput {
 
 /// Output written to stdout as a single JSON object.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ActionOutput {
+pub struct AppletOutput {
     /// One-line summary of what the action did.
     pub result: String,
     /// Updated config to persist back into `app_applets.config`.
@@ -80,7 +80,7 @@ pub struct ActionOutput {
     pub records: i64,
 }
 
-impl ActionOutput {
+impl AppletOutput {
     pub fn new(result: impl Into<String>, config: serde_json::Value) -> Self {
         Self {
             result: result.into(),
@@ -103,12 +103,12 @@ mod tests {
 
     #[test]
     fn input_round_trip() {
-        let input = ActionInput::new(json!({"sync_token": "abc"}))
+        let input = AppletInput::new(json!({"sync_token": "abc"}))
             .with_credentials(json!({"secrets": {"token": "x"}}))
             .with_payload(json!({"records": [1, 2, 3]}));
 
         let serialized = serde_json::to_string(&input).unwrap();
-        let parsed: ActionInput = serde_json::from_str(&serialized).unwrap();
+        let parsed: AppletInput = serde_json::from_str(&serialized).unwrap();
 
         assert_eq!(parsed.config["sync_token"], "abc");
         assert!(parsed.credentials.is_some());
@@ -117,7 +117,7 @@ mod tests {
 
     #[test]
     fn input_skips_none_fields() {
-        let input = ActionInput::new(json!({"a": 1}));
+        let input = AppletInput::new(json!({"a": 1}));
         let serialized = serde_json::to_string(&input).unwrap();
         assert!(!serialized.contains("credentials"));
         assert!(!serialized.contains("payload"));
@@ -126,16 +126,16 @@ mod tests {
     #[test]
     fn input_accepts_missing_optional_fields() {
         let json = r#"{"config": {"x": 1}}"#;
-        let parsed: ActionInput = serde_json::from_str(json).unwrap();
+        let parsed: AppletInput = serde_json::from_str(json).unwrap();
         assert!(parsed.credentials.is_none());
         assert!(parsed.payload.is_none());
     }
 
     #[test]
     fn output_round_trip() {
-        let out = ActionOutput::new("synced 5 events", json!({"sync_token": "xyz"}));
+        let out = AppletOutput::new("synced 5 events", json!({"sync_token": "xyz"}));
         let serialized = serde_json::to_string(&out).unwrap();
-        let parsed: ActionOutput = serde_json::from_str(&serialized).unwrap();
+        let parsed: AppletOutput = serde_json::from_str(&serialized).unwrap();
         assert_eq!(parsed.result, "synced 5 events");
         assert_eq!(parsed.config["sync_token"], "xyz");
     }

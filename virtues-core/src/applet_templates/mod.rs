@@ -1,4 +1,4 @@
-//! Action template loader, source catalog, and reconciler.
+//! Applet template loader, source catalog, and reconciler.
 //!
 //! Two on-disk inputs:
 //!
@@ -108,8 +108,8 @@ struct Template {
     source: Option<SourceRef>,
     /// Runtime contract — how the action executes.
     ///
-    /// - `function` (default) — fork-per-trigger CLI; reads `ActionInput` JSON
-    ///   from stdin, writes `ActionOutput` JSON to stdout, exits.
+    /// - `function` (default) — fork-per-trigger CLI; reads `AppletInput` JSON
+    ///   from stdin, writes `AppletOutput` JSON to stdout, exits.
     /// - `view` — pure Svelte component; never invoked server-side. The
     ///   runner skips `view` actions; the scheduler refuses to enqueue them.
     #[serde(default = "default_runtime")]
@@ -381,10 +381,10 @@ fn parse_template(manifest_path: &std::path::Path, dir: &str) -> Option<Template
 }
 
 fn load_catalog() -> ParsedTemplates {
-    let actions_dir = shipped_root();
+    let applets_dir = shipped_root();
 
     // 1. Sources — prefer on-disk; fall back to baked.
-    let sources_path = actions_dir.join("sources.toml");
+    let sources_path = applets_dir.join("sources.toml");
     let sources_doc: ParsedTemplates = match std::fs::read_to_string(&sources_path) {
         Ok(text) => toml::from_str(&text).unwrap_or_else(|e| {
             panic!("failed to parse {}: {e}", sources_path.display())
@@ -419,7 +419,7 @@ fn load_catalog() -> ParsedTemplates {
     // Both roots, shipped first: the state root's entries override shipped
     // ones with the same `dir`, so an authored applet shadows a system applet
     // of that name and deleting it reverts to shipped.
-    let mut actions = scan_root(&actions_dir);
+    let mut actions = scan_root(&applets_dir);
     let shipped_count = actions.len();
     for t in scan_root(&state_root()) {
         match actions.iter().position(|e| e.dir == t.dir) {
@@ -523,7 +523,7 @@ fn scan_root(root: &std::path::Path) -> Vec<Template> {
 /// choice. Best-effort — only chat-authored folders (`user/` namespace) are
 /// ever touched, and failures just log.
 pub fn mirror_enabled_to_manifest(action_id: &str, enabled: bool) {
-    let Some(dir) = dir_for_action_id(action_id) else {
+    let Some(dir) = dir_for_applet_id(action_id) else {
         return;
     };
     if !dir.starts_with("user/") {
@@ -553,7 +553,7 @@ pub fn mirror_enabled_to_manifest(action_id: &str, enabled: bool) {
 /// an action id. Matches the base id (`id_prefix`) and per-credential /
 /// per-device fan-out ids (`<id_prefix>_<anchor>`). Used by the face server
 /// to root static serving at the applet's folder.
-pub fn dir_for_action_id(action_id: &str) -> Option<String> {
+pub fn dir_for_applet_id(action_id: &str) -> Option<String> {
     let guard = catalog_lock().read().expect("catalog rwlock poisoned");
     guard
         .action
@@ -1038,7 +1038,7 @@ mod tests {
     }
 
     #[test]
-    fn every_per_credential_action_references_known_source() {
+    fn every_per_credential_applet_references_known_source() {
         let snapshot: ParsedTemplates = {
             let guard = catalog_lock().read().expect("catalog rwlock poisoned");
             guard.clone()
@@ -1068,10 +1068,10 @@ mod tests {
         // it and `per_credential` validation will fail. This test scans every
         // per-folder manifest + sources.toml for the offending substring.
         let core_manifest = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-        let actions_dir = core_manifest.join(ACTIONS_DIR_FROM_CORE);
+        let applets_dir = core_manifest.join(ACTIONS_DIR_FROM_CORE);
 
         // Sources file
-        if let Ok(text) = std::fs::read_to_string(actions_dir.join("sources.toml")) {
+        if let Ok(text) = std::fs::read_to_string(applets_dir.join("sources.toml")) {
             assert!(
                 !text.contains("connector = {"),
                 "sources.toml still references legacy `connector = {{ id = ... }}` field"
@@ -1079,7 +1079,7 @@ mod tests {
         }
 
         // Per-action manifests
-        if let Ok(entries) = std::fs::read_dir(&actions_dir) {
+        if let Ok(entries) = std::fs::read_dir(&applets_dir) {
             for entry in entries.flatten() {
                 let path = entry.path();
                 let manifest = path.join("manifest.toml");
