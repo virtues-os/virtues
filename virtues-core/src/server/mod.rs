@@ -609,6 +609,10 @@ pub async fn run(client: Virtues, host: &str, port: u16) -> Result<()> {
             get(api::wiki_entity_records_handler),
         )
         .route(
+            "/api/wiki/entity/:id/records/facets",
+            get(api::wiki_entity_record_facets_handler),
+        )
+        .route(
             "/api/wiki/day/:date",
             get(api::wiki_get_day_handler).put(api::wiki_update_day_handler),
         )

@@ -419,21 +419,59 @@ export interface EntityRecordApi {
 	continuous: boolean;
 }
 
-export async function getEntityRecords(
+export interface EntityRecordsPageApi {
+	items: EntityRecordApi[];
+	total: number;
+}
+
+/** Per-raw-source_type counts across ALL of an entity's records. */
+export interface EntityRecordFacetApi {
+	source_type: string;
+	count: number;
+	continuous: boolean;
+}
+
+export async function getEntityRecordsPage(
 	entityId: string,
+	opts: {
+		offset: number;
+		limit: number;
+		search?: string;
+		/** Raw source_types to include; empty = all. */
+		types?: string[];
+		dir?: "asc" | "desc";
+	},
 	fetchFn: FetchFn = fetch
-): Promise<EntityRecordApi[]> {
+): Promise<EntityRecordsPageApi> {
+	const params = new URLSearchParams();
+	params.set("offset", String(opts.offset));
+	params.set("limit", String(opts.limit));
+	if (opts.search) params.set("search", opts.search);
+	if (opts.types?.length) params.set("types", opts.types.join(","));
+	if (opts.dir) params.set("dir", opts.dir);
 	// no-store: this endpoint predates some deployed boxes, whose SPA fallback
 	// used to answer unknown /api paths with cacheable HTML — never let a
 	// poisoned cache entry shadow the real data.
 	const res = await fetchFn(
-		`/api/wiki/entity/${encodeURIComponent(entityId)}/records`,
+		`/api/wiki/entity/${encodeURIComponent(entityId)}/records?${params}`,
 		{ cache: "no-store" }
 	);
 	if (!res.ok) {
 		// A server error is not an empty history — let the caller show it.
 		throw new Error(`Failed to load entity records (${res.status})`);
 	}
+	return res.json();
+}
+
+export async function getEntityRecordFacets(
+	entityId: string,
+	fetchFn: FetchFn = fetch
+): Promise<EntityRecordFacetApi[]> {
+	const res = await fetchFn(
+		`/api/wiki/entity/${encodeURIComponent(entityId)}/records/facets`,
+		{ cache: "no-store" }
+	);
+	if (!res.ok) return [];
 	return res.json();
 }
 

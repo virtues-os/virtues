@@ -3,18 +3,26 @@
 
 	The entity page's evidence feed: every raw record that references this
 	entity (via wiki_entity_refs), newest first — the CRM view of a
-	relationship. Ontology chips filter; the grid pages.
+	relationship. Server-paginated: the grid holds one page; search, paging
+	and the ontology chips all travel to the box as a query, so an entity
+	with a hundred thousand records costs one page at a time.
 
-	Chips are keyed by DISPLAY name with a set of member source_types, so two
-	backend types that collapse to one label ("message:imessage" +
-	"message:sms" → Messages) make one chip, not two.
+	Chips come from a dedicated facets endpoint (counting loaded rows would
+	lie once the grid stopped loading everything), keyed by DISPLAY name with
+	a set of member raw source_types — "message:imessage" + "message:sms"
+	make one Messages chip, not two.
 -->
 
 <script lang="ts">
 	import UniversalDataGrid, {
 		type Column,
 	} from '$lib/components/datagrid/UniversalDataGrid.svelte';
-	import { getEntityRecords, type EntityRecordApi } from '$lib/wiki/api';
+	import type { GridQuery, GridPage } from '$lib/components/datagrid/types';
+	import {
+		getEntityRecordsPage,
+		getEntityRecordFacets,
+		type EntityRecordApi,
+	} from '$lib/wiki/api';
 	import { getOntologyName } from '$lib/wiki/ontology';
 
 	interface Props {
@@ -25,54 +33,42 @@
 
 	type RecordRow = EntityRecordApi;
 
-	let records = $state<EntityRecordApi[]>([]);
-	let loading = $state(true);
-	let error = $state<string | null>(null);
-
-	$effect(() => {
-		const id = entityId;
-		loading = true;
-		error = null;
-		getEntityRecords(id)
-			.then((r) => {
-				records = r;
-			})
-			.catch((e) => {
-				error = e instanceof Error ? e.message : 'Failed to load records';
-			})
-			.finally(() => {
-				loading = false;
-			});
-	});
-
 	// One chip per display name, carrying every raw source_type it covers.
 	interface Chip {
 		name: string;
-		types: Set<string>;
+		types: string[];
 		count: number;
 		continuous: boolean;
 	}
 
-	const chips = $derived.by(() => {
-		const byName = new Map<string, Chip>();
-		for (const r of records) {
-			const name = getOntologyName(r.source_type);
-			let chip = byName.get(name);
-			if (!chip) {
-				chip = { name, types: new Set(), count: 0, continuous: r.continuous };
-				byName.set(name, chip);
-			}
-			chip.types.add(r.source_type);
-			chip.count += 1;
-			chip.continuous = chip.continuous && r.continuous;
-		}
-		return [...byName.values()].sort((a, b) => a.name.localeCompare(b.name));
-	});
-
+	let chips = $state<Chip[]>([]);
+	let facetsLoaded = $state(false);
 	// Discrete streams on by default, continuous measurement streams off.
 	let activeNames = $state<Set<string>>(new Set());
+
 	$effect(() => {
-		activeNames = new Set(chips.filter((c) => !c.continuous).map((c) => c.name));
+		const id = entityId;
+		facetsLoaded = false;
+		getEntityRecordFacets(id)
+			.then((facets) => {
+				const byName = new Map<string, Chip>();
+				for (const f of facets) {
+					const name = getOntologyName(f.source_type);
+					let chip = byName.get(name);
+					if (!chip) {
+						chip = { name, types: [], count: 0, continuous: f.continuous };
+						byName.set(name, chip);
+					}
+					chip.types.push(f.source_type);
+					chip.count += f.count;
+					chip.continuous = chip.continuous && f.continuous;
+				}
+				chips = [...byName.values()].sort((a, b) => a.name.localeCompare(b.name));
+				activeNames = new Set(chips.filter((c) => !c.continuous).map((c) => c.name));
+			})
+			.finally(() => {
+				facetsLoaded = true;
+			});
 	});
 
 	function toggleChip(name: string) {
@@ -82,12 +78,37 @@
 		activeNames = next;
 	}
 
-	// Grid rows need a unique id; a record id can repeat across ontologies.
-	const visibleRows = $derived<RecordRow[]>(
-		records
-			.filter((r) => activeNames.has(getOntologyName(r.source_type)))
-			.map((r) => ({ ...r, id: `${r.source_type}:${r.id}` }))
+	/** The raw source_types the active chips cover, stable-sorted. */
+	const activeTypes = $derived(
+		chips
+			.filter((c) => activeNames.has(c.name))
+			.flatMap((c) => c.types)
+			.sort()
 	);
+
+	/** Everything on: no narrowing needed — send the empty allowlist. */
+	const allOn = $derived(chips.length > 0 && activeNames.size === chips.length);
+
+	// Part of the grid's cache key: a different entity or chip set is a
+	// different result set, never a cache hit.
+	const serverExtra = $derived({ entity: entityId, types: allOn ? [] : activeTypes });
+
+	async function fetchPage(q: GridQuery): Promise<GridPage<RecordRow>> {
+		const page = await getEntityRecordsPage(entityId, {
+			offset: q.offset,
+			limit: q.limit,
+			search: q.search || undefined,
+			types: allOn ? undefined : activeTypes,
+			// "When" is the only server-sortable column; anything else stays
+			// newest-first.
+			dir: q.sort?.key === 'timestamp' && q.sort.dir === 'asc' ? 'asc' : 'desc',
+		});
+		return {
+			// Grid rows need a unique id; a record id can repeat across ontologies.
+			items: page.items.map((r) => ({ ...r, id: `${r.source_type}:${r.id}` })),
+			total: page.total,
+		};
+	}
 
 	function formatWhen(iso: string): string {
 		const d = new Date(iso);
@@ -112,6 +133,7 @@
 			icon: 'ri:database-2-line',
 			width: '10rem',
 			getValue: (item) => getOntologyName(item.source_type),
+			sortable: false,
 		},
 		{
 			key: 'role',
@@ -120,17 +142,20 @@
 			width: '6.5rem',
 			hideOnMobile: true,
 			getValue: (item) => item.role ?? '—',
+			sortable: false,
 		},
 		{
 			key: 'label',
 			label: 'Description',
 			icon: 'ri:file-text-line',
+			sortable: false,
 		},
 		{
 			key: 'preview',
 			label: 'Detail',
 			icon: 'ri:information-line',
 			hideOnMobile: true,
+			sortable: false,
 		},
 	];
 </script>
@@ -152,18 +177,20 @@
 		</div>
 	{/if}
 
-	<UniversalDataGrid
-		items={visibleRows}
-		{columns}
-		entityType="entity-records"
-		{loading}
-		{error}
-		pageSize={10}
-		emptyIcon="ri:database-2-line"
-		emptyMessage="No records reference this entity yet"
-		loadingMessage="Reading the record..."
-		searchPlaceholder="Filter records..."
-	/>
+	{#if facetsLoaded}
+		<UniversalDataGrid
+			items={[]}
+			{columns}
+			entityType="entity-records"
+			server={fetchPage}
+			{serverExtra}
+			pageSize={10}
+			emptyIcon="ri:database-2-line"
+			emptyMessage="No records reference this entity yet"
+			loadingMessage="Reading the record..."
+			searchPlaceholder="Filter records..."
+		/>
+	{/if}
 </div>
 
 <style>

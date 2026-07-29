@@ -1778,12 +1778,52 @@ pub async fn wiki_on_this_day_handler(
     api_response(crate::api::on_this_day(state.db.pool(), date).await)
 }
 
-/// All raw records linked to an entity (the entity page's evidence feed)
+#[derive(Deserialize)]
+pub struct EntityRecordsQuery {
+    pub offset: Option<i64>,
+    pub limit: Option<i64>,
+    pub search: Option<String>,
+    /// Comma-separated raw source_types to include (empty/absent = all).
+    pub types: Option<String>,
+    /// "asc" for oldest-first; anything else is newest-first.
+    pub dir: Option<String>,
+}
+
+/// One page of the records linked to an entity (the entity page's evidence feed)
 pub async fn wiki_entity_records_handler(
     State(state): State<AppState>,
     Path(id): Path<String>,
+    Query(q): Query<EntityRecordsQuery>,
 ) -> Response {
-    api_response(crate::api::get_entity_records(state.db.pool(), &id).await)
+    let types: Vec<String> = q
+        .types
+        .as_deref()
+        .unwrap_or("")
+        .split(',')
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(String::from)
+        .collect();
+    api_response(
+        crate::api::get_entity_records_page(
+            state.db.pool(),
+            &id,
+            q.offset.unwrap_or(0),
+            q.limit.unwrap_or(10),
+            q.search.as_deref().unwrap_or(""),
+            &types,
+            q.dir.as_deref() != Some("asc"),
+        )
+        .await,
+    )
+}
+
+/// Facet counts over all of an entity's records, for the chip rail
+pub async fn wiki_entity_record_facets_handler(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> Response {
+    api_response(crate::api::get_entity_record_facets(state.db.pool(), &id).await)
 }
 
 // =============================================================================

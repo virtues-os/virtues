@@ -2090,19 +2090,35 @@ pub struct EntityRecord {
     pub continuous: bool,
 }
 
-/// Newest-first cap per source table. An entity page is a reading surface, not
-/// an export: a top correspondent can hold tens of thousands of message refs,
-/// and the grid pages client-side. The cap is per-table so one chatty ontology
-/// can't crowd out the others; hitting it logs loudly rather than lying.
-const ENTITY_RECORDS_PER_TABLE_LIMIT: usize = 500;
+/// One page of an entity's records, plus the true total for the query — the
+/// server half of the grid's server-side pagination.
+#[derive(Debug, Serialize)]
+pub struct EntityRecordsPage {
+    pub items: Vec<EntityRecord>,
+    pub total: i64,
+}
 
-/// All records linked to an entity, newest first (registry-driven).
+/// Per-raw-source_type counts across ALL of an entity's records, for the chip
+/// rail. Computed server-side because the grid only ever holds one page —
+/// chips counted from loaded rows would lie.
+#[derive(Debug, Serialize)]
+pub struct EntityRecordFacet {
+    pub source_type: String,
+    pub count: i64,
+    pub continuous: bool,
+}
+
+/// Requests can't ask for unbounded pages.
+const ENTITY_RECORDS_MAX_LIMIT: i64 = 100;
+
+/// Build the UNION ALL body over every source table holding refs for this
+/// entity, each subquery rendered with its ontology's `DaySourceConfig` SQL
+/// (same labels/previews as the day page). Roles are merged per record inside
+/// each subquery, so pagination and totals count records, not refs. Returns
+/// `None` when the entity has no refs in any renderable table.
 ///
-/// Refs-driven, unlike `get_day_sources`: we only query the source tables that
-/// actually hold refs for this entity, and reuse each ontology's
-/// `DaySourceConfig` SQL to render label/preview identically to the day page.
-pub async fn get_entity_records(pool: &PgPool, entity_id: &str) -> Result<Vec<EntityRecord>> {
-    use sqlx::Row;
+/// All subqueries bind the entity id as `$1`; callers add outer binds from $2.
+async fn entity_records_union(pool: &PgPool, entity_id: &str) -> Result<Option<String>> {
     use virtues_registry::ontologies::registered_ontologies;
 
     let tables: Vec<String> = sqlx::query_scalar(
@@ -2113,8 +2129,7 @@ pub async fn get_entity_records(pool: &PgPool, entity_id: &str) -> Result<Vec<En
     .await
     .map_err(|e| Error::Database(format!("Failed to list entity ref tables: {}", e)))?;
 
-    let mut records: Vec<EntityRecord> = Vec::new();
-
+    let mut subqueries: Vec<String> = Vec::new();
     for table in &tables {
         let Some(ont) = registered_ontologies()
             .into_iter()
@@ -2138,105 +2153,150 @@ pub async fn get_entity_records(pool: &PgPool, entity_id: &str) -> Result<Vec<En
             .map(|sql| format!("{} as source_type_dyn", sql))
             .unwrap_or_else(|| format!("'{}' as source_type_dyn", cfg.source_type));
 
-        // `WHERE true` so `extra_where` (which carries its own leading AND)
-        // splices the same way it does in the day-source template.
-        // Unlike the day-source template, this query JOINs wiki_entity_refs,
-        // which has its own `timestamp` column — so the ontology's timestamp
-        // must be `t.`-qualified everywhere or Postgres calls it ambiguous.
-        let query = format!(
+        // Notes on the shape:
+        //  - `WHERE true` so `extra_where` (which carries its own leading AND)
+        //    splices the same way it does in the day-source template.
+        //  - The refs JOIN introduces a second `timestamp` column, so the
+        //    ontology's timestamp must be `t.`-qualified or Postgres calls it
+        //    ambiguous.
+        //  - The refs unique key includes `role`, so one record can join once
+        //    per role (sender AND recipient): the GROUP BY collapses those to
+        //    one row with the roles aggregated. Positional GROUP BY, because
+        //    the grouped expressions are registry-supplied SQL.
+        //  - `src_cont` is a bare literal, which Postgres exempts from
+        //    GROUP BY.
+        subqueries.push(format!(
             "SELECT {id} as src_id, t.{ts} as src_ts, {label} as src_label, \
-                    {preview} as src_preview, {st}, er.role as src_role \
+                    {preview} as src_preview, {st}, \
+                    string_agg(DISTINCT er.role, ', ') as src_role, \
+                    {cont} as src_cont \
              FROM {table} t \
              JOIN wiki_entity_refs er \
                ON er.source_table = '{table}' AND er.source_id = {id} AND er.entity_id = $1 \
              WHERE true \
              {extra} \
-             ORDER BY t.{ts_col} DESC \
-             LIMIT {limit}",
+             GROUP BY 1, 2, 3, 4, 5",
             id = cfg.id_sql,
             ts = ont.timestamp_column,
             label = cfg.label_sql,
             preview = cfg.preview_sql,
             st = source_type_col,
+            cont = if ont.temporal_type == virtues_registry::ontologies::TemporalType::Continuous {
+                "TRUE"
+            } else {
+                "FALSE"
+            },
             table = ont.table_name,
-            ts_col = ont.timestamp_column,
             extra = cfg.extra_where.unwrap_or(""),
-            limit = ENTITY_RECORDS_PER_TABLE_LIMIT,
-        );
-
-        let rows = sqlx::query(&query)
-            .bind(entity_id)
-            .fetch_all(pool)
-            .await
-            .map_err(|e| {
-                Error::Database(format!(
-                    "entity records query failed for ontology `{}`: {e}",
-                    ont.name
-                ))
-            })?;
-
-        if rows.len() == ENTITY_RECORDS_PER_TABLE_LIMIT {
-            tracing::warn!(
-                ontology = ont.name,
-                entity_id = %entity_id,
-                limit = ENTITY_RECORDS_PER_TABLE_LIMIT,
-                "entity records truncated at the per-table cap"
-            );
-        }
-
-        for row in &rows {
-            let id: String = match row.try_get("src_id") {
-                Ok(v) => v,
-                Err(_) => continue,
-            };
-            // TIMESTAMPTZ — decode directly, never via String (see get_day_sources).
-            let ts: DateTime<Utc> = match row.try_get("src_ts") {
-                Ok(v) => v,
-                Err(_) => continue,
-            };
-            let label: String = row
-                .try_get("src_label")
-                .unwrap_or_else(|_| ont.display_name.to_string());
-            let preview: Option<String> = row.try_get("src_preview").ok().flatten();
-            let source_type: String = row
-                .try_get("source_type_dyn")
-                .unwrap_or_else(|_| cfg.source_type.to_string());
-            let role: Option<String> = row.try_get("src_role").ok().flatten();
-
-            // The refs unique key includes `role`, so a record can join twice
-            // (e.g. one person both sender and recipient). Merge the roles.
-            if let Some(existing) = records
-                .iter_mut()
-                .find(|r| r.id == id && r.source_type == source_type)
-            {
-                if let Some(new_role) = role {
-                    match &mut existing.role {
-                        Some(r) if !r.contains(&new_role) => {
-                            r.push_str(", ");
-                            r.push_str(&new_role);
-                        }
-                        None => existing.role = Some(new_role),
-                        _ => {}
-                    }
-                }
-                continue;
-            }
-
-            records.push(EntityRecord {
-                source_type,
-                id,
-                timestamp: ts,
-                label,
-                preview,
-                role,
-                continuous: ont.temporal_type
-                    == virtues_registry::ontologies::TemporalType::Continuous,
-            });
-        }
+        ));
     }
 
-    records.sort_by(|a, b| b.timestamp.cmp(&a.timestamp));
-    Ok(records)
+    Ok(if subqueries.is_empty() {
+        None
+    } else {
+        Some(subqueries.join(" UNION ALL "))
+    })
+}
+
+/// Shared narrowing clause for the union: $2 = search text ('' = all),
+/// $3 = raw source_type allowlist (empty array = all).
+const ENTITY_RECORDS_WHERE: &str = "($2 = '' \
+       OR u.src_label ILIKE '%' || $2 || '%' \
+       OR COALESCE(u.src_preview, '') ILIKE '%' || $2 || '%') \
+   AND (cardinality($3::text[]) = 0 OR u.source_type_dyn = ANY($3::text[]))";
+
+fn entity_record_from_row(row: &sqlx::postgres::PgRow) -> Option<EntityRecord> {
+    use sqlx::Row;
+    Some(EntityRecord {
+        id: row.try_get("src_id").ok()?,
+        // TIMESTAMPTZ — decode directly, never via String (see get_day_sources).
+        timestamp: row.try_get("src_ts").ok()?,
+        label: row.try_get("src_label").unwrap_or_default(),
+        preview: row.try_get("src_preview").ok().flatten(),
+        source_type: row.try_get("source_type_dyn").unwrap_or_default(),
+        role: row.try_get("src_role").ok().flatten(),
+        continuous: row.try_get("src_cont").unwrap_or(false),
+    })
+}
+
+/// One page of the records linked to an entity (registry-driven, refs-driven),
+/// with search and source_type narrowing applied server-side.
+pub async fn get_entity_records_page(
+    pool: &PgPool,
+    entity_id: &str,
+    offset: i64,
+    limit: i64,
+    search: &str,
+    types: &[String],
+    newest_first: bool,
+) -> Result<EntityRecordsPage> {
+    let limit = limit.clamp(1, ENTITY_RECORDS_MAX_LIMIT);
+    let offset = offset.max(0);
+
+    let Some(union) = entity_records_union(pool, entity_id).await? else {
+        return Ok(EntityRecordsPage { items: Vec::new(), total: 0 });
+    };
+
+    let total: i64 = sqlx::query_scalar(&format!(
+        "SELECT count(*) FROM ({union}) u WHERE {ENTITY_RECORDS_WHERE}"
+    ))
+    .bind(entity_id)
+    .bind(search)
+    .bind(types)
+    .fetch_one(pool)
+    .await
+    .map_err(|e| Error::Database(format!("entity records count failed: {e}")))?;
+
+    let dir = if newest_first { "DESC" } else { "ASC" };
+    let rows = sqlx::query(&format!(
+        "SELECT * FROM ({union}) u WHERE {ENTITY_RECORDS_WHERE} \
+         ORDER BY u.src_ts {dir} LIMIT $4 OFFSET $5"
+    ))
+    .bind(entity_id)
+    .bind(search)
+    .bind(types)
+    .bind(limit)
+    .bind(offset)
+    .fetch_all(pool)
+    .await
+    .map_err(|e| Error::Database(format!("entity records page failed: {e}")))?;
+
+    Ok(EntityRecordsPage {
+        items: rows.iter().filter_map(entity_record_from_row).collect(),
+        total,
+    })
+}
+
+/// Facet counts over ALL of an entity's records (unnarrowed), for the chips.
+pub async fn get_entity_record_facets(
+    pool: &PgPool,
+    entity_id: &str,
+) -> Result<Vec<EntityRecordFacet>> {
+    use sqlx::Row;
+
+    let Some(union) = entity_records_union(pool, entity_id).await? else {
+        return Ok(Vec::new());
+    };
+
+    let rows = sqlx::query(&format!(
+        "SELECT u.source_type_dyn as st, count(*) as n, bool_and(u.src_cont) as cont \
+         FROM ({union}) u GROUP BY 1 ORDER BY 1"
+    ))
+    .bind(entity_id)
+    .fetch_all(pool)
+    .await
+    .map_err(|e| Error::Database(format!("entity record facets failed: {e}")))?;
+
+    Ok(rows
+        .iter()
+        .filter_map(|row| {
+            Some(EntityRecordFacet {
+                source_type: row.try_get("st").ok()?,
+                count: row.try_get("n").ok()?,
+                continuous: row.try_get("cont").unwrap_or(false),
+            })
+        })
+        .collect())
 }
 
 // ============================================================================
