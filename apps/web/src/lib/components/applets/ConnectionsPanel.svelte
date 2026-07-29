@@ -32,7 +32,7 @@
 		type SourceCatalogItem
 	} from '$lib/api/client';
 	import { startOAuth, reloadOnReturn } from '$lib/components/sources/connectDispatch';
-	import { relativeTime } from '$lib/actions/palette';
+	import { relativeTime } from '$lib/applets/palette';
 
 	// ────────────────────────────────────────────────────────────────────────
 	// State
@@ -372,12 +372,12 @@
 						<div><dt>App</dt><dd>{manageCred.device_info.app_version}</dd></div>
 					{/if}
 					<div><dt>Last seen</dt><dd>{manageCred.last_seen_label}</dd></div>
-					<div><dt>Actions</dt><dd>{manageCred.action_count}</dd></div>
+					<div><dt>Applets</dt><dd>{manageCred.action_count}</dd></div>
 				</dl>
 			{:else}
 				<dl class="manage-info">
 					<div><dt>Last seen</dt><dd>{manageCred.last_seen_label}</dd></div>
-					<div><dt>Actions</dt><dd>{manageCred.action_count}</dd></div>
+					<div><dt>Applets</dt><dd>{manageCred.action_count}</dd></div>
 				</dl>
 			{/if}
 

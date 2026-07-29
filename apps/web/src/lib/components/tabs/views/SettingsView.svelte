@@ -35,7 +35,7 @@
 
 	import ProfileView from '$lib/components/tabs/views/ProfileView.svelte';
 	import AssistantView from '$lib/components/tabs/views/AssistantView.svelte';
-	import ConnectionsPanel from '$lib/components/actions/ConnectionsPanel.svelte';
+	import ConnectionsPanel from '$lib/components/applets/ConnectionsPanel.svelte';
 	import BillingView from '$lib/components/tabs/views/BillingView.svelte';
 	import UsageTab from '$lib/components/tabs/views/UsageTab.svelte';
 	import SystemInfoView from '$lib/components/tabs/views/SystemInfoView.svelte';

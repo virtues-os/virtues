@@ -110,11 +110,11 @@ actions/
 │   ├── manifest.toml                # runtime = "view"
 │   └── ui/
 │       ├── Card.svelte              # overrides TemplateCard for this action
-│       ├── Detail.svelte            # overrides ActionDetailView for this action
+│       ├── Detail.svelte            # overrides AppletDetailView for this action
 │       └── Output.svelte            # (future) — renders run output anywhere it appears
 └── ... (per-action folders)
 
-apps/web/src/lib/action-views/
+apps/web/src/lib/applet-views/
 └── index.ts                         # Vite glob loader; discovers actions/*/ui/*.svelte at build time
 
 /var/lib/virtues/applets/            # the WRITABLE applet root (state, not package data)
@@ -180,10 +180,10 @@ TemplatesPanel renders action card
 User clicks card → opens action detail tab
   ↓ TabContent fetches action by id
   ↓ if runtime == 'view' AND view.name has a registered Detail.svelte → render it
-  ↓ else fall back to generic ActionDetailView
+  ↓ else fall back to generic AppletDetailView
 ```
 
-Vite-glob registry at `apps/web/src/lib/action-views/index.ts` discovers `actions/<name>/ui/Card.svelte` / `Detail.svelte` files (co-located with the action) at build time.
+Vite-glob registry at `apps/web/src/lib/applet-views/index.ts` discovers `applets/<name>/ui/Card.svelte` / `Detail.svelte` files (co-located with the action) at build time.
 
 ---
 
@@ -271,6 +271,6 @@ Action detail tab shows: header (name, description, status, controls) + body (co
 | Authoring guide | [`actions/AUTHORING.md`](./actions/AUTHORING.md) |
 | Action manifest parser + reconcile | [`virtues-core/src/action_templates/mod.rs`](./virtues-core/src/action_templates/mod.rs) |
 | Action runner + dispatch | [`virtues-core/src/action_runner/mod.rs`](./virtues-core/src/action_runner/mod.rs) |
-| Frontend view loader | [`apps/web/src/lib/action-views/index.ts`](./apps/web/src/lib/action-views/index.ts) |
-| Actions page | [`apps/web/src/lib/components/actions/ActionsPanel.svelte`](./apps/web/src/lib/components/actions/ActionsPanel.svelte) |
+| Frontend view loader | [`apps/web/src/lib/applet-views/index.ts`](./apps/web/src/lib/applet-views/index.ts) |
+| Actions page | [`apps/web/src/lib/components/applets/AppletsPanel.svelte`](./apps/web/src/lib/components/applets/AppletsPanel.svelte) |
 | Admin reconcile endpoint | `POST /api/admin/reconcile` |

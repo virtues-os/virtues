@@ -1,6 +1,6 @@
 <script lang="ts">
 	import type { Tab } from '$lib/tabs/types';
-	import ActionsPanel from '$lib/components/actions/ActionsPanel.svelte';
+	import AppletsPanel from '$lib/components/applets/AppletsPanel.svelte';
 
 	// One flat list — the Actions/Templates/History sub-tabs are gone
 	// (applets overhaul). Old /actions/<sub> routes still resolve here.
@@ -12,7 +12,7 @@
 <div class="actions-view">
 	<main class="content">
 		<div class="measure">
-			<ActionsPanel />
+			<AppletsPanel />
 		</div>
 	</main>
 </div>

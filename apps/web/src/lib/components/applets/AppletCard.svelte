@@ -1,7 +1,7 @@
 <script lang="ts">
 	import type { Action, ActionRun } from '$lib/api/client';
-	import { describeSchedule, relativeTime } from '$lib/actions/palette';
-	import { descriptionFor } from '$lib/actions/descriptions';
+	import { describeSchedule, relativeTime } from '$lib/applets/palette';
+	import { descriptionFor } from '$lib/applets/descriptions';
 
 	let {
 		action,

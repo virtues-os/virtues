@@ -28,7 +28,7 @@
 		{ label: "Notebooks", icon: "ri:booklet-line", route: "/notebooks" },
 		{ label: "Wiki", icon: "ri:book-open-line", route: "/wiki" },
 		{ label: "Drive", icon: "ri:cloud-line", route: "/drive" },
-		{ label: "Actions", icon: "ri:flashlight-line", route: "/actions" },
+		{ label: "Applets", icon: "ri:flashlight-line", route: "/applets" },
 	];
 
 	// One Settings room, flat sections — mirrors the desktop sidebar's single door.

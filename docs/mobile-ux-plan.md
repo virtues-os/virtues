@@ -139,7 +139,7 @@ Slot this into the existing pages-editor roadmap rather than a separate track.
    check). Explicitly deferred; note that desktop layout (sidebar + split) is
    arguably the better iPad starting point when we get there.
 6. **Hardcoded theme colors** (violates the no-hardcoded-colors rule):
-   ActionDetailView amber/red banners, InlineCitation red/green, TrashView
+   AppletDetailView amber/red banners, InlineCitation red/green, TrashView
    emerald button. Batch into any Phase 3/5 pass.
 7. **isMobile is sticky** (module-load evaluation; no reaction to
    resize/rotation in shell, `onboardingOpen` computed once pre-pairing).
