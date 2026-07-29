@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "\n        SELECT\n            id, canonical_name, content, cover_image,\n            organization_type, relationship_type, role_title,\n            start_date, end_date, interaction_count,\n            first_interaction, last_interaction,\n            created_at, updated_at\n        FROM wiki_orgs\n        WHERE id = $1\n        ",
+  "query": "\n        SELECT\n            id, canonical_name, content, article, article_updated_at, cover_image,\n            organization_type, relationship_type, role_title,\n            start_date, end_date, interaction_count,\n            first_interaction, last_interaction,\n            created_at, updated_at\n        FROM wiki_orgs\n        WHERE id = $1\n        ",
   "describe": {
     "columns": [
       {
@@ -20,56 +20,66 @@
       },
       {
         "ordinal": 3,
-        "name": "cover_image",
+        "name": "article",
         "type_info": "Text"
       },
       {
         "ordinal": 4,
-        "name": "organization_type",
-        "type_info": "Text"
+        "name": "article_updated_at",
+        "type_info": "Timestamptz"
       },
       {
         "ordinal": 5,
-        "name": "relationship_type",
+        "name": "cover_image",
         "type_info": "Text"
       },
       {
         "ordinal": 6,
-        "name": "role_title",
+        "name": "organization_type",
         "type_info": "Text"
       },
       {
         "ordinal": 7,
+        "name": "relationship_type",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 8,
+        "name": "role_title",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 9,
         "name": "start_date",
         "type_info": "Date"
       },
       {
-        "ordinal": 8,
+        "ordinal": 10,
         "name": "end_date",
         "type_info": "Date"
       },
       {
-        "ordinal": 9,
+        "ordinal": 11,
         "name": "interaction_count",
         "type_info": "Int8"
       },
       {
-        "ordinal": 10,
+        "ordinal": 12,
         "name": "first_interaction",
         "type_info": "Timestamptz"
       },
       {
-        "ordinal": 11,
+        "ordinal": 13,
         "name": "last_interaction",
         "type_info": "Timestamptz"
       },
       {
-        "ordinal": 12,
+        "ordinal": 14,
         "name": "created_at",
         "type_info": "Timestamptz"
       },
       {
-        "ordinal": 13,
+        "ordinal": 15,
         "name": "updated_at",
         "type_info": "Timestamptz"
       }
@@ -89,6 +99,8 @@
       true,
       true,
       true,
+      true,
+      true,
       false,
       true,
       true,
@@ -96,5 +108,5 @@
       false
     ]
   },
-  "hash": "c1cf945755fcc5e0df9ab05b958e946cf6c5a8b481c2e045318d477fd9652258"
+  "hash": "7627ca74302ae4115192e137c7d3f79c4122d3da3edffce87f6922851260e214"
 }

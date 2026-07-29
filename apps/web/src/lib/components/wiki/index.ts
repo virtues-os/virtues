@@ -13,6 +13,14 @@ export { default as DayPage } from './DayPage.svelte';
 export { default as EventTimeline } from './EventTimeline.svelte';
 export { default as ActivityHeatmap } from './ActivityHeatmap.svelte';
 
+// Wiki room sections
+export { default as DaysChronicle } from './DaysChronicle.svelte';
+export { default as NarrativeIdentitySection } from './NarrativeIdentitySection.svelte';
+
+// Entity page sections
+export { default as EntityArticleSection } from './EntityArticleSection.svelte';
+export { default as EntityRecordsSection } from './EntityRecordsSection.svelte';
+
 // Year page
 export { default as YearPage } from './YearPage.svelte';
 
