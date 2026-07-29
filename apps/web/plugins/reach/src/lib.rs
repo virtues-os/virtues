@@ -55,6 +55,64 @@ pub(crate) fn clear_warm_client() {
   }
 }
 
+// ─── Radio hygiene: endpoint parking + payload-aligned drains ────────────────
+//
+// iroh keeps a live endpoint chatty (QUIC path keepalives every 5s, relay ping
+// every 15s, periodic re-STUN) and its transport config clamps the keepalive
+// intervals, so the only way to let a phone's radio idle is to not have an
+// endpoint at all between uploads. While the app is backgrounded (webview
+// suspended, nobody browsing), drains tear the endpoint down afterwards and the
+// next drain cold-builds one — a dial per 5-min window instead of pings every
+// 5 seconds. Foreground keeps the warm client so the UI stays snappy.
+
+/// True while the iOS app is backgrounded. Fed by Swift lifecycle observers via
+/// `virtues_app_background` (ReachMonitor), seeded with the launch app state so
+/// a cold background relaunch parks correctly.
+static APP_BACKGROUNDED: AtomicBool = AtomicBool::new(false);
+
+/// Rings when a collector enqueues the dominant payload (the ~5-min audio
+/// chunk) so the drain fires immediately — the radio wakes when there is
+/// something worth waking for, and queued location fixes ride along.
+static DRAIN_NUDGE: tokio::sync::Notify = tokio::sync::Notify::const_new();
+
+pub(crate) fn set_app_backgrounded(bg: bool) {
+  APP_BACKGROUNDED.store(bg, Ordering::SeqCst);
+}
+
+pub(crate) fn app_backgrounded() -> bool {
+  APP_BACKGROUNDED.load(Ordering::SeqCst)
+}
+
+pub(crate) fn nudge_drain() {
+  DRAIN_NUDGE.notify_one();
+}
+
+/// Tear down the warm endpoint so nothing pings between background drains.
+pub(crate) async fn park_endpoint(reason: &str) {
+  let old = WARM_CLIENT.lock().ok().and_then(|mut g| g.take());
+  if let Some(c) = old {
+    c.shutdown().await;
+    tracing::info!(reason, "reach endpoint parked");
+  }
+}
+
+/// The warm client, or a fresh cold-built one (stashed as the new warm client).
+pub(crate) async fn ensure_client(rec: &PairedBox) -> Option<Arc<VirtuesIrohClient>> {
+  if let Some(c) = warm_client() {
+    return Some(c);
+  }
+  match virtues_reach_client::build_client(rec).await {
+    Ok(c) => {
+      set_warm_client(c.clone());
+      Some(c)
+    }
+    Err(e) => {
+      tracing::warn!(error = %format!("{e:#}"), "reach client build failed");
+      None
+    }
+  }
+}
+
 /// One recovery at a time — NWPathMonitor + foreground can fire nearly together.
 static RECOVERING: AtomicBool = AtomicBool::new(false);
 
@@ -79,6 +137,13 @@ pub(crate) async fn recover_connection() -> i32 {
 
 async fn recover_inner() -> i32 {
   use std::time::Duration;
+  // Parked by design: backgrounded with no warm client means the endpoint was
+  // deliberately torn down so the radio can idle — background drains cold-build
+  // their own. Rebuilding here (NWPathMonitor fires on every cellular↔Wi-Fi
+  // hop in a pocket) would resurrect the keepalive chatter parking eliminated.
+  if app_backgrounded() && warm_client().is_none() {
+    return 0;
+  }
   // L1: poke iroh to re-check the network.
   if let Some(c) = warm_client() {
     c.network_change().await;
@@ -365,16 +430,35 @@ impl ReachState {
       }
     });
 
-    // Foreground upload loop: drain the shared outbox to the box.
+    // Upload loop: drain the shared outbox to the box. On mobile the tick is
+    // slow and payload-aligned — `nudge_drain` (audio chunk enqueue) fires it
+    // early — because every tick that touches the radio keeps it from idling.
+    // Desktop stays at 20s (mains-powered).
     // (Background sync via BGTaskScheduler + sig-loc wake is wired separately.)
     let store = self.store.clone();
     let drain = tauri::async_runtime::spawn(async move {
+      let tick = std::time::Duration::from_secs(if cfg!(mobile) { 300 } else { 20 });
       loop {
-        tokio::time::sleep(std::time::Duration::from_secs(20)).await;
+        tokio::select! {
+          _ = tokio::time::sleep(tick) => {}
+          _ = DRAIN_NUDGE.notified() => {
+            // Let the enqueue settle + coalesce near-simultaneous nudges.
+            tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+          }
+        }
         let Ok(Some(rec)) = store.load() else { continue };
-        // Read the CURRENT warm client each tick, so a network-change rebuild OR a
-        // re-pair to a different box is picked up without restarting this loop.
-        let Some(client) = warm_client() else { continue };
+        // Radio-quiet fast path: nothing due → no dial. Park a leftover warm
+        // endpoint if we're backgrounded with nothing to send.
+        if outbox::due_streams().map(|s| s.is_empty()).unwrap_or(false) {
+          if cfg!(mobile) && app_backgrounded() {
+            park_endpoint("idle").await;
+          }
+          continue;
+        }
+        // Warm client if present (foreground), else a cold build (parked). Reading
+        // per tick also picks up a network-change rebuild or a re-pair to a
+        // different box without restarting this loop.
+        let Some(client) = ensure_client(&rec).await else { continue };
         match upload::drain(&client, &rec).await {
           Ok(n) if n > 0 => tracing::info!("uploaded {n} records"),
           Ok(_) => {}
@@ -384,6 +468,11 @@ impl ReachState {
             // next tick re-dials fresh instead of reusing a dead one forever.
             client.drop_conn().await;
           }
+        }
+        // Backgrounded: the webview is suspended, nothing else needs the
+        // endpoint — park it so the radio sleeps until the next wake.
+        if cfg!(mobile) && app_backgrounded() {
+          park_endpoint("post-drain").await;
         }
       }
     });
@@ -457,7 +546,9 @@ impl ReachState {
       Some(r) => r,
       None => return Ok(0),
     };
-    let client = match self.client().await {
+    // Cold-build if parked — "Sync now" must work even before a foreground
+    // recovery has rebuilt the warm client.
+    let client = match ensure_client(&rec).await {
       Some(c) => c,
       None => return Ok(0),
     };

@@ -61,6 +61,14 @@ public final class LocationProbe: NSObject, CLLocationManagerDelegate {
   /// Guards against overlapping background drains.
   private var isDraining = false
 
+  /// Pace background drains at the audio-chunk cadence: with endpoint parking
+  /// (reach plugin) every background drain is a fresh QUIC dial, and location
+  /// fixes alone are too small to earn one every 15s while moving. The first
+  /// drain after launch goes immediately — a cold sig-loc relaunch may not
+  /// live long enough to wait out an interval.
+  private var lastBgDrainAt: Date?
+  private let minBgDrainInterval: TimeInterval = 300
+
   /// Set by the AppDelegate: "user" for a normal launch, "location" when the
   /// app was relaunched by the OS for a location event (launchOptions carried
   /// `.location`). This is the flag that proves cold-relaunch collection.
@@ -142,6 +150,8 @@ public final class LocationProbe: NSObject, CLLocationManagerDelegate {
   private func maybeDrainInBackground() {
     if appStateString() == "active" { return }
     if isDraining { return }
+    if let last = lastBgDrainAt, Date().timeIntervalSince(last) < minBgDrainInterval { return }
+    lastBgDrainAt = Date()
     isDraining = true
 
     var bg: UIBackgroundTaskIdentifier = .invalid

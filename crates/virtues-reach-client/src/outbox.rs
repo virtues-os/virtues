@@ -41,8 +41,11 @@ static DB_PATH: OnceLock<PathBuf> = OnceLock::new();
 static DEVICE_ID: Mutex<String> = Mutex::new(String::new());
 static INGEST_KEY: Mutex<String> = Mutex::new(String::new());
 
-/// Backoff schedule (seconds) indexed by attempt count, capped at 5 min.
-const BACKOFF_SECS: [i64; 6] = [0, 30, 60, 120, 240, 300];
+/// Backoff schedule (seconds) indexed by attempt count, capped at 5 min. The
+/// first retry waits too (30s, not 0): with an unreachable box, an immediate
+/// retry just burns a QUIC dial per drain tick — on cellular that keeps the
+/// radio from ever idling while offline.
+const BACKOFF_SECS: [i64; 6] = [30, 60, 120, 240, 300, 300];
 
 /// A batch claimed for delivery: the ids to ack/nack, and the box-shaped records.
 pub struct Claimed {
