@@ -18,10 +18,9 @@
 
 	interface Props {
 		mode: SidebarMode;
-		stagger?: number;
 	}
 
-	let { mode, stagger = 30 }: Props = $props();
+	let { mode }: Props = $props();
 
 	let activeHref = $state<string | null>(null);
 
@@ -37,12 +36,11 @@
 
 <div class="mode-panel">
 	<nav class="mode-rows">
-		{#each mode.rows as row, i (row.id)}
+		{#each mode.rows as row (row.id)}
 			<button
 				type="button"
 				class="mode-row"
 				class:active={activeHref === row.href}
-				style="animation-delay: {(i + 2) * stagger}ms"
 				onclick={() => open(row.href, row.label)}
 			>
 				<Icon icon={row.icon} width="16" />
@@ -53,20 +51,6 @@
 </div>
 
 <style>
-	/* Slides in from the right as the normal rows slide out to the left — the
-	   two halves of one motion, so it reads as a panel swap rather than a
-	   replacement. */
-	@keyframes modeRowIn {
-		from {
-			opacity: 0;
-			transform: translateX(10px);
-		}
-		to {
-			opacity: 1;
-			transform: translateX(0);
-		}
-	}
-
 	.mode-panel {
 		display: flex;
 		flex-direction: column;
@@ -88,7 +72,6 @@
 		text-align: left;
 		font-size: var(--sidebar-interactive-font-size);
 		color: var(--color-foreground-muted);
-		animation: modeRowIn 200ms cubic-bezier(0.2, 0, 0, 1) backwards;
 	}
 
 	.mode-row :global(svg) {
@@ -120,9 +103,4 @@
 		outline-offset: -2px;
 	}
 
-	@media (prefers-reduced-motion: reduce) {
-		.mode-row {
-			animation: none;
-		}
-	}
 </style>

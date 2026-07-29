@@ -1,5 +1,7 @@
 <script lang="ts">
 	import { onMount } from "svelte";
+	import { fly } from "svelte/transition";
+	import { cubicIn, cubicOut } from "svelte/easing";
 	import { windowShellStore } from "$lib/stores/window-shell.svelte";
 	import Icon from "$lib/components/Icon.svelte";
 	import { sidebarState } from "$lib/stores/sidebarState.svelte";
@@ -166,20 +168,19 @@
 		sidebarState.toggle();
 	}
 
-	// Stagger delay per item
-	const STAGGER_DELAY = 30;
-
-	// Running offset of each group's first row, so the waterfall reads as one
-	// continuous fall down the panel rather than restarting per group. Slot 1
-	// is the masthead, so nav rows start at 2 and land under it rather than
-	// alongside it. The footer sits at slot 10, after the longest nav list.
-	const GROUP_OFFSETS = SECTION_GROUPS.reduce<number[]>(
-		(acc, group) => [...acc, acc[acc.length - 1] + group.items.length],
-		[2],
-	);
-
-	const navDelay = (groupIndex: number, itemIndex: number) =>
-		(GROUP_OFFSETS[groupIndex] + itemIndex) * STAGGER_DELAY;
+	// The panel swaps as one object, not as a cascade of rows.
+	//
+	// It used to waterfall: every row animated in on its own 30ms delay, so
+	// entering Settings played eleven little arrivals. That reads as a flourish
+	// the second time and as latency by the tenth — the panel appeared to take
+	// 300ms to assemble when the work was instant. A crossfade with 16px of
+	// travel says the same thing (these are different contents) in under
+	// 200ms, and says it about the panel rather than about each row.
+	//
+	// Asymmetric on purpose: the outgoing layer leaves faster than the
+	// incoming arrives, so the eye lands on what's replacing it rather than on
+	// what's going.
+	const swapKey = $derived(sidebarMode.activeId ?? "root");
 
 	// Tailwind utility class strings
 	const sidebarClass = $derived.by(() =>
@@ -226,7 +227,6 @@
 	<div class={sidebarInnerClass}>
 		<WorkspaceHeader
 			collapsed={isCollapsed}
-			animationDelay={STAGGER_DELAY}
 			onSearch={handleSearch}
 		/>
 
@@ -239,42 +239,54 @@
 					<Icon icon="ri:loader-4-line" width="16" class="spinner" />
 					<span>Loading...</span>
 				</div>
-			{:else if sidebarMode.active && !isCollapsed}
-				<SidebarModePanel mode={sidebarMode.active} stagger={STAGGER_DELAY} />
 			{:else}
+				<!-- One swap, not eleven. The two panels are stacked in a single
+				     grid cell so the outgoing one can leave while the incoming
+				     one arrives, with no reflow between them. -->
+				<div class="nav-swap">
+					{#key swapKey}
+						<div
+							class="nav-layer"
+							in:fly={{ x: 16, duration: 190, easing: cubicOut, opacity: 0 }}
+							out:fly={{ x: -16, duration: 130, easing: cubicIn, opacity: 0 }}
+						>
+							{#if sidebarMode.active && !isCollapsed}
+								<SidebarModePanel mode={sidebarMode.active} />
+							{:else}
+								<!-- The Desk: what the user has taken off the shelf.
+								     Serif spines with bookcloth dots — the type
+								     distinction encodes ownership, which is what keeps
+								     pins from reading as a tinted nav row (the failure
+								     that retired them the first time). -->
+								<DeskSection collapsed={isCollapsed} />
 
-				<!-- The Desk: what the user has taken off the shelf. Serif spines
-				     with bookcloth dots — the type distinction encodes ownership,
-				     which is what keeps pins from reading as a tinted nav row (the
-				     failure that retired them the first time). -->
-				<DeskSection collapsed={isCollapsed} animationDelay={2 * STAGGER_DELAY} />
-
-				<!-- The Library: the system's fixed shelf. Seven rows, stable
-				     forever, so muscle memory can live here. -->
-				{#each SECTION_GROUPS as group, groupIndex (group.id)}
-					<div class="nav-group">
-						{#if group.label && !isCollapsed}
-							<ZoneHeader id={group.id} label={group.label} />
-						{/if}
-						{#if !sidebarZones.isCollapsed(group.id)}
-							{#each group.items as section, itemIndex (section.id)}
-								<SystemSection
-									{section}
-									collapsed={isCollapsed}
-									accentColor={null}
-									animationDelay={navDelay(groupIndex, itemIndex)}
-								/>
-							{/each}
-						{/if}
-					</div>
-				{/each}
-
+								<!-- The Library: the system's fixed shelf. Stable
+								     forever, so muscle memory can live here. -->
+								{#each SECTION_GROUPS as group (group.id)}
+									<div class="nav-group">
+										{#if group.label && !isCollapsed}
+											<ZoneHeader id={group.id} label={group.label} />
+										{/if}
+										{#if !sidebarZones.isCollapsed(group.id)}
+											{#each group.items as section (section.id)}
+												<SystemSection
+													{section}
+													collapsed={isCollapsed}
+													accentColor={null}
+												/>
+											{/each}
+										{/if}
+									</div>
+								{/each}
+							{/if}
+						</div>
+					{/key}
+				</div>
 			{/if}
 		</nav>
 
 		<SidebarFooter
 			collapsed={isCollapsed}
-			animationDelay={10 * STAGGER_DELAY}
 		/>
 	</div>
 </aside>
@@ -356,6 +368,19 @@
 		display: flex;
 		flex-direction: column;
 		align-items: center;
+	}
+
+	/* Both layers share one grid cell, so the leaving panel doesn't push the
+	   arriving one around while they overlap. Cheaper and steadier than
+	   absolute positioning: the cell keeps the taller layer's height, so the
+	   scroll container never jumps mid-swap. */
+	.nav-swap {
+		display: grid;
+	}
+
+	.nav-layer {
+		grid-area: 1 / 1;
+		min-width: 0;
 	}
 
 	/* Group header — the "contents-page" treatment: serif smallcaps,

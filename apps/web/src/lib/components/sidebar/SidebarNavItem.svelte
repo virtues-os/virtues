@@ -3,6 +3,7 @@
 	import { windowShellStore } from "$lib/stores/window-shell.svelte";
 	import Icon from "$lib/components/Icon.svelte";
 	import AtlasIcon from "./AtlasIcon.svelte";
+	import { pinMenuItem } from "$lib/pins/pinAction";
 	import { contextMenu } from "$lib/stores/contextMenu.svelte";
 	import { deleteChat, updatePage, updateChat } from "$lib/api/client";
 	import { pagesStore } from "$lib/stores/pages.svelte";
@@ -223,6 +224,13 @@
 					}
 				},
 			});
+		}
+
+		// Every named row in the rail is somewhere you might want to keep.
+		if (item.href) {
+			items.push(
+				pinMenuItem({ url: item.href, label: item.label, icon: item.icon }),
+			);
 		}
 
 		contextMenu.show({ x: e.clientX, y: e.clientY }, items);

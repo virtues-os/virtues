@@ -70,8 +70,10 @@ export function pinMenuItem(
 		id: 'pin-sidebar',
 		// Says what happens, and names where it goes — "Pin" alone doesn't
 		// answer "pin it to what?" when three different things in this app
-		// could plausibly be the destination.
-		label: pinned ? 'Unpin from sidebar' : 'Pin to sidebar',
+		// could plausibly be the destination. The destination has a name now,
+		// so the verb uses it: the Desk is where things you're working on go,
+		// and "add to desk" is the same sentence the zone header speaks.
+		label: pinned ? 'Take off the desk' : 'Add to desk',
 		icon: pinned ? 'ri:pushpin-fill' : 'ri:pushpin-line',
 		dividerBefore: opts.dividerBefore ?? true,
 		action: async () => {

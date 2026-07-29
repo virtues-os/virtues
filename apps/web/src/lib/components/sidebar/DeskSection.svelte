@@ -24,14 +24,14 @@
 	import { clothFor } from "$lib/sidebar/pin-colors";
 	import { sidebarZones } from "$lib/stores/sidebarZones.svelte";
 	import ZoneHeader from "./ZoneHeader.svelte";
+	import RefPicker, { type EntityResult } from "$lib/components/RefPicker.svelte";
 	import type { Pin } from "$lib/api/client";
 
 	interface Props {
 		collapsed?: boolean;
-		animationDelay?: number;
 	}
 
-	let { collapsed = false, animationDelay = 0 }: Props = $props();
+	let { collapsed = false }: Props = $props();
 
 	// Loaded once by the app layout; read the shared state, don't re-fetch.
 	const pins = $derived(pinsStore.pins);
@@ -64,6 +64,29 @@
 		}
 	}
 
+	// The `+` opens the ref picker — the same search used for @-mentions and
+	// notebook members, which already resolves any entity to a url and offers
+	// a synthetic "Link" result when what you typed looks like one. So the
+	// Desk can be filled with anything the app can name, without a bespoke
+	// search of its own.
+	let pickerAt = $state<{ x: number; y: number } | null>(null);
+
+	function openPicker(e: MouseEvent) {
+		e.preventDefault();
+		e.stopPropagation();
+		const r = (e.currentTarget as HTMLElement).getBoundingClientRect();
+		pickerAt = { x: r.left, y: r.bottom + 6 };
+	}
+
+	async function addFromPicker(entity: EntityResult) {
+		pickerAt = null;
+		try {
+			await pinsStore.add(entity.url, entity.name, entity.icon);
+		} catch (err) {
+			console.error("[DeskSection] Failed to pin:", err);
+		}
+	}
+
 	function handleContextMenu(e: MouseEvent, pin: Pin) {
 		e.preventDefault();
 		e.stopPropagation();
@@ -89,20 +112,35 @@
 </script>
 
 {#if !collapsed}
-	<div class="desk" style="--stagger-delay: {animationDelay}ms">
-		<ZoneHeader id="desk" label="Desk" />
+	<div class="desk">
+		<ZoneHeader id="desk" label="Desk">
+			<button
+				class="sidebar-item-action"
+				title="Add to desk"
+				aria-label="Add to desk"
+				onclick={openPicker}
+			>
+				<svg width="14" height="14" viewBox="0 0 16 16" fill="none">
+					<path
+						d="M8 3.5v9M3.5 8h9"
+						stroke="currentColor"
+						stroke-width="1.5"
+						stroke-linecap="round"
+					/>
+				</svg>
+			</button>
+		</ZoneHeader>
 
 		{#if zoneCollapsed}
 			<!-- folded shut -->
 		{:else if pinsStore.loaded && pins.length === 0}
 			<div class="desk-empty">Nothing pinned yet</div>
 		{:else}
-			{#each pins as pin, i (pin.id)}
+			{#each pins as pin (pin.id)}
 				<div
 					class="sidebar-interactive desk-spine"
 					role="link"
 					tabindex="0"
-					style="animation-delay: calc(var(--stagger-delay) + {i * 30}ms)"
 					onclick={() => open(pin)}
 					onkeydown={(e) => handleKeydown(e, pin)}
 					oncontextmenu={(e) => handleContextMenu(e, pin)}
@@ -116,6 +154,17 @@
 			{/each}
 		{/if}
 	</div>
+{/if}
+
+{#if pickerAt}
+	<RefPicker
+		mode="single"
+		position={pickerAt}
+		placeholder="Search, or paste a link…"
+		excludeIds={pins.map((p) => p.url)}
+		onSelect={addFromPicker}
+		onClose={() => (pickerAt = null)}
+	/>
 {/if}
 
 <style>
@@ -136,7 +185,6 @@
 		font-weight: 400;
 		letter-spacing: 0.02em;
 		-webkit-text-stroke: 0.2px currentColor;
-		animation: deskRowIn 200ms cubic-bezier(0.2, 0, 0, 1) backwards;
 	}
 
 	.desk-pin {
@@ -170,20 +218,4 @@
 		color: var(--color-foreground-subtle);
 	}
 
-	@keyframes deskRowIn {
-		from {
-			opacity: 0;
-			transform: translateX(-8px);
-		}
-		to {
-			opacity: 1;
-			transform: translateX(0);
-		}
-	}
-
-	@media (prefers-reduced-motion: reduce) {
-		.desk-spine {
-			animation: none;
-		}
-	}
 </style>
