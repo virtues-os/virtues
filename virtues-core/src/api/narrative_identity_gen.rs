@@ -230,8 +230,14 @@ fn append(prompt: &mut String, heading: &str, body: &str) {
     prompt.push_str(&format!("\n## {}\n{}\n", heading, body));
 }
 
-/// Call virtues-api for the draft — same bearer/System-purpose path as the day
-/// summary (debits the OS reserve, not the user's chat budget).
+/// Call virtues-api for the draft — same bearer path as the day summary.
+///
+/// `Purpose::System` is telemetry only. It used to select an "OS reserve"
+/// separate from the chat wallet, but billing collapsed to a single wallet and
+/// the server now ignores the header (see `virtues_api::client`), so this call
+/// debits exactly what a chat message debits. It also runs on the **Chat**
+/// slot, which means whatever model the owner picked for conversation is the
+/// model that pays for this — worth knowing before adding another one of these.
 async fn call_virtues_api(pool: &PgPool, user_prompt: &str) -> Result<String> {
     let chat_model = crate::api::assistant_profile::get_chat_model(pool).await?;
 
