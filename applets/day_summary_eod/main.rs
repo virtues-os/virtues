@@ -147,9 +147,15 @@ async fn main() -> Result<()> {
         .await
         .context("event annotation failed")?;
 
-    // 4. Novelty scoring — writes `embedding`, which everything downstream
-    //    (autonomic's similarity baseline, class-by-neighbourhood, the W5
-    //    story magnet) depends on.
+    // 4. Novelty scoring — writes `wiki_events.embedding`, which is the
+    //    baseline cache the NEXT night's novelty run reads, and which step 5
+    //    (autonomic) reads for *today's* events in this same run. That second
+    //    reader is the reason this column exists rather than the scorer just
+    //    reading `search_vectors`: the search index is populated by a separate
+    //    15-minute cron and will not have seen these ids yet.
+    //    Note this is NOT the notebook magnet's input — that reads
+    //    `search_vectors` directly (see magnet.rs) and is unaffected by
+    //    anything in this chain.
     let novelty_count = virtues::dayline::novelty::compute_novelty_for_day(&pool, date)
         .await
         .context("novelty scoring failed")?;
