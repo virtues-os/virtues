@@ -96,7 +96,16 @@ pub fn init(db_path: impl AsRef<Path>, device_id: &str, ingest_key: &str) -> Res
 /// is one row. Synchronous and cheap — safe to call from a background OS
 /// callback. `record` is the box-shaped record JSON; its `id` (if present) is
 /// used as the dedup key, else one is derived and stamped in.
-pub fn enqueue(stream: &str, mut record: Value) -> Result<()> {
+pub fn enqueue(stream: &str, record: Value) -> Result<()> {
+    enqueue_deferred(stream, record, 0)
+}
+
+/// Like [`enqueue`], but the row only becomes due at the next wall-clock
+/// multiple of `defer_secs` — so all records deferred with the same interval
+/// batch onto ONE dial at the boundary instead of each earning its own at
+/// staggered offsets. Used for low-urgency payloads (silent-chunk metadata)
+/// that shouldn't wake the radio alone. `defer_secs = 0` means due now.
+pub fn enqueue_deferred(stream: &str, mut record: Value, defer_secs: i64) -> Result<()> {
     let device = DEVICE_ID.lock().unwrap().clone();
     let action_key = {
         let k = INGEST_KEY.lock().unwrap().clone();
@@ -118,13 +127,19 @@ pub fn enqueue(stream: &str, mut record: Value) -> Result<()> {
         }
     };
     let payload = serde_json::to_string(&record)?;
+    let due = if defer_secs > 0 {
+        let n = now();
+        n + defer_secs - (n % defer_secs) // align to the wall-clock grid
+    } else {
+        0
+    };
 
     let conn = conn()?;
     conn.execute(
         "INSERT OR IGNORE INTO outbox
            (source_stream_id, stream, action_key, payload, created_at, attempts, next_attempt_at)
-         VALUES (?1, ?2, ?3, ?4, ?5, 0, 0)",
-        params![id, stream, action_key, payload, now()],
+         VALUES (?1, ?2, ?3, ?4, ?5, 0, ?6)",
+        params![id, stream, action_key, payload, now(), due],
     )?;
     Ok(())
 }
@@ -248,6 +263,18 @@ pub fn nack(ids: &[String]) -> Result<()> {
     }
     let refs: Vec<&dyn rusqlite::ToSql> = p.iter().map(|b| b.as_ref()).collect();
     conn.execute(&sql, refs.as_slice())?;
+    Ok(())
+}
+
+/// Make every unclaimed row due now — an explicit user "Sync now" bypasses
+/// both retry backoff and deferred (silent-chunk) gates. Safe: the box dedups
+/// on source_stream_id, so an early resend is harmless.
+pub fn clear_backoff() -> Result<()> {
+    let conn = conn()?;
+    conn.execute(
+        "UPDATE outbox SET next_attempt_at = 0 WHERE claimed_at IS NULL",
+        [],
+    )?;
     Ok(())
 }
 

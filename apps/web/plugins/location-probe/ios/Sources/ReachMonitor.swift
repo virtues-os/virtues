@@ -39,6 +39,19 @@ final class ReachMonitor {
   func start() {
     if started { return }
     started = true
+    // Seed the flag with the LAUNCH state BEFORE the path monitor starts:
+    // NWPathMonitor delivers its initial path immediately on the utility queue,
+    // and the recovery it kicks reads this flag — an async seed loses that race
+    // and lets a cold background relaunch cold-build an endpoint it shouldn't.
+    // start() runs inside didFinishLaunching on the main thread, so the read is
+    // synchronous; the async branch is a defensive fallback only.
+    if Thread.isMainThread {
+      virtues_app_background(UIApplication.shared.applicationState == .background ? 1 : 0)
+    } else {
+      DispatchQueue.main.async {
+        virtues_app_background(UIApplication.shared.applicationState == .background ? 1 : 0)
+      }
+    }
     monitor.pathUpdateHandler = { [weak self] _ in self?.kick("path") }
     monitor.start(queue: queue)
     NotificationCenter.default.addObserver(
@@ -47,12 +60,6 @@ final class ReachMonitor {
     NotificationCenter.default.addObserver(
       self, selector: #selector(onBackground),
       name: UIApplication.didEnterBackgroundNotification, object: nil)
-    // Seed the flag with the LAUNCH state: a cold sig-loc relaunch starts in the
-    // background with no didEnterBackground notification, and the flag must be
-    // right before the first drain decides whether to park the endpoint.
-    DispatchQueue.main.async {
-      virtues_app_background(UIApplication.shared.applicationState == .background ? 1 : 0)
-    }
     NSLog("[ReachMonitor] started (NWPathMonitor + fg/bg)")
   }
 
