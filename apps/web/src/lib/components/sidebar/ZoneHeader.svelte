@@ -61,12 +61,21 @@
 		user-select: none;
 	}
 
+	/* Indented to the TEXT edge, not the mark gutter: the subtitle is a word,
+	   and every other word in the panel — path root, spine, destination —
+	   starts at the same x. Sitting it out at the icon column made the two
+	   whispers the only left-aligned things in a column that otherwise has
+	   one edge. */
 	.zone-toggle {
 		display: flex;
 		align-items: center;
 		gap: 6px;
 		height: 100%;
-		padding: 0 0 0 var(--sidebar-padding-left-base);
+		padding: 0 0 0
+			calc(
+				var(--sidebar-padding-left-base) + var(--sidebar-interactive-icon-size) +
+					var(--sidebar-interactive-gap)
+			);
 		border: none;
 		background: none;
 		cursor: pointer;
