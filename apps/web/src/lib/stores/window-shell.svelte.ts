@@ -1094,6 +1094,16 @@ class WindowShellStore {
 	}
 
 	/**
+	 * Activate the Nth tab (1-based) counting left-to-right across the whole
+	 * window: the left pane's tabs first, then the right pane's. Focus follows
+	 * the tab into its pane. Out-of-range ordinals no-op.
+	 */
+	activateTabByOrdinal(n: number): void {
+		const tab = this.panes.flatMap(p => p.tabs)[n - 1];
+		if (tab) this.setActiveTab(tab.id);
+	}
+
+	/**
 	 * Move to the next/previous tab within the focused pane, wrapping at both
 	 * ends. No-ops on a pane with fewer than two tabs.
 	 */
