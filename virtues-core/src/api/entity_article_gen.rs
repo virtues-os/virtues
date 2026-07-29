@@ -16,9 +16,10 @@
 //! write back. The article lives in its own `article` column; `content` and
 //! `notes` remain the user's own writing and are never touched here.
 //!
-//! Cost note: this runs on the **Chat** slot, so it is billed at whatever
-//! model the owner chose for conversation, against the same single wallet.
-//! `Purpose::System` is telemetry only.
+//! Cost note: this runs on the **Lite** slot and ships **disabled**. On a box
+//! with real history several hundred entities clear the gate on day one, and
+//! there is no per-day spend ceiling anywhere in the system — so the slot and
+//! the off-by-default switch are the cost controls.
 
 use sqlx::PgPool;
 
@@ -390,10 +391,19 @@ fn cap(s: &str, n: usize) -> String {
     out
 }
 
-/// Same bearer/System-purpose path as narrative identity — debits the OS
-/// reserve, not the user's chat budget. Model comes from the Chat slot.
+/// Runs on the **Lite** slot, not Chat.
+///
+/// Background writing must not ride the slot the owner picked for
+/// conversation. It silently did, and the effect was that choosing a premium
+/// model to talk to made every applet premium too — the same call costing 15×
+/// more without anyone deciding that. There is also no per-day spend ceiling
+/// anywhere in the system, so the model slot is the actual cost control.
+///
+/// `Purpose::System` is telemetry only; billing collapsed to a single wallet
+/// and the server ignores the header, so this debits what a chat message
+/// debits either way.
 async fn call_virtues_api(pool: &PgPool, user_prompt: &str) -> Result<String> {
-    let chat_model = crate::api::assistant_profile::get_chat_model(pool).await?;
+    let model = crate::api::assistant_profile::get_background_model(pool).await?;
 
     let client = crate::virtues_api::client::BearerClient::from_env(pool.clone())
         .with_purpose(crate::virtues_api::client::Purpose::System)
@@ -402,7 +412,7 @@ async fn call_virtues_api(pool: &PgPool, user_prompt: &str) -> Result<String> {
         .post_json(
             "/v1/ai/chat/completions",
             &serde_json::json!({
-                "model": chat_model,
+                "model": model,
                 "messages": [
                     {"role": "system", "content": SYSTEM_PROMPT},
                     {"role": "user", "content": user_prompt}

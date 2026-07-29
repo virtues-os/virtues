@@ -117,6 +117,7 @@ where
     F: Fn() -> Option<Arc<VirtuesIrohClient>> + Send + Sync + 'static,
 {
     tracing::info!(addr = ?listener.local_addr().ok(), "reach helper: serving box over iroh (live client)");
+    let provider = Arc::new(provider);
     loop {
         let (mut tcp, _peer) = match listener.accept().await {
             Ok(x) => x,
@@ -125,11 +126,25 @@ where
                 continue;
             }
         };
-        let Some(client) = provider() else {
-            // No client right now (rebuilding / unpaired) — drop; caller retries.
-            continue;
-        };
+        let provider = provider.clone();
+        // No client right now (parked endpoint on app resume, mid-rebuild) —
+        // hold the accepted connection briefly instead of dropping it. Browser
+        // fetches don't retry a reset, so dropping turns every app resume into
+        // a window of dead requests; a rebuild lands in ~1-3s.
         tokio::spawn(async move {
+            let mut client = provider();
+            if client.is_none() {
+                for _ in 0..30 {
+                    tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+                    client = provider();
+                    if client.is_some() {
+                        break;
+                    }
+                }
+            }
+            let Some(client) = client else {
+                return; // still nothing after 3s (unpaired / build failed) — drop
+            };
             if let Err(e) = client.proxy_stream(&mut tcp).await {
                 tracing::debug!(error = %format!("{e:#}"), "proxy stream ended");
             }

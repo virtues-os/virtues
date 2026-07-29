@@ -55,6 +55,7 @@ pub async fn drain(client: &VirtuesIrohClient, rec: &PairedBox) -> Result<usize>
                 Ok(true) => {
                     outbox::ack(&batch.ids)?;
                     total += batch.ids.len();
+                    crate::stats::bump(|s| s.records += batch.ids.len() as u64);
                 }
                 // Delivered but not durable, or transport error — release the
                 // claim + back off, leave the rows for the next drain.
@@ -65,6 +66,10 @@ pub async fn drain(client: &VirtuesIrohClient, rec: &PairedBox) -> Result<usize>
             }
         }
     }
+    crate::stats::bump(|s| {
+        s.drains += 1;
+        s.last_drain_at = Some(crate::stats::now_secs());
+    });
     Ok(total)
 }
 
@@ -83,7 +88,11 @@ async fn post_batch(
     );
     let resp = client.request(raw.as_bytes()).await?;
     let text = String::from_utf8_lossy(&resp);
-    Ok(body_acks(&text))
+    let acked = body_acks(&text);
+    if acked {
+        crate::stats::bump(|s| s.bytes += body.len() as u64);
+    }
+    Ok(acked)
 }
 
 /// The box returns `{"status":"success"}` on a durable ingest. Anything else

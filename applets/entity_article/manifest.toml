@@ -1,7 +1,14 @@
-name = "Entity Summaries"
+name = "Entity Articles"
 description = "Writes and revises the wikipedia-style article on each entity page (people, places, organizations) whenever enough new records accumulate. Growth-gated: a quiet entity never costs a model call."
 owner = "system"
 runtime = "function"
 command = ["entity_article"]
 triggers = ["cron", "manual", "tool"]
 default_cron = "0 30 * * * *"
+
+# Ships OFF. On a box with real history several hundred entities clear the gate
+# immediately, so the first thing this would do on upgrade is spend its way
+# through a backlog nobody asked for — writing about people the owner has never
+# opened. The schedule stays defined so turning it on is one switch, but the
+# first editions want reading before the cron is trusted to keep writing.
+default_enabled = false
