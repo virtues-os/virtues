@@ -16,11 +16,14 @@
 	// The console line: the rail's only facts, set in mono on a hairline.
 	//
 	// Not a progress bar — a bar dramatizes a number nobody asked for. This is
-	// a colophon: which edition of your life this is, and the time. Virtues
-	// writes one edition per day, so the day-of-year is the shell's one piece
-	// of information no other product could display.
+	// a colophon: the date, and the time. (Day-of-year was here once and read
+	// as trivia — "DAY 210" tells you nothing you wanted to know.)
 	let stamp = $state("");
 	let clock = $state("");
+
+	// Click the clock to swap 24h ⇄ 12h. Persisted, because a clock that
+	// forgets which face you chose is worse than one that never offered.
+	let hour12 = $state(false);
 
 	const DAYS = ["SUN", "MON", "TUE", "WED", "THU", "FRI", "SAT"];
 	const MONTHS = [
@@ -30,14 +33,30 @@
 
 	function tick() {
 		const now = new Date();
-		const doy = Math.floor(
-			(now.getTime() - new Date(now.getFullYear(), 0, 0).getTime()) / 86400000,
-		);
-		stamp = `${DAYS[now.getDay()]} ${MONTHS[now.getMonth()]} ${now.getDate()} · DAY ${doy}`;
-		clock = `${String(now.getHours()).padStart(2, "0")}:${String(now.getMinutes()).padStart(2, "0")}`;
+		stamp = `${DAYS[now.getDay()]} ${MONTHS[now.getMonth()]} ${now.getDate()}`;
+		const h = now.getHours();
+		const mm = String(now.getMinutes()).padStart(2, "0");
+		clock = hour12
+			? `${((h + 11) % 12) + 1}:${mm} ${h < 12 ? "AM" : "PM"}`
+			: `${String(h).padStart(2, "0")}:${mm}`;
+	}
+
+	function toggleClock() {
+		hour12 = !hour12;
+		try {
+			localStorage.setItem("virtues:clock12", hour12 ? "1" : "0");
+		} catch {
+			// Private mode / storage disabled — the toggle still works this session.
+		}
+		tick();
 	}
 
 	onMount(() => {
+		try {
+			hour12 = localStorage.getItem("virtues:clock12") === "1";
+		} catch {
+			// Fall through to the 24h default.
+		}
 		tick();
 		const id = setInterval(tick, 30_000);
 		return () => clearInterval(id);
@@ -78,7 +97,13 @@
 	{#if !collapsed}
 		<div class="console">
 			<span>{stamp}</span>
-			<span class="console-clock">{clock}</span>
+			<button
+				type="button"
+				class="console-clock"
+				onclick={toggleClock}
+				title={hour12 ? "Switch to 24-hour" : "Switch to 12-hour"}
+				aria-label={`Time ${clock}. Switch to ${hour12 ? "24" : "12"}-hour clock.`}
+			>{clock}</button>
 		</div>
 	{/if}
 </div>
@@ -149,8 +174,28 @@
 		user-select: none;
 	}
 
+	/* A button for the affordance, but it must read as the same piece of text
+	   the span was — so inherit the console's type and drop every default. */
 	.console-clock {
+		appearance: none;
+		background: none;
+		border: 0;
+		padding: 0;
+		margin: 0;
+		font: inherit;
+		letter-spacing: inherit;
+		font-variant-numeric: tabular-nums;
 		color: var(--color-foreground-subtle);
+		cursor: pointer;
+	}
+
+	.console-clock:hover {
+		color: var(--color-foreground);
+	}
+
+	.console-clock:focus-visible {
+		outline: 1px solid var(--color-border);
+		outline-offset: 2px;
 	}
 
 	.door:hover {
