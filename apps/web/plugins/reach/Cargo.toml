@@ -25,3 +25,8 @@ virtues-reach-client = { path = "../../../../crates/virtues-reach-client" }
 
 [build-dependencies]
 tauri-plugin = { version = "2.6.3", features = ["build"] }
+
+# Standalone (excluded from the repo workspace). The empty table stops cargo's
+# workspace walk-up, which otherwise escapes the repo in nested git worktrees
+# and gets claimed by an outer checkout's manifest.
+[workspace]

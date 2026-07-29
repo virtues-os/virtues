@@ -10,6 +10,7 @@ Default permissions for the reach plugin
 - `allow-discover`
 - `allow-outbox-stats`
 - `allow-drain-now`
+- `allow-radio-stats`
 
 ## Permission Table
 
@@ -146,6 +147,32 @@ Enables the pair command without any pre-configured scope.
 <td>
 
 Denies the pair command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`reach:allow-radio-stats`
+
+</td>
+<td>
+
+Enables the radio_stats command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`reach:deny-radio-stats`
+
+</td>
+<td>
+
+Denies the radio_stats command without any pre-configured scope.
 
 </td>
 </tr>

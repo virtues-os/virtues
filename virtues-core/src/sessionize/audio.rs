@@ -175,11 +175,13 @@ pub async fn sessionize_day(pool: &PgPool, date: chrono::NaiveDate) -> Result<u3
 
     // The day's chunks: transcription (speech + summary + speaker count) joined to
     // its recording (loudness), in time order. Left join so a chunk with no
-    // recording row still contributes its speaker/summary.
+    // recording row still contributes its speaker/summary. Keyed on
+    // source_stream_id, NOT audio_url — metadata-only silent chunks carry NULL
+    // audio_url on both sides, and NULL = NULL never matches.
     let rows = sqlx::query(
         "SELECT t.start_time, t.end_time, t.speaker_count, t.summary, r.average_db_level AS db \
          FROM data_communication_transcription t \
-         LEFT JOIN data_audio_recording r ON r.audio_url = t.audio_url \
+         LEFT JOIN data_audio_recording r ON r.source_stream_id = t.source_stream_id \
          WHERE t.start_time >= $1::timestamptz AND t.start_time < $2::timestamptz \
          ORDER BY t.start_time",
     )

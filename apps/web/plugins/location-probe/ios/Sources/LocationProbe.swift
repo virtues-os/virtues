@@ -58,8 +58,39 @@ public final class LocationProbe: NSObject, CLLocationManagerDelegate {
   private var lastFixAt: Date?
   private let minFixInterval: TimeInterval = 15
 
+  // MARK: - Power modes (motion-adaptive duty cycle)
+  //
+  // GPS at 10m accuracy 24/7 is the single biggest hardware burn and a phone is
+  // stationary most of the day. `coarse` (cell/Wi-Fi positioning, GNSS chip off)
+  // is only ever entered while audio records healthily — the audio session owns
+  // process residency then, so location never carries the keepalive in coarse
+  // mode. Movement, or audio going down (the mic re-arm piggyback needs a fast
+  // heartbeat again), escalates straight back to `precise`. Updates are never
+  // stopped — only accuracy/filter are modulated — so background residency and
+  // the sig-loc relaunch path are untouched.
+
+  private enum PowerMode { case precise, coarse }
+  private var mode: PowerMode = .precise
+  /// 0 = audio off, 1 = enabled but not recording (down), 2 = recording healthy.
+  /// Pushed by the audio plugin on every state transition.
+  private var audioState: Int32 = 0
+  /// Last position that counted as movement; displacement is measured from here.
+  private var moveAnchor: CLLocation?
+  private var lastMovedAt = Date()
+  private let stationaryAfter: TimeInterval = 300
+  private let moveThreshold: CLLocationDistance = 60
+  private let movingSpeed: CLLocationSpeed = 1.5
+
   /// Guards against overlapping background drains.
   private var isDraining = false
+
+  /// Pace background drains at the audio-chunk cadence: with endpoint parking
+  /// (reach plugin) every background drain is a fresh QUIC dial, and location
+  /// fixes alone are too small to earn one every 15s while moving. The first
+  /// drain after launch goes immediately — a cold sig-loc relaunch may not
+  /// live long enough to wait out an interval.
+  private var lastBgDrainAt: Date?
+  private let minBgDrainInterval: TimeInterval = 300
 
   /// Set by the AppDelegate: "user" for a normal launch, "location" when the
   /// app was relaunched by the OS for a location event (launchOptions carried
@@ -120,6 +151,7 @@ public final class LocationProbe: NSObject, CLLocationManagerDelegate {
 
   public func locationManager(_ m: CLLocationManager, didUpdateLocations locs: [CLLocation]) {
     guard let l = locs.last else { return }
+    updateMotion(l)  // mode logic sees every callback, before the log throttle
     let now = Date()
     if let last = lastFixAt, now.timeIntervalSince(last) < minFixInterval { return }
     lastFixAt = now
@@ -142,6 +174,8 @@ public final class LocationProbe: NSObject, CLLocationManagerDelegate {
   private func maybeDrainInBackground() {
     if appStateString() == "active" { return }
     if isDraining { return }
+    if let last = lastBgDrainAt, Date().timeIntervalSince(last) < minBgDrainInterval { return }
+    lastBgDrainAt = Date()
     isDraining = true
 
     var bg: UIBackgroundTaskIdentifier = .invalid
@@ -187,6 +221,63 @@ public final class LocationProbe: NSObject, CLLocationManagerDelegate {
 
     let rc = "location".withCString { s in json.withCString { j in virtues_enqueue(s, j) } }
     if rc != 0 { NSLog("[LocationProbe] enqueue failed rc=%d", rc) }
+  }
+
+  /// Motion-adaptive mode switching. Runs on every delegate callback.
+  private func updateMotion(_ l: CLLocation) {
+    let moved: Bool
+    if let a = moveAnchor {
+      // Coarse fixes are cell/Wi-Fi positioned with km-scale horizontalAccuracy
+      // and speed = -1, so an accuracy-sized threshold would be unreachable for
+      // any sub-3km trip (walk to a café, short drive) — coarse mode would
+      // never escalate back. Cap the threshold at 500m: real short trips
+      // escape, and a spurious tower-jitter escalation self-corrects (5 min
+      // stationary in precise drops right back to coarse).
+      let threshold = mode == .coarse ? max(200, min(l.horizontalAccuracy, 500)) : moveThreshold
+      moved = l.distance(from: a) > threshold || l.speed > movingSpeed
+    } else {
+      moved = true
+    }
+    if moved {
+      moveAnchor = l
+      lastMovedAt = Date()
+      if mode == .coarse { apply(.precise, reason: "movement") }
+      return
+    }
+    if mode == .precise, audioState == 2,
+      Date().timeIntervalSince(lastMovedAt) > stationaryAfter {
+      apply(.coarse, reason: "stationary+audio")
+    }
+  }
+
+  private func apply(_ new: PowerMode, reason: String) {
+    if mode == new { return }
+    mode = new
+    switch new {
+    case .precise:
+      manager.desiredAccuracy = kCLLocationAccuracyNearestTenMeters
+      manager.distanceFilter = kCLDistanceFilterNone
+    case .coarse:
+      manager.desiredAccuracy = kCLLocationAccuracyThreeKilometers
+      manager.distanceFilter = 100
+    }
+    // Lands in the rolling log → visible under Recent activity, and greppable
+    // in the device console for the battery A/B.
+    writeMarker(source: "mode=\(new == .precise ? "precise" : "coarse") (\(reason))")
+  }
+
+  /// Audio plugin push (via C ABI): recording health drives how lazy location
+  /// may be. Anything below healthy forces precise — location is the backup
+  /// generator that keeps the process alive and the mic re-arm heartbeat fast
+  /// while the audio session is down.
+  public func setAudioState(_ state: Int32) {
+    DispatchQueue.main.async { [weak self] in
+      guard let self = self else { return }
+      self.audioState = state
+      if state < 2, self.mode == .coarse {
+        self.apply(.precise, reason: "audio=\(state)")
+      }
+    }
   }
 
   public func locationManagerDidChangeAuthorization(_ m: CLLocationManager) {
@@ -293,7 +384,7 @@ public final class LocationProbe: NSObject, CLLocationManagerDelegate {
     return String(cString: c)
   }
 
-  private func appStateString() -> String {
+  fileprivate func appStateString() -> String {
     let read: () -> String = {
       switch UIApplication.shared.applicationState {
       case .active: return "active"
@@ -305,4 +396,11 @@ public final class LocationProbe: NSObject, CLLocationManagerDelegate {
     if Thread.isMainThread { return read() }
     return DispatchQueue.main.sync(execute: read)
   }
+}
+
+/// C-ABI push from the audio plugin (mirror of `virtues_ensure_recording`):
+/// 0 = audio off, 1 = enabled but not recording, 2 = recording healthy.
+@_cdecl("virtues_location_audio_state")
+func virtues_location_audio_state(_ state: Int32) {
+  LocationProbe.shared.setAudioState(state)
 }
