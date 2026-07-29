@@ -22,9 +22,32 @@
 	import { modifierHint } from "$lib/stores/modifierHint.svelte";
 	import { chatSessions } from "$lib/stores/chatSessions.svelte";
 	import { isEmoji } from "$lib/utils/iconHelpers";
+	import { routeCloth, textOnCloth } from "$lib/sidebar/pin-colors";
 	import type { ContextMenuItem } from "$lib/stores/contextMenu.svelte";
 
 	const FLIP_DURATION_MS = 150;
+
+	/**
+	 * A tab for a thing that carries a bookcloth wears it.
+	 *
+	 * The color belongs to the THING, not to the window — which is why this is
+	 * per-tab and not a band across the pane. A pane holds tabs from several
+	 * worlds at once; painting the pane would claim the whole window for
+	 * whichever tab happened to be in front.
+	 *
+	 * Active tabs take the solid cloth with text inverted for legibility;
+	 * inactive ones drop to a wash so identity survives without competing with
+	 * focus. Only pinnable things (today: notebooks) have cloth at all, so a
+	 * filled tab stays rare — which is the only reason it can be loud.
+	 */
+	function clothStyle(tab: Tab, isActive: boolean): string {
+		const cloth = routeCloth(tab.route);
+		if (!cloth) return "";
+		if (isActive) {
+			return `background:${cloth};color:${textOnCloth(cloth)};`;
+		}
+		return `background:color-mix(in srgb, ${cloth} 12%, transparent);color:${cloth};`;
+	}
 
 	interface Props {
 		paneId?: "left" | "right"; // When set, renders as a pane tab bar in split mode
@@ -432,6 +455,8 @@
 					isActivePane}
 				class:pinned={tab.pinned}
 				class:renaming={tab.id === renamingTabId}
+				class:clothed={!!routeCloth(tab.route)}
+				style={clothStyle(tab, tab.id === activeTabId && isActivePane)}
 				animate:flip={{ duration: FLIP_DURATION_MS }}
 				onclick={() =>
 					tab.id !== renamingTabId && handleTabClick(tab.id)}
@@ -656,6 +681,20 @@
 	.tab.active:not(.active-in-active-pane) {
 		background: var(--tab-active-bg);
 		color: var(--color-foreground-muted);
+	}
+
+	/* A clothed tab supplies its own fill and text colour inline, so the hover
+	   and active rules — which are written against the neutral ramp — must not
+	   paint over it. Hover reads as a slight lift instead. */
+	.tab.clothed:hover {
+		background: inherit;
+		filter: brightness(1.08);
+	}
+
+	.tab.clothed :global(.tab-icon),
+	.tab.clothed .tab-close {
+		color: inherit;
+		opacity: 0.85;
 	}
 
 	/* Dragging state - svelte-dnd-action applies aria-grabbed */

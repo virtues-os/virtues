@@ -1,6 +1,9 @@
 <script lang="ts">
 	import Icon from "$lib/components/Icon.svelte";
 	import { isAppleKeyboard } from "$lib/utils/platform";
+	import { windowShellStore } from "$lib/stores/window-shell.svelte";
+	import { HOME_ROUTE } from "$lib/sidebar/sections";
+	import { routeCloth } from "$lib/sidebar/pin-colors";
 
 	interface Props {
 		collapsed?: boolean;
@@ -11,31 +14,36 @@
 
 	let { collapsed = false, animationDelay = 0, onSearch }: Props = $props();
 
-	// The mark, then the search. Identity above utility.
+	// The masthead is a PATH, and the path is the way home.
 	//
-	// Two wrong versions preceded this one, and they were wrong the same way.
-	// First the ∴ was a button that went Home — a wordmark behaving like a
-	// control, which is a pattern used nowhere else in software, so nobody read
-	// it as the way home. Then it was replaced with a bordered, input-shaped
-	// search field, which was worse: a border is a hard edge and nothing else
-	// in the sidebar has one, so a utility you touch twenty times a day became
-	// the highest-contrast object in the panel, outranking the user's entire
-	// life beneath it.
+	// The earlier wordmark-as-home was reverted for a good reason: a bare mark
+	// behaving like a button is a pattern read nowhere as navigation. This is
+	// the answer to that objection rather than a repeat of the mistake — the
+	// mast reads `∴ Virtues / galilee`, a breadcrumb, and breadcrumb roots are
+	// clickable everywhere in software. The root gained a job the moment it
+	// gained a tail.
 	//
-	// Both mistakes were the same mistake: the top of the sidebar is the most
-	// valuable space in the app, and putting a *control* there spends it.
-	//
-	// So: one row. The mark on the left, inert — no hover, no cursor, no tab
-	// stop — and search as a small icon button flexed to the right of it. The
-	// mark is the one place the serif appears in the chrome, which concentrates
-	// the typographic identity in a single deliberate spot instead of spreading
-	// it thin.
-	//
-	// `virtues` is set at the SAME size as the nav labels below. A wordmark that
-	// is bigger than everything around it is a logo demanding attention, and
-	// this one has no job to do beyond saying whose desk this is. The serif and
-	// the ∴ carry the identity; scale would just make it loud.
+	// The tail appears only for things that carry a bookcloth color (today:
+	// notebooks), with the thing's dot riding beside its name — the same dot
+	// as on its Desk spine and nowhere else. Routes without a cloth get no
+	// tail: a path that narrated every room would be a status bar.
 	const hint = $derived(isAppleKeyboard ? "⌘K" : "Ctrl K");
+
+	const activeTab = $derived.by(() => {
+		const pane = windowShellStore.activePane;
+		if (!pane) return null;
+		return pane.tabs.find((t) => t.id === pane.activeTabId) ?? null;
+	});
+
+	const tailCloth = $derived(routeCloth(activeTab?.route));
+	const tailLabel = $derived(tailCloth && activeTab ? activeTab.label : null);
+
+	function goHome() {
+		windowShellStore.openTabFromRoute(HOME_ROUTE, {
+			label: "Home",
+			focusExisting: true,
+		});
+	}
 </script>
 
 <div class="masthead" class:collapsed>
@@ -43,10 +51,25 @@
 		class="masthead-row animate-row"
 		style="animation-delay: {animationDelay}ms"
 	>
-		<!-- Inert. aria-hidden because "∴ virtues" read aloud between the window
-		     title and the first destination is noise, not information. -->
-		<div class="mark" aria-hidden="true">
-			<span class="mark-glyph">∴</span><span class="mark-word">virtues</span>
+		<div class="path">
+			<!-- The mark, drawn: the JJannon ∴ glyph is text-weight; the mast
+			     needs logo weight. Same optical grid as the Atlas icons —
+			     16px box, ~12px of ink. -->
+			<span class="mark-glyph" aria-hidden="true">
+				<svg viewBox="0 0 12 10.5" width="12" height="10.5" fill="currentColor">
+					<circle cx="6" cy="2.4" r="1.5" />
+					<circle cx="2.6" cy="8.1" r="1.5" />
+					<circle cx="9.4" cy="8.1" r="1.5" />
+				</svg>
+			</span>
+			<button type="button" class="mark-word" onclick={goHome} title="Home">
+				Virtues
+			</button>
+			{#if tailLabel}
+				<span class="path-sep" aria-hidden="true">/</span>
+				<span class="path-dot" style="background: {tailCloth}" aria-hidden="true"></span>
+				<span class="path-tail">{tailLabel}</span>
+			{/if}
 		</div>
 
 		<button
@@ -90,26 +113,74 @@
 		padding-left: var(--sidebar-padding-left-base);
 	}
 
-	.mark {
+	.path {
 		display: flex;
-		align-items: baseline;
+		align-items: center;
 		gap: 6px;
+		min-width: 0;
 		user-select: none;
 		color: var(--color-foreground);
 	}
 
 	.mark-glyph {
-		font-family: var(--font-serif, serif);
-		font-size: 15px;
-		line-height: 1;
+		width: 16px;
+		flex-shrink: 0;
+		display: flex;
+		align-items: center;
+		justify-content: center;
 	}
 
-	/* Same size as the nav labels. See the note in the script block. */
+	/* The root: one size up from the labels below — the mast ranks, quietly. */
 	.mark-word {
 		font-family: var(--font-serif, serif);
-		font-size: var(--sidebar-interactive-font-size);
+		font-size: 15px;
+		font-weight: 400;
+		letter-spacing: 0.025em;
+		-webkit-text-stroke: 0.2px currentColor;
 		line-height: 1;
-		letter-spacing: 0.01em;
+		color: var(--color-foreground);
+		background: none;
+		border: none;
+		padding: 0;
+		cursor: pointer;
+		flex-shrink: 0;
+	}
+
+	.mark-word:hover {
+		opacity: 0.65;
+	}
+
+	.mark-word:focus-visible {
+		outline: 2px solid var(--color-border-focus);
+		outline-offset: 2px;
+		border-radius: 2px;
+	}
+
+	.path-sep {
+		font-family: var(--font-serif, serif);
+		font-size: 13px;
+		color: var(--color-foreground-subtle);
+		flex-shrink: 0;
+	}
+
+	/* The thing's dot, riding beside its name — same cloth as its Desk spine. */
+	.path-dot {
+		width: 6px;
+		height: 6px;
+		border-radius: 999px;
+		flex-shrink: 0;
+		box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.12);
+	}
+
+	.path-tail {
+		font-family: var(--font-serif, serif);
+		font-size: 13px;
+		font-weight: 400;
+		color: var(--color-foreground-muted);
+		overflow: hidden;
+		text-overflow: ellipsis;
+		white-space: nowrap;
+		min-width: 0;
 	}
 
 	.masthead.collapsed {

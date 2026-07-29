@@ -6,6 +6,7 @@
 	import { chatSessions } from "$lib/stores/chatSessions.svelte";
 	import type { SystemSection } from "$lib/sidebar/sections";
 	import SidebarNavItem from "./SidebarNavItem.svelte";
+	import AtlasIcon from "./AtlasIcon.svelte";
 
 	interface Props {
 		section: SystemSection;
@@ -132,7 +133,7 @@
 				const data = await listNotebooks();
 				const all = data.notebooks || [];
 				entities = (section.limit ? all.slice(0, section.limit) : all).map((n) => ({
-					id: `/notebooks/${n.id}`,
+					id: `/notebook/${n.id}`,
 					name: n.name,
 					namespace: 'notebook',
 					icon: n.icon || 'ri:booklet-line',
@@ -237,7 +238,7 @@
 	async function handleNewNotebook() {
 		try {
 			const notebook = await createNotebook({ name: 'Untitled notebook' });
-			windowShellStore.openTabFromRoute(`/notebooks/${notebook.id}`, {
+			windowShellStore.openTabFromRoute(`/notebook/${notebook.id}`, {
 				label: notebook.name,
 				forceNew: true,
 				preferEmptyPane: true,
@@ -257,7 +258,17 @@
 </script>
 
 {#if !collapsed}
-	{#if section.type === 'link' && section.href}
+	{#if section.comingSoon}
+		<!-- A shelf slot whose room isn't built: announced, not clickable. The
+		     shelf's final shape has to be lived with before every room exists. -->
+		<div class="system-section" style="--stagger-delay: {animationDelay}ms">
+			<div class="sidebar-interactive coming-soon" aria-disabled="true" title="Coming soon">
+				<AtlasIcon name={section.icon.startsWith('atlas:') ? section.icon.slice(6) : 'pages'} />
+				<span class="sidebar-label">{section.name}</span>
+				<span class="soon-tag">soon</span>
+			</div>
+		</div>
+	{:else if section.type === 'link' && section.href}
 		<div class="system-section" style="--stagger-delay: {animationDelay}ms">
 			<SidebarNavItem
 				item={{
@@ -409,6 +420,31 @@
 		flex-direction: column;
 		animation: navRowIn 200ms cubic-bezier(0.2, 0, 0, 1) backwards;
 		animation-delay: var(--stagger-delay, 0ms);
+	}
+
+	/* Announced, not clickable: quieter than a real row, no hover, no cursor. */
+	.sidebar-interactive.coming-soon {
+		cursor: default;
+		color: var(--color-foreground-subtle);
+	}
+
+	.sidebar-interactive.coming-soon:hover {
+		background: transparent;
+		color: var(--color-foreground-subtle);
+	}
+
+	.soon-tag {
+		margin-left: auto;
+		font-family: var(--font-mono);
+		font-size: 9px;
+		letter-spacing: 0.06em;
+		color: var(--color-foreground-disabled);
+		opacity: 0;
+		transition: opacity 150ms ease;
+	}
+
+	.sidebar-interactive.coming-soon:hover .soon-tag {
+		opacity: 1;
 	}
 
 	/* Matches the masthead's fadeSlideIn so the panel falls as one motion. */
