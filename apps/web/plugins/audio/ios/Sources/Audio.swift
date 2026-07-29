@@ -54,6 +54,7 @@ public final class AudioRecorder: NSObject {
   // down for a while (the cases the watchdog can't self-heal — app killed, exotic
   // takeovers). Default ON; user-toggleable. Suppressed during phone calls.
   private let notifyKey = "virtues.audio.notifyOnStop"        // user toggle (default true)
+  private let silentDroppedKey = "virtues.audio.silentDropped" // metadata-only chunk count
   private let lastGoodKey = "virtues.audio.lastGoodCapture"   // persisted across launches
   private let gapThreshold: TimeInterval = 300                // 5 min sustained gap
   private let nudgeId = "virtues.audio.gap"                   // fixed id → dedupe + auto-clear
@@ -177,6 +178,11 @@ public final class AudioRecorder: NSObject {
   }
 
   // MARK: - Gap nudge
+
+  /// Chunks shipped metadata-only because they measured silent (battery stats).
+  public func silentDroppedCount() -> Int {
+    UserDefaults.standard.integer(forKey: silentDroppedKey)
+  }
 
   public func notifyEnabled() -> Bool {
     // Default ON: treat "unset" as true.
@@ -465,8 +471,8 @@ public final class AudioRecorder: NSObject {
     // ~900 KB of measured silence never rides the radio. The box inserts a NULL
     // audio_url row and the transcriber skips it as before.
     if silent {
-      let dropped = UserDefaults.standard.integer(forKey: "virtues.audio.silentDropped") + 1
-      UserDefaults.standard.set(dropped, forKey: "virtues.audio.silentDropped")
+      let dropped = UserDefaults.standard.integer(forKey: silentDroppedKey) + 1
+      UserDefaults.standard.set(dropped, forKey: silentDroppedKey)
     } else {
       rec["audio_data"] = data.base64EncodedString()
     }
