@@ -131,28 +131,33 @@
 			</button>
 		</ZoneHeader>
 
-		{#if zoneCollapsed}
-			<!-- folded shut -->
-		{:else if pinsStore.loaded && pins.length === 0}
-			<div class="desk-empty">Nothing pinned yet</div>
-		{:else}
-			{#each pins as pin (pin.id)}
-				<div
-					class="sidebar-interactive desk-spine"
-					role="link"
-					tabindex="0"
-					onclick={() => open(pin)}
-					onkeydown={(e) => handleKeydown(e, pin)}
-					oncontextmenu={(e) => handleContextMenu(e, pin)}
-					title={labelFor(pin)}
-				>
-					<span class="desk-pin" aria-hidden="true">
-						<i style="background: {clothFor(pin)}"></i>
-					</span>
-					<span class="sidebar-label desk-spine-label">{labelFor(pin)}</span>
-				</div>
-			{/each}
-		{/if}
+		<!-- Folds on the shared grid-rows accordion (0fr → 1fr), the same one
+		     the collections use, so a zone closing looks like every other
+		     thing that closes in this panel. -->
+		<div class="sidebar-expandable" class:expanded={!zoneCollapsed}>
+			<div class="sidebar-expandable-inner">
+				{#if pinsStore.loaded && pins.length === 0}
+					<div class="desk-empty">Nothing pinned yet</div>
+				{:else}
+					{#each pins as pin (pin.id)}
+						<div
+							class="sidebar-interactive desk-spine"
+							role="link"
+							tabindex="0"
+							onclick={() => open(pin)}
+							onkeydown={(e) => handleKeydown(e, pin)}
+							oncontextmenu={(e) => handleContextMenu(e, pin)}
+							title={labelFor(pin)}
+						>
+							<span class="desk-pin" aria-hidden="true">
+								<i style="background: {clothFor(pin)}"></i>
+							</span>
+							<span class="sidebar-label desk-spine-label">{labelFor(pin)}</span>
+						</div>
+					{/each}
+				{/if}
+			</div>
+		</div>
 	</div>
 {/if}
 
