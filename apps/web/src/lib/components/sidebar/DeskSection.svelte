@@ -22,6 +22,8 @@
 	import { pinsStore } from "$lib/stores/pins.svelte";
 	import { contextMenu } from "$lib/stores/contextMenu.svelte";
 	import { clothFor } from "$lib/sidebar/pin-colors";
+	import { sidebarZones } from "$lib/stores/sidebarZones.svelte";
+	import ZoneHeader from "./ZoneHeader.svelte";
 	import type { Pin } from "$lib/api/client";
 
 	interface Props {
@@ -33,6 +35,7 @@
 
 	// Loaded once by the app layout; read the shared state, don't re-fetch.
 	const pins = $derived(pinsStore.pins);
+	const zoneCollapsed = $derived(sidebarZones.isCollapsed("desk"));
 
 	function isExternal(url: string): boolean {
 		return /^https?:\/\//i.test(url);
@@ -87,12 +90,12 @@
 
 {#if !collapsed}
 	<div class="desk" style="--stagger-delay: {animationDelay}ms">
-		<div class="desk-header">
-			<span class="desk-title">Desk</span>
-		</div>
+		<ZoneHeader id="desk" label="Desk" />
 
-		{#if pinsStore.loaded && pins.length === 0}
-			<div class="desk-empty">Nothing checked out.</div>
+		{#if zoneCollapsed}
+			<!-- folded shut -->
+		{:else if pinsStore.loaded && pins.length === 0}
+			<div class="desk-empty">Nothing pinned yet</div>
 		{:else}
 			{#each pins as pin, i (pin.id)}
 				<div
@@ -122,25 +125,6 @@
 	.desk {
 		display: flex;
 		flex-direction: column;
-	}
-
-	.desk-header {
-		display: flex;
-		align-items: center;
-		height: 26px;
-		padding: 0 8px 0 var(--sidebar-padding-left-base);
-		margin-bottom: 2px;
-		user-select: none;
-		animation: deskRowIn 200ms cubic-bezier(0.2, 0, 0, 1) backwards;
-		animation-delay: var(--stagger-delay, 0ms);
-	}
-
-	/* The zone subtitle: a whisper, not a headline. */
-	.desk-title {
-		font-size: 11px;
-		font-weight: 500;
-		letter-spacing: 0.015em;
-		color: var(--color-foreground-subtle);
 	}
 
 	/* Spines: the serif appears in the chrome exactly where ownership does.
@@ -176,11 +160,13 @@
 		line-height: 1.5;
 	}
 
+	/* Plain, quiet, sans. It was set in italic serif — which made the one line
+	   in the panel that says "there is nothing here" the most decorated thing
+	   in it. An empty state is a statement of fact, not a flourish; the serif
+	   is reserved for the names of real things. */
 	.desk-empty {
-		padding: 4px 8px 4px var(--sidebar-padding-left-base);
-		font-family: var(--font-serif);
-		font-style: italic;
-		font-size: 12.5px;
+		padding: 3px 8px 3px var(--sidebar-padding-left-base);
+		font-size: 12px;
 		color: var(--color-foreground-subtle);
 	}
 
@@ -196,7 +182,6 @@
 	}
 
 	@media (prefers-reduced-motion: reduce) {
-		.desk-header,
 		.desk-spine {
 			animation: none;
 		}

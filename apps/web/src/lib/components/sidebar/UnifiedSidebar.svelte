@@ -7,6 +7,8 @@
 	import SidebarFooter from "./SidebarFooter.svelte";
 	import SystemSection from "./SystemSection.svelte";
 	import DeskSection from "./DeskSection.svelte";
+	import ZoneHeader from "./ZoneHeader.svelte";
+	import { sidebarZones } from "$lib/stores/sidebarZones.svelte";
 	import { SECTION_GROUPS } from "$lib/sidebar/sections";
 	import SearchModal from "./SearchModal.svelte";
 	import SidebarModePanel from "./SidebarModePanel.svelte";
@@ -252,16 +254,18 @@
 				{#each SECTION_GROUPS as group, groupIndex (group.id)}
 					<div class="nav-group">
 						{#if group.label && !isCollapsed}
-							<div class="nav-group-header">{group.label}</div>
+							<ZoneHeader id={group.id} label={group.label} />
 						{/if}
-						{#each group.items as section, itemIndex (section.id)}
-							<SystemSection
-								{section}
-								collapsed={isCollapsed}
-								accentColor={null}
-								animationDelay={navDelay(groupIndex, itemIndex)}
-							/>
-						{/each}
+						{#if !sidebarZones.isCollapsed(group.id)}
+							{#each group.items as section, itemIndex (section.id)}
+								<SystemSection
+									{section}
+									collapsed={isCollapsed}
+									accentColor={null}
+									animationDelay={navDelay(groupIndex, itemIndex)}
+								/>
+							{/each}
+						{/if}
 					</div>
 				{/each}
 
