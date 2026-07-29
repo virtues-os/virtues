@@ -185,7 +185,7 @@ pub async fn delete_action(db: &PgPool, action_id: &str, drop_data: bool) -> Res
     // folders (under user/) are ours to remove; builtin/imported folders are
     // managed by their own lanes.
     let dir =
-        crate::action_templates::dir_for_action_id(action_id).filter(|d| d.starts_with("user/"));
+        crate::applet_templates::dir_for_action_id(action_id).filter(|d| d.starts_with("user/"));
 
     sqlx::query("UPDATE app_applet_runs SET action_id = NULL WHERE action_id = $1")
         .bind(action_id)
@@ -208,14 +208,14 @@ pub async fn delete_action(db: &PgPool, action_id: &str, drop_data: bool) -> Res
     }
 
     if let Some(d) = dir {
-        let path = crate::action_templates::resolve_applet_dir(&d);
+        let path = crate::applet_templates::resolve_applet_dir(&d);
         if let Err(e) = std::fs::remove_dir_all(&path) {
             return Err(crate::Error::Other(format!(
                 "applet row deleted but folder removal failed ({e}); it may reappear on \
                  reconcile — remove {d} manually"
             )));
         }
-        crate::action_templates::reload_catalog();
+        crate::applet_templates::reload_catalog();
     }
 
     Ok(())
@@ -256,7 +256,7 @@ pub async fn applet_data_tables(db: &PgPool, action_id: &str) -> Result<Vec<Stri
 
 /// Fields the user can tune on a `system`-owned action row. Must match the
 /// set of fields that template reconcile preserves (see
-/// `action_templates::upsert_row`) — otherwise the next reconcile would
+/// `applet_templates::upsert_row`) — otherwise the next reconcile would
 /// silently clobber what the user just changed.
 pub const SYSTEM_EDITABLE_FIELDS: &[&str] = &["enabled", "cron_schedule", "config", "memory"];
 
@@ -418,7 +418,7 @@ pub async fn update_action(
     // loop walk the fields in the same fixed order so the `$N` placeholders
     // line up 1-to-1 with the bind values. `config`/`triggers` are JSONB
     // columns, so their placeholders are cast (`::jsonb`); the string we bind
-    // is a JSON document, mirroring the template upsert in `action_templates`.
+    // is a JSON document, mirroring the template upsert in `applet_templates`.
     let mut sets: Vec<String> = Vec::new();
     let mut bind_idx = 0u32;
     let mut next = || {
@@ -558,7 +558,7 @@ pub async fn update_action(
     // from disk comes back in the last chosen state (authoring plan §E).
     if current.owner == "ai" {
         if let Some(enabled) = obj.get("enabled").and_then(|v| v.as_bool()) {
-            crate::action_templates::mirror_enabled_to_manifest(action_id, enabled);
+            crate::applet_templates::mirror_enabled_to_manifest(action_id, enabled);
         }
     }
 

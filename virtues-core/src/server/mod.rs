@@ -36,7 +36,7 @@ pub async fn run(client: Virtues, host: &str, port: u16) -> Result<()> {
     // Reap runs left in `running` by a crash/restart mid-execution, so a stale
     // lock doesn't survive a reboot. (The concurrency gate also age-bounds stale
     // runs at request time; this just keeps the runs table honest on boot.)
-    match crate::scheduler::actions::cleanup_stale_runs(client.database.pool()).await {
+    match crate::scheduler::applets::cleanup_stale_runs(client.database.pool()).await {
         Ok(n) if n > 0 => tracing::info!("Reaped {} stale 'running' action run(s) on startup", n),
         Ok(_) => {}
         Err(e) => tracing::warn!("Failed to reap stale action runs: {}", e),
@@ -96,7 +96,7 @@ pub async fn run(client: Virtues, host: &str, port: u16) -> Result<()> {
     // Reconcile action templates from per-folder manifests — creates/updates
     // system action rows. Safe to call on every startup (user-managed runtime
     // state preserved).
-    if let Err(e) = crate::action_templates::reconcile_templates(client.database.pool()).await {
+    if let Err(e) = crate::applet_templates::reconcile_templates(client.database.pool()).await {
         tracing::warn!("Failed to reconcile action templates: {}", e);
     }
 

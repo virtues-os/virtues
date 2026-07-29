@@ -157,7 +157,7 @@ impl InstallConfig {
 
     /// Where the action tree (manifests + UI + sources.toml) lands on the box.
     /// virtues-core reads this via `VIRTUES_ACTIONS_DIR` (see
-    /// `action_templates::actions_root`); the default here must match
+    /// `applet_templates::actions_root`); the default here must match
     /// `WELL_KNOWN_ACTIONS_DIR` in virtues-core. Shipped in the release
     /// tarball as `actions/`; not baked into the binary, so a box with no
     /// copy here has no actions at all.
@@ -182,7 +182,7 @@ impl InstallConfig {
     /// Where the compiled function-action executables land (libexec = helper
     /// binaries not meant for direct user invocation). virtues-core resolves
     /// action `command[0]` here via `VIRTUES_ACTIONS_BIN_DIR` (see
-    /// `action_runner::resolve_program`); the default must match
+    /// `applet_runner::resolve_program`); the default must match
     /// `WELL_KNOWN_ACTIONS_BIN_DIR` in virtues-core. Shipped as `actions-bin/`.
     pub fn actions_bin_dir(&self) -> PathBuf {
         self.install_prefix.join("libexec/virtues")

@@ -29,8 +29,8 @@ pub(crate) mod sql_query;
 pub(crate) mod sql_write;
 mod page_editor;
 mod semantic_search;
-pub mod action_setup;
-pub mod action_management;
+pub mod applet_setup;
+pub mod applet_management;
 pub mod dayline_events;
 
 pub use executor::{

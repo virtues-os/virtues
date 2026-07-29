@@ -33,7 +33,7 @@
 //! }
 //! ```
 
-pub mod action_runner;
+pub mod applet_runner;
 pub mod executor;
 pub mod subagent;
 pub mod prompt;

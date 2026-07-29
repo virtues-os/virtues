@@ -5,7 +5,7 @@
 //! flow. Once the folder lands under `actions/`, the system makes no further
 //! distinction between built-ins and imports — the dir is the spec.
 //!
-//! Layout supported by the scanner (see `action_templates::load_catalog`):
+//! Layout supported by the scanner (see `applet_templates::load_catalog`):
 //!   - `actions/<slug>/manifest.toml` — single-action repo
 //!   - `actions/<slug>/actions/<name>/manifest.toml` — pack
 //!
@@ -25,7 +25,7 @@ use serde::{Deserialize, Serialize};
 use sqlx::PgPool;
 use tokio::process::Command;
 
-use crate::action_templates;
+use crate::applet_templates;
 use crate::error::{Error, Result};
 
 #[derive(Debug, Deserialize)]
@@ -68,7 +68,7 @@ pub async fn import(db: &PgPool, req: ImportRequest) -> Result<ImportOutcome> {
     validate_ref(git_ref)?;
 
     let slug = slug_for_url(url)?;
-    let actions_root = action_templates::state_root();
+    let actions_root = applet_templates::state_root();
     let target = actions_root.join(&slug);
 
     // Snapshot the existing row set under this slug so we can diff after
@@ -85,8 +85,8 @@ pub async fn import(db: &PgPool, req: ImportRequest) -> Result<ImportOutcome> {
 
     // Re-read manifests from disk and reconcile. This is the same flow the
     // admin Reconcile button runs; we just scoped the diff to our slug.
-    action_templates::reload_catalog();
-    if let Err(e) = action_templates::reconcile_templates(db).await {
+    applet_templates::reload_catalog();
+    if let Err(e) = applet_templates::reconcile_templates(db).await {
         return Err(Error::Other(format!(
             "reconcile after import failed: {e}"
         )));
@@ -285,7 +285,7 @@ async fn run_git(cwd: &Path, args: &[&str]) -> Result<()> {
 }
 
 fn actions_root_buf() -> PathBuf {
-    action_templates::state_root()
+    applet_templates::state_root()
 }
 
 async fn ids_under_slug(db: &PgPool, slug: &str) -> Result<HashSet<String>> {

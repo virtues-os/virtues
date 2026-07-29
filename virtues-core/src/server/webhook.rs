@@ -9,7 +9,7 @@
 //! actions anchored to IT (`app_applets.device_id`); the on-box console
 //! (loopback) may drive any action.
 //!
-//! The unified `action_runner::run_action` enforces trigger validation,
+//! The unified `applet_runner::run_action` enforces trigger validation,
 //! condition evaluation, and dispatch. This handler only does auth + routing.
 
 use std::sync::Arc;
@@ -22,7 +22,7 @@ use axum::{
 use serde::Serialize;
 use serde_json::Value;
 
-use crate::action_runner::{ActionRunStatus, RunnerDeps};
+use crate::applet_runner::{ActionRunStatus, RunnerDeps};
 use crate::api::chat::ChatCancellationState;
 use crate::database::Database;
 use crate::middleware::auth::AuthUser;
@@ -147,7 +147,7 @@ pub async fn webhook(
     // console). Confirm the action exists, then that this device owns it.
     tracing::debug!(device_id = %user.device_id, action_id = %action_id, "webhook authed by proven key");
 
-    if crate::scheduler::actions::get_action(state.db.pool(), &action_id)
+    if crate::scheduler::applets::get_action(state.db.pool(), &action_id)
         .await
         .is_err()
     {
@@ -191,7 +191,7 @@ pub async fn webhook(
         yjs: state.yjs_state.clone(),
     };
 
-    match crate::action_runner::run_action(&deps, &action_id, "webhook", Some(&body)).await {
+    match crate::applet_runner::run_action(&deps, &action_id, "webhook", Some(&body)).await {
         Ok(result) => match result.status {
             ActionRunStatus::Success => (
                 StatusCode::OK,

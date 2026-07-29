@@ -66,7 +66,7 @@ pub async fn get_action_run_handler(
     State(state): State<AppState>,
     Path(run_id): Path<String>,
 ) -> Response {
-    match crate::scheduler::actions::get_run(state.db.pool(), &run_id).await {
+    match crate::scheduler::applets::get_run(state.db.pool(), &run_id).await {
         Ok(run) => (StatusCode::OK, Json(run)).into_response(),
         Err(e) => (
             StatusCode::NOT_FOUND,
@@ -91,7 +91,7 @@ pub async fn trigger_action_handler(
 ) -> Response {
     let payload = body.and_then(|Json(b)| b.payload);
 
-    let deps = crate::action_runner::RunnerDeps {
+    let deps = crate::applet_runner::RunnerDeps {
         db: state.db.pool().clone(),
         yjs: state.yjs_state.clone(),
     };
@@ -101,7 +101,7 @@ pub async fn trigger_action_handler(
     // stuck in `running`. The handler returns 202 with the run_id as soon
     // as the row is created; the UI polls `app_applet_runs` for the final
     // status.
-    let result = match crate::action_runner::run_action_detached(
+    let result = match crate::applet_runner::run_action_detached(
         &deps,
         &action_id,
         "manual",
@@ -119,7 +119,7 @@ pub async fn trigger_action_handler(
         }
     };
 
-    use crate::action_runner::ActionRunStatus;
+    use crate::applet_runner::ActionRunStatus;
     let (status_code, status_label) = match result.status {
         ActionRunStatus::Running => (StatusCode::ACCEPTED, "running"),
         ActionRunStatus::Success => (StatusCode::OK, "success"),
@@ -190,7 +190,7 @@ pub async fn chat_import_upload_handler(
         )));
     }
 
-    let deps = crate::action_runner::RunnerDeps {
+    let deps = crate::applet_runner::RunnerDeps {
         db: state.db.pool().clone(),
         yjs: state.yjs_state.clone(),
     };
@@ -199,7 +199,7 @@ pub async fn chat_import_upload_handler(
         "provider": provider,
     });
 
-    match crate::action_runner::run_action(&deps, "action_chat_import", "manual", Some(&payload))
+    match crate::applet_runner::run_action(&deps, "action_chat_import", "manual", Some(&payload))
         .await
     {
         Ok(r) => (
@@ -348,9 +348,9 @@ pub async fn get_action_handler(
     Path(action_id): Path<String>,
 ) -> Response {
     let pool = state.db.pool();
-    match crate::scheduler::actions::get_action(pool, &action_id).await {
+    match crate::scheduler::applets::get_action(pool, &action_id).await {
         Ok(action) => {
-            let last_run = crate::scheduler::actions::last_run(pool, &action_id)
+            let last_run = crate::scheduler::applets::last_run(pool, &action_id)
                 .await
                 .ok()
                 .flatten();
@@ -369,7 +369,7 @@ pub async fn get_action_handler(
                     "memory": action.memory,
                     "command": action.command,
                     "credential_id": action.credential_id,
-                    "runtime": crate::scheduler::actions::derived_runtime(&action),
+                    "runtime": crate::scheduler::applets::derived_runtime(&action),
                     "until": action.until,
                     "archived_at": action.archived_at,
                     "has_face": crate::server::faces::face_dir_for(&action.id).is_some(),
@@ -412,7 +412,7 @@ pub async fn create_action_handler(
         }
     });
 
-    match crate::scheduler::actions::create_user_action(
+    match crate::scheduler::applets::create_user_action(
         state.db.pool(),
         None,
         &body.name,
@@ -441,7 +441,7 @@ pub async fn patch_action_handler(
     Path(action_id): Path<String>,
     Json(patch): Json<serde_json::Value>,
 ) -> Response {
-    match crate::scheduler::actions::update_action(state.db.pool(), &action_id, &patch).await {
+    match crate::scheduler::applets::update_action(state.db.pool(), &action_id, &patch).await {
         Ok(action) => (StatusCode::OK, Json(action)).into_response(),
         Err(e) => {
             let status = match e.http_status() {
@@ -468,7 +468,7 @@ pub async fn delete_action_handler(
     Path(action_id): Path<String>,
     axum::extract::Query(q): axum::extract::Query<DeleteActionQuery>,
 ) -> Response {
-    match crate::scheduler::actions::delete_action(state.db.pool(), &action_id, q.drop_data).await {
+    match crate::scheduler::applets::delete_action(state.db.pool(), &action_id, q.drop_data).await {
         Ok(()) => StatusCode::NO_CONTENT.into_response(),
         Err(e) => {
             let status = match e.http_status() {
@@ -488,9 +488,9 @@ pub async fn get_action_data_handler(
     State(state): State<AppState>,
     Path(action_id): Path<String>,
 ) -> Response {
-    match crate::scheduler::actions::applet_data_tables(state.db.pool(), &action_id).await {
+    match crate::scheduler::applets::applet_data_tables(state.db.pool(), &action_id).await {
         Ok(tables) => {
-            let schema = crate::scheduler::actions::applet_schema_name(&action_id);
+            let schema = crate::scheduler::applets::applet_schema_name(&action_id);
             (
                 StatusCode::OK,
                 Json(serde_json::json!({ "schema": schema, "tables": tables })),
@@ -520,7 +520,7 @@ pub async fn list_action_runs_handler(
     axum::extract::Query(q): axum::extract::Query<RunsQuery>,
 ) -> Response {
     let limit = q.limit.unwrap_or(20).clamp(1, 200);
-    match crate::scheduler::actions::query_runs(
+    match crate::scheduler::applets::query_runs(
         state.db.pool(),
         Some(&action_id),
         q.status.as_deref(),
@@ -543,7 +543,7 @@ pub async fn list_runs_handler(
     axum::extract::Query(q): axum::extract::Query<RunsQuery>,
 ) -> Response {
     let limit = q.limit.unwrap_or(50).clamp(1, 200);
-    match crate::scheduler::actions::query_runs(
+    match crate::scheduler::applets::query_runs(
         state.db.pool(),
         q.action_id.as_deref(),
         q.status.as_deref(),
@@ -606,7 +606,7 @@ pub struct SourceCatalogItem {
 pub async fn list_sources_handler(State(state): State<AppState>) -> Response {
     let pool = state.db.pool();
 
-    let sources = crate::action_templates::list_sources_sorted();
+    let sources = crate::applet_templates::list_sources_sorted();
     let mut items = Vec::with_capacity(sources.len());
 
     // One COUNT query per source — cheap; the catalog has at most a handful
@@ -757,13 +757,13 @@ pub async fn admin_reconcile_handler(State(state): State<AppState>) -> Response 
     // 1. Force a re-read of the on-disk catalog (sources.toml + per-action
     //    manifests). Subsequent lookup_source / list_sources_sorted /
     //    reconcile calls see the new data.
-    crate::action_templates::reload_catalog();
+    crate::applet_templates::reload_catalog();
 
     // 2. Reconcile `app_applets` SQL rows against the fresh catalog. Manifest
     //    fields overwrite for system actions; user-managed runtime state
     //    (enabled, cron_schedule, config) is preserved per the field-ownership
-    //    rule documented in action_templates/mod.rs.
-    let upserted = match crate::action_templates::reconcile_templates(state.db.pool()).await {
+    //    rule documented in applet_templates/mod.rs.
+    let upserted = match crate::applet_templates::reconcile_templates(state.db.pool()).await {
         Ok(n) => n,
         Err(e) => {
             return (
@@ -790,9 +790,9 @@ pub async fn admin_reconcile_handler(State(state): State<AppState>) -> Response 
 /// the slug prefix and clean up rows for manifests that disappeared upstream.
 pub async fn import_git_actions_handler(
     State(state): State<AppState>,
-    Json(body): Json<crate::action_git_import::ImportRequest>,
+    Json(body): Json<crate::applet_git_import::ImportRequest>,
 ) -> Response {
-    let outcome = match crate::action_git_import::import(state.db.pool(), body).await {
+    let outcome = match crate::applet_git_import::import(state.db.pool(), body).await {
         Ok(o) => o,
         Err(e) => {
             return (
@@ -903,7 +903,7 @@ pub async fn device_action_runs_handler(
     }
 
     let limit = q.limit.unwrap_or(10).clamp(1, 50);
-    match crate::scheduler::actions::query_runs(
+    match crate::scheduler::applets::query_runs(
         state.db.pool(),
         Some(&action_id),
         q.status.as_deref(),

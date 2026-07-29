@@ -40,7 +40,7 @@ use tokio::io::AsyncWriteExt;
 use tokio::process::Command;
 
 use crate::error::{Error, Result};
-use crate::scheduler::actions::{self, Action};
+use crate::scheduler::applets::{self, Action};
 use crate::server::yjs::YjsState;
 
 /// Dependencies threaded into the runner. Cheap to clone; holds references.
@@ -51,7 +51,7 @@ pub struct RunnerDeps {
 }
 
 // Subprocess contract types live in `virtues_helpers::contract`. Re-export so
-// existing call sites (`action_runner::ActionInput`) keep working.
+// existing call sites (`applet_runner::ActionInput`) keep working.
 pub use virtues_helpers::contract::{ActionInput, ActionOutput};
 
 /// Outcome of a single action run.
@@ -165,7 +165,7 @@ async fn prepare_run(
     trigger: &str,
 ) -> Result<PrepareOutcome> {
     // 1. Fetch action
-    let action = match actions::get_action(&deps.db, action_id).await {
+    let action = match applets::get_action(&deps.db, action_id).await {
         Ok(a) if a.enabled => a,
         Ok(_) => {
             tracing::warn!(action_id, "action is disabled, ignoring run request");
@@ -236,9 +236,9 @@ async fn prepare_run(
                 Ok(true) => {}
                 Err(e) => {
                     tracing::error!(action_id, error = %e, "condition evaluation failed");
-                    let run = actions::create_run(&deps.db, Some(&action.id), trigger).await?;
+                    let run = applets::create_run(&deps.db, Some(&action.id), trigger).await?;
                     let msg = format!("condition evaluation error: {e}");
-                    actions::complete_run(&deps.db, &run.id, "error", 0, Some(&msg), None)
+                    applets::complete_run(&deps.db, &run.id, "error", 0, Some(&msg), None)
                         .await?;
                     return Ok(PrepareOutcome::Early(ActionRunResult {
                         run_id: Some(run.id),
@@ -255,13 +255,13 @@ async fn prepare_run(
     // condition (silent by design: frequent polls would flood run history),
     // an overlap skip is rare and diagnostically important, so it records a
     // real `skipped` run row per the singleton doctrine.
-    if actions::has_active_run(&deps.db, &action.id)
+    if applets::has_active_run(&deps.db, &action.id)
         .await
         .unwrap_or(false)
     {
         tracing::info!(action_id, "previous run still active; skipping");
-        let run = actions::create_run(&deps.db, Some(&action.id), trigger).await?;
-        actions::complete_run(
+        let run = applets::create_run(&deps.db, Some(&action.id), trigger).await?;
+        applets::complete_run(
             &deps.db,
             &run.id,
             "skipped",
@@ -279,7 +279,7 @@ async fn prepare_run(
     }
 
     // 5. Create run row.
-    let run = actions::create_run(&deps.db, Some(&action.id), trigger).await?;
+    let run = applets::create_run(&deps.db, Some(&action.id), trigger).await?;
     Ok(PrepareOutcome::Ready {
         action,
         run_id: run.id,
@@ -308,7 +308,7 @@ async fn execute_prepared(
         msg: String,
     ) -> ActionRunResult {
         if let Err(e) =
-            actions::complete_run(&deps.db, run_id, "error", 0, Some(&msg), None).await
+            applets::complete_run(&deps.db, run_id, "error", 0, Some(&msg), None).await
         {
             tracing::error!(action_id, error = %e, "complete_run failed while recording error");
         }
@@ -364,7 +364,7 @@ async fn execute_prepared(
     // 8. Agent phase.
     if let Some(prompt) = action.agent.as_ref().filter(|s| !s.trim().is_empty()) {
         let ctx = subprocess_summary.as_deref();
-        match crate::agent::action_runner::run_agent_loop(
+        match crate::agent::applet_runner::run_agent_loop(
             &deps.db, &deps.yjs, &action, prompt, ctx,
         )
         .await
@@ -377,7 +377,7 @@ async fn execute_prepared(
                     .or(subprocess_summary.clone())
                     .unwrap_or_default();
                 if let Err(e) =
-                    actions::complete_run(&deps.db, &run_id, "success", steps, None, Some(&summary))
+                    applets::complete_run(&deps.db, &run_id, "success", steps, None, Some(&summary))
                         .await
                 {
                     tracing::error!(action_id, error = %e, "complete_run failed after agent success");
@@ -401,7 +401,7 @@ async fn execute_prepared(
     // 9. Complete run.
     let summary = subprocess_summary.unwrap_or_default();
     if let Err(e) =
-        actions::complete_run(&deps.db, &run_id, "success", subprocess_records, None, Some(&summary)).await
+        applets::complete_run(&deps.db, &run_id, "success", subprocess_records, None, Some(&summary)).await
     {
         tracing::error!(action_id, error = %e, "complete_run failed at end of run");
     }
@@ -444,7 +444,7 @@ async fn maybe_archive_on_until(db: &PgPool, action: &Action) {
     };
     if done {
         tracing::info!(action_id = %action.id, "lifecycle complete (until met); archiving");
-        if let Err(e) = actions::archive_action(db, &action.id).await {
+        if let Err(e) = applets::archive_action(db, &action.id).await {
             tracing::error!(action_id = %action.id, error = %e, "archive_action failed");
         }
     }

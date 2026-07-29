@@ -565,7 +565,7 @@ pub async fn deny_handler(
 pub(crate) fn resolve_source_id(kind: &str, source: Option<&str>) -> Result<String, ()> {
     match source.map(str::trim).filter(|s| !s.is_empty()) {
         Some(s) => {
-            if crate::action_templates::lookup_source(s).is_none() {
+            if crate::applet_templates::lookup_source(s).is_none() {
                 Err(())
             } else {
                 Ok(s.to_string())
@@ -922,7 +922,7 @@ pub(crate) async fn assemble_action_fanout(
     pool: &PgPool,
     device_id: &str,
 ) -> Result<std::collections::HashMap<String, String>, crate::Error> {
-    crate::action_templates::reconcile_templates(pool).await?;
+    crate::applet_templates::reconcile_templates(pool).await?;
     virtues_helpers::auth::fanout_action_ids(pool, device_id)
         .await
         .map_err(|e| crate::Error::Other(format!("fanout_action_ids: {e}")))
