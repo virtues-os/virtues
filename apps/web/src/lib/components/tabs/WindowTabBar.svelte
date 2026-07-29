@@ -23,6 +23,7 @@
 	import { chatSessions } from "$lib/stores/chatSessions.svelte";
 	import { isEmoji } from "$lib/utils/iconHelpers";
 	import { clothFor, textOnCloth } from "$lib/sidebar/pin-colors";
+	import { pinMenuItem } from "$lib/pins/pinAction";
 	import type { ContextMenuItem } from "$lib/stores/contextMenu.svelte";
 
 	const FLIP_DURATION_MS = 150;
@@ -303,6 +304,13 @@
 		// Add "Add to Folder" / "Move to Workspace" submenus if tab has a route
 		if (tab.route) {
 			items.push(...getNotebookMenuItems(tab.route));
+			// Anything you can open, you can keep. The tab is the one surface
+			// that exists for every route in the app, so wiring the pin here
+			// makes the Desk reachable from everywhere by construction rather
+			// than by remembering to add a menu item per view.
+			items.push(
+				pinMenuItem({ url: tab.route, label: tab.label, icon: tab.icon }),
+			);
 		}
 
 		contextMenu.show({ x: e.clientX, y: e.clientY }, items);

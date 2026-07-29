@@ -11,15 +11,12 @@
 		section: SystemSection;
 		collapsed?: boolean;
 		accentColor?: string | null;
-		/** Waterfall offset, in ms, set by the sidebar from the row's position. */
-		animationDelay?: number;
 	}
 
 	let {
 		section,
 		collapsed = false,
 		accentColor = null,
-		animationDelay = 0,
 	}: Props = $props();
 
 	// Local expand state (folder/view expansion no longer lives in the window shell store)
@@ -258,7 +255,7 @@
 
 {#if !collapsed}
 	{#if section.type === 'link' && section.href}
-		<div class="system-section" style="--stagger-delay: {animationDelay}ms">
+		<div class="system-section">
 			<SidebarNavItem
 				item={{
 					id: section.id,
@@ -275,7 +272,7 @@
 			/>
 		</div>
 	{:else}
-	<div class="system-section" style="--stagger-delay: {animationDelay}ms">
+	<div class="system-section">
 		<div
 			class="sidebar-interactive system"
 			role="button"
@@ -407,26 +404,6 @@
 	.system-section {
 		display: flex;
 		flex-direction: column;
-		animation: navRowIn 200ms cubic-bezier(0.2, 0, 0, 1) backwards;
-		animation-delay: var(--stagger-delay, 0ms);
-	}
-
-	/* Matches the masthead's fadeSlideIn so the panel falls as one motion. */
-	@keyframes navRowIn {
-		from {
-			opacity: 0;
-			transform: translateX(-8px);
-		}
-		to {
-			opacity: 1;
-			transform: translateX(0);
-		}
-	}
-
-	@media (prefers-reduced-motion: reduce) {
-		.system-section {
-			animation: none;
-		}
 	}
 
 	/* ------- Icon ↔ Chevron slide toggle (matches UnifiedFolder) ------- */
