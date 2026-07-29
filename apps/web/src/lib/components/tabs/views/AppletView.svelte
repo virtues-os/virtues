@@ -1,6 +1,6 @@
 <script lang="ts">
 	import type { Tab } from '$lib/tabs/types';
-	import FaceFrame from '$lib/components/actions/FaceFrame.svelte';
+	import FaceFrame from '$lib/components/applets/FaceFrame.svelte';
 
 	// Full-page applet view: nothing but the applet's face, filling the pane.
 	// The id comes from the route `/applet/<id>/view`.

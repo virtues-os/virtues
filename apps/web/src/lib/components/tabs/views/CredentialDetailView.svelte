@@ -26,7 +26,7 @@
 		type Action,
 		type SourceCatalogItem
 	} from '$lib/api/client';
-	import { relativeTime } from '$lib/actions/palette';
+	import { relativeTime } from '$lib/applets/palette';
 
 	let { tab }: { tab: Tab } = $props();
 

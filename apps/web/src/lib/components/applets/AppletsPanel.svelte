@@ -10,8 +10,8 @@
 		type ActionRun
 	} from '$lib/api/client';
 	import { windowShellStore } from '$lib/stores/window-shell.svelte';
-	import { describeSchedule, relativeTime } from '$lib/actions/palette';
-	import ActionCard from './ActionCard.svelte';
+	import { describeSchedule, relativeTime } from '$lib/applets/palette';
+	import AppletCard from './AppletCard.svelte';
 	import GitImportModal from './GitImportModal.svelte';
 	import Popover from '$lib/floating/primitives/Popover.svelte';
 	import { contextMenu } from '$lib/stores/contextMenu.svelte';
@@ -342,7 +342,7 @@
 		onItemContextMenu={rowContextMenu}
 	>
 		{#snippet card(action)}
-			<ActionCard
+			<AppletCard
 				{action}
 				lastRun={action.last_run}
 				lastSuccess={lastSuccessByAction[action.id] ?? null}
