@@ -7,7 +7,7 @@
 
 <script lang="ts">
 	import type { PersonPage as PersonPageType } from "$lib/wiki/types";
-	import EntitySummarySection from "./EntitySummarySection.svelte";
+	import EntityArticleSection from "./EntityArticleSection.svelte";
 	import EntityRecordsSection from "./EntityRecordsSection.svelte";
 	import CitedMarkdown from "$lib/components/CitedMarkdown.svelte";
 
@@ -34,7 +34,7 @@
 	}
 
 	// Sections render only when they have content — a wiki article never
-	// prints an empty heading (the summary stub is the one exception, as an
+	// prints an empty heading (the article stub is the one exception, as an
 	// honest invitation).
 	const hasContact = $derived(
 		Boolean(
@@ -71,11 +71,11 @@
 
 			<hr class="divider" />
 
-			<!-- Summary: the machine-written article -->
-			<section class="section" id="summary">
-				<EntitySummarySection
-					summary={page.summary}
-					summarizedAt={page.summarizedAt}
+			<!-- The article: machine-written prose about this entity -->
+			<section class="section" id="article">
+				<EntityArticleSection
+					article={page.article}
+					articleUpdatedAt={page.articleUpdatedAt}
 					name={page.title}
 				/>
 			</section>
