@@ -136,7 +136,7 @@ pub async fn get_activity_metrics(db: &Database) -> Result<ActivityMetrics> {
                 ELSE NULL END) as avg_duration,
             CAST(COALESCE(SUM(r.records_processed), 0) AS BIGINT) as total_records
         FROM app_applet_runs r
-        LEFT JOIN app_applets t ON r.action_id = t.id
+        LEFT JOIN app_applets t ON r.applet_id = t.id
         GROUP BY 1
         ORDER BY total DESC
         "#,
@@ -168,7 +168,7 @@ pub async fn get_activity_metrics(db: &Database) -> Result<ActivityMetrics> {
             MAX(r.completed_at) as last_sync_at,
             CAST(COALESCE(SUM(r.records_processed), 0) AS BIGINT) as total_records
         FROM app_applet_runs r
-        LEFT JOIN app_applets t ON r.action_id = t.id
+        LEFT JOIN app_applets t ON r.applet_id = t.id
         GROUP BY COALESCE(t.name, '(deleted action)')
         ORDER BY job_count DESC
         "#,
@@ -207,7 +207,7 @@ pub async fn get_activity_metrics(db: &Database) -> Result<ActivityMetrics> {
                  ELSE 'function' END as action_type,
                r.transform_stage, r.error, r.completed_at
         FROM app_applet_runs r
-        LEFT JOIN app_applets t ON r.action_id = t.id
+        LEFT JOIN app_applets t ON r.applet_id = t.id
         WHERE r.status = 'error' AND r.error IS NOT NULL
         ORDER BY r.completed_at DESC NULLS LAST
         LIMIT 10

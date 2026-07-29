@@ -1,6 +1,6 @@
 //! Webhook ingestion endpoint for device / service pushes.
 //!
-//! Single route: `POST /webhook/:action_id`.
+//! Single route: `POST /webhook/:applet_id`.
 //!
 //! Auth: the caller's **proven, allowlisted iroh key**. Devices (iOS, the Mac
 //! collector) reach the box over iroh, so the transport proved their key and
@@ -62,7 +62,7 @@ impl axum::extract::FromRef<AppState> for ChatCancellationState {
     }
 }
 
-/// Handler for `POST /webhook/:action_id`.
+/// Handler for `POST /webhook/:applet_id`.
 ///
 /// Flow:
 /// 1. `AuthUser` (proven iroh key / loopback console) — a hard extractor, so an
@@ -73,7 +73,7 @@ impl axum::extract::FromRef<AppState> for ChatCancellationState {
 /// 4. Dispatch via `run_applet(.., "webhook", payload)`.
 pub async fn webhook(
     State(state): State<AppState>,
-    Path(action_id): Path<String>,
+    Path(applet_id): Path<String>,
     user: AuthUser,
     headers: HeaderMap,
     payload: std::result::Result<Json<Value>, JsonRejection>,
@@ -96,7 +96,7 @@ pub async fn webhook(
         Ok(Json(v)) => v,
         Err(rej) => {
             tracing::warn!(
-                action_id = %action_id,
+                applet_id = %applet_id,
                 rejection = %rej,
                 content_length = ?headers.get("content-length"),
                 "webhook body rejected by Json extractor; returning 409 (retryable)"
@@ -127,7 +127,7 @@ pub async fn webhook(
             Value::Object(_) => "object",
         };
         tracing::warn!(
-            action_id = %action_id,
+            applet_id = %applet_id,
             kind = %kind,
             "webhook body is not a JSON object; returning 409 (retryable)"
         );
@@ -145,9 +145,9 @@ pub async fn webhook(
     // `user` (AuthUser) is already proven by the hard extractor above: the
     // request arrived over iroh with an allowlisted key (or from the on-box
     // console). Confirm the action exists, then that this device owns it.
-    tracing::debug!(device_id = %user.device_id, action_id = %action_id, "webhook authed by proven key");
+    tracing::debug!(device_id = %user.device_id, applet_id = %applet_id, "webhook authed by proven key");
 
-    if crate::scheduler::applets::get_applet(state.db.pool(), &action_id)
+    if crate::scheduler::applets::get_applet(state.db.pool(), &applet_id)
         .await
         .is_err()
     {
@@ -165,14 +165,14 @@ pub async fn webhook(
     if user.device_id != crate::middleware::auth::CONSOLE_DEVICE_ID {
         let action_device: Option<String> =
             sqlx::query_scalar("SELECT device_id FROM app_applets WHERE id = $1")
-                .bind(&action_id)
+                .bind(&applet_id)
                 .fetch_one(state.db.pool())
                 .await
                 .unwrap_or(None);
         if let Some(owner_device) = action_device {
             if owner_device != user.device_id {
                 tracing::warn!(
-                    action_id = %action_id,
+                    applet_id = %applet_id,
                     proven_device = %user.device_id,
                     action_device = %owner_device,
                     "webhook: proven device does not own this action"
@@ -191,7 +191,7 @@ pub async fn webhook(
         yjs: state.yjs_state.clone(),
     };
 
-    match crate::applet_runner::run_applet(&deps, &action_id, "webhook", Some(&body)).await {
+    match crate::applet_runner::run_applet(&deps, &applet_id, "webhook", Some(&body)).await {
         Ok(result) => match result.status {
             AppletRunStatus::Success => (
                 StatusCode::OK,

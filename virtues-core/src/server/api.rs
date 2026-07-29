@@ -86,7 +86,7 @@ pub struct TriggerAppletBody {
 /// Manually trigger an action run.
 pub async fn trigger_applet_handler(
     State(state): State<AppState>,
-    Path(action_id): Path<String>,
+    Path(applet_id): Path<String>,
     body: Option<Json<TriggerAppletBody>>,
 ) -> Response {
     let payload = body.and_then(|Json(b)| b.payload);
@@ -103,7 +103,7 @@ pub async fn trigger_applet_handler(
     // status.
     let result = match crate::applet_runner::run_applet_detached(
         &deps,
-        &action_id,
+        &applet_id,
         "manual",
         payload.as_ref(),
     )
@@ -133,7 +133,7 @@ pub async fn trigger_applet_handler(
         status_code,
         Json(serde_json::json!({
             "run_id": result.run_id,
-            "action_id": action_id,
+            "applet_id": applet_id,
             "status": status_label,
             "summary": result.summary,
             "error": result.error,
@@ -235,7 +235,7 @@ pub async fn list_applets_handler(State(state): State<AppState>) -> Response {
            FROM app_applets t
            LEFT JOIN app_applet_runs r ON r.id = (
                SELECT id FROM app_applet_runs
-               WHERE action_id = t.id
+               WHERE applet_id = t.id
                ORDER BY created_at DESC LIMIT 1
            )
            ORDER BY t.name"#,
@@ -345,12 +345,12 @@ pub async fn list_applets_handler(State(state): State<AppState>) -> Response {
 /// GET /api/actions/:id — single action with its last run inlined.
 pub async fn get_applet_handler(
     State(state): State<AppState>,
-    Path(action_id): Path<String>,
+    Path(applet_id): Path<String>,
 ) -> Response {
     let pool = state.db.pool();
-    match crate::scheduler::applets::get_applet(pool, &action_id).await {
+    match crate::scheduler::applets::get_applet(pool, &applet_id).await {
         Ok(action) => {
-            let last_run = crate::scheduler::applets::last_run(pool, &action_id)
+            let last_run = crate::scheduler::applets::last_run(pool, &applet_id)
                 .await
                 .ok()
                 .flatten();
@@ -438,10 +438,10 @@ pub async fn create_applet_handler(
 /// PATCH /api/actions/:id — partial update. Enforces system-owner guard.
 pub async fn patch_applet_handler(
     State(state): State<AppState>,
-    Path(action_id): Path<String>,
+    Path(applet_id): Path<String>,
     Json(patch): Json<serde_json::Value>,
 ) -> Response {
-    match crate::scheduler::applets::update_applet(state.db.pool(), &action_id, &patch).await {
+    match crate::scheduler::applets::update_applet(state.db.pool(), &applet_id, &patch).await {
         Ok(action) => (StatusCode::OK, Json(action)).into_response(),
         Err(e) => {
             let status = match e.http_status() {
@@ -465,10 +465,10 @@ pub struct DeleteAppletQuery {
 
 pub async fn delete_applet_handler(
     State(state): State<AppState>,
-    Path(action_id): Path<String>,
+    Path(applet_id): Path<String>,
     axum::extract::Query(q): axum::extract::Query<DeleteAppletQuery>,
 ) -> Response {
-    match crate::scheduler::applets::delete_applet(state.db.pool(), &action_id, q.drop_data).await {
+    match crate::scheduler::applets::delete_applet(state.db.pool(), &applet_id, q.drop_data).await {
         Ok(()) => StatusCode::NO_CONTENT.into_response(),
         Err(e) => {
             let status = match e.http_status() {
@@ -486,11 +486,11 @@ pub async fn delete_applet_handler(
 /// would remove. Empty `tables` (and null `schema`) when it owns none.
 pub async fn get_applet_data_handler(
     State(state): State<AppState>,
-    Path(action_id): Path<String>,
+    Path(applet_id): Path<String>,
 ) -> Response {
-    match crate::scheduler::applets::applet_data_tables(state.db.pool(), &action_id).await {
+    match crate::scheduler::applets::applet_data_tables(state.db.pool(), &applet_id).await {
         Ok(tables) => {
-            let schema = crate::scheduler::applets::applet_schema_name(&action_id);
+            let schema = crate::scheduler::applets::applet_schema_name(&applet_id);
             (
                 StatusCode::OK,
                 Json(serde_json::json!({ "schema": schema, "tables": tables })),
@@ -511,18 +511,18 @@ pub struct RunsQuery {
     pub limit: Option<i64>,
     pub offset: Option<i64>,
     pub status: Option<String>,
-    pub action_id: Option<String>,
+    pub applet_id: Option<String>,
 }
 
 pub async fn list_applet_runs_handler(
     State(state): State<AppState>,
-    Path(action_id): Path<String>,
+    Path(applet_id): Path<String>,
     axum::extract::Query(q): axum::extract::Query<RunsQuery>,
 ) -> Response {
     let limit = q.limit.unwrap_or(20).clamp(1, 200);
     match crate::scheduler::applets::query_runs(
         state.db.pool(),
-        Some(&action_id),
+        Some(&applet_id),
         q.status.as_deref(),
         limit,
     )
@@ -537,7 +537,7 @@ pub async fn list_applet_runs_handler(
     }
 }
 
-/// GET /api/runs?status=&action_id=&limit=&offset= — global run history.
+/// GET /api/runs?status=&applet_id=&limit=&offset= — global run history.
 pub async fn list_runs_handler(
     State(state): State<AppState>,
     axum::extract::Query(q): axum::extract::Query<RunsQuery>,
@@ -545,7 +545,7 @@ pub async fn list_runs_handler(
     let limit = q.limit.unwrap_or(50).clamp(1, 200);
     match crate::scheduler::applets::query_runs(
         state.db.pool(),
-        q.action_id.as_deref(),
+        q.applet_id.as_deref(),
         q.status.as_deref(),
         limit,
     )
@@ -690,7 +690,7 @@ pub async fn patch_credential_handler(
 ///   modal; the row never had a token or fan-out actions, so nothing to
 ///   preserve).
 /// - `active`   → revoke (clear `secret_lookup_hash`, drop fan-out actions,
-///   keep history with `action_id = NULL`).
+///   keep history with `applet_id = NULL`).
 /// - `revoked`  → already revoked, idempotent 204.
 pub async fn delete_credential_handler(
     State(state): State<AppState>,
@@ -842,7 +842,7 @@ pub async fn list_tables_handler(State(state): State<AppState>) -> Response {
 }
 
 
-/// GET /api/devices/action-ids — devices refresh their action_id routing map.
+/// GET /api/devices/action-ids — devices refresh their applet_id routing map.
 ///
 /// Used by paired devices when their local routing table goes stale (e.g. after
 /// templates.toml adds a new stream, or the device reinstalls). Authenticated by
@@ -879,7 +879,7 @@ pub async fn device_applet_ids_handler(
 /// Device-scoped sibling of the session-authed `list_applet_runs_handler`.
 pub async fn device_applet_runs_handler(
     State(state): State<AppState>,
-    Path(action_id): Path<String>,
+    Path(applet_id): Path<String>,
     axum::extract::Query(q): axum::extract::Query<RunsQuery>,
     user: crate::middleware::auth::AuthUser,
 ) -> Response {
@@ -888,7 +888,7 @@ pub async fn device_applet_runs_handler(
     let owned: bool = sqlx::query_scalar(
         "SELECT EXISTS(SELECT 1 FROM app_applets WHERE id = $1 AND device_id = $2)",
     )
-    .bind(&action_id)
+    .bind(&applet_id)
     .bind(&user.device_id)
     .fetch_one(state.db.pool())
     .await
@@ -905,7 +905,7 @@ pub async fn device_applet_runs_handler(
     let limit = q.limit.unwrap_or(10).clamp(1, 50);
     match crate::scheduler::applets::query_runs(
         state.db.pool(),
-        Some(&action_id),
+        Some(&applet_id),
         q.status.as_deref(),
         limit,
     )

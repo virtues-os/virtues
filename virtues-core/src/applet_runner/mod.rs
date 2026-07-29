@@ -110,11 +110,11 @@ enum PrepareOutcome {
 /// disconnect can't drop the future mid-subprocess.
 pub async fn run_applet(
     deps: &RunnerDeps,
-    action_id: &str,
+    applet_id: &str,
     trigger: &str,
     payload: Option<&serde_json::Value>,
 ) -> Result<AppletRunResult> {
-    match prepare_run(deps, action_id, trigger).await? {
+    match prepare_run(deps, applet_id, trigger).await? {
         PrepareOutcome::Early(result) => Ok(result),
         PrepareOutcome::Ready { action, run_id } => {
             let payload = payload.cloned();
@@ -132,11 +132,11 @@ pub async fn run_applet(
 /// view-runtime) are unchanged from `run_applet`.
 pub async fn run_applet_detached(
     deps: &RunnerDeps,
-    action_id: &str,
+    applet_id: &str,
     trigger: &str,
     payload: Option<&serde_json::Value>,
 ) -> Result<AppletRunResult> {
-    match prepare_run(deps, action_id, trigger).await? {
+    match prepare_run(deps, applet_id, trigger).await? {
         PrepareOutcome::Early(result) => Ok(result),
         PrepareOutcome::Ready { action, run_id } => {
             let payload = payload.cloned();
@@ -161,18 +161,18 @@ pub async fn run_applet_detached(
 /// caller can decide whether to await execution inline or detach it.
 async fn prepare_run(
     deps: &RunnerDeps,
-    action_id: &str,
+    applet_id: &str,
     trigger: &str,
 ) -> Result<PrepareOutcome> {
     // 1. Fetch action
-    let action = match applets::get_applet(&deps.db, action_id).await {
+    let action = match applets::get_applet(&deps.db, applet_id).await {
         Ok(a) if a.enabled => a,
         Ok(_) => {
-            tracing::warn!(action_id, "action is disabled, ignoring run request");
+            tracing::warn!(applet_id, "action is disabled, ignoring run request");
             return Ok(PrepareOutcome::Early(AppletRunResult::not_found()));
         }
         Err(e) => {
-            tracing::warn!(action_id, error = %e, "action not found");
+            tracing::warn!(applet_id, error = %e, "action not found");
             return Ok(PrepareOutcome::Early(AppletRunResult::not_found()));
         }
     };
@@ -180,7 +180,7 @@ async fn prepare_run(
     // 2. Triggers validation
     if !action.triggers.iter().any(|t| t == trigger) {
         tracing::warn!(
-            action_id,
+            applet_id,
             trigger,
             allowed = ?action.triggers,
             "trigger not allowed for this action"
@@ -198,7 +198,7 @@ async fn prepare_run(
     let has_agent = action.agent.as_deref().is_some_and(|s| !s.trim().is_empty());
     let has_exec = has_agent || action.command.as_ref().is_some_and(|c| !c.is_empty());
     if !has_exec {
-        tracing::debug!(action_id, "face-only applet — never invoked server-side");
+        tracing::debug!(applet_id, "face-only applet — never invoked server-side");
         return Ok(PrepareOutcome::Early(AppletRunResult {
             run_id: None,
             status: AppletRunStatus::Skipped,
@@ -212,7 +212,7 @@ async fn prepare_run(
     // key) or a credential_id (OAuth/api). One or the other must be set.
     if trigger == "webhook" && action.credential_id.is_none() && action.device_id.is_none() {
         tracing::error!(
-            action_id,
+            applet_id,
             "webhook trigger on action with no device_id or credential_id — rejected"
         );
         return Ok(PrepareOutcome::Early(AppletRunResult::forbidden(
@@ -225,7 +225,7 @@ async fn prepare_run(
         if !condition.trim().is_empty() {
             match eval_condition(&deps.db, condition).await {
                 Ok(false) => {
-                    tracing::debug!(action_id, "condition falsy, skipping silently");
+                    tracing::debug!(applet_id, "condition falsy, skipping silently");
                     return Ok(PrepareOutcome::Early(AppletRunResult {
                         run_id: None,
                         status: AppletRunStatus::Skipped,
@@ -235,7 +235,7 @@ async fn prepare_run(
                 }
                 Ok(true) => {}
                 Err(e) => {
-                    tracing::error!(action_id, error = %e, "condition evaluation failed");
+                    tracing::error!(applet_id, error = %e, "condition evaluation failed");
                     let run = applets::create_run(&deps.db, Some(&action.id), trigger).await?;
                     let msg = format!("condition evaluation error: {e}");
                     applets::complete_run(&deps.db, &run.id, "error", 0, Some(&msg), None)
@@ -259,7 +259,7 @@ async fn prepare_run(
         .await
         .unwrap_or(false)
     {
-        tracing::info!(action_id, "previous run still active; skipping");
+        tracing::info!(applet_id, "previous run still active; skipping");
         let run = applets::create_run(&deps.db, Some(&action.id), trigger).await?;
         applets::complete_run(
             &deps.db,
@@ -296,7 +296,7 @@ async fn execute_prepared(
     run_id: String,
     payload: Option<serde_json::Value>,
 ) -> AppletRunResult {
-    let action_id = action.id.clone();
+    let applet_id = action.id.clone();
 
     // Helper: persist `error` status and return a Failed result. Logs and
     // swallows DB errors from `complete_run` since at this point we have
@@ -304,13 +304,13 @@ async fn execute_prepared(
     async fn fail(
         deps: &RunnerDeps,
         run_id: &str,
-        action_id: &str,
+        applet_id: &str,
         msg: String,
     ) -> AppletRunResult {
         if let Err(e) =
             applets::complete_run(&deps.db, run_id, "error", 0, Some(&msg), None).await
         {
-            tracing::error!(action_id, error = %e, "complete_run failed while recording error");
+            tracing::error!(applet_id, error = %e, "complete_run failed while recording error");
         }
         AppletRunResult {
             run_id: Some(run_id.to_string()),
@@ -326,8 +326,8 @@ async fn execute_prepared(
             Ok(c) => Some(c),
             Err(e) => {
                 let msg = format!("failed to load credential {cred_id}: {e}");
-                tracing::error!(action_id, error = %msg, "credential load failed");
-                return fail(&deps, &run_id, &action_id, msg).await;
+                tracing::error!(applet_id, error = %msg, "credential load failed");
+                return fail(&deps, &run_id, &applet_id, msg).await;
             }
         }
     } else {
@@ -355,8 +355,8 @@ async fn execute_prepared(
             }
             Err(e) => {
                 let msg = e.to_string();
-                tracing::error!(action_id, error = %msg, "subprocess phase failed");
-                return fail(&deps, &run_id, &action_id, msg).await;
+                tracing::error!(applet_id, error = %msg, "subprocess phase failed");
+                return fail(&deps, &run_id, &applet_id, msg).await;
             }
         }
     }
@@ -380,7 +380,7 @@ async fn execute_prepared(
                     applets::complete_run(&deps.db, &run_id, "success", steps, None, Some(&summary))
                         .await
                 {
-                    tracing::error!(action_id, error = %e, "complete_run failed after agent success");
+                    tracing::error!(applet_id, error = %e, "complete_run failed after agent success");
                 }
                 maybe_archive_on_until(&deps.db, &action).await;
                 return AppletRunResult {
@@ -392,8 +392,8 @@ async fn execute_prepared(
             }
             Err(e) => {
                 let msg = e.to_string();
-                tracing::error!(action_id, error = %msg, "agent phase failed");
-                return fail(&deps, &run_id, &action_id, msg).await;
+                tracing::error!(applet_id, error = %msg, "agent phase failed");
+                return fail(&deps, &run_id, &applet_id, msg).await;
             }
         }
     }
@@ -403,7 +403,7 @@ async fn execute_prepared(
     if let Err(e) =
         applets::complete_run(&deps.db, &run_id, "success", subprocess_records, None, Some(&summary)).await
     {
-        tracing::error!(action_id, error = %e, "complete_run failed at end of run");
+        tracing::error!(applet_id, error = %e, "complete_run failed at end of run");
     }
     maybe_archive_on_until(&deps.db, &action).await;
     AppletRunResult {
@@ -437,15 +437,15 @@ async fn maybe_archive_on_until(db: &PgPool, action: &Applet) {
         match eval_condition(db, until).await {
             Ok(v) => v,
             Err(e) => {
-                tracing::warn!(action_id = %action.id, error = %e, "until evaluation failed; not archiving");
+                tracing::warn!(applet_id = %action.id, error = %e, "until evaluation failed; not archiving");
                 false
             }
         }
     };
     if done {
-        tracing::info!(action_id = %action.id, "lifecycle complete (until met); archiving");
+        tracing::info!(applet_id = %action.id, "lifecycle complete (until met); archiving");
         if let Err(e) = applets::archive_applet(db, &action.id).await {
-            tracing::error!(action_id = %action.id, error = %e, "archive_applet failed");
+            tracing::error!(applet_id = %action.id, error = %e, "archive_applet failed");
         }
     }
 }
@@ -695,7 +695,7 @@ async fn run_subprocess(
     // fold a short tail into the run summary so it shows in the Telemetry tab.
     let mut summary = action_output.result;
     if !stderr.trim().is_empty() {
-        tracing::warn!(action_id = %action.id, "action stderr (exit 0): {}", stderr.trim());
+        tracing::warn!(applet_id = %action.id, "action stderr (exit 0): {}", stderr.trim());
         let tail: String = stderr.trim().chars().rev().take(500).collect::<Vec<_>>()
             .into_iter().rev().collect();
         summary = format!("{summary}\n[stderr] {tail}");

@@ -56,7 +56,7 @@ pub struct ToolContext {
     /// Chat ID (for permission checking)
     pub chat_id: Option<String>,
     /// Applet ID (set when running as an action — for action memory tool)
-    pub action_id: Option<String>,
+    pub applet_id: Option<String>,
     /// Side-channel for streaming Deep Research subagent status to the live panel.
     /// Set by the chat handler; `None` for headless/action runs.
     pub subagent_tx: Option<tokio::sync::mpsc::Sender<SubagentUpdate>>,
@@ -76,7 +76,7 @@ impl Default for ToolContext {
             notebook_id: None,
             scope_mode: crate::search::ScopeMode::default(),
             chat_id: None,
-            action_id: None,
+            applet_id: None,
             subagent_tx: None,
             cancel_token: None,
             worker_budget: None,
@@ -198,9 +198,9 @@ impl ToolExecutor {
         if !Self::PERMISSION_REQUIRED.contains(&tool_name) {
             return Ok(None);
         }
-        // Only interactive chat is gated. Autonomous action runs set `action_id` (and may carry a
+        // Only interactive chat is gated. Autonomous action runs set `applet_id` (and may carry a
         // linked `chat_id`) but have no user present to approve, so they must run ungated.
-        if context.action_id.is_some() {
+        if context.applet_id.is_some() {
             return Ok(None);
         }
         // Headless calls with no chat aren't gated either.
@@ -209,19 +209,19 @@ impl ToolExecutor {
         };
         // The gated action tools all identify their target via `id`. If absent, let the tool
         // surface its own validation error.
-        let Some(action_id) = arguments.get("id").and_then(|v| v.as_str()) else {
+        let Some(applet_id) = arguments.get("id").and_then(|v| v.as_str()) else {
             return Ok(None);
         };
 
         let granted =
-            crate::api::chat_permissions::has_permission(self._pool.as_ref(), chat_id, action_id)
+            crate::api::chat_permissions::has_permission(self._pool.as_ref(), chat_id, applet_id)
                 .await
                 .unwrap_or(false);
         if granted {
             return Ok(None);
         }
 
-        let title = crate::scheduler::applets::get_applet(self._pool.as_ref(), action_id)
+        let title = crate::scheduler::applets::get_applet(self._pool.as_ref(), applet_id)
             .await
             .map(|a| a.name)
             .unwrap_or_else(|_| "this action".to_string());
@@ -230,7 +230,7 @@ impl ToolExecutor {
 
         Ok(Some(ToolResult::success(serde_json::json!({
             "permission_needed": true,
-            "entity_id": action_id,
+            "entity_id": applet_id,
             "entity_type": "action",
             "entity_title": title,
             "message": format!("AI wants to {verb} \"{title}\""),
@@ -420,7 +420,7 @@ impl ToolExecutor {
             .and_then(|v| v.as_str())
             .ok_or_else(|| ToolError::InvalidParameters("content is required".into()))?;
 
-        let action_id = context.action_id.as_deref()
+        let applet_id = context.applet_id.as_deref()
             .ok_or_else(|| ToolError::ExecutionFailed("No action context — this tool can only be used by actions".into()))?;
 
         // Cap at 8000 chars
@@ -435,7 +435,7 @@ impl ToolExecutor {
             content
         };
 
-        crate::scheduler::applets::update_memory(&self._pool, &action_id, content)
+        crate::scheduler::applets::update_memory(&self._pool, &applet_id, content)
             .await
             .map_err(|e| ToolError::ExecutionFailed(format!("Failed to update action memory: {}", e)))?;
 

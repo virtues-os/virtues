@@ -106,9 +106,9 @@ pub async fn list_credentials(db: &PgPool) -> Result<Vec<CredentialListItem>> {
               c.last_seen_at::text,
               c.created_at::text,
               (SELECT COUNT(*) FROM app_applets WHERE credential_id = c.id) AS action_count,
-              (SELECT COUNT(*) FROM app_applet_runs r JOIN app_applets a ON a.id = r.action_id
+              (SELECT COUNT(*) FROM app_applet_runs r JOIN app_applets a ON a.id = r.applet_id
                  WHERE a.credential_id = c.id) AS total_runs,
-              (SELECT COUNT(*) FROM app_applet_runs r JOIN app_applets a ON a.id = r.action_id
+              (SELECT COUNT(*) FROM app_applet_runs r JOIN app_applets a ON a.id = r.applet_id
                  WHERE a.credential_id = c.id AND r.status = 'success') AS success_runs
            FROM credentials c
            ORDER BY c.created_at DESC"#,
@@ -190,12 +190,12 @@ pub async fn rename_credential(db: &PgPool, credential_id: &str, new_name: &str)
 ///
 /// Flow:
 /// 1. Set `status = 'revoked'` so template reconcile skips this credential.
-/// 2. Nullify `action_id` on any historical runs for the credential's
+/// 2. Nullify `applet_id` on any historical runs for the credential's
 ///    fan-out actions (FK safety).
 /// 3. Delete the per-credential action rows. Reconcile won't re-create
 ///    them because the credential is no longer active.
 ///
-/// Run history is preserved with `action_id = NULL` so the history view
+/// Run history is preserved with `applet_id = NULL` so the history view
 /// can still surface past runs.
 pub async fn revoke_credential(db: &PgPool, credential_id: &str) -> Result<()> {
     let affected = sqlx::query(
@@ -215,8 +215,8 @@ pub async fn revoke_credential(db: &PgPool, credential_id: &str) -> Result<()> {
     }
 
     sqlx::query(
-        r#"UPDATE app_applet_runs SET action_id = NULL
-           WHERE action_id IN (SELECT id FROM app_applets WHERE credential_id = $1)"#,
+        r#"UPDATE app_applet_runs SET applet_id = NULL
+           WHERE applet_id IN (SELECT id FROM app_applets WHERE credential_id = $1)"#,
     )
     .bind(credential_id)
     .execute(db)

@@ -26,7 +26,7 @@ pub struct AiCall {
     pub reasoning_tokens: i64,
     pub cost_micros: i64,
     pub chat_id: Option<String>,
-    pub action_run_id: Option<String>,
+    pub applet_run_id: Option<String>,
 }
 
 /// A summary row for the Usage tab — spend grouped by feature or model.
@@ -47,7 +47,7 @@ pub async fn record_ai_call(pool: &PgPool, call: &AiCall) -> Result<(), sqlx::Er
         r#"
         INSERT INTO app_ai_calls
             (id, feature, model, prompt_tokens, completion_tokens,
-             reasoning_tokens, cost_micros, chat_id, action_run_id)
+             reasoning_tokens, cost_micros, chat_id, applet_run_id)
         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
         "#,
     )
@@ -59,7 +59,7 @@ pub async fn record_ai_call(pool: &PgPool, call: &AiCall) -> Result<(), sqlx::Er
     .bind(call.reasoning_tokens)
     .bind(call.cost_micros)
     .bind(&call.chat_id)
-    .bind(&call.action_run_id)
+    .bind(&call.applet_run_id)
     .execute(pool)
     .await?;
     Ok(())
