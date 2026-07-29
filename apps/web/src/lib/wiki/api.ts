@@ -13,8 +13,8 @@ export interface WikiPersonApi {
 	id: string;
 	canonical_name: string;
 	content: string | null;
-	summary: string | null;
-	summarized_at: string | null;
+	article: string | null;
+	article_updated_at: string | null;
 	picture: string | null;
 	cover_image: string | null;
 	emails: string[];
@@ -38,8 +38,8 @@ export interface WikiPlaceApi {
 	id: string;
 	name: string;
 	content: string | null;
-	summary: string | null;
-	summarized_at: string | null;
+	article: string | null;
+	article_updated_at: string | null;
 	cover_image: string | null;
 	category: string | null;
 	address: string | null;
@@ -56,8 +56,8 @@ export interface WikiOrganizationApi {
 	id: string;
 	canonical_name: string;
 	content: string | null;
-	summary: string | null;
-	summarized_at: string | null;
+	article: string | null;
+	article_updated_at: string | null;
 	cover_image: string | null;
 	organization_type: string | null;
 	relationship_type: string | null;

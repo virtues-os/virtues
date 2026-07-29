@@ -22,10 +22,10 @@ pub struct WikiPerson {
     pub id: String,
     pub canonical_name: String,
     pub content: Option<String>,
-    /// Machine-written wikipedia-style record (entity_summary applet). Never
+    /// Machine-written wikipedia-style record (entity_article applet). Never
     /// user-edited — `content`/`notes` carry the user's own writing.
-    pub summary: Option<String>,
-    pub summarized_at: Option<DateTime<Utc>>,
+    pub article: Option<String>,
+    pub article_updated_at: Option<DateTime<Utc>>,
     pub picture: Option<String>,
     pub cover_image: Option<String>,
     // vCard fields
@@ -53,8 +53,8 @@ pub struct WikiPlace {
     pub id: String,
     pub name: String,
     pub content: Option<String>,
-    pub summary: Option<String>,
-    pub summarized_at: Option<DateTime<Utc>>,
+    pub article: Option<String>,
+    pub article_updated_at: Option<DateTime<Utc>>,
     pub cover_image: Option<String>,
     pub category: Option<String>,
     pub address: Option<String>,
@@ -73,8 +73,8 @@ pub struct WikiOrganization {
     pub id: String,
     pub canonical_name: String,
     pub content: Option<String>,
-    pub summary: Option<String>,
-    pub summarized_at: Option<DateTime<Utc>>,
+    pub article: Option<String>,
+    pub article_updated_at: Option<DateTime<Utc>>,
     pub cover_image: Option<String>,
     pub organization_type: Option<String>,
     pub relationship_type: Option<String>,
@@ -287,7 +287,7 @@ pub async fn get_person(pool: &PgPool, id: String) -> Result<WikiPerson> {
     let row = sqlx::query!(
         r#"
         SELECT
-            id, canonical_name, content, summary, summarized_at, picture, cover_image,
+            id, canonical_name, content, article, article_updated_at, picture, cover_image,
             emails, phones, birthday, instagram, facebook, linkedin, x,
             relationship_category, nickname, notes,
             first_interaction, last_interaction, interaction_count,
@@ -306,8 +306,8 @@ pub async fn get_person(pool: &PgPool, id: String) -> Result<WikiPerson> {
         id: row.id,
         canonical_name: row.canonical_name,
         content: row.content,
-        summary: row.summary,
-        summarized_at: row.summarized_at,
+        article: row.article,
+        article_updated_at: row.article_updated_at,
         picture: row.picture,
         cover_image: row.cover_image,
         emails: serde_json::from_value(row.emails).unwrap_or_default(),
@@ -416,7 +416,7 @@ pub async fn get_wiki_place(pool: &PgPool, id: String) -> Result<WikiPlace> {
     let row = sqlx::query!(
         r#"
         SELECT
-            id, name, content, summary, summarized_at, cover_image, category, address,
+            id, name, content, article, article_updated_at, cover_image, category, address,
             latitude, longitude,
             visit_count, first_visit, last_visit,
             created_at, updated_at
@@ -434,8 +434,8 @@ pub async fn get_wiki_place(pool: &PgPool, id: String) -> Result<WikiPlace> {
         id: row.id,
         name: row.name.clone(),
         content: row.content.clone(),
-        summary: row.summary.clone(),
-        summarized_at: row.summarized_at,
+        article: row.article.clone(),
+        article_updated_at: row.article_updated_at,
         cover_image: row.cover_image.clone(),
         category: row.category.clone(),
         address: row.address.clone(),
@@ -516,7 +516,7 @@ pub async fn get_organization(pool: &PgPool, id: String) -> Result<WikiOrganizat
     let row = sqlx::query!(
         r#"
         SELECT
-            id, canonical_name, content, summary, summarized_at, cover_image,
+            id, canonical_name, content, article, article_updated_at, cover_image,
             organization_type, relationship_type, role_title,
             start_date, end_date, interaction_count,
             first_interaction, last_interaction,
@@ -535,8 +535,8 @@ pub async fn get_organization(pool: &PgPool, id: String) -> Result<WikiOrganizat
         id: row.id,
         canonical_name: row.canonical_name,
         content: row.content,
-        summary: row.summary,
-        summarized_at: row.summarized_at,
+        article: row.article,
+        article_updated_at: row.article_updated_at,
         cover_image: row.cover_image,
         organization_type: row.organization_type,
         relationship_type: row.relationship_type,

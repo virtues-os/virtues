@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "\n        SELECT\n            id, canonical_name, content, summary, summarized_at, cover_image,\n            organization_type, relationship_type, role_title,\n            start_date, end_date, interaction_count,\n            first_interaction, last_interaction,\n            created_at, updated_at\n        FROM wiki_orgs\n        WHERE id = $1\n        ",
+  "query": "\n        SELECT\n            id, canonical_name, content, article, article_updated_at, cover_image,\n            organization_type, relationship_type, role_title,\n            start_date, end_date, interaction_count,\n            first_interaction, last_interaction,\n            created_at, updated_at\n        FROM wiki_orgs\n        WHERE id = $1\n        ",
   "describe": {
     "columns": [
       {
@@ -20,12 +20,12 @@
       },
       {
         "ordinal": 3,
-        "name": "summary",
+        "name": "article",
         "type_info": "Text"
       },
       {
         "ordinal": 4,
-        "name": "summarized_at",
+        "name": "article_updated_at",
         "type_info": "Timestamptz"
       },
       {
@@ -108,5 +108,5 @@
       false
     ]
   },
-  "hash": "b28caace80ea5a5468b58827d9004d586f4a6e2b7fae027231ac45733cf59d8e"
+  "hash": "7627ca74302ae4115192e137c7d3f79c4122d3da3edffce87f6922851260e214"
 }

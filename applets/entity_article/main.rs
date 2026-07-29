@@ -1,8 +1,8 @@
-//! entity_summary: keep the wiki's entity articles current.
+//! entity_article: keep the wiki's entity articles current.
 //!
 //! Thin glue over `virtues-core` (same shape as `day_summary_eod`): connect,
 //! refresh whatever entities have outgrown their article, report the count.
-//! Runs hourly; the growth gate in `refresh_due_entity_summaries` is the real
+//! Runs hourly; the growth gate in `refresh_due_entity_articles` is the real
 //! scheduler — a tick with nothing due makes zero model calls.
 
 use anyhow::{Context, Result};
@@ -13,9 +13,9 @@ async fn main() -> Result<()> {
     virtues_applets::init_tracing();
 
     let input = read_input()?;
-    let pool = virtues_helpers::connect_from_env("virtues-action-entity_summary").await?;
+    let pool = virtues_helpers::connect_from_env("virtues-action-entity_article").await?;
 
-    let written = virtues::api::entity_summary_gen::refresh_due_entity_summaries(&pool)
+    let written = virtues::api::entity_article_gen::refresh_due_entity_articles(&pool)
         .await
         .context("entity summary refresh failed")?;
 

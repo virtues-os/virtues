@@ -1,4 +1,4 @@
-//! Entity summary generation — the wikipedia-style written record on each
+//! Entity article generation — the wikipedia-style written record on each
 //! entity page.
 //!
 //! Where the day summary narrates a *day*, this narrates a *relationship*: a
@@ -8,10 +8,17 @@
 //! growth-gated, not timer-gated, so a quiet entity never burns a model call
 //! and an active one stays current.
 //!
-//! Mirrors `narrative_identity_gen.rs`: gate → dossier → `BearerClient` with
-//! `Purpose::System` → write back. The summary lives in its own `summary`
-//! column; `content`/`notes` remain the user's own writing and are never
-//! touched here.
+//! It is an *article*, not a summary: it summarizes nothing, because the thing
+//! it would summarize (the records) is rendered directly beneath it on the
+//! page. It is the prose the page is written in.
+//!
+//! Mirrors `narrative_identity_gen.rs`: gate → dossier → `BearerClient` →
+//! write back. The article lives in its own `article` column; `content` and
+//! `notes` remain the user's own writing and are never touched here.
+//!
+//! Cost note: this runs on the **Chat** slot, so it is billed at whatever
+//! model the owner chose for conversation, against the same single wallet.
+//! `Purpose::System` is telemetry only.
 
 use sqlx::PgPool;
 
@@ -19,7 +26,7 @@ use crate::error::{Error, Result};
 
 /// Below this many total refs an entity has no article — the record is too
 /// thin to say anything a contact card doesn't. Deliberately high to start.
-const MIN_REFS_TO_SUMMARIZE: i64 = 15;
+const MIN_REFS_TO_WRITE: i64 = 15;
 
 /// A new edition requires at least this many refs beyond the count recorded
 /// at the last edition ("enough new data").
@@ -59,27 +66,27 @@ struct DueEntity {
 
 /// Find entities whose record has outgrown their article, most-outgrown first,
 /// and write a fresh edition for each. Returns how many were written.
-pub async fn refresh_due_entity_summaries(pool: &PgPool) -> Result<usize> {
+pub async fn refresh_due_entity_articles(pool: &PgPool) -> Result<usize> {
     let due: Vec<(String, String, i64)> = sqlx::query_as(
         r#"
         SELECT e.id, e.kind, c.refs
         FROM (
-            SELECT id, 'person' AS kind, summary_ref_count FROM wiki_people
+            SELECT id, 'person' AS kind, article_ref_count FROM wiki_people
             UNION ALL
-            SELECT id, 'place', summary_ref_count FROM wiki_places
+            SELECT id, 'place', article_ref_count FROM wiki_places
             UNION ALL
-            SELECT id, 'organization', summary_ref_count FROM wiki_orgs
+            SELECT id, 'organization', article_ref_count FROM wiki_orgs
         ) e
         JOIN LATERAL (
             SELECT count(*) AS refs FROM wiki_entity_refs r WHERE r.entity_id = e.id
         ) c ON true
         WHERE c.refs >= $1
-          AND c.refs - e.summary_ref_count >= $2
-        ORDER BY c.refs - e.summary_ref_count DESC
+          AND c.refs - e.article_ref_count >= $2
+        ORDER BY c.refs - e.article_ref_count DESC
         LIMIT $3
         "#,
     )
-    .bind(MIN_REFS_TO_SUMMARIZE)
+    .bind(MIN_REFS_TO_WRITE)
     .bind(MIN_NEW_REFS)
     .bind(MAX_ENTITIES_PER_RUN)
     .fetch_all(pool)
@@ -89,19 +96,19 @@ pub async fn refresh_due_entity_summaries(pool: &PgPool) -> Result<usize> {
     let mut written = 0;
     for (id, kind, refs) in due {
         let entity = DueEntity { id, kind, refs };
-        match summarize_entity(pool, &entity).await {
+        match write_article(pool, &entity).await {
             Ok(()) => written += 1,
             Err(e) => {
                 // One failed article must not block the batch — the gate will
                 // re-offer this entity next run.
-                tracing::warn!(entity = %entity.id, error = %e, "entity summary failed");
+                tracing::warn!(entity = %entity.id, error = %e, "entity article failed");
             }
         }
     }
     Ok(written)
 }
 
-async fn summarize_entity(pool: &PgPool, entity: &DueEntity) -> Result<()> {
+async fn write_article(pool: &PgPool, entity: &DueEntity) -> Result<()> {
     let prompt = build_dossier(pool, entity).await?;
 
     tracing::info!(
@@ -109,29 +116,29 @@ async fn summarize_entity(pool: &PgPool, entity: &DueEntity) -> Result<()> {
         kind = %entity.kind,
         refs = entity.refs,
         prompt_chars = prompt.len(),
-        "writing entity summary edition"
+        "writing entity article edition"
     );
 
     let raw = call_virtues_api(pool, &prompt).await?;
     let article = parse_article(&raw);
     if article.is_empty() {
         return Err(Error::ExternalApi(
-            "LLM returned an empty entity summary".to_string(),
+            "LLM returned an empty entity article".to_string(),
         ));
     }
 
     let update = match entity.kind.as_str() {
         "person" => {
-            "UPDATE wiki_people SET summary = $2, summarized_at = now(), \
-             summary_ref_count = $3, updated_at = now() WHERE id = $1"
+            "UPDATE wiki_people SET article = $2, article_updated_at = now(), \
+             article_ref_count = $3, updated_at = now() WHERE id = $1"
         }
         "place" => {
-            "UPDATE wiki_places SET summary = $2, summarized_at = now(), \
-             summary_ref_count = $3, updated_at = now() WHERE id = $1"
+            "UPDATE wiki_places SET article = $2, article_updated_at = now(), \
+             article_ref_count = $3, updated_at = now() WHERE id = $1"
         }
         _ => {
-            "UPDATE wiki_orgs SET summary = $2, summarized_at = now(), \
-             summary_ref_count = $3, updated_at = now() WHERE id = $1"
+            "UPDATE wiki_orgs SET article = $2, article_updated_at = now(), \
+             article_ref_count = $3, updated_at = now() WHERE id = $1"
         }
     };
     sqlx::query(update)
@@ -140,7 +147,7 @@ async fn summarize_entity(pool: &PgPool, entity: &DueEntity) -> Result<()> {
         .bind(entity.refs as i32)
         .execute(pool)
         .await
-        .map_err(|e| Error::Database(format!("Failed to write entity summary: {}", e)))?;
+        .map_err(|e| Error::Database(format!("Failed to write entity article: {}", e)))?;
 
     Ok(())
 }
@@ -159,7 +166,7 @@ async fn build_dossier(pool: &PgPool, entity: &DueEntity) -> Result<String> {
             let row = sqlx::query(
                 "SELECT canonical_name, relationship_category, nickname, notes, \
                         first_interaction::text AS fi, last_interaction::text AS li, \
-                        interaction_count, summary \
+                        interaction_count, article \
                  FROM wiki_people WHERE id = $1",
             )
             .bind(&entity.id)
@@ -183,13 +190,13 @@ async fn build_dossier(pool: &PgPool, entity: &DueEntity) -> Result<String> {
             if let Ok(Some(v)) = row.try_get::<Option<String>, _>("li") {
                 f.push_str(&format!("- Most recent interaction: {}\n", v));
             }
-            let prev: Option<String> = row.try_get("summary").ok().flatten();
+            let prev: Option<String> = row.try_get("article").ok().flatten();
             (name, f, prev)
         }
         "place" => {
             let row = sqlx::query(
                 "SELECT name, category, address, visit_count, \
-                        first_visit::text AS fv, last_visit::text AS lv, summary \
+                        first_visit::text AS fv, last_visit::text AS lv, article \
                  FROM wiki_places WHERE id = $1",
             )
             .bind(&entity.id)
@@ -213,13 +220,13 @@ async fn build_dossier(pool: &PgPool, entity: &DueEntity) -> Result<String> {
             if let Ok(Some(v)) = row.try_get::<Option<String>, _>("lv") {
                 f.push_str(&format!("- Most recent visit: {}\n", v));
             }
-            let prev: Option<String> = row.try_get("summary").ok().flatten();
+            let prev: Option<String> = row.try_get("article").ok().flatten();
             (name, f, prev)
         }
         _ => {
             let row = sqlx::query(
                 "SELECT canonical_name, organization_type, relationship_type, role_title, \
-                        first_interaction::text AS fi, last_interaction::text AS li, summary \
+                        first_interaction::text AS fi, last_interaction::text AS li, article \
                  FROM wiki_orgs WHERE id = $1",
             )
             .bind(&entity.id)
@@ -243,7 +250,7 @@ async fn build_dossier(pool: &PgPool, entity: &DueEntity) -> Result<String> {
             if let Ok(Some(v)) = row.try_get::<Option<String>, _>("li") {
                 f.push_str(&format!("- Most recent interaction: {}\n", v));
             }
-            let prev: Option<String> = row.try_get("summary").ok().flatten();
+            let prev: Option<String> = row.try_get("article").ok().flatten();
             (name, f, prev)
         }
     };
@@ -390,7 +397,7 @@ async fn call_virtues_api(pool: &PgPool, user_prompt: &str) -> Result<String> {
 
     let client = crate::virtues_api::client::BearerClient::from_env(pool.clone())
         .with_purpose(crate::virtues_api::client::Purpose::System)
-        .with_feature("entity_summary");
+        .with_feature("entity_article");
     let response = client
         .post_json(
             "/v1/ai/chat/completions",
