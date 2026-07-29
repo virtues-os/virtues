@@ -2,6 +2,6 @@ name = "Entity Summaries"
 description = "Writes and revises the wikipedia-style article on each entity page (people, places, organizations) whenever enough new records accumulate. Growth-gated: a quiet entity never costs a model call."
 owner = "system"
 runtime = "function"
-command = ["entity_summary"]
+command = ["entity_article"]
 triggers = ["cron", "manual", "tool"]
 default_cron = "0 30 * * * *"

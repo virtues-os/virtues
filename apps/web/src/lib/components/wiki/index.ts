@@ -18,7 +18,7 @@ export { default as DaysChronicle } from './DaysChronicle.svelte';
 export { default as NarrativeIdentitySection } from './NarrativeIdentitySection.svelte';
 
 // Entity page sections
-export { default as EntitySummarySection } from './EntitySummarySection.svelte';
+export { default as EntityArticleSection } from './EntityArticleSection.svelte';
 export { default as EntityRecordsSection } from './EntityRecordsSection.svelte';
 
 // Year page

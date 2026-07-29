@@ -7,7 +7,7 @@
 
 <script lang="ts">
 	import type { OrganizationPage as OrganizationPageType } from "$lib/wiki/types";
-	import EntitySummarySection from "./EntitySummarySection.svelte";
+	import EntityArticleSection from "./EntityArticleSection.svelte";
 	import EntityRecordsSection from "./EntityRecordsSection.svelte";
 	import CitedMarkdown from "$lib/components/CitedMarkdown.svelte";
 
@@ -68,11 +68,11 @@
 
 			<hr class="divider" />
 
-			<!-- Summary: the machine-written article -->
-			<section class="section" id="summary">
-				<EntitySummarySection
-					summary={page.summary}
-					summarizedAt={page.summarizedAt}
+			<!-- The article: machine-written prose about this entity -->
+			<section class="section" id="article">
+				<EntityArticleSection
+					article={page.article}
+					articleUpdatedAt={page.articleUpdatedAt}
 					name={page.title}
 				/>
 			</section>
