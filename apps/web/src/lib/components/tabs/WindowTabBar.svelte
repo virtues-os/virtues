@@ -92,8 +92,13 @@
 	}
 	const isSplitMode = $derived(windowShellStore.isSplit);
 
-	// ⌘1/⌘2 badge, shown only while ⌘ is held. Single-pane mode is always ⌘1.
-	const paneNumber = $derived(paneId === "right" ? "2" : "1");
+	// ⌘N badges, shown only while ⌘ is held. Tabs number left-to-right across
+	// the whole window, so the right pane's tabs continue where the left
+	// pane's leave off. Only the first nine tabs get a badge — ⌘0 and beyond
+	// don't exist as shortcuts.
+	const ordinalOffset = $derived(
+		paneId === "right" ? (windowShellStore.leftPane?.tabs.length ?? 0) : 0,
+	);
 	const showPaneHint = $derived(
 		modifierHint.visible && !mobileLayout.isMobile,
 	);
@@ -423,8 +428,9 @@
 		onconsider={handleDndConsider}
 		onfinalize={handleDndFinalize}
 	>
-		{#each dndItems as item (item.id)}
+		{#each dndItems as item, tabIndex (item.id)}
 			{@const tab = item.tab}
+			{@const tabOrdinal = ordinalOffset + tabIndex + 1}
 			<div
 				class="tab"
 				class:active={tab.id === activeTabId}
@@ -464,19 +470,18 @@
 							autofocus
 						/>
 					{:else}
-						<!-- On a ⌘ hold the ACTIVE tab's own label becomes its pane
-						     number: the title slides up and out, ⌘1 slides up and
-						     in. Nothing new enters the screen, which is the point —
+						<!-- On a ⌘ hold each tab's own label becomes its number:
+						     the title slides up and out, ⌘N slides up and in.
+						     Nothing new enters the screen, which is the point —
 						     the old version floated a saturated blue chip into the
 						     toolbar, the loudest object in an otherwise quiet
 						     window, and it announced the shortcut instead of
-						     teaching which label it belongs to.
-						     Only the active tab flips: every tab in a pane shares
-						     the pane's number, so flipping all of them would say
-						     the same thing five times. -->
-						<span class="tab-label" class:flipping={showPaneHint && tab.id === activeTabId}>
+						     teaching which label it belongs to. Every tab flips
+						     because every tab has its own number, browser-style:
+						     leftmost is ⌘1, counting across both panes. -->
+						<span class="tab-label" class:flipping={showPaneHint && tabOrdinal <= 9}>
 							<span class="tab-label-text">{tab.label}</span>
-							<span class="tab-label-hint" aria-hidden="true">⌘{paneNumber}</span>
+							<span class="tab-label-hint" aria-hidden="true">⌘{tabOrdinal}</span>
 						</span>
 					{/if}
 				{/if}
