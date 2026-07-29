@@ -265,7 +265,7 @@ pub async fn mark_credential_status(
 /// action's program name, e.g. `ios_ingest`), which the device uses to route a
 /// flush to `POST /webhook/{action_id}`. All iOS streams share the single
 /// `ios_ingest` action and disambiguate via the `stream` field in the body.
-pub async fn fanout_action_ids(
+pub async fn fanout_applet_ids(
     db: &PgPool,
     device_id: &str,
 ) -> Result<HashMap<String, String>> {

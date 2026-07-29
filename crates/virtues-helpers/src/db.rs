@@ -1,7 +1,7 @@
 //! Database connection helpers for action subprocesses.
 //!
 //! Each action binary connects to the same Postgres instance via the
-//! `DATABASE_URL` env var that the runner inherits. Action pools are
+//! `DATABASE_URL` env var that the runner inherits. Applet pools are
 //! intentionally small (2 connections) since most actions hit the DB
 //! serially and we want to keep total backend count bounded on the
 //! 8GB appliance hardware.

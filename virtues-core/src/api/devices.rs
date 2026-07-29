@@ -493,7 +493,7 @@ pub(crate) async fn enroll_peer_core(
     // Allowlist the EndpointId + register it with atlas so the relay admits it,
     // THEN fan out the device's ingest actions (anchored on device_id).
     crate::relay::after_pairing_change(pool.clone());
-    let action_ids = crate::api::pair::assemble_action_fanout(pool, &device_id)
+    let action_ids = crate::api::pair::assemble_applet_fanout(pool, &device_id)
         .await
         .unwrap_or_default();
 

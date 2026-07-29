@@ -272,7 +272,7 @@ pub async fn run(client: Virtues, host: &str, port: u16) -> Result<()> {
         // the webhook endpoint.
         .route(
             "/api/devices/action-ids",
-            get(api::device_action_ids_handler),
+            get(api::device_applet_ids_handler),
         )
         // Device-scoped run history for one of the caller's own actions, so the
         // app can show real server-side outcome per stream. Device-token bearer
@@ -280,7 +280,7 @@ pub async fn run(client: Virtues, host: &str, port: u16) -> Result<()> {
         // session-authed /api/actions/:id/runs.
         .route(
             "/api/devices/actions/:id/runs",
-            get(api::device_action_runs_handler),
+            get(api::device_applet_runs_handler),
         );
 
     // ============================================================
@@ -360,16 +360,16 @@ pub async fn run(client: Virtues, host: &str, port: u16) -> Result<()> {
         // Actions API
         .route(
             "/api/applets",
-            get(api::list_actions_handler).post(api::create_action_handler),
+            get(api::list_applets_handler).post(api::create_applet_handler),
         )
         .route(
             "/api/applets/:id",
-            get(api::get_action_handler)
-                .patch(api::patch_action_handler)
-                .delete(api::delete_action_handler),
+            get(api::get_applet_handler)
+                .patch(api::patch_applet_handler)
+                .delete(api::delete_applet_handler),
         )
-        .route("/api/applets/:id/run", post(api::trigger_action_handler))
-        .route("/api/applets/:id/data", get(api::get_action_data_handler))
+        .route("/api/applets/:id/run", post(api::trigger_applet_handler))
+        .route("/api/applets/:id/data", get(api::get_applet_data_handler))
         // Chat-export upload (Tier 3 one-time import). Per-route body limit
         // overrides the router-wide 105MB cap — ChatGPT exports can be larger.
         .route(
@@ -377,8 +377,8 @@ pub async fn run(client: Virtues, host: &str, port: u16) -> Result<()> {
             post(api::chat_import_upload_handler)
                 .layer(DefaultBodyLimit::max(512 * 1024 * 1024)),
         )
-        .route("/api/applets/:id/runs", get(api::list_action_runs_handler))
-        .route("/api/applets/runs/:id", get(api::get_action_run_handler))
+        .route("/api/applets/:id/runs", get(api::list_applet_runs_handler))
+        .route("/api/applets/runs/:id", get(api::get_applet_run_handler))
         .route("/api/runs", get(api::list_runs_handler))
         // Credentials API
         .route("/api/credentials", get(api::list_credentials_handler))
@@ -649,7 +649,7 @@ pub async fn run(client: Virtues, host: &str, port: u16) -> Result<()> {
         .route("/api/admin/reconcile", post(api::admin_reconcile_handler))
         .route(
             "/api/admin/applets/import-git",
-            post(api::import_git_actions_handler),
+            post(api::import_git_applets_handler),
         )
         // System (operator surface — apps + logs)
         // Live host snapshot + persisted history for the System/Telemetry views.

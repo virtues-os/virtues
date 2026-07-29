@@ -2,7 +2,7 @@
 //!
 //! Reads every enabled action with a cron schedule from `app_applets` and
 //! registers a job with `tokio-cron-scheduler`. Each firing calls
-//! [`crate::applet_runner::run_action`] with `trigger = "cron"`; the unified
+//! [`crate::applet_runner::run_applet`] with `trigger = "cron"`; the unified
 //! runner handles triggers validation, condition evaluation, concurrency, and
 //! dispatch to subprocess / LLM agent.
 //!
@@ -142,7 +142,7 @@ impl Scheduler {
                 let action_id = action_id_for_job.clone();
                 Box::pin(async move {
                     if let Err(e) =
-                        crate::applet_runner::run_action(&deps, &action_id, "cron", None).await
+                        crate::applet_runner::run_applet(&deps, &action_id, "cron", None).await
                     {
                         tracing::error!(action_id, error = %e, "scheduled cron run failed");
                     }
@@ -219,7 +219,7 @@ impl Scheduler {
     }
 
     /// Simple enumeration of cron-scheduled actions for display.
-    pub async fn list_scheduled(&self) -> Result<Vec<ScheduledAction>> {
+    pub async fn list_scheduled(&self) -> Result<Vec<ScheduledApplet>> {
         let rows = sqlx::query_as::<_, (String, String, String, Option<Timestamp>)>(
             r#"SELECT a.id, a.name, a.cron_schedule, r.started_at
                FROM app_applets a
@@ -238,7 +238,7 @@ impl Scheduler {
 
         Ok(rows
             .into_iter()
-            .map(|(id, name, cron_schedule, last_success_at)| ScheduledAction {
+            .map(|(id, name, cron_schedule, last_success_at)| ScheduledApplet {
                 id,
                 name,
                 cron_schedule,
@@ -249,7 +249,7 @@ impl Scheduler {
 }
 
 #[derive(Debug)]
-pub struct ScheduledAction {
+pub struct ScheduledApplet {
     pub id: String,
     pub name: String,
     pub cron_schedule: String,

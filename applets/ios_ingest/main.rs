@@ -28,7 +28,7 @@ use anyhow::{anyhow, Result};
 use serde_json::Value;
 use sqlx::PgPool;
 use virtues::storage::lake::{self, Envelope};
-use virtues_helpers::{connect_from_env, output, read_input, ActionInput};
+use virtues_helpers::{connect_from_env, output, read_input, AppletInput};
 
 const PROVIDER: &str = "ios";
 
@@ -172,7 +172,7 @@ fn residual_envelope(payload: Option<&Value>) -> Value {
 /// is honored first only as a manual/cron override. Both forms are normalized —
 /// an optional `ios_` prefix is stripped and the result lower-cased — so
 /// `"ios_location"` and `"location"` resolve the same.
-fn resolve_stream(input: &ActionInput) -> Result<String> {
+fn resolve_stream(input: &AppletInput) -> Result<String> {
     if let Some(arg) = std::env::args().nth(1) {
         return Ok(normalize_stream(&arg));
     }

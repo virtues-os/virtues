@@ -1,7 +1,7 @@
 //! Agent loop runner for actions with an `agent` field set.
 //!
 //! This runs the LLM agent loop for an action. It is invoked by the unified
-//! `crate::applet_runner::run_action` after any subprocess phase has completed.
+//! `crate::applet_runner::run_applet` after any subprocess phase has completed.
 //! Trigger validation, condition evaluation, concurrency gating, and run-row
 //! lifecycle are all handled upstream — this function is pure execution.
 
@@ -12,7 +12,7 @@ use sqlx::PgPool;
 use crate::api::chats::{append_message, ChatMessage};
 use crate::api::compaction::build_context_for_llm;
 use crate::error::Result;
-use crate::scheduler::applets::Action;
+use crate::scheduler::applets::Applet;
 use crate::server::yjs::YjsState;
 use crate::types::Timestamp;
 
@@ -30,11 +30,11 @@ pub struct AgentLoopResult {
 /// `prompt` is the action's `agent` field (the instruction). `context` is an
 /// optional dynamic context block — typically the result summary from a
 /// subprocess phase that ran immediately before. Concurrency/condition gating
-/// is handled upstream by `crate::applet_runner::run_action`.
+/// is handled upstream by `crate::applet_runner::run_applet`.
 pub async fn run_agent_loop(
     pool: &PgPool,
     yjs_state: &YjsState,
-    action: &Action,
+    action: &Applet,
     prompt: &str,
     context: Option<&str>,
 ) -> Result<AgentLoopResult> {
@@ -46,7 +46,7 @@ pub async fn run_agent_loop(
 
     // Build system prompt (with memory if present)
     let system_prompt =
-        build_action_system_prompt(pool, prompt, context, action.memory.as_deref()).await;
+        build_applet_system_prompt(pool, prompt, context, action.memory.as_deref()).await;
 
     // 3. Load compacted message history (only if chat is linked)
     let messages = if let Some(cid) = &chat_id {
@@ -80,7 +80,7 @@ pub async fn run_agent_loop(
     }
 
     // 4. Get tools and model
-    let tools = crate::tools::get_tools_for_action();
+    let tools = crate::tools::get_tools_for_applet();
     let model = if let Some(m) = &model_override {
         m.clone()
     } else {
@@ -125,12 +125,12 @@ pub async fn run_agent_loop(
                 step_count = step;
             }
             crate::agent::AgentEvent::Error { message, .. } => {
-                tracing::error!(action_id, error = %message, "Action run error");
+                tracing::error!(action_id, error = %message, "Applet run error");
                 if let Some(cid) = &chat_id {
                     let error_msg = ChatMessage {
                         id: None,
                         role: "system".to_string(),
-                        content: format!("[System: Action run error: {}]", message),
+                        content: format!("[System: Applet run error: {}]", message),
                         timestamp: Timestamp::now(),
                         model: None,
                         provider: None,
@@ -171,7 +171,7 @@ pub async fn run_agent_loop(
         }
     }
 
-    tracing::info!(action_id, steps = step_count, "Action run complete");
+    tracing::info!(action_id, steps = step_count, "Applet run complete");
 
     Ok(AgentLoopResult {
         action_id: action_id.to_string(),
@@ -246,7 +246,7 @@ async fn load_chat_messages(pool: &PgPool, chat_id: &str) -> Result<Vec<ChatMess
 ///
 /// `context` is optional dynamic data supplied by the unified runner — typically
 /// the stdout summary from a subprocess phase that ran immediately before.
-async fn build_action_system_prompt(
+async fn build_applet_system_prompt(
     pool: &PgPool,
     instruction: &str,
     context: Option<&str>,

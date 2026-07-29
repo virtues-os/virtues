@@ -34,7 +34,7 @@ const BATCH_SIZE: i64 = 30;
 async fn main() -> Result<()> {
     virtues_applets::init_tracing();
 
-    // Cron actions still receive an ActionInput on stdin (config + null payload).
+    // Cron actions still receive an AppletInput on stdin (config + null payload).
     let input = read_input()?;
     let db = connect_from_env("virtues-action-transcription_resolution").await?;
 
