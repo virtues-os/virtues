@@ -551,7 +551,14 @@ impl SqlQueryTool {
         let _ = tx.rollback().await;
 
         // Convert rows to JSON
-        let json_rows = convert_rows_to_json(&rows);
+        let mut json_rows = convert_rows_to_json(&rows);
+
+        // Make the answer citable. The agent is told to cite a claim by linking
+        // the `ref` a tool returned, and to cite nothing when a result has no
+        // `ref` — so without this, every fact the model learned from SQL was
+        // structurally uncitable, which is most of what it knows about the
+        // owner's own data.
+        attach_record_refs(&query, &mut json_rows);
 
         Ok(ToolResult::success(serde_json::json!({
             "operation": "query",
@@ -559,6 +566,73 @@ impl SqlQueryTool {
             "rows": json_rows,
         })))
     }
+}
+
+/// Attach a citable `/record/{ontology}/{id}` to each row, matching the `ref`
+/// that `semantic_search` already returns — the frontend renders that route as
+/// a click-through to the record itself.
+///
+/// Deliberately conservative: only for a JOIN-free query naming exactly ONE
+/// registered ontology table, on rows that actually carry an `id`. An
+/// aggregate has no record to point at, and in a join the `id` column may
+/// belong to either side — `SELECT d.id FROM wiki_events e JOIN wiki_days d`
+/// would otherwise be labelled a wiki_event. Resolving that needs real alias
+/// analysis, and a confident link to the wrong record is worse than no link:
+/// the agent prompt tells the model to skip results without a `ref`, so
+/// silence degrades to "uncited", never to "miscited".
+fn attach_record_refs(query: &str, rows: &mut [serde_json::Value]) {
+    use virtues_registry::ontologies::registered_ontologies;
+
+    let lowered = query.to_lowercase();
+    if mentions_table(&lowered, "join") {
+        return;
+    }
+    let mut matched: Option<&'static str> = None;
+    for ont in registered_ontologies() {
+        if !mentions_table(&lowered, ont.table_name) {
+            continue;
+        }
+        if matched.is_some() {
+            // More than one ontology in play — ambiguous, so cite nothing.
+            return;
+        }
+        matched = Some(ont.name);
+    }
+    let Some(ontology) = matched else { return };
+
+    for row in rows.iter_mut() {
+        let Some(obj) = row.as_object_mut() else { continue };
+        // Never shadow a real column the query happened to select.
+        if obj.contains_key("ref") {
+            continue;
+        }
+        let Some(id) = obj.get("id").and_then(|v| v.as_str()) else {
+            continue;
+        };
+        let route = format!("/record/{ontology}/{id}");
+        obj.insert("ref".to_string(), serde_json::Value::String(route));
+    }
+}
+
+/// Whole-word search for a table name, so `wiki_days` doesn't match inside a
+/// longer identifier and a name inside a string literal doesn't count either.
+fn mentions_table(lowered_query: &str, table: &str) -> bool {
+    lowered_query
+        .match_indices(table)
+        .any(|(idx, _)| {
+            let before_ok = idx == 0
+                || !lowered_query[..idx]
+                    .chars()
+                    .next_back()
+                    .is_some_and(|c| c.is_alphanumeric() || c == '_');
+            let after = idx + table.len();
+            let after_ok = after >= lowered_query.len()
+                || !lowered_query[after..]
+                    .chars()
+                    .next()
+                    .is_some_and(|c| c.is_alphanumeric() || c == '_');
+            before_ok && after_ok
+        })
 }
 
 /// Convert Postgres rows to JSON array
@@ -656,6 +730,73 @@ impl std::fmt::Debug for SqlQueryTool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn rows(ids: &[&str]) -> Vec<serde_json::Value> {
+        ids.iter()
+            .map(|id| serde_json::json!({ "id": id, "body": "hi" }))
+            .collect()
+    }
+
+    fn ref_of(row: &serde_json::Value) -> Option<&str> {
+        row.get("ref").and_then(|v| v.as_str())
+    }
+
+    #[test]
+    fn single_table_query_gets_citable_refs() {
+        let mut r = rows(&["msg_1", "msg_2"]);
+        attach_record_refs(
+            "SELECT id, body FROM data_communication_message LIMIT 2",
+            &mut r,
+        );
+        assert_eq!(ref_of(&r[0]), Some("/record/communication_message/msg_1"));
+        assert_eq!(ref_of(&r[1]), Some("/record/communication_message/msg_2"));
+    }
+
+    /// In a join the `id` column may belong to either side, so citing it would
+    /// be a confident link to possibly the wrong record.
+    #[test]
+    fn joined_query_gets_no_refs() {
+        let mut r = rows(&["x_1"]);
+        attach_record_refs(
+            "SELECT d.id FROM wiki_events e JOIN wiki_days d ON d.id = e.day_id",
+            &mut r,
+        );
+        assert_eq!(ref_of(&r[0]), None);
+    }
+
+    /// Two ontologies named without a join (a union, a subquery) is just as
+    /// ambiguous.
+    #[test]
+    fn two_ontologies_get_no_refs() {
+        let mut r = rows(&["x_1"]);
+        attach_record_refs(
+            "SELECT id FROM data_calendar_event UNION ALL SELECT id FROM data_communication_email",
+            &mut r,
+        );
+        assert_eq!(ref_of(&r[0]), None);
+    }
+
+    /// An aggregate row is not a record.
+    #[test]
+    fn rows_without_an_id_get_no_refs() {
+        let mut r = vec![serde_json::json!({ "count": 12 })];
+        attach_record_refs("SELECT count(*) FROM data_calendar_event", &mut r);
+        assert_eq!(ref_of(&r[0]), None);
+    }
+
+    #[test]
+    fn a_selected_ref_column_is_never_shadowed() {
+        let mut r = vec![serde_json::json!({ "id": "m1", "ref": "mine" })];
+        attach_record_refs("SELECT id, ref FROM data_communication_message", &mut r);
+        assert_eq!(ref_of(&r[0]), Some("mine"));
+    }
+
+    #[test]
+    fn table_names_match_on_word_boundaries() {
+        assert!(mentions_table("select * from wiki_events", "wiki_events"));
+        assert!(!mentions_table("select * from wiki_events_backup", "wiki_events"));
+        assert!(!mentions_table("select * from my_wiki_events", "wiki_events"));
+    }
 
     /// The boundary is Postgres, not the keyword blocklist.
     ///

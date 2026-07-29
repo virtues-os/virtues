@@ -146,7 +146,7 @@
 				{#if isEntity}
 					<Ref displayName={token.text} url={url} variant={refVariant} />
 				{:else if isExternal}
-					<LinkChip href={url} label={token.text} />
+					<LinkChip href={url} label={token.text} variant={refVariant} />
 				{:else if url}
 					<a href={url} target="_blank" rel="noopener noreferrer">{@render children()}</a>
 				{:else}
