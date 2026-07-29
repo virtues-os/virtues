@@ -275,15 +275,20 @@
 										{#if group.label && !isCollapsed}
 											<ZoneHeader id={group.id} label={group.label} />
 										{/if}
-										{#if !sidebarZones.isCollapsed(group.id)}
-											{#each group.items as section (section.id)}
-												<SystemSection
-													{section}
-													collapsed={isCollapsed}
-													accentColor={null}
-												/>
-											{/each}
-										{/if}
+										<div
+											class="sidebar-expandable"
+											class:expanded={!sidebarZones.isCollapsed(group.id)}
+										>
+											<div class="sidebar-expandable-inner">
+												{#each group.items as section (section.id)}
+													<SystemSection
+														{section}
+														collapsed={isCollapsed}
+														accentColor={null}
+													/>
+												{/each}
+											</div>
+										</div>
 									</div>
 								{/each}
 							{/if}
@@ -353,12 +358,15 @@
 		}
 	}
 
+	/* The gap above the first zone is the same one row of air that sits
+	   between zones, so Search → Desk and Desk → Library read as one
+	   interval rather than two arbitrary ones. */
 	.workspace-nav {
 		flex: 1;
 		min-height: 0;
 		overflow-y: auto;
 		overflow-x: hidden;
-		padding: 12px 0 12px 8px;
+		padding: var(--sidebar-interactive-height) 0 12px 8px;
 	}
 
 	.workspace-nav.collapsed {
