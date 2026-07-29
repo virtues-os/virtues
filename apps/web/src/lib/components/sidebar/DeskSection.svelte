@@ -213,7 +213,11 @@
 	   in it. An empty state is a statement of fact, not a flourish; the serif
 	   is reserved for the names of real things. */
 	.desk-empty {
-		padding: 3px 8px 3px var(--sidebar-padding-left-base);
+		padding: 3px 8px 3px
+			calc(
+				var(--sidebar-padding-left-base) + var(--sidebar-interactive-icon-size) +
+					var(--sidebar-interactive-gap)
+			);
 		font-size: 12px;
 		color: var(--color-foreground-subtle);
 	}
