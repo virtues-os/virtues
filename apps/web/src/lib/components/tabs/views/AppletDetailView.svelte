@@ -18,7 +18,7 @@
 		type AppletData,
 		type PatchActionBody
 	} from '$lib/api/client';
-	import { relativeTime, describeSchedule } from '$lib/actions/palette';
+	import { relativeTime, describeSchedule } from '$lib/applets/palette';
 
 	let { tab }: { tab: Tab; active: boolean } = $props();
 

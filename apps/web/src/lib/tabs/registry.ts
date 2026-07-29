@@ -19,10 +19,10 @@ import HistoryView from '$lib/components/tabs/views/HistoryView.svelte';
 import WikiView from '$lib/components/tabs/views/WikiView.svelte';
 import WikiDetailView from '$lib/components/tabs/views/WikiDetailView.svelte';
 import WikiListView from '$lib/components/tabs/views/WikiListView.svelte';
-import ConnectionsPanel from '$lib/components/actions/ConnectionsPanel.svelte';
+import ConnectionsPanel from '$lib/components/applets/ConnectionsPanel.svelte';
 import CredentialDetailView from '$lib/components/tabs/views/CredentialDetailView.svelte';
-import ActionsView from '$lib/components/tabs/views/ActionsView.svelte';
-import ActionDetailView from '$lib/components/tabs/views/ActionDetailView.svelte';
+import AppletsView from '$lib/components/tabs/views/AppletsView.svelte';
+import AppletDetailView from '$lib/components/tabs/views/AppletDetailView.svelte';
 import AppletView from '$lib/components/tabs/views/AppletView.svelte';
 import DevelopersView from '$lib/components/tabs/views/DevelopersView.svelte';
 import SettingsView from '$lib/components/tabs/views/SettingsView.svelte';
@@ -511,7 +511,7 @@ export const tabRegistry: Record<TabType, TabDefinition> = {
 		deserialize: () => '/applets',
 		icon: 'ri:flashlight-line',
 		defaultLabel: 'Applets',
-		component: ActionsView,
+		component: AppletsView,
 	},
 
 	// ========================================================================
@@ -561,8 +561,8 @@ export const tabRegistry: Record<TabType, TabDefinition> = {
 		},
 		icon: 'ri:flashlight-line',
 		defaultLabel: 'Applet',
-		component: ActionDetailView,
-		detailComponent: ActionDetailView,
+		component: AppletDetailView,
+		detailComponent: AppletDetailView,
 	},
 
 	// ========================================================================

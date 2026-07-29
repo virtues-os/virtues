@@ -11,7 +11,7 @@
 	import { onMount } from 'svelte';
 	import Icon from '$lib/components/Icon.svelte';
 	import { getStreamHealth, type StreamHealth } from '$lib/api/client';
-	import { relativeTime } from '$lib/actions/palette';
+	import { relativeTime } from '$lib/applets/palette';
 
 	let streams = $state<StreamHealth[]>([]);
 	let loading = $state(true);
