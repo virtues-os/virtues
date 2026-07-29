@@ -36,7 +36,7 @@ pub mod media;
 pub mod metrics;
 pub mod model_catalog;
 pub mod models;
-pub mod entity_summary_gen;
+pub mod entity_article_gen;
 pub mod narrative_identity_gen;
 pub mod pages;
 pub mod personas;

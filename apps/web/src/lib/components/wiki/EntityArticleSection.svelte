@@ -1,8 +1,8 @@
 <!--
-	EntitySummarySection.svelte
+	EntityArticleSection.svelte
 
 	The wikipedia-style article at the top of an entity page. Machine-written
-	by the entity_summary applet, rendered in the same linked-prose register
+	by the entity_article applet, rendered in the same linked-prose register
 	as the day narration (CitedMarkdown, quiet refs). While the record is too
 	thin for an article, a single honest stub line stands in — never an empty
 	section scaffold.
@@ -12,17 +12,17 @@
 	import CitedMarkdown from '$lib/components/CitedMarkdown.svelte';
 
 	interface Props {
-		summary?: string;
-		summarizedAt?: Date;
+		article?: string;
+		articleUpdatedAt?: Date;
 		/** The entity's name, for the stub line. */
 		name: string;
 	}
 
-	let { summary, summarizedAt, name }: Props = $props();
+	let { article, articleUpdatedAt, name }: Props = $props();
 
 	const revisedLabel = $derived(
-		summarizedAt
-			? summarizedAt.toLocaleDateString('en-US', {
+		articleUpdatedAt
+			? articleUpdatedAt.toLocaleDateString('en-US', {
 					month: 'long',
 					day: 'numeric',
 					year: 'numeric',
@@ -31,10 +31,10 @@
 	);
 </script>
 
-{#if summary}
-	<div class="summary">
-		<div class="summary-prose">
-			<CitedMarkdown content={summary} refVariant="quiet" />
+{#if article}
+	<div class="article">
+		<div class="article-prose">
+			<CitedMarkdown content={article} refVariant="quiet" />
 		</div>
 		{#if revisedLabel}
 			<p class="colophon">Written from the record · revised {revisedLabel}</p>
@@ -48,7 +48,7 @@
 {/if}
 
 <style>
-	.summary-prose {
+	.article-prose {
 		font-family: var(--font-serif, Georgia, serif);
 		font-size: 1.0313rem;
 		line-height: 1.65;
