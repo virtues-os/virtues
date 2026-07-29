@@ -1678,6 +1678,21 @@ pub async fn wiki_list_acts_handler(State(state): State<AppState>) -> Response {
     api_response(crate::api::list_acts(state.db.pool()).await)
 }
 
+// --- Story ---
+
+/// Get a story by ID
+pub async fn wiki_get_story_handler(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> Response {
+    api_response(crate::api::get_story(state.db.pool(), id).await)
+}
+
+/// List all stories
+pub async fn wiki_list_stories_handler(State(state): State<AppState>) -> Response {
+    api_response(crate::api::list_stories(state.db.pool()).await)
+}
+
 // --- Chapter ---
 
 /// Get a chapter by ID
