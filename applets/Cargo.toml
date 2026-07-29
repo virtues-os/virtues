@@ -33,6 +33,10 @@ name = "day_summary_eod"
 path = "day_summary_eod/main.rs"
 
 [[bin]]
+name = "entity_summary"
+path = "entity_summary/main.rs"
+
+[[bin]]
 name = "narrative_identity_draft"
 path = "narrative_identity_draft/main.rs"
 

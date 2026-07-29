@@ -1,23 +1,36 @@
 <!--
 	WikiView.svelte
 
-	The wiki room: Overview dashboard plus the entity sections, absorbed from
-	the former /entities page. Sub-navigation is route-driven via SubNav
-	(/wiki, /wiki/entities, /wiki/people, ...), so sections are deep-linkable.
+	The wiki room: the wikipedia of one life. Four sections, route-driven via
+	SubNav (deep-linkable):
+
+	  /wiki           Overview — the front page: standfirst, activity, on
+	                  this day, the latest entry, and the index.
+	  /wiki/days      Days — the temporal spine, a year calendar + chronicle.
+	  /wiki/entities  Entities — one index; person/place/org are filters.
+	  /wiki/identity  Narrative identity — user-authored, essay register.
+
+	Legacy routes (/wiki/people, /wiki/places, /wiki/orgs, /wiki/unlinked,
+	/entities) fold into the entities section, presetting its type filter.
+
+	The overview is set as an essay with a marginalia rail: the main column
+	carries the text and the charts; the margin carries the numbers and
+	asides. Charts and inline components stay crisp; the prose stays serif.
 -->
 
 <script lang="ts">
 	import type { Tab } from '$lib/tabs/types';
 	import { windowShellStore } from '$lib/stores/window-shell.svelte';
-	import { Page } from '$lib';
 	import {
 		ActivityHeatmap,
-		PersonTable,
-		PlaceTable,
-		OrganizationTable,
+		DaysChronicle,
+		NarrativeIdentitySection,
 	} from '$lib/components/wiki';
 	import SubNav, { type SubNavItem } from '$lib/components/SubNav.svelte';
-	import UniversalDataGrid, { type Column } from '$lib/components/datagrid/UniversalDataGrid.svelte';
+	import UniversalDataGrid, {
+		type Column,
+	} from '$lib/components/datagrid/UniversalDataGrid.svelte';
+	import type { FilterDef } from '$lib/components/datagrid/types';
 	import { onMount } from 'svelte';
 	import Icon from '$lib/components/Icon.svelte';
 	import { getLocalDateSlug, formatLongDate } from '$lib/utils/dateUtils';
@@ -25,34 +38,61 @@
 		listPeople,
 		listPlaces,
 		listOrganizations,
+		listDays,
+		listDayActivity,
+		listOnThisDay,
+		getNarrativeIdentity,
 		type WikiPersonListItem,
 		type WikiPlaceListItem,
 		type WikiOrganizationListItem,
+		type OnThisDayApi,
 	} from '$lib/wiki/api';
+	import { toActivityLevels } from '$lib/wiki/activity';
 
 	let { tab, active }: { tab: Tab; active: boolean } = $props();
 
-	type Section = 'overview' | 'entities' | 'people' | 'places' | 'orgs' | 'unlinked';
-
-	// Names seen in enough distinct records to be worth a decision. Only these
-	// carry a badge — badging every floating surface makes a count that never
-	// reaches zero, which is wallpaper, not a signal.
+	type Section = 'overview' | 'days' | 'entities' | 'identity';
 
 	const sections = $derived<SubNavItem[]>([
 		{ id: 'overview', label: 'Overview' },
+		{ id: 'days', label: 'Days' },
 		{ id: 'entities', label: 'Entities' },
-		{ id: 'people', label: 'People' },
-		{ id: 'places', label: 'Places' },
-		{ id: 'orgs', label: 'Organizations' },
+		{ id: 'identity', label: 'Narrative Identity' },
 	]);
 
 	// Active section is derived from the route (SubNav owns the writing side).
-	const section = $derived<Section>(
-		(tab.route.match(/^\/wiki\/(entities|people|places|orgs|unlinked)$/)?.[1] as Section) ??
-			'overview'
+	// Legacy per-type routes land in the unified entities section.
+	const LEGACY_TYPE: Record<string, 'person' | 'place' | 'org'> = {
+		people: 'person',
+		places: 'place',
+		orgs: 'org',
+	};
+
+	const routeSegment = $derived(
+		tab.route.match(
+			/^\/wiki\/(days|entities|identity|people|places|orgs|unlinked)$/
+		)?.[1] ?? (tab.route === '/entities' ? 'entities' : null)
 	);
 
-	// --- Unified entity list (also feeds the overview counts) ---
+	const section = $derived<Section>(
+		routeSegment == null
+			? 'overview'
+			: routeSegment === 'days' || routeSegment === 'identity'
+				? routeSegment
+				: 'entities'
+	);
+
+	/** Type filter preset when arriving via a legacy per-type route. */
+	const entityTypePreset = $derived(
+		routeSegment ? (LEGACY_TYPE[routeSegment] ?? null) : null
+	);
+
+	/** What SubNav highlights: legacy per-type routes read as Entities. */
+	const subNavRoute = $derived(
+		section === 'entities' ? '/wiki/entities' : tab.route
+	);
+
+	// --- Unified entity list (also feeds the overview index) ---
 
 	interface UnifiedEntity {
 		id: string;
@@ -63,9 +103,9 @@
 	}
 
 	const typeConfig = {
-		person: { icon: 'ri:user-line', label: 'Person', section: 'people' },
-		place: { icon: 'ri:map-pin-line', label: 'Place', section: 'places' },
-		org: { icon: 'ri:building-line', label: 'Organization', section: 'orgs' },
+		person: { icon: 'ri:user-line', label: 'Person', plural: 'People', legacy: 'people' },
+		place: { icon: 'ri:map-pin-line', label: 'Place', plural: 'Places', legacy: 'places' },
+		org: { icon: 'ri:building-line', label: 'Organization', plural: 'Organizations', legacy: 'orgs' },
 	} as const;
 
 	let allEntities = $state<UnifiedEntity[]>([]);
@@ -148,48 +188,97 @@
 		},
 	];
 
+	// One filter instead of three tabs: person/place/org narrow the same index.
+	const entityFilters = $derived<FilterDef<UnifiedEntity>[]>([
+		{
+			id: 'type',
+			label: 'Type',
+			kind: 'multi',
+			field: 'entityType',
+			defaultValue: entityTypePreset ? [entityTypePreset] : null,
+			options: [
+				{ value: 'person', label: 'People', icon: typeConfig.person.icon },
+				{ value: 'place', label: 'Places', icon: typeConfig.place.icon },
+				{ value: 'org', label: 'Organizations', icon: typeConfig.org.icon },
+			],
+		},
+	]);
+
 	// --- Overview data ---
 
 	let activityData = $state<Map<string, number>>(new Map());
 	let loadingActivity = $state(true);
+	let activityStats = $state<{ recorded: number; narrated: number; stubs: number }>({
+		recorded: 0,
+		narrated: 0,
+		stubs: 0,
+	});
+	let onThisDay = $state<OnThisDayApi[]>([]);
+	let latestEntry = $state<{ slug: string; label: string; epigraph: string | null } | null>(null);
+	let standfirst = $state<string | null>(null);
+
+	// One source of truth for the window: fetch exactly what the heatmap draws.
+	const HEATMAP_WEEKS = 26;
 
 	onMount(async () => {
 		loadAllEntities();
 
-		// Load activity data for the past year
 		try {
 			const endDate = new Date();
 			const startDate = new Date();
-			startDate.setFullYear(startDate.getFullYear() - 1);
+			startDate.setDate(startDate.getDate() - HEATMAP_WEEKS * 7);
+			const recentStart = new Date();
+			recentStart.setDate(recentStart.getDate() - 45);
 
-			const res = await fetch(
-				`/api/wiki/days?start_date=${getLocalDateSlug(startDate)}&end_date=${getLocalDateSlug(endDate)}`
-			);
+			const [activity, otd, recent, identity] = await Promise.all([
+				listDayActivity(getLocalDateSlug(startDate), getLocalDateSlug(endDate)),
+				listOnThisDay(),
+				listDays(getLocalDateSlug(recentStart), getLocalDateSlug(endDate)),
+				getNarrativeIdentity(),
+			]);
 
-			if (res.ok) {
-				const days = await res.json();
-				const dataMap = new Map<string, number>();
+			activityData = toActivityLevels(activity);
+			activityStats = {
+				recorded: activity.filter((d) => d.event_count > 0).length,
+				narrated: activity.filter((d) => d.narrated).length,
+				stubs: activity.filter((d) => d.event_count > 0 && !d.narrated).length,
+			};
 
-				for (const day of days) {
-					// Count activity based on whether there's content
-					const hasContent = day.autobiography || day.autobiography_sections;
-					if (hasContent) {
-						dataMap.set(day.date, 1);
-					}
-				}
+			onThisDay = otd;
 
-				activityData = dataMap;
+			// recent is date DESC; the latest narrated day is the featured entry.
+			const featured = recent.find((d) => d.autobiography);
+			if (featured) {
+				latestEntry = {
+					slug: featured.date,
+					label: new Date(featured.date + 'T12:00:00').toLocaleDateString('en-US', {
+						weekday: 'long',
+						month: 'long',
+						day: 'numeric',
+						year: 'numeric',
+					}),
+					epigraph: featured.epigraph,
+				};
+			}
+
+			// The identity's first line is the front page's standfirst.
+			const firstLine = identity?.content
+				?.split('\n')
+				.map((l) => l.replace(/^[#>*\-\s]+/, '').trim())
+				.find((l) => l.length > 0);
+			if (firstLine) {
+				standfirst =
+					firstLine.length > 180 ? firstLine.slice(0, 177) + '…' : firstLine;
 			}
 		} catch (e) {
-			console.error('Failed to load activity data:', e);
+			console.error('Failed to load overview data:', e);
 		} finally {
 			loadingActivity = false;
 		}
 	});
 
-	// Handle day click from heatmap
-	function handleDayClick(_date: Date, slug: string) {
-		// slug is a date string like "2026-01-24"
+	// Handle day click from heatmap / chronicle / links
+	function openDay(slug: string) {
 		windowShellStore.openTabFromRoute(`/day/day_${slug}`);
 	}
 
@@ -198,8 +287,8 @@
 	}
 
 	// Overview cards switch this pane to the matching section.
-	function goToSection(id: Section) {
-		windowShellStore.updateTab(tab.id, { route: id === 'overview' ? '/wiki' : `/wiki/${id}` });
+	function goTo(path: string) {
+		windowShellStore.updateTab(tab.id, { route: path });
 	}
 
 	// Today's formatted date
@@ -207,18 +296,15 @@
 	const todaySlug = getLocalDateSlug(today);
 	const todayFormatted = formatLongDate(today);
 
-	// Entity display config for the overview cards
-	const entityCards = [
-		{ key: 'person', label: 'People' },
-		{ key: 'place', label: 'Places' },
-		{ key: 'org', label: 'Organizations' },
-	] as const;
+	function yearOf(slug: string): string {
+		return slug.slice(0, 4);
+	}
 </script>
 
 <div class="wiki-view">
 	<SubNav
 		tabId={tab.id}
-		route={tab.route}
+		route={subNavRoute}
 		base="/wiki"
 		default="overview"
 		items={sections}
@@ -227,104 +313,183 @@
 
 	<main class="content">
 		{#if section === 'overview'}
-			<Page title="Wiki" description="Your personal knowledge base" maxWidth="prose">
-				<!-- Today context -->
-				<div class="today-context">
-					<p>
+			<div class="ovw">
+				<header class="mast">
+					<h1>Wiki</h1>
+					<p class="standfirst">
+						{standfirst ??
+							'A record of your life — its days, its people and places, and the story they add up to.'}
+					</p>
+					<p class="today-line">
 						Today's entry is
-						<button
-							onclick={() => windowShellStore.openTabFromRoute(`/day/day_${todaySlug}`)}
-							class="today-link"
-						>
+						<button onclick={() => openDay(todaySlug)} class="today-link">
 							{todayFormatted}
 						</button>
 					</p>
-				</div>
+				</header>
 
-				<!-- Activity Heatmap -->
-				<section class="section heatmap-section">
-					<h2>Activity</h2>
-					{#if loadingActivity}
-						<div class="heatmap-loading">
-							<span class="loading-text">Loading activity...</span>
-						</div>
-					{:else}
-						<ActivityHeatmap {activityData} onDayClick={handleDayClick} />
-					{/if}
-				</section>
-
-				<hr class="divider" />
-
-				<!-- Entities -->
-				<section class="section">
-					<h2>Entities</h2>
-					<p class="section-description">
-						The people, places, and organizations that appear in your data.
-					</p>
-
-					<div class="entity-grid">
-						{#each entityCards as card}
-							<button
-								onclick={() => goToSection(typeConfig[card.key].section)}
-								class="entity-card"
-							>
-								<Icon icon={typeConfig[card.key].icon} class="entity-icon" />
-								<span class="entity-label">{card.label}</span>
-								<span class="entity-count">{counts[card.key]}</span>
-							</button>
-						{/each}
+				<section class="sec">
+					<div class="sec-main">
+						<h2>Activity</h2>
+						{#if loadingActivity}
+							<p class="quiet">Loading activity…</p>
+						{:else}
+							<ActivityHeatmap
+								{activityData}
+								onDayClick={(_d, slug) => openDay(slug)}
+							/>
+						{/if}
 					</div>
+					<aside class="sec-aside">
+						{#if !loadingActivity}
+							<dl class="stat-stack">
+								<div>
+									<dt>Days recorded</dt>
+									<dd>{activityStats.recorded}</dd>
+								</div>
+								<div>
+									<dt>Narrated</dt>
+									<dd>{activityStats.narrated}</dd>
+								</div>
+								<div>
+									<dt>Awaiting narration</dt>
+									<dd>{activityStats.stubs}</dd>
+								</div>
+							</dl>
+							<p class="aside-note">The last six months, day by day.</p>
+						{/if}
+					</aside>
 				</section>
-			</Page>
+
+				<section class="sec">
+					<div class="sec-main">
+						<h2>On this day</h2>
+						{#if onThisDay.length === 0}
+							<p class="quiet">
+								No earlier years share this date yet — the record is young.
+							</p>
+						{:else}
+							<ul class="otd">
+								{#each onThisDay as entry (entry.date)}
+									<li>
+										<button class="otd-row" onclick={() => openDay(entry.date)}>
+											<span class="otd-year">{yearOf(entry.date)}</span>
+											{#if entry.epigraph}
+												<span class="otd-epigraph">{entry.epigraph}</span>
+											{:else if entry.narrated}
+												<span class="otd-epigraph">A narrated day</span>
+											{:else}
+												<span class="otd-stub">
+													{entry.event_count}
+													{entry.event_count === 1 ? 'event' : 'events'}, unwritten
+												</span>
+											{/if}
+										</button>
+									</li>
+								{/each}
+							</ul>
+						{/if}
+					</div>
+					<aside class="sec-aside">
+						<p class="aside-note">{todayFormatted.replace(/,\s*\d{4}$/, '')} in earlier years.</p>
+					</aside>
+				</section>
+
+				{#if latestEntry}
+					<section class="sec">
+						<div class="sec-main">
+							<h2>The latest entry</h2>
+							<button class="featured" onclick={() => openDay(latestEntry!.slug)}>
+								<span class="featured-date">{latestEntry.label}</span>
+								{#if latestEntry.epigraph}
+									<blockquote class="featured-epigraph">
+										{latestEntry.epigraph}
+									</blockquote>
+								{/if}
+								<span class="featured-open">Read the entry →</span>
+							</button>
+						</div>
+						<aside class="sec-aside">
+							<p class="aside-note">The most recent day the nightly narration has written.</p>
+						</aside>
+					</section>
+				{/if}
+
+				<section class="sec">
+					<div class="sec-main">
+						<h2>Index</h2>
+						<div class="index-row">
+							{#each Object.entries(typeConfig) as [key, cfg] (key)}
+								<button
+									class="index-card"
+									onclick={() => goTo(`/wiki/${cfg.legacy}`)}
+								>
+									<Icon icon={cfg.icon} class="index-icon" />
+									<span class="index-label">{cfg.plural}</span>
+									<span class="index-count">{counts[key as keyof typeof counts]}</span>
+								</button>
+							{/each}
+						</div>
+					</div>
+					<aside class="sec-aside">
+						<p class="aside-note">Everything the record names, in one list.</p>
+					</aside>
+				</section>
+			</div>
+		{:else if section === 'days'}
+			<div class="days-wrap">
+				<DaysChronicle onOpenDay={openDay} />
+			</div>
 		{:else if section === 'entities'}
 			<div class="grid-wrap">
-				<UniversalDataGrid
-					items={allEntities}
-					columns={entityColumns}
-					entityType="entities"
-					{loading}
-					{error}
-					emptyIcon="ri:group-line"
-					emptyMessage="No entities yet"
-					loadingMessage="Loading entities..."
-					searchPlaceholder="Search all entities..."
-					onItemClick={openEntity}
-					onRetry={loadAllEntities}
-				>
-					{#snippet tableRow(entity: UnifiedEntity)}
-						<td class="col-name">
-							<div class="name-cell">
-								<Icon icon={typeConfig[entity.entityType].icon} width="16" />
-								<span class="name-text">{entity.name}</span>
-							</div>
-						</td>
-						<td class="col-type">
-							<span class="badge badge-muted">{typeConfig[entity.entityType].label}</span>
-						</td>
-						<td class="col-details hide-mobile">
-							{#if entity.subtitle}
-								<span class="subtitle-text">{entity.subtitle}</span>
-							{:else}
-								<span class="empty-cell">—</span>
-							{/if}
-						</td>
-					{/snippet}
+				{#key entityTypePreset}
+					<UniversalDataGrid
+						items={allEntities}
+						columns={entityColumns}
+						entityType="entities"
+						{loading}
+						{error}
+						filters={entityFilters}
+						emptyIcon="ri:group-line"
+						emptyMessage="No entities yet"
+						loadingMessage="Loading entities..."
+						searchPlaceholder="Search all entities..."
+						onItemClick={openEntity}
+						onRetry={loadAllEntities}
+					>
+						{#snippet tableRow(entity: UnifiedEntity)}
+							<td class="col-name">
+								<div class="name-cell">
+									<Icon icon={typeConfig[entity.entityType].icon} width="16" />
+									<span class="name-text">{entity.name}</span>
+								</div>
+							</td>
+							<td class="col-type">
+								<span class="badge badge-muted">{typeConfig[entity.entityType].label}</span>
+							</td>
+							<td class="col-details hide-mobile">
+								{#if entity.subtitle}
+									<span class="subtitle-text">{entity.subtitle}</span>
+								{:else}
+									<span class="empty-cell">—</span>
+								{/if}
+							</td>
+						{/snippet}
 
-					{#snippet card(entity: UnifiedEntity)}
-						<div class="card-content">
-							<Icon icon={typeConfig[entity.entityType].icon} width="28" />
-							<span class="card-name">{entity.name}</span>
-							<span class="badge badge-muted">{typeConfig[entity.entityType].label}</span>
-						</div>
-					{/snippet}
-				</UniversalDataGrid>
+						{#snippet card(entity: UnifiedEntity)}
+							<div class="card-content">
+								<Icon icon={typeConfig[entity.entityType].icon} width="28" />
+								<span class="card-name">{entity.name}</span>
+								<span class="badge badge-muted">{typeConfig[entity.entityType].label}</span>
+							</div>
+						{/snippet}
+					</UniversalDataGrid>
+				{/key}
 			</div>
-		{:else if section === 'people'}
-			<div class="grid-wrap"><PersonTable /></div>
-		{:else if section === 'places'}
-			<div class="grid-wrap"><PlaceTable /></div>
-		{:else if section === 'orgs'}
-			<div class="grid-wrap"><OrganizationTable /></div>
+		{:else if section === 'identity'}
+			<div class="identity-wrap">
+				<NarrativeIdentitySection />
+			</div>
 		{/if}
 	</main>
 </div>
@@ -350,13 +515,54 @@
 		margin: 0 auto;
 	}
 
-	/* Today context */
-	.today-context {
-		margin-bottom: 2rem;
+	.days-wrap {
+		padding: 2rem 1.5rem 3rem;
+		max-width: 50rem;
+		width: 100%;
+		margin: 0 auto;
 	}
 
-	.today-context p {
-		font-size: 1rem;
+	.identity-wrap {
+		padding: 2.5rem 1.5rem 3rem;
+		max-width: 44rem;
+		width: 100%;
+		margin: 0 auto;
+	}
+
+	/* ===== Overview: essay column + marginalia rail ===== */
+
+	.ovw {
+		max-width: 54rem;
+		width: 100%;
+		margin: 0 auto;
+		padding: 2.5rem 1.5rem 4rem;
+	}
+
+	.mast {
+		margin-bottom: 2.5rem;
+	}
+
+	.mast h1 {
+		font-family: var(--font-serif, Georgia, serif);
+		font-size: 2rem;
+		font-weight: 500;
+		letter-spacing: -0.01em;
+		color: var(--color-foreground);
+		margin: 0 0 0.625rem;
+	}
+
+	.standfirst {
+		font-family: var(--font-serif, Georgia, serif);
+		font-size: 1.0625rem;
+		font-style: italic;
+		line-height: 1.5;
+		color: var(--color-foreground-muted);
+		margin: 0 0 1rem;
+		max-width: 40rem;
+	}
+
+	.today-line {
+		font-size: 0.875rem;
 		color: var(--color-foreground-muted);
 		margin: 0;
 	}
@@ -369,68 +575,183 @@
 		font: inherit;
 		font-weight: 500;
 		cursor: pointer;
-		text-decoration: none;
-		transition: opacity 0.15s ease;
 	}
 
 	.today-link:hover {
-		opacity: 0.8;
 		text-decoration: underline;
 	}
 
-	/* Sections */
-	.section {
-		margin-bottom: 2rem;
+	/* Each section is one grid row: the essay column and its margin. */
+	.sec {
+		display: grid;
+		grid-template-columns: minmax(0, 1fr) 11rem;
+		gap: 2.25rem;
+		padding: 1.75rem 0;
+		border-top: 1px solid var(--color-border);
 	}
 
-	.section h2 {
+	.sec-main h2 {
 		font-family: var(--font-serif, Georgia, serif);
 		font-size: 1.25rem;
 		font-weight: 400;
 		color: var(--color-foreground);
-		margin: 0 0 0.75rem 0;
+		margin: 0 0 1rem;
 	}
 
-	.section-description {
-		font-size: 0.875rem;
-		color: var(--color-foreground-muted);
-		margin: 0 0 1rem 0;
+	/* Marginalia: quiet, small, aligned to the section's first baseline. */
+	.sec-aside {
+		padding-top: 0.375rem;
+		display: flex;
+		flex-direction: column;
+		gap: 0.75rem;
+	}
+
+	.aside-note {
+		font-size: 0.6875rem;
 		line-height: 1.5;
+		letter-spacing: 0.02em;
+		color: var(--color-foreground-subtle);
+		margin: 0;
 	}
 
-	.heatmap-section {
-		margin-bottom: 1.5rem;
+	.stat-stack {
+		margin: 0;
+		display: flex;
+		flex-direction: column;
+		gap: 0.375rem;
 	}
 
-	.heatmap-loading {
-		padding: 2rem;
-		text-align: center;
+	.stat-stack div {
+		display: flex;
+		align-items: baseline;
+		gap: 0.5rem;
 	}
 
-	.loading-text {
+	.stat-stack dt {
+		font-size: 0.6875rem;
+		letter-spacing: 0.02em;
+		color: var(--color-foreground-subtle);
+		flex: 1;
+	}
+
+	.stat-stack dd {
+		margin: 0;
+		font-size: 0.8125rem;
+		font-variant-numeric: tabular-nums;
+		color: var(--color-foreground);
+	}
+
+	.quiet {
 		font-size: 0.875rem;
+		color: var(--color-foreground-subtle);
+		margin: 0;
+	}
+
+	/* On this day */
+	.otd {
+		list-style: none;
+		margin: 0;
+		padding: 0;
+	}
+
+	.otd-row {
+		display: flex;
+		align-items: baseline;
+		gap: 1rem;
+		width: 100%;
+		padding: 0.4375rem 0;
+		background: none;
+		border: none;
+		border-bottom: 1px solid color-mix(in srgb, var(--color-border) 45%, transparent);
+		font: inherit;
+		text-align: left;
+		cursor: pointer;
+	}
+
+	.otd-row:last-child {
+		border-bottom: none;
+	}
+
+	.otd-year {
+		flex: none;
+		font-size: 0.75rem;
+		font-variant-numeric: tabular-nums;
+		color: var(--color-foreground-muted);
+	}
+
+	.otd-row:hover .otd-year {
+		color: var(--color-primary);
+	}
+
+	.otd-epigraph {
+		font-family: var(--font-serif, Georgia, serif);
+		font-style: italic;
+		font-size: 0.9375rem;
+		color: var(--color-foreground);
+		overflow: hidden;
+		text-overflow: ellipsis;
+		white-space: nowrap;
+	}
+
+	.otd-stub {
+		font-size: 0.8125rem;
+		font-style: italic;
 		color: var(--color-foreground-subtle);
 	}
 
-	/* Divider */
-	.divider {
+	/* Featured entry */
+	.featured {
+		display: flex;
+		flex-direction: column;
+		align-items: flex-start;
+		gap: 0.625rem;
+		width: 100%;
+		background: none;
 		border: none;
-		border-top: 1px solid var(--color-border);
-		margin: 1.5rem 0;
+		padding: 0;
+		font: inherit;
+		text-align: left;
+		cursor: pointer;
 	}
 
-	/* Entity grid */
-	.entity-grid {
+	.featured-date {
+		font-size: 0.75rem;
+		letter-spacing: 0.04em;
+		color: var(--color-foreground-muted);
+	}
+
+	.featured-epigraph {
+		font-family: var(--font-serif, Georgia, serif);
+		font-size: 1.1875rem;
+		font-style: italic;
+		line-height: 1.5;
+		color: var(--color-foreground);
+		margin: 0;
+		padding-left: 1rem;
+		border-left: 2px solid var(--color-border);
+	}
+
+	.featured-open {
+		font-size: 0.8125rem;
+		color: var(--color-primary);
+	}
+
+	.featured:hover .featured-open {
+		text-decoration: underline;
+	}
+
+	/* Index */
+	.index-row {
 		display: grid;
-		grid-template-columns: repeat(2, 1fr);
+		grid-template-columns: repeat(3, 1fr);
 		gap: 0.75rem;
 	}
 
-	.entity-card {
+	.index-card {
 		display: flex;
 		align-items: center;
-		gap: 0.75rem;
-		padding: 1rem;
+		gap: 0.625rem;
+		padding: 0.875rem 1rem;
 		background: var(--color-surface-elevated);
 		border: 1px solid var(--color-border);
 		border-radius: 8px;
@@ -440,25 +761,25 @@
 		font: inherit;
 	}
 
-	.entity-card:hover {
+	.index-card:hover {
 		border-color: var(--color-border-subtle);
 		background: var(--color-surface-hover);
 	}
 
-	.entity-card :global(.entity-icon) {
-		font-size: 1.25rem;
+	.index-card :global(.index-icon) {
+		font-size: 1.125rem;
 		color: var(--color-foreground-muted);
 	}
 
-	.entity-label {
+	.index-label {
 		flex: 1;
-		font-size: 0.9375rem;
+		font-size: 0.875rem;
 		font-weight: 500;
 		color: var(--color-foreground);
 	}
 
-	.entity-count {
-		font-size: 0.875rem;
+	.index-count {
+		font-size: 0.8125rem;
 		color: var(--color-foreground-subtle);
 		font-variant-numeric: tabular-nums;
 	}
@@ -529,9 +850,25 @@
 		}
 	}
 
-	/* Responsive */
+	/* The margin collapses before the essay column does. */
+	@media (max-width: 880px) {
+		.sec {
+			grid-template-columns: 1fr;
+			gap: 0.875rem;
+		}
+
+		.sec-aside {
+			padding-top: 0;
+		}
+
+		.stat-stack {
+			flex-direction: row;
+			gap: 1.25rem;
+		}
+	}
+
 	@media (max-width: 640px) {
-		.entity-grid {
+		.index-row {
 			grid-template-columns: 1fr;
 		}
 	}

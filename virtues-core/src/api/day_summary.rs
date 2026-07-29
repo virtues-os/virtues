@@ -592,6 +592,11 @@ async fn day_entities_for_refs(pool: &PgPool, start_str: &str, end_str: &str) ->
          SELECT 'place', p.id, p.name \
          FROM wiki_entity_refs er JOIN wiki_places p ON p.id = er.entity_id \
          WHERE er.entity_type = 'place' \
+           AND er.timestamp >= $1::timestamptz AND er.timestamp <= $2::timestamptz \
+         UNION \
+         SELECT 'org', o.id, o.canonical_name \
+         FROM wiki_entity_refs er JOIN wiki_orgs o ON o.id = er.entity_id \
+         WHERE er.entity_type = 'organization' \
            AND er.timestamp >= $1::timestamptz AND er.timestamp <= $2::timestamptz",
     )
     .bind(start_str)

@@ -48,7 +48,14 @@
 	import { windowShellStore } from '$lib/stores/window-shell.svelte';
 	import { getKeepMenuItems } from '$lib/utils/contextMenuItems';
 	import Popover from '$lib/floating/primitives/Popover.svelte';
-	import type { FilterDef, FilterOption, FilterValue } from './types';
+	import type {
+		FilterDef,
+		FilterOption,
+		FilterValue,
+		GridPage,
+		GridQuery,
+		GridServerSource,
+	} from './types';
 	import { applyFilter, isFilterActive } from './types';
 
 	interface Props {
@@ -81,6 +88,15 @@
 		/** Declarative filters. Renders a chip rail in the toolbar; results are
 		 *  filtered client-side via def.predicate (or equality on def.field). */
 		filters?: FilterDef<T>[];
+		/** Server-side pagination. When set, `items` is ignored and search/
+		 *  sort/filter/page are forwarded to this source as a GridQuery — the
+		 *  grid never holds more than one page. Grouping is unavailable (it
+		 *  needs the whole set), selection is page-scoped, and only columns
+		 *  the server can ORDER BY should be marked `sortable`. */
+		server?: GridServerSource<T>;
+		/** Consumer-owned query context passed through to GridQuery.extra
+		 *  (e.g. an external chip row). Changing it refetches from page 1. */
+		serverExtra?: Record<string, unknown>;
 		onItemClick?: (item: T) => void;
 		onItemContextMenu?: (item: T, e: MouseEvent) => void;
 		onRefresh?: () => void;
@@ -137,6 +153,8 @@
 		animateMount = false,
 		sortable = true,
 		filters,
+		server,
+		serverExtra,
 		onItemClick,
 		onItemContextMenu,
 		onRefresh,
@@ -351,14 +369,46 @@
 	}
 
 	// ────────────────────────────────────────────────────────────────────────
+	// Server mode. With a `server` source the client pipeline above becomes
+	// inert and search/sort/filter/page are forwarded as a GridQuery. The grid
+	// keeps the previous page's rows on screen while the next one loads
+	// (stale-while-loading); the skeleton only shows before the first page.
+	// ────────────────────────────────────────────────────────────────────────
+	const serverMode = $derived(!!server);
+
+	let serverItems = $state<T[]>([]);
+	let serverTotal = $state(0);
+	let serverLoading = $state(false);
+	let serverLoaded = $state(false);
+	let serverError = $state<string | null>(null);
+	let serverSeq = 0;
+	let refreshTick = $state(0);
+
+	// Debounce only the query the server sees — the input stays live.
+	let debouncedSearch = $state('');
+	$effect(() => {
+		const q = searchQuery;
+		if (!serverMode) return;
+		const t = setTimeout(() => (debouncedSearch = q), 250);
+		return () => clearTimeout(t);
+	});
+
+	// A handful of recent pages, keyed on the full query, so Previous is
+	// instant. Cleared by auto-refresh and manual retry.
+	const pageCache = new Map<string, GridPage<T>>();
+	const PAGE_CACHE_MAX = 8;
+
+	// ────────────────────────────────────────────────────────────────────────
 	// Pagination
 	// ────────────────────────────────────────────────────────────────────────
 	let currentPage = $state(1);
-	const totalCount = $derived(items.length);
-	const filteredCount = $derived(sortedItems.length);
+	const totalCount = $derived(serverMode ? serverTotal : items.length);
+	const filteredCount = $derived(serverMode ? serverTotal : sortedItems.length);
 	const totalPages = $derived(Math.max(1, Math.ceil(filteredCount / pageSize)));
 	const displayedItems = $derived(
-		sortedItems.slice((currentPage - 1) * pageSize, currentPage * pageSize)
+		serverMode
+			? serverItems
+			: sortedItems.slice((currentPage - 1) * pageSize, currentPage * pageSize)
 	);
 
 	$effect(() => {
@@ -367,8 +417,68 @@
 		void sortKey;
 		void sortDir;
 		void filterValues;
+		void serverExtra;
 		currentPage = 1;
 	});
+
+	$effect(() => {
+		if (!server) return;
+		void refreshTick;
+		const query: GridQuery = {
+			offset: (currentPage - 1) * pageSize,
+			limit: pageSize,
+			search: debouncedSearch.trim(),
+			sort: sortKey && sortDir ? { key: String(sortKey), dir: sortDir } : null,
+			filters: { ...filterValues },
+			extra: serverExtra,
+		};
+		const key = JSON.stringify(query);
+		const cached = pageCache.get(key);
+		if (cached) {
+			serverItems = cached.items;
+			serverTotal = cached.total;
+			serverLoaded = true;
+			return;
+		}
+		const seq = ++serverSeq;
+		serverLoading = true;
+		serverError = null;
+		server(query)
+			.then((pg) => {
+				if (seq !== serverSeq) return;
+				pageCache.set(key, pg);
+				if (pageCache.size > PAGE_CACHE_MAX) {
+					const oldest = pageCache.keys().next().value;
+					if (oldest !== undefined) pageCache.delete(oldest);
+				}
+				serverItems = pg.items;
+				serverTotal = pg.total;
+			})
+			.catch((e) => {
+				if (seq !== serverSeq) return;
+				serverError = e instanceof Error ? e.message : 'Failed to load';
+			})
+			.finally(() => {
+				if (seq !== serverSeq) return;
+				serverLoading = false;
+				serverLoaded = true;
+			});
+	});
+
+	function retryServer() {
+		pageCache.clear();
+		serverLoaded = false;
+		refreshTick++;
+	}
+
+	/** Search or filters currently narrowing the result set. */
+	const isNarrowed = $derived(
+		!!searchQuery.trim() ||
+			(filters ?? []).some((f) => f.id in filterValues && isFilterActive(filterValues[f.id]))
+	);
+
+	const effectiveLoading = $derived(loading || (serverMode && serverLoading && !serverLoaded));
+	const effectiveError = $derived(error ?? (serverMode ? serverError : null));
 
 	// ────────────────────────────────────────────────────────────────────────
 	// View mode + density (persisted per entityType)
@@ -406,7 +516,8 @@
 			: 'comfortable';
 	});
 
-	const groupableCols = $derived(columns.filter((c) => c.groupable));
+	// Grouping needs the whole set; a server page can't honestly group.
+	const groupableCols = $derived(serverMode ? [] : columns.filter((c) => c.groupable));
 	/** Columns that actually get a header and a cell. */
 	const visibleColumns = $derived(columns.filter((c) => !c.hidden));
 
@@ -585,7 +696,17 @@
 	let autoRefresh = $state(false);
 
 	$effect(() => {
-		if (!autoRefresh || !refreshInterval || !onRefresh) return;
+		if (!autoRefresh || !refreshInterval) return;
+		// Server mode refreshes itself: drop the page cache and refetch the
+		// current query. Client mode delegates to the consumer's onRefresh.
+		if (serverMode) {
+			const timer = setInterval(() => {
+				pageCache.clear();
+				refreshTick++;
+			}, refreshInterval);
+			return () => clearInterval(timer);
+		}
+		if (!onRefresh) return;
 		const timer = setInterval(onRefresh, refreshInterval);
 		return () => clearInterval(timer);
 	});
@@ -747,14 +868,15 @@
 				<span class="item-count">
 					<!-- Any narrowing counts, not just search. With a filter chip set, the
 					     count went on reporting the unfiltered total, so the number
-					     contradicted the rows directly beneath it. -->
-					{#if filteredCount !== totalCount}
+					     contradicted the rows directly beneath it. (In server mode the
+					     total IS the narrowed total, so narrowing decides the word.) -->
+					{#if filteredCount !== totalCount || (serverMode && isNarrowed)}
 						{filteredCount} {filteredCount === 1 ? 'result' : 'results'}
 					{:else}
 						{totalCount} {totalCount === 1 ? 'item' : 'items'}
 					{/if}
 				</span>
-				{#if refreshInterval && onRefresh}
+				{#if refreshInterval && (onRefresh || serverMode)}
 					<label class="refresh-toggle">
 						<input type="checkbox" bind:checked={autoRefresh} />
 						<span>Auto-refresh</span>
@@ -873,7 +995,7 @@
 		{/if}
 	</div>
 
-	{#if loading}
+	{#if effectiveLoading}
 		<!-- Skeleton rows in the table's own shape: nothing reflows when the data
 		     lands, which is the difference between "loading" and "jumping". -->
 		<div class="skeleton" role="status" aria-live="polite" aria-label={loadingMessage}>
@@ -886,15 +1008,17 @@
 				</div>
 			{/each}
 		</div>
-	{:else if error}
+	{:else if effectiveError}
 		<div class="error-state" role="alert">
 			<Icon icon="ri:error-warning-line" width="24" />
-			<span>{error}</span>
-			{#if onRetry}
+			<span>{effectiveError}</span>
+			{#if serverMode}
+				<button class="retry-btn" onclick={retryServer}>Retry</button>
+			{:else if onRetry}
 				<button class="retry-btn" onclick={onRetry}>Retry</button>
 			{/if}
 		</div>
-	{:else if items.length === 0}
+	{:else if displayedItems.length === 0 && !isNarrowed}
 		<div class="empty-state">
 			<Icon icon={emptyIcon} width="32" />
 			<p>{emptyMessage}</p>
@@ -902,8 +1026,12 @@
 	{:else if displayedItems.length === 0}
 		<div class="empty-state">
 			<Icon icon="ri:search-line" width="32" />
-			<p>No results for "{searchQuery}"</p>
-			<button class="clear-search-btn" onclick={() => (searchQuery = '')}>Clear search</button>
+			{#if searchQuery.trim()}
+				<p>No results for "{searchQuery}"</p>
+				<button class="clear-search-btn" onclick={() => (searchQuery = '')}>Clear search</button>
+			{:else}
+				<p>No results match the active filters</p>
+			{/if}
 		</div>
 	{:else if isTable}
 		{@const total = displayedItems.length}
@@ -1176,20 +1304,30 @@
 		{/key}
 	{/if}
 
-	{#if totalPages > 1 && !loading && !error && displayedItems.length > 0}
+	{#if totalPages > 1 && !effectiveLoading && !effectiveError && displayedItems.length > 0}
 		<div class="pagination">
 			<button
 				class="page-btn"
-				disabled={currentPage <= 1}
+				disabled={currentPage <= 1 || (serverMode && serverLoading)}
 				onclick={() => currentPage--}
 				type="button"
 			>
 				Previous
 			</button>
-			<span class="page-info">{currentPage} / {totalPages}</span>
+			{#if serverMode}
+				<!-- An honest range: the server knows the true total, so say it. -->
+				<span class="page-info">
+					{(currentPage - 1) * pageSize + 1}–{Math.min(
+						currentPage * pageSize,
+						serverTotal
+					)} of {serverTotal}
+				</span>
+			{:else}
+				<span class="page-info">{currentPage} / {totalPages}</span>
+			{/if}
 			<button
 				class="page-btn"
-				disabled={currentPage >= totalPages}
+				disabled={currentPage >= totalPages || (serverMode && serverLoading)}
 				onclick={() => currentPage++}
 				type="button"
 			>
