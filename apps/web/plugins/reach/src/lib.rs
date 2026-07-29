@@ -23,6 +23,7 @@ mod commands;
 mod error;
 mod ffi;
 mod models;
+mod stats;
 mod upload;
 
 pub use error::{Error, Result};
@@ -92,6 +93,7 @@ pub(crate) async fn park_endpoint(reason: &str) {
   let old = WARM_CLIENT.lock().ok().and_then(|mut g| g.take());
   if let Some(c) = old {
     c.shutdown().await;
+    stats::bump(|s| s.parks += 1);
     tracing::info!(reason, "reach endpoint parked");
   }
 }
@@ -104,6 +106,7 @@ pub(crate) async fn ensure_client(rec: &PairedBox) -> Option<Arc<VirtuesIrohClie
   match virtues_reach_client::build_client(rec).await {
     Ok(c) => {
       set_warm_client(c.clone());
+      stats::bump(|s| s.dials += 1);
       Some(c)
     }
     Err(e) => {
@@ -169,6 +172,7 @@ async fn recover_inner() -> i32 {
   match virtues_reach_client::build_client(&rec).await {
     Ok(client) => {
       set_warm_client(client);
+      stats::bump(|s| s.dials += 1);
       if let Some(old) = old {
         old.shutdown().await; // free the dead socket
       }
@@ -419,6 +423,7 @@ impl ReachState {
     // FFI background drain all read it, so a network-change rebuild (which swaps
     // it) is picked up everywhere without restarting anything.
     set_warm_client(client);
+    stats::bump(|s| s.dials += 1);
 
     // Serve the loopback (webview → box). Reads the *current* warm client per
     // connection, so a rebuilt client (recovery from an iOS socket wedge) routes
@@ -631,7 +636,8 @@ pub fn init<R: Runtime>() -> TauriPlugin<R> {
       commands::forget,
       commands::discover,
       commands::outbox_stats,
-      commands::drain_now
+      commands::drain_now,
+      commands::radio_stats
     ])
     .setup(|app, _api| {
       // Android: pin the storage base to the app-private sandbox BEFORE anything

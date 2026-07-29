@@ -38,6 +38,7 @@ class AudioPlugin: Plugin {
       "authorized": AudioRecorder.shared.authorized(),
       "recording": AudioRecorder.shared.recording,
       "notify": AudioRecorder.shared.notifyEnabled(),
+      "silentDropped": AudioRecorder.shared.silentDroppedCount(),
     ])
   }
 

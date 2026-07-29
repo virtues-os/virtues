@@ -86,15 +86,8 @@ pub extern "C" fn virtues_drain_blocking(timeout_secs: i32) -> i32 {
   let timeout = std::time::Duration::from_secs(timeout_secs.clamp(1, 60) as u64);
 
   tauri::async_runtime::block_on(async move {
-    let client = match crate::warm_client() {
-      Some(c) => c,
-      None => match virtues_reach_client::build_client(&rec).await {
-        Ok(c) => {
-          crate::set_warm_client(c.clone());
-          c
-        }
-        Err(_) => return -2,
-      },
+    let Some(client) = crate::ensure_client(&rec).await else {
+      return -2;
     };
     let rc = match tokio::time::timeout(timeout, crate::upload::drain(&client, &rec)).await {
       Ok(Ok(n)) => n as i32,
