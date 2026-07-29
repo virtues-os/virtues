@@ -257,11 +257,20 @@ async fn build_dossier(pool: &PgPool, entity: &DueEntity) -> Result<String> {
     }
 
     // ── The recent record ──
-    let records = super::wiki::get_entity_records(pool, &entity.id).await?;
-    if !records.is_empty() {
-        let lines: Vec<String> = records
+    let page = super::wiki::get_entity_records_page(
+        pool,
+        &entity.id,
+        0,
+        DOSSIER_RECORDS as i64,
+        "",
+        &[],
+        true,
+    )
+    .await?;
+    if !page.items.is_empty() {
+        let lines: Vec<String> = page
+            .items
             .iter()
-            .take(DOSSIER_RECORDS)
             .map(|r| {
                 let role = r.role.as_deref().map(|x| format!(" [{}]", x)).unwrap_or_default();
                 let preview = r
@@ -282,7 +291,7 @@ async fn build_dossier(pool: &PgPool, entity: &DueEntity) -> Result<String> {
         p.push_str(&format!(
             "\n## The record (most recent {} of {})\n{}\n",
             lines.len(),
-            records.len(),
+            page.total,
             lines.join("\n")
         ));
     }
