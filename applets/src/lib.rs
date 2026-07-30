@@ -1,13 +1,13 @@
 //! Shared helpers for the action subprocess binaries.
 //!
 //! Every action is a `[[bin]]` in this crate; this lib holds the boilerplate
-//! they all repeated: tracing init, an HTTP client, `ActionInput`
+//! they all repeated: tracing init, an HTTP client, `AppletInput`
 //! credential/config accessors, and the send→error_for_status→json fetch dance.
 
 use anyhow::{Context, Result};
 use serde::de::DeserializeOwned;
 use std::time::Duration;
-use virtues_helpers::ActionInput;
+use virtues_helpers::AppletInput;
 
 /// Initialize stderr tracing with an `info` default (overridable via `RUST_LOG`),
 /// and load the box environment — the same files, in the same order, as the
@@ -58,7 +58,7 @@ fn ensure_crypto_provider() {
 }
 
 /// Read `credentials.secrets.<key>` as a string, erroring if absent.
-pub fn secret<'a>(input: &'a ActionInput, key: &str) -> Result<&'a str> {
+pub fn secret<'a>(input: &'a AppletInput, key: &str) -> Result<&'a str> {
     input
         .credentials
         .as_ref()
@@ -69,7 +69,7 @@ pub fn secret<'a>(input: &'a ActionInput, key: &str) -> Result<&'a str> {
 }
 
 /// Read `config.<key>` as a string, if present.
-pub fn config_str<'a>(input: &'a ActionInput, key: &str) -> Option<&'a str> {
+pub fn config_str<'a>(input: &'a AppletInput, key: &str) -> Option<&'a str> {
     input.config.get(key).and_then(|v| v.as_str())
 }
 

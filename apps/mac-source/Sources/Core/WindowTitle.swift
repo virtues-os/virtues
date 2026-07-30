@@ -4,7 +4,7 @@ import Foundation
 /// Reads the focused window title of an app via the Accessibility API.
 ///
 /// This is what turns "used Chrome for 40 minutes" into "read <page>" / "edited
-/// <doc>". The box's `mac_ingest` action ALREADY accepts `window_title` on
+/// <doc>". The box's `mac_ingest` applet ALREADY accepts `window_title` on
 /// `app_events` and folds it into the session row (`data_activity_app_usage`) —
 /// the collector just never sent it. No box change needed.
 ///

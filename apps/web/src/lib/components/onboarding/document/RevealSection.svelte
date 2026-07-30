@@ -43,7 +43,7 @@
 		triggered = true;
 		triggerFailed = false;
 		try {
-			await triggerAction("action_narrative_identity_draft");
+			await triggerAction("applet_narrative_identity_draft");
 		} catch {
 			triggerFailed = true;
 		}

@@ -37,7 +37,7 @@ struct InitCommand: ParsableCommand {
                 let config = Config(
                     deviceId: pair.deviceId,
                     apiEndpoint: pair.endpoint,
-                    actionIds: pair.actionIds,
+                    appletIds: pair.appletIds,
                     boxNodeId: pair.boxNodeId,
                     relayUrl: pair.relayUrl,
                     createdAt: Date(),
@@ -46,7 +46,7 @@ struct InitCommand: ParsableCommand {
 
                 try config.save()
 
-                if config.actionIds["mac_ingest"] == nil {
+                if config.appletIds["mac_ingest"] == nil {
                     print("⚠️ Warning: the box returned no 'mac_ingest' action — uploads")
                     print("   won't work until the box is updated. Re-run `init` after upgrading.")
                 }

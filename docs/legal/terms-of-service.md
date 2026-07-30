@@ -1,8 +1,21 @@
-# Terms of Service — DRAFT
+# Terms of Service — UNPUBLISHED DRAFT, NOT IN FORCE
 
-> **DRAFT — requires legal counsel review before publishing.** Captures the real
-> service shape + acceptable-use and payment terms; bracketed `[…]` items need a
-> decision or a lawyer. Last updated: 2026-07-01.
+> ## ⚠️ These are not Virtues' terms of service.
+>
+> This is an **unpublished engineering draft** in a public source repository. It
+> has **not** been reviewed by legal counsel, has **never** been presented to or
+> accepted by any user, and forms **no contract** with anyone. Nothing here binds
+> Virtues or you. Bracketed `[…]` items are open questions, not commitments.
+>
+> The operative terms — once they exist — will be published at
+> `virtues.com/terms`. Until a link appears there, **there are no terms of service
+> in force**, because there is no generally available paid service to govern.
+>
+> Your use of *this repository's source code* is governed solely by
+> [`LICENSE`](../../LICENSE) (BUSL-1.1 + MIT), which is unaffected by this file.
+> Purpose of this draft: capture the real service shape plus acceptable-use and
+> payment terms so a lawyer has an accurate starting point.
+> Last updated: 2026-07-01.
 
 ## 1. What Virtues is
 

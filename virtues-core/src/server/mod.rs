@@ -36,7 +36,7 @@ pub async fn run(client: Virtues, host: &str, port: u16) -> Result<()> {
     // Reap runs left in `running` by a crash/restart mid-execution, so a stale
     // lock doesn't survive a reboot. (The concurrency gate also age-bounds stale
     // runs at request time; this just keeps the runs table honest on boot.)
-    match crate::scheduler::actions::cleanup_stale_runs(client.database.pool()).await {
+    match crate::scheduler::applets::cleanup_stale_runs(client.database.pool()).await {
         Ok(n) if n > 0 => tracing::info!("Reaped {} stale 'running' action run(s) on startup", n),
         Ok(_) => {}
         Err(e) => tracing::warn!("Failed to reap stale action runs: {}", e),
@@ -96,7 +96,7 @@ pub async fn run(client: Virtues, host: &str, port: u16) -> Result<()> {
     // Reconcile action templates from per-folder manifests — creates/updates
     // system action rows. Safe to call on every startup (user-managed runtime
     // state preserved).
-    if let Err(e) = crate::action_templates::reconcile_templates(client.database.pool()).await {
+    if let Err(e) = crate::applet_templates::reconcile_templates(client.database.pool()).await {
         tracing::warn!("Failed to reconcile action templates: {}", e);
     }
 
@@ -244,8 +244,8 @@ pub async fn run(client: Virtues, host: &str, port: u16) -> Result<()> {
             "/api/face/query",
             post(faces::face_query_handler).options(faces::face_query_preflight),
         )
-        .route("/face/:action_id/", get(faces::face_index_handler))
-        .route("/face/:action_id/*path", get(faces::face_file_handler))
+        .route("/face/:applet_id/", get(faces::face_index_handler))
+        .route("/face/:applet_id/*path", get(faces::face_file_handler))
         // Public page sharing (token-based access, no session needed)
         .route("/api/s/:token", get(api::get_shared_page_handler))
         .route(
@@ -263,24 +263,24 @@ pub async fn run(client: Virtues, host: &str, port: u16) -> Result<()> {
         // handler runs, which historically surfaced as a bogus "no stream
         // selector" action error. See webhook.rs for the rejection handling.
         .route(
-            "/webhook/:action_id",
+            "/webhook/:applet_id",
             post(webhook::webhook).layer(DefaultBodyLimit::max(512 * 1024 * 1024)),
         )
-        // Device re-fetch for stream → action_id map. Used by paired devices
+        // Device re-fetch for stream → applet_id map. Used by paired devices
         // whose Keychain entry predates the webhook unification, or after
         // templates.toml adds a new stream. Same device-token bearer auth as
         // the webhook endpoint.
         .route(
-            "/api/devices/action-ids",
-            get(api::device_action_ids_handler),
+            "/api/devices/applet-ids",
+            get(api::device_applet_ids_handler),
         )
-        // Device-scoped run history for one of the caller's own actions, so the
+        // Device-scoped run history for one of the caller's own applets, so the
         // app can show real server-side outcome per stream. Device-token bearer
         // auth + credential-ownership check (see handler). Distinct from the
-        // session-authed /api/actions/:id/runs.
+        // session-authed /api/applets/:id/runs.
         .route(
-            "/api/devices/actions/:id/runs",
-            get(api::device_action_runs_handler),
+            "/api/devices/applets/:id/runs",
+            get(api::device_applet_runs_handler),
         );
 
     // ============================================================
@@ -360,16 +360,16 @@ pub async fn run(client: Virtues, host: &str, port: u16) -> Result<()> {
         // Actions API
         .route(
             "/api/applets",
-            get(api::list_actions_handler).post(api::create_action_handler),
+            get(api::list_applets_handler).post(api::create_applet_handler),
         )
         .route(
             "/api/applets/:id",
-            get(api::get_action_handler)
-                .patch(api::patch_action_handler)
-                .delete(api::delete_action_handler),
+            get(api::get_applet_handler)
+                .patch(api::patch_applet_handler)
+                .delete(api::delete_applet_handler),
         )
-        .route("/api/applets/:id/run", post(api::trigger_action_handler))
-        .route("/api/applets/:id/data", get(api::get_action_data_handler))
+        .route("/api/applets/:id/run", post(api::trigger_applet_handler))
+        .route("/api/applets/:id/data", get(api::get_applet_data_handler))
         // Chat-export upload (Tier 3 one-time import). Per-route body limit
         // overrides the router-wide 105MB cap — ChatGPT exports can be larger.
         .route(
@@ -377,8 +377,8 @@ pub async fn run(client: Virtues, host: &str, port: u16) -> Result<()> {
             post(api::chat_import_upload_handler)
                 .layer(DefaultBodyLimit::max(512 * 1024 * 1024)),
         )
-        .route("/api/applets/:id/runs", get(api::list_action_runs_handler))
-        .route("/api/applets/runs/:id", get(api::get_action_run_handler))
+        .route("/api/applets/:id/runs", get(api::list_applet_runs_handler))
+        .route("/api/applets/runs/:id", get(api::get_applet_run_handler))
         .route("/api/runs", get(api::list_runs_handler))
         // Credentials API
         .route("/api/credentials", get(api::list_credentials_handler))
@@ -651,7 +651,7 @@ pub async fn run(client: Virtues, host: &str, port: u16) -> Result<()> {
         .route("/api/admin/reconcile", post(api::admin_reconcile_handler))
         .route(
             "/api/admin/applets/import-git",
-            post(api::import_git_actions_handler),
+            post(api::import_git_applets_handler),
         )
         // System (operator surface — apps + logs)
         // Live host snapshot + persisted history for the System/Telemetry views.

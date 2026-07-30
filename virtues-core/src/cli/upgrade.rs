@@ -179,7 +179,7 @@ pub async fn run(
                     }
                     match &actions_bin_src {
                         Some(src) => {
-                            refresh_named("applet binaries", src, &canonical(&dirs.actions_bin))
+                            refresh_named("applet binaries", src, &canonical(&dirs.applets_bin))
                         }
                         None => ui::warn("tarball carries no applets-bin/ — skipped"),
                     }
@@ -545,7 +545,7 @@ fn stage_slot(
     qnnd: &Option<PathBuf>,
     web: &Option<PathBuf>,
     actions: &Option<PathBuf>,
-    actions_bin: &Option<PathBuf>,
+    applets_bin: &Option<PathBuf>,
 ) -> Result<(), crate::Error> {
     // Re-staging the same slot id (a retried upgrade) starts clean.
     let _ = fs::remove_dir_all(slot);
@@ -567,7 +567,7 @@ fn stage_slot(
     if let Some(p) = qnnd {
         copy_bin(p, "virtues-qnnd")?;
     }
-    for (src, name) in [(web, "web"), (actions, "applets"), (actions_bin, "applets-bin")] {
+    for (src, name) in [(web, "web"), (actions, "applets"), (applets_bin, "applets-bin")] {
         if let Some(s) = src {
             copy_dir_all(s, &slot.join(name))?;
         }
@@ -609,7 +609,7 @@ struct InstallDirs {
     bin_dir: PathBuf,
     web: PathBuf,
     actions: PathBuf,
-    actions_bin: PathBuf,
+    applets_bin: PathBuf,
 }
 
 impl InstallDirs {
@@ -626,8 +626,8 @@ impl InstallDirs {
                 .unwrap_or_else(|| PathBuf::from(default))
         };
         // Applets dir: honor whichever env var the box was provisioned with,
-        // in the SAME order the runtime resolves it (action_templates.rs /
-        // action_runner.rs try APPLETS_ first, then legacy ACTIONS_). A box
+        // in the SAME order the runtime resolves it (applet_templates.rs /
+        // applet_runner.rs try APPLETS_ first, then legacy ACTIONS_). A box
         // installed before the actions→applets rename only sets the ACTIONS_
         // vars; defaulting straight to /applets here would refresh into a dir
         // the runtime never reads (the bug that stranded document_extraction
@@ -646,7 +646,7 @@ impl InstallDirs {
                 &["VIRTUES_APPLETS_DIR", "VIRTUES_ACTIONS_DIR"],
                 "/usr/local/share/virtues/applets",
             ),
-            actions_bin: env_dir_multi(
+            applets_bin: env_dir_multi(
                 &["VIRTUES_APPLETS_BIN_DIR", "VIRTUES_ACTIONS_BIN_DIR"],
                 "/usr/local/libexec/virtues",
             ),

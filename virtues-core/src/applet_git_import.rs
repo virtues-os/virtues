@@ -5,7 +5,7 @@
 //! flow. Once the folder lands under `actions/`, the system makes no further
 //! distinction between built-ins and imports — the dir is the spec.
 //!
-//! Layout supported by the scanner (see `action_templates::load_catalog`):
+//! Layout supported by the scanner (see `applet_templates::load_catalog`):
 //!   - `actions/<slug>/manifest.toml` — single-action repo
 //!   - `actions/<slug>/actions/<name>/manifest.toml` — pack
 //!
@@ -25,7 +25,7 @@ use serde::{Deserialize, Serialize};
 use sqlx::PgPool;
 use tokio::process::Command;
 
-use crate::action_templates;
+use crate::applet_templates;
 use crate::error::{Error, Result};
 
 #[derive(Debug, Deserialize)]
@@ -43,11 +43,11 @@ pub struct ImportOutcome {
     pub slug: String,
     /// Resolved commit SHA after fetch.
     pub commit: Option<String>,
-    /// Action ids newly inserted by this import.
+    /// Applet ids newly inserted by this import.
     pub added: Vec<String>,
-    /// Action ids that already existed under this slug and were re-upserted.
+    /// Applet ids that already existed under this slug and were re-upserted.
     pub updated: Vec<String>,
-    /// Action ids that disappeared from the repo since the last import; their
+    /// Applet ids that disappeared from the repo since the last import; their
     /// rows are deleted (run history preserved via FK nullification).
     pub removed: Vec<String>,
 }
@@ -68,7 +68,7 @@ pub async fn import(db: &PgPool, req: ImportRequest) -> Result<ImportOutcome> {
     validate_ref(git_ref)?;
 
     let slug = slug_for_url(url)?;
-    let actions_root = action_templates::state_root();
+    let actions_root = applet_templates::state_root();
     let target = actions_root.join(&slug);
 
     // Snapshot the existing row set under this slug so we can diff after
@@ -85,8 +85,8 @@ pub async fn import(db: &PgPool, req: ImportRequest) -> Result<ImportOutcome> {
 
     // Re-read manifests from disk and reconcile. This is the same flow the
     // admin Reconcile button runs; we just scoped the diff to our slug.
-    action_templates::reload_catalog();
-    if let Err(e) = action_templates::reconcile_templates(db).await {
+    applet_templates::reload_catalog();
+    if let Err(e) = applet_templates::reconcile_templates(db).await {
         return Err(Error::Other(format!(
             "reconcile after import failed: {e}"
         )));
@@ -102,7 +102,7 @@ pub async fn import(db: &PgPool, req: ImportRequest) -> Result<ImportOutcome> {
     // zombie rows pointing to nothing — clean those up here.
     for id in &removed {
         // Preserve run history: nullify FK first.
-        sqlx::query("UPDATE app_applet_runs SET action_id = NULL WHERE action_id = $1")
+        sqlx::query("UPDATE app_applet_runs SET applet_id = NULL WHERE applet_id = $1")
             .bind(id)
             .execute(db)
             .await?;
@@ -211,14 +211,14 @@ async fn clone_or_update(target: &Path, url: &str, git_ref: &str) -> Result<()> 
         // user concretely so they can rename or remove the conflict.
         if target.exists() {
             return Err(Error::InvalidInput(format!(
-                "actions/{} already exists and isn't a git checkout — \
-                 the import slug collides with a built-in or hand-authored action. \
+                "applets/{} already exists and isn't a git checkout — \
+                 the import slug collides with a built-in or hand-authored applet. \
                  Rename or remove that folder before importing this URL.",
                 target.file_name().and_then(|s| s.to_str()).unwrap_or("?")
             )));
         }
         run_git(
-            &actions_root_buf(),
+            &applets_root_buf(),
             &[
                 "clone",
                 "--depth",
@@ -284,8 +284,8 @@ async fn run_git(cwd: &Path, args: &[&str]) -> Result<()> {
     Ok(())
 }
 
-fn actions_root_buf() -> PathBuf {
-    action_templates::state_root()
+fn applets_root_buf() -> PathBuf {
+    applet_templates::state_root()
 }
 
 async fn ids_under_slug(db: &PgPool, slug: &str) -> Result<HashSet<String>> {

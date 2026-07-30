@@ -86,12 +86,12 @@ pub fn default_tools() -> Vec<ToolConfig> {
         get_page_content_tool(),
         edit_page_tool(),
         setup_applet_tool(),
-        update_action_memory_tool(),
-        list_actions_tool(),
-        get_action_tool(),
-        edit_action_tool(),
-        delete_action_tool(),
-        run_action_tool(),
+        update_applet_memory_tool(),
+        list_applets_tool(),
+        get_applet_tool(),
+        edit_applet_tool(),
+        delete_applet_tool(),
+        run_applet_tool(),
         dayline_event_tool(),
         get_project_item_tool(),
         generate_image_tool(),
@@ -986,7 +986,7 @@ If the result status is "check_failed", fix the findings and call again — noth
 }
 
 /// List actions — lightweight catalog for chat-driven discovery
-fn list_actions_tool() -> ToolConfig {
+fn list_applets_tool() -> ToolConfig {
     ToolConfig {
         id: "list_applets".to_string(),
         name: "List Applets".to_string(),
@@ -1020,7 +1020,7 @@ Optional filters:
 }
 
 /// Get a single action's full details + recent runs
-fn get_action_tool() -> ToolConfig {
+fn get_applet_tool() -> ToolConfig {
     ToolConfig {
         id: "get_applet".to_string(),
         name: "Get Applet".to_string(),
@@ -1036,7 +1036,7 @@ Use this when:
             "type": "object",
             "required": ["id"],
             "properties": {
-                "id": { "type": "string", "description": "The action id (e.g. 'action_user_weekly_planner')" }
+                "id": { "type": "string", "description": "The action id (e.g. 'applet_user__weekly_planner')" }
             }
         }),
         tool_type: ToolType::Builtin,
@@ -1048,7 +1048,7 @@ Use this when:
 }
 
 /// Edit an existing action — partial update with system-owner guard
-fn edit_action_tool() -> ToolConfig {
+fn edit_applet_tool() -> ToolConfig {
     ToolConfig {
         id: "edit_applet".to_string(),
         name: "Edit Applet".to_string(),
@@ -1102,7 +1102,7 @@ Use this when the user asks to:
 }
 
 /// Delete a user-owned action
-fn delete_action_tool() -> ToolConfig {
+fn delete_applet_tool() -> ToolConfig {
     ToolConfig {
         id: "delete_applet".to_string(),
         name: "Delete Applet".to_string(),
@@ -1126,7 +1126,7 @@ This is destructive. Confirm with the user before calling unless the request is 
 }
 
 /// Manually run an action
-fn run_action_tool() -> ToolConfig {
+fn run_applet_tool() -> ToolConfig {
     ToolConfig {
         id: "run_applet".to_string(),
         name: "Run Applet".to_string(),
@@ -1158,7 +1158,7 @@ Use when the user asks to "run it now" or "re-run yesterday's summary"."#.to_str
 }
 
 /// Update action memory — persistent markdown scratchpad for actions
-fn update_action_memory_tool() -> ToolConfig {
+fn update_applet_memory_tool() -> ToolConfig {
     ToolConfig {
         id: "update_applet_memory".to_string(),
         name: "Update Applet Memory".to_string(),

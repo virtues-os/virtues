@@ -130,7 +130,7 @@ Extensible: add a new source as an applet in `applets/<name>/` with a `manifest.
 |---|---|
 | **Host OS** | Debian 13+, Ubuntu 24.04 LTS+, or Fedora 40+. Debian 13 and Ubuntu 26.04+ ship Postgres 18 natively; on Ubuntu 24.04/25.04 the installer adds the [PGDG repo](https://www.postgresql.org/download/linux/) automatically. x86_64 or aarch64. |
 | **Hardware** | 8 GB RAM, an SSD. GPU optional. |
-| **Network** | Standard residential ISP — outbound 443 only, no port forwarding, no inbound rule. v1 is LAN-first: the web UI is reachable from a browser on the box itself (Chromium on the Jetson → `http://localhost:8000`) or anywhere else from a paired client — the mobile app, or the desktop helper at `http://localhost:7117` (see [Connect from another machine](#connect-from-another-machine-v02-preview) below). |
+| **Network** | Standard residential ISP — outbound 443 only, no port forwarding, no inbound rule. v1 is LAN-first: the web UI is reachable from a browser on the box itself (Chromium on the box → `http://localhost:8000`) or anywhere else from a paired client — the mobile app, or the desktop helper at `http://localhost:7117` (see [Connect from another machine](#connect-from-another-machine-v02-preview) below). |
 | **Mac / Windows** | Not supported as host — Virtues needs root, native Postgres, and full SSD ownership. Use a Linux box. |
 
 <a id="install-in-one-command"></a>
@@ -145,14 +145,14 @@ That:
 - Installs Postgres 18 + pgvector, Avahi (mDNS), and the rest of the system deps via your package manager
 - Configures `/etc/avahi/services/virtues.service` so the box advertises itself on the LAN as `virtues.local`
 - Mints the box's WG identity (its SPKI fingerprint) and enables the `virtues.service` systemd unit
-- Prints a one-time URL — open it in Chromium on the Jetson to land in a logged-in session
+- Prints a one-time URL — open it in Chromium on the box to land in a logged-in session
 
 ```bash
 sudo systemctl enable --now virtues
 sudo -u virtues virtues link   # prints the one-time login URL for the box's browser
 ```
 
-After that you're in the web UI on `http://localhost:8000` (run Chromium on the Jetson). Connect a source, and optionally `sudo -u virtues virtues subscribe` to enable AI chat through the Virtues cloud (or set up a [BYO provider key](docs/auth-model.md) under Settings).
+After that you're in the web UI on `http://localhost:8000` (run Chromium on the box). Connect a source, and optionally `sudo -u virtues virtues subscribe` to enable AI chat through the Virtues cloud (or set up a [BYO provider key](docs/auth-model.md) under Settings).
 
 | Command | What it does |
 |---|---|
@@ -278,7 +278,7 @@ virtues/
 │   ├── src/
 │   │   ├── agent/           # AI agent loop, prompts, tool execution
 │   │   ├── api/             # HTTP route handlers
-│   │   ├── action_runner/   # Spawns & supervises action subprocesses
+│   │   ├── applet_runner/   # Spawns & supervises applet subprocesses
 │   │   ├── entity_resolution/  # People, places extraction from raw data
 │   │   ├── dayline/         # Day-page scoring + autobiography
 │   │   ├── storage/         # S3 and local filesystem abstraction
@@ -303,7 +303,7 @@ virtues/
 ├── deploy/                  # Model-fetch + sandbox scripts (cloud Docker lives under services/)
 ├── tools/                   # bootstrap.sh + virtues-installer (virtues.com/sh)
 ├── vendor/                  # Vendored third-party sources
-├── docs/                    # Architecture + concept docs (flat)
+├── docs/                    # Architecture + concept docs (docs/archive/ holds superseded ones)
 └── .data/                   # Gitignored runtime state (Postgres cluster, drive files)
 ```
 

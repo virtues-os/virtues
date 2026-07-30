@@ -2,7 +2,7 @@
 //!
 //! Reads every enabled action with a cron schedule from `app_applets` and
 //! registers a job with `tokio-cron-scheduler`. Each firing calls
-//! [`crate::action_runner::run_action`] with `trigger = "cron"`; the unified
+//! [`crate::applet_runner::run_applet`] with `trigger = "cron"`; the unified
 //! runner handles triggers validation, condition evaluation, concurrency, and
 //! dispatch to subprocess / LLM agent.
 //!
@@ -23,7 +23,7 @@
 //! set we fall back to UTC. (Note: the offset is captured when jobs register, so
 //! a DST change is picked up on the next restart/reschedule.)
 
-pub mod actions;
+pub mod applets;
 
 use chrono_tz::Tz;
 use sqlx::PgPool;
@@ -32,7 +32,7 @@ use std::time::Duration;
 use tokio_cron_scheduler::{Job, JobScheduler};
 use uuid::Uuid;
 
-use crate::action_runner::RunnerDeps;
+use crate::applet_runner::RunnerDeps;
 use crate::error::{Error, Result};
 use crate::server::yjs::YjsState;
 use crate::types::Timestamp;
@@ -47,7 +47,7 @@ pub struct Scheduler {
     db: PgPool,
     yjs_state: YjsState,
     scheduler: JobScheduler,
-    /// `action_id -> (cron_expr, job id)` for everything currently registered.
+    /// `applet_id -> (cron_expr, job id)` for everything currently registered.
     /// The cron expression is kept so an *edited* schedule reads as a change
     /// rather than a no-op — otherwise a user retiming an applet in the UI
     /// would keep firing on the old schedule until the next restart.
@@ -109,12 +109,12 @@ impl Scheduler {
             })
             .map(|(id, _)| id.clone())
             .collect();
-        for action_id in stale {
-            if let Some((_, job_id)) = self.registered.remove(&action_id) {
+        for applet_id in stale {
+            if let Some((_, job_id)) = self.registered.remove(&applet_id) {
                 if let Err(e) = self.scheduler.remove(&job_id).await {
-                    tracing::warn!(action_id, error = %e, "failed to unregister cron job");
+                    tracing::warn!(applet_id, error = %e, "failed to unregister cron job");
                 } else {
-                    tracing::info!(action_id, "unregistered cron action");
+                    tracing::info!(applet_id, "unregistered cron action");
                 }
             }
         }
@@ -124,13 +124,13 @@ impl Scheduler {
         let tz = resolve_schedule_tz(&self.db).await;
         let mut added = 0usize;
 
-        for (action_id, (name, cron_expr)) in desired {
-            if self.registered.contains_key(&action_id) {
+        for (applet_id, (name, cron_expr)) in desired {
+            if self.registered.contains_key(&applet_id) {
                 continue;
             }
             let db = self.db.clone();
             let yjs = self.yjs_state.clone();
-            let action_id_for_job = action_id.clone();
+            let action_id_for_job = applet_id.clone();
             let name_for_log = name.clone();
             let cron_for_log = cron_expr.clone();
 
@@ -139,12 +139,12 @@ impl Scheduler {
                     db: db.clone(),
                     yjs: yjs.clone(),
                 };
-                let action_id = action_id_for_job.clone();
+                let applet_id = action_id_for_job.clone();
                 Box::pin(async move {
                     if let Err(e) =
-                        crate::action_runner::run_action(&deps, &action_id, "cron", None).await
+                        crate::applet_runner::run_applet(&deps, &applet_id, "cron", None).await
                     {
-                        tracing::error!(action_id, error = %e, "scheduled cron run failed");
+                        tracing::error!(applet_id, error = %e, "scheduled cron run failed");
                     }
                 })
             })
@@ -161,19 +161,19 @@ impl Scheduler {
             let job = match job {
                 Ok(j) => j,
                 Err(e) => {
-                    tracing::error!(action_id, error = %e, "skipping unschedulable cron action");
+                    tracing::error!(applet_id, error = %e, "skipping unschedulable cron action");
                     continue;
                 }
             };
 
             match self.scheduler.add(job).await {
                 Ok(job_id) => {
-                    self.registered.insert(action_id.clone(), (cron_expr, job_id));
+                    self.registered.insert(applet_id.clone(), (cron_expr, job_id));
                     added += 1;
-                    tracing::debug!(action_id = %action_id, name = %name, "registered cron action");
+                    tracing::debug!(applet_id = %applet_id, name = %name, "registered cron action");
                 }
                 Err(e) => {
-                    tracing::error!(action_id, error = %e, "failed to register cron job");
+                    tracing::error!(applet_id, error = %e, "failed to register cron job");
                 }
             }
         }
@@ -219,13 +219,13 @@ impl Scheduler {
     }
 
     /// Simple enumeration of cron-scheduled actions for display.
-    pub async fn list_scheduled(&self) -> Result<Vec<ScheduledAction>> {
+    pub async fn list_scheduled(&self) -> Result<Vec<ScheduledApplet>> {
         let rows = sqlx::query_as::<_, (String, String, String, Option<Timestamp>)>(
             r#"SELECT a.id, a.name, a.cron_schedule, r.started_at
                FROM app_applets a
                LEFT JOIN app_applet_runs r ON r.id = (
                    SELECT id FROM app_applet_runs
-                   WHERE action_id = a.id AND status = 'success'
+                   WHERE applet_id = a.id AND status = 'success'
                    ORDER BY started_at DESC LIMIT 1
                )
                WHERE a.enabled = TRUE
@@ -238,7 +238,7 @@ impl Scheduler {
 
         Ok(rows
             .into_iter()
-            .map(|(id, name, cron_schedule, last_success_at)| ScheduledAction {
+            .map(|(id, name, cron_schedule, last_success_at)| ScheduledApplet {
                 id,
                 name,
                 cron_schedule,
@@ -249,7 +249,7 @@ impl Scheduler {
 }
 
 #[derive(Debug)]
-pub struct ScheduledAction {
+pub struct ScheduledApplet {
     pub id: String,
     pub name: String,
     pub cron_schedule: String,
@@ -314,7 +314,7 @@ mod tests {
         let mut sched = scheduler(&pool).await;
         assert_eq!(sched.sync_jobs().await.unwrap(), 0, "empty catalog");
 
-        insert_applet(&pool, "action_plaid_transactions_sync_cred_x", "0 */30 * * * *").await;
+        insert_applet(&pool, "applet_plaid_transactions_sync_cred_x", "0 */30 * * * *").await;
 
         assert_eq!(sched.sync_jobs().await.unwrap(), 1, "new row scheduled");
         assert_eq!(sched.sync_jobs().await.unwrap(), 0, "already registered");
@@ -325,17 +325,17 @@ mod tests {
     #[sqlx::test]
     async fn reregisters_an_applet_whose_cron_changed(pool: PgPool) {
         let mut sched = scheduler(&pool).await;
-        insert_applet(&pool, "action_a", "0 0 * * * *").await;
+        insert_applet(&pool, "applet_a", "0 0 * * * *").await;
         assert_eq!(sched.sync_jobs().await.unwrap(), 1);
 
-        sqlx::query("UPDATE app_applets SET cron_schedule = '0 */5 * * * *' WHERE id = 'action_a'")
+        sqlx::query("UPDATE app_applets SET cron_schedule = '0 */5 * * * *' WHERE id = 'applet_a'")
             .execute(&pool)
             .await
             .unwrap();
 
         assert_eq!(sched.sync_jobs().await.unwrap(), 1, "retimed → re-registered");
         assert_eq!(
-            sched.registered.get("action_a").map(|(c, _)| c.as_str()),
+            sched.registered.get("applet_a").map(|(c, _)| c.as_str()),
             Some("0 */5 * * * *")
         );
     }
@@ -345,15 +345,15 @@ mod tests {
     #[sqlx::test]
     async fn drops_disabled_and_deleted_applets(pool: PgPool) {
         let mut sched = scheduler(&pool).await;
-        insert_applet(&pool, "action_a", "0 0 * * * *").await;
-        insert_applet(&pool, "action_b", "0 0 * * * *").await;
+        insert_applet(&pool, "applet_a", "0 0 * * * *").await;
+        insert_applet(&pool, "applet_b", "0 0 * * * *").await;
         assert_eq!(sched.sync_jobs().await.unwrap(), 2);
 
-        sqlx::query("UPDATE app_applets SET enabled = FALSE WHERE id = 'action_a'")
+        sqlx::query("UPDATE app_applets SET enabled = FALSE WHERE id = 'applet_a'")
             .execute(&pool)
             .await
             .unwrap();
-        sqlx::query("DELETE FROM app_applets WHERE id = 'action_b'")
+        sqlx::query("DELETE FROM app_applets WHERE id = 'applet_b'")
             .execute(&pool)
             .await
             .unwrap();

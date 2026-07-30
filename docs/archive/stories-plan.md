@@ -13,7 +13,7 @@
 > scale mismatch, and "don't semantically index structured data") live with the
 > magnet code and the notebook fix, not here.
 
-*Design document — 2026-07-11. Captures the full design exploration of entity resolution, temporal resolution, significance, and the `wiki_stories` unification. Extends and partially supersedes [notebooks-plan.md](notebooks-plan.md) (Notebooks fold into Stories) and builds on [the-day.md](the-day.md) (the day page / event timeline is the temporal spine this attaches to).*
+*Design document — 2026-07-11. Captures the full design exploration of entity resolution, temporal resolution, significance, and the `wiki_stories` unification. Extends and partially supersedes [notebooks-plan.md](../notebooks-plan.md) (Notebooks fold into Stories) and builds on [the-day.md](../the-day.md) (the day page / event timeline is the temporal spine this attaches to).*
 
 ---
 

@@ -74,7 +74,7 @@ pub struct CredentialListItem {
     pub last_seen_at: Option<String>,
     pub created_at: String,
     /// Number of `app_applets` rows linked to this credential.
-    pub action_count: i64,
+    pub applet_count: i64,
     /// Derived initial-sync lifecycle for active credentials (Tier 2 UX):
     /// `connected` (paired, no run yet) → `backfilling` (runs in flight, no
     /// success) → `live` (≥1 successful run). `None` for pending/revoked rows.
@@ -105,10 +105,10 @@ pub async fn list_credentials(db: &PgPool) -> Result<Vec<CredentialListItem>> {
               c.metadata::text,
               c.last_seen_at::text,
               c.created_at::text,
-              (SELECT COUNT(*) FROM app_applets WHERE credential_id = c.id) AS action_count,
-              (SELECT COUNT(*) FROM app_applet_runs r JOIN app_applets a ON a.id = r.action_id
+              (SELECT COUNT(*) FROM app_applets WHERE credential_id = c.id) AS applet_count,
+              (SELECT COUNT(*) FROM app_applet_runs r JOIN app_applets a ON a.id = r.applet_id
                  WHERE a.credential_id = c.id) AS total_runs,
-              (SELECT COUNT(*) FROM app_applet_runs r JOIN app_applets a ON a.id = r.action_id
+              (SELECT COUNT(*) FROM app_applet_runs r JOIN app_applets a ON a.id = r.applet_id
                  WHERE a.credential_id = c.id AND r.status = 'success') AS success_runs
            FROM credentials c
            ORDER BY c.created_at DESC"#,
@@ -119,7 +119,7 @@ pub async fn list_credentials(db: &PgPool) -> Result<Vec<CredentialListItem>> {
     Ok(rows
         .into_iter()
         .map(
-            |(id, source_id, name, status, metadata_raw, last_seen_at, created_at, action_count, total_runs, success_runs)| {
+            |(id, source_id, name, status, metadata_raw, last_seen_at, created_at, applet_count, total_runs, success_runs)| {
                 let device_info = device_info_from_metadata(Some(&metadata_raw));
                 let auth_type = auth_type_for_source(&source_id).to_string();
                 let is_active = status == "active";
@@ -134,7 +134,7 @@ pub async fn list_credentials(db: &PgPool) -> Result<Vec<CredentialListItem>> {
                     device_info,
                     last_seen_at,
                     created_at,
-                    action_count,
+                    applet_count,
                     sync_state,
                 }
             },
@@ -158,7 +158,7 @@ fn sync_state_for(total_runs: i64, success_runs: i64) -> &'static str {
 /// Map a source id to the legacy `auth_type` string the frontend expects.
 /// Catalog-driven via `lookup_source` — no per-provider matching here.
 fn auth_type_for_source(source_id: &str) -> &'static str {
-    use crate::action_templates::{lookup_source, SourceAuth};
+    use crate::applet_templates::{lookup_source, SourceAuth};
     match lookup_source(source_id).map(|s| s.auth) {
         Some(SourceAuth::SelfIssuedBearer) => "device",
         Some(SourceAuth::ViaProxy { .. }) => "oauth",
@@ -190,12 +190,12 @@ pub async fn rename_credential(db: &PgPool, credential_id: &str, new_name: &str)
 ///
 /// Flow:
 /// 1. Set `status = 'revoked'` so template reconcile skips this credential.
-/// 2. Nullify `action_id` on any historical runs for the credential's
+/// 2. Nullify `applet_id` on any historical runs for the credential's
 ///    fan-out actions (FK safety).
 /// 3. Delete the per-credential action rows. Reconcile won't re-create
 ///    them because the credential is no longer active.
 ///
-/// Run history is preserved with `action_id = NULL` so the history view
+/// Run history is preserved with `applet_id = NULL` so the history view
 /// can still surface past runs.
 pub async fn revoke_credential(db: &PgPool, credential_id: &str) -> Result<()> {
     let affected = sqlx::query(
@@ -215,8 +215,8 @@ pub async fn revoke_credential(db: &PgPool, credential_id: &str) -> Result<()> {
     }
 
     sqlx::query(
-        r#"UPDATE app_applet_runs SET action_id = NULL
-           WHERE action_id IN (SELECT id FROM app_applets WHERE credential_id = $1)"#,
+        r#"UPDATE app_applet_runs SET applet_id = NULL
+           WHERE applet_id IN (SELECT id FROM app_applets WHERE credential_id = $1)"#,
     )
     .bind(credential_id)
     .execute(db)

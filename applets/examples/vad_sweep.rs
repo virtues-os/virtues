@@ -100,7 +100,13 @@ fn main() -> anyhow::Result<()> {
                         let (pass, all) = clips.iter().filter(|c| &c.class == cl).fold(
                             (0, 0),
                             |(p_, a), c| {
-                                let ok = vad::gate(&c.probs, c.dur, p, min_run, min_total);
+                                // `vad::gate` was folded into `speech_total`,
+                                // which returns the qualifying seconds and
+                                // leaves the threshold to the caller — the
+                                // drain compares it against MIN_SPEECH_SECS
+                                // the same way.
+                                let ok =
+                                    vad::speech_total(&c.probs, c.dur, p, min_run) >= min_total;
                                 (p_ + ok as usize, a + 1)
                             },
                         );

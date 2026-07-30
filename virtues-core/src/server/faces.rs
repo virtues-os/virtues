@@ -41,7 +41,7 @@ const TOKEN_TTL: Duration = Duration::from_secs(60 * 60); // one iframe session
 const MAX_ROWS: usize = 5000;
 
 struct FaceToken {
-    action_id: String,
+    applet_id: String,
     expires: Instant,
 }
 
@@ -50,7 +50,7 @@ fn token_store() -> &'static Mutex<HashMap<String, FaceToken>> {
     STORE.get_or_init(|| Mutex::new(HashMap::new()))
 }
 
-fn mint_token(action_id: &str) -> String {
+fn mint_token(applet_id: &str) -> String {
     let token = format!(
         "{}{}",
         uuid::Uuid::new_v4().simple(),
@@ -62,7 +62,7 @@ fn mint_token(action_id: &str) -> String {
     store.insert(
         token.clone(),
         FaceToken {
-            action_id: action_id.to_string(),
+            applet_id: applet_id.to_string(),
             expires: Instant::now() + TOKEN_TTL,
         },
     );
@@ -74,20 +74,20 @@ fn validate_token(token: &str) -> Option<String> {
     store
         .get(token)
         .filter(|t| t.expires > Instant::now())
-        .map(|t| t.action_id.clone())
+        .map(|t| t.applet_id.clone())
 }
 
 /// `GET /api/actions/:id/face-token` — minted by the authenticated app per
 /// iframe load. (Reaching this route at all required the proven transport.)
-pub async fn mint_face_token_handler(Path(action_id): Path<String>) -> Response {
-    if face_dir_for(&action_id).is_none() {
+pub async fn mint_face_token_handler(Path(applet_id): Path<String>) -> Response {
+    if face_dir_for(&applet_id).is_none() {
         return (
             StatusCode::NOT_FOUND,
             Json(serde_json::json!({ "error": "applet has no face" })),
         )
             .into_response();
     }
-    let token = mint_token(&action_id);
+    let token = mint_token(&applet_id);
     Json(serde_json::json!({
         "token": token,
         "expires_in_seconds": TOKEN_TTL.as_secs(),
@@ -102,9 +102,9 @@ pub async fn mint_face_token_handler(Path(action_id): Path<String>) -> Response 
 /// Resolve the on-disk `face/` directory for an applet id, if it has one.
 /// Serving is rooted at `<applet folder>/face` — never the folder root, so
 /// the manifest/prompt are not exposed to the iframe.
-pub fn face_dir_for(action_id: &str) -> Option<std::path::PathBuf> {
-    let dir = crate::action_templates::dir_for_action_id(action_id)?;
-    let face = crate::action_templates::resolve_applet_dir(&dir).join("face");
+pub fn face_dir_for(applet_id: &str) -> Option<std::path::PathBuf> {
+    let dir = crate::applet_templates::dir_for_applet_id(applet_id)?;
+    let face = crate::applet_templates::resolve_applet_dir(&dir).join("face");
     face.join("index.html").is_file().then_some(face)
 }
 
@@ -126,20 +126,20 @@ const FACE_CSP: &str = "default-src 'none'; script-src 'self' 'unsafe-inline'; \
      style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; \
      font-src 'self' data:; connect-src 'self'";
 
-/// `GET /face/:action_id/` and `GET /face/:action_id/*path` — static files
+/// `GET /face/:applet_id/` and `GET /face/:applet_id/*path` — static files
 /// from the applet's `face/` directory. `virtues.js` / `virtues.css` resolve
 /// from the injected runtime, shadowing any local file of the same name.
 pub async fn face_file_handler(
-    Path((action_id, path)): Path<(String, String)>,
+    Path((applet_id, path)): Path<(String, String)>,
 ) -> Response {
-    serve_face_file(&action_id, &path).await
+    serve_face_file(&applet_id, &path).await
 }
 
-pub async fn face_index_handler(Path(action_id): Path<String>) -> Response {
-    serve_face_file(&action_id, "index.html").await
+pub async fn face_index_handler(Path(applet_id): Path<String>) -> Response {
+    serve_face_file(&applet_id, "index.html").await
 }
 
-async fn serve_face_file(action_id: &str, raw_path: &str) -> Response {
+async fn serve_face_file(applet_id: &str, raw_path: &str) -> Response {
     let rel = if raw_path.is_empty() { "index.html" } else { raw_path };
 
     // Injected runtime files shadow local ones.
@@ -150,7 +150,7 @@ async fn serve_face_file(action_id: &str, raw_path: &str) -> Response {
         return static_lib(VIRTUES_CSS, "text/css; charset=utf-8");
     }
 
-    let Some(face_dir) = face_dir_for(action_id) else {
+    let Some(face_dir) = face_dir_for(applet_id) else {
         return StatusCode::NOT_FOUND.into_response();
     };
 
@@ -237,7 +237,7 @@ pub async fn face_query_handler(
             .and_then(|v| v.strip_prefix("Bearer "))
             .map(|s| s.to_string())
     });
-    let Some(action_id) = token.as_deref().and_then(validate_token) else {
+    let Some(applet_id) = token.as_deref().and_then(validate_token) else {
         return with_cors((
             StatusCode::UNAUTHORIZED,
             Json(serde_json::json!({ "error": "invalid or expired face token" })),
@@ -248,7 +248,7 @@ pub async fn face_query_handler(
     match run_face_query(pool, &body.sql).await {
         Ok(rows) => with_cors((StatusCode::OK, Json(rows))),
         Err(e) => {
-            tracing::debug!(action_id = %action_id, error = %e, "face query failed");
+            tracing::debug!(applet_id = %applet_id, error = %e, "face query failed");
             with_cors((
                 StatusCode::BAD_REQUEST,
                 Json(serde_json::json!({ "error": e })),

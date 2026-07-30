@@ -1318,7 +1318,7 @@ fn create_agent_stream(
                 crate::search::ScopeMode::Weighted
             },
             chat_id: Some(request.chat_id.clone()),
-            action_id: None,
+            applet_id: None,
             subagent_tx: Some(subagent_tx),
             cancel_token: Some(cancel_token.clone()),
             worker_budget: Some(worker_budget),
@@ -1614,7 +1614,7 @@ fn create_agent_stream(
                     reasoning_tokens: total_reasoning_tokens as i64,
                     cost_micros: total_cost_micros,
                     chat_id: Some(chat_id.clone()),
-                    action_run_id: None,
+                    applet_run_id: None,
                 },
             )
             .await

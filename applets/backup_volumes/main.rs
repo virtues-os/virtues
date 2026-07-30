@@ -5,7 +5,7 @@
 //! red every night for an expected condition is a cron nobody reads.
 //!
 //! **Why this shells out instead of calling the library.** The action contract is
-//! that stdout is one JSON document (`action_runner` does `from_str` on the whole
+//! that stdout is one JSON document (`applet_runner` does `from_str` on the whole
 //! thing). `virtues backup` writes human progress to stdout, so calling it
 //! in-process would corrupt the contract, and threading a "quiet" flag through
 //! the whole archive stack to avoid that would be a lot of invasive plumbing to

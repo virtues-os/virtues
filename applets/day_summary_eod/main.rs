@@ -187,7 +187,7 @@ async fn main() -> Result<()> {
     // Stash the last processed date in config so subsequent cron runs can
     // short-circuit in a condition or observe progress. Also strip any
     // `date` override that the caller passed in — the runner persists the
-    // returned config back to app_actions.config, and a sticky `date` would
+    // returned config back to app_applets.config, and a sticky `date` would
     // trap subsequent scheduled runs on the override's date forever. Chat
     // tools and manual-trigger with a date are always one-shot.
     let mut config = input.config.clone();
