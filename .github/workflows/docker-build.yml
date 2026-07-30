@@ -12,9 +12,15 @@ name: Build cloud sidecar images
 # If we ever move atlas to CI, add a build-atlas job here mirroring
 # build-virtues-api.
 
+# NOT built on `staging` pushes. Nothing consumes the GHCR image: prod pulls
+# from ECR, and the only thing that puts an image there is `make
+# deploy-virtues-api` from the operator's laptop. Building on every staging
+# merge was pushing a tag no host ever pulled — 8 paid runner minutes on a
+# normal day, for nothing. `main` is kept so a release tag still produces an
+# image, and `workflow_dispatch` covers the one-off.
 on:
   push:
-    branches: [main, staging]
+    branches: [main]
   workflow_dispatch:
     inputs:
       tag:
