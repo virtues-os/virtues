@@ -5,7 +5,7 @@
 	`/sources/<credential_id>`. Shows:
 	  - Source + name + status badge
 	  - Device info (for self_issued_bearer pairings)
-	  - Linked actions list with last-run badges
+	  - Linked applets list with last-run badges
 	  - Revoke button
 -->
 
@@ -18,12 +18,12 @@
 	import Button from '$lib/components/Button.svelte';
 	import {
 		listCredentials,
-		listActions,
+		listApplets,
 		listSourceCatalog,
 		revokeCredential,
 		renameCredential,
 		type Credential,
-		type Action,
+		type Applet,
 		type SourceCatalogItem
 	} from '$lib/api/client';
 	import { relativeTime } from '$lib/applets/palette';
@@ -33,7 +33,7 @@
 	const credentialId = $derived(routeToEntityId(tab.route) ?? '');
 
 	let credential = $state<Credential | null>(null);
-	let actions = $state<Action[]>([]);
+	let applets = $state<Applet[]>([]);
 	let catalog = $state<SourceCatalogItem[]>([]);
 	let loading = $state(true);
 	let error = $state<string | null>(null);
@@ -52,11 +52,11 @@
 		try {
 			const [creds, acts, src] = await Promise.all([
 				listCredentials(),
-				listActions(),
+				listApplets(),
 				listSourceCatalog()
 			]);
 			credential = creds.find((c) => c.id === credentialId) ?? null;
-			actions = acts.filter((a) => a.credential_id === credentialId);
+			applets = acts.filter((a) => a.credential_id === credentialId);
 			catalog = src;
 			if (!credential) error = 'Credential not found';
 		} catch (e) {
@@ -211,22 +211,22 @@
 
 		<section class="card">
 			<h2>
-				Actions
-				<span class="count">{actions.length}</span>
+				Applets
+				<span class="count">{applets.length}</span>
 			</h2>
-			{#if actions.length === 0}
+			{#if applets.length === 0}
 				<p class="dim">
-					No actions linked to this credential yet.
+					No applets linked to this credential yet.
 					{#if credential.status === 'active'}
 						The reconcile may still be fanning out — check back in a few seconds.
 					{/if}
 				</p>
 			{:else}
-				<ul class="action-list">
-					{#each actions as a}
-						<li class="action-row">
-							<div class="action-name">{a.name}</div>
-							<div class="action-meta">
+				<ul class="applet-list">
+					{#each applets as a}
+						<li class="applet-row">
+							<div class="applet-name">{a.name}</div>
+							<div class="applet-meta">
 								{#if a.last_run}
 									<Badge
 										variant={a.last_run.status === 'success'
@@ -401,7 +401,7 @@
 		font-size: 0.75rem;
 	}
 
-	.action-list {
+	.applet-list {
 		list-style: none;
 		padding: 0;
 		margin: 0;
@@ -409,7 +409,7 @@
 		flex-direction: column;
 		gap: 0.5rem;
 	}
-	.action-row {
+	.applet-row {
 		display: flex;
 		align-items: center;
 		justify-content: space-between;
@@ -419,11 +419,11 @@
 		border: 1px solid var(--color-border-subtle, #f3f4f6);
 		background: var(--color-surface-elevated, #f9fafb);
 	}
-	.action-name {
+	.applet-name {
 		font-size: 0.8125rem;
 		font-weight: 500;
 	}
-	.action-meta {
+	.applet-meta {
 		display: flex;
 		align-items: center;
 		gap: 0.375rem;
