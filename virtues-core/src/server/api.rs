@@ -853,11 +853,18 @@ pub async fn device_applet_ids_handler(
     user: crate::middleware::auth::AuthUser,
 ) -> Response {
     match virtues_helpers::auth::fanout_applet_ids(state.db.pool(), &user.device_id).await {
-        Ok(action_ids) => (
+        // Both keys, deliberately. A collector installed before the rename
+        // reads `action_ids` and has no way to learn a new name — this is the
+        // endpoint it would use to recover, so breaking it here is the one
+        // place that cannot self-heal. `applet_ids` is canonical; `action_ids`
+        // is a duplicate that comes out once every collector in the field
+        // reads the new one.
+        Ok(applet_ids) => (
             StatusCode::OK,
             Json(serde_json::json!({
                 "device_id": user.device_id,
-                "action_ids": action_ids,
+                "applet_ids": applet_ids,
+                "action_ids": applet_ids,
             })),
         )
             .into_response(),

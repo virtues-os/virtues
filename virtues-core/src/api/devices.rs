@@ -383,6 +383,9 @@ pub async fn enroll_peer(
                 StatusCode::OK,
                 Json(json!({
                     "device_id": p.device_id,
+                    // Both keys for one release — see the note on the
+                    // applet-ids handler. Canonical first.
+                    "applet_ids": p.action_ids,
                     "action_ids": p.action_ids,
                     "box_node_id": box_node_id,
                     "relay_url": relay_url,
