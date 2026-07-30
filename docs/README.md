@@ -106,7 +106,10 @@ listed below.
 
 ## Legal
 
-| Doc | Status | What it's for |
-|---|---|---|
-| [legal/privacy-policy.md](legal/privacy-policy.md) | ⚠️ Draft, not in force | Unpublished, not reviewed by counsel, never served to any user. Creates no obligations. Do not cite. |
-| [legal/terms-of-service.md](legal/terms-of-service.md) | ⚠️ Draft, not in force | Same. Use of this repository's source is governed solely by [`LICENSE`](../LICENSE). |
+**The operative policies live in the `website` repo** (`src/legal/virtues-os/`)
+and are published at `virtues.com/privacy` and `/terms`. They are not mirrored
+here — an unreviewed second copy in a public repo is quotable as posted policy,
+which is exactly the trap the drafts that used to sit in `docs/legal/` created.
+
+Use of *this repository's source* is governed solely by [`LICENSE`](../LICENSE)
+(BUSL-1.1 + MIT), which is independent of those policies.
