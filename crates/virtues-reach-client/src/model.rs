@@ -35,5 +35,5 @@ pub struct PairedBox {
     /// `{"ios_ingest": "act_…"}`. The upload coordinator POSTs collector batches
     /// to `/webhook/{applet_id}`. Empty on the desktop (it only proxies).
     #[serde(default)]
-    pub action_ids: std::collections::HashMap<String, String>,
+    pub applet_ids: std::collections::HashMap<String, String>,
 }

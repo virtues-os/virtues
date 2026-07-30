@@ -163,18 +163,18 @@ pub async fn webhook(
     // action; an action with no device anchor (e.g. an OAuth action reachable
     // only from the owner's own devices) is likewise owner-level.
     if user.device_id != crate::middleware::auth::CONSOLE_DEVICE_ID {
-        let action_device: Option<String> =
+        let applet_device: Option<String> =
             sqlx::query_scalar("SELECT device_id FROM app_applets WHERE id = $1")
                 .bind(&applet_id)
                 .fetch_one(state.db.pool())
                 .await
                 .unwrap_or(None);
-        if let Some(owner_device) = action_device {
+        if let Some(owner_device) = applet_device {
             if owner_device != user.device_id {
                 tracing::warn!(
                     applet_id = %applet_id,
                     proven_device = %user.device_id,
-                    action_device = %owner_device,
+                    applet_device = %owner_device,
                     "webhook: proven device does not own this action"
                 );
                 return (

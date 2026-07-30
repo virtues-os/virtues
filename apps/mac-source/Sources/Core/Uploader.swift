@@ -5,20 +5,20 @@ class Uploader {
     private let config: Config
     private var timer: DispatchSourceTimer?
 
-    /// Resolved `mac_ingest` webhook action id. Normally comes from
-    /// `config.actionIds`; refetched into here when that one is dead.
+    /// Resolved `mac_ingest` webhook applet id. Normally comes from
+    /// `config.appletIds`; refetched into here when that one is dead.
     ///
-    /// Takes precedence over `config.actionIds` once set. It has to: the
+    /// Takes precedence over `config.appletIds` once set. It has to: the
     /// config is a `let` read from disk at pair time, so if the id there ever
     /// stops existing box-side there is no other way to move off it.
-    private var cachedActionId: String?
+    private var cachedAppletId: String?
 
     /// Set when the box answers 404 for the id we used, which means that id is
     /// gone — the applet was deleted, re-created, or renamed. Distinct from the
     /// transient failures the backoff is for: retrying a 404 with the same id
     /// never succeeds, however long you wait. Cleared once a refetch produces
     /// a new one.
-    private var actionIdIsStale = false
+    private var appletIdIsStale = false
 
     // Thread-safe state management
     private let stateQueue = DispatchQueue(label: "com.virtues.uploader.state")
@@ -118,7 +118,7 @@ class Uploader {
         var totalUploaded = 0
         var totalFailed = 0
 
-        // One combined batch → the single `mac_ingest` webhook action.
+        // One combined batch → the single `mac_ingest` webhook applet.
         let result = await uploadBatch()
         totalUploaded += result.uploaded
         totalFailed += result.failed
@@ -137,7 +137,7 @@ class Uploader {
     }
 
     /// Upload all pending app events + iMessages as ONE batch to the
-    /// `mac_ingest` webhook action, authenticated with the device bearer.
+    /// `mac_ingest` webhook applet, authenticated with the device bearer.
     /// The action expects a flat payload with top-level `app_events` /
     /// `browser_history` / `imessages` arrays (see `actions/mac_ingest`).
     private func uploadBatch() async -> (uploaded: Int, failed: Int) {
@@ -154,7 +154,7 @@ class Uploader {
             }
 
             // Resolve the webhook target (from pair, else a one-shot refetch).
-            guard let actionId = await macActivityActionId() else {
+            guard let appletId = await macActivityAppletId() else {
                 print("⚠️ No 'mac_ingest' action id — re-pair this collector " +
                       "(`virtues-collector init <token>`). Skipping upload.")
                 return (0, pending)
@@ -213,7 +213,7 @@ class Uploader {
 
             // Host is ignored over iroh (the box is dialed by EndpointId); only
             // the path matters. Auth is this device's allowlisted key — no bearer.
-            guard let url = URL(string: "\(config.apiEndpoint)/webhook/\(actionId)") else {
+            guard let url = URL(string: "\(config.apiEndpoint)/webhook/\(appletId)") else {
                 print("Invalid API endpoint")
                 return (0, pending)
             }
@@ -258,10 +258,10 @@ class Uploader {
                 // NOT escalated — the retry will differ, so waiting longer
                 // buys nothing.
                 print(
-                    "⚠️ Webhook 404 for action id \(actionId) — it no longer exists on the box. "
+                    "⚠️ Webhook 404 for applet id \(appletId) — it no longer exists on the box. "
                         + "Refetching on the next cycle; \(pending) records held.")
-                actionIdIsStale = true
-                cachedActionId = nil
+                appletIdIsStale = true
+                cachedAppletId = nil
                 consecutive401Errors = 0
                 return (0, pending)
             } else {
@@ -303,7 +303,7 @@ class Uploader {
         }
     }
 
-    /// The `mac_ingest` action id: a refetched one if we have it, else the
+    /// The `mac_ingest` applet id: a refetched one if we have it, else the
     /// paired config, else a one-shot refetch.
     ///
     /// The refetch used to be unreachable whenever the config held any value —
@@ -311,18 +311,18 @@ class Uploader {
     /// had gone away box-side would post to it forever, take a 404, back off,
     /// and retry the same dead id until someone re-paired. Nothing surfaced but
     /// a `print`. So the order is deliberate: a value we fetched from the box
-    /// beats a value we read off disk, and `actionIdIsStale` forces a refetch
+    /// beats a value we read off disk, and `appletIdIsStale` forces a refetch
     /// even when the config still has something to offer.
-    private func macActivityActionId() async -> String? {
-        if !actionIdIsStale, let id = cachedActionId {
+    private func macActivityAppletId() async -> String? {
+        if !appletIdIsStale, let id = cachedAppletId {
             return id
         }
-        if !actionIdIsStale, let id = config.actionIds["mac_ingest"] {
+        if !appletIdIsStale, let id = config.appletIds["mac_ingest"] {
             return id
         }
-        if let id = await refetchMacActivityActionId() {
-            cachedActionId = id
-            actionIdIsStale = false
+        if let id = await refetchMacActivityAppletId() {
+            cachedAppletId = id
+            appletIdIsStale = false
             return id
         }
         // The refetch failed (box unreachable, or it genuinely has no
@@ -331,8 +331,8 @@ class Uploader {
         return nil
     }
 
-    private func refetchMacActivityActionId() async -> String? {
-        guard let url = URL(string: "\(config.apiEndpoint)/api/devices/action-ids") else {
+    private func refetchMacActivityAppletId() async -> String? {
+        guard let url = URL(string: "\(config.apiEndpoint)/api/devices/applet-ids") else {
             return nil
         }
         // Over iroh (BoxTransport) — authenticated by this device's proven key.
@@ -342,7 +342,7 @@ class Uploader {
             let (data, http) = try await BoxTransport.shared.send(request)
             guard http.statusCode == 200,
                   let json = try JSONSerialization.jsonObject(with: data) as? [String: Any],
-                  let ids = json["action_ids"] as? [String: String] else {
+                  let ids = json["applet_ids"] as? [String: String] else {
                 return nil
             }
             return ids["mac_ingest"]
@@ -351,7 +351,7 @@ class Uploader {
         }
     }
 
-    /// Rename the iMessage record keys to the `mac_ingest` action's contract
+    /// Rename the iMessage record keys to the `mac_ingest` applet's contract
     /// (`message_id`→`guid`, `handle_id`→`from_handle`). The action drops any
     /// message with an empty `guid`, so the rename is required.
     private func mapMessageForWebhook(_ dict: [String: Any]) -> [String: Any] {

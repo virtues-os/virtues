@@ -383,10 +383,7 @@ pub async fn enroll_peer(
                 StatusCode::OK,
                 Json(json!({
                     "device_id": p.device_id,
-                    // Both keys for one release — see the note on the
-                    // applet-ids handler. Canonical first.
-                    "applet_ids": p.action_ids,
-                    "action_ids": p.action_ids,
+                    "applet_ids": p.applet_ids,
                     "box_node_id": box_node_id,
                     "relay_url": relay_url,
                     "box_direct_addrs": box_direct_addrs,
@@ -402,7 +399,7 @@ pub async fn enroll_peer(
 /// map. No bearer — the peer authenticates by its allowlisted iroh key.
 pub(crate) struct EnrolledPeer {
     pub device_id: String,
-    pub action_ids: std::collections::HashMap<String, String>,
+    pub applet_ids: std::collections::HashMap<String, String>,
 }
 
 pub(crate) enum EnrollError {
@@ -496,13 +493,13 @@ pub(crate) async fn enroll_peer_core(
     // Allowlist the EndpointId + register it with atlas so the relay admits it,
     // THEN fan out the device's ingest actions (anchored on device_id).
     crate::relay::after_pairing_change(pool.clone());
-    let action_ids = crate::api::pair::assemble_applet_fanout(pool, &device_id)
+    let applet_ids = crate::api::pair::assemble_applet_fanout(pool, &device_id)
         .await
         .unwrap_or_default();
 
     Ok(EnrolledPeer {
         device_id,
-        action_ids,
+        applet_ids,
     })
 }
 

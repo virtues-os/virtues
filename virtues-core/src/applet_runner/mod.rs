@@ -674,7 +674,7 @@ async fn run_subprocess(
         }));
     }
 
-    let action_output: AppletOutput = serde_json::from_str(&stdout).map_err(|e| {
+    let applet_output: AppletOutput = serde_json::from_str(&stdout).map_err(|e| {
         Error::Other(format!(
             "failed to parse subprocess stdout JSON: {e}. raw: {}",
             &stdout[..stdout.len().min(500)]
@@ -683,7 +683,7 @@ async fn run_subprocess(
 
     // Persist returned config back to the action row (JSONB column)
     sqlx::query("UPDATE app_applets SET config = $1, updated_at = now() WHERE id = $2")
-        .bind(&action_output.config)
+        .bind(&applet_output.config)
         .bind(&action.id)
         .execute(db)
         .await
@@ -693,7 +693,7 @@ async fn run_subprocess(
     // JSON) while warning on stderr — that channel used to be swallowed, which
     // is exactly how the transcription runaway stayed invisible. Log it, and
     // fold a short tail into the run summary so it shows in the Telemetry tab.
-    let mut summary = action_output.result;
+    let mut summary = applet_output.result;
     if !stderr.trim().is_empty() {
         tracing::warn!(applet_id = %action.id, "action stderr (exit 0): {}", stderr.trim());
         let tail: String = stderr.trim().chars().rev().take(500).collect::<Vec<_>>()
@@ -703,7 +703,7 @@ async fn run_subprocess(
 
     Ok(SubprocessOutcome {
         summary,
-        records: action_output.records,
+        records: applet_output.records,
     })
 }
 
