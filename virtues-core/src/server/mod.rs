@@ -271,15 +271,24 @@ pub async fn run(client: Virtues, host: &str, port: u16) -> Result<()> {
         // templates.toml adds a new stream. Same device-token bearer auth as
         // the webhook endpoint.
         .route(
+            "/api/devices/applet-ids",
+            get(api::device_applet_ids_handler),
+        )
+        // DEPRECATED alias. A collector installed before the rename calls this
+        // path to recover its webhook target, so it is the one route that
+        // cannot be renamed out from under the field — removing it strands
+        // every such collector permanently rather than for one release. Goes
+        // when nothing in the field asks for it.
+        .route(
             "/api/devices/action-ids",
             get(api::device_applet_ids_handler),
         )
-        // Device-scoped run history for one of the caller's own actions, so the
+        // Device-scoped run history for one of the caller's own applets, so the
         // app can show real server-side outcome per stream. Device-token bearer
         // auth + credential-ownership check (see handler). Distinct from the
-        // session-authed /api/actions/:id/runs.
+        // session-authed /api/applets/:id/runs.
         .route(
-            "/api/devices/actions/:id/runs",
+            "/api/devices/applets/:id/runs",
             get(api::device_applet_runs_handler),
         );
 

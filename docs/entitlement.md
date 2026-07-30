@@ -1,24 +1,57 @@
-# Entitlement & Voucher Architecture (Spec)
+# Entitlement & Billing Architecture (Spec)
 
-> The technical spec. For the *why* and the marketing language, see
-> [`virtues-api.md`](virtues-api.md) in docs/.
+> The technical spec for how a paying customer's box gets AI and utility calls
+> paid for. For the *why* and the marketing language, see
+> [`virtues-api.md`](virtues-api.md).
 >
-> Supersedes the earlier `activation_handle` design. The load-bearing
-> change: **no field is shared between Atlas and virtues-api.** The
-> customer↔usage link exists only on the user's own home server.
+> **Rewritten 2026-07-29.** This document previously specified a *double-blind
+> voucher* model — Atlas and virtues-api shared no column, and a disposable
+> voucher passed between them through the user's own box so that neither side
+> could join identity to usage. **That model is not what ships.** It was
+> collapsed to a **linked prepaid ledger** in
+> [`0005_accounts_ledger.sql`](../services/virtues-api/migrations/0005_accounts_ledger.sql),
+> which drops the `vouchers` and `entitlements` tables outright. Section 1
+> states plainly what was traded away. The voucher design is preserved as
+> history in [§12](#12-the-voucher-model-superseded) because it is still the
+> intended v2 destination.
 
 ---
 
-## 1. The invariant
+## 1. The privacy posture — read this first
 
-A government subpoena of **both** databases must not be able to tie any
-usage to any person. Not by policy — by construction. The rule that
-guarantees it:
+**As shipped, identity and usage are linkable by whoever holds both databases.**
 
-**No column may exist in both the Atlas schema and the virtues-api schema.**
+Atlas assigns each customer an opaque `account_id`, and **shares that same
+`account_id` with virtues-api**, which keys the wallet on it. A subpoena of both
+databases joins on that column: Atlas turns `account_id` into a Stripe customer
+and an email; virtues-api turns it into a spend history. There is no
+cryptographic obstacle to that join — the wall the earlier spec described was
+removed deliberately, not breached.
 
-Lint 10 (`tools/arch-lint.sh`) enforces it: identity columns from one
-side are forbidden from appearing in the other's migrations.
+What remains true, and is the part worth defending:
+
+- **`account_id` is an opaque random string** (`acct_<32hex>`) — never a Stripe
+  id, never an email.
+- **Content never leaves the box.** virtues-api stores token counts and costs.
+  It never stores prompts, completions, or any personal data.
+- **The proxy knows nothing about people** on its own. It needs Atlas to turn an
+  account into a person.
+
+What is *not* true today, and must not be claimed:
+
+- ~~"No column exists in both schemas."~~ `account_id` does.
+- ~~"A subpoena of both databases cannot tie usage to a person."~~ It can.
+
+Blind unlinkability ([RFC 9474](https://www.rfc-editor.org/rfc/rfc9474.html))
+remains the documented v2 goal. Until it ships, the honest claim is
+*data minimization* — we hold little, and none of it is content — not
+*structural unlinkability*.
+
+**Lint 10** (`tools/arch-lint.sh`) still enforces the narrower rule that
+survives: Atlas's *customer-identity* columns (`stripe_customer_id`,
+`billing_token`, `email`) must never appear in virtues-api's schema. That keeps
+the proxy free of direct identity, which is why the join needs both sides rather
+than one.
 
 ---
 
@@ -26,99 +59,97 @@ side are forbidden from appearing in the other's migrations.
 
 | Party | Owns | Knows | Never sees |
 |---|---|---|---|
-| **Home server** (VirtuesOS) | the user | billing token + usage bearer, linked locally | — (it's the user's own box) |
-| **Atlas** (billing) | Virtues | customer, email, subscription, billing token | the usage bearer |
-| **virtues-api** (gate) | Virtues | bearer, budget, expiry | the customer |
+| **Home server** (VirtuesOS) | the user | the device `api_key`; all of the user's data | — (it's the user's own box) |
+| **Atlas** (billing) | Virtues | customer, email, subscription, `api_key_hash`, `account_id` | any usage detail; any content |
+| **virtues-api** (gate) | Virtues | `account_id`, balance, ledger, `api_key_hash` | who the customer is; any content |
 
-The bridge between Atlas and virtues-api is a **disposable voucher** that
-neither retains as a link.
+`account_id` is the shared join key. Atlas mints it and hands it to virtues-api
+when registering a device or crediting the wallet.
 
 ---
 
-## 3. Schemas (no shared column)
+## 3. Schemas
 
 ### Atlas (`services/virtues-atlas/migrations/`)
 ```sql
-customers(stripe_customer_id PK, email, billing_token_hash, last_voucher_issued_at, created_at)
+customers(stripe_customer_id PK, email, api_key_hash, account_id UNIQUE, daily_cap_micros, created_at)
 subscriptions(stripe_subscription_id PK, stripe_customer_id FK, status, current_period_end, ...)
+device_link(...)                 -- box↔customer link sessions
 stripe_webhook_events(stripe_event_id PK, event_type, processed_at)
 ```
 
 ### virtues-api (`services/virtues-api/migrations/`)
 ```sql
-entitlements(bearer_hash PK, wallet_micros, today_spent_micros, today_reset_at, expires_at, daily_cap_micros, ...)
-vouchers(voucher_code_hash PK, amount_micros, is_renewal, voucher_expires_at, daily_cap_micros, redeemed_at)
-blocklist(bearer_hash PK, reason_code, blocked_at, expires_at)
+accounts(account_id PK, balance_micros, today_spent_micros, today_reset_at,
+         daily_cap_micros, expires_at, created_at, updated_at)
+device_keys(api_key_hash PK, account_id FK, created_at)
+ledger(id PK, account_id FK, micros, kind, ts, ...)      -- append-only, source of truth
+blocklist(key_hash PK, reason_code, blocked_at, expires_at)
 ```
 
-`daily_cap_micros` is the per-customer daily spend ceiling, carried from
-Atlas's `customers.daily_cap_micros` on the voucher and enforced per-bearer.
-It's a *number*, not an identity column — the wall (no shared key) holds.
+**`accounts.balance_micros` is a projection**, not the truth: it must always
+equal `SUM(ledger.micros)` for that account, and is rebuildable from the ledger
+at any time. The ledger is append-only; nothing is ever updated in place.
 
-**Cross-check:** Atlas's identifier columns (`stripe_customer_id`, `email`,
-`billing_token_hash`) appear nowhere in virtues-api. virtues-api's
-identifiers (`bearer_hash`, `voucher_code_hash`) appear nowhere in Atlas.
-The wall is the *absence* of a shared key.
-
-Note `vouchers.redeemed_at` records **that** a voucher was spent, never
-**which bearer** spent it. That discard is what keeps the chain from ever
-living in one place.
+**`device_keys` is a separate, rotatable pointer.** Rotating or losing an
+api_key replaces a row there and never touches the balance. This is why recovery
+does not cost the user their wallet.
 
 ---
 
 ## 4. Flows
 
-### 4.1 Signup → claim (once)
+### 4.1 Signup → link (once)
 1. Customer pays via Stripe Checkout → `success_url?session_id=cs_xxx`.
 2. Home server `POST /claim {session_id}` to Atlas.
 3. Atlas verifies `payment_status == "paid"`, upserts `customers` +
-   `subscriptions`, mints a random **billing_token**, stores only its hash,
-   returns the raw token.
-4. Home server stores the billing_token locally.
+   `subscriptions`, assigns an `account_id` if the customer has none, mints a
+   random **api_key**, and stores only its hash.
+4. Atlas registers the device with virtues-api (`POST /internal/device`) — the
+   api_key hash plus the `account_id` — and credits the wallet
+   (`POST /internal/credit`).
+5. Atlas returns the raw api_key. The home server stores it in the credential
+   vault under `source_id = "virtues_api"`.
 
-Re-claim reissues a fresh billing_token (recovery is a billing-side
-concern, which is allowed — the billing token carries no usage data).
+Re-linking rotates the api_key and re-points the device at the **same**
+`account_id`, so the balance survives.
 
-### 4.2 Monthly renewal (lazy, first-request)
-Triggered when the bearer is expired (virtues-api returns `bearer_expired`,
-402). The home server:
-1. Generates a fresh random bearer (only its hash ever leaves the device).
-2. `POST /voucher {billing_token}` to Atlas → Atlas checks the
-   subscription is active, anti-stacking rate-limit passes, mints a
-   one-time **voucher_code**, registers `sha256(code)` + value + the
-   customer's `daily_cap_micros` with virtues-api via `POST /internal/voucher`
-   (no customer, no bearer in that call), returns the raw code.
-3. `POST /v1/redeem` to virtues-api with the code + bearer (in the
-   Authorization header). virtues-api validates the voucher, loads the
-   budget + cohort-aligned expiry onto the bearer, marks the voucher
-   redeemed, and **discards which bearer redeemed it**.
-4. Retries the original call.
-
-This is the OAuth refresh-token pattern: `bearer_expired` → renew → retry.
-One slightly slower call per month; otherwise invisible.
+### 4.2 Renewal and top-ups (server-side)
+There is no client-side renewal dance. Renewal is a **Stripe webhook** to Atlas,
+which SETs the month's allotment on the wallet via `POST /internal/credit`.
+Top-ups are a card charge through Atlas (`POST /credits/topup`, and
+`POST /credits/auto-topup` for the standing arrangement), which credits the same
+way. The box is not involved and holds no refresh token.
 
 ### 4.3 Per-call charging
-`bearer_auth` validates `expires_at > now()`. Paid routes call
-`entitlement::charge(bearer_hash, cost)`: lazy daily reset → atomic
-conditional decrement. AI cost is authoritative from Vercel AI Gateway's
-`usage.cost`; fixed-cost routes (Places/Exa) use a constant; failed
-upstreams refund.
+The box sends `Authorization: Bearer <api_key>` on every proxy call. virtues-api
+SHA-256s it, resolves `device_keys → accounts`, checks the balance and the daily
+cap (lazy reset on the first call after `today_reset_at`), then appends a debit
+to `ledger` and decrements the projection. AI cost is authoritative from Vercel
+AI Gateway's `usage.cost`; fixed-cost routes (Places/Exa/Unsplash) use a
+constant; failed upstreams refund by appending a credit.
+
+**402 means the wallet is empty** (surface it, or auto-topup). **401 means the
+key is unknown** (re-link). These are the only two states the box must handle.
 
 ### 4.4 Cancellation / refund
-Stripe webhook → Atlas updates `subscriptions.status`. **No call to
-virtues-api.** Revocation is by expiry: a canceled subscription stops
-producing vouchers, so the bearer runs out at month end. Refund/dispute
-sets status to `refunded`, same effect.
+Stripe webhook → Atlas updates `subscriptions.status` and stops crediting.
+Revocation is by **expiry plus exhaustion**: `accounts.expires_at` is
+cohort-aligned to the 1st of the month UTC, and leftover balance is
+use-it-or-lose-it. Unlike the voucher model, Atlas *can* now act on a specific
+account directly if it has to — that capability is a consequence of the shared
+`account_id`.
 
 ---
 
 ## 5. Cohort-aligned expiry
 
-`voucher::redeem` sets `expires_at = first-of-month after
-(max(now, current_expiry) + valid_days)`. Everyone who redeems lands on a
-shared monthly boundary → uniform expiry timestamps, no per-user
-fingerprint. This is *defense-in-depth*: the real unlinkability comes from
-discarding the voucher↔bearer link and Atlas not logging voucher requests.
+`expires_at` is set to the first of the month (UTC) rather than a per-customer
+anniversary, so wallets share a small number of expiry timestamps instead of
+carrying a per-user one. Under the voucher model this was defense-in-depth for
+unlinkability. **Under the linked model it no longer buys privacy** — the shared
+`account_id` already links the two sides — and it is kept purely because uniform
+month boundaries make renewal accounting and the sweeper simple.
 
 ---
 
