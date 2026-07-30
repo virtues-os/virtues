@@ -32,7 +32,7 @@
 ## Reaching the web UI
 
 Virtues serves the web UI over **plain HTTP on port 8000**. There is no TLS
-on the box — see [networking.md](networking.md) for the rationale.
+on the box — see [networking-relay-tee.md](networking-relay-tee.md) for the rationale.
 
 On the box itself, the web UI is always reachable from a browser at:
 

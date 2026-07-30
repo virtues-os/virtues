@@ -153,14 +153,14 @@ external chats are embedded).
 
 - **Current:** Indexer only walks ontologies with `embedding: Some(...)`.
   `app_chat` is `embedding: None`
-  ([ontologies.rs:619](../virtues-registry/src/ontologies.rs#L619));
+  ([ontologies.rs:619](../crates/virtues-registry/src/ontologies.rs#L619));
   `app_chat_messages` has no ontology. `data_content_conversation` (imported
   Claude/ChatGPT history) *is* embedded — ours is not.
   [append_message](../virtues-core/src/api/chats.rs#L593) does not trigger
   embedding (batch-only, which is fine).
 - **Change:**
   - Add an `OntologyDescriptor` for `app_chat_message` (and/or `app_chat`
-    summaries) in [ontologies.rs](../virtues-registry/src/ontologies.rs) with
+    summaries) in [ontologies.rs](../crates/virtues-registry/src/ontologies.rs) with
     `embedding: Some(EmbeddingConfig { embed_text_sql: "t.content", author_sql:
     "t.role", timestamp_sql: "t.created_at", preview_sql: ... })`. Decide the
     `record_id` scheme (`chat_id` + `message_id`).
@@ -294,10 +294,10 @@ video); never silently fail on a model that can't handle the input.
   - Extend `parseEntityRoute(url)` to route page/chat/space/media URLs.
   - **Behavior:** `@chat` / `@space` inject that thing's context (summary +
     vectors) into the prompt — **depends on Track B**.
-- **Files:** [EntityPicker.svelte](../apps/web/src/lib/components/EntityPicker.svelte),
-  [EntityChip.svelte](../apps/web/src/lib/components/EntityChip.svelte),
-  [ChatInput.svelte](../apps/web/src/lib/components/ChatInput.svelte),
-  backend route resolution.
+- **Files:** [ChatInput.svelte](../apps/web/src/lib/components/ChatInput.svelte)
+  plus backend route resolution. `EntityPicker.svelte` and `EntityChip.svelte`
+  no longer exist under those paths — the reference primitive was reworked; see
+  [references.md](references.md).
 
 ### ✅ Verification gate F
 - `@` shows grouped Entities/Pages/Chats/Spaces/Files.
@@ -431,9 +431,11 @@ needed, actionable errors.
   - **Drag a chat tab onto a space** in the sidebar.
   - **Multi-select / move-many** from the sidebar.
   - Clarify the Space mental model in UI (folder/project, not "room").
-- **Files:** [ChatSpaceBreadcrumb.svelte](../apps/web/src/lib/components/chat/ChatSpaceBreadcrumb.svelte),
-  [SpacesSection.svelte](../apps/web/src/lib/components/sidebar/SpacesSection.svelte),
-  [space.svelte.ts](../apps/web/src/lib/stores/space.svelte.ts).
+- **Files:** written against the Spaces naming, which is gone — Spaces became
+  Notebooks (see [notebooks-plan.md](notebooks-plan.md)). Today's equivalents are
+  [ChatNotebookBreadcrumb.svelte](../apps/web/src/lib/components/chat/ChatNotebookBreadcrumb.svelte)
+  and [notebook.svelte.ts](../apps/web/src/lib/stores/notebook.svelte.ts);
+  `SpacesSection.svelte` has no direct successor.
 
 ### ✅ Verification gate K
 - Filing a chat into a space is obvious in < 2s for a new user (self-check).

@@ -1,7 +1,8 @@
 # Deployment & Runtime Architecture
 
 > How Virtues ships and runs. Companion to
-> [`networking.md`](networking.md) (the WG transport + IPv6-direct reachability)
+> [`networking-relay-tee.md`](networking-relay-tee.md) (how a browser reaches the box,
+> via the blind relay)
 > and [`entitlement.md`](entitlement.md) (the cloud wall).
 
 ---
