@@ -17,7 +17,7 @@ import { getChatPermissions, addChatPermission, removeChatPermission } from '$li
 /**
  * Resource types that can be edited
  */
-export type EditableResourceType = 'page' | 'folder' | 'wiki_entry' | 'action';
+export type EditableResourceType = 'page' | 'folder' | 'wiki_entry' | 'applet';
 
 /**
  * An item on the edit allow list

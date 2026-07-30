@@ -279,15 +279,15 @@ impl ToolExecutor {
             "get_page_content" => self.page_editor.get_page_content(arguments, context).await,
             "edit_page" => self.page_editor.edit_page(arguments, context).await,
             // Applet setup
-            "setup_applet" | "setup_action" => super::applet_setup::execute(&self._pool, arguments, context).await,
+            "setup_applet" => super::applet_setup::execute(&self._pool, arguments, context).await,
             // Applet memory (persistent scratchpad for actions across runs)
-            "update_applet_memory" | "update_action_memory" => self.execute_update_applet_memory(arguments, context).await,
+            "update_applet_memory" => self.execute_update_applet_memory(arguments, context).await,
             // Applet management — list / get / edit / delete / run
-            "list_applets" | "list_applets" => super::applet_management::list_applets(&self._pool, arguments).await,
-            "get_applet" | "get_applet" => super::applet_management::get_applet(&self._pool, arguments).await,
-            "edit_applet" | "edit_applet" => super::applet_management::edit_applet(&self._pool, arguments).await,
-            "delete_applet" | "delete_applet" => super::applet_management::delete_applet(&self._pool, arguments).await,
-            "run_applet" | "run_applet" => {
+            "list_applets" => super::applet_management::list_applets(&self._pool, arguments).await,
+            "get_applet" => super::applet_management::get_applet(&self._pool, arguments).await,
+            "edit_applet" => super::applet_management::edit_applet(&self._pool, arguments).await,
+            "delete_applet" => super::applet_management::delete_applet(&self._pool, arguments).await,
+            "run_applet" => {
                 let yjs = self.yjs_state.as_ref().ok_or_else(|| {
                     ToolError::ExecutionFailed(
                         "run_applet tool requires YjsState — executor constructed without it".into(),

@@ -16,7 +16,7 @@ confusing: **the box logs runs as `success` while the app shows "Not reaching
 box."** That contradiction is real and explained below.
 
 The reassuring part: the repo already contains the *correct* pattern. Our
-cron-pull sync actions (`strava_activities_sync`, `plaid_*`, `google_*`,
+cron-pull sync applets (`strava_activities_sync`, `plaid_*`, `google_*`,
 `notion_pages_sync`) use deterministic `UUIDv5` ids + a cursor persisted in
 `app_actions.config` that advances only after a successful write. That is
 exactly the at-least-once + idempotent-receiver + confirmed-cursor design the
@@ -83,10 +83,10 @@ Root cause, confirmed end to end:
   (`BoxTransport.tunnelExchangeTimeout`). A slow run (cold spawn + cold PG +
   contention, or a large batch) crosses 30s → the device throws
   `TunnelTimeoutError` while the box runs to completion and logs `success`.
-- **Cascade:** `ios_ingest` is one action guarded by a per-action `running`
+- **Cascade:** `ios_ingest` is one applet guarded by a per-applet `running`
   lock. After a timeout, the device's next sequential stream POST gets a
   **409 skip** (prior run still active). And a hung subprocess **wedges the lock,
-  which is cleared only on server restart** (`scheduler/actions.rs`
+  which is cleared only on server restart** (`scheduler/applets.rs`
   `cleanup_stale_runs`) — so one stuck run can stall *all* of that device's
   ingestion until the box restarts. Latent availability landmine.
 
@@ -121,7 +121,7 @@ so a user in LPM for days keeps collecting but never delivers (data survives as
 ### F7 — Unused plumbing for the right design already exists
 
 The payload's `checkpoint` field, the `elt_stream_checkpoints` table, and a
-device-facing runs API (`GET /api/devices/actions/:id/runs`, returning
+device-facing runs API (`GET /api/devices/applets/:id/runs`, returning
 `status`, `records_processed`, `result_summary`) plus `/api/credentials`
 `sync_state` are all present and unused/under-used. Reconcile-after-timeout and a
 confirmed-cursor protocol can be built on what's already there.
@@ -189,20 +189,20 @@ Fixes F1–F5 and F7's reconcile. Self-contained to the iOS queue + `ios_ingest`
 - **Where:** `BatchUploadCoordinator` upload path + existing
   `NetworkManager.fetchActionRuns`.
 - **What:** on a tunnel timeout, before counting a failure, query
-  `GET /api/devices/actions/:id/runs` and match the recent run
+  `GET /api/devices/applets/:id/runs` and match the recent run
   (`result_summary`/`records_processed`/time) to confirm the batch landed. If it
   did, mark complete (with A1, even a missed reconcile + resend is harmless).
 - **Effect:** kills the false "Not reaching box" and the needless resend.
 
 ### A5. Server-side: bound and de-wedge execution
 
-- **Where:** `action_runner` + `scheduler::actions`.
+- **Where:** `action_runner` + `scheduler::applets`.
 - **What:** (a) add a subprocess timeout for `ios_ingest`; (b) add a TTL/watchdog
   so a stale `running` run is reaped without a server restart; (c) consider a
   **warm execution path** for `ios_ingest` (in-process handler or a warm pool /
   persistent PG connection) to shrink the per-call cost that drives the timeout
   race; (d) since ingest is idempotent, consider allowing concurrent ingest runs
-  (drop or narrow the per-action lock for this action) so sequential stream
+  (drop or narrow the per-applet lock for this applet) so sequential stream
   uploads don't 409-cascade.
 
 ### A6. `ios_ingest` atomicity + byte-bounded batches

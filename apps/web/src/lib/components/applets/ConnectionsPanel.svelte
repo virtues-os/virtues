@@ -1,5 +1,5 @@
 <!--
-	ConnectionsPanel.svelte — the /sources page (also mounted at /actions#sources).
+	ConnectionsPanel.svelte — the /sources page (also mounted at /applets#sources).
 
 	Single UniversalDataGrid of connected credentials. The catalog of available
 	sources is reachable via a "+ Connect" button (SourceConnectButton) that
@@ -8,7 +8,7 @@
 	transient picker, not a permanent shelf.
 
 	Vocabulary: each row is a *credential* (one connection to a provider).
-	Each credential fans out one or more *actions* that run on a schedule
+	Each credential fans out one or more *applets* that run on a schedule
 	(or webhook for self_issued_bearer devices) and write to data_* tables.
 -->
 
@@ -271,11 +271,11 @@
 			<h1>Sources</h1>
 			<p class="subtitle">
 				Sources are where data comes from. Each connected source creates one or more
-				<em>actions</em> that run on a schedule (or on-device webhook) and write into
+				<em>applets</em> that run on a schedule (or on-device webhook) and write into
 				your data tables. Connect a source to start ingestion.
 			</p>
 		</div>
-		<div class="actions">
+		<div class="applets">
 			<SourceConnectButton {catalog} onPick={handleConnect} align="right" />
 		</div>
 	</header>
@@ -297,7 +297,7 @@
 			<h2>No sources connected yet</h2>
 			<p>
 				Pick a provider to start ingesting data. Each source creates the
-				actions that pull or receive its data.
+				applets that pull or receive its data.
 			</p>
 			<SourceConnectButton
 				{catalog}
@@ -411,9 +411,9 @@
 					{#if confirmingDisconnect}
 						<p class="danger-prompt">
 							Disconnect this {manageCred.source_label}? It stops ingesting and its
-							actions are removed. Re-pair to reconnect.
+							applets are removed. Re-pair to reconnect.
 						</p>
-						<div class="danger-actions">
+						<div class="danger-applets">
 							<button class="btn-ghost" onclick={() => (confirmingDisconnect = false)} disabled={manageBusy}>
 								Cancel
 							</button>
@@ -470,7 +470,7 @@
 		font-style: italic;
 		color: var(--color-foreground-muted, #6b7280);
 	}
-	.actions {
+	.applets {
 		flex-shrink: 0;
 	}
 
@@ -598,7 +598,7 @@
 		line-height: 1.45;
 		color: var(--color-foreground-muted, #6b7280);
 	}
-	.danger-actions {
+	.danger-applets {
 		display: flex;
 		justify-content: flex-end;
 		gap: 0.5rem;
