@@ -102,14 +102,18 @@ Why one EC2 + Caddy and not ECS/App Runner/Fargate: latency, cost, and avoiding 
 - The EC2 instance then pulls and **recreates** the container. Manual today;
   candidate for a GitHub Action later.
 
-The instance is `i-0a0b34b72dac1ac59` ("virtues"), running both containers.
-Access is SSM only — no public SSH — so step two is a `send-command`:
+One EC2 instance runs both containers. Access is SSM only — no public SSH — so
+step two is a `send-command`. The account ID and instance ID live in the private
+ops note, not here; export them first:
 
 ```sh
-ECR=172349361546.dkr.ecr.us-east-1.amazonaws.com/virtues-api:latest   # or virtues-atlas
-aws ssm send-command --instance-ids i-0a0b34b72dac1ac59 \
+ACCOUNT=<aws-account-id>            # private ops note
+INSTANCE=<ec2-instance-id>          # private ops note
+REGISTRY=$ACCOUNT.dkr.ecr.us-east-1.amazonaws.com
+ECR=$REGISTRY/virtues-api:latest    # or virtues-atlas
+aws ssm send-command --instance-ids $INSTANCE \
   --document-name AWS-RunShellScript --parameters "commands=[
-    \"aws ecr get-login-password --region us-east-1 | docker login --username AWS --password-stdin 172349361546.dkr.ecr.us-east-1.amazonaws.com\",
+    \"aws ecr get-login-password --region us-east-1 | docker login --username AWS --password-stdin $REGISTRY\",
     \"docker pull $ECR\",
     \"docker rm -f virtues-api\",
     \"docker run -d --name virtues-api --restart unless-stopped --network host --env-file /etc/virtues/api.env $ECR\",

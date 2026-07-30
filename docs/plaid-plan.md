@@ -59,15 +59,17 @@ Two surfaces. **Atlas is not involved** — it is a separate container built by
 1. ✅ **Plaid dashboard** — `https://auth.virtues.com/plaid/callback` registered
    2026-07-24. Plaid matches it exactly, which is why it carries no per-session
    query param.
-2. ✅ **Prod env verified 2026-07-24** (SSM, `i-0a0b34b72dac1ac59` — the live
-   host; the instance *named* "virtues", `i-04e515dab909e10ef`, runs nothing).
+2. ✅ **Prod env verified 2026-07-24** over SSM. Note there are two instances and
+   the confusingly-named one is the decoy: the instance *named* "virtues" runs
+   nothing, and the live host is the other one. Both IDs are in the private ops
+   note — check which is which before sending a command.
    Nothing to change: `PLAID_ENV` absent → production; `PLAID_REDIRECT_URI`
    absent → the registered default; client_id/secret present;
    `OAUTH_PROXY_EXCHANGE_SECRET` 48 chars; `VIRTUES_API_DATABASE_URL` present so
    migration 0007 runs at boot. **If you ever do edit that file, the container
    needs a recreate — `docker restart` will not re-read `--env-file`.**
 3. **Registry: ECR, not GHCR.** The container runs
-   `172349361546.dkr.ecr.us-east-1.amazonaws.com/virtues-api:latest`.
+   `<account>.dkr.ecr.us-east-1.amazonaws.com/virtues-api:latest`.
    `docker-build.yml` pushes to GHCR, which **nothing on that host pulls** —
    merging to staging deploys nothing. The real path is
    `make deploy-virtues-api` (builds linux/amd64, pushes ECR `:latest`) followed
