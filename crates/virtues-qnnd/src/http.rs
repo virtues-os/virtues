@@ -215,14 +215,32 @@ mod tests {
         addr
     }
 
+    /// The tokenizer fixture, written exactly once per test binary.
+    ///
+    /// Keying the directory on `process::id()` is not enough: `cargo test` runs
+    /// the tests of one binary as parallel *threads* of one process, so all four
+    /// `test_router()` callers used to race on the same `tokenizer.json`.
+    /// `fs::write` truncates before it writes, so a reader that arrived mid-write
+    /// saw an empty file and failed with "EOF while parsing a value at line 1
+    /// column 0" — a flake that blocked unrelated PRs. `OnceLock` makes the
+    /// write happen once and every later caller wait for it.
     fn write_tokenizers() -> std::path::PathBuf {
-        let dir = std::env::temp_dir().join(format!("qnnd-test-{}", std::process::id()));
-        for sub in ["tok_gte", "tok_colbert"] {
-            let d = dir.join(sub);
-            std::fs::create_dir_all(&d).unwrap();
-            std::fs::write(d.join("tokenizer.json"), TINY_TOKENIZER).unwrap();
-        }
-        dir
+        static FIXTURE: std::sync::OnceLock<std::path::PathBuf> = std::sync::OnceLock::new();
+        FIXTURE
+            .get_or_init(|| {
+                let dir = std::env::temp_dir().join(format!("qnnd-test-{}", std::process::id()));
+                for sub in ["tok_gte", "tok_colbert"] {
+                    let d = dir.join(sub);
+                    std::fs::create_dir_all(&d).unwrap();
+                    // Write-then-rename so a torn file is never observable, even
+                    // if a stale directory survives from an earlier run.
+                    let tmp = d.join("tokenizer.json.tmp");
+                    std::fs::write(&tmp, TINY_TOKENIZER).unwrap();
+                    std::fs::rename(&tmp, d.join("tokenizer.json")).unwrap();
+                }
+                dir
+            })
+            .clone()
     }
 
     async fn test_router() -> Router {
