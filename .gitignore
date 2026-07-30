@@ -145,6 +145,12 @@ tmp/*
 # Local Claude Code project state (runtime locks, local settings)
 .claude/
 
+# Agent scratch. `.worktrees/` has already been swept into a commit as an
+# embedded git repo once — worktrees are not the workflow here (see the
+# Branching section of CLAUDE.md), but ignore the path so a stray one is inert.
+.worktrees/
+/.agent-scratch/
+
 # Chat/AI-authored applets materialize here per-box at runtime — they are
 # local state, not shipped source (builtin applets live under applets/<name>/).
 /applets/user/

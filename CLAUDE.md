@@ -1,31 +1,124 @@
 # virtues
 
-## Branching
+## Branching — read this before any git command
 
-**`staging` is the mainline. `main` is a release marker.**
+**Several agents work in this one checkout at the same time.** That is the whole
+reason this section exists. A checkout has exactly one HEAD, one index, one
+stash, and one working tree, and all of them are shared. A git command that is
+harmless when one human runs it can destroy another agent's work here.
 
-`main` only moves when a release ships (it last moved for v0.2.0). It is
-routinely ~100 commits behind `staging`. Branching from it means starting on
-released code and owing a large catch-up merge before anything can land.
+Worktrees are **not** used (one `make dev` serves everyone, and a stray worktree
+has already been swept into someone's commit). So isolation is unavailable, and
+discipline replaces it.
 
-- **Start every branch from `origin/staging`**, and fetch first:
+### The three branches
+
+| Branch | Moves when | Who writes |
+|---|---|---|
+| **`wave`** | constantly | every agent — this is where you work |
+| **`staging`** | when a slice of `wave` is green | merges only, via PR |
+| **`main`** | when a release ships | merges only |
+
+`wave` is permanent. It is **not** deleted after merging — it merges into
+`staging` repeatedly through successive PRs, and work continues on it. That
+keeps each PR a reviewable slice without anyone ever switching branches.
+
+`main` only moves on release (it last moved for v0.3.0) and is routinely ~100
+commits behind `staging`. Never branch from it.
+
+Why `wave` exists rather than working on `staging` directly: `staging.N`
+prereleases cut from `staging`, and real boxes install them with
+`virtues upgrade --pre`. Half-finished work must not land there.
+
+### Never — these destroy other agents' work
+
+| Command | What it does to everyone else |
+|---|---|
+| `git switch` / `checkout <branch>` | moves the floor under every running agent |
+| `git add -A` / `git add .` / `commit -a` | stages **everyone's** in-flight edits into your commit |
+| `git stash` | pockets everyone's uncommitted work, repo-wide |
+| `git restore` / `checkout -- <path>` | destroys another agent's edits, unrecoverably |
+| `git reset --hard`, `git clean -fd` | same, wholesale |
+| `git rebase`, `git push --force` | rewrites history others have built on |
+
+These are hard rules, not guidance. If you believe you need one, **stop and ask
+the human.** All of them have already caused a real loss in this repo.
+
+To abandon your own work, do not stash — either leave the files alone or commit
+them to `wave` and revert later. Commits are cheap; the stash is shared.
+
+### Committing
+
+Stage explicit paths, then commit with an explicit pathspec:
+
+```sh
+make commit MSG="fix(applets): the thing" FILES="path/one.rs path/two.rs"
+```
+
+`make commit` takes a lock and does the safe thing. If you commit by hand, the
+pathspec after `--` is what makes it safe:
+
+```sh
+git add <your paths> && git commit -m "..." -- <your paths>
+```
+
+With a pathspec, `git commit` **ignores the index entirely** and commits only
+those paths — so another agent's concurrently staged work cannot ride along.
+Without it, whoever commits first takes everyone's staged changes. This has
+already happened: a privacy-claim correction shipped inside a commit titled
+"rename the HTTP surface."
+
+Other rules that follow from a shared tree:
+
+- **Check `git status` before editing.** If a file is already modified and you
+  did not modify it, another agent is in it — pick something else or ask.
+- **The commit message must describe everything in the commit**, not just the
+  part you meant. With agents interleaving, `git log` is the only per-topic
+  navigation anyone has.
+- **Claim a migration number before writing the SQL:**
 
   ```sh
-  git fetch origin && git switch -c <name> origin/staging
+  make migration NAME=add_foo
   ```
 
-  Use `origin/staging`, not the local `staging` ref, which may be stale.
+  It takes the next number, writes a placeholder, and commits it under the lock
+  — so the number is yours before anyone else looks. Then write the SQL and
+  `make commit` it. Two agents reaching for the same number is the *default*
+  outcome otherwise, and git will not warn you: `sqlx::migrate!` keys on the
+  version, and renumbering after a box has applied it breaks that box's
+  upgrades. Migration 52 once killed a box for 3¼ hours.
 
-- **Never commit directly to `staging` or `main`.** Work on a branch and merge.
-- Rebase long-lived branches onto `origin/staging` regularly. A branch that
-  drifts far enough stops being mergeable: `feat/composability` reached 181
-  commits behind, and by then staging had independently rewritten the same
-  areas, so most of its work had to be dropped rather than merged.
-- **Hotfixes to released code** branch from the release tag (e.g. `v0.2.0`),
-  not from `main` — the tag stays correct after `main` moves. Merge the fix to
-  both `main` and `staging`.
+  **The counter only sees your own branch.** A number claimed on an unmerged
+  branch is invisible here — which is exactly why everyone works on `wave`. If
+  you must merge a branch carrying migrations, check for duplicate numbers
+  first:
 
-Branch naming follows `feat/`, `fix/`, `chore/`, `docs/`.
+  ```sh
+  ls virtues-core/migrations | sed -n 's/^\([0-9]*\).*/\1/p' | sort | uniq -d
+  ```
+- **Claim verification modestly.** A green `cargo check` on a shared tree may
+  reflect another agent's half-finished edits.
+
+### Merging up
+
+From `wave`, when a slice is green: open a PR to `staging`. Never delete
+`wave` afterward — keep committing to it.
+
+If `staging` moves independently (a hotfix, another machine), reconcile from
+`wave` without switching:
+
+```sh
+git fetch origin && git merge origin/staging
+```
+
+**Hotfixes to released code** branch from the release tag (e.g. `v0.3.0`), not
+from `main` — the tag stays correct after `main` moves. Merge the fix to both
+`main` and `staging`. This is the one case that leaves `wave`, and it needs the
+human.
+
+> **Naming:** `edge` is a release-channel identifier (a git *tag*, and an alias
+> users type for the prerelease channel — see `cli/channel.rs`). Never name a
+> branch `edge`; the tag/branch ambiguity breaks ref resolution.
 
 ## Builds
 
@@ -37,10 +130,9 @@ at each repo root (untracked, listed in `.git/info/exclude`):
 ```
 
 So **there is no `./target` in this repo** — build output lives at the path
-above. This exists because `target/` is ~67GB and agent sessions run in git
-worktrees; without sharing, each worktree cold-builds its own copy and fills the
-disk. Cargo finds the config by walking up from the working directory, so
-worktrees nested under the repo inherit it automatically.
+above. It is shared across the virtues repos so that `target/` (~67GB when it
+sprawls) is not duplicated per checkout. Cargo finds the config by walking up
+from the working directory.
 
 Do not move this setting to `~/.cargo/config.toml`. Other unrelated Rust
 projects live on this machine, and `cargo clean` in any of them deletes the
@@ -52,6 +144,10 @@ Checks:
 cargo check --workspace     # Rust
 cd apps/web && pnpm check   # Svelte
 ```
+
+**One `make dev` serves every agent** — do not start a second one, and do not
+kill the running one. `cargo check` will *block* on the shared target-dir lock
+while `make dev` holds it. That is contention, not a hang; wait it out.
 
 ## Conventions
 
