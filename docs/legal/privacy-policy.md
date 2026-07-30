@@ -1,8 +1,20 @@
-# Privacy Policy — DRAFT
+# Privacy Policy — UNPUBLISHED DRAFT, NOT IN FORCE
 
-> **DRAFT — requires legal counsel review before publishing.** This captures how
-> the system *actually works* (which counsel can't infer) plus standard scaffolding.
-> Bracketed `[…]` items need a decision or a lawyer. Last updated: 2026-07-01.
+> ## ⚠️ This is not Virtues' privacy policy.
+>
+> It is an **unpublished engineering draft** in a public source repository. It has
+> **not** been reviewed by legal counsel, has **never** been served to any user,
+> and creates **no rights, obligations, or representations** to anyone. Do not
+> cite it, rely on it, or quote it as a statement of what Virtues does or
+> promises. Bracketed `[…]` items are open questions, not commitments.
+>
+> The operative policy — once one exists — will be published at
+> `virtues.com/privacy`. Until a link appears there, **there is no privacy policy
+> in force**, because there is no generally available paid service to govern.
+>
+> Purpose of this file: capture how the system *actually works* (which counsel
+> can't infer from the code) so that a lawyer has something accurate to start
+> from. Last updated: 2026-07-01.
 
 ## The short version
 
