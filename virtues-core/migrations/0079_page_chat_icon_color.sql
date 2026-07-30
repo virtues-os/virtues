@@ -1,0 +1,2 @@
+-- 0079_page_chat_icon_color
+-- Number claimed; SQL to follow.
