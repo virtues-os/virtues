@@ -157,18 +157,21 @@ impl InstallConfig {
 
     /// Where the applet tree (manifests + UI + sources.toml) lands on the box.
     ///
-    /// Still the LEGACY path and the LEGACY env var: the installer writes
-    /// `VIRTUES_ACTIONS_DIR=<prefix>/share/virtues/actions`, while virtues-core
-    /// prefers `VIRTUES_APPLETS_DIR` / `WELL_KNOWN_APPLETS_DIR`
-    /// (`/usr/local/share/virtues/applets`) and falls back to these. Moving the
-    /// installer onto the new pair is a box migration, not a rename, so it is
-    /// deliberately not part of the applets rename — see
-    /// `applet_templates::actions_root` for the resolution order.
+    /// The installer writes `VIRTUES_APPLETS_DIR=<prefix>/share/virtues/applets`,
+    /// matching `WELL_KNOWN_APPLETS_DIR` in virtues-core.
+    ///
+    /// Safe on an existing box because activation already symlinks BOTH
+    /// `share/virtues/applets` and the legacy `share/virtues/actions` at the
+    /// slot's `applets/` (see `download::atomic_flip`), and core resolves
+    /// `VIRTUES_APPLETS_DIR` then `VIRTUES_ACTIONS_DIR` then the two well-known
+    /// paths. So old env files, new env files, and either directory name all
+    /// land in the same place — which is what made this a rename rather than a
+    /// migration.
     ///
     /// Shipped in the release tarball; not baked into the binary, so a box with
     /// no copy here has no applets at all.
     pub fn applets_dir(&self) -> PathBuf {
-        self.install_prefix.join("share/virtues/actions")
+        self.install_prefix.join("share/virtues/applets")
     }
 
     /// The WRITABLE applet tree — chat-authored applets and imported packs.

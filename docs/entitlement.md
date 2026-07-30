@@ -153,95 +153,121 @@ month boundaries make renewal accounting and the sweeper simple.
 
 ---
 
-## 6. What we deliberately gave up
+## 6. What the linked model gave up, and got back
 
-| Capability | Why it's gone | Mitigation |
+The voucher model bought structural unlinkability at the cost of every
+operation that needs to address one customer. Collapsing it reverses both
+columns of that trade.
+
+| Capability | Voucher model | Linked model (ships today) |
 |---|---|---|
-| Instant per-user revocation | Would require Atlas to address a bearer → a shared key → breaks the wall | Expiry (month-end) |
-| Chargeback clawback on a specific bearer | Can't find the bearer | Bounded loss (one month); economics cover it |
-| Targeted abuse ban from billing side | Atlas can't reach a bearer | Per-bearer rate limits + behavioral blocklist, all on virtues-api side |
-| Blind signatures | Unnecessary — issuance & redemption are already in separate trust domains | Architectural separation does the work |
+| Instant per-account revocation | Impossible — no shared key to address | **Available**: Atlas knows the `account_id` |
+| Chargeback clawback | Couldn't find the bearer; bounded loss of one month | **Available**: debit the ledger |
+| Targeted abuse ban from the billing side | Impossible | **Available** |
+| Daily-cap change taking effect immediately | No — travelled only on the next voucher | **Yes**: Atlas credits/updates the account directly |
+| Recovery without losing the wallet | Awkward — the bearer *was* the wallet | **Yes**: `device_keys` is a rotatable pointer |
+| Subpoena of both DBs cannot join identity↔usage | **Yes** | **No** — this is what was given up |
+| Blind signatures | Judged unnecessary; separation did the work | The documented v2 path back (RFC 9474) |
+
+The reason the trade was accepted: at the time of the cutover the userbase was
+approximately one box, and the operational capabilities in the top half of that
+table were all missing while the privacy property in the bottom half protected
+nobody in particular. That calculus changes as the userbase grows, which is why
+v2 is written down rather than dropped.
 
 ---
 
 ## 7. Endpoints
 
 **Atlas**
-- `POST /claim {session_id}` — Stripe session → billing_token
-- `POST /voucher {billing_token}` — → voucher_code (registers with virtues-api, carries `daily_cap_micros`)
-- `POST /billing/portal/sessions {billing_token, return_url?}` — → Stripe Customer Portal `{url}`
-- `POST /webhooks/stripe` — maintains subscription status (signature-verified, idempotent)
+- `POST /claim {session_id}` — Stripe session → device api_key (registers the
+  device + credits the wallet with virtues-api as a side effect)
+- `POST /credits/topup` / `POST /credits/auto-topup` — card-funded wallet top-up
+- `POST /billing/portal/sessions` — → Stripe Customer Portal `{url}`
+- `POST /webhooks/stripe` — maintains subscription status; drives renewal
+  crediting (signature-verified, idempotent)
+- `POST /init/*`, `GET /init/poll` — box link/login session dance
+- `POST /iroh/register`, `GET /relay/config`, `POST /relay/authorize` — reach
+  control plane (see [`relay-control-plane.md`](relay-control-plane.md))
+- `POST /diag/install`, `POST /diag/crash` — diagnostic beacons
 - `GET /health`
 
 **virtues-api**
-- `POST /internal/voucher` — Atlas registers a voucher (internal-secret gated)
-- `POST /v1/redeem` — device redeems voucher onto bearer
-- `GET /v1/whoami`, `POST /v1/charge-test` — bearer-auth canaries
-- `/v1/places/*`, `/v1/exa/*`, `/v1/unsplash/*`, `/v1/ai/*` — gated upstreams
+- `POST /internal/device` — Atlas registers an api_key hash → account
+  (internal-secret gated)
+- `POST /internal/credit` — Atlas credits a wallet (internal-secret gated)
+- `POST /internal/block` / `POST /internal/unblock` / `GET /internal/blocklist`
+- `GET /v1/whoami`, `GET /v1/usage`, `POST /v1/charge-test` — api_key canaries
+- `/v1/ai/*` (chat/completions, completions, embeddings, models),
+  `/v1/places/*`, `/v1/exa/*`, `/v1/unsplash/*`,
+  `/v1/services/plaid/*` — gated upstreams
+- `/{provider}/start|callback|exchange|refresh` — the OAuth proxy leg
+- `GET /health`, `GET /ready`
+
+There is no `POST /voucher` and no `POST /v1/redeem`; both were deleted with the
+voucher model.
 
 ---
 
 ## 8. Housekeeping
 
-- **virtues-api sweeper** (`sweeper.rs`): hourly, deletes expired
-  entitlements (past 7-day grace) + dead vouchers. No privacy weight — just
-  space reclamation; there's no link to delete.
-- **Atlas**: no sweeper needed in the voucher model (it stores no vouchers
-  and no bearer links).
+- **virtues-api sweeper** (`sweeper.rs`): hourly. Deletes `accounts` past
+  `expires_at + ACCOUNT_GRACE_DAYS` (which cascades to `device_keys` and
+  `ledger`), and expired `blocklist` rows. Space reclamation, not privacy work.
+- **Atlas**: no sweeper. It stores no usage and no per-call state.
 
 ---
 
 ## 9. Home-server client
 
-The home server (core) runs the voucher dance via `virtues-core/src/virtues_api/`:
-- `renew.rs` — `claim()`, `store_billing_token()`, `renew()` (the voucher
-  dance), `current_bearer()`. Secrets live in the credential vault
-  (`source_id = "virtues_api"`): `billing_token` ≈ refresh token, `bearer`
-  ≈ access token.
-- `client.rs` — `BearerClient`: attaches the current bearer to bearer-route
-  calls and auto-renews once on `bearer_expired` (402). `post_json` for
-  buffered calls; `stream` for SSE, which renews *before* opening the stream
-  (mid-stream renewal is impossible) and retries once on a connect-time 402.
-- `actions/virtues_api_renew/` — the renewal as a visible, catalog-declared
-  action (transparency motif).
-- Onboarding: core `POST /api/billing/claim {session_id}`
-  (`server/api.rs::claim_billing_handler`) runs `renew::claim()` +
-  `store_billing_token()`, then eagerly mints the first bearer (best-effort).
+The home server (core) talks to the cloud through `virtues-core/src/virtues_api/`:
 
-**Migrated to BearerClient.** Every home-server path that hits a Virtues AI
-or utility upstream now authenticates with the device bearer:
+- **`renew.rs`** — keeps its name from the voucher era, but there is no renewal
+  dance left in it. It is the api_key's lifecycle: `claim()` (Stripe session →
+  api_key), `store_api_key()` / `read_api_key()` / `has_api_key()` against the
+  credential vault (`source_id = "virtues_api"`), plus `auto_topup()` and
+  `fetch_portal_session()`. The api_key is a single rotatable credential — there
+  is no refresh/access token pair.
+- **`client.rs`** — `BearerClient` attaches the api_key to every proxy call.
+  `post_json` for buffered calls; `stream` for SSE. It no longer auto-renews on
+  402: a 402 now means *the wallet is empty*, which retrying cannot fix, so it
+  surfaces (and may trigger auto-topup) instead.
+- **Onboarding** — core `POST /api/billing/claim {session_id}`
+  (`server/api.rs::claim_billing_handler`) runs `renew::claim()` +
+  `store_api_key()`. Atlas has already registered the device and credited the
+  wallet by the time that returns, so there is no second step.
+
+**Everything goes through `BearerClient`.** Every home-server path that hits a
+Virtues AI or utility upstream authenticates with the device api_key:
+
 - AI (buffered, `post_json`): `day_summary`, `day_illustration` scene prompt,
   `chats::generate_title`, `compaction` background summary.
 - AI (streaming): `agent/stream.rs::stream_llm_response` uses
   `BearerClient::stream("/v1/ai/chat/completions", …)`, so `chat_handler` and
-  every agent-loop call (incl. `action_runner`) go through the bearer.
-  `LlmConfig` carries the `BearerClient` instead of url+user_id+secret.
-- Utilities: `places.rs` → `/v1/places/*` (`post_json` + `get_json`),
-  `exa.rs` → `/v1/exa/search`, `unsplash.rs` → `/v1/unsplash/search`,
-  `tools/web_search.rs` now delegates to `api::exa::search` (the duplicate
-  Exa client was deleted).
-- The standalone `llm/client.rs` (`VirtuesApiClient`, legacy
-  `/v1/chat/completions`) was **removed** — its only caller (compaction) now
-  uses `BearerClient`.
+  every agent-loop call (including the applet runner) go through it.
+  `LlmConfig` carries the `BearerClient` rather than url+user_id+secret.
+- Utilities: `places.rs` → `/v1/places/*`, `exa.rs` → `/v1/exa/search`,
+  `unsplash.rs` → `/v1/unsplash/search`; `tools/web_search.rs` delegates to
+  `api::exa::search`.
+- Day-illustration image generation routes through `/v1/ai/chat/completions`;
+  `AI_GATEWAY_API_KEY` is not used anywhere in core.
+- The standalone `llm/client.rs` (`VirtuesApiClient`) was removed.
 
-`subscription.rs` is now **local-first**: `/api/subscription` reads the vault
-(billing-token presence) instead of calling the deleted virtues-api
-`/v1/subscription`; gating is by bearer expiry. `/api/billing/portal` reads
-the billing token from the vault and asks Atlas (`POST /billing/portal/sessions`)
-to mint a Stripe-hosted Customer Portal session, returning `{url}` for the web
-BillingView to open. Card/invoice/cancellation management all live on Stripe;
-Atlas resolves billing_token → customer and never exposes a billing UI.
+No live core path uses `X-Internal-Secret` — that header is Atlas↔virtues-api
+only.
 
-Day-illustration image generation (`day_illustration::generate_image_via_gateway`)
-also routes through `/v1/ai/chat/completions` now — `AI_GATEWAY_API_KEY` is no
-longer used anywhere in core, and image-gen cost is metered through the bearer.
-
-Every home-server AI/utility path now authenticates with the device bearer;
-no live core path uses `X-Internal-Secret`.
+`subscription.rs` is **local-first**: `/api/subscription` reads the vault
+(api_key presence) rather than calling the cloud. `/api/billing/portal` reads
+the api_key from the vault and asks Atlas (`POST /billing/portal/sessions`) to
+mint a Stripe-hosted Customer Portal session, returning `{url}` for the web
+BillingView. Card, invoice, and cancellation management all live on Stripe;
+Atlas never exposes a billing UI.
 
 The streaming path forwards `provider_options` and `thought_signature` end to
-end (`agent/stream.rs` adds both to the request body when present), so
-extended-thinking / tool-signature continuity is preserved on the bearer route.
+end (`agent/stream.rs` adds both when present), so extended-thinking and
+tool-signature continuity are preserved.
+
+---
 
 ## 10. Open / deferred
 
@@ -250,28 +276,33 @@ extended-thinking / tool-signature continuity is preserved on the bearer route.
   source model; a per-Item monthly-cost entitlement treatment is still open.
 - Dunning recovery beyond `past_due` (full retry/grace flow).
 
-**Daily-cap propagation latency (by design):** a change to
-`customers.daily_cap_micros` takes effect at the customer's *next* voucher or
-top-up, because the cap travels only on the voucher (the wall forbids Atlas
-addressing a bearer directly). This is the natural, privacy-preserving latency
-— not a bug, and we deliberately don't add an eager-refresh path for a spend
-ceiling.
+- **Blind unlinkability (v2).** Restoring the property §1 says we gave up, via
+  [RFC 9474](https://www.rfc-editor.org/rfc/rfc9474.html) blind signatures
+  rather than the old disposable-voucher scheme. This is the one deferred item
+  with a user-visible promise attached, so it should not drift quietly.
+
+**Daily-cap propagation** is no longer deferred or latent: Atlas addresses the
+account directly, so a change to `customers.daily_cap_micros` can be pushed with
+the next `POST /internal/credit`. The voucher model's "privacy-preserving
+latency" was a consequence of the wall and went away with it.
 
 ## 11. Behavioral blocklist
 
-Implemented in [`blocklist.rs`](../../services/virtues-api/src/blocklist.rs). Keyed
-on the anonymous `bearer_hash` (never a customer). The in-memory `DashMap` is
+Implemented in [`blocklist.rs`](../services/virtues-api/src/blocklist.rs). Keyed
+on `key_hash` — the SHA-256 of the api_key, i.e. the credential being rate-limited,
+never a customer record. (The column was `bearer_hash` until migration 0005
+renamed it.) The in-memory `DashMap` is
 the hot path; the `blocklist` table is a restart snapshot, reloaded on boot and
 swept hourly. Blocks are **TTL'd cooldowns**, not permanent bans — usage is
 anonymous with no appeal channel, so a permanent false-positive would be
 unrecoverable.
 
-- **Enforcement**: `bearer_auth` checks `is_blocked` after expiry; blocked →
-  403 `blocked`.
+- **Enforcement**: the api_key auth layer checks `is_blocked` after resolving
+  the account; blocked → 403 `blocked`.
 - **Auto (rate) — observe-only by default**: each authenticated request hits a
-  per-bearer fixed-window counter; exceeding `BLOCKLIST_RATE_LIMIT_PER_MIN`
-  (default 600/min) *flags + logs* the bearer but does **not** block unless
-  `BLOCKLIST_RATE_AUTOBLOCK=true`. The reason it's off by default: a bearer is
+  per-key fixed-window counter; exceeding `BLOCKLIST_RATE_LIMIT_PER_MIN`
+  (default 600/min) *flags + logs* the key but does **not** block unless
+  `BLOCKLIST_RATE_AUTOBLOCK=true`. The reason it's off by default: an api_key is
   *per-home-server*, aggregating background jobs + chat + parallel tool calls +
   per-keystroke autocomplete onto one counter, and cost is already capped by the
   daily budget — so a false positive would lock out a whole paying household
@@ -281,8 +312,44 @@ unrecoverable.
   (default 15 min).
 - **Introspection**: `GET /internal/blocklist` (internal-secret gated) returns
   `autoblock_enabled`, the rate ceiling, active blocks, and the flagged
-  watchlist (bearers over the ceiling, with trip counts + peak) — so we can see
+  watchlist (keys over the ceiling, with trip counts + peak) — so we can see
   the would-block signal without enforcing.
 - **Manual (ops)**: `POST /internal/block` / `POST /internal/unblock`
-  (internal-secret gated) take a `bearer_hash` learned from virtues-api's *own*
-  abuse logs. Atlas is never involved — it has no bearer to send.
+  (internal-secret gated) take a `key_hash` learned from virtues-api's *own*
+  abuse logs.
+
+---
+
+## 12. The voucher model (superseded)
+
+Kept because it is the intended v2 destination, not because it describes
+anything running today. Every table and endpoint named here is deleted.
+
+Atlas and virtues-api shared **no column**. The bridge between them was a
+**disposable voucher** that neither side retained as a link:
+
+1. The box generated a fresh random bearer; only its hash ever left the device.
+2. `POST /voucher {billing_token}` to Atlas. Atlas checked the subscription was
+   active, passed an anti-stacking rate limit, minted a one-time `voucher_code`,
+   and registered `sha256(code)` + value + `daily_cap_micros` with virtues-api
+   via `POST /internal/voucher` — **a call containing no customer and no
+   bearer**. It returned the raw code.
+3. `POST /v1/redeem` to virtues-api with the code plus the bearer. virtues-api
+   validated the voucher, loaded the budget and cohort-aligned expiry onto the
+   bearer, marked the voucher redeemed, and **discarded which bearer redeemed
+   it**.
+
+The voucher was a relay baton: it passed from billing to the gate *through the
+user's own home server*, and the instant it was spent both sides forgot it. The
+two halves touched a shared object for a moment and kept no record of the touch.
+`vouchers.redeemed_at` recorded **that** a voucher was spent, never **which
+bearer** spent it, and that discard is what kept the chain from ever living in
+one place.
+
+Renewal was the OAuth refresh pattern — `bearer_expired` (402) → renew → retry —
+which is why the client had a renew-and-retry path and why `renew.rs` still
+carries that name.
+
+Dropped in
+[`0005_accounts_ledger.sql`](../services/virtues-api/migrations/0005_accounts_ledger.sql).
+The reasoning is in [§6](#6-what-the-linked-model-gave-up-and-got-back).
