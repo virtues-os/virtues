@@ -40,7 +40,7 @@ use tokio::io::AsyncWriteExt;
 use tokio::process::Command;
 
 use crate::error::{Error, Result};
-use crate::scheduler::actions::{self, Action};
+use crate::scheduler::applets::{self, Applet};
 use crate::server::yjs::YjsState;
 
 /// Dependencies threaded into the runner. Cheap to clone; holds references.
@@ -51,36 +51,36 @@ pub struct RunnerDeps {
 }
 
 // Subprocess contract types live in `virtues_helpers::contract`. Re-export so
-// existing call sites (`action_runner::ActionInput`) keep working.
-pub use virtues_helpers::contract::{ActionInput, ActionOutput};
+// existing call sites (`applet_runner::AppletInput`) keep working.
+pub use virtues_helpers::contract::{AppletInput, AppletOutput};
 
 /// Outcome of a single action run.
 #[derive(Debug)]
-pub struct ActionRunResult {
+pub struct AppletRunResult {
     pub run_id: Option<String>,
-    pub status: ActionRunStatus,
+    pub status: AppletRunStatus,
     pub summary: String,
     pub error: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum ActionRunStatus {
+pub enum AppletRunStatus {
     Success,
     Failed,
     Skipped,
     NotFound,
     Forbidden,
     /// Run row was created and execution was spawned on a detached task.
-    /// Used only by `run_action_detached` so the HTTP handler can return
+    /// Used only by `run_applet_detached` so the HTTP handler can return
     /// immediately with the run_id while the subprocess/agent finishes.
     Running,
 }
 
-impl ActionRunResult {
+impl AppletRunResult {
     fn not_found() -> Self {
         Self {
             run_id: None,
-            status: ActionRunStatus::NotFound,
+            status: AppletRunStatus::NotFound,
             summary: String::new(),
             error: None,
         }
@@ -89,7 +89,7 @@ impl ActionRunResult {
     fn forbidden(msg: impl Into<String>) -> Self {
         Self {
             run_id: None,
-            status: ActionRunStatus::Forbidden,
+            status: AppletRunStatus::Forbidden,
             summary: String::new(),
             error: Some(msg.into()),
         }
@@ -99,22 +99,22 @@ impl ActionRunResult {
 /// Outcome of `prepare_run`: either an early-exit result (no/short execution
 /// needed) or a created run row that the caller should drive to completion.
 enum PrepareOutcome {
-    Early(ActionRunResult),
-    Ready { action: Action, run_id: String },
+    Early(AppletRunResult),
+    Ready { action: Applet, run_id: String },
 }
 
 /// Run an action end-to-end. The single inline-await dispatch entry point.
 ///
 /// Used by cron, webhooks, and tool-call paths that want to await the full
-/// result. The HTTP handler uses `run_action_detached` instead so a client
+/// result. The HTTP handler uses `run_applet_detached` instead so a client
 /// disconnect can't drop the future mid-subprocess.
-pub async fn run_action(
+pub async fn run_applet(
     deps: &RunnerDeps,
-    action_id: &str,
+    applet_id: &str,
     trigger: &str,
     payload: Option<&serde_json::Value>,
-) -> Result<ActionRunResult> {
-    match prepare_run(deps, action_id, trigger).await? {
+) -> Result<AppletRunResult> {
+    match prepare_run(deps, applet_id, trigger).await? {
         PrepareOutcome::Early(result) => Ok(result),
         PrepareOutcome::Ready { action, run_id } => {
             let payload = payload.cloned();
@@ -129,14 +129,14 @@ pub async fn run_action(
 ///
 /// Returns `Running` status with the new `run_id` for the happy path; early
 /// exits (not_found / forbidden / condition-skipped / concurrency-skipped /
-/// view-runtime) are unchanged from `run_action`.
-pub async fn run_action_detached(
+/// view-runtime) are unchanged from `run_applet`.
+pub async fn run_applet_detached(
     deps: &RunnerDeps,
-    action_id: &str,
+    applet_id: &str,
     trigger: &str,
     payload: Option<&serde_json::Value>,
-) -> Result<ActionRunResult> {
-    match prepare_run(deps, action_id, trigger).await? {
+) -> Result<AppletRunResult> {
+    match prepare_run(deps, applet_id, trigger).await? {
         PrepareOutcome::Early(result) => Ok(result),
         PrepareOutcome::Ready { action, run_id } => {
             let payload = payload.cloned();
@@ -145,9 +145,9 @@ pub async fn run_action_detached(
             tokio::spawn(async move {
                 let _ = execute_prepared(deps_owned, action, run_id_for_task, payload).await;
             });
-            Ok(ActionRunResult {
+            Ok(AppletRunResult {
                 run_id: Some(run_id),
-                status: ActionRunStatus::Running,
+                status: AppletRunStatus::Running,
                 summary: String::new(),
                 error: None,
             })
@@ -161,31 +161,31 @@ pub async fn run_action_detached(
 /// caller can decide whether to await execution inline or detach it.
 async fn prepare_run(
     deps: &RunnerDeps,
-    action_id: &str,
+    applet_id: &str,
     trigger: &str,
 ) -> Result<PrepareOutcome> {
     // 1. Fetch action
-    let action = match actions::get_action(&deps.db, action_id).await {
+    let action = match applets::get_applet(&deps.db, applet_id).await {
         Ok(a) if a.enabled => a,
         Ok(_) => {
-            tracing::warn!(action_id, "action is disabled, ignoring run request");
-            return Ok(PrepareOutcome::Early(ActionRunResult::not_found()));
+            tracing::warn!(applet_id, "action is disabled, ignoring run request");
+            return Ok(PrepareOutcome::Early(AppletRunResult::not_found()));
         }
         Err(e) => {
-            tracing::warn!(action_id, error = %e, "action not found");
-            return Ok(PrepareOutcome::Early(ActionRunResult::not_found()));
+            tracing::warn!(applet_id, error = %e, "action not found");
+            return Ok(PrepareOutcome::Early(AppletRunResult::not_found()));
         }
     };
 
     // 2. Triggers validation
     if !action.triggers.iter().any(|t| t == trigger) {
         tracing::warn!(
-            action_id,
+            applet_id,
             trigger,
             allowed = ?action.triggers,
             "trigger not allowed for this action"
         );
-        return Ok(PrepareOutcome::Early(ActionRunResult::forbidden(format!(
+        return Ok(PrepareOutcome::Early(AppletRunResult::forbidden(format!(
             "trigger '{}' not in allowed list {:?}",
             trigger, action.triggers
         ))));
@@ -198,10 +198,10 @@ async fn prepare_run(
     let has_agent = action.agent.as_deref().is_some_and(|s| !s.trim().is_empty());
     let has_exec = has_agent || action.command.as_ref().is_some_and(|c| !c.is_empty());
     if !has_exec {
-        tracing::debug!(action_id, "face-only applet — never invoked server-side");
-        return Ok(PrepareOutcome::Early(ActionRunResult {
+        tracing::debug!(applet_id, "face-only applet — never invoked server-side");
+        return Ok(PrepareOutcome::Early(AppletRunResult {
             run_id: None,
-            status: ActionRunStatus::Skipped,
+            status: AppletRunStatus::Skipped,
             summary: "face-only applet — not server-invoked".to_string(),
             error: None,
         }));
@@ -212,10 +212,10 @@ async fn prepare_run(
     // key) or a credential_id (OAuth/api). One or the other must be set.
     if trigger == "webhook" && action.credential_id.is_none() && action.device_id.is_none() {
         tracing::error!(
-            action_id,
+            applet_id,
             "webhook trigger on action with no device_id or credential_id — rejected"
         );
-        return Ok(PrepareOutcome::Early(ActionRunResult::forbidden(
+        return Ok(PrepareOutcome::Early(AppletRunResult::forbidden(
             "webhook trigger requires a device_id or credential_id".to_string(),
         )));
     }
@@ -225,24 +225,24 @@ async fn prepare_run(
         if !condition.trim().is_empty() {
             match eval_condition(&deps.db, condition).await {
                 Ok(false) => {
-                    tracing::debug!(action_id, "condition falsy, skipping silently");
-                    return Ok(PrepareOutcome::Early(ActionRunResult {
+                    tracing::debug!(applet_id, "condition falsy, skipping silently");
+                    return Ok(PrepareOutcome::Early(AppletRunResult {
                         run_id: None,
-                        status: ActionRunStatus::Skipped,
+                        status: AppletRunStatus::Skipped,
                         summary: "condition evaluated false".to_string(),
                         error: None,
                     }));
                 }
                 Ok(true) => {}
                 Err(e) => {
-                    tracing::error!(action_id, error = %e, "condition evaluation failed");
-                    let run = actions::create_run(&deps.db, Some(&action.id), trigger).await?;
+                    tracing::error!(applet_id, error = %e, "condition evaluation failed");
+                    let run = applets::create_run(&deps.db, Some(&action.id), trigger).await?;
                     let msg = format!("condition evaluation error: {e}");
-                    actions::complete_run(&deps.db, &run.id, "error", 0, Some(&msg), None)
+                    applets::complete_run(&deps.db, &run.id, "error", 0, Some(&msg), None)
                         .await?;
-                    return Ok(PrepareOutcome::Early(ActionRunResult {
+                    return Ok(PrepareOutcome::Early(AppletRunResult {
                         run_id: Some(run.id),
-                        status: ActionRunStatus::Failed,
+                        status: AppletRunStatus::Failed,
                         summary: String::new(),
                         error: Some(msg),
                     }));
@@ -255,13 +255,13 @@ async fn prepare_run(
     // condition (silent by design: frequent polls would flood run history),
     // an overlap skip is rare and diagnostically important, so it records a
     // real `skipped` run row per the singleton doctrine.
-    if actions::has_active_run(&deps.db, &action.id)
+    if applets::has_active_run(&deps.db, &action.id)
         .await
         .unwrap_or(false)
     {
-        tracing::info!(action_id, "previous run still active; skipping");
-        let run = actions::create_run(&deps.db, Some(&action.id), trigger).await?;
-        actions::complete_run(
+        tracing::info!(applet_id, "previous run still active; skipping");
+        let run = applets::create_run(&deps.db, Some(&action.id), trigger).await?;
+        applets::complete_run(
             &deps.db,
             &run.id,
             "skipped",
@@ -270,16 +270,16 @@ async fn prepare_run(
             Some("skipped — previous run still active"),
         )
         .await?;
-        return Ok(PrepareOutcome::Early(ActionRunResult {
+        return Ok(PrepareOutcome::Early(AppletRunResult {
             run_id: Some(run.id),
-            status: ActionRunStatus::Skipped,
+            status: AppletRunStatus::Skipped,
             summary: "previous run still active".to_string(),
             error: None,
         }));
     }
 
     // 5. Create run row.
-    let run = actions::create_run(&deps.db, Some(&action.id), trigger).await?;
+    let run = applets::create_run(&deps.db, Some(&action.id), trigger).await?;
     Ok(PrepareOutcome::Ready {
         action,
         run_id: run.id,
@@ -289,14 +289,14 @@ async fn prepare_run(
 /// Steps 6–9 of the dispatch flow. Loads credentials, runs the subprocess
 /// and/or agent phase, and persists the final run state. Errors are recorded
 /// against the run row rather than propagated, so this function always returns
-/// an `ActionRunResult` and is safe to detach.
+/// an `AppletRunResult` and is safe to detach.
 async fn execute_prepared(
     deps: RunnerDeps,
-    action: Action,
+    action: Applet,
     run_id: String,
     payload: Option<serde_json::Value>,
-) -> ActionRunResult {
-    let action_id = action.id.clone();
+) -> AppletRunResult {
+    let applet_id = action.id.clone();
 
     // Helper: persist `error` status and return a Failed result. Logs and
     // swallows DB errors from `complete_run` since at this point we have
@@ -304,17 +304,17 @@ async fn execute_prepared(
     async fn fail(
         deps: &RunnerDeps,
         run_id: &str,
-        action_id: &str,
+        applet_id: &str,
         msg: String,
-    ) -> ActionRunResult {
+    ) -> AppletRunResult {
         if let Err(e) =
-            actions::complete_run(&deps.db, run_id, "error", 0, Some(&msg), None).await
+            applets::complete_run(&deps.db, run_id, "error", 0, Some(&msg), None).await
         {
-            tracing::error!(action_id, error = %e, "complete_run failed while recording error");
+            tracing::error!(applet_id, error = %e, "complete_run failed while recording error");
         }
-        ActionRunResult {
+        AppletRunResult {
             run_id: Some(run_id.to_string()),
-            status: ActionRunStatus::Failed,
+            status: AppletRunStatus::Failed,
             summary: String::new(),
             error: Some(msg),
         }
@@ -326,8 +326,8 @@ async fn execute_prepared(
             Ok(c) => Some(c),
             Err(e) => {
                 let msg = format!("failed to load credential {cred_id}: {e}");
-                tracing::error!(action_id, error = %msg, "credential load failed");
-                return fail(&deps, &run_id, &action_id, msg).await;
+                tracing::error!(applet_id, error = %msg, "credential load failed");
+                return fail(&deps, &run_id, &applet_id, msg).await;
             }
         }
     } else {
@@ -355,8 +355,8 @@ async fn execute_prepared(
             }
             Err(e) => {
                 let msg = e.to_string();
-                tracing::error!(action_id, error = %msg, "subprocess phase failed");
-                return fail(&deps, &run_id, &action_id, msg).await;
+                tracing::error!(applet_id, error = %msg, "subprocess phase failed");
+                return fail(&deps, &run_id, &applet_id, msg).await;
             }
         }
     }
@@ -364,7 +364,7 @@ async fn execute_prepared(
     // 8. Agent phase.
     if let Some(prompt) = action.agent.as_ref().filter(|s| !s.trim().is_empty()) {
         let ctx = subprocess_summary.as_deref();
-        match crate::agent::action_runner::run_agent_loop(
+        match crate::agent::applet_runner::run_agent_loop(
             &deps.db, &deps.yjs, &action, prompt, ctx,
         )
         .await
@@ -377,23 +377,23 @@ async fn execute_prepared(
                     .or(subprocess_summary.clone())
                     .unwrap_or_default();
                 if let Err(e) =
-                    actions::complete_run(&deps.db, &run_id, "success", steps, None, Some(&summary))
+                    applets::complete_run(&deps.db, &run_id, "success", steps, None, Some(&summary))
                         .await
                 {
-                    tracing::error!(action_id, error = %e, "complete_run failed after agent success");
+                    tracing::error!(applet_id, error = %e, "complete_run failed after agent success");
                 }
                 maybe_archive_on_until(&deps.db, &action).await;
-                return ActionRunResult {
+                return AppletRunResult {
                     run_id: Some(run_id),
-                    status: ActionRunStatus::Success,
+                    status: AppletRunStatus::Success,
                     summary,
                     error: None,
                 };
             }
             Err(e) => {
                 let msg = e.to_string();
-                tracing::error!(action_id, error = %msg, "agent phase failed");
-                return fail(&deps, &run_id, &action_id, msg).await;
+                tracing::error!(applet_id, error = %msg, "agent phase failed");
+                return fail(&deps, &run_id, &applet_id, msg).await;
             }
         }
     }
@@ -401,14 +401,14 @@ async fn execute_prepared(
     // 9. Complete run.
     let summary = subprocess_summary.unwrap_or_default();
     if let Err(e) =
-        actions::complete_run(&deps.db, &run_id, "success", subprocess_records, None, Some(&summary)).await
+        applets::complete_run(&deps.db, &run_id, "success", subprocess_records, None, Some(&summary)).await
     {
-        tracing::error!(action_id, error = %e, "complete_run failed at end of run");
+        tracing::error!(applet_id, error = %e, "complete_run failed at end of run");
     }
     maybe_archive_on_until(&deps.db, &action).await;
-    ActionRunResult {
+    AppletRunResult {
         run_id: Some(run_id),
-        status: ActionRunStatus::Success,
+        status: AppletRunStatus::Success,
         summary,
         error: None,
     }
@@ -424,7 +424,7 @@ async fn execute_prepared(
 /// hardened `eval_condition` path (read-only tx, timeout, local timezone).
 /// Failures are logged, never fatal — a broken `until` must not fail a run
 /// that already succeeded.
-async fn maybe_archive_on_until(db: &PgPool, action: &Action) {
+async fn maybe_archive_on_until(db: &PgPool, action: &Applet) {
     let Some(until) = action.until.as_deref().map(str::trim) else {
         return;
     };
@@ -437,15 +437,15 @@ async fn maybe_archive_on_until(db: &PgPool, action: &Action) {
         match eval_condition(db, until).await {
             Ok(v) => v,
             Err(e) => {
-                tracing::warn!(action_id = %action.id, error = %e, "until evaluation failed; not archiving");
+                tracing::warn!(applet_id = %action.id, error = %e, "until evaluation failed; not archiving");
                 false
             }
         }
     };
     if done {
-        tracing::info!(action_id = %action.id, "lifecycle complete (until met); archiving");
-        if let Err(e) = actions::archive_action(db, &action.id).await {
-            tracing::error!(action_id = %action.id, error = %e, "archive_action failed");
+        tracing::info!(applet_id = %action.id, "lifecycle complete (until met); archiving");
+        if let Err(e) = applets::archive_applet(db, &action.id).await {
+            tracing::error!(applet_id = %action.id, error = %e, "archive_applet failed");
         }
     }
 }
@@ -585,7 +585,7 @@ const SUBPROCESS_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(3
 /// embedding_index's initial-onboarding drain is hours of real work, so its
 /// manifest carries `[config.limits] timeout_s = 7500` and its internal
 /// 2-hour wall-clock limit exits cleanly rather than being SIGKILLed.
-fn subprocess_timeout(action: &Action) -> std::time::Duration {
+fn subprocess_timeout(action: &Applet) -> std::time::Duration {
     action
         .config
         .get("limits")
@@ -604,7 +604,7 @@ struct SubprocessOutcome {
 
 async fn run_subprocess(
     db: &PgPool,
-    action: &Action,
+    action: &Applet,
     command: &[String],
     credentials: Option<serde_json::Value>,
     payload: Option<&serde_json::Value>,
@@ -622,7 +622,7 @@ async fn run_subprocess(
         )));
     }
 
-    let input = ActionInput {
+    let input = AppletInput {
         config: action.config.clone(),
         credentials,
         payload: payload.cloned(),
@@ -674,7 +674,7 @@ async fn run_subprocess(
         }));
     }
 
-    let action_output: ActionOutput = serde_json::from_str(&stdout).map_err(|e| {
+    let applet_output: AppletOutput = serde_json::from_str(&stdout).map_err(|e| {
         Error::Other(format!(
             "failed to parse subprocess stdout JSON: {e}. raw: {}",
             &stdout[..stdout.len().min(500)]
@@ -683,7 +683,7 @@ async fn run_subprocess(
 
     // Persist returned config back to the action row (JSONB column)
     sqlx::query("UPDATE app_applets SET config = $1, updated_at = now() WHERE id = $2")
-        .bind(&action_output.config)
+        .bind(&applet_output.config)
         .bind(&action.id)
         .execute(db)
         .await
@@ -693,9 +693,9 @@ async fn run_subprocess(
     // JSON) while warning on stderr — that channel used to be swallowed, which
     // is exactly how the transcription runaway stayed invisible. Log it, and
     // fold a short tail into the run summary so it shows in the Telemetry tab.
-    let mut summary = action_output.result;
+    let mut summary = applet_output.result;
     if !stderr.trim().is_empty() {
-        tracing::warn!(action_id = %action.id, "action stderr (exit 0): {}", stderr.trim());
+        tracing::warn!(applet_id = %action.id, "action stderr (exit 0): {}", stderr.trim());
         let tail: String = stderr.trim().chars().rev().take(500).collect::<Vec<_>>()
             .into_iter().rev().collect();
         summary = format!("{summary}\n[stderr] {tail}");
@@ -703,12 +703,12 @@ async fn run_subprocess(
 
     Ok(SubprocessOutcome {
         summary,
-        records: action_output.records,
+        records: applet_output.records,
     })
 }
 
 /// Default deployed location for action binaries, matching the installer's
-/// `InstallConfig::actions_bin_dir` (`$INSTALL_PREFIX/libexec/virtues`). Kept
+/// `InstallConfig::applets_bin_dir` (`$INSTALL_PREFIX/libexec/virtues`). Kept
 /// in sync with where the installer copies `actions-bin/` and points
 /// `VIRTUES_ACTIONS_BIN_DIR`.
 const WELL_KNOWN_APPLETS_BIN_DIR: &str = "/usr/local/libexec/virtues";

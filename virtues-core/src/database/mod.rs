@@ -50,7 +50,7 @@ impl Database {
 
     /// Create a new database connection with a custom application name.
     pub fn new_named(database_url: &str, app_name: &str) -> Result<Self> {
-        // Default core pool size: 5. Action subprocesses override via env.
+        // Default core pool size: 5. Applet subprocesses override via env.
         let max_connections = std::env::var("DATABASE_MAX_CONNECTIONS")
             .ok()
             .and_then(|s| s.parse::<u32>().ok())

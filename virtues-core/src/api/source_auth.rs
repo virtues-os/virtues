@@ -30,7 +30,7 @@ use virtues_helpers::auth::{
     proxy_url, sign_oauth_state, verify_oauth_state, AuthError,
 };
 
-use crate::action_templates::{lookup_source, reconcile_templates, SourceAuth};
+use crate::applet_templates::{lookup_source, reconcile_templates, SourceAuth};
 use crate::server::webhook::AppState;
 
 // ─────────────────────────────────────────────────────────────────────────────

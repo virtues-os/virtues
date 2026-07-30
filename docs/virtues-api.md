@@ -2,7 +2,28 @@
 
 > This is not a spec. It's the *why* — the philosophy, the motifs, and the
 > plain-language way we tell people about it. The technical design lives in
-> `docs/`.
+> [`entitlement.md`](entitlement.md).
+
+> ## ⚠️ This page describes the v2 goal, not what ships today.
+>
+> The unlinkability claim below was **architecturally true** under the
+> double-blind voucher model. That model was collapsed to a linked prepaid
+> ledger in
+> [`0005_accounts_ledger.sql`](../services/virtues-api/migrations/0005_accounts_ledger.sql):
+> Atlas and virtues-api now **share an opaque `account_id`**, so identity and
+> usage *are* joinable by someone holding both of our databases.
+>
+> **Nothing on this page may be used as customer-facing copy until either the
+> blind-signature work ([RFC 9474](https://www.rfc-editor.org/rfc/rfc9474.html))
+> ships or the wording is rewritten to the weaker claim that is actually true.**
+> See [`entitlement.md` §1](entitlement.md#1-the-privacy-posture--read-this-first)
+> for the honest current posture.
+>
+> **What is true today and is safe to say:** your data lives on your box; we
+> never see your content — not prompts, not completions, not files, only token
+> counts and costs; and the proxy holds no names, emails, or payment details.
+> That is *data minimization*, which is a real and defensible promise. It is not
+> the *structural impossibility* this page describes.
 
 ---
 
@@ -11,6 +32,10 @@
 **The only machine on Earth that can connect your identity to your usage is the one in your house.**
 
 Everything else follows from that.
+
+> **Status: aspirational.** Today a second machine can also make that
+> connection — ours, by joining Atlas to virtues-api on `account_id`. Restoring
+> this sentence to literal truth is the v2 objective.
 
 ---
 
@@ -25,6 +50,13 @@ So we split the company's knowledge in two and made sure the two halves can neve
 
 The link between "who" and "what" exists in exactly one place: **your own server, in your own home.** That's your data, on your hardware. We never hold it.
 
+> **Where this diverges from the code.** The split above is real — Billing still
+> holds no usage, and the API still holds no names, emails, or cards. What the
+> shipped system lacks is the *"can never be rejoined"* part: both sides key on
+> the same opaque `account_id`, so the two halves can be joined by us. The
+> subpoena scenario in the paragraph above is therefore not yet defended
+> against by construction.
+
 ---
 
 ## The three parties
@@ -33,7 +65,7 @@ Think of it as three rooms that never share a filing cabinet:
 
 1. **Your home server** (VirtuesOS) — yours. Holds both your billing identity and your usage token, linked together. This is fine, because it's *your* box and *your* data. Nobody subpoenas your living room and finds Virtues' records there — they find *your* records, which you already control.
 
-2. **Billing (Atlas)** — ours. Talks to Stripe. Knows you're a paying customer. Issues a monthly "you're paid" voucher. **Never sees your usage token.**
+2. **Billing (Atlas)** — ours. Talks to Stripe. Knows you're a paying customer. Credits your wallet each month when the subscription renews. **Never sees your content or your usage detail.**
 
 3. **The API (virtues-api)** — ours. Serves your requests — AI, maps, search, integrations — and counts down a prepaid budget. Knows a token has money left. **Never sees you.**
 
@@ -61,10 +93,15 @@ it.)
 
 | Credential | Created by | Raw value lives on | Reference kept at | What it does | Never sees it |
 |---|---|---|---|---|---|
-| **Billing token** | Billing, at signup | your home server | Billing (hashed) | proves "I'm paid" → request vouchers | the API |
-| **Voucher** | Billing, monthly | passes *through* your server | the API (hashed, until spent) | one-time baton, Billing → API | both forget it after |
-| **Usage token** *(bearer)* | your home server, monthly | your home server | the API (hashed) | anonymous spend — AI, maps, search | Billing |
+| **Device api_key** | Billing, at signup (rotatable) | your home server | Billing *and* the API (both hashed) | proves "I'm paid" *and* spends the wallet — AI, maps, search | — |
 | **Device key** *(pairing bearer)* | your box, at pairing | each of your devices | your box | your phone / laptop ↔ your own box (local) | all of Virtues' cloud |
+
+> **Changed from the v2 design.** There used to be three cloud credentials — a
+> billing token, a monthly voucher, and a separate usage bearer — precisely so
+> that no one credential was known to both halves. Today there is **one**
+> api_key, known to both, resolving to an `account_id` that both also hold. That
+> collapse is the whole of what was given up; see
+> [`entitlement.md` §1](entitlement.md#1-the-privacy-posture--read-this-first).
 
 Two "bearers" people conflate, kept distinct:
 - The **usage token** is *home server ↔ the API* — your anonymous "I'm a paying
@@ -78,7 +115,11 @@ server.**
 
 ---
 
-## The voucher — how the two halves stay apart
+## The voucher — how the two halves *were* meant to stay apart
+
+> **Not shipped.** This section describes the v2 design. What runs today is a
+> single api_key and a wallet keyed on a shared `account_id`; renewal is a
+> Stripe webhook that credits the wallet server-side, with the box not involved.
 
 Every month, on the **same day for everyone** (so the timing reveals nothing), your home server quietly does three things:
 
@@ -90,9 +131,18 @@ The voucher is a relay baton. It passes from Billing to the API *through your ho
 
 Because everyone's token rotates on the same day, even the *timing* of all this carries no fingerprint. You're one indistinguishable rotation among thousands.
 
+*(The cohort-aligned month boundary did ship, and is still in the code — but it
+now buys operational tidiness rather than privacy, since the shared
+`account_id` already links the two sides.)*
+
 ---
 
 ## Why this needs no clever cryptography
+
+> **Not shipped — and the conclusion has flipped.** The argument below is sound
+> *given* the voucher model. Without it, separation is no longer doing the work,
+> and blind signatures stop being the tool for "the opposite situation" and
+> become exactly the tool we need. RFC 9474 is the v2 path.
 
 People expect a privacy claim like this to rest on some exotic crypto. Ours doesn't, and that's the point. The whole guarantee comes from one structural fact:
 
@@ -140,7 +190,7 @@ These are the recurring images. Reach for them in copy, docs, support replies, t
 - **"By construction, not by promise."** Whenever we state a privacy property, frame it as architecturally impossible, not policy-restrained.
 - **"Counters, not logs."** We track a number going down, never a history of events.
 - **"Two rooms, no shared cabinet."** Billing and the API are separate by design.
-- **"A baton, not a record."** The voucher passes through and is forgotten.
+- **"A baton, not a record."** The voucher passes through and is forgotten. *(v2 — see the banner at the top of this page.)*
 - **"One rotation among thousands."** Cohort timing erases the fingerprint.
 - **"Nothing to hand over."** The subpoena test — when compelled, we have nothing that ties you to your usage.
 

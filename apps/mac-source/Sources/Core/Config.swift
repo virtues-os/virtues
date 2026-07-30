@@ -10,9 +10,9 @@ struct Config: Codable {
     /// The LAN origin used at pair time (`/api/pair/consume`). Kept for reference
     /// / re-pair; uploads no longer use it (they go over iroh).
     let apiEndpoint: String
-    /// `function_name → action_id` map from pair-consume — the webhook targets.
-    /// mac-source posts to `actionIds["mac_ingest"]`.
-    let actionIds: [String: String]
+    /// `function_name → applet_id` map from pair-consume — the webhook targets.
+    /// mac-source posts to `appletIds["mac_ingest"]`.
+    let appletIds: [String: String]
     /// The box's iroh reach ticket: EndpointId + relay URL. Dialed by BoxTransport.
     let boxNodeId: String
     let relayUrl: String
@@ -34,7 +34,7 @@ struct Config: Codable {
     private struct ConfigFile: Codable {
         let deviceId: String
         let apiEndpoint: String
-        let actionIds: [String: String]
+        let appletIds: [String: String]
         let boxNodeId: String
         let relayUrl: String
         let createdAt: Date
@@ -58,7 +58,7 @@ struct Config: Codable {
             return Config(
                 deviceId: cf.deviceId,
                 apiEndpoint: cf.apiEndpoint,
-                actionIds: cf.actionIds,
+                appletIds: cf.appletIds,
                 boxNodeId: cf.boxNodeId,
                 relayUrl: cf.relayUrl,
                 createdAt: cf.createdAt,
@@ -80,7 +80,7 @@ struct Config: Codable {
         let cf = ConfigFile(
             deviceId: deviceId,
             apiEndpoint: apiEndpoint,
-            actionIds: actionIds,
+            appletIds: appletIds,
             boxNodeId: boxNodeId,
             relayUrl: relayUrl,
             createdAt: createdAt
@@ -176,7 +176,7 @@ struct Config: Codable {
     struct Paired {
         let deviceId: String
         let endpoint: String
-        let actionIds: [String: String]
+        let appletIds: [String: String]
         let boxNodeId: String
         let relayUrl: String
         let seed: String
@@ -186,7 +186,7 @@ struct Config: Codable {
     /// (the same public, token-gated route the iOS app uses — no bearer). We
     /// generate an iroh keypair, submit its EndpointId (`device_node_id`) so the
     /// box allowlists it, declare `source = "mac"` so `reconcile_templates` fans
-    /// out the `mac_ingest` webhook action (anchored on this device), and read
+    /// out the `mac_ingest` webhook applet (anchored on this device), and read
     /// back the box's reach ticket for uploads over iroh. Consume runs over the
     /// LAN origin (`VIRTUES_API_URL`); everything after goes over iroh.
     static func pairConsume(token: String) async throws -> Paired {
@@ -244,11 +244,11 @@ struct Config: Codable {
                 + "(is the box's iroh endpoint up?)"
             )
         }
-        let actionIds = (json["action_ids"] as? [String: String]) ?? [:]
+        let appletIds = (json["applet_ids"] as? [String: String]) ?? [:]
         return Paired(
             deviceId: deviceId,
             endpoint: root,
-            actionIds: actionIds,
+            appletIds: appletIds,
             boxNodeId: boxNodeId,
             relayUrl: relayUrl,
             seed: seed

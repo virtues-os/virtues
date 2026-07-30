@@ -156,7 +156,7 @@ pub fn due_streams() -> Result<Vec<String>> {
 }
 
 /// The `action_key` (ingest binary name) for a stream's queued rows.
-pub fn action_key_for(stream: &str) -> Result<Option<String>> {
+pub fn applet_key_for(stream: &str) -> Result<Option<String>> {
     let conn = conn()?;
     let key: Option<String> = conn
         .query_row(

@@ -301,7 +301,7 @@ pub async fn compute_setup_state(pool: &PgPool) -> Result<SetupState> {
     // row's id is `action_chat_import` (see server::api::chat_import_upload).
     let chat_imported: bool = sqlx::query_scalar(
         "SELECT EXISTS(SELECT 1 FROM app_applet_runs \
-         WHERE action_id = 'action_chat_import' AND status = 'success')",
+         WHERE applet_id = 'applet_chat_import' AND status = 'success')",
     )
     .fetch_one(pool)
     .await
@@ -328,7 +328,7 @@ pub async fn compute_setup_state(pool: &PgPool) -> Result<SetupState> {
     .unwrap_or(false);
     let nid_running: bool = sqlx::query_scalar(
         "SELECT EXISTS(SELECT 1 FROM app_applet_runs \
-         WHERE action_id = 'action_narrative_identity_draft' AND status = 'running')",
+         WHERE applet_id = 'applet_narrative_identity_draft' AND status = 'running')",
     )
     .fetch_one(pool)
     .await
@@ -341,7 +341,7 @@ pub async fn compute_setup_state(pool: &PgPool) -> Result<SetupState> {
         "SELECT EXISTS( \
            SELECT 1 FROM credentials c \
            JOIN app_applets a ON a.credential_id = c.id \
-           JOIN app_applet_runs r ON r.action_id = a.id AND r.status = 'success' \
+           JOIN app_applet_runs r ON r.applet_id = a.id AND r.status = 'success' \
            WHERE c.status = 'active' AND c.device_id IS NULL \
              AND c.source_id NOT IN ($1, $2, $3))",
     )

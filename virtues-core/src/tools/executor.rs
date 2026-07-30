@@ -55,8 +55,8 @@ pub struct ToolContext {
     pub scope_mode: crate::search::ScopeMode,
     /// Chat ID (for permission checking)
     pub chat_id: Option<String>,
-    /// Action ID (set when running as an action — for action memory tool)
-    pub action_id: Option<String>,
+    /// Applet ID (set when running as an action — for action memory tool)
+    pub applet_id: Option<String>,
     /// Side-channel for streaming Deep Research subagent status to the live panel.
     /// Set by the chat handler; `None` for headless/action runs.
     pub subagent_tx: Option<tokio::sync::mpsc::Sender<SubagentUpdate>>,
@@ -76,7 +76,7 @@ impl Default for ToolContext {
             notebook_id: None,
             scope_mode: crate::search::ScopeMode::default(),
             chat_id: None,
-            action_id: None,
+            applet_id: None,
             subagent_tx: None,
             cancel_token: None,
             worker_budget: None,
@@ -162,7 +162,7 @@ impl ToolExecutor {
     }
 
     /// Create a new tool executor with YjsState for real-time page editing
-    /// and action dispatch (required by the `run_action` tool).
+    /// and action dispatch (required by the `run_applet` tool).
     pub fn new_with_yjs(pool: PgPool, yjs_state: YjsState) -> Self {
         let pool = Arc::new(pool);
         Self {
@@ -184,7 +184,7 @@ impl ToolExecutor {
     /// destroy something or take a real-world / outbound action. Everything else runs freely
     /// (reversible, local). The free/gated split is the whole permission model.
     const PERMISSION_REQUIRED: &'static [&'static str] =
-        &["run_applet", "delete_applet", "run_action", "delete_action"];
+        &["run_applet", "delete_applet", "run_applet", "delete_applet"];
 
     /// If `tool_name` is gated and the user hasn't granted it for this chat, return a
     /// `permission_needed` result (the frontend then shows an inline allow/deny prompt and
@@ -198,9 +198,9 @@ impl ToolExecutor {
         if !Self::PERMISSION_REQUIRED.contains(&tool_name) {
             return Ok(None);
         }
-        // Only interactive chat is gated. Autonomous action runs set `action_id` (and may carry a
+        // Only interactive chat is gated. Autonomous action runs set `applet_id` (and may carry a
         // linked `chat_id`) but have no user present to approve, so they must run ungated.
-        if context.action_id.is_some() {
+        if context.applet_id.is_some() {
             return Ok(None);
         }
         // Headless calls with no chat aren't gated either.
@@ -209,19 +209,19 @@ impl ToolExecutor {
         };
         // The gated action tools all identify their target via `id`. If absent, let the tool
         // surface its own validation error.
-        let Some(action_id) = arguments.get("id").and_then(|v| v.as_str()) else {
+        let Some(applet_id) = arguments.get("id").and_then(|v| v.as_str()) else {
             return Ok(None);
         };
 
         let granted =
-            crate::api::chat_permissions::has_permission(self._pool.as_ref(), chat_id, action_id)
+            crate::api::chat_permissions::has_permission(self._pool.as_ref(), chat_id, applet_id)
                 .await
                 .unwrap_or(false);
         if granted {
             return Ok(None);
         }
 
-        let title = crate::scheduler::actions::get_action(self._pool.as_ref(), action_id)
+        let title = crate::scheduler::applets::get_applet(self._pool.as_ref(), applet_id)
             .await
             .map(|a| a.name)
             .unwrap_or_else(|_| "this action".to_string());
@@ -230,7 +230,7 @@ impl ToolExecutor {
 
         Ok(Some(ToolResult::success(serde_json::json!({
             "permission_needed": true,
-            "entity_id": action_id,
+            "entity_id": applet_id,
             "entity_type": "action",
             "entity_title": title,
             "message": format!("AI wants to {verb} \"{title}\""),
@@ -278,22 +278,22 @@ impl ToolExecutor {
             "create_page" => self.page_editor.create_page(arguments).await,
             "get_page_content" => self.page_editor.get_page_content(arguments, context).await,
             "edit_page" => self.page_editor.edit_page(arguments, context).await,
-            // Action setup
-            "setup_applet" | "setup_action" => super::action_setup::execute(&self._pool, arguments, context).await,
-            // Action memory (persistent scratchpad for actions across runs)
-            "update_applet_memory" | "update_action_memory" => self.execute_update_action_memory(arguments, context).await,
-            // Action management — list / get / edit / delete / run
-            "list_applets" | "list_actions" => super::action_management::list_actions(&self._pool, arguments).await,
-            "get_applet" | "get_action" => super::action_management::get_action(&self._pool, arguments).await,
-            "edit_applet" | "edit_action" => super::action_management::edit_action(&self._pool, arguments).await,
-            "delete_applet" | "delete_action" => super::action_management::delete_action(&self._pool, arguments).await,
-            "run_applet" | "run_action" => {
+            // Applet setup
+            "setup_applet" | "setup_action" => super::applet_setup::execute(&self._pool, arguments, context).await,
+            // Applet memory (persistent scratchpad for actions across runs)
+            "update_applet_memory" | "update_action_memory" => self.execute_update_applet_memory(arguments, context).await,
+            // Applet management — list / get / edit / delete / run
+            "list_applets" | "list_applets" => super::applet_management::list_applets(&self._pool, arguments).await,
+            "get_applet" | "get_applet" => super::applet_management::get_applet(&self._pool, arguments).await,
+            "edit_applet" | "edit_applet" => super::applet_management::edit_applet(&self._pool, arguments).await,
+            "delete_applet" | "delete_applet" => super::applet_management::delete_applet(&self._pool, arguments).await,
+            "run_applet" | "run_applet" => {
                 let yjs = self.yjs_state.as_ref().ok_or_else(|| {
                     ToolError::ExecutionFailed(
-                        "run_action tool requires YjsState — executor constructed without it".into(),
+                        "run_applet tool requires YjsState — executor constructed without it".into(),
                     )
                 })?;
-                super::action_management::run_action(&self._pool, yjs, arguments, context).await
+                super::applet_management::run_applet(&self._pool, yjs, arguments, context).await
             }
             // Dayline event CRUD (used by hourly/EOD actions)
             "dayline_event" => super::dayline_events::execute(&self._pool, arguments, context).await,
@@ -410,7 +410,7 @@ impl ToolExecutor {
 
     /// Update an action's persistent memory (markdown scratchpad across runs).
     /// Only works when called from an action context (chat_id must map to an action).
-    async fn execute_update_action_memory(
+    async fn execute_update_applet_memory(
         &self,
         arguments: serde_json::Value,
         context: &ToolContext,
@@ -420,7 +420,7 @@ impl ToolExecutor {
             .and_then(|v| v.as_str())
             .ok_or_else(|| ToolError::InvalidParameters("content is required".into()))?;
 
-        let action_id = context.action_id.as_deref()
+        let applet_id = context.applet_id.as_deref()
             .ok_or_else(|| ToolError::ExecutionFailed("No action context — this tool can only be used by actions".into()))?;
 
         // Cap at 8000 chars
@@ -435,7 +435,7 @@ impl ToolExecutor {
             content
         };
 
-        crate::scheduler::actions::update_memory(&self._pool, &action_id, content)
+        crate::scheduler::applets::update_memory(&self._pool, &applet_id, content)
             .await
             .map_err(|e| ToolError::ExecutionFailed(format!("Failed to update action memory: {}", e)))?;
 

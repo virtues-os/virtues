@@ -29,8 +29,8 @@ pub(crate) mod sql_query;
 pub(crate) mod sql_write;
 mod page_editor;
 mod semantic_search;
-pub mod action_setup;
-pub mod action_management;
+pub mod applet_setup;
+pub mod applet_management;
 pub mod dayline_events;
 
 pub use executor::{
@@ -103,7 +103,7 @@ const APPLET_RUN_ALLOWED_TOOLS: &[&str] = &[
 ];
 
 /// Tools for an autonomous **applet** run: the explicit allowlist above.
-pub fn get_tools_for_action() -> Vec<serde_json::Value> {
+pub fn get_tools_for_applet() -> Vec<serde_json::Value> {
     virtues_registry::tools::default_tools()
         .into_iter()
         .filter(|tool| APPLET_RUN_ALLOWED_TOOLS.contains(&tool.id.as_str()))

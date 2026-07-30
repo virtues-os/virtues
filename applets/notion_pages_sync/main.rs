@@ -3,7 +3,7 @@
 //! Cron-driven, per-credential. Calls Notion's `/v1/search` paginated using
 //! `next_cursor`. Cursor is reset on each full sync so re-runs always pick
 //! up newly-edited pages too. For incremental: filter by `last_edited_time`
-//! against `app_actions.config.last_sync_iso`.
+//! against `app_applets.config.last_sync_iso`.
 
 mod transform;
 

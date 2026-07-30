@@ -62,11 +62,11 @@ fn success_message(message: &str) -> Response {
 // ============================================================================
 
 /// Get a single action run by ID (used for polling status)
-pub async fn get_action_run_handler(
+pub async fn get_applet_run_handler(
     State(state): State<AppState>,
     Path(run_id): Path<String>,
 ) -> Response {
-    match crate::scheduler::actions::get_run(state.db.pool(), &run_id).await {
+    match crate::scheduler::applets::get_run(state.db.pool(), &run_id).await {
         Ok(run) => (StatusCode::OK, Json(run)).into_response(),
         Err(e) => (
             StatusCode::NOT_FOUND,
@@ -78,20 +78,20 @@ pub async fn get_action_run_handler(
 
 /// Optional body for manual trigger — forwarded as the action payload.
 #[derive(Debug, Deserialize, Default)]
-pub struct TriggerActionBody {
+pub struct TriggerAppletBody {
     #[serde(default)]
     pub payload: Option<serde_json::Value>,
 }
 
 /// Manually trigger an action run.
-pub async fn trigger_action_handler(
+pub async fn trigger_applet_handler(
     State(state): State<AppState>,
-    Path(action_id): Path<String>,
-    body: Option<Json<TriggerActionBody>>,
+    Path(applet_id): Path<String>,
+    body: Option<Json<TriggerAppletBody>>,
 ) -> Response {
     let payload = body.and_then(|Json(b)| b.payload);
 
-    let deps = crate::action_runner::RunnerDeps {
+    let deps = crate::applet_runner::RunnerDeps {
         db: state.db.pool().clone(),
         yjs: state.yjs_state.clone(),
     };
@@ -101,9 +101,9 @@ pub async fn trigger_action_handler(
     // stuck in `running`. The handler returns 202 with the run_id as soon
     // as the row is created; the UI polls `app_applet_runs` for the final
     // status.
-    let result = match crate::action_runner::run_action_detached(
+    let result = match crate::applet_runner::run_applet_detached(
         &deps,
-        &action_id,
+        &applet_id,
         "manual",
         payload.as_ref(),
     )
@@ -119,21 +119,21 @@ pub async fn trigger_action_handler(
         }
     };
 
-    use crate::action_runner::ActionRunStatus;
+    use crate::applet_runner::AppletRunStatus;
     let (status_code, status_label) = match result.status {
-        ActionRunStatus::Running => (StatusCode::ACCEPTED, "running"),
-        ActionRunStatus::Success => (StatusCode::OK, "success"),
-        ActionRunStatus::Skipped => (StatusCode::OK, "skipped"),
-        ActionRunStatus::Failed => (StatusCode::INTERNAL_SERVER_ERROR, "error"),
-        ActionRunStatus::NotFound => (StatusCode::NOT_FOUND, "not_found"),
-        ActionRunStatus::Forbidden => (StatusCode::FORBIDDEN, "forbidden"),
+        AppletRunStatus::Running => (StatusCode::ACCEPTED, "running"),
+        AppletRunStatus::Success => (StatusCode::OK, "success"),
+        AppletRunStatus::Skipped => (StatusCode::OK, "skipped"),
+        AppletRunStatus::Failed => (StatusCode::INTERNAL_SERVER_ERROR, "error"),
+        AppletRunStatus::NotFound => (StatusCode::NOT_FOUND, "not_found"),
+        AppletRunStatus::Forbidden => (StatusCode::FORBIDDEN, "forbidden"),
     };
 
     (
         status_code,
         Json(serde_json::json!({
             "run_id": result.run_id,
-            "action_id": action_id,
+            "applet_id": applet_id,
             "status": status_label,
             "summary": result.summary,
             "error": result.error,
@@ -190,7 +190,7 @@ pub async fn chat_import_upload_handler(
         )));
     }
 
-    let deps = crate::action_runner::RunnerDeps {
+    let deps = crate::applet_runner::RunnerDeps {
         db: state.db.pool().clone(),
         yjs: state.yjs_state.clone(),
     };
@@ -199,7 +199,7 @@ pub async fn chat_import_upload_handler(
         "provider": provider,
     });
 
-    match crate::action_runner::run_action(&deps, "action_chat_import", "manual", Some(&payload))
+    match crate::applet_runner::run_applet(&deps, "applet_chat_import", "manual", Some(&payload))
         .await
     {
         Ok(r) => (
@@ -216,7 +216,7 @@ pub async fn chat_import_upload_handler(
 }
 
 /// List all actions with their latest run status.
-pub async fn list_actions_handler(State(state): State<AppState>) -> Response {
+pub async fn list_applets_handler(State(state): State<AppState>) -> Response {
     let pool = state.db.pool();
 
     let rows = sqlx::query(
@@ -235,7 +235,7 @@ pub async fn list_actions_handler(State(state): State<AppState>) -> Response {
            FROM app_applets t
            LEFT JOIN app_applet_runs r ON r.id = (
                SELECT id FROM app_applet_runs
-               WHERE action_id = t.id
+               WHERE applet_id = t.id
                ORDER BY created_at DESC LIMIT 1
            )
            ORDER BY t.name"#,
@@ -343,14 +343,14 @@ pub async fn list_actions_handler(State(state): State<AppState>) -> Response {
 }
 
 /// GET /api/actions/:id — single action with its last run inlined.
-pub async fn get_action_handler(
+pub async fn get_applet_handler(
     State(state): State<AppState>,
-    Path(action_id): Path<String>,
+    Path(applet_id): Path<String>,
 ) -> Response {
     let pool = state.db.pool();
-    match crate::scheduler::actions::get_action(pool, &action_id).await {
+    match crate::scheduler::applets::get_applet(pool, &applet_id).await {
         Ok(action) => {
-            let last_run = crate::scheduler::actions::last_run(pool, &action_id)
+            let last_run = crate::scheduler::applets::last_run(pool, &applet_id)
                 .await
                 .ok()
                 .flatten();
@@ -369,7 +369,7 @@ pub async fn get_action_handler(
                     "memory": action.memory,
                     "command": action.command,
                     "credential_id": action.credential_id,
-                    "runtime": crate::scheduler::actions::derived_runtime(&action),
+                    "runtime": crate::scheduler::applets::derived_runtime(&action),
                     "until": action.until,
                     "archived_at": action.archived_at,
                     "has_face": crate::server::faces::face_dir_for(&action.id).is_some(),
@@ -391,7 +391,7 @@ pub async fn get_action_handler(
 
 /// POST /api/actions — create a user-owned action.
 #[derive(Debug, Deserialize)]
-pub struct CreateActionBody {
+pub struct CreateAppletBody {
     pub name: String,
     pub agent: Option<String>,
     pub cron_schedule: Option<String>,
@@ -400,9 +400,9 @@ pub struct CreateActionBody {
     pub config: Option<serde_json::Value>,
 }
 
-pub async fn create_action_handler(
+pub async fn create_applet_handler(
     State(state): State<AppState>,
-    Json(body): Json<CreateActionBody>,
+    Json(body): Json<CreateAppletBody>,
 ) -> Response {
     let triggers = body.triggers.unwrap_or_else(|| {
         if body.cron_schedule.is_some() {
@@ -412,7 +412,7 @@ pub async fn create_action_handler(
         }
     });
 
-    match crate::scheduler::actions::create_user_action(
+    match crate::scheduler::applets::create_user_applet(
         state.db.pool(),
         None,
         &body.name,
@@ -436,12 +436,12 @@ pub async fn create_action_handler(
 }
 
 /// PATCH /api/actions/:id — partial update. Enforces system-owner guard.
-pub async fn patch_action_handler(
+pub async fn patch_applet_handler(
     State(state): State<AppState>,
-    Path(action_id): Path<String>,
+    Path(applet_id): Path<String>,
     Json(patch): Json<serde_json::Value>,
 ) -> Response {
-    match crate::scheduler::actions::update_action(state.db.pool(), &action_id, &patch).await {
+    match crate::scheduler::applets::update_applet(state.db.pool(), &applet_id, &patch).await {
         Ok(action) => (StatusCode::OK, Json(action)).into_response(),
         Err(e) => {
             let status = match e.http_status() {
@@ -458,17 +458,17 @@ pub async fn patch_action_handler(
 /// refused. `drop_data=true` also drops the applet's private `applet_<slug>`
 /// schema; the default keeps its data.
 #[derive(Debug, Deserialize)]
-pub struct DeleteActionQuery {
+pub struct DeleteAppletQuery {
     #[serde(default)]
     pub drop_data: bool,
 }
 
-pub async fn delete_action_handler(
+pub async fn delete_applet_handler(
     State(state): State<AppState>,
-    Path(action_id): Path<String>,
-    axum::extract::Query(q): axum::extract::Query<DeleteActionQuery>,
+    Path(applet_id): Path<String>,
+    axum::extract::Query(q): axum::extract::Query<DeleteAppletQuery>,
 ) -> Response {
-    match crate::scheduler::actions::delete_action(state.db.pool(), &action_id, q.drop_data).await {
+    match crate::scheduler::applets::delete_applet(state.db.pool(), &applet_id, q.drop_data).await {
         Ok(()) => StatusCode::NO_CONTENT.into_response(),
         Err(e) => {
             let status = match e.http_status() {
@@ -484,13 +484,13 @@ pub async fn delete_action_handler(
 /// GET /api/applets/:id/data — the tables an applet owns in its private
 /// `applet_<slug>` schema, so the delete confirm can show what `drop_data`
 /// would remove. Empty `tables` (and null `schema`) when it owns none.
-pub async fn get_action_data_handler(
+pub async fn get_applet_data_handler(
     State(state): State<AppState>,
-    Path(action_id): Path<String>,
+    Path(applet_id): Path<String>,
 ) -> Response {
-    match crate::scheduler::actions::applet_data_tables(state.db.pool(), &action_id).await {
+    match crate::scheduler::applets::applet_data_tables(state.db.pool(), &applet_id).await {
         Ok(tables) => {
-            let schema = crate::scheduler::actions::applet_schema_name(&action_id);
+            let schema = crate::scheduler::applets::applet_schema_name(&applet_id);
             (
                 StatusCode::OK,
                 Json(serde_json::json!({ "schema": schema, "tables": tables })),
@@ -511,18 +511,18 @@ pub struct RunsQuery {
     pub limit: Option<i64>,
     pub offset: Option<i64>,
     pub status: Option<String>,
-    pub action_id: Option<String>,
+    pub applet_id: Option<String>,
 }
 
-pub async fn list_action_runs_handler(
+pub async fn list_applet_runs_handler(
     State(state): State<AppState>,
-    Path(action_id): Path<String>,
+    Path(applet_id): Path<String>,
     axum::extract::Query(q): axum::extract::Query<RunsQuery>,
 ) -> Response {
     let limit = q.limit.unwrap_or(20).clamp(1, 200);
-    match crate::scheduler::actions::query_runs(
+    match crate::scheduler::applets::query_runs(
         state.db.pool(),
-        Some(&action_id),
+        Some(&applet_id),
         q.status.as_deref(),
         limit,
     )
@@ -537,15 +537,15 @@ pub async fn list_action_runs_handler(
     }
 }
 
-/// GET /api/runs?status=&action_id=&limit=&offset= — global run history.
+/// GET /api/runs?status=&applet_id=&limit=&offset= — global run history.
 pub async fn list_runs_handler(
     State(state): State<AppState>,
     axum::extract::Query(q): axum::extract::Query<RunsQuery>,
 ) -> Response {
     let limit = q.limit.unwrap_or(50).clamp(1, 200);
-    match crate::scheduler::actions::query_runs(
+    match crate::scheduler::applets::query_runs(
         state.db.pool(),
-        q.action_id.as_deref(),
+        q.applet_id.as_deref(),
         q.status.as_deref(),
         limit,
     )
@@ -606,7 +606,7 @@ pub struct SourceCatalogItem {
 pub async fn list_sources_handler(State(state): State<AppState>) -> Response {
     let pool = state.db.pool();
 
-    let sources = crate::action_templates::list_sources_sorted();
+    let sources = crate::applet_templates::list_sources_sorted();
     let mut items = Vec::with_capacity(sources.len());
 
     // One COUNT query per source — cheap; the catalog has at most a handful
@@ -670,7 +670,7 @@ pub async fn patch_credential_handler(
         } else {
             // Re-activating is not supported via PATCH. A revoked device must
             // be re-paired via the QR / manual-link flow so a fresh
-            // device_token and action_ids fan-out are generated.
+            // device_token and applet_ids fan-out are generated.
             return (
                 StatusCode::BAD_REQUEST,
                 Json(serde_json::json!({
@@ -690,7 +690,7 @@ pub async fn patch_credential_handler(
 ///   modal; the row never had a token or fan-out actions, so nothing to
 ///   preserve).
 /// - `active`   → revoke (clear `secret_lookup_hash`, drop fan-out actions,
-///   keep history with `action_id = NULL`).
+///   keep history with `applet_id = NULL`).
 /// - `revoked`  → already revoked, idempotent 204.
 pub async fn delete_credential_handler(
     State(state): State<AppState>,
@@ -757,13 +757,13 @@ pub async fn admin_reconcile_handler(State(state): State<AppState>) -> Response 
     // 1. Force a re-read of the on-disk catalog (sources.toml + per-action
     //    manifests). Subsequent lookup_source / list_sources_sorted /
     //    reconcile calls see the new data.
-    crate::action_templates::reload_catalog();
+    crate::applet_templates::reload_catalog();
 
     // 2. Reconcile `app_applets` SQL rows against the fresh catalog. Manifest
     //    fields overwrite for system actions; user-managed runtime state
     //    (enabled, cron_schedule, config) is preserved per the field-ownership
-    //    rule documented in action_templates/mod.rs.
-    let upserted = match crate::action_templates::reconcile_templates(state.db.pool()).await {
+    //    rule documented in applet_templates/mod.rs.
+    let upserted = match crate::applet_templates::reconcile_templates(state.db.pool()).await {
         Ok(n) => n,
         Err(e) => {
             return (
@@ -788,11 +788,11 @@ pub async fn admin_reconcile_handler(State(state): State<AppState>) -> Response 
 /// Clone (or update) a Git repo into `actions/<slug>/` and reconcile so the
 /// new manifests show up as `app_applets` rows. We scope the per-row diff to
 /// the slug prefix and clean up rows for manifests that disappeared upstream.
-pub async fn import_git_actions_handler(
+pub async fn import_git_applets_handler(
     State(state): State<AppState>,
-    Json(body): Json<crate::action_git_import::ImportRequest>,
+    Json(body): Json<crate::applet_git_import::ImportRequest>,
 ) -> Response {
-    let outcome = match crate::action_git_import::import(state.db.pool(), body).await {
+    let outcome = match crate::applet_git_import::import(state.db.pool(), body).await {
         Ok(o) => o,
         Err(e) => {
             return (
@@ -842,22 +842,22 @@ pub async fn list_tables_handler(State(state): State<AppState>) -> Response {
 }
 
 
-/// GET /api/devices/action-ids — devices refresh their action_id routing map.
+/// GET /api/devices/applet-ids — devices refresh their applet_id routing map.
 ///
 /// Used by paired devices when their local routing table goes stale (e.g. after
 /// templates.toml adds a new stream, or the device reinstalls). Authenticated by
 /// the proven iroh key (`AuthUser`, a hard extractor) — the map is the device's
 /// own ingest actions, keyed on its `device_id`.
-pub async fn device_action_ids_handler(
+pub async fn device_applet_ids_handler(
     State(state): State<AppState>,
     user: crate::middleware::auth::AuthUser,
 ) -> Response {
-    match virtues_helpers::auth::fanout_action_ids(state.db.pool(), &user.device_id).await {
-        Ok(action_ids) => (
+    match virtues_helpers::auth::fanout_applet_ids(state.db.pool(), &user.device_id).await {
+        Ok(applet_ids) => (
             StatusCode::OK,
             Json(serde_json::json!({
                 "device_id": user.device_id,
-                "action_ids": action_ids,
+                "applet_ids": applet_ids,
             })),
         )
             .into_response(),
@@ -876,10 +876,10 @@ pub async fn device_action_ids_handler(
 ///
 /// Authenticated by the proven iroh key. The action's `device_id` must match the
 /// caller's device or it's 403 — one device can't read another's run history.
-/// Device-scoped sibling of the session-authed `list_action_runs_handler`.
-pub async fn device_action_runs_handler(
+/// Device-scoped sibling of the session-authed `list_applet_runs_handler`.
+pub async fn device_applet_runs_handler(
     State(state): State<AppState>,
-    Path(action_id): Path<String>,
+    Path(applet_id): Path<String>,
     axum::extract::Query(q): axum::extract::Query<RunsQuery>,
     user: crate::middleware::auth::AuthUser,
 ) -> Response {
@@ -888,7 +888,7 @@ pub async fn device_action_runs_handler(
     let owned: bool = sqlx::query_scalar(
         "SELECT EXISTS(SELECT 1 FROM app_applets WHERE id = $1 AND device_id = $2)",
     )
-    .bind(&action_id)
+    .bind(&applet_id)
     .bind(&user.device_id)
     .fetch_one(state.db.pool())
     .await
@@ -897,15 +897,15 @@ pub async fn device_action_runs_handler(
     if !owned {
         return (
             StatusCode::FORBIDDEN,
-            Json(serde_json::json!({ "error": "Action not found for this device" })),
+            Json(serde_json::json!({ "error": "Applet not found for this device" })),
         )
             .into_response();
     }
 
     let limit = q.limit.unwrap_or(10).clamp(1, 50);
-    match crate::scheduler::actions::query_runs(
+    match crate::scheduler::applets::query_runs(
         state.db.pool(),
-        Some(&action_id),
+        Some(&applet_id),
         q.status.as_deref(),
         limit,
     )

@@ -140,7 +140,7 @@ impl Sources {
             database_url: crate::database::normalize_database_url()
                 .map_err(|e| crate::Error::Other(format!("DATABASE_URL: {e}")))?,
             lake: crate::storage::lake::lake_root(),
-            applets: crate::action_templates::state_root(),
+            applets: crate::applet_templates::state_root(),
             env_file,
         })
     }
@@ -321,7 +321,7 @@ const DEV_RECIPIENT_PATH_FROM_CORE: &str = "../.backup-recipient";
 /// Where this box keeps its backup recipient.
 ///
 /// Same precedence as `storage::lake::lake_root` and
-/// `action_templates::state_root`, and for the same reason: a hardcoded box path
+/// `applet_templates::state_root`, and for the same reason: a hardcoded box path
 /// makes the command unusable anywhere else. `/var/lib` is root-owned, so a dev
 /// machine cannot even create the directory — `virtues backup --output /tmp/x`
 /// failed outright until this resolved properly.

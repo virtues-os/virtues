@@ -1,7 +1,7 @@
 //! Chat tools for listing, fetching, editing, deleting, and manually running
 //! actions. These exist in addition to `setup_action` (which creates an
 //! action from the current chat) and wrap the same core helpers the HTTP
-//! layer uses in `crate::scheduler::actions` + `crate::action_runner`.
+//! layer uses in `crate::scheduler::applets` + `crate::applet_runner`.
 //!
 //! System-row edit/delete protection is enforced inside the core helpers, so
 //! these tools can just forward user input. The tool layer's job is
@@ -10,8 +10,8 @@
 use sqlx::PgPool;
 
 use super::executor::{ToolContext, ToolError, ToolResult};
-use crate::action_runner::{ActionRunStatus, RunnerDeps};
-use crate::scheduler::actions;
+use crate::applet_runner::{AppletRunStatus, RunnerDeps};
+use crate::scheduler::applets;
 use crate::server::yjs::YjsState;
 
 fn map_err(e: crate::error::Error) -> ToolError {
@@ -24,13 +24,13 @@ fn map_err(e: crate::error::Error) -> ToolError {
     }
 }
 
-/// `list_actions` — return a lightweight array of actions with their last run.
+/// `list_applets` — return a lightweight array of actions with their last run.
 ///
 /// Optional filters:
 /// - `owner`: `"system"` or `"user"`
 /// - `enabled`: bool
 /// - `trigger`: one of `cron|manual|tool|api|webhook`
-pub async fn list_actions(
+pub async fn list_applets(
     pool: &PgPool,
     arguments: serde_json::Value,
 ) -> Result<ToolResult, ToolError> {
@@ -43,7 +43,7 @@ pub async fn list_actions(
         .and_then(|v| v.as_bool())
         .unwrap_or(false);
 
-    let all = actions::get_all_actions(pool).await.map_err(map_err)?;
+    let all = applets::get_all_applets(pool).await.map_err(map_err)?;
     let mut items = Vec::with_capacity(all.len());
     for a in all {
         // Archived applets (lifecycle complete) are hidden by default —
@@ -66,7 +66,7 @@ pub async fn list_actions(
                 continue;
             }
         }
-        let last = actions::last_run(pool, &a.id).await.ok().flatten();
+        let last = applets::last_run(pool, &a.id).await.ok().flatten();
         items.push(serde_json::json!({
             "id": a.id,
             "name": a.name,
@@ -90,8 +90,8 @@ pub async fn list_actions(
     })))
 }
 
-/// `get_action` — fetch a single action with its last 10 runs inlined.
-pub async fn get_action(
+/// `get_applet` — fetch a single action with its last 10 runs inlined.
+pub async fn get_applet(
     pool: &PgPool,
     arguments: serde_json::Value,
 ) -> Result<ToolResult, ToolError> {
@@ -100,8 +100,8 @@ pub async fn get_action(
         .and_then(|v| v.as_str())
         .ok_or_else(|| ToolError::InvalidParameters("id is required".into()))?;
 
-    let action = actions::get_action(pool, id).await.map_err(map_err)?;
-    let runs = actions::query_runs(pool, Some(id), None, 10)
+    let action = applets::get_applet(pool, id).await.map_err(map_err)?;
+    let runs = applets::query_runs(pool, Some(id), None, 10)
         .await
         .map_err(map_err)?;
 
@@ -111,9 +111,9 @@ pub async fn get_action(
     })))
 }
 
-/// `edit_action` — partial update. System rows accept only `enabled`,
+/// `edit_applet` — partial update. System rows accept only `enabled`,
 /// `cron_schedule`, `config`, `memory`; user rows accept all fields.
-pub async fn edit_action(
+pub async fn edit_applet(
     pool: &PgPool,
     arguments: serde_json::Value,
 ) -> Result<ToolResult, ToolError> {
@@ -145,7 +145,7 @@ pub async fn edit_action(
                 arr.iter().any(|t| matches!(t.as_str(), Some("api") | Some("webhook")))
             });
         if sets_enabled_true || adds_schedule || adds_remote_trigger {
-            let current = actions::get_action(pool, id).await.map_err(map_err)?;
+            let current = applets::get_applet(pool, id).await.map_err(map_err)?;
             if current.owner == "ai" {
                 if sets_enabled_true {
                     return Ok(ToolResult::success(serde_json::json!({
@@ -164,7 +164,7 @@ pub async fn edit_action(
         }
     }
 
-    let updated = actions::update_action(pool, id, &patch)
+    let updated = applets::update_applet(pool, id, &patch)
         .await
         .map_err(map_err)?;
     Ok(ToolResult::success(serde_json::json!({
@@ -172,8 +172,8 @@ pub async fn edit_action(
     })))
 }
 
-/// `delete_action` — remove a user-owned action. System rows are refused.
-pub async fn delete_action(
+/// `delete_applet` — remove a user-owned action. System rows are refused.
+pub async fn delete_applet(
     pool: &PgPool,
     arguments: serde_json::Value,
 ) -> Result<ToolResult, ToolError> {
@@ -182,10 +182,10 @@ pub async fn delete_action(
         .and_then(|v| v.as_str())
         .ok_or_else(|| ToolError::InvalidParameters("id is required".into()))?;
 
-    // Full teardown (row + on-disk folder) lives in `actions::delete_action`.
+    // Full teardown (row + on-disk folder) lives in `applets::delete_applet`.
     // The tool keeps the applet's data by default — dropping owned tables is a
     // user decision made on the delete confirm, not something the model does.
-    actions::delete_action(pool, id, false)
+    applets::delete_applet(pool, id, false)
         .await
         .map_err(map_err)?;
 
@@ -195,11 +195,11 @@ pub async fn delete_action(
     })))
 }
 
-/// `run_action` — dispatch an action manually with `trigger = "tool"`.
+/// `run_applet` — dispatch an action manually with `trigger = "tool"`.
 /// Optional `payload` is forwarded to the runner; optional `date` is merged
 /// into the action's `config.date` for actions that accept a date override
 /// (e.g. `day_summary_eod`).
-pub async fn run_action(
+pub async fn run_applet(
     pool: &PgPool,
     yjs: &YjsState,
     arguments: serde_json::Value,
@@ -213,16 +213,16 @@ pub async fn run_action(
     let payload = arguments.get("payload").cloned();
 
     // Date override: if present, merge into the stored config so the binary
-    // picks it up via stdin. Uses `update_action` with just the config key
+    // picks it up via stdin. Uses `update_applet` with just the config key
     // so the system-owner guard still applies correctly.
     if let Some(date) = arguments.get("date").and_then(|v| v.as_str()) {
-        let current = actions::get_action(pool, id).await.map_err(map_err)?;
+        let current = applets::get_applet(pool, id).await.map_err(map_err)?;
         let mut config = current.config.clone();
         if let Some(obj) = config.as_object_mut() {
             obj.insert("date".to_string(), serde_json::json!(date));
         }
         let patch = serde_json::json!({ "config": config });
-        actions::update_action(pool, id, &patch)
+        applets::update_applet(pool, id, &patch)
             .await
             .map_err(map_err)?;
     }
@@ -232,19 +232,19 @@ pub async fn run_action(
         yjs: yjs.clone(),
     };
 
-    let result = crate::action_runner::run_action(&deps, id, "tool", payload.as_ref())
+    let result = crate::applet_runner::run_applet(&deps, id, "tool", payload.as_ref())
         .await
         .map_err(|e| ToolError::ExecutionFailed(e.to_string()))?;
 
     let status_label = match result.status {
-        ActionRunStatus::Success => "success",
-        ActionRunStatus::Skipped => "skipped",
-        ActionRunStatus::Failed => "error",
-        ActionRunStatus::NotFound => "not_found",
-        ActionRunStatus::Forbidden => "forbidden",
-        // Tool-call dispatch awaits the full run via `run_action`, never
-        // `run_action_detached`, so this arm is unreachable in practice.
-        ActionRunStatus::Running => "running",
+        AppletRunStatus::Success => "success",
+        AppletRunStatus::Skipped => "skipped",
+        AppletRunStatus::Failed => "error",
+        AppletRunStatus::NotFound => "not_found",
+        AppletRunStatus::Forbidden => "forbidden",
+        // Tool-call dispatch awaits the full run via `run_applet`, never
+        // `run_applet_detached`, so this arm is unreachable in practice.
+        AppletRunStatus::Running => "running",
     };
 
     Ok(ToolResult::success(serde_json::json!({

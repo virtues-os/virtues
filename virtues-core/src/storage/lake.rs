@@ -113,7 +113,7 @@ const DEV_LAKE_DIR_FROM_CORE: &str = "../data/lake";
 ///    the **parent** matters: the lake legitimately does not exist yet on a box
 ///    that has never ingested anything, and falling back to a source path there
 ///    would write data somewhere production never reads. (Same reasoning as
-///    `action_templates::state_root`.)
+///    `applet_templates::state_root`.)
 /// 3. A dev path fixed relative to this crate. Manifest-relative rather than
 ///    cwd-relative so that `cargo run`, a `cargo test` with its own working
 ///    directory, and an applet binary invoked from anywhere all name the same

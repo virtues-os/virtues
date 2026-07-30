@@ -105,7 +105,7 @@ export type ActionTrigger = 'cron' | 'manual' | 'tool' | 'api' | 'webhook';
 
 export interface ActionRun {
 	id: string;
-	action_id: string | null;
+	applet_id: string | null;
 	status: 'running' | 'success' | 'error' | 'cancelled' | 'skipped';
 	started_at: string;
 	completed_at: string | null;
@@ -451,7 +451,7 @@ export async function getAppletData(id: string): Promise<AppletData> {
 
 export interface TriggerActionResponse {
 	run_id: string | null;
-	action_id: string;
+	applet_id: string;
 	status: string;
 	summary: string;
 	error: string | null;
@@ -491,12 +491,12 @@ export async function listActionRuns(
 export async function listRuns(opts?: {
 	limit?: number;
 	status?: string;
-	action_id?: string;
+	applet_id?: string;
 }): Promise<ActionRun[]> {
 	const params = new URLSearchParams();
 	if (opts?.limit != null) params.set('limit', String(opts.limit));
 	if (opts?.status) params.set('status', opts.status);
-	if (opts?.action_id) params.set('action_id', opts.action_id);
+	if (opts?.applet_id) params.set('applet_id', opts.applet_id);
 	const qs = params.toString();
 	const res = await fetch(`${API_BASE}/runs${qs ? `?${qs}` : ''}`);
 	if (!res.ok) throw new Error(`Failed to list runs: ${res.statusText}`);
@@ -536,7 +536,7 @@ export interface Credential {
 	device_info: DeviceInfo | null;
 	last_seen_at: string | null;
 	created_at: string;
-	action_count: number;
+	applet_count: number;
 	/** Tier-2 init-sync lifecycle for active credentials:
 	 *  'connected' → 'backfilling' → 'live'. Absent for pending/revoked. */
 	sync_state?: 'connected' | 'backfilling' | 'live';

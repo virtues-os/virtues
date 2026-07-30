@@ -8,7 +8,7 @@
 //! What's in here:
 //!   - Binary version + uptime
 //!   - Last applied schema migration ID
-//!   - Action subprocess health (running / errored / stopped per action)
+//!   - Applet subprocess health (running / errored / stopped per action)
 //!   - Last 10 `app_auth_event` rows (paired / revoked / sudo events)
 //!   - Subscription link state (api_key present? account linked?)
 //!   - Wallet snapshot (read locally — full wallet balance lives in
@@ -39,7 +39,7 @@ struct StatusJson {
     sudo: SudoSection,
     pair: PairSection,
     billing: BillingSection,
-    actions: ActionsSection,
+    actions: AppletsSection,
     network: NetworkSection,
     recent_events: Vec<EventRow>,
 }
@@ -72,7 +72,7 @@ struct BillingSection {
 }
 
 #[derive(Debug, Serialize)]
-struct ActionsSection {
+struct AppletsSection {
     total: i64,
     enabled: i64,
     last_run_status_counts: serde_json::Value,
@@ -115,7 +115,7 @@ async fn collect(pool: &PgPool) -> Result<StatusJson> {
         sudo: collect_sudo(pool).await,
         pair: collect_pair(pool).await,
         billing: collect_billing(pool).await,
-        actions: collect_actions(pool).await,
+        actions: collect_applets(pool).await,
         network: collect_network(),
         recent_events: collect_recent_events(pool).await,
     })
@@ -245,7 +245,7 @@ async fn collect_billing(pool: &PgPool) -> BillingSection {
     }
 }
 
-async fn collect_actions(pool: &PgPool) -> ActionsSection {
+async fn collect_applets(pool: &PgPool) -> AppletsSection {
     let total: Option<(i64,)> =
         sqlx::query_as("SELECT COUNT(*) FROM app_applets")
             .fetch_optional(pool)
@@ -260,10 +260,10 @@ async fn collect_actions(pool: &PgPool) -> ActionsSection {
             .flatten();
     let counts: Vec<(String, i64)> = sqlx::query_as(
         "SELECT status, COUNT(*) FROM ( \
-            SELECT DISTINCT ON (action_id) status \
+            SELECT DISTINCT ON (applet_id) status \
             FROM app_applet_runs \
-            WHERE action_id IS NOT NULL \
-            ORDER BY action_id, created_at DESC \
+            WHERE applet_id IS NOT NULL \
+            ORDER BY applet_id, created_at DESC \
          ) recent GROUP BY status",
     )
     .fetch_all(pool)
@@ -273,7 +273,7 @@ async fn collect_actions(pool: &PgPool) -> ActionsSection {
     for (status, n) in counts {
         by.insert(status, serde_json::Value::Number(n.into()));
     }
-    ActionsSection {
+    AppletsSection {
         total: total.map(|(n,)| n).unwrap_or(0),
         enabled: enabled.map(|(n,)| n).unwrap_or(0),
         last_run_status_counts: serde_json::Value::Object(by),

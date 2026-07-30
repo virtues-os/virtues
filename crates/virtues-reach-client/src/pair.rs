@@ -45,7 +45,7 @@ struct ConsumeResponse {
     box_direct_addrs: Vec<String>,
     /// Device-anchored webhook mapping, e.g. `{"ios_ingest": "act_…"}`.
     #[serde(default)]
-    action_ids: std::collections::HashMap<String, String>,
+    applet_ids: std::collections::HashMap<String, String>,
 }
 
 /// Consume a pair token against `origin` (e.g. `http://10.0.0.5:8000`).
@@ -117,7 +117,7 @@ pub async fn consume(
         relay_url: parsed.relay_url.filter(|s| !s.is_empty()),
         box_direct_addrs: parsed.box_direct_addrs,
         device_secret_hex: Some(device_secret_hex),
-        action_ids: parsed.action_ids,
+        applet_ids: parsed.applet_ids,
     };
     store.save(&rec).context("store paired box")?;
 

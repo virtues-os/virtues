@@ -155,19 +155,28 @@ impl InstallConfig {
         self.install_prefix.join("share/virtues")
     }
 
-    /// Where the action tree (manifests + UI + sources.toml) lands on the box.
-    /// virtues-core reads this via `VIRTUES_ACTIONS_DIR` (see
-    /// `action_templates::actions_root`); the default here must match
-    /// `WELL_KNOWN_ACTIONS_DIR` in virtues-core. Shipped in the release
-    /// tarball as `actions/`; not baked into the binary, so a box with no
-    /// copy here has no actions at all.
-    pub fn actions_dir(&self) -> PathBuf {
-        self.install_prefix.join("share/virtues/actions")
+    /// Where the applet tree (manifests + UI + sources.toml) lands on the box.
+    ///
+    /// The installer writes `VIRTUES_APPLETS_DIR=<prefix>/share/virtues/applets`,
+    /// matching `WELL_KNOWN_APPLETS_DIR` in virtues-core.
+    ///
+    /// Safe on an existing box because activation already symlinks BOTH
+    /// `share/virtues/applets` and the legacy `share/virtues/actions` at the
+    /// slot's `applets/` (see `download::atomic_flip`), and core resolves
+    /// `VIRTUES_APPLETS_DIR` then `VIRTUES_ACTIONS_DIR` then the two well-known
+    /// paths. So old env files, new env files, and either directory name all
+    /// land in the same place — which is what made this a rename rather than a
+    /// migration.
+    ///
+    /// Shipped in the release tarball; not baked into the binary, so a box with
+    /// no copy here has no applets at all.
+    pub fn applets_dir(&self) -> PathBuf {
+        self.install_prefix.join("share/virtues/applets")
     }
 
     /// The WRITABLE applet tree — chat-authored applets and imported packs.
     ///
-    /// Separate from [`Self::actions_dir`] because the two have opposite
+    /// Separate from [`Self::applets_dir`] because the two have opposite
     /// lifecycles: that one is package data the installer replaces wholesale
     /// on every release, this one is user data that must survive it. They
     /// used to be the same directory, which meant the slot flip deleted
@@ -182,9 +191,9 @@ impl InstallConfig {
     /// Where the compiled function-action executables land (libexec = helper
     /// binaries not meant for direct user invocation). virtues-core resolves
     /// action `command[0]` here via `VIRTUES_ACTIONS_BIN_DIR` (see
-    /// `action_runner::resolve_program`); the default must match
+    /// `applet_runner::resolve_program`); the default must match
     /// `WELL_KNOWN_ACTIONS_BIN_DIR` in virtues-core. Shipped as `actions-bin/`.
-    pub fn actions_bin_dir(&self) -> PathBuf {
+    pub fn applets_bin_dir(&self) -> PathBuf {
         self.install_prefix.join("libexec/virtues")
     }
 

@@ -565,7 +565,7 @@ pub async fn deny_handler(
 pub(crate) fn resolve_source_id(kind: &str, source: Option<&str>) -> Result<String, ()> {
     match source.map(str::trim).filter(|s| !s.is_empty()) {
         Some(s) => {
-            if crate::action_templates::lookup_source(s).is_none() {
+            if crate::applet_templates::lookup_source(s).is_none() {
                 Err(())
             } else {
                 Ok(s.to_string())
@@ -605,7 +605,7 @@ pub struct ConsumeResponse {
     /// so the device knows which webhook id to POST each stream flush to. Empty
     /// for non-collector devices.
     #[serde(skip_serializing_if = "std::collections::HashMap::is_empty", default)]
-    pub action_ids: std::collections::HashMap<String, String>,
+    pub applet_ids: std::collections::HashMap<String, String>,
     /// The box's iroh **EndpointId** (hex) — the device dials this to reach the
     /// box. Present once the box's iroh endpoint is up; `None` otherwise.
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -880,7 +880,7 @@ pub async fn consume_handler(
     // `app_applets.id` to POST each stream flush to. Post-commit best-effort: a
     // failure here doesn't undo the pairing — the device shows up paired but with
     // no ingest actions until the next reconcile.
-    let action_ids = match assemble_action_fanout(&pool, &device_id).await {
+    let applet_ids = match assemble_applet_fanout(&pool, &device_id).await {
         Ok(map) => map,
         Err(e) => {
             tracing::warn!(
@@ -898,7 +898,7 @@ pub async fn consume_handler(
         Json(ConsumeResponse {
             device_id,
             redirect: "/".to_string(),
-            action_ids,
+            applet_ids,
             box_node_id,
             relay_url,
             box_direct_addrs,
@@ -915,17 +915,17 @@ pub async fn consume_handler(
 
 /// Reconcile action templates (so per-credential `app_applets` rows are
 /// fanned out) and read back the binary-name → action-id map the device
-/// uses to route stream flushes to `POST /webhook/<action_id>`. Lifted
+/// uses to route stream flushes to `POST /webhook/<applet_id>`. Lifted
 /// out of the legacy `pair_complete_handler` so the unified pair flow
 /// produces identical device-side behavior.
-pub(crate) async fn assemble_action_fanout(
+pub(crate) async fn assemble_applet_fanout(
     pool: &PgPool,
     device_id: &str,
 ) -> Result<std::collections::HashMap<String, String>, crate::Error> {
-    crate::action_templates::reconcile_templates(pool).await?;
-    virtues_helpers::auth::fanout_action_ids(pool, device_id)
+    crate::applet_templates::reconcile_templates(pool).await?;
+    virtues_helpers::auth::fanout_applet_ids(pool, device_id)
         .await
-        .map_err(|e| crate::Error::Other(format!("fanout_action_ids: {e}")))
+        .map_err(|e| crate::Error::Other(format!("fanout_applet_ids: {e}")))
 }
 
 /// Atomically claim a pair token by its hash: locks the valid 'authorized' row

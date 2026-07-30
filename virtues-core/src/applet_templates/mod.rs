@@ -1,4 +1,4 @@
-//! Action template loader, source catalog, and reconciler.
+//! Applet template loader, source catalog, and reconciler.
 //!
 //! Two on-disk inputs:
 //!
@@ -108,8 +108,8 @@ struct Template {
     source: Option<SourceRef>,
     /// Runtime contract — how the action executes.
     ///
-    /// - `function` (default) — fork-per-trigger CLI; reads `ActionInput` JSON
-    ///   from stdin, writes `ActionOutput` JSON to stdout, exits.
+    /// - `function` (default) — fork-per-trigger CLI; reads `AppletInput` JSON
+    ///   from stdin, writes `AppletOutput` JSON to stdout, exits.
     /// - `view` — pure Svelte component; never invoked server-side. The
     ///   runner skips `view` actions; the scheduler refuses to enqueue them.
     #[serde(default = "default_runtime")]
@@ -374,17 +374,20 @@ fn parse_template(manifest_path: &std::path::Path, dir: &str) -> Option<Template
         Err(e) => panic!("failed to parse {}: {e}", manifest_path.display()),
     };
     if tmpl.id_prefix.is_none() {
-        tmpl.id_prefix = Some(format!("action_{}", dir.replace('/', "__")));
+        // Migration 0077 rewrote the stored ids to this prefix. `manifest.toml`
+        // may still pin an explicit `id_prefix`; none currently does, and one
+        // that did would be taken at its word.
+        tmpl.id_prefix = Some(format!("applet_{}", dir.replace('/', "__")));
     }
     tmpl.dir = dir.to_string();
     Some(tmpl)
 }
 
 fn load_catalog() -> ParsedTemplates {
-    let actions_dir = shipped_root();
+    let applets_dir = shipped_root();
 
     // 1. Sources — prefer on-disk; fall back to baked.
-    let sources_path = actions_dir.join("sources.toml");
+    let sources_path = applets_dir.join("sources.toml");
     let sources_doc: ParsedTemplates = match std::fs::read_to_string(&sources_path) {
         Ok(text) => toml::from_str(&text).unwrap_or_else(|e| {
             panic!("failed to parse {}: {e}", sources_path.display())
@@ -419,7 +422,7 @@ fn load_catalog() -> ParsedTemplates {
     // Both roots, shipped first: the state root's entries override shipped
     // ones with the same `dir`, so an authored applet shadows a system applet
     // of that name and deleting it reverts to shipped.
-    let mut actions = scan_root(&actions_dir);
+    let mut actions = scan_root(&applets_dir);
     let shipped_count = actions.len();
     for t in scan_root(&state_root()) {
         match actions.iter().position(|e| e.dir == t.dir) {
@@ -522,8 +525,8 @@ fn scan_root(root: &std::path::Path) -> Vec<Template> {
 /// (`default_enabled`) so a DB rebuilt from disk restores the user's last
 /// choice. Best-effort — only chat-authored folders (`user/` namespace) are
 /// ever touched, and failures just log.
-pub fn mirror_enabled_to_manifest(action_id: &str, enabled: bool) {
-    let Some(dir) = dir_for_action_id(action_id) else {
+pub fn mirror_enabled_to_manifest(applet_id: &str, enabled: bool) {
+    let Some(dir) = dir_for_applet_id(applet_id) else {
         return;
     };
     if !dir.starts_with("user/") {
@@ -541,10 +544,10 @@ pub fn mirror_enabled_to_manifest(action_id: &str, enabled: bool) {
         match toml::to_string_pretty(&doc) {
             Ok(out) => {
                 if let Err(e) = std::fs::write(&path, out) {
-                    tracing::warn!(action_id, error = %e, "enabled mirror write failed");
+                    tracing::warn!(applet_id, error = %e, "enabled mirror write failed");
                 }
             }
-            Err(e) => tracing::warn!(action_id, error = %e, "enabled mirror serialize failed"),
+            Err(e) => tracing::warn!(applet_id, error = %e, "enabled mirror serialize failed"),
         }
     }
 }
@@ -553,14 +556,14 @@ pub fn mirror_enabled_to_manifest(action_id: &str, enabled: bool) {
 /// an action id. Matches the base id (`id_prefix`) and per-credential /
 /// per-device fan-out ids (`<id_prefix>_<anchor>`). Used by the face server
 /// to root static serving at the applet's folder.
-pub fn dir_for_action_id(action_id: &str) -> Option<String> {
+pub fn dir_for_applet_id(applet_id: &str) -> Option<String> {
     let guard = catalog_lock().read().expect("catalog rwlock poisoned");
     guard
         .action
         .iter()
         .find(|t| {
             t.id_prefix.as_deref().is_some_and(|p| {
-                action_id == p || action_id.strip_prefix(p).is_some_and(|r| r.starts_with('_'))
+                applet_id == p || applet_id.strip_prefix(p).is_some_and(|r| r.starts_with('_'))
             })
         })
         .map(|t| t.dir.clone())
@@ -609,7 +612,7 @@ pub async fn reconcile_templates(db: &PgPool) -> Result<usize> {
     // credential row (OAuth/api actions) or a revoked/absent device (ingest
     // actions). The revoke paths handle this inline, but any state drift
     // (direct SQL, import, bug) leaves orphans. Nullify run FKs first so history
-    // is preserved under `action_id = NULL`.
+    // is preserved under `applet_id = NULL`.
     //
     // Deliberately NOT keyed on credential status: a recoverable blip
     // (`reauth_required`, refresh error) must not destroy the row's operational
@@ -622,8 +625,8 @@ pub async fn reconcile_templates(db: &PgPool) -> Result<usize> {
           OR (device_id IS NOT NULL \
              AND device_id NOT IN (SELECT id FROM app_device WHERE revoked_at IS NULL))";
     let pruned = sqlx::query(&format!(
-        "UPDATE app_applet_runs SET action_id = NULL \
-         WHERE action_id IN (SELECT id FROM app_applets WHERE {ORPHAN_PREDICATE})"
+        "UPDATE app_applet_runs SET applet_id = NULL \
+         WHERE applet_id IN (SELECT id FROM app_applets WHERE {ORPHAN_PREDICATE})"
     ))
     .execute(db)
     .await?
@@ -702,7 +705,7 @@ pub async fn reconcile_templates(db: &PgPool) -> Result<usize> {
 
             if matches!(source.auth, SourceAuth::SelfIssuedBearer) {
                 // Device source (iOS/Mac/sensor): fan out per DEVICE. The device's
-                // allowlisted iroh key authorizes its `/webhook/:action_id` posts,
+                // allowlisted iroh key authorizes its `/webhook/:applet_id` posts,
                 // so the action is anchored on device_id — no credential/bearer.
                 let device_ids: Vec<(String,)> = sqlx::query_as(
                     "SELECT id FROM app_device WHERE source_id = $1 AND revoked_at IS NULL",
@@ -711,9 +714,9 @@ pub async fn reconcile_templates(db: &PgPool) -> Result<usize> {
                 .fetch_all(db)
                 .await?;
                 for (device_id,) in device_ids {
-                    let action_id = format!("{}_{}", id_prefix, device_id);
-                    upsert_row(db, template, &action_id, None, Some(&device_id)).await?;
-                    live_ids.push(action_id);
+                    let applet_id = format!("{}_{}", id_prefix, device_id);
+                    upsert_row(db, template, &applet_id, None, Some(&device_id)).await?;
+                    live_ids.push(applet_id);
                     upserted += 1;
                 }
             } else {
@@ -726,9 +729,9 @@ pub async fn reconcile_templates(db: &PgPool) -> Result<usize> {
                 .fetch_all(db)
                 .await?;
                 for (cred_id,) in credential_ids {
-                    let action_id = format!("{}_{}", id_prefix, cred_id);
-                    upsert_row(db, template, &action_id, Some(&cred_id), None).await?;
-                    live_ids.push(action_id);
+                    let applet_id = format!("{}_{}", id_prefix, cred_id);
+                    upsert_row(db, template, &applet_id, Some(&cred_id), None).await?;
+                    live_ids.push(applet_id);
                     upserted += 1;
                 }
             }
@@ -747,7 +750,7 @@ pub async fn reconcile_templates(db: &PgPool) -> Result<usize> {
     // it. `user`-owned rows are never touched, and the pass is guarded on a
     // non-empty SHIPPED catalog so a load failure can't wipe the table.
     // Run-history FKs are nullified first so history survives under
-    // `action_id = NULL`.
+    // `applet_id = NULL`.
     //
     // The guard keys on the shipped root specifically, NOT on `live_ids`.
     // System rows come only from the shipped tree, so a shipped root that
@@ -757,8 +760,8 @@ pub async fn reconcile_templates(db: &PgPool) -> Result<usize> {
     // shipped tree is briefly unreadable (mid-upgrade, bad mount, bad env).
     if templates.shipped_count > 0 {
         sqlx::query(
-            r#"UPDATE app_applet_runs SET action_id = NULL
-               WHERE action_id IN (
+            r#"UPDATE app_applet_runs SET applet_id = NULL
+               WHERE applet_id IN (
                    SELECT id FROM app_applets
                    WHERE owner = 'system' AND id <> ALL($1::text[])
                )"#,
@@ -791,7 +794,7 @@ pub async fn reconcile_templates(db: &PgPool) -> Result<usize> {
 async fn upsert_row(
     db: &PgPool,
     template: &Template,
-    action_id: &str,
+    applet_id: &str,
     credential_id: Option<&str>,
     device_id: Option<&str>,
 ) -> Result<()> {
@@ -804,7 +807,7 @@ async fn upsert_row(
         other => {
             return Err(Error::Other(format!(
                 "template {} has invalid runtime '{}' (must be function, service, or view)",
-                action_id, other
+                applet_id, other
             )));
         }
     }
@@ -900,7 +903,7 @@ async fn upsert_row(
     };
 
     sqlx::query(sql)
-        .bind(action_id)
+        .bind(applet_id)
         .bind(&template.name)
         .bind(&template.owner)
         .bind(&template.agent)
@@ -1038,7 +1041,7 @@ mod tests {
     }
 
     #[test]
-    fn every_per_credential_action_references_known_source() {
+    fn every_per_credential_applet_references_known_source() {
         let snapshot: ParsedTemplates = {
             let guard = catalog_lock().read().expect("catalog rwlock poisoned");
             guard.clone()
@@ -1068,10 +1071,10 @@ mod tests {
         // it and `per_credential` validation will fail. This test scans every
         // per-folder manifest + sources.toml for the offending substring.
         let core_manifest = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-        let actions_dir = core_manifest.join(ACTIONS_DIR_FROM_CORE);
+        let applets_dir = core_manifest.join(ACTIONS_DIR_FROM_CORE);
 
         // Sources file
-        if let Ok(text) = std::fs::read_to_string(actions_dir.join("sources.toml")) {
+        if let Ok(text) = std::fs::read_to_string(applets_dir.join("sources.toml")) {
             assert!(
                 !text.contains("connector = {"),
                 "sources.toml still references legacy `connector = {{ id = ... }}` field"
@@ -1079,7 +1082,7 @@ mod tests {
         }
 
         // Per-action manifests
-        if let Ok(entries) = std::fs::read_dir(&actions_dir) {
+        if let Ok(entries) = std::fs::read_dir(&applets_dir) {
             for entry in entries.flatten() {
                 let path = entry.path();
                 let manifest = path.join("manifest.toml");
