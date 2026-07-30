@@ -374,7 +374,10 @@ fn parse_template(manifest_path: &std::path::Path, dir: &str) -> Option<Template
         Err(e) => panic!("failed to parse {}: {e}", manifest_path.display()),
     };
     if tmpl.id_prefix.is_none() {
-        tmpl.id_prefix = Some(format!("action_{}", dir.replace('/', "__")));
+        // Migration 0077 rewrote the stored ids to this prefix. `manifest.toml`
+        // may still pin an explicit `id_prefix`; none currently does, and one
+        // that did would be taken at its word.
+        tmpl.id_prefix = Some(format!("applet_{}", dir.replace('/', "__")));
     }
     tmpl.dir = dir.to_string();
     Some(tmpl)

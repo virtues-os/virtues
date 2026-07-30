@@ -123,7 +123,7 @@ pub async fn subscribe_applet_events(
                     );
 
                     yield Ok(SseEvent::default()
-                        .event("action_event")
+                        .event("applet_event")
                         .data(data));
 
                     if is_terminal {
@@ -136,7 +136,7 @@ pub async fn subscribe_applet_events(
                         "message": format!("Missed {} events due to slow consumption", count),
                     });
                     yield Ok(SseEvent::default()
-                        .event("action_event")
+                        .event("applet_event")
                         .data(warning.to_string()));
                 }
                 Err(broadcast::error::RecvError::Closed) => {
