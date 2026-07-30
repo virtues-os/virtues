@@ -224,19 +224,21 @@ pub async fn delete_applet(db: &PgPool, applet_id: &str, drop_data: bool) -> Res
 /// Prefix on the id of every chat-authored applet.
 ///
 /// One constant because this used to be three string literals, and they
-/// disagreed: `applet_setup` wrote `action_user__` (two underscores),
+/// disagreed: `applet_setup` wrote `applet_user__` (two underscores),
 /// `create_user_applet` wrote `action_user_` (one), and `applet_schema_name`
 /// parsed for two. So an applet created through the API silently failed the
 /// prefix check and never got its private schema, while an identical one
 /// created by the AI tool did. Same applet, different door, different
 /// behaviour. Write and parse both go through here now.
 ///
-/// The `action_` stem is legacy and stays for the moment: these are stored id
-/// VALUES, so changing them is a data migration rather than a rename.
-pub const USER_APPLET_PREFIX: &str = "action_user__";
+/// Migration 0077 rewrote the stored ids from `applet_user__` to this, so the
+/// two must not drift: an id minted here is parsed back by
+/// `applet_schema_name`, and a mismatch silently costs an applet its private
+/// schema — which is exactly the bug the single constant exists to prevent.
+pub const USER_APPLET_PREFIX: &str = "applet_user__";
 
 /// The Postgres schema a user applet owns for its private tables, or `None` for
-/// non-user applets — only `action_user__<slug>` applets own an `applet_`
+/// non-user applets — only `applet_user__<slug>` applets own an `applet_`
 /// schema. Slugs are `[a-z0-9_]`, so the result is a safe unquoted identifier.
 pub(crate) fn applet_schema_name(applet_id: &str) -> Option<String> {
     let slug = applet_id.strip_prefix(USER_APPLET_PREFIX)?;
@@ -963,7 +965,7 @@ mod tests {
     /// `applet_setup` and `create_user_applet` both mint user-applet ids, and
     /// `applet_schema_name` parses them back. They used to hold three separate
     /// string literals and two of them disagreed about how many underscores
-    /// `action_user__` has — so an applet created through the API parsed as
+    /// `applet_user__` has — so an applet created through the API parsed as
     /// "not a user applet" and never got its private schema, while the same
     /// applet created by the AI tool did.
     ///
@@ -973,7 +975,7 @@ mod tests {
     fn minted_user_applet_ids_parse_back_to_a_schema() {
         // Exactly what create_user_applet builds for an unnamed id.
         let minted = format!("{USER_APPLET_PREFIX}{}", slugify("Heart Rate Explorer"));
-        assert_eq!(minted, "action_user__heart_rate_explorer");
+        assert_eq!(minted, "applet_user__heart_rate_explorer");
         assert_eq!(
             applet_schema_name(&minted).as_deref(),
             Some("applet_heart_rate_explorer"),
@@ -985,13 +987,13 @@ mod tests {
     /// The shape the bug produced: one underscore short, silently unowned.
     #[test]
     fn a_single_underscore_id_owns_no_schema() {
-        assert_eq!(applet_schema_name("action_user_heart_rate_explorer"), None);
+        assert_eq!(applet_schema_name("applet_user_heart_rate_explorer"), None);
     }
 
     /// Shipped applets are not user applets and own nothing.
     #[test]
     fn shipped_applets_own_no_schema() {
-        assert_eq!(applet_schema_name("action_credential_refresh"), None);
+        assert_eq!(applet_schema_name("applet_credential_refresh"), None);
         assert_eq!(applet_schema_name(""), None);
         assert_eq!(applet_schema_name(USER_APPLET_PREFIX), None);
     }
@@ -1000,8 +1002,8 @@ mod tests {
     /// `[a-z0-9_]` has to be refused rather than escaped.
     #[test]
     fn unsafe_slugs_are_refused() {
-        assert_eq!(applet_schema_name("action_user__has-a-dash"), None);
-        assert_eq!(applet_schema_name("action_user__Caps"), None);
-        assert_eq!(applet_schema_name("action_user__drop\"table"), None);
+        assert_eq!(applet_schema_name("applet_user__has-a-dash"), None);
+        assert_eq!(applet_schema_name("applet_user__Caps"), None);
+        assert_eq!(applet_schema_name("applet_user__drop\"table"), None);
     }
 }

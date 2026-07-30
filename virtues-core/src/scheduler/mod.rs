@@ -314,7 +314,7 @@ mod tests {
         let mut sched = scheduler(&pool).await;
         assert_eq!(sched.sync_jobs().await.unwrap(), 0, "empty catalog");
 
-        insert_applet(&pool, "action_plaid_transactions_sync_cred_x", "0 */30 * * * *").await;
+        insert_applet(&pool, "applet_plaid_transactions_sync_cred_x", "0 */30 * * * *").await;
 
         assert_eq!(sched.sync_jobs().await.unwrap(), 1, "new row scheduled");
         assert_eq!(sched.sync_jobs().await.unwrap(), 0, "already registered");
@@ -325,7 +325,7 @@ mod tests {
     #[sqlx::test]
     async fn reregisters_an_applet_whose_cron_changed(pool: PgPool) {
         let mut sched = scheduler(&pool).await;
-        insert_applet(&pool, "action_a", "0 0 * * * *").await;
+        insert_applet(&pool, "applet_a", "0 0 * * * *").await;
         assert_eq!(sched.sync_jobs().await.unwrap(), 1);
 
         sqlx::query("UPDATE app_applets SET cron_schedule = '0 */5 * * * *' WHERE id = 'action_a'")
@@ -335,7 +335,7 @@ mod tests {
 
         assert_eq!(sched.sync_jobs().await.unwrap(), 1, "retimed → re-registered");
         assert_eq!(
-            sched.registered.get("action_a").map(|(c, _)| c.as_str()),
+            sched.registered.get("applet_a").map(|(c, _)| c.as_str()),
             Some("0 */5 * * * *")
         );
     }
@@ -345,8 +345,8 @@ mod tests {
     #[sqlx::test]
     async fn drops_disabled_and_deleted_applets(pool: PgPool) {
         let mut sched = scheduler(&pool).await;
-        insert_applet(&pool, "action_a", "0 0 * * * *").await;
-        insert_applet(&pool, "action_b", "0 0 * * * *").await;
+        insert_applet(&pool, "applet_a", "0 0 * * * *").await;
+        insert_applet(&pool, "applet_b", "0 0 * * * *").await;
         assert_eq!(sched.sync_jobs().await.unwrap(), 2);
 
         sqlx::query("UPDATE app_applets SET enabled = FALSE WHERE id = 'action_a'")

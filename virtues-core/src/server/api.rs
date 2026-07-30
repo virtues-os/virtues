@@ -199,7 +199,7 @@ pub async fn chat_import_upload_handler(
         "provider": provider,
     });
 
-    match crate::applet_runner::run_applet(&deps, "action_chat_import", "manual", Some(&payload))
+    match crate::applet_runner::run_applet(&deps, "applet_chat_import", "manual", Some(&payload))
         .await
     {
         Ok(r) => (

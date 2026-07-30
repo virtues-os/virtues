@@ -3,7 +3,7 @@
 *Working notes — 2026-07-22. A grounded map of the retrieval stack as it exists,
 the non-obvious truths a full read exposed, and a ranked set of improvements with
 spikes. Written after cutting `wiki_stories` from v1 (see
-[stories-plan.md](stories-plan.md), now shelved) and fixing the notebook magnet
+[stories-plan.md](archive/stories-plan.md), now shelved) and fixing the notebook magnet
 (branch `fix/notebook-magnet-drop-stories`). File references are to
 `virtues-core/src/` and `crates/virtues-registry/src/` unless noted.*
 
