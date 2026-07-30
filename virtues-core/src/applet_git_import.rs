@@ -211,8 +211,8 @@ async fn clone_or_update(target: &Path, url: &str, git_ref: &str) -> Result<()> 
         // user concretely so they can rename or remove the conflict.
         if target.exists() {
             return Err(Error::InvalidInput(format!(
-                "actions/{} already exists and isn't a git checkout — \
-                 the import slug collides with a built-in or hand-authored action. \
+                "applets/{} already exists and isn't a git checkout — \
+                 the import slug collides with a built-in or hand-authored applet. \
                  Rename or remove that folder before importing this URL.",
                 target.file_name().and_then(|s| s.to_str()).unwrap_or("?")
             )));

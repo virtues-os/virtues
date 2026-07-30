@@ -605,7 +605,7 @@ pub struct ConsumeResponse {
     /// so the device knows which webhook id to POST each stream flush to. Empty
     /// for non-collector devices.
     #[serde(skip_serializing_if = "std::collections::HashMap::is_empty", default)]
-    pub action_ids: std::collections::HashMap<String, String>,
+    pub applet_ids: std::collections::HashMap<String, String>,
     /// The box's iroh **EndpointId** (hex) — the device dials this to reach the
     /// box. Present once the box's iroh endpoint is up; `None` otherwise.
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -880,7 +880,7 @@ pub async fn consume_handler(
     // `app_applets.id` to POST each stream flush to. Post-commit best-effort: a
     // failure here doesn't undo the pairing — the device shows up paired but with
     // no ingest actions until the next reconcile.
-    let action_ids = match assemble_applet_fanout(&pool, &device_id).await {
+    let applet_ids = match assemble_applet_fanout(&pool, &device_id).await {
         Ok(map) => map,
         Err(e) => {
             tracing::warn!(
@@ -898,7 +898,7 @@ pub async fn consume_handler(
         Json(ConsumeResponse {
             device_id,
             redirect: "/".to_string(),
-            action_ids,
+            applet_ids,
             box_node_id,
             relay_url,
             box_direct_addrs,

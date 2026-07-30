@@ -670,7 +670,7 @@ pub async fn patch_credential_handler(
         } else {
             // Re-activating is not supported via PATCH. A revoked device must
             // be re-paired via the QR / manual-link flow so a fresh
-            // device_token and action_ids fan-out are generated.
+            // device_token and applet_ids fan-out are generated.
             return (
                 StatusCode::BAD_REQUEST,
                 Json(serde_json::json!({
@@ -842,7 +842,7 @@ pub async fn list_tables_handler(State(state): State<AppState>) -> Response {
 }
 
 
-/// GET /api/devices/action-ids — devices refresh their applet_id routing map.
+/// GET /api/devices/applet-ids — devices refresh their applet_id routing map.
 ///
 /// Used by paired devices when their local routing table goes stale (e.g. after
 /// templates.toml adds a new stream, or the device reinstalls). Authenticated by
@@ -853,18 +853,11 @@ pub async fn device_applet_ids_handler(
     user: crate::middleware::auth::AuthUser,
 ) -> Response {
     match virtues_helpers::auth::fanout_applet_ids(state.db.pool(), &user.device_id).await {
-        // Both keys, deliberately. A collector installed before the rename
-        // reads `action_ids` and has no way to learn a new name — this is the
-        // endpoint it would use to recover, so breaking it here is the one
-        // place that cannot self-heal. `applet_ids` is canonical; `action_ids`
-        // is a duplicate that comes out once every collector in the field
-        // reads the new one.
         Ok(applet_ids) => (
             StatusCode::OK,
             Json(serde_json::json!({
                 "device_id": user.device_id,
                 "applet_ids": applet_ids,
-                "action_ids": applet_ids,
             })),
         )
             .into_response(),
