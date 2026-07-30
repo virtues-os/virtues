@@ -75,12 +75,27 @@ Other rules that follow from a shared tree:
 - **The commit message must describe everything in the commit**, not just the
   part you meant. With agents interleaving, `git log` is the only per-topic
   navigation anyone has.
-- **Claim a migration number before writing the file.** Run
-  `ls virtues-core/migrations | tail -1`, take the next number, and commit an
-  empty placeholder *immediately*. Two agents reaching for the same number is
-  the default outcome otherwise, and git will not warn you — `sqlx::migrate!`
-  keys on the version, and a renumber after a box has applied it breaks that
-  box's upgrades. Migration 52 once killed a box for 3¼ hours.
+- **Claim a migration number before writing the SQL:**
+
+  ```sh
+  make migration NAME=add_foo
+  ```
+
+  It takes the next number, writes a placeholder, and commits it under the lock
+  — so the number is yours before anyone else looks. Then write the SQL and
+  `make commit` it. Two agents reaching for the same number is the *default*
+  outcome otherwise, and git will not warn you: `sqlx::migrate!` keys on the
+  version, and renumbering after a box has applied it breaks that box's
+  upgrades. Migration 52 once killed a box for 3¼ hours.
+
+  **The counter only sees your own branch.** A number claimed on an unmerged
+  branch is invisible here — which is exactly why everyone works on `wave`. If
+  you must merge a branch carrying migrations, check for duplicate numbers
+  first:
+
+  ```sh
+  ls virtues-core/migrations | sed -n 's/^\([0-9]*\).*/\1/p' | sort | uniq -d
+  ```
 - **Claim verification modestly.** A green `cargo check` on a shared tree may
   reflect another agent's half-finished edits.
 
