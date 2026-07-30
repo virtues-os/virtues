@@ -1036,7 +1036,7 @@ Use this when:
             "type": "object",
             "required": ["id"],
             "properties": {
-                "id": { "type": "string", "description": "The action id (e.g. 'action_user_weekly_planner')" }
+                "id": { "type": "string", "description": "The action id (e.g. 'applet_user__weekly_planner')" }
             }
         }),
         tool_type: ToolType::Builtin,

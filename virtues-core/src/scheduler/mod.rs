@@ -328,7 +328,7 @@ mod tests {
         insert_applet(&pool, "applet_a", "0 0 * * * *").await;
         assert_eq!(sched.sync_jobs().await.unwrap(), 1);
 
-        sqlx::query("UPDATE app_applets SET cron_schedule = '0 */5 * * * *' WHERE id = 'action_a'")
+        sqlx::query("UPDATE app_applets SET cron_schedule = '0 */5 * * * *' WHERE id = 'applet_a'")
             .execute(&pool)
             .await
             .unwrap();
@@ -349,11 +349,11 @@ mod tests {
         insert_applet(&pool, "applet_b", "0 0 * * * *").await;
         assert_eq!(sched.sync_jobs().await.unwrap(), 2);
 
-        sqlx::query("UPDATE app_applets SET enabled = FALSE WHERE id = 'action_a'")
+        sqlx::query("UPDATE app_applets SET enabled = FALSE WHERE id = 'applet_a'")
             .execute(&pool)
             .await
             .unwrap();
-        sqlx::query("DELETE FROM app_applets WHERE id = 'action_b'")
+        sqlx::query("DELETE FROM app_applets WHERE id = 'applet_b'")
             .execute(&pool)
             .await
             .unwrap();
