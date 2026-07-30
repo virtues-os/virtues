@@ -6,8 +6,19 @@ class Uploader {
     private var timer: DispatchSourceTimer?
 
     /// Resolved `mac_ingest` webhook action id. Normally comes from
-    /// `config.actionIds`; cached here if a one-shot refetch was needed.
+    /// `config.actionIds`; refetched into here when that one is dead.
+    ///
+    /// Takes precedence over `config.actionIds` once set. It has to: the
+    /// config is a `let` read from disk at pair time, so if the id there ever
+    /// stops existing box-side there is no other way to move off it.
     private var cachedActionId: String?
+
+    /// Set when the box answers 404 for the id we used, which means that id is
+    /// gone — the applet was deleted, re-created, or renamed. Distinct from the
+    /// transient failures the backoff is for: retrying a 404 with the same id
+    /// never succeeds, however long you wait. Cleared once a refetch produces
+    /// a new one.
+    private var actionIdIsStale = false
 
     // Thread-safe state management
     private let stateQueue = DispatchQueue(label: "com.virtues.uploader.state")
@@ -239,6 +250,20 @@ class Uploader {
             } else if httpResponse.statusCode == 401 {
                 handle401(data)
                 return (0, pending)
+            } else if httpResponse.statusCode == 404 {
+                // The box does not know this applet id. That is terminal for
+                // the id, not for the upload: nothing is dropped, the records
+                // stay pending, and the next cycle resolves a fresh id rather
+                // than posting to the same dead one. Backoff is deliberately
+                // NOT escalated — the retry will differ, so waiting longer
+                // buys nothing.
+                print(
+                    "⚠️ Webhook 404 for action id \(actionId) — it no longer exists on the box. "
+                        + "Refetching on the next cycle; \(pending) records held.")
+                actionIdIsStale = true
+                cachedActionId = nil
+                consecutive401Errors = 0
+                return (0, pending)
             } else {
                 print("Upload failed with status: \(httpResponse.statusCode)")
                 if let body = String(data: data, encoding: .utf8) {
@@ -278,20 +303,31 @@ class Uploader {
         }
     }
 
-    /// The `mac_ingest` action id: from the paired config, else a cached
-    /// value, else a one-shot refetch from `/api/devices/action-ids` (covers a
-    /// config that predates the box-side fanout fix).
+    /// The `mac_ingest` action id: a refetched one if we have it, else the
+    /// paired config, else a one-shot refetch.
+    ///
+    /// The refetch used to be unreachable whenever the config held any value —
+    /// and the config is a `let` loaded at pair time, so a collector whose id
+    /// had gone away box-side would post to it forever, take a 404, back off,
+    /// and retry the same dead id until someone re-paired. Nothing surfaced but
+    /// a `print`. So the order is deliberate: a value we fetched from the box
+    /// beats a value we read off disk, and `actionIdIsStale` forces a refetch
+    /// even when the config still has something to offer.
     private func macActivityActionId() async -> String? {
-        if let id = config.actionIds["mac_ingest"] {
+        if !actionIdIsStale, let id = cachedActionId {
             return id
         }
-        if let id = cachedActionId {
+        if !actionIdIsStale, let id = config.actionIds["mac_ingest"] {
             return id
         }
         if let id = await refetchMacActivityActionId() {
             cachedActionId = id
+            actionIdIsStale = false
             return id
         }
+        // The refetch failed (box unreachable, or it genuinely has no
+        // mac_ingest applet). Keep the stale flag set so the next cycle tries
+        // again rather than falling back to the id we already know is dead.
         return nil
     }
 
