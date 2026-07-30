@@ -76,7 +76,7 @@ pub fn init(db_path: impl AsRef<Path>, device_id: &str, ingest_key: &str) -> Res
         "CREATE TABLE IF NOT EXISTS outbox (
             source_stream_id TEXT PRIMARY KEY,
             stream           TEXT NOT NULL,
-            action_key       TEXT NOT NULL,
+            applet_key       TEXT NOT NULL,
             payload          TEXT NOT NULL,
             created_at       INTEGER NOT NULL,
             attempts         INTEGER NOT NULL DEFAULT 0,
@@ -86,6 +86,22 @@ pub fn init(db_path: impl AsRef<Path>, device_id: &str, ingest_key: &str) -> Res
          CREATE INDEX IF NOT EXISTS idx_outbox_due ON outbox(stream, next_attempt_at);
          CREATE INDEX IF NOT EXISTS idx_outbox_created ON outbox(stream, created_at);",
     )?;
+
+    // Migrate a device that already has the pre-rename column. CREATE TABLE IF
+    // NOT EXISTS is a no-op on those, so without this the column stays
+    // `action_key` and every INSERT below fails against it — on a queue holding
+    // undelivered records, which is the worst place to get this wrong.
+    //
+    // Checked rather than attempted-and-ignored: swallowing the error would
+    // also swallow a genuinely broken database. SQLite has had RENAME COLUMN
+    // since 3.25 (2018).
+    let has_legacy: bool = conn
+        .prepare("SELECT 1 FROM pragma_table_info('outbox') WHERE name = 'action_key'")?
+        .exists([])?;
+    if has_legacy {
+        conn.execute_batch("ALTER TABLE outbox RENAME COLUMN action_key TO applet_key;")?;
+        tracing::info!("outbox: migrated action_key → applet_key");
+    }
     let _ = DB_PATH.set(path);
     *DEVICE_ID.lock().unwrap() = device_id.to_string();
     *INGEST_KEY.lock().unwrap() = ingest_key.to_string();
@@ -107,7 +123,7 @@ pub fn enqueue(stream: &str, record: Value) -> Result<()> {
 /// that shouldn't wake the radio alone. `defer_secs = 0` means due now.
 pub fn enqueue_deferred(stream: &str, mut record: Value, defer_secs: i64) -> Result<()> {
     let device = DEVICE_ID.lock().unwrap().clone();
-    let action_key = {
+    let applet_key = {
         let k = INGEST_KEY.lock().unwrap().clone();
         if k.is_empty() {
             "ios_ingest".to_string()
@@ -137,9 +153,9 @@ pub fn enqueue_deferred(stream: &str, mut record: Value, defer_secs: i64) -> Res
     let conn = conn()?;
     conn.execute(
         "INSERT OR IGNORE INTO outbox
-           (source_stream_id, stream, action_key, payload, created_at, attempts, next_attempt_at)
+           (source_stream_id, stream, applet_key, payload, created_at, attempts, next_attempt_at)
          VALUES (?1, ?2, ?3, ?4, ?5, 0, ?6)",
-        params![id, stream, action_key, payload, now(), due],
+        params![id, stream, applet_key, payload, now(), due],
     )?;
     Ok(())
 }
@@ -155,12 +171,12 @@ pub fn due_streams() -> Result<Vec<String>> {
     Ok(rows.collect::<std::result::Result<Vec<_>, _>>()?)
 }
 
-/// The `action_key` (ingest binary name) for a stream's queued rows.
+/// The `applet_key` (ingest binary name) for a stream's queued rows.
 pub fn applet_key_for(stream: &str) -> Result<Option<String>> {
     let conn = conn()?;
     let key: Option<String> = conn
         .query_row(
-            "SELECT action_key FROM outbox WHERE stream = ?1 LIMIT 1",
+            "SELECT applet_key FROM outbox WHERE stream = ?1 LIMIT 1",
             params![stream],
             |r| r.get(0),
         )
