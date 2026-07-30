@@ -1,8 +1,8 @@
 # Networking — reach your box via a blind relay (ADR)
 
 > **Source of truth (2026-06-29) for Virtues' remote-access model.** Supersedes
-> [networking.md](networking.md), [jetson-wg.md](jetson-wg.md), and the WG/IPv6-direct
-> parts of [byo-networking.md](byo-networking.md) — those described an
+> the former `networking.md`, `jetson-wg.md`, and the WG/IPv6-direct parts of
+> `byo-networking.md` (all three since deleted) — those described an
 > IPv6-direct/WireGuard model that **fails on v4-only visited networks** (corporate /
 > coworking / café / CGNAT). This document replaces that doctrine.
 
