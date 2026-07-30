@@ -5,7 +5,7 @@
 # Cloud services (virtues-atlas / virtues-api) deploy as Docker images to ECR.
 
 .DEFAULT_GOAL := help
-.PHONY: help init dev seed dev-info dev-core dev-api dev-web dev-embed _embed-ensure _embed-run \
+.PHONY: help init commit migration dev seed dev-info dev-core dev-api dev-web dev-embed _embed-ensure _embed-run \
         dev-link dev-reset dev-wipe-mac dev-clean dev-pull dev-real db db-stop deploy-atlas deploy-virtues-api _ecr-push mac-app \
         iroh-ffi-ios iroh-ffi-mac
 
@@ -97,7 +97,44 @@ PG_BIN ?= $(shell brew --prefix postgresql@17 2>/dev/null)/bin
 
 help: ## Show this help
 	@grep -hE '^[a-zA-Z_-]+:.*?## ' $(MAKEFILE_LIST) \
-	  | awk 'BEGIN{FS=":.*?## "}{printf "  \033[36m%-12s\033[0m %s\n", $$1, $$2}'
+	  | awk 'BEGIN{FS=":.*?## "}{printf "  \033[36m%-14s\033[0m %s\n", $$1, $$2}'
+
+# ── Git, for a shared checkout ───────────────────────────────────────────────
+# Several agents work in this one tree at once, so the index is a shared mutable
+# resource: two agents doing add→commit interleaved means whoever commits first
+# takes both sets of changes. `git commit -- <paths>` sidesteps that entirely by
+# ignoring the index and committing only the named paths. The flock serializes
+# the add, so a concurrent `git add` can't land in between.
+#
+#   make commit MSG="fix(applets): the thing" FILES="a/one.rs b/two.rs"
+#
+# See the Branching section of CLAUDE.md. Never `git add -A` in this repo.
+
+commit: ## Safely commit only your files: MSG="..." FILES="path ..."
+	@[ -n "$(MSG)" ]   || { echo "error: MSG is required  —  make commit MSG=\"fix(x): y\" FILES=\"a b\""; exit 1; }
+	@[ -n "$(FILES)" ] || { echo "error: FILES is required (explicit paths only; never -A)"; exit 1; }
+	@branch=$$(git rev-parse --abbrev-ref HEAD); \
+	case "$$branch" in staging|main) \
+	  echo "refusing to commit to $$branch — work on 'wave' (see CLAUDE.md)"; exit 1;; esac; \
+	for f in $(FILES); do \
+	  [ -e "$$f" ] || git ls-files --error-unmatch "$$f" >/dev/null 2>&1 || \
+	    { echo "error: no such path: $$f"; exit 1; }; \
+	done; \
+	tools/with-lock.sh sh -c 'git add -- $(FILES) && git commit -m "$(MSG)" -- $(FILES)'; \
+	echo "→ committed to $$branch:"; git show --stat --format='  %h %s' HEAD | head -20
+
+migration: ## Claim the next migration number NOW, before writing SQL: NAME=add_foo
+	@[ -n "$(NAME)" ] || { echo "error: NAME is required  —  make migration NAME=add_foo"; exit 1; }
+	@tools/with-lock.sh sh -c '\
+	  last=$$(ls virtues-core/migrations | sed -n "s/^\([0-9][0-9]*\).*/\1/p" | sort -n | tail -1); \
+	  next=$$(printf "%04d" $$(expr $$(echo $$last | sed "s/^0*//") + 1)); \
+	  f="virtues-core/migrations/$${next}_$(NAME).sql"; \
+	  if [ -e "$$f" ]; then echo "error: $$f exists"; exit 1; fi; \
+	  printf -- "-- $${next}_$(NAME)\n-- Number claimed; SQL to follow.\n" > "$$f"; \
+	  git add -- "$$f" && \
+	  git commit -q -m "chore(db): claim migration $${next} ($(NAME))" -- "$$f" && \
+	  echo "→ claimed $$f"; \
+	  echo "   write the SQL, then: make commit MSG=\"...\" FILES=$$f"'
 
 # ── First-time setup ─────────────────────────────────────────────────────────
 
