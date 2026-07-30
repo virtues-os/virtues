@@ -1,15 +1,23 @@
 /**
- * The Library — the sidebar's system shelf.
+ * The sidebar's system shelves.
  *
- * The rail is two zones with two contracts, named from inside the metaphor
+ * The rail is three zones with three contracts, named from inside the metaphor
  * the whole shell uses:
  *
- *   - Desk    — what you've taken off the shelf to work on. Today that means
- *               notebooks; the species list grows (a page, a person, a day).
- *               Serif spines, bookcloth dots, the user's own order, uncapped.
- *               Rendered by DeskSection, not from these constants.
- *   - Library — the system's fixed shelf. Stable forever, so muscle memory
- *               can live here. Sans labels, Atlas icons.
+ *   - Desk      — what you've taken off the shelf to work on. Today that means
+ *                 notebooks; the species list grows (a page, a person, a day).
+ *                 Serif spines, bookcloth dots, the user's own order, uncapped.
+ *                 Rendered by DeskSection, not from these constants.
+ *   - Workbench — where you make things. Chats, pages, notebooks, applets: each
+ *                 row is a place you author, and each carries a `+`.
+ *   - Library   — where you read things. Wiki, bookmarks, drive: the record and
+ *                 what you've filed against it. Nothing here is made by hand,
+ *                 which is exactly why it belongs on its own shelf.
+ *
+ * Both of the latter are fixed and stable forever, so muscle memory can live in
+ * them. The split is by verb — make vs. consult — because that is the
+ * distinction you actually hold in your head when you reach for the rail, and a
+ * single seven-row list made you read every label to find either one.
  *
  * No Home row: the masthead is a path — `∴ Virtues / …` — and its root is the
  * way home. The earlier wordmark-as-home failed because a bare mark behaving
@@ -138,9 +146,14 @@ const ACTIONS: SystemSection = {
 
 export const SECTION_GROUPS: SectionGroup[] = [
 	{
+		id: 'grp_workbench',
+		label: 'Workbench',
+		items: [CHATS, PAGES, NOTEBOOKS, ACTIONS],
+	},
+	{
 		id: 'grp_library',
 		label: 'Library',
-		items: [NOTEBOOKS, CHATS, PAGES, BOOKMARKS, WIKI, DRIVE, ACTIONS],
+		items: [WIKI, BOOKMARKS, DRIVE],
 	},
 ];
 

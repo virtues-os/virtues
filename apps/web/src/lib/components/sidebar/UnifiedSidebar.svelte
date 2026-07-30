@@ -268,9 +268,11 @@
 								     that retired them the first time). -->
 								<DeskSection collapsed={isCollapsed} />
 
-								<!-- The Library: the system's fixed shelf. Stable
-								     forever, so muscle memory can live here. -->
-								{#each SECTION_GROUPS as group (group.id)}
+								<!-- Workbench, then Library: the system's fixed
+								     shelves, split by verb — what you make, then
+								     what you consult. Stable forever, so muscle
+								     memory can live in them. -->
+								{#each SECTION_GROUPS as group, i (group.id)}
 									<div class="nav-group">
 										{#if group.label && !isCollapsed}
 											<ZoneHeader id={group.id} label={group.label} />
@@ -287,6 +289,14 @@
 														accentColor={null}
 													/>
 												{/each}
+												<!-- The seam to the next zone, inside the fold
+												     that owns it — the Desk's trick, for the
+												     same reason: a spacer OUTSIDE the clipping
+												     box survives the fold and leaves a hole
+												     belonging to nothing. -->
+												{#if i < SECTION_GROUPS.length - 1}
+													<div class="zone-tail" aria-hidden="true"></div>
+												{/if}
 											</div>
 										</div>
 									</div>
@@ -393,6 +403,12 @@
 	   own collapsible region, so it folds away with the pins — otherwise
 	   closing the Desk left a 28px hole between two adjacent subtitles, and
 	   the space read as belonging to nothing. */
+
+	/* Same token as every other interval in the column, so Desk → Workbench
+	   and Workbench → Library read as one repeated beat. */
+	.zone-tail {
+		height: var(--sidebar-interactive-height);
+	}
 
 	.loading-state {
 		display: flex;

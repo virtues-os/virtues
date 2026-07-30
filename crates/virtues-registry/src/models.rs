@@ -109,7 +109,9 @@ impl ModelSlot {
 /// gateway's OpenAI-compatible endpoint FIRST — the gateway's `tool-use` tag
 /// describes the model, not the shim it is reached through. Run:
 ///
-///     cargo test -p virtues --lib slot_model_smoke -- --ignored
+/// ```text
+/// cargo test -p virtues --lib slot_model_smoke -- --ignored
+/// ```
 ///
 /// which drives the candidate with our real tool set: tool selection, valid
 /// tool names, parseable arguments, and parallel calls in one turn.
