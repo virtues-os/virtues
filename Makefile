@@ -108,7 +108,14 @@ help: ## Show this help
 #
 #   make commit MSG="fix(applets): the thing" FILES="a/one.rs b/two.rs"
 #
-# See the Branching section of CLAUDE.md. Never `git add -A` in this repo.
+# Only paths that still exist are staged: `git rm` clears a path from the index
+# AND the worktree, so no pathspec can match it and `git add` would abort the
+# whole command. `git commit -- <paths>` records those deletions by itself.
+# `git add -A -- <paths>` is scoped BY the pathspec and stages only what is
+# under those paths — not the same thing as a bare `git add -A`, which is what
+# sweeps up other agents' work.
+#
+# See the Branching section of CLAUDE.md. Never bare `git add -A` in this repo.
 
 commit: ## Safely commit only your files: MSG="..." FILES="path ..."
 	@[ -n "$(MSG)" ]   || { echo "error: MSG is required  —  make commit MSG=\"fix(x): y\" FILES=\"a b\""; exit 1; }
@@ -117,10 +124,15 @@ commit: ## Safely commit only your files: MSG="..." FILES="path ..."
 	case "$$branch" in staging|main) \
 	  echo "refusing to commit to $$branch — work on 'wave' (see CLAUDE.md)"; exit 1;; esac; \
 	for f in $(FILES); do \
-	  [ -e "$$f" ] || git ls-files --error-unmatch "$$f" >/dev/null 2>&1 || \
-	    { echo "error: no such path: $$f"; exit 1; }; \
+	  [ -e "$$f" ] && continue; \
+	  git cat-file -e "HEAD:$$f" 2>/dev/null && continue; \
+	  echo "error: no such path, and not tracked in HEAD: $$f"; exit 1; \
 	done; \
-	tools/with-lock.sh sh -c 'git add -- $(FILES) && git commit -m "$(MSG)" -- $(FILES)'; \
+	tools/with-lock.sh sh -c 'set -e; ex=""; \
+	  for f in $(FILES); do if [ -e "$$f" ]; then ex="$$ex $$f"; fi; done; \
+	  if [ -n "$$ex" ]; then git add -A -- $$ex; fi; \
+	  git commit -m "$(MSG)" -- $(FILES)' \
+	  || { echo "commit failed — nothing was committed"; exit 1; }; \
 	echo "→ committed to $$branch:"; git show --stat --format='  %h %s' HEAD | head -20
 
 migration: ## Claim the next migration number NOW, before writing SQL: NAME=add_foo
