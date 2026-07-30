@@ -13,7 +13,7 @@
 
 | Tier | What it is | How it ships | Privilege |
 |---|---|---|---|
-| **Home box** (DIY + appliance) | `virtues` binary + `virtues-wireguard` daemon | `curl -sSL https://virtues.com/sh \| sudo sh` → systemd units | App rootless; WG daemon `NET_ADMIN` only |
+| **Home box** (DIY + appliance) | `virtues` binary (+ `virtues-qnnd` on NPU boards) | `curl -sSL https://virtues.com/sh \| sudo sh` → systemd units | Rootless throughout — no privileged component |
 | **Cloud sidecar** (Virtues-operated) | `atlas` + `virtues-api` services | Docker images on a single EC2 + Caddy | `docker run`, no orchestrator |
 | **Clients** | Web UI (SvelteKit), iOS app, Mac collector | Static site / App Store / signed pkg | None |
 
@@ -34,7 +34,7 @@ redirect(302, 'https://github.com/virtues-os/virtues/releases/latest/download/bo
 
 Bootstrap downloads the platform-specific `virtues-installer` binary from the latest GitHub Release, sha-verifies it, and execs it. The installer is idempotent and does, in order:
 
-1. **Pick the package manager** (`apt` for Debian/Ubuntu, `dnf` for Fedora) and install: `postgresql-18` + `postgresql-18-pgvector`, `avahi-daemon`, `libnss-mdns`, `wireguard`, `openssl`, `ca-certificates`.
+1. **Pick the package manager** (`apt` for Debian/Ubuntu, `dnf` for Fedora) and install: `postgresql-18` + `postgresql-18-pgvector`, `avahi-daemon`, `avahi-utils`, `libnss-mdns`, `ca-certificates`, `curl`.
 2. **Resolve the latest release tag** from `https://api.github.com/repos/virtues-os/virtues/releases/latest`, download the `virtues-<ver>-<arch>-linux.tar.gz` tarball + its `.sha256` from the matching GitHub Release, verify the checksum, extract the `virtues` binary to `/usr/local/bin/`.
 3. **Set hostname** to `virtues` (skip with `VIRTUES_KEEP_HOSTNAME=1`) and drop `/etc/avahi/services/virtues.service` so the box advertises itself on the LAN as `_https._tcp` on `virtues.local`.
 4. **Create the `virtues` system user** that owns the daemon, with a home at `/var/lib/virtues/`.
@@ -57,23 +57,43 @@ The container trade-off makes sense in the cloud (multi-tenant, immutable infra,
 
 ---
 
-## The privilege split: app rootless, WG daemon rootful
+## Privilege: nothing is rootful
 
-WireGuard needs `CAP_NET_ADMIN` against the kernel. Rather than make the *whole app* privileged, we isolate WG into a **minimal standalone daemon** so the privileged surface is tiny.
+The box runs **one unprivileged service**. `virtues.service` runs as
+`User=virtues` with no capabilities; on NPU boards `virtues-qnnd.service` joins
+it, also unprivileged. There is no `NET_ADMIN` component and nothing that needs
+`/dev/net/tun`.
 
-- **`crates/virtues-wg`** — depends only on `defguard_wireguard_rs` + `sqlx` + crypto. No web, no ML, no interpreters.
-- **`virtues-wireguard`** binary (`virtues-wireguard.service`) — runs rootful with `NET_ADMIN` + `/dev/net/tun`. Owns: `wg0` lifecycle, **reconcile loop**, the netlink IPv6-change watcher (records the box's current endpoint for the pairing bundle), and the mDNS/SSDP multicast functions. Kernel WireGuard only — the host must have the `wireguard` module (shipped in the Jetson appliance image; stock on DIY mini-PCs).
-- **`virtues`** binary (`virtues.service`) — runs as `User=virtues` (no capabilities). Web UI, API, ingestion, ML. Its only WG involvement is writing peer config rows to the DB.
+> **This section used to describe a privilege split**, because reach was
+> WireGuard: a minimal rootful `virtues-wireguard` daemon (`crates/virtues-wg`)
+> owned `wg0`, the reconcile loop, the netlink IPv6 watcher, and the
+> mDNS/SSDP multicast functions, coordinating with the rootless app through the
+> DB rather than IPC. **All of it is gone.** Reach is the blind relay — the box
+> dials *outbound* and needs no kernel networking privileges at all, which is
+> what let the privileged component be deleted rather than merely shrunk. See
+> [`networking-relay-tee.md`](networking-relay-tee.md).
+>
+> The only trace left in the codebase is retirement code: `cli/upgrade.rs`
+> disables and removes a leftover `virtues-wireguard.service` on boxes upgrading
+> from a build that had one. That is deliberate and should stay until no such
+> box remains.
 
-**The DB is the interface — no IPC.** Pairing writes peers via `pairing::store_peer` (→ `credentials.metadata.wg`); the WG daemon reconciles `wg0` from `pairing::load_all_peers`. Prompt application of new pairings comes from Postgres `LISTEN/NOTIFY`.
-
-*risk ≈ privilege × attack surface.* The privileged component is a few hundred KB of WG/netlink/DB code with no untrusted input beyond peer config from our own DB — vs. making the fat app (web + ML + Python interpreter) the privileged one.
+The security argument that motivated the split still holds in its stronger
+form — *risk ≈ privilege × attack surface*, and the privilege term is now zero.
 
 ---
 
-## Networking: mDNS and SSDP live in the WG daemon
+## Networking: mDNS on the LAN
 
-Multicast/broadcast protocols (mDNS for `virtues.local` discovery, SSDP for the pinhole wizard's router detection) require host network access. Both ride along with the WG daemon (which is already host-networked for `wg0`). The app process binds a single explicit port (`:8000` HTTP, no TLS surface — see [[localhost-daemon-trust]] in MEMORY.md), unicast only.
+`avahi-daemon` is a stock distro package the installer enables, and the
+installer drops `/etc/avahi/services/virtues.service` so the box advertises
+itself as `_https._tcp` on `virtues.local`. Discovery is therefore Avahi's job,
+not ours — there is no Virtues-owned multicast code and no host-networked
+process. The app binds a single explicit port (`:8000` HTTP, no TLS surface),
+unicast only.
+
+SSDP is gone with the pinhole wizard: there is no port to forward, so there is
+no router to detect.
 
 ---
 
@@ -150,7 +170,8 @@ rollback.
 
 - `docker-compose.yml` (deleted — orphaned by native install)
 - `deploy/quadlet/` (deleted — orphaned by native install)
-- `deploy/wireguard.Dockerfile` (deleted — WG daemon ships as native binary alongside `virtues`)
+- `deploy/wireguard.Dockerfile` **and the WG daemon itself** (`crates/virtues-wg`,
+  `virtues-wireguard.service`) — deleted with the move to the blind relay
 - Nomad job files (gone — replaced by `docker run` on EC2)
 
 The cloud `services/{atlas,virtues-api}/Dockerfile` are the only Dockerfiles that still matter.
