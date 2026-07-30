@@ -8,10 +8,31 @@
 
 name: CI
 
+# Skips changes that cannot affect the build. A docs-only PR was costing a full
+# Rust compile plus a Postgres service on a paid runner, twice (once for the PR,
+# once when the merge landed on staging). Keep this list to things with no code
+# path — anything that even might be compiled or shipped must NOT be listed here.
+#
+# Safe because `staging` has no required status checks; if branch protection is
+# ever added, `paths-ignore` on `pull_request` means the check never reports and
+# such PRs can never merge. Use a skip-job that reports success instead.
+#
+# The two lists below are duplicated on purpose — GitHub Actions does not
+# support YAML anchors/aliases in workflow files. Keep them in sync.
 on:
   push:
     branches: [main, staging]
+    paths-ignore:
+      - "docs/**"
+      - "**/*.md"
+      - ".github/images/**"
+      - LICENSE
   pull_request:
+    paths-ignore:
+      - "docs/**"
+      - "**/*.md"
+      - ".github/images/**"
+      - LICENSE
 
 jobs:
   rust:

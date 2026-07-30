@@ -104,6 +104,14 @@ Other rules that follow from a shared tree:
 From `wave`, when a slice is green: open a PR to `staging`. Never delete
 `wave` afterward — keep committing to it.
 
+**Batch slices; don't open a PR per change.** Pushing to `wave` is free — CI
+only fires on pull requests and on `main`/`staging` pushes, so agents can commit
+all day at no cost. Each PR, by contrast, costs a full Rust build plus a
+Postgres service on a paid runner, and then costs it *again* when the merge
+lands on `staging`. One PR at the end of a wave of work, not one per commit.
+Docs-only changes are exempt (`paths-ignore` in `ci.yml`) — do not add
+compiled paths to that list.
+
 If `staging` moves independently (a hotfix, another machine), reconcile from
 `wave` without switching:
 
