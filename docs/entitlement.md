@@ -1,8 +1,8 @@
 # Entitlement & Billing Architecture (Spec)
 
 > The technical spec for how a paying customer's box gets AI and utility calls
-> paid for. For the *why* and the marketing language, see
-> [`virtues-api.md`](virtues-api.md).
+> paid for. For the *why* and the customer-facing language — also rewritten to
+> the shipped model — see [`virtues-api.md`](virtues-api.md).
 >
 > **Rewritten 2026-07-29.** This document previously specified a *double-blind
 > voucher* model — Atlas and virtues-api shared no column, and a disposable
