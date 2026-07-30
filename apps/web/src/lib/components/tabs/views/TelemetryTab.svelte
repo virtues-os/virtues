@@ -17,7 +17,7 @@
 		gpu_pct: number | null;
 		temp_c: number | null;
 	};
-	// ─── Action run metrics ───────────────────────────────────────────────────
+	// ─── Applet run metrics ───────────────────────────────────────────────────
 	type Metrics = {
 		summary: {
 			total_jobs: number;
@@ -163,7 +163,7 @@
 			{/if}
 		</div>
 
-		<!-- Action run summary -->
+		<!-- Applet run summary -->
 		{#if metrics}
 			<div class="border border-border rounded-lg p-6 mb-6">
 				<div class="text-xs uppercase tracking-wide text-foreground-muted mb-4">

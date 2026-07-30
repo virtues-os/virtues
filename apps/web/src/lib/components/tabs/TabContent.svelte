@@ -3,7 +3,7 @@
 	import { type Tab, routeToEntityId } from "$lib/tabs/types";
 	import { tabRegistry, getComponent, getVirtuesComponent } from "$lib/tabs/registry";
 	import { loadDetail } from "$lib/applet-views";
-	import { getAction } from "$lib/api/client";
+	import { getApplet } from "$lib/api/client";
 	import type { Component } from "svelte";
 
 	let { tab, active }: { tab: Tab; active: boolean } = $props();
@@ -19,11 +19,11 @@
 	$effect(() => {
 		actionViewComponent = null;
 
-		if (tab.type !== 'action') return;
+		if (tab.type !== 'applet') return;
 		const id = routeToEntityId(tab.route);
 		if (!id) return;
 
-		void getAction(id)
+		void getApplet(id)
 			.then((action) => {
 				if (action.runtime !== 'view') return;
 				const cfg = (action.config ?? {}) as { view?: { name?: string } };

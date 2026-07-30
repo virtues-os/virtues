@@ -496,18 +496,18 @@ export const tabRegistry: Record<TabType, TabDefinition> = {
 	},
 
 	// ========================================================================
-	// ACTIONS: /actions, /actions/{actions|templates|history}
+	// APPLETS: /applets (legacy /actions/* still resolves)
 	// ========================================================================
-	actions: {
+	applets: {
 		match: (path) =>
 			path === '/applets' ||
 			path === '/actions' || /^\/actions\/(actions|templates|history)$/.test(path),
 		parse: () => ({
-			type: 'actions',
+			type: 'applets',
 			label: 'Applets',
 			icon: 'ri:flashlight-line',
 		}),
-		serialize: () => 'actions',
+		serialize: () => 'applets',
 		deserialize: () => '/applets',
 		icon: 'ri:flashlight-line',
 		defaultLabel: 'Applets',
@@ -515,13 +515,13 @@ export const tabRegistry: Record<TabType, TabDefinition> = {
 	},
 
 	// ========================================================================
-	// APPLET VIEW: /applet/action_{id}/view — the applet's face, full-page.
-	// Must precede `action` (whose match ends at $, so order is belt-and-braces).
+	// APPLET VIEW: /applet/applet_{id}/view — the applet's face, full-page.
+	// Must precede `applet` (whose match ends at $, so order is belt-and-braces).
 	// ========================================================================
 	'applet-view': {
-		match: (path) => /^\/(?:applet|action)\/action_[^/]+\/view$/.test(path),
+		match: (path) => /^\/(?:applet|action)\/applet_[^/]+\/view$/.test(path),
 		parse: (path) => {
-			const match = path.match(/^\/(?:applet|action)\/(action_[^/]+)\/view$/);
+			const match = path.match(/^\/(?:applet|action)\/(applet_[^/]+)\/view$/);
 			return {
 				type: 'applet-view',
 				label: 'Applet',
@@ -532,7 +532,7 @@ export const tabRegistry: Record<TabType, TabDefinition> = {
 		serialize: (id) => (id ? `${id}__view` : 'applet-view'),
 		deserialize: (serialized) => {
 			const id = serialized.replace(/__view$/, '');
-			if (id.startsWith('action_')) return `/applet/${id}/view`;
+			if (id.startsWith('applet_')) return `/applet/${id}/view`;
 			return '/applets';
 		},
 		icon: 'ri:layout-2-line',
@@ -541,22 +541,22 @@ export const tabRegistry: Record<TabType, TabDefinition> = {
 	},
 
 	// ========================================================================
-	// ACTION DETAIL: /applet/action_{id} — settings, prompt, runs (no face).
+	// APPLET DETAIL: /applet/applet_{id} — settings, prompt, runs (no face).
 	// ========================================================================
-	action: {
-		match: (path) => /^\/(applet|action)\/action_[^/]+$/.test(path),
+	applet: {
+		match: (path) => /^\/(applet|action)\/applet_[^/]+$/.test(path),
 		parse: (path) => {
-			const match = path.match(/^\/(?:applet|action)\/(action_[^/]+)$/);
+			const match = path.match(/^\/(?:applet|action)\/(applet_[^/]+)$/);
 			return {
-				type: 'action',
+				type: 'applet',
 				label: 'Applet',
 				icon: 'ri:flashlight-line',
 				entityId: match?.[1],
 			};
 		},
-		serialize: (id) => (id ? `action_${id}` : 'action'),
+		serialize: (id) => (id ? `applet_${id}` : 'applet'),
 		deserialize: (serialized) => {
-			if (serialized.startsWith('action_')) return `/applet/${serialized}`;
+			if (serialized.startsWith('applet_')) return `/applet/${serialized}`;
 			return '/applets';
 		},
 		icon: 'ri:flashlight-line',
@@ -874,9 +874,9 @@ export function parseRoute(route: string): ParsedRoute {
 		'home',
 		// Specific patterns first
 		'source', // Source list and detail views
-		'actions', // Actions list page (must come before singular 'action')
-		'applet-view', // Applet full-page face (must come before 'action')
-		'action', // Action detail page
+		'applets', // Applets list page (must come before singular 'applet')
+		'applet-view', // Applet full-page face (must come before 'applet')
+		'applet', // Applet detail page
 		'developers', // Developers tab group (SQL/Terminal/Lake)
 		'ontology', // Ontology data browsing
 		'record', // /record/<ontology>/<id> — single raw record

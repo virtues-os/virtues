@@ -1,34 +1,34 @@
 <script lang="ts">
-	import type { Action, ActionRun } from '$lib/api/client';
+	import type { Applet, AppletRun } from '$lib/api/client';
 	import { describeSchedule, relativeTime } from '$lib/applets/palette';
 	import { descriptionFor } from '$lib/applets/descriptions';
 
 	let {
-		action,
+		applet,
 		lastRun,
 		lastSuccess,
 		pulseRuns = [],
 		onclick
 	}: {
-		action: Action;
-		lastRun?: ActionRun | Action['last_run'] | null;
-		lastSuccess?: ActionRun | null;
-		pulseRuns?: ActionRun[];
-		onclick?: (action: Action) => void;
+		applet: Applet;
+		lastRun?: AppletRun | Applet['last_run'] | null;
+		lastSuccess?: AppletRun | null;
+		pulseRuns?: AppletRun[];
+		onclick?: (applet: Applet) => void;
 	} = $props();
 
-	const schedule = $derived(describeSchedule(action.cron_schedule));
-	const isUserOwned = $derived(action.owner === 'user');
+	const schedule = $derived(describeSchedule(applet.cron_schedule));
+	const isUserOwned = $derived(applet.owner === 'user');
 
 	const lastStatus = $derived((lastRun as { status?: string } | null)?.status ?? null);
 	const isFailing = $derived(lastStatus === 'error');
 
 	// Excerpt resolution — always prefer a real successful output, never an error.
-	// Falls back to the action's description (self-introduction).
+	// Falls back to the applet's description (self-introduction).
 	const excerpt = $derived.by(() => {
 		const success = lastSuccess?.result_summary;
 		if (success) return { text: success, kind: 'output' as const };
-		const desc = descriptionFor(action);
+		const desc = descriptionFor(applet);
 		if (desc) return { text: desc, kind: 'description' as const };
 		return null;
 	});
@@ -58,18 +58,18 @@
 	});
 
 	function handleClick() {
-		onclick?.(action);
+		onclick?.(applet);
 	}
 </script>
 
 <button
 	type="button"
-	class="action-card"
-	class:disabled={!action.enabled}
+	class="applet-card"
+	class:disabled={!applet.enabled}
 	onclick={handleClick}
 >
 	<div class="meta-col">
-		<h3 class="name">{action.name}</h3>
+		<h3 class="name">{applet.name}</h3>
 
 		<div class="meta">
 			<span>{schedule}</span>
@@ -106,7 +106,7 @@
 </button>
 
 <style>
-	.action-card {
+	.applet-card {
 		display: grid;
 		grid-template-columns: minmax(0, 0.9fr) minmax(0, 1.1fr);
 		gap: 0.875rem;
@@ -120,14 +120,14 @@
 		cursor: pointer;
 		min-height: 120px;
 	}
-	.action-card:hover {
+	.applet-card:hover {
 		background: var(--color-surface-elevated, #f9fafb);
 	}
-	.action-card:focus-visible {
+	.applet-card:focus-visible {
 		outline: 2px solid var(--color-primary, #4338ca);
 		outline-offset: 1px;
 	}
-	.action-card.disabled {
+	.applet-card.disabled {
 		opacity: 0.55;
 	}
 

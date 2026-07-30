@@ -3,11 +3,11 @@
 	import UniversalDataGrid, { type Column } from '$lib/components/datagrid/UniversalDataGrid.svelte';
 	import type { FilterDef } from '$lib/components/datagrid/types';
 	import {
-		listActions,
+		listApplets,
 		listActionRuns,
 		adminReconcile,
-		type Action,
-		type ActionRun
+		type Applet,
+		type AppletRun
 	} from '$lib/api/client';
 	import { windowShellStore } from '$lib/stores/window-shell.svelte';
 	import { describeSchedule, relativeTime } from '$lib/applets/palette';
@@ -16,9 +16,9 @@
 	import Popover from '$lib/floating/primitives/Popover.svelte';
 	import { contextMenu } from '$lib/stores/contextMenu.svelte';
 
-	let actions = $state<Action[]>([]);
-	let pulseByAction = $state<Record<string, ActionRun[]>>({});
-	let lastSuccessByAction = $state<Record<string, ActionRun | null>>({});
+	let applets = $state<Applet[]>([]);
+	let pulseByAction = $state<Record<string, AppletRun[]>>({});
+	let lastSuccessByAction = $state<Record<string, AppletRun | null>>({});
 	let loading = $state(true);
 	let err = $state<string | null>(null);
 	let newMenuOpen = $state(false);
@@ -31,7 +31,7 @@
 
 	// Archived applets (lifecycle complete) are hidden: the list holds
 	// living things. Their run history stays reachable from chat/detail.
-	const living = $derived(actions.filter((a) => !a.archived_at));
+	const living = $derived(applets.filter((a) => !a.archived_at));
 	const systemCount = $derived(living.filter((a) => a.owner === 'system').length);
 	const visible = $derived(showSystem ? living : living.filter((a) => a.owner !== 'system'));
 
@@ -70,9 +70,9 @@
 		loading = true;
 		err = null;
 		try {
-			actions = await listActions();
+			applets = await listApplets();
 			void Promise.all(
-				actions.map(async (a) => {
+				applets.map(async (a) => {
 					try {
 						const [runs, successRuns] = await Promise.all([
 							listActionRuns(a.id, { limit: 10 }),
@@ -99,13 +99,13 @@
 		void load();
 	});
 
-	function openView(a: Action) {
+	function openView(a: Applet) {
 		windowShellStore.openTabFromRoute(`/applet/${a.id}/view`);
 	}
 
-	function openDetail(a: Action) {
+	function openDetail(a: Applet) {
 		windowShellStore.openAside({
-			type: 'action',
+			type: 'applet',
 			label: a.name,
 			route: `/applet/${a.id}`,
 			icon: 'ri:flashlight-line'
@@ -114,13 +114,13 @@
 
 	// Default open: an applet with a face goes straight to its full-page view;
 	// otherwise to its settings/detail.
-	function openCard(a: Action) {
+	function openCard(a: Applet) {
 		if (a.has_face) openView(a);
 		else openDetail(a);
 	}
 
 	// Right-click: pick view (if it has one) or settings explicitly.
-	function rowContextMenu(a: Action, e: MouseEvent) {
+	function rowContextMenu(a: Applet, e: MouseEvent) {
 		e.preventDefault();
 		const items = [];
 		if (a.has_face) {
@@ -128,30 +128,30 @@
 				id: 'view',
 				label: 'Open view',
 				icon: 'ri:layout-2-line',
-				action: () => openView(a)
+				applet: () => openView(a)
 			});
 		}
 		items.push({
 			id: 'detail',
 			label: 'Settings & runs',
 			icon: 'ri:settings-3-line',
-			action: () => openDetail(a)
+			applet: () => openDetail(a)
 		});
 		contextMenu.show({ x: e.clientX, y: e.clientY }, items);
 	}
 
-	function lastRunStatus(action: Action): string {
-		const lr = action.last_run;
+	function lastRunStatus(applet: Applet): string {
+		const lr = applet.last_run;
 		if (!lr) return '—';
 		return lr.status ?? '—';
 	}
 
-	function lifecycleLabel(a: Action): string {
+	function lifecycleLabel(a: Applet): string {
 		if (!a.until) return 'forever';
 		return a.until.toLowerCase() === 'once' ? 'once' : 'until';
 	}
 
-	const columns: Column<Action>[] = [
+	const columns: Column<Applet>[] = [
 		{ key: 'name', label: 'Name', width: '30%', minWidth: '140px' },
 		{
 			key: 'owner',
@@ -195,7 +195,7 @@
 		}
 	];
 
-	const filters: FilterDef<Action>[] = [
+	const filters: FilterDef<Applet>[] = [
 		{
 			id: 'owner',
 			kind: 'multi',
@@ -245,7 +245,7 @@
 	];
 </script>
 
-<section class="actions-panel">
+<section class="applets-panel">
 	<header class="section-header">
 		<div>
 			<h2>Applets</h2>
@@ -255,7 +255,7 @@
 				and it becomes an applet: scheduled, triggered, or always on.
 			</p>
 		</div>
-		<div class="header-actions">
+		<div class="header-applets">
 			{#if reconcileMsg}
 				<span class="reconcile-msg">{reconcileMsg}</span>
 			{/if}
@@ -329,7 +329,7 @@
 		items={visible}
 		{columns}
 		{filters}
-		entityType="actions"
+		entityType="applets"
 		defaultViewMode="table"
 		gridMinWidth="340px"
 		{loading}
@@ -341,12 +341,12 @@
 		onItemClick={openCard}
 		onItemContextMenu={rowContextMenu}
 	>
-		{#snippet card(action)}
+		{#snippet card(applet)}
 			<AppletCard
-				{action}
-				lastRun={action.last_run}
-				lastSuccess={lastSuccessByAction[action.id] ?? null}
-				pulseRuns={pulseByAction[action.id] ?? []}
+				{applet}
+				lastRun={applet.last_run}
+				lastSuccess={lastSuccessByAction[applet.id] ?? null}
+				pulseRuns={pulseByAction[applet.id] ?? []}
 			/>
 		{/snippet}
 	</UniversalDataGrid>
@@ -359,7 +359,7 @@
 />
 
 <style>
-	.actions-panel {
+	.applets-panel {
 		display: flex;
 		flex-direction: column;
 		gap: 0.75rem;
@@ -385,7 +385,7 @@
 		font-size: 0.875rem;
 		color: var(--color-foreground-subtle, #9ca3af);
 	}
-	.header-actions {
+	.header-applets {
 		display: flex;
 		align-items: center;
 		gap: 0.75rem;

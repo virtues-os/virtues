@@ -6,7 +6,7 @@
 	// The id comes from the route `/applet/<id>/view`.
 	let { tab }: { tab: Tab; active: boolean } = $props();
 
-	const actionId = $derived(tab.route.match(/\/(action_[^/]+)\/view/)?.[1] ?? null);
+	const actionId = $derived(tab.route.match(/\/(applet_[^/]+)\/view/)?.[1] ?? null);
 </script>
 
 <div class="applet-view">

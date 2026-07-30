@@ -7,16 +7,16 @@
 	import { routeToEntityId } from '$lib/tabs/types';
 	import type { Tab } from '$lib/tabs/types';
 	import {
-		getAction,
+		getApplet,
 		listActionRuns,
-		patchAction,
+		patchApplet,
 		deleteAction,
 		getAppletData,
 		runAction,
-		type Action,
-		type ActionRun,
+		type Applet,
+		type AppletRun,
 		type AppletData,
-		type PatchActionBody
+		type PatchAppletBody
 	} from '$lib/api/client';
 	import { relativeTime, describeSchedule } from '$lib/applets/palette';
 
@@ -24,8 +24,8 @@
 
 	const actionId = $derived(routeToEntityId(tab.route));
 
-	let action = $state<Action | null>(null);
-	let runs = $state<ActionRun[]>([]);
+	let action = $state<Applet | null>(null);
+	let runs = $state<AppletRun[]>([]);
 	let loading = $state(false);
 	let saving = $state(false);
 	let err = $state<string | null>(null);
@@ -46,7 +46,7 @@
 		loading = true;
 		err = null;
 		try {
-			const [a, rs] = await Promise.all([getAction(id), listActionRuns(id, { limit: 30 })]);
+			const [a, rs] = await Promise.all([getApplet(id), listActionRuns(id, { limit: 30 })]);
 			action = a;
 			runs = rs;
 			edit = {
@@ -76,7 +76,7 @@
 		saving = true;
 		err = null;
 		try {
-			const patch: PatchActionBody = {};
+			const patch: PatchAppletBody = {};
 			if (!isSystem && edit.name !== action.name) patch.name = edit.name;
 			if (!isSystem && edit.agent !== (action.agent ?? '')) {
 				patch.agent = edit.agent.trim() ? edit.agent : null;
@@ -91,7 +91,7 @@
 				isDirty = false;
 				return;
 			}
-			const updated = await patchAction(action.id, patch);
+			const updated = await patchApplet(action.id, patch);
 			action = updated;
 			edit = {
 				name: updated.name,
@@ -113,7 +113,7 @@
 		saving = true;
 		err = null;
 		try {
-			action = await patchAction(action.id, { enabled: !action.enabled });
+			action = await patchApplet(action.id, { enabled: !action.enabled });
 		} catch (e) {
 			err = e instanceof Error ? e.message : String(e);
 		} finally {
