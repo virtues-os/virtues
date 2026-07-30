@@ -255,7 +255,7 @@
 			hideOnMobile: true
 		},
 		{
-			key: 'action_count',
+			key: 'applet_count',
 			label: 'Applets',
 			icon: 'ri:flashlight-line',
 			width: '15%',
@@ -372,12 +372,12 @@
 						<div><dt>App</dt><dd>{manageCred.device_info.app_version}</dd></div>
 					{/if}
 					<div><dt>Last seen</dt><dd>{manageCred.last_seen_label}</dd></div>
-					<div><dt>Applets</dt><dd>{manageCred.action_count}</dd></div>
+					<div><dt>Applets</dt><dd>{manageCred.applet_count}</dd></div>
 				</dl>
 			{:else}
 				<dl class="manage-info">
 					<div><dt>Last seen</dt><dd>{manageCred.last_seen_label}</dd></div>
-					<div><dt>Applets</dt><dd>{manageCred.action_count}</dd></div>
+					<div><dt>Applets</dt><dd>{manageCred.applet_count}</dd></div>
 				</dl>
 			{/if}
 

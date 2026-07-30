@@ -536,7 +536,7 @@ export interface Credential {
 	device_info: DeviceInfo | null;
 	last_seen_at: string | null;
 	created_at: string;
-	action_count: number;
+	applet_count: number;
 	/** Tier-2 init-sync lifecycle for active credentials:
 	 *  'connected' → 'backfilling' → 'live'. Absent for pending/revoked. */
 	sync_state?: 'connected' | 'backfilling' | 'live';
