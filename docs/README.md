@@ -39,7 +39,7 @@ listed below.
 | [applet-authoring-plan.md](applet-authoring-plan.md) | Planned | Phase 3: chat intent → folder → check → reconcile → gate → enabled applet. The capability and param-schema contract. |
 | [auth-model.md](auth-model.md) | Current | Pair-only auth: no passwords, no email, no magic links. Devices are the auth surface; `virtues sudo` gates the dangerous verbs. |
 | [entitlement.md](entitlement.md) | Current | How a paying box gets AI and utility calls paid for: accounts, a rotatable device api_key, an append-only ledger, Stripe-webhook crediting. **§1 states the privacy posture plainly — read it before making any privacy claim.** |
-| [virtues-api.md](virtues-api.md) | ⚠️ History | The philosophy and marketing copy for the two-room split. Describes the **v2 goal**, not what ships — its unlinkability claim is currently false. Banner-marked throughout. Do not lift copy from it. |
+| [virtues-api.md](virtues-api.md) | Current | The philosophy and the FAQ-ready copy, rewritten 2026-07-30 to claim only what ships: *we can see what your usage cost, we never keep what it was.* **Lift copy from here, not from its final section**, which preserves the retired voucher claims as history. |
 | [deployment.md](deployment.md) | Current | The two shipping shapes — native Linux binary on the box, Docker on EC2 for atlas + api — and the systemd privilege split. |
 | [design.md](design.md) | Current | Shell design constraints. Exists because the same visual mistakes kept recurring across sessions. |
 | [composable-inference.md](composable-inference.md) | Current | Plan of record for inference composability: the two HTTP contracts (`/v1/embeddings` required, `/v1/rerank` optional) and how the index defends itself. |
