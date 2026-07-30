@@ -1,5 +1,5 @@
 /**
- * Action card palette + glyph derivation.
+ * Applet card palette + glyph derivation.
  *
  * Each action's hero card gets a color palette and a time-of-day glyph
  * derived from its schedule. System pipelines that fire hourly but are
@@ -7,7 +7,7 @@
  * `config.category` — if set, it wins over the derived palette.
  */
 
-import type { Action } from '$lib/api/client';
+import type { Applet } from '$lib/api/client';
 
 export type PaletteKey =
 	| 'morning'
@@ -110,7 +110,7 @@ function isContinuous(cron: string | null): boolean {
 	return slice.some((f) => f.includes('/'));
 }
 
-export function paletteFor(action: Action): Palette {
+export function paletteFor(action: Applet): Palette {
 	// Explicit override via config.category wins over cron-based derivation.
 	const override = (action.config?.category as string | undefined) || undefined;
 	if (override && override in PALETTES) {

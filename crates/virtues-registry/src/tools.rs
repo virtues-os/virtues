@@ -1298,7 +1298,7 @@ pub fn default_enabled_tools() -> serde_json::Value {
         "create_page": true,
         "get_page_content": true,
         "edit_page": true,
-        "setup_action": true,
+        "setup_applet": true,
         "get_project_item": true
     })
 }
@@ -1338,7 +1338,7 @@ mod tests {
         assert!(ids.contains(&"create_page"));
         assert!(ids.contains(&"get_page_content"));
         assert!(ids.contains(&"edit_page"));
-        assert!(ids.contains(&"setup_action"));
+        assert!(ids.contains(&"setup_applet"));
         assert!(ids.contains(&"dayline_event"));
     }
 

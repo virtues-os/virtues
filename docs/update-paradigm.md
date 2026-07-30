@@ -18,8 +18,8 @@ implements a naïve subset.
    migrations applied (Dragon: 27–31, incl. branch-only `0028`–`0031`). Mainline `staging.56` lacks
    them, so sqlx's "every applied migration must exist in the binary" check fails
    (`migration 28 … previously applied but is missing`). Critically this runs **after** the binary +
-   web + actions were already swapped (`:197`), leaving the box **half-upgraded and down**, with only
-   a printed manual-rollback hint — and web/actions are *not* rolled back at all.
+   web + applets were already swapped (`:197`), leaving the box **half-upgraded and down**, with only
+   a printed manual-rollback hint — and web/applets are *not* rolled back at all.
 
 3. **Wrong sidecar topology.** `upgrade.rs` hardcodes `virtues-embed` + `virtues-rerank`
    (`:139,:152,:242`). Dragon (Q6A/NPU) runs **`virtues-qnnd`** and no embed/rerank. `service_stop`
@@ -50,12 +50,12 @@ nothing**.
 ### 3. Atomic release slots + complete rollback
 Stop refreshing components in place. Stage a whole release, flip a symlink.
 ```
-/usr/local/share/virtues/releases/<build-id>/   {virtues, llama-server|qnnd, web/, actions/, actions-bin/}
+/usr/local/share/virtues/releases/<build-id>/   {virtues, llama-server|qnnd, web/, applets/, applets-bin/}
 /usr/local/share/virtues/current -> releases/<build-id>       # services reference `current`
 ```
 - Upgrade: stage → preflight (migrate --check + `virtues --version` smoke) → **flip `current`
   atomically** → restart. Any failure before the flip = box untouched; after = flip back.
-- Rollback is one symlink flip and rolls **binary + web + actions together** (today web/actions
+- Rollback is one symlink flip and rolls **binary + web + applets together** (today web/applets
   aren't rolled back, so a failed upgrade leaves new web on an old binary — exactly what happened).
 - Keep last N releases → `virtues rollback` is instant, no re-download.
 
@@ -75,7 +75,7 @@ never-restart-qnnd bug.
 Not every change needs a binary swap + migration + sidecar bounce.
 ```
 virtues upgrade --only web            # refresh just the SvelteKit build (static; zero risk)
-virtues upgrade --only web,actions    # web + action manifests/bins
+virtues upgrade --only web,applets    # web + applet manifests/bins
 virtues upgrade                       # full release (binary + migrations + sidecars)
 ```
 - `--only web` is the safe fast path for UI iteration and "I just want to see the new screen" — no
@@ -92,7 +92,7 @@ virtues upgrade                       # full release (binary + migrations + side
 
 ## Dev-push path (lab box iteration)
 Given the lab *is* the box (`ssh <your-box>`), the inner loop should be:
-- **UI/actions change** → `virtues upgrade --only web` (or `web,actions`) — seconds, no risk.
+- **UI/applets change** → `virtues upgrade --only web` (or `web,applets`) — seconds, no risk.
 - **Rust/migration change** → rebuild `edge` tag → `virtues upgrade` (SHA differs → proceeds; Pillar 1)
   → preflight gates migration safety (Pillar 2) → atomic slot flip (Pillar 3).
 - No more `--force` fighting, no more mid-swap bricks, no more manual rollback.

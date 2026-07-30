@@ -104,7 +104,7 @@ export function applyFilter<T>(item: T, def: FilterDef<T>, value: FilterValue): 
 
 /**
  * Pretty-print a filter's current value for the chip label / summary line.
- * `Status: Enabled` or `Trigger: cron, manual` or `Action: Day Summary`.
+ * `Status: Enabled` or `Trigger: cron, manual` or `Applet: Day Summary`.
  */
 export function describeFilter<T>(
 	def: FilterDef<T>,

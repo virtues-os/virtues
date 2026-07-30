@@ -129,12 +129,22 @@ jobs:
             psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -c "GRANT $role TO CURRENT_USER;"
           done
 
+      # `--workspace`, not `-p virtues`. This used to test the one package, so
+      # virtues-registry, virtues-helpers, virtues-iroh and virtues-installer
+      # had their tests skipped entirely — a failing registry test sat on green
+      # staging until someone ran it by hand. A test that never runs is worse
+      # than no test: it reads as coverage.
+      #
       # api::code::tests::test_timeout needs the code-execution sandbox
       # runtime, which isn't provisioned on a bare runner — it's an
       # environment-dependent timing test, not a unit test. Everything else
-      # in --lib runs DB-free.
+      # runs DB-free or against the service Postgres above.
+      #
+      # NOTE: the Tauri mobile plugins and src-tauri are in the workspace
+      # `exclude` list, so `--workspace` still does not reach them. They are
+      # covered by the mobile build, not here.
       - name: Unit tests
-        run: cargo test -p virtues --lib -- --skip api::code::tests::test_timeout
+        run: cargo test --workspace -- --skip api::code::tests::test_timeout
 
       # Audit the live models release against the installer's expected asset
       # list (config.rs `models_release_assets`). Exists because libpdfium

@@ -14,7 +14,7 @@
 	import Icon from "$lib/components/Icon.svelte";
 	import { Button } from "$lib";
 	import Markdown from "$lib/components/Markdown.svelte";
-	import { triggerAction, getNarrativeIdentity } from "$lib/api/client";
+	import { triggerApplet, getNarrativeIdentity } from "$lib/api/client";
 	import { formatDate } from "$lib/utils/dateUtils";
 
 	interface Props {
@@ -43,7 +43,7 @@
 		triggered = true;
 		triggerFailed = false;
 		try {
-			await triggerAction("applet_narrative_identity_draft");
+			await triggerApplet("applet_narrative_identity_draft");
 		} catch {
 			triggerFailed = true;
 		}

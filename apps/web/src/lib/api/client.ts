@@ -103,7 +103,7 @@ export function apiSend<T>(method: string, path: string, jsonBody?: unknown): Pr
 
 export type ActionTrigger = 'cron' | 'manual' | 'tool' | 'api' | 'webhook';
 
-export interface ActionRun {
+export interface AppletRun {
 	id: string;
 	applet_id: string | null;
 	status: 'running' | 'success' | 'error' | 'cancelled' | 'skipped';
@@ -137,7 +137,7 @@ export interface ActionLastRun {
  */
 export type ActionRuntime = 'function' | 'view';
 
-export interface Action {
+export interface Applet {
 	id: string;
 	owner: 'system' | 'user' | 'ai';
 	name: string;
@@ -168,8 +168,8 @@ export interface Action {
 	last_run: ActionLastRun | null;
 }
 
-export interface ActionDetail extends Action {
-	recent_runs?: ActionRun[];
+export interface ActionDetail extends Applet {
+	recent_runs?: AppletRun[];
 }
 
 export async function mintFaceToken(
@@ -178,15 +178,15 @@ export async function mintFaceToken(
 	return request(`/applets/${encodeURIComponent(actionId)}/face-token`);
 }
 
-export async function listActions(): Promise<Action[]> {
+export async function listApplets(): Promise<Applet[]> {
 	const res = await fetch(`${API_BASE}/applets`);
-	if (!res.ok) throw new Error(`Failed to list actions: ${res.statusText}`);
+	if (!res.ok) throw new Error(`Failed to list applets: ${res.statusText}`);
 	return res.json();
 }
 
-export async function getAction(id: string): Promise<Action> {
+export async function getApplet(id: string): Promise<Applet> {
 	const res = await fetch(`${API_BASE}/applets/${encodeURIComponent(id)}`);
-	if (!res.ok) throw new Error(`Failed to get action: ${res.statusText}`);
+	if (!res.ok) throw new Error(`Failed to get applet: ${res.statusText}`);
 	return res.json();
 }
 
@@ -380,7 +380,7 @@ export async function importActionsFromGit(body: {
 	return res.json();
 }
 
-export interface CreateActionRequest {
+export interface CreateAppletRequest {
 	name: string;
 	agent?: string;
 	cron_schedule?: string;
@@ -388,7 +388,7 @@ export interface CreateActionRequest {
 	config?: Record<string, unknown>;
 }
 
-export async function createAction(body: CreateActionRequest): Promise<Action> {
+export async function createApplet(body: CreateAppletRequest): Promise<Applet> {
 	const res = await fetch(`${API_BASE}/applets`, {
 		method: 'POST',
 		headers: { 'Content-Type': 'application/json' },
@@ -396,12 +396,12 @@ export async function createAction(body: CreateActionRequest): Promise<Action> {
 	});
 	if (!res.ok) {
 		const err = await res.json().catch(() => ({ error: res.statusText }));
-		throw new Error(err.error || `Failed to create action: ${res.statusText}`);
+		throw new Error(err.error || `Failed to create applet: ${res.statusText}`);
 	}
 	return res.json();
 }
 
-export interface PatchActionBody {
+export interface PatchAppletBody {
 	name?: string;
 	agent?: string | null;
 	cron_schedule?: string | null;
@@ -412,7 +412,7 @@ export interface PatchActionBody {
 	memory?: string | null;
 }
 
-export async function patchAction(id: string, patch: PatchActionBody): Promise<Action> {
+export async function patchApplet(id: string, patch: PatchAppletBody): Promise<Applet> {
 	const res = await fetch(`${API_BASE}/applets/${encodeURIComponent(id)}`, {
 		method: 'PATCH',
 		headers: { 'Content-Type': 'application/json' },
@@ -420,7 +420,7 @@ export async function patchAction(id: string, patch: PatchActionBody): Promise<A
 	});
 	if (!res.ok) {
 		const err = await res.json().catch(() => ({ error: res.statusText }));
-		throw new Error(err.error || `Failed to update action: ${res.statusText}`);
+		throw new Error(err.error || `Failed to update applet: ${res.statusText}`);
 	}
 	return res.json();
 }
@@ -432,7 +432,7 @@ export async function deleteAction(id: string, dropData = false): Promise<void> 
 	});
 	if (!res.ok) {
 		const err = await res.json().catch(() => ({ error: res.statusText }));
-		throw new Error(err.error || `Failed to delete action: ${res.statusText}`);
+		throw new Error(err.error || `Failed to delete applet: ${res.statusText}`);
 	}
 }
 
@@ -468,7 +468,7 @@ export async function runAction(
 	});
 	if (!res.ok && res.status !== 500) {
 		const err = await res.json().catch(() => ({ error: res.statusText }));
-		throw new Error(err.error || `Failed to run action: ${res.statusText}`);
+		throw new Error(err.error || `Failed to run applet: ${res.statusText}`);
 	}
 	return res.json();
 }
@@ -476,7 +476,7 @@ export async function runAction(
 export async function listActionRuns(
 	id: string,
 	opts?: { limit?: number; status?: string }
-): Promise<ActionRun[]> {
+): Promise<AppletRun[]> {
 	const params = new URLSearchParams();
 	if (opts?.limit != null) params.set('limit', String(opts.limit));
 	if (opts?.status) params.set('status', opts.status);
@@ -492,7 +492,7 @@ export async function listRuns(opts?: {
 	limit?: number;
 	status?: string;
 	applet_id?: string;
-}): Promise<ActionRun[]> {
+}): Promise<AppletRun[]> {
 	const params = new URLSearchParams();
 	if (opts?.limit != null) params.set('limit', String(opts.limit));
 	if (opts?.status) params.set('status', opts.status);
@@ -2233,7 +2233,7 @@ export function searchUnsplash<T = unknown>(body: Record<string, unknown>): Prom
 export function getServerInfo<T = unknown>(): Promise<T> {
 	return apiGet<T>('/app/server-info');
 }
-export function triggerAction<T = unknown>(id: string): Promise<T> {
+export function triggerApplet<T = unknown>(id: string): Promise<T> {
 	return apiSend<T>('POST', `/applets/${encodeURIComponent(id)}/trigger`);
 }
 export function aiComplete<T = unknown>(req: Record<string, unknown>): Promise<T> {
