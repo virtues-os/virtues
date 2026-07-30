@@ -22,7 +22,7 @@ Four rules everything else follows from:
 3. **Setup transport ≠ long-term reachability.**
    Setup needs exactly two things: the phone and box sharing a local link,
    and the box having *outbound* internet. Remote reachability (IPv6-direct +
-   WireGuard, see [networking.md](networking.md)) is assessed *after* setup,
+   the blind relay, see [networking-relay-tee.md](networking-relay-tee.md)) is assessed *after* setup,
    on the network where the box actually lives, and reported by the honest
    `net_check` verdict. Overlays/VPNs are never mentioned during setup — BYO
    transport lives behind the post-setup `[Fix remote access]` → *Advanced*.
@@ -216,9 +216,10 @@ survives re-installs, restores, and out-of-band changes.
 - **P3 — kiosk:** `/panel` route; cage+Chromium unit; splash; DRM guard.
 - **P4 — appliance image:** flash with kiosk enabled; AP-mode wifi
   onboarding; naming step end-to-end.
-- **P5 — reachability surface:** `[Fix remote access]` tiered flow
-  (IPv6-direct first-class → Advanced: BYO transport via
-  [byo-networking.md](byo-networking.md)).
+- **P5 — reachability surface:** `[Fix remote access]` tiered flow. Note the
+  doctrine moved after this was written: reach is the blind relay, not
+  IPv6-direct, and BYO transport is the power-user escape rather than a tier —
+  see [networking-relay-tee.md](networking-relay-tee.md) §"LAN: no tunnel".
 
 ## Open questions (design-time; none block P1)
 
