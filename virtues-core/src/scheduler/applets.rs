@@ -221,11 +221,25 @@ pub async fn delete_applet(db: &PgPool, applet_id: &str, drop_data: bool) -> Res
     Ok(())
 }
 
+/// Prefix on the id of every chat-authored applet.
+///
+/// One constant because this used to be three string literals, and they
+/// disagreed: `applet_setup` wrote `action_user__` (two underscores),
+/// `create_user_applet` wrote `action_user_` (one), and `applet_schema_name`
+/// parsed for two. So an applet created through the API silently failed the
+/// prefix check and never got its private schema, while an identical one
+/// created by the AI tool did. Same applet, different door, different
+/// behaviour. Write and parse both go through here now.
+///
+/// The `action_` stem is legacy and stays for the moment: these are stored id
+/// VALUES, so changing them is a data migration rather than a rename.
+pub const USER_APPLET_PREFIX: &str = "action_user__";
+
 /// The Postgres schema a user applet owns for its private tables, or `None` for
 /// non-user applets — only `action_user__<slug>` applets own an `applet_`
 /// schema. Slugs are `[a-z0-9_]`, so the result is a safe unquoted identifier.
 pub(crate) fn applet_schema_name(applet_id: &str) -> Option<String> {
-    let slug = applet_id.strip_prefix("action_user__")?;
+    let slug = applet_id.strip_prefix(USER_APPLET_PREFIX)?;
     if slug.is_empty()
         || !slug
             .bytes()
@@ -293,7 +307,7 @@ pub async fn create_user_applet(
 
     let base_id = match id {
         Some(s) => s.to_string(),
-        None => format!("action_user_{}", slugify(name)),
+        None => format!("{USER_APPLET_PREFIX}{}", slugify(name)),
     };
     let triggers_json = serde_json::to_string(triggers)
         .map_err(|e| Error::Other(format!("failed to serialize triggers: {e}")))?;
@@ -938,4 +952,56 @@ fn run_from_row(row: &sqlx::postgres::PgRow) -> Result<AppletRun> {
         result_summary: row.try_get("result_summary")?,
         created_at: row.try_get("created_at")?,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The regression this file earned the hard way.
+    ///
+    /// `applet_setup` and `create_user_applet` both mint user-applet ids, and
+    /// `applet_schema_name` parses them back. They used to hold three separate
+    /// string literals and two of them disagreed about how many underscores
+    /// `action_user__` has — so an applet created through the API parsed as
+    /// "not a user applet" and never got its private schema, while the same
+    /// applet created by the AI tool did.
+    ///
+    /// Nothing failed loudly. It just quietly did the wrong thing for one of
+    /// the two doors. This asserts the round trip both writers depend on.
+    #[test]
+    fn minted_user_applet_ids_parse_back_to_a_schema() {
+        // Exactly what create_user_applet builds for an unnamed id.
+        let minted = format!("{USER_APPLET_PREFIX}{}", slugify("Heart Rate Explorer"));
+        assert_eq!(minted, "action_user__heart_rate_explorer");
+        assert_eq!(
+            applet_schema_name(&minted).as_deref(),
+            Some("applet_heart_rate_explorer"),
+            "an id this codebase mints must parse back — if this fails the \
+             writer and the parser have drifted apart again"
+        );
+    }
+
+    /// The shape the bug produced: one underscore short, silently unowned.
+    #[test]
+    fn a_single_underscore_id_owns_no_schema() {
+        assert_eq!(applet_schema_name("action_user_heart_rate_explorer"), None);
+    }
+
+    /// Shipped applets are not user applets and own nothing.
+    #[test]
+    fn shipped_applets_own_no_schema() {
+        assert_eq!(applet_schema_name("action_credential_refresh"), None);
+        assert_eq!(applet_schema_name(""), None);
+        assert_eq!(applet_schema_name(USER_APPLET_PREFIX), None);
+    }
+
+    /// Slugs are interpolated unquoted into SQL, so anything outside
+    /// `[a-z0-9_]` has to be refused rather than escaped.
+    #[test]
+    fn unsafe_slugs_are_refused() {
+        assert_eq!(applet_schema_name("action_user__has-a-dash"), None);
+        assert_eq!(applet_schema_name("action_user__Caps"), None);
+        assert_eq!(applet_schema_name("action_user__drop\"table"), None);
+    }
 }

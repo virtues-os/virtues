@@ -168,7 +168,10 @@ pub async fn execute(
     let slug = disambiguate_slug(&root, &slug, name);
     let dir = root.join("user").join(&slug);
     let existed = dir.join("manifest.toml").is_file();
-    let applet_id = format!("action_user__{slug}");
+    let applet_id = format!(
+        "{}{slug}",
+        crate::scheduler::applets::USER_APPLET_PREFIX
+    );
 
     // Boundary predicate: schedule/trigger beyond manual+tool = unattended.
     let crosses_boundary = schedule.is_some()
