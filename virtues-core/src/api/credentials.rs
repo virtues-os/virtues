@@ -74,7 +74,7 @@ pub struct CredentialListItem {
     pub last_seen_at: Option<String>,
     pub created_at: String,
     /// Number of `app_applets` rows linked to this credential.
-    pub action_count: i64,
+    pub applet_count: i64,
     /// Derived initial-sync lifecycle for active credentials (Tier 2 UX):
     /// `connected` (paired, no run yet) → `backfilling` (runs in flight, no
     /// success) → `live` (≥1 successful run). `None` for pending/revoked rows.
@@ -105,7 +105,7 @@ pub async fn list_credentials(db: &PgPool) -> Result<Vec<CredentialListItem>> {
               c.metadata::text,
               c.last_seen_at::text,
               c.created_at::text,
-              (SELECT COUNT(*) FROM app_applets WHERE credential_id = c.id) AS action_count,
+              (SELECT COUNT(*) FROM app_applets WHERE credential_id = c.id) AS applet_count,
               (SELECT COUNT(*) FROM app_applet_runs r JOIN app_applets a ON a.id = r.applet_id
                  WHERE a.credential_id = c.id) AS total_runs,
               (SELECT COUNT(*) FROM app_applet_runs r JOIN app_applets a ON a.id = r.applet_id
@@ -119,7 +119,7 @@ pub async fn list_credentials(db: &PgPool) -> Result<Vec<CredentialListItem>> {
     Ok(rows
         .into_iter()
         .map(
-            |(id, source_id, name, status, metadata_raw, last_seen_at, created_at, action_count, total_runs, success_runs)| {
+            |(id, source_id, name, status, metadata_raw, last_seen_at, created_at, applet_count, total_runs, success_runs)| {
                 let device_info = device_info_from_metadata(Some(&metadata_raw));
                 let auth_type = auth_type_for_source(&source_id).to_string();
                 let is_active = status == "active";
@@ -134,7 +134,7 @@ pub async fn list_credentials(db: &PgPool) -> Result<Vec<CredentialListItem>> {
                     device_info,
                     last_seen_at,
                     created_at,
-                    action_count,
+                    applet_count,
                     sync_state,
                 }
             },

@@ -85,7 +85,7 @@
 		if (!credential) return;
 		const ok = await confirmAction({
 			title: `Revoke "${credential.name}"?`,
-			body: `This disables all ${credential.action_count} linked actions. You'll need to reconnect to restore them.`,
+			body: `This disables all ${credential.applet_count} linked applets. You'll need to reconnect to restore them.`,
 			confirmLabel: 'Revoke',
 			danger: true,
 		});
