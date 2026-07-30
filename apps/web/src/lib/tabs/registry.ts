@@ -182,7 +182,7 @@ export const tabRegistry: Record<TabType, TabDefinition> = {
 	wiki: {
 		match: (path) =>
 			path === '/wiki' ||
-			/^\/wiki\/(days|entities|identity|people|places|orgs|unlinked)$/.test(path) ||
+			/^\/wiki\/(days|years|stories|entities|identity|people|places|orgs|unlinked)$/.test(path) ||
 			path === '/entities',
 		parse: () => ({
 			type: 'wiki',
