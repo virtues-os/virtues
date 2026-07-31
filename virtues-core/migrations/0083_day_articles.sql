@@ -1,0 +1,2 @@
+-- 0083_day_articles
+-- Number claimed; SQL to follow.
