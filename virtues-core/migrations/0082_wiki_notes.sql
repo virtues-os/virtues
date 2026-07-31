@@ -1,0 +1,2 @@
+-- 0082_wiki_notes
+-- Number claimed; SQL to follow.
