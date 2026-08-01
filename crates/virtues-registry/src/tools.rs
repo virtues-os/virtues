@@ -96,6 +96,7 @@ pub fn default_tools() -> Vec<ToolConfig> {
         dayline_event_tool(),
         get_project_item_tool(),
         generate_image_tool(),
+        read_asset_tool(),
     ]
 }
 
@@ -170,6 +171,44 @@ If you are unsure whether something qualifies, it does not."#.to_string(),
         tool_type: ToolType::Builtin,
         category: ToolCategory::Edit,
         icon: "ri:compass-3-line".to_string(),
+        display_order: 0,
+        is_system: false,
+    }
+}
+
+/// Look at a file — actually look, not read a description of it.
+fn read_asset_tool() -> ToolConfig {
+    ToolConfig {
+        id: "read_asset".to_string(),
+        name: "Read file".to_string(),
+        description: "Look at an image or file the user has stored".to_string(),
+        llm_description: r#"Look at a file in the user's drive. For an image, the image itself comes back and you see it, exactly as if the user had pasted it into the conversation.
+
+Use this when the user refers to a specific file — a screenshot, a photo, a diagram — and answering means seeing what is actually in it.
+
+Take the id from the file's ref URL: `/drive/dr_abc123` means `file_id: "dr_abc123"`. Notebook members list theirs.
+
+When to reach for this instead of searching:
+- A member of the active notebook carries `text="none"` — nothing was extracted from it, so semantic_search cannot see inside it and will return nothing. That is not evidence the file lacks what the user is asking about. Look at it.
+- The user says "this screenshot" / "that photo" / "the image in here". Look before answering.
+- A document's extracted text is not enough and the layout matters.
+
+Do NOT use it to sweep a folder hoping to find something — one file per call, when you know which file you want. Images are sent whole and cost real context.
+
+If the file cannot be shown you are told why. Say that plainly to the user; never describe a file you were not shown."#.to_string(),
+        parameters: serde_json::json!({
+            "type": "object",
+            "required": ["file_id"],
+            "properties": {
+                "file_id": {
+                    "type": "string",
+                    "description": "Drive file id, e.g. `dr_abc123`. A full `/drive/dr_abc123` ref URL is also accepted."
+                }
+            }
+        }),
+        tool_type: ToolType::Builtin,
+        category: ToolCategory::Search,
+        icon: "ri:image-line".to_string(),
         display_order: 0,
         is_system: false,
     }

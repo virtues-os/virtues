@@ -105,6 +105,14 @@ pub struct ToolAttachment {
     pub filename: String,
 }
 
+/// Ceiling on a single attached file, before base64 inflates it by 4/3.
+///
+/// Sized for what this is actually for — screenshots and photos, which land
+/// well under it — rather than for the largest image a drive can hold. An
+/// attachment stays in the conversation for every subsequent turn, so the cost
+/// of one careless 40MB scan is paid again on every message that follows.
+const MAX_ATTACHMENT_BYTES: i64 = 5 * 1024 * 1024;
+
 /// Result from tool execution
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ToolResult {
@@ -305,6 +313,7 @@ impl ToolExecutor {
             }
             "sql_query" => self.sql_query.execute(arguments).await,
             "sql_write" => super::sql_write::execute(&self._pool, arguments).await,
+            "read_asset" => self.execute_read_asset(arguments).await,
             "code_interpreter" => self.execute_code_interpreter(arguments).await,
             // Deep Research fan-out: spawn read-only research workers in parallel.
             "dispatch_subagents" => {
@@ -409,6 +418,100 @@ impl ToolExecutor {
                 attachments: Vec::new(),
             })
         }
+    }
+
+    /// Hand a stored file to the model to look at.
+    ///
+    /// The point of this tool is the attachment, not the JSON: for an image
+    /// the data is what answers the question, and a caption written from the
+    /// filename would be a guess dressed as a reading. So a file we cannot
+    /// attach returns a plain refusal with a reason, never a description.
+    async fn execute_read_asset(
+        &self,
+        arguments: serde_json::Value,
+    ) -> Result<ToolResult, ToolError> {
+        use base64::Engine;
+
+        let raw = arguments
+            .get("file_id")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .trim();
+        if raw.is_empty() {
+            return Err(ToolError::InvalidParameters("file_id is required".into()));
+        }
+        // Ref URLs are how files are named everywhere else in the prompt, so
+        // accept one rather than making the model remember which surface it is
+        // talking to.
+        let file_id = raw.rsplit('/').next().unwrap_or(raw);
+
+        let storage = crate::storage::Storage::file(
+            crate::storage::lake::lake_root()
+                .to_string_lossy()
+                .into_owned(),
+        )
+        .map_err(|e| ToolError::ExecutionFailed(format!("Storage unavailable: {e}")))?;
+        let config = crate::api::DriveConfig::new(std::sync::Arc::new(storage));
+
+        let (file, bytes) =
+            match crate::api::drive::download_file(&self._pool, &config, file_id).await {
+                Ok(v) => v,
+                Err(e) => {
+                    return Ok(ToolResult::success(serde_json::json!({
+                        "shown": false,
+                        "file_id": file_id,
+                        "reason": format!("Could not read that file: {e}"),
+                    })))
+                }
+            };
+
+        let mime = file.mime_type.clone().unwrap_or_default();
+        if !mime.starts_with("image/") {
+            return Ok(ToolResult::success(serde_json::json!({
+                "shown": false,
+                "file_id": file_id,
+                "filename": file.filename,
+                "mime_type": mime,
+                "reason": "Only images can be looked at directly today. For a document, \
+                           its extracted text is what semantic_search indexes.",
+            })));
+        }
+
+        // Base64 inflates by 4/3, and this rides in the context window of every
+        // subsequent turn of the conversation — not just the next one. A cap
+        // that refuses loudly beats one that quietly poisons a long chat.
+        if bytes.len() as i64 > MAX_ATTACHMENT_BYTES {
+            return Ok(ToolResult::success(serde_json::json!({
+                "shown": false,
+                "file_id": file_id,
+                "filename": file.filename,
+                "size_bytes": bytes.len(),
+                "reason": format!(
+                    "That image is {:.1}MB, over the {:.0}MB limit for looking at a file directly.",
+                    bytes.len() as f64 / 1_048_576.0,
+                    MAX_ATTACHMENT_BYTES as f64 / 1_048_576.0
+                ),
+            })));
+        }
+
+        let encoded = base64::engine::general_purpose::STANDARD.encode(&bytes);
+        let attachment = ToolAttachment {
+            media_type: mime.clone(),
+            data_url: format!("data:{mime};base64,{encoded}"),
+            filename: file.filename.clone(),
+        };
+
+        Ok(
+            ToolResult::success(serde_json::json!({
+                "shown": true,
+                "file_id": file_id,
+                "filename": file.filename,
+                "mime_type": mime,
+                "size_bytes": bytes.len(),
+                "note": "The image follows this result. Describe what you actually see in it.",
+            }))
+            .with_attachments(vec![attachment]),
+        )
     }
 
     /// Update AI persistent memory
