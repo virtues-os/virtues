@@ -844,3 +844,96 @@ impl std::fmt::Debug for ToolExecutor {
             .finish()
     }
 }
+
+/// Live checks for read_asset against a dev box's real drive. Ignored by
+/// default — CI has neither the database nor the object store.
+///   cargo test -p virtues --lib tools::executor::live_read_asset -- --ignored --nocapture
+#[cfg(test)]
+mod live_read_asset {
+    use super::*;
+
+    async fn executor() -> ToolExecutor {
+        let url = std::env::var("DATABASE_URL")
+            .unwrap_or_else(|_| "postgres://virtues:virtues@localhost:5432/virtues".to_string());
+        ToolExecutor::new(PgPool::connect(&url).await.expect("dev database"))
+    }
+
+    /// Walks every image in the drive rather than trusting the first one.
+    ///
+    /// A drive row can outlive its bytes — this dev checkout has a
+    /// content-addressed `.media/` row whose blob was never copied here — and
+    /// a test that picked one file would report the resulting refusal as a
+    /// failure of the tool. The refusal is the tool working. What must be
+    /// proven is that a file WITH bytes comes back as something to look at.
+    #[tokio::test]
+    #[ignore]
+    async fn an_unextracted_screenshot_comes_back_as_something_to_look_at() {
+        let ex = executor().await;
+        let ids: Vec<String> = sqlx::query_scalar(
+            "SELECT id FROM app_drive_files
+             WHERE mime_type LIKE 'image/%' AND deleted_at IS NULL AND is_folder = FALSE
+             ORDER BY size_bytes ASC",
+        )
+        .fetch_all(ex._pool.as_ref())
+        .await
+        .expect("query");
+        if ids.is_empty() {
+            println!("no images in this drive; nothing to check");
+            return;
+        }
+
+        let mut refused: Vec<String> = Vec::new();
+        for id in &ids {
+            // A ref URL, the form the model reads in the notebook block — the
+            // bare-id path is the same call with the prefix stripped.
+            let out = ex
+                .execute_read_asset(serde_json::json!({ "file_id": format!("/drive/{id}") }))
+                .await
+                .expect("tool ran");
+
+            if out.data["shown"] != true {
+                refused.push(format!("{id}: {}", out.data["reason"]));
+                continue;
+            }
+
+            assert_eq!(out.attachments.len(), 1, "expected one attachment");
+            let att = &out.attachments[0];
+            assert!(att.media_type.starts_with("image/"), "{}", att.media_type);
+            assert!(
+                att.data_url
+                    .starts_with(&format!("data:{};base64,", att.media_type)),
+                "malformed data url prefix"
+            );
+            // Real bytes, not an empty envelope that would reach the model as
+            // a blank image and be described as one.
+            let b64 = att.data_url.split_once(";base64,").unwrap().1;
+            assert!(b64.len() > 1000, "suspiciously small payload: {}", b64.len());
+            println!(
+                "attached {} ({}, {} base64 chars)",
+                att.filename,
+                att.media_type,
+                b64.len()
+            );
+            return;
+        }
+
+        panic!(
+            "no image in the drive could be shown; every one refused:\n  {}",
+            refused.join("\n  ")
+        );
+    }
+
+    #[tokio::test]
+    #[ignore]
+    async fn a_missing_file_refuses_with_a_reason_and_never_a_description() {
+        let ex = executor().await;
+        let out = ex
+            .execute_read_asset(serde_json::json!({ "file_id": "file_does_not_exist" }))
+            .await
+            .expect("tool ran");
+        assert!(out.data["shown"] == false);
+        assert!(out.data["reason"].is_string(), "a refusal must say why");
+        assert!(out.attachments.is_empty());
+        println!("refusal: {}", out.data["reason"]);
+    }
+}
