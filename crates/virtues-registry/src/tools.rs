@@ -73,6 +73,7 @@ pub struct ToolConfig {
 pub fn default_tools() -> Vec<ToolConfig> {
     vec![
         think_tool(),
+        propose_narrative_identity_tool(),
         update_memory_tool(),
         set_user_name_tool(),
         set_assistant_name_tool(),
@@ -129,6 +130,47 @@ Returns: the generated image (rendered inline to the user)."#.to_string(),
         category: ToolCategory::Edit,
         icon: "ri:image-add-line".to_string(),
         display_order: 22,
+        is_system: false,
+    }
+}
+
+/// Propose an addition to the user's narrative identity — never write one.
+fn propose_narrative_identity_tool() -> ToolConfig {
+    ToolConfig {
+        id: "propose_narrative_identity_edit".to_string(),
+        name: "Propose identity note".to_string(),
+        description: "Suggest something for the user's narrative identity".to_string(),
+        llm_description: r#"Propose an addition to the user's narrative identity — the short document of who they are: values, aspirations, character, temperament, what they want.
+
+This document goes into EVERY conversation you have with them, so it is the most consequential text in the system and it is not yours to edit. This tool does not change it. It leaves a note the user sees, with Add and Dismiss; nothing happens unless they choose.
+
+Use it RARELY. Not for facts (those belong in the record), not for preferences about how to format an answer, and never for something they told you in passing. Use it when they say something durable about who they are or what they are for — the kind of thing that would still be true in a year and that would change how you understand a future question.
+
+Say it in their own register, one or two sentences, as an addition to the document rather than a report about the conversation. Write "I" as the user, because the document is theirs.
+
+Good: "I'd rather ship something imperfect early than polish in private."
+Bad: "The user mentioned they prefer shipping early." (a report, not the document)
+Bad: "The user's favourite editor is vim." (a fact, not an identity)
+
+If you are unsure whether something qualifies, it does not."#.to_string(),
+        parameters: serde_json::json!({
+            "type": "object",
+            "required": ["text", "why"],
+            "properties": {
+                "text": {
+                    "type": "string",
+                    "description": "The sentence(s) to add, written in the user's voice"
+                },
+                "why": {
+                    "type": "string",
+                    "description": "What in this conversation prompted it — shown to the user so they can judge"
+                }
+            }
+        }),
+        tool_type: ToolType::Builtin,
+        category: ToolCategory::Edit,
+        icon: "ri:compass-3-line".to_string(),
+        display_order: 0,
         is_system: false,
     }
 }

@@ -534,19 +534,56 @@ const MAX_PAGE_CONTENT_CHARS: usize = 10_000;
 
 /// Build narrative identity content for the system prompt.
 ///
-/// Queries the user's narrative identity (present-orientation self-portrait) to provide
-/// Returns the user's narrative identity content (up to 800 chars), or empty string.
+/// The user's telos document — values, character, aspirations — for the system
+/// prompt. Empty string when unset, which is the ordinary case.
+///
+/// **Budget: ~2k tokens, and the reason is behavioural, not economic.** NI sits
+/// in the SYSTEM prompt, so it is prompt-cached and the marginal cost per turn
+/// is a cache read; 5k would be affordable. What a longer document costs is
+/// precision. The prompt around this already spends four paragraphs telling the
+/// model to hold it lightly — "the fastest way to lose trust is to psychoanalyse
+/// a shopping list" — and every extra paragraph is more surface for a spurious
+/// connection to a routine question. A longer NI does not make the assistant
+/// understand you better; it makes it perform understanding more often.
+///
+/// Truncation happens at a PARAGRAPH boundary. The previous version cut at 800
+/// characters mid-word, which would have fed the model a sentence that stops
+/// in the middle and invited it to complete the thought itself. (It never fired
+/// in practice: the table has no rows on a real box, so NI has been the empty
+/// string in every prompt since it shipped. Fixing it is a build, not a repair.)
 async fn build_narrative_identity(pool: &PgPool) -> String {
-    match sqlx::query_scalar::<_, String>(
-        "SELECT content FROM wiki_narrative_identity LIMIT 1"
-    )
-    .fetch_one(pool)
-    .await
+    match sqlx::query_scalar::<_, String>("SELECT content FROM wiki_narrative_identity LIMIT 1")
+        .fetch_one(pool)
+        .await
     {
-        Ok(content) if !content.is_empty() => {
-            content.chars().take(800).collect()
-        }
+        Ok(content) if !content.trim().is_empty() => truncate_to_budget(&content, NI_BUDGET_CHARS),
         _ => String::new(),
+    }
+}
+
+/// ~2k tokens. English averages near four characters per token, and this is a
+/// ceiling rather than a target.
+const NI_BUDGET_CHARS: usize = 8_000;
+
+/// Cut at the last paragraph break inside the budget; if there is no break to
+/// find, cut at the last sentence end; only then fall back to a hard cut.
+///
+/// Never mid-word: a document that ends mid-sentence reads to the model as a
+/// thought it should finish, and this one is about who a person is.
+fn truncate_to_budget(text: &str, budget: usize) -> String {
+    if text.chars().count() <= budget {
+        return text.to_string();
+    }
+    let cut: String = text.chars().take(budget).collect();
+    if let Some(i) = cut.rfind("\n\n") {
+        return cut[..i].trim_end().to_string();
+    }
+    if let Some(i) = cut.rfind(['.', '!', '?']) {
+        return cut[..=i].to_string();
+    }
+    match cut.rfind(char::is_whitespace) {
+        Some(i) => cut[..i].to_string(),
+        None => cut,
     }
 }
 
@@ -804,8 +841,39 @@ async fn build_notebook_context(pool: &PgPool, notebook_id: &str) -> Option<Stri
     }
 
     let total = detail.items.len();
-    for item in detail.items.iter().take(MAX_NOTEBOOK_ITEMS_INLINED) {
-        out.push_str(&format!("\n  <member url=\"{}\"/>", escape_attr(&item.url)));
+    let shown: Vec<_> = detail
+        .items
+        .iter()
+        .take(MAX_NOTEBOOK_ITEMS_INLINED)
+        .collect();
+
+    // Resolve every member in one batch before writing the block. A bare URL
+    // is unreadable: the model cannot tell a screenshot from a spreadsheet
+    // without spending tool calls to find out, and the room it is standing in
+    // should not require an investigation.
+    let urls: Vec<String> = shown.iter().map(|i| i.url.clone()).collect();
+    let resolved = crate::api::refs::resolve_refs(pool, &urls).await;
+
+    for item in shown {
+        out.push_str(&format!("\n  <member url=\"{}\"", escape_attr(&item.url)));
+        if let Some(r) = resolved.get(&item.url) {
+            out.push_str(&format!(" title=\"{}\"", escape_attr(&r.title)));
+            out.push_str(&format!(" kind=\"{}\"", escape_attr(&r.kind)));
+            if let Some(mime) = r.mime.as_deref() {
+                out.push_str(&format!(" mime=\"{}\"", escape_attr(mime)));
+            }
+            // Only meaningful for files: says whether semantic_search can see
+            // this member's contents, so a dead end is known up front rather
+            // than discovered three tool calls in.
+            if let Some(text) = r.text.as_deref() {
+                out.push_str(&format!(" text=\"{}\"", escape_attr(text)));
+            }
+        }
+        // `library` grounds chat; `manuscript` is the user's own draft, kept
+        // out of retrieval so it is never cited back at them; `pin` is
+        // navigation. Without this the three were indistinguishable here, and
+        // a draft read exactly like a source.
+        out.push_str(&format!(" role=\"{}\"/>", escape_attr(&item.role)));
     }
     if total > MAX_NOTEBOOK_ITEMS_INLINED {
         out.push_str(&format!(
@@ -816,7 +884,7 @@ async fn build_notebook_context(pool: &PgPool, notebook_id: &str) -> Option<Stri
 
     out.push_str("\n</active_notebook>");
 
-    let preamble = "\n\n<active_notebook_preamble>\nThis chat lives in the Notebook (room) below — a collection the user returns to (a project, pet, hobby, goal, or topic). Treat its members as high-salience: they are the user's actively curated focus for this room. <instructions>, if present, are standing directions for how you should behave in this notebook — follow them. <memo>, if present, is a catch-up note about the notebook's current state. Members are also boosted in semantic search while this notebook is active.\n</active_notebook_preamble>";
+    let preamble = "\n\n<active_notebook_preamble>\nThis chat lives in the Notebook (room) below — a collection the user returns to (a project, pet, hobby, goal, or topic). Treat its members as high-salience: they are the user's actively curated focus for this room. <instructions>, if present, are standing directions for how you should behave in this notebook — follow them. <memo>, if present, is a catch-up note about the notebook's current state. Members are also boosted in semantic search while this notebook is active.\n\nThe member list below IS the notebook's contents — it is already complete (up to the cap noted at its end). When the user refers to something \"in this notebook,\" match it here first; do not go looking for the notebook's contents with other tools.\n\nEach member carries what it is: `title`, `kind`, and `role`. `role=\"library\"` grounds this chat; `role=\"manuscript\"` is the user's own draft, deliberately excluded from retrieval — never cite it back at them as a source; `role=\"pin\"` is navigation only. Files also carry `text`: `indexed` means its contents are searchable, `pending` means extraction has not finished yet, and `none` means no text was extracted — searching for its contents will find nothing, so say so plainly rather than reporting an empty search as an absence of the thing.\n</active_notebook_preamble>";
 
     Some(format!("{}{}", preamble, out))
 }
@@ -1686,5 +1754,40 @@ mod tests {
         let id2 = generate_id();
         assert_ne!(id1, id2);
         assert_eq!(id1.len(), 16); // 8 bytes = 16 hex chars
+    }
+}
+
+
+#[cfg(test)]
+mod ni_budget_tests {
+    use super::{truncate_to_budget, NI_BUDGET_CHARS};
+
+    #[test]
+    fn short_documents_are_untouched() {
+        let t = "I value patience.\n\nI want to finish the boat.";
+        assert_eq!(truncate_to_budget(t, NI_BUDGET_CHARS), t);
+    }
+
+    /// The point of the budget is to stop somewhere a reader would stop.
+    #[test]
+    fn cuts_at_a_paragraph_break_when_there_is_one() {
+        let t = "First para.\n\nSecond para is long and would be cut.";
+        assert_eq!(truncate_to_budget(t, 25), "First para.");
+    }
+
+    #[test]
+    fn falls_back_to_a_sentence_end() {
+        let t = "One sentence here. Then a much longer second sentence follows.";
+        assert_eq!(truncate_to_budget(t, 30), "One sentence here.");
+    }
+
+    /// Never mid-word: a document that stops mid-sentence reads as a thought
+    /// the model should finish, and this one is about who a person is.
+    #[test]
+    fn never_splits_a_word() {
+        let t = "aaaa bbbb cccc dddddddddddddddddddd";
+        let out = truncate_to_budget(t, 14);
+        assert!(!out.ends_with("cc"), "cut inside a word: {out:?}");
+        assert_eq!(out, "aaaa bbbb");
     }
 }
