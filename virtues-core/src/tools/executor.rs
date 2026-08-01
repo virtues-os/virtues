@@ -258,6 +258,9 @@ impl ToolExecutor {
                 // Return minimal acknowledgment to avoid doubling token cost.
                 Ok(ToolResult::success(serde_json::json!({ "acknowledged": true })))
             }
+            "propose_narrative_identity_edit" => {
+                self.execute_propose_narrative_identity(arguments).await
+            }
             "update_memory" => self.execute_update_memory(arguments).await,
             "set_user_name" => self.execute_set_user_name(arguments).await,
             "set_assistant_name" => self.execute_set_assistant_name(arguments).await,
@@ -375,6 +378,62 @@ impl ToolExecutor {
     }
 
     /// Update AI persistent memory
+    /// Leave a note proposing an addition to the narrative identity.
+    ///
+    /// **Propose, never write.** The narrative identity is in the system prompt
+    /// of every conversation, so a model editing it directly would be editing
+    /// the lens it is seen through — quietly, and in its own favour if it drifts.
+    /// This writes a `wiki_notes` row and nothing else; the user sees Add or
+    /// Dismiss, and the document changes only if they choose.
+    ///
+    /// The note carries `why` as its citation. A machine note must cite (the DB
+    /// enforces it), and for a proposal drawn from a conversation the honest
+    /// source is the conversation itself — so the reason the model gives IS the
+    /// evidence the user judges it on.
+    async fn execute_propose_narrative_identity(
+        &self,
+        arguments: serde_json::Value,
+    ) -> Result<ToolResult, ToolError> {
+        let text = arguments
+            .get("text")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .trim();
+        let why = arguments
+            .get("why")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .trim();
+
+        if text.is_empty() {
+            return Err(ToolError::InvalidParameters(
+                "A proposal needs text".to_string(),
+            ));
+        }
+
+        let body = if why.is_empty() {
+            text.to_string()
+        } else {
+            format!("{text}\n\n— proposed because: {why}")
+        };
+
+        sqlx::query(
+            "INSERT INTO wiki_notes (subject_type, subject_id, kind, body, author, source_refs) \
+             VALUES ('narrative_identity', 'nar_identity_001', 'observation', $1, 'ai', $2)",
+        )
+        .bind(&body)
+        .bind(serde_json::json!([format!("conversation: {why}")]))
+        .execute(self._pool.as_ref())
+        .await
+        .map_err(|e| ToolError::ExecutionFailed(format!("Failed to save proposal: {e}")))?;
+
+        Ok(ToolResult::success(serde_json::json!({
+            "status": "proposed",
+            "message": "Left this for them to accept or dismiss on their Narrative Identity page. \
+                        It has NOT been added — do not tell them it has."
+        })))
+    }
+
     async fn execute_update_memory(
         &self,
         arguments: serde_json::Value,
