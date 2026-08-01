@@ -164,8 +164,8 @@ async fn fetch_names(
     // Drive files carry two extra columns, so they get their own query rather
     // than a lowest-common-denominator shape shared with the entity tables.
     if kind == "drive" {
-        let rows = sqlx::query_as::<_, (String, String, Option<String>, String)>(
-            r#"SELECT id, filename, mime_type, extraction_status
+        let rows = sqlx::query_as::<_, (String, String, Option<String>, String, bool)>(
+            r#"SELECT id, filename, mime_type, extraction_status, is_folder
                FROM app_drive_files
                WHERE id = ANY($1) AND deleted_at IS NULL"#,
         )
@@ -176,7 +176,17 @@ async fn fetch_names(
         return match rows {
             Ok(rows) => rows
                 .into_iter()
-                .map(|(id, filename, mime, status)| (id, filename, mime, Some(status)))
+                .map(|(id, filename, mime, status, is_folder)| {
+                    // A folder carries no mime and lands on extraction_status
+                    // 'skipped' like an unreadable file does — reporting one as
+                    // `text="none"` would invite the model to announce that a
+                    // folder's contents could not be extracted. It has none.
+                    if is_folder {
+                        (id, filename, None, None)
+                    } else {
+                        (id, filename, mime, Some(status))
+                    }
+                })
                 .collect(),
             Err(e) => {
                 tracing::warn!("[refs] drive lookup failed: {}", e);
@@ -201,6 +211,17 @@ async fn fetch_names(
         "page" => {
             "SELECT id, COALESCE(NULLIF(title, ''), 'Untitled page') \
              FROM app_pages WHERE id = ANY($1)"
+        }
+        // Chats and notebooks are ordinary members — a notebook routinely
+        // collects the conversations that happened inside it, and pins point
+        // at sibling notebooks. Both were reaching the prompt as bare ids.
+        "chat" => {
+            "SELECT id, COALESCE(NULLIF(title, ''), 'Untitled chat') \
+             FROM app_chats WHERE id = ANY($1)"
+        }
+        "notebook" => {
+            "SELECT id, COALESCE(NULLIF(name, ''), 'Untitled notebook') \
+             FROM app_notebooks WHERE id = ANY($1)"
         }
         _ => return Vec::new(),
     };
@@ -268,5 +289,90 @@ mod tests {
     fn web_titles_are_bare_hostnames() {
         assert_eq!(web_title("https://www.example.com/a/b?c=1"), "example.com");
         assert_eq!(web_title("http://example.com"), "example.com");
+    }
+}
+
+/// Live-database checks. Ignored by default — they need a real box database,
+/// which CI does not have. Run against a dev checkout with:
+///   cargo test -p virtues --lib api::refs::live -- --ignored --nocapture
+#[cfg(test)]
+mod live {
+    use super::*;
+
+    async fn pool() -> PgPool {
+        let url = std::env::var("DATABASE_URL")
+            .unwrap_or_else(|_| "postgres://virtues:virtues@localhost:5432/virtues".to_string());
+        PgPool::connect(&url).await.expect("dev database")
+    }
+
+    #[tokio::test]
+    #[ignore]
+    async fn resolves_every_kind_a_real_notebook_actually_contains() {
+        let pool = pool().await;
+
+        let urls: Vec<String> = sqlx::query_scalar("SELECT DISTINCT url FROM app_notebook_items")
+            .fetch_all(&pool)
+            .await
+            .expect("notebook items");
+        assert!(!urls.is_empty(), "no notebook members to resolve");
+
+        let resolved = resolve_refs(&pool, &urls).await;
+
+        // Every kind that appears in real data must resolve to something a
+        // reader can use. The point of this test is that the KINDS are
+        // discovered from the data rather than from my imagination — /chat and
+        // /notebook members were both missed on the first pass.
+        let mut unresolved: Vec<&String> = Vec::new();
+        for url in &urls {
+            // A single-segment route like /home names no record; nothing to look up.
+            if split_ref(url).is_none() {
+                continue;
+            }
+            match resolved.get(url) {
+                Some(r) => assert!(!r.title.trim().is_empty(), "empty title for {url}"),
+                None => unresolved.push(url),
+            }
+        }
+
+        // A ref can point at a deleted row, so absence is legal — but it must
+        // be rare. A whole unhandled kind shows up as a cluster.
+        let mut by_kind: std::collections::HashMap<&str, usize> = Default::default();
+        for url in &unresolved {
+            *by_kind.entry(split_ref(url).unwrap().0).or_default() += 1;
+        }
+        for (kind, missing) in &by_kind {
+            let total = urls
+                .iter()
+                .filter(|u| split_ref(u).map(|(k, _)| k) == Some(kind))
+                .count();
+            assert!(
+                *missing < total,
+                "kind `{kind}` never resolves ({missing}/{total}) — it is unhandled, not deleted"
+            );
+        }
+        println!("resolved {}/{} refs", resolved.len(), urls.len());
+    }
+
+    #[tokio::test]
+    #[ignore]
+    async fn folders_do_not_masquerade_as_unreadable_files() {
+        let pool = pool().await;
+        let folder: Option<String> =
+            sqlx::query_scalar("SELECT id FROM app_drive_files WHERE is_folder = TRUE LIMIT 1")
+                .fetch_optional(&pool)
+                .await
+                .expect("query");
+        let Some(id) = folder else {
+            println!("no folders in this database; nothing to check");
+            return;
+        };
+
+        let url = format!("/drive/{id}");
+        let r = resolve_one(&pool, &url).await;
+        assert!(
+            r.text.is_none(),
+            "folder {id} reported text={:?} — it has no text to extract",
+            r.text
+        );
     }
 }
