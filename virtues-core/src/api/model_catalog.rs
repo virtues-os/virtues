@@ -195,6 +195,23 @@ pub fn model_for_slot(slot: virtues_registry::models::ModelSlot) -> String {
     }
 }
 
+/// Whether a model can read images, per the live catalog. `None` when we are
+/// cold or the model is unknown.
+///
+/// `None` is not `false`, for the same reason `pricing` refuses to answer zero.
+/// The compiled floor sets every capability flag to `false` because it knows
+/// nothing, and a caller that reads that as a real "no" would silently
+/// downgrade a vision-capable model on any box that has not reached the cloud
+/// yet. Callers must distinguish "cannot" from "do not know" and say which.
+pub fn supports_vision(model_id: &str) -> Option<bool> {
+    let snap = cache().read().ok()?;
+    if snap.models.is_empty() {
+        return None;
+    }
+    let m = snap.models.iter().find(|m| m.model_id == model_id)?;
+    Some(m.supports_vision)
+}
+
 /// `(input_per_1k, output_per_1k)` from the live catalog, or None when we are
 /// cold or the model is unknown. Callers must NOT substitute zero.
 pub fn pricing(model_id: &str) -> Option<(f64, f64)> {

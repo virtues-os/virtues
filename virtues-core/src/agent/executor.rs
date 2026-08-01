@@ -221,6 +221,60 @@ pub fn build_tool_result_message(tool_call_id: &str, content: &str) -> Value {
     })
 }
 
+/// Carry tool attachments to the model as a following user message.
+///
+/// It has to be a *user* message: a `role: "tool"` message takes a string in
+/// the OpenAI-compatible shape every provider here speaks, so an image cannot
+/// ride inside the tool result itself. Following it with a user turn is the
+/// conventional way around that, and it produces exactly the content blocks a
+/// pasted screenshot produces — see the `UIPart::File` arm in `compaction`.
+///
+/// The leading text is not decoration. Without it the model receives an image
+/// with no provenance in a turn it did not expect one, and the failure mode is
+/// that it narrates the image as though the user had just sent it.
+///
+/// Returns None when nothing survives filtering, so the caller adds no message
+/// at all rather than an empty user turn.
+pub fn build_attachment_message(attachments: &[(String, crate::tools::ToolAttachment)]) -> Option<Value> {
+    let mut parts: Vec<Value> = Vec::new();
+    let mut named: Vec<&str> = Vec::new();
+
+    for (_, att) in attachments {
+        if !att.media_type.starts_with("image/") {
+            continue;
+        }
+        named.push(&att.filename);
+        parts.push(serde_json::json!({
+            "type": "image_url",
+            "image_url": { "url": att.data_url }
+        }));
+    }
+
+    if parts.is_empty() {
+        return None;
+    }
+
+    let preface = if named.len() == 1 {
+        format!(
+            "[Contents of {}, returned by the tool call above. This is the file itself, not something the user just sent.]",
+            named[0]
+        )
+    } else {
+        format!(
+            "[Contents of {} files returned by the tool calls above ({}). These are the files themselves, not something the user just sent.]",
+            named.len(),
+            named.join(", ")
+        )
+    };
+
+    parts.insert(0, serde_json::json!({ "type": "text", "text": preface }));
+
+    Some(serde_json::json!({
+        "role": "user",
+        "content": parts
+    }))
+}
+
 /// Build the assistant message with tool calls
 pub fn build_assistant_tool_message(
     content: &str,
@@ -247,4 +301,68 @@ pub fn build_assistant_tool_message(
     }
 
     msg
+}
+
+#[cfg(test)]
+mod attachment_tests {
+    use super::*;
+    use crate::tools::ToolAttachment;
+
+    fn att(media_type: &str, filename: &str) -> (String, ToolAttachment) {
+        (
+            "read_asset".to_string(),
+            ToolAttachment {
+                media_type: media_type.to_string(),
+                data_url: format!("data:{media_type};base64,AAAA"),
+                filename: filename.to_string(),
+            },
+        )
+    }
+
+    #[test]
+    fn images_become_content_blocks_behind_a_provenance_line() {
+        let msg = build_attachment_message(&[att("image/png", "shot.png")]).expect("a message");
+        assert_eq!(msg["role"], "user");
+        let parts = msg["content"].as_array().expect("content parts");
+        assert_eq!(parts.len(), 2, "one preface + one image");
+        assert_eq!(parts[0]["type"], "text");
+        let preface = parts[0]["text"].as_str().unwrap();
+        assert!(preface.contains("shot.png"), "names the file: {preface}");
+        // The model must not read this as the user having just sent a picture.
+        assert!(
+            preface.contains("not something the user just sent"),
+            "disclaims user provenance: {preface}"
+        );
+        assert_eq!(parts[1]["type"], "image_url");
+        assert_eq!(parts[1]["image_url"]["url"], "data:image/png;base64,AAAA");
+    }
+
+    #[test]
+    fn non_images_are_dropped_rather_than_sent_as_broken_images() {
+        // PDF and audio ride the same UIPart path inbound from the browser, but
+        // outbound they need their own block shapes; until then, silence beats
+        // an image_url the provider will reject.
+        assert!(build_attachment_message(&[att("application/pdf", "a.pdf")]).is_none());
+        assert!(build_attachment_message(&[att("audio/mp4", "a.m4a")]).is_none());
+    }
+
+    #[test]
+    fn no_attachments_means_no_message_at_all() {
+        assert!(build_attachment_message(&[]).is_none());
+    }
+
+    #[test]
+    fn a_mixed_batch_keeps_only_the_images_and_counts_them_honestly() {
+        let msg = build_attachment_message(&[
+            att("image/png", "one.png"),
+            att("application/pdf", "skipped.pdf"),
+            att("image/jpeg", "two.jpg"),
+        ])
+        .expect("a message");
+        let parts = msg["content"].as_array().unwrap();
+        assert_eq!(parts.len(), 3, "preface + two images, pdf dropped");
+        let preface = parts[0]["text"].as_str().unwrap();
+        assert!(preface.contains("2 files"), "counts what was attached, not what was offered: {preface}");
+        assert!(!preface.contains("skipped.pdf"), "does not name what it dropped: {preface}");
+    }
 }
