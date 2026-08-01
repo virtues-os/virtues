@@ -319,6 +319,56 @@ impl AgentLoop {
                     ));
                 }
 
+                // 2b. Hand over any media the tools returned, so a file the
+                // model found counts for as much as one the user pasted.
+                //
+                // Gated on the catalog's capability flag rather than a mime
+                // check here: whether an image can be sent is a fact about the
+                // model, and the Chat slot is user-overridable to anything the
+                // gateway carries. `None` means the catalog is cold and we do
+                // not know — treated as cannot, because guessing wrong fails
+                // the whole request rather than one attachment.
+                let attachments: Vec<(String, crate::tools::ToolAttachment)> = tool_results
+                    .iter()
+                    .filter_map(|tr| tr.result.as_ref().ok().map(|r| (tr.tool_name.clone(), r)))
+                    .flat_map(|(name, r)| {
+                        r.attachments.iter().map(move |a| (name.clone(), a.clone()))
+                    })
+                    .collect();
+
+                if !attachments.is_empty() {
+                    match crate::api::model_catalog::supports_vision(&model) {
+                        Some(true) => {
+                            if let Some(msg) = executor::build_attachment_message(&attachments) {
+                                tracing::info!(
+                                    count = attachments.len(),
+                                    "Attaching tool media to next turn"
+                                );
+                                messages.push(msg);
+                            }
+                        }
+                        // Say it in the transcript rather than dropping the
+                        // media silently — the model must be able to tell the
+                        // user it cannot see, instead of reporting an absence.
+                        other => {
+                            let why = if other == Some(false) {
+                                format!("{model} cannot read images")
+                            } else {
+                                format!("image support for {model} is unknown on this box")
+                            };
+                            tracing::warn!(model = %model, "Dropping tool media: {}", why);
+                            messages.push(serde_json::json!({
+                                "role": "user",
+                                "content": format!(
+                                    "[System: the tool returned {} file(s) to look at, but they were not attached because {}. Tell the user you cannot see the file rather than guessing at its contents.]",
+                                    attachments.len(),
+                                    why
+                                )
+                            }));
+                        }
+                    }
+                }
+
                 // 3. Inject turn limit warning when running low on steps
                 let steps_remaining = config.max_steps.saturating_sub(step);
                 if steps_remaining <= 3 && steps_remaining > 0 {

@@ -34,7 +34,8 @@ pub mod applet_management;
 pub mod dayline_events;
 
 pub use executor::{
-    SubagentStatus, SubagentUpdate, ToolContext, ToolError, ToolExecutor, ToolResult,
+    SubagentStatus, SubagentUpdate, ToolAttachment, ToolContext, ToolError, ToolExecutor,
+    ToolResult,
 };
 pub use web_search::WebSearchTool;
 pub use sql_query::SqlQueryTool;

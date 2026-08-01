@@ -84,6 +84,27 @@ impl Default for ToolContext {
     }
 }
 
+/// Media a tool wants the model to actually look at, rather than describe.
+///
+/// A tool result is a string, so until now a tool could tell the model that an
+/// image existed but never hand it over — the multimodal path ran one way,
+/// inward from the browser, and nothing on the server could construct a part.
+/// An attachment is that missing direction: the agent loop turns it into the
+/// same image content block a pasted screenshot produces, so a file the model
+/// found is worth exactly as much as a file the user dropped in.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ToolAttachment {
+    /// IANA type — `image/png`, `application/pdf`. Decides how (and whether)
+    /// the loop can attach it.
+    pub media_type: String,
+    /// A `data:` URL. Inline rather than a link because the provider fetches
+    /// nothing from this box: it is on someone's desk behind a NAT, and a URL
+    /// that only resolves on the LAN would silently arrive empty.
+    pub data_url: String,
+    /// Shown to the model alongside the media so it can name what it looked at.
+    pub filename: String,
+}
+
 /// Result from tool execution
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ToolResult {
@@ -94,6 +115,10 @@ pub struct ToolResult {
     /// Optional error message
     #[serde(skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
+    /// Media for the model to see on the next turn. Empty for nearly every
+    /// tool, and skipped when empty so no existing result JSON changes shape.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub attachments: Vec<ToolAttachment>,
 }
 
 impl ToolResult {
@@ -103,6 +128,7 @@ impl ToolResult {
             success: true,
             data,
             error: None,
+            attachments: Vec::new(),
         }
     }
 
@@ -112,7 +138,14 @@ impl ToolResult {
             success: false,
             data: serde_json::Value::Null,
             error: Some(message.into()),
+            attachments: Vec::new(),
         }
+    }
+
+    /// Attach media for the model to look at on the next turn.
+    pub fn with_attachments(mut self, attachments: Vec<ToolAttachment>) -> Self {
+        self.attachments = attachments;
+        self
     }
 }
 
@@ -373,6 +406,7 @@ impl ToolExecutor {
                     "execution_time_ms": response.execution_time_ms,
                 }),
                 error: response.error,
+                attachments: Vec::new(),
             })
         }
     }
