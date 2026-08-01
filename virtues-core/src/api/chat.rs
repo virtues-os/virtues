@@ -1791,3 +1791,46 @@ mod ni_budget_tests {
         assert_eq!(out, "aaaa bbbb");
     }
 }
+
+/// Renders the real active-notebook block against a dev database, so the text
+/// the model actually receives is inspected rather than assumed. Ignored by
+/// default — CI has no box database.
+///   cargo test -p virtues --lib api::chat::live_notebook -- --ignored --nocapture
+#[cfg(test)]
+mod live_notebook {
+    use sqlx::PgPool;
+
+    #[tokio::test]
+    #[ignore]
+    async fn the_block_names_every_member() {
+        let url = std::env::var("DATABASE_URL")
+            .unwrap_or_else(|_| "postgres://virtues:virtues@localhost:5432/virtues".to_string());
+        let pool = PgPool::connect(&url).await.expect("dev database");
+
+        let id: Option<String> = sqlx::query_scalar(
+            "SELECT notebook_id FROM app_notebook_items
+             GROUP BY notebook_id ORDER BY count(*) DESC LIMIT 1",
+        )
+        .fetch_optional(&pool)
+        .await
+        .expect("query");
+        let Some(id) = id else {
+            println!("no notebooks with members; nothing to render");
+            return;
+        };
+
+        let block = super::build_notebook_context(&pool, &id)
+            .await
+            .expect("a context block");
+        println!("\n{block}\n");
+
+        // A member line carrying only a url is the bug this replaced.
+        for line in block.lines().filter(|l| l.trim_start().starts_with("<member")) {
+            assert!(line.contains("role="), "member without role: {line}");
+            assert!(
+                line.contains("title=") || line.contains("/home"),
+                "member reached the prompt as a bare url: {line}"
+            );
+        }
+    }
+}
