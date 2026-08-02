@@ -54,7 +54,12 @@ fn text_state(extraction_status: &str) -> &'static str {
 
 /// Split `/type/id` into its parts. Returns None for anything that isn't a
 /// two-segment app ref (external URLs are handled separately).
-fn split_ref(url: &str) -> Option<(&str, &str)> {
+///
+/// This is THE parser for the ref-URL grammar — notebook scope resolution
+/// (`search/query.rs`) and the prompt's member resolver both consume it.
+/// Growing a second copy is how `/thing/` members silently stopped grounding
+/// chat.
+pub(crate) fn split_ref(url: &str) -> Option<(&str, &str)> {
     let rest = url.strip_prefix('/')?;
     let (kind, id) = rest.split_once('/')?;
     if kind.is_empty() || id.is_empty() {

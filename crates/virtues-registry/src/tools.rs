@@ -447,7 +447,7 @@ including the user's uploaded documents. When the conversation is grounded in a
 notebook, ALWAYS omit `domains`: the notebook already scopes the results, and an
 extra domain filter will wrongly exclude the notebook's materials.
 
-Returns ranked results with title, preview, author, timestamp, and a similarity score.
+Returns results in relevance order (rank 1 = best match) with title, preview, author, and timestamp. Rank is relative order within THIS result set only — it says nothing about absolute match quality, so do not describe rank-1 as a strong match unless its content shows it.
 Use sql_query with the returned record_ids to get full details.
 
 RECALL TIP: for a broad, vague, or many-worded need, pass 2-4 phrasings in `queries`
