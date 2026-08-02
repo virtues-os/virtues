@@ -1346,7 +1346,7 @@ Use this when:
 
 Supported urls: /page/, /chat/, /notebook/, /person/, /place/, /org/.
 Returns the item's content (page text, recent chat messages, space members,
-person/place/org/thing details). Don't fetch a reference you don't need."#.to_string(),
+person/place/org details). Don't fetch a reference you don't need."#.to_string(),
         parameters: serde_json::json!({
             "type": "object",
             "required": ["item_url"],

@@ -103,7 +103,7 @@
 		const type = parts[1] ?? '';
 		const id = parts.slice(2).join('/');
 		try {
-			if (type === 'person' || type === 'place' || type === 'org' || type === 'thing') {
+			if (type === 'person' || type === 'place' || type === 'org') {
 				const s = await getRefSummary(type, id);
 				if (s?.name) return s.name;
 			} else if (type === 'page') {
@@ -145,7 +145,6 @@
 			page: 'Page',
 			org: 'Org',
 			place: 'Place',
-			thing: 'Thing',
 			day: 'Day',
 			year: 'Year',
 			source: 'Source',
@@ -522,6 +521,22 @@
 		await load(true);
 	}
 
+	/**
+	 * The notebook's color, in the same swatch row as its icon.
+	 *
+	 * Stored in `accent_color`, which predates the token rule and still holds
+	 * raw hex for notebooks colored before it — `accentCss` resolves either, so
+	 * old values keep working and new ones are theme-correct. Writing a token
+	 * key here converts a notebook the first time it's recolored, which is the
+	 * only migration that doesn't guess on the user's behalf.
+	 */
+	async function setAccent(color: string | null) {
+		const id = notebookId;
+		if (!id) return;
+		await notebookStore.update(id, { accent_color: color });
+		await load(true);
+	}
+
 	// ---- Membership ----------------------------------------------------------
 	let pickerPos = $state<{ x: number; y: number } | null>(null);
 	function openPicker(e: MouseEvent) {
@@ -585,7 +600,13 @@
 							</button>
 						{/snippet}
 						{#snippet children({ close }: { close: () => void })}
-							<IconPicker value={detail?.icon ?? null} onSelect={setIcon} {close} />
+							<IconPicker
+							value={detail?.icon ?? null}
+							onSelect={setIcon}
+							{close}
+							color={detail?.accent_color ?? null}
+							onColorSelect={setAccent}
+						/>
 						{/snippet}
 					</Popover>
 

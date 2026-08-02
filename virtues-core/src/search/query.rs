@@ -100,7 +100,7 @@ pub struct SearchOptions {
     pub ontologies: Vec<String>,
     pub date_after: Option<String>,
     pub date_before: Option<String>,
-    /// Resolved entity IDs (person/place/org/thing). When set, only rows whose
+    /// Resolved entity IDs (person/place/org). When set, only rows whose
     /// source record references one of these entities are returned.
     pub entities: Vec<String>,
     /// Active notebook: its members' chunks get an additive ranking boost
@@ -285,7 +285,7 @@ impl SemanticSearchEngine {
     async fn prepare_filters(&self, opts: &SearchOptions) -> Result<Option<SearchFilters>> {
         // Notebook scoping: resolve the active notebook's members into a set of
         // record_ids (page/day/source/chat + document chunks for /drive/file_
-        // members) and entity_ids (person/place/org/thing). Weighted = additive
+        // members) and entity_ids (person/place/org). Weighted = additive
         // ranking bonus; Exclusive = hard filter (grounded chat).
         let (nb_records, nb_entities): (Vec<String>, Vec<String>) = match &opts.notebook_id {
             Some(nb) => self.resolve_notebook_scope(nb).await?,
@@ -639,7 +639,7 @@ impl SemanticSearchEngine {
     /// Resolve an active notebook's members into the two buckets the search
     /// scope understands: direct record_ids (page/day/source/chat, plus the
     /// document CHUNKS of `/drive/file_` members — the uploaded_document
-    /// ontology indexes per-chunk) and entity_ids (person/place/org/thing —
+    /// ontology indexes per-chunk) and entity_ids (person/place/org —
     /// matched via `wiki_entity_refs`). Filters to `role='library'` (= grounds
     /// chat; nav-only 'pin' rows are ignored, and 'manuscript' rows are the
     /// user's own draft — retrieving them would cite their unfinished prose
@@ -658,15 +658,14 @@ impl SemanticSearchEngine {
         for url in urls {
             // One grammar, one parser: `refs::split_ref` is the same split the
             // prompt's member resolver uses. This chain used to be a third
-            // hand-rolled copy of it — and had quietly diverged: /thing/
-            // members never grounded chat, though wiki_entity_refs carries
-            // 'thing' edges like any other entity type.
+            // hand-rolled copy of it. (No "thing" arm — wiki_things was
+            // dropped by migration 0071 and its stored urls swept.)
             let Some((kind, id)) = crate::api::refs::split_ref(&url) else {
                 continue; // external https://, /home → not indexed
             };
             match kind {
                 "page" | "day" | "source" | "chat" => records.push(id.to_string()),
-                "person" | "place" | "org" | "thing" => entities.push(id.to_string()),
+                "person" | "place" | "org" => entities.push(id.to_string()),
                 "drive" => {
                     // Strip any viewer params (?page=N) a stored route carries.
                     let id = id.split('?').next().unwrap_or(id);

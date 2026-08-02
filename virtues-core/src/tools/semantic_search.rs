@@ -82,7 +82,7 @@ impl SemanticSearchTool {
 
         let date_after = arguments.get("date_after").and_then(|v| v.as_str());
         let date_before = arguments.get("date_before").and_then(|v| v.as_str());
-        // Resolved entity IDs (person/place/org/thing) to scope the search to.
+        // Resolved entity IDs (person/place/org) to scope the search to.
         let entities: Option<Vec<String>> = arguments
             .get("entities")
             .and_then(|v| v.as_array())

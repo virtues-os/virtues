@@ -25,7 +25,7 @@ use std::collections::HashMap;
 pub struct ResolvedRef {
     /// The URL this resolves, echoed back so callers can key on it.
     pub url: String,
-    /// `person` | `place` | `org` | `thing` | `page` | `drive` | `day` | `year` | `web`
+    /// `person` | `place` | `org` | `page` | `drive` | `day` | `year` | `web`
     pub kind: String,
     /// Display name. Never empty — falls back to the id, then the URL.
     pub title: String,
@@ -57,8 +57,8 @@ fn text_state(extraction_status: &str) -> &'static str {
 ///
 /// This is THE parser for the ref-URL grammar — notebook scope resolution
 /// (`search/query.rs`) and the prompt's member resolver both consume it.
-/// Growing a second copy is how `/thing/` members silently stopped grounding
-/// chat.
+/// When it was three hand-rolled copies, they disagreed about which kinds
+/// even existed.
 pub(crate) fn split_ref(url: &str) -> Option<(&str, &str)> {
     let rest = url.strip_prefix('/')?;
     let (kind, id) = rest.split_once('/')?;
@@ -212,7 +212,9 @@ async fn fetch_names(
         "org" => {
             "SELECT id, COALESCE(NULLIF(canonical_name, ''), id) FROM wiki_orgs WHERE id = ANY($1)"
         }
-        "thing" => "SELECT id, COALESCE(NULLIF(name, ''), id) FROM wiki_things WHERE id = ANY($1)",
+        // No "thing" arm: migration 0071 dropped wiki_things and swept every
+        // stored /thing/ url. An unknown kind resolves to nothing, which is
+        // the right answer for a retired paradigm's stragglers.
         "page" => {
             "SELECT id, COALESCE(NULLIF(title, ''), 'Untitled page') \
              FROM app_pages WHERE id = ANY($1)"
