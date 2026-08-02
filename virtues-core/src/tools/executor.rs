@@ -592,8 +592,13 @@ impl ToolExecutor {
             content
         };
 
+        // `memory` is JSONB. Binding the raw &str sends TEXT, and Postgres then
+        // parses it as JSON — so every note that was not itself valid JSON was
+        // rejected with `Token "Adam" is invalid`, which is to say all of them.
+        // Wrapping it in a JSON string is what makes the column and the tool
+        // agree; `build_user_context` reads it back the same way.
         sqlx::query("UPDATE app_assistant_profile SET memory = $1 WHERE id = '00000000-0000-0000-0000-000000000001'")
-            .bind(content)
+            .bind(serde_json::Value::String(content.to_string()))
             .execute(self._pool.as_ref())
             .await
             .map_err(|e| ToolError::ExecutionFailed(format!("Failed to update memory: {}", e)))?;
@@ -935,5 +940,61 @@ mod live_read_asset {
         assert!(out.data["reason"].is_string(), "a refusal must say why");
         assert!(out.attachments.is_empty());
         println!("refusal: {}", out.data["reason"]);
+    }
+}
+
+/// Round-trips the assistant's persistent memory through the real column.
+///
+/// The write and the read live in different modules and disagreed about the
+/// column's type for the tool's whole life: `update_memory` bound a bare string
+/// to JSONB (rejected by Postgres) and the prompt builder decoded JSONB into
+/// String (rejected by sqlx). Each end failed quietly in its own way, so only a
+/// test that does both catches it.
+///   cargo test -p virtues --lib tools::executor::live_memory -- --ignored --nocapture
+#[cfg(test)]
+mod live_memory {
+    use super::*;
+
+    #[tokio::test]
+    #[ignore]
+    async fn a_note_survives_the_round_trip_and_reaches_the_prompt() {
+        let url = std::env::var("DATABASE_URL")
+            .unwrap_or_else(|_| "postgres://virtues:virtues@localhost:5432/virtues".to_string());
+        let pool = PgPool::connect(&url).await.expect("dev database");
+
+        // Restore whatever the box already had — this is a real database.
+        let before: Option<serde_json::Value> =
+            sqlx::query_scalar("SELECT memory FROM app_assistant_profile LIMIT 1")
+                .fetch_optional(&pool)
+                .await
+                .expect("read")
+                .flatten();
+
+        let ex = ToolExecutor::new(pool.clone());
+        // Prose, not JSON — the case that was rejected for the tool's whole life.
+        let note = "Adam prefers concise answers and dislikes hedging.";
+        let out = ex
+            .execute_update_memory(serde_json::json!({ "content": note }))
+            .await
+            .expect("write succeeded");
+        assert_eq!(out.data["saved"], true);
+
+        let back: serde_json::Value =
+            sqlx::query_scalar("SELECT memory FROM app_assistant_profile LIMIT 1")
+                .fetch_one(&pool)
+                .await
+                .expect("read back as JSON");
+        assert_eq!(back.as_str(), Some(note), "stored shape is not a JSON string");
+
+        let prompt = crate::api::chat::build_system_prompt_for_audit(&pool).await;
+        assert!(prompt.contains("<memory>"), "memory never reached the prompt");
+        assert!(prompt.contains(note), "memory block does not contain the note");
+        println!("round-trip OK: {note}");
+
+        sqlx::query("UPDATE app_assistant_profile SET memory = $1")
+            .bind(before)
+            .execute(&pool)
+            .await
+            .expect("restore");
     }
 }

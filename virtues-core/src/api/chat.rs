@@ -621,14 +621,21 @@ async fn build_user_context(pool: &PgPool, user_name: &str) -> Option<String> {
     }
 
     // 2. Recent days — last 3 autobiographies
-    if let Ok(rows) = sqlx::query_as::<_, (String, Option<String>)>(
-        r#"SELECT date, autobiography FROM wiki_days
+    //
+    // `date::text` because the column is a Postgres DATE and this decodes into
+    // String. Without the cast sqlx returns a decode error, `if let Ok` drops
+    // it, and the section silently never renders — which is exactly what it did
+    // from the day it shipped until 2026-08-01. The cast is the fix; the
+    // `else` below is what makes the next such failure audible.
+    match sqlx::query_as::<_, (String, Option<String>)>(
+        r#"SELECT date::text, autobiography FROM wiki_days
          WHERE autobiography IS NOT NULL AND autobiography != ''
          ORDER BY date DESC LIMIT 3"#
     )
     .fetch_all(pool)
     .await
     {
+        Ok(rows) => {
         if !rows.is_empty() {
             let mut day_lines = Vec::new();
             for (date, auto) in &rows {
@@ -645,7 +652,9 @@ async fn build_user_context(pool: &PgPool, user_name: &str) -> Option<String> {
             if !day_lines.is_empty() {
                 sections.push(format!("<recent_days>\n{}\n</recent_days>", day_lines.join("\n")));
             }
+            }
         }
+        Err(e) => tracing::warn!("[chat] recent_days omitted from the prompt: {e}"),
     }
 
     // 3. Connected sources — active credential names
@@ -709,19 +718,37 @@ async fn build_system_prompt(
         prompt.push_str(crate::agent::prompt::NEW_USER_PROMPT);
     }
 
-    // Load AI persistent memory (if any)
-    if let Ok(Some(memory)) = sqlx::query_scalar::<_, String>(
+    // Load AI persistent memory (if any).
+    //
+    // Read as JSON, because the column is JSONB — decoding straight into String
+    // failed on type, and `if let Ok` dropped the error, so this block never
+    // rendered. Paired with the write in `update_memory`, which was storing a
+    // bare string into the same JSONB column and being rejected: the tool
+    // reported saving nothing and the prompt read back nothing, and neither end
+    // said so.
+    match sqlx::query_scalar::<_, serde_json::Value>(
         "SELECT memory FROM app_assistant_profile WHERE memory IS NOT NULL LIMIT 1"
     )
     .fetch_optional(pool)
     .await
     {
-        if !memory.is_empty() {
-            prompt.push_str(&format!(
-                "\n\n<memory>\nYour persistent memory (saved via update_memory tool). Reference when relevant:\n{}\n</memory>",
-                memory
-            ));
+        Ok(Some(value)) => {
+            // A JSON string is the shape `update_memory` writes; anything else
+            // is older or hand-written, and rendering it verbatim beats
+            // dropping it.
+            let memory = value
+                .as_str()
+                .map(str::to_string)
+                .unwrap_or_else(|| value.to_string());
+            if !memory.trim().is_empty() {
+                prompt.push_str(&format!(
+                    "\n\n<memory>\nYour persistent memory (saved via update_memory tool). Reference when relevant:\n{}\n</memory>",
+                    memory
+                ));
+            }
         }
+        Ok(None) => {}
+        Err(e) => tracing::warn!("[chat] persistent memory omitted from the prompt: {e}"),
     }
 
     // Add current date/time for temporal awareness
@@ -803,6 +830,13 @@ async fn build_system_prompt(
     }
 
     prompt
+}
+
+/// Test-only view of the assembled prompt, so audits in other modules can
+/// assert on what the model is actually sent rather than re-deriving it.
+#[cfg(test)]
+pub(crate) async fn build_system_prompt_for_audit(pool: &PgPool) -> String {
+    build_system_prompt(pool, None, Some("America/Chicago"), "default", "default", false, None).await
 }
 
 /// Maximum member URLs to inline for a Notebook before truncating.
@@ -1830,6 +1864,125 @@ mod live_notebook {
             assert!(
                 line.contains("title=") || line.contains("/home"),
                 "member reached the prompt as a bare url: {line}"
+            );
+        }
+    }
+}
+
+/// Measures the real system prompt against a dev database. Not an assertion of
+/// correctness — an audit instrument, so the prompt's size and composition are
+/// observed rather than estimated.
+///   cargo test -p virtues --lib api::live_prompt_audit -- --ignored --nocapture
+#[cfg(test)]
+mod live_prompt_audit {
+    use sqlx::PgPool;
+
+    #[tokio::test]
+    #[ignore]
+    async fn measure_the_assembled_system_prompt() {
+        let url = std::env::var("DATABASE_URL")
+            .unwrap_or_else(|_| "postgres://virtues:virtues@localhost:5432/virtues".to_string());
+        let pool = PgPool::connect(&url).await.expect("dev database");
+
+        let notebook: Option<String> = sqlx::query_scalar(
+            "SELECT notebook_id FROM app_notebook_items
+             GROUP BY notebook_id ORDER BY count(*) DESC LIMIT 1",
+        )
+        .fetch_optional(&pool)
+        .await
+        .expect("query");
+
+        for (label, nb) in [("no notebook", None), ("in a notebook", notebook.as_deref())] {
+            let p = super::build_system_prompt(
+                &pool,
+                None,
+                Some("America/Chicago"),
+                "default",
+                "default",
+                false,
+                nb,
+            )
+            .await;
+
+            // ~4 chars/token is the usual English approximation; this is an
+            // order-of-magnitude reading, not a billing figure.
+            println!(
+                "\n=== {label} ===\n{} chars  (~{} tokens)",
+                p.len(),
+                p.len() / 4
+            );
+            for tag in [
+                "<persona",
+                "<narrative_identity",
+                "<memory>",
+                "<datetime>",
+                "<user_context>",
+                "<identity>",
+                "<recent_days>",
+                "<connected_sources>",
+                "<active_notebook",
+                "<active_context>",
+            ] {
+                if let Some(i) = p.find(tag) {
+                    // Crude section sizing: distance to the next top-level tag.
+                    let rest = &p[i + tag.len()..];
+                    let end = rest.find("\n\n<").map(|e| e + tag.len()).unwrap_or(p.len() - i);
+                    println!("  {:<22} {:>6} chars", tag, end);
+                }
+            }
+        }
+    }
+}
+
+/// Regression guard for the prompt sections that are assembled from database
+/// queries whose errors are non-fatal by design.
+///
+/// A section that fails to render costs nothing visible — no error reaches the
+/// user, the model simply knows less — so nothing catches it but a test that
+/// checks the section against the data it was built from. `<recent_days>` was
+/// absent from every prompt ever built, for a DATE/String decode mismatch, and
+/// went unnoticed exactly this way.
+///   cargo test -p virtues --lib api::chat::live_context_sections -- --ignored --nocapture
+#[cfg(test)]
+mod live_context_sections {
+    use sqlx::PgPool;
+
+    #[tokio::test]
+    #[ignore]
+    async fn a_section_renders_whenever_its_data_exists() {
+        let url = std::env::var("DATABASE_URL")
+            .unwrap_or_else(|_| "postgres://virtues:virtues@localhost:5432/virtues".to_string());
+        let pool = PgPool::connect(&url).await.expect("dev database");
+
+        let ctx = super::build_user_context(&pool, "Tester").await;
+        let ctx = ctx.unwrap_or_default();
+
+        let days: i64 = sqlx::query_scalar(
+            "SELECT count(*) FROM wiki_days WHERE autobiography IS NOT NULL AND autobiography <> ''",
+        )
+        .fetch_one(&pool)
+        .await
+        .expect("count days");
+
+        let creds: i64 =
+            sqlx::query_scalar("SELECT count(*) FROM credentials WHERE status = 'active'")
+                .fetch_one(&pool)
+                .await
+                .expect("count credentials");
+
+        println!("days with autobiography: {days}, active credentials: {creds}");
+        println!("user_context:\n{ctx}");
+
+        if days > 0 {
+            assert!(
+                ctx.contains("<recent_days>"),
+                "{days} days carry an autobiography but none reached the prompt"
+            );
+        }
+        if creds > 0 {
+            assert!(
+                ctx.contains("<connected_sources>"),
+                "{creds} credentials are active but none reached the prompt"
             );
         }
     }
