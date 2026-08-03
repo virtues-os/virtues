@@ -411,6 +411,10 @@ pub async fn run(client: Virtues, host: &str, port: u16) -> Result<()> {
             axum::routing::put(api::resolve_note_handler),
         )
         .route(
+            "/api/wiki/notes-open-count",
+            axum::routing::get(api::open_notes_count_handler),
+        )
+        .route(
             "/api/wiki/lifeline",
             axum::routing::get(api::lifeline_handler),
         )

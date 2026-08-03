@@ -1784,6 +1784,15 @@ pub struct NotesQuery {
     pub include_resolved: Option<bool>,
 }
 
+/// Open notes across the whole record — the Overview's what-changed count.
+pub async fn open_notes_count_handler(State(state): State<AppState>) -> Response {
+    api_response(
+        crate::api::wiki_notes::count_open_total(state.db.pool())
+            .await
+            .map(|n| serde_json::json!({ "open": n })),
+    )
+}
+
 #[derive(serde::Deserialize)]
 pub struct CreateNoteBody {
     pub body: String,

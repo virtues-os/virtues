@@ -555,6 +555,14 @@ export async function resolveNote(
 	if (!res.ok) throw new Error('Could not close that note');
 }
 
+/** Open notes across the whole record — the Overview's what-changed count. */
+export async function countOpenNotes(fetchFn: FetchFn = fetch): Promise<number> {
+	const res = await fetchFn('/api/wiki/notes-open-count');
+	if (!res.ok) return 0;
+	const j = await res.json();
+	return typeof j.open === 'number' ? j.open : 0;
+}
+
 /** One edit to some article, for the History room. */
 export interface HistoryEntry {
 	subject_type: string;
