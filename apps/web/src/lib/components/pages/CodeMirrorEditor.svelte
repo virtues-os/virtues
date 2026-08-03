@@ -8,6 +8,10 @@
 		focusMode,
 		focusModeCompartment,
 	} from "$lib/codemirror/extensions/focus-mode";
+	import {
+		renderMode,
+		renderModeCompartment,
+	} from "$lib/codemirror/extensions/render-mode";
 	import { pageDisplay } from "$lib/stores/pageDisplay.svelte";
 	import {
 		startAiSession,
@@ -385,6 +389,7 @@
 			readOnly: false,
 			placeholder: placeholderText || "Start writing, or press / for commands…",
 			onDocChange: handleDocChange,
+			raw: pageDisplay.rawMode,
 			extensions: [
 				aiCursor,
 				entityPickerExt,
@@ -483,6 +488,14 @@
 		const on = pageDisplay.spellcheck;
 		if (view) {
 			view.dispatch({ effects: spellcheckCompartment.reconfigure(spellcheckExt(on)) });
+		}
+	});
+
+	// Live-swap the rendered surface for raw markdown.
+	$effect(() => {
+		const raw = pageDisplay.rawMode;
+		if (view) {
+			view.dispatch({ effects: renderModeCompartment.reconfigure(renderMode(raw)) });
 		}
 	});
 

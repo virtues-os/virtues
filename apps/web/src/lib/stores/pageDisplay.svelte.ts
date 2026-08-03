@@ -40,6 +40,7 @@ interface Persisted {
 	widthMode: WidthMode;
 	focusMode: boolean;
 	spellcheck: boolean;
+	rawMode: boolean;
 }
 
 const DEFAULTS: Persisted = {
@@ -48,6 +49,7 @@ const DEFAULTS: Persisted = {
 	widthMode: "medium",
 	focusMode: false,
 	spellcheck: true,
+	rawMode: false,
 };
 
 function load(): Persisted {
@@ -66,6 +68,11 @@ class PageDisplay {
 	widthMode = $state<WidthMode>(DEFAULTS.widthMode);
 	focusMode = $state(DEFAULTS.focusMode);
 	spellcheck = $state(DEFAULTS.spellcheck);
+	/**
+	 * Show the literal markdown instead of the rendered surface. The escape
+	 * hatch for when a construct mis-parses — see codemirror/extensions/render-mode.ts.
+	 */
+	rawMode = $state(DEFAULTS.rawMode);
 
 	constructor() {
 		const p = load();
@@ -74,6 +81,7 @@ class PageDisplay {
 		this.widthMode = p.widthMode;
 		this.focusMode = p.focusMode;
 		this.spellcheck = p.spellcheck;
+		this.rawMode = p.rawMode;
 	}
 
 	/** CSS value for `--editor-font-family`. */
@@ -101,6 +109,7 @@ class PageDisplay {
 					widthMode: this.widthMode,
 					focusMode: this.focusMode,
 					spellcheck: this.spellcheck,
+					rawMode: this.rawMode,
 				}),
 			);
 		} catch {
@@ -136,6 +145,11 @@ class PageDisplay {
 
 	toggleSpellcheck() {
 		this.spellcheck = !this.spellcheck;
+		this.persist();
+	}
+
+	toggleRaw() {
+		this.rawMode = !this.rawMode;
 		this.persist();
 	}
 }
