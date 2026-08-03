@@ -18,7 +18,7 @@
  */
 
 import { syntaxTree } from '@codemirror/language';
-import { type EditorState, type Extension, type Range, StateField } from '@codemirror/state';
+import { EditorState, type Extension, type Range, StateField } from '@codemirror/state';
 import { Decoration, type DecorationSet, EditorView, WidgetType } from '@codemirror/view';
 import { contextMenu } from '$lib/stores/contextMenu.svelte';
 
@@ -417,6 +417,18 @@ class TableWidget extends WidgetType {
 			}
 		});
 
+		// --- Column alignment ---
+		// Writes the `:---:` form into the delimiter row via syncToDocument and
+		// restyles the live cells so the choice is visible without a re-render.
+		const setAlignment = (colIdx: number, align: Alignment) => {
+			alignments[colIdx] = align;
+			table.querySelectorAll('tr').forEach((trEl) => {
+				const cell = trEl.children[colIdx] as HTMLElement | undefined;
+				if (cell) cell.style.textAlign = align;
+			});
+			syncToDocument();
+		};
+
 		// --- Delete row/column ---
 		const deleteRow = (rowIdx: number) => {
 			const tbody = table.querySelector('tbody');
@@ -467,12 +479,34 @@ class TableWidget extends WidgetType {
 			const isHeader = coords.row === -1;
 			const items = [];
 
+			items.push(
+				{
+					id: 'align-left',
+					label: 'Align left',
+					icon: 'ri:align-left',
+					action: () => setAlignment(coords.col, 'left'),
+				},
+				{
+					id: 'align-center',
+					label: 'Align center',
+					icon: 'ri:align-center',
+					action: () => setAlignment(coords.col, 'center'),
+				},
+				{
+					id: 'align-right',
+					label: 'Align right',
+					icon: 'ri:align-right',
+					action: () => setAlignment(coords.col, 'right'),
+				},
+			);
+
 			if (!isHeader) {
 				items.push({
 					id: 'delete-row',
 					label: 'Delete row',
 					icon: 'ri:delete-row',
 					variant: 'destructive' as const,
+					dividerBefore: true,
 					action: () => deleteRow(coords.row),
 					onMouseEnter: () => highlightRow(coords.row),
 					onMouseLeave: clearDeletePreview,
@@ -484,6 +518,7 @@ class TableWidget extends WidgetType {
 				label: 'Delete column',
 				icon: 'ri:delete-column',
 				variant: 'destructive' as const,
+				dividerBefore: isHeader,
 				action: () => deleteColumn(coords.col),
 				onMouseEnter: () => highlightCol(coords.col),
 				onMouseLeave: clearDeletePreview,
@@ -789,4 +824,35 @@ const tableAtoms: Extension = EditorView.atomicRanges.of((view) =>
 	view.state.field(tableField, false) ?? Decoration.none,
 );
 
-export const tables: Extension = [tableField, tableAtoms];
+/**
+ * Enter at the very end of a table inserts TWO newlines, not one.
+ *
+ * GFM absorbs any adjacent non-blank line into the table as a row, so text
+ * typed on a single new line directly below a table becomes a one-cell row
+ * and vanishes into the widget — this ate typed text twice during testing
+ * before it was understood. The only caret position where this can happen is
+ * the table's end boundary (the block is atomic; there is no inside), so the
+ * guard is exactly: a newline typed at a Table node's `to` gets a blank-line
+ * spacer, and the text that follows lands in a paragraph.
+ */
+const tableExitGuard = EditorState.transactionFilter.of((tr) => {
+	if (!tr.docChanged || !tr.isUserEvent('input')) return tr;
+
+	let at = -1;
+	tr.changes.iterChanges((fromA, toA, _fromB, _toB, inserted) => {
+		if (at >= 0 || fromA !== toA) return;
+		if (!inserted.toString().startsWith('\n')) return;
+		syntaxTree(tr.startState).iterate({
+			from: Math.max(0, fromA - 1),
+			to: fromA,
+			enter(node) {
+				if (node.name === 'Table' && node.to === fromA) at = fromA;
+			},
+		});
+	});
+
+	if (at < 0) return tr;
+	return [tr, { changes: { from: at, insert: '\n' }, sequential: true }];
+});
+
+export const tables: Extension = [tableField, tableAtoms, tableExitGuard];

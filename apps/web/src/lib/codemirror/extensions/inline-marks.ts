@@ -41,11 +41,28 @@ export interface InlineMark {
 	closeTo: number;
 }
 
-/** Length of the delimiter that opens this construct, or 0 if unrecognized. */
-function delimiterLength(text: string): number {
-	if (text.startsWith('**') || text.startsWith('~~')) return 2;
-	if (text.startsWith('*') || text.startsWith('_') || text.startsWith('`')) return 1;
-	return 0;
+/**
+ * Delimiter length comes from the NODE TYPE, not from peeking at the text.
+ * The text lies for nested emphasis: the Emphasis node of `***both***` spans
+ * text that starts with `**`, but its own delimiter is one `*` — guessing
+ * from the text mis-measured every mark in that construct, so toggling
+ * italic off deleted a `*` of the bold's, and the reveal dimmed the wrong
+ * characters. Inline code is the one type with a variable delimiter
+ * (` `` ` fences code containing a backtick), measured from the text where
+ * it cannot be ambiguous.
+ */
+function delimiterLength(nodeName: string, text: string): number {
+	switch (nodeName) {
+		case 'StrongEmphasis':
+		case 'Strikethrough':
+			return 2;
+		case 'Emphasis':
+			return 1;
+		case 'InlineCode':
+			return /^`+/.exec(text)?.[0].length ?? 0;
+		default:
+			return 0;
+	}
 }
 
 const NODE_CLASS: Record<string, string> = {
@@ -72,7 +89,7 @@ export function inlineMarks(state: EditorState, from: number, to: number): Inlin
 			if (!cls) return;
 
 			const text = state.sliceDoc(node.from, node.to);
-			const delim = delimiterLength(text);
+			const delim = delimiterLength(node.name, text);
 			if (!delim) return;
 
 			const innerFrom = node.from + delim;

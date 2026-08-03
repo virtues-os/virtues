@@ -8,37 +8,47 @@
 import type { Extension } from '@codemirror/state';
 import { type EditorView, ViewPlugin, type ViewUpdate } from '@codemirror/view';
 
+import { inlineMarks } from './inline-marks';
+
 export interface SelectionToolbarCallbacks {
 	onShow: (coords: { x: number; y: number }, activeFormats: Set<string>) => void;
 	onHide: () => void;
 }
 
+const CLS_TO_FORMAT: Record<string, string> = {
+	'cm-strong': 'bold',
+	'cm-emphasis': 'italic',
+	'cm-inline-code': 'code',
+	'cm-strikethrough': 'strikethrough',
+	'cm-underline': 'underline',
+	'cm-highlight': 'highlight',
+};
+
 /**
- * Detect which markdown formatting is active across the selection.
+ * Which formats apply to the selection — answered by inline-marks.ts, the
+ * same source the renderer uses.
+ *
+ * The previous version sniffed two raw characters either side of the
+ * selection, so the toolbar's B/I state was only right when the selection
+ * happened to hug the delimiters exactly: selecting one word inside a longer
+ * bold run showed bold as OFF. A format is active when the selection sits
+ * inside the construct's content or spans the whole construct.
  */
 function getActiveFormats(view: EditorView): Set<string> {
 	const { from, to } = view.state.selection.main;
 	const formats = new Set<string>();
 	if (from === to) return formats;
 
-	const text = view.state.sliceDoc(from, to);
-	const before2 = view.state.sliceDoc(Math.max(0, from - 2), from);
-	const after2 = view.state.sliceDoc(to, Math.min(view.state.doc.length, to + 2));
-	const before1 = before2.slice(-1);
-	const after1 = after2.slice(0, 1);
+	const lineFrom = view.state.doc.lineAt(from).from;
+	const lineTo = view.state.doc.lineAt(to).to;
 
-	// Check if selection is wrapped with formatting
-	if (before2 === '**' && after2.startsWith('**')) formats.add('bold');
-	if (before1 === '*' && after1 === '*' && !before2.endsWith('**')) formats.add('italic');
-	if (before1 === '`' && after1 === '`') formats.add('code');
-	if (before2 === '~~' && after2.startsWith('~~')) formats.add('strikethrough');
-
-	// Also check if selection includes the markers
-	if (text.startsWith('**') && text.endsWith('**')) formats.add('bold');
-	if (text.startsWith('*') && text.endsWith('*') && !text.startsWith('**')) formats.add('italic');
-	if (text.startsWith('`') && text.endsWith('`')) formats.add('code');
-	if (text.startsWith('~~') && text.endsWith('~~')) formats.add('strikethrough');
-	if (text.startsWith('<u>') && text.endsWith('</u>')) formats.add('underline');
+	for (const mark of inlineMarks(view.state, lineFrom, lineTo)) {
+		const format = CLS_TO_FORMAT[mark.cls];
+		if (!format) continue;
+		const insideContent = from >= mark.openTo && to <= mark.closeFrom;
+		const spansConstruct = from <= mark.openFrom && to >= mark.closeTo;
+		if (insideContent || spansConstruct) formats.add(format);
+	}
 
 	return formats;
 }
