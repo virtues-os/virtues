@@ -467,6 +467,7 @@ pub async fn narrate_day(pool: &PgPool, date: NaiveDate) -> Result<Option<WikiDa
     let raw = call_virtues_api(pool, NARRATE_PROMPT, &model, &prompt).await?;
     let mut parsed = parse_virtues_api_response(&raw);
     parsed.diary = strip_prompt_echo(&parsed.diary);
+    parsed.diary = unlink_uninvited_refs(&parsed.diary, &entities);
 
     let day = update_day(
         pool,
@@ -1646,6 +1647,56 @@ fn strip_prompt_echo(prose: &str) -> String {
     joined.trim_start_matches('\n').to_string()
 }
 
+/// Unlink any entity ref-link the candidate list did not sanction.
+///
+/// Observed live (2025-12-16): a day whose window held ZERO entity refs got
+/// no "Entities you may link" section at all — and the model, knowing the
+/// format from its instructions, fabricated ids in the right shape
+/// (`/person/person_5a4c`) and linked them through the prose. A dead link in
+/// a day article is worse than no link: it looks like the record knows
+/// someone it does not.
+///
+/// The candidate list is the ONLY sanctioned source of ref-links, so this is
+/// exactly decidable: a `/person/`, `/place/` or `/org/` link whose URL is
+/// not in the list is replaced by its own text. The name survives — it is
+/// real prose; the link was the fabrication.
+fn unlink_uninvited_refs(prose: &str, candidates: &[String]) -> String {
+    // The candidate lines are `[Name](/kind/id)`; sanctioned = their URLs.
+    let allowed: std::collections::HashSet<&str> = candidates
+        .iter()
+        .filter_map(|line| {
+            let open = line.find("](")?;
+            let close = line[open + 2..].find(')')?;
+            Some(&line[open + 2..open + 2 + close])
+        })
+        .collect();
+
+    let mut out = String::with_capacity(prose.len());
+    let mut rest = prose;
+    while let Some(start) = rest.find('[') {
+        let Some(mid) = rest[start..].find("](") else {
+            break;
+        };
+        let text_end = start + mid;
+        let url_start = text_end + 2;
+        let Some(url_len) = rest[url_start..].find(')') else {
+            break;
+        };
+        let url = &rest[url_start..url_start + url_len];
+        let is_ref = url.starts_with("/person/") || url.starts_with("/place/") || url.starts_with("/org/");
+        out.push_str(&rest[..start]);
+        if is_ref && !allowed.contains(url) {
+            // The text, shorn of its invented link.
+            out.push_str(&rest[start + 1..text_end]);
+        } else {
+            out.push_str(&rest[start..url_start + url_len + 1]);
+        }
+        rest = &rest[url_start + url_len + 1..];
+    }
+    out.push_str(rest);
+    out
+}
+
 ///   [JSON events]
 ///
 /// All markers except the diary are optional. Handles markdown code fences around JSON.
@@ -1985,6 +2036,29 @@ mod dossier_tests {
         // Clean prose passes through untouched.
         let clean = "A lede.\n\n## A section\n\nProse.";
         assert_eq!(strip_prompt_echo(clean), clean);
+    }
+
+    /// The 2025-12-16 fabrication: zero candidates offered, yet the model
+    /// linked invented ids through the prose. Sanctioned links survive
+    /// verbatim; invented ones lose the link and keep the name; non-ref
+    /// markdown links are not the guard's business.
+    #[test]
+    fn invented_ref_links_are_unlinked_and_sanctioned_ones_survive() {
+        let candidates = vec!["- [Maya](/person/person_demo_maya)".to_string()];
+        let prose = "Standup with [Maya](/person/person_demo_maya) and \
+                     [David](/person/person_5a4c), then the run at \
+                     [Mueller trails](/place/place_5daf). See \
+                     [the doc](https://example.com/x).";
+        let cleaned = unlink_uninvited_refs(prose, &candidates);
+        assert!(cleaned.contains("[Maya](/person/person_demo_maya)"));
+        assert!(cleaned.contains("and David,"), "invented link keeps its name: {cleaned}");
+        assert!(!cleaned.contains("person_5a4c"));
+        assert!(!cleaned.contains("place_5daf"));
+        assert!(cleaned.contains("[the doc](https://example.com/x)"));
+
+        // Zero candidates: every ref-link is invented by definition.
+        let none = unlink_uninvited_refs("Met [Jess](/person/person_9c2e).", &[]);
+        assert_eq!(none, "Met Jess.");
     }
 
     /// The GAP regression: a subscribed calendar said "Community Dinner" while the
