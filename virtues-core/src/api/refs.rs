@@ -128,8 +128,13 @@ pub async fn resolve_refs(pool: &PgPool, urls: &[String]) -> HashMap<String, Res
         url_of.entry((kind, id.to_string())).or_default().push(url);
     }
 
-    for (kind, ids) in ids_by_kind {
-        let rows = fetch_names(pool, kind, &ids).await;
+    // The per-kind queries are independent — run them concurrently rather
+    // than paying each round trip in sequence (this sits ahead of the LLM
+    // stream on every notebook-chat turn).
+    let lookups = ids_by_kind
+        .into_iter()
+        .map(|(kind, ids)| async move { (kind, fetch_names(pool, kind, &ids).await) });
+    for (kind, rows) in futures::future::join_all(lookups).await {
         for (id, title, mime, status) in rows {
             let Some(urls_for_id) = url_of.get(&(kind, id.clone())) else {
                 continue;
@@ -153,14 +158,15 @@ pub async fn resolve_refs(pool: &PgPool, urls: &[String]) -> HashMap<String, Res
 }
 
 /// Hostname for an external link — `www.` stripped, since it is noise in a
-/// list and never the distinguishing part.
-fn web_title(url: &str) -> String {
-    let after_scheme = url.split_once("://").map(|(_, r)| r).unwrap_or(url);
-    let host = after_scheme
-        .split(['/', '?', '#'])
-        .next()
-        .unwrap_or(after_scheme);
-    host.strip_prefix("www.").unwrap_or(host).to_string()
+/// list and never the distinguishing part. Parsed with the `url` crate rather
+/// than by hand: the hand-rolled split kept userinfo (`https://user@host/…`
+/// titled as `user@host`, leaking credentials-shaped text into the prompt)
+/// and ports. Unparseable input falls back to itself.
+fn web_title(url_str: &str) -> String {
+    match url::Url::parse(url_str).ok().and_then(|u| u.host_str().map(str::to_string)) {
+        Some(host) => host.strip_prefix("www.").unwrap_or(&host).to_string(),
+        None => url_str.to_string(),
+    }
 }
 
 /// One batched lookup for a single ref type.
@@ -307,6 +313,10 @@ mod tests {
     fn web_titles_are_bare_hostnames() {
         assert_eq!(web_title("https://www.example.com/a/b?c=1"), "example.com");
         assert_eq!(web_title("http://example.com"), "example.com");
+        // Userinfo and ports are not part of a title — the hand parser this
+        // replaced surfaced `user@example.com`.
+        assert_eq!(web_title("https://user:pw@example.com/x"), "example.com");
+        assert_eq!(web_title("https://example.com:8443/x"), "example.com");
     }
 }
 

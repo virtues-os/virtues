@@ -324,12 +324,6 @@ impl SemanticSearchEngine {
         }))
     }
 
-    /// Search for similar documents by natural language query.
-    pub async fn search(&self, query: &str, opts: &SearchOptions) -> Result<Vec<SearchResult>> {
-        self.search_multi(std::slice::from_ref(&query.to_string()), opts)
-            .await
-    }
-
     /// Multi-query retrieval (RAG-fusion). Runs recall for several phrasings of
     /// one information need in parallel and fuses them with RRF, then reranks the
     /// merged pool ONCE against the primary query (`queries[0]`). Widens recall on

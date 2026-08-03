@@ -1,5 +1,4 @@
 <script lang="ts">
-	import { browser } from '$app/environment';
 	import { Streamdown } from 'svelte-streamdown';
 	import type { CitationContext, Citation } from '$lib/types/Citation';
 	import InlineCitation from './citations/InlineCitation.svelte';
@@ -25,7 +24,6 @@
 
 	// Read Shiki theme from CSS variable (defined in themes.css)
 	function getShikiTheme(): BundledTheme {
-		if (!browser) return 'github-light';
 		const theme = getComputedStyle(document.documentElement).getPropertyValue('--shiki-theme').trim();
 		return (theme || 'github-light') as BundledTheme;
 	}
@@ -34,7 +32,6 @@
 
 	// Update when theme changes
 	$effect(() => {
-		if (!browser) return;
 		const handleThemeChange = () => {
 			currentShikiTheme = getShikiTheme();
 		};
@@ -67,8 +64,9 @@
 		return result;
 	});
 
-	// Get current origin for relative URL handling
-	const origin = browser ? window.location.origin : 'https://app.local';
+	// Get current origin for relative URL handling. The app is SPA-only
+	// (routes/+layout.js sets `ssr = false`), so window always exists here.
+	const origin = window.location.origin;
 
 	// Streamdown theme
 	const customTheme = {
@@ -93,8 +91,7 @@
 	};
 </script>
 
-{#if browser}
-	<div class="markdown cited-markdown">
+<div class="markdown">
 		<Streamdown
 			content={processedContent}
 			{sources}
@@ -172,29 +169,27 @@
 					<img src={url} alt={token?.text ?? ''} loading="lazy" style="max-width: 100%; height: auto;" />
 				{/if}
 			{/snippet}
-		</Streamdown>
-	</div>
-{:else}
-	<div class="markdown markdown-ssr">
-		<pre class="whitespace-pre-wrap text-foreground" style="line-height: 1.8;">{content}</pre>
-	</div>
-{/if}
+	</Streamdown>
+</div>
 
 <style>
-	.cited-markdown {
+	/* Scoped to this component's own .markdown div (Svelte hashes the class),
+	   so these don't touch app.css's global .markdown rules. `cited-markdown`
+	   is gone: it named a second renderer that no longer exists. */
+	.markdown {
 		display: block;
 	}
 
-	.cited-markdown :global(.streamdown-content) {
+	.markdown :global(.streamdown-content) {
 		display: block;
 	}
 
-	.cited-markdown :global([data-streamdown-citation-preview]) {
+	.markdown :global([data-streamdown-citation-preview]) {
 		all: unset;
 		display: inline;
 	}
 
-	.cited-markdown :global([data-streamdown-citation-popover]) {
+	.markdown :global([data-streamdown-citation-popover]) {
 		display: none !important;
 	}
 </style>
