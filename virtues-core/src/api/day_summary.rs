@@ -496,6 +496,10 @@ pub async fn narrate_day(pool: &PgPool, date: NaiveDate) -> Result<Option<WikiDa
         .execute(pool)
         .await?;
 
+    // Re-fetch: `day` was read before the article landed, so its `article`
+    // field predates the write — returning it as-is showed callers (the CLI,
+    // the API response) yesterday's prose under a "narrated" banner.
+    let day = crate::api::wiki::get_or_create_day(pool, date).await?;
     Ok(Some(day))
 }
 
