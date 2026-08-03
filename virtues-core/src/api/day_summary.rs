@@ -105,7 +105,7 @@ THE ONE HARD RULE — OBSERVE, NEVER INFER:
 
 FORMAT:
 - Plain, warm prose — a perceptive friend reflecting the day back, not a novelist. No lists, no bullet points, no epigraph, no closing metric, no "data quality" note. Headings only for body sections; the lede never has one.
-- LINK entities: when you mention a person or place listed under "Entities you may link" below, link it by copying its exact markdown link, e.g. [Maya](/person/person_ab12). Link a given entity once, on first mention. Never invent a link or link anything not in that list.
+- LINK entities: when you mention a person or place listed under "Entities you may link" below, link it by copying its exact markdown link, e.g. [Maya](/person/person_ab12). Link a given entity once, on first mention. Never invent a link or link anything not in that list. NEVER reproduce the list itself in the output — it is an instruction to you, not a line of the article.
 - Second person, past tense. Output ONLY the prose (markdown), nothing else."#;
 
 // ── Timezone helpers ─────────────────────────────────────────────────────────
