@@ -21,6 +21,7 @@ import { linkEditor } from '$lib/stores/linkEditor.svelte';
 
 import { collectCodeRanges, inCode } from './code-context';
 import { selectionTouches } from './inline-marks';
+import { onContextGesture } from './long-press';
 import { dragJustEnded, isMouseSelecting } from './mouse-freeze';
 import { getEntityTypeFromRoute } from '$lib/utils/refRoutes';
 import { windowShellStore } from '$lib/stores/window-shell.svelte';
@@ -48,17 +49,15 @@ function isExternalUrl(url: string): boolean {
 // =============================================================================
 
 function showLinkContextMenu(
-	e: MouseEvent,
+	x: number,
+	y: number,
 	view: EditorView,
 	from: number,
 	to: number,
 	href: string,
 	isExternal: boolean,
 ) {
-	e.preventDefault();
-	e.stopPropagation();
-
-	contextMenu.show({ x: e.clientX, y: e.clientY }, [
+	contextMenu.show({ x, y }, [
 		{
 			id: 'go-to',
 			label: 'Go to',
@@ -122,7 +121,7 @@ function showLinkContextMenu(
 						});
 						view.focus();
 					},
-					{ x: e.clientX, y: e.clientY, width: 0, height: 0 },
+					{ x, y, width: 0, height: 0 },
 				);
 			},
 		},
@@ -202,8 +201,9 @@ class RefLinkWidget extends WidgetType {
 			this.activate();
 		});
 
-		link.addEventListener('contextmenu', (e) => {
-			showLinkContextMenu(e, view, this.from, this.to, this.href, isExternalUrl(this.href));
+		// Right-click or long-press — same menu (see long-press.ts).
+		onContextGesture(link, (x, y) => {
+			showLinkContextMenu(x, y, view, this.from, this.to, this.href, isExternalUrl(this.href));
 		});
 
 		return link;
