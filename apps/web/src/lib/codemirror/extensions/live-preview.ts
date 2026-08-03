@@ -49,7 +49,13 @@ function buildDecorations(view: EditorView): DecorationSet {
 				cursorLine.number >= nodeStartLine && cursorLine.number <= nodeEndLine;
 
 			// --- Headings ---
-			if (name.startsWith('ATXHeading') && !overlapsActiveLine) {
+			// The line class is applied UNCONDITIONALLY. Dropping it on the active
+			// line (as this once did) collapsed an h1 from 68px to 26px — family,
+			// size, line-height and the 1.75rem padding all going at once — and
+			// shoved every line below it up by 42px on a single click. That was the
+			// single largest source of reflow in the editor. The markers may hide;
+			// the type never moves.
+			if (name.startsWith('ATXHeading')) {
 				const level = name.charAt(name.length - 1);
 				const lineFrom = doc.lineAt(from).from;
 				builder.push(
@@ -57,13 +63,27 @@ function buildDecorations(view: EditorView): DecorationSet {
 				);
 			}
 
-			// Hide heading markers (# ## ### etc.) and trailing space when not on active line
-			if (name === 'HeaderMark' && !overlapsActiveLine) {
+			// Hide the heading markers (# ## ###) and their trailing space. With the
+			// caret on the line the opening marker comes back as a margin-hung
+			// widget — absolutely positioned, so it is legible and editable but
+			// occupies no inline width and cannot push the text sideways.
+			if (name === 'HeaderMark') {
 				let hideEnd = to;
 				if (hideEnd < doc.length && view.state.sliceDoc(hideEnd, hideEnd + 1) === ' ') {
 					hideEnd += 1;
 				}
-				builder.push(Decoration.replace({}).range(from, hideEnd));
+				// Only the OPENING marker gets the widget; a closing `#` in `# Foo #`
+				// or a setext underline just hides.
+				const markLine = doc.lineAt(from);
+				const isOpeningMark = from === markLine.from && markLine.number === nodeStartLine;
+				const onActiveLine = markLine.number === cursorLine.number;
+				const deco =
+					isOpeningMark && onActiveLine
+						? Decoration.replace({
+								widget: new HeadingMarkWidget(view.state.sliceDoc(from, to)),
+							})
+						: Decoration.replace({});
+				builder.push(deco.range(from, hideEnd));
 			}
 
 			// --- Inline formatting (hide delimiters, style content) ---
@@ -285,6 +305,30 @@ class BulletDotWidget extends WidgetType {
 
 	eq(other: BulletDotWidget) {
 		return other.glyph === this.glyph;
+	}
+}
+
+/**
+ * The `#` markers, hung in the left margin while the caret is on the line.
+ *
+ * `position: absolute` takes it out of flow, so the marker is visible without
+ * occupying any inline width — the heading text does not shift when the caret
+ * arrives. That is the whole trick: reveal the syntax, never the reflow.
+ */
+class HeadingMarkWidget extends WidgetType {
+	constructor(private marks: string) {
+		super();
+	}
+
+	toDOM() {
+		const span = document.createElement('span');
+		span.className = 'cm-heading-mark';
+		span.textContent = this.marks;
+		return span;
+	}
+
+	eq(other: HeadingMarkWidget) {
+		return other.marks === this.marks;
 	}
 }
 
