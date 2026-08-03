@@ -75,6 +75,29 @@
 	padding-bottom: 0.1rem !important;
 }
 
+/*
+ * The `#` markers, shown only while the caret is on the heading line.
+ *
+ * `position: absolute` with no offsets keeps the span at its static position
+ * but OUT OF FLOW, so it has zero inline width; translateX(-100%) then hangs it
+ * in the margin to the left of the heading. This is what lets the syntax be
+ * visible without the heading text moving a single pixel when the caret lands.
+ * A fixed rem size (not em) keeps the marker the same size at every level.
+ */
+.cm-heading-mark {
+	position: absolute;
+	transform: translateX(-100%);
+	padding-right: 0.45em;
+	font-family: var(--font-mono, ui-monospace, monospace);
+	font-size: 0.8rem;
+	font-weight: 400;
+	line-height: inherit;
+	color: var(--color-foreground-subtle);
+	opacity: 0.55;
+	user-select: none;
+	pointer-events: none;
+}
+
 /* =============================================================================
    LIVE PREVIEW — INLINE FORMATTING (applied via mark decorations)
    ============================================================================= */

@@ -5,7 +5,7 @@
  * Mod-b: bold, Mod-i: italic, Mod-e: code, etc.
  */
 
-import { type Extension } from '@codemirror/state';
+import { Prec, type Extension } from '@codemirror/state';
 import { keymap, type EditorView } from '@codemirror/view';
 
 /**
@@ -87,7 +87,50 @@ function toggleHtmlTag(view: EditorView, tag: string): boolean {
 	return true;
 }
 
-export const markdownKeybindings: Extension = keymap.of([
+/**
+ * Backspace at the start of a heading unwraps the heading.
+ *
+ * The `# ` prefix is hidden (see live-preview.ts), so the default
+ * deleteCharBackward would swallow one invisible `#` and leave `## Foo` as
+ * `# Foo` — or `# Foo` as `Foo` with a stray space — with nothing on screen
+ * explaining why the type changed. Deleting the whole marker is what someone
+ * pressing Backspace at the front of a heading actually means.
+ *
+ * This claims the entire hidden prefix, including position 0, because with the
+ * marker hidden the line start and the text start render at the same x and the
+ * user cannot aim between them. Joining with the previous line is still one
+ * more Backspace away, once the line is no longer a heading.
+ */
+function unwrapHeadingOnBackspace(view: EditorView): boolean {
+	const { state } = view;
+	const sel = state.selection.main;
+	if (!sel.empty) return false;
+
+	const line = state.doc.lineAt(sel.head);
+	const marker = /^(#{1,6})([ \t]+)/.exec(line.text);
+	if (!marker) return false;
+
+	const markerEnd = line.from + marker[0].length;
+	if (sel.head > markerEnd) return false;
+
+	view.dispatch({
+		changes: { from: line.from, to: markerEnd },
+		selection: { anchor: line.from },
+		userEvent: 'delete.heading',
+	});
+	return true;
+}
+
+/**
+ * Bindings that must beat the defaults. `defaultKeymap` claims Backspace, and
+ * it is installed ahead of this module in editor.ts, so the heading rule only
+ * gets a look in at raised precedence.
+ */
+const highPrecedenceKeybindings: Extension = Prec.high(
+	keymap.of([{ key: 'Backspace', run: unwrapHeadingOnBackspace }]),
+);
+
+const formattingKeybindings: Extension = keymap.of([
 	{
 		key: 'Mod-b',
 		run: (view) => toggleWrapper(view, '**'),
@@ -122,3 +165,8 @@ export const markdownKeybindings: Extension = keymap.of([
 		run: (view) => toggleWrapper(view, '=='),
 	},
 ]);
+
+export const markdownKeybindings: Extension = [
+	highPrecedenceKeybindings,
+	formattingKeybindings,
+];
