@@ -19,6 +19,7 @@ import { mount, unmount } from 'svelte';
 import { contextMenu } from '$lib/stores/contextMenu.svelte';
 import { linkEditor } from '$lib/stores/linkEditor.svelte';
 
+import { collectCodeRanges, inCode } from './code-context';
 import { selectionTouches } from './inline-marks';
 import { dragJustEnded, isMouseSelecting } from './mouse-freeze';
 import { getEntityTypeFromRoute } from '$lib/utils/refRoutes';
@@ -238,6 +239,10 @@ function buildLinkDecorations(view: EditorView): DecorationSet {
 	const startLine = doc.lineAt(vpFrom).number;
 	const endLine = doc.lineAt(Math.min(vpTo, doc.length)).number;
 
+	// Link syntax inside code is characters, not a link. (Verified bug: a JS
+	// string containing `[x](url)` rendered as a clickable link in the fence.)
+	const codeRanges = collectCodeRanges(view.state, vpFrom, vpTo);
+
 	for (let lineNum = startLine; lineNum <= endLine; lineNum++) {
 		const line = doc.line(lineNum);
 		LINK_REGEX.lastIndex = 0;
@@ -249,6 +254,9 @@ function buildLinkDecorations(view: EditorView): DecorationSet {
 			// Skip empty URLs
 			if (!url.trim()) continue;
 
+			const matchFrom = line.from + match.index;
+			if (inCode(codeRanges, matchFrom, matchFrom + match[0].length)) continue;
+
 			// A leading `!` is media (image/audio/video/file) → let the media
 			// widgets render it. But a `!` in front of an ENTITY link is a legacy
 			// block embed — render it inline and swallow the `!` too.
@@ -258,8 +266,9 @@ function buildLinkDecorations(view: EditorView): DecorationSet {
 			const from = line.from + match.index - (bang ? 1 : 0);
 			const to = line.from + match.index + match[0].length;
 
-			// Touched → leave the raw markdown in place for direct editing.
-			if (selectionTouches(view.state, { openFrom: from, closeTo: to })) continue;
+			// Touched (and focused — selection survives blur) → leave the raw
+			// markdown in place for direct editing.
+			if (view.hasFocus && selectionTouches(view.state, { openFrom: from, closeTo: to })) continue;
 
 			// One inline density for every target — a plain underlined link.
 			builder.push(
@@ -293,6 +302,7 @@ const linkPillsPlugin = ViewPlugin.fromClass(
 			const rebuild =
 				update.docChanged ||
 				update.viewportChanged ||
+				update.focusChanged ||
 				(update.selectionSet && !isMouseSelecting(update.state)) ||
 				dragJustEnded(update);
 			if (rebuild) {

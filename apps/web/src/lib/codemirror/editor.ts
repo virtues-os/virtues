@@ -6,7 +6,7 @@
  */
 
 import { defaultKeymap } from '@codemirror/commands';
-import { markdown } from '@codemirror/lang-markdown';
+import { markdown, markdownKeymap } from '@codemirror/lang-markdown';
 import { bracketMatching, indentOnInput } from '@codemirror/language';
 // GFM adds Strikethrough, Table, TaskList to the Lezer markdown parser.
 import { GFM } from '@lezer/markdown';
@@ -58,9 +58,14 @@ export function createCodeMirrorEditor(options: CodeMirrorEditorOptions): Editor
 		indentOnInput(),
 		bracketMatching(),
 
-		// Keymaps
+		// Keymaps. markdownKeymap sits ahead of defaultKeymap so Enter continues
+		// the surrounding list/quote (insertNewlineContinueMarkup) and Backspace
+		// deletes markup structurally (deleteMarkupBackward) before the plain
+		// insert/delete bindings get a look. Both commands return false outside
+		// markdown block context, falling through to the defaults.
 		keymap.of([
 			...yUndoManagerKeymap,
+			...markdownKeymap,
 			...defaultKeymap,
 		]),
 
