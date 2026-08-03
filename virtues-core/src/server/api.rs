@@ -3530,23 +3530,14 @@ pub async fn get_page_backlinks_handler(
     api_response(crate::api::get_page_backlinks(state.db.pool(), &id).await)
 }
 
-/// GET /api/pages/reflections/:date - Get all reflections for a date
+/// GET /api/pages/reflections/:date — legacy reflections for a date, read
+/// only. The POST that minted them is retired: writing about a day belongs
+/// to the day's article or a note on the day.
 pub async fn get_reflections_handler(
     State(state): State<AppState>,
     Path(date): Path<String>,
 ) -> Response {
     api_response(crate::api::get_reflections_for_date(state.db.pool(), &date).await)
-}
-
-/// POST /api/pages/reflections/:date - Create a new reflection for a date
-pub async fn create_reflection_handler(
-    State(state): State<AppState>,
-    Path(date): Path<String>,
-) -> Response {
-    match crate::api::create_reflection(state.db.pool(), &date, None).await {
-        Ok(page) => (StatusCode::CREATED, Json(page)).into_response(),
-        Err(e) => error_response(e),
-    }
 }
 
 /// Query params for entity search

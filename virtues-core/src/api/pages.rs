@@ -482,7 +482,11 @@ pub async fn delete_page(pool: &PgPool, id: &str) -> Result<()> {
 // Reflections (pages linked to a day)
 // ============================================================================
 
-/// Get all reflections for a specific date.
+/// Legacy reflections for a date — READ ONLY. The reflection primitive is
+/// retired (2026-08-03): writing about a day belongs to the day's article
+/// (or a note on the day), not to a parallel date-linked page. This reader
+/// stays so pages minted before the retirement remain reachable; nothing
+/// creates new ones.
 pub async fn get_reflections_for_date(pool: &PgPool, date: &str) -> Result<Vec<Page>> {
     let pages = sqlx::query_as::<_, Page>(
         r#"
@@ -498,38 +502,6 @@ pub async fn get_reflections_for_date(pool: &PgPool, date: &str) -> Result<Vec<P
     .map_err(|e| Error::Database(format!("Failed to get reflections: {}", e)))?;
 
     Ok(pages)
-}
-
-/// Create a new reflection page linked to a date.
-pub async fn create_reflection(pool: &PgPool, date: &str, title: Option<&str>) -> Result<Page> {
-    // Default title is the formatted date
-    let title = title.unwrap_or_else(|| "").trim();
-    let title = if title.is_empty() {
-        chrono::NaiveDate::parse_from_str(date, "%Y-%m-%d")
-            .map(|d| d.format("%B %-d, %Y").to_string())
-            .unwrap_or_else(|_| date.to_string())
-    } else {
-        title.to_string()
-    };
-
-    let timestamp = chrono::Utc::now().to_rfc3339();
-    let id = generate_id(PAGE_PREFIX, &[&title, &timestamp]);
-
-    let page = sqlx::query_as::<_, Page>(
-        r#"
-        INSERT INTO app_pages (id, title, content, icon, date)
-        VALUES ($1, $2, '', '✎', $3)
-        RETURNING id, title, content, icon, icon_color, cover_url, tags, date, created_at, updated_at
-        "#,
-    )
-    .bind(&id)
-    .bind(&title)
-    .bind(date)
-    .fetch_one(pool)
-    .await
-    .map_err(|e| Error::Database(format!("Failed to create reflection: {}", e)))?;
-
-    Ok(page)
 }
 
 // ============================================================================

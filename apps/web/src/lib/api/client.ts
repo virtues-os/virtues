@@ -1887,20 +1887,14 @@ export async function getSharedPage(token: string): Promise<SharedPage> {
 }
 
 // ============================================================================
-// Reflections API (pages linked to a day)
+// Reflections API (legacy pages linked to a day — read only; the primitive
+// is retired: writing about a day belongs to the day's article or a note)
 // ============================================================================
 
-/** Get all reflections for a date. */
+/** Legacy reflections for a date. Nothing creates new ones. */
 export async function getReflectionsForDate(date: string): Promise<Page[]> {
 	const res = await fetch(`${API_BASE}/pages/reflections/${date}`);
 	if (!res.ok) throw new Error(`Failed to get reflections: ${res.statusText}`);
-	return res.json();
-}
-
-/** Create a new reflection page for a date. */
-export async function createReflection(date: string): Promise<Page> {
-	const res = await fetch(`${API_BASE}/pages/reflections/${date}`, { method: 'POST' });
-	if (!res.ok) throw new Error(`Failed to create reflection: ${res.statusText}`);
 	return res.json();
 }
 
