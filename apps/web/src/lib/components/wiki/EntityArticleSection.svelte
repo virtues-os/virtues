@@ -106,7 +106,11 @@
 			<Markdown content={article} refVariant="quiet" />
 		</div>
 		<p class="colophon">
-			{maintained ? 'Written and kept by the record' : 'Yours — the record adds notes, never edits'}{revisedLabel
+			<!-- "Not kept" covers both never-kept and claimed-by-you: either way
+			     the record's pen is down and its channel is the Notes rail. -->
+			{maintained
+				? 'Written and kept by the record'
+				: 'Written from the record — not kept updated; new evidence arrives as notes'}{revisedLabel
 				? ` · revised ${revisedLabel}`
 				: ''}
 			{#if canWrite}
