@@ -25,8 +25,8 @@ import { Compartment, type Extension } from '@codemirror/state';
 
 import { checkboxes } from './checkboxes';
 import { codeBlocks } from './code-blocks';
-import { inlineMarkAtoms } from './inline-marks';
 import { livePreview } from './live-preview';
+import { mouseFreeze } from './mouse-freeze';
 import { mediaWidgets } from './media-widgets';
 import { entityLinks } from './ref-links';
 import { shikiHighlight } from './shiki-highlight';
@@ -41,11 +41,10 @@ export const renderModeCompartment = new Compartment();
  * order wherever it is installed.
  */
 const renderedSurface: Extension = [
+	// The freeze guard ships with the surface, not beside it: it only exists
+	// because reveals move text, and raw mode has no reveals to hold back.
+	mouseFreeze,
 	livePreview,
-	// Belongs with the surface, not beside it: the delimiters are only atomic
-	// because they are hidden, so raw mode must drop this too or the caret would
-	// skip over asterisks that are plainly on screen.
-	inlineMarkAtoms,
 	entityLinks,
 	checkboxes,
 	mediaWidgets,

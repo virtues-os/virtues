@@ -13,7 +13,8 @@ import { syntaxTree } from '@codemirror/language';
 import type { Extension, Range } from '@codemirror/state';
 import { Decoration, type DecorationSet, type EditorView, ViewPlugin, type ViewUpdate, WidgetType } from '@codemirror/view';
 
-import { inlineMarks } from './inline-marks';
+import { inlineMarks, selectionTouches } from './inline-marks';
+import { dragJustEnded, isMouseSelecting } from './mouse-freeze';
 
 /** Minimal node shape from Lezer syntax tree (avoids @lezer/common version mismatch) */
 interface TreeNode { name: string; from: number; to: number; }
@@ -196,16 +197,26 @@ function buildDecorations(view: EditorView): DecorationSet {
 	}
 
 	// --- Inline marks: bold, italic, strike, code, highlight, underline ---
-	// Never revealed, on the caret's line or anywhere else. The delimiter
-	// positions come from inline-marks.ts, which also declares them atomic so
-	// the caret cannot get stranded inside what we just erased.
+	// Reveal-on-touch: the styling is always applied, and the delimiters of THE
+	// construct the selection touches appear in place, dimmed — every other
+	// construct keeps its delimiters hidden. Only ever a horizontal shift, only
+	// ever for the one construct being edited. Positions come from
+	// inline-marks.ts so this stays the single definition of a mark's extent.
 	for (const mark of inlineMarks(view.state, vpFrom, vpTo)) {
 		builder.push(
 			Decoration.mark({ class: mark.cls }).range(mark.openTo, mark.closeFrom)
 		);
-		if (!mark.hide) continue;
-		builder.push(Decoration.replace({}).range(mark.openFrom, mark.openTo));
-		builder.push(Decoration.replace({}).range(mark.closeFrom, mark.closeTo));
+		if (selectionTouches(view.state, mark)) {
+			builder.push(
+				Decoration.mark({ class: 'cm-formatting-mark' }).range(mark.openFrom, mark.openTo)
+			);
+			builder.push(
+				Decoration.mark({ class: 'cm-formatting-mark' }).range(mark.closeFrom, mark.closeTo)
+			);
+		} else {
+			builder.push(Decoration.replace({}).range(mark.openFrom, mark.openTo));
+			builder.push(Decoration.replace({}).range(mark.closeFrom, mark.closeTo));
+		}
 	}
 
 	// Decoration.set with sort=true handles ordering
@@ -286,7 +297,15 @@ const livePreviewPlugin = ViewPlugin.fromClass(
 		}
 
 		update(update: ViewUpdate) {
-			if (update.docChanged || update.viewportChanged || update.selectionSet) {
+			// Selection-driven rebuilds are held while the mouse is down (see
+			// mouse-freeze.ts) so a reveal cannot shift text under a drag in
+			// progress; the rebuild fires on release instead.
+			const rebuild =
+				update.docChanged ||
+				update.viewportChanged ||
+				(update.selectionSet && !isMouseSelecting(update.state)) ||
+				dragJustEnded(update);
+			if (rebuild) {
 				this.decorations = buildDecorations(update.view);
 			}
 		}

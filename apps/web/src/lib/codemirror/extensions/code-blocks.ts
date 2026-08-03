@@ -12,6 +12,8 @@ import { syntaxTree } from '@codemirror/language';
 import { type EditorState, type Extension, type Range, StateField } from '@codemirror/state';
 import { Decoration, type DecorationSet, EditorView, WidgetType } from '@codemirror/view';
 
+import { dragJustEnded, isMouseSelecting } from './mouse-freeze';
+
 class CodeBlockHeaderWidget extends WidgetType {
 	constructor(private language: string) {
 		super();
@@ -141,7 +143,14 @@ const codeBlockField = StateField.define<DecorationSet>({
 		return buildCodeBlockDecorations(state);
 	},
 	update(decos, tr) {
-		if (tr.docChanged || tr.selection) {
+		// Fence reveal is a two-line VERTICAL shift, the most violent reveal
+		// left in the editor — so it must never happen under a pressed mouse
+		// button. Held while dragging, recomputed on release (mouse-freeze.ts).
+		const rebuild =
+			tr.docChanged ||
+			(tr.selection && !isMouseSelecting(tr.state)) ||
+			dragJustEnded(tr);
+		if (rebuild) {
 			return buildCodeBlockDecorations(tr.state);
 		}
 		return decos;

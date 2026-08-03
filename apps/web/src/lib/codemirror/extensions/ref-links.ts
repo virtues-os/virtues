@@ -18,6 +18,9 @@ import { Decoration, type DecorationSet, EditorView, ViewPlugin, type ViewUpdate
 import { mount, unmount } from 'svelte';
 import { contextMenu } from '$lib/stores/contextMenu.svelte';
 import { linkEditor } from '$lib/stores/linkEditor.svelte';
+
+import { selectionTouches } from './inline-marks';
+import { dragJustEnded, isMouseSelecting } from './mouse-freeze';
 import { getEntityTypeFromRoute } from '$lib/utils/refRoutes';
 import { windowShellStore } from '$lib/stores/window-shell.svelte';
 import RefPreview from '$lib/components/RefPreview.svelte';
@@ -227,10 +230,11 @@ function buildLinkDecorations(view: EditorView): DecorationSet {
 	const doc = view.state.doc;
 	const { from: vpFrom, to: vpTo } = view.viewport;
 
-	// No active-line exclusion. A link used to burst back into
-	// `[label](url)` the moment the caret touched its line, which on a line with
-	// two or three links rewrapped the whole paragraph. Editing now happens in
-	// the panel behind right-click → Edit; the prose stays still.
+	// Reveal-on-touch, per CONSTRUCT — not the old per-line rule, where the
+	// caret touching a line burst every link on it back into `[label](url)`
+	// and rewrapped the whole paragraph. Only the one link the selection
+	// touches shows its source; its neighbors stay rendered. The Edit popover
+	// remains the deliberate path for fixing a URL without entering the text.
 	const startLine = doc.lineAt(vpFrom).number;
 	const endLine = doc.lineAt(Math.min(vpTo, doc.length)).number;
 
@@ -253,6 +257,9 @@ function buildLinkDecorations(view: EditorView): DecorationSet {
 
 			const from = line.from + match.index - (bang ? 1 : 0);
 			const to = line.from + match.index + match[0].length;
+
+			// Touched → leave the raw markdown in place for direct editing.
+			if (selectionTouches(view.state, { openFrom: from, closeTo: to })) continue;
 
 			// One inline density for every target — a plain underlined link.
 			builder.push(
@@ -281,9 +288,14 @@ const linkPillsPlugin = ViewPlugin.fromClass(
 		}
 
 		update(update: ViewUpdate) {
-			// Not rebuilt on selection any more — the only thing the cursor used
-			// to change was which line reverted to raw, and no line does.
-			if (update.docChanged || update.viewportChanged) {
+			// Selection matters again (reveal-on-touch), but rebuilds are held
+			// mid-drag — see mouse-freeze.ts.
+			const rebuild =
+				update.docChanged ||
+				update.viewportChanged ||
+				(update.selectionSet && !isMouseSelecting(update.state)) ||
+				dragJustEnded(update);
+			if (rebuild) {
 				this.decorations = buildLinkDecorations(update.view);
 			}
 		}
