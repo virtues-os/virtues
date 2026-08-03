@@ -814,7 +814,6 @@ mod tests {
         assert_eq!(ref_of(&r[0]), Some("mine"));
     }
 
-    #[test]
     /// Two ontologies over one table must not read as ambiguity.
     ///
     /// `app_page` and `wiki_article` both sit on `app_pages` (migration 0081).

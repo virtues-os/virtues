@@ -62,6 +62,13 @@ fn text_state(extraction_status: &str) -> &'static str {
 pub(crate) fn split_ref(url: &str) -> Option<(&str, &str)> {
     let rest = url.strip_prefix('/')?;
     let (kind, id) = rest.split_once('/')?;
+    // Viewer params and fragments (`?page=3`, `#hl`) ride on stored routes —
+    // the file viewer writes them into notebook members and citations — but
+    // they are never part of an id. Stripping here, at the grammar, is what
+    // keeps every consumer agreeing; when only the notebook-scope resolver
+    // stripped them, the prompt resolver showed those members as bare URLs
+    // and read_asset refused files that exist.
+    let id = id.split(['?', '#']).next().unwrap_or(id);
     if kind.is_empty() || id.is_empty() {
         return None;
     }
@@ -276,6 +283,10 @@ mod tests {
         assert_eq!(split_ref("/drive/dr_abc"), Some(("drive", "dr_abc")));
         // Ids containing slashes stay whole — the first segment is the type.
         assert_eq!(split_ref("/page/a/b"), Some(("page", "a/b")));
+        // Viewer params and fragments are route decoration, never id.
+        assert_eq!(split_ref("/drive/file_abc?page=3"), Some(("drive", "file_abc")));
+        assert_eq!(split_ref("/drive/file_abc#hl_9"), Some(("drive", "file_abc")));
+        assert_eq!(split_ref("/drive/?page=3"), None);
         assert_eq!(split_ref("/person"), None);
         assert_eq!(split_ref("/person/"), None);
         assert_eq!(split_ref("person/per_1"), None);

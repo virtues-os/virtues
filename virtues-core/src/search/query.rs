@@ -137,13 +137,27 @@ fn truncate_for_rerank(text: &str) -> String {
 /// single-query path. A ratio of the span means the same thing in both.
 ///
 /// Tunable via `VIRTUES_RERANK_GAP` pending real-data calibration — NOTE the
-/// unit change: this is now a fraction in [0, 1], not z-units.
+/// unit change: this is now a fraction in [0, 1], not z-units. A value above 1
+/// is meaningless in the new unit and almost certainly a calibration from the
+/// old one (1.5 was the documented default), so it clamps to 1.0 — "always
+/// rerank", the conservative direction — and says so, rather than being
+/// silently reinterpreted.
 fn rerank_gap_threshold() -> f64 {
-    std::env::var("VIRTUES_RERANK_GAP")
+    match std::env::var("VIRTUES_RERANK_GAP")
         .ok()
         .and_then(|s| s.trim().parse::<f64>().ok())
-        .filter(|v| *v >= 0.0)
-        .unwrap_or(0.4)
+    {
+        Some(v) if (0.0..=1.0).contains(&v) => v,
+        Some(v) if v > 1.0 => {
+            tracing::warn!(
+                "VIRTUES_RERANK_GAP={v} is outside [0, 1] — the variable changed \
+                 units (fraction of the pool's score span; it was a z-score gap). \
+                 Clamping to 1.0 (always rerank); recalibrate or unset."
+            );
+            1.0
+        }
+        _ => 0.4,
+    }
 }
 
 /// Top-1/top-2 margin as a fraction of the candidate pool's score span.
@@ -667,8 +681,7 @@ impl SemanticSearchEngine {
                 "page" | "day" | "source" | "chat" => records.push(id.to_string()),
                 "person" | "place" | "org" => entities.push(id.to_string()),
                 "drive" => {
-                    // Strip any viewer params (?page=N) a stored route carries.
-                    let id = id.split('?').next().unwrap_or(id);
+                    // split_ref already stripped any viewer params (?page=N).
                     if id.starts_with("file_") {
                         file_ids.push(id.to_string());
                     }
