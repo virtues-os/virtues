@@ -593,80 +593,101 @@ fn truncate_to_budget(text: &str, budget: usize) -> String {
 /// - Identity: occupation, employer, home location
 /// - Recent days: last 3 autobiographies (truncated)
 /// - Connected sources: active data source names
+/// The DB-backed prompt sections inside `<user_context>`, by name. One list,
+/// so assembly, the error policy, and the audit test all iterate the same
+/// registry rather than each hand-maintaining its own idea of what exists.
+pub(crate) const USER_CONTEXT_SECTIONS: &[&str] = &["identity", "recent_days", "connected_sources"];
+
+/// Build one named context section. `Ok(None)` = no data, section legitimately
+/// absent; `Err` = the section HAS data it failed to deliver.
+///
+/// Every arm is total: it either renders or errors — never `if let Ok` — and
+/// the caller applies one uniform policy to errors. That policy exists because
+/// this file shipped two sections that never rendered once (`recent_days`, a
+/// DATE decoded as String; `memory`, JSONB decoded as String) and the swallow
+/// meant nothing anywhere said so. A section that fails to render costs no
+/// error the user sees — the model just quietly knows less — so the log line
+/// is the only witness this failure mode can have.
+pub(crate) async fn build_context_section(
+    pool: &PgPool,
+    name: &str,
+) -> Result<Option<String>, sqlx::Error> {
+    match name {
+        "identity" => {
+            let row = sqlx::query_as::<_, (Option<String>, Option<String>, Option<String>)>(
+                r#"SELECT p.occupation, p.employer, wp.name
+                 FROM app_user_profile p
+                 LEFT JOIN wiki_places wp ON p.home_place_id = wp.id
+                 WHERE p.id = '00000000-0000-0000-0000-000000000001'"#,
+            )
+            .fetch_optional(pool)
+            .await?;
+            let Some(row) = row else { return Ok(None) };
+            let mut parts = Vec::new();
+            if let (Some(occ), Some(emp)) = (&row.0, &row.1) {
+                parts.push(format!("{} at {}", occ, emp));
+            } else if let Some(occ) = &row.0 {
+                parts.push(occ.clone());
+            }
+            if let Some(place) = &row.2 {
+                parts.push(format!("Lives in {}", place));
+            }
+            Ok((!parts.is_empty())
+                .then(|| format!("<identity>{}</identity>", parts.join(". "))))
+        }
+        "recent_days" => {
+            // `date::text` because the column is a Postgres DATE and this
+            // decodes into String. Without the cast sqlx errors — which is the
+            // decode failure that kept this section out of every prompt from
+            // the day it shipped until 2026-08-01.
+            let rows = sqlx::query_as::<_, (String, Option<String>)>(
+                r#"SELECT date::text, autobiography FROM wiki_days
+                 WHERE autobiography IS NOT NULL AND autobiography != ''
+                 ORDER BY date DESC LIMIT 3"#,
+            )
+            .fetch_all(pool)
+            .await?;
+            let day_lines: Vec<String> = rows
+                .iter()
+                .filter_map(|(date, auto)| {
+                    let text = auto.as_deref()?;
+                    let truncated = if text.chars().count() > 300 {
+                        format!("{}...", text.chars().take(300).collect::<String>())
+                    } else {
+                        text.to_string()
+                    };
+                    Some(format!("{date}: {truncated}"))
+                })
+                .collect();
+            Ok((!day_lines.is_empty())
+                .then(|| format!("<recent_days>\n{}\n</recent_days>", day_lines.join("\n"))))
+        }
+        "connected_sources" => {
+            let rows = sqlx::query_as::<_, (String,)>(
+                "SELECT name FROM credentials WHERE status = 'active' ORDER BY name",
+            )
+            .fetch_all(pool)
+            .await?;
+            let names: Vec<&str> = rows.iter().map(|r| r.0.as_str()).collect();
+            Ok((!names.is_empty())
+                .then(|| format!("<connected_sources>{}</connected_sources>", names.join(", "))))
+        }
+        other => {
+            tracing::warn!("[chat] unknown context section requested: {other}");
+            Ok(None)
+        }
+    }
+}
+
 async fn build_user_context(pool: &PgPool, user_name: &str) -> Option<String> {
     let mut sections = Vec::new();
-
-    // 1. Identity — occupation, employer, home place
-    if let Ok(row) = sqlx::query_as::<_, (Option<String>, Option<String>, Option<String>)>(
-        r#"SELECT p.occupation, p.employer, wp.name
-         FROM app_user_profile p
-         LEFT JOIN wiki_places wp ON p.home_place_id = wp.id
-         WHERE p.id = '00000000-0000-0000-0000-000000000001'"#
-    )
-    .fetch_one(pool)
-    .await
-    {
-        let mut parts = Vec::new();
-        if let (Some(occ), Some(emp)) = (&row.0, &row.1) {
-            parts.push(format!("{} at {}", occ, emp));
-        } else if let Some(occ) = &row.0 {
-            parts.push(occ.clone());
-        }
-        if let Some(place) = &row.2 {
-            parts.push(format!("Lives in {}", place));
-        }
-        if !parts.is_empty() {
-            sections.push(format!("<identity>{}</identity>", parts.join(". ")));
-        }
-    }
-
-    // 2. Recent days — last 3 autobiographies
-    //
-    // `date::text` because the column is a Postgres DATE and this decodes into
-    // String. Without the cast sqlx returns a decode error, `if let Ok` drops
-    // it, and the section silently never renders — which is exactly what it did
-    // from the day it shipped until 2026-08-01. The cast is the fix; the
-    // `else` below is what makes the next such failure audible.
-    match sqlx::query_as::<_, (String, Option<String>)>(
-        r#"SELECT date::text, autobiography FROM wiki_days
-         WHERE autobiography IS NOT NULL AND autobiography != ''
-         ORDER BY date DESC LIMIT 3"#
-    )
-    .fetch_all(pool)
-    .await
-    {
-        Ok(rows) => {
-        if !rows.is_empty() {
-            let mut day_lines = Vec::new();
-            for (date, auto) in &rows {
-                if let Some(text) = auto {
-                    let truncated = if text.chars().count() > 300 {
-                        let t: String = text.chars().take(300).collect();
-                        format!("{}...", t)
-                    } else {
-                        text.clone()
-                    };
-                    day_lines.push(format!("{}: {}", date, truncated));
-                }
-            }
-            if !day_lines.is_empty() {
-                sections.push(format!("<recent_days>\n{}\n</recent_days>", day_lines.join("\n")));
-            }
-            }
-        }
-        Err(e) => tracing::warn!("[chat] recent_days omitted from the prompt: {e}"),
-    }
-
-    // 3. Connected sources — active credential names
-    if let Ok(rows) = sqlx::query_as::<_, (String,)>(
-        "SELECT name FROM credentials WHERE status = 'active' ORDER BY name"
-    )
-    .fetch_all(pool)
-    .await
-    {
-        if !rows.is_empty() {
-            let names: Vec<&str> = rows.iter().map(|r| r.0.as_str()).collect();
-            sections.push(format!("<connected_sources>{}</connected_sources>", names.join(", ")));
+    for name in USER_CONTEXT_SECTIONS {
+        match build_context_section(pool, name).await {
+            Ok(Some(body)) => sections.push(body),
+            Ok(None) => {}
+            // One policy for every section, present and future: an error is a
+            // section with data it failed to deliver, and it must be audible.
+            Err(e) => tracing::warn!("[chat] {name} omitted from the prompt: {e}"),
         }
     }
 
@@ -1947,43 +1968,54 @@ mod live_prompt_audit {
 mod live_context_sections {
     use sqlx::PgPool;
 
+    /// Per-section "has data" predicate — the ground truth each section's
+    /// rendering is checked against. Adding a section to
+    /// [`super::USER_CONTEXT_SECTIONS`] without adding its predicate here
+    /// fails the test, which is the point: the registry and the audit can't
+    /// drift apart silently.
+    async fn section_has_data(pool: &PgPool, name: &str) -> bool {
+        let sql = match name {
+            "identity" => {
+                "SELECT EXISTS(SELECT 1 FROM app_user_profile \
+                 WHERE COALESCE(occupation, '') <> '' OR home_place_id IS NOT NULL)"
+            }
+            "recent_days" => {
+                "SELECT EXISTS(SELECT 1 FROM wiki_days \
+                 WHERE autobiography IS NOT NULL AND autobiography <> '')"
+            }
+            "connected_sources" => {
+                "SELECT EXISTS(SELECT 1 FROM credentials WHERE status = 'active')"
+            }
+            other => panic!("section {other} has no data predicate — add one here"),
+        };
+        sqlx::query_scalar(sql).fetch_one(pool).await.expect("predicate")
+    }
+
     #[tokio::test]
     #[ignore]
-    async fn a_section_renders_whenever_its_data_exists() {
+    async fn every_registered_section_renders_whenever_its_data_exists() {
         let url = std::env::var("DATABASE_URL")
             .unwrap_or_else(|_| "postgres://virtues:virtues@localhost:5432/virtues".to_string());
         let pool = PgPool::connect(&url).await.expect("dev database");
 
-        let ctx = super::build_user_context(&pool, "Tester").await;
-        let ctx = ctx.unwrap_or_default();
-
-        let days: i64 = sqlx::query_scalar(
-            "SELECT count(*) FROM wiki_days WHERE autobiography IS NOT NULL AND autobiography <> ''",
-        )
-        .fetch_one(&pool)
-        .await
-        .expect("count days");
-
-        let creds: i64 =
-            sqlx::query_scalar("SELECT count(*) FROM credentials WHERE status = 'active'")
-                .fetch_one(&pool)
-                .await
-                .expect("count credentials");
-
-        println!("days with autobiography: {days}, active credentials: {creds}");
+        let ctx = super::build_user_context(&pool, "Tester").await.unwrap_or_default();
         println!("user_context:\n{ctx}");
 
-        if days > 0 {
-            assert!(
-                ctx.contains("<recent_days>"),
-                "{days} days carry an autobiography but none reached the prompt"
-            );
-        }
-        if creds > 0 {
-            assert!(
-                ctx.contains("<connected_sources>"),
-                "{creds} credentials are active but none reached the prompt"
-            );
+        for name in super::USER_CONTEXT_SECTIONS {
+            let has_data = section_has_data(&pool, name).await;
+            let rendered = ctx.contains(&format!("<{name}>"));
+            println!("  {name:<20} data={has_data} rendered={rendered}");
+            if has_data {
+                assert!(
+                    rendered,
+                    "section {name} has data but did not reach the prompt \
+                     — the silent-section disease, again"
+                );
+            }
+            // A section rendering WITHOUT data is the inverse lie.
+            if !has_data {
+                assert!(!rendered, "section {name} rendered with no underlying data");
+            }
         }
     }
 }
