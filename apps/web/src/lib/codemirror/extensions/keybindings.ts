@@ -8,6 +8,8 @@
 import { Prec, type Extension } from '@codemirror/state';
 import { keymap, type EditorView } from '@codemirror/view';
 
+import { inlineMarks } from './inline-marks';
+
 /**
  * Toggle a markdown wrapper around the selection (e.g., ** for bold)
  */
@@ -122,12 +124,49 @@ function unwrapHeadingOnBackspace(view: EditorView): boolean {
 }
 
 /**
+ * Backspace at the front of bold/italic/code content unwraps the whole mark.
+ *
+ * Atomic ranges already stop Backspace from splitting a `**` in half, but
+ * deleting just the opening delimiter leaves the closing one orphaned — it
+ * stops parsing as emphasis and two asterisks appear in the prose out of
+ * nowhere. Since neither delimiter is visible, the only coherent reading of
+ * "delete the formatting" is to take both.
+ */
+function unwrapInlineMarkOnBackspace(view: EditorView): boolean {
+	const { state } = view;
+	const sel = state.selection.main;
+	if (!sel.empty) return false;
+
+	const line = state.doc.lineAt(sel.head);
+	for (const mark of inlineMarks(state, line.from, line.to)) {
+		if (!mark.hide) continue;
+		// Only at the very front of the content, where the caret is sitting
+		// against the hidden opening delimiter.
+		if (sel.head !== mark.openTo) continue;
+
+		view.dispatch({
+			changes: [
+				{ from: mark.openFrom, to: mark.openTo },
+				{ from: mark.closeFrom, to: mark.closeTo },
+			],
+			selection: { anchor: mark.openFrom },
+			userEvent: 'delete.inlinemark',
+		});
+		return true;
+	}
+	return false;
+}
+
+/**
  * Bindings that must beat the defaults. `defaultKeymap` claims Backspace, and
- * it is installed ahead of this module in editor.ts, so the heading rule only
- * gets a look in at raised precedence.
+ * it is installed ahead of this module in editor.ts, so these rules only get a
+ * look in at raised precedence.
  */
 const highPrecedenceKeybindings: Extension = Prec.high(
-	keymap.of([{ key: 'Backspace', run: unwrapHeadingOnBackspace }]),
+	keymap.of([
+		{ key: 'Backspace', run: unwrapHeadingOnBackspace },
+		{ key: 'Backspace', run: unwrapInlineMarkOnBackspace },
+	]),
 );
 
 const formattingKeybindings: Extension = keymap.of([

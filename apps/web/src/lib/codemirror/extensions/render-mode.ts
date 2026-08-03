@@ -25,6 +25,7 @@ import { Compartment, type Extension } from '@codemirror/state';
 
 import { checkboxes } from './checkboxes';
 import { codeBlocks } from './code-blocks';
+import { inlineMarkAtoms } from './inline-marks';
 import { livePreview } from './live-preview';
 import { mediaWidgets } from './media-widgets';
 import { entityLinks } from './ref-links';
@@ -41,6 +42,10 @@ export const renderModeCompartment = new Compartment();
  */
 const renderedSurface: Extension = [
 	livePreview,
+	// Belongs with the surface, not beside it: the delimiters are only atomic
+	// because they are hidden, so raw mode must drop this too or the caret would
+	// skip over asterisks that are plainly on screen.
+	inlineMarkAtoms,
 	entityLinks,
 	checkboxes,
 	mediaWidgets,

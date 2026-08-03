@@ -12,6 +12,9 @@
 import { syntaxTree } from '@codemirror/language';
 import type { Extension, Range } from '@codemirror/state';
 import { Decoration, type DecorationSet, type EditorView, ViewPlugin, type ViewUpdate, WidgetType } from '@codemirror/view';
+
+import { inlineMarks } from './inline-marks';
+
 /** Minimal node shape from Lezer syntax tree (avoids @lezer/common version mismatch) */
 interface TreeNode { name: string; from: number; to: number; }
 
@@ -86,42 +89,8 @@ function buildDecorations(view: EditorView): DecorationSet {
 				builder.push(deco.range(from, hideEnd));
 			}
 
-			// --- Inline formatting (hide delimiters, style content) ---
-			if (name === 'StrongEmphasis' && !overlapsActiveLine) {
-				const inner = getInnerRange(view, node);
-				if (inner) {
-					builder.push(Decoration.mark({ class: 'cm-strong' }).range(inner.from, inner.to));
-					if (inner.from > from) builder.push(Decoration.replace({}).range(from, inner.from));
-					if (inner.to < to) builder.push(Decoration.replace({}).range(inner.to, to));
-				}
-			}
-
-			if (name === 'Emphasis' && !overlapsActiveLine) {
-				const inner = getInnerRange(view, node);
-				if (inner) {
-					builder.push(Decoration.mark({ class: 'cm-emphasis' }).range(inner.from, inner.to));
-					if (inner.from > from) builder.push(Decoration.replace({}).range(from, inner.from));
-					if (inner.to < to) builder.push(Decoration.replace({}).range(inner.to, to));
-				}
-			}
-
-			if (name === 'Strikethrough' && !overlapsActiveLine) {
-				const inner = getInnerRange(view, node);
-				if (inner) {
-					builder.push(Decoration.mark({ class: 'cm-strikethrough' }).range(inner.from, inner.to));
-					if (inner.from > from) builder.push(Decoration.replace({}).range(from, inner.from));
-					if (inner.to < to) builder.push(Decoration.replace({}).range(inner.to, to));
-				}
-			}
-
-			if (name === 'InlineCode' && !overlapsActiveLine) {
-				const inner = getInnerRange(view, node);
-				if (inner) {
-					builder.push(Decoration.mark({ class: 'cm-inline-code' }).range(inner.from, inner.to));
-					if (inner.from > from) builder.push(Decoration.replace({}).range(from, inner.from));
-					if (inner.to < to) builder.push(Decoration.replace({}).range(inner.to, to));
-				}
-			}
+			// Inline formatting is handled once, after this walk, from
+			// inline-marks.ts — the same description the atomic ranges use.
 
 			// --- Blockquotes (left border always, hide > marker when not on line) ---
 			if (name === 'Blockquote') {
@@ -226,63 +195,21 @@ function buildDecorations(view: EditorView): DecorationSet {
 		);
 	}
 
-	// --- Inline HTML underline: <u>text</u> ---
-	const UNDERLINE_REGEX = /<u>(.*?)<\/u>/g;
-	for (let lineNum = startLine; lineNum <= endLine; lineNum++) {
-		if (lineNum === cursorLine.number) continue;
-		const line = doc.line(lineNum);
-		UNDERLINE_REGEX.lastIndex = 0;
-		for (let m = UNDERLINE_REGEX.exec(line.text); m !== null; m = UNDERLINE_REGEX.exec(line.text)) {
-			const from = line.from + m.index;
-			const tagOpenEnd = from + 3;                    // after <u>
-			const tagCloseStart = from + 3 + m[1].length;   // start of </u>
-			const to = from + m[0].length;                   // after </u>
-			builder.push(Decoration.replace({}).range(from, tagOpenEnd));
-			builder.push(Decoration.mark({ class: 'cm-underline' }).range(tagOpenEnd, tagCloseStart));
-			builder.push(Decoration.replace({}).range(tagCloseStart, to));
-		}
-	}
-
-	// --- Highlight: ==text== → theme-aware highlight, markers hidden off-line ---
-	const HIGHLIGHT_REGEX = /==(.+?)==/g;
-	for (let lineNum = startLine; lineNum <= endLine; lineNum++) {
-		if (lineNum === cursorLine.number) continue;
-		const line = doc.line(lineNum);
-		HIGHLIGHT_REGEX.lastIndex = 0;
-		for (let m = HIGHLIGHT_REGEX.exec(line.text); m !== null; m = HIGHLIGHT_REGEX.exec(line.text)) {
-			const from = line.from + m.index;
-			const openEnd = from + 2;                 // after ==
-			const closeStart = from + 2 + m[1].length; // before closing ==
-			const to = from + m[0].length;
-			builder.push(Decoration.replace({}).range(from, openEnd));
-			builder.push(Decoration.mark({ class: 'cm-highlight' }).range(openEnd, closeStart));
-			builder.push(Decoration.replace({}).range(closeStart, to));
-		}
+	// --- Inline marks: bold, italic, strike, code, highlight, underline ---
+	// Never revealed, on the caret's line or anywhere else. The delimiter
+	// positions come from inline-marks.ts, which also declares them atomic so
+	// the caret cannot get stranded inside what we just erased.
+	for (const mark of inlineMarks(view.state, vpFrom, vpTo)) {
+		builder.push(
+			Decoration.mark({ class: mark.cls }).range(mark.openTo, mark.closeFrom)
+		);
+		if (!mark.hide) continue;
+		builder.push(Decoration.replace({}).range(mark.openFrom, mark.openTo));
+		builder.push(Decoration.replace({}).range(mark.closeFrom, mark.closeTo));
 	}
 
 	// Decoration.set with sort=true handles ordering
 	return Decoration.set(builder, true);
-}
-
-/**
- * Get the content range inside delimiter marks (e.g., content between ** and **)
- */
-function getInnerRange(
-	view: EditorView,
-	node: TreeNode
-): { from: number; to: number } | null {
-	const text = view.state.sliceDoc(node.from, node.to);
-
-	// Find delimiter length (1 for *, 2 for **, ~~ etc.)
-	let delimLen = 0;
-	if (text.startsWith('**') || text.startsWith('~~')) delimLen = 2;
-	else if (text.startsWith('*') || text.startsWith('_') || text.startsWith('`')) delimLen = 1;
-	else return null;
-
-	const from = node.from + delimLen;
-	const to = node.to - delimLen;
-	if (from >= to) return null;
-	return { from, to };
 }
 
 /**
