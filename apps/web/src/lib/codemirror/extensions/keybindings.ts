@@ -8,6 +8,49 @@
 import { Prec, type Extension } from '@codemirror/state';
 import { keymap, type EditorView } from '@codemirror/view';
 
+import { emptyMarkTidy } from './empty-mark-tidy';
+
+/** A list item line: bullet, ordered, or task. */
+const LIST_ITEM = /^(\s*)([-*+]|\d+[.)])\s/;
+
+/** One level of list nesting, matching the depth math in live-preview.ts. */
+const LIST_INDENT = '  ';
+
+/**
+ * Tab / Shift-Tab indent the LIST ITEMS the selection touches, and only list
+ * items. On any other line both commands return false, so Tab keeps its
+ * accessibility default (moving focus out of the editor) — the binding claims
+ * exactly the context where a writer means "nest this bullet" and nothing more.
+ *
+ * The edit carries userEvent `input.indent` so ordered lists renumber per
+ * level in the same transaction (list-renumber gates on input/delete).
+ */
+function changeListIndent(view: EditorView, direction: 1 | -1): boolean {
+	const { state } = view;
+	const changes: { from: number; to?: number; insert?: string }[] = [];
+	const seen = new Set<number>();
+
+	for (const range of state.selection.ranges) {
+		const first = state.doc.lineAt(range.from).number;
+		const last = state.doc.lineAt(range.to).number;
+		for (let n = first; n <= last; n++) {
+			if (seen.has(n)) continue;
+			seen.add(n);
+			const line = state.doc.line(n);
+			if (!LIST_ITEM.test(line.text)) continue;
+			if (direction === 1) {
+				changes.push({ from: line.from, insert: LIST_INDENT });
+			} else {
+				const spaces = /^ {1,2}/.exec(line.text)?.[0].length ?? 0;
+				if (spaces > 0) changes.push({ from: line.from, to: line.from + spaces });
+			}
+		}
+	}
+
+	if (changes.length === 0) return false;
+	view.dispatch({ changes, userEvent: 'input.indent' });
+	return true;
+}
 
 /**
  * Narrow a range to the text actually worth marking up.
@@ -61,8 +104,9 @@ const BLOCK_PREFIX = /^\s*(?:>\s*)*(?:#{1,6}\s+|[-*+]\s+(?:\[[ xX]\]\s+)?|\d+[.)
  */
 function wrapEachLine(view: EditorView, wrapper: string, from: number, to: number): boolean {
 	const { doc } = view.state;
-	const changes: { from: number; insert: string }[] = [];
 
+	// Pass 1: collect each line's markable segment.
+	const segs: { from: number; to: number; wrapped: boolean }[] = [];
 	const firstLine = doc.lineAt(from).number;
 	const lastLine = doc.lineAt(to).number;
 
@@ -78,11 +122,36 @@ function wrapEachLine(view: EditorView, wrapper: string, from: number, to: numbe
 			Math.min(line.to, to),
 		);
 		if (seg.from >= seg.to) continue; // blank line, or whitespace only
-		changes.push({ from: seg.from, insert: wrapper });
-		changes.push({ from: seg.to, insert: wrapper });
+
+		const text = view.state.sliceDoc(seg.from, seg.to);
+		const wrapped =
+			text.length > wrapper.length * 2 &&
+			text.startsWith(wrapper) &&
+			text.endsWith(wrapper);
+		segs.push({ ...seg, wrapped });
 	}
 
-	if (changes.length === 0) return true;
+	if (segs.length === 0) return true;
+
+	// Pass 2: a toggle, like the single-line path. Every segment already
+	// wrapped → this press means "take it off"; otherwise wrap the ones that
+	// are not (skipping the already-wrapped so a mixed selection cannot end up
+	// double-marked — the second press then finds everything wrapped and
+	// unwraps uniformly).
+	const changes: { from: number; to?: number; insert?: string }[] = [];
+	if (segs.every((s) => s.wrapped)) {
+		for (const s of segs) {
+			changes.push({ from: s.from, to: s.from + wrapper.length });
+			changes.push({ from: s.to - wrapper.length, to: s.to });
+		}
+	} else {
+		for (const s of segs) {
+			if (s.wrapped) continue;
+			changes.push({ from: s.from, insert: wrapper });
+			changes.push({ from: s.to, insert: wrapper });
+		}
+	}
+
 	view.dispatch({ changes });
 	return true;
 }
@@ -106,12 +175,25 @@ function toggleWrapper(view: EditorView, wrapper: string): boolean {
 		return true;
 	}
 
-	const { from, to } = trimRange(view, selection.from, selection.to);
+	let { from, to } = trimRange(view, selection.from, selection.to);
 	// Selecting only whitespace is not a request to format anything.
 	if (from >= to) return true;
 
 	if (view.state.doc.lineAt(from).number !== view.state.doc.lineAt(to).number) {
 		return wrapEachLine(view, wrapper, from, to);
+	}
+
+	// Keep block markers OUTSIDE the mark on the single-line path too — a
+	// whole-line selection of `- item` must wrap the item, not the bullet.
+	// (`**- item**` stops being a list item at all; verified on screen when
+	// this guard only existed in the multi-line path.)
+	const markLine = view.state.doc.lineAt(from);
+	if (STRUCTURAL_LINE.test(markLine.text)) return true;
+	const linePrefix = BLOCK_PREFIX.exec(markLine.text)?.[0].length ?? 0;
+	if (from < markLine.from + linePrefix) {
+		from = Math.min(markLine.from + linePrefix, to);
+		({ from, to } = trimRange(view, from, to));
+		if (from >= to) return true;
 	}
 
 	const selectedText = view.state.sliceDoc(from, to);
@@ -161,9 +243,18 @@ function toggleHtmlTag(view: EditorView, tag: string): boolean {
 		return true;
 	}
 
-	// Same trailing-newline trap as toggleWrapper — see trimRange.
-	const { from, to } = trimRange(view, selection.from, selection.to);
+	// Same trailing-newline and block-marker traps as toggleWrapper.
+	let { from, to } = trimRange(view, selection.from, selection.to);
 	if (from >= to) return true;
+
+	const tagLine = view.state.doc.lineAt(from);
+	if (STRUCTURAL_LINE.test(tagLine.text)) return true;
+	const tagPrefix = BLOCK_PREFIX.exec(tagLine.text)?.[0].length ?? 0;
+	if (from < tagLine.from + tagPrefix) {
+		from = Math.min(tagLine.from + tagPrefix, to);
+		({ from, to } = trimRange(view, from, to));
+		if (from >= to) return true;
+	}
 
 	const selectedText = view.state.sliceDoc(from, to);
 	if (selectedText.startsWith(openTag) && selectedText.endsWith(closeTag)) {
@@ -276,9 +367,15 @@ const formattingKeybindings: Extension = Prec.high(keymap.of([
 		key: 'Mod-Shift-h',
 		run: (view) => toggleWrapper(view, '=='),
 	},
+	{
+		key: 'Tab',
+		run: (view) => changeListIndent(view, 1),
+		shift: (view) => changeListIndent(view, -1),
+	},
 ]));
 
 export const markdownKeybindings: Extension = [
 	highPrecedenceKeybindings,
 	formattingKeybindings,
+	emptyMarkTidy,
 ];

@@ -24,6 +24,8 @@
 import { syntaxTree } from '@codemirror/language';
 import type { EditorState } from '@codemirror/state';
 
+import { collectCodeRanges, inCode } from './code-context';
+
 /** `==highlight==` and `<u>underline</u>` have no Lezer nodes; they are scanned. */
 const HIGHLIGHT_REGEX = /==(.+?)==/g;
 const UNDERLINE_REGEX = /<u>(.*?)<\/u>/g;
@@ -88,7 +90,11 @@ export function inlineMarks(state: EditorState, from: number, to: number): Inlin
 	});
 
 	// Line-scanned constructs. Lezer has no node for either, so they are matched
-	// per line the way live-preview always has.
+	// per line the way live-preview always has — which also means, unlike the
+	// tree-walked marks above, the regex cannot see code context on its own.
+	// `inCode` drops matches inside fences and inline code (a `==x==` in a
+	// string literal is characters, not a highlight).
+	const codeRanges = collectCodeRanges(state, from, to);
 	const startLine = state.doc.lineAt(from).number;
 	const endLine = state.doc.lineAt(Math.min(to, state.doc.length)).number;
 
@@ -98,6 +104,7 @@ export function inlineMarks(state: EditorState, from: number, to: number): Inlin
 		UNDERLINE_REGEX.lastIndex = 0;
 		for (let m = UNDERLINE_REGEX.exec(line.text); m !== null; m = UNDERLINE_REGEX.exec(line.text)) {
 			const at = line.from + m.index;
+			if (inCode(codeRanges, at, at + m[0].length)) continue;
 			marks.push({
 				cls: 'cm-underline',
 				openFrom: at,
@@ -110,6 +117,7 @@ export function inlineMarks(state: EditorState, from: number, to: number): Inlin
 		HIGHLIGHT_REGEX.lastIndex = 0;
 		for (let m = HIGHLIGHT_REGEX.exec(line.text); m !== null; m = HIGHLIGHT_REGEX.exec(line.text)) {
 			const at = line.from + m.index;
+			if (inCode(codeRanges, at, at + m[0].length)) continue;
 			marks.push({
 				cls: 'cm-highlight',
 				openFrom: at,

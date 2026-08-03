@@ -19,6 +19,8 @@ import { Decoration, type DecorationSet, type EditorView, EditorView as EditorVi
 import { contextMenu } from '$lib/stores/contextMenu.svelte';
 import { isEntityRoute } from '$lib/utils/refRoutes';
 
+import { collectCodeRanges, inCode } from './code-context';
+
 const MEDIA_REGEX = /!\[([^\]]*)\]\(([^)]+)\)/g;
 
 const IMAGE_EXTS = /\.(png|jpg|jpeg|gif|webp|svg|bmp|ico|avif|heic|heif|tiff?)$/i;
@@ -353,6 +355,9 @@ function buildMediaDecorations(state: EditorState): DecorationSet {
 	const builder: Range<Decoration>[] = [];
 	const doc = state.doc;
 
+	// An `![x](y)` inside a code fence is example text, not an image to embed.
+	const codeRanges = collectCodeRanges(state, 0, doc.length);
+
 	for (let lineNum = 1; lineNum <= doc.lines; lineNum++) {
 		const line = doc.line(lineNum);
 		MEDIA_REGEX.lastIndex = 0;
@@ -360,6 +365,8 @@ function buildMediaDecorations(state: EditorState): DecorationSet {
 		for (let match = MEDIA_REGEX.exec(line.text); match !== null; match = MEDIA_REGEX.exec(line.text)) {
 			const rawAlt = match[1];
 			const url = match[2];
+			const matchFrom = line.from + match.index;
+			if (inCode(codeRanges, matchFrom, matchFrom + match[0].length)) continue;
 			// App refs (`![@X](/person/id)`, `![file](/drive/id)`) are ref embeds,
 			// rendered by ref-links; media widgets only handle direct/external urls.
 			if (isEntityRoute(url)) continue;

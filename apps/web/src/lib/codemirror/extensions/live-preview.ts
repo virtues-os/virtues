@@ -202,11 +202,15 @@ function buildDecorations(view: EditorView): DecorationSet {
 	// construct keeps its delimiters hidden. Only ever a horizontal shift, only
 	// ever for the one construct being edited. Positions come from
 	// inline-marks.ts so this stays the single definition of a mark's extent.
+	// No reveal without focus: the selection survives blur, and without this
+	// check an inactive pane (split view, popover open) holds stale raw syntax.
+	const canReveal = view.hasFocus;
+
 	for (const mark of inlineMarks(view.state, vpFrom, vpTo)) {
 		builder.push(
 			Decoration.mark({ class: mark.cls }).range(mark.openTo, mark.closeFrom)
 		);
-		if (selectionTouches(view.state, mark)) {
+		if (canReveal && selectionTouches(view.state, mark)) {
 			builder.push(
 				Decoration.mark({ class: 'cm-formatting-mark' }).range(mark.openFrom, mark.openTo)
 			);
@@ -303,6 +307,7 @@ const livePreviewPlugin = ViewPlugin.fromClass(
 			const rebuild =
 				update.docChanged ||
 				update.viewportChanged ||
+				update.focusChanged ||
 				(update.selectionSet && !isMouseSelecting(update.state)) ||
 				dragJustEnded(update);
 			if (rebuild) {
