@@ -465,7 +465,8 @@ pub async fn narrate_day(pool: &PgPool, date: NaiveDate) -> Result<Option<WikiDa
     // Chat slot: this is the narrative call, and the only one left that earns it.
     let model = crate::api::assistant_profile::get_chat_model(pool).await?;
     let raw = call_virtues_api(pool, NARRATE_PROMPT, &model, &prompt).await?;
-    let parsed = parse_virtues_api_response(&raw);
+    let mut parsed = parse_virtues_api_response(&raw);
+    parsed.diary = strip_prompt_echo(&parsed.diary);
 
     let day = update_day(
         pool,
@@ -1612,6 +1613,39 @@ struct ParsedDaySummary {
 ///   ---DATA_QUALITY---
 ///   {"coverage":{...},"overall":3,"note":"..."}
 ///   ---EVENTS---
+/// Drop prompt-instruction echo from the article prose.
+///
+/// Observed live (2025-12-16): the model opened its output with
+/// "Entities you may link: [David](/person/…), …" followed by a `---` rule —
+/// the prompt's own instruction header, reproduced as if it were the
+/// article's front matter. The prompt now forbids it, but a prompt is a
+/// request; this is the guarantee. Any line carrying the header is dropped,
+/// along with a horizontal rule left stranded directly beneath it.
+fn strip_prompt_echo(prose: &str) -> String {
+    let mut out: Vec<&str> = Vec::new();
+    let mut dropping_rule = false;
+    for line in prose.lines() {
+        if line.trim_start().starts_with("Entities you may link") {
+            dropping_rule = true;
+            continue;
+        }
+        if dropping_rule {
+            let t = line.trim();
+            if t.is_empty() {
+                continue;
+            }
+            dropping_rule = false;
+            if t.chars().all(|c| c == '-') && t.len() >= 3 {
+                continue;
+            }
+        }
+        out.push(line);
+    }
+    // The drop can leave leading blank lines where the header sat.
+    let joined = out.join("\n");
+    joined.trim_start_matches('\n').to_string()
+}
+
 ///   [JSON events]
 ///
 /// All markers except the diary are optional. Handles markdown code fences around JSON.
@@ -1931,6 +1965,27 @@ fn parse_hhmm_to_utc(
 #[cfg(test)]
 mod dossier_tests {
     use super::*;
+
+    /// The exact shape observed live on 2025-12-16: instruction header with
+    /// resolved links, a stranded rule beneath it, then the real article.
+    /// The guard must remove the first two and not touch a legitimate `---`
+    /// elsewhere in the prose.
+    #[test]
+    fn prompt_echo_is_stripped_and_real_rules_survive() {
+        let leaked = "Entities you may link: [David](/person/p_1), [Jess](/person/p_2).\n\n---\n\nA clear, cold Tuesday.\n\n## The dashboard\n\nBody with [David](/person/p_1) linked inline.\n\n---\n\nA closing aside.";
+        let cleaned = strip_prompt_echo(leaked);
+        assert!(cleaned.starts_with("A clear, cold Tuesday."));
+        assert!(!cleaned.contains("Entities you may link"));
+        assert!(
+            cleaned.contains("---"),
+            "a rule that belongs to the article must survive"
+        );
+        assert!(cleaned.contains("[David](/person/p_1) linked inline"));
+
+        // Clean prose passes through untouched.
+        let clean = "A lede.\n\n## A section\n\nProse.";
+        assert_eq!(strip_prompt_echo(clean), clean);
+    }
 
     /// The GAP regression: a subscribed calendar said "Community Dinner" while the
     /// owner sat at a Mac the whole evening, and the dossier showed only the plan.
