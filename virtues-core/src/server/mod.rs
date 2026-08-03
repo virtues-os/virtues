@@ -752,7 +752,7 @@ pub async fn run(client: Virtues, host: &str, port: u16) -> Result<()> {
         )
         .route(
             "/api/pages/reflections/:date",
-            get(api::get_reflections_handler).post(api::create_reflection_handler),
+            get(api::get_reflections_handler),
         )
         .route(
             "/api/pages/:id",

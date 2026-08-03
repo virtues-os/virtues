@@ -31,6 +31,7 @@
 	import DayToolbar from "./DayToolbar.svelte";
 	import DataQualityCoverage from "./DataQualityCoverage.svelte";
 	import JournalCard from "./JournalCard.svelte";
+	import NotesRail from "./NotesRail.svelte";
 	import UniversalDataGrid, { type Column } from "$lib/components/datagrid/UniversalDataGrid.svelte";
 	import TableOfContents, { type TocHeading } from "$lib/components/TableOfContents.svelte";
 
@@ -469,7 +470,6 @@
 		if (showAutobiography) h.push({ id: "summary", text: "The Day", level: 2 });
 		h.push({ id: "dayline", text: "The Dayline", level: 2 });
 		if (showTimeline) h.push({ id: "timeline", text: "Event Timeline", level: 2 });
-		if (hasAnyContent) h.push({ id: "writing", text: "Your Writing", level: 2 });
 		if (showChats) h.push({ id: "chats", text: "AI Chats", level: 2 });
 		if (showEntities) h.push({ id: "entities", text: "Entities", level: 2 });
 		if (hasAnyContent) h.push({ id: "ontologies", text: "Data Ontologies", level: 2 });
@@ -555,11 +555,14 @@
 						</section>
 					{/if}
 
-					<!-- Your Writing: journal entries for this day -->
-					<section class="section" id="writing">
-						<h2 class="section-title">Your Writing</h2>
-						<JournalCard date={currentDateSlug} />
-					</section>
+					<!-- Notes: the day's margin — where the examen line lands, and
+					     where a machine note about this day would wait. -->
+					<NotesRail subjectType="day" subjectId={page.id} />
+
+					<!-- Legacy reflections, read-only; renders nothing when the
+					     day has none. The primitive is retired — writing about a
+					     day belongs to the day's article or a note on it. -->
+					<JournalCard date={currentDateSlug} />
 
 					<!-- Movement is now in the Dayline chart's "Location" pill -->
 

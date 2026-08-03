@@ -12,6 +12,7 @@
 	import { onMount } from "svelte";
 	import {
 		getDayByDate,
+		createNote,
 		getDayTimeline,
 		getTodayStreams,
 		listPeople,
@@ -27,7 +28,6 @@
 		type UpcomingEvent,
 		type UnnamedPlace,
 	} from "$lib/wiki/api";
-	import { getReflectionsForDate, createReflection } from "$lib/api/client";
 	import { notebookStore } from "$lib/stores/notebook.svelte";
 	import { pagesStore } from "$lib/stores/pages.svelte";
 	import { chatSessions } from "$lib/stores/chatSessions.svelte";
@@ -160,15 +160,22 @@
 		return d.toLocaleDateString(undefined, { weekday: "short" });
 	}
 
-	// ---- examen: writes into today's reflection (the grounded SEED needs an LLM) ----
+	// ---- examen: a human note on today (the grounded SEED needs an LLM) ----
+	// A one-line answer is a note-shaped thing. Writing it as a note on the
+	// day keeps the day's article wholly the record's to maintain; longform
+	// belongs in the day article itself, which you claim by editing it.
 	async function saveExamen() {
 		if (!examenText.trim()) return;
 		try {
-			let refs = await getReflectionsForDate(todayDate);
-			let ref = refs[0] ?? (await createReflection(todayDate));
-			examenSaved = true;
-			// Open the reflection so the owner can keep writing.
-			if (ref?.id) setTimeout(() => open(`/page/${ref.id}`, "Reflection"), 400);
+			const day = await getDayByDate(todayDate);
+			if (day?.id) {
+				await createNote("day", day.id, examenText.trim(), "memo");
+				examenSaved = true;
+				// Open the day so the note is visible where it landed.
+				setTimeout(() => open(`/day/day_${todayDate}`, "Today"), 400);
+			} else {
+				examenSaved = true;
+			}
 		} catch { examenSaved = true; }
 	}
 
@@ -317,7 +324,7 @@
 				<div class="panel">
 					<div class="k">Tonight · a reflection</div>
 					{#if examenSaved}
-						<p class="q">Kept. <span class="s">Opening your reflection…</span></p>
+						<p class="q">Kept. <span class="s">Noted on today's page…</span></p>
 					{:else}
 						<p class="q">What do you want to remember from today?</p>
 						<!-- NEEDS: the *seeded* examen ("You were most alive in the map cache,
