@@ -52,6 +52,10 @@ pub struct UserProfile {
     pub employer: Option<String>,
     // Home place (FK to entities_place)
     pub home_place_id: Option<String>,
+    /// Which `wiki_people` row is the owner (migration 0080). Soft reference,
+    /// no FK — same shape as `home_place_id`. The profile owns the identity;
+    /// this names the graph node relationships are anchored to.
+    pub self_person_id: Option<String>,
     // Onboarding - single status field (deprecated, kept for compatibility)
     pub onboarding_status: String,
     // Server status - controls provisioning state (set by virtues-api hydration)

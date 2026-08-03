@@ -403,6 +403,74 @@ pub async fn run(client: Virtues, host: &str, port: u16) -> Result<()> {
                 .delete(api::delete_place_handler),
         )
         .route(
+            "/api/wiki/notes/:subject_type/:subject_id",
+            axum::routing::get(api::list_notes_handler).post(api::create_note_handler),
+        )
+        .route(
+            "/api/wiki/notes/:id/resolve",
+            axum::routing::put(api::resolve_note_handler),
+        )
+        .route(
+            "/api/wiki/lifeline",
+            axum::routing::get(api::lifeline_handler),
+        )
+        .route(
+            "/api/wiki/lifeline/ground",
+            axum::routing::get(api::lifeline_ground_handler),
+        )
+        .route(
+            "/api/wiki/lifeline/clock",
+            axum::routing::get(api::lifeline_clock_handler),
+        )
+        .route(
+            "/api/wiki/lifeline/feed",
+            axum::routing::get(api::lifeline_feed_handler),
+        )
+        .route(
+            "/api/wiki/lifeline/processed",
+            axum::routing::get(api::lifeline_processed_handler),
+        )
+        .route(
+            "/api/wiki/history",
+            axum::routing::get(api::history_feed_handler),
+        )
+        .route(
+            "/api/wiki/articles/:subject_type/:subject_id/history",
+            axum::routing::get(api::article_history_handler),
+        )
+        .route(
+            "/api/wiki/subjects/:subject_type/:subject_id/backlinks",
+            axum::routing::get(api::subject_backlinks_handler),
+        )
+        .route(
+            "/api/wiki/articles/:subject_type/:subject_id",
+            axum::routing::post(api::write_article_handler),
+        )
+        .route(
+            "/api/wiki/articles/:subject_type/:subject_id/auto-update",
+            axum::routing::put(api::set_article_auto_update_handler),
+        )
+        .route(
+            "/api/entities/people",
+            axum::routing::post(api::create_person_handler),
+        )
+        .route(
+            "/api/entities/people/:id",
+            axum::routing::delete(api::delete_person_handler),
+        )
+        .route(
+            "/api/entities/orgs",
+            axum::routing::post(api::create_org_handler),
+        )
+        .route(
+            "/api/entities/orgs/:id",
+            axum::routing::delete(api::delete_org_handler),
+        )
+        .route(
+            "/api/entities/people/:id/reclassify-as-org",
+            axum::routing::post(api::reclassify_person_handler),
+        )
+        .route(
             "/api/entities/places/:id/set-home",
             post(api::set_place_as_home_handler),
         )

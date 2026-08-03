@@ -362,7 +362,7 @@ fn extract_sync_payload(data: &[u8]) -> Option<&[u8]> {
 }
 
 /// Extract text content from Yjs state bytes (Y.Text)
-fn extract_text_content(yjs_state: &[u8]) -> String {
+pub fn extract_text_content(yjs_state: &[u8]) -> String {
     let doc = Doc::new();
     if let Ok(update) = Update::decode_v1(yjs_state) {
         let result = std::panic::catch_unwind(AssertUnwindSafe(|| {

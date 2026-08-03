@@ -171,6 +171,8 @@ export interface WikiPageBase {
 	// applet). Separate from `content`, which is the user's own writing.
 	article?: string;
 	articleUpdatedAt?: Date;
+	/** Is the record keeping this article up to date? Off unless asked. */
+	articleAutoUpdate?: boolean;
 
 	// Timestamps
 	createdAt: Date;

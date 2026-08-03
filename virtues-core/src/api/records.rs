@@ -41,6 +41,14 @@ pub struct OntologyRecord {
 /// `semantic_search` cites) or the **table name** (`data_calendar_event`, what
 /// the day/ontology data tables carry) — we accept both so every caller can link
 /// with whatever it has on hand.
+///
+/// When a table is described by more than one ontology — `app_pages` carries
+/// both `app_page` and `wiki_article` since migration 0081 — a lookup by TABLE
+/// name resolves to the first descriptor registered for it. The row returned is
+/// identical either way (same table, same id); only `display_name` can be
+/// wrong, so an article reached by table name reads as "Page Edits". Callers
+/// that know which they hold should pass the ontology NAME, which is exact.
+/// `semantic_search` and `attach_record_refs` both do.
 pub async fn get_record(pool: &PgPool, ontology: &str, record_id: &str) -> Result<OntologyRecord> {
     let desc = virtues_registry::ontologies::get_ontology(ontology)
         .or_else(|| {

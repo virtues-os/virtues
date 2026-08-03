@@ -51,6 +51,7 @@ export function apiToPersonPage(api: WikiPersonApi): PersonPage {
 
 		// Person-specific fields
 		nickname: api.nickname ?? undefined,
+		aliases: api.aliases ?? [],
 		relationship: api.relationship_category ?? "Contact",
 		emails: api.emails,
 		phones: api.phones,
@@ -66,6 +67,7 @@ export function apiToPersonPage(api: WikiPersonApi): PersonPage {
 		content: api.content ?? "",
 		article: api.article ?? undefined,
 		articleUpdatedAt: api.article_updated_at ? new Date(api.article_updated_at) : undefined,
+		articleAutoUpdate: api.article_auto_update ?? false,
 
 		// Metadata (empty for now - will be computed from entity_edges)
 		citations: [],
@@ -113,6 +115,7 @@ export function apiToPlacePage(api: WikiPlaceApi): PlacePage {
 		content: api.content ?? "",
 		article: api.article ?? undefined,
 		articleUpdatedAt: api.article_updated_at ? new Date(api.article_updated_at) : undefined,
+		articleAutoUpdate: api.article_auto_update ?? false,
 
 		// Connections (populated from entity_edges later)
 		associatedPeople: [],
@@ -170,6 +173,7 @@ export function apiToOrganizationPage(api: WikiOrganizationApi): OrganizationPag
 		content: api.content ?? "",
 		article: api.article ?? undefined,
 		articleUpdatedAt: api.article_updated_at ? new Date(api.article_updated_at) : undefined,
+		articleAutoUpdate: api.article_auto_update ?? false,
 
 		// Connections (populated from entity_edges later)
 		keyContacts: [],

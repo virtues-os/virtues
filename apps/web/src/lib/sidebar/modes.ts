@@ -91,7 +91,9 @@ export const WIKI_MODE: SidebarMode = {
 	title: 'Wiki',
 	rows: [
 		{ id: 'overview', label: 'Overview', icon: 'ri:book-2-line', href: '/wiki' },
-		{ id: 'stories', label: 'Stories', icon: 'ri:quill-pen-line', href: '/wiki/stories' },
+		// The shape of the record before you read a word of it — and it needs no
+		// articles and no model, which is the point.
+		{ id: 'lifeline', label: 'Lifeline', icon: 'ri:pulse-line', href: '/wiki/lifeline' },
 		{
 			id: 'identity',
 			label: 'Narrative Identity',
@@ -103,6 +105,10 @@ export const WIKI_MODE: SidebarMode = {
 		{ id: 'people', label: 'People', icon: 'ri:user-line', href: '/wiki/people' },
 		{ id: 'places', label: 'Places', icon: 'ri:map-pin-line', href: '/wiki/places' },
 		{ id: 'orgs', label: 'Orgs', icon: 'ri:building-line', href: '/wiki/orgs' },
+		// The review surface. `auto_update` is the consent; this is where you
+		// see what that consent produced — without it the record edits its own
+		// prose in a room nobody visits.
+		{ id: 'history', label: 'History', icon: 'ri:history-line', href: '/wiki/history' },
 	],
 };
 

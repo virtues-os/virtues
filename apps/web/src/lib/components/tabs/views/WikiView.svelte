@@ -1,8 +1,14 @@
 <!--
 	WikiView.svelte
 
-	The wiki room: the wikipedia of one life. Four sections, route-driven via
-	SubNav (deep-linkable):
+	The wiki room: the wikipedia of one life. Sections are route-driven and
+	deep-linkable, navigated from the SIDEBAR — the room swaps the rail for its
+	own rows the way Settings and Developer do.
+
+	There used to be a SubNav strip across the top carrying the same eight
+	links. Once the sidebar grew them it was the same list twice on one screen,
+	and the top copy cost a band of vertical space on every wiki page to say
+	what the rail already said.
 
 	  /wiki           Overview — the front page: standfirst, activity, on
 	                  this day, the latest entry, and the index.
@@ -20,13 +26,13 @@
 
 <script lang="ts">
 	import type { Tab } from '$lib/tabs/types';
+	import { WIKI_SECTION_RE } from '$lib/tabs/registry';
 	import { windowShellStore } from '$lib/stores/window-shell.svelte';
 	import {
 		ActivityHeatmap,
 		DaysChronicle,
 		NarrativeIdentitySection,
 	} from '$lib/components/wiki';
-	import SubNav, { type SubNavItem } from '$lib/components/SubNav.svelte';
 	import UniversalDataGrid, {
 		type Column,
 	} from '$lib/components/datagrid/UniversalDataGrid.svelte';
@@ -50,21 +56,20 @@
 		type OnThisDayApi,
 	} from '$lib/wiki/api';
 	import { toActivityLevels } from '$lib/wiki/activity';
+	import { getProfile } from '$lib/api/client';
+	import WikiHistory from '$lib/components/wiki/WikiHistory.svelte';
+	import LifelineCanvas from '$lib/components/wiki/LifelineCanvas.svelte';
+	import NotesRail from '$lib/components/wiki/NotesRail.svelte';
+	import { contextMenu } from '$lib/stores/contextMenu.svelte';
+	import { getKeepMenuItems } from '$lib/utils/contextMenuItems';
+	import { reclassifyPersonAsOrg, createPerson, deleteEntity } from '$lib/wiki/api';
 
 	let { tab, active }: { tab: Tab; active: boolean } = $props();
 
-	type Section = 'overview' | 'stories' | 'days' | 'years' | 'entities' | 'identity';
+	type Section = 'overview' | 'stories' | 'days' | 'years' | 'entities' | 'identity' | 'history' | 'lifeline';
 
-	const sections = $derived<SubNavItem[]>([
-		{ id: 'overview', label: 'Overview' },
-		{ id: 'stories', label: 'Stories' },
-		{ id: 'days', label: 'Days' },
-		{ id: 'years', label: 'Years' },
-		{ id: 'entities', label: 'Entities' },
-		{ id: 'identity', label: 'Narrative Identity' },
-	]);
 
-	// Active section is derived from the route (SubNav owns the writing side).
+	// The active section comes from the route; the sidebar rail does the linking.
 	// Legacy per-type routes land in the unified entities section.
 	const LEGACY_TYPE: Record<string, 'person' | 'place' | 'org'> = {
 		people: 'person',
@@ -73,20 +78,30 @@
 	};
 
 	const routeSegment = $derived(
-		tab.route.match(
-			/^\/wiki\/(days|years|stories|entities|identity|people|places|orgs|unlinked)$/
-		)?.[1] ?? (tab.route === '/entities' ? 'entities' : null)
+		tab.route.match(WIKI_SECTION_RE)?.[1] ?? (tab.route === '/entities' ? 'entities' : null)
 	);
 
-	/** Sections that are their own route; everything else folds into entities. */
-	const OWN_SECTION = ['days', 'years', 'stories', 'identity'] as const;
+	/**
+	 * The only segments that are NOT their own section.
+	 *
+	 * This was written the other way round — an allowlist of sections that
+	 * render themselves, with everything else folding into Entities — which
+	 * meant every new section silently became Entities until someone remembered
+	 * to add it. Lifeline and History both did exactly that: the route matched,
+	 * the tab opened, and the entity index appeared.
+	 *
+	 * Inverted, the default is "a section is itself" and only these four
+	 * historical aliases are special. Adding a section now requires no edit
+	 * here at all.
+	 */
+	const FOLDS_INTO_ENTITIES = ['people', 'places', 'orgs', 'unlinked'] as const;
 
 	const section = $derived<Section>(
 		routeSegment == null
 			? 'overview'
-			: (OWN_SECTION as readonly string[]).includes(routeSegment)
-				? (routeSegment as Section)
-				: 'entities'
+			: (FOLDS_INTO_ENTITIES as readonly string[]).includes(routeSegment)
+				? 'entities'
+				: (routeSegment as Section)
 	);
 
 	// --- Stories ---
@@ -154,10 +169,7 @@
 		routeSegment ? (LEGACY_TYPE[routeSegment] ?? null) : null
 	);
 
-	/** What SubNav highlights: legacy per-type routes read as Entities. */
-	const subNavRoute = $derived(
-		section === 'entities' ? '/wiki/entities' : tab.route
-	);
+	/** What the rail highlights: legacy per-type routes read as Entities. */
 
 	// --- Unified entity list (also feeds the overview index) ---
 
@@ -167,6 +179,8 @@
 		entityType: 'person' | 'place' | 'org';
 		subtitle: string | null;
 		route: string;
+		refCount: number;
+		isSelf: boolean;
 	}
 
 	const typeConfig = {
@@ -189,11 +203,17 @@
 		loading = true;
 		error = null;
 		try {
-			const [people, places, orgs] = await Promise.all([
+			// The owner is in the graph like anyone else — a real box carries a
+			// person row for them, built from contacts and email. The profile
+			// says which one (0080); without it the index lists you as a
+			// stranger among your own contacts.
+			const [people, places, orgs, profile] = await Promise.all([
 				listPeople(),
 				listPlaces(),
 				listOrganizations(),
+				getProfile().catch(() => null),
 			]);
+			const selfId = profile?.self_person_id ?? null;
 
 			const unified: UnifiedEntity[] = [
 				...people.map((p: WikiPersonListItem): UnifiedEntity => ({
@@ -202,6 +222,8 @@
 					entityType: 'person',
 					subtitle: p.relationship_category,
 					route: `/person/${p.id}`,
+					refCount: p.ref_count ?? 0,
+					isSelf: p.id === selfId,
 				})),
 				...places.map((p: WikiPlaceListItem): UnifiedEntity => ({
 					id: p.id,
@@ -209,6 +231,8 @@
 					entityType: 'place',
 					subtitle: p.category || p.address,
 					route: `/place/${p.id}`,
+					refCount: p.ref_count ?? 0,
+					isSelf: false,
 				})),
 				...orgs.map((o: WikiOrganizationListItem): UnifiedEntity => ({
 					id: o.id,
@@ -216,10 +240,18 @@
 					entityType: 'org',
 					subtitle: o.organization_type || o.relationship_type,
 					route: `/org/${o.id}`,
+					refCount: o.ref_count ?? 0,
+					isSelf: false,
 				})),
 			];
 
-			unified.sort((a, b) => a.name.localeCompare(b.name));
+			// By mentions, not by name. Each of the three endpoints already returns
+			// its own list in this order; the merge has to re-apply it or the
+			// interleave silently restores the alphabet — which is what this
+			// index did before, and why 573 contacts arrived with no order at
+			// all. Name is the tie-break, so the long tail of 0-mention rows is
+			// still browsable.
+			unified.sort((a, b) => b.refCount - a.refCount || a.name.localeCompare(b.name));
 			allEntities = unified;
 		} catch (e) {
 			console.error('Failed to load entities:', e);
@@ -243,17 +275,119 @@
 			icon: 'ri:price-tag-3-line',
 			width: '20%',
 			minWidth: '120px',
-			getValue: (item) => typeConfig[item.entityType].label,
+			getValue: (item) =>
+				item.isSelf ? `${typeConfig[item.entityType].label} · You` : typeConfig[item.entityType].label,
 		},
 		{
 			key: 'subtitle',
 			label: 'Details',
 			icon: 'ri:information-line',
-			width: '35%',
+			width: '25%',
 			minWidth: '140px',
 			hideOnMobile: true,
 		},
+		{
+			key: 'refCount',
+			label: 'Mentions',
+			icon: 'ri:link',
+			width: '10%',
+			minWidth: '90px',
+			hideOnMobile: true,
+			getValue: (item) => (item.refCount ? item.refCount.toLocaleString() : '—'),
+		},
 	];
+
+	/**
+	 * Row menu: the grid's default items, plus the one correction this index
+	 * exists to make possible.
+	 *
+	 * A person row is not always a person. `extract_name_from_email()` mints one
+	 * for any unseen sender, so the index arrives holding Gusto, Slack and The
+	 * Plaid Team alongside real contacts. Ranking by mentions sinks them, but
+	 * sinking is not fixing — this is the fix, and it belongs on the row rather
+	 * than behind a detail page nobody opens for a company.
+	 *
+	 * Only offered for people: place and org rows have nowhere to go.
+	 */
+	function entityContextMenu(entity: UnifiedEntity, e: MouseEvent) {
+		e.preventDefault();
+		const items = [
+			{
+				id: 'open-beside',
+				label: 'Open beside',
+				icon: 'ri:layout-column-line',
+				action: () => {
+					windowShellStore.openRouteBeside(entity.route, entity.name);
+				},
+			},
+			...getKeepMenuItems({
+				url: entity.route,
+				label: entity.name,
+				icon: typeConfig[entity.entityType].icon,
+			}),
+		];
+
+		// The owner is a person by definition — the server refuses this anyway
+		// (migration 0080), but offering it and then failing is worse than not
+		// offering it.
+		if (entity.entityType === 'person' && !entity.isSelf) {
+			items.push({
+				id: 'reclassify-org',
+				label: 'This is an organization',
+				icon: 'ri:building-line',
+				dividerBefore: true,
+				action: () => void reclassifyEntity(entity),
+			});
+		}
+		// Deleting takes the refs, article, notes and any pins with it — see
+		// purge_subject. Not offered for the owner.
+		if (!entity.isSelf) {
+			items.push({
+				id: 'delete-entity',
+				label: 'Delete',
+				icon: 'ri:delete-bin-line',
+				dividerBefore: entity.entityType !== 'person',
+				action: () => void removeEntity(entity),
+			});
+		}
+		contextMenu.show({ x: e.clientX, y: e.clientY }, items);
+	}
+
+	async function removeEntity(entity: UnifiedEntity) {
+		// Irreversible and it takes the edges with it, so it asks first.
+		if (!confirm(`Delete ${entity.name}? This also removes its records links, notes and pins.`)) return;
+		try {
+			await deleteEntity(entity.entityType, entity.id);
+			await loadAllEntities();
+		} catch (err) {
+			error = err instanceof Error ? err.message : 'Could not delete';
+		}
+	}
+
+	async function addPerson() {
+		const name = prompt('Name of the person to add:')?.trim();
+		if (!name) return;
+		try {
+			const made = await createPerson(name);
+			await loadAllEntities();
+			windowShellStore.openTabFromRoute(made.route, { label: name, focusExisting: true });
+		} catch (err) {
+			error = err instanceof Error ? err.message : 'Could not create that person';
+		}
+	}
+
+	async function reclassifyEntity(entity: UnifiedEntity) {
+		try {
+			await reclassifyPersonAsOrg(entity.id);
+			// Reload rather than patch in place: the row changes id, type and
+			// route all at once, so a local edit would leave a row pointing at
+			// a person route that no longer resolves.
+			await loadAllEntities();
+		} catch (err) {
+			console.error('[WikiView] reclassify failed:', err);
+			error = err instanceof Error ? err.message : 'Could not reclassify';
+		}
+	}
 
 	// One filter instead of three tabs: person/place/org narrow the same index.
 	const entityFilters = $derived<FilterDef<UnifiedEntity>[]>([
@@ -369,15 +503,6 @@
 </script>
 
 <div class="wiki-view">
-	<SubNav
-		tabId={tab.id}
-		route={subNavRoute}
-		base="/wiki"
-		default="overview"
-		items={sections}
-		ariaLabel="Wiki sections"
-	/>
-
 	<main class="content">
 		{#if section === 'overview'}
 			<div class="ovw">
@@ -524,6 +649,19 @@
 					</ul>
 				{/if}
 			</div>
+		{:else if section === 'lifeline'}
+			<!-- Full bleed, and not by preference. Every other section here is
+			     prose and belongs in a 42rem measure; a lifeline is a viewport
+			     onto eight years, and every pixel of width is a week you can
+			     actually see. Putting it in the reading column threw away a
+			     third of the record's resolution. -->
+			<div class="bleed">
+				<LifelineCanvas />
+			</div>
+		{:else if section === 'history'}
+			<div class="measure">
+				<WikiHistory />
+			</div>
 		{:else if section === 'years'}
 			<div class="measure">
 				{#if !yearsLoaded}
@@ -562,8 +700,18 @@
 						loadingMessage="Loading entities..."
 						searchPlaceholder="Search all entities..."
 						onItemClick={openEntity}
+						onItemContextMenu={entityContextMenu}
 						onRetry={loadAllEntities}
 					>
+						{#snippet toolbarActions()}
+							<!-- People arrived only by resolution before this: from a
+							     contact sync or an email sender. The people who matter
+							     most are often the ones you never email. -->
+							<button type="button" class="add-entity" onclick={addPerson}>
+								<Icon icon="ri:user-add-line" width="14" />
+								<span>New person</span>
+							</button>
+						{/snippet}
 						{#snippet tableRow(entity: UnifiedEntity)}
 							<td class="col-name">
 								<div class="name-cell">
@@ -596,6 +744,9 @@
 		{:else if section === 'identity'}
 			<div class="identity-wrap">
 				<NarrativeIdentitySection />
+				<!-- Where the assistant's proposals wait. It may suggest an
+				     addition; it may never make one. -->
+				<NotesRail subjectType="narrative_identity" subjectId="nar_identity_001" />
 			</div>
 		{/if}
 	</main>
@@ -638,6 +789,22 @@
 		max-width: 48rem;
 		width: 100%;
 		margin: 0 auto;
+	}
+
+	.add-entity {
+		display: inline-flex;
+		align-items: center;
+		gap: 0.3125rem;
+		padding: 0.25rem 0.5rem;
+		border-radius: 4px;
+		font-size: 0.8125rem;
+		color: var(--color-foreground-subtle);
+		cursor: pointer;
+	}
+
+	.add-entity:hover {
+		color: var(--color-foreground);
+		background: var(--color-surface-hover);
 	}
 
 	/* ===== Overview: essay column + marginalia rail ===== */
@@ -762,6 +929,18 @@
 	.measure {
 		max-width: 42rem;
 		padding: 1.5rem 0;
+	}
+
+	/* The one section that is not a document. Fills the room's width and its
+	   remaining height, so lanes get room to be read rather than sitting in a
+	   200px band under a page of white. */
+	.bleed {
+		display: flex;
+		flex-direction: column;
+		width: 100%;
+		height: 100%;
+		min-height: 0;
+		padding: 1rem 0;
 	}
 
 	.stories,

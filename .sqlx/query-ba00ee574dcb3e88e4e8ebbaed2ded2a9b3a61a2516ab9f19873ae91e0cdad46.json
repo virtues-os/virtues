@@ -1,0 +1,21 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n        INSERT INTO wiki_orgs (id, canonical_name, interaction_count, first_interaction,\n                               last_interaction, metadata, content, aliases)\n        VALUES ($1, $2, $3, $4, $5, $6, $7, $8)\n        ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Text",
+        "Text",
+        "Int8",
+        "Timestamptz",
+        "Timestamptz",
+        "Jsonb",
+        "Text",
+        "Jsonb"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "ba00ee574dcb3e88e4e8ebbaed2ded2a9b3a61a2516ab9f19873ae91e0cdad46"
+}

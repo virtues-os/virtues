@@ -856,6 +856,8 @@ export interface Profile {
 	update_check_hour?: number | null;
 	home_timezone?: string | null;
 	home_place_id?: string | null;
+	/** Which wiki_people row is the owner (migration 0080). */
+	self_person_id?: string | null;
 	home_city?: string | null;
 	home_country?: string | null;
 	onboarding_status?: string | null;
@@ -1407,8 +1409,19 @@ export async function createChat(
  */
 export async function updateChat(
 	chatId: string,
-	updates: { title?: string; icon?: string | null; notebookId?: string | null }
-): Promise<{ conversation_id: string; title: string; icon?: string | null; updated_at: string }> {
+	updates: {
+		title?: string;
+		icon?: string | null;
+		icon_color?: string | null;
+		notebookId?: string | null;
+	}
+): Promise<{
+	conversation_id: string;
+	title: string;
+	icon?: string | null;
+	icon_color?: string | null;
+	updated_at: string;
+}> {
 	const res = await fetch(`${API_BASE}/chats/${chatId}`, {
 		method: 'PATCH',
 		headers: { 'Content-Type': 'application/json' },
@@ -1686,6 +1699,8 @@ export interface Page {
 	content: string;
 	notebook_id: string | null;
 	icon: string | null;
+	/** `--cat-*` token key ('orange', 'emerald'), never a hex. Migration 0079. */
+	icon_color: string | null;
 	cover_url: string | null;
 	tags: string | null; // JSON array string: '["tag1", "tag2"]'
 	created_at: string;
@@ -1697,6 +1712,7 @@ export interface PageSummary {
 	title: string;
 	notebook_id: string | null;
 	icon: string | null;
+	icon_color: string | null;
 	cover_url: string | null;
 	tags: string | null; // JSON array string: '["tag1", "tag2"]'
 	created_at: string;
@@ -1775,6 +1791,7 @@ export async function updatePage(
 		content?: string;
 		notebook_id?: string | null;
 		icon?: string | null;
+		icon_color?: string | null;
 		cover_url?: string | null;
 		tags?: string | null;
 	}
