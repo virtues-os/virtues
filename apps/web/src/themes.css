@@ -128,6 +128,38 @@
 	   giving a `nav:` responsive variant. Deliberately NOT redefining --breakpoint-lg
 	   (that would silently move every existing `lg:` utility from 1024px). */
 	--breakpoint-nav: 900px;
+
+	/* Markdown typography — THE definition, cited by both render engines.
+	   `.markdown` (app.css) styles the read path (chat, wiki, asset panes);
+	   `.cm-*` (codemirror/theme.css) styles the editor's live preview. They
+	   had drifted into three competing value sets (editor h1 1.75rem vs read
+	   1.875rem, 600-weight serif table headers vs 400, a blue 4px quote bar vs
+	   a gray 3px one). These tokens hold the VALUES only — spacing stays
+	   engine-side, because the editor needs asymmetric padding on .cm-line
+	   (margins collapse there) while the read path uses ordinary margins.
+	   Change a size here and page and editor move together; that is the whole
+	   WYSIWYG guarantee. Values are the editor's tuned scale. */
+	--md-h1-size: 1.75rem;   --md-h1-lh: 1.3;  --md-h1-weight: 400;
+	--md-h2-size: 1.375rem;  --md-h2-lh: 1.35; --md-h2-weight: 400;
+	--md-h3-size: 1.125rem;  --md-h3-lh: 1.4;  --md-h3-weight: 500;
+	--md-h4-size: 1rem;      --md-h4-lh: 1.5;  --md-h4-weight: 500;
+	--md-h5-size: 0.9375rem; --md-h5-lh: 1.5;  --md-h5-weight: 600;
+	--md-h6-size: 0.875rem;  --md-h6-lh: 1.5;  --md-h6-weight: 600;
+	/* h1–h3 serif, h4–h6 inherit the surrounding sans — the editor's split. */
+	--md-heading-major-family: var(--font-serif);
+	--md-body-lh: 1.5;
+	/* Inline code (block code is Streamdown/Shiki chrome, not typography). */
+	--md-inline-code-size: 0.875em;
+	--md-inline-code-bg: var(--color-surface-elevated);
+	--md-inline-code-radius: 0.25rem;
+	--md-inline-code-border: 1px solid var(--color-border-subtle);
+	/* Blockquote: the hairline, not the accent — blue stays interactive. */
+	--md-quote-border: 3px solid var(--color-border);
+	/* Tables: hairline grid, dense cells, small serif headers. */
+	--md-table-border-color: var(--color-border-subtle);
+	--md-cell-pad: 0.375rem 0.75rem;
+	--md-th-size: 0.8125rem;
+	--md-th-weight: 600;
 }
 
 /* ===================================
@@ -1301,22 +1333,38 @@
  * message-roles, etc. These are NOT status colors: for success/warning/error/
  * info use the semantic --color-* tokens instead.
  * Theme-adaptive by design: the light values below are the default; the dark
- * override lightens each hue (~one Tailwind step) so categories stay legible
- * on dark surfaces. Retune these values freely — every consumer reads var().
+ * override lifts each hue so categories stay legible on dark surfaces.
+ *
+ * Both sets sit at a UNIFORM lightness in OKLab — 0.58 light, 0.78 dark — with
+ * hue preserved and chroma held near 0.13. They were raw Tailwind 500s, whose
+ * lightness ranged 0.59 to 0.80: yellow was the palest thing in the set and
+ * washed out on paper while indigo sat heavy, so a row of them read as
+ * unevenly weighted rather than as one family. Equal lightness is what makes
+ * nine hues look like a palette instead of nine separate decisions.
+ *
+ * `--cat-indigo` is a true BLUE (hue 258°), not the blue-violet it used to be.
+ * The set had three neighbouring purples — indigo 277°, violet 293°, purple
+ * 304° — and a 57° hole where blue belongs, so the one hue people reach for
+ * first was the one hue missing. The token KEY stays `indigo` because it is
+ * the stored value in app_pins.color and friends; only the hue and the
+ * picker's label moved.
+ *
+ * Retune freely — every consumer reads var() — but keep the set at one
+ * lightness, or the unevenness comes straight back.
  * ────────────────────────────────────────────────────────────────────────── */
 :root {
-	--cat-purple: #a855f7;
-	--cat-purple-light: #c084fc;
-	--cat-indigo: #6366f1;
-	--cat-violet: #8b5cf6;
-	--cat-pink: #ec4899;
-	--cat-rose: #f43f5e;
-	--cat-orange: #f97316;
-	--cat-yellow: #eab308;
-	--cat-cyan: #06b6d4;
-	--cat-cyan-light: #22d3ee;
-	--cat-emerald: #10b981;
-	--cat-emerald-light: #34d399;
+	--cat-purple: #8b64b9;
+	--cat-purple-light: #a97fd6;
+	--cat-indigo: #457ac7;
+	--cat-violet: #7e69c1;
+	--cat-pink: #b4557f;
+	--cat-rose: #bb555f;
+	--cat-orange: #b75e2b;
+	--cat-yellow: #9d7300;
+	--cat-cyan: #008cab;
+	--cat-cyan-light: #22a6c6;
+	--cat-emerald: #009262;
+	--cat-emerald-light: #1cad7c;
 }
 
 [data-theme="lothlorien"],
@@ -1328,18 +1376,24 @@
 [data-theme="asgard"],
 [data-theme="agora"],
 [data-theme="shire"] {
-	--cat-purple: #c084fc;
-	--cat-purple-light: #d8b4fe;
-	--cat-indigo: #818cf8;
-	--cat-violet: #a78bfa;
-	--cat-pink: #f472b6;
-	--cat-rose: #fb7185;
-	--cat-orange: #fb923c;
-	--cat-yellow: #facc15;
-	--cat-cyan: #22d3ee;
-	--cat-cyan-light: #67e8f9;
-	--cat-emerald: #34d399;
-	--cat-emerald-light: #6ee7b7;
+	--cat-purple: #c9a3f9;
+	--cat-purple-light: #dbbdff;
+	--cat-indigo: #84b9ff;
+	--cat-violet: #baa8ff;
+	--cat-pink: #f694bc;
+	--cat-rose: #fd959b;
+	--cat-orange: #f99d6e;
+	--cat-yellow: #dbb14e;
+	--cat-cyan: #37cbea;
+	--cat-cyan-light: #6fe0fb;
+	--cat-emerald: #60d09f;
+	--cat-emerald-light: #8ae5bb;
+
+	/* Dark-mode flag for the JS that adapts a user's CUSTOM hex (pin-colors.ts).
+	   Set here, beside the palette it belongs to, so adding a theme stays one
+	   block in this file rather than a list of theme names in TypeScript that
+	   someone will forget to update. */
+	--identity-dark: 1;
 }
 
 /* ──────────────────────────────────────────────────────────────────────────

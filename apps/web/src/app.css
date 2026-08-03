@@ -153,45 +153,63 @@ h6 {
 	word-break: break-word;
 }
 
+/* Heading VALUES come from the --md-* tokens in themes.css — one definition,
+   cited here and by the editor's .cm-heading-* rules. Only the margins are
+   local: rhythm is engine-specific (the editor pads .cm-line instead). */
 .markdown h1 {
-	@apply text-3xl font-normal font-serif mb-6;
+	@apply mb-6;
+	font-family: var(--md-heading-major-family);
+	font-size: var(--md-h1-size);
+	font-weight: var(--md-h1-weight);
+	line-height: var(--md-h1-lh);
 	color: var(--color-foreground);
-	line-height: 1.5;
 }
 
 .markdown h2 {
-	@apply text-2xl font-normal font-serif mb-5;
+	@apply mb-5;
+	font-family: var(--md-heading-major-family);
+	font-size: var(--md-h2-size);
+	font-weight: var(--md-h2-weight);
+	line-height: var(--md-h2-lh);
 	color: var(--color-foreground);
-	line-height: 1.5;
 }
 
 .markdown h3 {
-	@apply text-xl font-normal font-serif mb-4;
+	@apply mb-4;
+	font-family: var(--md-heading-major-family);
+	font-size: var(--md-h3-size);
+	font-weight: var(--md-h3-weight);
+	line-height: var(--md-h3-lh);
 	color: var(--color-foreground);
-	line-height: 1.5;
 }
 
 .markdown h4 {
-	@apply text-lg font-normal font-serif mb-2;
-	color: var(--color-foreground-muted);
-	line-height: 1.5;
+	@apply mb-2;
+	font-size: var(--md-h4-size);
+	font-weight: var(--md-h4-weight);
+	line-height: var(--md-h4-lh);
+	color: var(--color-foreground);
 }
 
 .markdown h5 {
-	@apply text-base font-normal font-serif mb-1;
-	color: var(--color-foreground-muted);
-	line-height: 1.5;
+	@apply mb-1;
+	font-size: var(--md-h5-size);
+	font-weight: var(--md-h5-weight);
+	line-height: var(--md-h5-lh);
+	color: var(--color-foreground);
 }
 
 .markdown h6 {
-	@apply text-sm font-normal font-serif mb-1;
-	color: var(--color-foreground-subtle);
-	line-height: 1.5;
+	@apply mb-1;
+	font-size: var(--md-h6-size);
+	font-weight: var(--md-h6-weight);
+	line-height: var(--md-h6-lh);
+	color: var(--color-foreground);
 }
 
 .markdown p {
 	@apply mb-4;
-	line-height: 1.5;
+	line-height: var(--md-body-lh);
 	color: var(--color-foreground);
 }
 
@@ -205,9 +223,12 @@ h6 {
 
 /* Inline code styling - block code is handled by Streamdown */
 .markdown :not(pre)>code {
-	@apply px-1.5 py-0.5 rounded text-xs font-mono;
+	@apply px-1.5 py-0.5 font-mono;
+	font-size: var(--md-inline-code-size);
+	border-radius: var(--md-inline-code-radius);
+	border: var(--md-inline-code-border);
 	color: var(--color-foreground);
-	background-color: var(--color-surface-elevated);
+	background-color: var(--md-inline-code-bg);
 }
 
 /* Size SVG icons in code block action buttons */
@@ -238,22 +259,29 @@ h6 {
 }
 
 .markdown li {
-	line-height: 1.5;
+	line-height: var(--md-body-lh);
 	contain: layout;
 }
 
 .markdown blockquote {
-	@apply border-l-4 pl-4 italic my-4;
-	border-color: var(--color-primary);
+	@apply pl-4 italic my-4;
+	border-left: var(--md-quote-border);
 	color: var(--color-foreground-muted);
 }
 
-.markdown a {
+/* Plain prose links only. Refs and citations bring their own treatment from
+   ref-badge.css — a hairline (or dotted) border-bottom and their own color —
+   and this rule out-specifies it (`.markdown a` is 0,1,1 against `.ref-link`'s
+   0,1,0). The result was a citation wearing BOTH: a text-decoration underline
+   and a border under that, two lines at two offsets, in a color the ref
+   never chose. Excluding the ref classes is the fix; raising ref-badge's
+   specificity would only move the fight. */
+.markdown a:not(.ref-link):not(.ref-pill) {
 	@apply underline;
 	color: var(--color-primary);
 }
 
-.markdown a:hover {
+.markdown a:not(.ref-link):not(.ref-pill):hover {
 	color: var(--color-primary-hover);
 }
 
@@ -285,11 +313,13 @@ h6 {
 }
 
 .markdown th {
-	@apply px-4 py-2 text-left text-sm;
-	font-weight: 400;
-	font-family: var(--font-serif);
-	border-right: 1px solid var(--color-border-subtle);
-	border-bottom: 1px solid var(--color-border-subtle);
+	@apply text-left;
+	padding: var(--md-cell-pad);
+	font-size: var(--md-th-size);
+	font-weight: var(--md-th-weight);
+	font-family: var(--md-heading-major-family);
+	border-right: 1px solid var(--md-table-border-color);
+	border-bottom: 1px solid var(--md-table-border-color);
 }
 
 .markdown th:last-child {
@@ -297,9 +327,10 @@ h6 {
 }
 
 .markdown td {
-	@apply px-4 py-2 text-sm;
-	border-right: 1px solid var(--color-border-subtle);
-	border-bottom: 1px solid var(--color-border-subtle);
+	@apply text-sm;
+	padding: var(--md-cell-pad);
+	border-right: 1px solid var(--md-table-border-color);
+	border-bottom: 1px solid var(--md-table-border-color);
 }
 
 .markdown td:last-child {
