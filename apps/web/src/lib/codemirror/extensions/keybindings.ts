@@ -8,8 +8,6 @@
 import { Prec, type Extension } from '@codemirror/state';
 import { keymap, type EditorView } from '@codemirror/view';
 
-import { armedFormatting, armFormat } from './armed-format';
-import { inlineMarks } from './inline-marks';
 
 /**
  * Narrow a range to the text actually worth marking up.
@@ -96,10 +94,15 @@ function toggleWrapper(view: EditorView, wrapper: string): boolean {
 	const selection = view.state.selection.main;
 
 	if (selection.empty) {
-		// Nothing selected — arm the format for the next character rather than
-		// writing an empty `****`, which the never-reveal rule would render as
-		// nothing at all. See armed-format.ts.
-		view.dispatch({ effects: armFormat.of({ open: wrapper, close: wrapper }) });
+		// Nothing selected — insert the pair with the caret inside. Under
+		// reveal-on-touch the caret is touching the construct it just created,
+		// so all four delimiters are VISIBLE while you type into them; the
+		// "invisible caret inside an invisible construct" problem this branch
+		// once worked around (via an armed-format mode) no longer exists.
+		view.dispatch({
+			changes: { from: selection.from, insert: `${wrapper}${wrapper}` },
+			selection: { anchor: selection.from + wrapper.length },
+		});
 		return true;
 	}
 
@@ -151,7 +154,10 @@ function toggleHtmlTag(view: EditorView, tag: string): boolean {
 	const closeTag = `</${tag}>`;
 
 	if (selection.empty) {
-		view.dispatch({ effects: armFormat.of({ open: openTag, close: closeTag }) });
+		view.dispatch({
+			changes: { from: selection.from, insert: `${openTag}${closeTag}` },
+			selection: { anchor: selection.from + openTag.length },
+		});
 		return true;
 	}
 
@@ -211,49 +217,18 @@ function unwrapHeadingOnBackspace(view: EditorView): boolean {
 }
 
 /**
- * Backspace at the front of bold/italic/code content unwraps the whole mark.
- *
- * Atomic ranges already stop Backspace from splitting a `**` in half, but
- * deleting just the opening delimiter leaves the closing one orphaned — it
- * stops parsing as emphasis and two asterisks appear in the prose out of
- * nowhere. Since neither delimiter is visible, the only coherent reading of
- * "delete the formatting" is to take both.
- */
-function unwrapInlineMarkOnBackspace(view: EditorView): boolean {
-	const { state } = view;
-	const sel = state.selection.main;
-	if (!sel.empty) return false;
-
-	const line = state.doc.lineAt(sel.head);
-	for (const mark of inlineMarks(state, line.from, line.to)) {
-		if (!mark.hide) continue;
-		// Only at the very front of the content, where the caret is sitting
-		// against the hidden opening delimiter.
-		if (sel.head !== mark.openTo) continue;
-
-		view.dispatch({
-			changes: [
-				{ from: mark.openFrom, to: mark.openTo },
-				{ from: mark.closeFrom, to: mark.closeTo },
-			],
-			selection: { anchor: mark.openFrom },
-			userEvent: 'delete.inlinemark',
-		});
-		return true;
-	}
-	return false;
-}
-
-/**
  * Bindings that must beat the defaults. `defaultKeymap` claims Backspace, and
- * it is installed ahead of this module in editor.ts, so these rules only get a
+ * it is installed ahead of this module in editor.ts, so this rule only gets a
  * look in at raised precedence.
+ *
+ * Only the HEADING gets a special Backspace: its `# ` stays hidden even with
+ * the caret on the line (the marker hangs in the margin), so deleting it
+ * character-by-character would be deleting the invisible. Inline marks need no
+ * such rule — reveal-on-touch means a caret against a `**` can see it, and
+ * ordinary Backspace does what it looks like it does.
  */
 const highPrecedenceKeybindings: Extension = Prec.high(
-	keymap.of([
-		{ key: 'Backspace', run: unwrapHeadingOnBackspace },
-		{ key: 'Backspace', run: unwrapInlineMarkOnBackspace },
-	]),
+	keymap.of([{ key: 'Backspace', run: unwrapHeadingOnBackspace }]),
 );
 
 /**
@@ -306,5 +281,4 @@ const formattingKeybindings: Extension = Prec.high(keymap.of([
 export const markdownKeybindings: Extension = [
 	highPrecedenceKeybindings,
 	formattingKeybindings,
-	armedFormatting,
 ];

@@ -98,15 +98,6 @@
 	pointer-events: none;
 }
 
-/*
- * A format is armed (Cmd+B with nothing selected) — the next character typed
- * will be wrapped. Recoloring the caret is the whole indicator; this editor
- * draws the native caret, so there is no cursor element to decorate instead.
- */
-.cm-format-armed {
-	caret-color: var(--color-primary);
-}
-
 /* =============================================================================
    LIVE PREVIEW — INLINE FORMATTING (applied via mark decorations)
    ============================================================================= */
@@ -147,11 +138,13 @@
 	border: var(--md-inline-code-border);
 }
 
-/* Dim markdown syntax markers (##, **, *, etc.) */
+/* Revealed syntax markers (**, *, ==, <u>) — shown in place, dimmed, when the
+   selection touches their construct (reveal-on-touch; see inline-marks.ts).
+   Same size as the text so the reveal is a small horizontal shift, never a
+   vertical one. */
 .cm-formatting-mark {
 	color: var(--color-foreground-subtle);
 	opacity: 0.4;
-	font-size: 0.9em;
 }
 
 /* Ordered list markers (1., 2.) — subtler than content but still readable */
