@@ -353,9 +353,6 @@ function buildMediaDecorations(state: EditorState): DecorationSet {
 	const builder: Range<Decoration>[] = [];
 	const doc = state.doc;
 
-	// Active-line exclusion
-	const cursorLine = doc.lineAt(state.selection.main.head).number;
-
 	for (let lineNum = 1; lineNum <= doc.lines; lineNum++) {
 		const line = doc.line(lineNum);
 		MEDIA_REGEX.lastIndex = 0;
@@ -398,10 +395,10 @@ function buildMediaDecorations(state: EditorState): DecorationSet {
 				}).range(to)
 			);
 
-			// Hide the markdown syntax when cursor is not on this line
-			if (lineNum !== cursorLine) {
-				builder.push(Decoration.replace({}).range(from, to));
-			}
+			// The `![alt](url)` line is always hidden. It used to reappear when
+			// the caret landed on it, which pushed the widget and everything
+			// below it down by a line for as long as the caret stayed.
+			builder.push(Decoration.replace({}).range(from, to));
 		}
 	}
 
@@ -413,7 +410,11 @@ const mediaField = StateField.define<DecorationSet>({
 		return buildMediaDecorations(state);
 	},
 	update(decos, tr) {
-		if (tr.docChanged || tr.selection) {
+		// Selection dropped from the trigger. This builder scans the WHOLE
+		// document (a StateField has no viewport, and its block widgets have to
+		// come from one), so rebuilding it on every cursor move meant work
+		// proportional to document length on each arrow key.
+		if (tr.docChanged) {
 			return buildMediaDecorations(tr.state);
 		}
 		return decos;

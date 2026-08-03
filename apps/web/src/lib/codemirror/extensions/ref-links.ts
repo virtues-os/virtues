@@ -17,6 +17,7 @@ import { type Extension, type Range } from '@codemirror/state';
 import { Decoration, type DecorationSet, EditorView, ViewPlugin, type ViewUpdate, WidgetType } from '@codemirror/view';
 import { mount, unmount } from 'svelte';
 import { contextMenu } from '$lib/stores/contextMenu.svelte';
+import { linkEditor } from '$lib/stores/linkEditor.svelte';
 import { getEntityTypeFromRoute } from '$lib/utils/refRoutes';
 import { windowShellStore } from '$lib/stores/window-shell.svelte';
 import RefPreview from '$lib/components/RefPreview.svelte';
@@ -102,8 +103,23 @@ function showLinkContextMenu(
 			label: 'Edit',
 			icon: 'ri:edit-line',
 			action: () => {
-				view.dispatch({ selection: { anchor: from } });
-				view.focus();
+				// This used to drop the caret on the line so the raw
+				// `[label](url)` would reveal itself for editing. Links no longer
+				// reveal, so there is nothing to drop the caret into — the label
+				// and href get their own panel instead.
+				const current = /^!?\[([^\]]*)\]\(([^)]*)\)$/.exec(
+					view.state.sliceDoc(from, to),
+				);
+				linkEditor.show(
+					{ label: current?.[1] ?? '', href: current?.[2] ?? href },
+					({ label, href: newHref }) => {
+						view.dispatch({
+							changes: { from, to, insert: `[${label}](${newHref})` },
+						});
+						view.focus();
+					},
+					{ x: e.clientX, y: e.clientY, width: 0, height: 0 },
+				);
 			},
 		},
 		{
@@ -130,8 +146,10 @@ function showLinkContextMenu(
  * refHoverPlugin) and in the block embed — never in inline chrome.
  *
  * Click model: ⌘/Ctrl-click acts (external → new tab; entity → open beside;
- * other internal → page-navigate event). Plain click falls through to CM so the
- * caret lands in the line and the raw markdown reveals for editing.
+ * other internal → page-navigate event). Plain click falls through to CM and
+ * places the caret in the line — the text no longer changes when it does.
+ * Editing the label or the URL is right-click → Edit, which opens a panel; the
+ * raw `[label](url)` is not shown in the document at any point.
  */
 class RefLinkWidget extends WidgetType {
 	constructor(
@@ -172,7 +190,8 @@ class RefLinkWidget extends WidgetType {
 
 		link.addEventListener('click', (e) => {
 			// Always stop the <a> from navigating; the caret is placed on mousedown,
-			// so a plain click still drops into the line to reveal raw markdown.
+			// so a plain click still drops into the line — it just no longer
+			// changes what the line says.
 			e.preventDefault();
 			if (!(e.metaKey || e.ctrlKey)) return;
 			e.stopPropagation();
@@ -208,17 +227,14 @@ function buildLinkDecorations(view: EditorView): DecorationSet {
 	const doc = view.state.doc;
 	const { from: vpFrom, to: vpTo } = view.viewport;
 
-	// Active-line exclusion (Obsidian pattern): don't decorate the cursor's line
-	const cursorLine = doc.lineAt(view.state.selection.main.head).number;
-
-	// Scan visible lines for link patterns
+	// No active-line exclusion. A link used to burst back into
+	// `[label](url)` the moment the caret touched its line, which on a line with
+	// two or three links rewrapped the whole paragraph. Editing now happens in
+	// the panel behind right-click → Edit; the prose stays still.
 	const startLine = doc.lineAt(vpFrom).number;
 	const endLine = doc.lineAt(Math.min(vpTo, doc.length)).number;
 
 	for (let lineNum = startLine; lineNum <= endLine; lineNum++) {
-		// Skip the cursor's line — show raw markdown for editing
-		if (lineNum === cursorLine) continue;
-
 		const line = doc.line(lineNum);
 		LINK_REGEX.lastIndex = 0;
 
@@ -265,7 +281,9 @@ const linkPillsPlugin = ViewPlugin.fromClass(
 		}
 
 		update(update: ViewUpdate) {
-			if (update.docChanged || update.viewportChanged || update.selectionSet) {
+			// Not rebuilt on selection any more — the only thing the cursor used
+			// to change was which line reverted to raw, and no line does.
+			if (update.docChanged || update.viewportChanged) {
 				this.decorations = buildLinkDecorations(update.view);
 			}
 		}

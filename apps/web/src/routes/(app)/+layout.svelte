@@ -13,6 +13,8 @@
 	import ServerProvisioning from "$lib/components/ServerProvisioning.svelte";
 	import { FloatingContent } from "$lib/floating";
 	import IconPicker from "$lib/components/IconPicker.svelte";
+	import LinkEditorPopover from "$lib/components/pages/LinkEditorPopover.svelte";
+	import { linkEditor } from "$lib/stores/linkEditor.svelte";
 	import { iconPickerStore } from "$lib/stores/iconPicker.svelte";
 	import { chatSessions } from "$lib/stores/chatSessions.svelte";
 	import { windowShellStore } from "$lib/stores/window-shell.svelte";
@@ -410,6 +412,30 @@
 					? (c) => iconPickerStore.selectColor(c)
 					: undefined}
 			/>
+		{/snippet}
+	</FloatingContent>
+{/if}
+
+<!-- Global link editor.
+     Links render as links now, whether or not the caret is on them, so the raw
+     `[label](url)` is never on screen to be corrected in place. This is where a
+     label or a URL gets fixed instead. Anchored to the link it was opened from,
+     same as the icon picker above. -->
+{#if linkEditor.open}
+	<!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
+	<div class="icon-picker-scrim" onclick={() => linkEditor.hide()}></div>
+	<FloatingContent
+		anchor={linkEditor.anchor ?? {
+			x: window.innerWidth / 2,
+			y: window.innerHeight / 2,
+			width: 0,
+			height: 0,
+		}}
+		options={{ placement: "bottom-start", offset: 6, flip: true, shift: true }}
+		class="icon-picker-floating"
+	>
+		{#snippet children()}
+			<LinkEditorPopover />
 		{/snippet}
 	</FloatingContent>
 {/if}
