@@ -9,6 +9,16 @@ import { Prec, type Extension } from '@codemirror/state';
 import { keymap, type EditorView } from '@codemirror/view';
 
 import { emptyMarkTidy } from './empty-mark-tidy';
+import { inlineMarks } from './inline-marks';
+
+/** Wrapper string → the mark class inline-marks.ts reports for it. */
+const WRAPPER_CLS: Record<string, string> = {
+	'**': 'cm-strong',
+	'*': 'cm-emphasis',
+	'~~': 'cm-strikethrough',
+	'`': 'cm-inline-code',
+	'==': 'cm-highlight',
+};
 
 /** A list item line: bullet, ordered, or task. */
 const LIST_ITEM = /^(\s*)([-*+]|\d+[.)])\s/;
@@ -196,33 +206,42 @@ function toggleWrapper(view: EditorView, wrapper: string): boolean {
 		if (from >= to) return true;
 	}
 
-	const selectedText = view.state.sliceDoc(from, to);
-	const beforeText = view.state.sliceDoc(Math.max(0, from - wrapper.length), from);
-	const afterText = view.state.sliceDoc(to, Math.min(view.state.doc.length, to + wrapper.length));
+	// Already formatted? Asked of inline-marks.ts rather than answered by
+	// peeking at adjacent characters — the peek broke on nesting (`***both***`:
+	// unwrapping the italic deleted one of the bold's asterisks) and on any
+	// selection that didn't hug the delimiters exactly. A construct counts when
+	// the selection sits inside its content or spans it whole; unwrapping
+	// deletes that construct's own delimiters, wherever they are.
+	const cls = WRAPPER_CLS[wrapper];
+	if (cls) {
+		const lineEnd = view.state.doc.lineAt(to).to;
+		for (const mark of inlineMarks(view.state, markLine.from, lineEnd)) {
+			if (mark.cls !== cls) continue;
+			const insideContent = from >= mark.openTo && to <= mark.closeFrom;
+			const spansConstruct = from <= mark.openFrom && to >= mark.closeTo;
+			if (!insideContent && !spansConstruct) continue;
 
-	// Check if already wrapped
-	if (beforeText === wrapper && afterText === wrapper) {
-		// Remove wrapper
-		view.dispatch({
-			changes: [
-				{ from: from - wrapper.length, to: from },
-				{ from: to, to: to + wrapper.length },
-			],
-			selection: { anchor: from - wrapper.length, head: to - wrapper.length },
-		});
-	} else if (selectedText.startsWith(wrapper) && selectedText.endsWith(wrapper)) {
-		// Selection includes wrappers — remove them
-		view.dispatch({
-			changes: { from, to, insert: selectedText.slice(wrapper.length, -wrapper.length) },
-			selection: { anchor: from, head: to - wrapper.length * 2 },
-		});
-	} else {
-		// Add wrapper
-		view.dispatch({
-			changes: { from, to, insert: `${wrapper}${selectedText}${wrapper}` },
-			selection: { anchor: from + wrapper.length, head: to + wrapper.length },
-		});
+			const openLen = mark.openTo - mark.openFrom;
+			view.dispatch({
+				changes: [
+					{ from: mark.openFrom, to: mark.openTo },
+					{ from: mark.closeFrom, to: mark.closeTo },
+				],
+				selection: {
+					anchor: Math.max(mark.openFrom, from - openLen),
+					head: Math.min(mark.closeFrom - openLen, to - openLen),
+				},
+			});
+			return true;
+		}
 	}
+
+	// Not formatted — wrap.
+	const selectedText = view.state.sliceDoc(from, to);
+	view.dispatch({
+		changes: { from, to, insert: `${wrapper}${selectedText}${wrapper}` },
+		selection: { anchor: from + wrapper.length, head: to + wrapper.length },
+	});
 
 	return true;
 }
@@ -256,19 +275,35 @@ function toggleHtmlTag(view: EditorView, tag: string): boolean {
 		if (from >= to) return true;
 	}
 
-	const selectedText = view.state.sliceDoc(from, to);
-	if (selectedText.startsWith(openTag) && selectedText.endsWith(closeTag)) {
-		const inner = selectedText.slice(openTag.length, -closeTag.length);
-		view.dispatch({
-			changes: { from, to, insert: inner },
-			selection: { anchor: from, head: from + inner.length },
-		});
-	} else {
-		view.dispatch({
-			changes: { from, to, insert: `${openTag}${selectedText}${closeTag}` },
-			selection: { anchor: from + openTag.length, head: to + openTag.length },
-		});
+	// Already underlined? Same containment rule as toggleWrapper.
+	if (tag === 'u') {
+		const lineEnd = view.state.doc.lineAt(to).to;
+		for (const mark of inlineMarks(view.state, tagLine.from, lineEnd)) {
+			if (mark.cls !== 'cm-underline') continue;
+			const insideContent = from >= mark.openTo && to <= mark.closeFrom;
+			const spansConstruct = from <= mark.openFrom && to >= mark.closeTo;
+			if (!insideContent && !spansConstruct) continue;
+
+			const openLen = mark.openTo - mark.openFrom;
+			view.dispatch({
+				changes: [
+					{ from: mark.openFrom, to: mark.openTo },
+					{ from: mark.closeFrom, to: mark.closeTo },
+				],
+				selection: {
+					anchor: Math.max(mark.openFrom, from - openLen),
+					head: Math.min(mark.closeFrom - openLen, to - openLen),
+				},
+			});
+			return true;
+		}
 	}
+
+	const selectedText = view.state.sliceDoc(from, to);
+	view.dispatch({
+		changes: { from, to, insert: `${openTag}${selectedText}${closeTag}` },
+		selection: { anchor: from + openTag.length, head: to + openTag.length },
+	});
 
 	return true;
 }

@@ -416,14 +416,44 @@ const mediaField = StateField.define<DecorationSet>({
 		return buildMediaDecorations(state);
 	},
 	update(decos, tr) {
-		// Selection dropped from the trigger. This builder scans the WHOLE
-		// document (a StateField has no viewport, and its block widgets have to
-		// come from one), so rebuilding it on every cursor move meant work
-		// proportional to document length on each arrow key.
-		if (tr.docChanged) {
-			return buildMediaDecorations(tr.state);
-		}
-		return decos;
+		if (!tr.docChanged) return decos;
+
+		// The builder scans the WHOLE document (a StateField has no viewport,
+		// and block widgets have to come from one), so rebuilding on every
+		// keystroke was O(document). Most edits cannot possibly change a media
+		// widget: the rebuild is skipped — decorations just mapped through —
+		// unless the edit (a) touches a line that contains media syntax,
+		// (b) touches an existing widget's range, or (c) involves a backtick or
+		// tilde, which can open/close a code fence and flip media far away from
+		// the edit into or out of code context.
+		let rebuild = false;
+		tr.changes.iterChanges((fromA, toA, _fromB, toB, inserted) => {
+			if (rebuild) return;
+
+			const removed = tr.startState.sliceDoc(fromA, toA);
+			const added = inserted.toString();
+			if (/[`~]/.test(removed) || /[`~]/.test(added)) {
+				rebuild = true;
+				return;
+			}
+
+			const startLine = tr.state.doc.lineAt(Math.min(_fromB, tr.state.doc.length));
+			const endLine = tr.state.doc.lineAt(Math.min(toB, tr.state.doc.length));
+			for (let n = startLine.number; n <= endLine.number; n++) {
+				MEDIA_REGEX.lastIndex = 0;
+				if (MEDIA_REGEX.test(tr.state.doc.line(n).text)) {
+					rebuild = true;
+					return;
+				}
+			}
+
+			decos.between(Math.max(0, fromA - 1), Math.min(tr.startState.doc.length, toA + 1), () => {
+				rebuild = true;
+				return false;
+			});
+		});
+
+		return rebuild ? buildMediaDecorations(tr.state) : decos.map(tr.changes);
 	},
 	provide: (field) => EditorViewValue.decorations.from(field),
 });
