@@ -535,16 +535,18 @@ pub async fn run(cli: Cli, virtues: Virtues) -> Result<(), Box<dyn std::error::E
             };
 
             println!();
-            println!("✅ Day summary written to wiki_days id={}", day.id);
+            println!("✅ Day narrated — id={}", day.id);
             if let Some(epigraph) = &day.epigraph {
                 println!();
                 println!("Epigraph:");
                 println!("  {epigraph}");
             }
-            if let Some(autobio) = &day.autobiography {
+            // The prose lives in the day's article page now (0087 view);
+            // `article` falls back to the legacy column for pre-0083 days.
+            if let Some(prose) = day.article.as_ref().or(day.autobiography.as_ref()) {
                 println!();
-                println!("Autobiography:");
-                for line in autobio.lines() {
+                println!("Article:");
+                for line in prose.lines() {
                     println!("  {line}");
                 }
             }

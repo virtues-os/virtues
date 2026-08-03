@@ -386,8 +386,9 @@ async fn build_dossier(pool: &PgPool, entity: &DueEntity) -> Result<String> {
         r#"
         SELECT DISTINCT d.date, d.epigraph
         FROM wiki_days d
+        JOIN wiki_day_prose dp ON dp.day_id = d.id AND dp.prose IS NOT NULL
         JOIN wiki_entity_refs er ON date(er.timestamp) = d.date
-        WHERE er.entity_id = $1 AND d.autobiography IS NOT NULL
+        WHERE er.entity_id = $1
         ORDER BY d.date DESC
         LIMIT 6
         "#,

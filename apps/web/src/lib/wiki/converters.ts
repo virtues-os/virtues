@@ -216,7 +216,7 @@ export function apiToDayPage(api: WikiDayApi): DayPage {
 		linkedEntities: emptyLinkedEntities(),
 		linkedTemporal: emptyLinkedTemporal(),
 		events: [],
-		autobiography: api.autobiography ?? "",
+		autobiography: api.article ?? api.autobiography ?? "",
 		autobiographySections: api.autobiography_sections
 			? api.autobiography_sections.map(s => ({
 				id: s.id,
@@ -244,7 +244,9 @@ export function apiToDayPage(api: WikiDayApi): DayPage {
 		citations: [],
 		linkedPages: [],
 		tags: [],
-		content: api.autobiography ?? "", // DayPage uses autobiography as main content
+		// The day's prose: the article page (via wiki_day_prose) with the
+		// legacy autobiography column as fallback until its drop.
+		content: api.article ?? api.autobiography ?? "",
 		createdAt: new Date(api.created_at),
 		updatedAt: new Date(api.updated_at),
 		lastEditedBy: (api.last_edited_by as "ai" | "human") ?? "ai",

@@ -203,10 +203,10 @@ fn get_table_metadata() -> HashMap<&'static str, TableMetadata> {
     // WIKI TABLES - Temporal
     // ============================================================================
     m.insert("wiki_days", TableMetadata {
-        description: "Day summaries with autobiography and context",
+        description: "Day records; a day's prose lives in the wiki_day_prose view (day_id, date, prose)",
         category: "wiki_temporal",
-        key_columns: &["date", "start_timezone", "autobiography", "last_edited_by"],
-        join_hint: Some("JOIN wiki_acts ON act_id = wiki_acts.id"),
+        key_columns: &["date", "start_timezone", "last_edited_by"],
+        join_hint: Some("JOIN wiki_day_prose ON wiki_day_prose.day_id = wiki_days.id"),
     });
     m.insert("wiki_years", TableMetadata {
         description: "Year summaries with highlights and themes",

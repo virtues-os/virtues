@@ -111,7 +111,7 @@ async fn assess_richness(pool: &PgPool) -> Richness {
         SELECT
             (SELECT count(*) FROM wiki_people WHERE interaction_count >= 3),
             (SELECT count(*) FROM wiki_places WHERE visit_count >= 2),
-            (SELECT count(*) FROM wiki_days WHERE autobiography IS NOT NULL AND length(trim(autobiography)) > 0)
+            (SELECT count(*) FROM wiki_day_prose WHERE prose IS NOT NULL)
         "#,
     )
     .fetch_one(pool)
@@ -190,9 +190,10 @@ async fn build_prompt(pool: &PgPool, thin: bool) -> String {
 
     // Recent day biographies — already-distilled meaning, the richest signal.
     let days: Vec<(chrono::NaiveDate, Option<String>, Option<String>)> = sqlx::query_as(
-        "SELECT date, epigraph, autobiography FROM wiki_days \
-         WHERE autobiography IS NOT NULL AND length(trim(autobiography)) > 0 \
-         ORDER BY date DESC LIMIT 5",
+        "SELECT d.date, d.epigraph, dp.prose FROM wiki_days d \
+         JOIN wiki_day_prose dp ON dp.day_id = d.id \
+         WHERE dp.prose IS NOT NULL \
+         ORDER BY d.date DESC LIMIT 5",
     )
     .fetch_all(pool)
     .await
