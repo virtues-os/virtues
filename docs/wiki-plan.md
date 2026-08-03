@@ -864,6 +864,24 @@ trigger is two-sourced — **novelty** from day notes, **accumulation** from
 
 ### 10. Articles are edited, never regenerated — and the edit runs in the agent phase.
 
+> **Superseded in part, 2026-08-03 — the one-pen rule.** An article is either
+> the record's or yours, never both: interleaved authorship is hard to follow
+> narratively and in telemetry, so it does not exist. `auto_update = true`
+> means the record holds the pen (day articles start kept — narration is
+> their maintenance; entity articles stay opt-in). The first real user edit
+> CLAIMS the article: the Yjs layer flips `auto_update` off when a doc
+> update arrives over the websocket and actually changes the doc (machine
+> writes are server-side and never traverse a client connection; opening a
+> page to read sends an empty diff and does not claim). From then on the
+> record adds notes, never edits — re-enabling the toggle is explicit
+> re-consent that it may rewrite. This dissolves the surgical-patch problem
+> below rather than solving it: maintenance edits only ever run against
+> prose the machine wholly owns. Per-character attribution (Yjs v14
+> AttributionManager) can arrive later as display-only blame; it is not
+> load-bearing. The section's original text is kept for the mechanics that
+> survive (whole-document replacement is still wrong in a CRDT; the agent
+> phase is still where a Yjs-aware writer must run).
+
 **Where the writer lives.** An applet run has two phases
 ([applet_runner/mod.rs:364](../virtues-core/src/applet_runner/mod.rs:364)): the
 subprocess, and then — if the applet declares an `agent` prompt — an agent loop

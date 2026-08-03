@@ -501,14 +501,17 @@ pub async fn narrate_day(pool: &PgPool, date: NaiveDate) -> Result<Option<WikiDa
 
 /// Land the narration in the day's article page — the one prose store.
 ///
-/// First write goes through `create_article`, the single minting path. A
-/// re-narration may only overwrite the page while `yjs_state IS NULL` (the
-/// page has never been opened in an editor): once a CRDT exists, a pool-side
-/// UPDATE of `content` would be silently clobbered by the next debounced save
-/// — and the user may have edited the article, which the machine must not
-/// overwrite anyway. In that case the article is stamped dirty and left
-/// alone; the maintenance edit (agent phase, plan §10) is the path that can
-/// patch prose surgically.
+/// An article has exactly one pen at a time. A day article starts KEPT
+/// (`auto_update = true`): the nightly narration is its maintenance, and the
+/// record may rewrite it. Editing the article claims it — the Yjs layer
+/// flips `auto_update` off on the first real user edit — and from then on
+/// this writer refuses and stamps `dirty_at`; new evidence for a claimed day
+/// belongs in notes, never in prose the user owns.
+///
+/// Even for a kept article, a pool-side rewrite is only safe while
+/// `yjs_state IS NULL` — once a CRDT exists, an UPDATE of `content` would be
+/// clobbered by the next debounced save. A kept-but-opened page is skipped
+/// with a dirty stamp; a server-side (Yjs-aware) writer can pick it up.
 async fn save_day_article(
     pool: &PgPool,
     day_id: &str,
@@ -524,9 +527,32 @@ async fn save_day_article(
         // Title matches 0083's backfill: "3 March 2026". `%-d` drops the
         // zero-padding, as `FMDD` did in the migration's to_char.
         let title = date.format("%-d %B %Y").to_string();
-        crate::api::wiki_articles::create_article(pool, "day", day_id, &title, prose).await?;
+        let created =
+            crate::api::wiki_articles::create_article(pool, "day", day_id, &title, prose).await?;
+        // Day articles are kept by default — narration IS their maintenance.
+        // (Entity articles stay opt-in; their consent is the explicit toggle.)
+        if let Err(e) = sqlx::query("UPDATE wiki_articles SET auto_update = true WHERE id = $1")
+            .bind(&created.id)
+            .execute(pool)
+            .await
+        {
+            tracing::warn!(date = %date, error = %e, "could not mark the day article kept");
+        }
         return Ok(());
     };
+
+    if !article.auto_update {
+        tracing::info!(
+            date = %date,
+            page_id = %article.page_id,
+            "day article is claimed (yours) — narration files nothing; marked dirty"
+        );
+        sqlx::query("UPDATE wiki_articles SET dirty_at = now() WHERE id = $1")
+            .bind(&article.id)
+            .execute(pool)
+            .await?;
+        return Ok(());
+    }
 
     let updated = sqlx::query(
         "UPDATE app_pages SET content = $1, updated_at = now() \
@@ -548,7 +574,7 @@ async fn save_day_article(
         tracing::info!(
             date = %date,
             page_id = %article.page_id,
-            "day article has a live CRDT (opened or edited) — not overwriting; marked dirty"
+            "kept day article has a live CRDT — pool write would be clobbered; marked dirty"
         );
         sqlx::query("UPDATE wiki_articles SET dirty_at = now() WHERE id = $1")
             .bind(&article.id)

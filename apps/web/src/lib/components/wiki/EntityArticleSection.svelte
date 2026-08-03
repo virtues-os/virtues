@@ -14,7 +14,8 @@
 
 <script lang="ts">
 	import Markdown from '$lib/components/Markdown.svelte';
-	import { writeArticle, setArticleAutoUpdate } from '$lib/wiki/api';
+	import { writeArticle, setArticleAutoUpdate, getArticle } from '$lib/wiki/api';
+	import { windowShellStore } from '$lib/stores/window-shell.svelte';
 
 	interface Props {
 		article?: string;
@@ -75,6 +76,19 @@
 		}
 	}
 
+	// An article IS a page — Edit opens the page editor. One pen at a time:
+	// the first real edit claims the article (the server flips auto_update
+	// off), so the affordance says so before you commit to it.
+	async function openInEditor() {
+		if (!subjectType || !subjectId) return;
+		try {
+			const a = await getArticle(subjectType, subjectId);
+			if (a?.page_id) windowShellStore.openTabFromRoute(`/page/${a.page_id}`);
+		} catch (e) {
+			failed = e instanceof Error ? e.message : 'Could not open the article';
+		}
+	}
+
 	const revisedLabel = $derived(
 		articleUpdatedAt
 			? articleUpdatedAt.toLocaleDateString('en-US', {
@@ -92,14 +106,40 @@
 			<Markdown content={article} refVariant="quiet" />
 		</div>
 		<p class="colophon">
-			Written from the record{revisedLabel ? ` · revised ${revisedLabel}` : ''}
+			{maintained ? 'Written and kept by the record' : 'Yours — the record adds notes, never edits'}{revisedLabel
+				? ` · revised ${revisedLabel}`
+				: ''}
 			{#if canWrite}
 				<span class="colophon-sep">·</span>
-				<button type="button" class="linkish" onclick={toggleMaintenance}>
+				<button
+					type="button"
+					class="linkish"
+					title={maintained
+						? 'The record rewrites this article as new evidence arrives. Turning this off makes it yours.'
+						: 'Let the record keep this updated — it may rewrite the article, including your edits.'}
+					onclick={toggleMaintenance}
+				>
 					{maintained ? 'Keeping this updated' : 'Keep this updated'}
+				</button>
+				<span class="colophon-sep">·</span>
+				<button
+					type="button"
+					class="linkish"
+					title={maintained
+						? 'Editing makes this article yours — AI updates turn off. Prefer a note for marginalia or raw data.'
+						: 'Open in the editor.'}
+					onclick={openInEditor}
+				>
+					Edit
 				</button>
 			{/if}
 		</p>
+		{#if maintained && canWrite}
+			<p class="regime-hint">
+				Making edits turns off AI updates as new data comes in — add a note instead to
+				attach marginalia.
+			</p>
+		{/if}
 	</div>
 {:else}
 	<p class="stub">
@@ -162,6 +202,16 @@
 		font-size: 0.6875rem;
 		letter-spacing: 0.04em;
 		color: var(--color-foreground-subtle);
+	}
+
+	/* The one-pen rule, said once, quietly, before the edit — not as a modal
+	   after it. */
+	.regime-hint {
+		margin: 0.25rem 0 0;
+		font-size: 0.6875rem;
+		font-style: italic;
+		color: var(--color-foreground-subtle);
+		opacity: 0.85;
 	}
 
 	.stub {

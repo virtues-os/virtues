@@ -448,7 +448,7 @@ pub async fn run(client: Virtues, host: &str, port: u16) -> Result<()> {
         )
         .route(
             "/api/wiki/articles/:subject_type/:subject_id",
-            axum::routing::post(api::write_article_handler),
+            get(api::get_article_handler).post(api::write_article_handler),
         )
         .route(
             "/api/wiki/articles/:subject_type/:subject_id/auto-update",
