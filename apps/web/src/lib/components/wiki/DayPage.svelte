@@ -17,6 +17,7 @@
 		getDayTimeline,
 		getDayChats,
 		updateDay,
+		getArticle,
 		type DaySourceApi,
 		type DayChatApi,
 		type TimelineDayLocationChunk,
@@ -435,6 +436,14 @@
 		}
 	}
 
+	// The day article IS a page — Edit opens the page editor. The first real
+	// edit claims it (the server flips auto_update off) and the nightly
+	// narration stops rewriting that day.
+	async function openDayArticle() {
+		const a = await getArticle("day", page.id);
+		if (a?.page_id) windowShellStore.openTabFromRoute(`/page/${a.page_id}`);
+	}
+
 	// ─────────────────────────────────────────────────────────────────────────
 	// Section visibility (hide empty sections)
 	// ─────────────────────────────────────────────────────────────────────────
@@ -512,7 +521,20 @@
 				<!-- Narrative first: the day told in words (unfolds from the epigraph) -->
 				{#if showAutobiography}
 					<section class="section lead-section" id="summary">
-						<h2 class="section-title">The Day</h2>
+						<h2 class="section-title">
+							The Day
+							<!-- One pen at a time: the day article is kept by the
+							     nightly narration until you edit it, at which point
+							     it becomes yours and the record files notes instead. -->
+							<button
+								type="button"
+								class="day-edit"
+								title="Editing makes this day's article yours — the nightly narration stops rewriting it. Prefer a note for a line you want to attach to the day."
+								onclick={openDayArticle}
+							>
+								Edit
+							</button>
+						</h2>
 						{#if editingAutobiography}
 							<!-- svelte-ignore a11y_no_static_element_interactions -->
 							<div
@@ -890,6 +912,26 @@
 		line-height: 1.35;
 		color: var(--color-foreground);
 		margin: 0 0 0.75rem;
+	}
+
+	/* Quiet until wanted — a small-caps verb beside the heading, not a button
+	   competing with the prose. */
+	.day-edit {
+		margin-left: 0.625rem;
+		background: none;
+		border: none;
+		padding: 0;
+		font-family: var(--font-sans, sans-serif);
+		font-size: 0.6875rem;
+		letter-spacing: 0.04em;
+		text-transform: uppercase;
+		color: var(--color-foreground-subtle);
+		cursor: pointer;
+		vertical-align: middle;
+	}
+
+	.day-edit:hover {
+		color: var(--color-primary);
 	}
 
 	.section-header-row {

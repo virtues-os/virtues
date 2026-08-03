@@ -1887,6 +1887,20 @@ pub async fn subject_backlinks_handler(
 /// Synchronous on purpose: it is one model call the user is waiting for, and
 /// returning 202 would mean polling `app_applet_runs` to find out whether your
 /// own click worked.
+/// GET one subject's article row — the join, not the prose. The frontend
+/// uses `page_id` to open the article in the page editor.
+pub async fn get_article_handler(
+    State(state): State<AppState>,
+    Path((subject_type, subject_id)): Path<(String, String)>,
+) -> Response {
+    match crate::api::wiki_articles::get_article(state.db.pool(), &subject_type, &subject_id).await
+    {
+        Ok(Some(a)) => Json(a).into_response(),
+        Ok(None) => StatusCode::NOT_FOUND.into_response(),
+        Err(e) => error_response(e),
+    }
+}
+
 pub async fn write_article_handler(
     State(state): State<AppState>,
     Path((subject_type, subject_id)): Path<(String, String)>,

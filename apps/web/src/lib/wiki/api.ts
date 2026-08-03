@@ -555,6 +555,29 @@ export async function resolveNote(
 	if (!res.ok) throw new Error('Could not close that note');
 }
 
+/** The article join row for a subject. `page_id` is what the editor opens. */
+export interface WikiArticleApi {
+	id: string;
+	subject_type: string;
+	subject_id: string;
+	page_id: string;
+	auto_update: boolean;
+	source_ref_count: number;
+}
+
+/** A subject's article row, or null when no article exists yet. */
+export async function getArticle(
+	subjectType: string,
+	subjectId: string,
+	fetchFn: FetchFn = fetch
+): Promise<WikiArticleApi | null> {
+	const res = await fetchFn(
+		`/api/wiki/articles/${subjectType}/${encodeURIComponent(subjectId)}`
+	);
+	if (!res.ok) return null;
+	return res.json();
+}
+
 /** Open notes across the whole record — the Overview's what-changed count. */
 export async function countOpenNotes(fetchFn: FetchFn = fetch): Promise<number> {
 	const res = await fetchFn('/api/wiki/notes-open-count');
