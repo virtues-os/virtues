@@ -382,6 +382,36 @@ pub async fn drain(db: &PgPool, batch_size: i64) -> Result<(usize, usize, usize)
                     speech_secs,
                     Some(s) if text_len > s * MAX_CHARS_PER_SPEECH_SEC + HALLUCINATION_SLACK_CHARS
                 );
+                // Degeneracy guard: a transcript that repeats itself is a model
+                // stuck in a loop, not speech.
+                //
+                // The budget check above only fires when the VAD returned a
+                // measurement — `speech_secs: None` fails open, and that is how
+                // loops still landed after the budget guard shipped. This one
+                // needs no VAD at all: it reads the text itself.
+                //
+                // Real examples from a box: "I don't know." ×280, "no, no, no,"
+                // ×240, "[singing] Da da da da…" to the token cap — 21,714
+                // characters for a 300-second clip. Speech does not do this.
+                let degenerate = is_degenerate(&t.text);
+                if degenerate {
+                    tracing::warn!(
+                        stream_id = %rec.source_stream_id,
+                        text_len = t.text.trim().chars().count(),
+                        "suppressing degenerate transcript: repeats itself past any plausible speech"
+                    );
+                    match insert_silent_transcript(db, rec).await {
+                        Ok(_) => skipped += 1,
+                        Err(e) => {
+                            tracing::warn!(stream_id = %rec.source_stream_id, error = %e,
+                                "failed to insert silent transcript (degeneracy guard)");
+                            record_attempt_failure(db, &rec.source_stream_id).await;
+                            failed += 1;
+                        }
+                    }
+                    continue;
+                }
+
                 if over_budget {
                     tracing::warn!(
                         stream_id = %rec.source_stream_id,
@@ -815,5 +845,75 @@ fn audio_mime_type(format: &str) -> &'static str {
         "ogg" => "audio/ogg",
         "flac" => "audio/flac",
         _ => "audio/mp4",
+    }
+}
+
+/// Below this, a long transcript is a loop rather than speech.
+///
+/// Set DELIBERATELY LOW. The two errors are not symmetric: letting a loop
+/// through now costs a little index space (chunk-level dedupe collapses it
+/// downstream), while suppressing real speech destroys a record of something
+/// that was actually said — and it is invisible, because a suppressed
+/// transcript is indistinguishable from a quiet room.
+///
+/// Real loops sit around 0.002–0.03 ("da" repeated 500 times is 1/500). Real
+/// speech, even circular speech, stays far above 0.10. 0.08 leaves a wide
+/// margin on the side that matters.
+const MIN_DISTINCT_WORD_RATIO: f32 = 0.08;
+
+/// Only applied past this length. Short utterances are legitimately repetitive
+/// — "no, no, no" is a thing people say, and "[inaudible]" repeated is a
+/// correct output for muffled audio.
+const DEGENERACY_MIN_WORDS: usize = 120;
+
+/// Does this transcript repeat itself past any plausible speech?
+///
+/// Deliberately a ratio rather than a length cap: a genuinely long conversation
+/// is exactly what this table exists to hold, and a 6,000-second recording
+/// should never be suppressed for being long. What is suspicious is a large
+/// amount of text carrying almost no distinct words.
+fn is_degenerate(text: &str) -> bool {
+    let words: Vec<String> = text
+        .split_whitespace()
+        .map(|w| w.trim_matches(|c: char| !c.is_alphanumeric()).to_lowercase())
+        .filter(|w| !w.is_empty())
+        .collect();
+
+    if words.len() < DEGENERACY_MIN_WORDS {
+        return false;
+    }
+    let distinct: std::collections::HashSet<&String> = words.iter().collect();
+    (distinct.len() as f32 / words.len() as f32) < MIN_DISTINCT_WORD_RATIO
+}
+
+#[cfg(test)]
+mod degeneracy_tests {
+    use super::*;
+
+    #[test]
+    fn a_looping_transcript_is_caught() {
+        assert!(is_degenerate(&"da ".repeat(500)));
+        assert!(is_degenerate(&"I don't know. ".repeat(280)));
+        assert!(is_degenerate(&"no, no, no, ".repeat(240)));
+    }
+
+    /// The guard must never eat a real conversation. This is the failure that
+    /// would be invisible: a suppressed transcript looks exactly like silence.
+    #[test]
+    fn ordinary_conversation_survives() {
+        let talk = "So I was thinking about the trip next month and whether we \
+                    should drive or take the train, because the tickets are cheaper \
+                    midweek but the car means we can stop at your mother's on the \
+                    way back, which she would like, and it saves us a night in a \
+                    hotel either way. ";
+        let long = talk.repeat(6); // ~350 words of varied speech
+        assert!(!is_degenerate(&long));
+    }
+
+    /// Short repetitive utterances are real. "[inaudible]" is a correct output.
+    #[test]
+    fn short_repetition_is_left_alone() {
+        assert!(!is_degenerate("no, no, no"));
+        assert!(!is_degenerate(&"[inaudible] ".repeat(10)));
     }
 }
