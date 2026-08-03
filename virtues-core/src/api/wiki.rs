@@ -188,6 +188,9 @@ pub struct WikiDay {
     pub start_timezone: Option<String>,
     pub autobiography: Option<String>,
     pub autobiography_sections: Option<serde_json::Value>,
+    /// The day's prose, from `wiki_day_prose` (0087): the article page first,
+    /// the legacy `autobiography` column as fallback until its drop.
+    pub article: Option<String>,
     pub epigraph: Option<String>,
     pub last_edited_by: Option<String>,
     pub cover_image: Option<String>,
@@ -1143,6 +1146,7 @@ pub async fn get_or_create_day(pool: &PgPool, date: NaiveDate) -> Result<WikiDay
         r#"
         SELECT
             id, date, start_timezone, autobiography, autobiography_sections,
+            (SELECT dp.prose FROM wiki_day_prose dp WHERE dp.day_id = wiki_days.id) AS article,
             epigraph,
             last_edited_by, cover_image, act_id, chapter_id, morning_baseline, battery_curve,
             data_quality, snapshot, readiness_score, readiness_details, created_at, updated_at
@@ -1201,6 +1205,9 @@ fn wiki_day_from_row_with_counts(row: &sqlx::postgres::PgRow, date: NaiveDate, n
         start_timezone: row.try_get("start_timezone").ok().flatten(),
         autobiography: row.try_get("autobiography").ok().flatten(),
         autobiography_sections: row.try_get("autobiography_sections").ok().flatten(),
+        // Absent from the INSERT..RETURNING path (a just-created day has no
+        // prose anyway) — `.ok()` makes that read as None rather than an error.
+        article: row.try_get("article").ok().flatten(),
         epigraph: row.try_get("epigraph").ok().flatten(),
         last_edited_by: row.try_get("last_edited_by").ok().flatten(),
         cover_image: row.try_get("cover_image").ok().flatten(),
@@ -1476,6 +1483,7 @@ pub async fn list_days(
         r#"
         SELECT
             id, date, start_timezone, autobiography, autobiography_sections,
+            (SELECT dp.prose FROM wiki_day_prose dp WHERE dp.day_id = wiki_days.id) AS article,
             epigraph,
             last_edited_by, cover_image, act_id, chapter_id, morning_baseline, battery_curve,
             data_quality, snapshot, readiness_score, readiness_details, created_at, updated_at

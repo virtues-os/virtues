@@ -641,8 +641,8 @@ pub(crate) async fn build_context_section(
             // decode failure that kept this section out of every prompt from
             // the day it shipped until 2026-08-01.
             let rows = sqlx::query_as::<_, (String, Option<String>)>(
-                r#"SELECT date::text, autobiography FROM wiki_days
-                 WHERE autobiography IS NOT NULL AND autobiography != ''
+                r#"SELECT date::text, prose FROM wiki_day_prose
+                 WHERE prose IS NOT NULL
                  ORDER BY date DESC LIMIT 3"#,
             )
             .fetch_all(pool)
@@ -1980,8 +1980,7 @@ mod live_context_sections {
                  WHERE COALESCE(occupation, '') <> '' OR home_place_id IS NOT NULL)"
             }
             "recent_days" => {
-                "SELECT EXISTS(SELECT 1 FROM wiki_days \
-                 WHERE autobiography IS NOT NULL AND autobiography <> '')"
+                "SELECT EXISTS(SELECT 1 FROM wiki_day_prose WHERE prose IS NOT NULL)"
             }
             "connected_sources" => {
                 "SELECT EXISTS(SELECT 1 FROM credentials WHERE status = 'active')"

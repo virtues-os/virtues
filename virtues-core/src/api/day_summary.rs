@@ -471,7 +471,10 @@ pub async fn narrate_day(pool: &PgPool, date: NaiveDate) -> Result<Option<WikiDa
         pool,
         date,
         UpdateWikiDayRequest {
-            autobiography: Some(parsed.diary),
+            // The prose no longer lands here — it goes to the day's ARTICLE
+            // page below. The column keeps its old values until the drop
+            // migration; `wiki_day_prose` (0087) prefers the article.
+            autobiography: None,
             autobiography_sections: None,
             epigraph: parsed.epigraph,
             last_edited_by: Some("ai".to_string()),
@@ -486,12 +489,73 @@ pub async fn narrate_day(pool: &PgPool, date: NaiveDate) -> Result<Option<WikiDa
     )
     .await?;
 
+    save_day_article(pool, &day.id, date, &parsed.diary).await?;
+
     sqlx::query("UPDATE wiki_days SET narrated_at = now() WHERE date = $1")
         .bind(date)
         .execute(pool)
         .await?;
 
     Ok(Some(day))
+}
+
+/// Land the narration in the day's article page — the one prose store.
+///
+/// First write goes through `create_article`, the single minting path. A
+/// re-narration may only overwrite the page while `yjs_state IS NULL` (the
+/// page has never been opened in an editor): once a CRDT exists, a pool-side
+/// UPDATE of `content` would be silently clobbered by the next debounced save
+/// — and the user may have edited the article, which the machine must not
+/// overwrite anyway. In that case the article is stamped dirty and left
+/// alone; the maintenance edit (agent phase, plan §10) is the path that can
+/// patch prose surgically.
+async fn save_day_article(
+    pool: &PgPool,
+    day_id: &str,
+    date: NaiveDate,
+    prose: &str,
+) -> Result<()> {
+    if prose.trim().is_empty() {
+        return Ok(());
+    }
+
+    let existing = crate::api::wiki_articles::get_article(pool, "day", day_id).await?;
+    let Some(article) = existing else {
+        // Title matches 0083's backfill: "3 March 2026". `%-d` drops the
+        // zero-padding, as `FMDD` did in the migration's to_char.
+        let title = date.format("%-d %B %Y").to_string();
+        crate::api::wiki_articles::create_article(pool, "day", day_id, &title, prose).await?;
+        return Ok(());
+    };
+
+    let updated = sqlx::query(
+        "UPDATE app_pages SET content = $1, updated_at = now() \
+         WHERE id = $2 AND yjs_state IS NULL",
+    )
+    .bind(prose)
+    .bind(&article.page_id)
+    .execute(pool)
+    .await?;
+
+    if updated.rows_affected() > 0 {
+        sqlx::query(
+            "UPDATE wiki_articles SET last_written_at = now(), dirty_at = NULL WHERE id = $1",
+        )
+        .bind(&article.id)
+        .execute(pool)
+        .await?;
+    } else {
+        tracing::info!(
+            date = %date,
+            page_id = %article.page_id,
+            "day article has a live CRDT (opened or edited) — not overwriting; marked dirty"
+        );
+        sqlx::query("UPDATE wiki_articles SET dirty_at = now() WHERE id = $1")
+            .bind(&article.id)
+            .execute(pool)
+            .await?;
+    }
+    Ok(())
 }
 
 // ── Section builders ─────────────────────────────────────────────────────────
