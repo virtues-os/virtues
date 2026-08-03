@@ -22,7 +22,7 @@
 		type TimelineDayLocationChunk,
 	} from "$lib/wiki/api";
 	import { apiToDayEvent } from "$lib/wiki/converters";
-	import CitedMarkdown from "$lib/components/CitedMarkdown.svelte";
+	import Markdown from "$lib/components/Markdown.svelte";
 	import { getOntologyName } from "$lib/wiki/ontology";
 	import { getLocalDateSlug } from "$lib/utils/dateUtils";
 	import { windowShellStore } from "$lib/stores/window-shell.svelte";
@@ -527,7 +527,7 @@
 							</div>
 						{:else}
 							<div class="lead-content">
-								<CitedMarkdown content={summaryText} refVariant="quiet" />
+								<Markdown content={summaryText} refVariant="quiet" />
 							</div>
 						{/if}
 					</section>

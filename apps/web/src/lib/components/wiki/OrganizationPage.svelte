@@ -8,8 +8,10 @@
 <script lang="ts">
 	import type { OrganizationPage as OrganizationPageType } from "$lib/wiki/types";
 	import EntityArticleSection from "./EntityArticleSection.svelte";
+	import SubjectBacklinks from "./SubjectBacklinks.svelte";
+	import NotesRail from "./NotesRail.svelte";
 	import EntityRecordsSection from "./EntityRecordsSection.svelte";
-	import CitedMarkdown from "$lib/components/CitedMarkdown.svelte";
+	import Markdown from "$lib/components/Markdown.svelte";
 
 	interface Props {
 		page: OrganizationPageType;
@@ -74,6 +76,10 @@
 					article={page.article}
 					articleUpdatedAt={page.articleUpdatedAt}
 					name={page.title}
+									subjectType="organization"
+					subjectId={page.id}
+					autoUpdate={page.articleAutoUpdate}
+					onChanged={() => location.reload()}
 				/>
 			</section>
 
@@ -83,11 +89,14 @@
 				<EntityRecordsSection entityId={page.id} />
 			</section>
 
+			<SubjectBacklinks subjectType="organization" subjectId={page.id} />
+			<NotesRail subjectType="organization" subjectId={page.id} />
+
 			<!-- Notes: the user's own writing -->
 			{#if page.content}
 				<section class="section" id="notes">
 					<div class="notes-content">
-						<CitedMarkdown content={page.content} refVariant="quiet" />
+						<Markdown content={page.content} refVariant="quiet" />
 					</div>
 				</section>
 			{/if}
