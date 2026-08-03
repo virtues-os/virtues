@@ -7,7 +7,10 @@
 
 /* =============================================================================
    LIVE PREVIEW — HEADINGS (applied via line decorations)
-   ============================================================================= */
+   =============================================================================
+   Sizes/weights/line-heights cite the --md-* tokens (themes.css) shared with
+   the read path's .markdown rules — the editor and the rendered page must
+   move together. Only the PADDING below is editor-owned; see next comment. */
 
 /*
  * Vertical rhythm: headings use ASYMMETRIC padding — a generous push above
@@ -16,57 +19,57 @@
  * and creates dead click-zones / caret-gap artifacts in CodeMirror.
  */
 .cm-heading-1 {
-	font-family: var(--font-serif, Georgia, 'Times New Roman', serif);
-	font-size: 1.75rem;
-	line-height: 1.3;
-	font-weight: 400;
+	font-family: var(--md-heading-major-family, Georgia, serif);
+	font-size: var(--md-h1-size);
+	line-height: var(--md-h1-lh);
+	font-weight: var(--md-h1-weight);
 	color: var(--color-foreground);
 	padding-top: 1.75rem !important;
 	padding-bottom: 0.2rem !important;
 }
 
 .cm-heading-2 {
-	font-family: var(--font-serif, Georgia, 'Times New Roman', serif);
-	font-size: 1.375rem;
-	line-height: 1.35;
-	font-weight: 400;
+	font-family: var(--md-heading-major-family, Georgia, serif);
+	font-size: var(--md-h2-size);
+	line-height: var(--md-h2-lh);
+	font-weight: var(--md-h2-weight);
 	color: var(--color-foreground);
 	padding-top: 1.25rem !important;
 	padding-bottom: 0.2rem !important;
 }
 
 .cm-heading-3 {
-	font-family: var(--font-serif, Georgia, 'Times New Roman', serif);
-	font-size: 1.125rem;
-	line-height: 1.4;
-	font-weight: 500;
+	font-family: var(--md-heading-major-family, Georgia, serif);
+	font-size: var(--md-h3-size);
+	line-height: var(--md-h3-lh);
+	font-weight: var(--md-h3-weight);
 	color: var(--color-foreground);
 	padding-top: 0.85rem !important;
 	padding-bottom: 0.15rem !important;
 }
 
 .cm-heading-4 {
-	font-size: 1rem;
-	line-height: 1.5;
-	font-weight: 500;
+	font-size: var(--md-h4-size);
+	line-height: var(--md-h4-lh);
+	font-weight: var(--md-h4-weight);
 	color: var(--color-foreground);
 	padding-top: 0.6rem !important;
 	padding-bottom: 0.1rem !important;
 }
 
 .cm-heading-5 {
-	font-size: 0.9375rem;
-	line-height: 1.5;
-	font-weight: 600;
+	font-size: var(--md-h5-size);
+	line-height: var(--md-h5-lh);
+	font-weight: var(--md-h5-weight);
 	color: var(--color-foreground);
 	padding-top: 0.5rem !important;
 	padding-bottom: 0.1rem !important;
 }
 
 .cm-heading-6 {
-	font-size: 0.875rem;
-	line-height: 1.5;
-	font-weight: 600;
+	font-size: var(--md-h6-size);
+	line-height: var(--md-h6-lh);
+	font-weight: var(--md-h6-weight);
 	color: var(--color-foreground);
 	padding-top: 0.5rem !important;
 	padding-bottom: 0.1rem !important;
@@ -105,11 +108,11 @@
 
 .cm-inline-code {
 	font-family: var(--font-mono, ui-monospace, monospace);
-	font-size: 0.875em;
-	background-color: var(--color-surface-elevated);
+	font-size: var(--md-inline-code-size);
+	background-color: var(--md-inline-code-bg);
 	padding: 0.125rem 0.375rem;
-	border-radius: 0.25rem;
-	border: 1px solid var(--color-border-subtle);
+	border-radius: var(--md-inline-code-radius);
+	border: var(--md-inline-code-border);
 }
 
 /* Dim markdown syntax markers (##, **, *, etc.) */
@@ -349,7 +352,7 @@
    ============================================================================= */
 
 .cm-blockquote-line {
-	border-left: 3px solid var(--color-border);
+	border-left: var(--md-quote-border);
 	padding-left: 1.25rem !important;
 	padding-right: 0.5rem !important;
 	color: var(--color-foreground-muted);
@@ -444,16 +447,16 @@
 	border-collapse: separate;
 	border-spacing: 0;
 	font-size: 0.875rem;
-	border: 1px solid var(--color-border);
+	border: 1px solid var(--md-table-border-color);
 	border-radius: 0.5rem;
 	overflow: hidden;
 }
 
 .cm-table-widget th,
 .cm-table-widget td {
-	padding: 0.375rem 0.75rem;
-	border-bottom: 1px solid var(--color-border);
-	border-right: 1px solid var(--color-border);
+	padding: var(--md-cell-pad);
+	border-bottom: 1px solid var(--md-table-border-color);
+	border-right: 1px solid var(--md-table-border-color);
 }
 
 .cm-table-widget th:last-child,
@@ -467,9 +470,9 @@
 
 .cm-table-widget th {
 	background-color: var(--color-surface-elevated);
-	font-family: var(--font-serif, Georgia, 'Times New Roman', serif);
-	font-weight: 600;
-	font-size: 0.8125rem;
+	font-family: var(--md-heading-major-family, Georgia, serif);
+	font-weight: var(--md-th-weight);
+	font-size: var(--md-th-size);
 	color: var(--color-foreground);
 }
 

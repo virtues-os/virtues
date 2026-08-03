@@ -84,14 +84,12 @@
 			downloadButton: 'px-2 py-1 rounded hover:bg-border/50 transition-colors text-foreground-muted',
 			downloadIcon: 'w-4 h-4'
 		},
-		// Cells are rendered by streamdown's default td/th components (so inline
-		// markdown — **bold**, links, `code` — renders); we only style them here.
-		// The `table` snippet below supplies the scrolling wrapper.
-		thead: { base: 'bg-surface-elevated' },
-		tbody: { base: '' },
-		tr: { base: '' },
-		th: { base: 'px-3 py-2 text-left font-medium border-b border-border-subtle' },
-		td: { base: 'px-3 py-2 align-top border-b border-border-subtle/50' }
+		// No cell entries: streamdown's default td/th render inline markdown,
+		// and their LOOK is `.markdown th/td` in app.css (which cites the
+		// --md-* tokens). Tailwind strings here used to style the same cells a
+		// second time and fight that CSS by specificity — px-3 vs px-4 was
+		// whoever won that day. The `table` snippet below supplies only the
+		// scrolling wrapper.
 	};
 </script>
 
