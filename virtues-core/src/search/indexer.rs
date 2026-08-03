@@ -397,11 +397,7 @@ async fn embed_one_batch(
                      ON CONFLICT (ontology, record_id, chunk_index) DO UPDATE SET \
                        doc_hash = EXCLUDED.doc_hash",
                 )
-                // Three-segment id like every other row: {ont}:{rec}:{chunk}.
-                // This used to omit the chunk suffix, which made id = f(triple)
-                // false for exactly one kind of row — the sort of almost-true
-                // invariant 0085 exists to end.
-                .bind(format!("{}:{}:0", ont_name, record_id))
+                .bind(embedding_id(ont_name, record_id, 0))
                 .bind(ont_name)
                 .bind(record_id)
                 .bind(doc_hash)
@@ -496,7 +492,7 @@ async fn embed_one_batch(
                 hasher.update(chunk.as_bytes());
                 format!("{:.16x}", hasher.finalize())
             };
-            let embedding_id = format!("{}:{}:{}", ont_name, record_id, ci);
+            let embedding_id = embedding_id(ont_name, record_id, ci);
 
             // BM25 lexical terms for this chunk. Same tokenizer query.rs uses.
             let (bm_terms, bm_tfs, bm_len) = bm25_postings(chunk);
@@ -628,6 +624,14 @@ async fn embed_one_batch(
 /// (parallel to `terms`), and the total token count (the document length used
 /// for BM25 length normalization). Uses the shared [`bm25::tokens`](super::bm25)
 /// tokenizer so ingest-time terms match query-time terms exactly.
+/// THE id rule: `{ontology}:{record_id}:{chunk_index}`. One Rust authority for
+/// both writers; migration 0086's trigger enforces the same rule in Postgres,
+/// so a writer that drifts is corrected rather than colliding (see 0085 for
+/// what convention-only enforcement cost).
+fn embedding_id(ontology: &str, record_id: &str, chunk_index: usize) -> String {
+    format!("{ontology}:{record_id}:{chunk_index}")
+}
+
 fn bm25_postings(chunk: &str) -> (Vec<String>, Vec<i32>, i64) {
     let toks = super::bm25::tokens(chunk);
     let len = toks.len() as i64;
