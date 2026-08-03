@@ -73,39 +73,38 @@ RULES:
 - RECENT CONTEXT (if provided) is the last few days' event labels — use it only to disambiguate a stretch the dossier leaves ambiguous ("Unknown 18:00-19:00" that lines up with a nightly gym pattern), never to invent evidence this day lacks.
 - The `summary` is the single most load-bearing field: the user reads it AND it is embedded to measure how novel the event was. Make it factual and specific — "Forty minutes at Blue Bottle on Hayes; six messages with Maya about the lease; heart rate mid-70s." Not "a pleasant coffee.""#;
 
-/// THE BIOGRAPHY — the Chat slot. The short, readable memory of the day.
+/// THE ARTICLE — the Chat slot. The day's page, written from the record.
 ///
 /// It reads the EVENTS, not the raw sources. It is NOT the log (the event timeline
-/// already lists what happened when) — it is the few sentences that, read back
-/// later, drop you straight into that day. Brevity does the selecting: you cannot
-/// fit fourteen events in four sentences, so only the parts that distinguished the
-/// day survive.
+/// already lists what happened when) — it is a lede plus body sections, an article
+/// in the wiki's sense. The old sentence quota is gone; what replaced it as the
+/// guard against invention is the evidence ceiling (every sentence must trace to
+/// the dossier) and the anti-transcription bar on sections.
 ///
 /// This deliberately dropped the old "elevated moves" (fabricated behavioural
 /// fingerprints, forced quantified closers), the literary epigraph, and the W6H
 /// data-quality block — all of which pushed the model to invent meaning the day did
 /// not carry. See docs/event-timeline.md and the essay "A Day, Well Written": the
 /// machine records what happened and hands the meaning back.
-const NARRATE_PROMPT: &str = r#"You write "the biography of the day" — a brief second-person recap for a personal day page. It is NOT a log (the event timeline already lists what happened, when). It is the short, readable memory of the day: the few sentences that, read back weeks later, drop the reader straight into that day.
+const NARRATE_PROMPT: &str = r#"You write the ARTICLE OF THE DAY for a personal wiki — the day's page, in the sense a wikipedia gives that word. It is NOT a log (the event timeline beneath the article already lists what happened, when) and it is not a summary squeezed into a sentence quota. It is prose about the day, written from the record, that read back weeks later drops the reader straight into it.
 
-WHAT TO WRITE:
-- A brief, natural recap that follows the day's shape, roughly start to end, grounded in real people and places by name.
-- LENGTH FOLLOWS THE DAY. A rich, eventful day earns up to ~4 sentences; an ordinary day, one or two; a thin day, a single line. Never pad. Brevity is the whole point: you cannot fit a day's fourteen events in four sentences, so only the parts that actually distinguished this day from every other one survive — the routine falls away, the distinctive thing remains. That is correct, not a loss.
-- A genuinely unremarkable day should say so plainly ("A day much like its neighbours — the office, home, the usual"), never be inflated into significance.
+STRUCTURE — A LEDE, THEN BODY SECTIONS:
+- Open with a LEDE: one short paragraph, no heading, that carries the shape of the day — the few lines that say what this day was. It sets the register for everything beneath it.
+- Beneath the lede, write the article's body as sections under `## ` headings, where the evidence supports them. A section holds something that spans the day or connects its parts — a thread that ran through it, a conversation that turned, a piece of work that moved, the errand that broke the routine. Give each a plain, specific heading (the thing itself, not a category).
+- THE SECTION BAR IS ANTI-TRANSCRIPTION: a section may only exist if it says something the timeline does not already say. Retelling the event list in paragraphs is the one way to fail here. If you cannot name what a section adds beyond the timeline, it does not exist.
+
+LENGTH FOLLOWS THE EVIDENCE — NOT A QUOTA, AND NOT PADDING:
+- A dense day whose record holds real threads earns a real article: a lede and two or three sections. An ordinary day earns a lede and perhaps one. A thin day earns a few lines and stops. There is no sentence ceiling and no floor — the ceiling is the evidence itself: every sentence must trace to something in the dossier.
+- Never pad. An article stretched past its evidence is worse than a short one, because the stretching is where invention lives. A genuinely unremarkable day should say so plainly ("A day much like its neighbours — the office, home, the usual"), never be inflated into significance.
 
 THE ONE HARD RULE — OBSERVE, NEVER INFER:
 - Write only what the evidence shows. Warmth comes from OBSERVED detail (the low sun, the quiet train, the water) — NEVER from asserting an inner state. Do not write that the reader was "content", "productive", "happy", or "tired" as a feeling; do not say they did something "because" of a motive you are guessing at. State a departure or a goodbye as a fact ("the last coffee before she moves"); do not narrate how it felt.
 - No inferred emotion, motive, meaning, or verdict. Never call a day good or bad, well-spent or wasted. Record what happened; hand the meaning back to the reader.
+- This applies to the lede and to every section equally. No feelings, no motives, no verdicts, no invented sensory detail.
 - If given RECENT DAYS (the last two weeks), use them only to recognise a real recurrence or a genuine first ("the first kayak in months", "the same thread as Saturday") — never to manufacture a pattern that isn't plainly there. Empty means a cold start: just say what the day was.
 
-AFTER THE RECAP — SECTIONS (optional, and usually absent):
-- The recap above is the day's opening paragraph and its length rules are unchanged. Beneath it you MAY add one or two short sections under a `## ` heading, and the bar is different from the recap's: the recap's failure is padding; a section's failure is TRANSCRIPTION — retelling the event timeline in paragraphs.
-- A SECTION MAY ONLY EXIST IF IT SAYS SOMETHING THE TIMELINE DOES NOT ALREADY SAY. The timeline below the article already lists what happened and when. A section earns its place by holding something that spans the day or connects two parts of it — a thread that ran through it, a conversation that turned, a piece of work that moved. If you cannot name what it adds, it does not exist.
-- Most days have none. A day with nothing to add gets a recap and stops, and that is the correct output, not a thin one.
-- OBSERVE, NEVER INFER applies to every section exactly as it applies to the recap. No feelings, no motives, no verdicts, no invented sensory detail.
-
 FORMAT:
-- Plain, warm prose — a perceptive friend reflecting the day back, not a novelist. No lists, no bullet points, no epigraph, no closing metric, no "data quality" note. Headings only for the optional sections described above; the recap itself never has one.
+- Plain, warm prose — a perceptive friend reflecting the day back, not a novelist. No lists, no bullet points, no epigraph, no closing metric, no "data quality" note. Headings only for body sections; the lede never has one.
 - LINK entities: when you mention a person or place listed under "Entities you may link" below, link it by copying its exact markdown link, e.g. [Maya](/person/person_ab12). Link a given entity once, on first mention. Never invent a link or link anything not in that list.
 - Second person, past tense. Output ONLY the prose (markdown), nothing else."#;
 

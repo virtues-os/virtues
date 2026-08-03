@@ -1051,14 +1051,22 @@ lazy about its brevity — it is arguing:
 
 That discipline is load-bearing. This pass has a history of manufacturing
 sensory detail it did not observe, and *"write more"* is the single instruction
-most likely to bring it back. So the change is **structure, not length**:
+most likely to bring it back.
 
-- **The recap survives verbatim as the article's opening paragraph.** Same
-  prompt, same four-sentence ceiling, same job — the few lines that drop you
-  back into the day. It sets the register for everything beneath it.
+> **Revised 2026-08-03** (user direction: the day is an article now, so the
+> prompt should read like one, not like a "4 sentences max" summary). The
+> sentence quota is gone. What replaced it as the guard against invention is
+> the **evidence ceiling** — every sentence must trace to the dossier; an
+> article stretched past its evidence is worse than a short one, because the
+> stretching is where invention lives — plus the unchanged anti-transcription
+> bar and OBSERVE-NEVER-INFER. Structure became lede + body sections expected
+> where the evidence supports them, rather than "optional and usually absent."
+
+- **The lede opens the article** — one short unheaded paragraph carrying the
+  shape of the day. It sets the register for everything beneath it.
 - **Sections are generated under a different rule.** Not *be brief* but **a
   section may only exist if it says something the timeline does not already
-  say.** The recap's failure mode is padding; a section's is transcription —
+  say.** The lede's failure mode is padding; a section's is transcription —
   re-narrating the event list in paragraphs. Different guard for a different
   risk.
 - **OBSERVE, NEVER INFER carries over verbatim** to every section. It is the
@@ -1369,10 +1377,11 @@ schema hint.
    pass outstanding. 13 autobiographies moved to day articles in pure SQL:
    derived ids so a replayed backup cannot double-create, `date` left NULL so a
    day article does not appear inside its own day as authorship, and no UPDATE
-   so the in-memory Yjs cache cannot clobber it. `NARRATE_PROMPT` keeps the
-   recap verbatim as the opening paragraph and adds optional sections under a
-   different bar: a section may only exist if it says something the timeline
-   does not.
+   so the in-memory Yjs cache cannot clobber it. `NARRATE_PROMPT` was
+   re-oriented as an article brief on 2026-08-03: lede + body sections, no
+   sentence quota, the evidence ceiling as the guard against invention, and
+   the same section bar — a section may only exist if it says something the
+   timeline does not.
 9. **Lifeline** — **done 2026-07-31.** `GET /api/wiki/lifeline` returns per-lane,
    per-bucket density; lanes are **derived from the registry `domain`** rather
    than hand-written (which folds audio into communication — if that is wrong the
