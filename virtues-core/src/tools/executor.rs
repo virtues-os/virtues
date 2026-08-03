@@ -442,8 +442,17 @@ impl ToolExecutor {
         }
         // Ref URLs are how files are named everywhere else in the prompt, so
         // accept one rather than making the model remember which surface it is
-        // talking to.
-        let file_id = raw.rsplit('/').next().unwrap_or(raw);
+        // talking to. Parse via THE ref parser (it strips ?page=N viewer
+        // params a stored route carries); the local rsplit this replaces kept
+        // the query string, so `/drive/file_abc?page=3` — the exact form the
+        // notebook block hands the model — refused a file that exists. Bare
+        // ids pass through, minus any params the model copied along.
+        let file_id = crate::api::refs::split_ref(raw)
+            .map(|(_, id)| id)
+            .unwrap_or(raw)
+            .split(['?', '#'])
+            .next()
+            .unwrap_or(raw);
 
         let storage = crate::storage::Storage::file(
             crate::storage::lake::lake_root()
