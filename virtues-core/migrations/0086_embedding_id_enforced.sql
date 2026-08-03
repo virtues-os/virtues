@@ -1,0 +1,2 @@
+-- 0086_embedding_id_enforced
+-- Number claimed; SQL to follow.
