@@ -49,11 +49,15 @@
 		listOnThisDay,
 		listStories,
 		getNarrativeIdentity,
+		getLifeline,
+		listHistory,
+		countOpenNotes,
 		type WikiStoryApi,
 		type WikiPersonListItem,
 		type WikiPlaceListItem,
 		type WikiOrganizationListItem,
 		type OnThisDayApi,
+		type HistoryEntry,
 	} from '$lib/wiki/api';
 	import { toActivityLevels } from '$lib/wiki/activity';
 	import { getProfile } from '$lib/api/client';
@@ -418,6 +422,19 @@
 	let latestEntry = $state<{ slug: string; label: string; epigraph: string | null } | null>(null);
 	let standfirst = $state<string | null>(null);
 
+	// The lifeline strip: the whole record flattened to one row (§17.1), plus
+	// what the same response tells us for free — when the record starts, and
+	// which lanes have gone quiet ("where it's thin").
+	let stripDensity = $state<number[]>([]);
+	let recordSince = $state<string | null>(null);
+	let thinLanes = $state<string[]>([]);
+
+	// What changed: the review loop's front door — recent article edits and
+	// the open-note count. Without this the machine writes into a room nobody
+	// visits.
+	let recentEdits = $state<HistoryEntry[]>([]);
+	let openNoteCount = $state(0);
+
 	// One source of truth for the window: fetch exactly what the heatmap draws.
 	const HEATMAP_WEEKS = 26;
 
@@ -431,12 +448,59 @@
 			const recentStart = new Date();
 			recentStart.setDate(recentStart.getDate() - 45);
 
-			const [activity, otd, recent, identity] = await Promise.all([
-				listDayActivity(getLocalDateSlug(startDate), getLocalDateSlug(endDate)),
-				listOnThisDay(),
-				listDays(getLocalDateSlug(recentStart), getLocalDateSlug(endDate)),
-				getNarrativeIdentity(),
-			]);
+			const [activity, otd, recent, identity, lifeline, edits, openNotes] =
+				await Promise.all([
+					listDayActivity(getLocalDateSlug(startDate), getLocalDateSlug(endDate)),
+					listOnThisDay(),
+					listDays(getLocalDateSlug(recentStart), getLocalDateSlug(endDate)),
+					getNarrativeIdentity(),
+					// No window: the whole record, which is the point of the strip.
+					getLifeline(560),
+					listHistory(6),
+					countOpenNotes(),
+				]);
+
+			if (lifeline && lifeline.lanes.length) {
+				const n = lifeline.lanes[0]?.density.length ?? 0;
+				const sum = new Array(n).fill(0);
+				for (const l of lifeline.lanes) {
+					const p = l.peak || 1;
+					for (let i = 0; i < n; i++) sum[i] += l.density[i] / p;
+				}
+				stripDensity = sum;
+				recordSince = new Date(lifeline.from).toLocaleDateString('en-US', {
+					month: 'long',
+					year: 'numeric',
+				});
+
+				// A lane that was collecting and has gone quiet for over a week.
+				const fromMs = new Date(lifeline.from).getTime();
+				const toMs = new Date(lifeline.to).getTime();
+				const quiet: string[] = [];
+				for (const l of lifeline.lanes) {
+					if (!l.first_seen) continue; // never collected — the console's story
+					let last = -1;
+					for (let i = l.density.length - 1; i >= 0; i--) {
+						if (l.density[i] > 0) {
+							last = i;
+							break;
+						}
+					}
+					if (last < 0) continue;
+					const lastMs = fromMs + ((last + 1) / l.density.length) * (toMs - fromMs);
+					if (Date.now() - lastMs > 7 * 86_400_000) {
+						const label = l.id.charAt(0).toUpperCase() + l.id.slice(1);
+						const since = new Date(lastMs).toLocaleDateString('en-US', {
+							month: 'short',
+							day: 'numeric',
+						});
+						quiet.push(`No ${label.toLowerCase()} data since ${since}`);
+					}
+				}
+				thinLanes = quiet.slice(0, 3);
+			}
+			recentEdits = edits;
+			openNoteCount = openNotes;
 
 			activityData = toActivityLevels(activity);
 			activityStats = {
@@ -448,7 +512,7 @@
 			onThisDay = otd;
 
 			// recent is date DESC; the latest narrated day is the featured entry.
-			const featured = recent.find((d) => d.autobiography);
+			const featured = recent.find((d) => d.article ?? d.autobiography);
 			if (featured) {
 				latestEntry = {
 					slug: featured.date,
@@ -512,6 +576,15 @@
 						{standfirst ??
 							'A record of your life — its days, its people and places, and the story they add up to.'}
 					</p>
+					<!-- Computed, never written (§17.2): every number here is SQL,
+					     so the line is always current and never goes stale. -->
+					<p class="record-line">
+						{counts.person}
+						{counts.person === 1 ? 'person' : 'people'} · {counts.place}
+						{counts.place === 1 ? 'place' : 'places'} · {counts.org}
+						{counts.org === 1 ? 'organization' : 'organizations'}{#if recordSince}&nbsp;— records
+							since {recordSince}{/if}
+					</p>
 					<p class="today-line">
 						Today's entry is
 						<button onclick={() => openDay(todaySlug)} class="today-link">
@@ -519,6 +592,32 @@
 						</button>
 					</p>
 				</header>
+
+				{#if stripDensity.length}
+					<!-- The whole span at maximum zoom-out, one row (§17.1): the
+					     shape of the record before you read a word of it. Click
+					     lands in the console. -->
+					<button
+						class="strip"
+						onclick={() => goTo('/wiki/lifeline')}
+						aria-label="Open the lifeline"
+					>
+						<svg
+							viewBox="0 0 {stripDensity.length} 40"
+							preserveAspectRatio="none"
+							class="strip-svg"
+						>
+							{#each stripDensity as d, i}
+								{#if d > 0}
+									{@const peak = Math.max(...stripDensity)}
+									{@const h = Math.max(1.5, Math.sqrt(d / peak) * 36)}
+									<rect x={i} y={40 - h} width="0.8" height={h} />
+								{/if}
+							{/each}
+						</svg>
+						<span class="strip-caption">The whole record — open the lifeline →</span>
+					</button>
+				{/if}
 
 				<section class="sec">
 					<div class="sec-main">
@@ -607,24 +706,63 @@
 					</section>
 				{/if}
 
+				<!-- What changed: the front door to the review loop (§17.4).
+				     The entity index that used to sit here duplicated the
+				     sidebar and turned the front page into a table of contents;
+				     the masthead's computed line carries the counts now. -->
 				<section class="sec">
 					<div class="sec-main">
-						<h2>Index</h2>
-						<div class="index-row">
-							{#each Object.entries(typeConfig) as [key, cfg] (key)}
-								<button
-									class="index-card"
-									onclick={() => goTo(`/wiki/${cfg.legacy}`)}
-								>
-									<Icon icon={cfg.icon} class="index-icon" />
-									<span class="index-label">{cfg.plural}</span>
-									<span class="index-count">{counts[key as keyof typeof counts]}</span>
-								</button>
-							{/each}
-						</div>
+						<h2>What changed</h2>
+						{#if recentEdits.length === 0}
+							<p class="quiet">
+								No article edits yet. When an article is written or
+								maintained, the edit lands here — with its diff, in History.
+							</p>
+						{:else}
+							<ul class="wc">
+								{#each recentEdits as e (e.route + e.version_number)}
+									<li>
+										<button class="wc-row" onclick={() => windowShellStore.openTabFromRoute(e.route)}>
+											<span class="wc-title">{e.title}</span>
+											<span class="wc-meta">
+												{e.author === 'ai' ? 'the record' : 'you'} ·
+												{new Date(e.at).toLocaleDateString('en-US', {
+													month: 'short',
+													day: 'numeric',
+												})}
+											</span>
+										</button>
+									</li>
+								{/each}
+							</ul>
+							<button class="wc-all" onclick={() => goTo('/wiki/history')}>
+								All history →
+							</button>
+						{/if}
 					</div>
 					<aside class="sec-aside">
-						<p class="aside-note">Everything the record names, in one list.</p>
+						<dl class="stat-stack">
+							<div>
+								<dt>Open notes</dt>
+								<dd>{openNoteCount}</dd>
+							</div>
+						</dl>
+						{#if thinLanes.length || activityStats.stubs > 0}
+							<!-- Where it's thin (§17.5): a record that says where it
+							     is incomplete is more trustworthy than one that
+							     presents itself as finished. -->
+							<ul class="thin">
+								{#each thinLanes as t (t)}
+									<li>{t}</li>
+								{/each}
+								{#if activityStats.stubs > 0}
+									<li>
+										{activityStats.stubs}
+										{activityStats.stubs === 1 ? 'day' : 'days'} with events, unwritten
+									</li>
+								{/if}
+							</ul>
+						{/if}
 					</aside>
 				</section>
 			</div>
@@ -839,10 +977,57 @@
 		max-width: 40rem;
 	}
 
+	.record-line {
+		font-size: 0.875rem;
+		color: var(--color-foreground-subtle);
+		font-variant-numeric: tabular-nums;
+		margin: 0 0 0.375rem;
+	}
+
 	.today-line {
 		font-size: 0.875rem;
 		color: var(--color-foreground-muted);
 		margin: 0;
+	}
+
+	/* The lifeline strip: one row, hairline-quiet, the whole span. */
+	.strip {
+		display: block;
+		width: 100%;
+		margin: 0 0 2.5rem;
+		padding: 0;
+		background: none;
+		border: none;
+		border-bottom: 1px solid var(--color-border);
+		cursor: pointer;
+		text-align: left;
+	}
+
+	.strip-svg {
+		display: block;
+		width: 100%;
+		height: 40px;
+	}
+
+	.strip-svg rect {
+		fill: var(--color-foreground-muted);
+		fill-opacity: 0.5;
+	}
+
+	.strip:hover .strip-svg rect {
+		fill: var(--color-primary);
+		fill-opacity: 0.55;
+	}
+
+	.strip-caption {
+		display: block;
+		padding: 0.375rem 0 0.5rem;
+		font-size: 0.8125rem;
+		color: var(--color-foreground-subtle);
+	}
+
+	.strip:hover .strip-caption {
+		color: var(--color-primary);
 	}
 
 	.today-link {
@@ -1064,48 +1249,65 @@
 		text-decoration: underline;
 	}
 
-	/* Index */
-	.index-row {
-		display: grid;
-		grid-template-columns: repeat(3, 1fr);
-		gap: 0.75rem;
+	/* What changed */
+	.wc {
+		list-style: none;
+		margin: 0;
+		padding: 0;
 	}
 
-	.index-card {
+	.wc-row {
 		display: flex;
-		align-items: center;
-		gap: 0.625rem;
-		padding: 0.875rem 1rem;
-		background: var(--color-surface-elevated);
-		border: 1px solid var(--color-border);
-		border-radius: 8px;
+		align-items: baseline;
+		justify-content: space-between;
+		gap: 1rem;
+		width: 100%;
+		padding: 0.4375rem 0;
+		background: none;
+		border: none;
+		border-bottom: 1px solid var(--color-border);
 		cursor: pointer;
-		transition: all 0.15s ease;
-		text-align: left;
 		font: inherit;
+		text-align: left;
 	}
 
-	.index-card:hover {
-		border-color: var(--color-border-subtle);
-		background: var(--color-surface-hover);
-	}
-
-	.index-card :global(.index-icon) {
-		font-size: 1.125rem;
-		color: var(--color-foreground-muted);
-	}
-
-	.index-label {
-		flex: 1;
-		font-size: 0.875rem;
-		font-weight: 500;
+	.wc-title {
+		font-family: var(--font-serif, Georgia, serif);
+		font-size: 0.9375rem;
 		color: var(--color-foreground);
 	}
 
-	.index-count {
+	.wc-row:hover .wc-title {
+		color: var(--color-primary);
+	}
+
+	.wc-meta {
 		font-size: 0.8125rem;
 		color: var(--color-foreground-subtle);
-		font-variant-numeric: tabular-nums;
+		white-space: nowrap;
+	}
+
+	.wc-all {
+		margin-top: 0.625rem;
+		background: none;
+		border: none;
+		padding: 0;
+		font-size: 0.8125rem;
+		color: var(--color-primary);
+		cursor: pointer;
+	}
+
+	/* Where it's thin */
+	.thin {
+		list-style: none;
+		margin: 0.875rem 0 0;
+		padding: 0;
+		font-size: 0.8125rem;
+		color: var(--color-foreground-subtle);
+	}
+
+	.thin li {
+		margin-bottom: 0.25rem;
 	}
 
 	/* Unified entity grid cells */
@@ -1191,9 +1393,4 @@
 		}
 	}
 
-	@media (max-width: 640px) {
-		.index-row {
-			grid-template-columns: 1fr;
-		}
-	}
 </style>

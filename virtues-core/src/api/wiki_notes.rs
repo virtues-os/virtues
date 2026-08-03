@@ -87,6 +87,18 @@ pub async fn list_notes(
         .collect())
 }
 
+/// How many notes are open across the whole record — the Overview's
+/// what-changed module. Runtime query on purpose: one scalar is not worth
+/// an .sqlx entry.
+pub async fn count_open_total(pool: &PgPool) -> Result<i64> {
+    sqlx::query_scalar::<_, i64>(
+        "SELECT count(*) FROM wiki_notes WHERE resolved_at IS NULL",
+    )
+    .fetch_one(pool)
+    .await
+    .map_err(|e| Error::Database(format!("Failed to count open notes: {}", e)))
+}
+
 /// How many open notes a subject has — the badge, and the Overview count.
 pub async fn count_open(pool: &PgPool, subject_type: &str, subject_id: &str) -> Result<i64> {
     sqlx::query_scalar!(
