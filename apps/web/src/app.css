@@ -100,6 +100,37 @@
 	font-display: swap;
 }
 
+/* The same file again, with its vertical metrics normalized — for the serif in
+   UI chrome rather than in prose.
+
+   JJannon declares ascent/descent = 0.740/0.260: exactly one em, a metric box
+   clamped to the ink with no leading in it. A line box carries its baseline
+   (ascent − descent)/2 below its own center, so centering that box in a row
+   leaves the letters 0.098em HIGH — which is why a Desk spine sat above its
+   icon while the sans rows on the Library shelf below it, whose font declares
+   a roomier 1.000/0.366, looked fine. The eye reads the gap between the two
+   zones, not the absolute error.
+
+   ascent − descent = capHeight (0.676) is the condition for the cap band to
+   land on the center line; keeping descent at the real ink depth gives 0.936.
+   Expressed in em, so it holds at 13.5px and at 46px alike — no per-element
+   nudges, and any future serif-beside-an-icon is correct by construction.
+
+   Not applied to 'JJannon' itself: the same correction would push every prose
+   block down 0.098em (4.5px on a 46px heading), moving first-baseline position
+   across the wiki, pages and home. Arguably also right, but that is a
+   typography pass, not this fix. */
+@font-face {
+	font-family: 'JJannon UI';
+	src: url('/fonts/JJannon-Display-Regular.woff2') format('woff2');
+	font-weight: 400;
+	font-style: normal;
+	font-display: swap;
+	ascent-override: 93.6%;
+	descent-override: 26%;
+	line-gap-override: 0%;
+}
+
 @font-face {
 	font-family: 'Lora';
 	src: url('/fonts/Lora-VariableFont_wght.ttf') format('truetype');
