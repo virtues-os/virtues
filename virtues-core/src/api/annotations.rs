@@ -64,7 +64,7 @@ pub async fn list_annotations(pool: &PgPool, file_id: &str) -> Result<Vec<Annota
     sqlx::query_as::<_, Annotation>(
         "SELECT id, file_id, page_num, quote_text, quote_prefix, quote_suffix, \
                 rects, color, note_md, created_at, updated_at \
-         FROM app_annotations WHERE file_id = $1 \
+         FROM app_marginalia WHERE file_id = $1 \
          ORDER BY COALESCE(page_num, 0), created_at",
     )
     .bind(file_id)
@@ -75,7 +75,7 @@ pub async fn list_annotations(pool: &PgPool, file_id: &str) -> Result<Vec<Annota
 
 /// A highlight enriched with its file's name, for the notebook-wide Highlights
 /// view (D2.5). Annotations live on files; a notebook gathers them by joining
-/// its `library` items (url = `/drive/{file_id}`) back to `app_annotations`.
+/// its `library` items (url = `/drive/{file_id}`) back to `app_marginalia`.
 #[derive(Debug, Clone, Serialize, sqlx::FromRow)]
 pub struct NotebookAnnotation {
     pub id: String,
@@ -98,7 +98,7 @@ pub async fn list_notebook_annotations(
     sqlx::query_as::<_, NotebookAnnotation>(
         "SELECT a.id, a.file_id, f.filename, a.page_num, a.quote_text, \
                 a.color, a.note_md, a.created_at, a.updated_at \
-         FROM app_annotations a \
+         FROM app_marginalia a \
          JOIN app_notebook_items ni \
            ON ni.url = '/drive/' || a.file_id AND ni.role = 'library' \
          JOIN app_drive_files f ON f.id = a.file_id \
@@ -206,7 +206,7 @@ pub async fn get_annotation(pool: &PgPool, id: &str) -> Result<Annotation> {
     sqlx::query_as::<_, Annotation>(
         "SELECT id, file_id, page_num, quote_text, quote_prefix, quote_suffix, \
                 rects, color, note_md, created_at, updated_at \
-         FROM app_annotations WHERE id = $1",
+         FROM app_marginalia WHERE id = $1",
     )
     .bind(id)
     .fetch_optional(pool)
@@ -234,7 +234,7 @@ pub async fn create_annotation(
         ],
     );
     sqlx::query(
-        "INSERT INTO app_annotations \
+        "INSERT INTO app_marginalia \
             (id, file_id, page_num, quote_text, quote_prefix, quote_suffix, rects, color, note_md) \
          VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9) \
          ON CONFLICT (id) DO UPDATE \
@@ -262,7 +262,7 @@ pub async fn update_annotation(
     req: UpdateAnnotationRequest,
 ) -> Result<Annotation> {
     sqlx::query(
-        "UPDATE app_annotations \
+        "UPDATE app_marginalia \
          SET color = COALESCE($2, color), \
              note_md = COALESCE($3, note_md), \
              updated_at = now() \
@@ -278,19 +278,19 @@ pub async fn update_annotation(
 }
 
 pub async fn delete_annotation(pool: &PgPool, id: &str) -> Result<()> {
-    // Annotations are retrievable (document_annotation ontology); drop the
+    // Annotations are retrievable (document_marginalia ontology); drop the
     // embedding along with the row so search doesn't cite a deleted highlight.
     let mut tx = pool
         .begin()
         .await
         .map_err(|e| Error::Database(format!("delete tx: {e}")))?;
-    sqlx::query("DELETE FROM app_annotations WHERE id = $1")
+    sqlx::query("DELETE FROM app_marginalia WHERE id = $1")
         .bind(id)
         .execute(&mut *tx)
         .await
         .map_err(|e| Error::Database(format!("Failed to delete annotation: {e}")))?;
     sqlx::query(
-        "DELETE FROM search_embeddings WHERE ontology = 'document_annotation' AND record_id = $1",
+        "DELETE FROM search_embeddings WHERE ontology = 'document_marginalia' AND record_id = $1",
     )
     .bind(id)
     .execute(&mut *tx)

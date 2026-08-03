@@ -24,6 +24,8 @@ pub struct UpdateProfileRequest {
     pub employer: Option<String>,
     // Home
     pub home_place_id: Option<String>,
+    /// "This person is me" — points at a `wiki_people` row (0080).
+    pub self_person_id: Option<String>,
     // Onboarding - single status field
     pub onboarding_status: Option<String>,
     // Preferences
@@ -78,6 +80,7 @@ pub async fn update_profile(db: &PgPool, request: UpdateProfileRequest) -> Resul
     if request.occupation.is_some()            { push("occupation", &mut set_clauses, &mut next); }
     if request.employer.is_some()              { push("employer", &mut set_clauses, &mut next); }
     if request.home_place_id.is_some()         { push("home_place_id", &mut set_clauses, &mut next); }
+    if request.self_person_id.is_some()        { push("self_person_id", &mut set_clauses, &mut next); }
     if request.onboarding_status.is_some()     { push("onboarding_status", &mut set_clauses, &mut next); }
     if request.theme.is_some()                 { push("theme", &mut set_clauses, &mut next); }
     if request.home_timezone.is_some()         { push("home_timezone", &mut set_clauses, &mut next); }
@@ -129,6 +132,9 @@ pub async fn update_profile(db: &PgPool, request: UpdateProfileRequest) -> Resul
         query_builder = query_builder.bind(v);
     }
     if let Some(ref v) = request.home_place_id {
+        query_builder = query_builder.bind(v);
+    }
+    if let Some(ref v) = request.self_person_id {
         query_builder = query_builder.bind(v);
     }
     if let Some(ref v) = request.onboarding_status {

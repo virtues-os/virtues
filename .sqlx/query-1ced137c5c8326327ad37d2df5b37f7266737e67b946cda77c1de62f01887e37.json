@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "\n        SELECT\n            id, canonical_name, picture, relationship_category, last_interaction\n        FROM wiki_people\n        ORDER BY canonical_name ASC\n        ",
+  "query": "\n        SELECT\n            p.id, p.canonical_name, p.picture, p.relationship_category, p.last_interaction,\n            COALESCE(r.n, 0) AS \"ref_count!\"\n        FROM wiki_people p\n        LEFT JOIN (\n            SELECT entity_id, count(*) AS n\n            FROM wiki_entity_refs WHERE entity_type = 'person' GROUP BY entity_id\n        ) r ON r.entity_id = p.id\n        ORDER BY COALESCE(r.n, 0) DESC, p.canonical_name ASC\n        ",
   "describe": {
     "columns": [
       {
@@ -27,6 +27,11 @@
         "ordinal": 4,
         "name": "last_interaction",
         "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 5,
+        "name": "ref_count!",
+        "type_info": "Int8"
       }
     ],
     "parameters": {
@@ -37,8 +42,9 @@
       false,
       true,
       true,
-      true
+      true,
+      null
     ]
   },
-  "hash": "03a577e1b9089ffba9488fd9e4af8ce6bbb5e1552e9166e29ac78ab232d494b6"
+  "hash": "1ced137c5c8326327ad37d2df5b37f7266737e67b946cda77c1de62f01887e37"
 }

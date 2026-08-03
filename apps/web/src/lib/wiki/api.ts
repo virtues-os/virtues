@@ -27,6 +27,10 @@ export interface WikiPersonApi {
 	relationship_category: string | null;
 	nickname: string | null;
 	notes: string | null;
+	/** Surfaces this entity also answers to (migration 0037). */
+	aliases: string[];
+	/** Is the record keeping this article up to date? Off unless asked. */
+	article_auto_update?: boolean;
 	first_interaction: string | null;
 	last_interaction: string | null;
 	interaction_count: number | null;
@@ -50,6 +54,8 @@ export interface WikiPlaceApi {
 	last_visit: string | null;
 	created_at: string;
 	updated_at: string;
+	/** Is the record keeping this article up to date? Off unless asked. */
+	article_auto_update?: boolean;
 }
 
 export interface WikiOrganizationApi {
@@ -69,6 +75,8 @@ export interface WikiOrganizationApi {
 	last_interaction: string | null;
 	created_at: string;
 	updated_at: string;
+	/** Is the record keeping this article up to date? Off unless asked. */
+	article_auto_update?: boolean;
 }
 
 
@@ -183,6 +191,8 @@ export interface WikiPersonListItem {
 	picture: string | null;
 	relationship_category: string | null;
 	last_interaction: string | null;
+	/** Records mentioning this entity. The index's sort key — see wiki.rs. */
+	ref_count: number;
 }
 
 export interface WikiPlaceListItem {
@@ -191,6 +201,8 @@ export interface WikiPlaceListItem {
 	category: string | null;
 	address: string | null;
 	visit_count: number | null;
+	/** Records mentioning this entity. The index's sort key — see wiki.rs. */
+	ref_count: number;
 }
 
 export interface WikiOrganizationListItem {
@@ -198,6 +210,8 @@ export interface WikiOrganizationListItem {
 	canonical_name: string;
 	organization_type: string | null;
 	relationship_type: string | null;
+	/** Records mentioning this entity. The index's sort key — see wiki.rs. */
+	ref_count: number;
 }
 
 
@@ -229,6 +243,414 @@ export async function getPersonById(
 	const res = await fetchFn(`/api/wiki/person/${encodeURIComponent(id)}`);
 	if (!res.ok) return null;
 	return res.json();
+}
+
+/**
+ * File a person as an organization instead.
+ *
+ * Returns the new org route — the person route stops resolving the moment this
+ * succeeds, so callers must navigate or reload rather than keep the old id.
+ */
+export async function reclassifyPersonAsOrg(
+	id: string,
+	fetchFn: FetchFn = fetch
+): Promise<{ id: string; route: string }> {
+	const res = await fetchFn(`/api/entities/people/${id}/reclassify-as-org`, { method: 'POST' });
+	if (!res.ok) throw new Error(`Failed to reclassify: ${res.statusText}`);
+	return res.json();
+}
+
+/**
+ * Whether merging two buckets adds their values.
+ *
+ * `total` grows with the zoom level and stands on zero; `rate` is an average
+ * and floats between its own floor and ceiling. The distinction decides both
+ * the arithmetic and the drawing.
+ */
+export type MeasureKind = 'total' | 'rate';
+
+/** One entry in a lane's measure menu. */
+export interface MeasureInfo {
+	id: string;
+	label: string;
+	unit: string;
+	kind: MeasureKind;
+}
+
+/** One lane of the lifeline: a registry domain and its per-bucket series. */
+export interface LifelineLane {
+	id: string;
+	sources: string[];
+	density: number[];
+	peak: number;
+	/** Smallest non-empty bucket — the baseline a `rate` is drawn against. */
+	floor: number;
+	/** When this lane started collecting. Before it, the lane wasn't watching. */
+	first_seen: string | null;
+	/** Which measure produced `density`; `records` when none was chosen. */
+	measure: string;
+	measure_label: string;
+	unit: string;
+	kind: MeasureKind;
+	available: MeasureInfo[];
+}
+
+export interface LifelineData {
+	from: string;
+	to: string;
+	buckets: number;
+	lanes: LifelineLane[];
+}
+
+/** Per-lane series over a window. The server buckets; the client only draws. */
+export async function getLifeline(
+	buckets: number,
+	from?: string,
+	to?: string,
+	expand?: string[],
+	measures?: Record<string, string>,
+	fetchFn: FetchFn = fetch
+): Promise<LifelineData | null> {
+	const p = new URLSearchParams({ buckets: String(buckets) });
+	// Omitting the window asks the server for the whole record. A lifeline
+	// defaulted to the last year is not a lifeline — this corpus starts in 2017.
+	if (from) p.set('from', from);
+	if (to) p.set('to', to);
+	if (expand?.length) p.set('expand', expand.join(','));
+	const pairs = Object.entries(measures ?? {}).map(([lane, id]) => `${lane}:${id}`);
+	if (pairs.length) p.set('measures', pairs.join(','));
+	const res = await fetchFn(`/api/wiki/lifeline?${p}`);
+	if (!res.ok) return null;
+	return res.json();
+}
+
+/**
+ * Time of day against date — the day-clock raster.
+ *
+ * `cells` is flat and row-major by column: `cells[col * 24 + hour]`. 28,800
+ * numbers as objects would be a quarter-megabyte of punctuation.
+ */
+export interface Clock {
+	from: string;
+	to: string;
+	columns: number;
+	cells: number[];
+	peak: number;
+	/** Busiest cell per column, for normalising a day against its own shape. */
+	column_peak: number[];
+	timezone: string;
+}
+
+/**
+ * The day-clock.
+ *
+ * One timezone for the whole raster, deliberately: rendering each record in the
+ * zone it was recorded in would straighten the sleep band back out and destroy
+ * the most legible thing on the chart. Fixed to one zone, a fortnight abroad is
+ * a visible dislocation.
+ */
+export async function getClock(
+	from: string,
+	to: string,
+	columns: number,
+	tz: string,
+	fetchFn: FetchFn = fetch
+): Promise<Clock | null> {
+	const p = new URLSearchParams({ from, to, buckets: String(columns), tz });
+	const res = await fetchFn(`/api/wiki/lifeline/clock?${p}`);
+	if (!res.ok) return null;
+	return res.json();
+}
+
+/** A place a window was spent, found by clustering arrivals. */
+export interface Stay {
+	lat: number;
+	lon: number;
+	visits: number;
+	minutes: number;
+	first: string | null;
+	last: string | null;
+}
+
+/** Where a window was spent. `bbox` is `[latMin, latMax, lonMin, lonMax]`. */
+export interface Ground {
+	bbox: [number, number, number, number] | null;
+	/** The trace, thinned server-side: `[lat, lon]` pairs in time order. */
+	track: [number, number][];
+	track_total: number;
+	stays: Stay[];
+}
+
+/**
+ * The ground under a window.
+ *
+ * A separate request from the lanes because it is answering a different
+ * question — where, not when — and because it is only wanted when someone is
+ * actually looking at location.
+ */
+export async function getGround(
+	from: string,
+	to: string,
+	fetchFn: FetchFn = fetch
+): Promise<Ground | null> {
+	const p = new URLSearchParams({ from, to });
+	const res = await fetchFn(`/api/wiki/lifeline/ground?${p}`);
+	if (!res.ok) return null;
+	return res.json();
+}
+
+/** One row inside a window, rendered by its ontology's own declarations. */
+export interface LifelineRecord {
+	id: string;
+	ontology: string;
+	lane: string;
+	kind: string;
+	label: string | null;
+	preview: string | null;
+	at: string;
+}
+
+export interface LifelineFeed {
+	records: LifelineRecord[];
+	has_more: boolean;
+}
+
+/**
+ * The records inside a window.
+ *
+ * The reason to draw a timeline is that a range on it can hand back the rows —
+ * a panel of sums is the answer chat already gives badly.
+ */
+export async function getFeed(
+	from: string,
+	to: string,
+	opts: { lanes?: string[]; limit?: number; offset?: number } = {},
+	fetchFn: FetchFn = fetch
+): Promise<LifelineFeed | null> {
+	const p = new URLSearchParams({ from, to });
+	if (opts.lanes?.length) p.set('lanes', opts.lanes.join(','));
+	if (opts.limit) p.set('limit', String(opts.limit));
+	if (opts.offset) p.set('offset', String(opts.offset));
+	const res = await fetchFn(`/api/wiki/lifeline/feed?${p}`);
+	if (!res.ok) return null;
+	return res.json();
+}
+
+/** A day or event Virtues has interpreted. */
+export interface Interpreted {
+	id: string;
+	kind: string;
+	/** The segmenter's classification — `sleep`, `transit`, `unknown`. */
+	tag: string | null;
+	label: string | null;
+	summary: string | null;
+	start: string;
+	end: string | null;
+}
+
+export interface ProcessedWindow {
+	items: Interpreted[];
+	/** The span over which ANY interpretation exists, whatever the window. */
+	coverage: [string, string] | null;
+	days_processed: number;
+}
+
+/**
+ * What Virtues has made of a window, as opposed to what was collected in it.
+ *
+ * Raw reaches back to 2017; the interpreted layer covers weeks. `coverage`
+ * comes back regardless of the window so an empty answer can say why.
+ */
+export async function getProcessed(
+	from: string,
+	to: string,
+	fetchFn: FetchFn = fetch
+): Promise<ProcessedWindow | null> {
+	const p = new URLSearchParams({ from, to });
+	const res = await fetchFn(`/api/wiki/lifeline/processed?${p}`);
+	if (!res.ok) return null;
+	return res.json();
+}
+
+/** Create a person by hand — the record only ever discovered them before. */
+export async function createPerson(name: string, fetchFn: FetchFn = fetch): Promise<{ id: string; route: string }> {
+	const res = await fetchFn('/api/entities/people', {
+		method: 'POST',
+		headers: { 'Content-Type': 'application/json' },
+		body: JSON.stringify({ name })
+	});
+	if (!res.ok) throw new Error('Could not create that person');
+	return res.json();
+}
+
+/** Delete an entity, and everything that pointed at it. */
+export async function deleteEntity(
+	entityType: 'person' | 'place' | 'org',
+	id: string,
+	fetchFn: FetchFn = fetch
+): Promise<void> {
+	const path = entityType === 'person' ? 'people' : entityType === 'org' ? 'orgs' : 'places';
+	const res = await fetchFn(`/api/entities/${path}/${id}`, { method: 'DELETE' });
+	if (!res.ok) {
+		const body = await res.json().catch(() => null);
+		throw new Error(body?.error ?? body?.message ?? 'Could not delete that');
+	}
+}
+
+/** A note in the margin of a subject. */
+export interface WikiNote {
+	id: number;
+	subject_type: string;
+	subject_id: string;
+	kind: string;
+	body: string;
+	author: string;
+	source_refs: unknown;
+	created_at: string;
+	resolution: string | null;
+}
+
+/** Open notes on a subject. */
+export async function listNotes(
+	subjectType: string,
+	subjectId: string,
+	fetchFn: FetchFn = fetch
+): Promise<WikiNote[]> {
+	const res = await fetchFn(`/api/wiki/notes/${subjectType}/${subjectId}`);
+	if (!res.ok) return [];
+	return res.json();
+}
+
+/** Leave a note yourself. Human notes need no citation — you were there. */
+export async function createNote(
+	subjectType: string,
+	subjectId: string,
+	body: string,
+	kind = 'memo',
+	fetchFn: FetchFn = fetch
+): Promise<WikiNote> {
+	const res = await fetchFn(`/api/wiki/notes/${subjectType}/${subjectId}`, {
+		method: 'POST',
+		headers: { 'Content-Type': 'application/json' },
+		body: JSON.stringify({ body, kind })
+	});
+	if (!res.ok) throw new Error('Could not save that note');
+	return res.json();
+}
+
+/** Close a note. Accepting hands the editing back to you. */
+export async function resolveNote(
+	id: number,
+	resolution: 'accepted' | 'dismissed',
+	fetchFn: FetchFn = fetch
+): Promise<void> {
+	const res = await fetchFn(`/api/wiki/notes/${id}/resolve`, {
+		method: 'PUT',
+		headers: { 'Content-Type': 'application/json' },
+		body: JSON.stringify({ resolution })
+	});
+	if (!res.ok) throw new Error('Could not close that note');
+}
+
+/** One edit to some article, for the History room. */
+export interface HistoryEntry {
+	subject_type: string;
+	subject_id: string;
+	route: string;
+	title: string;
+	author: string;
+	at: string;
+	version_number: number;
+}
+
+/** One line of a diff. `kind` is 'add' | 'del' | 'ctx'. */
+export interface DiffLine {
+	kind: string;
+	text: string;
+}
+
+/** One edit to one article, with what changed. */
+export interface ArticleRevision {
+	version_number: number;
+	author: string;
+	at: string;
+	diff: DiffLine[];
+	is_current: boolean;
+}
+
+/** Every recent edit to any article, newest first. */
+export async function listHistory(
+	limit = 50,
+	fetchFn: FetchFn = fetch
+): Promise<HistoryEntry[]> {
+	const res = await fetchFn(`/api/wiki/history?limit=${limit}`);
+	if (!res.ok) return [];
+	return res.json();
+}
+
+/** One article's edit history, with diffs. */
+export async function getArticleHistory(
+	subjectType: string,
+	subjectId: string,
+	fetchFn: FetchFn = fetch
+): Promise<ArticleRevision[]> {
+	const res = await fetchFn(`/api/wiki/articles/${subjectType}/${subjectId}/history`);
+	if (!res.ok) return [];
+	return res.json();
+}
+
+/** One piece of prose that mentions a subject. */
+export interface SubjectBacklink {
+	page_id: string;
+	title: string;
+	/** The subject's route if it is an article, else the page route. */
+	route: string;
+	is_article: boolean;
+}
+
+/** Everything whose prose links to this subject. Derived at read time. */
+export async function getSubjectBacklinks(
+	subjectType: string,
+	subjectId: string,
+	fetchFn: FetchFn = fetch
+): Promise<SubjectBacklink[]> {
+	const res = await fetchFn(`/api/wiki/subjects/${subjectType}/${subjectId}/backlinks`);
+	if (!res.ok) return [];
+	return res.json();
+}
+
+/**
+ * Write a subject's first article, now.
+ *
+ * Synchronous by design — one model call the user is waiting on. Returns the
+ * created article; the caller should re-fetch the entity to pick up the prose.
+ */
+export async function writeArticle(
+	subjectType: string,
+	subjectId: string,
+	fetchFn: FetchFn = fetch
+): Promise<{ id: string; page_id: string }> {
+	const res = await fetchFn(`/api/wiki/articles/${subjectType}/${subjectId}`, { method: 'POST' });
+	if (!res.ok) {
+		const body = await res.json().catch(() => null);
+		throw new Error(body?.error ?? body?.message ?? `Could not write the article`);
+	}
+	return res.json();
+}
+
+/** Turn maintenance on or off. Off means the AI never touches this article. */
+export async function setArticleAutoUpdate(
+	subjectType: string,
+	subjectId: string,
+	autoUpdate: boolean,
+	fetchFn: FetchFn = fetch
+): Promise<void> {
+	const res = await fetchFn(`/api/wiki/articles/${subjectType}/${subjectId}/auto-update`, {
+		method: 'PUT',
+		headers: { 'Content-Type': 'application/json' },
+		body: JSON.stringify({ auto_update: autoUpdate })
+	});
+	if (!res.ok) throw new Error('Could not change that');
 }
 
 export async function listPeople(fetchFn: FetchFn = fetch): Promise<WikiPersonListItem[]> {

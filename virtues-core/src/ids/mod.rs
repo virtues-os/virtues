@@ -81,6 +81,10 @@ pub const PAGE_PREFIX: &str = "page";
 pub const PAGE_VERSION_PREFIX: &str = "ver";
 pub const PAGE_SHARE_PREFIX: &str = "share";
 
+// Wiki articles (the record's prose about a subject — the join row; the prose
+// itself is an app_pages row with kind='article'). See migration 0081.
+pub const WIKI_ARTICLE_PREFIX: &str = "article";
+
 // Sidebar pins (user's globally-pinned URLs)
 pub const PIN_PREFIX: &str = "pin";
 

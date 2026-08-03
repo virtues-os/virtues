@@ -63,6 +63,19 @@ export interface TabDefinition {
 }
 
 // Complete tab registry with namespace-based URL patterns
+/**
+ * Every path the wiki room answers to — the ONE list.
+ *
+ * This regex used to be written out twice, here and in WikiView's own section
+ * parser. Adding Lifeline and History to one copy and not the other made both
+ * rooms unreachable: the section rendered fine, the sidebar linked to it, the
+ * typechecker was happy, and no tab would open because the router did not
+ * recognise the path. Two lists that must agree is a bug waiting for the next
+ * section.
+ */
+export const WIKI_SECTION_RE =
+	/^\/wiki\/(days|years|stories|entities|identity|lifeline|history|people|places|orgs|unlinked)$/;
+
 export const tabRegistry: Record<TabType, TabDefinition> = {
 	// ========================================================================
 	// HOME: /home — the default landing / "Return" page (synthesis surface)
@@ -182,7 +195,7 @@ export const tabRegistry: Record<TabType, TabDefinition> = {
 	wiki: {
 		match: (path) =>
 			path === '/wiki' ||
-			/^\/wiki\/(days|years|stories|entities|identity|people|places|orgs|unlinked)$/.test(path) ||
+			WIKI_SECTION_RE.test(path) ||
 			path === '/entities',
 		parse: () => ({
 			type: 'wiki',

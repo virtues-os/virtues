@@ -1,0 +1,23 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n        UPDATE wiki_orgs\n        SET\n            canonical_name = COALESCE($2, canonical_name),\n            content = COALESCE($3, content),\n            cover_image = COALESCE($4, cover_image),\n            organization_type = COALESCE($5, organization_type),\n            relationship_type = COALESCE($6, relationship_type),\n            role_title = COALESCE($7, role_title),\n            start_date = COALESCE($8, start_date),\n            end_date = COALESCE($9, end_date),\n            aliases = COALESCE($10, aliases),\n            updated_at = now()\n        WHERE id = $1\n        ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Text",
+        "Text",
+        "Text",
+        "Text",
+        "Text",
+        "Text",
+        "Text",
+        "Date",
+        "Date",
+        "Jsonb"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "1890df712ff164d6dc3f6d468b5332308674e7d0478bcf30a9f26d1d12b08176"
+}
