@@ -8,6 +8,7 @@
 import { Prec, type Extension } from '@codemirror/state';
 import { keymap, type EditorView } from '@codemirror/view';
 
+import { armedFormatting, armFormat } from './armed-format';
 import { inlineMarks } from './inline-marks';
 
 /**
@@ -17,11 +18,10 @@ function toggleWrapper(view: EditorView, wrapper: string): boolean {
 	const { from, to } = view.state.selection.main;
 
 	if (from === to) {
-		// No selection — insert wrapper pair and place cursor inside
-		view.dispatch({
-			changes: { from, insert: `${wrapper}${wrapper}` },
-			selection: { anchor: from + wrapper.length },
-		});
+		// Nothing selected — arm the format for the next character rather than
+		// writing an empty `****`, which the never-reveal rule would render as
+		// nothing at all. See armed-format.ts.
+		view.dispatch({ effects: armFormat.of({ open: wrapper, close: wrapper }) });
 		return true;
 	}
 
@@ -65,10 +65,7 @@ function toggleHtmlTag(view: EditorView, tag: string): boolean {
 	const closeTag = `</${tag}>`;
 
 	if (from === to) {
-		view.dispatch({
-			changes: { from, insert: `${openTag}${closeTag}` },
-			selection: { anchor: from + openTag.length },
-		});
+		view.dispatch({ effects: armFormat.of({ open: openTag, close: closeTag }) });
 		return true;
 	}
 
@@ -208,4 +205,5 @@ const formattingKeybindings: Extension = keymap.of([
 export const markdownKeybindings: Extension = [
 	highPrecedenceKeybindings,
 	formattingKeybindings,
+	armedFormatting,
 ];

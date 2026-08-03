@@ -98,6 +98,15 @@
 	pointer-events: none;
 }
 
+/*
+ * A format is armed (Cmd+B with nothing selected) — the next character typed
+ * will be wrapped. Recoloring the caret is the whole indicator; this editor
+ * draws the native caret, so there is no cursor element to decorate instead.
+ */
+.cm-format-armed {
+	caret-color: var(--color-primary);
+}
+
 /* =============================================================================
    LIVE PREVIEW — INLINE FORMATTING (applied via mark decorations)
    ============================================================================= */
