@@ -109,6 +109,11 @@
 	--font-mono: 'IBM Plex Mono', monospace;
 	--font-sans: 'Avenir', sans-serif;
 	--font-serif: 'JJannon', Lora, serif;
+	/* The serif for chrome — same face, metrics normalized so a centered line
+	   box centers the letters and not the em square. Use it wherever the serif
+	   shares a row with something that isn't text (an icon, a dot, a control);
+	   use --font-serif for prose. See the @font-face note in app.css. */
+	--font-serif-ui: 'JJannon UI', Lora, serif;
 
 	/* Animation Tokens */
 	--duration-fast: 150ms;
