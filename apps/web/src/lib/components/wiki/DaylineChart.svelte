@@ -17,6 +17,7 @@
 	import type { TimelineDayLocationChunk } from "$lib/wiki/api";
 	import MovementMap from "$lib/components/timeline/MovementMap.svelte";
 	import DayLocationTimeline from "$lib/components/timeline/DayLocationTimeline.svelte";
+	import DaylineStrip from "./DaylineStrip.svelte";
 
 	interface Props {
 		events: DayEvent[];
@@ -599,13 +600,17 @@
 	});
 
 	// ── Active metric pill ──────────────────────────────────────
-	type MetricView = "dayline" | "location" | "sleep" | "autonomic" | "dimensions";
+	// "Dayline" is the mini lifeline — the day in the same visual language as
+	// the life-scale console. The novelty z-score curve that used to own the
+	// word keeps its chart under its own name.
+	type MetricView = "dayline" | "novelty" | "location" | "sleep" | "autonomic" | "dimensions";
 	let activeMetric = $state<MetricView>("dayline");
 
 	const hasSleepData = $derived.by(() => sleepCycles.length > 0);
 
 	const metrics = $derived<{ id: MetricView; label: string; ready: boolean }[]>([
 		{ id: "dayline", label: "Dayline", ready: true },
+		{ id: "novelty", label: "Novelty", ready: true },
 		{ id: "location", label: "Location", ready: hasLocationData },
 		{ id: "sleep", label: "Sleep", ready: true },
 		{ id: "autonomic", label: "Autonomic", ready: false },
@@ -633,6 +638,14 @@
 	</div>
 
 	{#if activeMetric === "dayline"}
+	<!-- The day as a mini lifeline: sleep + events as a gantt, the raw record
+	     as per-lane density underneath — same endpoint the Lifeline draws.
+	     The wrapper clears the absolutely-positioned pill row; the old SVG got
+	     the same clearance from its own top margin. -->
+	<div class="strip-wrap">
+		<DaylineStrip {events} {timezone} {dayDateSlug} {sleepCycles} />
+	</div>
+	{:else if activeMetric === "novelty"}
 	<!-- Chart -->
 	<!-- svelte-ignore a11y_no_static_element_interactions -->
 	<svg
@@ -1179,6 +1192,10 @@
 		display: flex;
 		gap: 0.25rem;
 		padding: 0;
+	}
+
+	.strip-wrap {
+		padding-top: 2rem;
 	}
 
 	.metric-pill {

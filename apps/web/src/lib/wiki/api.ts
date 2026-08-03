@@ -77,6 +77,7 @@ export interface WikiOrganizationApi {
 	updated_at: string;
 	/** Is the record keeping this article up to date? Off unless asked. */
 	article_auto_update?: boolean;
+	aliases?: string[];
 }
 
 
