@@ -48,9 +48,6 @@ pub struct PageDoc {
     pub doc: Doc,
     pub broadcast_tx: broadcast::Sender<Vec<u8>>,
     pub last_update: Instant,
-    /// Whether this session has already run the article-claim check for a
-    /// user edit — one flip per cached doc, not one per keystroke flush.
-    pub claim_checked: bool,
 }
 
 /// Document cache with automatic TTL eviction
@@ -119,7 +116,6 @@ impl DocCache {
             doc,
             broadcast_tx,
             last_update: Instant::now(),
-            claim_checked: false,
         }));
 
         // Insert into cache
@@ -744,12 +740,13 @@ async fn handle_yjs_connection(mut socket: WebSocket, page_id: String, state: Yj
                                         };
                                         let mut doc = page_doc.write().await;
                                         if let Some((full_state, changed)) = apply_yjs_update(&mut doc, update_bytes) {
-                                            let claim = changed && !doc.claim_checked;
-                                            if claim {
-                                                doc.claim_checked = true;
-                                            }
                                             drop(doc);
-                                            if claim {
+                                            // Every changing update, not once per cached doc: the
+                                            // WHERE auto_update=true makes it a no-op after the
+                                            // first flip, and re-enabling the toggle mid-session
+                                            // must re-arm the claim — a memo held that flag
+                                            // hostage until cache eviction.
+                                            if changed {
                                                 claim_article_on_user_edit(&state.pool, &page_id).await;
                                             }
                                             state.save_queue.queue_save(page_id.clone(), full_state).await;
@@ -767,12 +764,13 @@ async fn handle_yjs_connection(mut socket: WebSocket, page_id: String, state: Yj
                                         };
                                         let mut doc = page_doc.write().await;
                                         if let Some((full_state, changed)) = apply_yjs_update(&mut doc, update_bytes) {
-                                            let claim = changed && !doc.claim_checked;
-                                            if claim {
-                                                doc.claim_checked = true;
-                                            }
                                             drop(doc);
-                                            if claim {
+                                            // Every changing update, not once per cached doc: the
+                                            // WHERE auto_update=true makes it a no-op after the
+                                            // first flip, and re-enabling the toggle mid-session
+                                            // must re-arm the claim — a memo held that flag
+                                            // hostage until cache eviction.
+                                            if changed {
                                                 claim_article_on_user_edit(&state.pool, &page_id).await;
                                             }
                                             state.save_queue.queue_save(page_id.clone(), full_state).await;
@@ -842,7 +840,6 @@ mod tests {
             doc,
             broadcast_tx,
             last_update: Instant::now(),
-            claim_checked: false,
         }
     }
 
