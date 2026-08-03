@@ -166,7 +166,18 @@ const highPrecedenceKeybindings: Extension = Prec.high(
 	]),
 );
 
-const formattingKeybindings: Extension = keymap.of([
+/**
+ * Formatting shortcuts.
+ *
+ * Raised precedence for one specific reason: `defaultKeymap` binds Mod-i to
+ * selectParentSyntax with preventDefault, and it is registered ahead of this
+ * module, so plain precedence meant Cmd+I selected the enclosing paragraph
+ * instead of italicizing — the whole line lighting up rather than four
+ * characters going slanted. Mod-i is the only collision (checked against the
+ * default list), but the whole set is raised so the next one added here does
+ * not silently lose the same way.
+ */
+const formattingKeybindings: Extension = Prec.high(keymap.of([
 	{
 		key: 'Mod-b',
 		run: (view) => toggleWrapper(view, '**'),
@@ -200,7 +211,7 @@ const formattingKeybindings: Extension = keymap.of([
 		key: 'Mod-Shift-h',
 		run: (view) => toggleWrapper(view, '=='),
 	},
-]);
+]));
 
 export const markdownKeybindings: Extension = [
 	highPrecedenceKeybindings,
