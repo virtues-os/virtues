@@ -22,6 +22,8 @@ import { type EditorState, type Extension, type Range, StateField } from '@codem
 import { Decoration, type DecorationSet, EditorView, WidgetType } from '@codemirror/view';
 import { contextMenu } from '$lib/stores/contextMenu.svelte';
 
+import { onContextGesture } from './long-press';
+
 type Alignment = 'left' | 'center' | 'right';
 
 function parseCells(line: string): string[] {
@@ -454,10 +456,10 @@ class TableWidget extends WidgetType {
 			highlightColumn(table, colIdx, 'cm-delete-preview');
 		};
 
-		table.addEventListener('contextmenu', (e) => {
-			const target = (e.target as HTMLElement).closest('th, td') as HTMLElement | null;
+		// Right-click or long-press on a cell — same menu (see long-press.ts).
+		onContextGesture(table, (x, y, eventTarget) => {
+			const target = (eventTarget as HTMLElement | null)?.closest('th, td') as HTMLElement | null;
 			if (!target) return;
-			e.preventDefault();
 
 			const coords = getCellCoords(table, target);
 			if (!coords) return;
@@ -487,7 +489,7 @@ class TableWidget extends WidgetType {
 				onMouseLeave: clearDeletePreview,
 			});
 
-			contextMenu.show({ x: e.clientX, y: e.clientY }, items);
+			contextMenu.show({ x, y }, items);
 		});
 
 		const addRow = (atIndex: number) => {

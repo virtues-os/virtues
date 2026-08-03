@@ -99,6 +99,103 @@
 }
 
 /* =============================================================================
+   FIND-IN-PAGE — the @codemirror/search panel, restyled to read as the app
+   ============================================================================= */
+
+.cm-panels {
+	background: var(--color-background);
+	border: none;
+	z-index: 10;
+}
+
+.cm-panels-top {
+	border-bottom: 1px solid var(--color-border-subtle, var(--color-border));
+}
+
+.cm-panel.cm-search {
+	display: flex;
+	align-items: center;
+	flex-wrap: wrap;
+	gap: 6px;
+	padding: 8px 12px;
+	font-family: var(--font-sans);
+	font-size: 12px;
+	color: var(--color-foreground-muted);
+}
+
+.cm-panel.cm-search input[type='checkbox'] {
+	accent-color: var(--color-primary);
+	margin-right: 2px;
+}
+
+.cm-panel.cm-search .cm-textfield {
+	padding: 5px 8px;
+	border: 1px solid var(--color-border);
+	border-radius: 6px;
+	background: var(--color-surface-elevated);
+	color: var(--color-foreground);
+	font-size: 12px;
+	font-family: var(--font-sans);
+}
+
+.cm-panel.cm-search .cm-textfield:focus {
+	outline: none;
+	border-color: var(--color-primary);
+}
+
+.cm-panel.cm-search .cm-button {
+	padding: 4px 10px;
+	border: 1px solid var(--color-border);
+	border-radius: 6px;
+	background: transparent;
+	background-image: none;
+	color: var(--color-foreground);
+	font-size: 12px;
+	font-weight: 500;
+	cursor: pointer;
+	text-transform: none;
+}
+
+.cm-panel.cm-search .cm-button:hover {
+	background: var(--hover-bg);
+}
+
+.cm-panel.cm-search [name='close'] {
+	position: static;
+	margin-left: auto;
+	padding: 2px 6px;
+	border: none;
+	background: transparent;
+	color: var(--color-foreground-muted);
+	font-size: 15px;
+	cursor: pointer;
+}
+
+.cm-panel.cm-search [name='close']:hover {
+	color: var(--color-foreground);
+}
+
+/* Matches: the current one gets the theme highlight, the rest a faint wash.
+   Selector depth matters: CodeMirror injects its own `.ͼx .cm-searchMatch`
+   rules at runtime (one class + descendant), so these need to be one level
+   more specific to win — a bare `.cm-searchMatch` loses and the stock yellow
+   shows through. */
+.cm-editor .cm-content .cm-searchMatch {
+	background-color: color-mix(in srgb, var(--color-highlight, #fae082) 35%, transparent);
+	border-radius: 2px;
+}
+
+.cm-editor .cm-content .cm-searchMatch.cm-searchMatch-selected {
+	background-color: var(--color-highlight, rgba(250, 224, 130, 0.45));
+}
+
+/* Quiet echo of other occurrences of the selected word. */
+.cm-editor .cm-content .cm-selectionMatch {
+	background-color: color-mix(in srgb, var(--color-primary) 12%, transparent);
+	border-radius: 2px;
+}
+
+/* =============================================================================
    LIVE PREVIEW — INLINE FORMATTING (applied via mark decorations)
    ============================================================================= */
 

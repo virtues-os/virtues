@@ -20,6 +20,7 @@ import { contextMenu } from '$lib/stores/contextMenu.svelte';
 import { isEntityRoute } from '$lib/utils/refRoutes';
 
 import { collectCodeRanges, inCode } from './code-context';
+import { onContextGesture } from './long-press';
 
 const MEDIA_REGEX = /!\[([^\]]*)\]\(([^)]+)\)/g;
 
@@ -81,16 +82,14 @@ function getFileIcon(ext: string): string {
 // =============================================================================
 
 function showMediaContextMenu(
-	e: MouseEvent,
+	x: number,
+	y: number,
 	view: EditorView,
 	from: number,
 	to: number,
 	href: string,
 ) {
-	e.preventDefault();
-	e.stopPropagation();
-
-	contextMenu.show({ x: e.clientX, y: e.clientY }, [
+	contextMenu.show({ x, y }, [
 		{
 			id: 'go-to',
 			label: 'Go to',
@@ -191,8 +190,8 @@ class ImageWidget extends WidgetType {
 
 		wrapper.appendChild(img);
 
-		wrapper.addEventListener('contextmenu', (e) => {
-			showMediaContextMenu(e, view, this.from, this.to, this.src);
+		onContextGesture(wrapper, (x, y) => {
+			showMediaContextMenu(x, y, view, this.from, this.to, this.src);
 		});
 
 		remeasureOnResize(view, wrapper);
@@ -239,8 +238,8 @@ class AudioWidget extends WidgetType {
 		wrapper.appendChild(header);
 		wrapper.appendChild(audio);
 
-		wrapper.addEventListener('contextmenu', (e) => {
-			showMediaContextMenu(e, view, this.from, this.to, this.src);
+		onContextGesture(wrapper, (x, y) => {
+			showMediaContextMenu(x, y, view, this.from, this.to, this.src);
 		});
 
 		return wrapper;
@@ -268,8 +267,8 @@ class VideoWidget extends WidgetType {
 
 		wrapper.appendChild(video);
 
-		wrapper.addEventListener('contextmenu', (e) => {
-			showMediaContextMenu(e, view, this.from, this.to, this.src);
+		onContextGesture(wrapper, (x, y) => {
+			showMediaContextMenu(x, y, view, this.from, this.to, this.src);
 		});
 
 		remeasureOnResize(view, wrapper);
@@ -331,8 +330,8 @@ class FileCardWidget extends WidgetType {
 		dl.className = 'cm-file-card-download';
 		wrapper.appendChild(dl);
 
-		wrapper.addEventListener('contextmenu', (e) => {
-			showMediaContextMenu(e, view, this.from, this.to, this.src);
+		onContextGesture(wrapper, (x, y) => {
+			showMediaContextMenu(x, y, view, this.from, this.to, this.src);
 		});
 
 		return wrapper;

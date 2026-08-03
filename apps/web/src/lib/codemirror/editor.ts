@@ -7,6 +7,7 @@
 
 import { defaultKeymap } from '@codemirror/commands';
 import { markdown, markdownKeymap } from '@codemirror/lang-markdown';
+import { highlightSelectionMatches, search, searchKeymap } from '@codemirror/search';
 import { bracketMatching, indentOnInput } from '@codemirror/language';
 // GFM adds Strikethrough, Table, TaskList to the Lezer markdown parser.
 import { GFM } from '@lezer/markdown';
@@ -67,7 +68,15 @@ export function createCodeMirrorEditor(options: CodeMirrorEditorOptions): Editor
 			...yUndoManagerKeymap,
 			...markdownKeymap,
 			...defaultKeymap,
+			// Find-in-page: Mod-f opens the panel, Mod-g / Shift-Mod-g step
+			// through matches, Escape closes. Distinct from the app's global ⌘K.
+			...searchKeymap,
 		]),
+
+		// The find panel docks above the content; styling lives in theme.css
+		// (.cm-panel.cm-search) so it reads as the app, not stock CodeMirror.
+		search({ top: true }),
+		highlightSelectionMatches(),
 
 		// Theme
 		virtuesTheme,
