@@ -11,7 +11,7 @@
 	import { ContextMenuProvider } from "$lib/components/contextMenu";
 	import DialogHost from "$lib/components/DialogHost.svelte";
 	import ServerProvisioning from "$lib/components/ServerProvisioning.svelte";
-	import Modal from "$lib/components/Modal.svelte";
+	import { FloatingContent } from "$lib/floating";
 	import IconPicker from "$lib/components/IconPicker.svelte";
 	import { iconPickerStore } from "$lib/stores/iconPicker.svelte";
 	import { chatSessions } from "$lib/stores/chatSessions.svelte";
@@ -381,16 +381,38 @@
 	<ServerProvisioning initialStatus={data.serverStatus} />
 {/if}
 
-<!-- Global Icon Picker Modal -->
-<Modal open={iconPickerStore.open} onClose={() => iconPickerStore.hide()} title="Change Icon" width="md">
-	{#snippet children()}
-		<IconPicker
-			value={iconPickerStore.currentValue}
-			onSelect={(icon) => iconPickerStore.select(icon)}
-			close={() => iconPickerStore.hide()}
-		/>
-	{/snippet}
-</Modal>
+<!-- Global icon picker.
+     A popover, not a modal: the in-page and toolbar pickers have always been
+     popovers, and the same panel arriving centred and dimming the document —
+     to ask about one 16px glyph — read as a different, heavier feature. It
+     hangs off wherever it was summoned from (a right-click point, a button
+     rect); with no anchor it falls back to the middle of the window. -->
+{#if iconPickerStore.open}
+	<!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
+	<div class="icon-picker-scrim" onclick={() => iconPickerStore.hide()}></div>
+	<FloatingContent
+		anchor={iconPickerStore.anchor ?? {
+			x: window.innerWidth / 2,
+			y: window.innerHeight / 2,
+			width: 0,
+			height: 0,
+		}}
+		options={{ placement: "bottom-start", offset: 6, flip: true, shift: true }}
+		class="icon-picker-floating"
+	>
+		{#snippet children()}
+			<IconPicker
+				value={iconPickerStore.currentValue}
+				onSelect={(icon) => iconPickerStore.select(icon)}
+				close={() => iconPickerStore.hide()}
+				color={iconPickerStore.currentColor}
+				onColorSelect={iconPickerStore.colorEnabled
+					? (c) => iconPickerStore.selectColor(c)
+					: undefined}
+			/>
+		{/snippet}
+	</FloatingContent>
+{/if}
 
 <!-- Hidden: SvelteKit children are not rendered - using custom tab-based routing instead -->
 {#if false}
@@ -454,5 +476,27 @@
 		opacity: 1;
 		color: var(--color-foreground);
 		background: var(--hover-bg);
+	}
+
+	/* Invisible, not dim. The picker is a popover — the page behind it stays
+	   readable and in context — but a click outside still has to dismiss it,
+	   and a transparent full-screen catcher is how that works without every
+	   caller wiring up click-outside itself. */
+	.icon-picker-scrim {
+		position: fixed;
+		inset: 0;
+		z-index: var(--z-popover, 1000);
+		background: transparent;
+	}
+
+	/* Chrome only. The picker sizes and scrolls itself (360px, its own
+	   max-height, its own overflow) — a second width and a second scroller out
+	   here would fight it and produce two scrollbars. */
+	:global(.icon-picker-floating) {
+		z-index: calc(var(--z-popover, 1000) + 1);
+		background: var(--color-surface);
+		border: 1px solid var(--color-border);
+		border-radius: 12px;
+		box-shadow: 0 12px 32px rgb(0 0 0 / 0.18);
 	}
 </style>
