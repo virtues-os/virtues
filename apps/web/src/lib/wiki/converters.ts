@@ -168,6 +168,7 @@ export function apiToOrganizationPage(api: WikiOrganizationApi): OrganizationPag
 				}
 			: undefined,
 		role: api.role_title ?? undefined,
+		aliases: api.aliases ?? [],
 
 		// Content
 		content: api.content ?? "",

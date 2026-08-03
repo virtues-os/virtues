@@ -11,7 +11,9 @@
 	import SubjectBacklinks from "./SubjectBacklinks.svelte";
 	import NotesRail from "./NotesRail.svelte";
 	import EntityRecordsSection from "./EntityRecordsSection.svelte";
+	import AliasEditor from "./AliasEditor.svelte";
 	import Markdown from "$lib/components/Markdown.svelte";
+	import { updateOrganization } from "$lib/wiki/api";
 
 	interface Props {
 		page: OrganizationPageType;
@@ -43,6 +45,11 @@
 		return `${start} — ${end}`;
 	}
 
+	async function saveAliases(next: string[]) {
+		const saved = await updateOrganization(page.id, { aliases: next });
+		if (!saved) throw new Error("Could not save aliases");
+	}
+
 </script>
 
 <div class="page-layout">
@@ -67,6 +74,18 @@
 					{/if}
 				</div>
 			</header>
+
+			<!-- Also known as. Same placement as the person page: it corrects
+			     the record calling this org by a surface the resolver does not
+			     recognise — Gusto the sender vs Gusto the company. Writing one
+			     here backfills every past mention of it (migration 0037). -->
+			<div class="org-aliases">
+				<AliasEditor
+					aliases={page.aliases ?? []}
+					canonicalName={page.title}
+					onSave={saveAliases}
+				/>
+			</div>
 
 			<hr class="divider" />
 
@@ -261,6 +280,11 @@
 		margin-top: 0.5rem;
 		font-size: 0.875rem;
 		color: var(--color-foreground-subtle);
+	}
+
+	/* Between the header and the article's rule, matching the person page. */
+	.org-aliases {
+		margin-top: 0.625rem;
 	}
 
 	.org-badge {

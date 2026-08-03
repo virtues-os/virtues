@@ -29,9 +29,13 @@ Four rules give that sentence teeth:
    can read and revert.
 
 Scope for this arc: **Overview, Lifeline, Narrative Identity, People, Places,
-Orgs, Days, History.** Stories and Years are hidden from the room, not dropped
-(`wiki_stories` shipped in 0075, `wiki_years` in 0006) — a row removed from
-`WIKI_MODE`, nothing more. **Notes are not a room**: a note belongs to the
+Orgs, Days, History.** Stories are hidden from the room, not dropped
+(`wiki_stories` shipped in 0075) — a row removed from `WIKI_MODE`, nothing
+more. **Years stays in the room** (decided 2026-08-03): a year is a subject a
+person names, and `YearPage` already renders it. Months and weeks do not get
+rooms or pages — a week has no narrative identity, and "March" already has a
+home as a note's date range; if a month view is ever wanted it is a grouping
+of the Days index, not a subject. **Notes are not a room**: a note belongs to the
 subject it is about, so it lives as a rail on that article and as one module on
 the Overview. A separate destination would detach every note from its subject,
 which is the whole point.
