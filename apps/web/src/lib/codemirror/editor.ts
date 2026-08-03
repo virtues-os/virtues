@@ -17,15 +17,9 @@ import { yCollab, yUndoManagerKeymap } from 'y-codemirror.next';
 import type { Awareness } from 'y-protocols/awareness';
 import type { Text as YText } from 'yjs';
 
-import { checkboxes } from './extensions/checkboxes';
-import { codeBlocks } from './extensions/code-blocks';
-import { entityLinks } from './extensions/ref-links';
 import { markdownKeybindings } from './extensions/keybindings';
 import { listRenumber } from './extensions/list-renumber';
-import { livePreview } from './extensions/live-preview';
-import { mediaWidgets } from './extensions/media-widgets';
-import { shikiHighlight } from './extensions/shiki-highlight';
-import { tables } from './extensions/tables';
+import { renderMode, renderModeCompartment } from './extensions/render-mode';
 import { virtuesTheme } from './theme';
 
 export interface CodeMirrorEditorOptions {
@@ -36,6 +30,8 @@ export interface CodeMirrorEditorOptions {
 	placeholder?: string;
 	extensions?: Extension[];
 	onDocChange?: (content: string) => void;
+	/** Start in raw markdown instead of the rendered surface. */
+	raw?: boolean;
 }
 
 export function createCodeMirrorEditor(options: CodeMirrorEditorOptions): EditorView {
@@ -47,6 +43,7 @@ export function createCodeMirrorEditor(options: CodeMirrorEditorOptions): Editor
 		placeholder = 'Start writing, or press / for commands…',
 		extensions: extraExtensions = [],
 		onDocChange,
+		raw = false,
 	} = options;
 
 	const baseExtensions: Extension[] = [
@@ -70,14 +67,9 @@ export function createCodeMirrorEditor(options: CodeMirrorEditorOptions): Editor
 		// Theme
 		virtuesTheme,
 
-		// Live preview decorations
-		livePreview,
-		entityLinks,
-		checkboxes,
-		mediaWidgets,
-		codeBlocks,
-		shikiHighlight,
-		tables,
+		// The rendered surface (see extensions/render-mode.ts) — swapped out
+		// wholesale for raw markdown via the compartment.
+		renderModeCompartment.of(renderMode(raw)),
 
 		// Keep ordered lists sequential after edits
 		listRenumber,
@@ -136,13 +128,8 @@ export function createReadOnlyEditor(options: ReadOnlyEditorOptions): EditorView
 				markdown({ codeLanguages: languages, extensions: GFM }),
 				EditorView.lineWrapping,
 				virtuesTheme,
-				livePreview,
-				entityLinks,
-				checkboxes,
-				mediaWidgets,
-				codeBlocks,
-				shikiHighlight,
-				tables,
+				// Reading is always rendered — raw is an authoring escape hatch.
+				renderMode(false),
 				EditorView.editable.of(false),
 				EditorState.readOnly.of(true),
 			],
