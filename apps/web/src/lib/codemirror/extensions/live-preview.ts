@@ -114,17 +114,18 @@ function buildDecorations(view: EditorView): DecorationSet {
 			}
 
 			// --- Horizontal rules ---
+			// Always the rule, never the `---`. Swapping a 1px line for three
+			// characters of text and back is the same flicker as everything else
+			// here; the line is still selectable and deletable as a line.
 			if (name === 'HorizontalRule') {
 				hrLines.add(nodeStartLine);
-				if (!overlapsActiveLine) {
-					builder.push(Decoration.replace({}).range(from, to));
-					builder.push(
-						Decoration.widget({
-							widget: new HorizontalRuleWidget(),
-							side: 1,
-						}).range(to)
-					);
-				}
+				builder.push(Decoration.replace({}).range(from, to));
+				builder.push(
+					Decoration.widget({
+						widget: new HorizontalRuleWidget(),
+						side: 1,
+					}).range(to)
+				);
 			}
 
 			// --- List line decorations (padding) ---
@@ -177,7 +178,6 @@ function buildDecorations(view: EditorView): DecorationSet {
 
 	for (let lineNum = startLine; lineNum <= endLine; lineNum++) {
 		if (hrLines.has(lineNum)) continue;
-		if (lineNum === cursorLine.number) continue;
 
 		const line = doc.line(lineNum);
 		if (!/^(-{3,}|\*{3,}|_{3,})\s*$/.test(line.text)) continue;

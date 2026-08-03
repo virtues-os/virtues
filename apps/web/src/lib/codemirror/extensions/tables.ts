@@ -734,15 +734,12 @@ class TableWidget extends WidgetType {
 
 function buildTableDecorations(state: EditorState): DecorationSet {
 	const builder: Range<Decoration>[] = [];
-	const cursorHead = state.selection.main.head;
 
 	syntaxTree(state).iterate({
 		enter(node) {
 			if (node.name !== 'Table') return;
 
 			const { from, to } = node;
-
-			if (cursorHead >= from && cursorHead <= to) return;
 
 			const text = state.sliceDoc(from, to);
 			const parsed = parseTable(text);
@@ -765,7 +762,12 @@ const tableField = StateField.define<DecorationSet>({
 		return buildTableDecorations(state);
 	},
 	update(decos, tr) {
-		if (tr.docChanged || tr.selection) {
+		// No longer rebuilt on selection: the table used to un-render into raw
+		// pipes whenever the caret entered its range, which meant a whole block
+		// changing shape under the cursor. The widget has always been a full
+		// editor — click a cell, Tab between them, +strips to add rows — so
+		// there was never anything to fall back to raw FOR.
+		if (tr.docChanged) {
 			return buildTableDecorations(tr.state);
 		}
 		return decos;
@@ -773,4 +775,16 @@ const tableField = StateField.define<DecorationSet>({
 	provide: (field) => EditorView.decorations.from(field),
 });
 
-export const tables: Extension = tableField;
+/**
+ * A rendered table is one object as far as the caret is concerned.
+ *
+ * Without this the caret could be placed inside the source range of a block
+ * that is not drawn — arrowing down from the line above would appear to strand
+ * it in nothing. Cell editing happens inside the widget's own contentEditable
+ * cells, not through the outer document selection.
+ */
+const tableAtoms: Extension = EditorView.atomicRanges.of((view) =>
+	view.state.field(tableField, false) ?? Decoration.none,
+);
+
+export const tables: Extension = [tableField, tableAtoms];
