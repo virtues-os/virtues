@@ -15,7 +15,8 @@
 <script lang="ts">
 	import { Page } from '$lib';
 	import Icon from '$lib/components/Icon.svelte';
-	import { getStreamHealth, type StreamHealth } from '$lib/api/client';
+	import { getStreamHealth, getStreamDays, type StreamHealth, type StreamDays } from '$lib/api/client';
+	import StreamGrid from './StreamGrid.svelte';
 	import { sourcesStore } from '$lib/stores/sources.svelte';
 	import { connectFlow } from '$lib/stores/connectFlow.svelte';
 	import { windowShellStore } from '$lib/stores/window-shell.svelte';
@@ -24,14 +25,32 @@
 	const store = sourcesStore;
 
 	let streams = $state<StreamHealth[]>([]);
+	let dayRows = $state<StreamDays[]>([]);
+	// The grid endpoint is newer than the health one; a box that predates it
+	// must not make the page claim nothing ever arrived.
+	let daysUnavailable = $state(false);
 	let streamsErr = $state<string | null>(null);
 	let refreshing = $state(false);
 
 	async function loadStreams() {
 		refreshing = true;
 		try {
-			streams = await getStreamHealth();
-			streamsErr = null;
+			// Two endpoints, two failure modes. Settled rather than all-or-nothing
+			// so a box that predates /streams/days still renders its vitals
+			// instead of reporting one error for both.
+			const [health, days] = await Promise.allSettled([
+				getStreamHealth(),
+				getStreamDays(84)
+			]);
+			if (health.status === 'fulfilled') streams = health.value;
+			dayRows = days.status === 'fulfilled' ? days.value : [];
+			daysUnavailable = days.status === 'rejected';
+			streamsErr =
+				health.status === 'rejected'
+					? health.reason instanceof Error
+						? health.reason.message
+						: String(health.reason)
+					: null;
 		} catch (e) {
 			streamsErr = e instanceof Error ? e.message : String(e);
 		} finally {
@@ -110,6 +129,35 @@
 		if (items.length === 2) return `${items[0]} ${conj} ${items[1]}`;
 		return `${items.slice(0, -1).join(', ')}, ${conj} ${items[items.length - 1]}`;
 	}
+
+	/**
+	 * Grid rows grouped by the source that feeds them. This is the operational
+	 * axis: everything wrong here is fixed by going to a device, so the device
+	 * is what the rows hang under. Coverage — what you *don't* have — is the
+	 * opposite question with the opposite answer ("connect something") and
+	 * belongs in the catalog, not here.
+	 */
+	const bySourceGrid = $derived.by(() => {
+		const connectedNames = new Set(
+			[...store.bySource.keys()].map((id) => store.sourceLabel(id))
+		);
+		const groups = new Map<string, StreamDays[]>();
+		for (const row of dayRows) {
+			// A stream with rows but no declared writer is computed by the box.
+			const owners = (row.provided_by ?? []).filter((n) => connectedNames.has(n));
+			const keys = owners.length
+				? owners
+				: row.days.some((n) => n > 0)
+					? ['Computed on the box']
+					: [];
+			for (const k of keys) {
+				const list = groups.get(k);
+				if (list) list.push(row);
+				else groups.set(k, [row]);
+			}
+		}
+		return [...groups].map(([source, rows]) => ({ source, rows }));
+	});
 
 	const domains = $derived.by(() => {
 		const by = new Map<string, StreamHealth[]>();
@@ -333,70 +381,27 @@
 		</section>
 	{/if}
 
-	<!-- ─── DATA FLOW ───────────────────────────────────────────────────── -->
-	<section class="chapter">
-
-		{#if streamsErr}
-			<div class="error">{streamsErr}</div>
-		{:else if streams.length === 0}
-			<p class="muted">No streams registered.</p>
-		{:else}
-			{#each domains as d (d.id)}
-				<div class="domain" class:dark={d.dark}>
-					<div class="domain-head">
-						<span class="domain-name">{d.label}</span>
-						{#if d.attention}
-							<span class="domain-flag">stopped</span>
-						{/if}
-					</div>
-					{#if d.arrived.length > 0}
-						<div class="ledger">
-							{#each d.arrived as s (s.name)}
-								<div class="ledger-row {s.status}">
-									<span class="ledger-label">{s.display_name}</span>
-									<span class="leader"></span>
-									<span class="ledger-state">{COPY[s.status] ?? s.status}</span>
-									<span class="ledger-value mono">
-										{s.last_ingest ? relativeTime(s.last_ingest) : '—'}
-									</span>
-									<span class="ledger-count mono">{s.count_24h > 0 ? s.count_24h : ''}</span>
-								</div>
-							{/each}
-						</div>
-					{/if}
-					<!-- Connected and capable, nothing arrived. Usually a permission
-					     on the device, so no "connect" offer would help. -->
-					{#if d.silent.length > 0}
-						<p class="aside">
-							Waiting on {joinNames(
-								d.silent.map((s) => s.display_name),
-								'and'
-							)} — connected, nothing delivered yet.
-						</p>
-					{/if}
-
-					<!-- The one actionable line: something in the catalog fills this. -->
-					{#each d.offers as o (o.source)}
-						<p class="aside offer">
-							{joinNames(o.names, 'and')} —
-							<button type="button" class="inline" onclick={() => connectNamed(o.source)}>
-								connect {o.source}
-							</button>
-						</p>
-					{/each}
-
-					{#if d.unsupported.length > 0}
-						<p class="aside quiet">
-							No source for {joinNames(
-								d.unsupported.map((s) => s.display_name),
-								'or'
-							)} yet.
-						</p>
-					{/if}
-				</div>
-			{/each}
-		{/if}
-	</section>
+	<!-- ─── ARRIVALS ────────────────────────────────────────────────────── -->
+	{#if streamsErr}
+		<div class="error">{streamsErr}</div>
+	{:else if daysUnavailable}
+		<p class="muted">This box is running a build without the arrivals grid yet.</p>
+	{:else if bySourceGrid.length === 0}
+		<p class="muted">
+			Nothing has arrived yet. The <button type="button" class="inline" onclick={openCatalog}
+				>catalog</button
+			> lists everything Virtues can draw from.
+		</p>
+	{:else}
+		{#each bySourceGrid as g (g.source)}
+			<StreamGrid title={g.source} streams={g.rows} />
+		{/each}
+		<p class="legend">
+			Each square is a day. Darker means more arrived — measured against that
+			stream's own busiest day, since a location fix a second and one calendar
+			event a day are both normal.
+		</p>
+	{/if}
 
 </Page>
 
@@ -521,126 +526,6 @@
 	.mono {
 		font-variant-numeric: tabular-nums;
 		color: var(--color-foreground-muted, #6b7280);
-	}
-
-	/* ── Domains ──────────────────────────────────────────────────────── */
-	.domain {
-		margin-bottom: 1.5rem;
-	}
-	.domain:last-child {
-		margin-bottom: 0;
-	}
-	.domain-head {
-		display: flex;
-		align-items: baseline;
-		gap: 0.5rem;
-		padding-bottom: 0.3125rem;
-		margin-bottom: 0.375rem;
-		border-bottom: 1px solid color-mix(in srgb, var(--color-foreground) 8%, transparent);
-	}
-	.domain-name {
-		font-size: 1rem;
-		font-weight: 600;
-		letter-spacing: -0.008em;
-		color: var(--color-foreground, #111827);
-	}
-	.domain-flag {
-		font-size: 0.75rem;
-		color: var(--color-error);
-	}
-	/* A domain nobody has connected is a fact, not a failure — quieter, but
-	   still listed, because "you could have this" is half the point. */
-	.domain.dark .domain-name {
-		color: var(--color-foreground-muted, #6b7280);
-		font-weight: 500;
-	}
-
-	/* The three not-yet lines. Same size, decreasing ink: an offer you can act
-	   on, a wait you cannot, and a limit that is ours rather than yours. */
-	.aside {
-		margin: 0.375rem 0 0;
-		font-size: 0.8125rem;
-		line-height: 1.5;
-		color: var(--color-foreground-muted, #6b7280);
-	}
-	.aside.quiet {
-		color: var(--color-foreground-subtle, #9ca3af);
-	}
-	.inline {
-		border: none;
-		background: none;
-		padding: 0;
-		font: inherit;
-		color: var(--color-primary);
-		cursor: pointer;
-	}
-	.inline:hover {
-		text-decoration: underline;
-		text-underline-offset: 2px;
-	}
-
-	/* ── Ledger ───────────────────────────────────────────────────────── */
-	.ledger {
-		display: flex;
-		flex-direction: column;
-	}
-	.ledger-row {
-		display: flex;
-		align-items: baseline;
-		gap: 0.625rem;
-		padding: 0.375rem 0;
-		font-size: 0.875rem;
-		color: var(--color-foreground-muted, #6b7280);
-	}
-	.ledger-label {
-		color: var(--color-foreground, #111827);
-	}
-	/* The dot leader — same device the CLI uses to tie a name to its value. */
-	/* The dot leader, as a printed index does it: dots fine enough to read as
-	   texture rather than as a dashed border, sitting on the x-height rather
-	   than the baseline so the eye tracks along the middle of the line. */
-	.leader {
-		flex: 1;
-		min-width: 2rem;
-		height: 1px;
-		align-self: center;
-		background-image: radial-gradient(
-			circle,
-			color-mix(in srgb, var(--color-foreground) 26%, transparent) 0.5px,
-			transparent 0.5px
-		);
-		background-size: 4px 1px;
-		background-repeat: repeat-x;
-		opacity: 0.85;
-	}
-	.ledger-state {
-		flex-shrink: 0;
-		width: 9rem;
-		font-size: 0.8125rem;
-	}
-	.ledger-row.stalled .ledger-state {
-		color: var(--color-error);
-		font-weight: 500;
-	}
-	.ledger-row.idle .ledger-state {
-		color: var(--color-warning, #d97706);
-	}
-	.ledger-row.never .ledger-state,
-	.ledger-row.never .ledger-label {
-		color: var(--color-foreground-subtle, #9ca3af);
-	}
-	.ledger-value {
-		flex-shrink: 0;
-		width: 6.5rem;
-		text-align: right;
-		font-size: 0.8125rem;
-	}
-	.ledger-count {
-		flex-shrink: 0;
-		width: 4rem;
-		text-align: right;
-		font-size: 0.8125rem;
-		color: var(--color-foreground-subtle, #9ca3af);
 	}
 
 	/* ── Attention ────────────────────────────────────────────────────── */

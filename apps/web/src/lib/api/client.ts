@@ -713,6 +713,23 @@ export interface StreamHealth {
  * Per-stream ingest freshness, worst-first. The signal that was missing while
  * messages, the calendar sync, and finance each went dark unnoticed.
  */
+/** One stream's arrivals, one entry per day, oldest first and zero-filled. */
+export interface StreamDays {
+	name: string;
+	display_name: string;
+	provided_by: string[];
+	days: number[];
+}
+
+/**
+ * Daily arrival counts per stream. A scalar "last seen" cannot show whether
+ * streams stopped *together* — nineteen rows reading the same date is one
+ * event, not nineteen — and on a day axis that becomes a visible cliff.
+ */
+export async function getStreamDays(days = 84): Promise<StreamDays[]> {
+	return apiGet<StreamDays[]>(`/streams/days?days=${days}`);
+}
+
 export async function getStreamHealth(): Promise<StreamHealth[]> {
 	return apiGet<StreamHealth[]>('/streams/health');
 }
