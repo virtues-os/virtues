@@ -1,2 +1,0 @@
--- 0088_allow_browser_device_kind
--- Number claimed; SQL to follow.
