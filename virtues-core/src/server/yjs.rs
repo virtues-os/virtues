@@ -71,9 +71,31 @@ impl DocCache {
         page_id: &str,
         pool: &PgPool,
     ) -> Result<Arc<RwLock<PageDoc>>, anyhow::Error> {
-        // Check cache first
+        // Check cache first — but not blindly. A cached doc persists
+        // `yjs_state` on every save, so `yjs_state IS NULL` in the database
+        // while a warm entry exists means an EXTERNAL writer rewrote the page
+        // via the pool since we last saved (the nightly narration, a
+        // migration, a manual reset). Serving the cached doc then resurrects
+        // stale prose over the rewrite on the next debounced save — observed
+        // live: a re-narrated day article was clobbered back to its old text
+        // by a doc cached before the narration. The DB is the authority;
+        // evict and reseed.
         if let Some(doc) = self.pages.get(page_id) {
-            return Ok(doc);
+            let externally_rewritten: bool = sqlx::query_scalar::<_, bool>(
+                "SELECT yjs_state IS NULL FROM app_pages WHERE id = $1",
+            )
+            .bind(page_id)
+            .fetch_optional(pool)
+            .await?
+            .unwrap_or(false);
+            if !externally_rewritten {
+                return Ok(doc);
+            }
+            tracing::info!(
+                page_id,
+                "page was rewritten outside the CRDT — dropping the cached doc and reseeding"
+            );
+            self.pages.invalidate(page_id);
         }
 
         // Load from database
@@ -204,8 +226,14 @@ impl Default for SaveQueue {
 
 /// Apply a Yjs update to a document and return the new state for saving
 /// This is a synchronous function to avoid Send issues with yrs types
-fn apply_yjs_update(doc: &mut PageDoc, data: &[u8]) -> Option<Vec<u8>> {
+///
+/// Returns the full doc state for the debounced save, plus whether the update
+/// actually CHANGED the doc. The distinction matters: a freshly-opened client
+/// answers sync step 1 with an empty diff, which applies cleanly but changes
+/// nothing — opening a page to read it must not count as editing it.
+fn apply_yjs_update(doc: &mut PageDoc, data: &[u8]) -> Option<(Vec<u8>, bool)> {
     if let Ok(update) = Update::decode_v1(data) {
+        let sv_before = doc.doc.transact().state_vector();
         let result = std::panic::catch_unwind(AssertUnwindSafe(|| {
             let mut txn = doc.doc.transact_mut();
             txn.apply_update(update);
@@ -222,9 +250,41 @@ fn apply_yjs_update(doc: &mut PageDoc, data: &[u8]) -> Option<Vec<u8>> {
 
         // Get current state for debounced save
         let txn = doc.doc.transact();
-        Some(txn.encode_state_as_update_v1(&yrs::StateVector::default()))
+        let changed = txn.state_vector() != sv_before;
+        Some((txn.encode_state_as_update_v1(&yrs::StateVector::default()), changed))
     } else {
         None
+    }
+}
+
+/// A doc update arriving over the WebSocket is, by definition, a human edit —
+/// the machine's writes go through `YjsState` methods server-side and never
+/// traverse a client connection. If the page is a KEPT article
+/// (`auto_update = true`), that edit claims it: the article becomes yours,
+/// and the record stops rewriting it. New evidence arrives as notes instead.
+///
+/// This is the whole authorship model: an article has exactly one pen at a
+/// time, so "whose sentence is this" never needs to be answered.
+async fn claim_article_on_user_edit(pool: &PgPool, page_id: &str) {
+    let claimed = sqlx::query_as::<_, (String, String)>(
+        "UPDATE wiki_articles SET auto_update = false \
+         WHERE page_id = $1 AND auto_update = true \
+         RETURNING subject_type, subject_id",
+    )
+    .bind(page_id)
+    .fetch_optional(pool)
+    .await;
+    match claimed {
+        Ok(Some((subject_type, subject_id))) => {
+            tracing::info!(
+                page_id,
+                subject_type,
+                subject_id,
+                "article claimed by user edit — the record stops updating it"
+            );
+        }
+        Ok(None) => {}
+        Err(e) => tracing::warn!(page_id, error = %e, "article claim check failed"),
     }
 }
 
@@ -362,7 +422,7 @@ fn extract_sync_payload(data: &[u8]) -> Option<&[u8]> {
 }
 
 /// Extract text content from Yjs state bytes (Y.Text)
-fn extract_text_content(yjs_state: &[u8]) -> String {
+pub fn extract_text_content(yjs_state: &[u8]) -> String {
     let doc = Doc::new();
     if let Ok(update) = Update::decode_v1(yjs_state) {
         let result = std::panic::catch_unwind(AssertUnwindSafe(|| {
@@ -701,8 +761,16 @@ async fn handle_yjs_connection(mut socket: WebSocket, page_id: String, state: Yj
                                             }
                                         };
                                         let mut doc = page_doc.write().await;
-                                        if let Some(full_state) = apply_yjs_update(&mut doc, update_bytes) {
+                                        if let Some((full_state, changed)) = apply_yjs_update(&mut doc, update_bytes) {
                                             drop(doc);
+                                            // Every changing update, not once per cached doc: the
+                                            // WHERE auto_update=true makes it a no-op after the
+                                            // first flip, and re-enabling the toggle mid-session
+                                            // must re-arm the claim — a memo held that flag
+                                            // hostage until cache eviction.
+                                            if changed {
+                                                claim_article_on_user_edit(&state.pool, &page_id).await;
+                                            }
                                             state.save_queue.queue_save(page_id.clone(), full_state).await;
                                         }
                                     }
@@ -717,8 +785,16 @@ async fn handle_yjs_connection(mut socket: WebSocket, page_id: String, state: Yj
                                             }
                                         };
                                         let mut doc = page_doc.write().await;
-                                        if let Some(full_state) = apply_yjs_update(&mut doc, update_bytes) {
+                                        if let Some((full_state, changed)) = apply_yjs_update(&mut doc, update_bytes) {
                                             drop(doc);
+                                            // Every changing update, not once per cached doc: the
+                                            // WHERE auto_update=true makes it a no-op after the
+                                            // first flip, and re-enabling the toggle mid-session
+                                            // must re-arm the claim — a memo held that flag
+                                            // hostage until cache eviction.
+                                            if changed {
+                                                claim_article_on_user_edit(&state.pool, &page_id).await;
+                                            }
                                             state.save_queue.queue_save(page_id.clone(), full_state).await;
                                         }
                                     }
@@ -775,6 +851,56 @@ mod tests {
     fn read_content(doc: &Doc) -> String {
         let txn = doc.transact();
         txn.get_text("content").unwrap().get_string(&txn)
+    }
+
+    // ── the claim signal: only a CHANGING update counts as an edit ──────────
+
+    /// Helper: a PageDoc around an existing Doc, for apply_yjs_update.
+    fn page_doc(doc: Doc) -> PageDoc {
+        let (broadcast_tx, _) = broadcast::channel(4);
+        PageDoc {
+            doc,
+            broadcast_tx,
+            last_update: Instant::now(),
+        }
+    }
+
+    /// Opening a page must never claim it. A freshly-synced client answers
+    /// the server's state vector with a diff of everything the server lacks —
+    /// which, on open, is NOTHING, so the update applies cleanly and changes
+    /// nothing. `changed` is the entire basis of the article-claim flip, so
+    /// this pins both directions: a no-op replay is not an edit, a real
+    /// insertion is.
+    #[test]
+    fn a_noop_update_is_not_an_edit_and_a_real_one_is() {
+        let server = setup_doc("The record's prose.");
+        let mut page = page_doc(server);
+
+        // A second client that has synced the same state.
+        let client = Doc::new();
+        {
+            let state = page.doc.transact().encode_state_as_update_v1(&yrs::StateVector::default());
+            let mut txn = client.transact_mut();
+            txn.apply_update(Update::decode_v1(&state).unwrap());
+        }
+
+        // Replaying the shared state back at the server: applies, changes nothing.
+        let replay = client.transact().encode_state_as_update_v1(&yrs::StateVector::default());
+        let (_, changed) = apply_yjs_update(&mut page, &replay).expect("decodable");
+        assert!(!changed, "an update carrying nothing new must not read as an edit");
+
+        // A real edit on the client → the diff the server lacks → an edit.
+        {
+            let mut txn = client.transact_mut();
+            let text = txn.get_or_insert_text("content");
+            let len = text.len(&txn);
+            text.insert(&mut txn, len, " Your line.");
+        }
+        let sv = page.doc.transact().state_vector();
+        let diff = client.transact().encode_state_as_update_v1(&sv);
+        let (_, changed) = apply_yjs_update(&mut page, &diff).expect("decodable");
+        assert!(changed, "a real insertion must read as an edit");
+        assert_eq!(read_content(&page.doc), "The record's prose. Your line.");
     }
 
     // ── append (researcher-plan D4.1) ───────────────────────────────────────

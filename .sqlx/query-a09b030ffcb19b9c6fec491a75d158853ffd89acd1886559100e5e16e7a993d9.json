@@ -1,0 +1,15 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO wiki_people (id, canonical_name) VALUES ($1, $2) ON CONFLICT (id) DO NOTHING",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Text",
+        "Text"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "a09b030ffcb19b9c6fec491a75d158853ffd89acd1886559100e5e16e7a993d9"
+}

@@ -6,3 +6,6 @@ command = ["mac_ingest"]
 triggers = ["webhook"]
 per_credential = true
 source = { id = "mac" }
+
+# Ontologies this applet writes — drives "what would fill this stream".
+writes = ["activity_app_session", "activity_web_browsing", "communication_message", "content_bookmark"]

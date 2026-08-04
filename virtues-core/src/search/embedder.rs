@@ -71,14 +71,6 @@ use tokio::sync::OnceCell;
 pub const MAX_INDEXED_DIM: usize = 4000;
 const DEFAULT_URL: &str = "http://127.0.0.1:18181";
 
-/// Is a model fingerprint pinned? True in manual inference mode — the installer
-/// probed the user's endpoint and recorded its fingerprint + native dims.
-fn fingerprint_pinned_env() -> bool {
-    std::env::var("VIRTUES_EMBED_FINGERPRINT")
-        .ok()
-        .is_some_and(|s| !s.trim().is_empty())
-}
-
 /// An explicit width the operator wants vectors stored at, if any.
 ///
 /// Set → **truncate to this** (Matryoshka) and store at this width. Unset → store

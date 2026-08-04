@@ -1,23 +1,30 @@
 /**
  * The sidebar's system shelves.
  *
- * The rail is three zones with three contracts, named from inside the metaphor
- * the whole shell uses:
+ * The rail is two zones with two contracts, named from inside the metaphor the
+ * whole shell uses:
  *
- *   - Desk      — what you've taken off the shelf to work on. Today that means
- *                 notebooks; the species list grows (a page, a person, a day).
- *                 Serif spines, bookcloth dots, the user's own order, uncapped.
- *                 Rendered by DeskSection, not from these constants.
- *   - Workbench — where you make things. Chats, pages, notebooks, applets: each
- *                 row is a place you author, and each carries a `+`.
- *   - Library   — where you read things. Wiki, bookmarks, drive: the record and
- *                 what you've filed against it. Nothing here is made by hand,
- *                 which is exactly why it belongs on its own shelf.
+ *   - Desk    — what you've taken off the shelf to work on. Pins, so a row can
+ *               be any route at all: a notebook, a page, a person, a day, an
+ *               external link. Serif spines, bookcloth dots, the user's own
+ *               order, uncapped. Rendered by DeskSection, not from these
+ *               constants.
+ *   - Library — the building's rooms. Every fixed destination the app has,
+ *               sans, in one shelf, stable forever so muscle memory can live
+ *               in it.
  *
- * Both of the latter are fixed and stable forever, so muscle memory can live in
- * them. The split is by verb — make vs. consult — because that is the
- * distinction you actually hold in your head when you reach for the rail, and a
- * single seven-row list made you read every label to find either one.
+ * There was briefly a third — Workbench, holding the four rooms you author in
+ * (chats, pages, notebooks, applets), split from Library by verb: make vs.
+ * consult. It came out because the split was doing less work than it cost.
+ * "Workbench" and "Desk" are two words for one surface, so nothing in either
+ * name told you which zone a new notebook would land on; and the verb is a
+ * property of what you do in a room, not of the door. Chats is a door whether
+ * you are writing one or looking one up.
+ *
+ * What remains is one seven-row shelf, ordered authored-then-reference so the
+ * old distinction survives as sequence rather than as furniture. Seven rows
+ * under a Desk is a column you scan once and learn; two headers over three and
+ * four rows was a taxonomy you had to agree with first.
  *
  * No Home row: the masthead is a path — `∴ Virtues / …` — and its root is the
  * way home. The earlier wordmark-as-home failed because a bare mark behaving
@@ -146,14 +153,12 @@ const ACTIONS: SystemSection = {
 
 export const SECTION_GROUPS: SectionGroup[] = [
 	{
-		id: 'grp_workbench',
-		label: 'Workbench',
-		items: [CHATS, PAGES, NOTEBOOKS, ACTIONS],
-	},
-	{
 		id: 'grp_library',
 		label: 'Library',
-		items: [WIKI, BOOKMARKS, DRIVE],
+		// Authored rooms first, then the reference shelf. No header between
+		// them — the order carries it, and a header would be the Workbench
+		// again under a quieter name.
+		items: [CHATS, PAGES, NOTEBOOKS, ACTIONS, WIKI, BOOKMARKS, DRIVE],
 	},
 ];
 

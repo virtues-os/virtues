@@ -1,0 +1,28 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n        UPDATE wiki_people\n        SET\n            canonical_name = COALESCE($2, canonical_name),\n            content = COALESCE($3, content),\n            picture = COALESCE($4, picture),\n            cover_image = COALESCE($5, cover_image),\n            emails = COALESCE($6, emails),\n            phones = COALESCE($7, phones),\n            birthday = COALESCE($8, birthday),\n            instagram = COALESCE($9, instagram),\n            facebook = COALESCE($10, facebook),\n            linkedin = COALESCE($11, linkedin),\n            x = COALESCE($12, x),\n            relationship_category = COALESCE($13, relationship_category),\n            nickname = COALESCE($14, nickname),\n            aliases = COALESCE($15, aliases),\n            updated_at = now()\n        WHERE id = $1\n        ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Text",
+        "Text",
+        "Text",
+        "Text",
+        "Text",
+        "Jsonb",
+        "Jsonb",
+        "Date",
+        "Text",
+        "Text",
+        "Text",
+        "Text",
+        "Text",
+        "Text",
+        "Jsonb"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "3a8e93b9c305e323b7326e2dc3906099dd4d2b0114e260c5a3ad60a0b8fbf9fa"
+}

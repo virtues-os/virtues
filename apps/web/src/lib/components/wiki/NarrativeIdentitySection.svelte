@@ -17,9 +17,21 @@
 
 	let loading = $state(true);
 	let content = $state('');
+
 	let updatedAt = $state<string | null>(null);
 	let editing = $state(false);
 	let draft = $state('');
+	/**
+	 * ~2k tokens, matching the server's ceiling (build_narrative_identity).
+	 *
+	 * Shown rather than enforced. This document is in every conversation, so
+	 * length costs precision — a longer identity gives the assistant more
+	 * surface to find a spurious connection to a routine question. But deciding
+	 * what has stopped being true about yourself is a value judgment, so the
+	 * page reports the overage and the person prunes. Nothing here truncates.
+	 */
+	const BUDGET_CHARS = 8000;
+	const overBudget = $derived(draft.length > BUDGET_CHARS);
 	let saving = $state(false);
 	let error = $state<string | null>(null);
 
@@ -84,6 +96,12 @@
 			<button class="btn" onclick={() => (editing = false)} disabled={saving}>
 				Cancel
 			</button>
+			{#if overBudget}
+				<span class="over-budget">
+					{draft.length.toLocaleString()} / {BUDGET_CHARS.toLocaleString()} characters —
+					past this the assistant only reads the beginning. Worth pruning.
+				</span>
+			{/if}
 			<button class="btn primary" onclick={save} disabled={saving}>
 				{saving ? 'Saving…' : 'Save'}
 			</button>
@@ -220,5 +238,12 @@
 		line-height: 1.55;
 		color: var(--color-foreground-muted);
 		margin: 0 0 1.25rem;
+	}
+
+	.over-budget {
+		font-size: 0.75rem;
+		color: var(--color-foreground-subtle);
+		max-width: 34ch;
+		line-height: 1.4;
 	}
 </style>

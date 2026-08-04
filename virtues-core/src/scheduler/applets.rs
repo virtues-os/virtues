@@ -912,6 +912,32 @@ pub fn derived_runtime(a: &Applet) -> &'static str {
     }
 }
 
+/// Derived provenance for the UI: which of the four things made this applet.
+/// `owner` cannot answer that on its own — it is the write-authority field
+/// (reconcile overwrites and GCs `system` rows and leaves `user`/`ai` alone),
+/// and every source fan-out row is `system` under it, so a list faceted on
+/// `owner` files your Gmail sync with the embedding indexer. An anchor is what
+/// makes a row a source's; widening `owner` would cost a migration and blur the
+/// authority it already carries.
+pub fn derived_origin(a: &Applet) -> &'static str {
+    origin_of(&a.owner, a.credential_id.is_some() || a.device_id.is_some())
+}
+
+/// Field-wise twin of [`derived_origin`], for the list handler — which reads
+/// raw rows and never builds an `Applet`. One rule, two callers: the list and
+/// the detail disagreeing about provenance is the drift this avoids.
+pub fn origin_of(owner: &str, anchored: bool) -> &'static str {
+    if anchored {
+        "source"
+    } else if owner == "user" {
+        "user"
+    } else if owner == "ai" {
+        "ai"
+    } else {
+        "system"
+    }
+}
+
 /// Clear the archived state — used when a user explicitly re-authors a
 /// completed applet (re-arm). Distinct from reconcile, which must NOT
 /// un-archive (that would resurrect completed one-shots on every boot).

@@ -8,8 +8,12 @@
 <script lang="ts">
 	import type { PersonPage as PersonPageType } from "$lib/wiki/types";
 	import EntityArticleSection from "./EntityArticleSection.svelte";
+	import SubjectBacklinks from "./SubjectBacklinks.svelte";
+	import NotesRail from "./NotesRail.svelte";
 	import EntityRecordsSection from "./EntityRecordsSection.svelte";
-	import CitedMarkdown from "$lib/components/CitedMarkdown.svelte";
+	import Markdown from "$lib/components/Markdown.svelte";
+	import AliasEditor from "./AliasEditor.svelte";
+	import { updatePerson } from "$lib/wiki/api";
 
 	interface Props {
 		page: PersonPageType;
@@ -49,6 +53,11 @@
 		Boolean(page.location || page.company || page.role || page.birthday)
 	);
 
+	async function saveAliases(next: string[]) {
+		const saved = await updatePerson(page.id, { aliases: next });
+		if (!saved) throw new Error("Could not save aliases");
+	}
+
 </script>
 
 <div class="person-page-layout">
@@ -69,6 +78,18 @@
 				</div>
 			</header>
 
+			<!-- Also known as. Sits directly under the name because that is what
+			     it corrects: the record calling someone by a surface the
+			     resolver does not recognise. Writing one here backfills every
+			     past mention of it (migration 0037). -->
+			<div class="person-aliases">
+				<AliasEditor
+					aliases={page.aliases ?? []}
+					canonicalName={page.title}
+					onSave={saveAliases}
+				/>
+			</div>
+
 			<hr class="divider" />
 
 			<!-- The article: machine-written prose about this entity -->
@@ -77,6 +98,10 @@
 					article={page.article}
 					articleUpdatedAt={page.articleUpdatedAt}
 					name={page.title}
+					subjectType="person"
+					subjectId={page.id}
+					autoUpdate={page.articleAutoUpdate}
+					onChanged={() => location.reload()}
 				/>
 			</section>
 
@@ -85,6 +110,9 @@
 				<h2 class="section-title">The record</h2>
 				<EntityRecordsSection entityId={page.id} />
 			</section>
+
+			<SubjectBacklinks subjectType="person" subjectId={page.id} />
+			<NotesRail subjectType="person" subjectId={page.id} />
 
 			{#if hasContact}
 			<!-- Contact -->
@@ -192,15 +220,13 @@
 			</section>
 			{/if}
 
-			{#if page.content}
-			<!-- Notes: the user's own writing -->
-			<section class="section" id="notes">
-				<h2 class="section-title">Notes</h2>
-				<div class="notes-content">
-					<CitedMarkdown content={page.content} refVariant="quiet" />
-				</div>
-			</section>
-			{/if}
+			<!-- There used to be a second "Notes" section here, rendering
+			     `wiki_people.content`. Two headings with the same name on one
+			     page, and the column is superseded twice over: prose about a
+			     person is the ARTICLE, and a note about them is a `wiki_notes`
+			     row shown in the rail above. It was empty on every box measured,
+			     so the duplicate was latent rather than visible — which is why
+			     it survived being added. -->
 		</div>
 	</article>
 </div>
@@ -260,6 +286,13 @@
 		gap: 0.5rem;
 		margin-top: 0.5rem;
 		font-size: 0.875rem;
+	}
+
+	/* Sits between the header and the article's rule, indented to the same
+	   measure as the prose so it reads as part of the record rather than a
+	   form bolted onto it. */
+	.person-aliases {
+		margin-top: 0.625rem;
 	}
 
 	.meta-badge {

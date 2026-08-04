@@ -203,10 +203,10 @@ fn get_table_metadata() -> HashMap<&'static str, TableMetadata> {
     // WIKI TABLES - Temporal
     // ============================================================================
     m.insert("wiki_days", TableMetadata {
-        description: "Day summaries with autobiography and context",
+        description: "Day records; a day's prose lives in the wiki_day_prose view (day_id, date, prose)",
         category: "wiki_temporal",
-        key_columns: &["date", "start_timezone", "autobiography", "last_edited_by"],
-        join_hint: Some("JOIN wiki_acts ON act_id = wiki_acts.id"),
+        key_columns: &["date", "start_timezone", "last_edited_by"],
+        join_hint: Some("JOIN wiki_day_prose ON wiki_day_prose.day_id = wiki_days.id"),
     });
     m.insert("wiki_years", TableMetadata {
         description: "Year summaries with highlights and themes",
@@ -587,16 +587,35 @@ fn attach_record_refs(query: &str, rows: &mut [serde_json::Value]) {
     if mentions_table(&lowered, "join") {
         return;
     }
+    // Ambiguity is about TABLES, not ontologies.
+    //
+    // Two ontologies can share one table — `app_page` and `wiki_article` both
+    // sit on `app_pages`, split by `kind` (migration 0081) so the record's own
+    // prose stays out of the day view. They point at the same rows, so a query
+    // naming that table is not ambiguous about WHICH ROW to cite; only about
+    // which label to hang on it.
+    //
+    // Counting ontologies instead of tables turned the split into a silent
+    // regression: every SQL-tool result touching `app_pages` would lose its
+    // `ref`, and because the agent prompt tells the model to skip uncited
+    // results, they would quietly vanish from answers rather than error.
+    let mut matched_table: Option<&'static str> = None;
     let mut matched: Option<&'static str> = None;
     for ont in registered_ontologies() {
         if !mentions_table(&lowered, ont.table_name) {
             continue;
         }
-        if matched.is_some() {
-            // More than one ontology in play — ambiguous, so cite nothing.
-            return;
+        match matched_table {
+            // A genuinely different table — that is real ambiguity.
+            Some(t) if t != ont.table_name => return,
+            // Same table, second ontology: keep the first. `get_record`
+            // resolves a bare table name the same way, so the ref still opens.
+            Some(_) => continue,
+            None => {
+                matched_table = Some(ont.table_name);
+                matched = Some(ont.name);
+            }
         }
-        matched = Some(ont.name);
     }
     let Some(ontology) = matched else { return };
 
@@ -764,10 +783,14 @@ mod tests {
         assert_eq!(ref_of(&r[0]), None);
     }
 
-    /// Two ontologies named without a join (a union, a subquery) is just as
-    /// ambiguous.
+    /// Two ontologies on two DIFFERENT tables, named without a join (a union, a
+    /// subquery), is just as ambiguous as a join.
+    ///
+    /// Renamed from `two_ontologies_get_no_refs`: since migration 0081 two
+    /// ontologies can describe one table, and that case must still cite. The
+    /// old name now reads as asserting the opposite of what the code does.
     #[test]
-    fn two_ontologies_get_no_refs() {
+    fn two_tables_get_no_refs() {
         let mut r = rows(&["x_1"]);
         attach_record_refs(
             "SELECT id FROM data_calendar_event UNION ALL SELECT id FROM data_communication_email",
@@ -791,6 +814,27 @@ mod tests {
         assert_eq!(ref_of(&r[0]), Some("mine"));
     }
 
+    /// Two ontologies over one table must not read as ambiguity.
+    ///
+    /// `app_page` and `wiki_article` both sit on `app_pages` (migration 0081).
+    /// Before this was distinguished from real ambiguity, the split silently
+    /// stripped the `ref` from every SQL-tool row touching that table — and
+    /// since the agent prompt says to skip uncited results, they disappeared
+    /// from answers instead of erroring.
+    #[test]
+    fn two_ontologies_on_one_table_still_cite() {
+        let mut r = rows(&["page_abc"]);
+        attach_record_refs("SELECT id, title FROM app_pages LIMIT 5", &mut r);
+        let got = r[0].get("ref").and_then(|v| v.as_str());
+        assert!(
+            got.is_some_and(|s| s.contains("page_abc")),
+            "a query naming one table should still cite, even when two \
+             ontologies describe it; got {got:?}"
+        );
+    }
+
+    // Was missing its #[test] attribute since it was written — it compiled,
+    // the compiler warned "never used", and it never once ran.
     #[test]
     fn table_names_match_on_word_boundaries() {
         assert!(mentions_table("select * from wiki_events", "wiki_events"));

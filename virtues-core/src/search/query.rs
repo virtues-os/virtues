@@ -90,6 +90,26 @@ pub struct SearchFilters {
     pub exclude_urls: Vec<String>,
 }
 
+/// A search request as callers state it, before scope resolution. What
+/// `search`/`search_multi` take instead of nine positional arguments; the
+/// resolved, bind-ready form is [`SearchFilters`] (built by `prepare_filters`).
+/// `Default` = search everything, top 10.
+#[derive(Debug, Clone, Default)]
+pub struct SearchOptions {
+    /// Restrict to these ontologies. Empty = all.
+    pub ontologies: Vec<String>,
+    pub date_after: Option<String>,
+    pub date_before: Option<String>,
+    /// Resolved entity IDs (person/place/org). When set, only rows whose
+    /// source record references one of these entities are returned.
+    pub entities: Vec<String>,
+    /// Active notebook: its members' chunks get an additive ranking boost
+    /// (Weighted) or become the only searchable set (Exclusive).
+    pub notebook_id: Option<String>,
+    pub scope_mode: ScopeMode,
+    pub limit: Option<i64>,
+}
+
 /// Cap each reranker candidate so a (query, doc) pair fits the rerank model's
 /// window (~512 tok for the cross-encoder, 256 for ColBERT). A document's lead
 /// carries the relevance signal, so truncating to ~1000 chars (~256 tok) is
@@ -104,18 +124,56 @@ fn truncate_for_rerank(text: &str) -> String {
     }
 }
 
-/// Conditional-rerank trigger: rerank only when the fused top-1/top-2 score
-/// margin is below this (the ranking is ambiguous and reranking can reorder it);
-/// skip it when the top result already dominates. The field report calibrated a
-/// ~60th-percentile gap offline on SciFact; we can't transplant that constant to
-/// a personal corpus, so this defaults conservatively (skip only clear top-1
-/// wins) and is tunable via `VIRTUES_RERANK_GAP` pending real-data calibration.
+/// Conditional-rerank trigger: rerank only when the top-1/top-2 margin is a
+/// small fraction of the pool's whole score span (the ordering is ambiguous
+/// and reranking can reorder it); skip when the top result dominates.
+///
+/// The margin is RELATIVE — `(s1 − s2) / (s1 − s_last)` — because this
+/// threshold is applied in two incompatible score spaces: single-query
+/// candidates carry fused z-scores (span of a few σ), multi-query candidates
+/// carry RRF weights (span ≈ 0.03–0.07). The old absolute threshold (1.5,
+/// z-units) was unreachable in RRF space, so every multi-phrasing search
+/// reranked unconditionally and the trigger only ever fired on the
+/// single-query path. A ratio of the span means the same thing in both.
+///
+/// Tunable via `VIRTUES_RERANK_GAP` pending real-data calibration — NOTE the
+/// unit change: this is now a fraction in [0, 1], not z-units. A value above 1
+/// is meaningless in the new unit and almost certainly a calibration from the
+/// old one (1.5 was the documented default), so it clamps to 1.0 — "always
+/// rerank", the conservative direction — and says so, rather than being
+/// silently reinterpreted.
 fn rerank_gap_threshold() -> f64 {
-    std::env::var("VIRTUES_RERANK_GAP")
+    match std::env::var("VIRTUES_RERANK_GAP")
         .ok()
         .and_then(|s| s.trim().parse::<f64>().ok())
-        .filter(|v| *v >= 0.0)
-        .unwrap_or(1.5)
+    {
+        Some(v) if (0.0..=1.0).contains(&v) => v,
+        Some(v) if v > 1.0 => {
+            tracing::warn!(
+                "VIRTUES_RERANK_GAP={v} is outside [0, 1] — the variable changed \
+                 units (fraction of the pool's score span; it was a z-score gap). \
+                 Clamping to 1.0 (always rerank); recalibrate or unset."
+            );
+            1.0
+        }
+        _ => 0.4,
+    }
+}
+
+/// Top-1/top-2 margin as a fraction of the candidate pool's score span.
+/// 0.0 = tied at the top (maximally ambiguous); 1.0 = top-1 alone above a flat
+/// rest. Invariant under shift and positive scale, which is what lets one
+/// threshold serve both z-score and RRF-weight candidate pools. A degenerate
+/// span (≤ 0, all scores equal) reads as fully ambiguous.
+pub(crate) fn relative_margin(candidates: &[SearchResult]) -> f64 {
+    if candidates.len() < 2 {
+        return 1.0;
+    }
+    let span = candidates[0].score - candidates[candidates.len() - 1].score;
+    if span <= 0.0 {
+        return 0.0;
+    }
+    (candidates[0].score - candidates[1].score) / span
 }
 
 /// Min-max rescale candidate scores into [0, 1] in place, preserving order.
@@ -233,61 +291,37 @@ impl SemanticSearchEngine {
         Ok((alpha, n_docs, avg_len))
     }
 
-    /// Search for similar documents by natural language query.
-    #[allow(clippy::too_many_arguments)]
-    pub async fn search(
-        &self,
-        query: &str,
-        ontologies: Option<&[String]>,
-        date_after: Option<&str>,
-        date_before: Option<&str>,
-        // Resolved entity IDs (person/place/org/thing). When set, only rows whose
-        // source record references one of these entities are returned.
-        entities: Option<&[String]>,
-        // Active notebook: its members' chunks get an additive ranking boost
-        // (Weighted) or become the only searchable set (Exclusive).
-        notebook_id: Option<&str>,
-        scope_mode: ScopeMode,
-        limit: Option<i64>,
-    ) -> Result<Vec<SearchResult>> {
-        let embedder = get_embedder().await?;
-        let query_vec = embedder.embed_query_async(query).await?;
-        let query_vector = Vector::from(query_vec);
-        let limit = limit.unwrap_or(10).clamp(1, 50);
-        let recall_limit = (limit * 2).clamp(10, 20);
-        let terms = bm25::tokens(query);
-
+    /// Resolve a request's scope into ready-to-bind `SearchFilters`, or `None`
+    /// for the honest-zero case: a grounded (Exclusive) chat over an empty or
+    /// fully unindexed notebook scope returns no results — never silently
+    /// falls open to the whole graph. One implementation shared by `search`
+    /// and `search_multi`, which previously each carried their own copy.
+    async fn prepare_filters(&self, opts: &SearchOptions) -> Result<Option<SearchFilters>> {
         // Notebook scoping: resolve the active notebook's members into a set of
         // record_ids (page/day/source/chat + document chunks for /drive/file_
-        // members) and entity_ids (person/place/org/thing). Weighted = additive
+        // members) and entity_ids (person/place/org). Weighted = additive
         // ranking bonus; Exclusive = hard filter (grounded chat).
-        let (nb_records, nb_entities): (Vec<String>, Vec<String>) = match notebook_id {
+        let (nb_records, nb_entities): (Vec<String>, Vec<String>) = match &opts.notebook_id {
             Some(nb) => self.resolve_notebook_scope(nb).await?,
             None => (Vec::new(), Vec::new()),
         };
         let notebook_scoped = !nb_records.is_empty() || !nb_entities.is_empty();
-        // Grounded chat over an empty (or fully unindexed) scope: honest zero
-        // results — never silently fall open to the whole graph.
-        if notebook_id.is_some() && scope_mode == ScopeMode::Exclusive && !notebook_scoped {
-            return Ok(Vec::new());
+        if opts.notebook_id.is_some()
+            && opts.scope_mode == ScopeMode::Exclusive
+            && !notebook_scoped
+        {
+            return Ok(None);
         }
-
-        let filters = SearchFilters {
-            ontologies: ontologies.map(<[String]>::to_vec).unwrap_or_default(),
-            date_after: date_after.map(str::to_string),
-            date_before: date_before.map(str::to_string),
-            entities: entities.map(<[String]>::to_vec).unwrap_or_default(),
+        Ok(Some(SearchFilters {
+            ontologies: opts.ontologies.clone(),
+            date_after: opts.date_after.clone(),
+            date_before: opts.date_before.clone(),
+            entities: opts.entities.clone(),
             nb_records,
             nb_entities,
-            scope_mode,
+            scope_mode: opts.scope_mode,
             exclude_urls: Vec::new(),
-        };
-
-        let candidates = self
-            .recall_and_fuse(&query_vector, &terms, &filters, recall_limit)
-            .await?;
-        self.rerank_and_finalize(query, candidates, limit as usize)
-            .await
+        }))
     }
 
     /// Multi-query retrieval (RAG-fusion). Runs recall for several phrasings of
@@ -297,58 +331,49 @@ impl SemanticSearchEngine {
     ///
     /// Cheap on-box: the variants embed in ONE batched sidecar call and their
     /// recalls run concurrently (Postgres parallelizes); only the final rerank
-    /// touches the reranker, once. A single-element `queries` delegates to
-    /// `search()` unchanged.
-    #[allow(clippy::too_many_arguments)]
+    /// touches the reranker, once. A single phrasing skips the RRF pass so its
+    /// candidates keep their fused z-scores (RRF would replace them with
+    /// rank-weights for no benefit).
     pub async fn search_multi(
         &self,
         queries: &[String],
-        ontologies: Option<&[String]>,
-        date_after: Option<&str>,
-        date_before: Option<&str>,
-        entities: Option<&[String]>,
-        notebook_id: Option<&str>,
-        scope_mode: ScopeMode,
-        limit: Option<i64>,
+        opts: &SearchOptions,
     ) -> Result<Vec<SearchResult>> {
-        // One phrasing (or none) is just a plain search — no fan-out overhead.
-        let non_empty: Vec<&String> = queries.iter().filter(|q| !q.trim().is_empty()).collect();
-        if non_empty.len() <= 1 {
-            let q = non_empty.first().map(|s| s.as_str()).unwrap_or("");
-            return self
-                .search(
-                    q, ontologies, date_after, date_before, entities, notebook_id, scope_mode,
-                    limit,
-                )
-                .await;
-        }
-        let queries: Vec<String> = non_empty.into_iter().cloned().collect();
-
-        let limit = limit.unwrap_or(10).clamp(1, 50);
-        let recall_limit = (limit * 2).clamp(10, 20); // per-variant
-
-        // Resolve notebook scope ONCE and share it across all variants.
-        let (nb_records, nb_entities): (Vec<String>, Vec<String>) = match notebook_id {
-            Some(nb) => self.resolve_notebook_scope(nb).await?,
-            None => (Vec::new(), Vec::new()),
-        };
-        let notebook_scoped = !nb_records.is_empty() || !nb_entities.is_empty();
-        if notebook_id.is_some() && scope_mode == ScopeMode::Exclusive && !notebook_scoped {
+        let queries: Vec<String> = queries
+            .iter()
+            .filter(|q| !q.trim().is_empty())
+            .cloned()
+            .collect();
+        // Nothing to ask: nothing to return. (Previously an empty set embedded
+        // the empty string and searched on its vector — noise, never useful.)
+        if queries.is_empty() {
             return Ok(Vec::new());
         }
-        let filters = SearchFilters {
-            ontologies: ontologies.map(<[String]>::to_vec).unwrap_or_default(),
-            date_after: date_after.map(str::to_string),
-            date_before: date_before.map(str::to_string),
-            entities: entities.map(<[String]>::to_vec).unwrap_or_default(),
-            nb_records,
-            nb_entities,
-            scope_mode,
-            exclude_urls: Vec::new(),
+
+        let Some(filters) = self.prepare_filters(opts).await? else {
+            return Ok(Vec::new());
         };
+        let limit = opts.limit.unwrap_or(10).clamp(1, 50);
+        let recall_limit = (limit * 2).clamp(10, 20); // per-variant
+        let embedder = get_embedder().await?;
+
+        // One phrasing — plain path, no fan-out, candidates keep fused z-scores.
+        if queries.len() == 1 {
+            let v = embedder.embed_query_async(&queries[0]).await?;
+            let candidates = self
+                .recall_and_fuse(
+                    &Vector::from(v),
+                    &bm25::tokens(&queries[0]),
+                    &filters,
+                    recall_limit,
+                )
+                .await?;
+            return self
+                .rerank_and_finalize(&queries[0], candidates, limit as usize)
+                .await;
+        }
 
         // One batched embed call for every variant.
-        let embedder = get_embedder().await?;
         let vecs = embedder.embed_query_batch(&queries).await?;
 
         // Recall each variant concurrently (shared &filters, immutable &self).
@@ -597,10 +622,7 @@ impl SemanticSearchEngine {
         mut candidates: Vec<SearchResult>,
         limit: usize,
     ) -> Result<Vec<SearchResult>> {
-        let ambiguous = candidates.len() > 1 && {
-            let gap = candidates[0].score - candidates[1].score;
-            gap < rerank_gap_threshold()
-        };
+        let ambiguous = relative_margin(&candidates) < rerank_gap_threshold();
         if ambiguous {
             match self.rerank_candidates(query, &mut candidates).await {
                 Ok(did) => {
@@ -625,7 +647,7 @@ impl SemanticSearchEngine {
     /// Resolve an active notebook's members into the two buckets the search
     /// scope understands: direct record_ids (page/day/source/chat, plus the
     /// document CHUNKS of `/drive/file_` members — the uploaded_document
-    /// ontology indexes per-chunk) and entity_ids (person/place/org/thing —
+    /// ontology indexes per-chunk) and entity_ids (person/place/org —
     /// matched via `wiki_entity_refs`). Filters to `role='library'` (= grounds
     /// chat; nav-only 'pin' rows are ignored, and 'manuscript' rows are the
     /// user's own draft — retrieving them would cite their unfinished prose
@@ -642,27 +664,24 @@ impl SemanticSearchEngine {
         let mut entities = Vec::new();
         let mut file_ids = Vec::new();
         for url in urls {
-            if let Some(id) = url.strip_prefix("/page/") {
-                records.push(id.to_string());
-            } else if let Some(id) = url.strip_prefix("/day/") {
-                records.push(id.to_string());
-            } else if let Some(id) = url.strip_prefix("/source/") {
-                records.push(id.to_string());
-            } else if let Some(id) = url.strip_prefix("/chat/") {
-                records.push(id.to_string());
-            } else if let Some(id) = url.strip_prefix("/person/") {
-                entities.push(id.to_string());
-            } else if let Some(id) = url.strip_prefix("/place/") {
-                entities.push(id.to_string());
-            } else if let Some(id) = url.strip_prefix("/org/") {
-                entities.push(id.to_string());
-            } else if let Some(id) = url.strip_prefix("/drive/") {
-                if id.starts_with("file_") {
-                    // Strip any viewer params (?page=N) a stored route carries.
-                    file_ids.push(id.split('?').next().unwrap_or(id).to_string());
+            // One grammar, one parser: `refs::split_ref` is the same split the
+            // prompt's member resolver uses. This chain used to be a third
+            // hand-rolled copy of it. (No "thing" arm — wiki_things was
+            // dropped by migration 0071 and its stored urls swept.)
+            let Some((kind, id)) = crate::api::refs::split_ref(&url) else {
+                continue; // external https://, /home → not indexed
+            };
+            match kind {
+                "page" | "day" | "source" | "chat" => records.push(id.to_string()),
+                "person" | "place" | "org" => entities.push(id.to_string()),
+                "drive" => {
+                    // split_ref already stripped any viewer params (?page=N).
+                    if id.starts_with("file_") {
+                        file_ids.push(id.to_string());
+                    }
                 }
+                _ => {} // /notebook/ → not indexed
             }
-            // external https://, /notebook/ → not indexed
         }
         if !file_ids.is_empty() {
             let chunk_ids: Vec<String> = sqlx::query_scalar(
@@ -712,7 +731,7 @@ impl SemanticSearchEngine {
             return Ok(Default::default());
         }
         let rows: Vec<(String, String, Option<i32>)> = sqlx::query_as(
-            "SELECT id, file_id, page_num FROM app_annotations WHERE id = ANY($1)",
+            "SELECT id, file_id, page_num FROM app_marginalia WHERE id = ANY($1)",
         )
         .bind(anno_ids)
         .fetch_all(self.pool.as_ref())
@@ -809,5 +828,130 @@ mod tests {
         let merged = rrf_merge(vec![list], RRF_K, 2);
         assert_eq!(merged.len(), 2);
         assert_eq!(merged[0].record_id, "A");
+    }
+
+    fn scored(scores: &[f64]) -> Vec<SearchResult> {
+        scores
+            .iter()
+            .enumerate()
+            .map(|(i, s)| {
+                let mut r = sr("m", &format!("r{i}"));
+                r.score = *s;
+                r
+            })
+            .collect()
+    }
+
+    /// The reason the margin is relative: one threshold must mean the same
+    /// thing for z-score pools (span ≈ several σ) and RRF-weight pools
+    /// (span ≈ 0.03). The old absolute gap (1.5) was unreachable in RRF space,
+    /// so multi-query searches always reranked regardless of how dominant the
+    /// top hit was.
+    #[test]
+    fn margin_is_scale_invariant_across_score_spaces() {
+        // Same shape, two spaces: top-1 well clear of a tight rest.
+        let z_space = scored(&[2.0, 0.1, 0.0, -0.1]);
+        let rrf_space = scored(&[0.048, 0.017, 0.0164, 0.016]);
+        let mz = relative_margin(&z_space);
+        let mr = relative_margin(&rrf_space);
+        assert!(mz > 0.8 && mr > 0.8, "dominant top-1 in both spaces: {mz} {mr}");
+
+        // And a genuine tie at the top is ambiguous in both.
+        let z_tie = scored(&[2.0, 1.98, 0.0]);
+        let rrf_tie = scored(&[0.048, 0.0478, 0.016]);
+        assert!(relative_margin(&z_tie) < 0.05);
+        assert!(relative_margin(&rrf_tie) < 0.05);
+    }
+
+    #[test]
+    fn margin_degenerate_cases() {
+        // Fewer than two candidates: nothing to disambiguate, never rerank.
+        assert_eq!(relative_margin(&scored(&[1.0])), 1.0);
+        assert_eq!(relative_margin(&[]), 1.0);
+        // A flat pool (span 0) is maximally ambiguous.
+        assert_eq!(relative_margin(&scored(&[0.5, 0.5, 0.5])), 0.0);
+    }
+}
+
+/// Every filter combination against the real database. The recall SQL is
+/// assembled with a hand-maintained placeholder counter whose allocation order
+/// (one block) must match bind order (another block, ~90 lines later); nothing
+/// but execution proves they agree. Ignored by default — needs the dev box's
+/// Postgres. Uses a vector already in the index as the query vector, so no
+/// embedding sidecar is required.
+///   cargo test -p virtues --lib search::query::live_filter_matrix -- --ignored --nocapture
+#[cfg(test)]
+mod live_filter_matrix {
+    use super::*;
+
+    #[tokio::test]
+    #[ignore]
+    async fn every_filter_combination_binds_correctly() {
+        let url = std::env::var("DATABASE_URL")
+            .unwrap_or_else(|_| "postgres://virtues:virtues@localhost:5432/virtues".to_string());
+        let pool = Arc::new(PgPool::connect(&url).await.expect("dev database"));
+
+        let Some(vec_str): Option<String> = sqlx::query_scalar(
+            "SELECT embedding::text FROM search_vectors LIMIT 1",
+        )
+        .fetch_optional(pool.as_ref())
+        .await
+        .expect("query")
+        else {
+            println!("index is empty; nothing to exercise");
+            return;
+        };
+        let floats: Vec<f32> = vec_str
+            .trim_matches(['[', ']'])
+            .split(',')
+            .map(|s| s.trim().parse().unwrap())
+            .collect();
+        let qv = Vector::from(floats);
+
+        let engine = SemanticSearchEngine::new(pool);
+        let terms = vec!["test".to_string(), "query".to_string()];
+
+        // One axis per filter; the matrix is their cross product (2·2·2·2·3 =
+        // 48 executions) — cheap, and exactly the space the counter must
+        // survive.
+        let onts = [vec![], vec!["app_page".to_string(), "communication_transcription".to_string()]];
+        let dates = [None, Some("2026-01-01T00:00:00Z".to_string())];
+        let ents = [vec![], vec!["person_demo_jess".to_string()]];
+        let excl = [vec![], vec!["/record/app_page/x".to_string()]];
+        let scopes = [
+            (vec![], vec![], ScopeMode::Weighted),
+            (vec!["page_x".to_string()], vec!["person_demo_jess".to_string()], ScopeMode::Weighted),
+            (vec!["page_x".to_string()], vec![], ScopeMode::Exclusive),
+        ];
+
+        let mut ran = 0;
+        for ont in &onts {
+            for date in &dates {
+                for ent in &ents {
+                    for ex in &excl {
+                        for (nb_r, nb_e, mode) in &scopes {
+                            let filters = SearchFilters {
+                                ontologies: ont.clone(),
+                                date_after: date.clone(),
+                                date_before: date.clone(),
+                                entities: ent.clone(),
+                                nb_records: nb_r.clone(),
+                                nb_entities: nb_e.clone(),
+                                scope_mode: *mode,
+                                exclude_urls: ex.clone(),
+                            };
+                            engine
+                                .recall_and_fuse(&qv, &terms, &filters, 5)
+                                .await
+                                .unwrap_or_else(|e| {
+                                    panic!("filter combination failed: {filters:?}\n{e}")
+                                });
+                            ran += 1;
+                        }
+                    }
+                }
+            }
+        }
+        println!("all {ran} filter combinations bound and executed");
     }
 }

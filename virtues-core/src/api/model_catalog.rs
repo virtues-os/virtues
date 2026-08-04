@@ -195,6 +195,23 @@ pub fn model_for_slot(slot: virtues_registry::models::ModelSlot) -> String {
     }
 }
 
+/// Whether a model can read images, per the live catalog. `None` when we are
+/// cold or the model is unknown.
+///
+/// `None` is not `false`, for the same reason `pricing` refuses to answer zero.
+/// The compiled floor sets every capability flag to `false` because it knows
+/// nothing, and a caller that reads that as a real "no" would silently
+/// downgrade a vision-capable model on any box that has not reached the cloud
+/// yet. Callers must distinguish "cannot" from "do not know" and say which.
+pub fn supports_vision(model_id: &str) -> Option<bool> {
+    let snap = cache().read().ok()?;
+    if snap.models.is_empty() {
+        return None;
+    }
+    let m = snap.models.iter().find(|m| m.model_id == model_id)?;
+    Some(m.supports_vision)
+}
+
 /// `(input_per_1k, output_per_1k)` from the live catalog, or None when we are
 /// cold or the model is unknown. Callers must NOT substitute zero.
 pub fn pricing(model_id: &str) -> Option<(f64, f64)> {
@@ -265,5 +282,45 @@ mod tests {
         // Zero would be a free-money bug on the usage tab; None renders blank.
         assert!(pricing("anthropic/claude-opus-4.8").is_none());
         assert!(models().iter().all(|m| m.input_cost_per_1k.is_none()));
+    }
+}
+
+/// Live check of the one fact the tool-attachment path depends on.
+///   cargo test -p virtues --lib api::model_catalog::live -- --ignored --nocapture
+#[cfg(test)]
+mod live {
+    use super::*;
+
+    #[tokio::test]
+    #[ignore]
+    async fn the_chat_slot_model_can_actually_read_images() {
+        let url = std::env::var("DATABASE_URL")
+            .unwrap_or_else(|_| "postgres://virtues:virtues@localhost:5432/virtues".to_string());
+        let pool = PgPool::connect(&url).await.expect("dev database");
+
+        let resp = match fetch(&pool).await {
+            Ok(r) => r,
+            Err(e) => {
+                println!("catalog unreachable ({e}) — cannot verify the vision gate here");
+                return;
+            }
+        };
+        println!("catalog: {} models", resp.data.len());
+        store(resp);
+
+        let chat = model_for_slot(virtues_registry::models::ModelSlot::Chat);
+        println!("chat slot: {chat}");
+        for m in models() {
+            println!(
+                "  {:<45} vision={:<5} pdf={:<5} audio={:<5} tools={}",
+                m.model_id, m.supports_vision, m.supports_pdf, m.supports_audio, m.supports_tools
+            );
+        }
+
+        match supports_vision(&chat) {
+            Some(true) => println!("\nOK: read_asset attachments will reach the model"),
+            Some(false) => panic!("chat slot {chat} cannot read images — read_asset is inert"),
+            None => panic!("chat slot {chat} is absent from the catalog — gate reads as cannot"),
+        }
     }
 }

@@ -180,6 +180,16 @@ spike. Prefer, in order:
 search rerank-gap on Dragon **and** a sidecar box; confirm one threshold works on
 both. (Harness from the magnet spike is reusable.)
 
+> **Status 2026-08-01:** ② and ③ are LANDED — `recall_and_fuse` /
+> `rerank_and_finalize` exist with three callers (magnet, ⌘K `search_local`,
+> multi-query RRF), and the magnet keeps no private ANN. Also landed since this
+> doc was written: the conditional-rerank gap is now a *relative* margin
+> (`(s1−s2)/(s1−s_last)`, default 0.4 via `VIRTUES_RERANK_GAP` — fraction, not
+> z-units; the old absolute 1.5 was unreachable in RRF-weight space, so every
+> multi-phrasing search reranked unconditionally), and §2.1's "sigmoid in
+> query.rs" never existed — scores are used as order only, then min-max
+> normalized, which is why the ColBERT/cross-encoder scale schism is benign.
+
 ### ② Split `search()` into vector-capable stages (the keystone refactor)
 
 Factor `search()` into `recall_and_fuse(query_vec, terms, filters)` (recall +

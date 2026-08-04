@@ -1,0 +1,16 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n        INSERT INTO app_pages (id, title, content, kind)\n        VALUES ($1, $2, $3, 'article')\n        ON CONFLICT (id) DO NOTHING\n        ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Text",
+        "Text",
+        "Text"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "7ea069a932f03ff3e4507c23c94081958f1c963d502de3209ad4f4293cfeebec"
+}

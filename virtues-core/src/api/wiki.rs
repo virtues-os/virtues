@@ -26,6 +26,9 @@ pub struct WikiPerson {
     /// user-edited — `content`/`notes` carry the user's own writing.
     pub article: Option<String>,
     pub article_updated_at: Option<DateTime<Utc>>,
+    /// Is this article being kept up to date? Off unless the user asked.
+    #[serde(default)]
+    pub article_auto_update: bool,
     pub picture: Option<String>,
     pub cover_image: Option<String>,
     // vCard fields
@@ -39,7 +42,12 @@ pub struct WikiPerson {
     // Metadata
     pub relationship_category: Option<String>,
     pub nickname: Option<String>,
-    pub notes: Option<String>,
+    // `notes` retired to wiki_notes (migration 0082). The column still exists —
+    // drops trail by a release — but nothing reads or writes it from here, which
+    // is what lets the next migration drop it safely.
+    /// Surfaces this entity also answers to (0037). Read alongside write, or an
+    /// editor cannot show what is already there.
+    pub aliases: Vec<String>,
     pub first_interaction: Option<DateTime<Utc>>,
     pub last_interaction: Option<DateTime<Utc>>,
     pub interaction_count: Option<i32>,
@@ -55,6 +63,9 @@ pub struct WikiPlace {
     pub content: Option<String>,
     pub article: Option<String>,
     pub article_updated_at: Option<DateTime<Utc>>,
+    /// Is this article being kept up to date? Off unless the user asked.
+    #[serde(default)]
+    pub article_auto_update: bool,
     pub cover_image: Option<String>,
     pub category: Option<String>,
     pub address: Option<String>,
@@ -75,12 +86,17 @@ pub struct WikiOrganization {
     pub content: Option<String>,
     pub article: Option<String>,
     pub article_updated_at: Option<DateTime<Utc>>,
+    /// Is this article being kept up to date? Off unless the user asked.
+    #[serde(default)]
+    pub article_auto_update: bool,
     pub cover_image: Option<String>,
     pub organization_type: Option<String>,
     pub relationship_type: Option<String>,
     pub role_title: Option<String>,
     pub start_date: Option<NaiveDate>,
     pub end_date: Option<NaiveDate>,
+    /// Surfaces this entity also answers to (0037).
+    pub aliases: Vec<String>,
     pub interaction_count: Option<i32>,
     pub first_interaction: Option<DateTime<Utc>>,
     pub last_interaction: Option<DateTime<Utc>>,
@@ -172,6 +188,9 @@ pub struct WikiDay {
     pub start_timezone: Option<String>,
     pub autobiography: Option<String>,
     pub autobiography_sections: Option<serde_json::Value>,
+    /// The day's prose, from `wiki_day_prose` (0087): the article page first,
+    /// the legacy `autobiography` column as fallback until its drop.
+    pub article: Option<String>,
     pub epigraph: Option<String>,
     pub last_edited_by: Option<String>,
     pub cover_image: Option<String>,
@@ -219,6 +238,8 @@ pub struct WikiPersonListItem {
     pub picture: Option<String>,
     pub relationship_category: Option<String>,
     pub last_interaction: Option<DateTime<Utc>>,
+    /// How many records mention this entity — see `REF_COUNT` in this module.
+    pub ref_count: i64,
 }
 
 /// A place list item
@@ -229,6 +250,8 @@ pub struct WikiPlaceListItem {
     pub category: Option<String>,
     pub address: Option<String>,
     pub visit_count: Option<i32>,
+    /// How many records mention this entity — see `REF_COUNT` in this module.
+    pub ref_count: i64,
 }
 
 /// An organization list item
@@ -238,6 +261,8 @@ pub struct WikiOrganizationListItem {
     pub canonical_name: String,
     pub organization_type: Option<String>,
     pub relationship_type: Option<String>,
+    /// How many records mention this entity — see `REF_COUNT` in this module.
+    pub ref_count: i64,
 }
 
 // ============================================================================
@@ -260,7 +285,15 @@ pub struct UpdateWikiPersonRequest {
     pub x: Option<String>,
     pub relationship_category: Option<String>,
     pub nickname: Option<String>,
-    pub notes: Option<String>,
+    // `notes` retired to wiki_notes (migration 0082). The column still exists —
+    // drops trail by a release — but nothing reads or writes it from here, which
+    // is what lets the next migration drop it safely.
+    /// Surfaces this entity also answers to. 0037 calls an alias "the record of
+    /// a human decision" and built the column for exactly this — then nothing
+    /// ever wrote it: 3 of 573 people on a real box have one. Stored
+    /// lowercased; the resolver lowercases the surface before matching, so a
+    /// name linked once resolves every past and future mention of it.
+    pub aliases: Option<Vec<String>>,
 }
 
 /// Request to update a place wiki page
@@ -284,6 +317,12 @@ pub struct UpdateWikiOrganizationRequest {
     pub role_title: Option<String>,
     pub start_date: Option<NaiveDate>,
     pub end_date: Option<NaiveDate>,
+    /// Surfaces this entity also answers to. 0037 calls an alias "the record of
+    /// a human decision" and built the column for exactly this — then nothing
+    /// ever wrote it: 3 of 573 people on a real box have one. Stored
+    /// lowercased; the resolver lowercases the surface before matching, so a
+    /// name linked once resolves every past and future mention of it.
+    pub aliases: Option<Vec<String>>,
 }
 
 /// Request to update a day wiki page
@@ -310,7 +349,7 @@ pub async fn get_person(pool: &PgPool, id: String) -> Result<WikiPerson> {
         SELECT
             id, canonical_name, content, article, article_updated_at, picture, cover_image,
             emails, phones, birthday, instagram, facebook, linkedin, x,
-            relationship_category, nickname, notes,
+            relationship_category, nickname, aliases,
             first_interaction, last_interaction, interaction_count,
             created_at, updated_at
         FROM wiki_people
@@ -323,16 +362,21 @@ pub async fn get_person(pool: &PgPool, id: String) -> Result<WikiPerson> {
     .map_err(|e| Error::Database(format!("Failed to get person: {}", e)))?
     .ok_or_else(|| Error::NotFound(format!("Person not found: {}", id)))?;
 
+    let (article, article_updated_at, auto_update) =
+        overlay_article(pool, "person", &row.id, row.article, row.article_updated_at).await;
+
     Ok(WikiPerson {
         id: row.id,
         canonical_name: row.canonical_name,
         content: row.content,
-        article: row.article,
-        article_updated_at: row.article_updated_at,
+        article,
+        article_updated_at,
+        article_auto_update: auto_update,
         picture: row.picture,
         cover_image: row.cover_image,
         emails: serde_json::from_value(row.emails).unwrap_or_default(),
         phones: serde_json::from_value(row.phones).unwrap_or_default(),
+        aliases: serde_json::from_value(row.aliases).unwrap_or_default(),
         birthday: row.birthday,
         instagram: row.instagram,
         facebook: row.facebook,
@@ -340,7 +384,6 @@ pub async fn get_person(pool: &PgPool, id: String) -> Result<WikiPerson> {
         x: row.x,
         relationship_category: row.relationship_category,
         nickname: row.nickname,
-        notes: row.notes,
         first_interaction: row.first_interaction,
         last_interaction: row.last_interaction,
         interaction_count: Some(row.interaction_count as i32),
@@ -350,13 +393,87 @@ pub async fn get_person(pool: &PgPool, id: String) -> Result<WikiPerson> {
 }
 
 /// List all people
+
+/// Overlay a subject's article from `wiki_articles` onto the legacy column.
+///
+/// Prose moved to `app_pages` (migration 0081), but the per-entity `article`
+/// columns from 0072 are still there — drops trail their phase by a release, so
+/// a box in the middle can hold prose in either place. New articles live on the
+/// page; anything written before the move still lives in the column. Read the
+/// page first and fall back, so neither is lost while both exist.
+async fn overlay_article(
+    pool: &PgPool,
+    subject_type: &str,
+    subject_id: &str,
+    legacy: Option<String>,
+    legacy_at: Option<DateTime<Utc>>,
+) -> (Option<String>, Option<DateTime<Utc>>, bool) {
+    match crate::api::wiki_articles::get_article_prose(pool, subject_type, subject_id).await {
+        Ok(Some(a)) => (Some(a.content), Some(a.updated_at), a.auto_update),
+        // A read failure must not take the whole entity page down with it — the
+        // records below the article are the more important half.
+        Ok(None) => (legacy, legacy_at, false),
+        Err(e) => {
+            tracing::warn!(subject_id, error = %e, "article read failed; showing legacy column");
+            (legacy, legacy_at, false)
+        }
+    }
+}
+
+/// Aliases are stored lowercased, trimmed, deduped, and never empty.
+///
+/// 0037 stores them lowercased and matches with `aliases ? lower(surface)`, so
+/// a mixed-case alias is simply invisible to the resolver — it would look
+/// saved and never resolve anything. Normalizing on the way in is the only
+/// place that can be enforced once for every caller.
+fn normalize_aliases(input: Option<&Vec<String>>) -> Option<serde_json::Value> {
+    let list = input?;
+    let mut seen: Vec<String> = Vec::with_capacity(list.len());
+    for raw in list {
+        let a = raw.trim().to_lowercase();
+        if !a.is_empty() && !seen.contains(&a) {
+            seen.push(a);
+        }
+    }
+    Some(serde_json::json!(seen))
+}
+
+/// Entity indexes sort by how many records mention the entity, not by name.
+///
+/// The People index had no order at all: it sorted by `canonical_name`, and the
+/// column that was supposed to carry importance — `interaction_count` — is 0 on
+/// every row on a real box, because nothing has ever written it. So an address
+/// book of 573 contacts arrived alphabetically, with `no-reply@slack.com` sitting
+/// level with the people you actually talk to.
+///
+/// The signal was always there: `wiki_entity_refs` holds 130k message refs
+/// across 314 people. Counting them sorts the wall on its own — people you
+/// message rise, contacts with no traffic sink, transactional senders land at
+/// the bottom with two email refs each. No classifier, no model, no deletion:
+/// the noise does not need removing, it needs ordering.
+///
+/// **Computed per query, not materialized.** The obvious move is a counter
+/// column, but that needs a refresh path and can drift, and this is a sort key
+/// rather than a fact. Measured on the real corpus (131k refs, 573 people) the
+/// aggregate runs in 11 ms, which is cheaper than being wrong. Materialize it
+/// when the index gets slow, and not before.
+///
+/// Deliberately NOT `interaction_count` or `wiki_places.visit_count`: those are
+/// two different quantities on two tables (and visits are not refs), so reusing
+/// either would make "the default sort" mean something different per index.
+/// Both are legacy; this is the one uniform measure.
 pub async fn list_people(pool: &PgPool) -> Result<Vec<WikiPersonListItem>> {
     let rows = sqlx::query!(
         r#"
         SELECT
-            id, canonical_name, picture, relationship_category, last_interaction
-        FROM wiki_people
-        ORDER BY canonical_name ASC
+            p.id, p.canonical_name, p.picture, p.relationship_category, p.last_interaction,
+            COALESCE(r.n, 0) AS "ref_count!"
+        FROM wiki_people p
+        LEFT JOIN (
+            SELECT entity_id, count(*) AS n
+            FROM wiki_entity_refs WHERE entity_type = 'person' GROUP BY entity_id
+        ) r ON r.entity_id = p.id
+        ORDER BY COALESCE(r.n, 0) DESC, p.canonical_name ASC
         "#
     )
     .fetch_all(pool)
@@ -371,6 +488,7 @@ pub async fn list_people(pool: &PgPool) -> Result<Vec<WikiPersonListItem>> {
             picture: row.picture,
             relationship_category: row.relationship_category,
             last_interaction: row.last_interaction,
+            ref_count: row.ref_count,
         })
         .collect())
 }
@@ -383,6 +501,7 @@ pub async fn update_person(
 ) -> Result<WikiPerson> {
     let emails_json: Option<serde_json::Value> = req.emails.as_ref().map(|e| serde_json::json!(e));
     let phones_json: Option<serde_json::Value> = req.phones.as_ref().map(|p| serde_json::json!(p));
+    let aliases_json = normalize_aliases(req.aliases.as_ref());
 
     sqlx::query!(
         r#"
@@ -401,7 +520,7 @@ pub async fn update_person(
             x = COALESCE($12, x),
             relationship_category = COALESCE($13, relationship_category),
             nickname = COALESCE($14, nickname),
-            notes = COALESCE($15, notes),
+            aliases = COALESCE($15, aliases),
             updated_at = now()
         WHERE id = $1
         "#,
@@ -419,7 +538,7 @@ pub async fn update_person(
         req.x,
         req.relationship_category,
         req.nickname,
-        req.notes
+        aliases_json
     )
     .execute(pool)
     .await
@@ -451,12 +570,16 @@ pub async fn get_wiki_place(pool: &PgPool, id: String) -> Result<WikiPlace> {
     .map_err(|e| Error::Database(format!("Failed to get place: {}", e)))?
     .ok_or_else(|| Error::NotFound(format!("Place not found: {}", id)))?;
 
+    let (article, article_updated_at, auto_update) =
+        overlay_article(pool, "place", &row.id, row.article.clone(), row.article_updated_at).await;
+
     Ok(WikiPlace {
         id: row.id,
         name: row.name.clone(),
         content: row.content.clone(),
-        article: row.article.clone(),
-        article_updated_at: row.article_updated_at,
+        article,
+        article_updated_at,
+        article_auto_update: auto_update,
         cover_image: row.cover_image.clone(),
         category: row.category.clone(),
         address: row.address.clone(),
@@ -475,9 +598,14 @@ pub async fn list_wiki_places(pool: &PgPool) -> Result<Vec<WikiPlaceListItem>> {
     let rows = sqlx::query!(
         r#"
         SELECT
-            id, name, category, address, visit_count
-        FROM wiki_places
-        ORDER BY name ASC
+            p.id, p.name, p.category, p.address, p.visit_count,
+            COALESCE(r.n, 0) AS "ref_count!"
+        FROM wiki_places p
+        LEFT JOIN (
+            SELECT entity_id, count(*) AS n
+            FROM wiki_entity_refs WHERE entity_type = 'place' GROUP BY entity_id
+        ) r ON r.entity_id = p.id
+        ORDER BY COALESCE(r.n, 0) DESC, p.name ASC
         "#
     )
     .fetch_all(pool)
@@ -492,6 +620,7 @@ pub async fn list_wiki_places(pool: &PgPool) -> Result<Vec<WikiPlaceListItem>> {
             category: row.category,
             address: row.address,
             visit_count: Some(row.visit_count as i32),
+            ref_count: row.ref_count,
         })
         .collect())
 }
@@ -538,7 +667,7 @@ pub async fn get_organization(pool: &PgPool, id: String) -> Result<WikiOrganizat
         r#"
         SELECT
             id, canonical_name, content, article, article_updated_at, cover_image,
-            organization_type, relationship_type, role_title,
+            organization_type, relationship_type, role_title, aliases,
             start_date, end_date, interaction_count,
             first_interaction, last_interaction,
             created_at, updated_at
@@ -552,18 +681,23 @@ pub async fn get_organization(pool: &PgPool, id: String) -> Result<WikiOrganizat
     .map_err(|e| Error::Database(format!("Failed to get organization: {}", e)))?
     .ok_or_else(|| Error::NotFound(format!("Organization not found: {}", id)))?;
 
+    let (article, article_updated_at, auto_update) =
+        overlay_article(pool, "organization", &row.id, row.article, row.article_updated_at).await;
+
     Ok(WikiOrganization {
         id: row.id,
         canonical_name: row.canonical_name,
         content: row.content,
-        article: row.article,
-        article_updated_at: row.article_updated_at,
+        article,
+        article_updated_at,
+        article_auto_update: auto_update,
         cover_image: row.cover_image,
         organization_type: row.organization_type,
         relationship_type: row.relationship_type,
         role_title: row.role_title,
         start_date: row.start_date,
         end_date: row.end_date,
+        aliases: serde_json::from_value(row.aliases).unwrap_or_default(),
         interaction_count: Some(row.interaction_count as i32),
         first_interaction: row.first_interaction,
         last_interaction: row.last_interaction,
@@ -577,9 +711,14 @@ pub async fn list_organizations(pool: &PgPool) -> Result<Vec<WikiOrganizationLis
     let rows = sqlx::query!(
         r#"
         SELECT
-            id, canonical_name, organization_type, relationship_type
-        FROM wiki_orgs
-        ORDER BY canonical_name ASC
+            o.id, o.canonical_name, o.organization_type, o.relationship_type,
+            COALESCE(r.n, 0) AS "ref_count!"
+        FROM wiki_orgs o
+        LEFT JOIN (
+            SELECT entity_id, count(*) AS n
+            FROM wiki_entity_refs WHERE entity_type = 'organization' GROUP BY entity_id
+        ) r ON r.entity_id = o.id
+        ORDER BY COALESCE(r.n, 0) DESC, o.canonical_name ASC
         "#
     )
     .fetch_all(pool)
@@ -593,6 +732,7 @@ pub async fn list_organizations(pool: &PgPool) -> Result<Vec<WikiOrganizationLis
             canonical_name: row.canonical_name,
             organization_type: row.organization_type,
             relationship_type: row.relationship_type,
+            ref_count: row.ref_count,
         })
         .collect())
 }
@@ -615,6 +755,7 @@ pub async fn update_organization(
             role_title = COALESCE($7, role_title),
             start_date = COALESCE($8, start_date),
             end_date = COALESCE($9, end_date),
+            aliases = COALESCE($10, aliases),
             updated_at = now()
         WHERE id = $1
         "#,
@@ -626,7 +767,8 @@ pub async fn update_organization(
         req.relationship_type,
         req.role_title,
         req.start_date,
-        req.end_date
+        req.end_date,
+        normalize_aliases(req.aliases.as_ref())
     )
     .execute(pool)
     .await
@@ -1004,6 +1146,7 @@ pub async fn get_or_create_day(pool: &PgPool, date: NaiveDate) -> Result<WikiDay
         r#"
         SELECT
             id, date, start_timezone, autobiography, autobiography_sections,
+            (SELECT dp.prose FROM wiki_day_prose dp WHERE dp.day_id = wiki_days.id) AS article,
             epigraph,
             last_edited_by, cover_image, act_id, chapter_id, morning_baseline, battery_curve,
             data_quality, snapshot, readiness_score, readiness_details, created_at, updated_at
@@ -1062,6 +1205,9 @@ fn wiki_day_from_row_with_counts(row: &sqlx::postgres::PgRow, date: NaiveDate, n
         start_timezone: row.try_get("start_timezone").ok().flatten(),
         autobiography: row.try_get("autobiography").ok().flatten(),
         autobiography_sections: row.try_get("autobiography_sections").ok().flatten(),
+        // Absent from the INSERT..RETURNING path (a just-created day has no
+        // prose anyway) — `.ok()` makes that read as None rather than an error.
+        article: row.try_get("article").ok().flatten(),
         epigraph: row.try_get("epigraph").ok().flatten(),
         last_edited_by: row.try_get("last_edited_by").ok().flatten(),
         cover_image: row.try_get("cover_image").ok().flatten(),
@@ -1337,6 +1483,7 @@ pub async fn list_days(
         r#"
         SELECT
             id, date, start_timezone, autobiography, autobiography_sections,
+            (SELECT dp.prose FROM wiki_day_prose dp WHERE dp.day_id = wiki_days.id) AS article,
             epigraph,
             last_edited_by, cover_image, act_id, chapter_id, morning_baseline, battery_curve,
             data_quality, snapshot, readiness_score, readiness_details, created_at, updated_at
@@ -2622,6 +2769,42 @@ pub struct TodayStreamsView {
     pub audio: Vec<TodayAudioSpan>,
 }
 
+/// One heart-rate sample, for the day page's Autonomic chart.
+#[derive(Debug, serde::Serialize)]
+pub struct DayHeartRateSample {
+    pub timestamp: chrono::DateTime<chrono::Utc>,
+    pub bpm: i32,
+}
+
+/// Raw heart-rate samples across a day's window, oldest first. The client
+/// draws; sparse days (a dozen samples) are normal and the chart must read
+/// honestly at that density — dots joined by a line, never a smoothed curve
+/// that invents continuity the record does not hold.
+pub async fn get_day_heart_rate(
+    pool: &PgPool,
+    date: NaiveDate,
+    client_tz: Option<&str>,
+) -> Result<Vec<DayHeartRateSample>> {
+    let timezone = resolve_render_timezone(pool, date, client_tz).await;
+    let (start_str, end_str) = super::day_summary::day_boundaries_utc(date, Some(&timezone));
+
+    let rows: Vec<(chrono::DateTime<chrono::Utc>, i32)> = sqlx::query_as(
+        r#"SELECT timestamp, bpm FROM data_health_heart_rate
+           WHERE timestamp >= $1::timestamptz AND timestamp < $2::timestamptz
+           ORDER BY timestamp"#,
+    )
+    .bind(&start_str)
+    .bind(&end_str)
+    .fetch_all(pool)
+    .await
+    .map_err(|e| Error::Database(format!("Failed to load heart rate: {}", e)))?;
+
+    Ok(rows
+        .into_iter()
+        .map(|(timestamp, bpm)| DayHeartRateSample { timestamp, bpm })
+        .collect())
+}
+
 /// Get the three raw record streams (location, calendar, audio) for a day as
 /// spans. Anchored to the day's effective timezone exactly like `get_day_sources`.
 pub async fn get_today_streams(
@@ -3238,5 +3421,48 @@ fn truncate_title(s: &str) -> String {
     } else {
         let truncated: String = chars.iter().take(80).collect();
         format!("{}…", truncated.trim_end())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The whole point of normalizing is that 0037 matches with
+    /// `aliases ? lower(surface)`. An alias stored with capitals or padding is
+    /// not "slightly wrong" — it is invisible to the resolver, so it looks
+    /// saved and resolves nothing. These cases are the ones a human actually
+    /// types.
+    #[test]
+    fn aliases_are_lowercased_trimmed_and_deduped() {
+        let input = vec![
+            "  Sarah ".to_string(),
+            "SARAH".to_string(), // same surface, different case
+            "sarah".to_string(), // exact duplicate
+            "Mum".to_string(),
+            "   ".to_string(), // whitespace only
+            "".to_string(),
+        ];
+        let out = normalize_aliases(Some(&input)).expect("some input");
+        assert_eq!(out, serde_json::json!(["sarah", "mum"]));
+    }
+
+    /// `None` must stay `None`: the update statement is
+    /// `aliases = COALESCE($n, aliases)`, so a null leaves the column alone.
+    /// Returning an empty array instead would silently erase every alias on
+    /// any request that simply did not mention them.
+    #[test]
+    fn absent_aliases_do_not_clear_the_column() {
+        assert!(normalize_aliases(None).is_none());
+    }
+
+    /// Clearing has to remain possible, and is distinct from "not mentioned".
+    #[test]
+    fn an_explicit_empty_list_clears() {
+        let empty: Vec<String> = vec![];
+        assert_eq!(
+            normalize_aliases(Some(&empty)).expect("some"),
+            serde_json::json!([])
+        );
     }
 }

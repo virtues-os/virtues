@@ -1,6 +1,7 @@
 //! Library-level API functions.
 
 pub mod applet_events;
+pub mod applet_source;
 pub mod annotations;
 pub mod ai_calls;
 pub mod ai_complete;
@@ -48,6 +49,7 @@ pub mod places;
 pub mod profile;
 pub mod notebooks;
 pub mod records;
+pub mod refs;
 pub mod source_auth;
 pub mod subscription;
 pub mod stream_health;
@@ -58,6 +60,9 @@ pub mod token_estimation;
 pub mod unsplash;
 pub mod usage;
 pub mod wiki;
+pub mod lifeline;
+pub mod wiki_articles;
+pub mod wiki_notes;
 
 // Re-export all functions for convenience
 pub use assistant_profile::{
@@ -149,7 +154,6 @@ pub use pages::{
     delete_page,
     delete_page_share,
     get_reflections_for_date,
-    create_reflection,
     get_page,
     get_page_backlinks,
     get_page_share,

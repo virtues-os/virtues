@@ -366,8 +366,6 @@
 		margin: 0 0 0.625rem;
 		font-size: 0.6875rem;
 		font-weight: 600;
-		text-transform: uppercase;
-		letter-spacing: 0.06em;
 		color: var(--color-foreground-subtle, #9ca3af);
 		display: flex;
 		align-items: center;

@@ -82,7 +82,7 @@ impl SemanticSearchTool {
 
         let date_after = arguments.get("date_after").and_then(|v| v.as_str());
         let date_before = arguments.get("date_before").and_then(|v| v.as_str());
-        // Resolved entity IDs (person/place/org/thing) to scope the search to.
+        // Resolved entity IDs (person/place/org) to scope the search to.
         let entities: Option<Vec<String>> = arguments
             .get("entities")
             .and_then(|v| v.as_array())
@@ -91,18 +91,18 @@ impl SemanticSearchTool {
             .get("num_results")
             .and_then(|v| v.as_i64());
 
+        let opts = crate::search::query::SearchOptions {
+            ontologies: domains.unwrap_or_default(),
+            date_after: date_after.map(str::to_string),
+            date_before: date_before.map(str::to_string),
+            entities: entities.unwrap_or_default(),
+            notebook_id: notebook_id.map(str::to_string),
+            scope_mode,
+            limit: num_results,
+        };
         let results = self
             .engine
-            .search_multi(
-                &queries,
-                domains.as_deref(),
-                date_after,
-                date_before,
-                entities.as_deref(),
-                notebook_id,
-                scope_mode,
-                num_results,
-            )
+            .search_multi(&queries, &opts)
             .await
             .map_err(|e| ToolError::ExecutionFailed(format!("Semantic search failed: {}", e)))?;
 
@@ -123,7 +123,7 @@ impl SemanticSearchTool {
         // Annotation hits cite the viewer at the highlight itself.
         let anno_ids: Vec<String> = results
             .iter()
-            .filter(|r| r.ontology == "document_annotation")
+            .filter(|r| r.ontology == "document_marginalia")
             .map(|r| r.record_id.clone())
             .collect();
         let anno_refs = self
@@ -134,7 +134,8 @@ impl SemanticSearchTool {
 
         let result_json: Vec<serde_json::Value> = results
             .iter()
-            .map(|r| {
+            .enumerate()
+            .map(|(i, r)| {
                 let ref_route = if let Some((file_id, _filename, page, quote)) =
                     doc_refs.get(&r.record_id)
                 {
@@ -164,7 +165,12 @@ impl SemanticSearchTool {
                 serde_json::json!({
                     "ontology": r.ontology,
                     "record_id": r.record_id,
-                    "score": format!("{:.3}", r.score),
+                    // Rank, not "score": the engine min-max normalizes within
+                    // the result set, so the old 0–1 number made the top hit of
+                    // a garbage pool look identical to the top hit of a great
+                    // one ("1.000") — manufactured confidence the model then
+                    // cited. Rank claims only what is true: relative order.
+                    "rank": i + 1,
                     "title": r.title,
                     "preview": r.preview,
                     "author": r.author,
@@ -194,7 +200,7 @@ fn normalize_domain(raw: &str) -> Vec<String> {
     let mapped: &[&str] = match d.as_str() {
         "document" | "documents" | "doc" | "docs" | "file" | "files" | "pdf" | "paper"
         | "papers" => &["uploaded_document"],
-        "highlight" | "highlights" | "annotation" | "annotations" => &["document_annotation"],
+        "highlight" | "highlights" | "annotation" | "annotations" => &["document_marginalia"],
         "message" | "messages" | "email" | "emails" | "sms" | "text" => {
             &["communication_message"]
         }
@@ -228,7 +234,7 @@ mod tests {
     fn friendly_aliases_map_to_real_ontologies() {
         assert_eq!(normalize_domain("document"), vec!["uploaded_document"]);
         assert_eq!(normalize_domain("PDF"), vec!["uploaded_document"]);
-        assert_eq!(normalize_domain("highlights"), vec!["document_annotation"]);
+        assert_eq!(normalize_domain("highlights"), vec!["document_marginalia"]);
         assert_eq!(normalize_domain("calendar"), vec!["calendar_event"]);
         assert_eq!(
             normalize_domain("chat"),

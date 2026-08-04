@@ -182,6 +182,16 @@ pub async fn run_embedding_job(pool: &PgPool) -> Result<u64> {
         //
         // The join pins `chunk_index = 0` so a multi-chunk record is one row here,
         // not N.
+        //
+        // The staleness test is PARENTHESISED before `embed_where` is appended,
+        // and that is load-bearing rather than tidy. The test is a disjunction —
+        // never indexed OR indexed from different text — so splicing a scope
+        // onto the end unparenthesised would parse as
+        //   se.id IS NULL OR (doc_hash differs AND kind = 'page')
+        // by operator precedence. Every never-indexed row of the *other*
+        // ontology would satisfy the left branch and get embedded under the
+        // wrong name, which is precisely the double-indexing the scope exists
+        // to prevent — and it would report success while doing it.
         let sql = format!(
             "SELECT t.id, \
              {embed_text} as embed_text, \
@@ -193,11 +203,15 @@ pub async fn run_embedding_job(pool: &PgPool) -> Result<u64> {
              FROM {table} t \
              LEFT JOIN search_embeddings se \
                     ON se.ontology = $1 AND se.record_id = t.id AND se.chunk_index = 0 \
-             WHERE se.id IS NULL \
-                OR se.doc_hash IS DISTINCT FROM md5(COALESCE({embed_text}, '')) \
+             WHERE ({embed_text_is_stale}) {scope} \
              ORDER BY t.id ASC \
              LIMIT $2",
             embed_text = config.embed_text_sql,
+            embed_text_is_stale = format!(
+                "se.id IS NULL OR se.doc_hash IS DISTINCT FROM md5(COALESCE({}, ''))",
+                config.embed_text_sql
+            ),
+            scope = config.embed_where.unwrap_or(""),
             title = title_sql,
             preview = preview_sql,
             author = author_sql,
@@ -383,7 +397,7 @@ async fn embed_one_batch(
                      ON CONFLICT (ontology, record_id, chunk_index) DO UPDATE SET \
                        doc_hash = EXCLUDED.doc_hash",
                 )
-                .bind(format!("{}:{}", ont_name, record_id))
+                .bind(embedding_id(ont_name, record_id, 0))
                 .bind(ont_name)
                 .bind(record_id)
                 .bind(doc_hash)
@@ -478,7 +492,7 @@ async fn embed_one_batch(
                 hasher.update(chunk.as_bytes());
                 format!("{:.16x}", hasher.finalize())
             };
-            let embedding_id = format!("{}:{}:{}", ont_name, record_id, ci);
+            let embedding_id = embedding_id(ont_name, record_id, ci);
 
             // BM25 lexical terms for this chunk. Same tokenizer query.rs uses.
             let (bm_terms, bm_tfs, bm_len) = bm25_postings(chunk);
@@ -610,6 +624,14 @@ async fn embed_one_batch(
 /// (parallel to `terms`), and the total token count (the document length used
 /// for BM25 length normalization). Uses the shared [`bm25::tokens`](super::bm25)
 /// tokenizer so ingest-time terms match query-time terms exactly.
+/// THE id rule: `{ontology}:{record_id}:{chunk_index}`. One Rust authority for
+/// both writers; migration 0086's trigger enforces the same rule in Postgres,
+/// so a writer that drifts is corrected rather than colliding (see 0085 for
+/// what convention-only enforcement cost).
+fn embedding_id(ontology: &str, record_id: &str, chunk_index: usize) -> String {
+    format!("{ontology}:{record_id}:{chunk_index}")
+}
+
 fn bm25_postings(chunk: &str) -> (Vec<String>, Vec<i32>, i64) {
     let toks = super::bm25::tokens(chunk);
     let len = toks.len() as i64;
@@ -661,7 +683,38 @@ fn chunk_text(text: &str) -> Vec<String> {
         }
         start += step;
     }
-    chunks
+    dedupe_identical(chunks)
+}
+
+/// Drop chunks whose text has already appeared in this record.
+///
+/// A chunk identical to one already emitted contributes nothing: it embeds to
+/// the same vector, matches the same queries, and adds another identical point
+/// to the index. Recall is unchanged by construction — a query that would match
+/// the duplicate already matches the original, and the record is returned once
+/// either way.
+///
+/// This is not hypothetical tidiness. Speech-to-text loops: on a real box a
+/// single 300-second clip came back as `"[singing] Da da da da…"` repeated to
+/// the token cap, 21,714 characters. Windowing turned it into ~89 chunks
+/// carrying THREE distinct strings — 89 embedding calls, 86 identical vectors
+/// in the index, and enough repeated points to distort HNSW neighbourhoods and
+/// skew the BM25 corpus statistics every other query is scored against. Across
+/// the corpus, 590 such rows generated 77% of all transcription embeddings.
+///
+/// Deliberately scoped to WITHIN one record. Two different recordings that both
+/// say "Okay." are two honest documents and both should be findable; the
+/// duplication that matters is a single document repeating itself.
+fn dedupe_identical(chunks: Vec<String>) -> Vec<String> {
+    use std::collections::HashSet;
+    let mut seen: HashSet<&str> = HashSet::new();
+    let mut out: Vec<String> = Vec::with_capacity(chunks.len());
+    for c in &chunks {
+        if seen.insert(c.as_str()) {
+            out.push(c.clone());
+        }
+    }
+    out
 }
 
 /// Push `chunk` onto `out`, splitting it into [`MAX_CHUNK_CHARS`]-byte pieces
@@ -679,6 +732,54 @@ fn push_capped(chunk: String, out: &mut Vec<String>) {
         }
         out.push(rest[..end].to_string());
         rest = &rest[end..];
+    }
+}
+
+#[cfg(test)]
+mod chunk_dedupe_tests {
+    use super::*;
+
+    /// The case this exists for: a speech-to-text loop. One real row on a box
+    /// came back as 21,714 characters of the same phrase, which windowed into
+    /// ~89 chunks holding three distinct strings.
+    #[test]
+    fn a_repetition_loop_collapses_to_its_distinct_content() {
+        let looped = "da da da ".repeat(4_000);
+        let chunks = chunk_text(&looped);
+        let mut distinct: Vec<&String> = chunks.iter().collect();
+        distinct.sort();
+        distinct.dedup();
+        assert_eq!(
+            chunks.len(),
+            distinct.len(),
+            "every emitted chunk must be distinct"
+        );
+        assert!(
+            chunks.len() < 5,
+            "a loop should collapse to a handful, got {}",
+            chunks.len()
+        );
+    }
+
+    /// Ordinary prose must be untouched — overlapping windows are how recall
+    /// survives a phrase straddling a boundary, and they are not duplicates.
+    #[test]
+    fn normal_text_keeps_every_window() {
+        let prose: String = (0..600)
+            .map(|i| format!("word{i} "))
+            .collect::<String>();
+        let chunks = chunk_text(&prose);
+        assert!(chunks.len() > 1, "long prose should window");
+        let mut distinct: Vec<&String> = chunks.iter().collect();
+        distinct.sort();
+        distinct.dedup();
+        assert_eq!(chunks.len(), distinct.len(), "no window was dropped");
+    }
+
+    /// Short records — the common case — pass straight through.
+    #[test]
+    fn short_text_is_one_chunk() {
+        assert_eq!(chunk_text("Coffee with Maya."), vec!["Coffee with Maya."]);
     }
 }
 

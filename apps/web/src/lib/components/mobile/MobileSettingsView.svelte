@@ -154,8 +154,6 @@
 
 	.group-label {
 		font-size: 11px;
-		text-transform: uppercase;
-		letter-spacing: 0.05em;
 		color: var(--color-foreground-muted);
 		margin: 18px 4px 8px;
 	}

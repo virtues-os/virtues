@@ -109,8 +109,6 @@
 	.toc-label {
 		font-family: var(--font-mono);
 		font-size: 0.6875rem;
-		letter-spacing: 0.06em;
-		text-transform: uppercase;
 		color: var(--color-foreground-subtle);
 		white-space: nowrap;
 		transition: color 0.3s ease;

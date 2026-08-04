@@ -423,7 +423,6 @@
 		font-weight: 500;
 		color: var(--color-foreground-muted);
 		background: var(--color-surface-elevated);
-		text-transform: uppercase;
 		letter-spacing: 0.5px;
 	}
 

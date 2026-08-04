@@ -82,11 +82,20 @@ Other rules that follow from a shared tree:
   ```
 
   It takes the next number, writes a placeholder, and commits it under the lock
-  — so the number is yours before anyone else looks. Then write the SQL and
-  `make commit` it. Two agents reaching for the same number is the *default*
-  outcome otherwise, and git will not warn you: `sqlx::migrate!` keys on the
-  version, and renumbering after a box has applied it breaks that box's
-  upgrades. Migration 52 once killed a box for 3¼ hours.
+  — so the number is yours before anyone else looks. Two agents reaching for the
+  same number is the *default* outcome otherwise, and git will not warn you:
+  `sqlx::migrate!` keys on the version, and renumbering after a box has applied
+  it breaks that box's upgrades. Migration 52 once killed a box for 3¼ hours.
+
+  **The placeholder is `.sql.pending`, and you must rename it to `.sql` once the
+  SQL is written.** `sqlx::migrate!` globs `*.sql`, so a bare placeholder is a
+  *valid migration that does nothing* — and any box that boots in the window
+  between claiming the number and writing the SQL records it as applied. The
+  real SQL then never runs, and its checksum no longer matches what the DB
+  stored, so the **next boot refuses to start**. That happened to the shared dev
+  box on 2026-08-04. The `.pending` suffix reserves the number (the counter
+  reads any filename starting with digits) while keeping it invisible to sqlx
+  until you rename it.
 
   **The counter only sees your own branch.** A number claimed on an unmerged
   branch is invisible here — which is exactly why everyone works on `wave`. If

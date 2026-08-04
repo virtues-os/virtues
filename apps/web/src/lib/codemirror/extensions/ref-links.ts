@@ -17,6 +17,12 @@ import { type Extension, type Range } from '@codemirror/state';
 import { Decoration, type DecorationSet, EditorView, ViewPlugin, type ViewUpdate, WidgetType } from '@codemirror/view';
 import { mount, unmount } from 'svelte';
 import { contextMenu } from '$lib/stores/contextMenu.svelte';
+import { linkEditor } from '$lib/stores/linkEditor.svelte';
+
+import { collectCodeRanges, inCode } from './code-context';
+import { selectionTouches } from './inline-marks';
+import { onContextGesture } from './long-press';
+import { dragJustEnded, isMouseSelecting } from './mouse-freeze';
 import { getEntityTypeFromRoute } from '$lib/utils/refRoutes';
 import { windowShellStore } from '$lib/stores/window-shell.svelte';
 import RefPreview from '$lib/components/RefPreview.svelte';
@@ -42,18 +48,36 @@ function isExternalUrl(url: string): boolean {
 // Context Menu
 // =============================================================================
 
+/**
+ * The link markdown's CURRENT range, derived from the DOM at gesture time —
+ * see the matching helper in media-widgets.ts for why captured widget
+ * positions cannot be trusted after upstream edits.
+ */
+function linkRangeAtDOM(view: EditorView, dom: HTMLElement): { from: number; to: number } | null {
+	const pos = view.posAtDOM(dom);
+	const line = view.state.doc.lineAt(Math.min(pos, view.state.doc.length));
+	let first: { from: number; to: number } | null = null;
+	LINK_REGEX.lastIndex = 0;
+	for (let m = LINK_REGEX.exec(line.text); m !== null; m = LINK_REGEX.exec(line.text)) {
+		const bang = m.index > 0 && line.text[m.index - 1] === '!';
+		const from = line.from + m.index - (bang ? 1 : 0);
+		const to = line.from + m.index + m[0].length;
+		if (!first) first = { from, to };
+		if (pos >= from && pos <= to) return { from, to };
+	}
+	return first;
+}
+
 function showLinkContextMenu(
-	e: MouseEvent,
+	x: number,
+	y: number,
 	view: EditorView,
 	from: number,
 	to: number,
 	href: string,
 	isExternal: boolean,
 ) {
-	e.preventDefault();
-	e.stopPropagation();
-
-	contextMenu.show({ x: e.clientX, y: e.clientY }, [
+	contextMenu.show({ x, y }, [
 		{
 			id: 'go-to',
 			label: 'Go to',
@@ -102,8 +126,23 @@ function showLinkContextMenu(
 			label: 'Edit',
 			icon: 'ri:edit-line',
 			action: () => {
-				view.dispatch({ selection: { anchor: from } });
-				view.focus();
+				// This used to drop the caret on the line so the raw
+				// `[label](url)` would reveal itself for editing. Links no longer
+				// reveal, so there is nothing to drop the caret into — the label
+				// and href get their own panel instead.
+				const current = /^!?\[([^\]]*)\]\(([^)]*)\)$/.exec(
+					view.state.sliceDoc(from, to),
+				);
+				linkEditor.show(
+					{ label: current?.[1] ?? '', href: current?.[2] ?? href },
+					({ label, href: newHref }) => {
+						view.dispatch({
+							changes: { from, to, insert: `[${label}](${newHref})` },
+						});
+						view.focus();
+					},
+					{ x, y, width: 0, height: 0 },
+				);
 			},
 		},
 		{
@@ -130,8 +169,10 @@ function showLinkContextMenu(
  * refHoverPlugin) and in the block embed — never in inline chrome.
  *
  * Click model: ⌘/Ctrl-click acts (external → new tab; entity → open beside;
- * other internal → page-navigate event). Plain click falls through to CM so the
- * caret lands in the line and the raw markdown reveals for editing.
+ * other internal → page-navigate event). Plain click falls through to CM and
+ * places the caret in the line — the text no longer changes when it does.
+ * Editing the label or the URL is right-click → Edit, which opens a panel; the
+ * raw `[label](url)` is not shown in the document at any point.
  */
 class RefLinkWidget extends WidgetType {
 	constructor(
@@ -172,15 +213,23 @@ class RefLinkWidget extends WidgetType {
 
 		link.addEventListener('click', (e) => {
 			// Always stop the <a> from navigating; the caret is placed on mousedown,
-			// so a plain click still drops into the line to reveal raw markdown.
+			// so a plain click still drops into the line — it just no longer
+			// changes what the line says.
 			e.preventDefault();
 			if (!(e.metaKey || e.ctrlKey)) return;
 			e.stopPropagation();
 			this.activate();
 		});
 
-		link.addEventListener('contextmenu', (e) => {
-			showLinkContextMenu(e, view, this.from, this.to, this.href, isExternalUrl(this.href));
+		// Right-click or long-press — same menu (see long-press.ts). The range
+		// is re-derived from the DOM at gesture time: eq() keeps this DOM (and
+		// this closure) alive across rebuilds, so the constructor's from/to go
+		// stale the moment anything earlier in the document changes — and Edit
+		// and Remove write by range.
+		onContextGesture(link, (x, y) => {
+			const range = linkRangeAtDOM(view, link);
+			if (!range) return;
+			showLinkContextMenu(x, y, view, range.from, range.to, this.href, isExternalUrl(this.href));
 		});
 
 		return link;
@@ -208,17 +257,19 @@ function buildLinkDecorations(view: EditorView): DecorationSet {
 	const doc = view.state.doc;
 	const { from: vpFrom, to: vpTo } = view.viewport;
 
-	// Active-line exclusion (Obsidian pattern): don't decorate the cursor's line
-	const cursorLine = doc.lineAt(view.state.selection.main.head).number;
-
-	// Scan visible lines for link patterns
+	// Reveal-on-touch, per CONSTRUCT — not the old per-line rule, where the
+	// caret touching a line burst every link on it back into `[label](url)`
+	// and rewrapped the whole paragraph. Only the one link the selection
+	// touches shows its source; its neighbors stay rendered. The Edit popover
+	// remains the deliberate path for fixing a URL without entering the text.
 	const startLine = doc.lineAt(vpFrom).number;
 	const endLine = doc.lineAt(Math.min(vpTo, doc.length)).number;
 
-	for (let lineNum = startLine; lineNum <= endLine; lineNum++) {
-		// Skip the cursor's line — show raw markdown for editing
-		if (lineNum === cursorLine) continue;
+	// Link syntax inside code is characters, not a link. (Verified bug: a JS
+	// string containing `[x](url)` rendered as a clickable link in the fence.)
+	const codeRanges = collectCodeRanges(view.state, vpFrom, vpTo);
 
+	for (let lineNum = startLine; lineNum <= endLine; lineNum++) {
 		const line = doc.line(lineNum);
 		LINK_REGEX.lastIndex = 0;
 
@@ -229,6 +280,9 @@ function buildLinkDecorations(view: EditorView): DecorationSet {
 			// Skip empty URLs
 			if (!url.trim()) continue;
 
+			const matchFrom = line.from + match.index;
+			if (inCode(codeRanges, matchFrom, matchFrom + match[0].length)) continue;
+
 			// A leading `!` is media (image/audio/video/file) → let the media
 			// widgets render it. But a `!` in front of an ENTITY link is a legacy
 			// block embed — render it inline and swallow the `!` too.
@@ -237,6 +291,10 @@ function buildLinkDecorations(view: EditorView): DecorationSet {
 
 			const from = line.from + match.index - (bang ? 1 : 0);
 			const to = line.from + match.index + match[0].length;
+
+			// Touched (and focused — selection survives blur) → leave the raw
+			// markdown in place for direct editing.
+			if (view.hasFocus && selectionTouches(view.state, { openFrom: from, closeTo: to })) continue;
 
 			// One inline density for every target — a plain underlined link.
 			builder.push(
@@ -265,7 +323,15 @@ const linkPillsPlugin = ViewPlugin.fromClass(
 		}
 
 		update(update: ViewUpdate) {
-			if (update.docChanged || update.viewportChanged || update.selectionSet) {
+			// Selection matters again (reveal-on-touch), but rebuilds are held
+			// mid-drag — see mouse-freeze.ts.
+			const rebuild =
+				update.docChanged ||
+				update.viewportChanged ||
+				update.focusChanged ||
+				(update.selectionSet && !isMouseSelecting(update.state)) ||
+				dragJustEnded(update);
+			if (rebuild) {
 				this.decorations = buildLinkDecorations(update.view);
 			}
 		}

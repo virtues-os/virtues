@@ -137,6 +137,16 @@ export interface ActionLastRun {
  */
 export type ActionRuntime = 'function' | 'view';
 
+/**
+ * Which of the four things made this applet — the facet lists and filters use.
+ *
+ * Derived server-side, not stored: `owner` is the write-authority field
+ * (reconcile overwrites and GCs `system` rows, leaves `user`/`ai` alone), and
+ * every source fan-out row is `system` under it. Faceting on `owner` therefore
+ * files a Gmail sync with the embedding indexer; `origin` splits them.
+ */
+export type AppletOrigin = 'source' | 'system' | 'user' | 'ai';
+
 export interface Applet {
 	id: string;
 	owner: 'system' | 'user' | 'ai';
@@ -149,7 +159,11 @@ export interface Applet {
 	triggers: ActionTrigger[];
 	memory: string | null;
 	function_name: string | null;
+	/** Set when the applet is one source connection's fan-out (OAuth/API-key). */
 	credential_id: string | null;
+	/** Set when the applet is one paired device's ingest webhook (iOS/Mac). */
+	device_id: string | null;
+	origin: AppletOrigin;
 	runtime: ActionRuntime;
 	/** Polyglot escape: explicit argv to spawn instead of resolving a Cargo
 	 *  binary by `function_name`. Null when the action uses the function_name
@@ -237,11 +251,27 @@ export async function searchLocal(
 // Box updates (Settings → Box)
 // ─────────────────────────────────────────────────────────────────────────────
 
+/** A release already downloaded, verified and preflighted on the box. */
+export interface StagedRelease {
+	/** Slot directory name, e.g. `v0.3.1-a1b2c3d`. */
+	slot_id: string;
+	/** Version from the release's own BUILD.json, when it carries one. */
+	version: string | null;
+	/** Commit the release was built from, when known. */
+	sha: string | null;
+}
+
 export interface UpdateStatus {
 	current: string;
 	channel: string;
 	latest: string | null;
 	update_available: boolean;
+	/**
+	 * Set when the box has already fetched the update. Installing it is then a
+	 * restart plus migrations rather than a download — seconds, not minutes —
+	 * which is the difference the UI has to tell the truth about.
+	 */
+	staged: StagedRelease | null;
 	check_error: string | null;
 }
 
@@ -262,6 +292,9 @@ export async function setUpdateChannel(channel: 'stable' | 'prerelease'): Promis
 
 export interface ApplyUpdateResponse {
 	unit: string;
+	/** Whether this activated an already-downloaded release (fast) or had to
+	 *  fetch one first (slow). */
+	staged: boolean;
 	detail: string;
 }
 
@@ -367,7 +400,20 @@ export async function adminReconcile(): Promise<{ upserted: number }> {
 export async function importActionsFromGit(body: {
 	url: string;
 	ref?: string;
-}): Promise<{ added: string[]; updated: string[]; removed: string[] }> {
+	/** From `/api/sudo/request` — importing runs someone else's code. */
+	sudo_request_id: string;
+}): Promise<{
+	/** Folder the package landed in — host + owner + repo, so two remotes with
+	 *  the same repo name can't claim each other's. */
+	slug: string;
+	/** Commit actually checked out. The server has always resolved this; the
+	 *  client used to drop it, which is why "is there a newer version" was
+	 *  unanswerable. */
+	commit: string | null;
+	added: string[];
+	updated: string[];
+	removed: string[];
+}> {
 	const res = await fetch(`${API_BASE}/admin/applets/import-git`, {
 		method: 'POST',
 		headers: { 'Content-Type': 'application/json' },
@@ -473,6 +519,49 @@ export async function runAction(
 	return res.json();
 }
 
+// ── Applet source ───────────────────────────────────────────────────────────
+// Reading the code that ran. Every applet, whatever its provenance.
+
+export interface AppletSourceFile {
+	path: string;
+	size: number;
+	/** False for binary or oversized files — don't offer to open them. */
+	readable: boolean;
+}
+
+export interface AppletSourceListing {
+	dir: string;
+	/** Which root the folder resolved in — `shipped` came with the box. */
+	origin_root: 'shipped' | 'state';
+	files: AppletSourceFile[];
+	truncated: boolean;
+}
+
+export async function getAppletSource(id: string): Promise<AppletSourceListing> {
+	return apiGet<AppletSourceListing>(`/applets/${encodeURIComponent(id)}/source`);
+}
+
+/**
+ * Copy a shipped applet onto this box so it can be changed. Reverting is
+ * deleting the copy; the shipped version is never touched.
+ */
+export async function forkApplet(id: string): Promise<{ status: string; dir: string }> {
+	return apiSend<{ status: string; dir: string }>(
+		'POST',
+		`/applets/${encodeURIComponent(id)}/fork`
+	);
+}
+
+export async function getAppletSourceFile(
+	id: string,
+	path: string
+): Promise<{ path: string; text: string }> {
+	const safe = path.split('/').map(encodeURIComponent).join('/');
+	return apiGet<{ path: string; text: string }>(
+		`/applets/${encodeURIComponent(id)}/source/${safe}`
+	);
+}
+
 export async function listActionRuns(
 	id: string,
 	opts?: { limit?: number; status?: string }
@@ -524,7 +613,18 @@ export interface DeviceInfo {
 	app_version: string | null;
 }
 
-export type CredentialStatus = 'pending' | 'active' | 'revoked';
+/**
+ * Mirrors the CHECK constraint on `credentials.status`. `reauth_required` and
+ * `error` are the states most worth surfacing — a Plaid `ITEM_LOGIN_REQUIRED`
+ * arrives as one — and they were missing here, so the two rows that need a
+ * Reconnect button were the two that rendered as unstyled raw text.
+ */
+export type CredentialStatus =
+	| 'pending'
+	| 'active'
+	| 'revoked'
+	| 'reauth_required'
+	| 'error';
 
 export interface Credential {
 	id: string;
@@ -532,6 +632,9 @@ export interface Credential {
 	name: string;
 	auth_type: string;
 	status: CredentialStatus;
+	/** The provider's own words for why a broken credential broke, when we
+	 *  have them. Absent on healthy rows. */
+	status_reason?: string | null;
 	is_active: boolean;
 	device_info: DeviceInfo | null;
 	last_seen_at: string | null;
@@ -584,6 +687,19 @@ export interface SourceCatalogItem {
 	description: string | null;
 	auth_kind: SourceAuthKind;
 	credential_count: number;
+	/** Secret names an `api_key` source expects, in manifest order. Empty for
+	 *  every other auth kind. */
+	fields: string[];
+	/** Where this source's code can be read. Provenance only — the collectors
+	 *  ship through the App Store and update themselves; no git ref installs
+	 *  them. Null when the code is entirely the box's. */
+	repo?: string | null;
+	repo_ref?: string | null;
+	/** Ontologies this source can produce, by display name — what connecting it
+	 *  would actually give you. */
+	provides?: string[];
+	/** The life-domains those fall in (`health`, `financial`, …). */
+	domains?: string[];
 }
 
 /**
@@ -607,12 +723,48 @@ export interface StreamHealth {
 	count_7d: number;
 	last_event: string | null;
 	last_ingest: string | null;
+	/** Sources that declare they write this stream, by display name. */
+	provided_by: string[];
+	/** At least one of those sources is connected. Distinguishes "nothing
+	 *  provides this" from "provided, but switched off or not yet delivering". */
+	connected: boolean;
+	/** No source writes it, yet rows exist — the box computes it from other
+	 *  streams, so "connect something" is the wrong advice. */
+	derived: boolean;
 }
 
 /**
  * Per-stream ingest freshness, worst-first. The signal that was missing while
  * messages, the calendar sync, and finance each went dark unnoticed.
  */
+/** One stream's arrivals, one entry per day, oldest first and zero-filled. */
+export interface StreamDays {
+	name: string;
+	display_name: string;
+	/** The provider that actually wrote these rows (`source_provider` on the
+	 *  data), not the manifest's claim. One entry per (stream, provider). */
+	provider: string;
+	days: number[];
+}
+
+/**
+ * Daily arrival counts per stream. A scalar "last seen" cannot show whether
+ * streams stopped *together* — nineteen rows reading the same date is one
+ * event, not nineteen — and on a day axis that becomes a visible cliff.
+ */
+export interface StreamDaysResponse {
+	/** UTC date that `days[0]` refers to. Labels come from this, not from a
+	 *  local `new Date()` — deriving them locally shifts every tick by a day for
+	 *  anyone west of UTC in the evening. */
+	start: string;
+	days: number;
+	streams: StreamDays[];
+}
+
+export async function getStreamDays(days = 84): Promise<StreamDaysResponse> {
+	return apiGet<StreamDaysResponse>(`/streams/days?days=${days}`);
+}
+
 export async function getStreamHealth(): Promise<StreamHealth[]> {
 	return apiGet<StreamHealth[]>('/streams/health');
 }
@@ -856,6 +1008,8 @@ export interface Profile {
 	update_check_hour?: number | null;
 	home_timezone?: string | null;
 	home_place_id?: string | null;
+	/** Which wiki_people row is the owner (migration 0080). */
+	self_person_id?: string | null;
 	home_city?: string | null;
 	home_country?: string | null;
 	onboarding_status?: string | null;
@@ -1407,8 +1561,19 @@ export async function createChat(
  */
 export async function updateChat(
 	chatId: string,
-	updates: { title?: string; icon?: string | null; notebookId?: string | null }
-): Promise<{ conversation_id: string; title: string; icon?: string | null; updated_at: string }> {
+	updates: {
+		title?: string;
+		icon?: string | null;
+		icon_color?: string | null;
+		notebookId?: string | null;
+	}
+): Promise<{
+	conversation_id: string;
+	title: string;
+	icon?: string | null;
+	icon_color?: string | null;
+	updated_at: string;
+}> {
 	const res = await fetch(`${API_BASE}/chats/${chatId}`, {
 		method: 'PATCH',
 		headers: { 'Content-Type': 'application/json' },
@@ -1686,6 +1851,8 @@ export interface Page {
 	content: string;
 	notebook_id: string | null;
 	icon: string | null;
+	/** `--cat-*` token key ('orange', 'emerald'), never a hex. Migration 0079. */
+	icon_color: string | null;
 	cover_url: string | null;
 	tags: string | null; // JSON array string: '["tag1", "tag2"]'
 	created_at: string;
@@ -1697,6 +1864,7 @@ export interface PageSummary {
 	title: string;
 	notebook_id: string | null;
 	icon: string | null;
+	icon_color: string | null;
 	cover_url: string | null;
 	tags: string | null; // JSON array string: '["tag1", "tag2"]'
 	created_at: string;
@@ -1775,6 +1943,7 @@ export async function updatePage(
 		content?: string;
 		notebook_id?: string | null;
 		icon?: string | null;
+		icon_color?: string | null;
 		cover_url?: string | null;
 		tags?: string | null;
 	}
@@ -1870,20 +2039,14 @@ export async function getSharedPage(token: string): Promise<SharedPage> {
 }
 
 // ============================================================================
-// Reflections API (pages linked to a day)
+// Reflections API (legacy pages linked to a day — read only; the primitive
+// is retired: writing about a day belongs to the day's article or a note)
 // ============================================================================
 
-/** Get all reflections for a date. */
+/** Legacy reflections for a date. Nothing creates new ones. */
 export async function getReflectionsForDate(date: string): Promise<Page[]> {
 	const res = await fetch(`${API_BASE}/pages/reflections/${date}`);
 	if (!res.ok) throw new Error(`Failed to get reflections: ${res.statusText}`);
-	return res.json();
-}
-
-/** Create a new reflection page for a date. */
-export async function createReflection(date: string): Promise<Page> {
-	const res = await fetch(`${API_BASE}/pages/reflections/${date}`, { method: 'POST' });
-	if (!res.ok) throw new Error(`Failed to create reflection: ${res.statusText}`);
 	return res.json();
 }
 
@@ -2212,9 +2375,6 @@ export function updateNarrativeIdentity<T = unknown>(body: Record<string, unknow
 // ── Devices / pairing (extras beyond pairMint/pairDeny/pairStatus) ────────────
 export function listDevices<T = unknown>(): Promise<T> {
 	return apiGet<T>('/devices');
-}
-export function pairConfirm<T = unknown>(id: string): Promise<T> {
-	return apiSend<T>('POST', `/pair/confirm/${encodeURIComponent(id)}`);
 }
 export function pairConsume<T = unknown>(body?: Record<string, unknown>): Promise<T> {
 	return apiSend<T>('POST', '/pair/consume', body);

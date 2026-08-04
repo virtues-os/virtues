@@ -602,6 +602,252 @@ struct SubprocessOutcome {
     records: i64,
 }
 
+/// Environment every applet gets. Deliberately short: an applet receives its
+/// config, its payload and its already-decrypted credentials on **stdin**, so
+/// the environment is for reaching the box's own services, not for secrets.
+const ENV_PASSTHROUGH: &[&str] = &[
+    // Process basics. Without PATH a bare `python3` argv0 cannot resolve.
+    "PATH",
+    "HOME",
+    "LANG",
+    "LC_ALL",
+    "TZ",
+    "RUST_LOG",
+    "RUST_BACKTRACE",
+    // The box's own Postgres. `virtues_helpers::connect_from_env` reads these.
+    "DATABASE_URL",
+    "DATABASE_MAX_CONNECTIONS",
+    // Where the box keeps its data, and the paths applets resolve against.
+    "VIRTUES_DATA_DIR",
+    "VIRTUES_LAKE_DIR",
+    "VIRTUES_APPLETS_DIR",
+    "VIRTUES_APPLET_STATE_DIR",
+    "VIRTUES_APPLETS_BIN_DIR",
+    "VIRTUES_BIN",
+    // Outbound service endpoints (no credentials in either).
+    "VIRTUES_OAUTH_PROXY_URL",
+    "VIRTUES_API_URL",
+    "ENVIRONMENT",
+];
+
+/// Memory ceiling for a jailed applet. Generous — some shipped syncs are
+/// memory-hungry — but bounded, so a runaway import cannot take the box out.
+const JAILED_MEMORY_MAX: &str = "1G";
+
+/// Build the spawn command, jailing it when the code did not ship with the box.
+///
+/// The routing, not a ban, is the policy: a package may run native code, it
+/// just does not get to run it as a user with passwordless sudo. `systemd-run`
+/// is the same mechanism `code_interpreter` already uses (api/code.rs), which
+/// is the strongest precedent in this codebase for containing code we did not
+/// write.
+///
+/// The properties are looser than `code_interpreter`'s in one deliberate way:
+/// **no `PrivateNetwork`**, because an applet's whole job is to reach Postgres
+/// and usually an upstream API. What it does buy:
+///
+/// - `NoNewPrivileges=yes` — the single most valuable line here. The box user
+///   has `NOPASSWD: ALL` (installer, by design), so without this any imported
+///   applet is one `sudo -n` from root.
+/// - `ProtectSystem=strict` + `ProtectHome=yes` — the filesystem is read-only
+///   apart from the paths an applet legitimately writes.
+/// - `PrivateTmp`, `PrivateDevices`, memory and runtime ceilings, and a
+///   syscall filter.
+///
+/// Not `DynamicUser`: an applet writes to the lake and its own state directory
+/// as the box user, and a dynamic uid cannot.
+///
+/// Off Linux, or in a debug build without systemd, we run direct — that is a
+/// developer machine. In a release build on Linux a missing `systemd-run` is a
+/// hard refusal rather than a silent downgrade, matching `code.rs`: the moment
+/// the sandbox quietly stops applying is the moment it stops being one.
+fn build_command(
+    program: &std::path::Path,
+    args: &[String],
+    shipped: bool,
+    timeout: std::time::Duration,
+    env: &[(String, String)],
+) -> Result<Command> {
+    // Direct spawn: env_clear plus exactly what we chose to pass.
+    let direct = || {
+        let mut cmd = Command::new(program);
+        cmd.args(args);
+        cmd.env_clear();
+        for (k, v) in env {
+            cmd.env(k, v);
+        }
+        cmd
+    };
+
+    if shipped {
+        return Ok(direct());
+    }
+
+    if !cfg!(target_os = "linux") {
+        tracing::warn!(
+            "running an unshipped applet unjailed — no systemd on this platform (developer machine)"
+        );
+        return Ok(direct());
+    }
+
+    if which_systemd_run().is_none() {
+        if cfg!(debug_assertions) {
+            tracing::warn!("systemd-run unavailable; running unjailed (debug build only)");
+            return Ok(direct());
+        }
+        return Err(Error::Other(
+            "applet sandbox (systemd-run) is unavailable; refusing to run imported code unjailed"
+                .to_string(),
+        ));
+    }
+
+    let state = crate::applet_templates::state_root();
+
+    // `sudo -n`, matching api/updates.rs. The box runs as `User=virtues`
+    // (installer), and a non-root user creating a *system* transient unit goes
+    // through polkit, which on a headless box with no agent denies outright. A
+    // bare `systemd-run` therefore does not fail loudly — it exits non-zero and
+    // the run is recorded as a generic subprocess failure, so the sandbox
+    // reports itself present while every unshipped applet silently dies.
+    let mut cmd = Command::new("sudo");
+    cmd.args(["-n", "systemd-run"]);
+    // And drop back to the box user. A transient SYSTEM unit with no `User=`
+    // runs as ROOT — `code.rs` only avoids that because it sets
+    // `DynamicUser=yes`, which this cannot use (an applet writes to the lake as
+    // the box user). Without this line, adding the sudo above would have
+    // escalated every imported applet from `virtues` to uid 0, i.e. strictly
+    // worse than no jail at all. `NoNewPrivileges` does not help you if you
+    // start at root.
+    cmd.args(["-p", &format!("User={}", box_uid())]);
+    cmd.args([
+        "--pipe",
+        "--wait",
+        "--collect",
+        "--quiet",
+        "-p",
+        "NoNewPrivileges=yes",
+        "-p",
+        "ProtectSystem=strict",
+        "-p",
+        "ProtectHome=yes",
+        "-p",
+        "PrivateTmp=yes",
+        "-p",
+        "PrivateDevices=yes",
+        "-p",
+        "SystemCallFilter=@system-service",
+        "-p",
+        "SystemCallErrorNumber=EPERM",
+        "-p",
+        "MemorySwapMax=0",
+    ]);
+    cmd.args(["-p", &format!("MemoryMax={JAILED_MEMORY_MAX}")]);
+    cmd.args(["-p", &format!("RuntimeMaxSec={}", timeout.as_secs())]);
+    // The applet's own folder and the lake are the only writable paths it gets.
+    cmd.args(["-p", &format!("ReadWritePaths={}", state.display())]);
+    if let Ok(lake) = std::env::var("VIRTUES_LAKE_DIR") {
+        if !lake.is_empty() {
+            cmd.args(["-p", &format!("ReadWritePaths={lake}")]);
+        }
+    }
+    // The unit does NOT inherit our environment, and `cmd.env()` would set
+    // systemd-run's own rather than the unit's — so every variable the applet
+    // needs has to be handed over explicitly, before the `--`.
+    for (k, v) in env {
+        // `ProtectHome=yes` mounts /home empty, so forwarding the real HOME
+        // hands the applet a path that exists in its environment and not in its
+        // namespace — anything touching ~/.cache (python, pip, git, most HTTP
+        // clients) fails on it. Point it at the private tmp instead, as code.rs
+        // does.
+        if k == "HOME" {
+            continue;
+        }
+        cmd.args(["-E", &format!("{k}={v}")]);
+    }
+    cmd.args(["-E", "HOME=/tmp"]);
+    cmd.arg("--");
+    cmd.arg(program);
+    cmd.args(args);
+    Ok(cmd)
+}
+
+/// The uid the box itself runs as, so a jailed applet lands on the same user
+/// rather than root. Read from `/proc/self` to avoid a libc dependency; the
+/// jail is Linux-only, which is exactly where this path exists.
+fn box_uid() -> u32 {
+    use std::os::unix::fs::MetadataExt;
+    std::fs::metadata("/proc/self").map(|m| m.uid()).unwrap_or(0)
+}
+
+fn which_systemd_run() -> Option<std::path::PathBuf> {
+    std::env::var_os("PATH").and_then(|paths| {
+        std::env::split_paths(&paths)
+            .map(|p| p.join("systemd-run"))
+            .find(|p| p.is_file())
+    })
+}
+
+/// Whether this applet's code shipped with the box, decided by **where the
+/// folder actually is** rather than by what its manifest claims. A manifest's
+/// `owner` is attacker-controlled — a package can declare `owner = "system"` —
+/// so it must not gate anything security-relevant. The filesystem cannot lie.
+fn is_shipped_applet(applet_id: &str) -> bool {
+    let Some(dir) = crate::applet_templates::dir_for_applet_id(applet_id) else {
+        // Unknown to the catalog: treat as untrusted.
+        return false;
+    };
+    let resolved = crate::applet_templates::resolve_applet_dir(&dir);
+    let shipped = crate::applet_templates::shipped_root();
+    match (resolved.canonicalize(), shipped.canonicalize()) {
+        (Ok(r), Ok(s)) => r.starts_with(s),
+        // If either path can't be resolved we cannot prove provenance, so we
+        // don't grant on it.
+        _ => false,
+    }
+}
+
+/// Build the subprocess environment.
+///
+/// The spawn used to inherit the server's entire environment, which handed
+/// every applet `VIRTUES_ENCRYPTION_KEY` — the master key for the whole
+/// credential vault — and the unscoped `DATABASE_URL`. That made
+/// `load_credentials`' promise ("the master encryption key never crosses the
+/// subprocess boundary") true of the stdin payload and false in fact, and it
+/// meant any imported package could decrypt every credential on the box.
+///
+/// `credential_refresh` genuinely needs the key: it re-encrypts rotated tokens
+/// through `ensure_fresh`. So the key is granted, but only to code that shipped
+/// with the box — never to an imported or authored package.
+fn env_pairs(applet_id: &str, shipped: bool) -> Vec<(String, String)> {
+    let mut out: Vec<(String, String)> = ENV_PASSTHROUGH
+        .iter()
+        .filter_map(|k| std::env::var(k).ok().map(|v| ((*k).to_string(), v)))
+        .collect();
+    // Two conditions, both required: the applet must declare it needs the key,
+    // and its code must have shipped with the box. The declaration keeps the
+    // grant auditable from the manifest instead of implicit in provenance; the
+    // provenance check keeps a package from simply declaring its way in.
+    if shipped && crate::applet_templates::declares_vault_key_need(applet_id) {
+        if let Ok(val) = std::env::var("VIRTUES_ENCRYPTION_KEY") {
+            out.push(("VIRTUES_ENCRYPTION_KEY".to_string(), val));
+        }
+    }
+    // The dev-only wallet override (`make dev` sets it; prod leaves it unset and
+    // `BearerClient::ensure_bearer` reads the vault through the pool instead).
+    // The Plaid syncs call virtues-api for every page of transactions, so
+    // without this they fail on a dev box with "no virtues_api key" — env_clear
+    // took it away and nothing else supplies it. Shipped-only: it spends the
+    // user's wallet, and an imported package has no business presenting it.
+    if shipped {
+        if let Ok(val) = std::env::var("VIRTUES_API_KEY") {
+            if !val.is_empty() {
+                out.push(("VIRTUES_API_KEY".to_string(), val));
+            }
+        }
+    }
+    out
+}
+
 async fn run_subprocess(
     db: &PgPool,
     action: &Applet,
@@ -630,8 +876,17 @@ async fn run_subprocess(
     let stdin_bytes = serde_json::to_vec(&input)
         .map_err(|e| Error::Other(format!("failed to serialize action input: {e}")))?;
 
-    let mut child = Command::new(&program)
-        .args(&command[1..])
+    let shipped = is_shipped_applet(&action.id);
+    let env = env_pairs(&action.id, shipped);
+    let mut cmd = build_command(
+        &program,
+        &command[1..],
+        shipped,
+        subprocess_timeout(action),
+        &env,
+    )?;
+
+    let mut child = cmd
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -650,7 +905,17 @@ async fn run_subprocess(
     // block every future webhook for this action) indefinitely. On timeout the
     // wait future is dropped; `kill_on_drop` then SIGKILLs the child, and the
     // caller records the run as `error`, freeing the lock.
-    let ceiling = subprocess_timeout(action);
+    // When jailed, RuntimeMaxSec is the real enforcer and this is only a
+    // backstop — equal values mean the tokio clock (which starts before
+    // systemd-run has finished setting the unit up) always wins, and dropping
+    // the future SIGKILLs the systemd-run *client*, not the unit, which PID 1
+    // owns. The applet would keep running with its pipes closed while the
+    // per-applet lock was already released. Same grace `code.rs` uses.
+    let ceiling = if shipped {
+        subprocess_timeout(action)
+    } else {
+        subprocess_timeout(action) + std::time::Duration::from_secs(10)
+    };
     let output = match tokio::time::timeout(ceiling, child.wait_with_output()).await {
         Ok(res) => {
             res.map_err(|e| Error::Other(format!("failed to wait for action subprocess: {e}")))?
@@ -789,4 +1054,21 @@ fn resolve_program(argv0: &str) -> PathBuf {
 
     // Not a workspace binary — spawn via PATH (interpreters, system tools).
     PathBuf::from(argv0)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::ENV_PASSTHROUGH;
+
+    /// The vault master key must never be granted by the blanket passthrough.
+    /// It is handed out in `apply_env` only to shipped code, and the tempting
+    /// fix for "my applet can't decrypt" is to add it here — which would return
+    /// every imported package's access to every credential on the box.
+    #[test]
+    fn passthrough_never_carries_the_vault_key() {
+        assert!(
+            !ENV_PASSTHROUGH.contains(&"VIRTUES_ENCRYPTION_KEY"),
+            "VIRTUES_ENCRYPTION_KEY must stay provenance-gated in apply_env"
+        );
+    }
 }

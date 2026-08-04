@@ -18,9 +18,11 @@
  */
 
 import { syntaxTree } from '@codemirror/language';
-import { type EditorState, type Extension, type Range, StateField } from '@codemirror/state';
+import { EditorSelection, EditorState, type Extension, type Range, StateField } from '@codemirror/state';
 import { Decoration, type DecorationSet, EditorView, WidgetType } from '@codemirror/view';
 import { contextMenu } from '$lib/stores/contextMenu.svelte';
+
+import { onContextGesture } from './long-press';
 
 type Alignment = 'left' | 'center' | 'right';
 
@@ -415,6 +417,18 @@ class TableWidget extends WidgetType {
 			}
 		});
 
+		// --- Column alignment ---
+		// Writes the `:---:` form into the delimiter row via syncToDocument and
+		// restyles the live cells so the choice is visible without a re-render.
+		const setAlignment = (colIdx: number, align: Alignment) => {
+			alignments[colIdx] = align;
+			table.querySelectorAll('tr').forEach((trEl) => {
+				const cell = trEl.children[colIdx] as HTMLElement | undefined;
+				if (cell) cell.style.textAlign = align;
+			});
+			syncToDocument();
+		};
+
 		// --- Delete row/column ---
 		const deleteRow = (rowIdx: number) => {
 			const tbody = table.querySelector('tbody');
@@ -454,10 +468,10 @@ class TableWidget extends WidgetType {
 			highlightColumn(table, colIdx, 'cm-delete-preview');
 		};
 
-		table.addEventListener('contextmenu', (e) => {
-			const target = (e.target as HTMLElement).closest('th, td') as HTMLElement | null;
+		// Right-click or long-press on a cell — same menu (see long-press.ts).
+		onContextGesture(table, (x, y, eventTarget) => {
+			const target = (eventTarget as HTMLElement | null)?.closest('th, td') as HTMLElement | null;
 			if (!target) return;
-			e.preventDefault();
 
 			const coords = getCellCoords(table, target);
 			if (!coords) return;
@@ -465,12 +479,34 @@ class TableWidget extends WidgetType {
 			const isHeader = coords.row === -1;
 			const items = [];
 
+			items.push(
+				{
+					id: 'align-left',
+					label: 'Align left',
+					icon: 'ri:align-left',
+					action: () => setAlignment(coords.col, 'left'),
+				},
+				{
+					id: 'align-center',
+					label: 'Align center',
+					icon: 'ri:align-center',
+					action: () => setAlignment(coords.col, 'center'),
+				},
+				{
+					id: 'align-right',
+					label: 'Align right',
+					icon: 'ri:align-right',
+					action: () => setAlignment(coords.col, 'right'),
+				},
+			);
+
 			if (!isHeader) {
 				items.push({
 					id: 'delete-row',
 					label: 'Delete row',
 					icon: 'ri:delete-row',
 					variant: 'destructive' as const,
+					dividerBefore: true,
 					action: () => deleteRow(coords.row),
 					onMouseEnter: () => highlightRow(coords.row),
 					onMouseLeave: clearDeletePreview,
@@ -482,12 +518,13 @@ class TableWidget extends WidgetType {
 				label: 'Delete column',
 				icon: 'ri:delete-column',
 				variant: 'destructive' as const,
+				dividerBefore: isHeader,
 				action: () => deleteColumn(coords.col),
 				onMouseEnter: () => highlightCol(coords.col),
 				onMouseLeave: clearDeletePreview,
 			});
 
-			contextMenu.show({ x: e.clientX, y: e.clientY }, items);
+			contextMenu.show({ x, y }, items);
 		});
 
 		const addRow = (atIndex: number) => {
@@ -734,15 +771,12 @@ class TableWidget extends WidgetType {
 
 function buildTableDecorations(state: EditorState): DecorationSet {
 	const builder: Range<Decoration>[] = [];
-	const cursorHead = state.selection.main.head;
 
 	syntaxTree(state).iterate({
 		enter(node) {
 			if (node.name !== 'Table') return;
 
 			const { from, to } = node;
-
-			if (cursorHead >= from && cursorHead <= to) return;
 
 			const text = state.sliceDoc(from, to);
 			const parsed = parseTable(text);
@@ -765,7 +799,12 @@ const tableField = StateField.define<DecorationSet>({
 		return buildTableDecorations(state);
 	},
 	update(decos, tr) {
-		if (tr.docChanged || tr.selection) {
+		// No longer rebuilt on selection: the table used to un-render into raw
+		// pipes whenever the caret entered its range, which meant a whole block
+		// changing shape under the cursor. The widget has always been a full
+		// editor — click a cell, Tab between them, +strips to add rows — so
+		// there was never anything to fall back to raw FOR.
+		if (tr.docChanged) {
 			return buildTableDecorations(tr.state);
 		}
 		return decos;
@@ -773,4 +812,89 @@ const tableField = StateField.define<DecorationSet>({
 	provide: (field) => EditorView.decorations.from(field),
 });
 
-export const tables: Extension = tableField;
+/**
+ * A rendered table is one object as far as the caret is concerned.
+ *
+ * Without this the caret could be placed inside the source range of a block
+ * that is not drawn — arrowing down from the line above would appear to
+ * strand it in nothing. Cell editing happens inside the widget's own
+ * contentEditable cells, not through the outer document selection.
+ *
+ * Deliberately NOT EditorView.atomicRanges. Feeding it the widget's
+ * decoration set broke vertical motion far away from the table: ArrowUp from
+ * ANY line below one teleported the caret to the table's edge, skipping the
+ * lines between (verified with a plain three-lines-below-a-table doc, after
+ * a full reload). This filter enforces only the invariant we actually want —
+ * a selection endpoint never RESTS strictly inside a table's source range —
+ * and ejects in the direction of travel, which also preserves the
+ * jump-over-in-one-press behavior from the adjacent lines. Positions outside
+ * every table pass through untouched, so it cannot affect motion elsewhere.
+ */
+const tableSelectionGuard: Extension = EditorState.transactionFilter.of((tr) => {
+	if (!tr.selection) return tr;
+
+	const ranges: { from: number; to: number }[] = [];
+	syntaxTree(tr.state).iterate({
+		enter(node) {
+			if (node.name === 'Table') {
+				ranges.push({ from: node.from, to: node.to });
+				return false;
+			}
+		},
+	});
+	if (ranges.length === 0) return tr;
+
+	const oldHead = tr.startState.selection.main.head;
+	const eject = (pos: number): number => {
+		const t = ranges.find((x) => pos > x.from && pos < x.to);
+		if (!t) return pos;
+		// Moving forward (or typing at) → land after the table; backward →
+		// before it. The boundary positions themselves are legal.
+		return pos >= oldHead ? Math.min(t.to, tr.newDoc.length) : t.from;
+	};
+
+	let changed = false;
+	const fixed = tr.newSelection.ranges.map((r) => {
+		const anchor = eject(r.anchor);
+		const head = eject(r.head);
+		if (anchor === r.anchor && head === r.head) return r;
+		changed = true;
+		return EditorSelection.range(anchor, head);
+	});
+
+	if (!changed) return tr;
+	return [tr, { selection: EditorSelection.create(fixed, tr.newSelection.mainIndex), sequential: true }];
+});
+
+/**
+ * Enter at the very end of a table inserts TWO newlines, not one.
+ *
+ * GFM absorbs any adjacent non-blank line into the table as a row, so text
+ * typed on a single new line directly below a table becomes a one-cell row
+ * and vanishes into the widget — this ate typed text twice during testing
+ * before it was understood. The only caret position where this can happen is
+ * the table's end boundary (the block is atomic; there is no inside), so the
+ * guard is exactly: a newline typed at a Table node's `to` gets a blank-line
+ * spacer, and the text that follows lands in a paragraph.
+ */
+const tableExitGuard = EditorState.transactionFilter.of((tr) => {
+	if (!tr.docChanged || !tr.isUserEvent('input')) return tr;
+
+	let at = -1;
+	tr.changes.iterChanges((fromA, toA, _fromB, _toB, inserted) => {
+		if (at >= 0 || fromA !== toA) return;
+		if (!inserted.toString().startsWith('\n')) return;
+		syntaxTree(tr.startState).iterate({
+			from: Math.max(0, fromA - 1),
+			to: fromA,
+			enter(node) {
+				if (node.name === 'Table' && node.to === fromA) at = fromA;
+			},
+		});
+	});
+
+	if (at < 0) return tr;
+	return [tr, { changes: { from: at, insert: '\n' }, sequential: true }];
+});
+
+export const tables: Extension = [tableField, tableSelectionGuard, tableExitGuard];

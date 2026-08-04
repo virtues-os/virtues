@@ -128,6 +128,9 @@ pub struct ChatListItem {
     pub message_count: i32,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub icon: Option<String>,
+    /// `--cat-*` token key, never a hex. See migration 0079.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub icon_color: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub notebook_id: Option<String>,
     pub first_message_at: Timestamp,
@@ -187,6 +190,8 @@ pub struct MessageResponse {
 pub struct UpdateChatRequest {
     pub title: Option<String>,
     pub icon: Option<Option<String>>,
+    #[serde(default)]
+    pub icon_color: Option<Option<String>>,
     /// Tri-state: absent = leave, null = detach from Notebook, value = set Notebook.
     /// Routed through `notebooks::set_chat_notebook` (also folds chat into membership).
     #[serde(default, rename = "notebookId")]
@@ -218,6 +223,8 @@ pub struct UpdateChatResponse {
     pub title: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub icon: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub icon_color: Option<String>,
     pub updated_at: Timestamp,
 }
 
@@ -261,6 +268,7 @@ pub async fn list_chats(pool: &PgPool, limit: i64) -> Result<ChatListResponse> {
             id,
             title,
             icon,
+            icon_color,
             notebook_id,
             message_count,
             created_at,
@@ -281,6 +289,7 @@ pub async fn list_chats(pool: &PgPool, limit: i64) -> Result<ChatListResponse> {
             let id: String = row.get("id");
             let title: String = row.get("title");
             let icon: Option<String> = row.get("icon");
+            let icon_color: Option<String> = row.get("icon_color");
             let notebook_id: Option<String> = row.get("notebook_id");
             let message_count: i64 = row.get("message_count");
             let first_message_at: Timestamp = row.get("created_at");
@@ -290,6 +299,7 @@ pub async fn list_chats(pool: &PgPool, limit: i64) -> Result<ChatListResponse> {
                 title,
                 message_count: message_count as i32,
                 icon,
+                icon_color,
                 notebook_id,
                 first_message_at,
                 last_updated,
@@ -553,8 +563,13 @@ pub async fn update_chat(
         set_clauses.push(format!("icon = ${}", binds.len()));
     }
 
+    if let Some(ref icon_color) = request.icon_color {
+        binds.push(icon_color.clone());
+        set_clauses.push(format!("icon_color = ${}", binds.len()));
+    }
+
     let sql = format!(
-        "UPDATE app_chats SET {} WHERE id = ${} RETURNING id, title, icon, updated_at",
+        "UPDATE app_chats SET {} WHERE id = ${} RETURNING id, title, icon, icon_color, updated_at",
         set_clauses.join(", "),
         binds.len() + 1
     );
@@ -577,12 +592,14 @@ pub async fn update_chat(
     let id: String = row.get("id");
     let title: String = row.get("title");
     let icon: Option<String> = row.get("icon");
+    let icon_color: Option<String> = row.get("icon_color");
     let updated_at: Timestamp = row.get("updated_at");
 
     Ok(UpdateChatResponse {
         conversation_id: id,
         title,
         icon,
+        icon_color,
         updated_at,
     })
 }
@@ -795,12 +812,24 @@ pub async fn generate_title(
         messages.iter().take(6.min(messages.len())).collect();
     let conversation_summary: String = messages_to_include
         .iter()
-        .map(|m| format!("{}: {}", m.role, &m.content[..200.min(m.content.len())]))
+        // Chars, not bytes — `&content[..200]` panics if byte 200 lands mid
+        // character, and the first message of a chat is arbitrary user text.
+        .map(|m| {
+            let head: String = m.content.chars().take(200).collect();
+            format!("{}: {}", m.role, head)
+        })
         .collect::<Vec<_>>()
         .join("\n\n");
 
+    // "Plain text" spelled out, because models reach for emphasis when asked
+    // for a title — they were returning `**The Definition and Meaning of
+    // Life**`, and a tab label has no markdown renderer, so the asterisks
+    // showed. The stripping below is the belt to this braces: the instruction
+    // fixes the common case, the parse fixes the rest.
     let prompt = format!(
-        r#"Based on this conversation, generate a very short title (3-6 words maximum) that captures the main topic or theme. Only return the title, nothing else.
+        r#"Based on this conversation, generate a very short title (3-6 words maximum) that captures the main topic or theme.
+
+Return the title as plain text only. No markdown, no asterisks, no bold, no quotation marks, no trailing punctuation, no preamble — just the words of the title.
 
 Conversation:
 {}"#,
@@ -840,12 +869,30 @@ Conversation:
         .trim()
         .to_string();
 
-    // Remove quotes if present
-    title = title.trim_matches(|c| c == '"' || c == '\'').to_string();
+    // Strip the costume the model put on the title: markdown emphasis, a
+    // leading heading marker, quotes. Trimmed as a set and repeatedly, because
+    // they nest — `**"Title"**` arrives with two layers, and one pass would
+    // leave the inner one. Cheap, and the alternative is asterisks in a tab.
+    loop {
+        let before = title.clone();
+        title = title
+            .trim()
+            .trim_start_matches('#')
+            .trim_matches(|c| c == '"' || c == '\'' || c == '*' || c == '_')
+            .trim()
+            .to_string();
+        if title == before {
+            break;
+        }
+    }
 
-    // Truncate if too long
-    if title.len() > 60 {
-        title = format!("{}...", &title[..57]);
+    // Truncate if too long. By CHARS, not bytes: `&title[..57]` panics when
+    // byte 57 lands inside a multi-byte character, and titles are arbitrary
+    // user-topic text — an accented word or an emoji was a crash waiting for
+    // the right conversation.
+    if title.chars().count() > 60 {
+        let head: String = title.chars().take(57).collect();
+        title = format!("{}...", head);
     }
 
     // Update chat title in database

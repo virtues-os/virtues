@@ -137,6 +137,7 @@ impl PageEditorTool {
             title: args.title.clone(),
             content: clean_content,
             icon: None,
+            icon_color: None,
             cover_url: None,
             tags: None,
             notebook_id: None,
@@ -293,6 +294,7 @@ impl PageEditorTool {
                 title: None,
                 content: Some(new_content),
                 icon: None,
+                icon_color: None,
                 cover_url: None,
                 tags: None,
             };
@@ -308,6 +310,7 @@ impl PageEditorTool {
                 title: Some(new_title.clone()),
                 content: None,
                 icon: None,
+                icon_color: None,
                 cover_url: None,
                 tags: None,
             };

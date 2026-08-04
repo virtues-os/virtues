@@ -196,8 +196,6 @@
 	.section-label {
 		font-size: 11px;
 		font-weight: 500;
-		text-transform: uppercase;
-		letter-spacing: 0.05em;
 		color: var(--color-foreground-subtle);
 		margin-bottom: 8px;
 	}

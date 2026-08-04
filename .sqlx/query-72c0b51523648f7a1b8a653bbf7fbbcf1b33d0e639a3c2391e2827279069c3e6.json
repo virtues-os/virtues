@@ -1,0 +1,35 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n        SELECT p.content, p.updated_at, a.auto_update\n        FROM wiki_articles a\n        JOIN app_pages p ON p.id = a.page_id\n        WHERE a.subject_type = $1 AND a.subject_id = $2\n        ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "content",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 1,
+        "name": "updated_at",
+        "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 2,
+        "name": "auto_update",
+        "type_info": "Bool"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Text",
+        "Text"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      false
+    ]
+  },
+  "hash": "72c0b51523648f7a1b8a653bbf7fbbcf1b33d0e639a3c2391e2827279069c3e6"
+}

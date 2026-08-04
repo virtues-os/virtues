@@ -15,16 +15,16 @@ AWS_REGION ?= us-east-1
 # local virtues-api (seeded wallet → AI works with no checkout) and points atlas
 # at localhost (nothing there — so a stray "Connect" can't mint rows in prod).
 #
-# To exercise the real billing/onboarding flow against the deployed staging
-# services: `make dev STAGING=1` (test-mode Stripe, real claim). Or override
-# VIRTUES_API_URL / VIRTUES_ATLAS_URL individually for prod or a custom host.
-ifeq ($(STAGING),1)
-VIRTUES_API_URL   ?= https://api-staging.virtues.com
-VIRTUES_ATLAS_URL ?= https://atlas-staging.virtues.com
-else
+# There is no staging stack. `STAGING=1` used to point these at
+# {api,atlas}-staging.virtues.com, but no such host was ever deployed: both names
+# resolved only by way of a `*.virtues.com` wildcard aimed at an Elastic IP
+# attached to no instance, so the "real billing flow" was dialing a blackhole
+# that swallowed connections instead of refusing them. A Stripe test-mode webhook
+# pointed there for long enough to start mailing about failed deliveries.
+# Wildcard and IP were both removed 2026-07-31. Override VIRTUES_API_URL /
+# VIRTUES_ATLAS_URL individually for prod or a custom host.
 VIRTUES_API_URL   ?= http://localhost:9002
 VIRTUES_ATLAS_URL ?= http://localhost:9100
-endif
 DEV_WEB_PORT ?= 5173
 
 # Local virtues-api (`make dev-api`): its own logical db + a known dev api_key.
@@ -135,18 +135,31 @@ commit: ## Safely commit only your files: MSG="..." FILES="path ..."
 	  || { echo "commit failed — nothing was committed"; exit 1; }; \
 	echo "→ committed to $$branch:"; git show --stat --format='  %h %s' HEAD | head -20
 
+# The claimed file is `.sql.pending`, NOT `.sql`, and that suffix is the whole
+# point. `sqlx::migrate!` globs `*.sql`, so a bare placeholder is a VALID
+# MIGRATION THAT DOES NOTHING — and any box that boots between claiming the
+# number and writing the SQL records it as applied. The real SQL then never
+# runs, and worse, its checksum no longer matches what the DB stored, so the
+# next boot refuses to start. That happened on the dev box on 2026-08-04 and
+# took the shared `make dev` with it.
+#
+# The number is still reserved the moment this commits (the counter below reads
+# any filename starting with digits), but sqlx cannot see the file until you
+# rename it, which is also the signal that the SQL is actually written.
 migration: ## Claim the next migration number NOW, before writing SQL: NAME=add_foo
 	@[ -n "$(NAME)" ] || { echo "error: NAME is required  —  make migration NAME=add_foo"; exit 1; }
 	@tools/with-lock.sh sh -c '\
 	  last=$$(ls virtues-core/migrations | sed -n "s/^\([0-9][0-9]*\).*/\1/p" | sort -n | tail -1); \
 	  next=$$(printf "%04d" $$(expr $$(echo $$last | sed "s/^0*//") + 1)); \
-	  f="virtues-core/migrations/$${next}_$(NAME).sql"; \
-	  if [ -e "$$f" ]; then echo "error: $$f exists"; exit 1; fi; \
-	  printf -- "-- $${next}_$(NAME)\n-- Number claimed; SQL to follow.\n" > "$$f"; \
+	  f="virtues-core/migrations/$${next}_$(NAME).sql.pending"; \
+	  if [ -e "$$f" ] || [ -e "virtues-core/migrations/$${next}_$(NAME).sql" ]; then echo "error: $${next}_$(NAME) exists"; exit 1; fi; \
+	  printf -- "-- $${next}_$(NAME)\n-- Number claimed; SQL to follow.\n--\n-- Rename to .sql once written — sqlx ignores this file until you do,\n-- which is what stops a boot from applying it as an empty migration.\n" > "$$f"; \
 	  git add -- "$$f" && \
 	  git commit -q -m "chore(db): claim migration $${next} ($(NAME))" -- "$$f" && \
 	  echo "→ claimed $$f"; \
-	  echo "   write the SQL, then: make commit MSG=\"...\" FILES=$$f"'
+	  echo "   1. write the SQL into that file"; \
+	  echo "   2. mv $$f virtues-core/migrations/$${next}_$(NAME).sql"; \
+	  echo "   3. make commit MSG=\"...\" FILES=virtues-core/migrations/$${next}_$(NAME).sql"'
 
 # ── First-time setup ─────────────────────────────────────────────────────────
 
@@ -182,13 +195,13 @@ db-stop: ## Stop the brew postgres service (preserves data)
 	@brew services stop postgresql@17
 
 # Run a local virtues-api as part of `make dev` whenever core points at a
-# localhost api (the default). Empty when pointing at staging/prod.
+# localhost api (the default). Empty when VIRTUES_API_URL is overridden to prod.
 DEV_LOCAL_API := $(filter http://localhost%,$(VIRTUES_API_URL))
 
-dev: db ## Run the full LOCAL dev stack: postgres + api (:9002) + core (:8000) + web + embed (Ctrl-C stops all). `make dev STAGING=1` for the real billing flow.
+dev: db ## Run the full LOCAL dev stack: postgres + api (:9002) + core (:8000) + web + embed (Ctrl-C stops all)
 	@if [ "$(WITH_EMBED)" = "1" ]; then $(MAKE) _embed-ensure; fi
 	@echo "→ starting$(if $(DEV_LOCAL_API), virtues-api (:9002) +,) virtues-core (:8000) + web (:$(DEV_WEB_PORT))$(if $(filter 1,$(WITH_EMBED)), + embed :18181/rerank :18182,). Ctrl-C stops all."
-	@echo "  api: $(VIRTUES_API_URL)  atlas: $(VIRTUES_ATLAS_URL)$(if $(DEV_LOCAL_API),  (fully local — AI works, no checkout), (staging/prod — real billing flow))"
+	@echo "  api: $(VIRTUES_API_URL)  atlas: $(VIRTUES_ATLAS_URL)$(if $(DEV_LOCAL_API),  (fully local — AI works, no checkout), (PROD — real billing, real rows))"
 	@echo "  lands straight in the app (setup skipped).$(if $(filter 1,$(WITH_EMBED)),, search off — 'make dev WITH_EMBED=1' or 'make dev-embed' to enable.)"
 	@trap 'kill 0' EXIT INT TERM; \
 	$(if $(DEV_LOCAL_API),$(MAKE) dev-api & ,) \
@@ -205,9 +218,6 @@ dev-info: db ## Print the manual multi-tab dev instructions (when you want split
 	@echo "  tab 2:  make dev-web"
 	@echo ""
 	@echo "Then 'make dev-link' to get a login URL."
-	@echo ""
-	@echo "To exercise the real billing/onboarding flow against staging:"
-	@echo "  tab 1:  make dev-core STAGING=1   (real claim, test-mode Stripe; skip dev-api)"
 
 dev-core: ## Run virtues-core on the host (HTTP :8000, auto-migrates + prod-seeds). WATCH=1 to auto-restart on .rs changes
 	@if [ "$(WATCH)" = "1" ] && [ -z "$(CARGO_WATCH)" ]; then \
@@ -323,6 +333,22 @@ dev-reset: ## Drop + recreate the dev dbs (DESTRUCTIVE, dev only)
 # `SINCE=` window (e.g. last 90 days) — a per-table time filter with referential
 # integrity, so the pull stays ~constant regardless of total history. Media never
 # rides along (it's on-disk on the box); fetch it lazily over the box loopback.
+#
+# EVERY APPLET IS DISABLED IN THE COPY, as the last step of the restore. The
+# scheduler has no off switch, so whatever the box had armed starts firing here
+# every 15 minutes against data it cannot act on:
+#
+#   · credentialed syncs (gmail, calendar, plaid) decrypt their OAuth tokens
+#     with the BOX's key, which never leaves the box — so they can't work on a
+#     laptop, not now and not after any amount of fixing;
+#   · the embedding/extraction applets want the llama sidecars on :18181/:18182,
+#     which `dev-real` doesn't start;
+#   · and the ones that DO run would write into a snapshot nobody keeps.
+#
+# The result was a wall of ERROR lines every quarter hour, which trains you to
+# ignore the log — the expensive kind of noise. Re-enable individually in the
+# copy if you're actually working on an applet; it's a throwaway, and the next
+# pull disarms them again.
 dev-pull: db ## Snapshot the live box's Postgres into a throwaway local db (~min, network-bound). Run occasionally.
 	@dump="$${TMPDIR:-/tmp}/virtues-box.$$$$.dump"; \
 	trap 'rm -f "$$dump"' EXIT INT TERM; \
@@ -333,7 +359,9 @@ dev-pull: db ## Snapshot the live box's Postgres into a throwaway local db (~min
 	$(PG_BIN)/createdb $(DEV_BOXCOPY_DB); \
 	$(PG_BIN)/psql -d $(DEV_BOXCOPY_DB) -c "CREATE EXTENSION IF NOT EXISTS vector" >/dev/null; \
 	$(PG_BIN)/pg_restore --no-owner -d $(DEV_BOXCOPY_DB) "$$dump" || true; \
-	echo "✓ '$(DEV_BOXCOPY_DB)' refreshed ($$($(PG_BIN)/psql -d $(DEV_BOXCOPY_DB) -tAc "SELECT pg_size_pretty(pg_database_size('$(DEV_BOXCOPY_DB)'))")). Raw dump deleted. Run 'make dev-real'."
+	echo "→ disarming applets in the copy…"; \
+	$(PG_BIN)/psql -d $(DEV_BOXCOPY_DB) -tAc "UPDATE app_applets SET enabled = false WHERE enabled" >/dev/null 2>&1 || true; \
+	echo "✓ '$(DEV_BOXCOPY_DB)' refreshed ($$($(PG_BIN)/psql -d $(DEV_BOXCOPY_DB) -tAc "SELECT pg_size_pretty(pg_database_size('$(DEV_BOXCOPY_DB)'))")), applets disabled. Raw dump deleted. Run 'make dev-real'."
 
 dev-real: db ## Run dev-core + dev-web against your real-box snapshot (virtues_boxcopy). Auto-pulls on first use. Ctrl-C stops all.
 	@$(PG_BIN)/psql -d postgres -tAc "SELECT 1 FROM pg_database WHERE datname='$(DEV_BOXCOPY_DB)'" | grep -q 1 || { \

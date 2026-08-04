@@ -73,6 +73,7 @@ pub struct ToolConfig {
 pub fn default_tools() -> Vec<ToolConfig> {
     vec![
         think_tool(),
+        propose_narrative_identity_tool(),
         update_memory_tool(),
         set_user_name_tool(),
         set_assistant_name_tool(),
@@ -95,6 +96,7 @@ pub fn default_tools() -> Vec<ToolConfig> {
         dayline_event_tool(),
         get_project_item_tool(),
         generate_image_tool(),
+        read_asset_tool(),
     ]
 }
 
@@ -129,6 +131,85 @@ Returns: the generated image (rendered inline to the user)."#.to_string(),
         category: ToolCategory::Edit,
         icon: "ri:image-add-line".to_string(),
         display_order: 22,
+        is_system: false,
+    }
+}
+
+/// Propose an addition to the user's narrative identity — never write one.
+fn propose_narrative_identity_tool() -> ToolConfig {
+    ToolConfig {
+        id: "propose_narrative_identity_edit".to_string(),
+        name: "Propose identity note".to_string(),
+        description: "Suggest something for the user's narrative identity".to_string(),
+        llm_description: r#"Propose an addition to the user's narrative identity — the short document of who they are: values, aspirations, character, temperament, what they want.
+
+This document goes into EVERY conversation you have with them, so it is the most consequential text in the system and it is not yours to edit. This tool does not change it. It leaves a note the user sees, with Add and Dismiss; nothing happens unless they choose.
+
+Use it RARELY. Not for facts (those belong in the record), not for preferences about how to format an answer, and never for something they told you in passing. Use it when they say something durable about who they are or what they are for — the kind of thing that would still be true in a year and that would change how you understand a future question.
+
+Say it in their own register, one or two sentences, as an addition to the document rather than a report about the conversation. Write "I" as the user, because the document is theirs.
+
+Good: "I'd rather ship something imperfect early than polish in private."
+Bad: "The user mentioned they prefer shipping early." (a report, not the document)
+Bad: "The user's favourite editor is vim." (a fact, not an identity)
+
+If you are unsure whether something qualifies, it does not."#.to_string(),
+        parameters: serde_json::json!({
+            "type": "object",
+            "required": ["text", "why"],
+            "properties": {
+                "text": {
+                    "type": "string",
+                    "description": "The sentence(s) to add, written in the user's voice"
+                },
+                "why": {
+                    "type": "string",
+                    "description": "What in this conversation prompted it — shown to the user so they can judge"
+                }
+            }
+        }),
+        tool_type: ToolType::Builtin,
+        category: ToolCategory::Edit,
+        icon: "ri:compass-3-line".to_string(),
+        display_order: 0,
+        is_system: false,
+    }
+}
+
+/// Look at a file — actually look, not read a description of it.
+fn read_asset_tool() -> ToolConfig {
+    ToolConfig {
+        id: "read_asset".to_string(),
+        name: "Read file".to_string(),
+        description: "Look at an image or file the user has stored".to_string(),
+        llm_description: r#"Look at a file in the user's drive. For an image, the image itself comes back and you see it, exactly as if the user had pasted it into the conversation.
+
+Use this when the user refers to a specific file — a screenshot, a photo, a diagram — and answering means seeing what is actually in it.
+
+Take the id from the file's ref URL: `/drive/dr_abc123` means `file_id: "dr_abc123"`. Notebook members list theirs.
+
+When to reach for this instead of searching:
+- A member of the active notebook carries `text="none"` — nothing was extracted from it, so semantic_search cannot see inside it and will return nothing. That is not evidence the file lacks what the user is asking about. Look at it.
+- The user says "this screenshot" / "that photo" / "the image in here". Look before answering.
+- A document's extracted text is not enough and the layout matters.
+
+Do NOT use it to sweep a folder hoping to find something — one file per call, when you know which file you want. Images are sent whole and cost real context.
+
+If the file cannot be shown you are told why. Say that plainly to the user; never describe a file you were not shown."#.to_string(),
+        parameters: serde_json::json!({
+            "type": "object",
+            "required": ["file_id"],
+            "properties": {
+                "file_id": {
+                    "type": "string",
+                    "description": "Drive file id, e.g. `dr_abc123`. A full `/drive/dr_abc123` ref URL is also accepted."
+                }
+            }
+        }),
+        tool_type: ToolType::Builtin,
+        category: ToolCategory::Search,
+        icon: "ri:image-line".to_string(),
+        display_order: 0,
         is_system: false,
     }
 }
@@ -366,7 +447,7 @@ including the user's uploaded documents. When the conversation is grounded in a
 notebook, ALWAYS omit `domains`: the notebook already scopes the results, and an
 extra domain filter will wrongly exclude the notebook's materials.
 
-Returns ranked results with title, preview, author, timestamp, and a similarity score.
+Returns results in relevance order (rank 1 = best match) with title, preview, author, and timestamp. Rank is relative order within THIS result set only — it says nothing about absolute match quality, so do not describe rank-1 as a strong match unless its content shows it.
 Use sql_query with the returned record_ids to get full details.
 
 RECALL TIP: for a broad, vague, or many-worded need, pass 2-4 phrasings in `queries`
@@ -780,8 +861,8 @@ Use this tool when:
 ALWAYS call this before using edit_page so you know what text to find.
 
 IMPORTANT - Extracting page_id:
-When user mentions a page using entity syntax like [Page Name](entity:page_abc123),
-extract the ID from the link: page_abc123 (everything after "entity:").
+When the user mentions a page it arrives as a route link, [Page Name](/page/page_abc123).
+Extract the ID from the link: page_abc123 (the last path segment).
 You MUST pass this page_id parameter when the user references a specific page.
 
 Returns the page title, content, and content length."#.to_string(),
@@ -791,7 +872,7 @@ Returns the page title, content, and content length."#.to_string(),
             "properties": {
                 "page_id": {
                     "type": "string",
-                    "description": "Page ID to read. Extract from entity links: [Name](entity:page_xxx) -> page_xxx"
+                    "description": "Page ID to read. Extract from the page link: [Name](/page/page_xxx) -> page_xxx"
                 }
             }
         }),
@@ -820,12 +901,12 @@ Use this tool when:
 IMPORTANT: Call get_page_content FIRST to see the current document!
 
 IMPORTANT - Extracting page_id:
-When user mentions a page using entity syntax like [Page Name](entity:page_abc123),
-extract the ID from the link: page_abc123 (everything after "entity:").
+When the user mentions a page it arrives as a route link, [Page Name](/page/page_abc123).
+Extract the ID from the link: page_abc123 (the last path segment).
 You MUST pass this page_id parameter when the user references a specific page.
 
 How it works:
-1. Provide 'page_id' - extracted from the entity link
+1. Provide 'page_id' - extracted from the page link
 2. Provide 'find' - the exact text to locate in the document
 3. Provide 'replace' - the new text you want instead
 4. Optionally provide 'title' - new title for the page
@@ -865,7 +946,7 @@ Tips:
             "properties": {
                 "page_id": {
                     "type": "string",
-                    "description": "Page ID to edit. Extract from entity links: [Name](entity:page_xxx) -> page_xxx"
+                    "description": "Page ID to edit. Extract from the page link: [Name](/page/page_xxx) -> page_xxx"
                 },
                 "title": {
                     "type": "string",
@@ -1265,7 +1346,7 @@ Use this when:
 
 Supported urls: /page/, /chat/, /notebook/, /person/, /place/, /org/.
 Returns the item's content (page text, recent chat messages, space members,
-person/place/org/thing details). Don't fetch a reference you don't need."#.to_string(),
+person/place/org details). Don't fetch a reference you don't need."#.to_string(),
         parameters: serde_json::json!({
             "type": "object",
             "required": ["item_url"],

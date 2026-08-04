@@ -12,6 +12,10 @@
 import { syntaxTree } from '@codemirror/language';
 import type { Extension, Range } from '@codemirror/state';
 import { Decoration, type DecorationSet, type EditorView, ViewPlugin, type ViewUpdate, WidgetType } from '@codemirror/view';
+
+import { inlineMarks, selectionTouches } from './inline-marks';
+import { dragJustEnded, isMouseSelecting } from './mouse-freeze';
+
 /** Minimal node shape from Lezer syntax tree (avoids @lezer/common version mismatch) */
 interface TreeNode { name: string; from: number; to: number; }
 
@@ -49,7 +53,13 @@ function buildDecorations(view: EditorView): DecorationSet {
 				cursorLine.number >= nodeStartLine && cursorLine.number <= nodeEndLine;
 
 			// --- Headings ---
-			if (name.startsWith('ATXHeading') && !overlapsActiveLine) {
+			// The line class is applied UNCONDITIONALLY. Dropping it on the active
+			// line (as this once did) collapsed an h1 from 68px to 26px — family,
+			// size, line-height and the 1.75rem padding all going at once — and
+			// shoved every line below it up by 42px on a single click. That was the
+			// single largest source of reflow in the editor. The markers may hide;
+			// the type never moves.
+			if (name.startsWith('ATXHeading')) {
 				const level = name.charAt(name.length - 1);
 				const lineFrom = doc.lineAt(from).from;
 				builder.push(
@@ -57,51 +67,31 @@ function buildDecorations(view: EditorView): DecorationSet {
 				);
 			}
 
-			// Hide heading markers (# ## ### etc.) and trailing space when not on active line
-			if (name === 'HeaderMark' && !overlapsActiveLine) {
+			// Hide the heading markers (# ## ###) and their trailing space. With the
+			// caret on the line the opening marker comes back as a margin-hung
+			// widget — absolutely positioned, so it is legible and editable but
+			// occupies no inline width and cannot push the text sideways.
+			if (name === 'HeaderMark') {
 				let hideEnd = to;
 				if (hideEnd < doc.length && view.state.sliceDoc(hideEnd, hideEnd + 1) === ' ') {
 					hideEnd += 1;
 				}
-				builder.push(Decoration.replace({}).range(from, hideEnd));
+				// Only the OPENING marker gets the widget; a closing `#` in `# Foo #`
+				// or a setext underline just hides.
+				const markLine = doc.lineAt(from);
+				const isOpeningMark = from === markLine.from && markLine.number === nodeStartLine;
+				const onActiveLine = markLine.number === cursorLine.number;
+				const deco =
+					isOpeningMark && onActiveLine
+						? Decoration.replace({
+								widget: new HeadingMarkWidget(view.state.sliceDoc(from, to)),
+							})
+						: Decoration.replace({});
+				builder.push(deco.range(from, hideEnd));
 			}
 
-			// --- Inline formatting (hide delimiters, style content) ---
-			if (name === 'StrongEmphasis' && !overlapsActiveLine) {
-				const inner = getInnerRange(view, node);
-				if (inner) {
-					builder.push(Decoration.mark({ class: 'cm-strong' }).range(inner.from, inner.to));
-					if (inner.from > from) builder.push(Decoration.replace({}).range(from, inner.from));
-					if (inner.to < to) builder.push(Decoration.replace({}).range(inner.to, to));
-				}
-			}
-
-			if (name === 'Emphasis' && !overlapsActiveLine) {
-				const inner = getInnerRange(view, node);
-				if (inner) {
-					builder.push(Decoration.mark({ class: 'cm-emphasis' }).range(inner.from, inner.to));
-					if (inner.from > from) builder.push(Decoration.replace({}).range(from, inner.from));
-					if (inner.to < to) builder.push(Decoration.replace({}).range(inner.to, to));
-				}
-			}
-
-			if (name === 'Strikethrough' && !overlapsActiveLine) {
-				const inner = getInnerRange(view, node);
-				if (inner) {
-					builder.push(Decoration.mark({ class: 'cm-strikethrough' }).range(inner.from, inner.to));
-					if (inner.from > from) builder.push(Decoration.replace({}).range(from, inner.from));
-					if (inner.to < to) builder.push(Decoration.replace({}).range(inner.to, to));
-				}
-			}
-
-			if (name === 'InlineCode' && !overlapsActiveLine) {
-				const inner = getInnerRange(view, node);
-				if (inner) {
-					builder.push(Decoration.mark({ class: 'cm-inline-code' }).range(inner.from, inner.to));
-					if (inner.from > from) builder.push(Decoration.replace({}).range(from, inner.from));
-					if (inner.to < to) builder.push(Decoration.replace({}).range(inner.to, to));
-				}
-			}
+			// Inline formatting is handled once, after this walk, from
+			// inline-marks.ts — the same description the atomic ranges use.
 
 			// --- Blockquotes (left border always, hide > marker when not on line) ---
 			if (name === 'Blockquote') {
@@ -125,17 +115,18 @@ function buildDecorations(view: EditorView): DecorationSet {
 			}
 
 			// --- Horizontal rules ---
+			// Always the rule, never the `---`. Swapping a 1px line for three
+			// characters of text and back is the same flicker as everything else
+			// here; the line is still selectable and deletable as a line.
 			if (name === 'HorizontalRule') {
 				hrLines.add(nodeStartLine);
-				if (!overlapsActiveLine) {
-					builder.push(Decoration.replace({}).range(from, to));
-					builder.push(
-						Decoration.widget({
-							widget: new HorizontalRuleWidget(),
-							side: 1,
-						}).range(to)
-					);
-				}
+				builder.push(Decoration.replace({}).range(from, to));
+				builder.push(
+					Decoration.widget({
+						widget: new HorizontalRuleWidget(),
+						side: 1,
+					}).range(to)
+				);
 			}
 
 			// --- List line decorations (padding) ---
@@ -188,7 +179,6 @@ function buildDecorations(view: EditorView): DecorationSet {
 
 	for (let lineNum = startLine; lineNum <= endLine; lineNum++) {
 		if (hrLines.has(lineNum)) continue;
-		if (lineNum === cursorLine.number) continue;
 
 		const line = doc.line(lineNum);
 		if (!/^(-{3,}|\*{3,}|_{3,})\s*$/.test(line.text)) continue;
@@ -206,63 +196,35 @@ function buildDecorations(view: EditorView): DecorationSet {
 		);
 	}
 
-	// --- Inline HTML underline: <u>text</u> ---
-	const UNDERLINE_REGEX = /<u>(.*?)<\/u>/g;
-	for (let lineNum = startLine; lineNum <= endLine; lineNum++) {
-		if (lineNum === cursorLine.number) continue;
-		const line = doc.line(lineNum);
-		UNDERLINE_REGEX.lastIndex = 0;
-		for (let m = UNDERLINE_REGEX.exec(line.text); m !== null; m = UNDERLINE_REGEX.exec(line.text)) {
-			const from = line.from + m.index;
-			const tagOpenEnd = from + 3;                    // after <u>
-			const tagCloseStart = from + 3 + m[1].length;   // start of </u>
-			const to = from + m[0].length;                   // after </u>
-			builder.push(Decoration.replace({}).range(from, tagOpenEnd));
-			builder.push(Decoration.mark({ class: 'cm-underline' }).range(tagOpenEnd, tagCloseStart));
-			builder.push(Decoration.replace({}).range(tagCloseStart, to));
-		}
-	}
+	// --- Inline marks: bold, italic, strike, code, highlight, underline ---
+	// Reveal-on-touch: the styling is always applied, and the delimiters of THE
+	// construct the selection touches appear in place, dimmed — every other
+	// construct keeps its delimiters hidden. Only ever a horizontal shift, only
+	// ever for the one construct being edited. Positions come from
+	// inline-marks.ts so this stays the single definition of a mark's extent.
+	// No reveal without focus: the selection survives blur, and without this
+	// check an inactive pane (split view, popover open) holds stale raw syntax.
+	const canReveal = view.hasFocus;
 
-	// --- Highlight: ==text== → theme-aware highlight, markers hidden off-line ---
-	const HIGHLIGHT_REGEX = /==(.+?)==/g;
-	for (let lineNum = startLine; lineNum <= endLine; lineNum++) {
-		if (lineNum === cursorLine.number) continue;
-		const line = doc.line(lineNum);
-		HIGHLIGHT_REGEX.lastIndex = 0;
-		for (let m = HIGHLIGHT_REGEX.exec(line.text); m !== null; m = HIGHLIGHT_REGEX.exec(line.text)) {
-			const from = line.from + m.index;
-			const openEnd = from + 2;                 // after ==
-			const closeStart = from + 2 + m[1].length; // before closing ==
-			const to = from + m[0].length;
-			builder.push(Decoration.replace({}).range(from, openEnd));
-			builder.push(Decoration.mark({ class: 'cm-highlight' }).range(openEnd, closeStart));
-			builder.push(Decoration.replace({}).range(closeStart, to));
+	for (const mark of inlineMarks(view.state, vpFrom, vpTo)) {
+		builder.push(
+			Decoration.mark({ class: mark.cls }).range(mark.openTo, mark.closeFrom)
+		);
+		if (canReveal && selectionTouches(view.state, mark)) {
+			builder.push(
+				Decoration.mark({ class: 'cm-formatting-mark' }).range(mark.openFrom, mark.openTo)
+			);
+			builder.push(
+				Decoration.mark({ class: 'cm-formatting-mark' }).range(mark.closeFrom, mark.closeTo)
+			);
+		} else {
+			builder.push(Decoration.replace({}).range(mark.openFrom, mark.openTo));
+			builder.push(Decoration.replace({}).range(mark.closeFrom, mark.closeTo));
 		}
 	}
 
 	// Decoration.set with sort=true handles ordering
 	return Decoration.set(builder, true);
-}
-
-/**
- * Get the content range inside delimiter marks (e.g., content between ** and **)
- */
-function getInnerRange(
-	view: EditorView,
-	node: TreeNode
-): { from: number; to: number } | null {
-	const text = view.state.sliceDoc(node.from, node.to);
-
-	// Find delimiter length (1 for *, 2 for **, ~~ etc.)
-	let delimLen = 0;
-	if (text.startsWith('**') || text.startsWith('~~')) delimLen = 2;
-	else if (text.startsWith('*') || text.startsWith('_') || text.startsWith('`')) delimLen = 1;
-	else return null;
-
-	const from = node.from + delimLen;
-	const to = node.to - delimLen;
-	if (from >= to) return null;
-	return { from, to };
 }
 
 /**
@@ -285,6 +247,30 @@ class BulletDotWidget extends WidgetType {
 
 	eq(other: BulletDotWidget) {
 		return other.glyph === this.glyph;
+	}
+}
+
+/**
+ * The `#` markers, hung in the left margin while the caret is on the line.
+ *
+ * `position: absolute` takes it out of flow, so the marker is visible without
+ * occupying any inline width — the heading text does not shift when the caret
+ * arrives. That is the whole trick: reveal the syntax, never the reflow.
+ */
+class HeadingMarkWidget extends WidgetType {
+	constructor(private marks: string) {
+		super();
+	}
+
+	toDOM() {
+		const span = document.createElement('span');
+		span.className = 'cm-heading-mark';
+		span.textContent = this.marks;
+		return span;
+	}
+
+	eq(other: HeadingMarkWidget) {
+		return other.marks === this.marks;
 	}
 }
 
@@ -315,7 +301,16 @@ const livePreviewPlugin = ViewPlugin.fromClass(
 		}
 
 		update(update: ViewUpdate) {
-			if (update.docChanged || update.viewportChanged || update.selectionSet) {
+			// Selection-driven rebuilds are held while the mouse is down (see
+			// mouse-freeze.ts) so a reveal cannot shift text under a drag in
+			// progress; the rebuild fires on release instead.
+			const rebuild =
+				update.docChanged ||
+				update.viewportChanged ||
+				update.focusChanged ||
+				(update.selectionSet && !isMouseSelecting(update.state)) ||
+				dragJustEnded(update);
+			if (rebuild) {
 				this.decorations = buildDecorations(update.view);
 			}
 		}

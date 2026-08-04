@@ -127,7 +127,6 @@
 		background: var(--color-primary-subtle);
 		color: var(--color-primary);
 		border-radius: 0.25rem;
-		text-transform: uppercase;
 		letter-spacing: 0.025em;
 	}
 

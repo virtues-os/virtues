@@ -93,6 +93,17 @@
 		</span>
 		<kbd class="focus-kbd">⌘⇧F</kbd>
 	</button>
+
+	<button class="focus-toggle" onclick={() => pageDisplay.toggleRaw()}>
+		<Icon
+			icon={pageDisplay.rawMode ? "ri:markdown-fill" : "ri:markdown-line"}
+			width="15"
+		/>
+		<span class="focus-label">Raw markdown</span>
+		<span class="focus-state" class:on={pageDisplay.rawMode}>
+			{pageDisplay.rawMode ? "On" : "Off"}
+		</span>
+	</button>
 </div>
 
 <style>
