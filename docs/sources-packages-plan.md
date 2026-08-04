@@ -14,6 +14,31 @@ cutting a box release, *and* — for OAuth — a code change and deploy of
 virtues-api. That is an unbounded centralized bottleneck on an appliance whose
 entire pitch is that the owner owns everything.
 
+**Decided:** a package *is* a git repo, and installing a third party's repo is a
+first-class supported action — not a power-user escape hatch. Two reasons, and
+the second is the stronger one:
+
+1. **Uniform updatability.** There are four update mechanisms today — box
+   release for shipped applets, Apple/Sparkle for collectors, reconcile-from-disk
+   for chat-authored, and nothing at all for imports. If every package is a repo
+   at a pinned ref, "update" becomes one verb with one UI regardless of where the
+   package came from.
+2. **It forces the git path to be finished.** The importer is half-built
+   *because nothing depends on it*: a dead column query, no provenance, no
+   persisted SHA, no integration tests. Optional paths rot. Making it
+   load-bearing is the forcing function that gets it done properly.
+
+The cost of that bet, stated plainly: once git is load-bearing, a broken git
+path is a broken product rather than a broken optional feature. The tests and
+the sandbox stop being "should" and become ship-blocking.
+
+Two audiences, one system: the person who forks and reads diffs, and the person
+for whom "Apple is kinda hard." Those are not in tension if the trust tier is a
+visible property of the package and the dangerous path is not reachable by
+accident — which is an IA problem, not a capability problem. Catalog stays a
+curated shelf with no paste-a-URL box; stranger-repo install lives one door
+over, sudo-gated, exactly like `change_byo_key`.
+
 ---
 
 ## What the sweep found
@@ -164,7 +189,21 @@ Costs nothing, needs no design, closes the gap between `load_credentials`' doc
 comment and its behavior, and is worth doing whether or not any of the rest
 happens. **Independent of this plan; ship it first.**
 
-### P1 — First-party repo pointers *(cheap, pure win)*
+### P1 — Read and fork *(cheap, and the feature that makes "open" felt)*
+
+Two things that are almost free and serve both audiences at once. Neither needs
+a git remote.
+
+- **View source, everywhere.** Every applet — shipped, source-created,
+  AI-authored — gets a read-only source surface. The technical reader uses it;
+  the non-technical one is reassured it exists without opening it. Zero risk,
+  and it is the strongest trust artifact available for the price.
+- **Fork on edit.** Editing a shipped applet writes a copy into the state root,
+  which already shadows shipped and already reverts cleanly on delete. Record
+  `forked_from`. This is what "fork, change, run it" means for the 90% case —
+  our code, their change — and it is safe by construction in a way that
+  installing a stranger's repo is not. Ranked above stranger-import for that
+  reason, not instead of it.
 
 Add an optional `repo` (and `repo_ref`) to `Source`. Populate it for `ios` and
 `mac`. Surface it on the Catalog row as "read the code."
@@ -220,12 +259,16 @@ order of increasing effort:
 - **Sudo-gate import**, matching `change_byo_key`. A trust warning in
   `GitImportModal` — today the caveat exists only as a source comment and never
   reaches the screen.
-- **Tier what a package may be.** Face-only and agent-only packages are already
-  genuinely bounded (opaque-origin iframe + read-only PG role; a 12-tool
-  allowlist). A `command` package is not bounded at all. Consider allowing only
-  the first two from git until the `systemd-run` jail
-  (`docs/applets-overhaul-plan.md:129`) exists — `code_interpreter` already
-  proves the pattern works here.
+- **Build the jail; don't ban the capability.** Face-only and agent-only
+  packages are already genuinely bounded (opaque-origin iframe + read-only PG
+  role; a 12-tool allowlist). A `command` package is not bounded at all — but
+  the answer is the `systemd-run` jail (`docs/applets-overhaul-plan.md:129`),
+  not a prohibition. `code_interpreter` (`api/code.rs:87-90`) already runs
+  untrusted code under `PrivateNetwork`/`MemoryMax` and refuses to run
+  unsandboxed in release builds; that is the pattern, and applying it to
+  imported `command` packages moves the guarantee from policy back to
+  structural, which is what the product's doctrine wants. Native third-party
+  code stays supported; it just stops being root.
 
 ### P5 — `oauth_direct` spike
 
@@ -272,3 +315,14 @@ drift silently into a 404.
    review-before-run gate is *against* the updatability framing that motivated
    this. Auto-updating a remote that runs against the whole lake is the thing
    P4 exists to prevent.
+4. **Are shipped applets packages too?** If not, there are two classes again and
+   the uniform-update win evaporates. Cheapest coherent answer: the release
+   tarball is a set of packages pinned to the release version — preserves atomic
+   release semantics without making each built-in its own repo. Decide before
+   the update UI is built, because it determines whether "update" is even a
+   meaningful verb on a built-in.
+5. **Fork meets upstream.** Someone forks `google_calendar_sync`; we ship a fix
+   to it. What do they see? Silently keeping a stale fork is the failure mode
+   that bites hardest, and `forked_from = <url>@<sha>` is exactly what makes the
+   good answer possible — show the diff, offer the rebase. Design it with the
+   fork UI, not after it.
