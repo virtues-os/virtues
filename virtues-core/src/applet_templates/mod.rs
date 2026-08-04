@@ -408,7 +408,21 @@ fn parse_template(manifest_path: &std::path::Path, dir: &str) -> Option<Template
     };
     let mut tmpl: Template = match toml::from_str(&text) {
         Ok(t) => t,
-        Err(e) => panic!("failed to parse {}: {e}", manifest_path.display()),
+        Err(e) => {
+            // Log and skip, never panic. This used to abort the process, and
+            // since imports land in the writable state root the folder survives
+            // a restart — so one typo in a third party's manifest poisoned
+            // `load_catalog` permanently, taking reconcile, boot, and the admin
+            // Reconcile button (the only in-app lever) down with it. Recovery
+            // required shell access. The sibling `read_sources_file` was already
+            // hardened for exactly this; this path was missed.
+            tracing::error!(
+                path = %manifest_path.display(),
+                error = %e,
+                "skipping unparseable manifest.toml"
+            );
+            return None;
+        }
     };
     if tmpl.id_prefix.is_none() {
         // Migration 0077 rewrote the stored ids to this prefix. `manifest.toml`
