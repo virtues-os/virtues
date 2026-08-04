@@ -1113,6 +1113,21 @@ pub async fn stream_health_handler(State(state): State<AppState>) -> Response {
     api_response(crate::api::stream_health(&state.db).await)
 }
 
+#[derive(Debug, Deserialize)]
+pub struct StreamDaysQuery {
+    /// Window length. Twelve weeks by default — long enough to show a rhythm
+    /// and a stoppage without the cells becoming unreadably thin.
+    #[serde(default)]
+    pub days: Option<i64>,
+}
+
+pub async fn stream_days_handler(
+    State(state): State<AppState>,
+    axum::extract::Query(q): axum::extract::Query<StreamDaysQuery>,
+) -> Response {
+    api_response(crate::api::stream_health::stream_days(&state.db, q.days.unwrap_or(84)).await)
+}
+
 // Plaid Link handlers were removed in the actions cutover.
 
 // ============================================================================

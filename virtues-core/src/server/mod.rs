@@ -534,6 +534,7 @@ pub async fn run(client: Virtues, host: &str, port: u16) -> Result<()> {
         // Per-stream ingest freshness — surfaces a stalled source instead of
         // letting it rot silently.
         .route("/api/streams/health", get(api::stream_health_handler))
+        .route("/api/streams/days", get(api::stream_days_handler))
         // Subscription & Billing API
         .route("/api/subscription", get(api::get_subscription_handler))
         .route(

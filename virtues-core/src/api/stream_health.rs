@@ -56,6 +56,100 @@ pub struct StreamHealth {
     pub derived: bool,
 }
 
+/// One stream's arrivals, one cell per day, oldest first.
+#[derive(Debug, Serialize, Deserialize)]
+pub struct StreamDays {
+    pub name: String,
+    pub display_name: String,
+    /// Sources that write it — the grouping key for the grid.
+    pub provided_by: Vec<String>,
+    /// `days[i]` is the row count for `from + i` days. Zero-filled, so the
+    /// caller can render a fixed grid without reconciling sparse dates.
+    pub days: Vec<i64>,
+}
+
+/// Daily arrival counts per stream over a window.
+///
+/// A scalar "last seen" per stream cannot show the only thing that matters at a
+/// glance: whether streams stopped *together*. Nineteen rows all reading `Jul 7`
+/// is one event — a device stopped — but as a list it reads as nineteen
+/// problems. Given a day axis the same data draws a vertical cliff across every
+/// row that device feeds, and the shape says it without a word.
+///
+/// It also exposes rhythm, which a scalar cannot: a calendar that only fills on
+/// weekdays is healthy, a heart rate that only fills on weekdays is a phone left
+/// at home.
+pub async fn stream_days(db: &Database, days: i64) -> Result<Vec<StreamDays>> {
+    let days = days.clamp(7, 365);
+    let streams: Vec<_> = virtues_registry::ontologies::registered_ontologies()
+        .into_iter()
+        .filter(|o| o.table_name.starts_with("data_"))
+        .collect();
+    if streams.is_empty() {
+        return Ok(vec![]);
+    }
+
+    // One UNION ALL, grouped per day per stream. `table_name` is a compile-time
+    // registry constant, never user input, so interpolation is injection-safe —
+    // the same argument the freshness query above relies on.
+    let sql = streams
+        .iter()
+        .map(|o| {
+            format!(
+                "SELECT '{name}' AS name, \
+                        (created_at AT TIME ZONE 'UTC')::date AS day, \
+                        count(*)::int8 AS n \
+                   FROM {table} \
+                  WHERE created_at >= now() - ($1::int * interval '1 day') \
+                  GROUP BY 1, 2",
+                name = o.name,
+                table = o.table_name,
+            )
+        })
+        .collect::<Vec<_>>()
+        .join(" UNION ALL ");
+
+    let rows = sqlx::query(&sql).bind(days as i32).fetch_all(db.pool()).await?;
+
+    let today = chrono::Utc::now().date_naive();
+    let start = today - chrono::Duration::days(days - 1);
+    let idx = |d: chrono::NaiveDate| (d - start).num_days();
+
+    let mut by_name: std::collections::HashMap<String, Vec<i64>> = streams
+        .iter()
+        .map(|o| (o.name.to_string(), vec![0i64; days as usize]))
+        .collect();
+
+    for r in rows {
+        let name: String = r.get("name");
+        let day: chrono::NaiveDate = r.get("day");
+        let n: i64 = r.get("n");
+        if let Some(slot) = by_name.get_mut(&name) {
+            let i = idx(day);
+            if i >= 0 && (i as usize) < slot.len() {
+                slot[i as usize] = n;
+            }
+        }
+    }
+
+    Ok(streams
+        .iter()
+        .map(|o| StreamDays {
+            name: o.name.to_string(),
+            display_name: o.display_name.to_string(),
+            provided_by: crate::applet_templates::sources_writing(o.name)
+                .iter()
+                .map(|id| {
+                    crate::applet_templates::lookup_source(id)
+                        .map(|s| s.display_name)
+                        .unwrap_or_else(|| id.clone())
+                })
+                .collect(),
+            days: by_name.remove(o.name).unwrap_or_default(),
+        })
+        .collect())
+}
+
 /// Freshness for every ingest stream, worst-first (stalled → idle → never →
 /// live) so the caller leads with what needs attention.
 pub async fn stream_health(db: &Database) -> Result<Vec<StreamHealth>> {
