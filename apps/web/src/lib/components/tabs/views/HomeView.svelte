@@ -12,6 +12,7 @@
 	import { onMount } from "svelte";
 	import {
 		getDayByDate,
+		createNote,
 		getDayTimeline,
 		getTodayStreams,
 		listPeople,
@@ -27,7 +28,6 @@
 		type UpcomingEvent,
 		type UnnamedPlace,
 	} from "$lib/wiki/api";
-	import { getReflectionsForDate, createReflection } from "$lib/api/client";
 	import { notebookStore } from "$lib/stores/notebook.svelte";
 	import { pagesStore } from "$lib/stores/pages.svelte";
 	import { chatSessions } from "$lib/stores/chatSessions.svelte";
@@ -160,15 +160,22 @@
 		return d.toLocaleDateString(undefined, { weekday: "short" });
 	}
 
-	// ---- examen: writes into today's reflection (the grounded SEED needs an LLM) ----
+	// ---- examen: a human note on today (the grounded SEED needs an LLM) ----
+	// A one-line answer is a note-shaped thing. Writing it as a note on the
+	// day keeps the day's article wholly the record's to maintain; longform
+	// belongs in the day article itself, which you claim by editing it.
 	async function saveExamen() {
 		if (!examenText.trim()) return;
 		try {
-			let refs = await getReflectionsForDate(todayDate);
-			let ref = refs[0] ?? (await createReflection(todayDate));
-			examenSaved = true;
-			// Open the reflection so the owner can keep writing.
-			if (ref?.id) setTimeout(() => open(`/page/${ref.id}`, "Reflection"), 400);
+			const day = await getDayByDate(todayDate);
+			if (day?.id) {
+				await createNote("day", day.id, examenText.trim(), "memo");
+				examenSaved = true;
+				// Open the day so the note is visible where it landed.
+				setTimeout(() => open(`/day/day_${todayDate}`, "Today"), 400);
+			} else {
+				examenSaved = true;
+			}
 		} catch { examenSaved = true; }
 	}
 
@@ -317,7 +324,7 @@
 				<div class="panel">
 					<div class="k">Tonight · a reflection</div>
 					{#if examenSaved}
-						<p class="q">Kept. <span class="s">Opening your reflection…</span></p>
+						<p class="q">Kept. <span class="s">Noted on today's page…</span></p>
 					{:else}
 						<p class="q">What do you want to remember from today?</p>
 						<!-- NEEDS: the *seeded* examen ("You were most alive in the map cache,
@@ -349,13 +356,13 @@
 	@keyframes rv { to { opacity: 1; transform: none; } }
 	@media (prefers-reduced-motion: reduce) { .rv { animation: none; opacity: 1; transform: none; } }
 
-	.kicker { font-family: var(--font-mono); font-size: 10.5px; letter-spacing: 0.2em; text-transform: uppercase; color: var(--color-foreground-subtle); margin: 0 0 18px; }
+	.kicker { font-family: var(--font-mono); font-size: 10.5px; color: var(--color-foreground-subtle); margin: 0 0 18px; }
 	.link { font-family: var(--font-sans); font-size: 13.5px; font-weight: 500; color: var(--color-primary); background: none; border: 0; padding: 0; cursor: pointer; }
 	.link:hover { text-decoration: underline; text-underline-offset: 3px; }
 	.link .arw { opacity: 0.7; }
 
 	.mast { padding-top: clamp(30px, 5vh, 52px); display: flex; align-items: baseline; gap: 16px; }
-	.mast .wm { font-family: var(--font-serif); font-weight: 600; font-size: 16px; letter-spacing: 0.14em; text-transform: uppercase; }
+	.mast .wm { font-family: var(--font-serif); font-weight: 600; font-size: 16px; }
 	.mast .dl { margin-left: auto; font-size: 11px; letter-spacing: 0.08em; color: var(--color-foreground-subtle); }
 	.mast .clk { color: var(--color-foreground); }
 
@@ -380,7 +387,7 @@
 	.dialogue { margin: clamp(48px, 8vh, 90px) 0 0; display: grid; grid-template-columns: 1fr 1fr; gap: clamp(28px, 4vw, 44px); }
 	@media (max-width: 720px) { .dialogue { grid-template-columns: 1fr; gap: clamp(32px, 6vh, 44px); } }
 	.panel { background: color-mix(in srgb, var(--color-primary) 6%, var(--color-background)); border-radius: 14px; padding: clamp(22px, 3vw, 30px); }
-	.panel .k { font-family: var(--font-mono); font-size: 10px; letter-spacing: 0.18em; text-transform: uppercase; color: var(--color-primary); margin: 0 0 14px; }
+	.panel .k { font-family: var(--font-mono); font-size: 10px; color: var(--color-primary); margin: 0 0 14px; }
 	.panel .q { font-family: var(--font-serif); font-size: 17px; line-height: 1.45; color: var(--color-foreground); margin: 0; font-style: normal; }
 	.panel .q .m { color: var(--color-primary); }
 	.panel .q .s { color: var(--color-foreground-subtle); }

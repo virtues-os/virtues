@@ -282,8 +282,6 @@
 		padding: 0.5rem 0.75rem;
 		font-size: 0.6875rem;
 		font-weight: 500;
-		text-transform: uppercase;
-		letter-spacing: 0.05em;
 		color: var(--color-foreground-muted);
 		background: var(--color-surface-elevated);
 	}

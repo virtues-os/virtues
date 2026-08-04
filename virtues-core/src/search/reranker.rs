@@ -13,10 +13,12 @@
 //! encoder but never the head, returning plausible-looking vectors that
 //! rank as noise. llama-server runs the head and returns real scores.
 //!
-//! Scores are the classifier's raw logits (unbounded); `query.rs` applies
-//! the sigmoid when it folds them into result ordering. If the sidecar is
-//! down, `get_reranker()` errors and the search pipeline falls back to
-//! bi-encoder cosine ranking (fallback lives in `query.rs`).
+//! Scores are the classifier's raw logits (unbounded). `query.rs` uses them
+//! ONLY as an ordering — it sorts, then min-max normalizes to [0,1] (both
+//! monotonic, so any strictly increasing score scale works; that is what lets
+//! Dragon's ColBERT MaxSim serve the same contract). If the sidecar is down,
+//! `get_reranker()` errors and the search pipeline falls back to the fused
+//! hybrid ranking (fallback lives in `query.rs`).
 
 use anyhow::{anyhow, Context, Result};
 use serde::Deserialize;
@@ -45,15 +47,18 @@ struct RerankRow {
     relevance_score: f32,
 }
 
-/// llama-server HTTP-backed reranker. The sidecar owns the model, GPU,
-/// threading; one POST scores every (query, document) pair in the batch. One of
-/// the two backends behind [`LocalReranker`].
-struct HttpReranker {
+/// HTTP-backed reranker speaking the `/v1/rerank` contract. The sidecar owns
+/// the model, GPU/NPU, threading; one POST scores every (query, document) pair
+/// in the batch. On Dragon the endpoint is `virtues-qnnd` (ColBERT MaxSim);
+/// everywhere else, llama-server's cross-encoder. One inference path — this
+/// was previously wrapped in a dispatch layer left over from a native QNN
+/// client that no longer exists.
+pub struct LocalReranker {
     client: reqwest::Client,
     base_url: String,
 }
 
-impl HttpReranker {
+impl LocalReranker {
     async fn new() -> Result<Self> {
         let base_url = resolve_base_url();
         // See embedder.rs: reqwest's rustls build panics "No provider set"
@@ -82,8 +87,10 @@ impl HttpReranker {
         Ok(Self { client, base_url })
     }
 
+    /// Score `documents` against `query`; one score per document, indexed into
+    /// the input slice.
     pub async fn rerank_async(
-        self: &Arc<Self>,
+        &self,
         query: &str,
         documents: &[String],
     ) -> Result<Vec<RerankScore>> {
@@ -129,36 +136,6 @@ pub(crate) fn resolve_base_url() -> String {
         .unwrap_or_else(|_| DEFAULT_URL.to_string())
 }
 
-/// The reranker callers use — a thin wrapper preserving the public surface
-/// from when this dispatched between an HTTP backend and a native QNN client.
-/// One inference path now: the `/v1/rerank` contract. On Dragon the endpoint
-/// behind `VIRTUES_RERANK_URL` is `virtues-qnnd` (ColBERT MaxSim on the NPU —
-/// unbounded-positive monotonic scores; `query.rs`'s sigmoid preserves their
-/// order); everywhere else it's llama-server's cross-encoder logits.
-pub struct LocalReranker {
-    inner: Arc<HttpReranker>,
-}
-
-impl LocalReranker {
-    async fn new() -> Result<Self> {
-        Ok(Self { inner: Arc::new(HttpReranker::new().await?) })
-    }
-
-    /// Score `documents` against `query`; one score per document, indexed into
-    /// the input slice.
-    pub async fn rerank_async(
-        &self,
-        query: &str,
-        documents: &[String],
-    ) -> Result<Vec<RerankScore>> {
-        self.inner.rerank_async(query, documents).await
-    }
-
-    fn backend_label(&self) -> &'static str {
-        "http-contract"
-    }
-}
-
 static RERANKER: OnceCell<Arc<LocalReranker>> = OnceCell::const_new();
 
 /// Errors when the sidecar is unreachable; a failed init is retried on the
@@ -171,9 +148,9 @@ pub async fn get_reranker() -> Result<Arc<LocalReranker>> {
             let start = std::time::Instant::now();
             let reranker = LocalReranker::new().await?;
             tracing::info!(
-                "Reranker ready in {:.1}s (backend={})",
+                "Reranker ready in {:.1}s at {}",
                 start.elapsed().as_secs_f64(),
-                reranker.backend_label()
+                reranker.base_url
             );
             Ok::<_, anyhow::Error>(Arc::new(reranker))
         })

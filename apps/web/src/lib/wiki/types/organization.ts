@@ -52,6 +52,12 @@ export interface OrganizationPage extends WikiPageBase {
 	 */
 	role?: string;
 
+	/**
+	 * Other surfaces the record knows this organization by.
+	 * Lowercased on save; a saved alias backfills every past mention (0037).
+	 */
+	aliases?: string[];
+
 	// ─────────────────────────────────────────────────────────────
 	// Narrative
 	// ─────────────────────────────────────────────────────────────

@@ -51,6 +51,7 @@ export function apiToPersonPage(api: WikiPersonApi): PersonPage {
 
 		// Person-specific fields
 		nickname: api.nickname ?? undefined,
+		aliases: api.aliases ?? [],
 		relationship: api.relationship_category ?? "Contact",
 		emails: api.emails,
 		phones: api.phones,
@@ -66,6 +67,7 @@ export function apiToPersonPage(api: WikiPersonApi): PersonPage {
 		content: api.content ?? "",
 		article: api.article ?? undefined,
 		articleUpdatedAt: api.article_updated_at ? new Date(api.article_updated_at) : undefined,
+		articleAutoUpdate: api.article_auto_update ?? false,
 
 		// Metadata (empty for now - will be computed from entity_edges)
 		citations: [],
@@ -113,6 +115,7 @@ export function apiToPlacePage(api: WikiPlaceApi): PlacePage {
 		content: api.content ?? "",
 		article: api.article ?? undefined,
 		articleUpdatedAt: api.article_updated_at ? new Date(api.article_updated_at) : undefined,
+		articleAutoUpdate: api.article_auto_update ?? false,
 
 		// Connections (populated from entity_edges later)
 		associatedPeople: [],
@@ -165,11 +168,13 @@ export function apiToOrganizationPage(api: WikiOrganizationApi): OrganizationPag
 				}
 			: undefined,
 		role: api.role_title ?? undefined,
+		aliases: api.aliases ?? [],
 
 		// Content
 		content: api.content ?? "",
 		article: api.article ?? undefined,
 		articleUpdatedAt: api.article_updated_at ? new Date(api.article_updated_at) : undefined,
+		articleAutoUpdate: api.article_auto_update ?? false,
 
 		// Connections (populated from entity_edges later)
 		keyContacts: [],
@@ -211,7 +216,7 @@ export function apiToDayPage(api: WikiDayApi): DayPage {
 		linkedEntities: emptyLinkedEntities(),
 		linkedTemporal: emptyLinkedTemporal(),
 		events: [],
-		autobiography: api.autobiography ?? "",
+		autobiography: api.article ?? api.autobiography ?? "",
 		autobiographySections: api.autobiography_sections
 			? api.autobiography_sections.map(s => ({
 				id: s.id,
@@ -239,7 +244,9 @@ export function apiToDayPage(api: WikiDayApi): DayPage {
 		citations: [],
 		linkedPages: [],
 		tags: [],
-		content: api.autobiography ?? "", // DayPage uses autobiography as main content
+		// The day's prose: the article page (via wiki_day_prose) with the
+		// legacy autobiography column as fallback until its drop.
+		content: api.article ?? api.autobiography ?? "",
 		createdAt: new Date(api.created_at),
 		updatedAt: new Date(api.updated_at),
 		lastEditedBy: (api.last_edited_by as "ai" | "human") ?? "ai",

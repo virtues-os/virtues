@@ -84,6 +84,35 @@ impl Default for ToolContext {
     }
 }
 
+/// Media a tool wants the model to actually look at, rather than describe.
+///
+/// A tool result is a string, so until now a tool could tell the model that an
+/// image existed but never hand it over — the multimodal path ran one way,
+/// inward from the browser, and nothing on the server could construct a part.
+/// An attachment is that missing direction: the agent loop turns it into the
+/// same image content block a pasted screenshot produces, so a file the model
+/// found is worth exactly as much as a file the user dropped in.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ToolAttachment {
+    /// IANA type — `image/png`, `application/pdf`. Decides how (and whether)
+    /// the loop can attach it.
+    pub media_type: String,
+    /// A `data:` URL. Inline rather than a link because the provider fetches
+    /// nothing from this box: it is on someone's desk behind a NAT, and a URL
+    /// that only resolves on the LAN would silently arrive empty.
+    pub data_url: String,
+    /// Shown to the model alongside the media so it can name what it looked at.
+    pub filename: String,
+}
+
+/// Ceiling on a single attached file, before base64 inflates it by 4/3.
+///
+/// Sized for what this is actually for — screenshots and photos, which land
+/// well under it — rather than for the largest image a drive can hold. An
+/// attachment stays in the conversation for every subsequent turn, so the cost
+/// of one careless 40MB scan is paid again on every message that follows.
+const MAX_ATTACHMENT_BYTES: i64 = 5 * 1024 * 1024;
+
 /// Result from tool execution
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ToolResult {
@@ -94,6 +123,10 @@ pub struct ToolResult {
     /// Optional error message
     #[serde(skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
+    /// Media for the model to see on the next turn. Empty for nearly every
+    /// tool, and skipped when empty so no existing result JSON changes shape.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub attachments: Vec<ToolAttachment>,
 }
 
 impl ToolResult {
@@ -103,6 +136,7 @@ impl ToolResult {
             success: true,
             data,
             error: None,
+            attachments: Vec::new(),
         }
     }
 
@@ -112,7 +146,14 @@ impl ToolResult {
             success: false,
             data: serde_json::Value::Null,
             error: Some(message.into()),
+            attachments: Vec::new(),
         }
+    }
+
+    /// Attach media for the model to look at on the next turn.
+    pub fn with_attachments(mut self, attachments: Vec<ToolAttachment>) -> Self {
+        self.attachments = attachments;
+        self
     }
 }
 
@@ -258,6 +299,9 @@ impl ToolExecutor {
                 // Return minimal acknowledgment to avoid doubling token cost.
                 Ok(ToolResult::success(serde_json::json!({ "acknowledged": true })))
             }
+            "propose_narrative_identity_edit" => {
+                self.execute_propose_narrative_identity(arguments).await
+            }
             "update_memory" => self.execute_update_memory(arguments).await,
             "set_user_name" => self.execute_set_user_name(arguments).await,
             "set_assistant_name" => self.execute_set_assistant_name(arguments).await,
@@ -269,6 +313,7 @@ impl ToolExecutor {
             }
             "sql_query" => self.sql_query.execute(arguments).await,
             "sql_write" => super::sql_write::execute(&self._pool, arguments).await,
+            "read_asset" => self.execute_read_asset(arguments).await,
             "code_interpreter" => self.execute_code_interpreter(arguments).await,
             // Deep Research fan-out: spawn read-only research workers in parallel.
             "dispatch_subagents" => {
@@ -370,11 +415,171 @@ impl ToolExecutor {
                     "execution_time_ms": response.execution_time_ms,
                 }),
                 error: response.error,
+                attachments: Vec::new(),
             })
         }
     }
 
+    /// Hand a stored file to the model to look at.
+    ///
+    /// The point of this tool is the attachment, not the JSON: for an image
+    /// the data is what answers the question, and a caption written from the
+    /// filename would be a guess dressed as a reading. So a file we cannot
+    /// attach returns a plain refusal with a reason, never a description.
+    async fn execute_read_asset(
+        &self,
+        arguments: serde_json::Value,
+    ) -> Result<ToolResult, ToolError> {
+        use base64::Engine;
+
+        let raw = arguments
+            .get("file_id")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .trim();
+        if raw.is_empty() {
+            return Err(ToolError::InvalidParameters("file_id is required".into()));
+        }
+        // Ref URLs are how files are named everywhere else in the prompt, so
+        // accept one rather than making the model remember which surface it is
+        // talking to. Parse via THE ref parser (it strips ?page=N viewer
+        // params a stored route carries); the local rsplit this replaces kept
+        // the query string, so `/drive/file_abc?page=3` — the exact form the
+        // notebook block hands the model — refused a file that exists. Bare
+        // ids pass through, minus any params the model copied along.
+        let file_id = crate::api::refs::split_ref(raw)
+            .map(|(_, id)| id)
+            .unwrap_or(raw)
+            .split(['?', '#'])
+            .next()
+            .unwrap_or(raw);
+
+        let storage = crate::storage::Storage::file(
+            crate::storage::lake::lake_root()
+                .to_string_lossy()
+                .into_owned(),
+        )
+        .map_err(|e| ToolError::ExecutionFailed(format!("Storage unavailable: {e}")))?;
+        let config = crate::api::DriveConfig::new(std::sync::Arc::new(storage));
+
+        let (file, bytes) =
+            match crate::api::drive::download_file(&self._pool, &config, file_id).await {
+                Ok(v) => v,
+                Err(e) => {
+                    return Ok(ToolResult::success(serde_json::json!({
+                        "shown": false,
+                        "file_id": file_id,
+                        "reason": format!("Could not read that file: {e}"),
+                    })))
+                }
+            };
+
+        let mime = file.mime_type.clone().unwrap_or_default();
+        if !mime.starts_with("image/") {
+            return Ok(ToolResult::success(serde_json::json!({
+                "shown": false,
+                "file_id": file_id,
+                "filename": file.filename,
+                "mime_type": mime,
+                "reason": "Only images can be looked at directly today. For a document, \
+                           its extracted text is what semantic_search indexes.",
+            })));
+        }
+
+        // Base64 inflates by 4/3, and this rides in the context window of every
+        // subsequent turn of the conversation — not just the next one. A cap
+        // that refuses loudly beats one that quietly poisons a long chat.
+        if bytes.len() as i64 > MAX_ATTACHMENT_BYTES {
+            return Ok(ToolResult::success(serde_json::json!({
+                "shown": false,
+                "file_id": file_id,
+                "filename": file.filename,
+                "size_bytes": bytes.len(),
+                "reason": format!(
+                    "That image is {:.1}MB, over the {:.0}MB limit for looking at a file directly.",
+                    bytes.len() as f64 / 1_048_576.0,
+                    MAX_ATTACHMENT_BYTES as f64 / 1_048_576.0
+                ),
+            })));
+        }
+
+        let encoded = base64::engine::general_purpose::STANDARD.encode(&bytes);
+        let attachment = ToolAttachment {
+            media_type: mime.clone(),
+            data_url: format!("data:{mime};base64,{encoded}"),
+            filename: file.filename.clone(),
+        };
+
+        Ok(
+            ToolResult::success(serde_json::json!({
+                "shown": true,
+                "file_id": file_id,
+                "filename": file.filename,
+                "mime_type": mime,
+                "size_bytes": bytes.len(),
+                "note": "The image follows this result. Describe what you actually see in it.",
+            }))
+            .with_attachments(vec![attachment]),
+        )
+    }
+
     /// Update AI persistent memory
+    /// Leave a note proposing an addition to the narrative identity.
+    ///
+    /// **Propose, never write.** The narrative identity is in the system prompt
+    /// of every conversation, so a model editing it directly would be editing
+    /// the lens it is seen through — quietly, and in its own favour if it drifts.
+    /// This writes a `wiki_notes` row and nothing else; the user sees Add or
+    /// Dismiss, and the document changes only if they choose.
+    ///
+    /// The note carries `why` as its citation. A machine note must cite (the DB
+    /// enforces it), and for a proposal drawn from a conversation the honest
+    /// source is the conversation itself — so the reason the model gives IS the
+    /// evidence the user judges it on.
+    async fn execute_propose_narrative_identity(
+        &self,
+        arguments: serde_json::Value,
+    ) -> Result<ToolResult, ToolError> {
+        let text = arguments
+            .get("text")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .trim();
+        let why = arguments
+            .get("why")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .trim();
+
+        if text.is_empty() {
+            return Err(ToolError::InvalidParameters(
+                "A proposal needs text".to_string(),
+            ));
+        }
+
+        let body = if why.is_empty() {
+            text.to_string()
+        } else {
+            format!("{text}\n\n— proposed because: {why}")
+        };
+
+        sqlx::query(
+            "INSERT INTO wiki_notes (subject_type, subject_id, kind, body, author, source_refs) \
+             VALUES ('narrative_identity', 'nar_identity_001', 'observation', $1, 'ai', $2)",
+        )
+        .bind(&body)
+        .bind(serde_json::json!([format!("conversation: {why}")]))
+        .execute(self._pool.as_ref())
+        .await
+        .map_err(|e| ToolError::ExecutionFailed(format!("Failed to save proposal: {e}")))?;
+
+        Ok(ToolResult::success(serde_json::json!({
+            "status": "proposed",
+            "message": "Left this for them to accept or dismiss on their Narrative Identity page. \
+                        It has NOT been added — do not tell them it has."
+        })))
+    }
+
     async fn execute_update_memory(
         &self,
         arguments: serde_json::Value,
@@ -396,8 +601,13 @@ impl ToolExecutor {
             content
         };
 
+        // `memory` is JSONB. Binding the raw &str sends TEXT, and Postgres then
+        // parses it as JSON — so every note that was not itself valid JSON was
+        // rejected with `Token "Adam" is invalid`, which is to say all of them.
+        // Wrapping it in a JSON string is what makes the column and the tool
+        // agree; `build_user_context` reads it back the same way.
         sqlx::query("UPDATE app_assistant_profile SET memory = $1 WHERE id = '00000000-0000-0000-0000-000000000001'")
-            .bind(content)
+            .bind(serde_json::Value::String(content.to_string()))
             .execute(self._pool.as_ref())
             .await
             .map_err(|e| ToolError::ExecutionFailed(format!("Failed to update memory: {}", e)))?;
@@ -646,5 +856,154 @@ impl std::fmt::Debug for ToolExecutor {
         f.debug_struct("ToolExecutor")
             .field("available_tools", &self.available_tools())
             .finish()
+    }
+}
+
+/// Live checks for read_asset against a dev box's real drive. Ignored by
+/// default — CI has neither the database nor the object store.
+///   cargo test -p virtues --lib tools::executor::live_read_asset -- --ignored --nocapture
+#[cfg(test)]
+mod live_read_asset {
+    use super::*;
+
+    async fn executor() -> ToolExecutor {
+        let url = std::env::var("DATABASE_URL")
+            .unwrap_or_else(|_| "postgres://virtues:virtues@localhost:5432/virtues".to_string());
+        ToolExecutor::new(PgPool::connect(&url).await.expect("dev database"))
+    }
+
+    /// Walks every image in the drive rather than trusting the first one.
+    ///
+    /// A drive row can outlive its bytes — this dev checkout has a
+    /// content-addressed `.media/` row whose blob was never copied here — and
+    /// a test that picked one file would report the resulting refusal as a
+    /// failure of the tool. The refusal is the tool working. What must be
+    /// proven is that a file WITH bytes comes back as something to look at.
+    #[tokio::test]
+    #[ignore]
+    async fn an_unextracted_screenshot_comes_back_as_something_to_look_at() {
+        let ex = executor().await;
+        let ids: Vec<String> = sqlx::query_scalar(
+            "SELECT id FROM app_drive_files
+             WHERE mime_type LIKE 'image/%' AND deleted_at IS NULL AND is_folder = FALSE
+             ORDER BY size_bytes ASC",
+        )
+        .fetch_all(ex._pool.as_ref())
+        .await
+        .expect("query");
+        if ids.is_empty() {
+            println!("no images in this drive; nothing to check");
+            return;
+        }
+
+        let mut refused: Vec<String> = Vec::new();
+        for id in &ids {
+            // A ref URL, the form the model reads in the notebook block — the
+            // bare-id path is the same call with the prefix stripped.
+            let out = ex
+                .execute_read_asset(serde_json::json!({ "file_id": format!("/drive/{id}") }))
+                .await
+                .expect("tool ran");
+
+            if out.data["shown"] != true {
+                refused.push(format!("{id}: {}", out.data["reason"]));
+                continue;
+            }
+
+            assert_eq!(out.attachments.len(), 1, "expected one attachment");
+            let att = &out.attachments[0];
+            assert!(att.media_type.starts_with("image/"), "{}", att.media_type);
+            assert!(
+                att.data_url
+                    .starts_with(&format!("data:{};base64,", att.media_type)),
+                "malformed data url prefix"
+            );
+            // Real bytes, not an empty envelope that would reach the model as
+            // a blank image and be described as one.
+            let b64 = att.data_url.split_once(";base64,").unwrap().1;
+            assert!(b64.len() > 1000, "suspiciously small payload: {}", b64.len());
+            println!(
+                "attached {} ({}, {} base64 chars)",
+                att.filename,
+                att.media_type,
+                b64.len()
+            );
+            return;
+        }
+
+        panic!(
+            "no image in the drive could be shown; every one refused:\n  {}",
+            refused.join("\n  ")
+        );
+    }
+
+    #[tokio::test]
+    #[ignore]
+    async fn a_missing_file_refuses_with_a_reason_and_never_a_description() {
+        let ex = executor().await;
+        let out = ex
+            .execute_read_asset(serde_json::json!({ "file_id": "file_does_not_exist" }))
+            .await
+            .expect("tool ran");
+        assert!(out.data["shown"] == false);
+        assert!(out.data["reason"].is_string(), "a refusal must say why");
+        assert!(out.attachments.is_empty());
+        println!("refusal: {}", out.data["reason"]);
+    }
+}
+
+/// Round-trips the assistant's persistent memory through the real column.
+///
+/// The write and the read live in different modules and disagreed about the
+/// column's type for the tool's whole life: `update_memory` bound a bare string
+/// to JSONB (rejected by Postgres) and the prompt builder decoded JSONB into
+/// String (rejected by sqlx). Each end failed quietly in its own way, so only a
+/// test that does both catches it.
+///   cargo test -p virtues --lib tools::executor::live_memory -- --ignored --nocapture
+#[cfg(test)]
+mod live_memory {
+    use super::*;
+
+    #[tokio::test]
+    #[ignore]
+    async fn a_note_survives_the_round_trip_and_reaches_the_prompt() {
+        let url = std::env::var("DATABASE_URL")
+            .unwrap_or_else(|_| "postgres://virtues:virtues@localhost:5432/virtues".to_string());
+        let pool = PgPool::connect(&url).await.expect("dev database");
+
+        // Restore whatever the box already had — this is a real database.
+        let before: Option<serde_json::Value> =
+            sqlx::query_scalar("SELECT memory FROM app_assistant_profile LIMIT 1")
+                .fetch_optional(&pool)
+                .await
+                .expect("read")
+                .flatten();
+
+        let ex = ToolExecutor::new(pool.clone());
+        // Prose, not JSON — the case that was rejected for the tool's whole life.
+        let note = "Adam prefers concise answers and dislikes hedging.";
+        let out = ex
+            .execute_update_memory(serde_json::json!({ "content": note }))
+            .await
+            .expect("write succeeded");
+        assert_eq!(out.data["saved"], true);
+
+        let back: serde_json::Value =
+            sqlx::query_scalar("SELECT memory FROM app_assistant_profile LIMIT 1")
+                .fetch_one(&pool)
+                .await
+                .expect("read back as JSON");
+        assert_eq!(back.as_str(), Some(note), "stored shape is not a JSON string");
+
+        let prompt = crate::api::chat::build_system_prompt_for_audit(&pool).await;
+        assert!(prompt.contains("<memory>"), "memory never reached the prompt");
+        assert!(prompt.contains(note), "memory block does not contain the note");
+        println!("round-trip OK: {note}");
+
+        sqlx::query("UPDATE app_assistant_profile SET memory = $1")
+            .bind(before)
+            .execute(&pool)
+            .await
+            .expect("restore");
     }
 }

@@ -141,6 +141,8 @@
 				}
 				return "Queried data";
 			}
+			case "read_asset":
+				return "Looked at a file";
 			case "query_database":
 			case "database_query":
 				return "Queried your personal data";

@@ -139,6 +139,11 @@ pub async fn run(client: Virtues, host: &str, port: u16) -> Result<()> {
     // ends. See `crate::maintenance::sweeper`.
     crate::maintenance::sweeper::spawn(client.database.pool().clone());
 
+    // Release preparation: on the stable channel, fetch + preflight the next
+    // release ahead of time so installing it is a restart rather than a
+    // download. Never activates anything — see `api::updates`.
+    crate::api::updates::spawn();
+
     // Pair-code rotator: keeps a fresh universal standing pair code alive at all
     // times (with an overlap window) so the panel and `virtues pair` always have
     // a valid code to display. See `crate::maintenance::pair_rotator`.
@@ -370,6 +375,21 @@ pub async fn run(client: Virtues, host: &str, port: u16) -> Result<()> {
         )
         .route("/api/applets/:id/run", post(api::trigger_applet_handler))
         .route("/api/applets/:id/data", get(api::get_applet_data_handler))
+        // Read the applet's own code. Read-only, owner-authed like everything
+        // in this group; see api/applet_source.rs for why it guards harder than
+        // the face server does.
+        .route(
+            "/api/applets/:id/source",
+            get(crate::api::applet_source::list_handler),
+        )
+        .route(
+            "/api/applets/:id/source/*path",
+            get(crate::api::applet_source::file_handler),
+        )
+        .route(
+            "/api/applets/:id/fork",
+            post(crate::api::applet_source::fork_handler),
+        )
         // Chat-export upload (Tier 3 one-time import). Per-route body limit
         // overrides the router-wide 105MB cap — ChatGPT exports can be larger.
         .route(
@@ -401,6 +421,78 @@ pub async fn run(client: Virtues, host: &str, port: u16) -> Result<()> {
             get(api::get_place_handler)
                 .put(api::update_place_handler)
                 .delete(api::delete_place_handler),
+        )
+        .route(
+            "/api/wiki/notes/:subject_type/:subject_id",
+            axum::routing::get(api::list_notes_handler).post(api::create_note_handler),
+        )
+        .route(
+            "/api/wiki/notes/:id/resolve",
+            axum::routing::put(api::resolve_note_handler),
+        )
+        .route(
+            "/api/wiki/notes-open-count",
+            axum::routing::get(api::open_notes_count_handler),
+        )
+        .route(
+            "/api/wiki/lifeline",
+            axum::routing::get(api::lifeline_handler),
+        )
+        .route(
+            "/api/wiki/lifeline/ground",
+            axum::routing::get(api::lifeline_ground_handler),
+        )
+        .route(
+            "/api/wiki/lifeline/clock",
+            axum::routing::get(api::lifeline_clock_handler),
+        )
+        .route(
+            "/api/wiki/lifeline/feed",
+            axum::routing::get(api::lifeline_feed_handler),
+        )
+        .route(
+            "/api/wiki/lifeline/processed",
+            axum::routing::get(api::lifeline_processed_handler),
+        )
+        .route(
+            "/api/wiki/history",
+            axum::routing::get(api::history_feed_handler),
+        )
+        .route(
+            "/api/wiki/articles/:subject_type/:subject_id/history",
+            axum::routing::get(api::article_history_handler),
+        )
+        .route(
+            "/api/wiki/subjects/:subject_type/:subject_id/backlinks",
+            axum::routing::get(api::subject_backlinks_handler),
+        )
+        .route(
+            "/api/wiki/articles/:subject_type/:subject_id",
+            get(api::get_article_handler).post(api::write_article_handler),
+        )
+        .route(
+            "/api/wiki/articles/:subject_type/:subject_id/auto-update",
+            axum::routing::put(api::set_article_auto_update_handler),
+        )
+        .route(
+            "/api/entities/people",
+            axum::routing::post(api::create_person_handler),
+        )
+        .route(
+            "/api/entities/people/:id",
+            axum::routing::delete(api::delete_person_handler),
+        )
+        .route(
+            "/api/entities/orgs",
+            axum::routing::post(api::create_org_handler),
+        )
+        .route(
+            "/api/entities/orgs/:id",
+            axum::routing::delete(api::delete_org_handler),
+        )
+        .route(
+            "/api/entities/people/:id/reclassify-as-org",
+            axum::routing::post(api::reclassify_person_handler),
         )
         .route(
             "/api/entities/places/:id/set-home",
@@ -447,6 +539,7 @@ pub async fn run(client: Virtues, host: &str, port: u16) -> Result<()> {
         // Per-stream ingest freshness — surfaces a stalled source instead of
         // letting it rot silently.
         .route("/api/streams/health", get(api::stream_health_handler))
+        .route("/api/streams/days", get(api::stream_days_handler))
         // Subscription & Billing API
         .route("/api/subscription", get(api::get_subscription_handler))
         .route(
@@ -647,6 +740,11 @@ pub async fn run(client: Virtues, host: &str, port: u16) -> Result<()> {
             "/api/wiki/day/:date/streams",
             get(api::wiki_get_day_streams_handler),
         )
+        // Wiki - Day heart rate (the Autonomic chart)
+        .route(
+            "/api/wiki/day/:date/heart-rate",
+            get(api::day_heart_rate_handler),
+        )
         // Admin API — LLM-authoring on-ramp for new actions
         .route("/api/admin/reconcile", post(api::admin_reconcile_handler))
         .route(
@@ -680,7 +778,7 @@ pub async fn run(client: Virtues, host: &str, port: u16) -> Result<()> {
         )
         .route(
             "/api/pages/reflections/:date",
-            get(api::get_reflections_handler).post(api::create_reflection_handler),
+            get(api::get_reflections_handler),
         )
         .route(
             "/api/pages/:id",

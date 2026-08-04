@@ -223,7 +223,7 @@ pub async fn list_applets_handler(State(state): State<AppState>) -> Response {
         r#"SELECT
             t.id, t.owner, t.name, t.agent, t.cron_schedule,
             t.enabled, t.config, t.condition, t.triggers,
-            t.memory, t.credential_id,
+            t.memory, t.credential_id, t.device_id,
             t.command,
             t.until, t.archived_at,
             t.created_at, t.updated_at,
@@ -267,6 +267,7 @@ pub async fn list_applets_handler(State(state): State<AppState>) -> Response {
                         serde_json::from_value(triggers_val).unwrap_or_default();
                     let memory: Option<String> = r.try_get("memory").unwrap_or(None);
                     let credential_id: Option<String> = r.try_get("credential_id").unwrap_or(None);
+                    let device_id: Option<String> = r.try_get("device_id").unwrap_or(None);
                     let command_raw: Option<String> = r.try_get("command").unwrap_or(None);
                     let command: Option<Vec<String>> = command_raw
                         .as_deref()
@@ -275,6 +276,10 @@ pub async fn list_applets_handler(State(state): State<AppState>) -> Response {
                     let archived_at: Option<chrono::DateTime<chrono::Utc>> =
                         r.try_get("archived_at").unwrap_or(None);
                     let has_face = crate::server::faces::face_dir_for(&id).is_some();
+                    let origin = crate::scheduler::applets::origin_of(
+                        &owner,
+                        credential_id.is_some() || device_id.is_some(),
+                    );
                     // Derived display shape (the old runtime taxonomy).
                     let runtime = if command.as_ref().is_none_or(|c| c.is_empty())
                         && agent.as_deref().is_none_or(|s| s.trim().is_empty())
@@ -319,6 +324,8 @@ pub async fn list_applets_handler(State(state): State<AppState>) -> Response {
                         "triggers": triggers,
                         "memory": memory,
                         "credential_id": credential_id,
+                        "device_id": device_id,
+                        "origin": origin,
                         "runtime": runtime,
                         "command": command,
                         "until": until,
@@ -369,6 +376,8 @@ pub async fn get_applet_handler(
                     "memory": action.memory,
                     "command": action.command,
                     "credential_id": action.credential_id,
+                    "device_id": action.device_id,
+                    "origin": crate::scheduler::applets::derived_origin(&action),
                     "runtime": crate::scheduler::applets::derived_runtime(&action),
                     "until": action.until,
                     "archived_at": action.archived_at,
@@ -592,6 +601,22 @@ pub struct SourceCatalogItem {
     pub auth_kind: &'static str,
     /// Number of `active` credentials (passwords) for this source.
     pub credential_count: i64,
+    /// Secret names an `api_key` source expects, in manifest order. Empty for
+    /// every other auth kind. Without it the connect form had to guess, and it
+    /// guessed `["token"]` — so a source declaring two fields could not be
+    /// connected from the UI at all.
+    pub fields: Vec<String>,
+    /// Where this source's code can be read. Provenance only; never an install
+    /// or update path. Null for sources whose code is entirely the box's.
+    pub repo: Option<String>,
+    pub repo_ref: Option<String>,
+    /// Ontologies this source can produce, by display name — "what would
+    /// connecting this give me". The catalog could previously only say what a
+    /// source *is*, never what it would deliver.
+    pub provides: Vec<String>,
+    /// The life-domains those ontologies fall in (`health`, `financial`, …),
+    /// which is the coarser grain worth showing in a table cell.
+    pub domains: Vec<String>,
 }
 
 /// GET /api/sources — catalog tiles for the Sources UI.
@@ -620,6 +645,7 @@ pub async fn list_sources_handler(State(state): State<AppState>) -> Response {
         .await
         .unwrap_or(0);
 
+        let written = crate::applet_templates::ontologies_written_by(&s.id);
         items.push(SourceCatalogItem {
             id: s.id.clone(),
             name: s.display_name.clone(),
@@ -627,6 +653,31 @@ pub async fn list_sources_handler(State(state): State<AppState>) -> Response {
             description: s.description.clone(),
             auth_kind: s.auth.kind_str(),
             credential_count,
+            fields: match &s.auth {
+                crate::applet_templates::SourceAuth::ApiKey { fields } => fields.clone(),
+                _ => Vec::new(),
+            },
+            repo: s.repo.clone(),
+            repo_ref: s.repo_ref.clone(),
+            provides: written
+                .iter()
+                .map(|n| {
+                    virtues_registry::ontologies::registered_ontologies()
+                        .into_iter()
+                        .find(|o| o.name == n)
+                        .map(|o| o.display_name.to_string())
+                        .unwrap_or_else(|| n.clone())
+                })
+                .collect(),
+            domains: {
+                let mut d: Vec<String> = written
+                    .iter()
+                    .filter_map(|n| n.split('_').next().map(str::to_string))
+                    .collect();
+                d.sort();
+                d.dedup();
+                d
+            },
         });
     }
 
@@ -790,8 +841,33 @@ pub async fn admin_reconcile_handler(State(state): State<AppState>) -> Response 
 /// the slug prefix and clean up rows for manifests that disappeared upstream.
 pub async fn import_git_applets_handler(
     State(state): State<AppState>,
+    user: crate::middleware::auth::AuthUser,
     Json(body): Json<crate::applet_git_import::ImportRequest>,
 ) -> Response {
+    // Sudo-gated: this fetches and runs somebody else's code.
+    let Some(sudo_id) = body.sudo_request_id.as_deref().filter(|s| !s.is_empty()) else {
+        return (
+            StatusCode::FORBIDDEN,
+            Json(serde_json::json!({ "error": "sudo_required" })),
+        )
+            .into_response();
+    };
+    if let Err(resp) = crate::api::sudo::verify_and_consume(
+        state.db.pool(),
+        sudo_id,
+        "import_applet_package",
+        &user.device_id,
+    )
+    .await
+    {
+        tracing::warn!("applet import: sudo verify failed: {resp}");
+        return (
+            StatusCode::FORBIDDEN,
+            Json(serde_json::json!({ "error": "sudo_not_approved" })),
+        )
+            .into_response();
+    }
+
     let outcome = match crate::applet_git_import::import(state.db.pool(), body).await {
         Ok(o) => o,
         Err(e) => {
@@ -1062,6 +1138,21 @@ pub async fn get_activity_metrics_handler(State(state): State<AppState>) -> Resp
 /// messages, the calendar sync, and finance each went dark unnoticed.
 pub async fn stream_health_handler(State(state): State<AppState>) -> Response {
     api_response(crate::api::stream_health(&state.db).await)
+}
+
+#[derive(Debug, Deserialize)]
+pub struct StreamDaysQuery {
+    /// Window length. Twelve weeks by default — long enough to show a rhythm
+    /// and a stoppage without the cells becoming unreadably thin.
+    #[serde(default)]
+    pub days: Option<i64>,
+}
+
+pub async fn stream_days_handler(
+    State(state): State<AppState>,
+    axum::extract::Query(q): axum::extract::Query<StreamDaysQuery>,
+) -> Response {
+    api_response(crate::api::stream_health::stream_days(&state.db, q.days.unwrap_or(84)).await)
 }
 
 // Plaid Link handlers were removed in the actions cutover.
@@ -1533,6 +1624,428 @@ pub async fn delete_place_handler(
     }
 }
 
+#[derive(serde::Deserialize)]
+pub struct CreateEntityBody {
+    pub name: String,
+}
+
+/// Create a person by hand.
+pub async fn create_person_handler(
+    State(state): State<AppState>,
+    Json(b): Json<CreateEntityBody>,
+) -> Response {
+    match crate::api::entities::create_person(state.db.pool(), &b.name).await {
+        Ok(id) => api_response(Ok::<_, crate::error::Error>(
+            serde_json::json!({ "id": id, "route": format!("/person/{id}") }),
+        )),
+        Err(e) => error_response(e),
+    }
+}
+
+/// Create an organization by hand.
+pub async fn create_org_handler(
+    State(state): State<AppState>,
+    Json(b): Json<CreateEntityBody>,
+) -> Response {
+    match crate::api::entities::create_organization(state.db.pool(), &b.name).await {
+        Ok(id) => api_response(Ok::<_, crate::error::Error>(
+            serde_json::json!({ "id": id, "route": format!("/org/{id}") }),
+        )),
+        Err(e) => error_response(e),
+    }
+}
+
+/// Delete a person, and everything that pointed at them.
+pub async fn delete_person_handler(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> Response {
+    match crate::api::entities::delete_person(state.db.pool(), id).await {
+        Ok(()) => success_message("Person deleted"),
+        Err(e) => error_response(e),
+    }
+}
+
+/// Delete an organization, and everything that pointed at it.
+pub async fn delete_org_handler(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> Response {
+    match crate::api::entities::delete_organization(state.db.pool(), id).await {
+        Ok(()) => success_message("Organization deleted"),
+        Err(e) => error_response(e),
+    }
+}
+
+#[derive(serde::Deserialize)]
+pub struct LifelineQuery {
+    pub from: Option<String>,
+    pub to: Option<String>,
+    pub buckets: Option<i32>,
+    /// Comma-separated lane ids; absent = every lane.
+    pub lanes: Option<String>,
+    /// Comma-separated lane ids to split into their member tables.
+    pub expand: Option<String>,
+    /// Comma-separated `lane:measure_id` pairs — what each lane should plot
+    /// instead of a row count. Unknown pairs fall back to the default.
+    pub measures: Option<String>,
+    /// Feed paging.
+    pub limit: Option<i64>,
+    pub offset: Option<i64>,
+    /// IANA zone the day-clock's hours are read in. One zone for the whole
+    /// raster, so travel shows as a dislocation rather than being normalised
+    /// away. Unknown names fall back to UTC.
+    pub tz: Option<String>,
+}
+
+/// Per-lane density over a window — the lifeline's only data source.
+pub async fn lifeline_handler(
+    State(state): State<AppState>,
+    Query(q): Query<LifelineQuery>,
+) -> Response {
+    // No window given = the whole life. Computed from the data, because a
+    // lifeline that defaults to the last 365 days is not a lifeline.
+    let (span_from, span_to) = match crate::api::lifeline::corpus_span(state.db.pool()).await {
+        Ok(s) => s,
+        Err(e) => return error_response(e),
+    };
+    let to = q
+        .to
+        .and_then(|s| chrono::DateTime::parse_from_rfc3339(&s).ok())
+        .map(|d| d.with_timezone(&chrono::Utc))
+        .unwrap_or(span_to);
+    let from = q
+        .from
+        .and_then(|s| chrono::DateTime::parse_from_rfc3339(&s).ok())
+        .map(|d| d.with_timezone(&chrono::Utc))
+        .unwrap_or(span_from);
+    let csv = |v: Option<String>| {
+        v.map(|s| {
+            s.split(',')
+                .map(|x| x.trim().to_string())
+                .filter(|x| !x.is_empty())
+                .collect::<Vec<_>>()
+        })
+    };
+    let lanes = csv(q.lanes);
+    let expand = csv(q.expand);
+    let measures = csv(q.measures);
+
+    api_response(
+        crate::api::lifeline::get_lifeline(
+            state.db.pool(),
+            from,
+            to,
+            q.buckets.unwrap_or(365),
+            lanes,
+            expand,
+            measures,
+        )
+        .await,
+    )
+}
+
+/// Where a window was spent — the location lane's second view.
+pub async fn lifeline_ground_handler(
+    State(state): State<AppState>,
+    Query(q): Query<LifelineQuery>,
+) -> Response {
+    let (span_from, span_to) = match crate::api::lifeline::corpus_span(state.db.pool()).await {
+        Ok(s) => s,
+        Err(e) => return error_response(e),
+    };
+    let parse = |s: Option<String>, fallback: chrono::DateTime<chrono::Utc>| {
+        s.and_then(|s| chrono::DateTime::parse_from_rfc3339(&s).ok())
+            .map(|d| d.with_timezone(&chrono::Utc))
+            .unwrap_or(fallback)
+    };
+    api_response(
+        crate::api::lifeline::get_ground(
+            state.db.pool(),
+            parse(q.from, span_from),
+            parse(q.to, span_to),
+        )
+        .await,
+    )
+}
+
+/// Time-of-day against date — the lifeline's primary band.
+pub async fn lifeline_clock_handler(
+    State(state): State<AppState>,
+    Query(q): Query<LifelineQuery>,
+) -> Response {
+    let (span_from, span_to) = match crate::api::lifeline::corpus_span(state.db.pool()).await {
+        Ok(s) => s,
+        Err(e) => return error_response(e),
+    };
+    let parse = |s: Option<String>, fallback: chrono::DateTime<chrono::Utc>| {
+        s.and_then(|s| chrono::DateTime::parse_from_rfc3339(&s).ok())
+            .map(|d| d.with_timezone(&chrono::Utc))
+            .unwrap_or(fallback)
+    };
+    api_response(
+        crate::api::lifeline::get_clock(
+            state.db.pool(),
+            parse(q.from, span_from),
+            parse(q.to, span_to),
+            q.buckets.unwrap_or(720),
+            q.tz.as_deref().unwrap_or("UTC"),
+        )
+        .await,
+    )
+}
+
+/// The records inside a window — what a selection actually contains.
+pub async fn lifeline_feed_handler(
+    State(state): State<AppState>,
+    Query(q): Query<LifelineQuery>,
+) -> Response {
+    let (span_from, span_to) = match crate::api::lifeline::corpus_span(state.db.pool()).await {
+        Ok(s) => s,
+        Err(e) => return error_response(e),
+    };
+    let parse = |s: Option<String>, fallback: chrono::DateTime<chrono::Utc>| {
+        s.and_then(|s| chrono::DateTime::parse_from_rfc3339(&s).ok())
+            .map(|d| d.with_timezone(&chrono::Utc))
+            .unwrap_or(fallback)
+    };
+    let lanes = q.lanes.map(|s| {
+        s.split(',')
+            .map(|x| x.trim().to_string())
+            .filter(|x| !x.is_empty())
+            .collect::<Vec<_>>()
+    });
+    api_response(
+        crate::api::lifeline::get_feed(
+            state.db.pool(),
+            parse(q.from, span_from),
+            parse(q.to, span_to),
+            lanes,
+            q.limit.unwrap_or(50),
+            q.offset.unwrap_or(0),
+        )
+        .await,
+    )
+}
+
+/// What Virtues has interpreted inside a window — days and events.
+pub async fn lifeline_processed_handler(
+    State(state): State<AppState>,
+    Query(q): Query<LifelineQuery>,
+) -> Response {
+    let (span_from, span_to) = match crate::api::lifeline::corpus_span(state.db.pool()).await {
+        Ok(s) => s,
+        Err(e) => return error_response(e),
+    };
+    let parse = |s: Option<String>, fallback: chrono::DateTime<chrono::Utc>| {
+        s.and_then(|s| chrono::DateTime::parse_from_rfc3339(&s).ok())
+            .map(|d| d.with_timezone(&chrono::Utc))
+            .unwrap_or(fallback)
+    };
+    api_response(
+        crate::api::lifeline::get_processed(
+            state.db.pool(),
+            parse(q.from, span_from),
+            parse(q.to, span_to),
+            q.limit.unwrap_or(80),
+        )
+        .await,
+    )
+}
+
+/// Notes on a subject.
+pub async fn list_notes_handler(
+    State(state): State<AppState>,
+    Path((subject_type, subject_id)): Path<(String, String)>,
+    Query(q): Query<NotesQuery>,
+) -> Response {
+    api_response(
+        crate::api::wiki_notes::list_notes(
+            state.db.pool(),
+            &subject_type,
+            &subject_id,
+            q.include_resolved.unwrap_or(false),
+        )
+        .await,
+    )
+}
+
+#[derive(serde::Deserialize)]
+pub struct NotesQuery {
+    pub include_resolved: Option<bool>,
+}
+
+/// Open notes across the whole record — the Overview's what-changed count.
+pub async fn open_notes_count_handler(State(state): State<AppState>) -> Response {
+    api_response(
+        crate::api::wiki_notes::count_open_total(state.db.pool())
+            .await
+            .map(|n| serde_json::json!({ "open": n })),
+    )
+}
+
+#[derive(serde::Deserialize)]
+pub struct CreateNoteBody {
+    pub body: String,
+    pub kind: Option<String>,
+}
+
+/// Leave a note on a subject.
+pub async fn create_note_handler(
+    State(state): State<AppState>,
+    Path((subject_type, subject_id)): Path<(String, String)>,
+    Json(b): Json<CreateNoteBody>,
+) -> Response {
+    api_response(
+        crate::api::wiki_notes::create_note(
+            state.db.pool(),
+            &subject_type,
+            &subject_id,
+            b.kind.as_deref().unwrap_or("memo"),
+            &b.body,
+        )
+        .await,
+    )
+}
+
+#[derive(serde::Deserialize)]
+pub struct ResolveNoteBody {
+    pub resolution: String,
+}
+
+/// Accept or dismiss a note.
+pub async fn resolve_note_handler(
+    State(state): State<AppState>,
+    Path(id): Path<i64>,
+    Json(b): Json<ResolveNoteBody>,
+) -> Response {
+    match crate::api::wiki_notes::resolve_note(state.db.pool(), id, &b.resolution).await {
+        Ok(()) => success_message("Note closed"),
+        Err(e) => error_response(e),
+    }
+}
+
+/// One article's edit history, with diffs.
+pub async fn article_history_handler(
+    State(state): State<AppState>,
+    Path((subject_type, subject_id)): Path<(String, String)>,
+) -> Response {
+    api_response(
+        crate::api::wiki_articles::get_article_history(
+            state.db.pool(),
+            &subject_type,
+            &subject_id,
+        )
+        .await,
+    )
+}
+
+/// The wiki's History room: every recent edit to any article.
+pub async fn history_feed_handler(
+    State(state): State<AppState>,
+    Query(q): Query<LimitQuery>,
+) -> Response {
+    api_response(
+        crate::api::wiki_articles::get_history_feed(state.db.pool(), q.limit.unwrap_or(50)).await,
+    )
+}
+
+/// Everything that mentions this subject.
+pub async fn subject_backlinks_handler(
+    State(state): State<AppState>,
+    Path((subject_type, subject_id)): Path<(String, String)>,
+) -> Response {
+    api_response(
+        crate::api::wiki_articles::get_subject_backlinks(
+            state.db.pool(),
+            &subject_type,
+            &subject_id,
+        )
+        .await,
+    )
+}
+
+/// Write a subject's article, now, because someone asked for it.
+///
+/// A plain handler rather than a trip through the applet runner. The applet
+/// path looked available — `entity_article` declares a `manual` trigger — but
+/// it ships `default_enabled = false` and `prepare_run` refuses disabled
+/// applets, so the button would 404 on a fresh box; its singleton concurrency
+/// gate turns a second click into a `skipped` run, which is wrong for
+/// per-subject work; and its entry point takes no target, so there is no way to
+/// say *this one*. The applet stays the cron host; this is the door.
+///
+/// Synchronous on purpose: it is one model call the user is waiting for, and
+/// returning 202 would mean polling `app_applet_runs` to find out whether your
+/// own click worked.
+/// GET one subject's article row — the join, not the prose. The frontend
+/// uses `page_id` to open the article in the page editor.
+pub async fn get_article_handler(
+    State(state): State<AppState>,
+    Path((subject_type, subject_id)): Path<(String, String)>,
+) -> Response {
+    match crate::api::wiki_articles::get_article(state.db.pool(), &subject_type, &subject_id).await
+    {
+        Ok(Some(a)) => Json(a).into_response(),
+        Ok(None) => StatusCode::NOT_FOUND.into_response(),
+        Err(e) => error_response(e),
+    }
+}
+
+pub async fn write_article_handler(
+    State(state): State<AppState>,
+    Path((subject_type, subject_id)): Path<(String, String)>,
+) -> Response {
+    api_response(
+        crate::api::entity_article_gen::write_entity_article_now(
+            state.db.pool(),
+            &subject_type,
+            &subject_id,
+        )
+        .await,
+    )
+}
+
+/// Turn maintenance on or off for one article.
+pub async fn set_article_auto_update_handler(
+    State(state): State<AppState>,
+    Path((subject_type, subject_id)): Path<(String, String)>,
+    Json(body): Json<serde_json::Value>,
+) -> Response {
+    let on = body.get("auto_update").and_then(|v| v.as_bool()).unwrap_or(false);
+    match crate::api::wiki_articles::set_auto_update(
+        state.db.pool(),
+        &subject_type,
+        &subject_id,
+        on,
+    )
+    .await
+    {
+        Ok(()) => success_message(if on {
+            "This article will be kept up to date"
+        } else {
+            "This article will no longer be updated automatically"
+        }),
+        Err(e) => error_response(e),
+    }
+}
+
+/// Reclassify a person as an organization.
+///
+/// Returns the new org id so the caller can navigate to it — the person route
+/// it came from stops resolving the moment this succeeds.
+pub async fn reclassify_person_handler(
+    State(state): State<AppState>,
+    Path(person_id): Path<String>,
+) -> Response {
+    match crate::api::entities::reclassify_person_as_organization(state.db.pool(), person_id).await {
+        Ok(org_id) => api_response(Ok::<_, crate::error::Error>(
+            serde_json::json!({ "id": org_id, "route": format!("/org/{org_id}") }),
+        )),
+        Err(e) => error_response(e),
+    }
+}
+
 /// Set a place as the user's home
 pub async fn set_place_as_home_handler(
     State(state): State<AppState>,
@@ -1933,6 +2446,24 @@ pub struct DaySourcesQuery {
 
 /// Get the three raw record streams (location, calendar, audio) for a day, as
 /// spans — the homepage's "day before synthesis" view.
+/// GET /api/wiki/day/:date/heart-rate — the day's HR samples, for Autonomic.
+pub async fn day_heart_rate_handler(
+    State(state): State<AppState>,
+    Path(date): Path<String>,
+    Query(query): Query<DaySourcesQuery>,
+) -> Response {
+    match date.parse::<chrono::NaiveDate>() {
+        Ok(parsed_date) => api_response(
+            crate::api::wiki::get_day_heart_rate(state.db.pool(), parsed_date, query.tz.as_deref())
+                .await,
+        ),
+        Err(_) => error_response(Error::InvalidInput(format!(
+            "Invalid date format: {}",
+            date
+        ))),
+    }
+}
+
 pub async fn today_streams_handler(
     State(state): State<AppState>,
     Path(date): Path<String>,
@@ -3122,23 +3653,14 @@ pub async fn get_page_backlinks_handler(
     api_response(crate::api::get_page_backlinks(state.db.pool(), &id).await)
 }
 
-/// GET /api/pages/reflections/:date - Get all reflections for a date
+/// GET /api/pages/reflections/:date — legacy reflections for a date, read
+/// only. The POST that minted them is retired: writing about a day belongs
+/// to the day's article or a note on the day.
 pub async fn get_reflections_handler(
     State(state): State<AppState>,
     Path(date): Path<String>,
 ) -> Response {
     api_response(crate::api::get_reflections_for_date(state.db.pool(), &date).await)
-}
-
-/// POST /api/pages/reflections/:date - Create a new reflection for a date
-pub async fn create_reflection_handler(
-    State(state): State<AppState>,
-    Path(date): Path<String>,
-) -> Response {
-    match crate::api::create_reflection(state.db.pool(), &date, None).await {
-        Ok(page) => (StatusCode::CREATED, Json(page)).into_response(),
-        Err(e) => error_response(e),
-    }
 }
 
 /// Query params for entity search

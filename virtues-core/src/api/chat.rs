@@ -534,19 +534,56 @@ const MAX_PAGE_CONTENT_CHARS: usize = 10_000;
 
 /// Build narrative identity content for the system prompt.
 ///
-/// Queries the user's narrative identity (present-orientation self-portrait) to provide
-/// Returns the user's narrative identity content (up to 800 chars), or empty string.
+/// The user's telos document — values, character, aspirations — for the system
+/// prompt. Empty string when unset, which is the ordinary case.
+///
+/// **Budget: ~2k tokens, and the reason is behavioural, not economic.** NI sits
+/// in the SYSTEM prompt, so it is prompt-cached and the marginal cost per turn
+/// is a cache read; 5k would be affordable. What a longer document costs is
+/// precision. The prompt around this already spends four paragraphs telling the
+/// model to hold it lightly — "the fastest way to lose trust is to psychoanalyse
+/// a shopping list" — and every extra paragraph is more surface for a spurious
+/// connection to a routine question. A longer NI does not make the assistant
+/// understand you better; it makes it perform understanding more often.
+///
+/// Truncation happens at a PARAGRAPH boundary. The previous version cut at 800
+/// characters mid-word, which would have fed the model a sentence that stops
+/// in the middle and invited it to complete the thought itself. (It never fired
+/// in practice: the table has no rows on a real box, so NI has been the empty
+/// string in every prompt since it shipped. Fixing it is a build, not a repair.)
 async fn build_narrative_identity(pool: &PgPool) -> String {
-    match sqlx::query_scalar::<_, String>(
-        "SELECT content FROM wiki_narrative_identity LIMIT 1"
-    )
-    .fetch_one(pool)
-    .await
+    match sqlx::query_scalar::<_, String>("SELECT content FROM wiki_narrative_identity LIMIT 1")
+        .fetch_one(pool)
+        .await
     {
-        Ok(content) if !content.is_empty() => {
-            content.chars().take(800).collect()
-        }
+        Ok(content) if !content.trim().is_empty() => truncate_to_budget(&content, NI_BUDGET_CHARS),
         _ => String::new(),
+    }
+}
+
+/// ~2k tokens. English averages near four characters per token, and this is a
+/// ceiling rather than a target.
+const NI_BUDGET_CHARS: usize = 8_000;
+
+/// Cut at the last paragraph break inside the budget; if there is no break to
+/// find, cut at the last sentence end; only then fall back to a hard cut.
+///
+/// Never mid-word: a document that ends mid-sentence reads to the model as a
+/// thought it should finish, and this one is about who a person is.
+fn truncate_to_budget(text: &str, budget: usize) -> String {
+    if text.chars().count() <= budget {
+        return text.to_string();
+    }
+    let cut: String = text.chars().take(budget).collect();
+    if let Some(i) = cut.rfind("\n\n") {
+        return cut[..i].trim_end().to_string();
+    }
+    if let Some(i) = cut.rfind(['.', '!', '?']) {
+        return cut[..=i].to_string();
+    }
+    match cut.rfind(char::is_whitespace) {
+        Some(i) => cut[..i].to_string(),
+        None => cut,
     }
 }
 
@@ -556,71 +593,101 @@ async fn build_narrative_identity(pool: &PgPool) -> String {
 /// - Identity: occupation, employer, home location
 /// - Recent days: last 3 autobiographies (truncated)
 /// - Connected sources: active data source names
+/// The DB-backed prompt sections inside `<user_context>`, by name. One list,
+/// so assembly, the error policy, and the audit test all iterate the same
+/// registry rather than each hand-maintaining its own idea of what exists.
+pub(crate) const USER_CONTEXT_SECTIONS: &[&str] = &["identity", "recent_days", "connected_sources"];
+
+/// Build one named context section. `Ok(None)` = no data, section legitimately
+/// absent; `Err` = the section HAS data it failed to deliver.
+///
+/// Every arm is total: it either renders or errors — never `if let Ok` — and
+/// the caller applies one uniform policy to errors. That policy exists because
+/// this file shipped two sections that never rendered once (`recent_days`, a
+/// DATE decoded as String; `memory`, JSONB decoded as String) and the swallow
+/// meant nothing anywhere said so. A section that fails to render costs no
+/// error the user sees — the model just quietly knows less — so the log line
+/// is the only witness this failure mode can have.
+pub(crate) async fn build_context_section(
+    pool: &PgPool,
+    name: &str,
+) -> Result<Option<String>, sqlx::Error> {
+    match name {
+        "identity" => {
+            let row = sqlx::query_as::<_, (Option<String>, Option<String>, Option<String>)>(
+                r#"SELECT p.occupation, p.employer, wp.name
+                 FROM app_user_profile p
+                 LEFT JOIN wiki_places wp ON p.home_place_id = wp.id
+                 WHERE p.id = '00000000-0000-0000-0000-000000000001'"#,
+            )
+            .fetch_optional(pool)
+            .await?;
+            let Some(row) = row else { return Ok(None) };
+            let mut parts = Vec::new();
+            if let (Some(occ), Some(emp)) = (&row.0, &row.1) {
+                parts.push(format!("{} at {}", occ, emp));
+            } else if let Some(occ) = &row.0 {
+                parts.push(occ.clone());
+            }
+            if let Some(place) = &row.2 {
+                parts.push(format!("Lives in {}", place));
+            }
+            Ok((!parts.is_empty())
+                .then(|| format!("<identity>{}</identity>", parts.join(". "))))
+        }
+        "recent_days" => {
+            // `date::text` because the column is a Postgres DATE and this
+            // decodes into String. Without the cast sqlx errors — which is the
+            // decode failure that kept this section out of every prompt from
+            // the day it shipped until 2026-08-01.
+            let rows = sqlx::query_as::<_, (String, Option<String>)>(
+                r#"SELECT date::text, prose FROM wiki_day_prose
+                 WHERE prose IS NOT NULL
+                 ORDER BY date DESC LIMIT 3"#,
+            )
+            .fetch_all(pool)
+            .await?;
+            let day_lines: Vec<String> = rows
+                .iter()
+                .filter_map(|(date, auto)| {
+                    let text = auto.as_deref()?;
+                    let truncated = if text.chars().count() > 300 {
+                        format!("{}...", text.chars().take(300).collect::<String>())
+                    } else {
+                        text.to_string()
+                    };
+                    Some(format!("{date}: {truncated}"))
+                })
+                .collect();
+            Ok((!day_lines.is_empty())
+                .then(|| format!("<recent_days>\n{}\n</recent_days>", day_lines.join("\n"))))
+        }
+        "connected_sources" => {
+            let rows = sqlx::query_as::<_, (String,)>(
+                "SELECT name FROM credentials WHERE status = 'active' ORDER BY name",
+            )
+            .fetch_all(pool)
+            .await?;
+            let names: Vec<&str> = rows.iter().map(|r| r.0.as_str()).collect();
+            Ok((!names.is_empty())
+                .then(|| format!("<connected_sources>{}</connected_sources>", names.join(", "))))
+        }
+        other => {
+            tracing::warn!("[chat] unknown context section requested: {other}");
+            Ok(None)
+        }
+    }
+}
+
 async fn build_user_context(pool: &PgPool, user_name: &str) -> Option<String> {
     let mut sections = Vec::new();
-
-    // 1. Identity — occupation, employer, home place
-    if let Ok(row) = sqlx::query_as::<_, (Option<String>, Option<String>, Option<String>)>(
-        r#"SELECT p.occupation, p.employer, wp.name
-         FROM app_user_profile p
-         LEFT JOIN wiki_places wp ON p.home_place_id = wp.id
-         WHERE p.id = '00000000-0000-0000-0000-000000000001'"#
-    )
-    .fetch_one(pool)
-    .await
-    {
-        let mut parts = Vec::new();
-        if let (Some(occ), Some(emp)) = (&row.0, &row.1) {
-            parts.push(format!("{} at {}", occ, emp));
-        } else if let Some(occ) = &row.0 {
-            parts.push(occ.clone());
-        }
-        if let Some(place) = &row.2 {
-            parts.push(format!("Lives in {}", place));
-        }
-        if !parts.is_empty() {
-            sections.push(format!("<identity>{}</identity>", parts.join(". ")));
-        }
-    }
-
-    // 2. Recent days — last 3 autobiographies
-    if let Ok(rows) = sqlx::query_as::<_, (String, Option<String>)>(
-        r#"SELECT date, autobiography FROM wiki_days
-         WHERE autobiography IS NOT NULL AND autobiography != ''
-         ORDER BY date DESC LIMIT 3"#
-    )
-    .fetch_all(pool)
-    .await
-    {
-        if !rows.is_empty() {
-            let mut day_lines = Vec::new();
-            for (date, auto) in &rows {
-                if let Some(text) = auto {
-                    let truncated = if text.chars().count() > 300 {
-                        let t: String = text.chars().take(300).collect();
-                        format!("{}...", t)
-                    } else {
-                        text.clone()
-                    };
-                    day_lines.push(format!("{}: {}", date, truncated));
-                }
-            }
-            if !day_lines.is_empty() {
-                sections.push(format!("<recent_days>\n{}\n</recent_days>", day_lines.join("\n")));
-            }
-        }
-    }
-
-    // 3. Connected sources — active credential names
-    if let Ok(rows) = sqlx::query_as::<_, (String,)>(
-        "SELECT name FROM credentials WHERE status = 'active' ORDER BY name"
-    )
-    .fetch_all(pool)
-    .await
-    {
-        if !rows.is_empty() {
-            let names: Vec<&str> = rows.iter().map(|r| r.0.as_str()).collect();
-            sections.push(format!("<connected_sources>{}</connected_sources>", names.join(", ")));
+    for name in USER_CONTEXT_SECTIONS {
+        match build_context_section(pool, name).await {
+            Ok(Some(body)) => sections.push(body),
+            Ok(None) => {}
+            // One policy for every section, present and future: an error is a
+            // section with data it failed to deliver, and it must be audible.
+            Err(e) => tracing::warn!("[chat] {name} omitted from the prompt: {e}"),
         }
     }
 
@@ -672,19 +739,37 @@ async fn build_system_prompt(
         prompt.push_str(crate::agent::prompt::NEW_USER_PROMPT);
     }
 
-    // Load AI persistent memory (if any)
-    if let Ok(Some(memory)) = sqlx::query_scalar::<_, String>(
+    // Load AI persistent memory (if any).
+    //
+    // Read as JSON, because the column is JSONB — decoding straight into String
+    // failed on type, and `if let Ok` dropped the error, so this block never
+    // rendered. Paired with the write in `update_memory`, which was storing a
+    // bare string into the same JSONB column and being rejected: the tool
+    // reported saving nothing and the prompt read back nothing, and neither end
+    // said so.
+    match sqlx::query_scalar::<_, serde_json::Value>(
         "SELECT memory FROM app_assistant_profile WHERE memory IS NOT NULL LIMIT 1"
     )
     .fetch_optional(pool)
     .await
     {
-        if !memory.is_empty() {
-            prompt.push_str(&format!(
-                "\n\n<memory>\nYour persistent memory (saved via update_memory tool). Reference when relevant:\n{}\n</memory>",
-                memory
-            ));
+        Ok(Some(value)) => {
+            // A JSON string is the shape `update_memory` writes; anything else
+            // is older or hand-written, and rendering it verbatim beats
+            // dropping it.
+            let memory = value
+                .as_str()
+                .map(str::to_string)
+                .unwrap_or_else(|| value.to_string());
+            if !memory.trim().is_empty() {
+                prompt.push_str(&format!(
+                    "\n\n<memory>\nYour persistent memory (saved via update_memory tool). Reference when relevant:\n{}\n</memory>",
+                    memory
+                ));
+            }
         }
+        Ok(None) => {}
+        Err(e) => tracing::warn!("[chat] persistent memory omitted from the prompt: {e}"),
     }
 
     // Add current date/time for temporal awareness
@@ -768,6 +853,13 @@ async fn build_system_prompt(
     prompt
 }
 
+/// Test-only view of the assembled prompt, so audits in other modules can
+/// assert on what the model is actually sent rather than re-deriving it.
+#[cfg(test)]
+pub(crate) async fn build_system_prompt_for_audit(pool: &PgPool) -> String {
+    build_system_prompt(pool, None, Some("America/Chicago"), "default", "default", false, None).await
+}
+
 /// Maximum member URLs to inline for a Notebook before truncating.
 const MAX_NOTEBOOK_ITEMS_INLINED: usize = 100;
 
@@ -804,8 +896,39 @@ async fn build_notebook_context(pool: &PgPool, notebook_id: &str) -> Option<Stri
     }
 
     let total = detail.items.len();
-    for item in detail.items.iter().take(MAX_NOTEBOOK_ITEMS_INLINED) {
-        out.push_str(&format!("\n  <member url=\"{}\"/>", escape_attr(&item.url)));
+    let shown: Vec<_> = detail
+        .items
+        .iter()
+        .take(MAX_NOTEBOOK_ITEMS_INLINED)
+        .collect();
+
+    // Resolve every member in one batch before writing the block. A bare URL
+    // is unreadable: the model cannot tell a screenshot from a spreadsheet
+    // without spending tool calls to find out, and the room it is standing in
+    // should not require an investigation.
+    let urls: Vec<String> = shown.iter().map(|i| i.url.clone()).collect();
+    let resolved = crate::api::refs::resolve_refs(pool, &urls).await;
+
+    for item in shown {
+        out.push_str(&format!("\n  <member url=\"{}\"", escape_attr(&item.url)));
+        if let Some(r) = resolved.get(&item.url) {
+            out.push_str(&format!(" title=\"{}\"", escape_attr(&r.title)));
+            out.push_str(&format!(" kind=\"{}\"", escape_attr(&r.kind)));
+            if let Some(mime) = r.mime.as_deref() {
+                out.push_str(&format!(" mime=\"{}\"", escape_attr(mime)));
+            }
+            // Only meaningful for files: says whether semantic_search can see
+            // this member's contents, so a dead end is known up front rather
+            // than discovered three tool calls in.
+            if let Some(text) = r.text.as_deref() {
+                out.push_str(&format!(" text=\"{}\"", escape_attr(text)));
+            }
+        }
+        // `library` grounds chat; `manuscript` is the user's own draft, kept
+        // out of retrieval so it is never cited back at them; `pin` is
+        // navigation. Without this the three were indistinguishable here, and
+        // a draft read exactly like a source.
+        out.push_str(&format!(" role=\"{}\"/>", escape_attr(&item.role)));
     }
     if total > MAX_NOTEBOOK_ITEMS_INLINED {
         out.push_str(&format!(
@@ -816,7 +939,7 @@ async fn build_notebook_context(pool: &PgPool, notebook_id: &str) -> Option<Stri
 
     out.push_str("\n</active_notebook>");
 
-    let preamble = "\n\n<active_notebook_preamble>\nThis chat lives in the Notebook (room) below — a collection the user returns to (a project, pet, hobby, goal, or topic). Treat its members as high-salience: they are the user's actively curated focus for this room. <instructions>, if present, are standing directions for how you should behave in this notebook — follow them. <memo>, if present, is a catch-up note about the notebook's current state. Members are also boosted in semantic search while this notebook is active.\n</active_notebook_preamble>";
+    let preamble = "\n\n<active_notebook_preamble>\nThis chat lives in the Notebook (room) below — a collection the user returns to (a project, pet, hobby, goal, or topic). Treat its members as high-salience: they are the user's actively curated focus for this room. <instructions>, if present, are standing directions for how you should behave in this notebook — follow them. <memo>, if present, is a catch-up note about the notebook's current state. Members are also boosted in semantic search while this notebook is active.\n\nThe member list below IS the notebook's contents — it is already complete (up to the cap noted at its end). When the user refers to something \"in this notebook,\" match it here first; do not go looking for the notebook's contents with other tools.\n\nEach member carries what it is: `title`, `kind`, and `role`. `role=\"library\"` grounds this chat; `role=\"manuscript\"` is the user's own draft, deliberately excluded from retrieval — never cite it back at them as a source; `role=\"pin\"` is navigation only. Files also carry `text`: `indexed` means its contents are searchable, `pending` means extraction has not finished yet, and `none` means no text was extracted — searching for its contents will find nothing, so say so plainly rather than reporting an empty search as an absence of the thing.\n</active_notebook_preamble>";
 
     Some(format!("{}{}", preamble, out))
 }
@@ -1686,5 +1809,212 @@ mod tests {
         let id2 = generate_id();
         assert_ne!(id1, id2);
         assert_eq!(id1.len(), 16); // 8 bytes = 16 hex chars
+    }
+}
+
+
+#[cfg(test)]
+mod ni_budget_tests {
+    use super::{truncate_to_budget, NI_BUDGET_CHARS};
+
+    #[test]
+    fn short_documents_are_untouched() {
+        let t = "I value patience.\n\nI want to finish the boat.";
+        assert_eq!(truncate_to_budget(t, NI_BUDGET_CHARS), t);
+    }
+
+    /// The point of the budget is to stop somewhere a reader would stop.
+    #[test]
+    fn cuts_at_a_paragraph_break_when_there_is_one() {
+        let t = "First para.\n\nSecond para is long and would be cut.";
+        assert_eq!(truncate_to_budget(t, 25), "First para.");
+    }
+
+    #[test]
+    fn falls_back_to_a_sentence_end() {
+        let t = "One sentence here. Then a much longer second sentence follows.";
+        assert_eq!(truncate_to_budget(t, 30), "One sentence here.");
+    }
+
+    /// Never mid-word: a document that stops mid-sentence reads as a thought
+    /// the model should finish, and this one is about who a person is.
+    #[test]
+    fn never_splits_a_word() {
+        let t = "aaaa bbbb cccc dddddddddddddddddddd";
+        let out = truncate_to_budget(t, 14);
+        assert!(!out.ends_with("cc"), "cut inside a word: {out:?}");
+        assert_eq!(out, "aaaa bbbb");
+    }
+}
+
+/// Renders the real active-notebook block against a dev database, so the text
+/// the model actually receives is inspected rather than assumed. Ignored by
+/// default — CI has no box database.
+///   cargo test -p virtues --lib api::chat::live_notebook -- --ignored --nocapture
+#[cfg(test)]
+mod live_notebook {
+    use sqlx::PgPool;
+
+    #[tokio::test]
+    #[ignore]
+    async fn the_block_names_every_member() {
+        let url = std::env::var("DATABASE_URL")
+            .unwrap_or_else(|_| "postgres://virtues:virtues@localhost:5432/virtues".to_string());
+        let pool = PgPool::connect(&url).await.expect("dev database");
+
+        let id: Option<String> = sqlx::query_scalar(
+            "SELECT notebook_id FROM app_notebook_items
+             GROUP BY notebook_id ORDER BY count(*) DESC LIMIT 1",
+        )
+        .fetch_optional(&pool)
+        .await
+        .expect("query");
+        let Some(id) = id else {
+            println!("no notebooks with members; nothing to render");
+            return;
+        };
+
+        let block = super::build_notebook_context(&pool, &id)
+            .await
+            .expect("a context block");
+        println!("\n{block}\n");
+
+        // A member line carrying only a url is the bug this replaced.
+        for line in block.lines().filter(|l| l.trim_start().starts_with("<member")) {
+            assert!(line.contains("role="), "member without role: {line}");
+            assert!(
+                line.contains("title=") || line.contains("/home"),
+                "member reached the prompt as a bare url: {line}"
+            );
+        }
+    }
+}
+
+/// Measures the real system prompt against a dev database. Not an assertion of
+/// correctness — an audit instrument, so the prompt's size and composition are
+/// observed rather than estimated.
+///   cargo test -p virtues --lib api::live_prompt_audit -- --ignored --nocapture
+#[cfg(test)]
+mod live_prompt_audit {
+    use sqlx::PgPool;
+
+    #[tokio::test]
+    #[ignore]
+    async fn measure_the_assembled_system_prompt() {
+        let url = std::env::var("DATABASE_URL")
+            .unwrap_or_else(|_| "postgres://virtues:virtues@localhost:5432/virtues".to_string());
+        let pool = PgPool::connect(&url).await.expect("dev database");
+
+        let notebook: Option<String> = sqlx::query_scalar(
+            "SELECT notebook_id FROM app_notebook_items
+             GROUP BY notebook_id ORDER BY count(*) DESC LIMIT 1",
+        )
+        .fetch_optional(&pool)
+        .await
+        .expect("query");
+
+        for (label, nb) in [("no notebook", None), ("in a notebook", notebook.as_deref())] {
+            let p = super::build_system_prompt(
+                &pool,
+                None,
+                Some("America/Chicago"),
+                "default",
+                "default",
+                false,
+                nb,
+            )
+            .await;
+
+            // ~4 chars/token is the usual English approximation; this is an
+            // order-of-magnitude reading, not a billing figure.
+            println!(
+                "\n=== {label} ===\n{} chars  (~{} tokens)",
+                p.len(),
+                p.len() / 4
+            );
+            for tag in [
+                "<persona",
+                "<narrative_identity",
+                "<memory>",
+                "<datetime>",
+                "<user_context>",
+                "<identity>",
+                "<recent_days>",
+                "<connected_sources>",
+                "<active_notebook",
+                "<active_context>",
+            ] {
+                if let Some(i) = p.find(tag) {
+                    // Crude section sizing: distance to the next top-level tag.
+                    let rest = &p[i + tag.len()..];
+                    let end = rest.find("\n\n<").map(|e| e + tag.len()).unwrap_or(p.len() - i);
+                    println!("  {:<22} {:>6} chars", tag, end);
+                }
+            }
+        }
+    }
+}
+
+/// Regression guard for the prompt sections that are assembled from database
+/// queries whose errors are non-fatal by design.
+///
+/// A section that fails to render costs nothing visible — no error reaches the
+/// user, the model simply knows less — so nothing catches it but a test that
+/// checks the section against the data it was built from. `<recent_days>` was
+/// absent from every prompt ever built, for a DATE/String decode mismatch, and
+/// went unnoticed exactly this way.
+///   cargo test -p virtues --lib api::chat::live_context_sections -- --ignored --nocapture
+#[cfg(test)]
+mod live_context_sections {
+    use sqlx::PgPool;
+
+    /// Per-section "has data" predicate — the ground truth each section's
+    /// rendering is checked against. Adding a section to
+    /// [`super::USER_CONTEXT_SECTIONS`] without adding its predicate here
+    /// fails the test, which is the point: the registry and the audit can't
+    /// drift apart silently.
+    async fn section_has_data(pool: &PgPool, name: &str) -> bool {
+        let sql = match name {
+            "identity" => {
+                "SELECT EXISTS(SELECT 1 FROM app_user_profile \
+                 WHERE COALESCE(occupation, '') <> '' OR home_place_id IS NOT NULL)"
+            }
+            "recent_days" => {
+                "SELECT EXISTS(SELECT 1 FROM wiki_day_prose WHERE prose IS NOT NULL)"
+            }
+            "connected_sources" => {
+                "SELECT EXISTS(SELECT 1 FROM credentials WHERE status = 'active')"
+            }
+            other => panic!("section {other} has no data predicate — add one here"),
+        };
+        sqlx::query_scalar(sql).fetch_one(pool).await.expect("predicate")
+    }
+
+    #[tokio::test]
+    #[ignore]
+    async fn every_registered_section_renders_whenever_its_data_exists() {
+        let url = std::env::var("DATABASE_URL")
+            .unwrap_or_else(|_| "postgres://virtues:virtues@localhost:5432/virtues".to_string());
+        let pool = PgPool::connect(&url).await.expect("dev database");
+
+        let ctx = super::build_user_context(&pool, "Tester").await.unwrap_or_default();
+        println!("user_context:\n{ctx}");
+
+        for name in super::USER_CONTEXT_SECTIONS {
+            let has_data = section_has_data(&pool, name).await;
+            let rendered = ctx.contains(&format!("<{name}>"));
+            println!("  {name:<20} data={has_data} rendered={rendered}");
+            if has_data {
+                assert!(
+                    rendered,
+                    "section {name} has data but did not reach the prompt \
+                     — the silent-section disease, again"
+                );
+            }
+            // A section rendering WITHOUT data is the inverse lie.
+            if !has_data {
+                assert!(!rendered, "section {name} rendered with no underlying data");
+            }
+        }
     }
 }

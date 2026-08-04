@@ -56,7 +56,7 @@
 	aria-expanded={item.submenu && contextMenu.openSubmenuId === item.id ? 'true' : undefined}
 >
 	{#if item.icon}
-		<span class="item-icon">
+		<span class="item-icon" style={item.iconColor ? `color: ${item.iconColor}` : undefined}>
 			{#if isLoading}
 				<Icon icon="ri:loader-4-line" width="16" class="spin" />
 			{:else}

@@ -1118,7 +1118,6 @@
 		font-size: 0.75rem;
 		font-weight: 600;
 		letter-spacing: 0.02em;
-		text-transform: uppercase;
 		color: var(--color-foreground-subtle);
 		border-bottom: 1px solid var(--color-border);
 		flex-shrink: 0;

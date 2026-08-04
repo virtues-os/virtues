@@ -20,6 +20,7 @@
  */
 import { pinsStore } from '$lib/stores/pins.svelte';
 import type { ContextMenuItem } from '$lib/stores/contextMenu.svelte';
+import { iconPickerStore } from '$lib/stores/iconPicker.svelte';
 
 export interface PinTarget {
 	/** Route or absolute URL. External `http(s)` urls are allowed and open out. */
@@ -51,6 +52,44 @@ export async function togglePin(target: PinTarget): Promise<boolean> {
 	}
 	await pinsStore.add(target.url, target.label ?? null, target.icon ?? null);
 	return true;
+}
+
+/**
+ * "Change icon" for a pinned url — opens the shared picker, which carries the
+ * color swatches with it, so a pin's glyph and its color are chosen in one
+ * place like every other icon in the app.
+ *
+ * A pin's rows were dots on purpose ("a pinned thing has no natural glyph").
+ * That holds right up until the user wants to pick one; the dot stays as the
+ * default for pins that never do.
+ */
+export function pinIconMenuItem(
+	url: string,
+	anchor?: { x: number; y: number; width: number; height: number },
+): ContextMenuItem | null {
+	const pin = pinsStore.getByUrl(url);
+	if (!pin) return null;
+
+	return {
+		id: 'pin-icon',
+		label: 'Change icon',
+		icon: 'ri:emotion-line',
+		action: () => {
+			iconPickerStore.show(
+				pin.icon ?? null,
+				(icon) => {
+					void pinsStore.setIcon(pin.id, icon);
+				},
+				{
+					color: pin.color ?? null,
+					onColorSelect: (color) => {
+						void pinsStore.setColor(pin.id, color);
+					},
+					anchor,
+				},
+			);
+		},
+	};
 }
 
 /**

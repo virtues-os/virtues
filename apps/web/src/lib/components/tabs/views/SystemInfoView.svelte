@@ -546,9 +546,7 @@
 		gap: 6px;
 		font-family: var(--font-mono);
 		font-size: 11px;
-		letter-spacing: 0.04em;
 		color: var(--foreground-subtle);
-		text-transform: uppercase;
 	}
 	.live .dot {
 		width: 6px;
@@ -617,8 +615,6 @@
 	.vital-head { display: flex; align-items: baseline; justify-content: space-between; }
 	.vital-name {
 		font-size: 11px;
-		letter-spacing: 0.08em;
-		text-transform: uppercase;
 		color: var(--foreground-subtle);
 	}
 	.vital-pct { font-size: 12px; }
@@ -737,9 +733,7 @@
 		text-align: left;
 		font-weight: 400;
 		color: var(--foreground-subtle);
-		text-transform: uppercase;
 		font-size: 10px;
-		letter-spacing: 0.06em;
 		padding: 4px 8px;
 		border-bottom: 1px solid var(--border);
 	}

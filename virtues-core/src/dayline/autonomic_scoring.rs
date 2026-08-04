@@ -207,15 +207,6 @@ pub async fn compute_autonomic_for_day(pool: &PgPool, date: NaiveDate) -> anyhow
 // Helpers
 // ============================================================================
 
-fn days_between_dates(from: &str, to: &str) -> f64 {
-    let from_date = chrono::NaiveDate::parse_from_str(from, "%Y-%m-%d");
-    let to_date = chrono::NaiveDate::parse_from_str(to, "%Y-%m-%d");
-    match (from_date, to_date) {
-        (Ok(f), Ok(t)) => (t - f).num_days() as f64,
-        _ => 84.0, // fallback to max window
-    }
-}
-
 /// Get the user's resting HR from recent data (14-day median).
 async fn get_resting_hr(pool: &PgPool, before_date: &str) -> Option<f64> {
     let row: Option<(f64,)> = sqlx::query_as(

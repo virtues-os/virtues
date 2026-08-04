@@ -7,3 +7,6 @@ triggers = ["cron", "manual"]
 default_cron = "0 */30 * * * *"
 per_credential = true
 source = { id = "strava" }
+
+# Ontologies this applet writes — drives "what would fill this stream".
+writes = ["health_workout"]

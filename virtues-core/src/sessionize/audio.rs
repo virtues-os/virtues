@@ -178,8 +178,27 @@ pub async fn sessionize_day(pool: &PgPool, date: chrono::NaiveDate) -> Result<u3
     // recording row still contributes its speaker/summary. Keyed on
     // source_stream_id, NOT audio_url — metadata-only silent chunks carry NULL
     // audio_url on both sides, and NULL = NULL never matches.
+    //
+    // A silent chunk contributes its TIMING and LOUDNESS but never its prose.
+    // `text = ''` is the pipeline's canonical silence marker (set by the
+    // transcription drainer's silent path); `summary` is not — the model writes a
+    // scene description even when it transcribes no speech, so a silent chunk
+    // arrives with empty text and a non-empty summary. Stitching that summary put
+    // prose about silence into a session's transcript content, and pre-guard it
+    // put INVENTED prose there: "Quiet Morning Routine — someone preparing coffee"
+    // over a chunk the VAD measured as no-speech. 41 of 364 sessions on a real box
+    // carried that narrative.
+    //
+    // Null it here rather than filtering the row out: dropping silent chunks from
+    // the query would remove them from segmentation too, and silence is exactly
+    // what marks where one session ends and the next begins — every boundary would
+    // move. `dayline::context` already keys on `text`; this makes the two readers
+    // agree. Consequence: a session covering no speech now stitches to nothing,
+    // which is what `silent_session_stitches_to_nothing` has always asserted.
     let rows = sqlx::query(
-        "SELECT t.start_time, t.end_time, t.speaker_count, t.summary, r.average_db_level AS db \
+        "SELECT t.start_time, t.end_time, t.speaker_count, \
+                CASE WHEN t.text = '' THEN NULL ELSE t.summary END AS summary, \
+                r.average_db_level AS db \
          FROM data_communication_transcription t \
          LEFT JOIN data_audio_recording r ON r.source_stream_id = t.source_stream_id \
          WHERE t.start_time >= $1::timestamptz AND t.start_time < $2::timestamptz \
@@ -309,6 +328,74 @@ mod tests {
         assert_eq!(s.len(), 1, "a coherent 10h stretch is one block, not 120");
         assert_eq!(s[0].chunk_idx.len(), 120);
         assert_eq!(s[0].stitched, "", "silent session stitches to nothing");
+    }
+
+    /// A silent chunk must not put its summary into a session's content.
+    ///
+    /// The unit tests above can't reach this: they build `Chunk` directly and so
+    /// assume the very thing that was broken — that a silent chunk arrives with no
+    /// summary. In reality the drainer writes `text = ''` for no-speech audio while
+    /// the model still fills in `summary`, so silent chunks arrive with prose
+    /// attached. Pre-guard that prose was invented ("Quiet Morning Routine —
+    /// someone preparing coffee" over a chunk the VAD measured as no-speech), and
+    /// stitching it put a fabricated narrative into the transcript content of 41 of
+    /// 364 sessions on a real box.
+    ///
+    /// The suppression is in the SELECT, so only a DB-backed test proves it.
+    #[sqlx::test]
+    async fn a_silent_chunk_contributes_no_prose(pool: sqlx::PgPool) {
+        let date = chrono::NaiveDate::from_ymd_opt(2026, 7, 20).unwrap();
+        let at = |h: u32, m: u32| {
+            date.and_hms_opt(h, m, 0)
+                .unwrap()
+                .and_utc()
+        };
+
+        // Two chunks in one flat acoustic context: one real speech, one silent
+        // carrying a fabricated summary. Same loudness/speakers so they land in a
+        // single session — this is about content, not segmentation.
+        for (i, (text, summary, start)) in [
+            ("we should ship it friday", "talking about the release", at(14, 0)),
+            ("", "Quiet Morning Routine — someone preparing coffee", at(14, 5)),
+        ]
+        .iter()
+        .enumerate()
+        {
+            sqlx::query(
+                "INSERT INTO data_communication_transcription \
+                 (id, text, summary, start_time, end_time, speaker_count, \
+                  source_stream_id, source_table, source_provider) \
+                 VALUES ($1, $2, $3, $4, $5, $6, $7, 'stream_ios_microphone', 'ios')",
+            )
+            .bind(format!("t{i}"))
+            .bind(text)
+            .bind(summary)
+            .bind(start)
+            .bind(*start + chrono::Duration::minutes(5))
+            .bind(1i32)
+            .bind(format!("s{i}"))
+            .execute(&pool)
+            .await
+            .expect("insert chunk");
+        }
+
+        sessionize_day(&pool, date).await.expect("sessionize");
+
+        let content: Vec<Option<String>> =
+            sqlx::query_scalar("SELECT content FROM data_audio_session ORDER BY start_time")
+                .fetch_all(&pool)
+                .await
+                .expect("read sessions");
+        let joined = content.into_iter().flatten().collect::<Vec<_>>().join(" ");
+
+        assert!(
+            joined.contains("release"),
+            "the speech chunk's summary must survive, got: {joined:?}",
+        );
+        assert!(
+            !joined.contains("coffee"),
+            "a silent chunk's summary must never reach session content, got: {joined:?}",
+        );
     }
 }
 

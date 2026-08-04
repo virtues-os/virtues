@@ -1,5 +1,6 @@
 <script lang="ts">
 	import Icon from '$lib/components/Icon.svelte';
+	import AppletSource from '$lib/components/applets/AppletSource.svelte';
 	import Badge from '$lib/components/Badge.svelte';
 	import Button from '$lib/components/Button.svelte';
 	import Modal from '$lib/components/Modal.svelte';
@@ -307,6 +308,13 @@
 						{saving ? 'Saving…' : 'Save changes'}
 					</Button>
 				</div>
+				<section class="source-block">
+					<h3>Source</h3>
+					<p class="muted">
+						The code this applet runs. Read-only — editing forks it onto this box.
+					</p>
+					<AppletSource appletId={action.id} />
+				</section>
 			</section>
 
 			<aside class="col runs">
@@ -534,8 +542,6 @@
 		font-size: 0.75rem;
 		font-weight: 500;
 		color: var(--color-foreground-muted, #6b7280);
-		text-transform: uppercase;
-		letter-spacing: 0.04em;
 	}
 	.field input,
 	.field textarea {
@@ -613,8 +619,6 @@
 	.runs h3 {
 		font-size: 0.8125rem;
 		font-weight: 600;
-		text-transform: uppercase;
-		letter-spacing: 0.04em;
 		color: var(--color-foreground-muted, #6b7280);
 		margin: 0 0 0.75rem;
 	}
@@ -664,5 +668,21 @@
 	}
 	.error-msg {
 		color: color-mix(in srgb, var(--color-error) 75%, #000);
+	}
+
+	.source-block {
+		margin-top: 1.5rem;
+		padding-top: 1.25rem;
+		border-top: 1px solid var(--color-border, #e5e7eb);
+	}
+	.source-block h3 {
+		margin: 0 0 0.25rem;
+		font-size: 0.875rem;
+		font-weight: 600;
+	}
+	.source-block .muted {
+		margin: 0 0 0.75rem;
+		font-size: 0.75rem;
+		font-style: normal;
 	}
 </style>

@@ -378,8 +378,29 @@ pub struct ExchangeTokenClaims {
     pub exp: i64,
 }
 
-/// Sign an exchange token (HMAC-SHA256 over base64url(claims); 5-min TTL).
-/// `secret` must be at least 32 chars.
+/// Encryption key for the exchange-token body, derived from the shared HMAC
+/// secret with its own domain separator so the two uses never share bytes.
+fn exchange_body_key(secret: &str) -> [u8; 32] {
+    let mut h = <Sha256 as sha2::Digest>::new();
+    sha2::Digest::update(&mut h, b"oauth.exchange.body.v1");
+    sha2::Digest::update(&mut h, secret.as_bytes());
+    let out = sha2::Digest::finalize(h);
+    let mut key = [0u8; 32];
+    key.copy_from_slice(&out);
+    key
+}
+
+/// Sign an exchange token: AES-256-GCM over the claims, then HMAC-SHA256 over
+/// the sealed body; 5-min TTL. `secret` must be at least 32 chars.
+///
+/// The body is **encrypted, not merely signed**. It used to be plain
+/// base64url of the claims — which carry the provider's raw access and refresh
+/// tokens — with an HMAC appended. The HMAC prevents forgery but not reading,
+/// and this token travels back through the *user's browser* as a query
+/// parameter, so anything that sees that URL (browser history, a proxy log, a
+/// referer leak, a screen) could base64-decode live credentials. Sealing the
+/// body costs nothing here: the proxy both signs and verifies these, so there
+/// is no second party who needs to read them.
 pub fn sign_exchange_token(
     secret: &str,
     source_id: &str,
@@ -403,7 +424,8 @@ pub fn sign_exchange_token(
         iat: now,
         exp: now + EXCHANGE_TOKEN_TTL_SECS,
     };
-    let body = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(serde_json::to_vec(&claims)?);
+    let sealed = seal_aes_256_gcm(&exchange_body_key(secret), &serde_json::to_vec(&claims)?)?;
+    let body = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(&sealed);
     let mut mac = <Hmac<Sha256> as Mac>::new_from_slice(secret.as_bytes())
         .map_err(|_| CryptoError::Hmac("exchange hmac key".into()))?;
     mac.update(body.as_bytes());
@@ -411,7 +433,13 @@ pub fn sign_exchange_token(
     Ok(format!("{body}.{sig}"))
 }
 
-/// Verify an exchange token: HMAC (constant-time) + expiry + source match.
+/// Verify an exchange token: HMAC (constant-time), decrypt, expiry, source
+/// match. The HMAC is checked before the seal is opened so a forged token is
+/// rejected without touching the cipher.
+///
+/// Format changed when the body became encrypted — tokens minted by an older
+/// proxy fail here. They live five minutes, and the same service mints and
+/// verifies them, so the skew window closes on its own.
 pub fn verify_exchange_token(
     secret: &str,
     token: &str,
@@ -440,9 +468,11 @@ pub fn verify_exchange_token(
         ));
     }
 
-    let raw = base64::engine::general_purpose::URL_SAFE_NO_PAD
+    let sealed = base64::engine::general_purpose::URL_SAFE_NO_PAD
         .decode(body)
         .map_err(|_| CryptoError::InvalidStateToken("malformed exchange body".into()))?;
+    let raw = open_aes_256_gcm(&exchange_body_key(secret), &sealed)
+        .map_err(|_| CryptoError::InvalidStateToken("undecryptable exchange body".into()))?;
     let claims: ExchangeTokenClaims = serde_json::from_slice(&raw)
         .map_err(|_| CryptoError::InvalidStateToken("invalid exchange claims".into()))?;
 
@@ -674,6 +704,39 @@ mod tests {
         assert!(verify_exchange_token("ffffffffffffffffffffffffffffffff", &tok, "google").is_err());
         // too-short secret on sign → error
         assert!(sign_exchange_token("short", "google", serde_json::json!({}), serde_json::json!({}), None, None).is_err());
+    }
+
+    /// The token rides back through the user's browser as a query parameter, so
+    /// the provider's tokens must not be *readable* by anyone who sees the URL.
+    /// The body used to be plain base64 of the claims — signed, so unforgeable,
+    /// but perfectly legible to browser history, a proxy log or a referer leak.
+    #[test]
+    fn exchange_token_body_is_not_readable() {
+        let secret = "0123456789abcdef0123456789abcdef";
+        let tok = sign_exchange_token(
+            secret,
+            "google",
+            serde_json::json!({ "access_token": "SUPER_SECRET_ACCESS", "refresh_token": "SUPER_SECRET_REFRESH" }),
+            serde_json::json!({}),
+            None,
+            None,
+        )
+        .unwrap();
+
+        // Not in the token as-is...
+        assert!(!tok.contains("SUPER_SECRET_ACCESS"));
+        // ...and not one base64 decode away either, which was the actual bug.
+        let (body, _) = tok.split_once('.').unwrap();
+        let raw = base64::engine::general_purpose::URL_SAFE_NO_PAD
+            .decode(body)
+            .unwrap();
+        let as_text = String::from_utf8_lossy(&raw);
+        assert!(!as_text.contains("SUPER_SECRET_ACCESS"), "body decodes to plaintext");
+        assert!(!as_text.contains("refresh_token"), "claim names leak the shape");
+
+        // Still fully recoverable by the holder of the secret.
+        let claims = verify_exchange_token(secret, &tok, "google").unwrap();
+        assert_eq!(claims.secrets["access_token"], "SUPER_SECRET_ACCESS");
     }
 
     #[test]

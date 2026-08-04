@@ -17,9 +17,14 @@
 	import type { TimelineDayLocationChunk } from "$lib/wiki/api";
 	import MovementMap from "$lib/components/timeline/MovementMap.svelte";
 	import DayLocationTimeline from "$lib/components/timeline/DayLocationTimeline.svelte";
+	import DaylineStrip from "./DaylineStrip.svelte";
+	import { getDayHeartRate, type DayHeartRateSample } from "$lib/wiki/api";
 
 	interface Props {
 		events: DayEvent[];
+		/** The prior day's sleep events — the evening half of a night the
+		 *  detective's midnight cut split in two. */
+		priorSleepEvents?: DayEvent[];
 		timezone: string | null;
 		pageDate?: Date;
 		readinessScore?: number | null;
@@ -33,7 +38,7 @@
 	}
 
 	let {
-		events, timezone, pageDate, readinessScore, sleepCycles = [],
+		events, priorSleepEvents = [], timezone, pageDate, readinessScore, sleepCycles = [],
 		movementStops = [], movementTrack = [], dedupedMarkers = [],
 		dayDateSlug = "", hasLocationData = false,
 	}: Props = $props();
@@ -599,17 +604,36 @@
 	});
 
 	// ── Active metric pill ──────────────────────────────────────
-	type MetricView = "dayline" | "location" | "sleep" | "autonomic" | "dimensions";
+	// "Dayline" is the mini lifeline — the day in the same visual language as
+	// the life-scale console. The novelty z-score curve that used to own the
+	// word keeps its chart under its own name. (The "Dimensions" placeholder
+	// is gone: a pill that has never been ready is a promise, not a feature.)
+	type MetricView = "dayline" | "novelty" | "location" | "sleep" | "autonomic";
 	let activeMetric = $state<MetricView>("dayline");
 
-	const hasSleepData = $derived.by(() => sleepCycles.length > 0);
+	const hasSleepData = $derived.by(
+		() => sleepCycles.length > 0 || events.some((e) => e.isSleep && !e.userHidden)
+	);
+
+	// Heart-rate samples for the Autonomic view; the pill lights up only when
+	// the day actually holds any.
+	let hrSamples = $state<DayHeartRateSample[]>([]);
+	let lastHrDay = "";
+	$effect(() => {
+		if (dayDateSlug && dayDateSlug !== lastHrDay) {
+			lastHrDay = dayDateSlug;
+			getDayHeartRate(dayDateSlug).then((s) => (hrSamples = s));
+		}
+	});
 
 	const metrics = $derived<{ id: MetricView; label: string; ready: boolean }[]>([
 		{ id: "dayline", label: "Dayline", ready: true },
-		{ id: "location", label: "Location", ready: hasLocationData },
-		{ id: "sleep", label: "Sleep", ready: true },
-		{ id: "autonomic", label: "Autonomic", ready: false },
-		{ id: "dimensions", label: "Dimensions", ready: false },
+		{ id: "novelty", label: "Novelty", ready: true },
+		// Always clickable: an empty map is an honest answer ("the box saw
+		// nowhere today"), where a grayed pill reads as a broken feature.
+		{ id: "location", label: "Location", ready: true },
+		{ id: "sleep", label: "Sleep", ready: hasSleepData },
+		{ id: "autonomic", label: "Autonomic", ready: hrSamples.length > 0 },
 	]);
 </script>
 
@@ -633,6 +657,14 @@
 	</div>
 
 	{#if activeMetric === "dayline"}
+	<!-- The day as a mini lifeline: sleep + events as a gantt, the raw record
+	     as per-lane density underneath — same endpoint the Lifeline draws.
+	     The wrapper clears the absolutely-positioned pill row; the old SVG got
+	     the same clearance from its own top margin. -->
+	<div class="strip-wrap">
+		<DaylineStrip {events} {timezone} {dayDateSlug} {sleepCycles} />
+	</div>
+	{:else if activeMetric === "novelty"}
 	<!-- Chart -->
 	<!-- svelte-ignore a11y_no_static_element_interactions -->
 	<svg
@@ -1068,26 +1100,77 @@
 		{/if}
 	</svg>
 	{:else if activeMetric === "location"}
-	<!-- Location view: timeline + map -->
-	{#if hasLocationData}
-		<div class="location-view">
-			{#if movementStops.length > 0}
-				<DayLocationTimeline
-					visits={movementStops}
-					dayDate={dayDateSlug}
-					bind:hoverTimeMs={movementHoverTimeMs}
-				/>
-			{/if}
-			<MovementMap
-				track={movementTrack}
-				stops={dedupedMarkers}
-				height={240}
-				hoverTimeMs={movementHoverTimeMs}
+	<!-- Location view: timeline + map. The map renders even with nothing to
+	     put on it — empty is an answer, and the note says which one. -->
+	<div class="location-view">
+		{#if movementStops.length > 0}
+			<DayLocationTimeline
+				visits={movementStops}
+				dayDate={dayDateSlug}
+				bind:hoverTimeMs={movementHoverTimeMs}
 			/>
-		</div>
+		{/if}
+		<MovementMap
+			track={movementTrack}
+			stops={dedupedMarkers}
+			height={240}
+			hoverTimeMs={movementHoverTimeMs}
+		/>
+		{#if !hasLocationData}
+			<p class="view-note">No location data recorded for this day.</p>
+		{/if}
+	</div>
+	{:else if activeMetric === "autonomic"}
+	<!-- Autonomic: the day's raw heart-rate samples on the 24h axis. Dots
+	     joined by a line — at a dozen samples a day, a smoothed curve would
+	     invent continuity the record does not hold. -->
+	{#if hrSamples.length > 0}
+		{@const pts = hrSamples.map((s) => ({
+			x: hourToX(getHourOfDay(new Date(s.timestamp))),
+			bpm: s.bpm,
+		}))}
+		{@const lo = Math.min(...pts.map((p) => p.bpm))}
+		{@const hi = Math.max(...pts.map((p) => p.bpm))}
+		{@const pad = Math.max(5, Math.round((hi - lo) * 0.15))}
+		{@const yOf = (bpm: number) =>
+			MARGIN.top + ((hi + pad - bpm) / (hi + pad - (lo - pad))) * PLOT_H}
+		<svg viewBox="0 0 {WIDTH} {HEIGHT}" preserveAspectRatio="xMidYMid meet" class="dayline-svg">
+			<rect x={MARGIN.left} y={MARGIN.top} width={PLOT_W} height={PLOT_H}
+				fill="var(--color-surface, #fafafa)" rx="2" />
+			{#each HOUR_TICKS as h}
+				<line x1={hourToX(h)} y1={MARGIN.top} x2={hourToX(h)} y2={MARGIN.top + PLOT_H}
+					stroke="var(--color-border, #e5e5e5)" stroke-width="0.5" />
+				<text x={hourToX(h)} y={MARGIN.top + PLOT_H + 16} text-anchor="middle" class="axis-label x-label">
+					{formatHourLabel(h)}
+				</text>
+			{/each}
+			{#each [lo, hi] as bpm}
+				<line x1={MARGIN.left} y1={yOf(bpm)} x2={MARGIN.left + PLOT_W} y2={yOf(bpm)}
+					stroke="var(--color-border, #e5e5e5)" stroke-width="0.5" stroke-dasharray="2 3" />
+				<text x={MARGIN.left - 6} y={yOf(bpm)} text-anchor="end" dominant-baseline="middle" class="axis-label y-label">
+					{bpm}
+				</text>
+			{/each}
+			<polyline
+				points={pts.map((p) => `${p.x},${yOf(p.bpm)}`).join(" ")}
+				fill="none"
+				stroke="var(--color-primary, #4f46e5)"
+				stroke-width="1.25"
+				stroke-opacity="0.55"
+			/>
+			{#each pts as p}
+				<circle cx={p.x} cy={yOf(p.bpm)} r="2.5" fill="var(--color-primary, #4f46e5)">
+					<title>{p.bpm} bpm</title>
+				</circle>
+			{/each}
+			<text x={MARGIN.left + PLOT_W - 4} y={MARGIN.top + 14} text-anchor="end" class="axis-label"
+				fill="var(--color-foreground-muted, #888)">
+				{hrSamples.length} samples · {lo}–{hi} bpm
+			</text>
+		</svg>
 	{:else}
 		<div class="sleep-empty">
-			<p class="empty-placeholder">No location data for this day</p>
+			<p class="empty-placeholder">No heart-rate data for this day</p>
 		</div>
 	{/if}
 	{:else if activeMetric === "sleep"}
@@ -1151,9 +1234,60 @@
 			{/if}
 		</svg>
 	{:else}
-		<div class="sleep-empty">
-			<p class="empty-placeholder">No sleep data for this day</p>
-		</div>
+		<!-- No scored cycles — the sleep events on a SPAN axis: the night from
+		     first sleep to last waking, left to right, hourly ticks. The
+		     detective cuts timelines at midnight, so the prior day's trailing
+		     sleep is merged back in and contiguous blocks become one night. -->
+		{@const rawSleep = [...priorSleepEvents, ...events.filter((e) => e.isSleep && !e.userHidden)]
+			.map((e) => ({ start: e.startTime.getTime(), end: e.endTime.getTime() }))
+			.sort((a, b) => a.start - b.start)}
+		{@const sleepEvts = rawSleep.reduce<{ start: number; end: number }[]>((acc, s) => {
+			const last = acc[acc.length - 1];
+			if (last && s.start - last.end <= 10 * 60_000) last.end = Math.max(last.end, s.end);
+			else acc.push({ ...s });
+			return acc;
+		}, [])}
+		{#if sleepEvts.length > 0}
+			{@const t0 = Math.min(...sleepEvts.map((e) => e.start))}
+			{@const t1 = Math.max(...sleepEvts.map((e) => e.end))}
+			{@const spanMs = Math.max(1, t1 - t0)}
+			{@const SLEEP_H2 = 150}
+			{@const SM2 = { top: 36, bottom: 28, left: 40, right: 16 }}
+			{@const plotW2 = WIDTH - SM2.left - SM2.right}
+			{@const xOfMs = (t: number) => SM2.left + ((t - t0) / spanMs) * plotW2}
+			{@const hourMs = 3_600_000}
+			{@const firstTick = Math.ceil(t0 / hourMs) * hourMs}
+			{@const tickCount = Math.max(0, Math.floor((t1 - firstTick) / hourMs) + 1)}
+			<svg viewBox="0 0 {WIDTH} {SLEEP_H2}" preserveAspectRatio="xMidYMid meet" class="dayline-svg">
+				{#each Array.from({ length: tickCount }, (_, i) => firstTick + i * hourMs) as t}
+					{@const hh = getHourOfDay(new Date(t))}
+					<line x1={xOfMs(t)} y1={SM2.top} x2={xOfMs(t)} y2={SLEEP_H2 - SM2.bottom}
+						stroke="var(--color-border, #e5e5e5)" stroke-width="0.5" />
+					<text x={xOfMs(t)} y={SLEEP_H2 - 10} text-anchor="middle" class="axis-label x-label">
+						{formatHourLabel(Math.round(hh))}
+					</text>
+				{/each}
+				{#each sleepEvts as e}
+					{@const x1 = xOfMs(e.start)}
+					{@const x2 = xOfMs(e.end)}
+					{@const w = Math.max(2, x2 - x1)}
+					<rect x={x1} y={SM2.top + 8} width={w} height={SLEEP_H2 - SM2.top - SM2.bottom - 16} rx="3"
+						fill="var(--color-primary, #4f46e5)" fill-opacity="0.18"
+						stroke="var(--color-primary, #4f46e5)" stroke-opacity="0.35" stroke-width="0.75" />
+					{#if w > 60}
+						<text x={x1 + w / 2} y={(SM2.top + SLEEP_H2 - SM2.bottom) / 2} text-anchor="middle"
+							dominant-baseline="middle" class="axis-label"
+							fill="var(--color-foreground-muted, #888)">
+							{Math.round(((e.end - e.start) / 3_600_000) * 10) / 10}h
+						</text>
+					{/if}
+				{/each}
+			</svg>
+		{:else}
+			<div class="sleep-empty">
+				<p class="empty-placeholder">No sleep data for this day</p>
+			</div>
+		{/if}
 	{/if}
 	{/if}
 </div>
@@ -1179,6 +1313,10 @@
 		display: flex;
 		gap: 0.25rem;
 		padding: 0;
+	}
+
+	.strip-wrap {
+		padding-top: 2rem;
 	}
 
 	.metric-pill {
@@ -1346,6 +1484,16 @@
 		display: flex;
 		flex-direction: column;
 		gap: 0.75rem;
-		padding-top: 0.5rem;
+		/* Clear the absolutely-positioned pill row — the map has no internal
+		   top margin the way the SVG charts do. */
+		padding-top: 2rem;
+	}
+
+	/* Below the chart, never over it — the pill row owns the top edge. */
+	.view-note {
+		margin: 0.25rem 0 0;
+		font-size: 0.75rem;
+		font-style: italic;
+		color: var(--color-foreground-subtle);
 	}
 </style>

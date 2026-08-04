@@ -32,8 +32,14 @@
 	// Archived applets (lifecycle complete) are hidden: the list holds
 	// living things. Their run history stays reachable from chat/detail.
 	const living = $derived(applets.filter((a) => !a.archived_at));
-	const systemCount = $derived(living.filter((a) => a.owner === 'system').length);
-	const visible = $derived(showSystem ? living : living.filter((a) => a.owner !== 'system'));
+
+	// Hide on `origin`, not `owner`. Every source fan-out row is owner='system'
+	// — that field is reconcile's write-authority, not provenance — so hiding
+	// by owner filed the Gmail sync you connected on purpose with the embedding
+	// indexer you have never thought about. `origin === 'system'` is the actual
+	// plumbing; a source's applets are yours and stay visible.
+	const systemCount = $derived(living.filter((a) => a.origin === 'system').length);
+	const visible = $derived(showSystem ? living : living.filter((a) => a.origin !== 'system'));
 
 	// Needs-attention strip: enabled applets whose last run errored.
 	// (Expected-but-didn't-run and credential-expired join when the slot
@@ -151,13 +157,23 @@
 		return a.until.toLowerCase() === 'once' ? 'once' : 'until';
 	}
 
+	// What made this applet, in the user's terms. "Source" is the one that was
+	// unsayable before: those rows are owner='system' and read as built-in, but
+	// they exist because the user connected something.
+	const ORIGIN_LABEL: Record<string, string> = {
+		source: 'Source',
+		ai: 'AI-authored',
+		user: 'You',
+		system: 'Built-in'
+	};
+
 	const columns: Column<Applet>[] = [
 		{ key: 'name', label: 'Name', width: '30%', minWidth: '140px' },
 		{
-			key: 'owner',
-			label: 'Owner',
+			key: 'origin',
+			label: 'Origin',
 			format: 'badge',
-			getValue: (a) => a.owner
+			getValue: (a) => ORIGIN_LABEL[a.origin] ?? a.origin
 		},
 		{
 			key: 'until',
@@ -197,15 +213,16 @@
 
 	const filters: FilterDef<Applet>[] = [
 		{
-			id: 'owner',
+			id: 'origin',
 			kind: 'multi',
-			label: 'Owner',
+			label: 'Origin',
 			options: [
-				{ value: 'ai', label: 'AI-authored' },
-				{ value: 'user', label: 'User' },
-				{ value: 'system', label: 'Built-in' }
+				{ value: 'source', label: ORIGIN_LABEL.source },
+				{ value: 'ai', label: ORIGIN_LABEL.ai },
+				{ value: 'user', label: ORIGIN_LABEL.user },
+				{ value: 'system', label: ORIGIN_LABEL.system }
 			],
-			predicate: (a, v) => Array.isArray(v) && v.includes(a.owner)
+			predicate: (a, v) => Array.isArray(v) && v.includes(a.origin)
 		},
 		{
 			id: 'enabled',

@@ -83,6 +83,19 @@ pub async fn run(cli: Cli, virtues: Virtues) -> Result<(), Box<dyn std::error::E
             unreachable!("Rollback command should be handled in main.rs");
         }
 
+        Commands::Prepare { .. } => {
+            // Same — fetches and stages a release without touching the DB or
+            // the running install. Must work on a box whose database is down,
+            // which is a common reason to want the next release ready.
+            unreachable!("Prepare command should be handled in main.rs");
+        }
+
+        Commands::Activate => {
+            // Same — the staged half of an upgrade; the new binary's `migrate`
+            // touches the DB after the flip, not this process.
+            unreachable!("Activate command should be handled in main.rs");
+        }
+
         Commands::Channel { .. } => {
             // Same — reads/writes one file in the state root and must work on a
             // box whose database is down, which is a common reason to be
@@ -535,16 +548,18 @@ pub async fn run(cli: Cli, virtues: Virtues) -> Result<(), Box<dyn std::error::E
             };
 
             println!();
-            println!("✅ Day summary written to wiki_days id={}", day.id);
+            println!("✅ Day narrated — id={}", day.id);
             if let Some(epigraph) = &day.epigraph {
                 println!();
                 println!("Epigraph:");
                 println!("  {epigraph}");
             }
-            if let Some(autobio) = &day.autobiography {
+            // The prose lives in the day's article page now (0087 view);
+            // `article` falls back to the legacy column for pre-0083 days.
+            if let Some(prose) = day.article.as_ref().or(day.autobiography.as_ref()) {
                 println!();
-                println!("Autobiography:");
-                for line in autobio.lines() {
+                println!("Article:");
+                for line in prose.lines() {
                     println!("  {line}");
                 }
             }

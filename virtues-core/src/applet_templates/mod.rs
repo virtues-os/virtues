@@ -42,6 +42,23 @@ pub struct Source {
     pub icon: String,
     pub description: String,
     pub auth: SourceAuth,
+    /// Where this source's code can be read. Provenance, **not** an install or
+    /// update path — the iOS and Mac collectors ship through the App Store, a
+    /// notarized DMG, and the Tauri updater, and no git ref can deliver them.
+    /// On an appliance whose pitch is verifiability, "here is the exact source
+    /// for the collector you just paired" is worth saying out loud.
+    #[serde(default)]
+    pub repo: Option<String>,
+    /// Branch, tag, or path within the repo, when the whole repo is too coarse.
+    #[serde(default)]
+    pub repo_ref: Option<String>,
+    /// Which package contributed this row, relative to whichever root it was
+    /// found in. Empty for the box's own top-level `sources.toml`. Populated by
+    /// the loader from the on-disk path, never read from TOML — a file cannot
+    /// know its own location. Without it a source cannot be attributed to the
+    /// thing that would have to be uninstalled to remove it.
+    #[serde(skip)]
+    pub dir: String,
 }
 
 /// How a source authenticates. Matches the three auth kinds in the charter.
@@ -129,6 +146,36 @@ struct Template {
     /// seeded once via `ON CONFLICT DO NOTHING`; subsequent edits via the UI win.
     #[serde(default)]
     config: Option<toml::Value>,
+    /// Ontologies this applet writes, by registry name (`health_sleep`, not
+    /// `data_health_sleep`). Declared rather than inferred: the box cannot know
+    /// what a subprocess will INSERT into, and an installed package's streams
+    /// have to be discoverable the same way a shipped one's are.
+    ///
+    /// This is what lets a dark stream say *which source would fill it* instead
+    /// of the flat "not connected" that conflated "nothing provides this",
+    /// "provided but switched off", and "the box derives this itself".
+    #[serde(default)]
+    writes: Vec<String>,
+    /// This applet legitimately needs `VIRTUES_ENCRYPTION_KEY` — it re-encrypts
+    /// secrets rather than merely reading the decrypted ones handed to it on
+    /// stdin. Only `credential_refresh` does today.
+    ///
+    /// Forking one is refused: a fork moves the folder into the state root,
+    /// which flips it from shipped to unshipped, which drops the key. The
+    /// breakage would surface hours later as credentials silently going
+    /// `reauth_required`.
+    #[serde(default)]
+    needs_vault_key: bool,
+    /// Where this folder came from, when it is a copy of something else:
+    /// `<origin>@<version>` — e.g. `virtues@v0.3.0` for a forked built-in, or
+    /// `https://host/owner/repo@<sha>` for an edited import.
+    ///
+    /// Written by the fork operation, then carried in the manifest rather than
+    /// only in the database, so it survives a DB rebuild and travels with the
+    /// folder if it is ever committed or copied. Without it recorded at fork
+    /// time the question "what did this diverge from" is unanswerable later.
+    #[serde(default)]
+    forked_from: Option<String>,
     /// Manifest folder relative to the actions root. Populated by the loader
     /// from the on-disk path, never read from TOML — a file can't know its own
     /// location. Examples: `morning_brief`, `team-pack/actions/foo`.
@@ -371,7 +418,21 @@ fn parse_template(manifest_path: &std::path::Path, dir: &str) -> Option<Template
     };
     let mut tmpl: Template = match toml::from_str(&text) {
         Ok(t) => t,
-        Err(e) => panic!("failed to parse {}: {e}", manifest_path.display()),
+        Err(e) => {
+            // Log and skip, never panic. This used to abort the process, and
+            // since imports land in the writable state root the folder survives
+            // a restart — so one typo in a third party's manifest poisoned
+            // `load_catalog` permanently, taking reconcile, boot, and the admin
+            // Reconcile button (the only in-app lever) down with it. Recovery
+            // required shell access. The sibling `read_sources_file` was already
+            // hardened for exactly this; this path was missed.
+            tracing::error!(
+                path = %manifest_path.display(),
+                error = %e,
+                "skipping unparseable manifest.toml"
+            );
+            return None;
+        }
     };
     if tmpl.id_prefix.is_none() {
         // Migration 0077 rewrote the stored ids to this prefix. `manifest.toml`
@@ -383,17 +444,100 @@ fn parse_template(manifest_path: &std::path::Path, dir: &str) -> Option<Template
     Some(tmpl)
 }
 
+/// Read one `sources.toml`, tagging every row with the package folder it came
+/// from. A parse failure is logged and skipped rather than fatal: a package
+/// with a broken TOML must not take the whole catalog down with it. (The box's
+/// own top-level file is still a panic — that one is ours and a typo in it is a
+/// build error we want loudly.)
+fn read_sources_file(path: &std::path::Path, dir: &str) -> Vec<Source> {
+    let Ok(text) = std::fs::read_to_string(path) else {
+        return Vec::new();
+    };
+    match toml::from_str::<ParsedTemplates>(&text) {
+        Ok(doc) => doc
+            .source
+            .into_iter()
+            .map(|mut s| {
+                s.dir = dir.to_string();
+                s
+            })
+            .collect(),
+        Err(e) => {
+            tracing::error!(path = %path.display(), error = %e, "skipping unparseable sources.toml");
+            Vec::new()
+        }
+    }
+}
+
+/// Collect `[[source]]` rows contributed by packages under one root.
+///
+/// Same shape as `scan_root` does for manifests: a package is a folder, and it
+/// may declare sources in its own `sources.toml`. One level only — a pack's
+/// sources belong to the pack, not to each applet inside it.
+fn scan_sources(root: &std::path::Path) -> Vec<Source> {
+    let Ok(entries) = std::fs::read_dir(root) else {
+        return Vec::new();
+    };
+    let mut out = Vec::new();
+    let mut dirs: Vec<_> = entries.flatten().collect();
+    dirs.sort_by_key(|e| e.file_name());
+    for entry in dirs {
+        if !entry.path().is_dir() {
+            continue;
+        }
+        let Ok(name) = entry.file_name().into_string() else {
+            continue;
+        };
+        if name.starts_with('.') {
+            continue;
+        }
+        let candidate = entry.path().join("sources.toml");
+        if candidate.is_file() {
+            out.extend(read_sources_file(&candidate, &name));
+        }
+    }
+    out
+}
+
 fn load_catalog() -> ParsedTemplates {
     let applets_dir = shipped_root();
 
-    // 1. Sources — prefer on-disk; fall back to baked.
+    // 1. Sources. Three layers, last-wins-by-id, mirroring how actions merge
+    //    below: the box's own catalog, then packages that shipped with it, then
+    //    packages installed on this box. That last layer is what lets a new
+    //    provider arrive as a directory instead of a release — and it is why a
+    //    source now carries the `dir` that contributed it.
     let sources_path = applets_dir.join("sources.toml");
-    let sources_doc: ParsedTemplates = match std::fs::read_to_string(&sources_path) {
-        Ok(text) => toml::from_str(&text).unwrap_or_else(|e| {
-            panic!("failed to parse {}: {e}", sources_path.display())
-        }),
-        Err(_) => toml::from_str(SOURCES_TOML)
-            .unwrap_or_else(|e| panic!("failed to parse baked sources.toml: {e}")),
+    let base: Vec<Source> = match std::fs::read_to_string(&sources_path) {
+        Ok(text) => toml::from_str::<ParsedTemplates>(&text)
+            .unwrap_or_else(|e| panic!("failed to parse {}: {e}", sources_path.display()))
+            .source,
+        Err(_) => toml::from_str::<ParsedTemplates>(SOURCES_TOML)
+            .unwrap_or_else(|e| panic!("failed to parse baked sources.toml: {e}"))
+            .source,
+    };
+
+    let mut sources: Vec<Source> = base;
+    for contributed in scan_sources(&applets_dir)
+        .into_iter()
+        .chain(scan_sources(&state_root()))
+    {
+        match sources.iter().position(|s| s.id == contributed.id) {
+            Some(i) => {
+                tracing::info!(
+                    source_id = %contributed.id,
+                    shadowed_by = %contributed.dir,
+                    "package source shadows an earlier definition"
+                );
+                sources[i] = contributed;
+            }
+            None => sources.push(contributed),
+        }
+    }
+    let sources_doc = ParsedTemplates {
+        source: sources,
+        action: Vec::new(),
+        shipped_count: 0,
     };
 
     // 2. Per-folder manifests. The scanner rule is intentionally flat:
@@ -552,6 +696,122 @@ pub fn mirror_enabled_to_manifest(applet_id: &str, enabled: bool) {
     }
 }
 
+/// Copy a shipped applet into the state root so the owner can change it.
+///
+/// This is what "fork" means on a box. It needs no git remote and no network:
+/// the state root already shadows the shipped root by folder name, and deleting
+/// the copy already reverts to the shipped version — that precedence is an
+/// existing, documented feature. All this adds is the copy and the record of
+/// what it diverged from.
+///
+/// Stamps `forked_from = "virtues@<version>"` into the copied manifest so the
+/// answer survives a database rebuild and travels with the folder.
+///
+/// Returns the folder that was created. Errors if the applet is unknown, if it
+/// did not come from the shipped root (nothing to fork — it is already yours),
+/// or if a copy already exists.
+pub async fn fork_applet(db: &PgPool, applet_id: &str) -> Result<String> {
+    let dir = dir_for_applet_id(applet_id)
+        .ok_or_else(|| Error::Other(format!("unknown applet: {applet_id}")))?;
+
+    let shipped = shipped_root().join(&dir);
+    if !shipped.is_dir() {
+        return Err(Error::Other(format!(
+            "applet {applet_id} has no shipped folder to fork"
+        )));
+    }
+    if template_needs_vault_key(&dir) {
+        return Err(Error::Other(format!(
+            "{dir} cannot be forked: it re-encrypts stored secrets, and a fork \
+             runs without the vault key — token refresh would stop working \
+             silently. Change it in place or file an issue instead."
+        )));
+    }
+    let target = state_root().join(&dir);
+    if target.exists() {
+        return Err(Error::Other(format!(
+            "{dir} is already forked onto this box"
+        )));
+    }
+
+    copy_tree(&shipped, &target)?;
+    stamp_forked_from(
+        &target.join("manifest.toml"),
+        &format!("virtues@{}", crate::codename::version()),
+    )?;
+
+    // The copy only takes effect once the catalog re-reads both roots.
+    reload_and_reconcile(db).await?;
+    Ok(dir)
+}
+
+/// Whether the applet behind this id declares it needs the vault key. Public
+/// twin of [`template_needs_vault_key`] for the runner, which holds an id
+/// rather than a folder — and must resolve fan-out ids too.
+pub fn declares_vault_key_need(applet_id: &str) -> bool {
+    match dir_for_applet_id(applet_id) {
+        Some(dir) => template_needs_vault_key(&dir),
+        None => false,
+    }
+}
+
+/// Whether the manifest at `dir` declares it needs the vault key.
+fn template_needs_vault_key(dir: &str) -> bool {
+    let guard = catalog_lock().read().expect("catalog rwlock poisoned");
+    guard
+        .action
+        .iter()
+        .any(|t| t.dir == dir && t.needs_vault_key)
+}
+
+/// Recursive copy, skipping dot-directories. `.git` in particular must not be
+/// carried into a fork: it would point the copy at the upstream remote and, for
+/// an authenticated clone, bring the credential in its URL along with it.
+fn copy_tree(from: &std::path::Path, to: &std::path::Path) -> Result<()> {
+    std::fs::create_dir_all(to)
+        .map_err(|e| Error::Other(format!("create {}: {e}", to.display())))?;
+    let entries = std::fs::read_dir(from)
+        .map_err(|e| Error::Other(format!("read {}: {e}", from.display())))?;
+    for entry in entries.flatten() {
+        let name = entry.file_name();
+        let name_str = name.to_string_lossy();
+        if name_str.starts_with('.') {
+            continue;
+        }
+        // Don't follow links out of the tree while copying.
+        let Ok(meta) = entry.path().symlink_metadata() else {
+            continue;
+        };
+        if meta.is_symlink() {
+            continue;
+        }
+        let src = entry.path();
+        let dst = to.join(&name);
+        if meta.is_dir() {
+            copy_tree(&src, &dst)?;
+        } else {
+            std::fs::copy(&src, &dst)
+                .map_err(|e| Error::Other(format!("copy {}: {e}", src.display())))?;
+        }
+    }
+    Ok(())
+}
+
+/// Add (or replace) the `forked_from` key in a manifest, textually. Rewriting
+/// the file through the TOML serializer would drop its comments, which for an
+/// applet manifest are most of what a reader came for.
+fn stamp_forked_from(manifest: &std::path::Path, origin: &str) -> Result<()> {
+    let text = std::fs::read_to_string(manifest)
+        .map_err(|e| Error::Other(format!("read {}: {e}", manifest.display())))?;
+    let kept: Vec<&str> = text
+        .lines()
+        .filter(|l| !l.trim_start().starts_with("forked_from"))
+        .collect();
+    let stamped = format!("forked_from = \"{origin}\"\n{}", kept.join("\n"));
+    std::fs::write(manifest, stamped)
+        .map_err(|e| Error::Other(format!("write {}: {e}", manifest.display())))
+}
+
 /// Resolve the manifest folder (relative to an applet root) that produced
 /// an action id. Matches the base id (`id_prefix`) and per-credential /
 /// per-device fan-out ids (`<id_prefix>_<anchor>`). Used by the face server
@@ -567,6 +827,42 @@ pub fn dir_for_applet_id(applet_id: &str) -> Option<String> {
             })
         })
         .map(|t| t.dir.clone())
+}
+
+/// Which catalog sources can produce a given ontology, by source id.
+///
+/// Built from the `writes` each template declares, joined to the source that
+/// template fans out from. Empty means nothing installed writes it — which is
+/// a different fact from "connected but silent", and the difference is the
+/// whole reason this exists.
+pub fn sources_writing(ontology: &str) -> Vec<String> {
+    let guard = catalog_lock().read().expect("catalog rwlock poisoned");
+    let mut out: Vec<String> = guard
+        .action
+        .iter()
+        .filter(|t| t.writes.iter().any(|w| w == ontology))
+        .filter_map(|t| t.source.as_ref().map(|s| s.id.clone()))
+        .collect();
+    out.sort();
+    out.dedup();
+    out
+}
+
+/// The inverse of [`sources_writing`]: which ontologies a source can produce.
+///
+/// Catalog-side question — "what would connecting this give me" — where
+/// `sources_writing` answers the stream-side one, "what would fill this".
+pub fn ontologies_written_by(source_id: &str) -> Vec<String> {
+    let guard = catalog_lock().read().expect("catalog rwlock poisoned");
+    let mut out: Vec<String> = guard
+        .action
+        .iter()
+        .filter(|t| t.source.as_ref().is_some_and(|s| s.id == source_id))
+        .flat_map(|t| t.writes.iter().cloned())
+        .collect();
+    out.sort();
+    out.dedup();
+    out
 }
 
 /// Look up a `[[source]]` entry by its id. Returns an owned clone so the
@@ -696,12 +992,24 @@ pub async fn reconcile_templates(db: &PgPool) -> Result<usize> {
                     ))
                 })?;
 
-            let source = lookup_source(source_id).ok_or_else(|| {
-                Error::Other(format!(
-                    "template {} references unknown source '{}' — add a [[source]] block to sources.toml",
-                    id_prefix, source_id
-                ))
-            })?;
+            // Skip, don't abort. This used to `return Err`, which unwound the
+            // whole pass — after the orphan GC had already deleted rows and
+            // before the system GC ran — so every remaining template was
+            // skipped and boot, admin reconcile, the OAuth callback and
+            // pair-consume all failed together. That was survivable while the
+            // source list shipped with the box; now that a package can
+            // contribute (and remove) sources, one package that deletes a
+            // source while leaving a manifest behind would brick reconcile for
+            // everything else on the box.
+            let Some(source) = lookup_source(source_id) else {
+                tracing::error!(
+                    template = %id_prefix,
+                    source_id = %source_id,
+                    "template references an unknown source; skipping it. The package \
+                     that declares this source may be missing or failed to parse."
+                );
+                continue;
+            };
 
             if matches!(source.auth, SourceAuth::SelfIssuedBearer) {
                 // Device source (iOS/Mac/sensor): fan out per DEVICE. The device's
@@ -927,6 +1235,191 @@ mod tests {
     use super::*;
 
     /// Both roots are scanned, and an authored applet in the state root
+    /// Every `writes` entry must name a real ontology. A typo here fails
+    /// silently and in the worst direction: the stream reports that *nothing*
+    /// provides it, so the UI tells the user to connect something they already
+    /// have. Cheap to assert, impossible to notice otherwise.
+    #[test]
+    fn declared_writes_name_real_ontologies() {
+        let known: std::collections::HashSet<String> =
+            virtues_registry::ontologies::registered_ontologies()
+                .into_iter()
+                .map(|o| o.name.to_string())
+                .collect();
+
+        let guard = catalog_lock().read().unwrap();
+        let mut bad = Vec::new();
+        for t in &guard.action {
+            for w in &t.writes {
+                if !known.contains(w) {
+                    bad.push(format!("{} declares writes = \"{}\"", t.dir, w));
+                }
+            }
+        }
+        assert!(bad.is_empty(), "unknown ontologies in `writes`: {bad:#?}");
+    }
+
+    /// The map has to actually resolve, or the feature it exists for is a very
+    /// well-tested no-op.
+    #[test]
+    fn ingest_applets_claim_their_streams() {
+        assert!(
+            sources_writing("health_sleep").contains(&"ios".to_string()),
+            "iPhone should provide sleep"
+        );
+        assert!(
+            sources_writing("communication_message").contains(&"mac".to_string()),
+            "Mac should provide messages"
+        );
+        // Two sources can fill one stream, and both should be offered.
+        let bookmarks = sources_writing("content_bookmark");
+        assert!(bookmarks.contains(&"mac".to_string()) && bookmarks.contains(&"github".to_string()));
+        // And a stream nothing writes must stay empty rather than guess.
+        assert!(sources_writing("activity_listening").is_empty());
+    }
+
+    /// The keystone of the package model: a directory can contribute a
+    /// `[[source]]` row, so a new provider no longer requires editing the box's
+    /// own catalog and cutting a release.
+    #[test]
+    fn packages_contribute_and_shadow_sources() {
+        let root = tempfile::tempdir().unwrap();
+        let write = |dir: &str, body: &str| {
+            let d = root.path().join(dir);
+            std::fs::create_dir_all(&d).unwrap();
+            std::fs::write(d.join("sources.toml"), body).unwrap();
+        };
+
+        write(
+            "todoist-pack",
+            r#"[[source]]
+id = "todoist"
+display_name = "Todoist"
+icon = "ri:list-check"
+description = "Tasks."
+auth = { kind = "api_key", fields = ["token"] }
+"#,
+        );
+        // A package may also shadow a source the box ships, which is what makes
+        // "fix the description without waiting for a release" possible.
+        write(
+            "my-google",
+            r#"[[source]]
+id = "google"
+display_name = "Google (mine)"
+icon = "ri:google-fill"
+description = "Patched."
+auth = { kind = "via_proxy", start_path = "/google/start" }
+"#,
+        );
+        // Not a package: no sources.toml, and dot-dirs are skipped outright.
+        std::fs::create_dir_all(root.path().join(".hidden")).unwrap();
+
+        let found = scan_sources(root.path());
+        assert_eq!(found.len(), 2, "one row per package sources.toml: {found:?}");
+
+        let todoist = found.iter().find(|s| s.id == "todoist").unwrap();
+        assert_eq!(todoist.display_name, "Todoist");
+        assert_eq!(
+            todoist.dir, "todoist-pack",
+            "a source must be attributable to the package that added it"
+        );
+
+        // Merge order: base, then packages, last-wins-by-id.
+        let mut merged = vec![Source {
+            id: "google".into(),
+            display_name: "Google".into(),
+            icon: "ri:google-fill".into(),
+            description: "Shipped.".into(),
+            auth: SourceAuth::ViaProxy { start_path: "/google/start".into() },
+            repo: None,
+            repo_ref: None,
+            dir: String::new(),
+        }];
+        for s in found {
+            match merged.iter().position(|e| e.id == s.id) {
+                Some(i) => merged[i] = s,
+                None => merged.push(s),
+            }
+        }
+        assert_eq!(merged.len(), 2, "shadowing must not duplicate an id");
+        let google = merged.iter().find(|s| s.id == "google").unwrap();
+        assert_eq!(google.display_name, "Google (mine)", "package wins");
+        assert_eq!(google.dir, "my-google");
+    }
+
+    /// A package with a broken `sources.toml` must not take the catalog down
+    /// with it — the whole point of the merge is that packages are independent.
+    #[test]
+    fn unparseable_package_sources_are_skipped_not_fatal() {
+        let root = tempfile::tempdir().unwrap();
+        let bad = root.path().join("broken");
+        std::fs::create_dir_all(&bad).unwrap();
+        std::fs::write(bad.join("sources.toml"), "this is not = = toml [[[").unwrap();
+
+        let good = root.path().join("fine");
+        std::fs::create_dir_all(&good).unwrap();
+        std::fs::write(
+            good.join("sources.toml"),
+            "[[source]]\nid = \"ok\"\ndisplay_name = \"Ok\"\nicon = \"i\"\ndescription = \"d\"\nauth = { kind = \"self_issued_bearer\" }\n",
+        )
+        .unwrap();
+
+        let found = scan_sources(root.path());
+        assert_eq!(found.len(), 1, "the good package still loads");
+        assert_eq!(found[0].id, "ok");
+    }
+
+    /// A fork must not carry `.git` across. For an applet forked out of an
+    /// imported package that directory points at the upstream remote, and for
+    /// an authenticated clone it holds the credential in the remote's URL.
+    /// Symlinks are skipped for the same reason the source reader skips them:
+    /// a package controls its own layout and can link anywhere.
+    #[test]
+    fn copy_tree_skips_dotdirs_and_symlinks() {
+        let base = std::env::temp_dir().join(format!("vfork-{}", std::process::id()));
+        let (from, to, outside) = (base.join("from"), base.join("to"), base.join("outside"));
+        let _ = std::fs::remove_dir_all(&base);
+        std::fs::create_dir_all(from.join(".git")).unwrap();
+        std::fs::create_dir_all(from.join("face")).unwrap();
+        std::fs::create_dir_all(&outside).unwrap();
+        std::fs::write(from.join("manifest.toml"), "name = \"x\"\nowner = \"system\"\n").unwrap();
+        std::fs::write(from.join("face").join("index.html"), "<p>hi</p>").unwrap();
+        std::fs::write(from.join(".git").join("config"), "url = https://tok@h/r\n").unwrap();
+        std::fs::write(outside.join("secret"), "k").unwrap();
+        #[cfg(unix)]
+        std::os::unix::fs::symlink(outside.join("secret"), from.join("link")).unwrap();
+
+        copy_tree(&from, &to).unwrap();
+
+        assert!(to.join("manifest.toml").is_file(), "real files copy");
+        assert!(to.join("face").join("index.html").is_file(), "subdirs copy");
+        assert!(!to.join(".git").exists(), "`.git` must not be carried into a fork");
+        #[cfg(unix)]
+        assert!(!to.join("link").exists(), "symlinks must not be copied");
+
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    /// The stamp is textual so a manifest keeps its comments, which for an
+    /// applet are most of what a reader opened the file for. Re-stamping must
+    /// replace rather than accumulate.
+    #[test]
+    fn stamp_forked_from_replaces_and_keeps_comments() {
+        let p = std::env::temp_dir().join(format!("vstamp-{}.toml", std::process::id()));
+        std::fs::write(&p, "# why this exists\nname = \"x\"\n").unwrap();
+
+        stamp_forked_from(&p, "virtues@v0.3.0").unwrap();
+        stamp_forked_from(&p, "virtues@v0.4.0").unwrap();
+        let out = std::fs::read_to_string(&p).unwrap();
+
+        assert_eq!(out.matches("forked_from").count(), 1, "replaced, not appended");
+        assert!(out.contains("virtues@v0.4.0"));
+        assert!(out.contains("# why this exists"), "comments survive");
+        assert!(out.contains("name = \"x\""));
+        let _ = std::fs::remove_file(&p);
+    }
+
     /// SHADOWS a shipped applet with the same dir rather than colliding with
     /// it. This is what makes "fork a system applet" work, and what makes
     /// deleting your copy revert cleanly to shipped.

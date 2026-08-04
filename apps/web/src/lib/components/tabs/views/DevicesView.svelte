@@ -14,7 +14,6 @@
 	import {
 		listDevices,
 		pairMint,
-		pairConfirm,
 		pairDeny,
 		pairStatus as pairStatusApi,
 	} from "$lib/api/client";
@@ -48,7 +47,10 @@
 			checked_at?: string;
 			stale?: boolean;
 		} | null;
-		kind: "browser" | "mobile_app" | "desktop_app" | "sensor" | "cli";
+		// Mirrors the CHECK on `app_device.kind`. No "browser": the allowlisted
+		// iroh key is the credential (middleware/auth.rs), and a bare browser
+		// holds none — it cannot be a paired device, only the loopback console.
+		kind: "mobile_app" | "desktop_app" | "sensor" | "cli";
 		label: string;
 		paired_at: string;
 		last_seen_at: string | null;
@@ -74,7 +76,10 @@
 	let mintedQrSvg = $state<string | null>(null);
 	let mintedTokenId = $state<string | null>(null);
 	let mintedExpiresAt = $state<string | null>(null);
-	let pairStatus = $state<"pending" | "authorized" | "consumed" | "expired" | "denied" | "idle">(
+	// No "pending": an authenticated mint is authorized on the spot, so the
+	// confirm round-trip (and the /api/pair/confirm route it called, which no
+	// longer exists) is gone.
+	let pairStatus = $state<"authorized" | "consumed" | "expired" | "denied" | "idle">(
 		"idle"
 	);
 	let consumedByLabel = $state<string | null>(null);
@@ -137,30 +142,25 @@
 		consumedByLabel = null;
 		mintLoading = true;
 		try {
-			const data = await pairMint("browser");
+			// No intended_kind. This minted "Add device" without one is redeemed
+			// by whatever scans it — a phone, a Mac, the CLI — and the device
+			// declares its own kind at consume. Naming one here meant naming
+			// "browser", which the token's CHECK constraint rejects, so this
+			// button failed on every click with `mint_failed`.
+			const data = await pairMint();
 			mintedToken = data.token;
 			mintedUrl = data.pair_url;
 			mintedQrSvg = data.qr_svg;
 			mintedTokenId = data.id;
 			mintedExpiresAt = data.expires_at;
-			pairStatus = "pending";
+			// Authenticated mints are minted `authorized` (see mint_pair_token) —
+			// there is no confirm round-trip to wait through.
+			pairStatus = "authorized";
 			pollHandle = setInterval(pollStatus, 2000);
 		} catch (e) {
 			mintError = e instanceof Error ? e.message : "Could not mint pair token";
 		} finally {
 			mintLoading = false;
-		}
-	}
-
-	async function confirmPair() {
-		if (!mintedTokenId) return;
-		try {
-			await pairConfirm(mintedTokenId);
-			pairStatus = "authorized";
-		} catch (e) {
-			toast.error("Confirmation failed", {
-				description: e instanceof Error ? e.message : "Network error",
-			});
 		}
 	}
 
@@ -229,8 +229,6 @@
 
 	function kindLabel(k: Device["kind"]) {
 		switch (k) {
-			case "browser":
-				return "Browser";
 			case "mobile_app":
 				return "Mobile";
 			case "desktop_app":
@@ -244,8 +242,6 @@
 
 	function kindIcon(k: Device["kind"]) {
 		switch (k) {
-			case "browser":
-				return "ri:window-line";
 			case "mobile_app":
 				return "ri:smartphone-line";
 			case "desktop_app":
@@ -388,21 +384,7 @@
 				<ErrorState message={mintError} />
 			{:else if mintedUrl}
 				<div class="space-y-4">
-					{#if pairStatus === "pending"}
-						<div class="rounded-lg bg-surface-alt border border-border p-3 text-sm">
-							<div class="font-medium mb-1">Before we hand out access…</div>
-							<p class="text-foreground-muted text-xs">
-								You're about to pair a new device. Confirm to authorize the QR
-								below, then open the URL on the new device.
-							</p>
-							<div class="flex gap-2 mt-3">
-								<Button variant="primary" onclick={confirmPair}>
-									<Icon icon="ri:check-line" /> Confirm
-								</Button>
-								<Button variant="ghost" onclick={denyPair}>Cancel</Button>
-							</div>
-						</div>
-					{:else if pairStatus === "authorized"}
+					{#if pairStatus === "authorized"}
 						<div class="rounded-lg bg-surface-alt border border-border p-3 text-sm">
 							<div class="flex items-center gap-2">
 								<Icon icon="ri:loader-4-line" class="animate-spin text-foreground-muted" />

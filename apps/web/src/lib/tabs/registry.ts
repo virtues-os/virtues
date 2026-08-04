@@ -19,7 +19,7 @@ import HistoryView from '$lib/components/tabs/views/HistoryView.svelte';
 import WikiView from '$lib/components/tabs/views/WikiView.svelte';
 import WikiDetailView from '$lib/components/tabs/views/WikiDetailView.svelte';
 import WikiListView from '$lib/components/tabs/views/WikiListView.svelte';
-import ConnectionsPanel from '$lib/components/applets/ConnectionsPanel.svelte';
+import SourcesView from '$lib/components/sources/SourcesView.svelte';
 import CredentialDetailView from '$lib/components/tabs/views/CredentialDetailView.svelte';
 import AppletsView from '$lib/components/tabs/views/AppletsView.svelte';
 import AppletDetailView from '$lib/components/tabs/views/AppletDetailView.svelte';
@@ -63,6 +63,31 @@ export interface TabDefinition {
 }
 
 // Complete tab registry with namespace-based URL patterns
+/**
+ * Every path the wiki room answers to — the ONE list.
+ *
+ * This regex used to be written out twice, here and in WikiView's own section
+ * parser. Adding Lifeline and History to one copy and not the other made both
+ * rooms unreachable: the section rendered fine, the sidebar linked to it, the
+ * typechecker was happy, and no tab would open because the router did not
+ * recognise the path. Two lists that must agree is a bug waiting for the next
+ * section.
+ */
+export const WIKI_SECTION_RE =
+	/^\/wiki\/(days|years|stories|entities|identity|lifeline|history|people|places|orgs|unlinked)$/;
+
+/**
+ * Sections of the Sources room. Same one-list rule as the wiki above, and here
+ * it also disambiguates: `/sources/<x>` is a credential detail unless `<x>` is
+ * one of these words, so the router and the view must agree about which words
+ * are reserved or a section silently becomes a lookup for a credential that
+ * does not exist.
+ *
+ * Overview is the bare `/sources` and so is not in this list.
+ */
+export const SOURCES_SECTIONS = ['catalog', 'activity'] as const;
+export type SourcesSection = (typeof SOURCES_SECTIONS)[number];
+
 export const tabRegistry: Record<TabType, TabDefinition> = {
 	// ========================================================================
 	// HOME: /home — the default landing / "Return" page (synthesis surface)
@@ -182,7 +207,7 @@ export const tabRegistry: Record<TabType, TabDefinition> = {
 	wiki: {
 		match: (path) =>
 			path === '/wiki' ||
-			/^\/wiki\/(days|years|stories|entities|identity|people|places|orgs|unlinked)$/.test(path) ||
+			WIKI_SECTION_RE.test(path) ||
 			path === '/entities',
 		parse: () => ({
 			type: 'wiki',
@@ -461,11 +486,15 @@ export const tabRegistry: Record<TabType, TabDefinition> = {
 	},
 
 	// ========================================================================
-	// SOURCE NAMESPACE: /sources, /sources/<credential_id>
-	//   - `/sources` (and `/source` legacy alias) → list of credentials
-	//   - `/sources/<id>` → CredentialDetailView for one credential
-	// "Source" in the URL is user-facing vocabulary; under the hood each row
-	// is a credential (one connection to a provider).
+	// SOURCE NAMESPACE: /sources, /sources/<section>, /sources/<credential_id>
+	//   - `/sources` (and `/source` legacy alias) → Overview
+	//   - `/sources/catalog`, `/sources/activity` → the other two sections
+	//   - `/sources/<id>` → CredentialDetailView for one connection
+	// "Source" in the URL is user-facing vocabulary; under the hood a connection
+	// is a credential (OAuth/API-key) or a paired device (iOS/Mac).
+	//
+	// Sections are matched before ids — see SOURCES_SECTIONS for why the two
+	// must not be decided in two places.
 	// ========================================================================
 	source: {
 		match: (path) =>
@@ -480,19 +509,32 @@ export const tabRegistry: Record<TabType, TabDefinition> = {
 				};
 			}
 			const m = path.match(/^\/sources\/([^/]+)$/);
+			const seg = m?.[1] ?? '';
+			if ((SOURCES_SECTIONS as readonly string[]).includes(seg)) {
+				return {
+					type: 'source',
+					label: `Sources · ${seg[0].toUpperCase()}${seg.slice(1)}`,
+					icon: 'ri:database-2-line',
+				};
+			}
 			return {
 				type: 'source',
 				label: 'Source',
 				icon: 'ri:database-2-line',
-				entityId: m?.[1],
+				entityId: seg,
 			};
 		},
 		serialize: (id) => (id ? id : 'sources'),
 		deserialize: (serialized) => (serialized === 'sources' ? '/sources' : `/sources/${serialized}`),
 		icon: 'ri:database-2-line',
 		defaultLabel: 'Sources',
-		component: ConnectionsPanel,
-		detailComponent: CredentialDetailView,
+		// No `detailComponent`. TabContent decides list-vs-detail with a generic
+		// `/^\/[a-z]+\/([^/]+)$/` on the route, which cannot tell `/sources/catalog`
+		// (a section) from `/sources/cred_abc` (a credential) — it called both
+		// details and rendered "Credential not found" on the catalog. SourcesView
+		// owns the whole namespace and dispatches the detail itself, against the
+		// same SOURCES_SECTIONS list the matcher above uses.
+		component: SourcesView,
 	},
 
 	// ========================================================================

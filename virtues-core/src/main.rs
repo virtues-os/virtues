@@ -629,6 +629,48 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     }
 
+    // ─── `virtues prepare` ──────────────────────────────────────────────────
+    // Fetch + stage + preflight the next release WITHOUT installing it. Needs
+    // no DB (and must run without one — a box whose database is unhealthy is a
+    // box that wants the next release ready to go).
+    if let Some(Commands::Prepare { force }) = &cli.command {
+        match virtues::cli::upgrade::prepare(*force).await {
+            Ok(virtues::cli::upgrade::Prepared::UpToDate) => {
+                virtues::cli::ui::ok("already on the newest build for this channel");
+                return Ok(());
+            }
+            Ok(virtues::cli::upgrade::Prepared::Already { slot_id }) => {
+                virtues::cli::ui::ok(&format!(
+                    "{slot_id} is already staged — `virtues activate` installs it"
+                ));
+                return Ok(());
+            }
+            Ok(virtues::cli::upgrade::Prepared::Staged { slot_id }) => {
+                virtues::cli::ui::ok(&format!(
+                    "{slot_id} staged — `virtues activate` installs it"
+                ));
+                return Ok(());
+            }
+            Err(e) => {
+                eprintln!("error: prepare failed: {e}");
+                std::process::exit(1);
+            }
+        }
+    }
+
+    // ─── `virtues activate` ─────────────────────────────────────────────────
+    // Install what `prepare` staged. Like Upgrade, deliberately does NOT touch
+    // the DB here; the new binary's `migrate` does that after the flip.
+    if let Some(Commands::Activate) = &cli.command {
+        match virtues::cli::upgrade::activate_prepared().await {
+            Ok(()) => return Ok(()),
+            Err(e) => {
+                eprintln!("error: activate failed: {e}");
+                std::process::exit(1);
+            }
+        }
+    }
+
     // DATABASE_URL (Postgres) must be set — no default. Fail loudly if missing.
     // It's already in the process env, so subprocess actions inherit it as-is.
     let database_url = virtues::database::normalize_database_url()?;

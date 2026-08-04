@@ -150,6 +150,37 @@ jobs:
             psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -c "GRANT $role TO CURRENT_USER;"
           done
 
+      # Does `.sqlx/` still describe the real schema?
+      #
+      # The build above runs with SQLX_OFFLINE=true, so every `sqlx::query!` is
+      # validated against the recorded JSON in `.sqlx/` rather than against
+      # Postgres. That is the right default — it keeps the build and the release
+      # from needing a database — but it means the cache is the *only* thing
+      # asserting those queries are valid, and nothing was asserting the cache.
+      #
+      # The failure that shape allows is the worst kind this repo has:
+      # drop a column that `api/wiki.rs` selects, forget to regenerate, and the
+      # stale cache still says the column exists. `cargo check` passes. Clippy
+      # passes. CI is green. The release builds. Then `GET /api/wiki/people/:id`
+      # 500s on a real box, and the first person to find out is whoever is
+      # running it. Same shape as migration 52 and the pdfium 404: green here,
+      # broken there.
+      #
+      # `prepare --check` regenerates against the migrated service container and
+      # fails if the result differs from what is committed. It cannot be
+      # satisfied by discipline — that is the point. Fix is one command:
+      #   cargo sqlx prepare --workspace
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: sqlx-cli
+
+      - name: Verify the sqlx cache matches the schema
+        env:
+          SQLX_OFFLINE: 'false'
+        run: |
+          sqlx migrate run --source virtues-core/migrations
+          cargo sqlx prepare --check --workspace
+
       # `--workspace`, not `-p virtues`. This used to test the one package, so
       # virtues-registry, virtues-helpers, virtues-iroh and virtues-installer
       # had their tests skipped entirely — a failing registry test sat on green

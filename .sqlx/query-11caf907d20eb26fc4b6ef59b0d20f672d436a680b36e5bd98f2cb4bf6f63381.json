@@ -1,0 +1,82 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n        SELECT canonical_name, emails, phones, handles, nickname,\n               first_interaction, last_interaction, interaction_count,\n               metadata, content, aliases\n        FROM wiki_people WHERE id = $1\n        ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "canonical_name",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 1,
+        "name": "emails",
+        "type_info": "Jsonb"
+      },
+      {
+        "ordinal": 2,
+        "name": "phones",
+        "type_info": "Jsonb"
+      },
+      {
+        "ordinal": 3,
+        "name": "handles",
+        "type_info": "Jsonb"
+      },
+      {
+        "ordinal": 4,
+        "name": "nickname",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 5,
+        "name": "first_interaction",
+        "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 6,
+        "name": "last_interaction",
+        "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 7,
+        "name": "interaction_count",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 8,
+        "name": "metadata",
+        "type_info": "Jsonb"
+      },
+      {
+        "ordinal": 9,
+        "name": "content",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 10,
+        "name": "aliases",
+        "type_info": "Jsonb"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Text"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      false,
+      true,
+      true,
+      true,
+      false,
+      false,
+      true,
+      false
+    ]
+  },
+  "hash": "11caf907d20eb26fc4b6ef59b0d20f672d436a680b36e5bd98f2cb4bf6f63381"
+}

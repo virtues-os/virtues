@@ -25,13 +25,17 @@ use sqlx::PgPool;
 
 use crate::error::{Error, Result};
 
-/// Below this many total refs an entity has no article — the record is too
-/// thin to say anything a contact card doesn't. Deliberately high to start.
-const MIN_REFS_TO_WRITE: i64 = 15;
-
-/// A new edition requires at least this many refs beyond the count recorded
-/// at the last edition ("enough new data").
-const MIN_NEW_REFS: i64 = 10;
+// MIN_REFS_TO_WRITE and MIN_NEW_REFS are gone (migration 0081).
+//
+// They were a machine deciding which of your relationships deserved prose. On
+// the real box that meant 226 entities cleared the bar on a corpus of five
+// months — hundreds of unrequested model calls, recurring forever, with nothing
+// in the UI to say the box was spending on them.
+//
+// The gate is consent now. An entity has no article until someone clicks
+// "Write the article", and none is maintained until they turn maintenance on,
+// per-article, with its own `refresh_after_new_refs`. Writing once and
+// maintaining forever are different decisions and get different switches.
 
 /// Editions per run. The applet runs hourly; a bounded batch drains a backlog
 /// without a cost spike.
@@ -65,59 +69,92 @@ struct DueEntity {
     refs: i64,
 }
 
-/// Find entities whose record has outgrown their article, most-outgrown first,
-/// and write a fresh edition for each. Returns how many were written.
+/// Maintenance: rewrite articles whose subject has outgrown them.
+///
+/// The candidate set is no longer "every entity on the box" — it is the
+/// articles a person switched maintenance on for, and each carries its own
+/// threshold. An article with `auto_update = false` is never a candidate, and
+/// that means exactly what it says: the AI does not touch it. Not a queue, not
+/// a review inbox; the sweep skips it.
+///
+/// **Rewriting is not implemented here, and cannot be.** An article is an
+/// `app_pages` row, and once its `yjs_state` is non-null the CRDT is
+/// authoritative: a pool-only write to `content` is overwritten from the CRDT
+/// on the next save, silently. Maintenance therefore belongs in an applet's
+/// AGENT phase, which holds a real `YjsState` and edits through the same
+/// find/replace path the assistant already uses on pages — which is also the
+/// only way to get reviewable diffs instead of a 100% rewrite every edition.
+///
+/// Until that lands this returns the count it *would* write, and logs it. The
+/// set is empty on any box where nobody has opted in, so this is dormant rather
+/// than broken.
 pub async fn refresh_due_entity_articles(pool: &PgPool) -> Result<usize> {
     let due: Vec<(String, String, i64)> = sqlx::query_as(
         r#"
-        SELECT e.id, e.kind, c.refs
-        FROM (
-            SELECT id, 'person' AS kind, article_ref_count FROM wiki_people
-            UNION ALL
-            SELECT id, 'place', article_ref_count FROM wiki_places
-            UNION ALL
-            SELECT id, 'organization', article_ref_count FROM wiki_orgs
-        ) e
+        SELECT a.subject_id, a.subject_type, c.refs
+        FROM wiki_articles a
         JOIN LATERAL (
-            SELECT count(*) AS refs FROM wiki_entity_refs r WHERE r.entity_id = e.id
+            SELECT count(*) AS refs FROM wiki_entity_refs r WHERE r.entity_id = a.subject_id
         ) c ON true
-        WHERE c.refs >= $1
-          AND c.refs - e.article_ref_count >= $2
-        ORDER BY c.refs - e.article_ref_count DESC
-        LIMIT $3
+        WHERE a.auto_update
+          AND a.subject_type IN ('person', 'place', 'organization')
+          AND c.refs - a.source_ref_count >= a.refresh_after_new_refs
+        ORDER BY c.refs - a.source_ref_count DESC
+        LIMIT $1
         "#,
     )
-    .bind(MIN_REFS_TO_WRITE)
-    .bind(MIN_NEW_REFS)
     .bind(MAX_ENTITIES_PER_RUN)
     .fetch_all(pool)
     .await
-    .map_err(|e| Error::Database(format!("Failed to find due entities: {}", e)))?;
+    .map_err(|e| Error::Database(format!("Failed to find due articles: {}", e)))?;
 
-    let mut written = 0;
-    for (id, kind, refs) in due {
-        let entity = DueEntity { id, kind, refs };
-        match write_article(pool, &entity).await {
-            Ok(()) => written += 1,
-            Err(e) => {
-                // One failed article must not block the batch — the gate will
-                // re-offer this entity next run.
-                tracing::warn!(entity = %entity.id, error = %e, "entity article failed");
-            }
-        }
+    if !due.is_empty() {
+        tracing::warn!(
+            count = due.len(),
+            "articles are due for maintenance, but rewriting needs the agent phase \
+             (a pool-only write to a CRDT-backed page is silently discarded) — skipping"
+        );
     }
-    Ok(written)
+    Ok(0)
 }
 
-async fn write_article(pool: &PgPool, entity: &DueEntity) -> Result<()> {
-    let prompt = build_dossier(pool, entity).await?;
+/// Write a subject's first article, now, because someone asked for it.
+///
+/// This is the create path, and it is the one an applet subprocess can safely
+/// take: a page with `content` and no `yjs_state` seeds its CRDT correctly on
+/// first open. Re-writing an existing article is refused rather than silently
+/// dropped — see `refresh_due_entity_articles`.
+pub async fn write_entity_article_now(
+    pool: &PgPool,
+    subject_type: &str,
+    subject_id: &str,
+) -> Result<crate::api::wiki_articles::Article> {
+    if let Some(existing) = crate::api::wiki_articles::get_article(pool, subject_type, subject_id).await? {
+        return Err(Error::InvalidInput(format!(
+            "{subject_type} already has an article (page {}). Rewriting an existing              article needs the agent phase, so it is not available yet.",
+            existing.page_id
+        )));
+    }
 
+    let refs: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM wiki_entity_refs WHERE entity_id = $1",
+    )
+    .bind(subject_id)
+    .fetch_one(pool)
+    .await
+    .map_err(|e| Error::Database(format!("Failed to count refs: {}", e)))?;
+
+    let entity = DueEntity {
+        id: subject_id.to_string(),
+        kind: subject_type.to_string(),
+        refs,
+    };
+
+    let prompt = build_dossier(pool, &entity).await?;
     tracing::info!(
-        entity = %entity.id,
-        kind = %entity.kind,
-        refs = entity.refs,
+        entity = %entity.id, kind = %entity.kind, refs,
         prompt_chars = prompt.len(),
-        "writing entity article edition"
+        "writing first entity article (user-requested)"
     );
 
     let raw = call_virtues_api(pool, &prompt).await?;
@@ -128,29 +165,39 @@ async fn write_article(pool: &PgPool, entity: &DueEntity) -> Result<()> {
         ));
     }
 
-    let update = match entity.kind.as_str() {
-        "person" => {
-            "UPDATE wiki_people SET article = $2, article_updated_at = now(), \
-             article_ref_count = $3, updated_at = now() WHERE id = $1"
-        }
-        "place" => {
-            "UPDATE wiki_places SET article = $2, article_updated_at = now(), \
-             article_ref_count = $3, updated_at = now() WHERE id = $1"
-        }
-        _ => {
-            "UPDATE wiki_orgs SET article = $2, article_updated_at = now(), \
-             article_ref_count = $3, updated_at = now() WHERE id = $1"
-        }
-    };
-    sqlx::query(update)
-        .bind(&entity.id)
-        .bind(&article)
-        .bind(entity.refs as i32)
+    let title = entity_title(pool, subject_type, subject_id).await?;
+    let created =
+        crate::api::wiki_articles::create_article(pool, subject_type, subject_id, &title, &article)
+            .await?;
+
+    sqlx::query("UPDATE wiki_articles SET source_ref_count = $2 WHERE id = $1")
+        .bind(&created.id)
+        .bind(refs as i32)
         .execute(pool)
         .await
-        .map_err(|e| Error::Database(format!("Failed to write entity article: {}", e)))?;
+        .map_err(|e| Error::Database(format!("Failed to stamp ref count: {}", e)))?;
 
-    Ok(())
+    Ok(created)
+}
+
+/// The subject's display name, for the article page's title.
+async fn entity_title(pool: &PgPool, subject_type: &str, subject_id: &str) -> Result<String> {
+    let sql = match subject_type {
+        "person" => "SELECT canonical_name FROM wiki_people WHERE id = $1",
+        "place" => "SELECT name FROM wiki_places WHERE id = $1",
+        "organization" => "SELECT canonical_name FROM wiki_orgs WHERE id = $1",
+        other => {
+            return Err(Error::InvalidInput(format!(
+                "Cannot write an article for subject type {other}"
+            )))
+        }
+    };
+    sqlx::query_scalar(sql)
+        .bind(subject_id)
+        .fetch_optional(pool)
+        .await
+        .map_err(|e| Error::Database(format!("Failed to load subject: {}", e)))?
+        .ok_or_else(|| Error::NotFound(format!("No {subject_type}: {subject_id}")))
 }
 
 /// Assemble everything the editor reads: header facts, the recent record,
@@ -339,8 +386,9 @@ async fn build_dossier(pool: &PgPool, entity: &DueEntity) -> Result<String> {
         r#"
         SELECT DISTINCT d.date, d.epigraph
         FROM wiki_days d
+        JOIN wiki_day_prose dp ON dp.day_id = d.id AND dp.prose IS NOT NULL
         JOIN wiki_entity_refs er ON date(er.timestamp) = d.date
-        WHERE er.entity_id = $1 AND d.autobiography IS NOT NULL
+        WHERE er.entity_id = $1
         ORDER BY d.date DESC
         LIMIT 6
         "#,

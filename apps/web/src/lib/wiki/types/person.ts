@@ -52,6 +52,8 @@ export interface PersonPage extends WikiPageBase {
 	 * Nickname or preferred name (if different from title).
 	 */
 	nickname?: string;
+	/** Surfaces this person also answers to (migration 0037). */
+	aliases?: string[];
 
 	/**
 	 * Primary relationship category.

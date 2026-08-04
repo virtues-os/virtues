@@ -37,7 +37,7 @@ The dossier is a time-ordered list of the day's evidence, each item formatted fo
 - **Calendar events are PLANS, NOT EVIDENCE.** They are the weakest line in the dossier and are never a boundary on their own — see CALENDAR EVENTS ARE INTENTIONS below.
 - **Device presence** (`[device]` lines) is a stretch the owner was demonstrably AT a machine — typing, clicking, or holding the screen awake. It is weak evidence of WHAT they were doing and strong evidence of WHERE THEY WERE NOT: a body at a keyboard is not a body at a dinner. Read the tail of the line — `screen locked` and `machine slept` mean they stopped; `collector stopped` means WE stopped watching and says nothing at all about them.
 - **Sleep** spans are hard boundaries, BUT DO NOT EMIT YOUR OWN "Sleep" EVENT. The system stamps the authoritative sleep block separately from deterministic sleep-tracking data. Treat the overnight sleep span as a boundary and leave that stretch as "Unknown" — do not label it "Sleep" yourself.
-- **Audio sessions** and **messages** COLOUR the day and are CANDIDATE boundaries — weigh them, do not obey them. An audio session's content tells you what a stretch actually was (a conversation, a drive, airport noise, quiet work, sickness in bed) even when there is no location or calendar to anchor it. This is how you name a day spent entirely at home, or entirely on the road, where location never changes.
+- **Audio sessions** and **messages** color the day and are CANDIDATE boundaries — weigh them, do not obey them. An audio session's content tells you what a stretch actually was (a conversation, a drive, airport noise, quiet work, sickness in bed) even when there is no location or calendar to anchor it. This is how you name a day spent entirely at home, or entirely on the road, where location never changes.
 - **Health** (heart rate, steps) is texture, never a boundary on its own.
 - **Purchases** (`[purchase]` / `[refund]` lines) are precise evidence of what a stretch was — a meal, a shop, a checkout; the merchant names the activity.
 - **Movement** (`[movement]` lines) tell you when, and how fast, the owner was actually travelling — see MOVEMENT AND TRANSIT.
@@ -73,34 +73,39 @@ RULES:
 - RECENT CONTEXT (if provided) is the last few days' event labels — use it only to disambiguate a stretch the dossier leaves ambiguous ("Unknown 18:00-19:00" that lines up with a nightly gym pattern), never to invent evidence this day lacks.
 - The `summary` is the single most load-bearing field: the user reads it AND it is embedded to measure how novel the event was. Make it factual and specific — "Forty minutes at Blue Bottle on Hayes; six messages with Maya about the lease; heart rate mid-70s." Not "a pleasant coffee.""#;
 
-/// THE BIOGRAPHY — the Chat slot. The short, readable memory of the day.
+/// THE ARTICLE — the Chat slot. The day's page, written from the record.
 ///
 /// It reads the EVENTS, not the raw sources. It is NOT the log (the event timeline
-/// already lists what happened when) — it is the few sentences that, read back
-/// later, drop you straight into that day. Brevity does the selecting: you cannot
-/// fit fourteen events in four sentences, so only the parts that distinguished the
-/// day survive.
+/// already lists what happened when) — it is a lede plus body sections, an article
+/// in the wiki's sense. The old sentence quota is gone; what replaced it as the
+/// guard against invention is the evidence ceiling (every sentence must trace to
+/// the dossier) and the anti-transcription bar on sections.
 ///
 /// This deliberately dropped the old "elevated moves" (fabricated behavioural
 /// fingerprints, forced quantified closers), the literary epigraph, and the W6H
 /// data-quality block — all of which pushed the model to invent meaning the day did
 /// not carry. See docs/event-timeline.md and the essay "A Day, Well Written": the
 /// machine records what happened and hands the meaning back.
-const NARRATE_PROMPT: &str = r#"You write "the biography of the day" — a brief second-person recap for a personal day page. It is NOT a log (the event timeline already lists what happened, when). It is the short, readable memory of the day: the few sentences that, read back weeks later, drop the reader straight into that day.
+const NARRATE_PROMPT: &str = r#"You write the ARTICLE OF THE DAY for a personal wiki — the day's page, in the sense a wikipedia gives that word. It is NOT a log (the event timeline beneath the article already lists what happened, when) and it is not a summary squeezed into a sentence quota. It is prose about the day, written from the record, that read back weeks later drops the reader straight into it.
 
-WHAT TO WRITE:
-- A brief, natural recap that follows the day's shape, roughly start to end, grounded in real people and places by name.
-- LENGTH FOLLOWS THE DAY. A rich, eventful day earns up to ~4 sentences; an ordinary day, one or two; a thin day, a single line. Never pad. Brevity is the whole point: you cannot fit a day's fourteen events in four sentences, so only the parts that actually distinguished this day from every other one survive — the routine falls away, the distinctive thing remains. That is correct, not a loss.
-- A genuinely unremarkable day should say so plainly ("A day much like its neighbours — the office, home, the usual"), never be inflated into significance.
+STRUCTURE — A LEDE, THEN BODY SECTIONS:
+- Open with a LEDE: one short paragraph, no heading, that carries the shape of the day — the few lines that say what this day was. It sets the register for everything beneath it.
+- Beneath the lede, write the article's body as sections under `## ` headings, where the evidence supports them. A section holds something that spans the day or connects its parts — a thread that ran through it, a conversation that turned, a piece of work that moved, the errand that broke the routine. Give each a plain, specific heading (the thing itself, not a category).
+- THE SECTION BAR IS ANTI-TRANSCRIPTION: a section may only exist if it says something the timeline does not already say. Retelling the event list in paragraphs is the one way to fail here. If you cannot name what a section adds beyond the timeline, it does not exist.
+
+LENGTH FOLLOWS THE EVIDENCE — NOT A QUOTA, AND NOT PADDING:
+- A dense day whose record holds real threads earns a real article: a lede and two or three sections. An ordinary day earns a lede and perhaps one. A thin day earns a few lines and stops. There is no sentence ceiling and no floor — the ceiling is the evidence itself: every sentence must trace to something in the dossier.
+- Never pad. An article stretched past its evidence is worse than a short one, because the stretching is where invention lives. A genuinely unremarkable day should say so plainly ("A day much like its neighbours — the office, home, the usual"), never be inflated into significance.
 
 THE ONE HARD RULE — OBSERVE, NEVER INFER:
 - Write only what the evidence shows. Warmth comes from OBSERVED detail (the low sun, the quiet train, the water) — NEVER from asserting an inner state. Do not write that the reader was "content", "productive", "happy", or "tired" as a feeling; do not say they did something "because" of a motive you are guessing at. State a departure or a goodbye as a fact ("the last coffee before she moves"); do not narrate how it felt.
 - No inferred emotion, motive, meaning, or verdict. Never call a day good or bad, well-spent or wasted. Record what happened; hand the meaning back to the reader.
+- This applies to the lede and to every section equally. No feelings, no motives, no verdicts, no invented sensory detail.
 - If given RECENT DAYS (the last two weeks), use them only to recognise a real recurrence or a genuine first ("the first kayak in months", "the same thread as Saturday") — never to manufacture a pattern that isn't plainly there. Empty means a cold start: just say what the day was.
 
 FORMAT:
-- Plain, warm prose — a perceptive friend reflecting the day back, not a novelist. No headings, no lists, no bullet points, no epigraph, no closing metric, no "data quality" note.
-- LINK entities: when you mention a person or place listed under "Entities you may link" below, link it by copying its exact markdown link, e.g. [Maya](/person/person_ab12). Link a given entity once, on first mention. Never invent a link or link anything not in that list.
+- Plain, warm prose — a perceptive friend reflecting the day back, not a novelist. No lists, no bullet points, no epigraph, no closing metric, no "data quality" note. Headings only for body sections; the lede never has one.
+- LINK entities: when you mention a person or place listed under "Entities you may link" below, link it by copying its exact markdown link, e.g. [Maya](/person/person_ab12). Link a given entity once, on first mention. Never invent a link or link anything not in that list. NEVER reproduce the list itself in the output — it is an instruction to you, not a line of the article.
 - Second person, past tense. Output ONLY the prose (markdown), nothing else."#;
 
 // ── Timezone helpers ─────────────────────────────────────────────────────────
@@ -460,13 +465,18 @@ pub async fn narrate_day(pool: &PgPool, date: NaiveDate) -> Result<Option<WikiDa
     // Chat slot: this is the narrative call, and the only one left that earns it.
     let model = crate::api::assistant_profile::get_chat_model(pool).await?;
     let raw = call_virtues_api(pool, NARRATE_PROMPT, &model, &prompt).await?;
-    let parsed = parse_virtues_api_response(&raw);
+    let mut parsed = parse_virtues_api_response(&raw);
+    parsed.diary = strip_prompt_echo(&parsed.diary);
+    parsed.diary = unlink_uninvited_refs(&parsed.diary, &entities);
 
     let day = update_day(
         pool,
         date,
         UpdateWikiDayRequest {
-            autobiography: Some(parsed.diary),
+            // The prose no longer lands here — it goes to the day's ARTICLE
+            // page below. The column keeps its old values until the drop
+            // migration; `wiki_day_prose` (0087) prefers the article.
+            autobiography: None,
             autobiography_sections: None,
             epigraph: parsed.epigraph,
             last_edited_by: Some("ai".to_string()),
@@ -481,12 +491,103 @@ pub async fn narrate_day(pool: &PgPool, date: NaiveDate) -> Result<Option<WikiDa
     )
     .await?;
 
+    save_day_article(pool, &day.id, date, &parsed.diary).await?;
+
     sqlx::query("UPDATE wiki_days SET narrated_at = now() WHERE date = $1")
         .bind(date)
         .execute(pool)
         .await?;
 
+    // Re-fetch: `day` was read before the article landed, so its `article`
+    // field predates the write — returning it as-is showed callers (the CLI,
+    // the API response) yesterday's prose under a "narrated" banner.
+    let day = crate::api::wiki::get_or_create_day(pool, date).await?;
     Ok(Some(day))
+}
+
+/// Land the narration in the day's article page — the one prose store.
+///
+/// An article has exactly one pen at a time. A day article starts KEPT
+/// (`auto_update = true`): the nightly narration is its maintenance, and the
+/// record may rewrite it. Editing the article claims it — the Yjs layer
+/// flips `auto_update` off on the first real user edit — and from then on
+/// this writer refuses and stamps `dirty_at`; new evidence for a claimed day
+/// belongs in notes, never in prose the user owns.
+///
+/// Even for a kept article, a pool-side rewrite is only safe while
+/// `yjs_state IS NULL` — once a CRDT exists, an UPDATE of `content` would be
+/// clobbered by the next debounced save. A kept-but-opened page is skipped
+/// with a dirty stamp; a server-side (Yjs-aware) writer can pick it up.
+async fn save_day_article(
+    pool: &PgPool,
+    day_id: &str,
+    date: NaiveDate,
+    prose: &str,
+) -> Result<()> {
+    if prose.trim().is_empty() {
+        return Ok(());
+    }
+
+    let existing = crate::api::wiki_articles::get_article(pool, "day", day_id).await?;
+    let Some(article) = existing else {
+        // Title matches 0083's backfill: "3 March 2026". `%-d` drops the
+        // zero-padding, as `FMDD` did in the migration's to_char.
+        let title = date.format("%-d %B %Y").to_string();
+        let created =
+            crate::api::wiki_articles::create_article(pool, "day", day_id, &title, prose).await?;
+        // Day articles are kept by default — narration IS their maintenance.
+        // (Entity articles stay opt-in; their consent is the explicit toggle.)
+        if let Err(e) = sqlx::query("UPDATE wiki_articles SET auto_update = true WHERE id = $1")
+            .bind(&created.id)
+            .execute(pool)
+            .await
+        {
+            tracing::warn!(date = %date, error = %e, "could not mark the day article kept");
+        }
+        return Ok(());
+    };
+
+    if !article.auto_update {
+        tracing::info!(
+            date = %date,
+            page_id = %article.page_id,
+            "day article is claimed (yours) — narration files nothing; marked dirty"
+        );
+        sqlx::query("UPDATE wiki_articles SET dirty_at = now() WHERE id = $1")
+            .bind(&article.id)
+            .execute(pool)
+            .await?;
+        return Ok(());
+    }
+
+    let updated = sqlx::query(
+        "UPDATE app_pages SET content = $1, updated_at = now() \
+         WHERE id = $2 AND yjs_state IS NULL",
+    )
+    .bind(prose)
+    .bind(&article.page_id)
+    .execute(pool)
+    .await?;
+
+    if updated.rows_affected() > 0 {
+        sqlx::query(
+            "UPDATE wiki_articles SET last_written_at = now(), dirty_at = NULL WHERE id = $1",
+        )
+        .bind(&article.id)
+        .execute(pool)
+        .await?;
+    } else {
+        tracing::info!(
+            date = %date,
+            page_id = %article.page_id,
+            "kept day article has a live CRDT — pool write would be clobbered; marked dirty"
+        );
+        sqlx::query("UPDATE wiki_articles SET dirty_at = now() WHERE id = $1")
+            .bind(&article.id)
+            .execute(pool)
+            .await?;
+    }
+    Ok(())
 }
 
 // ── Section builders ─────────────────────────────────────────────────────────
@@ -1513,6 +1614,89 @@ struct ParsedDaySummary {
 ///   ---DATA_QUALITY---
 ///   {"coverage":{...},"overall":3,"note":"..."}
 ///   ---EVENTS---
+/// Drop prompt-instruction echo from the article prose.
+///
+/// Observed live (2025-12-16): the model opened its output with
+/// "Entities you may link: [David](/person/…), …" followed by a `---` rule —
+/// the prompt's own instruction header, reproduced as if it were the
+/// article's front matter. The prompt now forbids it, but a prompt is a
+/// request; this is the guarantee. Any line carrying the header is dropped,
+/// along with a horizontal rule left stranded directly beneath it.
+fn strip_prompt_echo(prose: &str) -> String {
+    let mut out: Vec<&str> = Vec::new();
+    let mut dropping_rule = false;
+    for line in prose.lines() {
+        if line.trim_start().starts_with("Entities you may link") {
+            dropping_rule = true;
+            continue;
+        }
+        if dropping_rule {
+            let t = line.trim();
+            if t.is_empty() {
+                continue;
+            }
+            dropping_rule = false;
+            if t.chars().all(|c| c == '-') && t.len() >= 3 {
+                continue;
+            }
+        }
+        out.push(line);
+    }
+    // The drop can leave leading blank lines where the header sat.
+    let joined = out.join("\n");
+    joined.trim_start_matches('\n').to_string()
+}
+
+/// Unlink any entity ref-link the candidate list did not sanction.
+///
+/// Observed live (2025-12-16): a day whose window held ZERO entity refs got
+/// no "Entities you may link" section at all — and the model, knowing the
+/// format from its instructions, fabricated ids in the right shape
+/// (`/person/person_5a4c`) and linked them through the prose. A dead link in
+/// a day article is worse than no link: it looks like the record knows
+/// someone it does not.
+///
+/// The candidate list is the ONLY sanctioned source of ref-links, so this is
+/// exactly decidable: a `/person/`, `/place/` or `/org/` link whose URL is
+/// not in the list is replaced by its own text. The name survives — it is
+/// real prose; the link was the fabrication.
+fn unlink_uninvited_refs(prose: &str, candidates: &[String]) -> String {
+    // The candidate lines are `[Name](/kind/id)`; sanctioned = their URLs.
+    let allowed: std::collections::HashSet<&str> = candidates
+        .iter()
+        .filter_map(|line| {
+            let open = line.find("](")?;
+            let close = line[open + 2..].find(')')?;
+            Some(&line[open + 2..open + 2 + close])
+        })
+        .collect();
+
+    let mut out = String::with_capacity(prose.len());
+    let mut rest = prose;
+    while let Some(start) = rest.find('[') {
+        let Some(mid) = rest[start..].find("](") else {
+            break;
+        };
+        let text_end = start + mid;
+        let url_start = text_end + 2;
+        let Some(url_len) = rest[url_start..].find(')') else {
+            break;
+        };
+        let url = &rest[url_start..url_start + url_len];
+        let is_ref = url.starts_with("/person/") || url.starts_with("/place/") || url.starts_with("/org/");
+        out.push_str(&rest[..start]);
+        if is_ref && !allowed.contains(url) {
+            // The text, shorn of its invented link.
+            out.push_str(&rest[start + 1..text_end]);
+        } else {
+            out.push_str(&rest[start..url_start + url_len + 1]);
+        }
+        rest = &rest[url_start + url_len + 1..];
+    }
+    out.push_str(rest);
+    out
+}
+
 ///   [JSON events]
 ///
 /// All markers except the diary are optional. Handles markdown code fences around JSON.
@@ -1832,6 +2016,50 @@ fn parse_hhmm_to_utc(
 #[cfg(test)]
 mod dossier_tests {
     use super::*;
+
+    /// The exact shape observed live on 2025-12-16: instruction header with
+    /// resolved links, a stranded rule beneath it, then the real article.
+    /// The guard must remove the first two and not touch a legitimate `---`
+    /// elsewhere in the prose.
+    #[test]
+    fn prompt_echo_is_stripped_and_real_rules_survive() {
+        let leaked = "Entities you may link: [David](/person/p_1), [Jess](/person/p_2).\n\n---\n\nA clear, cold Tuesday.\n\n## The dashboard\n\nBody with [David](/person/p_1) linked inline.\n\n---\n\nA closing aside.";
+        let cleaned = strip_prompt_echo(leaked);
+        assert!(cleaned.starts_with("A clear, cold Tuesday."));
+        assert!(!cleaned.contains("Entities you may link"));
+        assert!(
+            cleaned.contains("---"),
+            "a rule that belongs to the article must survive"
+        );
+        assert!(cleaned.contains("[David](/person/p_1) linked inline"));
+
+        // Clean prose passes through untouched.
+        let clean = "A lede.\n\n## A section\n\nProse.";
+        assert_eq!(strip_prompt_echo(clean), clean);
+    }
+
+    /// The 2025-12-16 fabrication: zero candidates offered, yet the model
+    /// linked invented ids through the prose. Sanctioned links survive
+    /// verbatim; invented ones lose the link and keep the name; non-ref
+    /// markdown links are not the guard's business.
+    #[test]
+    fn invented_ref_links_are_unlinked_and_sanctioned_ones_survive() {
+        let candidates = vec!["- [Maya](/person/person_demo_maya)".to_string()];
+        let prose = "Standup with [Maya](/person/person_demo_maya) and \
+                     [David](/person/person_5a4c), then the run at \
+                     [Mueller trails](/place/place_5daf). See \
+                     [the doc](https://example.com/x).";
+        let cleaned = unlink_uninvited_refs(prose, &candidates);
+        assert!(cleaned.contains("[Maya](/person/person_demo_maya)"));
+        assert!(cleaned.contains("and David,"), "invented link keeps its name: {cleaned}");
+        assert!(!cleaned.contains("person_5a4c"));
+        assert!(!cleaned.contains("place_5daf"));
+        assert!(cleaned.contains("[the doc](https://example.com/x)"));
+
+        // Zero candidates: every ref-link is invented by definition.
+        let none = unlink_uninvited_refs("Met [Jess](/person/person_9c2e).", &[]);
+        assert_eq!(none, "Met Jess.");
+    }
 
     /// The GAP regression: a subscribed calendar said "Community Dinner" while the
     /// owner sat at a Mac the whole evening, and the dossier showed only the plan.

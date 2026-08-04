@@ -9,6 +9,12 @@ export interface ContextMenuItem {
 	id: string;
 	label: string;
 	icon?: string;
+	/**
+	 * Paints the icon. The only caller is a swatch — a menu row that IS a
+	 * color choice — so it takes a CSS color (`var(--cat-orange)`), not a
+	 * hex, and the theme's own override decides what that means.
+	 */
+	iconColor?: string;
 	action?: () => void | Promise<void>;
 	submenu?: ContextMenuItem[];
 	disabled?: boolean;

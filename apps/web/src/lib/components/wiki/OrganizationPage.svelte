@@ -8,8 +8,12 @@
 <script lang="ts">
 	import type { OrganizationPage as OrganizationPageType } from "$lib/wiki/types";
 	import EntityArticleSection from "./EntityArticleSection.svelte";
+	import SubjectBacklinks from "./SubjectBacklinks.svelte";
+	import NotesRail from "./NotesRail.svelte";
 	import EntityRecordsSection from "./EntityRecordsSection.svelte";
-	import CitedMarkdown from "$lib/components/CitedMarkdown.svelte";
+	import AliasEditor from "./AliasEditor.svelte";
+	import Markdown from "$lib/components/Markdown.svelte";
+	import { updateOrganization } from "$lib/wiki/api";
 
 	interface Props {
 		page: OrganizationPageType;
@@ -41,6 +45,11 @@
 		return `${start} — ${end}`;
 	}
 
+	async function saveAliases(next: string[]) {
+		const saved = await updateOrganization(page.id, { aliases: next });
+		if (!saved) throw new Error("Could not save aliases");
+	}
+
 </script>
 
 <div class="page-layout">
@@ -66,6 +75,18 @@
 				</div>
 			</header>
 
+			<!-- Also known as. Same placement as the person page: it corrects
+			     the record calling this org by a surface the resolver does not
+			     recognise — Gusto the sender vs Gusto the company. Writing one
+			     here backfills every past mention of it (migration 0037). -->
+			<div class="org-aliases">
+				<AliasEditor
+					aliases={page.aliases ?? []}
+					canonicalName={page.title}
+					onSave={saveAliases}
+				/>
+			</div>
+
 			<hr class="divider" />
 
 			<!-- The article: machine-written prose about this entity -->
@@ -74,6 +95,10 @@
 					article={page.article}
 					articleUpdatedAt={page.articleUpdatedAt}
 					name={page.title}
+									subjectType="organization"
+					subjectId={page.id}
+					autoUpdate={page.articleAutoUpdate}
+					onChanged={() => location.reload()}
 				/>
 			</section>
 
@@ -83,11 +108,14 @@
 				<EntityRecordsSection entityId={page.id} />
 			</section>
 
+			<SubjectBacklinks subjectType="organization" subjectId={page.id} />
+			<NotesRail subjectType="organization" subjectId={page.id} />
+
 			<!-- Notes: the user's own writing -->
 			{#if page.content}
 				<section class="section" id="notes">
 					<div class="notes-content">
-						<CitedMarkdown content={page.content} refVariant="quiet" />
+						<Markdown content={page.content} refVariant="quiet" />
 					</div>
 				</section>
 			{/if}
@@ -252,6 +280,11 @@
 		margin-top: 0.5rem;
 		font-size: 0.875rem;
 		color: var(--color-foreground-subtle);
+	}
+
+	/* Between the header and the article's rule, matching the person page. */
+	.org-aliases {
+		margin-top: 0.625rem;
 	}
 
 	.org-badge {
