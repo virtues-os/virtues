@@ -353,13 +353,13 @@
 						<p class="text-sm text-foreground-muted">Waiting for your device…</p>
 					{/if}
 
-					<!-- Pairing the Mac app pairs a viewer; the collector is a
-					     separate daemon it installs. Until the app does that on
-					     pair, this step is real and saying so beats a silent
-					     "connected" that collects nothing. -->
+					<!-- The app switches collection on itself as part of pairing
+					     (src-tauri/ui/pair.html). Kept as a quiet fallback rather
+					     than a numbered step: it is what to do if that best-effort
+					     install didn't take, not part of the two-beat flow. -->
 					<p class="text-xs text-foreground-subtle">
-						<span class="step-n">3</span> Then open Sources → This Mac in that app
-						to switch collection on.
+						Collection switches on automatically. If it doesn't, open
+						Sources → This Mac in that app.
 					</p>
 
 					<div class="pt-4">
