@@ -44,13 +44,22 @@
 		void loadStreams();
 	});
 
-	// The API sorts worst-first and these are its four states. `never` means the
-	// stream has no rows at all, which is "not connected" rather than a fault.
+	// Two questions, and the page used to answer them in one column, which is
+	// why it read as noise:
+	//
+	//   1. CONNECTEDNESS — is anything hooked up that could produce this at all?
+	//   2. STREAMING     — given it is, has anything arrived, and when?
+	//
+	// Only (2) is answerable from stream health. `total == 0` means "no rows
+	// ever", which could equally be "nothing provides this" or "an iPhone is
+	// paired with location switched off" — so the old `never` → "not connected"
+	// was a claim the box could not actually substantiate. Answering (1) needs a
+	// map from ontology to the sources that write it; until that exists these
+	// rows are listed as simply not having arrived yet, which is true.
 	const COPY: Record<string, string> = {
 		live: 'flowing',
 		stalled: 'stopped',
-		idle: 'nothing this week',
-		never: 'not connected'
+		idle: 'quiet this week'
 	};
 
 	/**
@@ -67,8 +76,7 @@
 	 * Deliberately not a score. "Health 2/5" reads as a deficit to close, and
 	 * completionism on this product means pressuring someone into more
 	 * self-surveillance to fill a bar. A domain nobody connected may be a
-	 * decision, not a gap. So each domain gets a sentence naming what is there
-	 * and what isn't, and no number.
+	 * decision, not a gap — so it is stated once, quietly, with no number.
 	 */
 	const DOMAIN_LABEL: Record<string, string> = {
 		health: 'Health',
@@ -103,15 +111,6 @@
 		return `${items.slice(0, -1).join(', ')}, ${conj} ${items[items.length - 1]}`;
 	}
 
-	/** What the record can and cannot say for this domain, in a sentence. */
-	function summarize(group: StreamHealth[]): string {
-		const has = group.filter((s) => s.total > 0).map((s) => s.display_name);
-		const missing = group.filter((s) => s.total === 0).map((s) => s.display_name);
-		if (has.length === 0) return `Nothing connected — no ${joinNames(missing, 'or')}.`;
-		if (missing.length === 0) return `${joinNames(has)}.`;
-		return `${joinNames(has)} — nothing for ${joinNames(missing, 'or')}.`;
-	}
-
 	const domains = $derived.by(() => {
 		const by = new Map<string, StreamHealth[]>();
 		for (const s of streams) {
@@ -125,18 +124,24 @@
 		const rest = [...by.keys()].filter((d) => !DOMAIN_ORDER.includes(d)).sort();
 		return [...known, ...rest].map((d) => {
 			const group = by.get(d) ?? [];
+			// The split that makes the page legible: a stream that has delivered
+			// gets a liveness state, one that never has gets named once and left
+			// alone. Applying "stopped"/"quiet" to something that never started
+			// is what made nineteen rows read as nineteen problems.
+			const arrived = group.filter((s) => s.total > 0);
+			const waiting = group.filter((s) => s.total === 0);
 			return {
 				id: d,
 				label: DOMAIN_LABEL[d] ?? d.charAt(0).toUpperCase() + d.slice(1),
-				streams: group,
-				summary: summarize(group),
-				dark: group.every((s) => s.total === 0),
+				arrived,
+				waiting,
+				dark: arrived.length === 0,
 				attention: group.some((s) => s.status === 'stalled')
 			};
 		});
 	});
 
-	const connected = $derived(streams.filter((s) => s.status !== 'never'));
+	const connected = $derived(streams.filter((s) => s.total > 0));
 	const flowing = $derived(streams.filter((s) => s.status === 'live'));
 	const stalled = $derived(streams.filter((s) => s.status === 'stalled'));
 	const recordsToday = $derived(streams.reduce((n, s) => n + s.count_24h, 0));
@@ -315,34 +320,34 @@
 							<span class="domain-flag">stopped</span>
 						{/if}
 					</div>
-					<p class="domain-summary">{d.summary}</p>
-					<div class="ledger">
-						{#each d.streams as s (s.name)}
-							<div class="ledger-row {s.status}">
-								<span class="ledger-label">{s.display_name}</span>
-								<span class="leader"></span>
-								<span class="ledger-state">{COPY[s.status] ?? s.status}</span>
-								<span class="ledger-value mono">
-									{s.last_ingest ? relativeTime(s.last_ingest) : '—'}
-								</span>
-								<span class="ledger-count mono">{s.count_24h > 0 ? s.count_24h : ''}</span>
-							</div>
-						{/each}
-					</div>
+					{#if d.arrived.length > 0}
+						<div class="ledger">
+							{#each d.arrived as s (s.name)}
+								<div class="ledger-row {s.status}">
+									<span class="ledger-label">{s.display_name}</span>
+									<span class="leader"></span>
+									<span class="ledger-state">{COPY[s.status] ?? s.status}</span>
+									<span class="ledger-value mono">
+										{s.last_ingest ? relativeTime(s.last_ingest) : '—'}
+									</span>
+									<span class="ledger-count mono">{s.count_24h > 0 ? s.count_24h : ''}</span>
+								</div>
+							{/each}
+						</div>
+					{/if}
+					{#if d.waiting.length > 0}
+						<p class="waiting">
+							Nothing yet: {joinNames(
+								d.waiting.map((s) => s.display_name),
+								'or'
+							)}
+						</p>
+					{/if}
 				</div>
 			{/each}
 		{/if}
 	</section>
 
-	{#if !store.loading && store.connections.length === 0}
-		<section class="chapter">
-			<div class="empty">
-				<Icon icon="ri:plug-line" width="26" />
-				<p>Nothing connected yet. The catalog has everything Virtues can draw from.</p>
-				<button type="button" class="ghost" onclick={openCatalog}>Open the catalog</button>
-			</div>
-		</section>
-	{/if}
 </Page>
 
 <style>
@@ -485,8 +490,9 @@
 		color: var(--color-foreground-muted, #6b7280);
 		font-weight: 500;
 	}
-	.domain-summary {
-		margin: 0.125rem 0 0.375rem;
+
+	.waiting {
+		margin: 0.25rem 0 0;
 		font-size: 0.75rem;
 		color: var(--color-foreground-subtle, #9ca3af);
 	}
@@ -629,21 +635,6 @@
 		opacity: 0.7;
 		cursor: pointer;
 		padding: 0;
-	}
-	.empty {
-		display: flex;
-		flex-direction: column;
-		align-items: center;
-		gap: 0.5rem;
-		padding: 2rem 1rem;
-		text-align: center;
-		color: var(--color-foreground-muted, #6b7280);
-		border: 1px dashed var(--color-border, #e5e7eb);
-		border-radius: 10px;
-	}
-	.empty p {
-		margin: 0;
-		font-size: 0.8125rem;
 	}
 
 	@media (max-width: 640px) {
