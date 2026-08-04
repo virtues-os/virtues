@@ -728,6 +728,31 @@
       // needs a moment to resolve the upstream and bind :7117. Poll until it
       // actually answers, then navigate.
       const ready = await waitForProxy(20000);
+
+      // Switch collection on, here, as part of pairing.
+      //
+      // Pairing this app pairs a *viewer*: the reach client sends
+      // `kind=desktop_app` with no source, so the box records `__device__` and
+      // no `mac_ingest` applet is ever created. The thing that actually collects
+      // is a separate daemon this app installs. Until this ran, finishing the
+      // pairing flow left you "connected" and collecting nothing — permanently,
+      // and with the UI reporting success.
+      //
+      // Best-effort by design: a box that can't mint, or a platform with no
+      // collector sidecar, must not strand someone on the pairing screen. The
+      // Sources → This Mac switch remains as the manual path.
+      if (ready) {
+        try {
+          const res = await fetch(BOX_URL + '/api/pair/mint-collector', { method: 'POST' });
+          if (res.ok) {
+            const { token } = await res.json();
+            if (token) await invoke('install_collector', { token });
+          }
+        } catch (e) {
+          console.warn('[pair] collector not installed; use Sources → This Mac', e);
+        }
+      }
+
       stopProgress();
       if (!ready) {
         setStatus('Connected — the local link is taking a moment to start…', 'info');
