@@ -46,7 +46,8 @@
 		state: string;
 		last_activity: string;
 		applets: number;
-		source: SourceCatalogItem;
+		/** Null when the connection's source is no longer in the catalog. */
+		source: SourceCatalogItem | null;
 	};
 
 	const AUTH_LABEL: Record<string, string> = {
@@ -55,7 +56,39 @@
 		api_key: 'Key'
 	};
 
-	const rows = $derived.by<Row[]>(() =>
+	/**
+	 * A connection whose source is no longer in the catalog. Possible now that
+	 * a package can contribute sources and therefore remove them — and nothing
+	 * reconciles credentials against the catalog, so the row survives with a
+	 * `source_id` that resolves to nothing. Without a home here it would be
+	 * invisible and un-revokable while its applets kept running.
+	 */
+	let query = $state('');
+
+	const orphanRows = $derived.by<Row[]>(() => {
+		const known = new Set(store.catalog.map((s) => s.id));
+		const out: Row[] = [];
+		for (const [sourceId, connections] of store.bySource) {
+			if (known.has(sourceId)) continue;
+			out.push({
+				id: sourceId,
+				name: sourceId,
+				description:
+					'This connection’s source is no longer installed. Nothing will run for it; disconnect it if you no longer need it.',
+				icon: 'ri:question-line',
+				kind: 'unknown',
+				connections,
+				connected: connections.length,
+				state: 'needs attention',
+				last_activity: '—',
+				applets: connections.reduce((n, c) => n + (c.appletCount ?? 0), 0),
+				source: null
+			});
+		}
+		return out;
+	});
+
+	const catalogRows = $derived.by<Row[]>(() =>
 		store.catalog.map((source) => {
 			const connections = store.bySource.get(source.id) ?? [];
 			const stamps = connections
@@ -81,6 +114,17 @@
 			};
 		})
 	);
+
+	// Orphans first: they are the only rows here that are actively wrong.
+	const rows = $derived.by<Row[]>(() => {
+		const q = query.trim().toLowerCase();
+		return [...orphanRows, ...catalogRows]
+			.filter((r) => !q || r.name.toLowerCase().includes(q))
+			.sort((a, b) => {
+				const rank = (r: Row) => (r.source === null ? 0 : r.connections.length > 0 ? 1 : 2);
+				return rank(a) - rank(b) || a.name.localeCompare(b.name);
+			});
+	});
 
 	const columns: Column<Row>[] = [
 		{ key: 'name', label: 'Source', icon: 'ri:plug-line', width: '26%', minWidth: '150px' },
@@ -145,6 +189,7 @@
 	}
 
 	function connectLabel(row: Row): string {
+		if (!row.source) return '';
 		if (isThisDevice(row.source)) return `Set up ${thisComputerLabel}`;
 		if (row.source.auth_kind === 'self_issued_bearer') return 'Pair a device';
 		return row.connected > 0 ? 'Connect another' : 'Connect';
@@ -189,16 +234,18 @@
 		onRetry={() => store.load()}
 	>
 		{#snippet rowActions(row: Row)}
-			<button type="button" class="connect" onclick={() => void connect(row.source)}>
-				{connectLabel(row)}
-			</button>
+			{#if row.source}
+				<button type="button" class="connect" onclick={() => void connect(row.source!)}>
+					{connectLabel(row)}
+				</button>
+			{/if}
 		{/snippet}
 
 		{#snippet expandDetail(row: Row)}
 			<div class="detail">
 				<p class="desc">{row.description}</p>
 
-				{#if row.source.repo}
+				{#if row.source?.repo}
 					<!-- Provenance, not an install path. The collectors arrive through
 					     the App Store and update themselves; this is so you can read
 					     what they do before pairing one to your life. -->
@@ -209,9 +256,9 @@
 							class="link"
 							onclick={() =>
 								void openExternal(
-									row.source.repo_ref
-										? `${row.source.repo}/tree/main/${row.source.repo_ref}`
-										: (row.source.repo as string)
+									row.source!.repo_ref
+										? `${row.source!.repo}/tree/main/${row.source!.repo_ref}`
+										: (row.source!.repo as string)
 								)}
 						>
 							Read the code
@@ -219,10 +266,10 @@
 						{#if row.source.repo_ref}<code>{row.source.repo_ref}</code>{/if}
 					</p>
 				{/if}
-				{#if row.connections.length === 0}
+				{#if row.connections.length === 0 && row.source}
 					<p class="none">
 						Nothing connected yet.
-						<button type="button" class="link" onclick={() => void connect(row.source)}>
+						<button type="button" class="link" onclick={() => void connect(row.source!)}>
 							{connectLabel(row)}
 						</button>
 					</p>
