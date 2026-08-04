@@ -381,6 +381,10 @@ pub async fn run(client: Virtues, host: &str, port: u16) -> Result<()> {
             "/api/applets/:id/source/*path",
             get(crate::api::applet_source::file_handler),
         )
+        .route(
+            "/api/applets/:id/fork",
+            post(crate::api::applet_source::fork_handler),
+        )
         // Chat-export upload (Tier 3 one-time import). Per-route body limit
         // overrides the router-wide 105MB cap — ChatGPT exports can be larger.
         .route(

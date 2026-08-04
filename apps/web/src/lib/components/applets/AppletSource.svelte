@@ -14,10 +14,13 @@
 	import {
 		getAppletSource,
 		getAppletSourceFile,
+		forkApplet,
 		type AppletSourceListing
 	} from '$lib/api/client';
 
 	let { appletId }: { appletId: string } = $props();
+
+	let forking = $state(false);
 
 	let listing = $state<AppletSourceListing | null>(null);
 	let selected = $state<string | null>(null);
@@ -57,6 +60,19 @@
 		}
 	}
 
+	async function fork() {
+		forking = true;
+		err = null;
+		try {
+			await forkApplet(appletId);
+			listing = await getAppletSource(appletId);
+		} catch (e) {
+			err = e instanceof Error ? e.message : String(e);
+		} finally {
+			forking = false;
+		}
+	}
+
 	function humanSize(n: number): string {
 		if (n < 1024) return `${n} B`;
 		if (n < 1024 * 1024) return `${Math.round(n / 1024)} KB`;
@@ -78,7 +94,18 @@
 					: 'Lives on this box — authored, imported, or forked'}
 				· <code>{listing.dir}</code>
 			</span>
+			{#if listing.origin_root === 'shipped'}
+				<!-- Copies the folder onto this box; the shipped version is
+				     untouched, and deleting the copy reverts. -->
+				<button type="button" class="fork" disabled={forking} onclick={() => void fork()}>
+					{forking ? 'Copying…' : 'Make it mine'}
+				</button>
+			{/if}
 		</div>
+
+		{#if err}
+			<p class="muted">{err}</p>
+		{/if}
 
 		<div class="panes">
 			<ul class="files">
@@ -135,6 +162,20 @@
 	}
 	.provenance code {
 		font-size: 0.6875rem;
+	}
+	.fork {
+		margin-left: auto;
+		padding: 0.1875rem 0.5rem;
+		border-radius: 5px;
+		border: 1px solid var(--color-border, #d1d5db);
+		background: var(--color-background, #fff);
+		color: var(--color-foreground, #111827);
+		font-size: 0.6875rem;
+		font-weight: 500;
+		cursor: pointer;
+	}
+	.fork:hover:not(:disabled) {
+		background: var(--color-muted, #f3f4f6);
 	}
 
 	.panes {

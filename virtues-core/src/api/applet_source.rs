@@ -181,6 +181,27 @@ pub async fn list_handler(Path(applet_id): Path<String>) -> Response {
         .into_response()
 }
 
+/// `POST /api/applets/:id/fork` — copy a shipped applet onto this box so it can
+/// be changed. Reverting is deleting the copy; the shipped version is untouched
+/// throughout, which is what makes this safe to offer without ceremony.
+pub async fn fork_handler(
+    axum::extract::State(state): axum::extract::State<crate::server::webhook::AppState>,
+    Path(applet_id): Path<String>,
+) -> Response {
+    match crate::applet_templates::fork_applet(state.db.pool(), &applet_id).await {
+        Ok(dir) => (
+            StatusCode::OK,
+            Json(json!({ "status": "forked", "dir": dir })),
+        )
+            .into_response(),
+        Err(e) => (
+            StatusCode::BAD_REQUEST,
+            Json(json!({ "error": e.to_string() })),
+        )
+            .into_response(),
+    }
+}
+
 /// `GET /api/applets/:id/source/*path` — one file, as text.
 pub async fn file_handler(Path((applet_id, rel)): Path<(String, String)>) -> Response {
     let Some((root, _)) = applet_dir(&applet_id) else {
