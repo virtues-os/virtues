@@ -381,7 +381,18 @@ export async function adminReconcile(): Promise<{ upserted: number }> {
 export async function importActionsFromGit(body: {
 	url: string;
 	ref?: string;
-}): Promise<{ added: string[]; updated: string[]; removed: string[] }> {
+}): Promise<{
+	/** Folder the package landed in — host + owner + repo, so two remotes with
+	 *  the same repo name can't claim each other's. */
+	slug: string;
+	/** Commit actually checked out. The server has always resolved this; the
+	 *  client used to drop it, which is why "is there a newer version" was
+	 *  unanswerable. */
+	commit: string | null;
+	added: string[];
+	updated: string[];
+	removed: string[];
+}> {
 	const res = await fetch(`${API_BASE}/admin/applets/import-git`, {
 		method: 'POST',
 		headers: { 'Content-Type': 'application/json' },

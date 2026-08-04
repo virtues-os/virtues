@@ -102,6 +102,25 @@ pub async fn import(db: &PgPool, req: ImportRequest) -> Result<ImportOutcome> {
         )));
     }
 
+    // Record where this came from. Without the resolved SHA persisted, "is
+    // there a newer version" is unanswerable — which is most of why packages
+    // are worth having as a unit at all.
+    sqlx::query(
+        r#"INSERT INTO app_applet_package (slug, repo_url, git_ref, commit_sha)
+           VALUES ($1, $2, $3, $4)
+           ON CONFLICT (slug) DO UPDATE
+             SET repo_url = EXCLUDED.repo_url,
+                 git_ref = EXCLUDED.git_ref,
+                 commit_sha = EXCLUDED.commit_sha,
+                 updated_at = now()"#,
+    )
+    .bind(&slug)
+    .bind(url)
+    .bind(git_ref)
+    .bind(commit.as_deref())
+    .execute(db)
+    .await?;
+
     let after: HashSet<String> = ids_under_slug(db, &slug).await?;
 
     let added: Vec<String> = after.difference(&before).cloned().collect();
@@ -341,7 +360,12 @@ async fn clone_or_update(target: &Path, url: &str, git_ref: &str) -> Result<()> 
         return Ok(());
     }
 
-    // Existing checkout: fetch the ref shallowly, then hard-reset.
+    // Existing checkout: make the requested URL authoritative before fetching.
+    // The slug now carries host and owner so a different repo lands in a
+    // different folder, but the same repo reached over https and then ssh
+    // shares one — and silently fetching whichever remote was configured first
+    // is the shape of the bug this whole path just had.
+    run_git(target, &["remote", "set-url", "origin", url]).await?;
     run_git(target, &["fetch", "--depth", "1", "origin", git_ref]).await?;
     run_git(target, &["reset", "--hard", "FETCH_HEAD"]).await?;
     Ok(())
@@ -506,6 +530,84 @@ mod tests {
         }
         // 172.32 is public; only 172.16-31 is private.
         assert!(validate_url("https://172.32.0.1/x/y").is_ok());
+    }
+
+    /// Exercises the fetch path against a real repo on disk. Everything here
+    /// was untested — which is how a query against a column dropped two dozen
+    /// migrations ago survived in the one place that runs before the clone.
+    ///
+    /// Goes through `clone_or_update` rather than `import`, because `import`
+    /// needs a database and because `validate_url` now (correctly) refuses the
+    /// local path this uses as an origin.
+    #[tokio::test]
+    async fn clone_then_update_checks_out_the_requested_ref() {
+        // A `git` we can run, and an identity so `commit` doesn't fail on a
+        // machine with no global config.
+        let origin = tempfile::tempdir().unwrap();
+        let work = tempfile::tempdir().unwrap();
+        let o = origin.path();
+
+        let git = |dir: &std::path::Path, args: &[&str]| {
+            let ok = std::process::Command::new("git")
+                .args(args)
+                .current_dir(dir)
+                .env("GIT_AUTHOR_NAME", "t")
+                .env("GIT_AUTHOR_EMAIL", "t@t")
+                .env("GIT_COMMITTER_NAME", "t")
+                .env("GIT_COMMITTER_EMAIL", "t@t")
+                .output()
+                .expect("git runs")
+                .status
+                .success();
+            assert!(ok, "git {args:?} failed");
+        };
+
+        git(o, &["init", "--quiet", "-b", "main", "."]);
+        std::fs::write(o.join("manifest.toml"), "name = \"One\"\nowner = \"user\"\n").unwrap();
+        git(o, &["add", "."]);
+        git(o, &["commit", "--quiet", "-m", "one"]);
+
+        let first = String::from_utf8(
+            std::process::Command::new("git")
+                .args(["rev-parse", "HEAD"])
+                .current_dir(o)
+                .output()
+                .unwrap()
+                .stdout,
+        )
+        .unwrap()
+        .trim()
+        .to_string();
+
+        // Fresh clone of a branch.
+        let target = work.path().join("pkg");
+        clone_or_update(&target, o.to_str().unwrap(), "main")
+            .await
+            .expect("first clone");
+        assert!(target.join("manifest.toml").is_file());
+        assert_eq!(resolve_head(&target).await.unwrap(), first);
+
+        // Upstream moves; re-running takes the new commit.
+        std::fs::write(o.join("manifest.toml"), "name = \"Two\"\nowner = \"user\"\n").unwrap();
+        git(o, &["add", "."]);
+        git(o, &["commit", "--quiet", "-m", "two"]);
+
+        clone_or_update(&target, o.to_str().unwrap(), "main")
+            .await
+            .expect("update");
+        let body = std::fs::read_to_string(target.join("manifest.toml")).unwrap();
+        assert!(body.contains("Two"), "update must take upstream's content");
+        assert_ne!(resolve_head(&target).await.unwrap(), first);
+
+        // And a bare SHA is a valid ref to pin to — `clone --branch` could not
+        // do this, which is why the first clone is init + fetch + checkout.
+        let pinned = work.path().join("pinned");
+        clone_or_update(&pinned, o.to_str().unwrap(), &first)
+            .await
+            .expect("clone at a commit");
+        assert_eq!(resolve_head(&pinned).await.unwrap(), first);
+        let body = std::fs::read_to_string(pinned.join("manifest.toml")).unwrap();
+        assert!(body.contains("One"), "pinned to the older commit");
     }
 
     #[test]

@@ -16,7 +16,9 @@
 	let ref = $state('main');
 	let importing = $state(false);
 	let error = $state<string | null>(null);
-	let result = $state<{ added: string[]; updated: string[]; removed: string[] } | null>(null);
+	// Shape follows the client's return type rather than restating it — the
+	// local copy is how `slug` and `commit` went unnoticed for so long.
+	let result = $state<Awaited<ReturnType<typeof importActionsFromGit>> | null>(null);
 
 	function reset() {
 		url = '';
@@ -62,6 +64,15 @@
 				<div><dt>Added</dt><dd>{result.added.length}</dd></div>
 				<div><dt>Updated</dt><dd>{result.updated.length}</dd></div>
 				<div><dt>Removed</dt><dd>{result.removed.length}</dd></div>
+			</dl>
+			<!-- The exact commit now on disk. The server always resolved it; the
+			     client used to discard it, so there was no record anywhere of
+			     what code was actually running. -->
+			<dl class="counts">
+				<div><dt>Installed as</dt><dd><code>{result.slug}</code></dd></div>
+				{#if result.commit}
+					<div><dt>Commit</dt><dd><code>{result.commit.slice(0, 12)}</code></dd></div>
+				{/if}
 			</dl>
 		</div>
 	{:else}
