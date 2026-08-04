@@ -814,8 +814,33 @@ pub async fn admin_reconcile_handler(State(state): State<AppState>) -> Response 
 /// the slug prefix and clean up rows for manifests that disappeared upstream.
 pub async fn import_git_applets_handler(
     State(state): State<AppState>,
+    user: crate::middleware::auth::AuthUser,
     Json(body): Json<crate::applet_git_import::ImportRequest>,
 ) -> Response {
+    // Sudo-gated: this fetches and runs somebody else's code.
+    let Some(sudo_id) = body.sudo_request_id.as_deref().filter(|s| !s.is_empty()) else {
+        return (
+            StatusCode::FORBIDDEN,
+            Json(serde_json::json!({ "error": "sudo_required" })),
+        )
+            .into_response();
+    };
+    if let Err(resp) = crate::api::sudo::verify_and_consume(
+        state.db.pool(),
+        sudo_id,
+        "import_applet_package",
+        &user.device_id,
+    )
+    .await
+    {
+        tracing::warn!("applet import: sudo verify failed: {resp}");
+        return (
+            StatusCode::FORBIDDEN,
+            Json(serde_json::json!({ "error": "sudo_not_approved" })),
+        )
+            .into_response();
+    }
+
     let outcome = match crate::applet_git_import::import(state.db.pool(), body).await {
         Ok(o) => o,
         Err(e) => {

@@ -381,6 +381,8 @@ export async function adminReconcile(): Promise<{ upserted: number }> {
 export async function importActionsFromGit(body: {
 	url: string;
 	ref?: string;
+	/** From `/api/sudo/request` — importing runs someone else's code. */
+	sudo_request_id: string;
 }): Promise<{
 	/** Folder the package landed in — host + owner + repo, so two remotes with
 	 *  the same repo name can't claim each other's. */

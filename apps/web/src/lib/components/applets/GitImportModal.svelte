@@ -2,6 +2,7 @@
 	import Modal from '$lib/components/Modal.svelte';
 	import Button from '$lib/components/Button.svelte';
 	import Icon from '$lib/components/Icon.svelte';
+	import SudoModal from '$lib/components/SudoModal.svelte';
 	import { importActionsFromGit } from '$lib/api/client';
 
 	type Props = {
@@ -33,16 +34,27 @@
 		onClose();
 	}
 
-	async function submit(e?: Event) {
+	// Importing runs a stranger's code on the box, so it is sudo-gated the same
+	// way changing an API key is: approval happens at the box itself, not in a
+	// browser someone could have talked you into.
+	let showSudo = $state(false);
+
+	function submit(e?: Event) {
 		e?.preventDefault();
 		if (!url.trim()) return;
-		importing = true;
 		error = null;
 		result = null;
+		showSudo = true;
+	}
+
+	async function runImport(sudoRequestId: string) {
+		importing = true;
+		error = null;
 		try {
 			result = await importActionsFromGit({
 				url: url.trim(),
-				ref: ref.trim() || 'main'
+				ref: ref.trim() || 'main',
+				sudo_request_id: sudoRequestId
 			});
 			onImported?.();
 		} catch (e) {
@@ -91,9 +103,26 @@
 				<span class="label">Ref</span>
 				<input type="text" bind:value={ref} placeholder="main" disabled={importing} />
 			</label>
+			<!-- This caveat lived only in a source comment. The one screen where
+			     someone decides to run a stranger's code is where it belongs. -->
+			<div class="warn">
+				<Icon icon="ri:alert-line" width="16" />
+				<div>
+					<strong>This runs someone else's code on your box.</strong>
+					Imported applets are sandboxed and cannot gain root or read your
+					stored credentials, but they still run on a schedule and can read
+					and write your data. Import repositories you would be willing to
+					read yourself — you can, from the applet's Source pane.
+				</div>
+			</div>
 			<p class="hint">
 				The repo is cloned locally and any folder containing a
-				<code>manifest.toml</code> becomes an action.
+				<code>manifest.toml</code> becomes an applet; a
+				<code>sources.toml</code> adds sources.
+			</p>
+			<p class="hint">
+				Pin to a tag or a commit rather than a branch if you want the code to
+				stay put — a branch moves under you on the next import.
 			</p>
 			<p class="hint">
 				<strong>Public</strong> HTTPS URLs work without auth.
@@ -118,6 +147,15 @@
 		{/if}
 	{/snippet}
 </Modal>
+
+<SudoModal
+	action="import_applet_package"
+	title="Install a package from Git"
+	description="Installing runs code you did not write on this box. Approve at the box itself by running `virtues sudo` — the same confirmation used for changing an API key."
+	actionPayload={{ url: url.trim(), ref: ref.trim() || 'main' }}
+	bind:show={showSudo}
+	onApproved={(id) => runImport(id)}
+/>
 
 <style>
 	.form {
@@ -149,6 +187,19 @@
 		outline-offset: -1px;
 		border-color: transparent;
 	}
+	.warn {
+		display: flex;
+		align-items: flex-start;
+		gap: 0.5rem;
+		padding: 0.625rem 0.75rem;
+		border-radius: 8px;
+		border: 1px solid color-mix(in srgb, var(--color-warning, #d97706) 35%, transparent);
+		background: color-mix(in srgb, var(--color-warning, #d97706) 10%, transparent);
+		color: var(--color-foreground, #111827);
+		font-size: 0.75rem;
+		line-height: 1.5;
+	}
+
 	.hint {
 		margin: 0;
 		font-size: 0.75rem;
