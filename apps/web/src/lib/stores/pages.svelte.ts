@@ -149,6 +149,7 @@ class PagesStore {
 		title?: string;
 		content?: string;
 		icon?: string | null;
+		icon_color?: string | null;
 		cover_url?: string | null;
 		tags?: string | null;
 	}): Promise<void> {
@@ -162,8 +163,9 @@ class PagesStore {
 			windowShellStore.updateEntityMetadata(pageId, metadataUpdates);
 		}
 
-		// Sidebar refresh (only if visible fields changed)
-		if (updates.title || 'icon' in updates) {
+		// Sidebar refresh (only if visible fields changed). `icon_color` counts:
+		// the tab and the sidebar row both draw the icon in it.
+		if (updates.title || 'icon' in updates || 'icon_color' in updates) {
 			windowShellStore.invalidateViewCache('page');
 		}
 	}

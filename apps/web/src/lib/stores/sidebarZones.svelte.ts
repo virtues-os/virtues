@@ -6,8 +6,9 @@
  * to look — reopening the app and finding Library expanded again would undo a
  * decision the user made on purpose.
  *
- * Keyed by zone id ('desk', 'grp_workbench', 'grp_library') so a future zone
- * costs one string.
+ * Keyed by zone id ('desk', 'grp_library') so a future zone costs one string.
+ * A key for a zone that no longer exists just goes unread — 'grp_workbench'
+ * lingers in some users' localStorage and costs nothing.
  */
 
 const STORAGE_KEY = 'virtues-sidebar-zones-collapsed';

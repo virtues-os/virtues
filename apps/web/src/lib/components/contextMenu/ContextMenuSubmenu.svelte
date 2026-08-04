@@ -93,7 +93,13 @@
 			aria-disabled={subItem.disabled}
 		>
 			{#if subItem.icon}
-				<span class="item-icon">
+				<!-- Submenus render their own rows rather than reusing
+				     ContextMenuItem, so anything added to the item contract has
+				     to be honoured twice. `iconColor` is the swatch. -->
+				<span
+					class="item-icon"
+					style={subItem.iconColor ? `color: ${subItem.iconColor}` : undefined}
+				>
 					<Icon icon={subItem.icon} width="16" />
 				</span>
 			{/if}

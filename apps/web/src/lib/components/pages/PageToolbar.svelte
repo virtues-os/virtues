@@ -10,6 +10,8 @@
 
 	interface Props {
 		icon: string | null;
+		/** `--cat-*` token key for the icon, or null. */
+		iconColor?: string | null;
 		coverUrl: string | null;
 		copied: boolean;
 		pageId: string;
@@ -18,6 +20,7 @@
 		isShared?: boolean;
 		referencesActive?: boolean;
 		onIconSelect: (value: string | null) => void;
+		onIconColorSelect?: (value: string | null) => void;
 		onCoverSelect: (url: string | null) => void;
 		onCopyMarkdown: () => void;
 		onShare?: () => void;
@@ -27,6 +30,7 @@
 
 	let {
 		icon,
+		iconColor = null,
 		coverUrl,
 		copied,
 		pageId,
@@ -35,6 +39,7 @@
 		isShared = false,
 		referencesActive = false,
 		onIconSelect,
+		onIconColorSelect,
 		onCoverSelect,
 		onCopyMarkdown,
 		onShare,
@@ -68,7 +73,11 @@
 				>
 					{#if icon}
 						{#if icon.includes(":")}
-							<Icon {icon} width="15" />
+							<Icon
+								{icon}
+								width="15"
+								style={iconColor ? `color: var(--cat-${iconColor})` : undefined}
+							/>
 						{:else}
 							<span class="toolbar-emoji">{icon}</span>
 						{/if}
@@ -78,7 +87,13 @@
 				</button>
 			{/snippet}
 			{#snippet children({ close })}
-				<IconPicker value={icon} onSelect={onIconSelect} {close} />
+				<IconPicker
+					value={icon}
+					onSelect={onIconSelect}
+					{close}
+					color={iconColor}
+					onColorSelect={onIconColorSelect}
+				/>
 			{/snippet}
 		</Popover>
 		<Popover bind:open={showCoverPicker} placement="bottom-start">

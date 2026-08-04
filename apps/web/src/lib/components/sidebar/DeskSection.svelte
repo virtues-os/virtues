@@ -18,10 +18,13 @@
 	 * Order is the user's own `sort_order`, never recency: a shelf that
 	 * reshuffles itself is how a stable list stops being a place.
 	 */
+	import Icon from "$lib/components/Icon.svelte";
+	import { isEmoji } from "$lib/utils/iconHelpers";
 	import { windowShellStore } from "$lib/stores/window-shell.svelte";
 	import { pinsStore } from "$lib/stores/pins.svelte";
-	import { contextMenu } from "$lib/stores/contextMenu.svelte";
+	import { contextMenu, type ContextMenuItem } from "$lib/stores/contextMenu.svelte";
 	import { clothFor } from "$lib/sidebar/pin-colors";
+	import { pinIconMenuItem } from "$lib/pins/pinAction";
 	import { sidebarZones } from "$lib/stores/sidebarZones.svelte";
 	import ZoneHeader from "./ZoneHeader.svelte";
 	import RefPicker, { type EntityResult } from "$lib/components/RefPicker.svelte";
@@ -90,19 +93,31 @@
 	function handleContextMenu(e: MouseEvent, pin: Pin) {
 		e.preventDefault();
 		e.stopPropagation();
-		const items = [];
+		const items: ContextMenuItem[] = [];
 		if (!isExternal(pin.url)) {
 			items.push({
 				id: "open-beside",
 				label: "Open beside",
 				icon: "ri:layout-column-line",
-				action: () => windowShellStore.openRouteBeside(pin.url, labelFor(pin)),
+				// Braced: `openRouteBeside` returns the new tab, and an arrow
+				// body would make this a `() => string`, which is not an action.
+				action: () => {
+					windowShellStore.openRouteBeside(pin.url, labelFor(pin));
+				},
 			});
 		}
+		// Hang the picker off the click, not the middle of the window.
+		const at = { x: e.clientX, y: e.clientY, width: 0, height: 0 };
+		// One entry, not two: the picker holds the icon AND the color, so
+		// splitting them into "Change icon" and "Color" made one decision look
+		// like two features.
+		const iconItem = pinIconMenuItem(pin.url, at);
+		if (iconItem) items.push(iconItem);
 		items.push({
 			id: "unpin",
 			label: "Take off the desk",
 			icon: "ri:unpin-line",
+			dividerBefore: true,
 			action: () => {
 				void pinsStore.remove(pin.id);
 			},
@@ -149,8 +164,23 @@
 							oncontextmenu={(e) => handleContextMenu(e, pin)}
 							title={labelFor(pin)}
 						>
+							<!-- The glyph if the user picked one, the cloth dot if
+							     not. The dot is still the default — most pins have
+							     no natural icon, which is why it exists — but a pin
+							     that HAS been given one should wear it, in its own
+							     color, the same as its tab does. -->
 							<span class="desk-pin" aria-hidden="true">
-								<i style="background: {clothFor(pin)}"></i>
+								{#if pin.icon && isEmoji(pin.icon)}
+									<span class="desk-emoji">{pin.icon}</span>
+								{:else if pin.icon}
+									<Icon
+										icon={pin.icon}
+										width="14"
+										style="color: {clothFor(pin)}"
+									/>
+								{:else}
+									<i style="background: {clothFor(pin)}"></i>
+								{/if}
 							</span>
 							<span class="sidebar-label desk-spine-label">{labelFor(pin)}</span>
 						</div>
@@ -199,7 +229,9 @@
 	   The display cut at text size wants its tracking back and a hair of
 	   optical weight — the stroke reads as a medium, not a faux bold. */
 	.desk-spine {
-		font-family: var(--font-serif);
+		/* The chrome cut: the spine sits beside an icon, and JJannon's own
+		   metrics would leave the letters 1.3px above it. */
+		font-family: var(--font-serif-ui);
 		font-size: 13.5px;
 		font-weight: 400;
 		letter-spacing: 0.02em;
@@ -215,6 +247,11 @@
 		justify-content: center;
 	}
 
+	.desk-emoji {
+		font-size: 12px;
+		line-height: 1;
+	}
+
 	.desk-pin i {
 		width: 6.5px;
 		height: 6.5px;
@@ -223,8 +260,11 @@
 		box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.12);
 	}
 
+	/* An integer box: 13.5 × 1.5 = 20.25px, which centers on a half pixel and
+	   rounds differently by DPR and scroll position. 20px is the same leading
+	   without the wobble. */
 	.desk-spine-label {
-		line-height: 1.5;
+		line-height: 20px;
 	}
 
 	/* Plain, quiet, sans. It was set in italic serif — which made the one line

@@ -10,6 +10,8 @@ export interface ChatSession {
 	conversation_id: string;
 	title: string | null;
 	icon: string | null;
+	/** `--cat-*` token key, never a hex. Migration 0079. */
+	icon_color?: string | null;
 	notebook_id?: string | null;
 	last_updated: string | null;
 	first_message_at: string;
@@ -56,6 +58,18 @@ class ChatSessionStore {
 	updateSessionIcon(chatId: string, icon: string | null) {
 		this.sessions = this.sessions.map(s =>
 			s.conversation_id === chatId ? { ...s, icon } : s
+		);
+	}
+
+	/**
+	 * Same, for the icon's color. Separate from `updateSessionIcon` because
+	 * the picker sets them independently — a color can change without an icon
+	 * changing, and folding them into one call would make each overwrite the
+	 * other's untouched half.
+	 */
+	updateSessionIconColor(chatId: string, icon_color: string | null) {
+		this.sessions = this.sessions.map(s =>
+			s.conversation_id === chatId ? { ...s, icon_color } : s
 		);
 	}
 

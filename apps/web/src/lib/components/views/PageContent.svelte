@@ -59,6 +59,7 @@
 		title: string;
 		content: string;
 		icon: string | null;
+		icon_color: string | null;
 		cover_url: string | null;
 		tags: string | null;
 		created_at: string;
@@ -69,6 +70,8 @@
 	let title = $state("");
 	let content = $state("");
 	let icon = $state<string | null>(null);
+	/** `--cat-*` token key for the icon, or null. Migration 0079. */
+	let iconColor = $state<string | null>(null);
 	let coverUrl = $state<string | null>(null);
 	let showCoverPicker = $state(false);
 	let loading = $state(false);
@@ -343,6 +346,7 @@
 			// Content will be synced via Yjs, but we set it for initial display and word count
 			content = data.content;
 			icon = data.icon;
+			iconColor = data.icon_color ?? null;
 			coverUrl = data.cover_url;
 
 			// Update label
@@ -605,7 +609,13 @@
 				referencesActive={showReferences}
 				onToggleReferences={toggleReferences}
 				onShare={handleShare}
-				onIconSelect={(value) => {
+				onIconColorSelect={(value) => {
+				iconColor = value;
+				if (pageData) {
+					void pagesStore.savePage(pageData.id, { icon_color: value });
+				}
+			}}
+			onIconSelect={(value) => {
 					icon = value;
 					if (pageData) {
 						pagesStore.updatePageLocally(pageData.id, { icon: value });
@@ -684,6 +694,20 @@
 											save();
 										}}
 										{close}
+										color={iconColor}
+										onColorSelect={(value) => {
+											// Saved on its own rather than through
+											// `save()`: that path sends title, icon
+											// and cover together, and picking a
+											// color shouldn't drag a half-typed
+											// title to the server with it.
+											iconColor = value;
+											if (pageData) {
+												void pagesStore.savePage(pageData.id, {
+													icon_color: value,
+												});
+											}
+										}}
 									/>
 								{/snippet}
 							</Popover>

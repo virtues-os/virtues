@@ -268,10 +268,12 @@
 								     that retired them the first time). -->
 								<DeskSection collapsed={isCollapsed} />
 
-								<!-- Workbench, then Library: the system's fixed
-								     shelves, split by verb — what you make, then
-								     what you consult. Stable forever, so muscle
-								     memory can live in them. -->
+								<!-- The Library: every fixed room the app has, in
+								     one shelf. Stable forever, so muscle memory
+								     can live in it. Still a loop over groups —
+								     there is one today, and the Workbench that
+								     used to be the second one may not be the last
+								     shelf anyone proposes. -->
 								{#each SECTION_GROUPS as group, i (group.id)}
 									<div class="nav-group">
 										{#if group.label && !isCollapsed}
