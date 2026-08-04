@@ -861,8 +861,8 @@ Use this tool when:
 ALWAYS call this before using edit_page so you know what text to find.
 
 IMPORTANT - Extracting page_id:
-When user mentions a page using entity syntax like [Page Name](entity:page_abc123),
-extract the ID from the link: page_abc123 (everything after "entity:").
+When the user mentions a page it arrives as a route link, [Page Name](/page/page_abc123).
+Extract the ID from the link: page_abc123 (the last path segment).
 You MUST pass this page_id parameter when the user references a specific page.
 
 Returns the page title, content, and content length."#.to_string(),
@@ -872,7 +872,7 @@ Returns the page title, content, and content length."#.to_string(),
             "properties": {
                 "page_id": {
                     "type": "string",
-                    "description": "Page ID to read. Extract from entity links: [Name](entity:page_xxx) -> page_xxx"
+                    "description": "Page ID to read. Extract from the page link: [Name](/page/page_xxx) -> page_xxx"
                 }
             }
         }),
@@ -901,12 +901,12 @@ Use this tool when:
 IMPORTANT: Call get_page_content FIRST to see the current document!
 
 IMPORTANT - Extracting page_id:
-When user mentions a page using entity syntax like [Page Name](entity:page_abc123),
-extract the ID from the link: page_abc123 (everything after "entity:").
+When the user mentions a page it arrives as a route link, [Page Name](/page/page_abc123).
+Extract the ID from the link: page_abc123 (the last path segment).
 You MUST pass this page_id parameter when the user references a specific page.
 
 How it works:
-1. Provide 'page_id' - extracted from the entity link
+1. Provide 'page_id' - extracted from the page link
 2. Provide 'find' - the exact text to locate in the document
 3. Provide 'replace' - the new text you want instead
 4. Optionally provide 'title' - new title for the page
@@ -946,7 +946,7 @@ Tips:
             "properties": {
                 "page_id": {
                     "type": "string",
-                    "description": "Page ID to edit. Extract from entity links: [Name](entity:page_xxx) -> page_xxx"
+                    "description": "Page ID to edit. Extract from the page link: [Name](/page/page_xxx) -> page_xxx"
                 },
                 "title": {
                     "type": "string",

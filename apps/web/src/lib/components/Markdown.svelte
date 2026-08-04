@@ -64,9 +64,20 @@
 		return result;
 	});
 
-	// Get current origin for relative URL handling. The app is SPA-only
-	// (routes/+layout.js sets `ssr = false`), so window always exists here.
-	const origin = window.location.origin;
+	// Base for resolving relative URLs. The app is SPA-only (routes/+layout.js
+	// sets `ssr = false`), so window always exists here.
+	//
+	// It has to be an http(s) origin even when ours isn't. Streamdown resolves
+	// every relative href against this and then drops anything that doesn't come
+	// back http(s) — so under the Tauri shell, where the origin is
+	// `tauri://localhost`, a bare `page/page_abc` resolves to a `tauri:` URL and
+	// renders as dead text with a `[blocked]` suffix. Absolute paths (`/page/…`)
+	// bypass that check, so this only governs the relative-without-slash case;
+	// the placeholder never reaches the DOM, because our `link` snippet below
+	// renders from `token.href`, not from the resolved URL.
+	const origin = /^https?:$/.test(window.location.protocol)
+		? window.location.origin
+		: 'http://localhost';
 
 	// Streamdown theme
 	const customTheme = {
