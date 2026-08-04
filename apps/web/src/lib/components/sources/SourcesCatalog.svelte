@@ -11,12 +11,11 @@
 
 	So the row is a *source*, not a connection, and every source has one whether
 	or not you've connected it — "what could I plug in" is half of what this page
-	is for. Connections hang off the row as its expansion, and both kinds are
-	treated alike (see lib/stores/sources.svelte.ts).
+	is for. Opening a row goes to that source's page, where its connections live
+	and where both kinds are treated alike (see lib/stores/sources.svelte.ts).
 -->
 <script lang="ts">
 	import { Page } from '$lib';
-	import Icon from '$lib/components/Icon.svelte';
 	import UniversalDataGrid, {
 		type Column
 	} from '$lib/components/datagrid/UniversalDataGrid.svelte';
@@ -25,7 +24,6 @@
 	import { windowShellStore } from '$lib/stores/window-shell.svelte';
 	import { relativeTime } from '$lib/applets/palette';
 	import { isMacOS, isTauri, thisComputerLabel } from '$lib/utils/platform';
-	import { openExternal } from '$lib/tauri/bridge';
 	import type { SourceCatalogItem } from '$lib/api/client';
 
 	const store = sourcesStore;
@@ -203,14 +201,14 @@
 		await connectFlow.start(source);
 	}
 
-	function openConnection(c: Connection) {
-		if (c.route) windowShellStore.navigate(c.route, { label: c.name });
+	function openSource(row: Row) {
+		windowShellStore.navigate(`/sources/${row.id}`, { label: row.name });
 	}
 </script>
 
 <Page
 	title="Catalog"
-	description="Everything Virtues can draw from, and what you have connected to each. Open a row to see its connections."
+	description="Everything Virtues can draw from, and what you have connected to each."
 	maxWidth="wide"
 >
 	{#if store.error}
@@ -231,6 +229,7 @@
 		loadingMessage="Loading sources…"
 		searchPlaceholder="Search sources…"
 		defaultViewMode="table"
+		onItemClick={openSource}
 		onRetry={() => store.load()}
 	>
 		{#snippet rowActions(row: Row)}
@@ -241,68 +240,6 @@
 			{/if}
 		{/snippet}
 
-		{#snippet expandDetail(row: Row)}
-			<div class="detail">
-				<p class="desc">{row.description}</p>
-
-				{#if row.source?.repo}
-					<!-- Provenance, not an install path. The collectors arrive through
-					     the App Store and update themselves; this is so you can read
-					     what they do before pairing one to your life. -->
-					<p class="repo">
-						<Icon icon="ri:code-line" width="14" />
-						<button
-							type="button"
-							class="link"
-							onclick={() =>
-								void openExternal(
-									row.source!.repo_ref
-										? `${row.source!.repo}/tree/main/${row.source!.repo_ref}`
-										: (row.source!.repo as string)
-								)}
-						>
-							Read the code
-						</button>
-						{#if row.source.repo_ref}<code>{row.source.repo_ref}</code>{/if}
-					</p>
-				{/if}
-				{#if row.connections.length === 0 && row.source}
-					<p class="none">
-						Nothing connected yet.
-						<button type="button" class="link" onclick={() => void connect(row.source!)}>
-							{connectLabel(row)}
-						</button>
-					</p>
-				{:else}
-					<ul class="connections">
-						{#each row.connections as c (c.id)}
-							<li class="connection" class:broken={c.broken}>
-								<span class="dot" aria-hidden="true"></span>
-								<button
-									type="button"
-									class="cname"
-									class:inert={!c.route}
-									disabled={!c.route}
-									onclick={() => openConnection(c)}
-								>
-									{c.name}{c.isCurrent ? ' · this device' : ''}
-								</button>
-								<span class="cstatus">{c.statusLabel}</span>
-								<span class="cseen">
-									{c.lastSeenAt ? relativeTime(c.lastSeenAt) : 'no activity yet'}
-								</span>
-							</li>
-							{#if c.statusReason}
-								<li class="reason">
-									<Icon icon="ri:error-warning-line" width="14" />
-									<span>{c.statusReason}</span>
-								</li>
-							{/if}
-						{/each}
-					</ul>
-				{/if}
-			</div>
-		{/snippet}
 	</UniversalDataGrid>
 </Page>
 
@@ -331,116 +268,4 @@
 		background: var(--color-muted, #f3f4f6);
 	}
 
-	.detail {
-		padding: 0.625rem 0.5rem 0.75rem;
-		display: flex;
-		flex-direction: column;
-		gap: 0.5rem;
-	}
-	.desc {
-		margin: 0;
-		font-size: 0.75rem;
-		color: var(--color-foreground-muted, #6b7280);
-	}
-	.none {
-		margin: 0;
-		font-size: 0.75rem;
-		color: var(--color-foreground-subtle, #9ca3af);
-	}
-	.repo {
-		display: flex;
-		align-items: center;
-		gap: 0.375rem;
-		margin: 0;
-		font-size: 0.75rem;
-		color: var(--color-foreground-muted, #6b7280);
-	}
-	.repo code {
-		font-size: 0.6875rem;
-		color: var(--color-foreground-subtle, #9ca3af);
-	}
-	.link {
-		border: none;
-		background: none;
-		padding: 0;
-		margin-left: 0.25rem;
-		font: inherit;
-		color: var(--color-primary);
-		cursor: pointer;
-	}
-	.link:hover {
-		text-decoration: underline;
-	}
-
-	.connections {
-		list-style: none;
-		margin: 0;
-		padding: 0;
-	}
-	.connection {
-		display: flex;
-		align-items: center;
-		gap: 0.625rem;
-		padding: 0.3125rem 0;
-		font-size: 0.75rem;
-		color: var(--color-foreground-muted, #6b7280);
-	}
-	.dot {
-		width: 6px;
-		height: 6px;
-		border-radius: 50%;
-		background: var(--color-success, #16a34a);
-		flex-shrink: 0;
-	}
-	.connection.broken .dot {
-		background: var(--color-error);
-	}
-	.cname {
-		flex: 1;
-		min-width: 0;
-		text-align: left;
-		border: none;
-		background: none;
-		padding: 0;
-		font: inherit;
-		color: var(--color-foreground, #111827);
-		cursor: pointer;
-		overflow: hidden;
-		text-overflow: ellipsis;
-		white-space: nowrap;
-	}
-	.cname:hover:not(.inert) {
-		text-decoration: underline;
-	}
-	.cname.inert {
-		cursor: default;
-	}
-	.cstatus {
-		flex-shrink: 0;
-		width: 9rem;
-	}
-	.connection.broken .cstatus {
-		color: var(--color-error);
-		font-weight: 500;
-	}
-	.cseen {
-		flex-shrink: 0;
-		width: 9rem;
-	}
-
-	.reason {
-		display: flex;
-		align-items: center;
-		gap: 0.375rem;
-		padding: 0 0 0.375rem 1rem;
-		font-size: 0.6875rem;
-		color: color-mix(in srgb, var(--color-error) 75%, #000);
-	}
-
-	@media (max-width: 640px) {
-		.cstatus,
-		.cseen {
-			display: none;
-		}
-	}
 </style>
