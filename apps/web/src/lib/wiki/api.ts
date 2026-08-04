@@ -555,6 +555,22 @@ export async function resolveNote(
 	if (!res.ok) throw new Error('Could not close that note');
 }
 
+/** One heart-rate sample for the day's Autonomic chart. */
+export interface DayHeartRateSample {
+	timestamp: string;
+	bpm: number;
+}
+
+/** The day's raw HR samples, oldest first. Sparse days are normal. */
+export async function getDayHeartRate(
+	date: string,
+	fetchFn: FetchFn = fetch
+): Promise<DayHeartRateSample[]> {
+	const res = await fetchFn(`/api/wiki/day/${encodeURIComponent(date)}/heart-rate`);
+	if (!res.ok) return [];
+	return res.json();
+}
+
 /** The article join row for a subject. `page_id` is what the editor opens. */
 export interface WikiArticleApi {
 	id: string;

@@ -2355,6 +2355,24 @@ pub struct DaySourcesQuery {
 
 /// Get the three raw record streams (location, calendar, audio) for a day, as
 /// spans — the homepage's "day before synthesis" view.
+/// GET /api/wiki/day/:date/heart-rate — the day's HR samples, for Autonomic.
+pub async fn day_heart_rate_handler(
+    State(state): State<AppState>,
+    Path(date): Path<String>,
+    Query(query): Query<DaySourcesQuery>,
+) -> Response {
+    match date.parse::<chrono::NaiveDate>() {
+        Ok(parsed_date) => api_response(
+            crate::api::wiki::get_day_heart_rate(state.db.pool(), parsed_date, query.tz.as_deref())
+                .await,
+        ),
+        Err(_) => error_response(Error::InvalidInput(format!(
+            "Invalid date format: {}",
+            date
+        ))),
+    }
+}
+
 pub async fn today_streams_handler(
     State(state): State<AppState>,
     Path(date): Path<String>,

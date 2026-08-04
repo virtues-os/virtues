@@ -719,6 +719,11 @@ pub async fn run(client: Virtues, host: &str, port: u16) -> Result<()> {
             "/api/wiki/day/:date/streams",
             get(api::wiki_get_day_streams_handler),
         )
+        // Wiki - Day heart rate (the Autonomic chart)
+        .route(
+            "/api/wiki/day/:date/heart-rate",
+            get(api::day_heart_rate_handler),
+        )
         // Admin API — LLM-authoring on-ramp for new actions
         .route("/api/admin/reconcile", post(api::admin_reconcile_handler))
         .route(
