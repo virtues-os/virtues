@@ -269,18 +269,29 @@
    target/type distinctions live in the hover preview and the block embed, not
    in inline chrome. Colour inherits the surrounding text; the underline is a
    muted hairline that firms up on hover. */
+/*
+ * The app-wide "quiet ref" idiom (see .ref-link--quiet in ref-badge.css):
+ * body-colored text over a dotted hairline that firms and warms on hover.
+ * Dotted = "this text is a live ref — hover peeks, click opens", the same
+ * signal as refs woven into the day biography and other reading prose. The
+ * editor used a solid underline here until reveal-on-touch made its surface
+ * the reading surface too; now the two would sit side by side meaning the
+ * same thing, so they say it the same way.
+ */
 .cm-ref-link {
 	color: inherit;
-	text-decoration: underline;
-	text-decoration-color: color-mix(in srgb, currentColor 32%, transparent);
-	text-decoration-thickness: 1px;
-	text-underline-offset: 2px;
+	text-decoration: underline dotted 1px;
+	text-decoration-color: color-mix(in srgb, currentColor 45%, transparent);
+	text-underline-offset: 3px;
 	cursor: pointer;
-	transition: text-decoration-color 0.12s ease;
+	transition:
+		color 0.15s ease,
+		text-decoration-color 0.15s ease;
 }
 
 .cm-ref-link:hover {
-	text-decoration-color: currentColor;
+	text-decoration-color: color-mix(in srgb, var(--color-primary) 60%, transparent);
+	color: var(--color-primary);
 }
 
 /* =============================================================================
