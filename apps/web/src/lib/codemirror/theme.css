@@ -298,9 +298,12 @@
    LIVE PREVIEW — IMAGES
    ============================================================================= */
 
+/* Padding, not margin — CodeMirror cannot measure margins. See the note on
+   .cm-table-wrapper; margins here desynchronize the heightmap and break
+   vertical caret motion for every line below the widget. */
 .cm-image-wrapper {
 	display: block;
-	margin: 0.5rem 0;
+	padding: 0.5rem 0;
 }
 
 .cm-image {
@@ -318,9 +321,14 @@
    LIVE PREVIEW — AUDIO PLAYER
    ============================================================================= */
 
+/* Transparent borders rather than padding here: this wrapper paints a surface,
+   so padding would inflate the visible card. Borders ARE included in the box
+   CodeMirror measures, and background-clip keeps the surface off them. */
 .cm-audio-wrapper {
 	display: block;
-	margin: 0.5rem 0;
+	border-top: 0.5rem solid transparent;
+	border-bottom: 0.5rem solid transparent;
+	background-clip: padding-box;
 	padding: 0.75rem;
 	background-color: var(--color-surface);
 	border-radius: 0.5rem;
@@ -353,7 +361,7 @@
 
 .cm-video-wrapper {
 	display: block;
-	margin: 0.5rem 0;
+	padding: 0.5rem 0;
 }
 
 .cm-video-player {
@@ -368,12 +376,19 @@
    LIVE PREVIEW — FILE CARD
    ============================================================================= */
 
+.cm-file-card-wrapper {
+	display: block;
+	padding: 0.5rem 0;
+}
+
+/* No vertical margin: this card is a block widget root (and also nests inside
+   .cm-image-wrapper as the broken-image fallback). Spacing comes from the
+   wrapper so CodeMirror can measure it — see .cm-table-wrapper. */
 .cm-file-card {
 	display: inline-flex;
 	align-items: center;
 	gap: 0.625rem;
 	padding: 0.5rem 0.75rem;
-	margin: 0.5rem 0;
 	background-color: var(--color-surface);
 	border: 1px solid var(--color-border);
 	border-radius: 0.5rem;
@@ -474,10 +489,16 @@
    LIVE PREVIEW — HORIZONTAL RULE
    ============================================================================= */
 
+/* The rule is a 1px CONTENT box with the color clipped to it, and the breathing
+   room is padding — so the whole 33px is measurable. Drawn with border-top and
+   margins, the 32px of margin was invisible to CodeMirror's heightmap. */
 .cm-hr-widget {
+	box-sizing: content-box;
 	border: none;
-	border-top: 1px solid var(--color-border);
-	margin: 1rem 0;
+	height: 1px;
+	padding: 1rem 0;
+	background-color: var(--color-border);
+	background-clip: content-box;
 }
 
 /* =============================================================================
@@ -583,9 +604,23 @@
    ============================================================================= */
 
 /* --- Wrapper (positions control overlays) --- */
+/*
+ * PADDING, never margin — the same rule the heading rhythm follows above, and
+ * for a sharper reason here.
+ *
+ * CodeMirror measures a block widget with getBoundingClientRect, which
+ * EXCLUDES margins, and stores that height in its heightmap. Margins therefore
+ * make the heightmap disagree with the real layout by exactly their size, and
+ * that gap breaks vertical caret motion outright: posAtCoords' widget-skipping
+ * scan compares each line's heightmap position against its true DOM position,
+ * the comparison never matches once the two have drifted, and the scan walks
+ * up past the table and off the top of the document — returning position 0.
+ * The symptom is ArrowUp anywhere below a table teleporting the caret to the
+ * document start (16px of margin was enough to do it).
+ */
 .cm-table-wrapper {
 	position: relative;
-	margin: 0.5rem 0;
+	padding: 0.5rem 0;
 }
 
 /* --- Table --- */

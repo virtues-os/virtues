@@ -440,7 +440,12 @@ class FileCardWidget extends WidgetType {
 	}
 
 	toDOM(view: EditorView) {
-		const wrapper = buildFileCardDOM(this.src, this.name);
+		// The card sits in a wrapper so the vertical spacing lives in a box
+		// CodeMirror can measure (see .cm-file-card / .cm-table-wrapper notes
+		// in theme.css — margins on a block widget corrupt the heightmap).
+		const wrapper = document.createElement('div');
+		wrapper.className = 'cm-file-card-wrapper';
+		wrapper.appendChild(buildFileCardDOM(this.src, this.name));
 
 		onContextGesture(wrapper, (x, y) => {
 			const range = mediaRangeAtDOM(view, wrapper);
