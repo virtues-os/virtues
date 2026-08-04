@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { onMount } from "svelte";
 	import { sidebarMode } from "$lib/stores/sidebarMode.svelte";
+	import { windowShellStore } from "$lib/stores/window-shell.svelte";
 	import AtlasIcon from "./AtlasIcon.svelte";
 
 	interface Props {
@@ -62,17 +63,36 @@
 		return () => clearInterval(id);
 	});
 
-	// Two doors, both of which swap the sidebar into their own mode rather than
+	// Three doors, each of which swaps the sidebar into its own mode rather than
 	// navigating anywhere directly — see lib/sidebar/modes.ts. Developer is its
-	// own door now instead of a section inside Settings, which is what let
-	// Settings drop the second row of underline tabs it had grown.
+	// own door instead of a section inside Settings, which is what let Settings
+	// drop the second row of underline tabs it had grown; Sources left Settings
+	// for the same reason, having been one row between Assistant and Billing.
+	//
+	// Ordered by how often you mean it: Sources answers "is my data still
+	// arriving", which is a question worth asking far more often than either of
+	// the other two.
 	//
 	// There is no "Sign Out" — auth is the device's proven iroh key, not a
 	// server session; to drop this device use Settings → Devices → Unpair.
+	// `href` opens the room's front page as well as swapping the rail. Settings
+	// and Developer deliberately don't: their first row is a preference screen
+	// you may not have come for, and swapping the rail under a pane you were
+	// reading is the cheaper move. Sources is the opposite — Overview *is* the
+	// answer to why you opened the door ("is my data still arriving"), so making
+	// you click twice for it would be the wrong default.
 	const doors = [
-		{ id: "developer", label: "Developer", icon: "developer" },
-		{ id: "settings", label: "Settings", icon: "settings" },
+		{ id: "sources", label: "Sources", icon: "sources", href: "/sources" },
+		{ id: "developer", label: "Developer", icon: "developer", href: null },
+		{ id: "settings", label: "Settings", icon: "settings", href: null },
 	];
+
+	function openDoor(door: (typeof doors)[number]) {
+		sidebarMode.enter(door.id);
+		if (door.href) {
+			windowShellStore.navigate(door.href, { label: door.label });
+		}
+	}
 </script>
 
 <div
@@ -86,7 +106,7 @@
 			class="door"
 			class:collapsed
 			class:active={sidebarMode.activeId === door.id}
-			onclick={() => sidebarMode.enter(door.id)}
+			onclick={() => openDoor(door)}
 			title={door.label}
 		>
 			<AtlasIcon name={door.icon} />

@@ -12,7 +12,6 @@
 
 	  You          /virtues/you            — profile, theme
 	  Assistant    /virtues/assistant      — name, persona, model
-	  Sources      /virtues/sources        — connected data sources
 	  Billing      /virtues/billing        — plan, wallet, and usage on one page
 	  Box          /virtues/box            — box stats / health
 	  Devices      /virtues/devices        — paired devices (Unpair lives here)
@@ -35,7 +34,6 @@
 
 	import ProfileView from '$lib/components/tabs/views/ProfileView.svelte';
 	import AssistantView from '$lib/components/tabs/views/AssistantView.svelte';
-	import ConnectionsPanel from '$lib/components/applets/ConnectionsPanel.svelte';
 	import BillingView from '$lib/components/tabs/views/BillingView.svelte';
 	import UsageTab from '$lib/components/tabs/views/UsageTab.svelte';
 	import SystemInfoView from '$lib/components/tabs/views/SystemInfoView.svelte';
@@ -56,11 +54,6 @@
 		'/virtues/account': '/virtues/you',
 		'/virtues/profile': '/virtues/you',
 		'/virtues/account/assistant': '/virtues/assistant',
-		// Connections → Sources (Tools & apps removed)
-		'/virtues/connections': '/virtues/sources',
-		'/virtues/connections/sources': '/virtues/sources',
-		'/virtues/connections/tools': '/virtues/sources',
-		'/virtues/tools': '/virtues/sources',
 		// Billing is one page again (plan · wallet · usage)
 		'/virtues/account/billing': '/virtues/billing',
 		'/virtues/account/usage': '/virtues/billing',
@@ -85,7 +78,22 @@
 		'/virtues/activity': '/virtues/developer/activity',
 	};
 
+	// Sources left Settings for its own door, so these can't be rewritten in
+	// place the way the others are — `/sources` is a different tab type, and
+	// only `navigate` re-resolves that through the registry.
+	const SOURCES_ALIASES = [
+		'/virtues/sources',
+		'/virtues/connections',
+		'/virtues/connections/sources',
+		'/virtues/connections/tools',
+		'/virtues/tools',
+	];
+
 	$effect(() => {
+		if (SOURCES_ALIASES.includes(tab.route)) {
+			windowShellStore.navigate('/sources', { label: 'Sources' });
+			return;
+		}
 		const next = LEGACY_ROUTES[tab.route];
 		if (next) windowShellStore.updateTab(tab.id, { route: next });
 	});
@@ -93,14 +101,13 @@
 	type Section =
 		| 'you'
 		| 'assistant'
-		| 'sources'
 		| 'billing'
 		| 'box'
 		| 'devices'
 		| 'this-mac'
 		| 'developer';
 
-	const SECTIONS = ['assistant', 'sources', 'billing', 'box', 'devices', 'this-mac', 'developer'];
+	const SECTIONS = ['assistant', 'billing', 'box', 'devices', 'this-mac', 'developer'];
 
 	// (section, sub) are a pure function of the route. `raw` is everything after
 	// `/virtues/`; segment 1 = section, segment 2 = sub-section (Developer only).
@@ -126,9 +133,6 @@
 			<ProfileView {tab} {active} />
 		{:else if section === 'assistant'}
 			<AssistantView {tab} {active} />
-		{:else if section === 'sources'}
-			<!-- ConnectionsPanel is self-driven (no tab/active props). -->
-			<ConnectionsPanel />
 		{:else if section === 'billing'}
 			<!-- Plan · wallet · usage on one scrolling page. Each view is a
 			     full-height <Page>; neutralize that so .content is the one scroller. -->
