@@ -1,0 +1,274 @@
+# Sources as packages
+
+**Status:** proposed, 2026-08-04. Supersedes nothing; extends
+`docs/applets-overhaul-plan.md` (§ Git / distribution).
+
+The idea: a source stops being a row in one compiled-in TOML file and becomes a
+*package* — a directory carrying its own `[[source]]` declaration plus the
+applets that serve it. Git becomes one way to deliver a package, not the model
+itself. First-party sources (iOS, Mac, Android) additionally carry a pointer to
+the public repo that builds them.
+
+Motivation: adding a provider today means editing `applets/sources.toml`,
+cutting a box release, *and* — for OAuth — a code change and deploy of
+virtues-api. That is an unbounded centralized bottleneck on an appliance whose
+entire pitch is that the owner owns everything.
+
+---
+
+## What the sweep found
+
+Five things changed the shape of this plan. They are load-bearing; read them
+before the phases.
+
+### 1. The git importer does not work at all
+
+`applet_git_import.rs:293-299` queries `app_applets.dir`. That column was
+dropped by migration `0051_applets_drop_runtime.sql:15`. `sqlx::query_as` is
+unchecked, so it compiles and fails at runtime with `column "dir" does not
+exist`. The call site is `ids_under_slug`, invoked at `applet_git_import.rs:77`
+**before** the clone — so nothing is ever cloned and every import returns 400.
+
+There are three pure-function unit tests and zero integration coverage, which is
+exactly why this shipped undetected. **"The git model already half-works" was
+wrong. It works zero percent.**
+
+### 2. There is no sandbox, and `command` is not restricted to our binaries
+
+The manifest's `command` is argv, spawned with no `current_dir`, **no
+`env_clear`**, no uid change, no rlimit, no namespace
+(`applet_runner/mod.rs:633-640`). Consequences, all verified:
+
+- The child inherits the server's whole environment — including
+  `VIRTUES_ENCRYPTION_KEY` (the master key for every credential in the vault)
+  and `DATABASE_URL` (the unscoped pool). `load_credentials`' doc comment claims
+  "the master encryption key never crosses the subprocess boundary"; that is
+  true of the explicit stdin payload and false in practice.
+- `resolve_program` (`:724-792`) passes a bare name through to the OS PATH
+  loader when it matches no workspace binary. `python3`, `node`, `bash` all
+  resolve. There is no allowlist.
+- `applets/AUTHORING.md:94` and `MANIFEST_SCHEMA.json:43` **actively teach** the
+  interpreter form: `command = ["python3", "applets/my_action/main.py"]`.
+- The systemd unit deliberately disables hardening
+  (`install.rs:1286-1305`, `NoNewPrivileges=false`), and the installer writes
+  `virtues ALL=(ALL) NOPASSWD: ALL` to `/etc/sudoers.d/virtues`
+  (`install.rs:784-789`).
+
+So a git-delivered package containing one line of TOML and one `.py` file gets
+arbitrary code execution as `virtues`, which is one `sudo -n` from root, with
+the vault key in its environment. No compiler required. The 21 shipped applets
+all happen to be `command = ["<bare_name>"]` compiled bins, which makes the tree
+*look* constrained; nothing enforces it.
+
+The honest framing: **`import-git` is not currently a feature with a security
+gap. It is a remote-code-execution endpoint with a UI.** It is gated only by the
+same blanket `AuthUser` as every other route — `/api/admin/` is naming, not
+middleware — while changing a BYO API key *is* sudo-gated. That asymmetry is the
+clearest thing to fix.
+
+### 3. The catalog is closer to package-ready than expected
+
+`load_catalog()` already reads `sources.toml` from disk
+(`applet_templates/mod.rs:389-397`), falling back to the `include_str!` bake
+only if the file is unreadable. But: shipped root only, **replace not merge**,
+no per-source provenance, and no duplicate-id check (actions get one, sources
+don't). The state root — where imports and chat-authored applets live —
+contributes zero sources.
+
+The merge shape to copy already exists ten lines below, in the action overlay
+(`mod.rs:425-432`).
+
+### 4. A missing source aborts reconcile box-wide
+
+`mod.rs:699-704` — a template referencing an unknown source id is a hard `Err`
+that returns from `reconcile_templates` **mid-pass**, after the orphan GC has
+already deleted rows and before the system GC runs. Every remaining template is
+skipped. That error path is shared by boot, the admin reconcile, the OAuth
+callback, and pair-consume.
+
+So one package that removes a source but leaves a manifest behind bricks
+reconcile for the whole box. This must become per-template before anything
+outside our release can contribute sources.
+
+Related: credentials are **never** reconciled against the catalog. Remove a
+source and its credential rows survive with a `source_id` that resolves to
+nothing — invisible in the UI, un-revokable, `auth_type` `"unknown"`, and their
+fan-out applets keep running.
+
+### 5. `oauth_direct` is small, and the hard part isn't code
+
+The proxy is bolted on at exactly two seams — `proxy_exchange` and
+`proxy_refresh` — each `(source_id, token) → one normalized struct`. Everything
+else (AES-256-GCM vault, state HMAC, `expires_at`/`next_refresh_at`, the
+JIT-refresh mutex, the `credential_refresh` cron, the applet secret contract) is
+already provider- and proxy-agnostic. `secrets` is `serde_json::Value` end to
+end, so a `{client_id, client_secret, access_token, refresh_token}` blob stores
+with **zero migration**, and `settings_byo.rs` is a working precedent for
+"user's own credential as a synthetic credentials row."
+
+Two useful corrections to my earlier framing:
+
+- **The proxy is a client-secret custodian, not a token custodian.** The box
+  already holds raw provider refresh tokens at rest. Going direct does not
+  change the box's exposure to tokens; it only adds a client_secret.
+- `oauth2 = "4.4"` is already in `virtues-core/Cargo.toml:110` and **referenced
+  by nothing** — a dead dependency whose PKCE support is already paid for.
+
+The real obstacle is `redirect_uri`. The box lives at `.local` / `127.0.0.1`,
+and Google will not accept a `.local` redirect. Loopback redirects are accepted
+for "desktop app" client types — which also makes the client_secret concern
+mostly moot, since those secrets are non-confidential by design. That is a
+product question about registration friction, not an engineering one.
+
+One coupling to check before assuming BYO can bypass the proxy freely:
+`docs/networking-relay-tee.md:209` reuses the OAuth proxy as a Sybil-resistance
+chokepoint for relay payment gating.
+
+---
+
+## What a package is
+
+A directory, discoverable in either root, containing:
+
+```
+<slug>/
+  sources.toml         # zero or more [[source]] rows        (new: now scanned)
+  <applet>/manifest.toml
+  <applet>/face/       # optional
+```
+
+The scanner rule is unchanged: a dir with `manifest.toml` is an applet, a dir
+without one is a namespace descended one level. Ids stay
+`applet_<dir with / → __>`, which is what keeps packages from colliding.
+
+Delivery is orthogonal: shipped in the release, cloned by git, written by chat,
+or copied in by hand. `state_root` wins over `shipped_root`, so a package can
+shadow a built-in and deleting it reverts cleanly — that precedence already
+exists and is documented as a feature.
+
+---
+
+## Phases
+
+Ordered so that each phase is independently shippable and no phase opens a door
+before the lock for it exists.
+
+### P0 — `env_clear` on applet spawn *(do this regardless)*
+
+Add `.env_clear()` plus an explicit passthrough allowlist at
+`applet_runner/mod.rs:633`. Applets receive their credentials on stdin by
+design; there is no reason for `VIRTUES_ENCRYPTION_KEY` or the unscoped
+`DATABASE_URL` to be in their environment.
+
+Costs nothing, needs no design, closes the gap between `load_credentials`' doc
+comment and its behavior, and is worth doing whether or not any of the rest
+happens. **Independent of this plan; ship it first.**
+
+### P1 — First-party repo pointers *(cheap, pure win)*
+
+Add an optional `repo` (and `repo_ref`) to `Source`. Populate it for `ios` and
+`mac`. Surface it on the Catalog row as "read the code."
+
+This is provenance, not an update mechanism — the collectors ship through the
+App Store, a notarized DMG, and the Tauri updater, and a git ref cannot install
+any of them. For an appliance whose pitch is verifiability, "here is the exact
+source for the collector you just paired" is worth more than most features, and
+it costs an afternoon.
+
+### P2 — Merge the catalog *(the keystone)*
+
+1. `load_catalog()` merges `[[source]]` rows from shipped root, then each
+   package dir, last-wins-by-id — mirroring the action overlay at `mod.rs:425`.
+2. Add `dir` / provenance to `Source` so a row is attributable to a package.
+3. Extend the dedup pass to sources; today uniqueness is asserted only in a test.
+4. Make the unknown-source error **per-template**, not a global abort: skip that
+   template, log it loudly, keep reconciling.
+5. Reconcile credentials against the catalog — at minimum, surface
+   catalog-less credentials in the UI so they can be revoked.
+6. Add `shipped_source_count` if any source-driven deletion is introduced; the
+   existing `shipped_count` guard counts actions only and gives sources no
+   protection.
+
+After P2 a new provider is a directory, no release required — which is most of
+the value, and it needs no git at all.
+
+### P3 — Fix and instrument the importer
+
+1. Fix `ids_under_slug` to key on the `applet_<slug>` id prefix instead of the
+   dropped `dir` column. Add the integration test whose absence hid this.
+2. Add the provenance columns `docs/applets-overhaul-plan.md:137` already names:
+   `repo_url`, `git_ref`, `commit`, `imported_at`, `forked_from`. Persist the
+   resolved SHA — today it is computed, returned in JSON, and dropped by the TS
+   client.
+3. Slug must include host and owner. Today `github.com/alice/tools` and
+   `evil.com/mallory/tools` both become `tools`, and a re-import silently
+   re-fetches the *original* remote while reporting success.
+4. URL policy: drop `git://` and `http://`, add a deny-list for link-local and
+   private ranges, follow-redirect checks, and a subprocess timeout. There is
+   none of this today.
+5. Pin by commit. `git clone --branch <sha>` does not work, so first-import
+   pinning needs `init` + `fetch` + `checkout`.
+
+### P4 — Execution policy *(the gate)*
+
+Nothing user-facing should install a package until this exists. Decide, in
+order of increasing effort:
+
+- **argv policy by provenance.** Shipped packages may name workspace binaries;
+  imported packages may not spawn arbitrary interpreters. This is a reconcile
+  time check and it is cheap.
+- **Sudo-gate import**, matching `change_byo_key`. A trust warning in
+  `GitImportModal` — today the caveat exists only as a source comment and never
+  reaches the screen.
+- **Tier what a package may be.** Face-only and agent-only packages are already
+  genuinely bounded (opaque-origin iframe + read-only PG role; a 12-tool
+  allowlist). A `command` package is not bounded at all. Consider allowing only
+  the first two from git until the `systemd-run` jail
+  (`docs/applets-overhaul-plan.md:129`) exists — `code_interpreter` already
+  proves the pattern works here.
+
+### P5 — `oauth_direct` spike
+
+One provider, self-serve registration, loopback redirect. Prove the variant end
+to end, then decide whether it generalizes. Prerequisites: a
+`SourceAuth::OauthDirect` variant, `direct_{start,exchange,refresh}` in
+`virtues-helpers/auth`, and refactoring the `msg.contains("upstream 4")`
+reauth detection (`refresh.rs:131`) into a typed error — two call sites
+currently depend on a substring of an error message.
+
+Independently worth doing: a capability endpoint on virtues-api listing
+supported providers. Today the box and the proxy are coupled by convention and
+drift silently into a 404.
+
+---
+
+## Explicitly not doing
+
+- **Package-carried global migrations.** Applets own private `applet_<slug>`
+  schemas; package DDL stays inside them and never enters the `sqlx::migrate!`
+  lineage. Migration 52 killed a box for 3¼ hours when *one* team shared a
+  counter under a lock; N third-party packages sharing one is strictly worse,
+  and git gives no coordination.
+- **Treating `MANIFEST_SCHEMA.json` as a stable public API yet.** It is already
+  public and tracked — that was never the issue. The cost is that breaking it
+  starts costing other people, and we should not accept that until P2–P4 have
+  settled the shape.
+- **A registry.** `docs/applets-overhaul-plan.md:139` is right: git URLs, no
+  registry, sharing is v2.
+- **Self-service OAuth for the hosted proxy.** A package can declare a
+  `via_proxy` source, but the proxy must have a route and a registered app; that
+  stays gated until P5 removes the dependency.
+
+---
+
+## Open questions
+
+1. Does the relay's Sybil-resistance design depend on the OAuth proxy being in
+   every path (`networking-relay-tee.md:209`)? If yes, P5 is constrained.
+2. Which providers accept a loopback `redirect_uri` under self-serve
+   registration? That set determines whether P5 generalizes or stays a
+   one-provider escape hatch.
+3. Do we want package updates to be automatic at all? Pinned refs plus a
+   review-before-run gate is *against* the updatability framing that motivated
+   this. Auto-updating a remote that runs against the whole lake is the thing
+   P4 exists to prevent.
