@@ -35,6 +35,14 @@ function detectFileType(url: string, alt: string): FileType {
 	if (IMAGE_EXTS.test(url) || IMAGE_EXTS.test(alt)) return 'image';
 	if (AUDIO_EXTS.test(url) || AUDIO_EXTS.test(alt)) return 'audio';
 	if (VIDEO_EXTS.test(url) || VIDEO_EXTS.test(alt)) return 'video';
+	// Extensionless EXTERNAL urls default to image: `![…]` is image syntax,
+	// and the modern web serves images from extensionless CDN/signed urls
+	// (unsplash's `photo-…?w=400` rendered as a file-card button before this).
+	// A wrong guess self-heals — ImageWidget swaps to a file card on error.
+	// Internal paths (drive downloads) keep extension detection: the drive
+	// picker embeds pdfs and archives with `![name](/api/drive/…)`, and their
+	// alt carries the real filename for the tests above.
+	if (/^https?:\/\//i.test(url)) return 'image';
 	return 'file';
 }
 
@@ -61,6 +69,56 @@ function getFilename(url: string, alt: string): string {
 function getFileExtension(name: string): string {
 	const dot = name.lastIndexOf('.');
 	return dot >= 0 ? name.slice(dot + 1).toLowerCase() : '';
+}
+
+/**
+ * The file-card DOM, shared by FileCardWidget and by ImageWidget's error
+ * fallback (an extensionless external url guessed as image that turns out to
+ * be something else degrades to this card instead of an error box).
+ * Context gestures are the caller's to attach.
+ */
+function buildFileCardDOM(src: string, name: string): HTMLAnchorElement {
+	const card = document.createElement('a');
+	card.className = 'cm-file-card';
+	card.href = src;
+	card.target = '_blank';
+	card.rel = 'noopener';
+	card.addEventListener('click', (e) => {
+		e.stopPropagation();
+	});
+
+	const ext = getFileExtension(name);
+
+	const icon = document.createElement('iconify-icon');
+	icon.setAttribute('icon', getFileIcon(ext));
+	icon.setAttribute('width', '20');
+	icon.className = 'cm-file-card-icon';
+	card.appendChild(icon);
+
+	const info = document.createElement('div');
+	info.className = 'cm-file-card-info';
+
+	const nameEl = document.createElement('span');
+	nameEl.className = 'cm-file-card-name';
+	nameEl.textContent = name;
+	info.appendChild(nameEl);
+
+	if (ext) {
+		const extEl = document.createElement('span');
+		extEl.className = 'cm-file-card-ext';
+		extEl.textContent = ext.toUpperCase();
+		info.appendChild(extEl);
+	}
+
+	card.appendChild(info);
+
+	const dl = document.createElement('iconify-icon');
+	dl.setAttribute('icon', 'ri:download-line');
+	dl.setAttribute('width', '16');
+	dl.className = 'cm-file-card-download';
+	card.appendChild(dl);
+
+	return card;
 }
 
 /** Map file extension to a Remix Icon name */
@@ -265,8 +323,13 @@ class ImageWidget extends WidgetType {
 			img.style.maxWidth = '100%';
 		}
 		img.onerror = () => {
-			wrapper.textContent = `Image failed to load: ${this.displayAlt || this.src}`;
-			wrapper.className = 'cm-image-error';
+			// Wrong guess or dead link — degrade to the file card, which stays
+			// clickable and keeps this wrapper's context menu, instead of the
+			// old dead-end error box. The ResizeObserver already attached to
+			// the wrapper re-measures the height change for CodeMirror.
+			wrapper.replaceChildren(
+				buildFileCardDOM(this.src, getFilename(this.src, this.displayAlt)),
+			);
 		};
 
 		wrapper.appendChild(img);
@@ -377,45 +440,7 @@ class FileCardWidget extends WidgetType {
 	}
 
 	toDOM(view: EditorView) {
-		const wrapper = document.createElement('a');
-		wrapper.className = 'cm-file-card';
-		wrapper.href = this.src;
-		wrapper.target = '_blank';
-		wrapper.rel = 'noopener';
-		wrapper.addEventListener('click', (e) => {
-			e.stopPropagation();
-		});
-
-		const ext = getFileExtension(this.name);
-
-		const icon = document.createElement('iconify-icon');
-		icon.setAttribute('icon', getFileIcon(ext));
-		icon.setAttribute('width', '20');
-		icon.className = 'cm-file-card-icon';
-		wrapper.appendChild(icon);
-
-		const info = document.createElement('div');
-		info.className = 'cm-file-card-info';
-
-		const nameEl = document.createElement('span');
-		nameEl.className = 'cm-file-card-name';
-		nameEl.textContent = this.name;
-		info.appendChild(nameEl);
-
-		if (ext) {
-			const extEl = document.createElement('span');
-			extEl.className = 'cm-file-card-ext';
-			extEl.textContent = ext.toUpperCase();
-			info.appendChild(extEl);
-		}
-
-		wrapper.appendChild(info);
-
-		const dl = document.createElement('iconify-icon');
-		dl.setAttribute('icon', 'ri:download-line');
-		dl.setAttribute('width', '16');
-		dl.className = 'cm-file-card-download';
-		wrapper.appendChild(dl);
+		const wrapper = buildFileCardDOM(this.src, this.name);
 
 		onContextGesture(wrapper, (x, y) => {
 			const range = mediaRangeAtDOM(view, wrapper);
