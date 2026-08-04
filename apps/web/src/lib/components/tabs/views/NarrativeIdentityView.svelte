@@ -335,8 +335,6 @@
 	.cap {
 		font-size: 0.6875rem;
 		font-weight: 500;
-		text-transform: uppercase;
-		letter-spacing: 0.08em;
 		color: var(--color-foreground-subtle);
 		margin-bottom: 0.625rem;
 	}

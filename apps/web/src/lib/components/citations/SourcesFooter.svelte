@@ -269,7 +269,6 @@
 	.source-type {
 		font-size: 0.6875rem;
 		color: var(--color-foreground-subtle);
-		text-transform: uppercase;
 		letter-spacing: 0.025em;
 	}
 

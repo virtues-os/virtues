@@ -882,7 +882,7 @@
 	.memo { display: flex; align-items: baseline; gap: 8px; margin-top: 0.45rem; }
 	.memo-label {
 		flex-shrink: 0; font-size: 10px; letter-spacing: 0.06em;
-		text-transform: uppercase; color: var(--color-foreground-subtle);
+ color: var(--color-foreground-subtle);
 	}
 	.memo-input {
 		flex: 1; min-width: 0; display: block; resize: none; overflow: hidden;
@@ -894,7 +894,7 @@
 	.memo-input::placeholder { color: var(--color-foreground-subtle); }
 
 	.props {
-		font-size: 11px; letter-spacing: 0.04em; text-transform: uppercase;
+		font-size: 11px;
 		color: var(--color-foreground-subtle); padding-left: 60px;
 	}
 

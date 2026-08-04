@@ -356,13 +356,13 @@
 	@keyframes rv { to { opacity: 1; transform: none; } }
 	@media (prefers-reduced-motion: reduce) { .rv { animation: none; opacity: 1; transform: none; } }
 
-	.kicker { font-family: var(--font-mono); font-size: 10.5px; letter-spacing: 0.2em; text-transform: uppercase; color: var(--color-foreground-subtle); margin: 0 0 18px; }
+	.kicker { font-family: var(--font-mono); font-size: 10.5px; color: var(--color-foreground-subtle); margin: 0 0 18px; }
 	.link { font-family: var(--font-sans); font-size: 13.5px; font-weight: 500; color: var(--color-primary); background: none; border: 0; padding: 0; cursor: pointer; }
 	.link:hover { text-decoration: underline; text-underline-offset: 3px; }
 	.link .arw { opacity: 0.7; }
 
 	.mast { padding-top: clamp(30px, 5vh, 52px); display: flex; align-items: baseline; gap: 16px; }
-	.mast .wm { font-family: var(--font-serif); font-weight: 600; font-size: 16px; letter-spacing: 0.14em; text-transform: uppercase; }
+	.mast .wm { font-family: var(--font-serif); font-weight: 600; font-size: 16px; }
 	.mast .dl { margin-left: auto; font-size: 11px; letter-spacing: 0.08em; color: var(--color-foreground-subtle); }
 	.mast .clk { color: var(--color-foreground); }
 
@@ -387,7 +387,7 @@
 	.dialogue { margin: clamp(48px, 8vh, 90px) 0 0; display: grid; grid-template-columns: 1fr 1fr; gap: clamp(28px, 4vw, 44px); }
 	@media (max-width: 720px) { .dialogue { grid-template-columns: 1fr; gap: clamp(32px, 6vh, 44px); } }
 	.panel { background: color-mix(in srgb, var(--color-primary) 6%, var(--color-background)); border-radius: 14px; padding: clamp(22px, 3vw, 30px); }
-	.panel .k { font-family: var(--font-mono); font-size: 10px; letter-spacing: 0.18em; text-transform: uppercase; color: var(--color-primary); margin: 0 0 14px; }
+	.panel .k { font-family: var(--font-mono); font-size: 10px; color: var(--color-primary); margin: 0 0 14px; }
 	.panel .q { font-family: var(--font-serif); font-size: 17px; line-height: 1.45; color: var(--color-foreground); margin: 0; font-style: normal; }
 	.panel .q .m { color: var(--color-primary); }
 	.panel .q .s { color: var(--color-foreground-subtle); }

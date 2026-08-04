@@ -218,7 +218,6 @@
 		font-size: 11px;
 		font-weight: 500;
 		color: var(--color-foreground-subtle);
-		text-transform: uppercase;
 		letter-spacing: 0.5px;
 	}
 

@@ -542,8 +542,6 @@
 		font-size: 0.75rem;
 		font-weight: 500;
 		color: var(--color-foreground-muted, #6b7280);
-		text-transform: uppercase;
-		letter-spacing: 0.04em;
 	}
 	.field input,
 	.field textarea {
@@ -621,8 +619,6 @@
 	.runs h3 {
 		font-size: 0.8125rem;
 		font-weight: 600;
-		text-transform: uppercase;
-		letter-spacing: 0.04em;
 		color: var(--color-foreground-muted, #6b7280);
 		margin: 0 0 0.75rem;
 	}

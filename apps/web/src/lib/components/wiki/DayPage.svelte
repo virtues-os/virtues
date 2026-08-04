@@ -862,8 +862,6 @@
 		margin: 0;
 		font-family: var(--font-sans, system-ui, sans-serif);
 		font-size: 0.6875rem;
-		letter-spacing: 0.06em;
-		text-transform: uppercase;
 		color: var(--color-foreground-subtle);
 	}
 
@@ -985,8 +983,6 @@
 		padding: 0;
 		font-family: var(--font-sans, sans-serif);
 		font-size: 0.6875rem;
-		letter-spacing: 0.04em;
-		text-transform: uppercase;
 		color: var(--color-foreground-subtle);
 		cursor: pointer;
 		vertical-align: middle;

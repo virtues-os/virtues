@@ -278,7 +278,6 @@
 		border-radius: 3px;
 		font-size: 0.5625rem;
 		letter-spacing: 0.02em;
-		text-transform: uppercase;
 		color: var(--color-foreground-subtle);
 		white-space: nowrap;
 	}

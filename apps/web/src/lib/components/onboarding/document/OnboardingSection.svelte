@@ -54,8 +54,6 @@
 	.kicker {
 		font-family: var(--font-mono);
 		font-size: 0.6875rem;
-		letter-spacing: 0.16em;
-		text-transform: uppercase;
 		color: var(--color-foreground-subtle);
 		margin: 0 0 1rem;
 	}

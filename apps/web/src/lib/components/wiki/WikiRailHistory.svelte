@@ -215,8 +215,6 @@
 	.history-title {
 		font-size: 0.6875rem;
 		font-weight: 600;
-		text-transform: uppercase;
-		letter-spacing: 0.05em;
 		flex: 1;
 	}
 
@@ -332,8 +330,6 @@
 	.entry-author {
 		font-size: 0.625rem;
 		font-weight: 500;
-		text-transform: uppercase;
-		letter-spacing: 0.05em;
 		padding: 0.125rem 0.375rem;
 		border-radius: 0.25rem;
 	}
