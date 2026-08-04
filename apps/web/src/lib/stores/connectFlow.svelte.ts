@@ -13,7 +13,6 @@ import type { SourceCatalogItem } from '$lib/api/client';
 
 type Pending =
 	| { kind: 'none' }
-	| { kind: 'in_app'; displayName: string; onThisDevice: boolean }
 	| { kind: 'pair'; deviceType: 'ios' | 'mac'; displayName: string }
 	| { kind: 'chat_import' }
 	| { kind: 'api_key'; source: SourceCatalogItem };
@@ -28,13 +27,6 @@ class ConnectFlowStore {
 		this.error = null;
 		const intent = await connectIntent(source);
 		switch (intent.kind) {
-			case 'in_app':
-				this.pending = {
-					kind: 'in_app',
-					displayName: intent.displayName,
-					onThisDevice: intent.onThisDevice
-				};
-				return;
 			case 'pair':
 				this.pending = {
 					kind: 'pair',
