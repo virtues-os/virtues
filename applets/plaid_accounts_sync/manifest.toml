@@ -7,3 +7,6 @@ triggers = ["cron", "manual"]
 default_cron = "0 0 */6 * * *"
 per_credential = true
 source = { id = "plaid" }
+
+# Ontologies this applet writes — drives "what would fill this stream".
+writes = ["financial_account"]

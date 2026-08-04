@@ -129,12 +129,34 @@
 			// alone. Applying "stopped"/"quiet" to something that never started
 			// is what made nineteen rows read as nineteen problems.
 			const arrived = group.filter((s) => s.total > 0);
-			const waiting = group.filter((s) => s.total === 0);
+			const none = group.filter((s) => s.total === 0);
+			// The three reasons a stream is empty, which the old single "not
+			// connected" label ran together. Only the middle one is actionable,
+			// and only the middle one should read like an offer.
+			// `?? []` is not defensive programming for its own sake: a box running
+			// a build older than these fields returns neither, and the page must
+			// degrade to "nothing arrived" rather than throw on a missing array.
+			const providers = (s: StreamHealth) => s.provided_by ?? [];
+			const silent = none.filter((s) => s.connected === true);
+			const available = none.filter((s) => !s.connected && providers(s).length > 0);
+			const unsupported = none.filter((s) => !s.connected && providers(s).length === 0);
+			// One offer line per source, so "Email or Calendar — connect Google"
+			// rather than a line per stream.
+			const offers = new Map<string, string[]>();
+			for (const s of available) {
+				for (const p of providers(s)) {
+					const list = offers.get(p);
+					if (list) list.push(s.display_name);
+					else offers.set(p, [s.display_name]);
+				}
+			}
 			return {
 				id: d,
 				label: DOMAIN_LABEL[d] ?? d.charAt(0).toUpperCase() + d.slice(1),
 				arrived,
-				waiting,
+				silent,
+				offers: [...offers].map(([source, names]) => ({ source, names })),
+				unsupported,
 				dark: arrived.length === 0,
 				attention: group.some((s) => s.status === 'stalled')
 			};
@@ -196,6 +218,13 @@
 		windowShellStore.navigate('/sources/catalog', { label: 'Sources · Catalog' });
 	}
 
+	/** Start the connect flow from a source's display name, which is what the
+	 *  stream map hands back. */
+	async function connectNamed(displayName: string) {
+		const source = store.catalog.find((s) => s.name === displayName);
+		if (source) await connectFlow.start(source);
+	}
+
 	function openSource(sourceId: string) {
 		windowShellStore.navigate(`/sources/${sourceId}`, { label: store.sourceLabel(sourceId) });
 	}
@@ -205,7 +234,7 @@
 	<div class="vital">
 		<div class="vital-head"><span class="vital-name">{name}</span></div>
 		<div class="vital-figure">
-			<span class="vital-big mono {tone}">{figure}</span>
+			<span class="vital-big {tone}">{figure}</span>
 			{#if unit}<span class="vital-unit">{unit}</span>{/if}
 		</div>
 		<div class="vital-sub">{sub}</div>
@@ -335,12 +364,33 @@
 							{/each}
 						</div>
 					{/if}
-					{#if d.waiting.length > 0}
-						<p class="waiting">
-							Nothing yet: {joinNames(
-								d.waiting.map((s) => s.display_name),
+					<!-- Connected and capable, nothing arrived. Usually a permission
+					     on the device, so no "connect" offer would help. -->
+					{#if d.silent.length > 0}
+						<p class="aside">
+							Waiting on {joinNames(
+								d.silent.map((s) => s.display_name),
+								'and'
+							)} — connected, nothing delivered yet.
+						</p>
+					{/if}
+
+					<!-- The one actionable line: something in the catalog fills this. -->
+					{#each d.offers as o (o.source)}
+						<p class="aside offer">
+							{joinNames(o.names, 'and')} —
+							<button type="button" class="inline" onclick={() => connectNamed(o.source)}>
+								connect {o.source}
+							</button>
+						</p>
+					{/each}
+
+					{#if d.unsupported.length > 0}
+						<p class="aside quiet">
+							No source for {joinNames(
+								d.unsupported.map((s) => s.display_name),
 								'or'
-							)}
+							)} yet.
 						</p>
 					{/if}
 				</div>
@@ -427,9 +477,17 @@
 		gap: 0.75rem;
 	}
 	.vital {
-		padding: 0.875rem 1rem;
-		border: 1px solid var(--color-border, #e5e7eb);
-		border-radius: 10px;
+		padding: 0.9375rem 1.0625rem 1rem;
+		border: 1px solid color-mix(in srgb, var(--color-foreground) 9%, transparent);
+		border-radius: 9px;
+	}
+	@media (min-resolution: 2dppx) {
+		/* Where the display can render it, take the rule below 1px so the card
+		   reads as an edge rather than as a drawn box. */
+		.vital {
+			border-width: 0.5px;
+			border-color: color-mix(in srgb, var(--color-foreground) 14%, transparent);
+		}
 	}
 	.vital-name {
 		font-size: 0.75rem;
@@ -442,15 +500,21 @@
 		margin-top: 0.375rem;
 	}
 	.vital-big {
-		font-size: 1.75rem;
-		line-height: 1.1;
-		letter-spacing: -0.02em;
+		font-family: var(--font-serif, ui-serif, Georgia, serif);
+		font-size: 1.875rem;
+		line-height: 1;
+		/* Lining + tabular so 0 and 10 occupy the same width and the four cards
+		   agree on a baseline grid. Optical sizing keeps the serif from going
+		   spindly at display size. */
+		font-variant-numeric: lining-nums tabular-nums;
+		letter-spacing: -0.015em;
 		color: var(--color-foreground, #111827);
 	}
 	.vital-big.crit {
 		color: var(--color-error);
 	}
 	.vital-unit {
+		font-variant-numeric: lining-nums tabular-nums;
 		font-size: 0.8125rem;
 		color: var(--color-foreground-subtle, #9ca3af);
 	}
@@ -461,6 +525,8 @@
 	}
 	.mono {
 		font-family: var(--font-mono, ui-monospace, monospace);
+		font-variant-numeric: tabular-nums;
+		font-feature-settings: 'ss01';
 	}
 
 	/* ── Domains ──────────────────────────────────────────────────────── */
@@ -491,10 +557,28 @@
 		font-weight: 500;
 	}
 
-	.waiting {
+	/* The three not-yet lines. Same size, decreasing ink: an offer you can act
+	   on, a wait you cannot, and a limit that is ours rather than yours. */
+	.aside {
 		margin: 0.25rem 0 0;
 		font-size: 0.75rem;
+		line-height: 1.5;
+		color: var(--color-foreground-muted, #6b7280);
+	}
+	.aside.quiet {
 		color: var(--color-foreground-subtle, #9ca3af);
+	}
+	.inline {
+		border: none;
+		background: none;
+		padding: 0;
+		font: inherit;
+		color: var(--color-primary);
+		cursor: pointer;
+	}
+	.inline:hover {
+		text-decoration: underline;
+		text-underline-offset: 2px;
 	}
 
 	/* ── Ledger ───────────────────────────────────────────────────────── */
@@ -514,11 +598,22 @@
 		color: var(--color-foreground, #111827);
 	}
 	/* The dot leader — same device the CLI uses to tie a name to its value. */
+	/* The dot leader, as a printed index does it: dots fine enough to read as
+	   texture rather than as a dashed border, sitting on the x-height rather
+	   than the baseline so the eye tracks along the middle of the line. */
 	.leader {
 		flex: 1;
-		min-width: 1.5rem;
-		border-bottom: 1px dotted var(--color-border, #d1d5db);
-		transform: translateY(-0.2em);
+		min-width: 2rem;
+		height: 1px;
+		align-self: center;
+		background-image: radial-gradient(
+			circle,
+			color-mix(in srgb, var(--color-foreground) 26%, transparent) 0.5px,
+			transparent 0.5px
+		);
+		background-size: 4px 1px;
+		background-repeat: repeat-x;
+		opacity: 0.85;
 	}
 	.ledger-state {
 		flex-shrink: 0;

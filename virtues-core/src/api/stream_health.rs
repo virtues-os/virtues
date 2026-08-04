@@ -42,6 +42,18 @@ pub struct StreamHealth {
     /// Newest ingest time (`created_at`) — how fresh the *pipe* is, which can
     /// lag the event time when a derivation falls behind.
     pub last_ingest: Option<chrono::DateTime<chrono::Utc>>,
+    /// Sources that declare they write this stream, by display name. Answers
+    /// "what would fill this" — the question a page showing an empty stream
+    /// could not previously answer at all.
+    pub provided_by: Vec<String>,
+    /// True when at least one of those sources is actually connected. This is
+    /// the axis that was missing: `total == 0` alone cannot tell "nothing
+    /// provides this" from "provided, but switched off or not yet delivered".
+    pub connected: bool,
+    /// No source writes it, yet rows exist — the box computed it from other
+    /// streams (a sessionizer). "Connect something" is the wrong advice here,
+    /// so the UI must not offer it.
+    pub derived: bool,
 }
 
 /// Freshness for every ingest stream, worst-first (stalled → idle → never →
@@ -98,8 +110,9 @@ pub async fn stream_health(db: &Database) -> Result<Vec<StreamHealth>> {
             } else {
                 "idle"
             };
+            let name: String = r.get("name");
+            let writers = crate::applet_templates::sources_writing(&name);
             StreamHealth {
-                name: r.get("name"),
                 display_name: r.get("display_name"),
                 status: status.to_string(),
                 total,
@@ -107,9 +120,41 @@ pub async fn stream_health(db: &Database) -> Result<Vec<StreamHealth>> {
                 count_7d: c7,
                 last_event: r.get("last_event"),
                 last_ingest: r.get("last_ingest"),
+                provided_by: writers
+                    .iter()
+                    .map(|id| {
+                        crate::applet_templates::lookup_source(id)
+                            .map(|s| s.display_name)
+                            .unwrap_or_else(|| id.clone())
+                    })
+                    .collect(),
+                // Filled in below — needs one query, not one per stream.
+                connected: false,
+                derived: writers.is_empty() && total > 0,
+                name,
             }
         })
         .collect();
+
+    // Which sources are actually connected. One pass over both tables rather
+    // than a lookup per stream: OAuth and API-key sources mint a credential,
+    // device sources (iOS, Mac) pair into app_device and never do — a stream
+    // fed by an iPhone would look unconnected if only credentials were checked.
+    let live_sources: std::collections::HashSet<String> = sqlx::query_scalar::<_, String>(
+        "SELECT source_id FROM credentials WHERE status = 'active' \
+         UNION \
+         SELECT source_id FROM app_device WHERE source_id IS NOT NULL AND revoked_at IS NULL",
+    )
+    .fetch_all(db.pool())
+    .await
+    .unwrap_or_default()
+    .into_iter()
+    .collect();
+
+    for s in &mut out {
+        let ids = crate::applet_templates::sources_writing(&s.name);
+        s.connected = ids.iter().any(|id| live_sources.contains(id));
+    }
 
     fn rank(s: &str) -> u8 {
         match s {

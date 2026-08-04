@@ -699,6 +699,14 @@ export interface StreamHealth {
 	count_7d: number;
 	last_event: string | null;
 	last_ingest: string | null;
+	/** Sources that declare they write this stream, by display name. */
+	provided_by: string[];
+	/** At least one of those sources is connected. Distinguishes "nothing
+	 *  provides this" from "provided, but switched off or not yet delivering". */
+	connected: boolean;
+	/** No source writes it, yet rows exist — the box computes it from other
+	 *  streams, so "connect something" is the wrong advice. */
+	derived: boolean;
 }
 
 /**
