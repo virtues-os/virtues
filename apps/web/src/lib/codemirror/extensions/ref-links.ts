@@ -48,6 +48,26 @@ function isExternalUrl(url: string): boolean {
 // Context Menu
 // =============================================================================
 
+/**
+ * The link markdown's CURRENT range, derived from the DOM at gesture time —
+ * see the matching helper in media-widgets.ts for why captured widget
+ * positions cannot be trusted after upstream edits.
+ */
+function linkRangeAtDOM(view: EditorView, dom: HTMLElement): { from: number; to: number } | null {
+	const pos = view.posAtDOM(dom);
+	const line = view.state.doc.lineAt(Math.min(pos, view.state.doc.length));
+	let first: { from: number; to: number } | null = null;
+	LINK_REGEX.lastIndex = 0;
+	for (let m = LINK_REGEX.exec(line.text); m !== null; m = LINK_REGEX.exec(line.text)) {
+		const bang = m.index > 0 && line.text[m.index - 1] === '!';
+		const from = line.from + m.index - (bang ? 1 : 0);
+		const to = line.from + m.index + m[0].length;
+		if (!first) first = { from, to };
+		if (pos >= from && pos <= to) return { from, to };
+	}
+	return first;
+}
+
 function showLinkContextMenu(
 	x: number,
 	y: number,
@@ -201,9 +221,15 @@ class RefLinkWidget extends WidgetType {
 			this.activate();
 		});
 
-		// Right-click or long-press — same menu (see long-press.ts).
+		// Right-click or long-press — same menu (see long-press.ts). The range
+		// is re-derived from the DOM at gesture time: eq() keeps this DOM (and
+		// this closure) alive across rebuilds, so the constructor's from/to go
+		// stale the moment anything earlier in the document changes — and Edit
+		// and Remove write by range.
 		onContextGesture(link, (x, y) => {
-			showLinkContextMenu(x, y, view, this.from, this.to, this.href, isExternalUrl(this.href));
+			const range = linkRangeAtDOM(view, link);
+			if (!range) return;
+			showLinkContextMenu(x, y, view, range.from, range.to, this.href, isExternalUrl(this.href));
 		});
 
 		return link;

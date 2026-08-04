@@ -502,8 +502,22 @@
 	user-select: none;
 }
 
+/* A button now (it opens the language picker) — reset the chrome so it still
+   reads as the quiet label it always was, with hover as the affordance. */
 .cm-code-language {
+	border: none;
+	background: transparent;
+	padding: 1px 5px;
+	margin-left: -5px;
+	border-radius: 4px;
+	font: inherit;
 	color: var(--color-foreground-muted);
+	cursor: pointer;
+}
+
+.cm-code-language:hover {
+	background: var(--hover-bg);
+	color: var(--color-foreground);
 }
 
 .cm-code-copy {

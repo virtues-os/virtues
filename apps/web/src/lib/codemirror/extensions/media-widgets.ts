@@ -17,6 +17,7 @@
 import { type EditorState, type Extension, type Range, StateField } from '@codemirror/state';
 import { Decoration, type DecorationSet, type EditorView, EditorView as EditorViewValue, WidgetType } from '@codemirror/view';
 import { contextMenu } from '$lib/stores/contextMenu.svelte';
+import { linkEditor } from '$lib/stores/linkEditor.svelte';
 import { isEntityRoute } from '$lib/utils/refRoutes';
 
 import { collectCodeRanges, inCode } from './code-context';
@@ -81,6 +82,31 @@ function getFileIcon(ext: string): string {
 // Context Menu
 // =============================================================================
 
+/**
+ * The media markdown's CURRENT range, derived from the DOM at action time.
+ *
+ * Widgets capture from/to at construction, but `eq()` keeps the DOM (and the
+ * listener closures with it) alive across rebuilds, so any edit earlier in
+ * the document silently shifts the real range out from under those captured
+ * numbers. With stale numbers, "Remove" deletes the wrong span and "Edit"
+ * parses garbage — verified live: after a two-character edit upstream, the
+ * Edit panel came up with an empty label because the slice no longer matched.
+ * Same re-derivation trick as the checkbox and copy-button handlers.
+ */
+function mediaRangeAtDOM(view: EditorView, dom: HTMLElement): { from: number; to: number } | null {
+	const pos = view.posAtDOM(dom);
+	const line = view.state.doc.lineAt(Math.min(pos, view.state.doc.length));
+	let first: { from: number; to: number } | null = null;
+	MEDIA_REGEX.lastIndex = 0;
+	for (let m = MEDIA_REGEX.exec(line.text); m !== null; m = MEDIA_REGEX.exec(line.text)) {
+		const from = line.from + m.index;
+		const to = from + m[0].length;
+		if (!first) first = { from, to };
+		if (pos >= from && pos <= to) return { from, to };
+	}
+	return first;
+}
+
 function showMediaContextMenu(
 	x: number,
 	y: number,
@@ -88,7 +114,42 @@ function showMediaContextMenu(
 	from: number,
 	to: number,
 	href: string,
+	isImage = false,
 ) {
+	/** Rewrite the whole `![alt|w](url)` with a new width (null strips it). */
+	const setWidth = (w: number | null) => {
+		const m = /^!\[([^\]]*)\]\(([^)]+)\)$/.exec(view.state.sliceDoc(from, to));
+		if (!m) return;
+		const { alt } = parseAltWidth(m[1]);
+		view.dispatch({
+			changes: { from, to, insert: `![${alt}${w ? `|${w}` : ''}](${m[2]})` },
+		});
+	};
+
+	const resizeItems = isImage
+		? [
+				{
+					id: 'width-small',
+					label: 'Small (320px)',
+					icon: 'ri:contract-left-right-line',
+					dividerBefore: true,
+					action: () => setWidth(320),
+				},
+				{
+					id: 'width-medium',
+					label: 'Medium (600px)',
+					icon: 'ri:pause-line',
+					action: () => setWidth(600),
+				},
+				{
+					id: 'width-original',
+					label: 'Original size',
+					icon: 'ri:expand-left-right-line',
+					action: () => setWidth(null),
+				},
+			]
+		: [];
+
 	contextMenu.show({ x, y }, [
 		{
 			id: 'go-to',
@@ -122,15 +183,35 @@ function showMediaContextMenu(
 			label: 'Edit',
 			icon: 'ri:edit-line',
 			action: () => {
-				view.dispatch({ selection: { anchor: from } });
-				view.focus();
+				// This used to drop the caret at the media line so the raw
+				// `![alt](url)` would reveal — media never reveals now, so that
+				// dispatch did nothing at all. Same panel as links; the alt text
+				// is the "Text" field, and a `|width` suffix survives the edit.
+				const m = /^!\[([^\]]*)\]\(([^)]+)\)$/.exec(view.state.sliceDoc(from, to));
+				const { alt, width } = parseAltWidth(m?.[1] ?? '');
+				linkEditor.show(
+					{ label: alt, href: m?.[2] ?? href },
+					({ label, href: newHref }) => {
+						view.dispatch({
+							changes: {
+								from,
+								to,
+								insert: `![${label}${width ? `|${width}` : ''}](${newHref})`,
+							},
+						});
+						view.focus();
+					},
+					{ x, y, width: 0, height: 0 },
+				);
 			},
 		},
+		...resizeItems,
 		{
 			id: 'remove',
 			label: 'Remove',
 			icon: 'ri:delete-bin-line',
 			variant: 'destructive' as const,
+			dividerBefore: isImage,
 			action: () => {
 				view.dispatch({ changes: { from, to, insert: '' } });
 			},
@@ -191,7 +272,9 @@ class ImageWidget extends WidgetType {
 		wrapper.appendChild(img);
 
 		onContextGesture(wrapper, (x, y) => {
-			showMediaContextMenu(x, y, view, this.from, this.to, this.src);
+			const range = mediaRangeAtDOM(view, wrapper);
+			if (!range) return;
+			showMediaContextMenu(x, y, view, range.from, range.to, this.src, true);
 		});
 
 		remeasureOnResize(view, wrapper);
@@ -239,7 +322,9 @@ class AudioWidget extends WidgetType {
 		wrapper.appendChild(audio);
 
 		onContextGesture(wrapper, (x, y) => {
-			showMediaContextMenu(x, y, view, this.from, this.to, this.src);
+			const range = mediaRangeAtDOM(view, wrapper);
+			if (!range) return;
+			showMediaContextMenu(x, y, view, range.from, range.to, this.src);
 		});
 
 		return wrapper;
@@ -268,7 +353,9 @@ class VideoWidget extends WidgetType {
 		wrapper.appendChild(video);
 
 		onContextGesture(wrapper, (x, y) => {
-			showMediaContextMenu(x, y, view, this.from, this.to, this.src);
+			const range = mediaRangeAtDOM(view, wrapper);
+			if (!range) return;
+			showMediaContextMenu(x, y, view, range.from, range.to, this.src);
 		});
 
 		remeasureOnResize(view, wrapper);
@@ -331,7 +418,9 @@ class FileCardWidget extends WidgetType {
 		wrapper.appendChild(dl);
 
 		onContextGesture(wrapper, (x, y) => {
-			showMediaContextMenu(x, y, view, this.from, this.to, this.src);
+			const range = mediaRangeAtDOM(view, wrapper);
+			if (!range) return;
+			showMediaContextMenu(x, y, view, range.from, range.to, this.src);
 		});
 
 		return wrapper;
