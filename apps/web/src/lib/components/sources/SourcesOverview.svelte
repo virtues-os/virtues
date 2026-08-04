@@ -138,25 +138,23 @@
 	 * belongs in the catalog, not here.
 	 */
 	const bySourceGrid = $derived.by(() => {
-		const connectedNames = new Set(
-			[...store.bySource.keys()].map((id) => store.sourceLabel(id))
-		);
 		const groups = new Map<string, StreamDays[]>();
 		for (const row of dayRows) {
-			// A stream with rows but no declared writer is computed by the box.
-			const owners = (row.provided_by ?? []).filter((n) => connectedNames.has(n));
-			const keys = owners.length
-				? owners
-				: row.days.some((n) => n > 0)
-					? ['Computed on the box']
-					: [];
-			for (const k of keys) {
-				const list = groups.get(k);
-				if (list) list.push(row);
-				else groups.set(k, [row]);
-			}
+			const list = groups.get(row.provider);
+			if (list) list.push(row);
+			else groups.set(row.provider, [row]);
 		}
-		return [...groups].map(([source, rows]) => ({ source, rows }));
+		return [...groups]
+			.map(([provider, rows]) => ({
+				provider,
+				// The provider is a source id on the data; name it the way the
+				// catalog does when we know it, and leave it verbatim when we
+				// don't — a row written by something the catalog never heard of is
+				// still a true row, and hiding it would be the bigger lie.
+				label: store.catalogById.get(provider)?.name ?? provider,
+				rows: rows.slice().sort((a, b) => a.display_name.localeCompare(b.display_name))
+			}))
+			.sort((a, b) => a.label.localeCompare(b.label));
 	});
 
 	const domains = $derived.by(() => {
@@ -393,8 +391,8 @@
 			> lists everything Virtues can draw from.
 		</p>
 	{:else}
-		{#each bySourceGrid as g (g.source)}
-			<StreamGrid title={g.source} streams={g.rows} />
+		{#each bySourceGrid as g (g.provider)}
+			<StreamGrid title={g.label} streams={g.rows} />
 		{/each}
 		<p class="legend">
 			Each square is a day. Darker means more arrived — measured against that

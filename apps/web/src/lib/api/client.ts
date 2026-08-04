@@ -722,7 +722,9 @@ export interface StreamHealth {
 export interface StreamDays {
 	name: string;
 	display_name: string;
-	provided_by: string[];
+	/** The provider that actually wrote these rows (`source_provider` on the
+	 *  data), not the manifest's claim. One entry per (stream, provider). */
+	provider: string;
 	days: number[];
 }
 

@@ -61,8 +61,11 @@ pub struct StreamHealth {
 pub struct StreamDays {
     pub name: String,
     pub display_name: String,
-    /// Sources that write it — the grouping key for the grid.
-    pub provided_by: Vec<String>,
+    /// The provider that actually wrote these rows, from `source_provider` on
+    /// the data itself — ground truth, not the manifest's claim. One entry per
+    /// (stream, provider) pair, so a stream two sources both write (bookmarks
+    /// from a Mac and from GitHub) is two rows, each with its own shape.
+    pub provider: String,
     /// `days[i]` is the row count for `from + i` days. Zero-filled, so the
     /// caller can render a fixed grid without reconciling sparse dates.
     pub days: Vec<i64>,
@@ -89,19 +92,27 @@ pub async fn stream_days(db: &Database, days: i64) -> Result<Vec<StreamDays>> {
         return Ok(vec![]);
     }
 
-    // One UNION ALL, grouped per day per stream. `table_name` is a compile-time
-    // registry constant, never user input, so interpolation is injection-safe —
-    // the same argument the freshness query above relies on.
+    // One UNION ALL, grouped per provider per day. Grouping on the data's own
+    // `source_provider` rather than on the manifest's declared `writes` means
+    // the grid shows what actually happened: if a stream is fed by two sources,
+    // or by one the manifest never claimed, the rows are still right. The
+    // declared map stays useful for the opposite question — what would fill a
+    // stream that has no rows at all — which no observation can answer.
+    //
+    // `table_name` is a compile-time registry constant, never user input, so
+    // interpolation is injection-safe; the freshness query above relies on the
+    // same argument.
     let sql = streams
         .iter()
         .map(|o| {
             format!(
                 "SELECT '{name}' AS name, \
+                        source_provider AS provider, \
                         (created_at AT TIME ZONE 'UTC')::date AS day, \
                         count(*)::int8 AS n \
                    FROM {table} \
                   WHERE created_at >= now() - ($1::int * interval '1 day') \
-                  GROUP BY 1, 2",
+                  GROUP BY 1, 2, 3",
                 name = o.name,
                 table = o.table_name,
             )
@@ -113,41 +124,42 @@ pub async fn stream_days(db: &Database, days: i64) -> Result<Vec<StreamDays>> {
 
     let today = chrono::Utc::now().date_naive();
     let start = today - chrono::Duration::days(days - 1);
-    let idx = |d: chrono::NaiveDate| (d - start).num_days();
+    let width = days as usize;
 
-    let mut by_name: std::collections::HashMap<String, Vec<i64>> = streams
-        .iter()
-        .map(|o| (o.name.to_string(), vec![0i64; days as usize]))
-        .collect();
-
+    // (stream, provider) -> daily counts.
+    let mut acc: std::collections::HashMap<(String, String), Vec<i64>> =
+        std::collections::HashMap::new();
     for r in rows {
         let name: String = r.get("name");
+        let provider: String = r.get("provider");
         let day: chrono::NaiveDate = r.get("day");
         let n: i64 = r.get("n");
-        if let Some(slot) = by_name.get_mut(&name) {
-            let i = idx(day);
-            if i >= 0 && (i as usize) < slot.len() {
-                slot[i as usize] = n;
-            }
+        let i = (day - start).num_days();
+        if i < 0 || i as usize >= width {
+            continue;
         }
+        acc.entry((name, provider))
+            .or_insert_with(|| vec![0i64; width])[i as usize] = n;
     }
 
-    Ok(streams
+    let display: std::collections::HashMap<&str, &str> = streams
         .iter()
-        .map(|o| StreamDays {
-            name: o.name.to_string(),
-            display_name: o.display_name.to_string(),
-            provided_by: crate::applet_templates::sources_writing(o.name)
-                .iter()
-                .map(|id| {
-                    crate::applet_templates::lookup_source(id)
-                        .map(|s| s.display_name)
-                        .unwrap_or_else(|| id.clone())
-                })
-                .collect(),
-            days: by_name.remove(o.name).unwrap_or_default(),
+        .map(|o| (o.name, o.display_name))
+        .collect();
+
+    let mut out: Vec<StreamDays> = acc
+        .into_iter()
+        .map(|((name, provider), days)| StreamDays {
+            display_name: display.get(name.as_str()).copied().unwrap_or("").to_string(),
+            provider,
+            days,
+            name,
         })
-        .collect())
+        .collect();
+    // Stable order: provider, then stream, so the grid does not reshuffle
+    // between polls.
+    out.sort_by(|a, b| a.provider.cmp(&b.provider).then(a.name.cmp(&b.name)));
+    Ok(out)
 }
 
 /// Freshness for every ingest stream, worst-first (stalled → idle → never →
