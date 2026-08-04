@@ -832,6 +832,19 @@ fn env_pairs(applet_id: &str, shipped: bool) -> Vec<(String, String)> {
             out.push(("VIRTUES_ENCRYPTION_KEY".to_string(), val));
         }
     }
+    // The dev-only wallet override (`make dev` sets it; prod leaves it unset and
+    // `BearerClient::ensure_bearer` reads the vault through the pool instead).
+    // The Plaid syncs call virtues-api for every page of transactions, so
+    // without this they fail on a dev box with "no virtues_api key" — env_clear
+    // took it away and nothing else supplies it. Shipped-only: it spends the
+    // user's wallet, and an imported package has no business presenting it.
+    if shipped {
+        if let Ok(val) = std::env::var("VIRTUES_API_KEY") {
+            if !val.is_empty() {
+                out.push(("VIRTUES_API_KEY".to_string(), val));
+            }
+        }
+    }
     out
 }
 
