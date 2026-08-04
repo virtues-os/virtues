@@ -346,6 +346,11 @@
 	// ─────────────────────────────────────────────────────────────────────────
 	let dayEvents = $state<DayEvent[]>([]);
 
+	// The prior day's trailing sleep. The detective cuts every timeline at
+	// midnight, so an 11pm–6:30am night is split across two days' events —
+	// the sleep chart needs the evening half to draw the night whole.
+	let priorSleepEvents = $state<DayEvent[]>([]);
+
 	const loadEvents = makeLoader(
 		(slug) => getDayEvents(slug),
 		(result) => {
@@ -354,7 +359,27 @@
 	);
 
 	$effect(() => {
-		if (browser && page?.date) loadEvents(currentDateSlug);
+		if (browser && page?.date) {
+			loadEvents(currentDateSlug);
+			const prev = new Date(`${currentDateSlug}T12:00:00`);
+			prev.setDate(prev.getDate() - 1);
+			// Only sleep that touches this day's midnight — the evening half of
+			// tonight's split night. The prior day's own overnight block would
+			// otherwise stretch the sleep chart across thirty hours.
+			const midnight = new Date(`${currentDateSlug}T00:00:00`).getTime();
+			getDayEvents(getLocalDateSlug(prev))
+				.then((evs) => {
+					priorSleepEvents = (evs ?? [])
+						.map(apiToDayEvent)
+						.filter(
+							(e) =>
+								e.isSleep &&
+								!e.userHidden &&
+								e.endTime.getTime() >= midnight - 10 * 60_000
+						);
+				})
+				.catch(() => (priorSleepEvents = []));
+		}
 	});
 
 	// ─────────────────────────────────────────────────────────────────────────
@@ -585,7 +610,7 @@
 				<!-- Dayline chart: visual bridge between narrative and timeline -->
 				<section class="section" id="dayline">
 					<h2 class="section-title">The Dayline</h2>
-					<DaylineChart events={dayEvents} timezone={page.startTimezone} pageDate={page.date} readinessScore={page.readinessScore} sleepCycles={page.sleepCycles} {movementStops} {movementTrack} {dedupedMarkers} dayDateSlug={currentDateSlug} {hasLocationData} />
+					<DaylineChart events={dayEvents} {priorSleepEvents} timezone={page.startTimezone} pageDate={page.date} readinessScore={page.readinessScore} sleepCycles={page.sleepCycles} {movementStops} {movementTrack} {dedupedMarkers} dayDateSlug={currentDateSlug} {hasLocationData} />
 				</section>
 
 				{#if hasAnyContent}

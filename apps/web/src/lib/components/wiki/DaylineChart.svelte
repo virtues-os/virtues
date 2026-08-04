@@ -22,6 +22,9 @@
 
 	interface Props {
 		events: DayEvent[];
+		/** The prior day's sleep events — the evening half of a night the
+		 *  detective's midnight cut split in two. */
+		priorSleepEvents?: DayEvent[];
 		timezone: string | null;
 		pageDate?: Date;
 		readinessScore?: number | null;
@@ -35,7 +38,7 @@
 	}
 
 	let {
-		events, timezone, pageDate, readinessScore, sleepCycles = [],
+		events, priorSleepEvents = [], timezone, pageDate, readinessScore, sleepCycles = [],
 		movementStops = [], movementTrack = [], dedupedMarkers = [],
 		dayDateSlug = "", hasLocationData = false,
 	}: Props = $props();
@@ -1231,15 +1234,22 @@
 			{/if}
 		</svg>
 	{:else}
-		{@const sleepEvts = events.filter((e) => e.isSleep && !e.userHidden)}
+		<!-- No scored cycles — the sleep events on a SPAN axis: the night from
+		     first sleep to last waking, left to right, hourly ticks. The
+		     detective cuts timelines at midnight, so the prior day's trailing
+		     sleep is merged back in and contiguous blocks become one night. -->
+		{@const rawSleep = [...priorSleepEvents, ...events.filter((e) => e.isSleep && !e.userHidden)]
+			.map((e) => ({ start: e.startTime.getTime(), end: e.endTime.getTime() }))
+			.sort((a, b) => a.start - b.start)}
+		{@const sleepEvts = rawSleep.reduce<{ start: number; end: number }[]>((acc, s) => {
+			const last = acc[acc.length - 1];
+			if (last && s.start - last.end <= 10 * 60_000) last.end = Math.max(last.end, s.end);
+			else acc.push({ ...s });
+			return acc;
+		}, [])}
 		{#if sleepEvts.length > 0}
-			<!-- No scored cycles — show the sleep events on a SPAN axis: the
-			     night from first sleep to last waking, left to right, hourly
-			     ticks, like the cycles chart above. A 24h axis wasted five
-			     sixths of the plot on hours nobody slept. Flat blocks,
-			     honestly: without stage data there is no depth to draw. -->
-			{@const t0 = Math.min(...sleepEvts.map((e) => e.startTime.getTime()))}
-			{@const t1 = Math.max(...sleepEvts.map((e) => e.endTime.getTime()))}
+			{@const t0 = Math.min(...sleepEvts.map((e) => e.start))}
+			{@const t1 = Math.max(...sleepEvts.map((e) => e.end))}
 			{@const spanMs = Math.max(1, t1 - t0)}
 			{@const SLEEP_H2 = 150}
 			{@const SM2 = { top: 36, bottom: 28, left: 40, right: 16 }}
@@ -1258,8 +1268,8 @@
 					</text>
 				{/each}
 				{#each sleepEvts as e}
-					{@const x1 = xOfMs(e.startTime.getTime())}
-					{@const x2 = xOfMs(e.endTime.getTime())}
+					{@const x1 = xOfMs(e.start)}
+					{@const x2 = xOfMs(e.end)}
 					{@const w = Math.max(2, x2 - x1)}
 					<rect x={x1} y={SM2.top + 8} width={w} height={SLEEP_H2 - SM2.top - SM2.bottom - 16} rx="3"
 						fill="var(--color-primary, #4f46e5)" fill-opacity="0.18"
@@ -1268,15 +1278,11 @@
 						<text x={x1 + w / 2} y={(SM2.top + SLEEP_H2 - SM2.bottom) / 2} text-anchor="middle"
 							dominant-baseline="middle" class="axis-label"
 							fill="var(--color-foreground-muted, #888)">
-							{Math.round((e.durationMinutes / 60) * 10) / 10}h
+							{Math.round(((e.end - e.start) / 3_600_000) * 10) / 10}h
 						</text>
 					{/if}
 				{/each}
 			</svg>
-			<p class="view-note">
-				From the day's sleep events — no scored cycles. The timeline starts at
-				midnight, so sleep that began the evening before shows from 12am.
-			</p>
 		{:else}
 			<div class="sleep-empty">
 				<p class="empty-placeholder">No sleep data for this day</p>

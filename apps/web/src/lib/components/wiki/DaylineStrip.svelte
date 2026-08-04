@@ -176,7 +176,6 @@
 	];
 
 	let lanes = $state<LifelineLane[]>([]);
-	let lanesLoaded = $state(false);
 
 	async function loadLanes() {
 		const data = await getLifeline(
@@ -193,7 +192,6 @@
 				const ib = LANE_ORDER.indexOf(b.id);
 				return (ia === -1 ? 99 : ia) - (ib === -1 ? 99 : ib) || a.id.localeCompare(b.id);
 			});
-		lanesLoaded = true;
 	}
 
 	let lastLoadedDay = "";
@@ -325,9 +323,10 @@
 		{/each}
 	{/each}
 
-	{#if lanesLoaded && lanes.length === 0}
-		<text x={ML} y={lanesTop + 12} class="lane-label">No raw data recorded for this day</text>
-	{/if}
+	<!-- No text for empty data lanes: the sleep and events rows above are
+	     themselves derived from the record, so "no raw data" read as a lie
+	     sitting under them. Empty lanes simply don't render, and the axis
+	     collapses to what exists. -->
 
 	<!-- now -->
 	{#if showNow}
