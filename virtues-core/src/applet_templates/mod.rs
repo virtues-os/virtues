@@ -52,6 +52,13 @@ pub struct Source {
     /// Branch, tag, or path within the repo, when the whole repo is too coarse.
     #[serde(default)]
     pub repo_ref: Option<String>,
+    /// Which package contributed this row, relative to whichever root it was
+    /// found in. Empty for the box's own top-level `sources.toml`. Populated by
+    /// the loader from the on-disk path, never read from TOML — a file cannot
+    /// know its own location. Without it a source cannot be attributed to the
+    /// thing that would have to be uninstalled to remove it.
+    #[serde(skip)]
+    pub dir: String,
 }
 
 /// How a source authenticates. Matches the three auth kinds in the charter.
@@ -403,17 +410,100 @@ fn parse_template(manifest_path: &std::path::Path, dir: &str) -> Option<Template
     Some(tmpl)
 }
 
+/// Read one `sources.toml`, tagging every row with the package folder it came
+/// from. A parse failure is logged and skipped rather than fatal: a package
+/// with a broken TOML must not take the whole catalog down with it. (The box's
+/// own top-level file is still a panic — that one is ours and a typo in it is a
+/// build error we want loudly.)
+fn read_sources_file(path: &std::path::Path, dir: &str) -> Vec<Source> {
+    let Ok(text) = std::fs::read_to_string(path) else {
+        return Vec::new();
+    };
+    match toml::from_str::<ParsedTemplates>(&text) {
+        Ok(doc) => doc
+            .source
+            .into_iter()
+            .map(|mut s| {
+                s.dir = dir.to_string();
+                s
+            })
+            .collect(),
+        Err(e) => {
+            tracing::error!(path = %path.display(), error = %e, "skipping unparseable sources.toml");
+            Vec::new()
+        }
+    }
+}
+
+/// Collect `[[source]]` rows contributed by packages under one root.
+///
+/// Same shape as `scan_root` does for manifests: a package is a folder, and it
+/// may declare sources in its own `sources.toml`. One level only — a pack's
+/// sources belong to the pack, not to each applet inside it.
+fn scan_sources(root: &std::path::Path) -> Vec<Source> {
+    let Ok(entries) = std::fs::read_dir(root) else {
+        return Vec::new();
+    };
+    let mut out = Vec::new();
+    let mut dirs: Vec<_> = entries.flatten().collect();
+    dirs.sort_by_key(|e| e.file_name());
+    for entry in dirs {
+        if !entry.path().is_dir() {
+            continue;
+        }
+        let Ok(name) = entry.file_name().into_string() else {
+            continue;
+        };
+        if name.starts_with('.') {
+            continue;
+        }
+        let candidate = entry.path().join("sources.toml");
+        if candidate.is_file() {
+            out.extend(read_sources_file(&candidate, &name));
+        }
+    }
+    out
+}
+
 fn load_catalog() -> ParsedTemplates {
     let applets_dir = shipped_root();
 
-    // 1. Sources — prefer on-disk; fall back to baked.
+    // 1. Sources. Three layers, last-wins-by-id, mirroring how actions merge
+    //    below: the box's own catalog, then packages that shipped with it, then
+    //    packages installed on this box. That last layer is what lets a new
+    //    provider arrive as a directory instead of a release — and it is why a
+    //    source now carries the `dir` that contributed it.
     let sources_path = applets_dir.join("sources.toml");
-    let sources_doc: ParsedTemplates = match std::fs::read_to_string(&sources_path) {
-        Ok(text) => toml::from_str(&text).unwrap_or_else(|e| {
-            panic!("failed to parse {}: {e}", sources_path.display())
-        }),
-        Err(_) => toml::from_str(SOURCES_TOML)
-            .unwrap_or_else(|e| panic!("failed to parse baked sources.toml: {e}")),
+    let base: Vec<Source> = match std::fs::read_to_string(&sources_path) {
+        Ok(text) => toml::from_str::<ParsedTemplates>(&text)
+            .unwrap_or_else(|e| panic!("failed to parse {}: {e}", sources_path.display()))
+            .source,
+        Err(_) => toml::from_str::<ParsedTemplates>(SOURCES_TOML)
+            .unwrap_or_else(|e| panic!("failed to parse baked sources.toml: {e}"))
+            .source,
+    };
+
+    let mut sources: Vec<Source> = base;
+    for contributed in scan_sources(&applets_dir)
+        .into_iter()
+        .chain(scan_sources(&state_root()))
+    {
+        match sources.iter().position(|s| s.id == contributed.id) {
+            Some(i) => {
+                tracing::info!(
+                    source_id = %contributed.id,
+                    shadowed_by = %contributed.dir,
+                    "package source shadows an earlier definition"
+                );
+                sources[i] = contributed;
+            }
+            None => sources.push(contributed),
+        }
+    }
+    let sources_doc = ParsedTemplates {
+        source: sources,
+        action: Vec::new(),
+        shipped_count: 0,
     };
 
     // 2. Per-folder manifests. The scanner rule is intentionally flat:
@@ -806,12 +896,24 @@ pub async fn reconcile_templates(db: &PgPool) -> Result<usize> {
                     ))
                 })?;
 
-            let source = lookup_source(source_id).ok_or_else(|| {
-                Error::Other(format!(
-                    "template {} references unknown source '{}' — add a [[source]] block to sources.toml",
-                    id_prefix, source_id
-                ))
-            })?;
+            // Skip, don't abort. This used to `return Err`, which unwound the
+            // whole pass — after the orphan GC had already deleted rows and
+            // before the system GC ran — so every remaining template was
+            // skipped and boot, admin reconcile, the OAuth callback and
+            // pair-consume all failed together. That was survivable while the
+            // source list shipped with the box; now that a package can
+            // contribute (and remove) sources, one package that deletes a
+            // source while leaving a manifest behind would brick reconcile for
+            // everything else on the box.
+            let Some(source) = lookup_source(source_id) else {
+                tracing::error!(
+                    template = %id_prefix,
+                    source_id = %source_id,
+                    "template references an unknown source; skipping it. The package \
+                     that declares this source may be missing or failed to parse."
+                );
+                continue;
+            };
 
             if matches!(source.auth, SourceAuth::SelfIssuedBearer) {
                 // Device source (iOS/Mac/sensor): fan out per DEVICE. The device's
@@ -1037,6 +1139,98 @@ mod tests {
     use super::*;
 
     /// Both roots are scanned, and an authored applet in the state root
+    /// The keystone of the package model: a directory can contribute a
+    /// `[[source]]` row, so a new provider no longer requires editing the box's
+    /// own catalog and cutting a release.
+    #[test]
+    fn packages_contribute_and_shadow_sources() {
+        let root = tempfile::tempdir().unwrap();
+        let write = |dir: &str, body: &str| {
+            let d = root.path().join(dir);
+            std::fs::create_dir_all(&d).unwrap();
+            std::fs::write(d.join("sources.toml"), body).unwrap();
+        };
+
+        write(
+            "todoist-pack",
+            r#"[[source]]
+id = "todoist"
+display_name = "Todoist"
+icon = "ri:list-check"
+description = "Tasks."
+auth = { kind = "api_key", fields = ["token"] }
+"#,
+        );
+        // A package may also shadow a source the box ships, which is what makes
+        // "fix the description without waiting for a release" possible.
+        write(
+            "my-google",
+            r#"[[source]]
+id = "google"
+display_name = "Google (mine)"
+icon = "ri:google-fill"
+description = "Patched."
+auth = { kind = "via_proxy", start_path = "/google/start" }
+"#,
+        );
+        // Not a package: no sources.toml, and dot-dirs are skipped outright.
+        std::fs::create_dir_all(root.path().join(".hidden")).unwrap();
+
+        let found = scan_sources(root.path());
+        assert_eq!(found.len(), 2, "one row per package sources.toml: {found:?}");
+
+        let todoist = found.iter().find(|s| s.id == "todoist").unwrap();
+        assert_eq!(todoist.display_name, "Todoist");
+        assert_eq!(
+            todoist.dir, "todoist-pack",
+            "a source must be attributable to the package that added it"
+        );
+
+        // Merge order: base, then packages, last-wins-by-id.
+        let mut merged = vec![Source {
+            id: "google".into(),
+            display_name: "Google".into(),
+            icon: "ri:google-fill".into(),
+            description: "Shipped.".into(),
+            auth: SourceAuth::ViaProxy { start_path: "/google/start".into() },
+            repo: None,
+            repo_ref: None,
+            dir: String::new(),
+        }];
+        for s in found {
+            match merged.iter().position(|e| e.id == s.id) {
+                Some(i) => merged[i] = s,
+                None => merged.push(s),
+            }
+        }
+        assert_eq!(merged.len(), 2, "shadowing must not duplicate an id");
+        let google = merged.iter().find(|s| s.id == "google").unwrap();
+        assert_eq!(google.display_name, "Google (mine)", "package wins");
+        assert_eq!(google.dir, "my-google");
+    }
+
+    /// A package with a broken `sources.toml` must not take the catalog down
+    /// with it — the whole point of the merge is that packages are independent.
+    #[test]
+    fn unparseable_package_sources_are_skipped_not_fatal() {
+        let root = tempfile::tempdir().unwrap();
+        let bad = root.path().join("broken");
+        std::fs::create_dir_all(&bad).unwrap();
+        std::fs::write(bad.join("sources.toml"), "this is not = = toml [[[").unwrap();
+
+        let good = root.path().join("fine");
+        std::fs::create_dir_all(&good).unwrap();
+        std::fs::write(
+            good.join("sources.toml"),
+            "[[source]]\nid = \"ok\"\ndisplay_name = \"Ok\"\nicon = \"i\"\ndescription = \"d\"\nauth = { kind = \"self_issued_bearer\" }\n",
+        )
+        .unwrap();
+
+        let found = scan_sources(root.path());
+        assert_eq!(found.len(), 1, "the good package still loads");
+        assert_eq!(found[0].id, "ok");
+    }
+
     /// A fork must not carry `.git` across. For an applet forked out of an
     /// imported package that directory points at the upstream remote, and for
     /// an authenticated clone it holds the credential in the remote's URL.
