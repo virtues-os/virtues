@@ -509,6 +509,17 @@ export async function getAppletSource(id: string): Promise<AppletSourceListing> 
 	return apiGet<AppletSourceListing>(`/applets/${encodeURIComponent(id)}/source`);
 }
 
+/**
+ * Copy a shipped applet onto this box so it can be changed. Reverting is
+ * deleting the copy; the shipped version is never touched.
+ */
+export async function forkApplet(id: string): Promise<{ status: string; dir: string }> {
+	return apiSend<{ status: string; dir: string }>(
+		'POST',
+		`/applets/${encodeURIComponent(id)}/fork`
+	);
+}
+
 export async function getAppletSourceFile(
 	id: string,
 	path: string
