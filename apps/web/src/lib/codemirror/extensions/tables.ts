@@ -18,7 +18,7 @@
  */
 
 import { syntaxTree } from '@codemirror/language';
-import { EditorState, type Extension, type Range, StateField } from '@codemirror/state';
+import { EditorSelection, EditorState, type Extension, type Range, StateField } from '@codemirror/state';
 import { Decoration, type DecorationSet, EditorView, WidgetType } from '@codemirror/view';
 import { contextMenu } from '$lib/stores/contextMenu.svelte';
 
@@ -816,13 +816,55 @@ const tableField = StateField.define<DecorationSet>({
  * A rendered table is one object as far as the caret is concerned.
  *
  * Without this the caret could be placed inside the source range of a block
- * that is not drawn — arrowing down from the line above would appear to strand
- * it in nothing. Cell editing happens inside the widget's own contentEditable
- * cells, not through the outer document selection.
+ * that is not drawn — arrowing down from the line above would appear to
+ * strand it in nothing. Cell editing happens inside the widget's own
+ * contentEditable cells, not through the outer document selection.
+ *
+ * Deliberately NOT EditorView.atomicRanges. Feeding it the widget's
+ * decoration set broke vertical motion far away from the table: ArrowUp from
+ * ANY line below one teleported the caret to the table's edge, skipping the
+ * lines between (verified with a plain three-lines-below-a-table doc, after
+ * a full reload). This filter enforces only the invariant we actually want —
+ * a selection endpoint never RESTS strictly inside a table's source range —
+ * and ejects in the direction of travel, which also preserves the
+ * jump-over-in-one-press behavior from the adjacent lines. Positions outside
+ * every table pass through untouched, so it cannot affect motion elsewhere.
  */
-const tableAtoms: Extension = EditorView.atomicRanges.of((view) =>
-	view.state.field(tableField, false) ?? Decoration.none,
-);
+const tableSelectionGuard: Extension = EditorState.transactionFilter.of((tr) => {
+	if (!tr.selection) return tr;
+
+	const ranges: { from: number; to: number }[] = [];
+	syntaxTree(tr.state).iterate({
+		enter(node) {
+			if (node.name === 'Table') {
+				ranges.push({ from: node.from, to: node.to });
+				return false;
+			}
+		},
+	});
+	if (ranges.length === 0) return tr;
+
+	const oldHead = tr.startState.selection.main.head;
+	const eject = (pos: number): number => {
+		const t = ranges.find((x) => pos > x.from && pos < x.to);
+		if (!t) return pos;
+		// Moving forward (or typing at) → land after the table; backward →
+		// before it. The boundary positions themselves are legal.
+		return pos >= oldHead ? Math.min(t.to, tr.newDoc.length) : t.from;
+	};
+
+	let changed = false;
+	const fixed = tr.newSelection.ranges.map((r) => {
+		const anchor = eject(r.anchor);
+		const head = eject(r.head);
+		if (anchor === r.anchor && head === r.head) return r;
+		changed = true;
+		return EditorSelection.range(anchor, head);
+	});
+
+	if (!changed) return tr;
+	return [tr, { selection: EditorSelection.create(fixed, tr.newSelection.mainIndex), sequential: true }];
+});
 
 /**
  * Enter at the very end of a table inserts TWO newlines, not one.
@@ -855,4 +897,4 @@ const tableExitGuard = EditorState.transactionFilter.of((tr) => {
 	return [tr, { changes: { from: at, insert: '\n' }, sequential: true }];
 });
 
-export const tables: Extension = [tableField, tableAtoms, tableExitGuard];
+export const tables: Extension = [tableField, tableSelectionGuard, tableExitGuard];
