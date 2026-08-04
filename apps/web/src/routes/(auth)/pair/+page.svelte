@@ -1,28 +1,31 @@
 <!--
   Pair landing page.
 
-  Two states:
+  This page can explain pairing; it can never perform it. The allowlisted iroh
+  key is the credential (virtues-core middleware/auth.rs) — a browser tab holds
+  no key, so there is nothing for the box to allowlist and no session to hand
+  back. It used to POST /api/pair/consume with `kind: "browser"`, which the
+  handler and the `app_device.kind` CHECK constraint both reject; the "gets a
+  session cookie back" it was written against is from the pre-iroh auth model.
 
-  - WITH a fragment token (`/pair#t=<token>`): consume it. The token is in
-    the URL fragment specifically because browsers never send fragments to
-    servers — no proxy logs, no referer leakage. The page reads it via JS,
-    POSTs to /api/pair/consume, gets a session cookie back, and navigates
-    away. The fragment is wiped from history on the way out.
+  So both states are informational:
 
-  - WITHOUT a token: render a "this device isn't paired" landing with
-    instructions. No login form, no email field, nothing to brute-force or
-    phish. The only way in is from `virtues link` on the box or a "+ Add
-    device" QR scanned from a paired device.
+  - WITH a fragment token (`/pair#t=<token>`): the link was opened in a browser
+    when it was meant to be scanned or typed *into the Virtues app*, which holds
+    the key. Say that, and leave the token unused so it stays redeemable. The
+    token lives in the fragment because browsers never send fragments to servers
+    — no proxy logs, no referer leakage — and it is wiped from history here.
+
+  - WITHOUT a token: a "this device isn't paired" landing. No login form, no
+    email field, nothing to brute-force or phish. The only way in is `virtues
+    pair` on the box or a QR scanned from the app on an already-paired device.
 -->
 <script lang="ts">
-	import { goto } from "$app/navigation";
 	import Icon from "$lib/components/Icon.svelte";
 	import { onMount } from "svelte";
-	import { pairConsume, getSetupState, ApiError } from "$lib/api/client";
 
-	type Mode = "idle" | "exchanging" | "error";
+	type Mode = "idle" | "wrong-surface";
 	let mode = $state<Mode>("idle");
-	let errorMessage = $state<string | null>(null);
 
 	function readFragmentToken(): string | null {
 		// `window.location.hash` is `#t=…`. Strip the leading `#` and parse as
@@ -36,80 +39,51 @@
 		return token && token.length > 0 ? token : null;
 	}
 
-	function buildDeviceInfo(): Record<string, string> {
-		return {
-			user_agent: navigator.userAgent,
-			screen: `${window.screen.width}x${window.screen.height}`,
-			lang: navigator.language,
-			// IANA timezone — read by the box's home_timezone cross-check in
-			// pair.rs. See docs/timezone-model.md.
-			timezone: Intl.DateTimeFormat().resolvedOptions().timeZone ?? "",
-		};
-	}
-
-	async function consume(token: string) {
-		mode = "exchanging";
-		try {
-			const data = await pairConsume<{ redirect?: string }>({
-				token,
-				kind: "browser",
-				device_info: buildDeviceInfo(),
-			});
-			// Wipe the fragment so a back-button or copy/paste can't leak the
-			// already-consumed token. `replaceState` keeps the navigation
-			// stack clean.
-			history.replaceState(null, "", "/pair");
-			// Fresh box → the setup wizard owns the next steps (account,
-			// name). Set-up box → wherever the server pointed us. The state
-			// is derived server-side, so this is safe to probe every time.
-			try {
-				const setup = await getSetupState();
-				if (!setup.setup_complete) {
-					await goto("/setup", { replaceState: true });
-					return;
-				}
-			} catch (_e) {
-				/* fall through to the normal redirect */
-			}
-			await goto(data.redirect ?? "/", { replaceState: true });
-			return;
-		} catch (e) {
-			// An HTTP error (ApiError) carries the box's error body; a network
-			// failure (anything else) means we couldn't reach the box at all.
-			if (e instanceof ApiError) {
-				const body = e.body as { error?: string } | undefined;
-				errorMessage =
-					body?.error === "invalid_or_expired_token"
-						? "This link is invalid or already used. Run `virtues pair` on the box to get a new one."
-						: "Could not complete pairing. Try again with a fresh link.";
-			} else {
-				errorMessage = "Could not reach the box. Make sure you're on the same network.";
-			}
-			mode = "error";
-		}
+	function checkFragment() {
+		if (!readFragmentToken()) return;
+		// Deliberately unused. Redeeming it here would burn a live token on a
+		// surface that cannot hold the resulting key; leaving it lets the user
+		// finish in the app with the same link. Wipe the fragment so a
+		// back-button or a copied URL can't leak it.
+		history.replaceState(null, "", "/pair");
+		mode = "wrong-surface";
 	}
 
 	onMount(() => {
-		const token = readFragmentToken();
-		if (token) {
-			void consume(token);
-		}
+		checkFragment();
+		// Pasting a pair URL while already on /pair changes only the fragment,
+		// which SvelteKit resolves without remounting — so mount alone would
+		// leave the page silently showing the unpaired landing.
+		window.addEventListener("hashchange", checkFragment);
+		return () => window.removeEventListener("hashchange", checkFragment);
 	});
 </script>
 
 <div class="w-full">
-	{#if mode === "exchanging"}
-		<div
-			class="mb-4 p-3 rounded-lg bg-surface-alt border border-border text-foreground-muted text-sm flex items-center gap-2"
-		>
-			<Icon icon="ri:loader-4-line" class="animate-spin" />
-			<span>Pairing this device…</span>
-		</div>
-	{:else if mode === "error" && errorMessage}
-		<div
-			class="mb-4 p-3 rounded-lg bg-error-subtle border border-error/20 text-error text-sm"
-		>
-			{errorMessage}
+	{#if mode === "wrong-surface"}
+		<div class="space-y-4 text-sm text-foreground-muted">
+			<div class="flex items-start gap-3">
+				<div
+					class="flex-shrink-0 w-8 h-8 rounded-full bg-surface-alt border border-border flex items-center justify-center"
+				>
+					<Icon icon="ri:smartphone-line" class="text-foreground-muted" />
+				</div>
+				<div>
+					<div class="text-foreground font-medium mb-1">
+						Finish this in the Virtues app
+					</div>
+					<p>
+						This link pairs an app, not a browser tab. Virtues authenticates a
+						device by a key the app holds, and a browser has none to offer.
+					</p>
+				</div>
+			</div>
+
+			<p class="pl-11">
+				Open Virtues on the device you're adding and scan the same QR from its
+				pairing screen, or type the code shown beside it. The link is still
+				good — nothing here used it up.
+			</p>
 		</div>
 	{:else}
 		<div class="space-y-4 text-sm text-foreground-muted">
@@ -140,8 +114,9 @@
 				</li>
 				<li>
 					<span class="text-foreground">From an already-paired device:</span>
-					open Settings → Box → Devices → <span class="text-foreground">Add device</span>,
-					and scan the QR with this device's camera (or paste the URL).
+					open Settings → Devices → <span class="text-foreground">Add device</span>,
+					then scan that QR from the Virtues app on this device — the app holds
+					the key, so pairing has to finish there rather than in a browser.
 				</li>
 			</ol>
 

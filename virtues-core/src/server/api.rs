@@ -223,7 +223,7 @@ pub async fn list_applets_handler(State(state): State<AppState>) -> Response {
         r#"SELECT
             t.id, t.owner, t.name, t.agent, t.cron_schedule,
             t.enabled, t.config, t.condition, t.triggers,
-            t.memory, t.credential_id,
+            t.memory, t.credential_id, t.device_id,
             t.command,
             t.until, t.archived_at,
             t.created_at, t.updated_at,
@@ -267,6 +267,7 @@ pub async fn list_applets_handler(State(state): State<AppState>) -> Response {
                         serde_json::from_value(triggers_val).unwrap_or_default();
                     let memory: Option<String> = r.try_get("memory").unwrap_or(None);
                     let credential_id: Option<String> = r.try_get("credential_id").unwrap_or(None);
+                    let device_id: Option<String> = r.try_get("device_id").unwrap_or(None);
                     let command_raw: Option<String> = r.try_get("command").unwrap_or(None);
                     let command: Option<Vec<String>> = command_raw
                         .as_deref()
@@ -275,6 +276,10 @@ pub async fn list_applets_handler(State(state): State<AppState>) -> Response {
                     let archived_at: Option<chrono::DateTime<chrono::Utc>> =
                         r.try_get("archived_at").unwrap_or(None);
                     let has_face = crate::server::faces::face_dir_for(&id).is_some();
+                    let origin = crate::scheduler::applets::origin_of(
+                        &owner,
+                        credential_id.is_some() || device_id.is_some(),
+                    );
                     // Derived display shape (the old runtime taxonomy).
                     let runtime = if command.as_ref().is_none_or(|c| c.is_empty())
                         && agent.as_deref().is_none_or(|s| s.trim().is_empty())
@@ -319,6 +324,8 @@ pub async fn list_applets_handler(State(state): State<AppState>) -> Response {
                         "triggers": triggers,
                         "memory": memory,
                         "credential_id": credential_id,
+                        "device_id": device_id,
+                        "origin": origin,
                         "runtime": runtime,
                         "command": command,
                         "until": until,
@@ -369,6 +376,8 @@ pub async fn get_applet_handler(
                     "memory": action.memory,
                     "command": action.command,
                     "credential_id": action.credential_id,
+                    "device_id": action.device_id,
+                    "origin": crate::scheduler::applets::derived_origin(&action),
                     "runtime": crate::scheduler::applets::derived_runtime(&action),
                     "until": action.until,
                     "archived_at": action.archived_at,
@@ -592,6 +601,11 @@ pub struct SourceCatalogItem {
     pub auth_kind: &'static str,
     /// Number of `active` credentials (passwords) for this source.
     pub credential_count: i64,
+    /// Secret names an `api_key` source expects, in manifest order. Empty for
+    /// every other auth kind. Without it the connect form had to guess, and it
+    /// guessed `["token"]` — so a source declaring two fields could not be
+    /// connected from the UI at all.
+    pub fields: Vec<String>,
 }
 
 /// GET /api/sources — catalog tiles for the Sources UI.
@@ -627,6 +641,10 @@ pub async fn list_sources_handler(State(state): State<AppState>) -> Response {
             description: s.description.clone(),
             auth_kind: s.auth.kind_str(),
             credential_count,
+            fields: match &s.auth {
+                crate::applet_templates::SourceAuth::ApiKey { fields } => fields.clone(),
+                _ => Vec::new(),
+            },
         });
     }
 
