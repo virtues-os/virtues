@@ -626,7 +626,9 @@
 	const metrics = $derived<{ id: MetricView; label: string; ready: boolean }[]>([
 		{ id: "dayline", label: "Dayline", ready: true },
 		{ id: "novelty", label: "Novelty", ready: true },
-		{ id: "location", label: "Location", ready: hasLocationData },
+		// Always clickable: an empty map is an honest answer ("the box saw
+		// nowhere today"), where a grayed pill reads as a broken feature.
+		{ id: "location", label: "Location", ready: true },
 		{ id: "sleep", label: "Sleep", ready: hasSleepData },
 		{ id: "autonomic", label: "Autonomic", ready: hrSamples.length > 0 },
 	]);
@@ -1095,28 +1097,26 @@
 		{/if}
 	</svg>
 	{:else if activeMetric === "location"}
-	<!-- Location view: timeline + map -->
-	{#if hasLocationData}
-		<div class="location-view">
-			{#if movementStops.length > 0}
-				<DayLocationTimeline
-					visits={movementStops}
-					dayDate={dayDateSlug}
-					bind:hoverTimeMs={movementHoverTimeMs}
-				/>
-			{/if}
-			<MovementMap
-				track={movementTrack}
-				stops={dedupedMarkers}
-				height={240}
-				hoverTimeMs={movementHoverTimeMs}
+	<!-- Location view: timeline + map. The map renders even with nothing to
+	     put on it — empty is an answer, and the note says which one. -->
+	<div class="location-view">
+		{#if movementStops.length > 0}
+			<DayLocationTimeline
+				visits={movementStops}
+				dayDate={dayDateSlug}
+				bind:hoverTimeMs={movementHoverTimeMs}
 			/>
-		</div>
-	{:else}
-		<div class="sleep-empty">
-			<p class="empty-placeholder">No location data for this day</p>
-		</div>
-	{/if}
+		{/if}
+		<MovementMap
+			track={movementTrack}
+			stops={dedupedMarkers}
+			height={240}
+			hoverTimeMs={movementHoverTimeMs}
+		/>
+		{#if !hasLocationData}
+			<p class="view-note">No location data recorded for this day.</p>
+		{/if}
+	</div>
 	{:else if activeMetric === "autonomic"}
 	<!-- Autonomic: the day's raw heart-rate samples on the 24h axis. Dots
 	     joined by a line — at a dozen samples a day, a smoothed curve would
@@ -1233,36 +1233,50 @@
 	{:else}
 		{@const sleepEvts = events.filter((e) => e.isSleep && !e.userHidden)}
 		{#if sleepEvts.length > 0}
-			<!-- No scored cycles — show the sleep events themselves on the 24h
-			     axis. Flat blocks, honestly: without stage data there is no
-			     depth to draw. -->
-			{@const SLEEP_H2 = 120}
+			<!-- No scored cycles — show the sleep events on a SPAN axis: the
+			     night from first sleep to last waking, left to right, hourly
+			     ticks, like the cycles chart above. A 24h axis wasted five
+			     sixths of the plot on hours nobody slept. Flat blocks,
+			     honestly: without stage data there is no depth to draw. -->
+			{@const t0 = Math.min(...sleepEvts.map((e) => e.startTime.getTime()))}
+			{@const t1 = Math.max(...sleepEvts.map((e) => e.endTime.getTime()))}
+			{@const spanMs = Math.max(1, t1 - t0)}
+			{@const SLEEP_H2 = 150}
+			{@const SM2 = { top: 36, bottom: 28, left: 40, right: 16 }}
+			{@const plotW2 = WIDTH - SM2.left - SM2.right}
+			{@const xOfMs = (t: number) => SM2.left + ((t - t0) / spanMs) * plotW2}
+			{@const hourMs = 3_600_000}
+			{@const firstTick = Math.ceil(t0 / hourMs) * hourMs}
+			{@const tickCount = Math.max(0, Math.floor((t1 - firstTick) / hourMs) + 1)}
 			<svg viewBox="0 0 {WIDTH} {SLEEP_H2}" preserveAspectRatio="xMidYMid meet" class="dayline-svg">
-				{#each HOUR_TICKS as h}
-					<line x1={hourToX(h)} y1={20} x2={hourToX(h)} y2={SLEEP_H2 - 28}
+				{#each Array.from({ length: tickCount }, (_, i) => firstTick + i * hourMs) as t}
+					{@const hh = getHourOfDay(new Date(t))}
+					<line x1={xOfMs(t)} y1={SM2.top} x2={xOfMs(t)} y2={SLEEP_H2 - SM2.bottom}
 						stroke="var(--color-border, #e5e5e5)" stroke-width="0.5" />
-					<text x={hourToX(h)} y={SLEEP_H2 - 12} text-anchor="middle" class="axis-label x-label">
-						{formatHourLabel(h)}
+					<text x={xOfMs(t)} y={SLEEP_H2 - 10} text-anchor="middle" class="axis-label x-label">
+						{formatHourLabel(Math.round(hh))}
 					</text>
 				{/each}
 				{#each sleepEvts as e}
-					{@const x1 = hourToX(Math.min(getHourOfDay(e.startTime), 24))}
-					{@const x2 = hourToX(Math.min(getHourOfDay(e.endTime), 24))}
+					{@const x1 = xOfMs(e.startTime.getTime())}
+					{@const x2 = xOfMs(e.endTime.getTime())}
 					{@const w = Math.max(2, x2 - x1)}
-					<rect x={x1} y={34} width={w} height={SLEEP_H2 - 34 - 34} rx="3"
-						fill="var(--color-primary, #4f46e5)" fill-opacity="0.18" />
+					<rect x={x1} y={SM2.top + 8} width={w} height={SLEEP_H2 - SM2.top - SM2.bottom - 16} rx="3"
+						fill="var(--color-primary, #4f46e5)" fill-opacity="0.18"
+						stroke="var(--color-primary, #4f46e5)" stroke-opacity="0.35" stroke-width="0.75" />
 					{#if w > 60}
-						<text x={x1 + w / 2} y={SLEEP_H2 / 2} text-anchor="middle" dominant-baseline="middle"
-							class="axis-label" fill="var(--color-foreground-muted, #888)">
+						<text x={x1 + w / 2} y={(SM2.top + SLEEP_H2 - SM2.bottom) / 2} text-anchor="middle"
+							dominant-baseline="middle" class="axis-label"
+							fill="var(--color-foreground-muted, #888)">
 							{Math.round((e.durationMinutes / 60) * 10) / 10}h
 						</text>
 					{/if}
 				{/each}
-				<text x={MARGIN.left + PLOT_W - 4} y={16} text-anchor="end" class="axis-label"
-					fill="var(--color-foreground-muted, #888)">
-					From sleep events — no scored cycles for this day
-				</text>
 			</svg>
+			<p class="view-note">
+				From the day's sleep events — no scored cycles. The timeline starts at
+				midnight, so sleep that began the evening before shows from 12am.
+			</p>
 		{:else}
 			<div class="sleep-empty">
 				<p class="empty-placeholder">No sleep data for this day</p>
@@ -1464,6 +1478,16 @@
 		display: flex;
 		flex-direction: column;
 		gap: 0.75rem;
-		padding-top: 0.5rem;
+		/* Clear the absolutely-positioned pill row — the map has no internal
+		   top margin the way the SVG charts do. */
+		padding-top: 2rem;
+	}
+
+	/* Below the chart, never over it — the pill row owns the top edge. */
+	.view-note {
+		margin: 0.25rem 0 0;
+		font-size: 0.75rem;
+		font-style: italic;
+		color: var(--color-foreground-subtle);
 	}
 </style>
