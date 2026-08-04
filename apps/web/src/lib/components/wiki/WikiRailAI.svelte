@@ -137,8 +137,6 @@
 	.ai-title {
 		font-size: 0.6875rem;
 		font-weight: 600;
-		text-transform: uppercase;
-		letter-spacing: 0.05em;
 	}
 
 	.ai-content {
@@ -183,8 +181,6 @@
 	.suggestions-header {
 		font-size: 0.6875rem;
 		font-weight: 600;
-		text-transform: uppercase;
-		letter-spacing: 0.05em;
 		color: var(--color-foreground-subtle);
 		margin-bottom: 0.75rem;
 	}

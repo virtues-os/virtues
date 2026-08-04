@@ -159,8 +159,6 @@
 		padding: 0.625rem 0.875rem 0.5rem;
 		font-size: 0.6875rem;
 		font-weight: 600;
-		text-transform: uppercase;
-		letter-spacing: 0.06em;
 		color: var(--color-foreground-subtle, #9ca3af);
 		border-bottom: 1px solid var(--color-border-subtle, #f3f4f6);
 	}

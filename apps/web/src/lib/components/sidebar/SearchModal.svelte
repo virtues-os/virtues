@@ -796,7 +796,6 @@
 		display: block;
 		font-size: 11px;
 		font-weight: 500;
-		text-transform: uppercase;
 		letter-spacing: 0.02em;
 		color: var(--foreground-subtle);
 		padding: 6px 8px;

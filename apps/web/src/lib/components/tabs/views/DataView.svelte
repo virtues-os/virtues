@@ -211,8 +211,6 @@
 		gap: 0.35rem;
 		font-family: var(--font-mono);
 		font-size: 0.7rem;
-		letter-spacing: 0.04em;
-		text-transform: uppercase;
 		color: var(--color-foreground-subtle);
 		margin-bottom: 0.75rem;
 	}

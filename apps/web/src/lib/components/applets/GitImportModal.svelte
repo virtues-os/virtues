@@ -246,8 +246,6 @@
 	.counts dt {
 		font-size: 0.7rem;
 		color: var(--color-foreground-subtle, #9ca3af);
-		text-transform: uppercase;
-		letter-spacing: 0.05em;
 	}
 	.counts dd {
 		margin: 0;
