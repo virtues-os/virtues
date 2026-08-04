@@ -304,25 +304,74 @@ drift silently into a 404.
 
 ---
 
-## Open questions
+## Resolved
 
-1. Does the relay's Sybil-resistance design depend on the OAuth proxy being in
-   every path (`networking-relay-tee.md:209`)? If yes, P5 is constrained.
-2. Which providers accept a loopback `redirect_uri` under self-serve
-   registration? That set determines whether P5 generalizes or stays a
-   one-provider escape hatch.
-3. Do we want package updates to be automatic at all? Pinned refs plus a
-   review-before-run gate is *against* the updatability framing that motivated
-   this. Auto-updating a remote that runs against the whole lake is the thing
-   P4 exists to prevent.
-4. **Are shipped applets packages too?** If not, there are two classes again and
-   the uniform-update win evaporates. Cheapest coherent answer: the release
-   tarball is a set of packages pinned to the release version — preserves atomic
-   release semantics without making each built-in its own repo. Decide before
-   the update UI is built, because it determines whether "update" is even a
-   meaningful verb on a built-in.
-5. **Fork meets upstream.** Someone forks `google_calendar_sync`; we ship a fix
-   to it. What do they see? Silently keeping a stale fork is the failure mode
-   that bites hardest, and `forked_from = <url>@<sha>` is exactly what makes the
-   good answer possible — show the diff, offer the rebase. Design it with the
-   fork UI, not after it.
+**Relay Sybil resistance does not constrain P5.** `networking-relay-tee.md:209`
+reuses "the OAuth-proxy / virtues-api / wallet credential spine" — the anchor is
+the *billing relationship* (account → wallet → api_key), not the OAuth token
+exchange. `oauth_direct` moves where a provider's client credentials live; it
+does not decommission virtues-api, which remains the AI gateway, wallet, and
+relay control plane. A user who brings their own Google app still has a Virtues
+account.
+
+**Shipped applets are packages, pinned to the release version.** Uniform model,
+atomic release semantics preserved, no per-built-in repo. Consequence: built-ins
+have no independent update verb — they move when the box moves.
+
+**Fork provenance now, fork UI later.** Recording `forked_from = <url>@<sha>` is
+foundation (a column, and the thing that makes a later answer possible at all).
+The diff/rebase experience is not, and is explicitly deferred.
+
+## Open questions
+1. Which providers accept a loopback `redirect_uri` under self-serve
+   registration? Determines whether P5 generalizes or stays a one-provider
+   escape hatch. Genuine research; everything else about P5 is small.
+
+## Update policy
+
+Because shipped applets follow the box, an auto-update toggle only ever applies
+to third-party packages — one rule, not two:
+
+- **Built-ins:** no toggle. They move when the box moves, under the release
+  channel's tested migration lineage and rollback.
+- **Third-party:** default **notify, don't apply**. Per-package opt-in to follow
+  a ref.
+- **Auto-follow is available only to face-only and agent-only packages, or to
+  jailed `command` packages.** Silently pulling and running unjailed native code
+  against the whole lake is precisely what P4 exists to prevent, and it must not
+  be the default anywhere.
+
+Note "update available" is impossible until P3 persists the resolved SHA — today
+the box cannot answer the question at all.
+
+## P5 shape: one seam, two implementations
+
+The elegant version is *not* a parallel OAuth flow. The proxy attaches at
+exactly two seams — `proxy_exchange` and `proxy_refresh`, each
+`(source_id, token) → one normalized token set` — so `oauth_direct` is a second
+implementation behind a seam that already exists. Vault, expiry math, the JIT
+refresh mutex, the cron sweep, and the applet secret contract are untouched.
+One catalog variant, two functions, one match.
+
+**The over-engineering trap is provider quirks.** The proxy special-cases
+per-provider behaviour in four places (authorize params — Google's
+`access_type=offline`, Strava's comma-separated scopes; token-request shape —
+Notion's HTTP Basic; response and refresh normalization). A fully generic
+`oauth_direct` would have to express all of that in TOML, which means inventing
+a configuration language for OAuth dialects.
+
+Don't. Split by capability instead:
+
+- **Proxy** — curated providers, quirks live in code where they belong, zero
+  user setup.
+- **Direct** — standards-compliant RFC-6749 + PKCE only. `authorize_url`,
+  `token_url`, `scopes`, and `auth_style` (basic vs body) as the single
+  concession to reality. A provider needing more than that belongs in the proxy.
+
+Client credentials go in the same encrypted `secrets` blob as the tokens — it is
+already `serde_json::Value`, so one credential row carries everything one
+connection needs with zero migration. Use `oauth2 = "4.4"` for PKCE rather than
+hand-rolling; it is already a (currently dead) dependency. Redirect to
+`http://127.0.0.1:<port>/oauth/callback` under a desktop-app client type, which
+also makes the client_secret non-confidential by design and dissolves the
+"the box now holds a secret" worry.
