@@ -1,21 +1,31 @@
-//! Git-import on-ramp for actions.
+//! Git-import on-ramp for applets.
 //!
-//! `POST /api/admin/actions/import-git { url, ref }` clones a repo into
-//! `actions/<slug>/` and re-runs the standard catalog scanner + reconcile
-//! flow. Once the folder lands under `actions/`, the system makes no further
-//! distinction between built-ins and imports — the dir is the spec.
+//! `POST /api/admin/applets/import-git { url, ref }` clones a repo into the
+//! **state root** (`/var/lib/virtues/applets/<slug>/`) and re-runs the standard
+//! catalog scanner + reconcile flow. Once the folder lands there the system
+//! makes no further distinction between built-ins and imports — the dir is the
+//! spec. The state root, not the shipped root: the shipped tree is package data
+//! the installer replaces wholesale on every release, and imports have to
+//! survive that.
 //!
 //! Layout supported by the scanner (see `applet_templates::load_catalog`):
-//!   - `actions/<slug>/manifest.toml` — single-action repo
-//!   - `actions/<slug>/actions/<name>/manifest.toml` — pack
+//!   - `<slug>/manifest.toml` — single-applet repo
+//!   - `<slug>/<name>/manifest.toml` — pack
+//!   - `<slug>/sources.toml` — the package's own `[[source]]` rows
 //!
 //! Updates are manual: re-running this endpoint with the same URL fetches and
 //! resets the working tree to the requested ref, then reconciles. Stale rows
 //! (manifests removed upstream) are deleted by diffing the row set under the
-//! slug prefix before/after reconcile.
+//! slug's id prefix before/after reconcile.
 //!
-//! Trust note: cloned manifests run with the same privileges as built-ins.
-//! There is no sandbox in v1; users should only import repos they trust.
+//! **Trust note, and it is the whole story right now:** cloned manifests run
+//! with the same privileges as built-ins. `command` is argv and the authoring
+//! docs teach `["python3", "main.py"]`, so an import is arbitrary code
+//! execution as the box user — which has passwordless sudo. There is no
+//! sandbox yet. Until P4 of `docs/sources-packages-plan.md` lands (argv policy
+//! by provenance, sudo-gating, and the `systemd-run` jail that
+//! `code_interpreter` already proves out), this endpoint should not be put in
+//! front of anyone who would not audit the repo themselves.
 
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
@@ -128,17 +138,72 @@ fn validate_url(url: &str) -> Result<()> {
     if url.is_empty() {
         return Err(Error::InvalidInput("git url is empty".into()));
     }
-    let ok_https = url.starts_with("https://") || url.starts_with("http://");
-    let ok_ssh = url.starts_with("git@") && url.contains(':');
-    let ok_git = url.starts_with("git://");
-    if !(ok_https || ok_ssh || ok_git) {
-        return Err(Error::InvalidInput(format!(
-            "unsupported git url scheme: {url}"
-        )));
-    }
     // Cheap sanity check — no embedded newlines or NUL.
     if url.bytes().any(|b| b == 0 || b == b'\n' || b == b'\r') {
         return Err(Error::InvalidInput("git url contains control bytes".into()));
+    }
+
+    // `http://` and `git://` are gone. Both are unauthenticated cleartext, so
+    // the code the box is about to run could be swapped in flight by anything
+    // on the path — which is not a trade worth making for a convenience nobody
+    // asked for.
+    let ok_https = url.starts_with("https://");
+    let ok_ssh = url.starts_with("git@") && url.contains(':');
+    if !(ok_https || ok_ssh) {
+        return Err(Error::InvalidInput(format!(
+            "git url must be https:// or git@host:owner/repo — got: {url}"
+        )));
+    }
+
+    deny_internal_host(url)
+}
+
+/// Refuse hosts that only the box itself can reach.
+///
+/// The importer runs server-side, so an unrestricted URL turns it into a
+/// request forger: `169.254.169.254` is the cloud metadata service, and a box
+/// on a home LAN can see every other machine on it. This is a literal-host
+/// check, not full SSRF protection — a hostname that *resolves* to a private
+/// address still passes, and DNS rebinding is not addressed. It stops the
+/// obvious and the accidental; the real containment for what an import can do
+/// once fetched is the jail (P4 in docs/sources-packages-plan.md).
+fn deny_internal_host(url: &str) -> Result<()> {
+    let no_scheme = url
+        .split_once("://")
+        .map(|(_, rest)| rest)
+        .unwrap_or(url);
+    let no_user = no_scheme
+        .split_once('@')
+        .map(|(_, rest)| rest)
+        .unwrap_or(no_scheme);
+    let host = no_user
+        .split(['/', ':'])
+        .next()
+        .unwrap_or("")
+        .trim_matches(['[', ']'])
+        .to_ascii_lowercase();
+
+    let blocked = host == "localhost"
+        || host == "::1"
+        || host.ends_with(".localhost")
+        || host.ends_with(".internal")
+        || host.starts_with("127.")
+        || host.starts_with("10.")
+        || host.starts_with("192.168.")
+        || host.starts_with("169.254.")
+        || host.starts_with("fd")
+        || host.starts_with("fe80:")
+        // 172.16.0.0/12 — 172.16 through 172.31.
+        || host
+            .strip_prefix("172.")
+            .and_then(|r| r.split('.').next())
+            .and_then(|o| o.parse::<u8>().ok())
+            .is_some_and(|o| (16..=31).contains(&o));
+
+    if blocked {
+        return Err(Error::InvalidInput(format!(
+            "refusing to fetch from an internal address: {host}"
+        )));
     }
     Ok(())
 }
@@ -160,21 +225,50 @@ fn validate_ref(r: &str) -> Result<()> {
     Ok(())
 }
 
-/// Derive a folder name under `actions/` from a Git URL.
+/// Derive a folder name under the state root from a Git URL.
+///
+/// **Host and owner are part of the identity.** The slug used to be the repo
+/// basename alone, so `github.com/alice/tools` and `evil.com/mallory/tools`
+/// both became `tools` — and because the URL is only consulted on first clone,
+/// importing the second while the first existed would silently `git fetch` the
+/// *original* remote and report success. A name collision between two strangers
+/// is not a naming inconvenience, it is a supply-chain hole.
 ///
 /// Examples:
-///   `https://github.com/alice/my-actions.git`     → `my-actions`
-///   `git@github.com:alice/my-actions.git`         → `my-actions`
-///   `https://example.com/foo/bar/baz`             → `baz`
+///   `https://github.com/alice/my-applets.git` → `github-com-alice-my-applets`
+///   `git@github.com:alice/my-applets.git`     → `github-com-alice-my-applets`
 fn slug_for_url(url: &str) -> Result<String> {
-    // Strip trailing slash and `.git`.
     let trimmed = url.trim_end_matches('/').trim_end_matches(".git");
-    // Last path-or-colon segment is the repo name.
-    let raw = trimmed
-        .rsplit(|c: char| c == '/' || c == ':')
-        .next()
-        .unwrap_or("");
-    let cleaned: String = raw
+
+    // Strip scheme and any userinfo, then split host from path. `git@host:path`
+    // and `https://host/path` normalize to the same `host/path` shape.
+    let no_scheme = trimmed
+        .split_once("://")
+        .map(|(_, rest)| rest)
+        .unwrap_or(trimmed);
+    let no_user = no_scheme
+        .split_once('@')
+        .map(|(_, rest)| rest)
+        .unwrap_or(no_scheme);
+    // scp-form uses ':' between host and path; URL form uses '/'.
+    let host_and_path = no_user.replacen(':', "/", 1);
+
+    let parts: Vec<&str> = host_and_path
+        .split('/')
+        .filter(|s| !s.is_empty())
+        .collect();
+    // Keep host + the last two path segments (owner/repo) — enough to be
+    // unambiguous without turning a deep path into a filename.
+    let keep: Vec<&str> = if parts.len() > 3 {
+        let mut v = vec![parts[0]];
+        v.extend_from_slice(&parts[parts.len() - 2..]);
+        v
+    } else {
+        parts
+    };
+
+    let cleaned: String = keep
+        .join("-")
         .chars()
         .map(|c| {
             if c.is_ascii_alphanumeric() || c == '-' || c == '_' {
@@ -184,13 +278,21 @@ fn slug_for_url(url: &str) -> Result<String> {
             }
         })
         .collect();
-    let cleaned = cleaned.trim_matches('-').to_string();
-    if cleaned.is_empty() {
+    // Collapse runs of '-' so `github.com` doesn't become `github--com`.
+    let mut collapsed = String::with_capacity(cleaned.len());
+    for c in cleaned.chars() {
+        if c == '-' && collapsed.ends_with('-') {
+            continue;
+        }
+        collapsed.push(c);
+    }
+    let collapsed = collapsed.trim_matches('-').to_string();
+    if collapsed.is_empty() {
         return Err(Error::InvalidInput(format!(
             "could not derive a folder name from url: {url}"
         )));
     }
-    Ok(cleaned)
+    Ok(collapsed)
 }
 
 /// `git clone --depth 1 --branch <ref>` if the dir is empty; otherwise
@@ -217,22 +319,25 @@ async fn clone_or_update(target: &Path, url: &str, git_ref: &str) -> Result<()> 
                 target.file_name().and_then(|s| s.to_str()).unwrap_or("?")
             )));
         }
-        run_git(
-            &applets_root_buf(),
-            &[
-                "clone",
-                "--depth",
-                "1",
-                "--branch",
-                git_ref,
-                "--single-branch",
-                url,
-                target.to_str().ok_or_else(|| {
-                    Error::Other("non-utf8 import target path".into())
-                })?,
-            ],
-        )
-        .await?;
+        let dest = target
+            .to_str()
+            .ok_or_else(|| Error::Other("non-utf8 import target path".into()))?;
+
+        // `git clone --branch` takes a branch or a tag, never a commit — so
+        // pinning to a SHA, which the request has always claimed to support,
+        // silently failed at the one moment it matters most. init + fetch +
+        // checkout takes all three.
+        run_git(&applets_root_buf(), &["init", "--quiet", dest]).await?;
+        run_git(target, &["remote", "add", "origin", url]).await?;
+        if let Err(e) = run_git(target, &["fetch", "--depth", "1", "origin", git_ref]).await {
+            // Leave nothing half-created behind for the next attempt to trip on.
+            let _ = std::fs::remove_dir_all(target);
+            return Err(e);
+        }
+        if let Err(e) = run_git(target, &["checkout", "--quiet", "FETCH_HEAD"]).await {
+            let _ = std::fs::remove_dir_all(target);
+            return Err(e);
+        }
         return Ok(());
     }
 
@@ -260,8 +365,14 @@ async fn resolve_head(dir: &Path) -> Result<String> {
     Ok(String::from_utf8_lossy(&out.stdout).trim().to_string())
 }
 
+/// Ceiling on any one git invocation. Without it an unresponsive host holds an
+/// axum request handler open indefinitely — `GIT_TERMINAL_PROMPT=0` only covers
+/// the credential-prompt case, not a server that accepts the connection and
+/// then says nothing.
+const GIT_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(120);
+
 async fn run_git(cwd: &Path, args: &[&str]) -> Result<()> {
-    let out = Command::new("git")
+    let fut = Command::new("git")
         .args(args)
         .current_dir(cwd)
         // Refuse to prompt on stdin. Without this, a private HTTPS URL with
@@ -271,8 +382,18 @@ async fn run_git(cwd: &Path, args: &[&str]) -> Result<()> {
         .env("GIT_TERMINAL_PROMPT", "0")
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
-        .output()
+        .kill_on_drop(true)
+        .output();
+
+    let out = tokio::time::timeout(GIT_TIMEOUT, fut)
         .await
+        .map_err(|_| {
+            Error::Other(format!(
+                "git {} timed out after {}s",
+                args.join(" "),
+                GIT_TIMEOUT.as_secs()
+            ))
+        })?
         .map_err(|e| Error::Other(format!("git {} failed to spawn: {e}", args.join(" "))))?;
     if !out.status.success() {
         return Err(Error::Other(format!(
@@ -288,12 +409,27 @@ fn applets_root_buf() -> PathBuf {
     applet_templates::state_root()
 }
 
+/// Every applet id that belongs to an imported slug.
+///
+/// Keys on the **id prefix**, not on a `dir` column. `app_applets.dir` was
+/// dropped by migration 0051 as derivable-from-the-id, and this query was not
+/// updated — so it failed at runtime with `column "dir" does not exist`. Since
+/// it runs before the clone, the whole endpoint has been dead ever since: every
+/// import returned 400 without fetching anything. `sqlx::query_as` is unchecked,
+/// so nothing caught it at compile time and there was no integration test.
+///
+/// Ids derive as `applet_<dir with / → __>` (`applet_templates::parse_template`),
+/// so a slug owns `applet_<slug>` itself, `applet_<slug>__<member>` for a pack,
+/// and `<either>_<anchor>` for per-credential and per-device fan-out. One
+/// prefix match covers all three. The underscore is escaped because it is a
+/// single-character wildcard in LIKE — without that, `applet_foo_%` would also
+/// claim rows belonging to `applet_fooX`.
 async fn ids_under_slug(db: &PgPool, slug: &str) -> Result<HashSet<String>> {
-    let prefix = format!("{slug}/");
+    let prefix = format!("applet_{}", slug.replace('/', "__"));
     let rows: Vec<(String,)> = sqlx::query_as(
-        "SELECT id FROM app_applets WHERE dir = $1 OR dir LIKE $2 || '%'",
+        r#"SELECT id FROM app_applets
+            WHERE id = $1 OR id LIKE $1 || '\_%' ESCAPE '\'"#,
     )
-    .bind(slug)
     .bind(&prefix)
     .fetch_all(db)
     .await?;
@@ -306,23 +442,38 @@ mod tests {
 
     #[test]
     fn slug_extraction() {
+        // Host and owner are part of the slug — both URL and scp forms
+        // normalize to the same identity.
         assert_eq!(
             slug_for_url("https://github.com/alice/my-actions.git").unwrap(),
-            "my-actions"
+            "github-com-alice-my-actions"
         );
         assert_eq!(
             slug_for_url("git@github.com:alice/my-actions.git").unwrap(),
-            "my-actions"
+            "github-com-alice-my-actions"
         );
+        // Deep paths keep host + the last two segments, not the whole path.
         assert_eq!(
-            slug_for_url("https://example.com/foo/bar/baz/").unwrap(),
-            "baz"
+            slug_for_url("https://example.com/a/b/foo/bar/").unwrap(),
+            "example-com-foo-bar"
         );
-        // Special chars get folded.
+        // Special chars fold, and runs of '-' collapse.
         assert_eq!(
             slug_for_url("https://example.com/foo/Bar.Baz").unwrap(),
-            "bar-baz"
+            "example-com-foo-bar-baz"
         );
+    }
+
+    /// The bug this replaced: the slug was the repo basename alone, so two
+    /// different remotes owned the same folder — and since the URL is only
+    /// consulted on first clone, the second import silently re-fetched the
+    /// first's remote and reported success.
+    #[test]
+    fn different_remotes_never_share_a_slug() {
+        let alice = slug_for_url("https://github.com/alice/tools").unwrap();
+        let mallory = slug_for_url("https://evil.example/mallory/tools").unwrap();
+        assert_ne!(alice, mallory, "same basename must not collide");
+        assert!(alice.contains("alice") && alice.contains("github"));
     }
 
     #[test]
@@ -333,6 +484,28 @@ mod tests {
         assert!(validate_url("ssh://x@y/z").is_err());
         assert!(validate_url("").is_err());
         assert!(validate_url("https://x\nhost").is_err());
+        // Cleartext transports are refused: the box runs what it fetches.
+        assert!(validate_url("http://github.com/x/y.git").is_err());
+        assert!(validate_url("git://github.com/x/y.git").is_err());
+    }
+
+    /// The importer fetches server-side, so an unrestricted URL makes it a
+    /// request forger — the cloud metadata endpoint being the sharpest case.
+    #[test]
+    fn internal_hosts_are_refused() {
+        for url in [
+            "https://169.254.169.254/latest/meta-data/",
+            "https://localhost/x/y",
+            "https://127.0.0.1/x/y",
+            "https://10.1.2.3/x/y",
+            "https://192.168.1.9/x/y",
+            "https://172.20.0.5/x/y",
+            "git@192.168.1.9:x/y.git",
+        ] {
+            assert!(validate_url(url).is_err(), "should refuse {url}");
+        }
+        // 172.32 is public; only 172.16-31 is private.
+        assert!(validate_url("https://172.32.0.1/x/y").is_ok());
     }
 
     #[test]
