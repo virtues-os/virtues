@@ -20,6 +20,7 @@
 		type Column
 	} from '$lib/components/datagrid/UniversalDataGrid.svelte';
 	import { sourcesStore, type Connection } from '$lib/stores/sources.svelte';
+	import { getStreamHealth, type StreamHealth } from '$lib/api/client';
 	import { connectFlow } from '$lib/stores/connectFlow.svelte';
 	import { windowShellStore } from '$lib/stores/window-shell.svelte';
 	import { relativeTime } from '$lib/applets/palette';
@@ -28,9 +29,36 @@
 
 	const store = sourcesStore;
 
+	let streams = $state<StreamHealth[]>([]);
+
 	$effect(() => {
 		void store.load();
+		// Failure here costs the footnote, not the table.
+		getStreamHealth()
+			.then((r) => (streams = r))
+			.catch(() => (streams = []));
 	});
+
+	/**
+	 * Ontologies nothing in the catalog can produce. The coverage question the
+	 * Overview deliberately no longer answers: its axis is "is what I have
+	 * working", and this one is "what could I have at all". Stated once, at the
+	 * bottom, because it is a limit of ours rather than something the reader did
+	 * wrong — and with no count, for the same reason the Overview carries no
+	 * score.
+	 */
+	// Only claim this when the box demonstrably serves provider data. On a build
+	// that predates it every stream looks unprovided, and the footnote would
+	// confidently list streams an already-paired iPhone writes — the exact class
+	// of unsubstantiated claim this whole pass exists to remove.
+	const providerDataAvailable = $derived(streams.some((s) => (s.provided_by ?? []).length > 0));
+	const uncovered = $derived(
+		providerDataAvailable
+			? streams
+					.filter((s) => (s.provided_by ?? []).length === 0 && s.total === 0)
+					.map((s) => s.display_name)
+			: []
+	);
 
 	/** One catalog row: a source plus whatever is connected to it. */
 	type Row = {
@@ -44,8 +72,22 @@
 		state: string;
 		last_activity: string;
 		applets: number;
+		/** Life-domains this source can fill, e.g. "Health · Location". */
+		provides: string;
 		/** Null when the connection's source is no longer in the catalog. */
 		source: SourceCatalogItem | null;
+	};
+
+	// Domain labels match the Overview's, since they name the same buckets.
+	const DOMAIN_LABEL: Record<string, string> = {
+		health: 'Health',
+		location: 'Location',
+		communication: 'Communication',
+		calendar: 'Calendar',
+		activity: 'Activity',
+		content: 'Content',
+		financial: 'Finance',
+		audio: 'Audio'
 	};
 
 	const AUTH_LABEL: Record<string, string> = {
@@ -80,6 +122,7 @@
 				state: 'needs attention',
 				last_activity: '—',
 				applets: connections.reduce((n, c) => n + (c.appletCount ?? 0), 0),
+				provides: '—',
 				source: null
 			});
 		}
@@ -108,6 +151,8 @@
 						: 'not connected',
 				last_activity: newest ? relativeTime(newest) : '—',
 				applets: connections.reduce((n, c) => n + (c.appletCount ?? 0), 0),
+				provides:
+					(source.domains ?? []).map((d) => DOMAIN_LABEL[d] ?? d).join(' · ') || '—',
 				source
 			};
 		})
@@ -125,13 +170,20 @@
 	});
 
 	const columns: Column<Row>[] = [
-		{ key: 'name', label: 'Source', icon: 'ri:plug-line', width: '26%', minWidth: '150px' },
+		{ key: 'name', label: 'Source', icon: 'ri:plug-line', width: '20%', minWidth: '140px' },
+		{
+			key: 'provides',
+			label: 'Provides',
+			icon: 'ri:stack-line',
+			width: '22%',
+			minWidth: '150px'
+		},
 		{
 			key: 'kind',
 			label: 'Connects by',
 			icon: 'ri:key-2-line',
-			width: '14%',
-			minWidth: '110px',
+			width: '12%',
+			minWidth: '100px',
 			groupable: true,
 			hideOnMobile: true
 		},
@@ -241,6 +293,13 @@
 		{/snippet}
 
 	</UniversalDataGrid>
+
+	{#if uncovered.length > 0}
+		<p class="uncovered">
+			No source yet for {uncovered.join(', ')}. Virtues can hold these, but
+			nothing installed writes them.
+		</p>
+	{/if}
 </Page>
 
 <style>
@@ -251,6 +310,14 @@
 		background: var(--color-error-subtle);
 		color: color-mix(in srgb, var(--color-error) 75%, #000);
 		font-size: 0.8125rem;
+	}
+
+	.uncovered {
+		margin: 1rem 0 0;
+		max-width: 44rem;
+		font-size: 0.8125rem;
+		line-height: 1.55;
+		color: var(--color-foreground-subtle, #9ca3af);
 	}
 
 	.connect {
