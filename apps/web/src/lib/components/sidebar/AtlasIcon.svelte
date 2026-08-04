@@ -35,6 +35,12 @@
 		applets:
 			'<path d="M8 2.2 9.6 6.4 13.8 8 9.6 9.6 8 13.8 6.4 9.6 2.2 8 6.4 6.4z"/>',
 		search: '<circle cx="7.1" cy="7.1" r="4.3"/><path d="M10.4 10.4 13.5 13.5"/>',
+		// An inkwell, taking a drop. The well the record is written from — a desk
+		// object, like the rest of this set, rather than the plug or stacked
+		// database cylinder a general-purpose set would offer. It also avoids the
+		// funnel, which at this size is read as Filter everywhere else.
+		sources:
+			'<ellipse cx="8" cy="6" rx="3.4" ry="1.2"/><path d="M4.6 6v4.3c0 1.2 1.5 2.2 3.4 2.2s3.4-1 3.4-2.2V6"/><path d="M8 2.3v1.7"/>',
 		developer: '<path d="M3 5l3.2 3L3 11"/><path d="M9 11.5h4"/>',
 		settings:
 			'<circle cx="8" cy="8" r="5.2"/><path d="M8 2.8v2.7"/><circle cx="8" cy="8" r="1.1" fill="currentColor" stroke="none"/>',

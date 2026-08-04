@@ -1,9 +1,8 @@
 /**
  * connectDispatch — the single place that maps a catalog source to the right
- * connect flow, so the onboarding "Connect your world" view and the /sources
- * ConnectionsPanel can't drift. Returns a descriptor the caller turns into
- * modal state; the OAuth case performs the redirect itself and returns
- * `{ kind: 'oauth' }`.
+ * connect flow, so the onboarding "Connect your world" view and the Sources
+ * room can't drift. Returns a descriptor the caller turns into modal state;
+ * the OAuth case performs the redirect itself and returns `{ kind: 'oauth' }`.
  */
 import { oauthStart, type SourceCatalogItem } from '$lib/api/client';
 import { getBackendOrigin } from '$lib/config/backend';
