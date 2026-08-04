@@ -65,10 +65,16 @@ pub struct CredentialListItem {
     pub provider: String,
     pub name: String,
     pub auth_type: String,
-    /// Raw status enum: `pending` (mid-pairing), `active`, or `revoked`. The
-    /// frontend uses this to filter transient pending rows out of the list and
-    /// to distinguish revoked from pending in display.
+    /// Raw status enum: `pending` (mid-pairing), `active`, `revoked`,
+    /// `reauth_required`, or `error`. The frontend uses this to filter
+    /// transient pending rows out of the list, to distinguish revoked from
+    /// pending in display, and to offer Reconnect on the two broken states.
     pub status: String,
+    /// Why the credential is in a broken state — the provider's own words
+    /// where we have them (a Plaid `ITEM_LOGIN_REQUIRED`, a refresh failure).
+    /// Without it a Reconnect button can only say that something is wrong.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub status_reason: Option<String>,
     pub is_active: bool,
     pub device_info: Option<DeviceInfo>,
     pub last_seen_at: Option<String>,
@@ -90,6 +96,7 @@ pub async fn list_credentials(db: &PgPool) -> Result<Vec<CredentialListItem>> {
         String,
         String,
         String,
+        Option<String>,
         String,
         Option<String>,
         String,
@@ -102,6 +109,7 @@ pub async fn list_credentials(db: &PgPool) -> Result<Vec<CredentialListItem>> {
               c.source_id,
               c.name,
               c.status,
+              c.status_reason,
               c.metadata::text,
               c.last_seen_at::text,
               c.created_at::text,
@@ -119,7 +127,7 @@ pub async fn list_credentials(db: &PgPool) -> Result<Vec<CredentialListItem>> {
     Ok(rows
         .into_iter()
         .map(
-            |(id, source_id, name, status, metadata_raw, last_seen_at, created_at, applet_count, total_runs, success_runs)| {
+            |(id, source_id, name, status, status_reason, metadata_raw, last_seen_at, created_at, applet_count, total_runs, success_runs)| {
                 let device_info = device_info_from_metadata(Some(&metadata_raw));
                 let auth_type = auth_type_for_source(&source_id).to_string();
                 let is_active = status == "active";
@@ -131,6 +139,7 @@ pub async fn list_credentials(db: &PgPool) -> Result<Vec<CredentialListItem>> {
                     auth_type,
                     is_active,
                     status,
+                    status_reason,
                     device_info,
                     last_seen_at,
                     created_at,

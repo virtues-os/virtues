@@ -137,6 +137,16 @@ export interface ActionLastRun {
  */
 export type ActionRuntime = 'function' | 'view';
 
+/**
+ * Which of the four things made this applet — the facet lists and filters use.
+ *
+ * Derived server-side, not stored: `owner` is the write-authority field
+ * (reconcile overwrites and GCs `system` rows, leaves `user`/`ai` alone), and
+ * every source fan-out row is `system` under it. Faceting on `owner` therefore
+ * files a Gmail sync with the embedding indexer; `origin` splits them.
+ */
+export type AppletOrigin = 'source' | 'system' | 'user' | 'ai';
+
 export interface Applet {
 	id: string;
 	owner: 'system' | 'user' | 'ai';
@@ -149,7 +159,11 @@ export interface Applet {
 	triggers: ActionTrigger[];
 	memory: string | null;
 	function_name: string | null;
+	/** Set when the applet is one source connection's fan-out (OAuth/API-key). */
 	credential_id: string | null;
+	/** Set when the applet is one paired device's ingest webhook (iOS/Mac). */
+	device_id: string | null;
+	origin: AppletOrigin;
 	runtime: ActionRuntime;
 	/** Polyglot escape: explicit argv to spawn instead of resolving a Cargo
 	 *  binary by `function_name`. Null when the action uses the function_name
@@ -524,7 +538,18 @@ export interface DeviceInfo {
 	app_version: string | null;
 }
 
-export type CredentialStatus = 'pending' | 'active' | 'revoked';
+/**
+ * Mirrors the CHECK constraint on `credentials.status`. `reauth_required` and
+ * `error` are the states most worth surfacing — a Plaid `ITEM_LOGIN_REQUIRED`
+ * arrives as one — and they were missing here, so the two rows that need a
+ * Reconnect button were the two that rendered as unstyled raw text.
+ */
+export type CredentialStatus =
+	| 'pending'
+	| 'active'
+	| 'revoked'
+	| 'reauth_required'
+	| 'error';
 
 export interface Credential {
 	id: string;
@@ -532,6 +557,9 @@ export interface Credential {
 	name: string;
 	auth_type: string;
 	status: CredentialStatus;
+	/** The provider's own words for why a broken credential broke, when we
+	 *  have them. Absent on healthy rows. */
+	status_reason?: string | null;
 	is_active: boolean;
 	device_info: DeviceInfo | null;
 	last_seen_at: string | null;
@@ -584,6 +612,9 @@ export interface SourceCatalogItem {
 	description: string | null;
 	auth_kind: SourceAuthKind;
 	credential_count: number;
+	/** Secret names an `api_key` source expects, in manifest order. Empty for
+	 *  every other auth kind. */
+	fields: string[];
 }
 
 /**
@@ -2223,9 +2254,6 @@ export function updateNarrativeIdentity<T = unknown>(body: Record<string, unknow
 // ── Devices / pairing (extras beyond pairMint/pairDeny/pairStatus) ────────────
 export function listDevices<T = unknown>(): Promise<T> {
 	return apiGet<T>('/devices');
-}
-export function pairConfirm<T = unknown>(id: string): Promise<T> {
-	return apiSend<T>('POST', `/pair/confirm/${encodeURIComponent(id)}`);
 }
 export function pairConsume<T = unknown>(body?: Record<string, unknown>): Promise<T> {
 	return apiSend<T>('POST', '/pair/consume', body);

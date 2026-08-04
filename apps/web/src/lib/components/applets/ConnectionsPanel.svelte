@@ -31,7 +31,7 @@
 		type Credential,
 		type SourceCatalogItem
 	} from '$lib/api/client';
-	import { startOAuth, reloadOnReturn } from '$lib/components/sources/connectDispatch';
+	import { connectIntent, reloadOnReturn } from '$lib/components/sources/connectDispatch';
 	import { relativeTime } from '$lib/applets/palette';
 
 	// ────────────────────────────────────────────────────────────────────────
@@ -64,6 +64,42 @@
 	// ────────────────────────────────────────────────────────────────────────
 	// Data loading
 	// ────────────────────────────────────────────────────────────────────────
+
+	// The OAuth callback 302s back here as `?connected=<source_id>` on success
+	// and `?source=<id>&error=<reason>` when it didn't finish — and nothing read
+	// either, so a round-trip through the provider ended in silence whichever
+	// way it went. Read once at mount and strip the params, so a refresh doesn't
+	// replay a stale verdict. (Native shells never land here; they get a
+	// terminal page in the system browser instead.)
+	const connectReturn = (() => {
+		if (typeof window === 'undefined') return null;
+		const p = new URLSearchParams(window.location.search);
+		const connected = p.get('connected');
+		const error = p.get('error');
+		const source = p.get('source');
+		if (!connected && !error) return null;
+		for (const k of ['connected', 'error', 'source']) p.delete(k);
+		const qs = p.toString();
+		window.history.replaceState({}, '', window.location.pathname + (qs ? `?${qs}` : ''));
+		return { connected, error, source };
+	})();
+
+	let noticeDismissed = $state(false);
+
+	const notice = $derived.by(() => {
+		if (!connectReturn || noticeDismissed) return null;
+		if (connectReturn.connected) {
+			return { ok: true, text: `${sourceLabel(connectReturn.connected)} is connected.` };
+		}
+		const who = connectReturn.source ? sourceLabel(connectReturn.source) : 'That source';
+		return {
+			ok: false,
+			text:
+				connectReturn.error === 'connect_cancelled'
+					? `${who} wasn't connected — the flow was closed before it finished.`
+					: `Couldn't finish connecting ${who}. Nothing was connected.`
+		};
+	});
 
 	async function load() {
 		loading = true;
@@ -101,41 +137,52 @@
 	// Connect dispatch — picker → right modal/redirect for each auth_kind
 	// ────────────────────────────────────────────────────────────────────────
 
+	// Dispatch lives in connectDispatch so this page and onboarding cannot
+	// disagree about what a source click does — the two had already drifted on
+	// where chat_import is tested, which is the drift that module exists to
+	// prevent. This turns the intent into modal state; nothing decides here.
 	async function handleConnect(source: SourceCatalogItem) {
 		err = null;
-
-		if (source.auth_kind === 'self_issued_bearer') {
-			pairModalDeviceType = source.id === 'mac' ? 'mac' : 'ios';
-			pairModalDisplayName = source.name;
-			pairModalOpen = true;
-			return;
-		}
-
-		if (source.auth_kind === 'via_proxy') {
-			try {
-				const { external } = await startOAuth(source.id);
+		const intent = await connectIntent(source);
+		switch (intent.kind) {
+			case 'pair':
+				pairModalDeviceType = intent.deviceType;
+				pairModalDisplayName = intent.displayName;
+				pairModalOpen = true;
+				return;
+			case 'chat_import':
+				chatImportOpen = true;
+				return;
+			case 'api_key':
+				apikeyModalSource = intent.source;
+				apikeyModalOpen = true;
+				return;
+			case 'oauth':
 				// Tauri: the SPA stayed mounted (system browser handled the dance);
 				// refresh the credential list when the user switches back.
-				if (external) reloadOnReturn(load);
-			} catch (e) {
-				err = e instanceof Error ? e.message : String(e);
-			}
+				if (intent.external) reloadOnReturn(load);
+				return;
+			case 'error':
+				err = intent.message;
+				return;
+		}
+	}
+
+	/**
+	 * Re-run the original connect flow for a credential that has gone bad.
+	 * Reconnecting *is* connecting — a fresh OAuth dance or a fresh key against
+	 * the same source — so this reuses the dispatcher rather than inventing a
+	 * repair path. The old row is replaced by the provider's own upsert.
+	 */
+	async function doReconnect(cred: CredRow | null = manageCred) {
+		if (!cred) return;
+		const source = catalogById.get(cred.provider);
+		if (!source) {
+			manageErr = `No catalog entry for "${cred.provider}"`;
 			return;
 		}
-
-		// One-time import sources open the upload card, not the api-key form.
-		if (source.id === 'chat_import') {
-			chatImportOpen = true;
-			return;
-		}
-
-		if (source.auth_kind === 'api_key') {
-			apikeyModalSource = source;
-			apikeyModalOpen = true;
-			return;
-		}
-
-		err = `Unknown auth_kind for "${source.name}": ${source.auth_kind}`;
+		closeManage();
+		await handleConnect(source);
 	}
 
 	function handleRowClick(row: CredRow) {
@@ -199,22 +246,43 @@
 	// Filter out `pending` rows (transient pre-pairing state — the server
 	// minted them at pair_initiate and they get hard-deleted on cancel or
 	// flipped to `active` on complete). They should never surface in the UI.
+	/** A connection that has stopped working and needs the user, not us. */
+	function isBroken(status: string): boolean {
+		return status === 'reauth_required' || status === 'error';
+	}
+
+	// Active rows show the Tier-2 init-sync lifecycle (connected → backfilling
+	// → live). The rest show their status in the user's terms: `reauth_required`
+	// is the provider asking them to sign in again, which is an instruction, not
+	// a state name.
+	function statusLabel(c: Credential): string {
+		if (c.status === 'active') return c.sync_state ?? 'active';
+		if (c.status === 'reauth_required') return 'sign in again';
+		return c.status;
+	}
+
+	function lastSeenLabel(c: Credential): string {
+		if (c.last_seen_at) return relativeTime(c.last_seen_at);
+		if (c.status === 'active') return 'no activity yet';
+		if (isBroken(c.status)) return 'not delivering';
+		return `revoked ${relativeTime(c.created_at)}`;
+	}
+
 	const rows = $derived.by<CredRow[]>(() =>
 		credentials
 			.filter((c) => c.status !== 'pending')
 			.map((c) => ({
 				...c,
 				source_label: sourceLabel(c.provider),
-				// Active rows show the Tier-2 init-sync lifecycle
-				// (connected → backfilling → live); others show the raw status.
-				status_label: c.status === 'active' ? (c.sync_state ?? 'active') : c.status,
-				last_seen_label: c.last_seen_at
-					? relativeTime(c.last_seen_at)
-					: c.status === 'active'
-						? 'no activity yet'
-						: `revoked ${relativeTime(c.created_at)}`
+				status_label: statusLabel(c),
+				last_seen_label: lastSeenLabel(c)
 			}))
 	);
+
+	// Broken connections are the only thing on this page the user must act on,
+	// and a row in a sorted grid is easy to miss. Surfaced above the grid with
+	// the provider's own reason where we have it.
+	const broken = $derived(rows.filter((c) => isBroken(c.status)));
 
 	const columns: Column<CredRow>[] = [
 		{
@@ -243,7 +311,9 @@
 				active: 'badge-success',
 				backfilling: 'badge-warning',
 				connected: 'badge-muted',
-				revoked: 'badge-muted'
+				revoked: 'badge-muted',
+				'sign in again': 'badge-error',
+				error: 'badge-error'
 			}
 		},
 		{
@@ -282,6 +352,40 @@
 
 	{#if err}
 		<div class="error">{err}</div>
+	{/if}
+
+	{#if notice}
+		<div class="notice" class:ok={notice.ok}>
+			<Icon icon={notice.ok ? 'ri:check-line' : 'ri:information-line'} width="16" />
+			<span>{notice.text}</span>
+			<button type="button" class="notice-x" onclick={() => (noticeDismissed = true)} aria-label="Dismiss">
+				<Icon icon="ri:close-line" width="15" />
+			</button>
+		</div>
+	{/if}
+
+	<!-- Above even the flow panel: a stopped stream is a fact to read, but a
+	     credential the provider has locked out is a job only the user can do. -->
+	{#if broken.length > 0}
+		<ul class="attention">
+			{#each broken as c (c.id)}
+				<li>
+					<Icon icon="ri:error-warning-line" width="16" />
+					<div class="what">
+						<span class="who">{c.source_label} · {c.name}</span>
+						<span class="why">
+							{c.status_reason ??
+								(c.status === 'reauth_required'
+									? 'The provider needs you to sign in again.'
+									: 'This connection stopped working.')}
+						</span>
+					</div>
+					<button type="button" class="reconnect" onclick={() => void doReconnect(c)}>
+						Reconnect
+					</button>
+				</li>
+			{/each}
+		</ul>
 	{/if}
 
 	<!-- Connecting a source is only half the story; this is whether it's still
@@ -359,7 +463,11 @@
 			<div class="manage-head">
 				<Icon icon={catalogById.get(manageCred.provider)?.icon ?? 'ri:plug-line'} width="20" />
 				<span class="manage-source">{manageCred.source_label}</span>
-				<span class="manage-status" class:revoked={manageCred.status !== 'active'}>
+				<span
+					class="manage-status"
+					class:revoked={manageCred.status === 'revoked'}
+					class:broken={isBroken(manageCred.status)}
+				>
 					{manageCred.status_label}
 				</span>
 			</div>
@@ -381,7 +489,22 @@
 				</dl>
 			{/if}
 
-			{#if manageCred.status === 'active'}
+			{#if isBroken(manageCred.status)}
+				<div class="manage-broken">
+					<p>
+						{manageCred.status_reason ??
+							(manageCred.status === 'reauth_required'
+								? 'The provider needs you to sign in again before this can deliver.'
+								: 'This connection stopped working.')}
+					</p>
+					<button class="btn-secondary" onclick={() => void doReconnect()} disabled={manageBusy}>
+						<Icon icon="ri:refresh-line" width="15" />
+						Reconnect
+					</button>
+				</div>
+			{/if}
+
+			{#if manageCred.status !== 'revoked'}
 				<label class="manage-rename">
 					<span>Name</span>
 					<div class="rename-row">
@@ -406,7 +529,7 @@
 				<div class="error">{manageErr}</div>
 			{/if}
 
-			{#if manageCred.status === 'active'}
+			{#if manageCred.status !== 'revoked'}
 				<div class="manage-danger">
 					{#if confirmingDisconnect}
 						<p class="danger-prompt">
@@ -509,6 +632,101 @@
 		margin-bottom: 1.25rem;
 	}
 
+	.notice {
+		display: flex;
+		align-items: center;
+		gap: 0.5rem;
+		padding: 0.5rem 0.75rem;
+		border-radius: 6px;
+		font-size: 0.8125rem;
+		background: var(--color-muted, #f3f4f6);
+		color: var(--color-foreground, #111827);
+	}
+	.notice.ok {
+		background: var(--color-success-subtle, #dcfce7);
+		color: var(--color-success, #166534);
+	}
+	.notice span {
+		flex: 1;
+		min-width: 0;
+	}
+	.notice-x {
+		display: inline-flex;
+		border: none;
+		background: transparent;
+		color: inherit;
+		opacity: 0.7;
+		cursor: pointer;
+		padding: 0;
+	}
+	.notice-x:hover {
+		opacity: 1;
+	}
+
+	/* ── Broken connections ───────────────────────────────────────────────── */
+	.attention {
+		list-style: none;
+		margin: 0;
+		padding: 0;
+		display: flex;
+		flex-direction: column;
+		gap: 0.5rem;
+	}
+	.attention li {
+		display: flex;
+		align-items: center;
+		gap: 0.625rem;
+		padding: 0.625rem 0.75rem;
+		border-radius: 8px;
+		border: 1px solid color-mix(in srgb, var(--color-error) 30%, transparent);
+		background: var(--color-error-subtle);
+		color: color-mix(in srgb, var(--color-error) 75%, #000);
+	}
+	.attention .what {
+		flex: 1;
+		min-width: 0;
+		display: flex;
+		flex-direction: column;
+		gap: 0.0625rem;
+	}
+	.attention .who {
+		font-size: 0.8125rem;
+		font-weight: 600;
+	}
+	.attention .why {
+		font-size: 0.75rem;
+		opacity: 0.85;
+	}
+	.reconnect {
+		flex-shrink: 0;
+		padding: 0.3125rem 0.75rem;
+		border-radius: 6px;
+		border: 1px solid currentColor;
+		background: transparent;
+		color: inherit;
+		font-size: 0.75rem;
+		font-weight: 600;
+		cursor: pointer;
+	}
+	.reconnect:hover {
+		background: color-mix(in srgb, var(--color-error) 12%, transparent);
+	}
+
+	.manage-broken {
+		display: flex;
+		flex-direction: column;
+		align-items: flex-start;
+		gap: 0.5rem;
+		padding: 0.625rem 0.75rem;
+		border-radius: 6px;
+		background: var(--color-error-subtle);
+	}
+	.manage-broken p {
+		margin: 0;
+		font-size: 0.8125rem;
+		color: color-mix(in srgb, var(--color-error) 75%, #000);
+	}
+
 	/* ── Manage-connection modal ──────────────────────────────────────────── */
 	.manage {
 		display: flex;
@@ -540,6 +758,10 @@
 	.manage-status.revoked {
 		background: var(--color-muted, #f3f4f6);
 		color: var(--color-foreground-muted, #6b7280);
+	}
+	.manage-status.broken {
+		background: var(--color-error-subtle);
+		color: color-mix(in srgb, var(--color-error) 75%, #000);
 	}
 	.manage-info {
 		display: grid;
