@@ -798,6 +798,23 @@ pub fn sources_writing(ontology: &str) -> Vec<String> {
     out
 }
 
+/// The inverse of [`sources_writing`]: which ontologies a source can produce.
+///
+/// Catalog-side question — "what would connecting this give me" — where
+/// `sources_writing` answers the stream-side one, "what would fill this".
+pub fn ontologies_written_by(source_id: &str) -> Vec<String> {
+    let guard = catalog_lock().read().expect("catalog rwlock poisoned");
+    let mut out: Vec<String> = guard
+        .action
+        .iter()
+        .filter(|t| t.source.as_ref().is_some_and(|s| s.id == source_id))
+        .flat_map(|t| t.writes.iter().cloned())
+        .collect();
+    out.sort();
+    out.dedup();
+    out
+}
+
 /// Look up a `[[source]]` entry by its id. Returns an owned clone so the
 /// catalog rwlock isn't held across the caller's await points.
 pub fn lookup_source(id: &str) -> Option<Source> {

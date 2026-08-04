@@ -676,6 +676,11 @@ export interface SourceCatalogItem {
 	 *  them. Null when the code is entirely the box's. */
 	repo?: string | null;
 	repo_ref?: string | null;
+	/** Ontologies this source can produce, by display name — what connecting it
+	 *  would actually give you. */
+	provides?: string[];
+	/** The life-domains those fall in (`health`, `financial`, …). */
+	domains?: string[];
 }
 
 /**

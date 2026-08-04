@@ -610,6 +610,13 @@ pub struct SourceCatalogItem {
     /// or update path. Null for sources whose code is entirely the box's.
     pub repo: Option<String>,
     pub repo_ref: Option<String>,
+    /// Ontologies this source can produce, by display name — "what would
+    /// connecting this give me". The catalog could previously only say what a
+    /// source *is*, never what it would deliver.
+    pub provides: Vec<String>,
+    /// The life-domains those ontologies fall in (`health`, `financial`, …),
+    /// which is the coarser grain worth showing in a table cell.
+    pub domains: Vec<String>,
 }
 
 /// GET /api/sources — catalog tiles for the Sources UI.
@@ -638,6 +645,7 @@ pub async fn list_sources_handler(State(state): State<AppState>) -> Response {
         .await
         .unwrap_or(0);
 
+        let written = crate::applet_templates::ontologies_written_by(&s.id);
         items.push(SourceCatalogItem {
             id: s.id.clone(),
             name: s.display_name.clone(),
@@ -651,6 +659,25 @@ pub async fn list_sources_handler(State(state): State<AppState>) -> Response {
             },
             repo: s.repo.clone(),
             repo_ref: s.repo_ref.clone(),
+            provides: written
+                .iter()
+                .map(|n| {
+                    virtues_registry::ontologies::registered_ontologies()
+                        .into_iter()
+                        .find(|o| o.name == n)
+                        .map(|o| o.display_name.to_string())
+                        .unwrap_or_else(|| n.clone())
+                })
+                .collect(),
+            domains: {
+                let mut d: Vec<String> = written
+                    .iter()
+                    .filter_map(|n| n.split('_').next().map(str::to_string))
+                    .collect();
+                d.sort();
+                d.dedup();
+                d
+            },
         });
     }
 
