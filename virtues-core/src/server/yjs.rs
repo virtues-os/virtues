@@ -71,9 +71,31 @@ impl DocCache {
         page_id: &str,
         pool: &PgPool,
     ) -> Result<Arc<RwLock<PageDoc>>, anyhow::Error> {
-        // Check cache first
+        // Check cache first — but not blindly. A cached doc persists
+        // `yjs_state` on every save, so `yjs_state IS NULL` in the database
+        // while a warm entry exists means an EXTERNAL writer rewrote the page
+        // via the pool since we last saved (the nightly narration, a
+        // migration, a manual reset). Serving the cached doc then resurrects
+        // stale prose over the rewrite on the next debounced save — observed
+        // live: a re-narrated day article was clobbered back to its old text
+        // by a doc cached before the narration. The DB is the authority;
+        // evict and reseed.
         if let Some(doc) = self.pages.get(page_id) {
-            return Ok(doc);
+            let externally_rewritten: bool = sqlx::query_scalar::<_, bool>(
+                "SELECT yjs_state IS NULL FROM app_pages WHERE id = $1",
+            )
+            .bind(page_id)
+            .fetch_optional(pool)
+            .await?
+            .unwrap_or(false);
+            if !externally_rewritten {
+                return Ok(doc);
+            }
+            tracing::info!(
+                page_id,
+                "page was rewritten outside the CRDT — dropping the cached doc and reseeding"
+            );
+            self.pages.invalidate(page_id);
         }
 
         // Load from database

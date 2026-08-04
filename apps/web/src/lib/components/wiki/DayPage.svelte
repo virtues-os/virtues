@@ -515,6 +515,33 @@
 					{#if page.epigraph}
 						<p class="day-epigraph">{page.epigraph}</p>
 					{/if}
+					<!-- The record's colophon, where a title page would carry one:
+					     when this was last written, by whose hand, and how much of
+					     the day the record actually saw. The audit trail below
+					     keeps the rest. -->
+					{#if page.updatedAt || page.dataQuality}
+						<p class="day-byline">
+							{#if page.updatedAt}
+								<span>
+									Updated {new Date(page.updatedAt).toLocaleDateString("en-US", {
+										month: "short",
+										day: "numeric",
+										year: "numeric",
+									})}{page.lastEditedBy
+										? ` · by ${page.lastEditedBy === "ai" ? "the record" : "you"}`
+										: ""}
+								</span>
+							{/if}
+							{#if page.updatedAt && page.dataQuality}
+								<span class="byline-sep">·</span>
+							{/if}
+							{#if page.dataQuality}
+								<span title={page.dataQuality.note}>
+									Coverage {page.dataQuality.overall}/5
+								</span>
+							{/if}
+						</p>
+					{/if}
 					<div class="day-title-rule" aria-hidden="true"></div>
 				</header>
 
@@ -695,15 +722,9 @@
 								<dt>Created</dt>
 								<dd>{new Date(page.createdAt).toLocaleString()}</dd>
 							{/if}
-							{#if page.updatedAt}
-								<dt>Last updated</dt>
-								<dd>
-									{new Date(page.updatedAt).toLocaleString()}
-									{#if page.lastEditedBy}
-										<span class="metadata-dim">· by {page.lastEditedBy}</span>
-									{/if}
-								</dd>
-							{/if}
+							<!-- "Last updated" moved to the byline under the title —
+							     it is the one line a reader wants before the prose,
+							     not after the sources table. -->
 							<dt>Events</dt>
 							<dd>{dayEvents.length}</dd>
 							<dt>Sources</dt>
@@ -808,6 +829,22 @@
 		height: 1px;
 		background: color-mix(in srgb, var(--color-foreground) 15%, transparent);
 		margin-top: 0.25rem;
+	}
+
+	/* Small-caps register under the title: present but quiet, like a printed
+	   colophon. The tooltip on Coverage carries the quality note. */
+	.day-byline {
+		margin: 0;
+		font-family: var(--font-sans, system-ui, sans-serif);
+		font-size: 0.6875rem;
+		letter-spacing: 0.06em;
+		text-transform: uppercase;
+		color: var(--color-foreground-subtle);
+	}
+
+	.byline-sep {
+		margin: 0 0.375rem;
+		opacity: 0.5;
 	}
 
 	.day-epigraph {
