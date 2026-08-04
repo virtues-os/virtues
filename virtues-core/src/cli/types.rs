@@ -327,8 +327,13 @@ pub enum Commands {
     /// "already on it" before any transfer starts. The box runs this on a
     /// schedule on the stable channel; running it by hand is the same work.
     Prepare {
-        /// Re-fetch and re-stage even if this box already runs (or has already
-        /// staged) the newest build. Also skips the migration lineage gate.
+        /// Re-fetch and re-stage even if the newest build is already staged.
+        /// Also skips the migration lineage gate.
+        ///
+        /// Does NOT re-stage the release this box is already RUNNING: that
+        /// resolves to the live slot, and staging starts by deleting it. Use
+        /// `upgrade --force` to reinstall in place, which restarts into the
+        /// result rather than leaving it half-written underneath a live box.
         #[arg(long)]
         force: bool,
     },
