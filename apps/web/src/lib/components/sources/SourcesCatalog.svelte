@@ -25,6 +25,7 @@
 	import { windowShellStore } from '$lib/stores/window-shell.svelte';
 	import { relativeTime } from '$lib/applets/palette';
 	import { isMacOS, isTauri, thisComputerLabel } from '$lib/utils/platform';
+	import { openExternal } from '$lib/tauri/bridge';
 	import type { SourceCatalogItem } from '$lib/api/client';
 
 	const store = sourcesStore;
@@ -196,6 +197,28 @@
 		{#snippet expandDetail(row: Row)}
 			<div class="detail">
 				<p class="desc">{row.description}</p>
+
+				{#if row.source.repo}
+					<!-- Provenance, not an install path. The collectors arrive through
+					     the App Store and update themselves; this is so you can read
+					     what they do before pairing one to your life. -->
+					<p class="repo">
+						<Icon icon="ri:code-line" width="14" />
+						<button
+							type="button"
+							class="link"
+							onclick={() =>
+								void openExternal(
+									row.source.repo_ref
+										? `${row.source.repo}/tree/main/${row.source.repo_ref}`
+										: (row.source.repo as string)
+								)}
+						>
+							Read the code
+						</button>
+						{#if row.source.repo_ref}<code>{row.source.repo_ref}</code>{/if}
+					</p>
+				{/if}
 				{#if row.connections.length === 0}
 					<p class="none">
 						Nothing connected yet.
@@ -275,6 +298,18 @@
 	.none {
 		margin: 0;
 		font-size: 0.75rem;
+		color: var(--color-foreground-subtle, #9ca3af);
+	}
+	.repo {
+		display: flex;
+		align-items: center;
+		gap: 0.375rem;
+		margin: 0;
+		font-size: 0.75rem;
+		color: var(--color-foreground-muted, #6b7280);
+	}
+	.repo code {
+		font-size: 0.6875rem;
 		color: var(--color-foreground-subtle, #9ca3af);
 	}
 	.link {

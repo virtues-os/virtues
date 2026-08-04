@@ -606,6 +606,10 @@ pub struct SourceCatalogItem {
     /// guessed `["token"]` — so a source declaring two fields could not be
     /// connected from the UI at all.
     pub fields: Vec<String>,
+    /// Where this source's code can be read. Provenance only; never an install
+    /// or update path. Null for sources whose code is entirely the box's.
+    pub repo: Option<String>,
+    pub repo_ref: Option<String>,
 }
 
 /// GET /api/sources — catalog tiles for the Sources UI.
@@ -645,6 +649,8 @@ pub async fn list_sources_handler(State(state): State<AppState>) -> Response {
                 crate::applet_templates::SourceAuth::ApiKey { fields } => fields.clone(),
                 _ => Vec::new(),
             },
+            repo: s.repo.clone(),
+            repo_ref: s.repo_ref.clone(),
         });
     }
 
