@@ -135,18 +135,31 @@ commit: ## Safely commit only your files: MSG="..." FILES="path ..."
 	  || { echo "commit failed — nothing was committed"; exit 1; }; \
 	echo "→ committed to $$branch:"; git show --stat --format='  %h %s' HEAD | head -20
 
+# The claimed file is `.sql.pending`, NOT `.sql`, and that suffix is the whole
+# point. `sqlx::migrate!` globs `*.sql`, so a bare placeholder is a VALID
+# MIGRATION THAT DOES NOTHING — and any box that boots between claiming the
+# number and writing the SQL records it as applied. The real SQL then never
+# runs, and worse, its checksum no longer matches what the DB stored, so the
+# next boot refuses to start. That happened on the dev box on 2026-08-04 and
+# took the shared `make dev` with it.
+#
+# The number is still reserved the moment this commits (the counter below reads
+# any filename starting with digits), but sqlx cannot see the file until you
+# rename it, which is also the signal that the SQL is actually written.
 migration: ## Claim the next migration number NOW, before writing SQL: NAME=add_foo
 	@[ -n "$(NAME)" ] || { echo "error: NAME is required  —  make migration NAME=add_foo"; exit 1; }
 	@tools/with-lock.sh sh -c '\
 	  last=$$(ls virtues-core/migrations | sed -n "s/^\([0-9][0-9]*\).*/\1/p" | sort -n | tail -1); \
 	  next=$$(printf "%04d" $$(expr $$(echo $$last | sed "s/^0*//") + 1)); \
-	  f="virtues-core/migrations/$${next}_$(NAME).sql"; \
-	  if [ -e "$$f" ]; then echo "error: $$f exists"; exit 1; fi; \
-	  printf -- "-- $${next}_$(NAME)\n-- Number claimed; SQL to follow.\n" > "$$f"; \
+	  f="virtues-core/migrations/$${next}_$(NAME).sql.pending"; \
+	  if [ -e "$$f" ] || [ -e "virtues-core/migrations/$${next}_$(NAME).sql" ]; then echo "error: $${next}_$(NAME) exists"; exit 1; fi; \
+	  printf -- "-- $${next}_$(NAME)\n-- Number claimed; SQL to follow.\n--\n-- Rename to .sql once written — sqlx ignores this file until you do,\n-- which is what stops a boot from applying it as an empty migration.\n" > "$$f"; \
 	  git add -- "$$f" && \
 	  git commit -q -m "chore(db): claim migration $${next} ($(NAME))" -- "$$f" && \
 	  echo "→ claimed $$f"; \
-	  echo "   write the SQL, then: make commit MSG=\"...\" FILES=$$f"'
+	  echo "   1. write the SQL into that file"; \
+	  echo "   2. mv $$f virtues-core/migrations/$${next}_$(NAME).sql"; \
+	  echo "   3. make commit MSG=\"...\" FILES=virtues-core/migrations/$${next}_$(NAME).sql"'
 
 # ── First-time setup ─────────────────────────────────────────────────────────
 
