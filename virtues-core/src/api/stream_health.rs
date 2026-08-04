@@ -56,6 +56,18 @@ pub struct StreamHealth {
     pub derived: bool,
 }
 
+/// The arrivals window: the UTC date `days[0]` refers to, and its length.
+/// Sent so the client labels the axis from the same calendar the server bucketed
+/// on — deriving it from a local `new Date()` shifts every tick and tooltip by a
+/// day for anyone west of UTC after 18:00, which undercuts the exact reading the
+/// grid exists for.
+#[derive(Debug, Serialize, Deserialize)]
+pub struct StreamDaysResponse {
+    pub start: chrono::NaiveDate,
+    pub days: i64,
+    pub streams: Vec<StreamDays>,
+}
+
 /// One stream's arrivals, one cell per day, oldest first.
 #[derive(Debug, Serialize, Deserialize)]
 pub struct StreamDays {
@@ -82,14 +94,16 @@ pub struct StreamDays {
 /// It also exposes rhythm, which a scalar cannot: a calendar that only fills on
 /// weekdays is healthy, a heart rate that only fills on weekdays is a phone left
 /// at home.
-pub async fn stream_days(db: &Database, days: i64) -> Result<Vec<StreamDays>> {
+pub async fn stream_days(db: &Database, days: i64) -> Result<StreamDaysResponse> {
     let days = days.clamp(7, 365);
     let streams: Vec<_> = virtues_registry::ontologies::registered_ontologies()
         .into_iter()
         .filter(|o| o.table_name.starts_with("data_"))
         .collect();
+    let today = chrono::Utc::now().date_naive();
+    let start = today - chrono::Duration::days(days - 1);
     if streams.is_empty() {
-        return Ok(vec![]);
+        return Ok(StreamDaysResponse { start, days, streams: vec![] });
     }
 
     // One UNION ALL, grouped per provider per day. Grouping on the data's own
@@ -111,7 +125,7 @@ pub async fn stream_days(db: &Database, days: i64) -> Result<Vec<StreamDays>> {
                         (created_at AT TIME ZONE 'UTC')::date AS day, \
                         count(*)::int8 AS n \
                    FROM {table} \
-                  WHERE created_at >= now() - ($1::int * interval '1 day') \
+                  WHERE created_at >= (($1::date)::timestamptz) \
                   GROUP BY 1, 2, 3",
                 name = o.name,
                 table = o.table_name,
@@ -120,10 +134,8 @@ pub async fn stream_days(db: &Database, days: i64) -> Result<Vec<StreamDays>> {
         .collect::<Vec<_>>()
         .join(" UNION ALL ");
 
-    let rows = sqlx::query(&sql).bind(days as i32).fetch_all(db.pool()).await?;
+    let rows = sqlx::query(&sql).bind(start).fetch_all(db.pool()).await?;
 
-    let today = chrono::Utc::now().date_naive();
-    let start = today - chrono::Duration::days(days - 1);
     let width = days as usize;
 
     // (stream, provider) -> daily counts.
@@ -159,7 +171,7 @@ pub async fn stream_days(db: &Database, days: i64) -> Result<Vec<StreamDays>> {
     // Stable order: provider, then stream, so the grid does not reshuffle
     // between polls.
     out.sort_by(|a, b| a.provider.cmp(&b.provider).then(a.name.cmp(&b.name)));
-    Ok(out)
+    Ok(StreamDaysResponse { start, days, streams: out })
 }
 
 /// Freshness for every ingest stream, worst-first (stalled → idle → never →

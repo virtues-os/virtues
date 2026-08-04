@@ -23,8 +23,28 @@
 	let {
 		title,
 		subtitle,
-		streams
-	}: { title: string; subtitle?: string; streams: StreamDays[] } = $props();
+		streams,
+		start
+	}: {
+		title: string;
+		subtitle?: string;
+		streams: StreamDays[];
+		/** UTC date of column 0, from the server. Labels must come from the same
+		 *  calendar the server bucketed on — deriving them from a local
+		 *  `new Date()` shifts every tick and tooltip by a day for anyone west of
+		 *  UTC in the evening, which undercuts the exact reading this exists for. */
+		start: string | null;
+	} = $props();
+
+	/** Column index → its UTC date. */
+	function dayAt(i: number): Date | null {
+		if (!start) return null;
+		const d = new Date(`${start}T00:00:00Z`);
+		d.setUTCDate(d.getUTCDate() + i);
+		return d;
+	}
+
+	const FMT: Intl.DateTimeFormatOptions = { month: 'short', day: 'numeric', timeZone: 'UTC' };
 
 	// Four steps. Volume across streams spans orders of magnitude — a location
 	// point every few seconds against one calendar event a day — so the scale is
@@ -53,14 +73,13 @@
 	// eye can date a cliff without counting squares.
 	const ticks = $derived.by(() => {
 		const n = streams[0]?.days.length ?? 0;
-		if (n === 0) return [];
-		const today = new Date();
+		if (n === 0 || !start) return [];
 		const out: { i: number; label: string }[] = [];
 		let last = '';
 		for (let i = 0; i < n; i++) {
-			const d = new Date(today);
-			d.setDate(d.getDate() - (n - 1 - i));
-			const label = d.toLocaleDateString(undefined, { month: 'short' });
+			const d = dayAt(i);
+			if (!d) break;
+			const label = d.toLocaleDateString(undefined, { month: 'short', timeZone: 'UTC' });
 			if (label !== last) {
 				out.push({ i, label });
 				last = label;
@@ -69,10 +88,9 @@
 		return out;
 	});
 
-	function dayLabel(i: number, n: number, count: number, name: string): string {
-		const d = new Date();
-		d.setDate(d.getDate() - (n - 1 - i));
-		const when = d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+	function dayLabel(i: number, count: number, name: string): string {
+		const d = dayAt(i);
+		const when = d ? d.toLocaleDateString(undefined, FMT) : `day ${i + 1}`;
 		return count === 0 ? `${name} — nothing on ${when}` : `${name} — ${count} on ${when}`;
 	}
 </script>
@@ -96,7 +114,7 @@
 				{#each r.cells as level, i (i)}
 					<span
 						class="cell l{level}"
-						title={dayLabel(i, r.cells.length, r.days[i], r.display_name)}
+						title={dayLabel(i, r.days[i], r.display_name)}
 					></span>
 				{/each}
 			</div>

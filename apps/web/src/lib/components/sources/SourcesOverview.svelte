@@ -26,6 +26,8 @@
 
 	let streams = $state<StreamHealth[]>([]);
 	let dayRows = $state<StreamDays[]>([]);
+	/** UTC date `days[0]` refers to, from the server — see StreamGrid. */
+	let gridStart = $state<string | null>(null);
 	// The grid endpoint is newer than the health one; a box that predates it
 	// must not make the page claim nothing ever arrived.
 	let daysUnavailable = $state(false);
@@ -43,7 +45,13 @@
 				getStreamDays(84)
 			]);
 			if (health.status === 'fulfilled') streams = health.value;
-			dayRows = days.status === 'fulfilled' ? days.value : [];
+			if (days.status === 'fulfilled') {
+				dayRows = days.value.streams;
+				gridStart = days.value.start;
+			} else {
+				dayRows = [];
+				gridStart = null;
+			}
 			daysUnavailable = days.status === 'rejected';
 			streamsErr =
 				health.status === 'rejected'
@@ -63,80 +71,10 @@
 		void loadStreams();
 	});
 
-	// Two questions, and the page used to answer them in one column, which is
-	// why it read as noise:
-	//
-	//   1. CONNECTEDNESS — is anything hooked up that could produce this at all?
-	//   2. STREAMING     — given it is, has anything arrived, and when?
-	//
-	// Only (2) is answerable from stream health. `total == 0` means "no rows
-	// ever", which could equally be "nothing provides this" or "an iPhone is
-	// paired with location switched off" — so the old `never` → "not connected"
-	// was a claim the box could not actually substantiate. Answering (1) needs a
-	// map from ontology to the sources that write it; until that exists these
-	// rows are listed as simply not having arrived yet, which is true.
-	const COPY: Record<string, string> = {
-		live: 'flowing',
-		stalled: 'stopped',
-		idle: 'quiet this week'
-	};
-
-	/**
-	 * Streams grouped by the life-domain already encoded in their name — a
-	 * stream is `<domain>_<thing>` (`health_sleep`, `financial_account`), so the
-	 * buckets exist without inventing a taxonomy.
-	 *
-	 * Grouping matters more than it looks. A flat list of nineteen rows answers
-	 * "is this one flowing" and nothing else; grouped, it answers the question
-	 * people actually have — *what does the record know about my life* — and
-	 * makes an entirely dark domain visible as a fact rather than as fourteen
-	 * greyed rows you scroll past.
-	 *
-	 * Deliberately not a score. "Health 2/5" reads as a deficit to close, and
-	 * completionism on this product means pressuring someone into more
-	 * self-surveillance to fill a bar. A domain nobody connected may be a
-	 * decision, not a gap — so it is stated once, quietly, with no number.
-	 */
-	const DOMAIN_LABEL: Record<string, string> = {
-		health: 'Health',
-		location: 'Location',
-		communication: 'Communication',
-		calendar: 'Calendar',
-		activity: 'Activity',
-		content: 'Content',
-		financial: 'Finance',
-		audio: 'Audio'
-	};
-
-	// Fixed order, not worst-first. The vitals above already lead with what needs
-	// you; this is the reference list, and a reference list that reorders itself
-	// under you is harder to read than one that sits still.
-	const DOMAIN_ORDER = [
-		'health',
-		'location',
-		'communication',
-		'calendar',
-		'activity',
-		'content',
-		'financial',
-		'audio'
-	];
-
-	// `or` for the negative half: "no email and transcriptions" reads as one
-	// missing pair, "no email or transcriptions" as two missing things.
-	function joinNames(items: string[], conj: 'and' | 'or' = 'and'): string {
-		if (items.length === 1) return items[0];
-		if (items.length === 2) return `${items[0]} ${conj} ${items[1]}`;
-		return `${items.slice(0, -1).join(', ')}, ${conj} ${items[items.length - 1]}`;
-	}
-
-	/**
-	 * Grid rows grouped by the source that feeds them. This is the operational
-	 * axis: everything wrong here is fixed by going to a device, so the device
-	 * is what the rows hang under. Coverage — what you *don't* have — is the
-	 * opposite question with the opposite answer ("connect something") and
-	 * belongs in the catalog, not here.
-	 */
+	// Rows group by the provider recorded on the data, because everything wrong
+	// here is fixed by going to a device. What is *missing* is the opposite
+	// question with the opposite answer ("connect something") and lives in the
+	// catalog — which is why no prose about absence remains on this page.
 	const bySourceGrid = $derived.by(() => {
 		const groups = new Map<string, StreamDays[]>();
 		for (const row of dayRows) {
@@ -155,58 +93,6 @@
 				rows: rows.slice().sort((a, b) => a.display_name.localeCompare(b.display_name))
 			}))
 			.sort((a, b) => a.label.localeCompare(b.label));
-	});
-
-	const domains = $derived.by(() => {
-		const by = new Map<string, StreamHealth[]>();
-		for (const s of streams) {
-			const domain = s.name.split('_')[0];
-			const list = by.get(domain);
-			if (list) list.push(s);
-			else by.set(domain, [s]);
-		}
-		const known = DOMAIN_ORDER.filter((d) => by.has(d));
-		// Anything the registry grows that this list hasn't heard of still shows.
-		const rest = [...by.keys()].filter((d) => !DOMAIN_ORDER.includes(d)).sort();
-		return [...known, ...rest].map((d) => {
-			const group = by.get(d) ?? [];
-			// The split that makes the page legible: a stream that has delivered
-			// gets a liveness state, one that never has gets named once and left
-			// alone. Applying "stopped"/"quiet" to something that never started
-			// is what made nineteen rows read as nineteen problems.
-			const arrived = group.filter((s) => s.total > 0);
-			const none = group.filter((s) => s.total === 0);
-			// The three reasons a stream is empty, which the old single "not
-			// connected" label ran together. Only the middle one is actionable,
-			// and only the middle one should read like an offer.
-			// `?? []` is not defensive programming for its own sake: a box running
-			// a build older than these fields returns neither, and the page must
-			// degrade to "nothing arrived" rather than throw on a missing array.
-			const providers = (s: StreamHealth) => s.provided_by ?? [];
-			const silent = none.filter((s) => s.connected === true);
-			const available = none.filter((s) => !s.connected && providers(s).length > 0);
-			const unsupported = none.filter((s) => !s.connected && providers(s).length === 0);
-			// One offer line per source, so "Email or Calendar — connect Google"
-			// rather than a line per stream.
-			const offers = new Map<string, string[]>();
-			for (const s of available) {
-				for (const p of providers(s)) {
-					const list = offers.get(p);
-					if (list) list.push(s.display_name);
-					else offers.set(p, [s.display_name]);
-				}
-			}
-			return {
-				id: d,
-				label: DOMAIN_LABEL[d] ?? d.charAt(0).toUpperCase() + d.slice(1),
-				arrived,
-				silent,
-				offers: [...offers].map(([source, names]) => ({ source, names })),
-				unsupported,
-				dark: arrived.length === 0,
-				attention: group.some((s) => s.status === 'stalled')
-			};
-		});
 	});
 
 	const connected = $derived(streams.filter((s) => s.total > 0));
@@ -264,16 +150,6 @@
 		windowShellStore.navigate('/sources/catalog', { label: 'Sources · Catalog' });
 	}
 
-	/** Start the connect flow from a source's display name, which is what the
-	 *  stream map hands back. */
-	async function connectNamed(displayName: string) {
-		const source = store.catalog.find((s) => s.name === displayName);
-		if (source) await connectFlow.start(source);
-	}
-
-	function openSource(sourceId: string) {
-		windowShellStore.navigate(`/sources/${sourceId}`, { label: store.sourceLabel(sourceId) });
-	}
 </script>
 
 {#snippet vital(name: string, figure: string, unit: string, sub: string, tone = '')}
@@ -392,7 +268,7 @@
 		</p>
 	{:else}
 		{#each bySourceGrid as g (g.provider)}
-			<StreamGrid title={g.label} streams={g.rows} />
+			<StreamGrid title={g.label} streams={g.rows} start={gridStart} />
 		{/each}
 		<p class="legend">
 			Each square is a day. Darker means more arrived — measured against that

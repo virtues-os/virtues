@@ -156,6 +156,16 @@ struct Template {
     /// "provided but switched off", and "the box derives this itself".
     #[serde(default)]
     writes: Vec<String>,
+    /// This applet legitimately needs `VIRTUES_ENCRYPTION_KEY` — it re-encrypts
+    /// secrets rather than merely reading the decrypted ones handed to it on
+    /// stdin. Only `credential_refresh` does today.
+    ///
+    /// Forking one is refused: a fork moves the folder into the state root,
+    /// which flips it from shipped to unshipped, which drops the key. The
+    /// breakage would surface hours later as credentials silently going
+    /// `reauth_required`.
+    #[serde(default)]
+    needs_vault_key: bool,
     /// Where this folder came from, when it is a copy of something else:
     /// `<origin>@<version>` — e.g. `virtues@v0.3.0` for a forked built-in, or
     /// `https://host/owner/repo@<sha>` for an edited import.
@@ -710,6 +720,13 @@ pub async fn fork_applet(db: &PgPool, applet_id: &str) -> Result<String> {
             "applet {applet_id} has no shipped folder to fork"
         )));
     }
+    if template_needs_vault_key(&dir) {
+        return Err(Error::Other(format!(
+            "{dir} cannot be forked: it re-encrypts stored secrets, and a fork \
+             runs without the vault key — token refresh would stop working \
+             silently. Change it in place or file an issue instead."
+        )));
+    }
     let target = state_root().join(&dir);
     if target.exists() {
         return Err(Error::Other(format!(
@@ -726,6 +743,25 @@ pub async fn fork_applet(db: &PgPool, applet_id: &str) -> Result<String> {
     // The copy only takes effect once the catalog re-reads both roots.
     reload_and_reconcile(db).await?;
     Ok(dir)
+}
+
+/// Whether the applet behind this id declares it needs the vault key. Public
+/// twin of [`template_needs_vault_key`] for the runner, which holds an id
+/// rather than a folder — and must resolve fan-out ids too.
+pub fn declares_vault_key_need(applet_id: &str) -> bool {
+    match dir_for_applet_id(applet_id) {
+        Some(dir) => template_needs_vault_key(&dir),
+        None => false,
+    }
+}
+
+/// Whether the manifest at `dir` declares it needs the vault key.
+fn template_needs_vault_key(dir: &str) -> bool {
+    let guard = catalog_lock().read().expect("catalog rwlock poisoned");
+    guard
+        .action
+        .iter()
+        .any(|t| t.dir == dir && t.needs_vault_key)
 }
 
 /// Recursive copy, skipping dot-directories. `.git` in particular must not be

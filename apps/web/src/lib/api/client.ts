@@ -733,8 +733,17 @@ export interface StreamDays {
  * streams stopped *together* — nineteen rows reading the same date is one
  * event, not nineteen — and on a day axis that becomes a visible cliff.
  */
-export async function getStreamDays(days = 84): Promise<StreamDays[]> {
-	return apiGet<StreamDays[]>(`/streams/days?days=${days}`);
+export interface StreamDaysResponse {
+	/** UTC date that `days[0]` refers to. Labels come from this, not from a
+	 *  local `new Date()` — deriving them locally shifts every tick by a day for
+	 *  anyone west of UTC in the evening. */
+	start: string;
+	days: number;
+	streams: StreamDays[];
+}
+
+export async function getStreamDays(days = 84): Promise<StreamDaysResponse> {
+	return apiGet<StreamDaysResponse>(`/streams/days?days=${days}`);
 }
 
 export async function getStreamHealth(): Promise<StreamHealth[]> {
