@@ -2769,6 +2769,42 @@ pub struct TodayStreamsView {
     pub audio: Vec<TodayAudioSpan>,
 }
 
+/// One heart-rate sample, for the day page's Autonomic chart.
+#[derive(Debug, serde::Serialize)]
+pub struct DayHeartRateSample {
+    pub timestamp: chrono::DateTime<chrono::Utc>,
+    pub bpm: i32,
+}
+
+/// Raw heart-rate samples across a day's window, oldest first. The client
+/// draws; sparse days (a dozen samples) are normal and the chart must read
+/// honestly at that density — dots joined by a line, never a smoothed curve
+/// that invents continuity the record does not hold.
+pub async fn get_day_heart_rate(
+    pool: &PgPool,
+    date: NaiveDate,
+    client_tz: Option<&str>,
+) -> Result<Vec<DayHeartRateSample>> {
+    let timezone = resolve_render_timezone(pool, date, client_tz).await;
+    let (start_str, end_str) = super::day_summary::day_boundaries_utc(date, Some(&timezone));
+
+    let rows: Vec<(chrono::DateTime<chrono::Utc>, i32)> = sqlx::query_as(
+        r#"SELECT timestamp, bpm FROM data_health_heart_rate
+           WHERE timestamp >= $1::timestamptz AND timestamp < $2::timestamptz
+           ORDER BY timestamp"#,
+    )
+    .bind(&start_str)
+    .bind(&end_str)
+    .fetch_all(pool)
+    .await
+    .map_err(|e| Error::Database(format!("Failed to load heart rate: {}", e)))?;
+
+    Ok(rows
+        .into_iter()
+        .map(|(timestamp, bpm)| DayHeartRateSample { timestamp, bpm })
+        .collect())
+}
+
 /// Get the three raw record streams (location, calendar, audio) for a day as
 /// spans. Anchored to the day's effective timezone exactly like `get_day_sources`.
 pub async fn get_today_streams(

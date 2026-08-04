@@ -18,6 +18,7 @@
 	import MovementMap from "$lib/components/timeline/MovementMap.svelte";
 	import DayLocationTimeline from "$lib/components/timeline/DayLocationTimeline.svelte";
 	import DaylineStrip from "./DaylineStrip.svelte";
+	import { getDayHeartRate, type DayHeartRateSample } from "$lib/wiki/api";
 
 	interface Props {
 		events: DayEvent[];
@@ -602,19 +603,32 @@
 	// ── Active metric pill ──────────────────────────────────────
 	// "Dayline" is the mini lifeline — the day in the same visual language as
 	// the life-scale console. The novelty z-score curve that used to own the
-	// word keeps its chart under its own name.
-	type MetricView = "dayline" | "novelty" | "location" | "sleep" | "autonomic" | "dimensions";
+	// word keeps its chart under its own name. (The "Dimensions" placeholder
+	// is gone: a pill that has never been ready is a promise, not a feature.)
+	type MetricView = "dayline" | "novelty" | "location" | "sleep" | "autonomic";
 	let activeMetric = $state<MetricView>("dayline");
 
-	const hasSleepData = $derived.by(() => sleepCycles.length > 0);
+	const hasSleepData = $derived.by(
+		() => sleepCycles.length > 0 || events.some((e) => e.isSleep && !e.userHidden)
+	);
+
+	// Heart-rate samples for the Autonomic view; the pill lights up only when
+	// the day actually holds any.
+	let hrSamples = $state<DayHeartRateSample[]>([]);
+	let lastHrDay = "";
+	$effect(() => {
+		if (dayDateSlug && dayDateSlug !== lastHrDay) {
+			lastHrDay = dayDateSlug;
+			getDayHeartRate(dayDateSlug).then((s) => (hrSamples = s));
+		}
+	});
 
 	const metrics = $derived<{ id: MetricView; label: string; ready: boolean }[]>([
 		{ id: "dayline", label: "Dayline", ready: true },
 		{ id: "novelty", label: "Novelty", ready: true },
 		{ id: "location", label: "Location", ready: hasLocationData },
-		{ id: "sleep", label: "Sleep", ready: true },
-		{ id: "autonomic", label: "Autonomic", ready: false },
-		{ id: "dimensions", label: "Dimensions", ready: false },
+		{ id: "sleep", label: "Sleep", ready: hasSleepData },
+		{ id: "autonomic", label: "Autonomic", ready: hrSamples.length > 0 },
 	]);
 </script>
 
@@ -1103,6 +1117,59 @@
 			<p class="empty-placeholder">No location data for this day</p>
 		</div>
 	{/if}
+	{:else if activeMetric === "autonomic"}
+	<!-- Autonomic: the day's raw heart-rate samples on the 24h axis. Dots
+	     joined by a line — at a dozen samples a day, a smoothed curve would
+	     invent continuity the record does not hold. -->
+	{#if hrSamples.length > 0}
+		{@const pts = hrSamples.map((s) => ({
+			x: hourToX(getHourOfDay(new Date(s.timestamp))),
+			bpm: s.bpm,
+		}))}
+		{@const lo = Math.min(...pts.map((p) => p.bpm))}
+		{@const hi = Math.max(...pts.map((p) => p.bpm))}
+		{@const pad = Math.max(5, Math.round((hi - lo) * 0.15))}
+		{@const yOf = (bpm: number) =>
+			MARGIN.top + ((hi + pad - bpm) / (hi + pad - (lo - pad))) * PLOT_H}
+		<svg viewBox="0 0 {WIDTH} {HEIGHT}" preserveAspectRatio="xMidYMid meet" class="dayline-svg">
+			<rect x={MARGIN.left} y={MARGIN.top} width={PLOT_W} height={PLOT_H}
+				fill="var(--color-surface, #fafafa)" rx="2" />
+			{#each HOUR_TICKS as h}
+				<line x1={hourToX(h)} y1={MARGIN.top} x2={hourToX(h)} y2={MARGIN.top + PLOT_H}
+					stroke="var(--color-border, #e5e5e5)" stroke-width="0.5" />
+				<text x={hourToX(h)} y={MARGIN.top + PLOT_H + 16} text-anchor="middle" class="axis-label x-label">
+					{formatHourLabel(h)}
+				</text>
+			{/each}
+			{#each [lo, hi] as bpm}
+				<line x1={MARGIN.left} y1={yOf(bpm)} x2={MARGIN.left + PLOT_W} y2={yOf(bpm)}
+					stroke="var(--color-border, #e5e5e5)" stroke-width="0.5" stroke-dasharray="2 3" />
+				<text x={MARGIN.left - 6} y={yOf(bpm)} text-anchor="end" dominant-baseline="middle" class="axis-label y-label">
+					{bpm}
+				</text>
+			{/each}
+			<polyline
+				points={pts.map((p) => `${p.x},${yOf(p.bpm)}`).join(" ")}
+				fill="none"
+				stroke="var(--color-primary, #4f46e5)"
+				stroke-width="1.25"
+				stroke-opacity="0.55"
+			/>
+			{#each pts as p}
+				<circle cx={p.x} cy={yOf(p.bpm)} r="2.5" fill="var(--color-primary, #4f46e5)">
+					<title>{p.bpm} bpm</title>
+				</circle>
+			{/each}
+			<text x={MARGIN.left + PLOT_W - 4} y={MARGIN.top + 14} text-anchor="end" class="axis-label"
+				fill="var(--color-foreground-muted, #888)">
+				{hrSamples.length} samples · {lo}–{hi} bpm
+			</text>
+		</svg>
+	{:else}
+		<div class="sleep-empty">
+			<p class="empty-placeholder">No heart-rate data for this day</p>
+		</div>
+	{/if}
 	{:else if activeMetric === "sleep"}
 	<!-- Sleep architecture view (from scored sleep cycles, not wiki_events) -->
 	{#if sleepCycles.length > 0}
@@ -1164,9 +1231,43 @@
 			{/if}
 		</svg>
 	{:else}
-		<div class="sleep-empty">
-			<p class="empty-placeholder">No sleep data for this day</p>
-		</div>
+		{@const sleepEvts = events.filter((e) => e.isSleep && !e.userHidden)}
+		{#if sleepEvts.length > 0}
+			<!-- No scored cycles — show the sleep events themselves on the 24h
+			     axis. Flat blocks, honestly: without stage data there is no
+			     depth to draw. -->
+			{@const SLEEP_H2 = 120}
+			<svg viewBox="0 0 {WIDTH} {SLEEP_H2}" preserveAspectRatio="xMidYMid meet" class="dayline-svg">
+				{#each HOUR_TICKS as h}
+					<line x1={hourToX(h)} y1={20} x2={hourToX(h)} y2={SLEEP_H2 - 28}
+						stroke="var(--color-border, #e5e5e5)" stroke-width="0.5" />
+					<text x={hourToX(h)} y={SLEEP_H2 - 12} text-anchor="middle" class="axis-label x-label">
+						{formatHourLabel(h)}
+					</text>
+				{/each}
+				{#each sleepEvts as e}
+					{@const x1 = hourToX(Math.min(getHourOfDay(e.startTime), 24))}
+					{@const x2 = hourToX(Math.min(getHourOfDay(e.endTime), 24))}
+					{@const w = Math.max(2, x2 - x1)}
+					<rect x={x1} y={34} width={w} height={SLEEP_H2 - 34 - 34} rx="3"
+						fill="var(--color-primary, #4f46e5)" fill-opacity="0.18" />
+					{#if w > 60}
+						<text x={x1 + w / 2} y={SLEEP_H2 / 2} text-anchor="middle" dominant-baseline="middle"
+							class="axis-label" fill="var(--color-foreground-muted, #888)">
+							{Math.round((e.durationMinutes / 60) * 10) / 10}h
+						</text>
+					{/if}
+				{/each}
+				<text x={MARGIN.left + PLOT_W - 4} y={16} text-anchor="end" class="axis-label"
+					fill="var(--color-foreground-muted, #888)">
+					From sleep events — no scored cycles for this day
+				</text>
+			</svg>
+		{:else}
+			<div class="sleep-empty">
+				<p class="empty-placeholder">No sleep data for this day</p>
+			</div>
+		{/if}
 	{/if}
 	{/if}
 </div>
