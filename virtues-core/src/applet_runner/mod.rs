@@ -602,6 +602,79 @@ struct SubprocessOutcome {
     records: i64,
 }
 
+/// Environment every applet gets. Deliberately short: an applet receives its
+/// config, its payload and its already-decrypted credentials on **stdin**, so
+/// the environment is for reaching the box's own services, not for secrets.
+const ENV_PASSTHROUGH: &[&str] = &[
+    // Process basics. Without PATH a bare `python3` argv0 cannot resolve.
+    "PATH",
+    "HOME",
+    "LANG",
+    "LC_ALL",
+    "TZ",
+    "RUST_LOG",
+    "RUST_BACKTRACE",
+    // The box's own Postgres. `virtues_helpers::connect_from_env` reads these.
+    "DATABASE_URL",
+    "DATABASE_MAX_CONNECTIONS",
+    // Where the box keeps its data, and the paths applets resolve against.
+    "VIRTUES_DATA_DIR",
+    "VIRTUES_LAKE_DIR",
+    "VIRTUES_APPLETS_DIR",
+    "VIRTUES_APPLET_STATE_DIR",
+    "VIRTUES_APPLETS_BIN_DIR",
+    "VIRTUES_BIN",
+    // Outbound service endpoints (no credentials in either).
+    "VIRTUES_OAUTH_PROXY_URL",
+    "VIRTUES_API_URL",
+    "ENVIRONMENT",
+];
+
+/// Whether this applet's code shipped with the box, decided by **where the
+/// folder actually is** rather than by what its manifest claims. A manifest's
+/// `owner` is attacker-controlled — a package can declare `owner = "system"` —
+/// so it must not gate anything security-relevant. The filesystem cannot lie.
+fn is_shipped_applet(applet_id: &str) -> bool {
+    let Some(dir) = crate::applet_templates::dir_for_applet_id(applet_id) else {
+        // Unknown to the catalog: treat as untrusted.
+        return false;
+    };
+    let resolved = crate::applet_templates::resolve_applet_dir(&dir);
+    let shipped = crate::applet_templates::shipped_root();
+    match (resolved.canonicalize(), shipped.canonicalize()) {
+        (Ok(r), Ok(s)) => r.starts_with(s),
+        // If either path can't be resolved we cannot prove provenance, so we
+        // don't grant on it.
+        _ => false,
+    }
+}
+
+/// Build the subprocess environment.
+///
+/// The spawn used to inherit the server's entire environment, which handed
+/// every applet `VIRTUES_ENCRYPTION_KEY` — the master key for the whole
+/// credential vault — and the unscoped `DATABASE_URL`. That made
+/// `load_credentials`' promise ("the master encryption key never crosses the
+/// subprocess boundary") true of the stdin payload and false in fact, and it
+/// meant any imported package could decrypt every credential on the box.
+///
+/// `credential_refresh` genuinely needs the key: it re-encrypts rotated tokens
+/// through `ensure_fresh`. So the key is granted, but only to code that shipped
+/// with the box — never to an imported or authored package.
+fn apply_env(cmd: &mut Command, applet_id: &str) {
+    cmd.env_clear();
+    for key in ENV_PASSTHROUGH {
+        if let Ok(val) = std::env::var(key) {
+            cmd.env(key, val);
+        }
+    }
+    if is_shipped_applet(applet_id) {
+        if let Ok(val) = std::env::var("VIRTUES_ENCRYPTION_KEY") {
+            cmd.env("VIRTUES_ENCRYPTION_KEY", val);
+        }
+    }
+}
+
 async fn run_subprocess(
     db: &PgPool,
     action: &Applet,
@@ -630,8 +703,11 @@ async fn run_subprocess(
     let stdin_bytes = serde_json::to_vec(&input)
         .map_err(|e| Error::Other(format!("failed to serialize action input: {e}")))?;
 
-    let mut child = Command::new(&program)
-        .args(&command[1..])
+    let mut cmd = Command::new(&program);
+    cmd.args(&command[1..]);
+    apply_env(&mut cmd, &action.id);
+
+    let mut child = cmd
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -789,4 +865,21 @@ fn resolve_program(argv0: &str) -> PathBuf {
 
     // Not a workspace binary — spawn via PATH (interpreters, system tools).
     PathBuf::from(argv0)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::ENV_PASSTHROUGH;
+
+    /// The vault master key must never be granted by the blanket passthrough.
+    /// It is handed out in `apply_env` only to shipped code, and the tempting
+    /// fix for "my applet can't decrypt" is to add it here — which would return
+    /// every imported package's access to every credential on the box.
+    #[test]
+    fn passthrough_never_carries_the_vault_key() {
+        assert!(
+            !ENV_PASSTHROUGH.contains(&"VIRTUES_ENCRYPTION_KEY"),
+            "VIRTUES_ENCRYPTION_KEY must stay provenance-gated in apply_env"
+        );
+    }
 }
