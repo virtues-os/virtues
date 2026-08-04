@@ -647,6 +647,11 @@ export interface SourceCatalogItem {
 	/** Secret names an `api_key` source expects, in manifest order. Empty for
 	 *  every other auth kind. */
 	fields: string[];
+	/** Where this source's code can be read. Provenance only — the collectors
+	 *  ship through the App Store and update themselves; no git ref installs
+	 *  them. Null when the code is entirely the box's. */
+	repo?: string | null;
+	repo_ref?: string | null;
 }
 
 /**

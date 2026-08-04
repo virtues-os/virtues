@@ -42,6 +42,16 @@ pub struct Source {
     pub icon: String,
     pub description: String,
     pub auth: SourceAuth,
+    /// Where this source's code can be read. Provenance, **not** an install or
+    /// update path — the iOS and Mac collectors ship through the App Store, a
+    /// notarized DMG, and the Tauri updater, and no git ref can deliver them.
+    /// On an appliance whose pitch is verifiability, "here is the exact source
+    /// for the collector you just paired" is worth saying out loud.
+    #[serde(default)]
+    pub repo: Option<String>,
+    /// Branch, tag, or path within the repo, when the whole repo is too coarse.
+    #[serde(default)]
+    pub repo_ref: Option<String>,
 }
 
 /// How a source authenticates. Matches the three auth kinds in the charter.
