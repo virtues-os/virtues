@@ -316,6 +316,30 @@ pub enum Commands {
     /// forward); the previous binary tolerates a newer schema.
     Rollback,
 
+    /// Download, verify, and preflight the newest release — without installing.
+    ///
+    /// The first half of `upgrade`, on its own: the release is staged into its
+    /// slot and made to prove itself (`--version` smoke + `migrate --check`),
+    /// but `current` is not touched, so the box is byte-identical afterwards
+    /// whether this succeeds or fails. `virtues activate` installs the result.
+    ///
+    /// Costs nothing when there is nothing to do — two small API calls settle
+    /// "already on it" before any transfer starts. The box runs this on a
+    /// schedule on the stable channel; running it by hand is the same work.
+    Prepare {
+        /// Re-fetch and re-stage even if this box already runs (or has already
+        /// staged) the newest build. Also skips the migration lineage gate.
+        #[arg(long)]
+        force: bool,
+    },
+
+    /// Install the release `prepare` staged: flip, migrate, restart.
+    ///
+    /// The second half of `upgrade`. Preflights the staged release again first,
+    /// because the box's schema may have moved since it was prepared. Fails
+    /// cleanly if nothing is staged.
+    Activate,
+
     /// Start the HTTP server
     #[command(hide = true)]
     Server {

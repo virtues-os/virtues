@@ -139,6 +139,11 @@ pub async fn run(client: Virtues, host: &str, port: u16) -> Result<()> {
     // ends. See `crate::maintenance::sweeper`.
     crate::maintenance::sweeper::spawn(client.database.pool().clone());
 
+    // Release preparation: on the stable channel, fetch + preflight the next
+    // release ahead of time so installing it is a restart rather than a
+    // download. Never activates anything — see `api::updates`.
+    crate::api::updates::spawn();
+
     // Pair-code rotator: keeps a fresh universal standing pair code alive at all
     // times (with an overlap window) so the panel and `virtues pair` always have
     // a valid code to display. See `crate::maintenance::pair_rotator`.
