@@ -45,6 +45,10 @@ pub struct ImportRequest {
     /// Branch, tag, or commit SHA. Defaults to `main` when absent or empty.
     #[serde(default)]
     pub r#ref: Option<String>,
+    /// Sudo request id from `/api/sudo/request`. Required — importing runs a
+    /// third party's code on this box.
+    #[serde(default)]
+    pub sudo_request_id: Option<String>,
 }
 
 #[derive(Debug, Serialize, Default)]

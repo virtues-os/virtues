@@ -630,6 +630,130 @@ const ENV_PASSTHROUGH: &[&str] = &[
     "ENVIRONMENT",
 ];
 
+/// Memory ceiling for a jailed applet. Generous — some shipped syncs are
+/// memory-hungry — but bounded, so a runaway import cannot take the box out.
+const JAILED_MEMORY_MAX: &str = "1G";
+
+/// Build the spawn command, jailing it when the code did not ship with the box.
+///
+/// The routing, not a ban, is the policy: a package may run native code, it
+/// just does not get to run it as a user with passwordless sudo. `systemd-run`
+/// is the same mechanism `code_interpreter` already uses (api/code.rs), which
+/// is the strongest precedent in this codebase for containing code we did not
+/// write.
+///
+/// The properties are looser than `code_interpreter`'s in one deliberate way:
+/// **no `PrivateNetwork`**, because an applet's whole job is to reach Postgres
+/// and usually an upstream API. What it does buy:
+///
+/// - `NoNewPrivileges=yes` — the single most valuable line here. The box user
+///   has `NOPASSWD: ALL` (installer, by design), so without this any imported
+///   applet is one `sudo -n` from root.
+/// - `ProtectSystem=strict` + `ProtectHome=yes` — the filesystem is read-only
+///   apart from the paths an applet legitimately writes.
+/// - `PrivateTmp`, `PrivateDevices`, memory and runtime ceilings, and a
+///   syscall filter.
+///
+/// Not `DynamicUser`: an applet writes to the lake and its own state directory
+/// as the box user, and a dynamic uid cannot.
+///
+/// Off Linux, or in a debug build without systemd, we run direct — that is a
+/// developer machine. In a release build on Linux a missing `systemd-run` is a
+/// hard refusal rather than a silent downgrade, matching `code.rs`: the moment
+/// the sandbox quietly stops applying is the moment it stops being one.
+fn build_command(
+    program: &std::path::Path,
+    args: &[String],
+    shipped: bool,
+    timeout: std::time::Duration,
+    env: &[(String, String)],
+) -> Result<Command> {
+    // Direct spawn: env_clear plus exactly what we chose to pass.
+    let direct = || {
+        let mut cmd = Command::new(program);
+        cmd.args(args);
+        cmd.env_clear();
+        for (k, v) in env {
+            cmd.env(k, v);
+        }
+        cmd
+    };
+
+    if shipped {
+        return Ok(direct());
+    }
+
+    if !cfg!(target_os = "linux") {
+        tracing::warn!(
+            "running an unshipped applet unjailed — no systemd on this platform (developer machine)"
+        );
+        return Ok(direct());
+    }
+
+    if which_systemd_run().is_none() {
+        if cfg!(debug_assertions) {
+            tracing::warn!("systemd-run unavailable; running unjailed (debug build only)");
+            return Ok(direct());
+        }
+        return Err(Error::Other(
+            "applet sandbox (systemd-run) is unavailable; refusing to run imported code unjailed"
+                .to_string(),
+        ));
+    }
+
+    let state = crate::applet_templates::state_root();
+    let mut cmd = Command::new("systemd-run");
+    cmd.args([
+        "--pipe",
+        "--wait",
+        "--collect",
+        "--quiet",
+        "-p",
+        "NoNewPrivileges=yes",
+        "-p",
+        "ProtectSystem=strict",
+        "-p",
+        "ProtectHome=yes",
+        "-p",
+        "PrivateTmp=yes",
+        "-p",
+        "PrivateDevices=yes",
+        "-p",
+        "SystemCallFilter=@system-service",
+        "-p",
+        "SystemCallErrorNumber=EPERM",
+        "-p",
+        "MemorySwapMax=0",
+    ]);
+    cmd.args(["-p", &format!("MemoryMax={JAILED_MEMORY_MAX}")]);
+    cmd.args(["-p", &format!("RuntimeMaxSec={}", timeout.as_secs())]);
+    // The applet's own folder and the lake are the only writable paths it gets.
+    cmd.args(["-p", &format!("ReadWritePaths={}", state.display())]);
+    if let Ok(lake) = std::env::var("VIRTUES_LAKE_DIR") {
+        if !lake.is_empty() {
+            cmd.args(["-p", &format!("ReadWritePaths={lake}")]);
+        }
+    }
+    // The unit does NOT inherit our environment, and `cmd.env()` would set
+    // systemd-run's own rather than the unit's — so every variable the applet
+    // needs has to be handed over explicitly, before the `--`.
+    for (k, v) in env {
+        cmd.args(["-E", &format!("{k}={v}")]);
+    }
+    cmd.arg("--");
+    cmd.arg(program);
+    cmd.args(args);
+    Ok(cmd)
+}
+
+fn which_systemd_run() -> Option<std::path::PathBuf> {
+    std::env::var_os("PATH").and_then(|paths| {
+        std::env::split_paths(&paths)
+            .map(|p| p.join("systemd-run"))
+            .find(|p| p.is_file())
+    })
+}
+
 /// Whether this applet's code shipped with the box, decided by **where the
 /// folder actually is** rather than by what its manifest claims. A manifest's
 /// `owner` is attacker-controlled — a package can declare `owner = "system"` —
@@ -661,18 +785,18 @@ fn is_shipped_applet(applet_id: &str) -> bool {
 /// `credential_refresh` genuinely needs the key: it re-encrypts rotated tokens
 /// through `ensure_fresh`. So the key is granted, but only to code that shipped
 /// with the box — never to an imported or authored package.
-fn apply_env(cmd: &mut Command, applet_id: &str) {
-    cmd.env_clear();
-    for key in ENV_PASSTHROUGH {
-        if let Ok(val) = std::env::var(key) {
-            cmd.env(key, val);
-        }
-    }
-    if is_shipped_applet(applet_id) {
+fn env_pairs(applet_id: &str, shipped: bool) -> Vec<(String, String)> {
+    let mut out: Vec<(String, String)> = ENV_PASSTHROUGH
+        .iter()
+        .filter_map(|k| std::env::var(k).ok().map(|v| ((*k).to_string(), v)))
+        .collect();
+    if shipped {
         if let Ok(val) = std::env::var("VIRTUES_ENCRYPTION_KEY") {
-            cmd.env("VIRTUES_ENCRYPTION_KEY", val);
+            out.push(("VIRTUES_ENCRYPTION_KEY".to_string(), val));
         }
     }
+    let _ = applet_id;
+    out
 }
 
 async fn run_subprocess(
@@ -703,9 +827,15 @@ async fn run_subprocess(
     let stdin_bytes = serde_json::to_vec(&input)
         .map_err(|e| Error::Other(format!("failed to serialize action input: {e}")))?;
 
-    let mut cmd = Command::new(&program);
-    cmd.args(&command[1..]);
-    apply_env(&mut cmd, &action.id);
+    let shipped = is_shipped_applet(&action.id);
+    let env = env_pairs(&action.id, shipped);
+    let mut cmd = build_command(
+        &program,
+        &command[1..],
+        shipped,
+        subprocess_timeout(action),
+        &env,
+    )?;
 
     let mut child = cmd
         .stdin(Stdio::piped())
