@@ -702,7 +702,23 @@ fn build_command(
     }
 
     let state = crate::applet_templates::state_root();
-    let mut cmd = Command::new("systemd-run");
+
+    // `sudo -n`, matching api/updates.rs. The box runs as `User=virtues`
+    // (installer), and a non-root user creating a *system* transient unit goes
+    // through polkit, which on a headless box with no agent denies outright. A
+    // bare `systemd-run` therefore does not fail loudly — it exits non-zero and
+    // the run is recorded as a generic subprocess failure, so the sandbox
+    // reports itself present while every unshipped applet silently dies.
+    let mut cmd = Command::new("sudo");
+    cmd.args(["-n", "systemd-run"]);
+    // And drop back to the box user. A transient SYSTEM unit with no `User=`
+    // runs as ROOT — `code.rs` only avoids that because it sets
+    // `DynamicUser=yes`, which this cannot use (an applet writes to the lake as
+    // the box user). Without this line, adding the sudo above would have
+    // escalated every imported applet from `virtues` to uid 0, i.e. strictly
+    // worse than no jail at all. `NoNewPrivileges` does not help you if you
+    // start at root.
+    cmd.args(["-p", &format!("User={}", box_uid())]);
     cmd.args([
         "--pipe",
         "--wait",
@@ -738,12 +754,29 @@ fn build_command(
     // systemd-run's own rather than the unit's — so every variable the applet
     // needs has to be handed over explicitly, before the `--`.
     for (k, v) in env {
+        // `ProtectHome=yes` mounts /home empty, so forwarding the real HOME
+        // hands the applet a path that exists in its environment and not in its
+        // namespace — anything touching ~/.cache (python, pip, git, most HTTP
+        // clients) fails on it. Point it at the private tmp instead, as code.rs
+        // does.
+        if k == "HOME" {
+            continue;
+        }
         cmd.args(["-E", &format!("{k}={v}")]);
     }
+    cmd.args(["-E", "HOME=/tmp"]);
     cmd.arg("--");
     cmd.arg(program);
     cmd.args(args);
     Ok(cmd)
+}
+
+/// The uid the box itself runs as, so a jailed applet lands on the same user
+/// rather than root. Read from `/proc/self` to avoid a libc dependency; the
+/// jail is Linux-only, which is exactly where this path exists.
+fn box_uid() -> u32 {
+    use std::os::unix::fs::MetadataExt;
+    std::fs::metadata("/proc/self").map(|m| m.uid()).unwrap_or(0)
 }
 
 fn which_systemd_run() -> Option<std::path::PathBuf> {
@@ -856,7 +889,17 @@ async fn run_subprocess(
     // block every future webhook for this action) indefinitely. On timeout the
     // wait future is dropped; `kill_on_drop` then SIGKILLs the child, and the
     // caller records the run as `error`, freeing the lock.
-    let ceiling = subprocess_timeout(action);
+    // When jailed, RuntimeMaxSec is the real enforcer and this is only a
+    // backstop — equal values mean the tokio clock (which starts before
+    // systemd-run has finished setting the unit up) always wins, and dropping
+    // the future SIGKILLs the systemd-run *client*, not the unit, which PID 1
+    // owns. The applet would keep running with its pipes closed while the
+    // per-applet lock was already released. Same grace `code.rs` uses.
+    let ceiling = if shipped {
+        subprocess_timeout(action)
+    } else {
+        subprocess_timeout(action) + std::time::Duration::from_secs(10)
+    };
     let output = match tokio::time::timeout(ceiling, child.wait_with_output()).await {
         Ok(res) => {
             res.map_err(|e| Error::Other(format!("failed to wait for action subprocess: {e}")))?
