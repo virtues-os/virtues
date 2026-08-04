@@ -282,6 +282,26 @@ drift silently into a 404.
 
 ---
 
+## Adjacent security items found in the same sweep
+
+Not part of this plan's dependency chain, but found while mapping it and worth
+tracking rather than losing.
+
+1. **The OAuth `exchange_token` is signed but not encrypted.** It is base64 of
+   the *plaintext* access and refresh tokens with an HMAC appended
+   (`crypto/mod.rs:383-412`), and it travels through the user's browser as a
+   query parameter. The HMAC prevents forgery, not reading — anyone who sees
+   that URL (browser history, a proxy log, a referer leak) can base64-decode
+   live provider tokens. `TokenEncryptor` already exists; encrypt the payload
+   rather than only signing it. **Highest-value fix on this list, and entirely
+   independent of packages.**
+2. **`sql_query` for agent applets runs on the main pool**, not the scoped
+   `virtues_face_reader` role that faces use. An AI-authored applet can read
+   anything the box can.
+3. **The face `MAX_ROWS` cap is an outer `LIMIT` wrapper** around
+   caller-supplied SQL (`faces.rs:307-310`). The read-only transaction and the
+   role grants are what actually hold; the wrapper is not a control.
+
 ## Explicitly not doing
 
 - **Package-carried global migrations.** Applets own private `applet_<slug>`
