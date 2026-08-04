@@ -823,12 +823,15 @@ fn env_pairs(applet_id: &str, shipped: bool) -> Vec<(String, String)> {
         .iter()
         .filter_map(|k| std::env::var(k).ok().map(|v| ((*k).to_string(), v)))
         .collect();
-    if shipped {
+    // Two conditions, both required: the applet must declare it needs the key,
+    // and its code must have shipped with the box. The declaration keeps the
+    // grant auditable from the manifest instead of implicit in provenance; the
+    // provenance check keeps a package from simply declaring its way in.
+    if shipped && crate::applet_templates::declares_vault_key_need(applet_id) {
         if let Ok(val) = std::env::var("VIRTUES_ENCRYPTION_KEY") {
             out.push(("VIRTUES_ENCRYPTION_KEY".to_string(), val));
         }
     }
-    let _ = applet_id;
     out
 }
 
