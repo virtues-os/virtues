@@ -146,6 +146,16 @@ struct Template {
     /// seeded once via `ON CONFLICT DO NOTHING`; subsequent edits via the UI win.
     #[serde(default)]
     config: Option<toml::Value>,
+    /// Ontologies this applet writes, by registry name (`health_sleep`, not
+    /// `data_health_sleep`). Declared rather than inferred: the box cannot know
+    /// what a subprocess will INSERT into, and an installed package's streams
+    /// have to be discoverable the same way a shipped one's are.
+    ///
+    /// This is what lets a dark stream say *which source would fill it* instead
+    /// of the flat "not connected" that conflated "nothing provides this",
+    /// "provided but switched off", and "the box derives this itself".
+    #[serde(default)]
+    writes: Vec<String>,
     /// Where this folder came from, when it is a copy of something else:
     /// `<origin>@<version>` — e.g. `virtues@v0.3.0` for a forked built-in, or
     /// `https://host/owner/repo@<sha>` for an edited import.
@@ -769,6 +779,25 @@ pub fn dir_for_applet_id(applet_id: &str) -> Option<String> {
         .map(|t| t.dir.clone())
 }
 
+/// Which catalog sources can produce a given ontology, by source id.
+///
+/// Built from the `writes` each template declares, joined to the source that
+/// template fans out from. Empty means nothing installed writes it — which is
+/// a different fact from "connected but silent", and the difference is the
+/// whole reason this exists.
+pub fn sources_writing(ontology: &str) -> Vec<String> {
+    let guard = catalog_lock().read().expect("catalog rwlock poisoned");
+    let mut out: Vec<String> = guard
+        .action
+        .iter()
+        .filter(|t| t.writes.iter().any(|w| w == ontology))
+        .filter_map(|t| t.source.as_ref().map(|s| s.id.clone()))
+        .collect();
+    out.sort();
+    out.dedup();
+    out
+}
+
 /// Look up a `[[source]]` entry by its id. Returns an owned clone so the
 /// catalog rwlock isn't held across the caller's await points.
 pub fn lookup_source(id: &str) -> Option<Source> {
@@ -1139,6 +1168,49 @@ mod tests {
     use super::*;
 
     /// Both roots are scanned, and an authored applet in the state root
+    /// Every `writes` entry must name a real ontology. A typo here fails
+    /// silently and in the worst direction: the stream reports that *nothing*
+    /// provides it, so the UI tells the user to connect something they already
+    /// have. Cheap to assert, impossible to notice otherwise.
+    #[test]
+    fn declared_writes_name_real_ontologies() {
+        let known: std::collections::HashSet<String> =
+            virtues_registry::ontologies::registered_ontologies()
+                .into_iter()
+                .map(|o| o.name.to_string())
+                .collect();
+
+        let guard = catalog_lock().read().unwrap();
+        let mut bad = Vec::new();
+        for t in &guard.action {
+            for w in &t.writes {
+                if !known.contains(w) {
+                    bad.push(format!("{} declares writes = \"{}\"", t.dir, w));
+                }
+            }
+        }
+        assert!(bad.is_empty(), "unknown ontologies in `writes`: {bad:#?}");
+    }
+
+    /// The map has to actually resolve, or the feature it exists for is a very
+    /// well-tested no-op.
+    #[test]
+    fn ingest_applets_claim_their_streams() {
+        assert!(
+            sources_writing("health_sleep").contains(&"ios".to_string()),
+            "iPhone should provide sleep"
+        );
+        assert!(
+            sources_writing("communication_message").contains(&"mac".to_string()),
+            "Mac should provide messages"
+        );
+        // Two sources can fill one stream, and both should be offered.
+        let bookmarks = sources_writing("content_bookmark");
+        assert!(bookmarks.contains(&"mac".to_string()) && bookmarks.contains(&"github".to_string()));
+        // And a stream nothing writes must stay empty rather than guess.
+        assert!(sources_writing("activity_listening").is_empty());
+    }
+
     /// The keystone of the package model: a directory can contribute a
     /// `[[source]]` row, so a new provider no longer requires editing the box's
     /// own catalog and cutting a release.
