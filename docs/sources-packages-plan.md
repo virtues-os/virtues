@@ -191,8 +191,8 @@ happens. **Independent of this plan; ship it first.**
 
 ### P1 — Read and fork *(cheap, and the feature that makes "open" felt)*
 
-Two things that are almost free and serve both audiences at once. Neither needs
-a git remote.
+Three things that are almost free and serve both audiences at once. None needs a
+git remote.
 
 - **View source, everywhere.** Every applet — shipped, source-created,
   AI-authored — gets a read-only source surface. The technical reader uses it;
@@ -204,15 +204,12 @@ a git remote.
   our code, their change — and it is safe by construction in a way that
   installing a stranger's repo is not. Ranked above stranger-import for that
   reason, not instead of it.
-
-Add an optional `repo` (and `repo_ref`) to `Source`. Populate it for `ios` and
-`mac`. Surface it on the Catalog row as "read the code."
-
-This is provenance, not an update mechanism — the collectors ship through the
-App Store, a notarized DMG, and the Tauri updater, and a git ref cannot install
-any of them. For an appliance whose pitch is verifiability, "here is the exact
-source for the collector you just paired" is worth more than most features, and
-it costs an afternoon.
+- **First-party repo pointers.** An optional `repo` / `repo_ref` on `Source`,
+  populated for `ios` and `mac`, surfaced on the Catalog row as "read the code."
+  Provenance, not an update mechanism — those collectors ship through the App
+  Store, a notarized DMG, and the Tauri updater, and no git ref can install
+  them. For an appliance whose pitch is verifiability, "here is the exact source
+  for the collector you just paired" is worth more than most features.
 
 ### P2 — Merge the catalog *(the keystone)*
 
