@@ -80,7 +80,7 @@ class PinsStore {
 	 * Set (or clear, with null) a pin's ribbon colour.
 	 *
 	 * Optimistic like reorder, and for the same reason: the sidebar IS the
-	 * feedback, so a colour that only appears after a round-trip reads as the
+	 * feedback, so a color that only appears after a round-trip reads as the
 	 * click not registering.
 	 */
 	async setColor(id: string, color: string | null) {
@@ -91,6 +91,19 @@ class PinsStore {
 		} catch (e) {
 			this.pins = previous;
 			console.error('[pinsStore] setColor failed', e);
+			throw e;
+		}
+	}
+
+	/** Same contract as `setColor`, for the pin's glyph. */
+	async setIcon(id: string, icon: string | null) {
+		const previous = this.pins;
+		this.pins = this.pins.map((p) => (p.id === id ? { ...p, icon } : p));
+		try {
+			await updatePin(id, { icon });
+		} catch (e) {
+			this.pins = previous;
+			console.error('[pinsStore] setIcon failed', e);
 			throw e;
 		}
 	}
