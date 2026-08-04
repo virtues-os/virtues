@@ -83,6 +83,19 @@ pub async fn run(cli: Cli, virtues: Virtues) -> Result<(), Box<dyn std::error::E
             unreachable!("Rollback command should be handled in main.rs");
         }
 
+        Commands::Prepare { .. } => {
+            // Same — fetches and stages a release without touching the DB or
+            // the running install. Must work on a box whose database is down,
+            // which is a common reason to want the next release ready.
+            unreachable!("Prepare command should be handled in main.rs");
+        }
+
+        Commands::Activate => {
+            // Same — the staged half of an upgrade; the new binary's `migrate`
+            // touches the DB after the flip, not this process.
+            unreachable!("Activate command should be handled in main.rs");
+        }
+
         Commands::Channel { .. } => {
             // Same — reads/writes one file in the state root and must work on a
             // box whose database is down, which is a common reason to be

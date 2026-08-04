@@ -251,11 +251,27 @@ export async function searchLocal(
 // Box updates (Settings → Box)
 // ─────────────────────────────────────────────────────────────────────────────
 
+/** A release already downloaded, verified and preflighted on the box. */
+export interface StagedRelease {
+	/** Slot directory name, e.g. `v0.3.1-a1b2c3d`. */
+	slot_id: string;
+	/** Version from the release's own BUILD.json, when it carries one. */
+	version: string | null;
+	/** Commit the release was built from, when known. */
+	sha: string | null;
+}
+
 export interface UpdateStatus {
 	current: string;
 	channel: string;
 	latest: string | null;
 	update_available: boolean;
+	/**
+	 * Set when the box has already fetched the update. Installing it is then a
+	 * restart plus migrations rather than a download — seconds, not minutes —
+	 * which is the difference the UI has to tell the truth about.
+	 */
+	staged: StagedRelease | null;
 	check_error: string | null;
 }
 
@@ -276,6 +292,9 @@ export async function setUpdateChannel(channel: 'stable' | 'prerelease'): Promis
 
 export interface ApplyUpdateResponse {
 	unit: string;
+	/** Whether this activated an already-downloaded release (fast) or had to
+	 *  fetch one first (slow). */
+	staged: boolean;
 	detail: string;
 }
 

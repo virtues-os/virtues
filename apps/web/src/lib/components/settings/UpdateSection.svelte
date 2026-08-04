@@ -66,13 +66,22 @@
 		if (restart) return;
 		applyError = null;
 
+		// Two genuinely different waits, so two different warnings. On the
+		// stable channel the box fetches releases ahead of time, which turns
+		// this from a download into a restart — quoting "a minute or two" for
+		// something that takes fifteen seconds teaches people to discount the
+		// next estimate, and the estimate matters most when it's the long one.
 		const ok = await confirmAction({
 			title: status?.latest ? `Install ${status.latest}?` : 'Install this update?',
-			body:
-				'The box swaps its binary and runs migrations, so it stops serving for ' +
-				'a minute or two. Every device connected to it drops — phones and other ' +
-				'browsers included, not just this window. Nothing is lost; they reconnect ' +
-				'on their own.',
+			body: staged
+				? 'This release is already downloaded. The box runs its migrations and ' +
+					'restarts, which takes well under a minute. Every device connected to ' +
+					'it drops — phones and other browsers included, not just this window. ' +
+					'Nothing is lost; they reconnect on their own.'
+				: 'The box downloads the release, swaps its binary and runs migrations, ' +
+					'so it stops serving for a minute or two. Every device connected to it ' +
+					'drops — phones and other browsers included, not just this window. ' +
+					'Nothing is lost; they reconnect on their own.',
 			confirmLabel: 'Install and restart',
 			cancelLabel: 'Not now'
 		});
@@ -151,6 +160,10 @@
 	// "stop taking prereleases" — it doesn't roll anything back. Saying so is the
 	// difference between a considered design and an apparently broken setting.
 	const aheadOfStable = $derived(status?.channel === 'prerelease');
+
+	// The box fetches stable releases on a schedule, so by the time anyone opens
+	// this screen the update is usually already here.
+	const staged = $derived(status?.staged ?? null);
 </script>
 
 <section class="updates">
@@ -226,17 +239,23 @@
 		{:else if status.update_available}
 			<div class="state available">
 				<p>
-					<Icon icon="ri:download-cloud-line" width="14" />
-					{#if status.latest}<strong>{status.latest}</strong> is available{:else}An update
-						is available{/if}
+					<Icon icon={staged ? 'ri:check-double-line' : 'ri:download-cloud-line'} width="14" />
+					{#if status.latest}<strong>{status.latest}</strong>{:else}An update{/if}
+					{staged ? 'is downloaded and ready' : 'is available'}
 				</p>
 				<p class="warn">
-					The box restarts and runs migrations, which disconnects every
-					device using it — not just this one.
+					{#if staged}
+						Already fetched and checked against this box, so installing is a
+						restart — under a minute. It disconnects every device using the
+						box, not just this one.
+					{:else}
+						The box downloads it, restarts and runs migrations, which
+						disconnects every device using it — not just this one.
+					{/if}
 				</p>
 				<button class="install-btn" onclick={install} disabled={!!restart}>
-					<Icon icon="ri:download-2-line" width="14" />
-					<span>Install and restart</span>
+					<Icon icon={staged ? 'ri:restart-line' : 'ri:download-2-line'} width="14" />
+					<span>{staged ? 'Install and restart' : 'Download and install'}</span>
 				</button>
 				{#if applyError}
 					<!-- The box's own reason, verbatim. The common one is that this
