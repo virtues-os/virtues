@@ -1,6 +1,7 @@
 //! Library-level API functions.
 
 pub mod applet_events;
+pub mod applet_source;
 pub mod annotations;
 pub mod ai_calls;
 pub mod ai_complete;

@@ -487,6 +487,38 @@ export async function runAction(
 	return res.json();
 }
 
+// ── Applet source ───────────────────────────────────────────────────────────
+// Reading the code that ran. Every applet, whatever its provenance.
+
+export interface AppletSourceFile {
+	path: string;
+	size: number;
+	/** False for binary or oversized files — don't offer to open them. */
+	readable: boolean;
+}
+
+export interface AppletSourceListing {
+	dir: string;
+	/** Which root the folder resolved in — `shipped` came with the box. */
+	origin_root: 'shipped' | 'state';
+	files: AppletSourceFile[];
+	truncated: boolean;
+}
+
+export async function getAppletSource(id: string): Promise<AppletSourceListing> {
+	return apiGet<AppletSourceListing>(`/applets/${encodeURIComponent(id)}/source`);
+}
+
+export async function getAppletSourceFile(
+	id: string,
+	path: string
+): Promise<{ path: string; text: string }> {
+	const safe = path.split('/').map(encodeURIComponent).join('/');
+	return apiGet<{ path: string; text: string }>(
+		`/applets/${encodeURIComponent(id)}/source/${safe}`
+	);
+}
+
 export async function listActionRuns(
 	id: string,
 	opts?: { limit?: number; status?: string }

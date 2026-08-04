@@ -370,6 +370,17 @@ pub async fn run(client: Virtues, host: &str, port: u16) -> Result<()> {
         )
         .route("/api/applets/:id/run", post(api::trigger_applet_handler))
         .route("/api/applets/:id/data", get(api::get_applet_data_handler))
+        // Read the applet's own code. Read-only, owner-authed like everything
+        // in this group; see api/applet_source.rs for why it guards harder than
+        // the face server does.
+        .route(
+            "/api/applets/:id/source",
+            get(crate::api::applet_source::list_handler),
+        )
+        .route(
+            "/api/applets/:id/source/*path",
+            get(crate::api::applet_source::file_handler),
+        )
         // Chat-export upload (Tier 3 one-time import). Per-route body limit
         // overrides the router-wide 105MB cap — ChatGPT exports can be larger.
         .route(
