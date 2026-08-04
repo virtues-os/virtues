@@ -623,17 +623,32 @@ pub async fn prepare(force: bool) -> Result<Prepared, crate::Error> {
 
     // The whole no-op path, in a few hundred bytes.
     let sha = fetch_tag_sha(&target_tag).await?;
+
+    // A box can be running the target without `GIT_COMMIT` proving it (a dev
+    // build, an older binary that didn't stamp one). The slot it booted from
+    // still carries the manifest, so ask that too.
+    let slot_is_target = |slot: &Path| slot_build_sha(slot).is_some_and(|s| sha_eq(&s, &sha));
+
+    // Unconditional — `--force` does NOT override this, and that asymmetry with
+    // `upgrade --force` is deliberate.
+    //
+    // Slot ids are a function of the build, so re-preparing the release you are
+    // already running resolves to the slot `current` points at, and staging
+    // begins by deleting the slot it is about to write. The running process
+    // survives on its open inodes, which is what makes this look harmless on a
+    // live box and is exactly why it isn't: for the duration of the copy,
+    // `current` names a half-written release, and anything that starts in that
+    // window — a restart, an applet subprocess, the health probe — reads it.
+    //
+    // `upgrade --force` accepts that risk because reinstalling in place is its
+    // whole purpose and it restarts into the result. Preparation has no such
+    // purpose: the release that is already running is, by definition, ready.
+    if is_running_commit(&sha) || layout.current_slot().is_some_and(|s| slot_is_target(&s)) {
+        return Ok(Prepared::UpToDate);
+    }
+
+    // This one IS what `--force` overrides: re-fetch a release already staged.
     if !force {
-        if is_running_commit(&sha) {
-            return Ok(Prepared::UpToDate);
-        }
-        // A box can be running the target without `GIT_COMMIT` proving it (a dev
-        // build, an older binary that didn't stamp one). The slot it booted from
-        // still carries the manifest, so ask that too.
-        let slot_is_target = |slot: &Path| slot_build_sha(slot).is_some_and(|s| sha_eq(&s, &sha));
-        if layout.current_slot().is_some_and(|s| slot_is_target(&s)) {
-            return Ok(Prepared::UpToDate);
-        }
         if let Some(p) = layout.prepared_slot() {
             if slot_is_target(&p) {
                 return Ok(Prepared::Already {
@@ -691,6 +706,17 @@ pub async fn prepare(force: bool) -> Result<Prepared, crate::Error> {
 
     let slot_id = slot_id_for(&build, &target_tag);
     let slot = layout.slot_dir(&slot_id);
+
+    // The same refusal as above, now that the real slot id is known.
+    //
+    // The check up there compares build manifests, so it cannot fire for a slot
+    // staged before manifests were copied in — and those slots are named by the
+    // same `<tag>-<sha7>` rule, so the id can still collide. Reaching here means
+    // the next line would delete the running release.
+    if layout.current_slot().as_deref() == Some(slot.as_path()) {
+        return Ok(Prepared::UpToDate);
+    }
+
     stage_and_preflight(
         &layout,
         &slot,
