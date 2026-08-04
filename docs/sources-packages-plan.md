@@ -1,7 +1,11 @@
 # Sources as packages
 
-**Status:** proposed, 2026-08-04. Supersedes nothing; extends
+**Status:** P0–P4 shipped 2026-08-04; P5 remaining. Supersedes nothing; extends
 `docs/applets-overhaul-plan.md` (§ Git / distribution).
+
+> The "What the sweep found" section below describes the state *before* this
+> work and is kept as the rationale for each phase — every defect it names has
+> since been fixed. Read the phase headings for what is actually true now.
 
 The idea: a source stops being a row in one compiled-in TOML file and becomes a
 *package* — a directory carrying its own `[[source]]` declaration plus the
@@ -178,7 +182,7 @@ exists and is documented as a feature.
 Ordered so that each phase is independently shippable and no phase opens a door
 before the lock for it exists.
 
-### P0 — `env_clear` on applet spawn *(do this regardless)*
+### P0 — `env_clear` on applet spawn — **DONE** (`fbd98e1e`)
 
 Add `.env_clear()` plus an explicit passthrough allowlist at
 `applet_runner/mod.rs:633`. Applets receive their credentials on stdin by
@@ -189,7 +193,7 @@ Costs nothing, needs no design, closes the gap between `load_credentials`' doc
 comment and its behavior, and is worth doing whether or not any of the rest
 happens. **Independent of this plan; ship it first.**
 
-### P1 — Read and fork *(cheap, and the feature that makes "open" felt)*
+### P1 — Read and fork — **DONE** (`df95e4ce`, `9e0e4899`, `ac6841b3`)
 
 Three things that are almost free and serve both audiences at once. None needs a
 git remote.
@@ -211,7 +215,7 @@ git remote.
   them. For an appliance whose pitch is verifiability, "here is the exact source
   for the collector you just paired" is worth more than most features.
 
-### P2 — Merge the catalog *(the keystone)*
+### P2 — Merge the catalog — **DONE** (`e4a70cb5`)
 
 1. `load_catalog()` merges `[[source]]` rows from shipped root, then each
    package dir, last-wins-by-id — mirroring the action overlay at `mod.rs:425`.
@@ -228,7 +232,7 @@ git remote.
 After P2 a new provider is a directory, no release required — which is most of
 the value, and it needs no git at all.
 
-### P3 — Fix and instrument the importer
+### P3 — Fix and instrument the importer — **DONE** (`340a55bc`, `d04daa7e`)
 
 1. Fix `ids_under_slug` to key on the `applet_<slug>` id prefix instead of the
    dropped `dir` column. Add the integration test whose absence hid this.
@@ -245,7 +249,7 @@ the value, and it needs no git at all.
 5. Pin by commit. `git clone --branch <sha>` does not work, so first-import
    pinning needs `init` + `fetch` + `checkout`.
 
-### P4 — Execution policy *(the gate)*
+### P4 — Execution policy — **DONE** (`48cee3f2`)
 
 Nothing user-facing should install a package until this exists. Decide, in
 order of increasing effort:
@@ -267,7 +271,7 @@ order of increasing effort:
   structural, which is what the product's doctrine wants. Native third-party
   code stays supported; it just stops being root.
 
-### P5 — `oauth_direct` spike
+### P5 — `oauth_direct` spike — **NEXT**, blocked on research not code
 
 One provider, self-serve registration, loopback redirect. Prove the variant end
 to end, then decide whether it generalizes. Prerequisites: a
@@ -287,14 +291,11 @@ drift silently into a 404.
 Not part of this plan's dependency chain, but found while mapping it and worth
 tracking rather than losing.
 
-1. **The OAuth `exchange_token` is signed but not encrypted.** It is base64 of
-   the *plaintext* access and refresh tokens with an HMAC appended
-   (`crypto/mod.rs:383-412`), and it travels through the user's browser as a
-   query parameter. The HMAC prevents forgery, not reading — anyone who sees
-   that URL (browser history, a proxy log, a referer leak) can base64-decode
-   live provider tokens. `TokenEncryptor` already exists; encrypt the payload
-   rather than only signing it. **Highest-value fix on this list, and entirely
-   independent of packages.**
+1. ~~**The OAuth `exchange_token` is signed but not encrypted.**~~ **Fixed**
+   (`4f7b20d2`). The body is now AES-256-GCM sealed under a key derived from the
+   same shared secret, then HMAC'd as before. It had been base64 of the
+   *plaintext* access and refresh tokens travelling through the user's browser
+   as a query parameter.
 2. **`sql_query` for agent applets runs on the main pool**, not the scoped
    `virtues_face_reader` role that faces use. An AI-authored applet can read
    anything the box can.
