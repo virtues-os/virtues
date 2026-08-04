@@ -53,6 +53,89 @@
 		never: 'not connected'
 	};
 
+	/**
+	 * Streams grouped by the life-domain already encoded in their name — a
+	 * stream is `<domain>_<thing>` (`health_sleep`, `financial_account`), so the
+	 * buckets exist without inventing a taxonomy.
+	 *
+	 * Grouping matters more than it looks. A flat list of nineteen rows answers
+	 * "is this one flowing" and nothing else; grouped, it answers the question
+	 * people actually have — *what does the record know about my life* — and
+	 * makes an entirely dark domain visible as a fact rather than as fourteen
+	 * greyed rows you scroll past.
+	 *
+	 * Deliberately not a score. "Health 2/5" reads as a deficit to close, and
+	 * completionism on this product means pressuring someone into more
+	 * self-surveillance to fill a bar. A domain nobody connected may be a
+	 * decision, not a gap. So each domain gets a sentence naming what is there
+	 * and what isn't, and no number.
+	 */
+	const DOMAIN_LABEL: Record<string, string> = {
+		health: 'Health',
+		location: 'Location',
+		communication: 'Communication',
+		calendar: 'Calendar',
+		activity: 'Activity',
+		content: 'Content',
+		financial: 'Finance',
+		audio: 'Audio'
+	};
+
+	// Fixed order, not worst-first. The vitals above already lead with what needs
+	// you; this is the reference list, and a reference list that reorders itself
+	// under you is harder to read than one that sits still.
+	const DOMAIN_ORDER = [
+		'health',
+		'location',
+		'communication',
+		'calendar',
+		'activity',
+		'content',
+		'financial',
+		'audio'
+	];
+
+	// `or` for the negative half: "no email and transcriptions" reads as one
+	// missing pair, "no email or transcriptions" as two missing things.
+	function joinNames(items: string[], conj: 'and' | 'or' = 'and'): string {
+		if (items.length === 1) return items[0];
+		if (items.length === 2) return `${items[0]} ${conj} ${items[1]}`;
+		return `${items.slice(0, -1).join(', ')}, ${conj} ${items[items.length - 1]}`;
+	}
+
+	/** What the record can and cannot say for this domain, in a sentence. */
+	function summarize(group: StreamHealth[]): string {
+		const has = group.filter((s) => s.total > 0).map((s) => s.display_name);
+		const missing = group.filter((s) => s.total === 0).map((s) => s.display_name);
+		if (has.length === 0) return `Nothing connected — no ${joinNames(missing, 'or')}.`;
+		if (missing.length === 0) return `${joinNames(has)}.`;
+		return `${joinNames(has)} — nothing for ${joinNames(missing, 'or')}.`;
+	}
+
+	const domains = $derived.by(() => {
+		const by = new Map<string, StreamHealth[]>();
+		for (const s of streams) {
+			const domain = s.name.split('_')[0];
+			const list = by.get(domain);
+			if (list) list.push(s);
+			else by.set(domain, [s]);
+		}
+		const known = DOMAIN_ORDER.filter((d) => by.has(d));
+		// Anything the registry grows that this list hasn't heard of still shows.
+		const rest = [...by.keys()].filter((d) => !DOMAIN_ORDER.includes(d)).sort();
+		return [...known, ...rest].map((d) => {
+			const group = by.get(d) ?? [];
+			return {
+				id: d,
+				label: DOMAIN_LABEL[d] ?? d.charAt(0).toUpperCase() + d.slice(1),
+				streams: group,
+				summary: summarize(group),
+				dark: group.every((s) => s.total === 0),
+				attention: group.some((s) => s.status === 'stalled')
+			};
+		});
+	});
+
 	const connected = $derived(streams.filter((s) => s.status !== 'never'));
 	const flowing = $derived(streams.filter((s) => s.status === 'live'));
 	const stalled = $derived(streams.filter((s) => s.status === 'stalled'));
@@ -224,19 +307,30 @@
 		{:else if streams.length === 0}
 			<p class="muted">No streams registered.</p>
 		{:else}
-			<div class="ledger">
-				{#each streams as s (s.name)}
-					<div class="ledger-row {s.status}">
-						<span class="ledger-label">{s.display_name}</span>
-						<span class="leader"></span>
-						<span class="ledger-state">{COPY[s.status] ?? s.status}</span>
-						<span class="ledger-value mono">
-							{s.last_ingest ? relativeTime(s.last_ingest) : '—'}
-						</span>
-						<span class="ledger-count mono">{s.count_24h > 0 ? s.count_24h : ''}</span>
+			{#each domains as d (d.id)}
+				<div class="domain" class:dark={d.dark}>
+					<div class="domain-head">
+						<span class="domain-name">{d.label}</span>
+						{#if d.attention}
+							<span class="domain-flag">stopped</span>
+						{/if}
 					</div>
-				{/each}
-			</div>
+					<p class="domain-summary">{d.summary}</p>
+					<div class="ledger">
+						{#each d.streams as s (s.name)}
+							<div class="ledger-row {s.status}">
+								<span class="ledger-label">{s.display_name}</span>
+								<span class="leader"></span>
+								<span class="ledger-state">{COPY[s.status] ?? s.status}</span>
+								<span class="ledger-value mono">
+									{s.last_ingest ? relativeTime(s.last_ingest) : '—'}
+								</span>
+								<span class="ledger-count mono">{s.count_24h > 0 ? s.count_24h : ''}</span>
+							</div>
+						{/each}
+					</div>
+				</div>
+			{/each}
 		{/if}
 	</section>
 
@@ -362,6 +456,39 @@
 	}
 	.mono {
 		font-family: var(--font-mono, ui-monospace, monospace);
+	}
+
+	/* ── Domains ──────────────────────────────────────────────────────── */
+	.domain {
+		margin-bottom: 1.25rem;
+	}
+	.domain:last-child {
+		margin-bottom: 0;
+	}
+	.domain-head {
+		display: flex;
+		align-items: baseline;
+		gap: 0.5rem;
+	}
+	.domain-name {
+		font-size: 0.8125rem;
+		font-weight: 600;
+		color: var(--color-foreground, #111827);
+	}
+	.domain-flag {
+		font-size: 0.6875rem;
+		color: var(--color-error);
+	}
+	/* A domain nobody has connected is a fact, not a failure — quieter, but
+	   still listed, because "you could have this" is half the point. */
+	.domain.dark .domain-name {
+		color: var(--color-foreground-muted, #6b7280);
+		font-weight: 500;
+	}
+	.domain-summary {
+		margin: 0.125rem 0 0.375rem;
+		font-size: 0.75rem;
+		color: var(--color-foreground-subtle, #9ca3af);
 	}
 
 	/* ── Ledger ───────────────────────────────────────────────────────── */
