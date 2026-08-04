@@ -151,9 +151,15 @@ class SourcesStore {
 				// `pending` credentials are a transient pre-pairing state the server
 				// hard-deletes on cancel; they should never reach a list.
 				...creds.filter((c) => c.status !== 'pending' && c.status !== 'revoked').map(fromCredential),
-				// A device with no source_id only views — it collects nothing, so it
-				// belongs in Settings → Devices, not under a source here.
-				...(devices.devices ?? []).filter((d) => d.source_id).map(fromDevice)
+				// A device that only views — it collects nothing — belongs in
+				// Settings → Devices, not under a source here. `__device__` is the
+				// server's sentinel for exactly that (pair.rs `resolve_source_id`),
+				// and it is truthy, so filtering on presence alone let the Tauri
+				// desktop shell surface here as an orphaned connection claiming its
+				// source was uninstalled.
+				...(devices.devices ?? [])
+					.filter((d) => d.source_id && d.source_id !== '__device__')
+					.map(fromDevice)
 			];
 		} catch (e) {
 			this.error = e instanceof Error ? e.message : String(e);
