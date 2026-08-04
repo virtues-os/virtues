@@ -241,12 +241,25 @@
 	</div>
 {/snippet}
 
-<Page title="Sources" description="The state of supply." maxWidth="wide">
+<Page
+	title="Sources"
+	description="Where your data comes from, and whether it is still arriving."
+	maxWidth="wide"
+>
 	{#snippet actions()}
 		<div class="head-actions">
 			<span class="live" class:on={flowing.length > 0}>
 				<span class="dot"></span>{lastSeen ? relativeTime(lastSeen) : '—'}
 			</span>
+			<button
+				type="button"
+				class="ghost icon-only"
+				onclick={() => void loadStreams()}
+				aria-label="Refresh"
+				disabled={refreshing}
+			>
+				<Icon icon="ri:refresh-line" width="15" />
+			</button>
 			<button type="button" class="ghost" onclick={openCatalog}>
 				<Icon icon="ri:apps-line" width="15" /> Catalog
 			</button>
@@ -268,7 +281,6 @@
 
 	<!-- ─── VITALS ──────────────────────────────────────────────────────── -->
 	<section class="chapter">
-		<h2 class="chapter-title">Vitals</h2>
 		<div class="vitals-grid">
 			{@render vital(
 				'Connections',
@@ -301,7 +313,7 @@
 	<!-- ─── ATTENTION ───────────────────────────────────────────────────── -->
 	{#if store.broken.length > 0}
 		<section class="chapter">
-			<h2 class="chapter-title">Needs you</h2>
+			<h2 class="section">Needs you</h2>
 			<ul class="attention">
 				{#each store.broken as c (c.id)}
 					<li>
@@ -323,18 +335,6 @@
 
 	<!-- ─── DATA FLOW ───────────────────────────────────────────────────── -->
 	<section class="chapter">
-		<h2 class="chapter-title">
-			Data flow
-			<button
-				type="button"
-				class="refresh"
-				onclick={() => void loadStreams()}
-				aria-label="Refresh"
-				disabled={refreshing}
-			>
-				<Icon icon="ri:refresh-line" width="14" />
-			</button>
-		</h2>
 
 		{#if streamsErr}
 			<div class="error">{streamsErr}</div>
@@ -443,31 +443,26 @@
 
 	/* ── Chapters ─────────────────────────────────────────────────────── */
 	.chapter {
-		margin-top: 1.75rem;
+		margin-top: 2rem;
 	}
 	.chapter:first-of-type {
 		margin-top: 1rem;
 	}
-	.chapter-title {
-		display: flex;
-		align-items: center;
-		gap: 0.5rem;
-		margin: 0 0 0.75rem;
-		font-size: 0.6875rem;
+	/* A section heading must outrank the rows under it. These were 11px serif —
+	   smaller than their own body text — which is why nothing read as
+	   structure. */
+	.section {
+		margin: 0;
+		font-size: 0.9375rem;
 		font-weight: 600;
-		color: var(--color-foreground-subtle, #9ca3af);
+		letter-spacing: -0.006em;
+		color: var(--color-foreground, #111827);
 	}
-	.refresh {
-		display: inline-flex;
-		border: none;
-		background: none;
-		padding: 0;
-		color: inherit;
-		cursor: pointer;
-		opacity: 0.7;
+	.section {
+		margin-bottom: 0.625rem;
 	}
-	.refresh:hover:not(:disabled) {
-		opacity: 1;
+	.icon-only {
+		padding: 0.3125rem 0.4375rem;
 	}
 
 	/* ── Vitals ───────────────────────────────────────────────────────── */
@@ -490,7 +485,7 @@
 		}
 	}
 	.vital-name {
-		font-size: 0.75rem;
+		font-size: 0.8125rem;
 		color: var(--color-foreground-muted, #6b7280);
 	}
 	.vital-figure {
@@ -500,14 +495,14 @@
 		margin-top: 0.375rem;
 	}
 	.vital-big {
-		font-family: var(--font-serif, ui-serif, Georgia, serif);
-		font-size: 1.875rem;
+		font-size: 1.75rem;
+		font-weight: 500;
 		line-height: 1;
 		/* Lining + tabular so 0 and 10 occupy the same width and the four cards
 		   agree on a baseline grid. Optical sizing keeps the serif from going
 		   spindly at display size. */
 		font-variant-numeric: lining-nums tabular-nums;
-		letter-spacing: -0.015em;
+		letter-spacing: -0.02em;
 		color: var(--color-foreground, #111827);
 	}
 	.vital-big.crit {
@@ -519,19 +514,18 @@
 		color: var(--color-foreground-subtle, #9ca3af);
 	}
 	.vital-sub {
-		margin-top: 0.25rem;
-		font-size: 0.6875rem;
+		margin-top: 0.3125rem;
+		font-size: 0.75rem;
 		color: var(--color-foreground-subtle, #9ca3af);
 	}
 	.mono {
-		font-family: var(--font-mono, ui-monospace, monospace);
 		font-variant-numeric: tabular-nums;
-		font-feature-settings: 'ss01';
+		color: var(--color-foreground-muted, #6b7280);
 	}
 
 	/* ── Domains ──────────────────────────────────────────────────────── */
 	.domain {
-		margin-bottom: 1.25rem;
+		margin-bottom: 1.5rem;
 	}
 	.domain:last-child {
 		margin-bottom: 0;
@@ -540,14 +534,18 @@
 		display: flex;
 		align-items: baseline;
 		gap: 0.5rem;
+		padding-bottom: 0.3125rem;
+		margin-bottom: 0.375rem;
+		border-bottom: 1px solid color-mix(in srgb, var(--color-foreground) 8%, transparent);
 	}
 	.domain-name {
-		font-size: 0.8125rem;
+		font-size: 1rem;
 		font-weight: 600;
+		letter-spacing: -0.008em;
 		color: var(--color-foreground, #111827);
 	}
 	.domain-flag {
-		font-size: 0.6875rem;
+		font-size: 0.75rem;
 		color: var(--color-error);
 	}
 	/* A domain nobody has connected is a fact, not a failure — quieter, but
@@ -560,8 +558,8 @@
 	/* The three not-yet lines. Same size, decreasing ink: an offer you can act
 	   on, a wait you cannot, and a limit that is ours rather than yours. */
 	.aside {
-		margin: 0.25rem 0 0;
-		font-size: 0.75rem;
+		margin: 0.375rem 0 0;
+		font-size: 0.8125rem;
 		line-height: 1.5;
 		color: var(--color-foreground-muted, #6b7280);
 	}
@@ -589,9 +587,9 @@
 	.ledger-row {
 		display: flex;
 		align-items: baseline;
-		gap: 0.5rem;
-		padding: 0.3125rem 0;
-		font-size: 0.8125rem;
+		gap: 0.625rem;
+		padding: 0.375rem 0;
+		font-size: 0.875rem;
 		color: var(--color-foreground-muted, #6b7280);
 	}
 	.ledger-label {
@@ -618,7 +616,7 @@
 	.ledger-state {
 		flex-shrink: 0;
 		width: 9rem;
-		font-size: 0.75rem;
+		font-size: 0.8125rem;
 	}
 	.ledger-row.stalled .ledger-state {
 		color: var(--color-error);
@@ -633,15 +631,15 @@
 	}
 	.ledger-value {
 		flex-shrink: 0;
-		width: 6rem;
+		width: 6.5rem;
 		text-align: right;
-		font-size: 0.75rem;
+		font-size: 0.8125rem;
 	}
 	.ledger-count {
 		flex-shrink: 0;
 		width: 4rem;
 		text-align: right;
-		font-size: 0.75rem;
+		font-size: 0.8125rem;
 		color: var(--color-foreground-subtle, #9ca3af);
 	}
 
