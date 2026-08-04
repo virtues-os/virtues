@@ -7,10 +7,13 @@
 import { oauthStart, type SourceCatalogItem } from '$lib/api/client';
 import { getBackendOrigin } from '$lib/config/backend';
 import { openExternal } from '$lib/tauri/bridge';
-import { isTauri } from '$lib/utils/platform';
+import { isTauri, isMacOS } from '$lib/utils/platform';
 
 export type ConnectIntent =
 	| { kind: 'pair'; deviceType: 'ios' | 'mac'; displayName: string }
+	/** Collection is switched on from inside that device's own app, not paired
+	 *  by a code. See `connectIntent` for why the Mac is this and iOS is not. */
+	| { kind: 'in_app'; sourceId: string; displayName: string; onThisDevice: boolean }
 	| { kind: 'chat_import' }
 	| { kind: 'api_key'; source: SourceCatalogItem }
 	// `external` = the OAuth dance was handed off to the *system browser*
@@ -66,6 +69,30 @@ export function reloadOnReturn(reload: () => void): void {
 }
 
 export async function connectIntent(source: SourceCatalogItem): Promise<ConnectIntent> {
+	// Two device sources, two genuinely different setups — the catalog used to
+	// offer both the same six-digit code, and for the Mac that code led nowhere.
+	//
+	// iOS pairs by code: you are on a laptop, the phone is in your hand, and the
+	// phone's app scans the QR. Cross-device, so a code is exactly right.
+	//
+	// The Mac does not. The Virtues Mac app pairs itself as a *viewer*
+	// (`desktop_app` with no source — see `resolve_source_id`), and the thing
+	// that actually collects is a separate daemon the app installs. So the code
+	// flow paired the shell, produced no `mac_ingest` applet, and reported
+	// success: you were "connected" and collecting nothing, permanently and
+	// silently. One Mac is two devices, and only the second one is a source.
+	//
+	// So the Mac's real question is never "pair this" — it is "switch collection
+	// on, over in that Mac's app", which ThisMacView already does tokenlessly.
+	if (source.id === 'mac') {
+		return {
+			kind: 'in_app',
+			sourceId: source.id,
+			displayName: source.name,
+			onThisDevice: isTauri && isMacOS
+		};
+	}
+
 	if (source.auth_kind === 'self_issued_bearer') {
 		return {
 			kind: 'pair',

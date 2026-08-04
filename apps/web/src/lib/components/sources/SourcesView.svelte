@@ -35,6 +35,7 @@
 	import SourceDetail from './SourceDetail.svelte';
 	import CredentialDetailView from '$lib/components/tabs/views/CredentialDetailView.svelte';
 	import { connectFlow } from '$lib/stores/connectFlow.svelte';
+	import { windowShellStore } from '$lib/stores/window-shell.svelte';
 	import { sourcesStore } from '$lib/stores/sources.svelte';
 	import { reloadOnReturn } from './connectDispatch';
 
@@ -107,7 +108,76 @@
 	<ChatImportCard />
 </Modal>
 
+<!-- A Mac is not paired by a code; collection is switched on inside its own
+     app. See connectDispatch for why offering a code here was worse than
+     useless. -->
+<Modal
+	open={pending.kind === 'in_app'}
+	onClose={() => connectFlow.close()}
+	title={pending.kind === 'in_app' ? `Set up ${pending.displayName}` : 'Set up'}
+	width="sm"
+>
+	{#if pending.kind === 'in_app'}
+		<div class="in-app">
+			{#if pending.onThisDevice}
+				<p>
+					This Mac is already paired — the app you're reading this in is the
+					pairing. What's left is switching collection on.
+				</p>
+				<button
+					type="button"
+					class="primary"
+					onclick={() => {
+						connectFlow.close();
+						windowShellStore.navigate('/virtues/this-mac', { label: 'This Mac' });
+					}}
+				>
+					Open This Mac
+				</button>
+			{:else}
+				<p>
+					Collection on a Mac is switched on from the Virtues app running on
+					that Mac — there's no code to carry across.
+				</p>
+				<p class="muted">
+					Install Virtues on the Mac you want to collect from, pair it, then open
+					Sources → This Mac there.
+				</p>
+			{/if}
+		</div>
+	{/if}
+</Modal>
+
 <style>
+	.in-app {
+		display: flex;
+		flex-direction: column;
+		gap: 0.75rem;
+		align-items: flex-start;
+	}
+	.in-app p {
+		margin: 0;
+		font-size: 0.875rem;
+		line-height: 1.55;
+	}
+	.in-app .muted {
+		font-size: 0.8125rem;
+		color: var(--color-foreground-muted, #6b7280);
+	}
+	.primary {
+		padding: 0.375rem 0.75rem;
+		border-radius: 6px;
+		border: 1px solid var(--color-border, #d1d5db);
+		background: var(--color-background, #fff);
+		color: var(--color-foreground, #111827);
+		font-size: 0.8125rem;
+		font-weight: 500;
+		cursor: pointer;
+	}
+	.primary:hover {
+		background: var(--color-muted, #f3f4f6);
+	}
+
 	.sources-room {
 		height: 100%;
 		overflow-y: auto;

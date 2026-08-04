@@ -241,6 +241,10 @@
 	function connectLabel(row: Row): string {
 		if (!row.source) return '';
 		if (isThisDevice(row.source)) return `Set up ${thisComputerLabel}`;
+		// A Mac is never paired by a code — its collector is switched on inside
+		// that Mac's own app. Saying "Pair a device" here promised a flow that
+		// paired the viewer and collected nothing.
+		if (row.source.id === 'mac') return 'How to set up';
 		if (row.source.auth_kind === 'self_issued_bearer') return 'Pair a device';
 		return row.connected > 0 ? 'Connect another' : 'Connect';
 	}

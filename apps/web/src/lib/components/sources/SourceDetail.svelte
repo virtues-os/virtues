@@ -38,6 +38,9 @@
 	const connectLabel = $derived.by(() => {
 		if (!source) return '';
 		if (isThisDevice) return `Set up ${thisComputerLabel}`;
+		// See connectDispatch: a Mac's collector is switched on in that Mac's
+		// app, so a pairing code here would promise a flow that collects nothing.
+		if (source.id === 'mac') return 'How to set up';
 		if (source.auth_kind === 'self_issued_bearer') return 'Pair a device';
 		return connections.length > 0 ? 'Connect another' : 'Connect';
 	});
