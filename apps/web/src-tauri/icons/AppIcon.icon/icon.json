@@ -9,6 +9,8 @@
           "fill" : {
             "solid" : "display-p3:0.96881,1.00000,0.96631,1.00000"
           },
+          "glass" : true,
+          "hidden" : false,
           "image-name" : "mark.svg",
           "name" : "mark"
         }
