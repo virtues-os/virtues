@@ -89,6 +89,7 @@ impl Scheduler {
                 r#"SELECT id, name, cron_schedule, next_due_at
                FROM app_applets
                WHERE enabled = TRUE
+                 AND archived_at IS NULL
                  AND cron_schedule IS NOT NULL
                  AND triggers @> '["cron"]'::jsonb
                  AND (command IS NOT NULL OR (agent IS NOT NULL AND btrim(agent) <> ''))"#,
@@ -343,6 +344,7 @@ impl Scheduler {
                    ORDER BY started_at DESC LIMIT 1
                )
                WHERE a.enabled = TRUE
+                 AND a.archived_at IS NULL
                  AND a.cron_schedule IS NOT NULL
                  AND a.triggers @> '["cron"]'::jsonb
                ORDER BY a.name"#,
@@ -578,6 +580,34 @@ mod tests {
         let (_, after) = pointer(&pool, "applet_a").await;
         assert!(after.is_some(), "reseeded from the new schedule");
         assert_ne!(before, after, "the old schedule's slot did not survive");
+    }
+
+    /// A finished applet must not be scheduled. Archiving sets enabled = FALSE
+    /// so this was covered in practice, but the query never said so — and
+    /// `slots::overdue` DID filter archived rows, so the two disagreed about
+    /// what counts as live.
+    #[sqlx::test]
+    async fn a_finished_applet_is_never_scheduled(pool: PgPool) {
+        let mut sched = scheduler(&pool).await;
+        insert_applet(&pool, "applet_a", "0 0 7 * * *").await;
+        assert_eq!(sched.sync_jobs().await.unwrap(), 1);
+
+        sqlx::query(
+            "UPDATE app_applets SET archived_at = now(), enabled = FALSE WHERE id = 'applet_a'",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        assert_eq!(sched.sync_jobs().await.unwrap(), 0);
+        assert!(sched.registered.is_empty(), "unregistered once finished");
+
+        // Enabled again but still archived — the belt-and-braces case, and the
+        // one the enabled-only query would have re-scheduled.
+        sqlx::query("UPDATE app_applets SET enabled = TRUE WHERE id = 'applet_a'")
+            .execute(&pool)
+            .await
+            .unwrap();
+        assert_eq!(sched.sync_jobs().await.unwrap(), 0, "still finished");
     }
 
     /// Disabling or deleting an applet must unregister it, or a disconnected

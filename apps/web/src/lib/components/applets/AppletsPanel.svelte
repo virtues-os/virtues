@@ -29,9 +29,16 @@
 	// Built-in (system) applets are plumbing — inspectable on demand, hidden
 	// by default so they don't crowd out yours. A filter, not a wall.
 	let showSystem = $state(false);
+	// Finished applets (lifecycle complete) are out of the way, not gone. They
+	// used to be filtered out with no way back: no archived filter, no history
+	// route since the phase-1 collapse, and the detail page's "Finished" branch
+	// reachable only by typing the URL. So a one-shot reminder fired, archived
+	// itself, and took its own output out of the interface — while the MODEL
+	// could still list it (`list_applets` has include_archived) and the person
+	// could not.
+	let showFinished = $state(false);
 
-	// Archived applets (lifecycle complete) are hidden: the list holds
-	// living things. Their run history stays reachable from chat/detail.
+	const finished = $derived(applets.filter((a) => a.archived_at));
 	const living = $derived(applets.filter((a) => !a.archived_at));
 
 	// Hide on `origin`, not `owner`. Every source fan-out row is owner='system'
@@ -40,7 +47,8 @@
 	// indexer you have never thought about. `origin === 'system'` is the actual
 	// plumbing; a source's applets are yours and stay visible.
 	const systemCount = $derived(living.filter((a) => a.origin === 'system').length);
-	const visible = $derived(showSystem ? living : living.filter((a) => a.origin !== 'system'));
+	const pool = $derived(showFinished ? [...living, ...finished] : living);
+	const visible = $derived(showSystem ? pool : pool.filter((a) => a.origin !== 'system'));
 
 	// Needs-attention strip. Two signals now; credential-expired joins when
 	// credential surfacing lands.
@@ -253,8 +261,8 @@
 			key: 'enabled',
 			label: 'On',
 			format: 'badge',
-			getValue: (a) => (a.enabled ? 'on' : 'off'),
-			badgeColors: { on: 'badge-success', off: 'badge-muted' }
+			getValue: (a) => (a.archived_at ? 'finished' : a.enabled ? 'on' : 'off'),
+			badgeColors: { on: 'badge-success', off: 'badge-muted', finished: 'badge-info' }
 		},
 		{
 			key: 'last_run',
@@ -290,10 +298,12 @@
 			kind: 'enum',
 			label: 'Status',
 			options: [
-				{ value: 'true', label: 'Enabled', badgeColor: 'badge-success' },
-				{ value: 'false', label: 'Disabled', badgeColor: 'badge-muted' }
+				{ value: 'true', label: 'On', badgeColor: 'badge-success' },
+				{ value: 'false', label: 'Off', badgeColor: 'badge-muted' },
+				{ value: 'finished', label: 'Finished', badgeColor: 'badge-info' }
 			],
-			predicate: (a, v) => String(a.enabled) === v
+			predicate: (a, v) =>
+				v === 'finished' ? Boolean(a.archived_at) : !a.archived_at && String(a.enabled) === v
 		},
 		{
 			id: 'schedule_type',
@@ -347,6 +357,17 @@
 			>
 				{showSystem ? 'Hide' : 'Show'} built-in ({systemCount})
 			</button>
+			{#if finished.length > 0}
+				<button
+					type="button"
+					class="show-system-btn"
+					class:active={showFinished}
+					onclick={() => (showFinished = !showFinished)}
+					title="Applets whose lifecycle completed — a one-off reminder that fired, or an `until` condition that came true. Their work and their run history are still here."
+				>
+					{showFinished ? 'Hide' : 'Show'} finished ({finished.length})
+				</button>
+			{/if}
 			<!-- Reconcile is an operator verb — "re-read manifests from disk" is
 			     a sentence about the box's internals, and it sat at the top of a
 			     consumer page next to New as though it were a thing you do. It
