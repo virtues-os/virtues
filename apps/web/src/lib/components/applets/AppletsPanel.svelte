@@ -41,12 +41,41 @@
 	const systemCount = $derived(living.filter((a) => a.origin === 'system').length);
 	const visible = $derived(showSystem ? living : living.filter((a) => a.origin !== 'system'));
 
-	// Needs-attention strip: enabled applets whose last run errored.
-	// (Expected-but-didn't-run and credential-expired join when the slot
-	// bookkeeping and credential surfacing land.)
-	const needsAttention = $derived(
-		living.filter((a) => a.enabled && a.last_run?.status === 'error')
-	);
+	// Needs-attention strip. Two signals now; credential-expired joins when
+	// credential surfacing lands.
+	//
+	// `budget_exceeded` is deliberately NOT here: a run stopped at a ceiling
+	// its owner set is working as configured, and filing it beside genuine
+	// breakage teaches people to ignore the strip.
+	//
+	// An hour is the grace, matching the scheduler's own ceiling — long enough
+	// that a busy box isn't accused, short enough that a daily applet which
+	// silently stopped firing is caught the same morning.
+	const OVERDUE_GRACE_MS = 60 * 60 * 1000;
+
+	type Attention = { applet: Applet; why: string };
+
+	const needsAttention = $derived.by((): Attention[] => {
+		const out: Attention[] = [];
+		for (const a of living) {
+			if (!a.enabled) continue;
+			if (a.last_run?.status === 'error') {
+				out.push({ applet: a, why: 'last run failed' });
+				continue;
+			}
+			// Silent non-execution: the slot passed and nothing ran. This is
+			// the failure the strip could not see before — an unschedulable
+			// cron, a job that never registered, a box that was off. It looks
+			// identical to health in every other view.
+			if (a.next_due_at) {
+				const late = Date.now() - new Date(a.next_due_at).getTime();
+				if (late > OVERDUE_GRACE_MS) {
+					out.push({ applet: a, why: `expected ${relativeTime(a.next_due_at)}` });
+				}
+			}
+		}
+		return out;
+	});
 
 	function startChatFlow() {
 		newMenuOpen = false;
@@ -197,6 +226,14 @@
 			getValue: (a) => a.last_run?.started_at ? relativeTime(a.last_run.started_at) : '—'
 		},
 		{
+			key: 'next_due_at',
+			label: 'Next run',
+			// The scheduler's own answer, not a re-derivation from the cron
+			// string — so a row that stopped firing reads as overdue here
+			// rather than confidently predicting a run that will never come.
+			getValue: (a) => (a.next_due_at ? relativeTime(a.next_due_at) : '—')
+		},
+		{
 			key: 'enabled',
 			label: 'Status',
 			format: 'badge',
@@ -334,10 +371,14 @@
 					: `${needsAttention.length} applets need attention`}
 			</span>
 			<div class="attention-items">
-				{#each needsAttention as a (a.id)}
-					<button type="button" class="attention-item" onclick={() => openCard(a)}>
-						{a.name}
-						<span class="attention-why">last run failed</span>
+				{#each needsAttention as item (item.applet.id)}
+					<button
+						type="button"
+						class="attention-item"
+						onclick={() => openCard(item.applet)}
+					>
+						{item.applet.name}
+						<span class="attention-why">{item.why}</span>
 					</button>
 				{/each}
 			</div>

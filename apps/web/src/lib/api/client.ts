@@ -177,6 +177,14 @@ export interface Applet {
 	until: string | null;
 	/** Set when the lifecycle completed; archived applets are disabled. */
 	archived_at: string | null;
+	/** The scheduled slot this applet currently owes. Null when it has no
+	 *  schedule, or the scheduler has not seen it yet. Far enough in the past
+	 *  means it was expected and didn't run. */
+	next_due_at: string | null;
+	/** The last scheduled slot actually handled — fired, or consciously
+	 *  skipped. Not the same as the last run's `started_at`: a catch-up run at
+	 *  07:12 handles the 06:00 slot. */
+	last_slot_at: string | null;
 	/** True when the applet folder ships a face/ (sandboxed-iframe HTML UI). */
 	has_face: boolean;
 	is_system: boolean;

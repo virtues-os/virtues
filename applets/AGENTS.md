@@ -99,9 +99,19 @@ alternative. Never write a prompt that pretends a tool exists.**
 - **Date-anchored one-offs** ("remind me on the 25th"): nearest future
   occurrence, 6-field cron, and `until = "once"` — mandatory, or it fires
   yearly forever.
-- **Time-of-day gates** (`condition` on the clock): remember the schedule
-  and the gate must agree — a box that wakes late can miss a narrow window.
-  Widen the window rather than tightening the cron.
+- **Catch-up is automatic, and only for daily-or-slower schedules.** A box
+  asleep at 7am runs the 7am applet once when it wakes, provided it is still
+  the same day; a 15-minute sync that missed a tick just waits for the next
+  one. At most one slot is ever caught up — a box off for a week does not
+  replay seven mornings on Monday. You do not declare this; it is read from
+  the schedule's shape.
+- **Time-of-day gates** (`condition` on the clock) can annihilate catch-up,
+  and this is the trap: a schedule of `0 0 7 * * *` with
+  `condition = "extract(hour from now()) < 8"` looks careful and is not. The
+  box wakes at 9:30, the catch-up fires, the gate says no, and the applet is
+  silently skipped on exactly the day it mattered. **Widen the window rather
+  than tightening the cron** — gate on the day, not the hour
+  (`NOT EXISTS (a successful run today)` beats `hour < 8`).
 - **Repeat-fire / cooldown.** A threshold condition ("no workout in 3 days")
   stays true for the whole lapse and fires daily. Until a cooldown field
   exists, gate on your own runs:
