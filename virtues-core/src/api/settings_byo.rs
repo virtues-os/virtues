@@ -345,6 +345,28 @@ pub async fn delete_handler(
     (StatusCode::OK, Json(json!({ "ok": true }))).into_response()
 }
 
+/// Is a BYO credential active right now?
+///
+/// For the *streaming* recorders (`api/chat.rs`, `agent/applet_runner.rs`)
+/// which build their own `AiCall` rows far from the fork in `client.rs` and so
+/// cannot see which way the call went. One indexed `EXISTS` and no decryption,
+/// which is nothing beside the LLM call it is labelling.
+///
+/// Prefer plumbing the actual route through where you can — this answers "is
+/// BYO on now", not "did *that* call take it", so flipping BYO mid-call could
+/// mislabel one row. Harmless for a usage breakdown; never make a billing
+/// decision on it.
+pub async fn byo_is_active(pool: &PgPool) -> bool {
+    sqlx::query_scalar::<_, bool>(
+        "SELECT EXISTS(SELECT 1 FROM credentials \
+          WHERE source_id = $1 AND status = 'active')",
+    )
+    .bind(BYO_SOURCE_ID)
+    .fetch_one(pool)
+    .await
+    .unwrap_or(false)
+}
+
 /// Settle on the URL to POST to: the user's, or a legacy preset.
 ///
 /// The user's `endpoint_url` always wins. `provider` is consulted only when no

@@ -2371,7 +2371,14 @@ export interface AiCallRow {
 	prompt_tokens: number;
 	completion_tokens: number;
 	reasoning_tokens: number;
+	/**
+	 * Micros-USD, authoritative ONLY when `route === 'wallet'`. Our gateway is
+	 * the only upstream that reports a price, so a BYO row is 0-as-unknown —
+	 * render it as "your key", never as "$0.00".
+	 */
 	cost_micros: number;
+	/** `wallet` | `byo` — which purse paid. */
+	route: string;
 	status: string;
 }
 

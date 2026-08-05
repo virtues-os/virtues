@@ -391,7 +391,8 @@ impl BearerClient {
         let bearer = self.ensure_bearer().await?;
         let resp = self.send(path, body, &bearer).await?;
         let resp = self.handle_402_and_retry_post(path, body, resp).await?;
-        self.record_ai_usage(path, body, &resp).await;
+        self.record_ai_usage(path, body, &resp, crate::api::ai_calls::Route::Wallet)
+            .await;
         Ok(resp)
     }
 
@@ -433,14 +434,21 @@ impl BearerClient {
         // `app_ai_calls` measures what the *wallet* spent, which for a BYO call
         // is nothing. Presenting that as the user's total AI cost would be the
         // lie; showing tokens instead is `docs/byo-ai-plan.md` phase 5.
-        self.record_ai_usage(path, &body, &resp).await;
+        self.record_ai_usage(path, &body, &resp, crate::api::ai_calls::Route::Byo)
+            .await;
         Ok(resp)
     }
 
     /// Best-effort: record one `app_ai_calls` row for a successful `/v1/ai/*`
     /// response that carries a `usage` block. Never fails the request.
-    async fn record_ai_usage(&self, path: &str, req_body: &Value, resp: &ApiResponse) {
-        if !path.starts_with("/v1/ai/") || !resp.is_success() {
+    async fn record_ai_usage(
+        &self,
+        path: &str,
+        req_body: &Value,
+        resp: &ApiResponse,
+        route: crate::api::ai_calls::Route,
+    ) {
+        if !is_ai_path(path) || !resp.is_success() {
             return;
         }
         let Some(usage) = resp.body.get("usage") else { return };
@@ -470,6 +478,7 @@ impl BearerClient {
             completion_tokens: as_i64("completion_tokens"),
             reasoning_tokens: reasoning,
             cost_micros,
+            route,
             chat_id: None,
             applet_run_id: None,
         };

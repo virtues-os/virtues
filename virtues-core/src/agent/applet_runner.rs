@@ -163,6 +163,15 @@ pub async fn run_agent_loop(
                         completion_tokens: completion_tokens as i64,
                         reasoning_tokens: reasoning_tokens.unwrap_or(0) as i64,
                         cost_micros: step_cost,
+                        // Applet runs egress through `BearerClient`, which
+                        // forks to the user's own endpoint when BYO is set —
+                        // so this is NOT always the wallet, and `step_cost` is
+                        // 0-as-unknown when it isn't.
+                        route: if crate::api::settings_byo::byo_is_active(pool).await {
+                            crate::api::ai_calls::Route::Byo
+                        } else {
+                            crate::api::ai_calls::Route::Wallet
+                        },
                         chat_id: chat_id.clone(),
                         applet_run_id: Some(run_id.to_string()),
                     },
