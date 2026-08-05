@@ -80,9 +80,12 @@ than hiding behind "we don't store it."
 history, the health records, the files, the day pages — is collected, indexed,
 and queried entirely on your box. It never transits our infrastructure at all.
 
-**If that trade doesn't suit you, remove it.** Bring your own provider key and
-the gateway is out of the path entirely; the box talks to your provider
-directly. The rest of Virtues works the same.
+**If that trade doesn't suit you — not yet.** Bringing your own provider key is
+designed to take the gateway out of the path entirely, with the box talking to
+your provider directly. **It is not built.** The Billing screen stores a key,
+but nothing reads it during a chat, so today every call still goes through the
+gateway whether or not a key is set. Do not make this promise to anyone until
+the routing lands.
 
 ---
 
@@ -175,8 +178,11 @@ The recurring images. Reach for them in copy, docs, support replies, talks:
   what the ledger is.
 - **"Nothing to decrypt with."** The relay's blindness — the strongest fully
   structural claim we have.
-- **"Bring your own key and we're out of the path."** The escape hatch is real
-  and worth naming.
+- ~~**"Bring your own key and we're out of the path."**~~ **Do not use — not
+  true yet.** The key is stored but never read during inference (see
+  `api/settings_byo.rs`). Restore this line when routing ships; per
+  `docs/byo-ai-plan.md` it will still only cover `stream()`, so even then it
+  needs qualifying rather than stating flat.
 
 **Retired — do not use.** These described the voucher model and are now false:
 *"the link lives in your house"* (it also lives with us), *"two rooms, no shared
@@ -198,8 +204,10 @@ unlinkability for a month after the structure changed.
 > No. We don't log or store your prompts or the answers, and we never train on
 > them. All that lands in our database is an amount and a timestamp — the charge
 > row doesn't even record which model served the request. Your prompts do pass
-> through our gateway on the way to the model provider; if you'd rather they
-> didn't, bring your own provider key and we're out of the path entirely.
+> through our gateway on the way to the model provider, and today there is no
+> way to avoid that. Bringing your own provider key is designed to remove us
+> from that path, but it is not built yet — the setting stores a key without
+> using it.
 
 **Q: Can you see my notes, location, or health data?**
 > No, and not as a matter of policy — that data never leaves your box. We have
