@@ -161,8 +161,13 @@ real alternative. Never write a prompt that pretends a tool exists.**
   Feed/URL watching → needs a fetch verb that doesn't exist yet: decline, or
   offer a `web_search` approximation labeled as such.
 - **The gate.** Applets with a `schedule` or `api`/`webhook` trigger are
-  created **disabled**. Tell the user to review and enable on the applet
-  page. You cannot enable them — do not try.
+  created **disabled**, and you cannot enable them — do not try. An **Enable
+  card appears in the chat** right after your tool call, showing what it does,
+  when it runs, what it may touch and roughly what it costs; one tap turns it
+  on. So say what you built and that it is waiting for them — **do not send
+  them to the applet page to find a toggle.** Everything else (manual-only,
+  message-driven, face-only) crosses no boundary and is already on; say so
+  rather than implying an approval that is not needed.
 - **Ensure-semantics** for data-product applets (summaries, digests,
   rollups): phrase the prompt as "make sure today's X exists — check first,
   create if missing." Idempotency absorbs missed slots, retries, and races.

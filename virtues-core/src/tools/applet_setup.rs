@@ -362,8 +362,14 @@ pub async fn execute(
         capabilities.push("posts run results to this chat".into());
     }
 
+    // Only an applet with a prompt spends anything — a face renders and a
+    // subprocess runs compiled code, and quoting a model cost for either would
+    // be inventing a number. The per-run figure is a slot constant, not a
+    // measurement, which is why the card calls it an estimate.
     let runs_per_day = schedule.as_deref().map(estimate_runs_per_day);
-    let est_cost = runs_per_day.map(|r| format!("~${:.2}/day", r * 0.01));
+    let est_cost_per_day = runs_per_day
+        .filter(|_| agent.is_some())
+        .map(|r| r * 0.01);
 
     Ok(ToolResult::success(serde_json::json!({
         "status": if existed { "updated" } else { "created" },
@@ -372,16 +378,21 @@ pub async fn execute(
         "slug": slug,
         "folder": format!("user/{slug}"),
         "enabled": default_enabled,
+        // The card renders from these; the string below is for the model, so
+        // it says the same thing in its own reply.
+        "description": description,
+        "schedule": schedule,
+        "gated": !default_enabled,
         "gate": if !default_enabled {
-            "DISABLED — the user must enable it on the applet page (tell them)"
+            "DISABLED — an Enable card is shown to the user in this chat. Say what it does and that it is waiting for them; do NOT tell them to go to the applet page."
         } else {
-            "manual-only: enabled"
+            "no boundary crossed: enabled already, nothing for the user to approve"
         },
         "lifecycle": until.as_deref().map(|u| {
             if u.eq_ignore_ascii_case("once") { "once" } else { "until" }
         }).unwrap_or("forever"),
         "capabilities": capabilities,
-        "estimated_cost": est_cost,
+        "estimated_cost_per_day": est_cost_per_day,
         "manifest": manifest_toml,
     })))
 }
