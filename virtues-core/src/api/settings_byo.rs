@@ -397,13 +397,83 @@ pub async fn load_byo_credential(pool: &PgPool) -> Result<Option<ByoCredential>,
     }))
 }
 
+/// Preset endpoint URLs, one per `provider` slug.
+///
+/// **These are conveniences, not a provider integration.** We support exactly
+/// one contract — OpenAI-style `/chat/completions` with a `Bearer` token — and
+/// every entry here is just a URL that speaks it. `custom` is the general
+/// case; the presets exist so the common ones need no copy-paste.
+///
+/// That contract covers nearly everything: OpenAI, xAI, Groq, DeepSeek,
+/// Together and Mistral natively; Vercel AI Gateway, OpenRouter, LiteLLM,
+/// Portkey and Cloudflare as gateways; Ollama, LM Studio, vLLM and llama.cpp
+/// locally. **Bedrock is the exception** — SigV4 request signing is not a
+/// bearer token, and we do not implement it. Bedrock is reached by pointing
+/// `custom` at a gateway that fronts it.
+///
+/// Anthropic and Google are here via their **OpenAI-compat** endpoints, not
+/// their native ones. Their native APIs were wired until 2026-08-05 and could
+/// not have worked: `api.anthropic.com/v1/messages` wants `x-api-key` +
+/// `anthropic-version` headers, takes `system` as a top-level field rather
+/// than a message role, and answers `content[].text` instead of `choices[]`;
+/// `generativelanguage.googleapis.com/v1beta` is a base, not a callable path
+/// (the native one is `/v1beta/models/{model}:generateContent`, keyed by query
+/// param, with a `contents[]/parts[]` body). Neither is a near miss — the fix
+/// is the compat URL, never per-provider request translation. That belongs in
+/// a gateway, and `docs/byo-ai-plan.md` declines it on purpose.
 fn default_endpoint_for(provider: &str) -> &'static str {
     match provider {
         "openai" => "https://api.openai.com/v1/chat/completions",
-        "anthropic" => "https://api.anthropic.com/v1/messages",
+        "anthropic" => "https://api.anthropic.com/v1/chat/completions",
         "xai" => "https://api.x.ai/v1/chat/completions",
-        "google" => "https://generativelanguage.googleapis.com/v1beta",
+        "google" => "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions",
         // `custom` always comes with an explicit endpoint_url.
         _ => "",
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Every preset must be a complete, POST-able `/chat/completions` URL.
+    ///
+    /// This is the guard the old table lacked. `anthropic` pointed at
+    /// `/v1/messages` and `google` at a bare `/v1beta`, and both shipped in a
+    /// user-facing dropdown for months because nothing asserted that a preset
+    /// is the one thing we know how to call.
+    #[test]
+    fn every_preset_speaks_the_one_contract() {
+        for provider in ["openai", "anthropic", "xai", "google"] {
+            let url = default_endpoint_for(provider);
+            assert!(
+                url.starts_with("https://"),
+                "preset `{provider}` is not an https URL: {url}"
+            );
+            assert!(
+                url.ends_with("/chat/completions"),
+                "preset `{provider}` does not point at an OpenAI-style \
+                 chat/completions endpoint: {url}"
+            );
+        }
+    }
+
+    /// `custom` carries its own URL and must never fall back to a preset —
+    /// silently posting a user's key at someone else's API would be worse
+    /// than failing.
+    #[test]
+    fn custom_has_no_preset() {
+        assert_eq!(default_endpoint_for("custom"), "");
+        assert_eq!(default_endpoint_for("anything-else"), "");
+    }
+
+    /// `custom` is the only slug allowed through without an endpoint, and it
+    /// is required to bring one.
+    #[test]
+    fn custom_requires_an_endpoint_url() {
+        assert!(validate_provider("custom", None).is_err());
+        assert!(validate_provider("custom", Some("  ")).is_err());
+        assert!(validate_provider("custom", Some("https://gw.example/v1/chat/completions")).is_ok());
+        assert!(validate_provider("bedrock", None).is_err());
     }
 }
