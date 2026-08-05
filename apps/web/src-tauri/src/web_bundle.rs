@@ -139,6 +139,19 @@ pub fn active_bundle(app_data: &Path) -> Option<PathBuf> {
     is_usable(&dir).then_some(dir)
 }
 
+/// Identity of the active overlay bundle — its content hash — or `None` when
+/// running the build baked into the binary.
+///
+/// This is the answer to "which UI is this device actually running", which is
+/// unanswerable from the SPA alone: the bundle's own `$lib/build` constants say
+/// what it was built from, but not whether it arrived over the air or shipped
+/// in the app. Both halves are needed to interpret a bad update.
+pub fn active_bundle_id(app_data: &Path) -> Option<String> {
+    let root = bundles_root(app_data);
+    let hash = read_pointer(&root, PTR_ACTIVE)?;
+    is_usable(&root.join(&hash)).then_some(hash)
+}
+
 /// Resolve rollback state at startup, before any window loads.
 ///
 /// A pending pointer here means the previous launch flipped to a bundle and

@@ -266,6 +266,19 @@ fn command_surface_version() -> u32 {
     virtues_lib::COMMAND_SURFACE_VERSION
 }
 
+/// What this shell is: its own version, the command contract it exposes, and
+/// which OTA bundle (if any) is serving the UI.
+///
+/// The SPA knows what it was built from but not whether it arrived over the air
+/// or shipped inside the app — only the shell can answer that. Together with
+/// `$lib/build` and the box's `/health`, this is the third of the three version
+/// lines, and the one that was missing when a phone visibly outran the Mac
+/// beside it with no way to see why.
+#[tauri::command]
+fn shell_identity_cmd(app: AppHandle) -> virtues_lib::ShellIdentity {
+    virtues_lib::shell_identity(&app)
+}
+
 /// Tell the shell the UI booted successfully from the active OTA bundle.
 ///
 /// A freshly applied bundle stays *pending* until this lands, and a pending
@@ -1357,6 +1370,7 @@ fn main() {
         .plugin(tauri_plugin_reach::init())
         .invoke_handler(tauri::generate_handler![
             command_surface_version,
+            shell_identity_cmd,
             bundle_boot_ok,
             get_client_status,
             discover_servers,
