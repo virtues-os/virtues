@@ -73,6 +73,34 @@ export interface ShellIdentity {
 	commandSurface: number;
 	/** Active OTA bundle's content hash, or null when running the baked build. */
 	activeBundle: string | null;
+	/** What the last update check concluded; null if none has run. */
+	lastCheck: OtaCheck | null;
+}
+
+/** Outcome of the shell's last OTA check. Mirrors `Outcome` in web_bundle.rs. */
+export type OtaCheck =
+	| { state: 'up_to_date' }
+	| { state: 'applied'; contentHash: string }
+	| { state: 'shell_too_old'; needs: number; have: number }
+	| { state: 'no_bundle_on_box' };
+
+/**
+ * One line describing an update check, or null when there is nothing worth
+ * saying. Deliberately silent for the ordinary states: "up to date" and "your
+ * box serves no bundle" are not news. `shell_too_old` is the one that must
+ * always speak — it is the case where everything is working correctly and the
+ * user still sees stale UI, which without an explanation reads as a bug.
+ */
+export function describeOtaCheck(c: OtaCheck | null): string | null {
+	if (!c) return null;
+	switch (c.state) {
+		case 'shell_too_old':
+			return `Your box has newer UI that needs a newer app (needs ${c.needs}, this app has ${c.have}) — update from the App Store.`;
+		case 'applied':
+			return 'Newer UI downloaded — it will be used next time the app starts.';
+		default:
+			return null;
+	}
 }
 
 /**
@@ -91,14 +119,39 @@ export async function shellIdentity(): Promise<ShellIdentity | null> {
 			app_version: string;
 			command_surface: number;
 			active_bundle: string | null;
+			last_check: OtaCheck | null;
 		}>('shell_identity_cmd');
 		return {
 			appVersion: r.app_version,
 			commandSurface: r.command_surface,
-			activeBundle: r.active_bundle ?? null
+			activeBundle: r.active_bundle ?? null,
+			lastCheck: r.last_check ?? null
 		};
 	} catch {
 		return null;
+	}
+}
+
+/**
+ * Ask the shell to check the box for a newer UI bundle.
+ *
+ * Best-effort by design: it needs command surface 2, and `bundle-contract.json`
+ * deliberately still requires only 1, so on an older shell this is a no-op
+ * rather than a reason to strand the client. Returns immediately — the shell
+ * does the work on its own thread.
+ *
+ * Call this when the app returns to the foreground. The launch-time check alone
+ * is not enough: the mobile app stays alive for days (the mic session doubles as
+ * the background keepalive), so a phone that is never cold-started would never
+ * check again.
+ */
+export async function otaCheckNow(): Promise<void> {
+	const invoke = await getInvoke();
+	if (!invoke) return;
+	try {
+		await invoke('ota_check_now');
+	} catch {
+		// Shell older than surface 2, or desktop. Nothing to do.
 	}
 }
 

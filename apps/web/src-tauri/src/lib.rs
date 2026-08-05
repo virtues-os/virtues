@@ -44,10 +44,15 @@ pub mod web_bundle;
 /// | v | change |
 /// |---|---|
 /// | 1 | baseline: the surface as of 2026-08-05 |
+/// | 2 | `ota_check_now` — lets the UI trigger an update check on foreground |
+///
+/// Note `bundle-contract.json` stays at `minShellVersion: 1`: the UI calls
+/// `ota_check_now` best-effort and works fine without it, so requiring 2 would
+/// strand every client on an older app for no gain.
 ///
 /// Lives here rather than in main.rs so mobile can see it: main.rs is the
 /// desktop bin and is never compiled for iOS/Android.
-pub const COMMAND_SURFACE_VERSION: u32 = 1;
+pub const COMMAND_SURFACE_VERSION: u32 = 2;
 
 /// What the native shell knows about itself.
 ///
@@ -66,6 +71,12 @@ pub struct ShellIdentity {
   /// Content hash of the active OTA bundle, or `None` when running the build
   /// baked into the app. This is the bit the SPA cannot know about itself.
   pub active_bundle: Option<String>,
+  /// What the last update check concluded, or `None` if none has run.
+  ///
+  /// Carries the refusal case especially: a shell too old for the bundle the
+  /// box offers stays on its baked build *correctly*, but with nothing on
+  /// screen that is indistinguishable from OTA being broken or unconfigured.
+  pub last_check: Option<serde_json::Value>,
 }
 
 /// Collect [`ShellIdentity`]. Shared so the desktop bin and the mobile entry
@@ -81,6 +92,11 @@ pub fn shell_identity<R: tauri::Runtime>(app: &tauri::AppHandle<R>) -> ShellIden
       .app_data_dir()
       .ok()
       .and_then(|d| web_bundle::active_bundle_id(&d)),
+    last_check: app
+      .path()
+      .app_data_dir()
+      .ok()
+      .and_then(|d| web_bundle::last_outcome(&d)),
   }
 }
 
@@ -138,6 +154,54 @@ fn bundle_boot_ok(app: tauri::AppHandle) {
   use tauri::Manager;
   if let Ok(dir) = app.path().app_data_dir() {
     web_bundle::mark_boot_ok(&dir);
+  }
+}
+
+/// Check for a new bundle now, at the UI's request.
+///
+/// The launch-time check is not enough on its own: this app stays alive for
+/// days (the mic session is also the background keepalive), so a phone that is
+/// never cold-started would never check again. The UI calls this when it comes
+/// back to the foreground.
+///
+/// Returns immediately; the work runs on its own thread so a slow or
+/// unreachable box cannot block the webview.
+#[cfg(mobile)]
+#[tauri::command]
+fn ota_check_now(app: tauri::AppHandle) {
+  let handle = app.clone();
+  std::thread::spawn(move || ota_check(&handle));
+}
+
+/// Ask the box for a newer bundle and apply it if this shell can run it.
+///
+/// Runs off the launch path and never swaps the bundle the current session is
+/// already serving — an applied bundle takes effect at the NEXT launch, where
+/// `resolve_pending_at_startup` is watching it.
+///
+/// Every outcome is recorded (`record_outcome`) because this runs on a
+/// background thread: by the time anyone looks at a screen the result is
+/// otherwise gone, and a shell silently refusing every bundle looks exactly
+/// like OTA never being configured.
+#[cfg(mobile)]
+fn ota_check(app: &tauri::AppHandle) {
+  use tauri::Manager;
+  let Ok(dir) = app.path().app_data_dir() else { return };
+  match web_bundle::check_and_apply(&dir, COMMAND_SURFACE_VERSION) {
+    Ok(outcome) => {
+      match &outcome {
+        web_bundle::Outcome::Applied { content_hash } => {
+          eprintln!("[ota] staged bundle {content_hash}; active next launch")
+        }
+        web_bundle::Outcome::ShellTooOld { needs, have } => eprintln!(
+          "[ota] box bundle needs shell surface {needs}, this app has {have} — \
+           staying on the bundled build (update the app from the App Store)"
+        ),
+        _ => {}
+      }
+      web_bundle::record_outcome(&dir, &outcome);
+    }
+    Err(e) => eprintln!("[ota] check failed (harmless, will retry): {e}"),
   }
 }
 
@@ -228,7 +292,8 @@ pub fn run() {
       set_appearance,
       command_surface_version,
       bundle_boot_ok,
-      shell_identity_cmd
+      shell_identity_cmd,
+      ota_check_now
     ])
     .setup(|app| {
       // Collector resume — iOS only, mirroring the plugin registrations above.
@@ -306,20 +371,7 @@ pub fn run() {
       // watching it. That ordering is what makes a bad bundle survivable.
       if paired {
         let handle = app.handle().clone();
-        std::thread::spawn(move || {
-          let Ok(dir) = handle.path().app_data_dir() else { return };
-          match web_bundle::check_and_apply(&dir, COMMAND_SURFACE_VERSION) {
-            Ok(web_bundle::Outcome::Applied { content_hash }) => {
-              eprintln!("[ota] staged bundle {content_hash}; active next launch")
-            }
-            Ok(web_bundle::Outcome::ShellTooOld { needs, have }) => eprintln!(
-              "[ota] box bundle needs shell surface {needs}, this app has {have} — \
-               staying on the bundled build (update the app from the App Store)"
-            ),
-            Ok(_) => {}
-            Err(e) => eprintln!("[ota] check failed (harmless, will retry next launch): {e}"),
-          }
-        });
+        std::thread::spawn(move || ota_check(&handle));
       }
 
       // Always launch the connect shell; when paired it immediately redirects to
