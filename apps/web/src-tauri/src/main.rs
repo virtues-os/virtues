@@ -655,19 +655,30 @@ async fn set_summon_shortcut(app: AppHandle, accelerator: String) -> Result<Stri
 #[derive(Default)]
 struct UpdateState {
     ready: Option<ReadyUpdate>,
+    /// Consecutive staging failures. We say nothing about the first: a download
+    /// interrupted by a closing laptop lid is not news, and the next tick
+    /// retries. Two in a row is a real problem worth one line.
+    failures: u8,
 }
 
 struct ReadyUpdate {
     version: String,
-    /// When we first saw it ready — drives the escalating amber→red tray nudge.
-    ready_at: std::time::Instant,
 }
 
-/// Check the **stable** channel (mac-latest `latest.json`) for a newer version.
-/// On a hit: record it + fire ONE native notification; the tray's own poll then
-/// surfaces the "Restart to update" line. Silent best-effort — `None`/errors are
-/// no-ops (up to date, or offline; retried next tick). The actual download runs
-/// on the user's click ([`apply_update`]) so we don't hold an `Update` in state.
+/// Check the followed channel for a newer version and, on a hit, STAGE it —
+/// download and install silently, so the next launch is already the new
+/// version. No notification, no "Restart to update" prompt, nothing the user
+/// has to decide.
+///
+/// The old flow asked. That is a question the user has no basis to answer —
+/// they cannot know what is in the release or whether it matters — and the
+/// honest default for a background helper is to keep itself current the way
+/// the browser does. macOS lets us replace the bundle under a running app, so
+/// "apply on quit" costs nothing: whenever they next start Virtues, it is
+/// current.
+///
+/// Silent best-effort. Up-to-date and offline are both no-ops, retried next
+/// tick. Only a SECOND consecutive staging failure is worth a word.
 /// Which release channel this install follows. Stored beside the app's other
 /// config; absent means Main, so an existing install keeps its behaviour.
 ///
@@ -774,42 +785,60 @@ async fn check_for_update(app: &AppHandle) {
         .unwrap_or("")
         .to_string();
 
-    // Record + dedupe so we notify at most once per version.
+    // Already staged this version? Nothing to do. Scoped so the guard is
+    // dropped before the await below — holding a std Mutex across an await
+    // would be a deadlock waiting for a slow download.
     {
         let state = app.state::<std::sync::Mutex<UpdateState>>();
-        let mut g = state.lock().unwrap();
+        let g = state.lock().unwrap();
         if g.ready.as_ref().map(|r| r.version.as_str()) == Some(version.as_str()) {
             return;
         }
-        g.ready = Some(ReadyUpdate {
-            version: version.clone(),
-            ready_at: std::time::Instant::now(),
-        });
     }
 
-    let body = if note.is_empty() {
-        "Restart Virtues to apply.".to_string()
-    } else {
-        format!("{note}\n\nRestart Virtues to apply.")
-    };
-    let _ = app
-        .notification()
-        .builder()
-        .title(format!("Virtues {version} is ready"))
-        .body(body)
-        .show();
+    let staged = update.download_and_install(|_, _| {}, || {}).await;
+
+    let state = app.state::<std::sync::Mutex<UpdateState>>();
+    let mut g = state.lock().unwrap();
+    match staged {
+        Ok(()) => {
+            g.failures = 0;
+            g.ready = Some(ReadyUpdate { version: version.clone() });
+        }
+        Err(e) => {
+            g.failures = g.failures.saturating_add(1);
+            // Exactly at two: report once, then go quiet again rather than
+            // nagging every six hours about something the user cannot fix.
+            if g.failures == 2 {
+                drop(g);
+                let _ = app
+                    .notification()
+                    .builder()
+                    .title("Virtues could not update itself")
+                    .body(format!("{e}\n\nIt will keep trying."))
+                    .show();
+            }
+        }
+    }
+    // `note` is read only for the tray line now; the release body is not
+    // pushed at the user unasked.
+    let _ = note;
 }
 
-/// Apply a pending update: re-check (cheap), download + install, then relaunch.
+/// Restart into an already-staged update, for the user who does not want to
+/// wait until their next launch. Optional by design: the staged bundle takes
+/// effect on quit whether or not anyone clicks this.
+///
 /// On relaunch the helper-reconcile redeploys the new sidecars — loop closed.
 /// `app.restart()` never returns.
-async fn apply_update(app: AppHandle) {
-    use tauri_plugin_updater::UpdaterExt;
-    let Ok(updater) = app.updater() else { return };
-    if let Ok(Some(update)) = updater.check().await {
-        if update.download_and_install(|_, _| {}, || {}).await.is_ok() {
-            app.restart();
-        }
+fn apply_update(app: AppHandle) {
+    let staged = {
+        let state = app.state::<std::sync::Mutex<UpdateState>>();
+        let g = state.lock().unwrap();
+        g.ready.is_some()
+    };
+    if staged {
+        app.restart();
     }
 }
 
@@ -976,20 +1005,17 @@ fn refresh_tray(app: &AppHandle, items: TrayItems) {
         let sync_text = last_sync_label(installed, &status);
         let toggle_text = if status.paused { "Resume collecting" } else { "Pause collecting" };
 
-        // Update line: amber "Restart to update (vX)" when staged, escalating to
-        // red after ~3 days unapplied (Chrome's green→orange→red nudge); a
-        // disabled "up to date" otherwise.
+        // Update line: a staged update is INFORMATION, not a task. It applies
+        // on the next launch on its own, so the escalating amber→red nudge that
+        // used to live here would be pressuring the user about something that
+        // needs nothing from them. Green, stated once; clicking is a shortcut
+        // for the impatient, not a chore.
         let update = {
             let st = app.state::<std::sync::Mutex<UpdateState>>();
             let g = st.lock().unwrap();
-            g.ready.as_ref().map(|r| {
-                let dot = if r.ready_at.elapsed() > std::time::Duration::from_secs(3 * 24 * 3600) {
-                    Dot::Red
-                } else {
-                    Dot::Amber
-                };
-                (dot, format!("Restart to update ({})", r.version))
-            })
+            g.ready
+                .as_ref()
+                .map(|r| (Dot::Green, format!("Virtues {} installs on next launch", r.version)))
         };
 
         let _ = app.run_on_main_thread(move || {
@@ -1120,7 +1146,7 @@ fn setup_tray(app: &AppHandle) -> tauri::Result<()> {
             // always has something to apply.
             "update_item" => {
                 let app = app.clone();
-                tauri::async_runtime::spawn(async move { apply_update(app).await });
+                apply_update(app);
             }
             // Manual update check. Flip the label to "Checking…" while it runs,
             // then either let the staged-update path take over (refresh_tray
