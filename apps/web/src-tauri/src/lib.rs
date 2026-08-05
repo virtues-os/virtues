@@ -49,6 +49,41 @@ pub mod web_bundle;
 /// desktop bin and is never compiled for iOS/Android.
 pub const COMMAND_SURFACE_VERSION: u32 = 1;
 
+/// What the native shell knows about itself.
+///
+/// Three artifacts carry three version lines — the box, the UI bundle, and this
+/// binary — and until now only the first two were visible anywhere. On
+/// 2026-08-05 a phone was running visibly newer UI than the Mac beside it and
+/// the reason was not discoverable from either screen; it took `ssh` and a git
+/// log. An update mechanism whose state cannot be read is one you cannot debug
+/// when it misbehaves, so this ships before OTA is trusted, not after.
+#[derive(serde::Serialize)]
+pub struct ShellIdentity {
+  /// This binary's version — `tauri.conf.json > version`.
+  pub app_version: String,
+  /// The command contract this binary exposes; see [`COMMAND_SURFACE_VERSION`].
+  pub command_surface: u32,
+  /// Content hash of the active OTA bundle, or `None` when running the build
+  /// baked into the app. This is the bit the SPA cannot know about itself.
+  pub active_bundle: Option<String>,
+}
+
+/// Collect [`ShellIdentity`]. Shared so the desktop bin and the mobile entry
+/// answer identically — a diagnostic that differs by platform is worse than
+/// none.
+pub fn shell_identity<R: tauri::Runtime>(app: &tauri::AppHandle<R>) -> ShellIdentity {
+  use tauri::Manager;
+  ShellIdentity {
+    app_version: app.package_info().version.to_string(),
+    command_surface: COMMAND_SURFACE_VERSION,
+    active_bundle: app
+      .path()
+      .app_data_dir()
+      .ok()
+      .and_then(|d| web_bundle::active_bundle_id(&d)),
+  }
+}
+
 // Appearance bridge: the SPA's themes are user-picked (not system-driven), so
 // the iOS status bar can't ride the system light/dark mode — a dark theme on a
 // light-mode phone gets an invisible clock. tao's window.set_theme() is a no-op
@@ -85,6 +120,14 @@ fn set_appearance(_dark: bool) {}
 #[tauri::command]
 fn command_surface_version() -> u32 {
   COMMAND_SURFACE_VERSION
+}
+
+/// See `shell_identity_cmd` in main.rs — same command, same shape, both
+/// platforms, so a diagnostic never differs by where it is read.
+#[cfg(mobile)]
+#[tauri::command]
+fn shell_identity_cmd(app: tauri::AppHandle) -> ShellIdentity {
+  shell_identity(&app)
 }
 
 /// See `bundle_boot_ok` in main.rs: a staged bundle is only kept once the UI it
@@ -184,7 +227,8 @@ pub fn run() {
     .invoke_handler(tauri::generate_handler![
       set_appearance,
       command_surface_version,
-      bundle_boot_ok
+      bundle_boot_ok,
+      shell_identity_cmd
     ])
     .setup(|app| {
       // Collector resume — iOS only, mirroring the plugin registrations above.

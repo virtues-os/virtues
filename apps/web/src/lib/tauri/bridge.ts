@@ -65,6 +65,43 @@ export async function shellSupports(min: number): Promise<boolean> {
 	return (await shellSurface()) >= min;
 }
 
+/** What the native shell reports about itself. See `ShellIdentity` in lib.rs. */
+export interface ShellIdentity {
+	/** The native app's version — `tauri.conf.json > version`. */
+	appVersion: string;
+	/** Command contract this shell exposes. */
+	commandSurface: number;
+	/** Active OTA bundle's content hash, or null when running the baked build. */
+	activeBundle: string | null;
+}
+
+/**
+ * Ask the shell what it is. `null` in a plain browser or on a shell too old to
+ * answer — both mean "no native identity to show", not an error.
+ *
+ * This is the third of three version lines. The SPA knows what it was built
+ * from (`$lib/build`) and the box reports its own (`/health`), but only the
+ * shell can say whether this UI arrived over the air or shipped inside the app.
+ */
+export async function shellIdentity(): Promise<ShellIdentity | null> {
+	const invoke = await getInvoke();
+	if (!invoke) return null;
+	try {
+		const r = await invoke<{
+			app_version: string;
+			command_surface: number;
+			active_bundle: string | null;
+		}>('shell_identity_cmd');
+		return {
+			appVersion: r.app_version,
+			commandSurface: r.command_surface,
+			activeBundle: r.active_bundle ?? null
+		};
+	} catch {
+		return null;
+	}
+}
+
 /**
  * Tell the shell this UI booted successfully.
  *
