@@ -45,7 +45,14 @@
 
 	const pulseLabel = $derived.by(() => {
 		if (pulseRuns.length === 0) return 'No recent runs';
-		const counts = { success: 0, error: 0, skipped: 0, running: 0, cancelled: 0 };
+		const counts = {
+			success: 0,
+			error: 0,
+			skipped: 0,
+			running: 0,
+			cancelled: 0,
+			budget_exceeded: 0
+		};
 		for (const r of pulseRuns) {
 			if (r.status in counts) counts[r.status as keyof typeof counts]++;
 		}
@@ -54,6 +61,7 @@
 		if (counts.error) parts.push(`${counts.error} failed`);
 		if (counts.skipped) parts.push(`${counts.skipped} skipped`);
 		if (counts.running) parts.push(`${counts.running} running`);
+		if (counts.budget_exceeded) parts.push(`${counts.budget_exceeded} stopped on budget`);
 		return `Last ${pulseRuns.length} runs: ${parts.join(', ') || 'none completed'}`;
 	});
 
@@ -197,6 +205,13 @@
 		border-color: color-mix(in srgb, var(--color-warning) 75%, #000);
 	}
 	.dot[data-status='cancelled'] {
+		background: var(--color-warning-subtle);
+		border-color: var(--color-warning);
+	}
+	/* Stopped at a spend ceiling — deliberately not the error red. The run
+	   did what it was told to do; the pulse should read as "held", not
+	   "broken". */
+	.dot[data-status='budget_exceeded'] {
 		background: var(--color-warning-subtle);
 		border-color: var(--color-warning);
 	}

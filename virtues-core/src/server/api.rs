@@ -125,6 +125,9 @@ pub async fn trigger_applet_handler(
         AppletRunStatus::Success => (StatusCode::OK, "success"),
         AppletRunStatus::Skipped => (StatusCode::OK, "skipped"),
         AppletRunStatus::Failed => (StatusCode::INTERNAL_SERVER_ERROR, "error"),
+        // Not an error: a ceiling the owner set was reached. 200 so the UI
+        // renders the run and its explanation rather than a failure toast.
+        AppletRunStatus::BudgetExceeded => (StatusCode::OK, "budget_exceeded"),
         AppletRunStatus::NotFound => (StatusCode::NOT_FOUND, "not_found"),
         AppletRunStatus::Forbidden => (StatusCode::FORBIDDEN, "forbidden"),
     };

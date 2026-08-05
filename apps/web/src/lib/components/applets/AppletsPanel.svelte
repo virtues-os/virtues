@@ -206,6 +206,7 @@
 				error: 'badge-error',
 				skipped: 'badge-muted',
 				running: 'badge-warning',
+				budget_exceeded: 'badge-warning',
 				'—': 'badge-muted'
 			}
 		}
@@ -255,7 +256,8 @@
 				{ value: 'success', label: 'Success', badgeColor: 'badge-success' },
 				{ value: 'error', label: 'Error', badgeColor: 'badge-error' },
 				{ value: 'running', label: 'Running', badgeColor: 'badge-warning' },
-				{ value: 'skipped', label: 'Skipped', badgeColor: 'badge-muted' }
+				{ value: 'skipped', label: 'Skipped', badgeColor: 'badge-muted' },
+				{ value: 'budget_exceeded', label: 'Over budget', badgeColor: 'badge-warning' }
 			],
 			predicate: (a, v) => (a.last_run?.status ?? null) === v
 		}

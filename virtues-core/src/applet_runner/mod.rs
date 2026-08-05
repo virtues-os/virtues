@@ -39,9 +39,12 @@ use std::process::Stdio;
 use tokio::io::AsyncWriteExt;
 use tokio::process::Command;
 
+pub mod limits;
+
 use crate::error::{Error, Result};
 use crate::scheduler::applets::{self, Applet};
 use crate::server::yjs::YjsState;
+use limits::Limits;
 
 /// Dependencies threaded into the runner. Cheap to clone; holds references.
 #[derive(Clone)]
@@ -70,6 +73,11 @@ pub enum AppletRunStatus {
     Skipped,
     NotFound,
     Forbidden,
+    /// Stopped by a spend ceiling the owner set (`config.limits.max_llm_cost`
+    /// or `max_llm_cost_per_day`). Distinct from `Failed` on purpose: nothing
+    /// broke, so it does not belong in the needs-attention strip beside
+    /// genuine breakage.
+    BudgetExceeded,
     /// Run row was created and execution was spawned on a detached task.
     /// Used only by `run_applet_detached` so the HTTP handler can return
     /// immediately with the run_id while the subprocess/agent finishes.
@@ -278,6 +286,46 @@ async fn prepare_run(
         }));
     }
 
+    // 4b. Limits that can be answered before spending anything: the rate caps
+    // and the rolling daily spend ceiling. Deliberately after the concurrency
+    // gate — an overlap skip is not an attempt, and must not eat a rate
+    // budget. The refusal records a real run row, because "your applet did
+    // not run, and here is exactly why" is the whole point of having a cap.
+    let applet_limits = Limits::from_config(&action.config);
+    match limits::check_pre_run(&deps.db, &action.id, &applet_limits, trigger).await {
+        Ok(Some(refusal)) => {
+            tracing::info!(applet_id, reason = refusal.message(), "run refused by limits");
+            let run = applets::create_run(&deps.db, Some(&action.id), trigger).await?;
+            applets::complete_run(
+                &deps.db,
+                &run.id,
+                refusal.status(),
+                0,
+                None,
+                Some(refusal.message()),
+            )
+            .await?;
+            let status = match refusal {
+                limits::Refusal::RateLimited(_) => AppletRunStatus::Skipped,
+                limits::Refusal::OverDailyBudget(_) => AppletRunStatus::BudgetExceeded,
+            };
+            return Ok(PrepareOutcome::Early(AppletRunResult {
+                run_id: Some(run.id),
+                status,
+                summary: refusal.message().to_string(),
+                error: None,
+            }));
+        }
+        Ok(None) => {}
+        // A limits query that fails must not become a limit that blocks. The
+        // caps are protective, not load-bearing: if we cannot read the ledger
+        // we let the run through and say so, rather than silently freezing an
+        // applet on a transient database error.
+        Err(e) => {
+            tracing::warn!(applet_id, error = %e, "limits check failed — allowing the run");
+        }
+    }
+
     // 5. Create run row.
     let run = applets::create_run(&deps.db, Some(&action.id), trigger).await?;
     Ok(PrepareOutcome::Ready {
@@ -365,12 +413,38 @@ async fn execute_prepared(
     if let Some(prompt) = action.agent.as_ref().filter(|s| !s.trim().is_empty()) {
         let ctx = subprocess_summary.as_deref();
         match crate::agent::applet_runner::run_agent_loop(
-            &deps.db, &deps.yjs, &action, prompt, ctx,
+            &deps.db, &deps.yjs, &action, prompt, ctx, &run_id,
         )
         .await
         {
             Ok(agent_result) => {
                 let steps = agent_result.steps as i64;
+
+                // Stopped at the ceiling: the work is partial by definition, so
+                // it is neither a success nor a failure. Recording it as
+                // `success` would let `until = "once"` archive an applet that
+                // never finished its one job.
+                if let Some(reason) = agent_result.budget_stopped {
+                    if let Err(e) = applets::complete_run(
+                        &deps.db,
+                        &run_id,
+                        "budget_exceeded",
+                        steps,
+                        None,
+                        Some(&reason),
+                    )
+                    .await
+                    {
+                        tracing::error!(applet_id, error = %e, "complete_run failed after budget stop");
+                    }
+                    return AppletRunResult {
+                        run_id: Some(run_id),
+                        status: AppletRunStatus::BudgetExceeded,
+                        summary: reason,
+                        error: None,
+                    };
+                }
+
                 let summary = agent_result
                     .message
                     .clone()
@@ -573,26 +647,16 @@ async fn load_credentials(db: &PgPool, credential_id: &str) -> Result<serde_json
 // Subprocess phase
 // ============================================================================
 
-/// Hard ceiling on a single action subprocess. Generous enough for the largest
-/// legitimate batch, short enough that a hung/wedged process frees the per-action
-/// run lock instead of blocking the action until the box restarts. (A device
-/// upload gives up far sooner; the box still finishes idempotently if it can.)
-const SUBPROCESS_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(300);
-
-/// Per-applet ceiling: `config.limits.timeout_s` (the first limits-block
-/// field enforced), falling back to the global default. Actions with long
-/// legitimate runs declare their ceiling in their own manifest — e.g.
-/// embedding_index's initial-onboarding drain is hours of real work, so its
-/// manifest carries `[config.limits] timeout_s = 7500` and its internal
+/// Per-applet subprocess ceiling: `config.limits.timeout_s`, falling back to
+/// the global default. Applets with long legitimate runs declare their own —
+/// e.g. embedding_index's initial-onboarding drain is hours of real work, so
+/// its manifest carries `[config.limits] timeout_s = 7500` and its internal
 /// 2-hour wall-clock limit exits cleanly rather than being SIGKILLed.
+///
+/// Parsing lives in [`limits::Limits`] with every other cap; this stays as the
+/// call-site shorthand.
 fn subprocess_timeout(action: &Applet) -> std::time::Duration {
-    action
-        .config
-        .get("limits")
-        .and_then(|l| l.get("timeout_s"))
-        .and_then(|v| v.as_u64())
-        .map(std::time::Duration::from_secs)
-        .unwrap_or(SUBPROCESS_TIMEOUT)
+    Limits::from_config(&action.config).subprocess_timeout()
 }
 
 /// What a successful subprocess phase produced: the one-line summary plus the

@@ -24,7 +24,37 @@ applet: that is the edit path.
 | `until` | lifecycle | omit = forever · `"once"` = archive after first success · SQL boolean = archive when true after a success |
 | `schema_sql` | idempotent DDL | **only** schema `applet_<slug>`; start with `CREATE SCHEMA IF NOT EXISTS applet_<slug>;` |
 | `face_html` | complete index.html | sandboxed iframe; include `<link rel="stylesheet" href="virtues.css">` + `<script src="virtues.js"></script>`; read data with `await virtues.query(sql)` (read-only); 48KB max |
-| `limits` | object | `{max_llm_cost, timeout, max_runs}` — protective defaults, user-editable |
+| `limits` | object | protective ceilings — see below. Only enforced keys are accepted |
+
+## Limits
+
+Five keys, and only these five — anything else fails the check. A limit that
+is stored but never read looks like protection on the gate and is not, which
+is the whole reason the check rejects unknown keys instead of ignoring them.
+
+| Key | Unit | Enforced |
+|---|---|---|
+| `max_llm_cost` | **dollars** (`0.25` = 25¢) | mid-run: spend is summed from the gateway's authoritative per-call cost after every model call; crossing the line stops the loop and records `budget_exceeded` |
+| `max_llm_cost_per_day` | **dollars** | before the run: rolling 24h of this applet's spend |
+| `max_runs_per_day` | whole runs (`max_runs` means this) | before the run, rolling 24h |
+| `max_runs_per_hour` | whole runs | before the run, rolling hour |
+| `timeout_s` | seconds | wall clock on the subprocess phase |
+
+Notes that change what you should write:
+
+- **Money is dollars, not micros.** `max_llm_cost = 1` is one dollar.
+- **Manual "Run now" is exempt from the run-count caps, and only those.** Rate
+  caps exist to bound automation; refusing the person who just pressed the
+  button is a limit behaving as a lock. Spend ceilings bind everyone — the
+  wallet does not care who pressed it.
+- **Skipped runs don't count** toward `max_runs_*`. A falsy `condition` on a
+  two-minute poll would otherwise exhaust a daily cap before lunch.
+- **`budget_exceeded` is not an error.** It means a ceiling the owner set was
+  reached, so it stays out of the needs-attention strip and never counts as
+  the success that `until = "once"` archives on.
+- **Put a spend ceiling on anything scheduled that calls a model.** An applet
+  that wakes hourly and reasons each time is the shape that quietly spends;
+  `max_llm_cost` is the difference between a cap and a hope.
 
 ## What the applet can do at runtime
 

@@ -106,7 +106,10 @@ export type ActionTrigger = 'cron' | 'manual' | 'tool' | 'api' | 'webhook';
 export interface AppletRun {
 	id: string;
 	applet_id: string | null;
-	status: 'running' | 'success' | 'error' | 'cancelled' | 'skipped';
+	/** `budget_exceeded` is not a failure: a spend ceiling the owner set in
+	 *  `config.limits` was reached, so the run stopped deliberately. It stays
+	 *  out of the needs-attention strip for that reason. */
+	status: 'running' | 'success' | 'error' | 'cancelled' | 'skipped' | 'budget_exceeded';
 	started_at: string;
 	completed_at: string | null;
 	records_processed: number;
