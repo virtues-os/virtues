@@ -1,7 +1,6 @@
 name = "Weather Sync"
 description = "Records the weather where you are, hour by hour."
 owner = "system"
-runtime = "function"
 command = ["weather_sync"]
 triggers = ["cron", "manual"]
-default_cron = "0 0 * * * *"
+schedule = "0 0 * * * *"
