@@ -69,6 +69,37 @@ jobs:
           echo "TAG=$TAG" >> "$GITHUB_OUTPUT"
           echo "channel: edge=$IS_EDGE  version=$VERSION  tag=$TAG"
 
+      # A version may only ever go UP, per channel. The updater compares semver,
+      # so publishing a manifest at or below what is already live either does
+      # nothing or — if an installed build sits between the two — offers users a
+      # DOWNGRADE that silently reverts fixes. That is not hypothetical: the
+      # tree sat at 1.0.15 while `mac-latest` served 1.0.20 from July, so every
+      # locally built app was told to "update" backwards into the old release.
+      #
+      # Nothing enforced monotonicity before, and care is not a mechanism.
+      - name: Version must exceed what is published
+        run: |
+          TAG="${{ steps.version.outputs.TAG }}"
+          VERSION="${{ steps.version.outputs.VERSION }}"
+          CHANNEL_TAG="$([ "${{ steps.version.outputs.IS_EDGE }}" = "true" ] && echo mac-edge || echo mac-latest)"
+
+          URL="https://github.com/${{ github.repository }}/releases/download/$CHANNEL_TAG/latest.json"
+          LIVE="$(curl -fsSL "$URL" | jq -r .version 2>/dev/null || true)"
+
+          if [ -z "$LIVE" ] || [ "$LIVE" = "null" ]; then
+            echo "no published manifest on $CHANNEL_TAG yet — nothing to compare"
+            exit 0
+          fi
+
+          # sort -V puts the greater last; equal versions fail too.
+          HIGHEST="$(printf '%s\n%s\n' "$LIVE" "$VERSION" | sort -V | tail -1)"
+          if [ "$VERSION" = "$LIVE" ] || [ "$HIGHEST" != "$VERSION" ]; then
+            echo "::error::$TAG publishes $VERSION but $CHANNEL_TAG already serves $LIVE."
+            echo "::error::A release must be strictly greater. Bump the version and retag."
+            exit 1
+          fi
+          echo "✓ $VERSION > $LIVE on $CHANNEL_TAG"
+
       # Stamp the tag-derived version into tauri.conf.json so the bundler names
       # the DMG `Virtues_<VERSION>_universal.dmg` to match the tag. Without this
       # the bundler uses the static `"version"` in the config and every build

@@ -38,6 +38,63 @@ struct Config: Codable {
         let boxNodeId: String
         let relayUrl: String
         let createdAt: Date
+
+        enum CodingKeys: String, CodingKey {
+            case deviceId, apiEndpoint, appletIds, boxNodeId, relayUrl, createdAt
+            /// Pre-rename spelling. Every collector paired before the applets
+            /// rename has this key on disk.
+            case actionIds
+        }
+
+        /// Accept `actionIds` as well as `appletIds`.
+        ///
+        /// The rename moved this key without a read-side fallback, so an
+        /// installed collector could not decode the config it wrote itself —
+        /// `load()` returned nil and the daemon exited on launch. That also
+        /// disarmed the recovery this same release shipped (a 404 clears the
+        /// cached id and refetches): it cannot run in a process that dies
+        /// before it starts. The VALUES are left alone deliberately — they are
+        /// stale `action_*` ids, and letting that recovery correct them is the
+        /// point of having it.
+        init(from decoder: Decoder) throws {
+            let c = try decoder.container(keyedBy: CodingKeys.self)
+            deviceId = try c.decode(String.self, forKey: .deviceId)
+            apiEndpoint = try c.decode(String.self, forKey: .apiEndpoint)
+            appletIds =
+                try c.decodeIfPresent([String: String].self, forKey: .appletIds)
+                ?? c.decodeIfPresent([String: String].self, forKey: .actionIds)
+                ?? [:]
+            boxNodeId = try c.decode(String.self, forKey: .boxNodeId)
+            relayUrl = try c.decode(String.self, forKey: .relayUrl)
+            createdAt = try c.decode(Date.self, forKey: .createdAt)
+        }
+
+        /// Always writes the new key, so a legacy file upgrades itself the
+        /// first time anything saves. Explicit because `CodingKeys` carries a
+        /// case with no matching property, which defeats synthesis.
+        func encode(to encoder: Encoder) throws {
+            var c = encoder.container(keyedBy: CodingKeys.self)
+            try c.encode(deviceId, forKey: .deviceId)
+            try c.encode(apiEndpoint, forKey: .apiEndpoint)
+            try c.encode(appletIds, forKey: .appletIds)
+            try c.encode(boxNodeId, forKey: .boxNodeId)
+            try c.encode(relayUrl, forKey: .relayUrl)
+            try c.encode(createdAt, forKey: .createdAt)
+        }
+
+        /// Memberwise init, restored — declaring `init(from:)` suppresses the
+        /// synthesized one, and `save()` builds this value directly.
+        init(
+            deviceId: String, apiEndpoint: String, appletIds: [String: String],
+            boxNodeId: String, relayUrl: String, createdAt: Date
+        ) {
+            self.deviceId = deviceId
+            self.apiEndpoint = apiEndpoint
+            self.appletIds = appletIds
+            self.boxNodeId = boxNodeId
+            self.relayUrl = relayUrl
+            self.createdAt = createdAt
+        }
     }
 
     static func load() -> Config? {
