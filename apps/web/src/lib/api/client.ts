@@ -101,7 +101,7 @@ export function apiSend<T>(method: string, path: string, jsonBody?: unknown): Pr
 // Actions — new schema (post cutover + PR 2 endpoints)
 // ============================================================================
 
-export type ActionTrigger = 'cron' | 'manual' | 'tool' | 'api' | 'webhook';
+export type ActionTrigger = 'cron' | 'manual' | 'tool' | 'api' | 'webhook' | 'message';
 
 export interface AppletRun {
 	id: string;
@@ -118,6 +118,9 @@ export interface AppletRun {
 	parent_run_id: string | null;
 	transform_stage: string | null;
 	result_summary: string | null;
+	/** What the user said, for `message` runs. This plus `result_summary` is
+	 *  the exchange — the conversation lives on the run, not in a thread. */
+	message: string | null;
 	/** What this run spent with the model, in micros-USD — summed from the
 	 *  gateway's authoritative per-call figures. Zero for runs that called no
 	 *  model, and for every run recorded before spend was attributed. */
@@ -499,6 +502,21 @@ export async function deleteAction(id: string, dropData = false): Promise<void> 
 		const err = await res.json().catch(() => ({ error: res.statusText }));
 		throw new Error(err.error || `Failed to delete applet: ${res.statusText}`);
 	}
+}
+
+/** Say something to an applet — the `message` wake. Returns once the run row
+ *  exists; the agent turn continues detached. */
+export async function messageApplet(id: string, message: string): Promise<{ run_id: string | null; status: string }> {
+	const res = await fetch(`${API_BASE}/applets/${encodeURIComponent(id)}/message`, {
+		method: 'POST',
+		headers: { 'Content-Type': 'application/json' },
+		body: JSON.stringify({ message })
+	});
+	if (!res.ok) {
+		const err = await res.json().catch(() => ({ error: res.statusText }));
+		throw new Error(err.error || `Failed to send: ${res.statusText}`);
+	}
+	return res.json();
 }
 
 /** The private tables an applet owns — shown on the delete confirm so the user

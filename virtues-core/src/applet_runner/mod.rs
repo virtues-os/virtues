@@ -126,7 +126,7 @@ pub async fn run_applet(
         PrepareOutcome::Early(result) => Ok(result),
         PrepareOutcome::Ready { action, run_id } => {
             let payload = payload.cloned();
-            Ok(execute_prepared(deps.clone(), action, run_id, payload).await)
+            Ok(execute_prepared(deps.clone(), action, run_id, trigger.to_string(), payload).await)
         }
     }
 }
@@ -150,8 +150,11 @@ pub async fn run_applet_detached(
             let payload = payload.cloned();
             let deps_owned = deps.clone();
             let run_id_for_task = run_id.clone();
+            let trigger_owned = trigger.to_string();
             tokio::spawn(async move {
-                let _ = execute_prepared(deps_owned, action, run_id_for_task, payload).await;
+                let _ =
+                    execute_prepared(deps_owned, action, run_id_for_task, trigger_owned, payload)
+                        .await;
             });
             Ok(AppletRunResult {
                 run_id: Some(run_id),
@@ -229,8 +232,15 @@ async fn prepare_run(
     }
 
     // 3. Condition (SQL gate). Evaluate before creating a run row.
+    //
+    // A condition gates POLLS, not people. `message` and `manual` are someone
+    // acting deliberately, and a gate like `extract(hour from now()) < 8`
+    // would silently swallow what they just sent — the same shape as the
+    // catch-up × time-of-day trap, and the same answer as rate caps exempting
+    // "Run now": a limit that refuses the person pressing the button is a lock.
+    let gated = !matches!(trigger, "message" | "manual");
     if let Some(condition) = &action.condition {
-        if !condition.trim().is_empty() {
+        if gated && !condition.trim().is_empty() {
             match eval_condition(&deps.db, condition).await {
                 Ok(false) => {
                     tracing::debug!(applet_id, "condition falsy, skipping silently");
@@ -342,9 +352,28 @@ async fn execute_prepared(
     deps: RunnerDeps,
     action: Applet,
     run_id: String,
+    trigger: String,
     payload: Option<serde_json::Value>,
 ) -> AppletRunResult {
     let applet_id = action.id.clone();
+
+    // What the person said, when this wake was a person saying something. The
+    // exchange lives on the run — this plus `result_summary` IS the
+    // conversation, which is why no separate thread object is minted.
+    let message: Option<String> = (trigger == "message")
+        .then(|| {
+            payload
+                .as_ref()
+                .and_then(|p| p.get("message").or_else(|| p.get("text")))
+                .and_then(|v| v.as_str())
+                .map(str::to_string)
+        })
+        .flatten();
+    if let Some(text) = &message {
+        if let Err(e) = applets::set_run_message(&deps.db, &run_id, text).await {
+            tracing::warn!(applet_id, error = %e, "failed to record run message");
+        }
+    }
 
     // Helper: persist `error` status and return a Failed result. Logs and
     // swallows DB errors from `complete_run` since at this point we have
@@ -413,7 +442,13 @@ async fn execute_prepared(
     if let Some(prompt) = action.agent.as_ref().filter(|s| !s.trim().is_empty()) {
         let ctx = subprocess_summary.as_deref();
         match crate::agent::applet_runner::run_agent_loop(
-            &deps.db, &deps.yjs, &action, prompt, ctx, &run_id,
+            &deps.db,
+            &deps.yjs,
+            &action,
+            prompt,
+            ctx,
+            &run_id,
+            message.as_deref(),
         )
         .await
         {
@@ -1123,6 +1158,77 @@ fn resolve_program(argv0: &str) -> PathBuf {
 #[cfg(test)]
 mod tests {
     use super::ENV_PASSTHROUGH;
+    use super::*;
+    use crate::server::yjs::YjsState;
+
+    async fn applet_with_falsy_condition(pool: &sqlx::PgPool, id: &str, triggers: &str) {
+        sqlx::query(
+            "INSERT INTO app_applets (id, name, owner, command, condition, triggers, enabled) \
+             VALUES ($1, $1, 'user', '[\"echo\"]', 'FALSE', $2::jsonb, TRUE)",
+        )
+        .bind(id)
+        .bind(triggers)
+        .execute(pool)
+        .await
+        .expect("insert");
+    }
+
+    async fn run_count(pool: &sqlx::PgPool, id: &str) -> i64 {
+        sqlx::query_scalar("SELECT count(*) FROM app_applet_runs WHERE applet_id = $1")
+            .bind(id)
+            .fetch_one(pool)
+            .await
+            .unwrap()
+    }
+
+    /// A condition gates POLLS. Someone who just pressed send is not a poll, and
+    /// a clock gate like `extract(hour from now()) < 8` would otherwise swallow
+    /// what they typed — silently, since a falsy condition records nothing.
+    /// Same shape as the catch-up × time-of-day trap, same answer as rate caps
+    /// exempting "Run now".
+    #[sqlx::test]
+    async fn a_condition_does_not_swallow_a_message(pool: sqlx::PgPool) {
+        let deps = RunnerDeps {
+            db: pool.clone(),
+            yjs: YjsState::new(pool.clone()),
+        };
+        applet_with_falsy_condition(&pool, "applet_m", r#"["cron","message"]"#).await;
+
+        // The cron wake is gated, and silently: no run row at all.
+        let cron = run_applet(&deps, "applet_m", "cron", None).await.unwrap();
+        assert_eq!(cron.status, AppletRunStatus::Skipped);
+        assert_eq!(run_count(&pool, "applet_m").await, 0, "a poll is gated silently");
+
+        // The message is not.
+        let payload = serde_json::json!({ "message": "I had eggs" });
+        let msg = run_applet(&deps, "applet_m", "message", Some(&payload))
+            .await
+            .unwrap();
+        assert_ne!(msg.status, AppletRunStatus::Skipped, "the person was heard");
+        assert_eq!(run_count(&pool, "applet_m").await, 1);
+
+        let said: Option<String> =
+            sqlx::query_scalar("SELECT message FROM app_applet_runs WHERE applet_id = 'applet_m'")
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(said.as_deref(), Some("I had eggs"), "the words are on the run");
+    }
+
+    /// `message` still has to be granted like any other trigger.
+    #[sqlx::test]
+    async fn an_applet_that_does_not_take_messages_refuses_one(pool: sqlx::PgPool) {
+        let deps = RunnerDeps {
+            db: pool.clone(),
+            yjs: YjsState::new(pool.clone()),
+        };
+        applet_with_falsy_condition(&pool, "applet_n", r#"["cron"]"#).await;
+        let payload = serde_json::json!({ "message": "hello" });
+        let r = run_applet(&deps, "applet_n", "message", Some(&payload))
+            .await
+            .unwrap();
+        assert_eq!(r.status, AppletRunStatus::Forbidden);
+    }
 
     /// The vault master key must never be granted by the blanket passthrough.
     /// It is handed out in `apply_env` only to shipped code, and the tempting

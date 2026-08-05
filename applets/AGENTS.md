@@ -19,7 +19,7 @@ applet: that is the edit path.
 | `description` (req) | one sentence | **the user reads this.** It is the line under the applet's name in the list and the headline on its page — what the applet does FOR them, in their words, not how it works. "Keeps your bank balances current", not "Sync accounts via Plaid cursor" |
 | `agent` | prompt | **optional** — only for applets that DO something each run. Runs self-contained: no chat history, opens with the kickoff turn "Run your action instruction now." Omit it entirely for a face-only dashboard |
 | `schedule` | 6-field cron | seconds first, **box-local timezone**. `0 0 6 * * *` = daily 6am |
-| `triggers` | list | `cron` `manual` `tool` `api` `webhook`; defaults follow `schedule` |
+| `triggers` | list | `cron` `manual` `tool` `api` `webhook` `message`; defaults follow `schedule`. Add `message` to let the user talk to it |
 | `condition` | SQL boolean | run gate — local data only, never network |
 | `until` | lifecycle | omit = forever · `"once"` = archive after first success · SQL boolean = archive when true after a success |
 | `schema_sql` | **one migration** | **only** schema `applet_<slug>`. First call creates; later calls submit *only what changed* — see below |
@@ -63,6 +63,36 @@ finding, do not re-send the `CREATE` with the column added.
 Row-level work (`INSERT`/`UPDATE`/`DELETE`) is not this. That happens at
 runtime through `sql_write`, needs no migration, and is how a tracker records
 what the user tells it.
+
+## Applets you can talk to
+
+Add `message` to `triggers` and the applet gets a composer on its page. What
+the user types becomes the run's opening turn — the prompt sees their words
+instead of the synthetic "Run your action instruction now." — and the reply is
+the run's result. The exchange lives on the run, so the run log **is** the
+conversation.
+
+This is the front door for anything the user feeds rather than schedules:
+
+- **A tracker.** `schema_sql` for the table, `message` to log into it, a face
+  to see it. "I had eggs and toast" → the prompt parses it and `sql_write`s a
+  row. No schedule needed at all.
+- **A capture inbox.** Send it something; it files it.
+- **Anything you would otherwise have declined** with "there is no way for the
+  user to give it input." Check this list before declining.
+
+Two rules:
+
+- **A `condition` does not gate a message.** Conditions gate polls. Someone who
+  just pressed send is not a poll, and a clock gate would silently swallow what
+  they wrote. Same reason manual "Run now" is exempt from rate caps.
+- **The composer is for input, not edits.** "I had eggs" goes to the applet;
+  "make it weekly" is an edit and belongs in chat with you. Do not write a
+  prompt that tries to reconfigure the applet from its own messages — it
+  cannot, and `edit_applet` refuses it.
+
+Still not authorable: **Personas.** A message wake is inbound from the *user*,
+not from a third party, and there is no send-as-me channel. Draft-mode stands.
 
 ## Limits
 
@@ -111,10 +141,12 @@ Its prompt may rely on exactly this set — nothing else exists:
 | compute | `code_interpreter` (jailed, no network) |
 | introspect applets | `list_applets` / `get_applet` (read-only) |
 
+| **be told something** | add `message` to `triggers` — the user's text becomes the run's opening turn |
+
 **The closing rule: if the ask needs a verb not on this list — send an email,
-fetch a URL, react to an incoming message, act on another service — decompose
-it into what IS possible, or decline honestly and offer the nearest real
-alternative. Never write a prompt that pretends a tool exists.**
+fetch a URL, react to a message from someone else, act on another service —
+decompose it into what IS possible, or decline honestly and offer the nearest
+real alternative. Never write a prompt that pretends a tool exists.**
 
 ## Doctrine
 
@@ -125,7 +157,7 @@ alternative. Never write a prompt that pretends a tool exists.**
   machine-checked; you are the check.** An imaginary table in a prompt fails
   softly, nightly, forever.
 - **Honest downgrades.** No data source → say so; offer to connect one, or a
-  manual tracker (`schema_sql` + the user logging via chat with `sql_write`).
+  manual tracker (`schema_sql` + `message` so the user can log into it).
   Feed/URL watching → needs a fetch verb that doesn't exist yet: decline, or
   offer a `web_search` approximation labeled as such.
 - **The gate.** Applets with a `schedule` or `api`/`webhook` trigger are

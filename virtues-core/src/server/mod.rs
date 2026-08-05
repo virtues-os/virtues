@@ -380,6 +380,7 @@ pub async fn run(client: Virtues, host: &str, port: u16) -> Result<()> {
                 .delete(api::delete_applet_handler),
         )
         .route("/api/applets/:id/run", post(api::trigger_applet_handler))
+        .route("/api/applets/:id/message", post(api::message_applet_handler))
         .route("/api/applets/:id/data", get(api::get_applet_data_handler))
         // Read the applet's own code. Read-only, owner-authed like everything
         // in this group; see api/applet_source.rs for why it guards harder than

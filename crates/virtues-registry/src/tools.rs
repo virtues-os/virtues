@@ -1031,7 +1031,7 @@ Parameters:
 - description (required): ONE sentence of the user's intent — shown as the applet's headline.
 - agent (required): the runtime prompt. It runs with a kickoff message "Run your action instruction now." and NO chat history — write it self-contained.
 - schedule: 6-field cron (sec min hour day month dow), box-LOCAL timezone. "0 0 9 25 7 *" = July 25, 9am. Date-anchored one-offs: nearest future occurrence + until="once".
-- triggers: subset of cron/manual/tool/api/webhook. Defaults: with schedule ["cron","manual","tool"], else ["manual","tool"].
+- triggers: subset of cron/manual/tool/api/webhook/message. Defaults: with schedule ["cron","manual","tool"], else ["manual","tool"]. Add "message" when the user should be able to TALK to the applet — their text becomes the run's opening turn and the reply is the run result. This is the front door for trackers ("I had eggs" → sql_write a row) and anything the user feeds rather than schedules; check it before declining an ask for lack of input.
 - condition: SQL boolean gating each run (skipped when false). Local data only.
 - until: omit = forever · "once" = archive after first success · SQL boolean = archive when true after a success.
 - schema_sql: ONE MIGRATION, not the whole schema. MUST target only schema applet_<slug>. First call: CREATE SCHEMA IF NOT EXISTS applet_<slug>; then your CREATE TABLEs. Later calls: submit ONLY what changed (ALTER TABLE applet_<slug>.t ADD COLUMN ...) — re-sending a CREATE TABLE IF NOT EXISTS with an extra column silently adds nothing, and the check will refuse it with the ALTER to write. Resubmitting identical DDL is recognized as already applied.
@@ -1055,7 +1055,7 @@ If the result status is "check_failed", fix the findings and call again — noth
                 "schedule": { "type": "string", "description": "6-field cron, box-local tz" },
                 "triggers": {
                     "type": "array",
-                    "items": { "type": "string", "enum": ["cron", "manual", "tool", "api", "webhook"] }
+                    "items": { "type": "string", "enum": ["cron", "manual", "tool", "api", "webhook", "message"] }
                 },
                 "condition": { "type": "string", "description": "SQL boolean run gate" },
                 "until": { "type": "string", "description": "forever (omit) | 'once' | SQL boolean" },
@@ -1098,7 +1098,7 @@ Use this when:
 Optional filters:
 - owner: "system" or "user" (system = built-in, user = user-created)
 - enabled: true/false
-- trigger: "cron" | "manual" | "tool" | "api" | "webhook"
+- trigger: "cron" | "manual" | "tool" | "api" | "webhook" | "message"
 "#.to_string(),
         parameters: serde_json::json!({
             "type": "object",

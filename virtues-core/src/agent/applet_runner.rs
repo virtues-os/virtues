@@ -50,6 +50,7 @@ pub async fn run_agent_loop(
     prompt: &str,
     context: Option<&str>,
     run_id: &str,
+    message: Option<&str>,
 ) -> Result<AgentLoopResult> {
     let applet_id = &action.id;
     let limits = crate::applet_runner::limits::Limits::from_config(&action.config);
@@ -88,7 +89,12 @@ pub async fn run_agent_loop(
             at,
             serde_json::json!({
                 "role": "user",
-                "content": "Run your action instruction now.",
+                // When a person sent something, THAT is the turn. The synthetic
+                // instruction is for wakes nobody asked for — a clock, a poll.
+                // Handing the applet "Run your action instruction now." while
+                // the user's actual words sat in a side channel would make the
+                // message a footnote to a prompt about itself.
+                "content": message.unwrap_or("Run your action instruction now."),
             }),
         );
     }
