@@ -14,6 +14,7 @@
 		getTheme,
 		applyTheme,
 		setTheme,
+		themeDefaultLabel,
 		themeMetadata,
 		type Theme,
 	} from "$lib/utils/theme";
@@ -482,7 +483,17 @@
 									width="16"
 									class="result-icon"
 								/>
-								<span class="result-label">{getThemeDisplayName(theme)}</span>
+								<span class="result-label">
+									{getThemeDisplayName(theme)}
+									<!-- The role rides on the name rather than replacing it:
+									     the theme is called Asgard, and "Virtues Dark" is what
+									     it's for. Both surfaces list the two defaults first
+									     (getAvailableThemes), so this labels the top of the
+									     list rather than asking anyone to search for it. -->
+									{#if themeDefaultLabel(theme)}
+										<span class="theme-role">({themeDefaultLabel(theme)})</span>
+									{/if}
+								</span>
 								<span class="theme-description">{themeMetadata[theme].description}</span>
 							</button>
 						{/each}
@@ -962,5 +973,12 @@
 		font-size: 12px;
 		color: var(--foreground-subtle);
 		white-space: nowrap;
+	}
+
+	/* Quieter than the name it follows — it names a role, not the theme. */
+	.theme-role {
+		font-size: 12px;
+		font-weight: 400;
+		color: var(--foreground-subtle);
 	}
 </style>

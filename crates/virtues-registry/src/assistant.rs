@@ -10,10 +10,16 @@ use crate::tools::default_enabled_tools;
 /// The canonical default theme for the application.
 /// This is the single source of truth — frontend and spaces.rs reference this.
 ///
-/// Caladan: white surfaces, neutral greys, one blue accent. The plainest of
-/// the sixteen, so a new box lands somewhere quiet rather than arriving with a
-/// strong opinion already formed on the owner's behalf.
-pub const DEFAULT_THEME: &str = "caladan";
+/// Pemberley: white on white, hairlines, one blue. Still the quiet arrival
+/// Caladan was chosen for — a new box does not open with a strong opinion
+/// already formed on the owner's behalf — but it is also the theme the app is
+/// designed in, and the one the UI now names "Virtues Light" (with Asgard as
+/// "Virtues Dark"; see `DEFAULT_THEMES` in apps/web/src/lib/utils/theme.ts).
+/// Those two must agree with this constant, or the label is a claim about a
+/// default that new boxes do not actually get.
+///
+/// Only new profiles read this. Anyone who has already picked a theme keeps it.
+pub const DEFAULT_THEME: &str = "pemberley";
 
 /// Assistant profile defaults
 #[derive(Debug, Clone, Deserialize, Serialize)]
