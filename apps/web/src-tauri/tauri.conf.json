@@ -4,9 +4,9 @@
   "version": "1.0.21",
   "identifier": "com.virtues.desktop",
   "build": {
-    "beforeBuildCommand": "pnpm build && cp build/200.html build/index.html && cp src-tauri/ui/*.html src-tauri/ui/*.js build/",
+    "beforeBuildCommand": "",
     "beforeDevCommand": "",
-    "frontendDist": "../build"
+    "frontendDist": "ui"
   },
   "app": {
     "withGlobalTauri": true,
