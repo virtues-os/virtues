@@ -194,12 +194,20 @@ that would spend the user's money to paper over their misconfiguration.
 
 ### Phase 6 — The UI
 
-- Rename the `custom` provider to **"AI Gateway"** and make it the first and
-  recommended option, with real copy naming Vercel AI Gateway, OpenRouter,
-  LiteLLM, Portkey, and work proxies.
-- Fix or drop `anthropic` and `google`: `default_endpoint_for` points them at
-  `/v1/messages` and `/v1beta` and then posts an OpenAI-shaped body. Both 400
-  today. Shipping a dropdown entry that cannot work is worse than omitting it.
+- **Drop the provider dropdown; ask for a URL.** *(Rust side done 2026-08-05.)*
+  `provider` never drove behavior — nothing branches on it, because there is
+  nothing to branch on. All it did was pick a hardcoded URL, and hardcoded
+  URLs rot: `anthropic` pointed at `/v1/messages` and `google` at a bare
+  `/v1beta` for months in a user-facing dropdown, neither of which we can
+  call. Fixing the two strings was the small fix; removing the class was the
+  real one. The field is now endpoint URL + key, `provider` is a deprecated
+  input for un-updated clients, and the old table survives only to resolve
+  rows saved before the change — which is why this needed no migration.
+- **Example URLs go in help text, not in code.** A stale doc line is wrong; a
+  stale shipped option is broken. Name Vercel AI Gateway, OpenRouter, LiteLLM
+  and a local Ollama, and state the contract in one sentence — gateways are
+  worth recommending because one credential covers all five slots, not
+  because they are special.
 - Expose Image in the picker — `model_catalog::models()` currently filters it
   out with Omni as a "system slot."
 - Per-slot route selector, with the wallet as the visible default.
