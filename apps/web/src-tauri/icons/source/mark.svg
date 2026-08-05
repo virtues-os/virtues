@@ -8,8 +8,17 @@
   a ∴ is bottom-heavy (two dots below, one above), so a bbox-centered
   triangle reads as sitting low. That 20px is the optical correction.
 
-  Transparent ground on purpose: Icon Composer owns the background layer,
-  and iOS gets its opaque ground from the bundler.
+  Transparent ground on purpose: Icon Composer owns the background layer.
+
+  The bundler does NOT give iOS an opaque ground — assuming it did cost a
+  TestFlight upload (409: "The large app icon ... can't be transparent or
+  contain an alpha channel"). `tauri icon` writes RGBA into
+  gen/apple/Assets.xcassets/AppIcon.appiconset, and App Store validation
+  rejects an alpha channel on the app icon even when it is fully opaque —
+  ours was alpha 254-255 everywhere and still failed.
+
+  So after any `tauri icon` run, flatten that appiconset back to RGB before
+  archiving, or the upload dies at validation. See tools/strip-icon-alpha.py.
 -->
 <svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
 	<g fill="#17171A">
