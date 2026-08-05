@@ -1736,6 +1736,15 @@ fn create_agent_stream(
                     completion_tokens: total_output_tokens as i64,
                     reasoning_tokens: total_reasoning_tokens as i64,
                     cost_micros: total_cost_micros,
+                    // `stream()` diverts to the user's endpoint when BYO is
+                    // set, and no upstream but our own gateway sends a cost
+                    // trailer — so `total_cost_micros` is 0-as-unknown there,
+                    // and the Usage tab must show tokens instead of "$0.00".
+                    route: if crate::api::settings_byo::byo_is_active(&pool).await {
+                        crate::api::ai_calls::Route::Byo
+                    } else {
+                        crate::api::ai_calls::Route::Wallet
+                    },
                     chat_id: Some(chat_id.clone()),
                     applet_run_id: None,
                 },

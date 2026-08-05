@@ -129,6 +129,19 @@
 		return c.prompt_tokens + c.completion_tokens + c.reasoning_tokens;
 	}
 
+	/**
+	 * What a call cost, or an honest refusal to say.
+	 *
+	 * Only our own gateway reports `usage.cost`, so a BYO row's `cost_micros`
+	 * is 0 meaning *unknown*, not free. Rendering "$0.00" there would read as a
+	 * measurement — a whole month of BYO traffic totalling nothing — when it is
+	 * the absence of one. The tokens are real and sit in the column beside it;
+	 * the price belongs to the user's provider and is theirs to look up.
+	 */
+	function cost(c: AiCallRow): string {
+		return c.route === "byo" ? "your key" : formatMicrosPrecise(c.cost_micros);
+	}
+
 	function fmtWhen(ts: string): string {
 		return new Date(ts).toLocaleString(undefined, {
 			month: "short",
@@ -176,7 +189,7 @@
 
 <Page
 	title="Usage"
-	description="What the box has been running, and what each AI call cost — box-local, nothing leaves your machine."
+	description="What the box has been running, and what each AI call cost the wallet — box-local, nothing leaves your machine. Calls on your own key show tokens, not a price we'd be guessing at."
 	maxWidth="wide"
 >
 	<!-- AI-call log. First, because it is the one thing here you'd come back
@@ -200,7 +213,7 @@
 				<td class="cell">{call.feature ?? "—"}</td>
 				<td class="cell mono">{call.model ?? "—"}</td>
 				<td class="cell num hide-mobile">{tokens(call).toLocaleString()}</td>
-				<td class="cell num">{formatMicrosPrecise(call.cost_micros)}</td>
+				<td class="cell num" class:muted={call.route === "byo"}>{cost(call)}</td>
 			{/snippet}
 		</UniversalDataGrid>
 	</section>
@@ -333,6 +346,13 @@
 	}
 	.cell.num:last-child {
 		padding-right: 0;
+	}
+
+	/* "your key" is prose in a column of figures — subdue it so a scan down the
+	   column reads the numbers, and don't align it as though it were one. */
+	.cell.num.muted {
+		color: var(--color-foreground-subtle);
+		font-variant-numeric: normal;
 	}
 
 	@media (max-width: 768px) {
