@@ -3,19 +3,31 @@
 //! BYO ("bring your own") provider key is *intended* as the user's escape
 //! hatch from the Virtues wallet.
 //!
-//! **This module is storage only. The routing half does not exist.** Nothing
-//! in the inference path reads the stored key — grep `BYO_SOURCE_ID` and every
-//! consumer outside this file (`status_json.rs`, `box_status.rs`,
-//! `billing_state.rs`, `credentials.rs`) merely *reports* that a key is
-//! present. Chat traffic still routes through virtues-api on the Virtues
-//! wallet whether or not a key is set.
+//! **The routing half is a HALF door, not a missing one.** Exactly one call
+//! path honors the key: `BearerClient::stream` reads it via
+//! `load_byo_credential` below and diverts to `stream_direct_upstream`, so
+//! interactive chat really does go box → upstream. Everything else still
+//! bills the wallet with a key set:
 //!
-//! This comment claimed the opposite until 2026-08-05 ("the agent module reads
-//! it just before each call"), and the Billing UI repeated the claim to users.
-//! If you implement routing, update both — and `docs/virtues-api.md`, which
-//! makes the same promise publicly. Per `docs/byo-ai-plan.md` the built form is
-//! a HALF door even then: only `stream()` honors the key, while compaction,
-//! day summaries, image generation and transcription keep billing the wallet.
+//! - `api/compaction.rs` → `/v1/ai/chat/completions` via `post_json`
+//! - `api/day_summary.rs` → same
+//! - `api/image_gen.rs` → same
+//! - the `transcription_resolution` applet → the Omni call, and the largest
+//!   line item of the four
+//!
+//! Do not conclude from grepping `BYO_SOURCE_ID` that nothing reads the key —
+//! the `stream()` call site goes through `load_byo_credential` and does not
+//! mention the constant. The consumers that genuinely only *report* a key is
+//! present are `status_json.rs`, `box_status.rs`, `billing_state.rs`, and
+//! `credentials.rs`.
+//!
+//! So the user-facing claim is false by omission rather than wholly false,
+//! which is the harder kind to notice. This comment overstated it in both
+//! directions during 2026-08-05 — first "the agent module reads it just
+//! before each call" (it does not), then "the routing half does not exist"
+//! (it partly does). The Billing UI and `docs/virtues-api.md` still make the
+//! unqualified promise; closing the four paths above is what makes it true.
+//! Plan of record: `docs/byo-ai-plan.md`, phase 1.
 //!
 //! The key is stored as a `credentials` row with `source_id = "__byo_ai_key__"`,
 //! encrypted at rest via the same `TokenEncryptor` that protects every other
