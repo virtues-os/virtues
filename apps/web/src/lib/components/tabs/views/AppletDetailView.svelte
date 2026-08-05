@@ -1,6 +1,7 @@
 <script lang="ts">
 	import Icon from '$lib/components/Icon.svelte';
 	import AppletSource from '$lib/components/applets/AppletSource.svelte';
+	import FaceFrame from '$lib/components/applets/FaceFrame.svelte';
 	import Badge from '$lib/components/Badge.svelte';
 	import Button from '$lib/components/Button.svelte';
 	import Modal from '$lib/components/Modal.svelte';
@@ -65,8 +66,66 @@
 		}
 	}
 
+	// Editability follows `owner`, because that is genuinely what the server
+	// enforces: reconcile owns those rows and would overwrite an edit anyway.
 	const isSystem = $derived(action?.owner === 'system');
 	const isAgent = $derived(Boolean(action?.agent && action.agent.trim().length > 0));
+
+	// What the user is told, though, follows `origin` — the distinction the
+	// list page already learned. Every source fan-out row is owner='system',
+	// so keying the EXPLANATION off owner told you the Gmail sync you
+	// connected on purpose was an internal system pipeline.
+	const managedNote = $derived.by(() => {
+		if (!action || !isSystem) return null;
+		switch (action.origin) {
+			case 'source':
+				return 'Part of a source you connected. Its settings come from the connection — disconnect the source to remove it.';
+			default:
+				return 'Built in. It keeps the box running, so it can be turned off but not deleted — reconcile would recreate it.';
+		}
+	});
+
+	const triggers = $derived(action?.triggers ?? []);
+
+	// Lifecycle, in words rather than a raw SQL string.
+	const lifecycle = $derived.by(() => {
+		if (!action) return '';
+		if (action.archived_at) {
+			return `Finished ${new Date(action.archived_at).toLocaleDateString()}`;
+		}
+		if (!action.until) return 'Runs for as long as it is on';
+		if (action.until.toLowerCase() === 'once') return 'Runs once, then finishes';
+		return `Finishes when: ${action.until}`;
+	});
+
+	// The ceilings this applet declares, in the same words the gate uses.
+	// Read from config rather than a new endpoint — config already ships.
+	const limits = $derived.by(() => {
+		const l = (action?.config?.limits ?? {}) as Record<string, unknown>;
+		const out: string[] = [];
+		const money = (k: string, label: string) => {
+			const v = typeof l[k] === 'number' ? (l[k] as number) : null;
+			if (v !== null) out.push(`${label} $${v.toFixed(2)}`);
+		};
+		const count = (k: string, label: string) => {
+			const v = typeof l[k] === 'number' ? (l[k] as number) : null;
+			if (v !== null) out.push(`${label} ${v}`);
+		};
+		money('max_llm_cost', 'at most'); // per run
+		money('max_llm_cost_per_day', 'at most');
+		count('max_runs_per_day', 'at most');
+		count('max_runs_per_hour', 'at most');
+		return out;
+	});
+
+	function usd(micros: number): string {
+		if (!micros) return '';
+		// Sub-cent spend is real and worth showing as more than "$0.00".
+		return micros < 10_000 ? `$${(micros / 1_000_000).toFixed(4)}` : `$${(micros / 1_000_000).toFixed(2)}`;
+	}
+
+	// What the last 30 runs cost, so the ceiling above has something to mean.
+	const recentSpend = $derived(runs.reduce((n, r) => n + (r.cost_micros ?? 0), 0));
 
 	// Milliseconds past the owed slot. Same hour of grace the scheduler and the
 	// needs-attention strip use, so the three surfaces never disagree about
@@ -246,17 +305,27 @@
 			{#if err}
 				<div class="error-banner">{err}</div>
 			{/if}
-			{#if action.has_face}
-				<div class="meta view-link">
+		</header>
+
+		<!-- The face IS the page when there is one. It was a button to another
+		     tab before, which put the applet's own output one click further away
+		     than its cron string. -->
+		{#if action.has_face}
+			<section class="face-block">
+				<div class="face-head">
+					<h2>What it shows</h2>
 					<button type="button" class="open-view" onclick={openView}>
-						<Icon icon="ri:layout-2-line" width="13" /> Open view
+						<Icon icon="ri:external-link-line" width="12" /> Open full page
 					</button>
 				</div>
-			{/if}
-		</header>
+				<FaceFrame actionId={action.id} height="460px" />
+			</section>
+		{/if}
 
 		<div class="body">
 			<section class="col main">
+				<h2 class="section-head">How it works</h2>
+
 				<label class="field">
 					<span class="label">Name</span>
 					<input
@@ -265,12 +334,24 @@
 						disabled={isSystem}
 						oninput={markDirty}
 					/>
-					{#if isSystem}
+					{#if managedNote}
 						<span class="hint">
-							<Icon icon="ri:lock-line" width="12" /> Managed by templates.toml
+							<Icon icon="ri:lock-line" width="12" />
+							{managedNote}
 						</span>
 					{/if}
 				</label>
+
+				{#if action.description}
+					<div class="field">
+						<span class="label">What it does</span>
+						<p class="readonly-value">{action.description}</p>
+						<span class="hint">
+							Comes from the applet's manifest. Editing it there and
+							reconciling changes it here.
+						</span>
+					</div>
+				{/if}
 
 				<!-- A pure View (a face with no agent) has no server-side run and
 				     no prompt — don't show an empty agent editor for it. -->
@@ -283,7 +364,7 @@
 								bind:value={edit.agent}
 								disabled={isSystem}
 								oninput={markDirty}
-								placeholder="What should this action do each run?"
+								placeholder="What should this applet do each run?"
 							></textarea>
 						{:else}
 							<div class="pipeline-note">
@@ -293,7 +374,7 @@
 						{/if}
 						{#if isSystem && isAgent}
 							<span class="hint">
-								<Icon icon="ri:lock-line" width="12" /> System prompt — read only
+								<Icon icon="ri:lock-line" width="12" /> Read-only — this prompt ships with the applet
 							</span>
 						{/if}
 					</label>
@@ -310,25 +391,80 @@
 					<span class="hint">{describeSchedule(edit.cron_schedule || null)}</span>
 				</label>
 
+				<!-- Three facts the page never showed, and the reason a person
+				     could not tell why an applet had or hadn't run: what wakes
+				     it, what it checks once awake, and when it is done. -->
+				<div class="field">
+					<span class="label">What wakes it</span>
+					<div class="chips">
+						{#each triggers as t (t)}
+							<span class="chip">{t === 'cron' ? 'schedule' : t}</span>
+						{/each}
+						{#if triggers.length === 0}
+							<span class="readonly-value dim">nothing — it never runs on its own</span>
+						{/if}
+					</div>
+				</div>
+
+				{#if action.condition}
+					<div class="field">
+						<span class="label">Only when</span>
+						<code class="readonly-value mono">{action.condition}</code>
+						<span class="hint">
+							Checked before each run. When it is false the run is skipped, not
+							failed.
+						</span>
+					</div>
+				{/if}
+
+				<div class="field">
+					<span class="label">Lifecycle</span>
+					<p class="readonly-value">{lifecycle}</p>
+				</div>
+
+				<div class="field">
+					<span class="label">Limits</span>
+					{#if limits.length > 0}
+						<p class="readonly-value">{limits.join(' · ')}</p>
+					{:else}
+						<p class="readonly-value dim">No ceilings set.</p>
+					{/if}
+					{#if recentSpend > 0}
+						<span class="hint">
+							The last {runs.length} runs cost {usd(recentSpend)}.
+						</span>
+					{:else if isAgent}
+						<span class="hint">The runs below have cost nothing so far.</span>
+					{/if}
+				</div>
+
 				<label class="field">
-					<span class="label">Memory</span>
+					<!-- Not a settings field: this is the applet's own scratchpad,
+					     written by it, for its next run. Editing it by hand is
+					     allowed and is closer to amending a diary than filling a
+					     form, so the label says whose it is. -->
+					<span class="label">Notes it keeps</span>
 					<textarea
 						rows="6"
 						bind:value={edit.memory}
 						oninput={markDirty}
-						placeholder="Persistent markdown scratchpad, carried across runs"
+						placeholder="Empty — this applet has not written itself any notes yet."
 					></textarea>
+					<span class="hint">
+						What this applet wrote down for its own next run. Yours to read, and
+						to correct.
+					</span>
 				</label>
 
 				<div class="save-row">
 					{#if !isSystem}
 						<Button variant="danger" onclick={openDelete} disabled={saving}>
-							Delete action
+							Delete applet
 						</Button>
 					{:else}
 						<span class="system-note">
 							<Icon icon="ri:lock-line" width="12" />
-							System action — managed automatically. Disable it to stop it running; it can't be deleted (reconcile would recreate it).
+							{managedNote}
 						</span>
 					{/if}
 					<Button variant="primary" onclick={save} disabled={!isDirty || saving}>
@@ -367,6 +503,11 @@
 										{r.status === 'budget_exceeded' ? 'over budget' : r.status}
 									</Badge>
 									<span class="run-trigger">{r.trigger}</span>
+									{#if r.cost_micros}
+										<span class="run-cost" title="What this run spent with the model">
+											{usd(r.cost_micros)}
+										</span>
+									{/if}
 									<span class="run-time">{relativeTime(r.started_at)}</span>
 								</div>
 								{#if r.result_summary}
@@ -460,9 +601,6 @@
 	.del .dim {
 		color: var(--color-foreground-subtle);
 	}
-	.view-link {
-		margin-top: 0.5rem;
-	}
 	.open-view {
 		display: inline-flex;
 		align-items: center;
@@ -512,6 +650,62 @@
 		font-size: 1.1875rem;
 		font-weight: 600;
 		line-height: 1.25;
+	}
+	.section-head {
+		margin: 0;
+		font-size: 0.8125rem;
+		font-weight: 600;
+		color: var(--color-foreground-muted);
+	}
+	.readonly-value {
+		margin: 0;
+		font-size: 0.875rem;
+		line-height: 1.5;
+		color: var(--color-foreground);
+	}
+	.readonly-value.dim {
+		color: var(--color-foreground-subtle);
+	}
+	.readonly-value.mono {
+		font-family: var(--font-mono, ui-monospace, monospace);
+		font-size: 0.8125rem;
+		padding: 0.5rem 0.625rem;
+		border-radius: 6px;
+		background: var(--color-surface-elevated);
+		border: 1px solid var(--color-border-subtle);
+		display: block;
+		overflow-x: auto;
+	}
+	.chips {
+		display: flex;
+		flex-wrap: wrap;
+		gap: 0.3rem;
+	}
+	.chip {
+		padding: 0.1rem 0.5rem;
+		border: 1px solid var(--color-border);
+		border-radius: 999px;
+		background: var(--color-surface-elevated);
+		font-size: 0.75rem;
+		color: var(--color-foreground-muted);
+	}
+	.face-block {
+		padding: 1.25rem 2rem 0;
+		max-width: 1400px;
+		width: 100%;
+		margin: 0 auto;
+	}
+	.face-head {
+		display: flex;
+		align-items: baseline;
+		justify-content: space-between;
+		margin-bottom: 0.5rem;
+	}
+	.face-head h2 {
+		margin: 0;
+		font-size: 0.8125rem;
+		font-weight: 600;
+		color: var(--color-foreground-muted);
 	}
 	.intent {
 		margin: 0 0 0.375rem;
@@ -687,6 +881,10 @@
 		align-items: center;
 		gap: 0.5rem;
 		font-size: 0.75rem;
+	}
+	.run-cost {
+		font-variant-numeric: tabular-nums;
+		color: var(--color-foreground-muted);
 	}
 	.run-trigger {
 		font-family: var(--font-mono, monospace);
