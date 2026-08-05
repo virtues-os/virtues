@@ -561,12 +561,20 @@ export interface DayHeartRateSample {
 	bpm: number;
 }
 
-/** The day's raw HR samples, oldest first. Sparse days are normal. */
+/**
+ * The day's raw HR samples, oldest first. Sparse days are normal.
+ *
+ * `tz` anchors the local-day window. Without it the server falls back to the
+ * day's recorded zone, which is right for a past day and wrong for today when
+ * the box and the browser disagree about where midnight is.
+ */
 export async function getDayHeartRate(
 	date: string,
+	tz?: string,
 	fetchFn: FetchFn = fetch
 ): Promise<DayHeartRateSample[]> {
-	const res = await fetchFn(`/api/wiki/day/${encodeURIComponent(date)}/heart-rate`);
+	const q = tz ? `?tz=${encodeURIComponent(tz)}` : '';
+	const res = await fetchFn(`/api/wiki/day/${encodeURIComponent(date)}/heart-rate${q}`);
 	if (!res.ok) return [];
 	return res.json();
 }
