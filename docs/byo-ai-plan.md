@@ -83,16 +83,21 @@ More of the shape exists than it looks:
 
 ### Phase 1 — Stop the leak *(correctness fix; do this regardless)*
 
-`stream()` is the only path that honors BYO. These four still bill the wallet
-while the UI says "BYO active":
+**Done 2026-08-05.** `stream()` was the only path honoring BYO. The audit in
+this doc counted four leaking callers; there were **seven** —
+`api/compaction.rs`, `api/day_summary.rs`, `api/image_gen.rs`,
+`api/entity_article_gen.rs`, `api/narrative_identity_gen.rs`, `api/chats.rs`,
+and the `transcription_resolution` applet.
 
-- `api/compaction.rs` → `/v1/ai/chat/completions` via `post_json`
-- `api/day_summary.rs` → same
-- `api/image_gen.rs` → same
-- `applets/transcription_resolution/transform.rs` → the Omni call
+The fix is one fork inside `BearerClient::post_json`, gated on the same
+`is_ai_path` predicate that already decides cost capture — not a new
+`post_ai()` method that callers opt into. That choice is what caught the three
+the audit missed, and it is why a future AI caller cannot regress this. Keep
+it: an opt-in chokepoint is not a chokepoint.
 
-Funnel all of them through **one resolver**. Until this lands the BYO promise
-is false by omission, and everything downstream inherits the lie.
+No fallback on failure. A BYO call that 401s, 404s or 429s returns the
+provider's own error; it never quietly re-runs on the wallet, because that is
+exactly the surprise charge BYO exists to prevent.
 
 **Shipping order: phase 1 can go alone, and probably should.** It is about a
 day, it is pure correctness, it requires no product decisions, and it makes

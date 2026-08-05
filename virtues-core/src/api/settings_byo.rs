@@ -1,33 +1,38 @@
 //! `POST /api/settings/byo-key` + `DELETE /api/settings/byo-key`.
 //!
-//! BYO ("bring your own") provider key is *intended* as the user's escape
-//! hatch from the Virtues wallet.
+//! BYO ("bring your own") provider key is the user's escape hatch from the
+//! Virtues wallet: with one set, every `/v1/ai/*` call leaves by their
+//! endpoint and virtues-api is out of the inference path.
 //!
-//! **The routing half is a HALF door, not a missing one.** Exactly one call
-//! path honors the key: `BearerClient::stream` reads it via
-//! `load_byo_credential` below and diverts to `stream_direct_upstream`, so
-//! interactive chat really does go box → upstream. Everything else still
-//! bills the wallet with a key set:
+//! **This module is storage; the routing lives in one place —
+//! `virtues_api/client.rs`.** Both `stream()` and `post_json()` call
+//! `load_byo_credential` below and divert, gated on the same `is_ai_path`
+//! predicate, so all seven AI callers are covered without opting in:
+//! `agent/stream.rs`, `api/compaction.rs`, `api/day_summary.rs`,
+//! `api/image_gen.rs`, `api/entity_article_gen.rs`,
+//! `api/narrative_identity_gen.rs`, `api/chats.rs`, plus the
+//! `transcription_resolution` applet.
 //!
-//! - `api/compaction.rs` → `/v1/ai/chat/completions` via `post_json`
-//! - `api/day_summary.rs` → same
-//! - `api/image_gen.rs` → same
-//! - the `transcription_resolution` applet → the Omni call, and the largest
-//!   line item of the four
+//! Until 2026-08-05 only `stream()` honored the key and the other seven
+//! quietly billed the wallet while the UI said "BYO active" — a claim false by
+//! omission, which is the harder kind to notice. Two lessons worth keeping:
 //!
-//! Do not conclude from grepping `BYO_SOURCE_ID` that nothing reads the key —
-//! the `stream()` call site goes through `load_byo_credential` and does not
-//! mention the constant. The consumers that genuinely only *report* a key is
-//! present are `status_json.rs`, `box_status.rs`, `billing_state.rs`, and
-//! `credentials.rs`.
+//! - **Do not conclude from grepping `BYO_SOURCE_ID` that nothing reads the
+//!   key.** The routing goes through `load_byo_credential` and never mentions
+//!   the constant. The consumers that only *report* a key is present are
+//!   `status_json.rs`, `box_status.rs`, `billing_state.rs`, `credentials.rs`.
+//! - **The audit undercounted the leak at four paths; it was seven.** Keying
+//!   the fork on the route rather than adding an opt-in `post_ai()` method is
+//!   what caught the other three, and is why a new AI caller cannot regress
+//!   this.
 //!
-//! So the user-facing claim is false by omission rather than wholly false,
-//! which is the harder kind to notice. This comment overstated it in both
-//! directions during 2026-08-05 — first "the agent module reads it just
-//! before each call" (it does not), then "the routing half does not exist"
-//! (it partly does). The Billing UI and `docs/virtues-api.md` still make the
-//! unqualified promise; closing the four paths above is what makes it true.
-//! Plan of record: `docs/byo-ai-plan.md`, phase 1.
+//! Two honest gaps remain, both design rather than oversight: request bodies
+//! that pin a model send *our* gateway's id (`google/gemini-3-flash`), which
+//! another gateway may spell differently, and audio rides as an `image_url`
+//! data-URI, which is a Vercel quirk that OpenRouter will reject. Per-slot
+//! model ids and a per-route audio encoder fix them —
+//! `docs/byo-ai-plan.md` phases 2 and 3. The Billing UI and
+//! `docs/virtues-api.md` are now true as written.
 //!
 //! The key is stored as a `credentials` row with `source_id = "__byo_ai_key__"`,
 //! encrypted at rest via the same `TokenEncryptor` that protects every other
