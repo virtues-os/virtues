@@ -6,8 +6,17 @@
 //
 // The mobile app is: an in-process iroh reach loopback + a webview pointed at it
 // + native collectors feeding a shared upload queue. This entry wires the
-// reach + location plugins and picks the launch URL the same way desktop does:
-// paired → the box UI over the loopback; not paired → the bundled connect shell.
+// reach + location plugins and picks the launch URL.
+//
+// NOTE: mobile does NOT resolve its URL the way desktop does, despite what this
+// comment claimed until 2026-08-05. Desktop shells to the box and renders the
+// build the box serves; mobile IS the bundled SvelteKit build and uses the box
+// only as a REST/WS API. That difference is the whole reason `web_bundle`
+// exists — see docs/spa-delivery-plan.md.
+
+/// OTA web-bundle overlay. Lives in the lib so BOTH shells can reach it: the
+/// mobile entry below, and the desktop bin via `virtues_lib::web_bundle`.
+pub mod web_bundle;
 
 // Appearance bridge: the SPA's themes are user-picked (not system-driven), so
 // the iOS status bar can't ride the system light/dark mode — a dark theme on a
