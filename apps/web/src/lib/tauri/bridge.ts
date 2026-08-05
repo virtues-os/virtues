@@ -66,6 +66,29 @@ export async function shellSupports(min: number): Promise<boolean> {
 }
 
 /**
+ * Tell the shell this UI booted successfully.
+ *
+ * An OTA bundle is *pending* until this lands. If the app starts and still
+ * finds one pending, that bundle failed to come up and is abandoned — so
+ * **failing to call this rolls back every update**, which is the intended
+ * failure direction but a silent one if the call is simply forgotten.
+ *
+ * Call it once the app has actually rendered, not on module load: the point is
+ * to prove the bundle works, and a module that parses is not a page that
+ * renders. No-op outside Tauri and on shells without the command.
+ */
+export async function reportBootOk(): Promise<void> {
+	const invoke = await getInvoke();
+	if (!invoke) return;
+	try {
+		await invoke('bundle_boot_ok');
+	} catch {
+		// Older shell without the command, or a desktop build that does not use
+		// overlays. Nothing to report to, and nothing broken.
+	}
+}
+
+/**
  * Open a URL in the user's default *system* browser.
  *
  * In a plain browser this is just `window.open(url, '_blank')`. But inside the

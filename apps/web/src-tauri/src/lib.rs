@@ -105,7 +105,67 @@ pub fn run() {
   use tauri::{Manager, WebviewUrl, WebviewWindowBuilder};
   use tauri_plugin_reach::ReachExt;
 
-  let builder = tauri::Builder::default().plugin(tauri_plugin_reach::init());
+  // OTA asset protocol. Every request for the UI comes through here, and the
+  // handler decides per-file: the overlay bundle the box handed us, else the
+  // build baked into this binary.
+  //
+  // A custom scheme rather than Tauri's own `tauri://` because Tauri owns that
+  // one and gives no hook to intercept it. The cost is a one-time origin change
+  // (`tauri://localhost` → `virtues://localhost`), which empties this app's
+  // IndexedDB once. That is a cache, not data: pages persist server-side in
+  // `app_pages.yjs_state` and re-sync on connect. Doing it now, before OTA
+  // ships, is deliberate — from here the origin never moves again, so applying
+  // a bundle can never cost a user their local state.
+  //
+  // Fail-safe: every path out of the handler that is not a confirmed overlay
+  // hit falls through to the baked asset. A corrupt or half-written bundle
+  // costs freshness, never the UI.
+  let builder = tauri::Builder::default()
+    .plugin(tauri_plugin_reach::init())
+    .register_uri_scheme_protocol("virtues", |ctx, request| {
+      use tauri::Manager;
+
+      let path = request.uri().path().to_string();
+      let baked = |p: &str| ctx.app_handle().asset_resolver().get(p.to_string());
+
+      let Some(resolved) = web_bundle::resolve_request_path(&path) else {
+        return tauri::http::Response::builder()
+          .status(400)
+          .body(Vec::new())
+          .unwrap();
+      };
+
+      // Overlay first, baked second. `mime_guess` is not a dependency here, so
+      // the baked asset's own mime type is reused when the overlay serves the
+      // same path — which it does for every file, both being the same build
+      // shape.
+      let overlay = ctx
+        .app_handle()
+        .path()
+        .app_data_dir()
+        .ok()
+        .and_then(|d| web_bundle::read_from_overlay(&d, &resolved));
+
+      match (overlay, baked(&resolved)) {
+        (Some(bytes), asset) => tauri::http::Response::builder()
+          .status(200)
+          .header(
+            "Content-Type",
+            asset.map(|a| a.mime_type).unwrap_or_else(|| "text/html".into()),
+          )
+          .body(bytes)
+          .unwrap(),
+        (None, Some(asset)) => tauri::http::Response::builder()
+          .status(200)
+          .header("Content-Type", asset.mime_type)
+          .body(asset.bytes)
+          .unwrap(),
+        (None, None) => tauri::http::Response::builder()
+          .status(404)
+          .body(Vec::new())
+          .unwrap(),
+      }
+    });
 
   // The six collectors are iOS-only: Rust shims over Swift halves, with no
   // Android counterpart yet (see Cargo.toml). Android boots reach + the webview
@@ -228,7 +288,15 @@ pub fn run() {
         reach.loopback_url(),
         paired
       );
-      WebviewWindowBuilder::new(app, "main", WebviewUrl::App("mobile-pair.html".into()))
+      // Loaded through the `virtues://` scheme registered above, not Tauri's
+      // built-in asset protocol — that is what lets an OTA bundle answer these
+      // requests. The URL is otherwise identical to what `WebviewUrl::App`
+      // produced, and the handler falls back to the baked asset, so with no
+      // overlay present this behaves exactly as before.
+      let start = "virtues://localhost/mobile-pair.html"
+        .parse()
+        .expect("static url");
+      WebviewWindowBuilder::new(app, "main", WebviewUrl::CustomProtocol(start))
         .title("Virtues")
         .initialization_script(&init)
         .build()?;

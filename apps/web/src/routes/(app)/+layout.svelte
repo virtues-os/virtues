@@ -33,6 +33,7 @@
 	import type { Snippet } from "svelte";
 
 	import { installClientHeader } from "$lib/build";
+	import { reportBootOk } from "$lib/tauri/bridge";
 	import { shortcuts } from "$lib/shortcuts/registry.svelte";
 	import { modifierHint } from "$lib/stores/modifierHint.svelte";
 
@@ -65,6 +66,15 @@
 
 	// Load chat sessions, workspaces, and initialize theme on mount
 	onMount(async () => {
+		// Confirm to the shell that this build actually rendered. An OTA bundle
+		// stays pending until this lands, and a bundle still pending at the next
+		// launch is treated as one that failed to boot and is rolled back — so
+		// removing this call silently reverts every update. It lives in onMount,
+		// not at module scope, because a module that parses is not a page that
+		// renders, and rendering is the thing being proven. See
+		// src-tauri/src/web_bundle.rs.
+		void reportBootOk();
+
 		// Global dragover handler: Allow drops on document by preventing default
 		// This is a fallback to ensure drops are never blocked by missing handlers
 		document.addEventListener("dragover", (e) => {

@@ -266,6 +266,53 @@ fn split_http_response(raw: &[u8]) -> Option<Vec<u8>> {
     Some(raw[head_end + 4..].to_vec())
 }
 
+// ─── Serving ────────────────────────────────────────────────────────────────
+
+/// Normalize a request URI into a path inside a bundle, or `None` if it escapes.
+///
+/// SvelteKit is built with `adapter-static` and a `200.html` SPA fallback, so a
+/// route like `/wiki/foo` is not a file — the shell must return `index.html`
+/// and let the client router take it. That is the `is_none()` branch below, and
+/// getting it wrong means every deep link 404s.
+pub fn resolve_request_path(uri_path: &str) -> Option<String> {
+    let trimmed = uri_path.trim_start_matches('/');
+    let clean = trimmed.split(['?', '#']).next().unwrap_or("");
+
+    if clean.is_empty() {
+        return Some("index.html".into());
+    }
+    if escapes_dest(Path::new(clean)) {
+        return None;
+    }
+    // A path with no extension is a client route, not a file. Anything with a
+    // dot is an asset request and must 404 honestly if missing, rather than
+    // being handed HTML — a JS request answered with `index.html` fails in a
+    // way that is very hard to read from the console.
+    let last = clean.rsplit('/').next().unwrap_or("");
+    if last.contains('.') {
+        Some(clean.to_string())
+    } else {
+        Some("index.html".into())
+    }
+}
+
+/// Read `path` out of the active overlay bundle, if one is active and has it.
+///
+/// `None` means "fall through to the baked bundle" for every reason: no
+/// overlay, missing file, unreadable file. The caller must always have that
+/// fallback — this function never being able to fail is the property that keeps
+/// a bad bundle from costing the app its UI.
+pub fn read_from_overlay(app_data: &Path, path: &str) -> Option<Vec<u8>> {
+    let dir = active_bundle(app_data)?;
+    let file = dir.join(path);
+    // Re-check after joining: `path` is already normalized, but the cost of
+    // being wrong here is serving arbitrary files off the device.
+    if !file.starts_with(&dir) {
+        return None;
+    }
+    fs::read(file).ok()
+}
+
 /// Whether an archive entry's path would write outside the destination.
 ///
 /// `tar`'s own `unpack_in` also refuses these (it errors rather than escaping),
@@ -412,6 +459,35 @@ mod tests {
         );
         assert_eq!(split_http_response(b"HTTP/1.1 404 Not Found\r\n\r\nnope"), None);
         assert_eq!(split_http_response(b"garbage"), None);
+    }
+
+    #[test]
+    fn request_paths_resolve_spa_routes_to_index() {
+        // Assets keep their path.
+        assert_eq!(resolve_request_path("/_app/x.js").as_deref(), Some("_app/x.js"));
+        assert_eq!(resolve_request_path("/favicon.png").as_deref(), Some("favicon.png"));
+        // Client routes get index.html — adapter-static + SPA fallback.
+        assert_eq!(resolve_request_path("/").as_deref(), Some("index.html"));
+        assert_eq!(resolve_request_path("/wiki/foo").as_deref(), Some("index.html"));
+        assert_eq!(resolve_request_path("/virtues/billing").as_deref(), Some("index.html"));
+        // Query and fragment are not part of the file path.
+        assert_eq!(resolve_request_path("/_app/x.js?v=2").as_deref(), Some("_app/x.js"));
+        // Escapes are refused outright.
+        assert_eq!(resolve_request_path("/../../etc/passwd"), None);
+    }
+
+    #[test]
+    fn overlay_read_falls_through_when_absent() {
+        let d = tmp();
+        // No overlay at all.
+        assert_eq!(read_from_overlay(&d, "index.html"), None);
+
+        let root = bundles_root(&d);
+        plant(&root, "abc123");
+        write_pointer(&root, PTR_ACTIVE, "abc123").unwrap();
+        assert!(read_from_overlay(&d, "index.html").is_some(), "serves from overlay");
+        // Present overlay, absent file → fall through, not an error.
+        assert_eq!(read_from_overlay(&d, "_app/missing.js"), None);
     }
 
     #[test]
