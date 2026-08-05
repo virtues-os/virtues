@@ -1,14 +1,25 @@
 //! `POST /api/settings/byo-key` + `DELETE /api/settings/byo-key`.
 //!
-//! BYO ("bring your own") provider key is the user's escape hatch from the
-//! Virtues wallet. When set, all chat traffic routes box → upstream provider
-//! directly, bypassing virtues-api entirely. Virtues is no longer in the
-//! inference path — that's the whole point.
+//! BYO ("bring your own") provider key is *intended* as the user's escape
+//! hatch from the Virtues wallet.
+//!
+//! **This module is storage only. The routing half does not exist.** Nothing
+//! in the inference path reads the stored key — grep `BYO_SOURCE_ID` and every
+//! consumer outside this file (`status_json.rs`, `box_status.rs`,
+//! `billing_state.rs`, `credentials.rs`) merely *reports* that a key is
+//! present. Chat traffic still routes through virtues-api on the Virtues
+//! wallet whether or not a key is set.
+//!
+//! This comment claimed the opposite until 2026-08-05 ("the agent module reads
+//! it just before each call"), and the Billing UI repeated the claim to users.
+//! If you implement routing, update both — and `docs/virtues-api.md`, which
+//! makes the same promise publicly. Per `docs/byo-ai-plan.md` the built form is
+//! a HALF door even then: only `stream()` honors the key, while compaction,
+//! day summaries, image generation and transcription keep billing the wallet.
 //!
 //! The key is stored as a `credentials` row with `source_id = "__byo_ai_key__"`,
 //! encrypted at rest via the same `TokenEncryptor` that protects every other
-//! secret. The agent module reads it just before each call; it never lives
-//! in the chat request body or in the URL.
+//! secret. It never lives in the chat request body or in the URL.
 //!
 //! Both endpoints are sudo-gated (`change_byo_key` is one of the four locked
 //! sudo actions). The handler verifies a sudo request id before doing
