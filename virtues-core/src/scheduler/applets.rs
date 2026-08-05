@@ -79,6 +79,12 @@ pub struct Applet {
     /// Set when the lifecycle completed; archived applets also get
     /// `enabled = FALSE` so the scheduler skips them naturally.
     pub archived_at: Option<crate::types::Timestamp>,
+    /// The scheduled slot most recently handled — fired, or consciously
+    /// declined for catch-up. Derived; the scheduler recomputes it.
+    pub last_slot_at: Option<crate::types::Timestamp>,
+    /// The slot currently owed. Far enough in the past = "expected but didn't
+    /// run". Derived; see [`crate::scheduler::slots`].
+    pub next_due_at: Option<crate::types::Timestamp>,
     pub created_at: crate::types::Timestamp,
     pub updated_at: crate::types::Timestamp,
 }
@@ -894,6 +900,8 @@ pub fn applet_from_row(row: &sqlx::postgres::PgRow) -> Result<Applet> {
         command,
         until: row.try_get("until").ok().flatten(),
         archived_at: row.try_get("archived_at").ok().flatten(),
+        last_slot_at: row.try_get("last_slot_at").ok().flatten(),
+        next_due_at: row.try_get("next_due_at").ok().flatten(),
         created_at: row.try_get("created_at")?,
         updated_at: row.try_get("updated_at")?,
     })

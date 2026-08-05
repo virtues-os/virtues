@@ -229,6 +229,7 @@ pub async fn list_applets_handler(State(state): State<AppState>) -> Response {
             t.memory, t.credential_id, t.device_id,
             t.command,
             t.until, t.archived_at,
+            t.next_due_at, t.last_slot_at,
             t.created_at, t.updated_at,
             r.status AS last_run_status,
             r.started_at AS last_run_at,
@@ -278,6 +279,10 @@ pub async fn list_applets_handler(State(state): State<AppState>) -> Response {
                     let until: Option<String> = r.try_get("until").unwrap_or(None);
                     let archived_at: Option<chrono::DateTime<chrono::Utc>> =
                         r.try_get("archived_at").unwrap_or(None);
+                    let next_due_at: Option<chrono::DateTime<chrono::Utc>> =
+                        r.try_get("next_due_at").unwrap_or(None);
+                    let last_slot_at: Option<chrono::DateTime<chrono::Utc>> =
+                        r.try_get("last_slot_at").unwrap_or(None);
                     let has_face = crate::server::faces::face_dir_for(&id).is_some();
                     let origin = crate::scheduler::applets::origin_of(
                         &owner,
@@ -333,6 +338,8 @@ pub async fn list_applets_handler(State(state): State<AppState>) -> Response {
                         "command": command,
                         "until": until,
                         "archived_at": archived_at,
+                        "next_due_at": next_due_at,
+                        "last_slot_at": last_slot_at,
                         "has_face": has_face,
                         "created_at": created,
                         "updated_at": updated,
@@ -384,6 +391,8 @@ pub async fn get_applet_handler(
                     "runtime": crate::scheduler::applets::derived_runtime(&action),
                     "until": action.until,
                     "archived_at": action.archived_at,
+                    "next_due_at": action.next_due_at,
+                    "last_slot_at": action.last_slot_at,
                     "has_face": crate::server::faces::face_dir_for(&action.id).is_some(),
                     "created_at": action.created_at,
                     "updated_at": action.updated_at,

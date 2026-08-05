@@ -68,6 +68,16 @@
 	const isSystem = $derived(action?.owner === 'system');
 	const isAgent = $derived(Boolean(action?.agent && action.agent.trim().length > 0));
 
+	// Milliseconds past the owed slot. Same hour of grace the scheduler and the
+	// needs-attention strip use, so the three surfaces never disagree about
+	// whether an applet is late.
+	const OVERDUE_GRACE_MS = 60 * 60 * 1000;
+	const overdueBy = $derived(
+		action?.next_due_at
+			? Date.now() - new Date(action.next_due_at).getTime() - OVERDUE_GRACE_MS
+			: 0
+	);
+
 	function markDirty() {
 		isDirty = true;
 	}
@@ -188,6 +198,17 @@
 					<h1 class="title">{action.name}</h1>
 					<div class="meta">
 						<span>{describeSchedule(action.cron_schedule ?? null)}</span>
+						{#if action.next_due_at && action.enabled && !action.archived_at}
+							<span class="dot-sep">·</span>
+							<!-- The scheduler's own pointer, not a re-derivation from the
+							     cron string: an applet that silently stopped firing says
+							     so here instead of predicting a run that never comes. -->
+							<span class:overdue={overdueBy > 0}>
+								{overdueBy > 0
+									? `expected ${relativeTime(action.next_due_at)}`
+									: `next ${relativeTime(action.next_due_at)}`}
+							</span>
+						{/if}
 						<span class="dot-sep">·</span>
 						<span class="muted-inline">
 							{#if action.archived_at}
@@ -496,8 +517,17 @@
 	.dot-sep {
 		opacity: 0.5;
 	}
+	/* Lifecycle is a neutral fact — "runs forever" is not a warning. This was
+	   tinted `--color-warning`, which made every applet's normal state read as
+	   a problem and left nothing distinct for the state that IS one. */
 	.muted-inline {
+		color: inherit;
+	}
+	/* The slot passed and nothing ran. The one thing in this row that earns a
+	   colour, now that it is the only one taking it. */
+	.overdue {
 		color: var(--color-warning);
+		font-weight: 500;
 	}
 	.hero-actions {
 		display: flex;
