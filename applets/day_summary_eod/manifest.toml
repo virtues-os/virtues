@@ -1,5 +1,5 @@
 name = "Day Summary (End of Day)"
-description = "Resolves sleep, scores novelty/autonomic/topic/entity, and writes the daily autobiography. Runs hourly; the binary self-gates to the user's local maintenance hour."
+description = "Writes the day's entry in your autobiography once the day is done."
 owner = "system"
 runtime = "function"
 command = ["day_summary_eod"]

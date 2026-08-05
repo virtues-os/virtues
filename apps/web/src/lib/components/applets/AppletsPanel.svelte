@@ -197,7 +197,18 @@
 	};
 
 	const columns: Column<Applet>[] = [
-		{ key: 'name', label: 'Name', width: '30%', minWidth: '140px' },
+		{ key: 'name', label: 'Name', width: '22%', minWidth: '140px' },
+		{
+			// The row's whole informational payload. Without it the table is six
+			// columns of machine vocabulary and a name the reader could already
+			// guess — Origin and Lifecycle badges answering questions nobody
+			// asked, while "what is this thing for" went unanswered.
+			key: 'description',
+			label: 'What it does',
+			width: '32%',
+			minWidth: '200px',
+			getValue: (a) => a.description ?? '—'
+		},
 		{
 			key: 'origin',
 			label: 'Origin',

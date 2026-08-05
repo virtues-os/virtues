@@ -154,6 +154,10 @@ export interface Applet {
 	id: string;
 	owner: 'system' | 'user' | 'ai';
 	name: string;
+	/** The applet's one-sentence intent, from its manifest — what it is for,
+	 *  in the user's terms. The list row's plain-English line and the detail
+	 *  headline. Null only for a row whose manifest omits it. */
+	description: string | null;
 	agent: string | null;
 	cron_schedule: string | null;
 	enabled: boolean;

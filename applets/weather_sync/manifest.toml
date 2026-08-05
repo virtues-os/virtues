@@ -1,5 +1,5 @@
 name = "Weather Sync"
-description = "Hourly current-conditions + short forecast from Open-Meteo for the owner's (rounded) location. Establishes the environment ontology; no key, no tracking."
+description = "Records the weather where you are, hour by hour."
 owner = "system"
 runtime = "function"
 command = ["weather_sync"]

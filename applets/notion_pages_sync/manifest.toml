@@ -1,5 +1,5 @@
 name = "Notion Pages"
-description = "Sync pages and databases from a connected Notion workspace."
+description = "Keeps your Notion pages and databases here."
 owner = "system"
 runtime = "function"
 command = ["notion_pages_sync"]

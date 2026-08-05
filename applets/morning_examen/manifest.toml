@@ -1,5 +1,5 @@
 name = "Morning Examen"
-description = "Daily morning reflection — reads yesterday's day article and surfaces a single concrete observation plus a gentle question for today."
+description = "Reads yesterday and offers one observation and one question for today."
 owner = "user"
 runtime = "function"
 triggers = ["cron", "manual"]

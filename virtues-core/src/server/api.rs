@@ -224,7 +224,7 @@ pub async fn list_applets_handler(State(state): State<AppState>) -> Response {
 
     let rows = sqlx::query(
         r#"SELECT
-            t.id, t.owner, t.name, t.agent, t.cron_schedule,
+            t.id, t.owner, t.name, t.description, t.agent, t.cron_schedule,
             t.enabled, t.config, t.condition, t.triggers,
             t.memory, t.credential_id, t.device_id,
             t.command,
@@ -256,6 +256,7 @@ pub async fn list_applets_handler(State(state): State<AppState>) -> Response {
                     let id: String = r.try_get("id").unwrap_or_default();
                     let owner: String = r.try_get("owner").unwrap_or_else(|_| "user".to_string());
                     let name: String = r.try_get("name").unwrap_or_default();
+                    let description: Option<String> = r.try_get("description").unwrap_or(None);
                     let agent: Option<String> = r.try_get("agent").unwrap_or(None);
                     let cron: Option<String> = r.try_get("cron_schedule").unwrap_or(None);
                     let enabled: bool = r.try_get("enabled").unwrap_or(false);
@@ -324,6 +325,7 @@ pub async fn list_applets_handler(State(state): State<AppState>) -> Response {
                         "id": id,
                         "owner": owner,
                         "name": name,
+                        "description": description,
                         "agent": agent,
                         "cron_schedule": cron,
                         "enabled": enabled,
@@ -377,6 +379,7 @@ pub async fn get_applet_handler(
                     "id": action.id,
                     "owner": action.owner,
                     "name": action.name,
+                    "description": action.description,
                     "agent": action.agent,
                     "cron_schedule": action.cron_schedule,
                     "enabled": action.enabled,

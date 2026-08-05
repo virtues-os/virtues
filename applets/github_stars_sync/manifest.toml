@@ -1,5 +1,5 @@
 name = "GitHub Stars"
-description = "Sync starred repositories into bookmarks."
+description = "Files the repositories you star on GitHub with your bookmarks."
 owner = "system"
 runtime = "function"
 command = ["github_stars_sync"]

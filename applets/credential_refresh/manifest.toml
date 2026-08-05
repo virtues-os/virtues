@@ -1,5 +1,5 @@
 name = "Credential Refresh"
-description = "Sweep via_proxy credentials whose access tokens are nearing expiry and refresh them."
+description = "Keeps your connected accounts signed in, renewing access before it lapses."
 owner = "system"
 runtime = "function"
 command = ["credential_refresh"]

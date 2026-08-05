@@ -1,5 +1,5 @@
 name = "Plaid Investments"
-description = "Sync brokerage holdings and securities for a Plaid Hosted Link credential."
+description = "Keeps your brokerage holdings current."
 owner = "system"
 runtime = "function"
 command = ["plaid_investments_sync"]

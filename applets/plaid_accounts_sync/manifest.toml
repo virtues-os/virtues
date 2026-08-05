@@ -1,5 +1,5 @@
 name = "Plaid Accounts"
-description = "Sync bank accounts (balances, masks) for a Plaid Hosted Link credential."
+description = "Keeps your bank balances current."
 owner = "system"
 runtime = "function"
 command = ["plaid_accounts_sync"]

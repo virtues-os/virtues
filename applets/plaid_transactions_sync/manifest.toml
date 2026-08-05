@@ -1,5 +1,5 @@
 name = "Plaid Transactions"
-description = "Sync transactions for a Plaid Hosted Link credential. Uses incremental cursor."
+description = "Brings in new transactions as your bank posts them."
 owner = "system"
 runtime = "function"
 command = ["plaid_transactions_sync"]

@@ -20,44 +20,53 @@ The plan makes one field load-bearing three separate times:
 - *"Row = face-thumbnail-or-glyph, name, **plain-English line**, last activity,
   on/off, run-pulse"* (plan, UI surfaces).
 
-All 24 manifests carry one. [`applet_templates/mod.rs:43`](../virtues-core/src/applet_templates/mod.rs)
-parses it into `AppletTemplate`. Then every one of the three upsert branches
-([`mod.rs:1163`](../virtues-core/src/applet_templates/mod.rs)) binds thirteen
-fields and `description` is not among them — because **`app_applets` has no
-`description` column**. It was never in `0004`, and no migration since has added
-it. It is read off disk and dropped on the floor at reconcile.
+> **FIXED 2026-08-05.** Migration `0093` adds the column, the loader gained the
+> field, all three upsert branches bind it, both handlers return it, and the 22
+> shipped descriptions were rewritten in one voice. `descriptions.ts` is gone.
+> Kept below because the shape of the failure is worth remembering.
 
-Downstream, everything the plan hangs on that sentence is therefore missing:
-neither `list_applets_handler` ([`server/api.rs:219`](../virtues-core/src/server/api.rs))
-nor `get_applet_handler` can return it, the `Applet` interface in `client.ts`
-has no such key, the list shows no plain-English line, and the detail page has
-no headline.
+All 24 manifests carry one. The `Template` struct **never had the field** —
+the `description` at `mod.rs:43` belongs to `Source`, a different struct — and
+there is no `deny_unknown_fields`, so serde discarded the key silently on every
+load. It was not parsed-then-dropped; it was never read. Downstream, every one
+of the three upsert branches bound thirteen fields with no `description` among
+them, because **`app_applets` had no `description` column** either: not in
+`0004`, and no migration since had added one.
 
-What stands in its place is [`applets/descriptions.ts`](../apps/web/src/lib/applets/descriptions.ts):
-a hardcoded seven-entry map keyed on `function_name`, of which two keys
-(`day_illustration`, `trash_purge`) name applets that do not exist in this
-repo, and which is missing roughly fifteen that do. Its own header carries the
-fix: *"TODO: promote this to a `description` field … so this map can go away."*
+So everything the plan hung on that sentence was missing: neither handler could
+return it, the `Applet` interface had no such key, the list showed no
+plain-English line, and the detail page had no headline.
 
-**This is the first thing to build.** The list line, the detail headline, the
-authoring gate, and any future gallery all read from it, and none of them can be
-designed honestly until it exists.
+What stood in its place was `applets/descriptions.ts` — a hardcoded seven-entry
+map keyed on `function_name`, of which two keys (`day_illustration`,
+`trash_purge`) named applets that do not exist in this repo, and which was
+missing roughly fifteen that do. When it missed, it fell through to the first
+sentence of the agent **prompt**, so `morning_examen` introduced itself as *"You
+are the user's morning reflection companion"* — an instruction addressed **to**
+the applet, leaking out as a description **of** it. The file's own header
+carried the fix: *"TODO: promote this to a `description` field … so this map can
+go away."*
+
+**The lesson worth keeping:** a field can be in every manifest, documented as
+load-bearing in two plans, and still never exist — because nothing between the
+TOML and the screen was ever required to carry it, and no test asked. Both ends
+now have one.
 
 ## Findings register
 
 | # | Where | Finding | Plan says |
 |---|---|---|---|
-| **D1** | `app_applets` schema · `mod.rs:1163` · `api.rs:219` | No `description` column; parsed then dropped; absent from both API handlers and the TS type | intent-source · gate headline · the list's plain-English line |
-| **D2** | `applets/descriptions.ts` | Hardcoded 7-entry stand-in; 2 keys name nonexistent applets, ~15 real ones missing | (the file's own TODO: delete it) |
+| ~~**D1**~~ | `app_applets` schema · `mod.rs:1163` · `api.rs:219` | **FIXED (0093).** No `description` column; never parsed (the loader struct lacked the field); absent from both API handlers and the TS type | intent-source · gate headline · the list's plain-English line |
+| ~~**D2**~~ | `applets/descriptions.ts` | **FIXED.** File deleted. Hardcoded 7-entry stand-in; 2 keys named nonexistent applets, ~15 real ones missing | (the file's own TODO: delete it) |
 | **L1** | `AppletsPanel.svelte:350` | `defaultViewMode="table"` — the card with the run-pulse and output excerpt is hidden unless the user switches to grid | the row *is* glyph + name + line + activity + toggle + pulse |
-| **L2** | `AppletsPanel.svelte:170–212` | Default table is six columns of machine vocabulary (Origin · Lifecycle · Schedule · Last run · Status); no plain-English line, no on/off | as above |
+| **L2** | `AppletsPanel.svelte:170–212` | *Partly fixed:* a `What it does` column now carries the sentence. Still no on/off in the row | as above |
 | **L3** | `AppletsPanel.svelte:199–211` | The `Status` column keys on `enabled` but renders the *last run's* status. Enabled/disabled is unreachable from the table except through a filter | on/off is a row affordance |
 | **L4** | `AppletsPanel.svelte:288–297` | `Reconcile` ("re-read applet manifests from disk") is a header button beside `New` | not in the spec; this is an operator verb on a consumer page |
 | **L5** | `AppletsPanel.svelte:355` | Empty state is `"No applets yet — ask for one in chat."` — no examples, no starter set | the contemplative starter set markets as **"Practices"**; `Practices` appears nowhere in the codebase |
 | **T1** | `AppletDetailView.svelte` | Four editable fields: Name, Agent prompt, Schedule, Memory. No description, condition, triggers, `until`, limits, cost, credential/source | header → face → *the guts* (schedule, triggers, limits — all editable) |
 | **T2** | `AppletDetailView.svelte:222–228` | The face is not on the page; it is an "Open view" button to a separate tab | the face **is** the detail body; headless falls back to the run log |
 | **T3** | `AppletDetailView.svelte:68` | `isSystem` gates on `owner === 'system'` — the exact mistake the list already fixed by switching to `origin`. Your Gmail sync's page therefore claims to be system-managed and locks its name | `owner` is write-authority, not provenance |
-| **T4** | `AppletDetailView.svelte:497–499` | `.muted-inline` resolves to `--color-warning`, so every applet's "runs forever" renders orange | lifecycle is a neutral fact |
+| ~~**T4**~~ | `AppletDetailView.svelte:497–499` | **FIXED.** `.muted-inline` resolved to `--color-warning`, so every applet's "runs forever" rendered orange | lifecycle is a neutral fact |
 | **T5** | `AppletDetailView.svelte:243` | Hint reads `Managed by templates.toml` — a file that no longer exists (per-folder manifests since the rename) | — |
 | **T6** | `AppletDetailView.svelte:259, 299, 304` | "Delete **action**", "System **action** — managed automatically", "What should this **action** do each run?" | Applet everywhere (phase 1) |
 | **T7** | `AppletDetailView.svelte:287–293` | Memory is a bare textarea labeled "Memory" / "Persistent markdown scratchpad, carried across runs" | *"notes this applet keeps"* |
@@ -67,7 +76,7 @@ designed honestly until it exists.
 | **M1** | 23 of 24 manifests | `runtime = "…"` still declared | phase 1 drops `runtime` — it is derived from which fields are set |
 | **M2** | 16 manifests | `default_cron`; only 2 use the canonical `schedule` (loader accepts both via `alias`) | manifest key → `schedule` in phase 1 |
 | **M3** | `MANIFEST_SCHEMA.json`, `AUTHORING.md` | Both still speak "action", reference `actions/<name>/`, and route `config.view.name` at `apps/web/src/lib/applets/<name>/` — a path that does not exist (real path is `applets/<name>/ui/`). `AUTHORING.md` announces "the three runtimes" and then lists two | phase 6 cleanup: AUTHORING.md → AGENTS.md + doc-drift fix |
-| **M4** | all 24 descriptions | No shared voice. "A small dog who lives on your box" sits beside "Sweep via_proxy credentials whose access tokens are nearing expiry" and "the binary self-gates to the user's local maintenance hour" | the sentence is the user's intent, in the user's terms |
+| ~~**M4**~~ | all 24 descriptions | **FIXED.** No shared voice. "A small dog who lives on your box" sits beside "Sweep via_proxy credentials whose access tokens are nearing expiry" and "the binary self-gates to the user's local maintenance hour" | the sentence is the user's intent, in the user's terms |
 | **A1** | `applets/user/heart_rate_explorer/manifest.toml` | A face-only dashboard carries `agent = "…If run, do nothing and report that this is a display-only dashboard."` `setup_applet` permits an agent-less face ([`applet_setup.rs:63–74`](../virtues-core/src/tools/applet_setup.rs)), but AGENTS.md never says so — so the model invented a no-op prompt, and "Run now" spends a model call to say nothing | capability contract must be exhaustive; the model writes only what it is told exists |
 | **A2** | `applets/AGENTS.md` | No rule for face-only applets; no rule that `description` is what the user will read on the list row | the sentence is compiled from intent and blessed at the gate |
 

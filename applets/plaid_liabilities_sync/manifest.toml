@@ -1,5 +1,5 @@
 name = "Plaid Liabilities"
-description = "Sync credit cards, mortgages, and student loans for a Plaid Hosted Link credential."
+description = "Keeps your credit cards, mortgage, and loans current."
 owner = "system"
 runtime = "function"
 command = ["plaid_liabilities_sync"]
