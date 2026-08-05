@@ -233,12 +233,22 @@ async fn prepare_run(
 
     // 3. Condition (SQL gate). Evaluate before creating a run row.
     //
-    // A condition gates POLLS, not people. `message` and `manual` are someone
-    // acting deliberately, and a gate like `extract(hour from now()) < 8`
-    // would silently swallow what they just sent — the same shape as the
-    // catch-up × time-of-day trap, and the same answer as rate caps exempting
-    // "Run now": a limit that refuses the person pressing the button is a lock.
-    let gated = !matches!(trigger, "message" | "manual");
+    // Only `message` is exempt, and the line is narrower than "a person did
+    // it deliberately" — `manual` is deliberate too and is still gated.
+    //
+    // The difference is what the condition is FOR. A condition guards whether
+    // the applet's scheduled work should happen, and AGENTS.md tells authors
+    // to write exactly that: `NOT EXISTS (a successful run today)` is the
+    // recommended cooldown idiom. "Run now" means "do your scheduled thing
+    // now", so bypassing that guard would let a button press double-write the
+    // day's entry — the condition is an idempotency check, not a preference.
+    //
+    // A message is not the scheduled work. It is new input that did not exist
+    // when the gate was written, there is nothing to duplicate, and a clock
+    // gate would silently swallow what someone typed (a falsy condition
+    // records no run at all). So the message goes through and `manual` does
+    // not.
+    let gated = trigger != "message";
     if let Some(condition) = &action.condition {
         if gated && !condition.trim().is_empty() {
             match eval_condition(&deps.db, condition).await {
@@ -1192,12 +1202,20 @@ mod tests {
             db: pool.clone(),
             yjs: YjsState::new(pool.clone()),
         };
-        applet_with_falsy_condition(&pool, "applet_m", r#"["cron","message"]"#).await;
+        applet_with_falsy_condition(&pool, "applet_m", r#"["cron","manual","message"]"#).await;
 
         // The cron wake is gated, and silently: no run row at all.
         let cron = run_applet(&deps, "applet_m", "cron", None).await.unwrap();
         assert_eq!(cron.status, AppletRunStatus::Skipped);
         assert_eq!(run_count(&pool, "applet_m").await, 0, "a poll is gated silently");
+
+        // And so is "Run now". The condition guards whether the scheduled work
+        // should happen — AGENTS.md's own cooldown idiom is
+        // `NOT EXISTS (a successful run today)` — so a button press that
+        // bypassed it would double-write the day's entry.
+        let manual = run_applet(&deps, "applet_m", "manual", None).await.unwrap();
+        assert_eq!(manual.status, AppletRunStatus::Skipped, "manual is not exempt");
+        assert_eq!(run_count(&pool, "applet_m").await, 0);
 
         // The message is not.
         let payload = serde_json::json!({ "message": "I had eggs" });
