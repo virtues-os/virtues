@@ -1,7 +1,6 @@
 name = "Document Extraction"
 description = "Reads the text out of your PDFs and documents so you can search inside them."
 owner = "system"
-runtime = "function"
 command = ["document_extraction"]
 triggers = ["cron"]
 schedule = "30 */5 * * * *"

@@ -16,8 +16,8 @@ applet: that is the edit path.
 | Field | Language | Notes |
 |---|---|---|
 | `name` (req) | text | slug = lowercased name with `_` ("Calorie Tracker" → `calorie_tracker`); tables live in schema `applet_<slug>` |
-| `description` (req) | one sentence | the user's intent — the applet's headline |
-| `agent` (req) | prompt | runs self-contained: no chat history, opens with the kickoff turn "Run your action instruction now." |
+| `description` (req) | one sentence | **the user reads this.** It is the line under the applet's name in the list and the headline on its page — what the applet does FOR them, in their words, not how it works. "Keeps your bank balances current", not "Sync accounts via Plaid cursor" |
+| `agent` | prompt | **optional** — only for applets that DO something each run. Runs self-contained: no chat history, opens with the kickoff turn "Run your action instruction now." Omit it entirely for a face-only dashboard |
 | `schedule` | 6-field cron | seconds first, **box-local timezone**. `0 0 6 * * *` = daily 6am |
 | `triggers` | list | `cron` `manual` `tool` `api` `webhook`; defaults follow `schedule` |
 | `condition` | SQL boolean | run gate — local data only, never network |
@@ -25,6 +25,18 @@ applet: that is the edit path.
 | `schema_sql` | **one migration** | **only** schema `applet_<slug>`. First call creates; later calls submit *only what changed* — see below |
 | `face_html` | complete index.html | sandboxed iframe; include `<link rel="stylesheet" href="virtues.css">` + `<script src="virtues.js"></script>`; read data with `await virtues.query(sql)` (read-only); 48KB max |
 | `limits` | object | protective ceilings — see below. Only enforced keys are accepted |
+
+## A dashboard has no agent
+
+An applet needs **either** an `agent` (something to do each run) **or** a
+`face_html` (something to show). A dashboard is face-only: the face queries the
+data itself, so there is nothing for a prompt to do.
+
+Do not write a placeholder prompt that says it has nothing to do. One exists on
+a real box — *"This applet is a face-only dashboard… If run, do nothing and
+report that this is a display-only dashboard"* — and it means "Run now" spends
+a model call to say nothing. **Omit the field.** The check accepts that; a
+face-only applet with no `agent` is a complete, valid applet.
 
 ## Tables: `schema_sql` is a migration, not a schema
 

@@ -1,7 +1,6 @@
 name = "Embedding Indexer"
 description = "Keeps search working on meaning, so you can find things you cannot name exactly."
 owner = "system"
-runtime = "function"
 command = ["embedding_index"]
 triggers = ["cron"]
 schedule = "0 */15 * * * *"

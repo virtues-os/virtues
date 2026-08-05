@@ -1,10 +1,9 @@
 name = "Plaid Transactions"
 description = "Brings in new transactions as your bank posts them."
 owner = "system"
-runtime = "function"
 command = ["plaid_transactions_sync"]
 triggers = ["cron", "manual"]
-default_cron = "0 */30 * * * *"
+schedule = "0 */30 * * * *"
 per_credential = true
 source = { id = "plaid" }
 

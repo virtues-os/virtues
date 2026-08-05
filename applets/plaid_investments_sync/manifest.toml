@@ -1,9 +1,8 @@
 name = "Plaid Investments"
 description = "Keeps your brokerage holdings current."
 owner = "system"
-runtime = "function"
 command = ["plaid_investments_sync"]
 triggers = ["cron", "manual"]
-default_cron = "0 0 */12 * * *"
+schedule = "0 0 */12 * * *"
 per_credential = true
 source = { id = "plaid" }

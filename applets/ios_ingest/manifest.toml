@@ -1,7 +1,6 @@
 name = "iOS Ingest"
 description = "Receives everything your iPhone collects — health, location, calendar, contacts, audio, and finance."
 owner = "system"
-runtime = "function"
 command = ["ios_ingest"]
 triggers = ["webhook"]
 per_credential = true

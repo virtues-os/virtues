@@ -9,7 +9,7 @@
 //!
 //! 2. `actions/<name>/manifest.toml` — one per action. Each is a flat TOML
 //!    document with the action's declarative metadata (name, runtime,
-//!    command, triggers, default_cron, etc.). Globbed at parse time;
+//!    command, triggers, schedule, etc.). Globbed at parse time;
 //!    folder name becomes the action's `id_prefix` if not explicitly set.
 //!
 //! On startup, `reconcile_templates`:
@@ -112,10 +112,11 @@ struct Template {
     #[serde(default)]
     triggers: Vec<String>,
     /// Cron seed for the live `cron_schedule` value (SQL-owned after seeding).
-    /// Canonical manifest key is `schedule`; `default_cron` accepted as the
-    /// legacy spelling.
-    #[serde(default, alias = "schedule")]
-    default_cron: Option<String>,
+    /// Canonical manifest key is `schedule`; `default_cron` is still accepted
+    /// so a folder written against the old spelling — an import, an older
+    /// backup — keeps working.
+    #[serde(default, alias = "default_cron")]
+    schedule: Option<String>,
     #[serde(default = "default_true")]
     default_enabled: bool,
     #[serde(default)]
@@ -139,8 +140,6 @@ struct Template {
     ///   from stdin, writes `AppletOutput` JSON to stdout, exits.
     /// - `view` — pure Svelte component; never invoked server-side. The
     ///   runner skips `view` actions; the scheduler refuses to enqueue them.
-    #[serde(default = "default_runtime")]
-    runtime: String,
     /// Argv to spawn (JSON array in SQL). A bare `command[0]` resolves to a
     /// Cargo-built action binary; anything else (`python3 main.py`, `./x`) runs
     /// via PATH. Used by both `function` and `service` runtimes; unset for `view`.
@@ -218,10 +217,6 @@ struct ParsedTemplates {
 
 fn default_true() -> bool {
     true
-}
-
-fn default_runtime() -> String {
-    "function".to_string()
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -968,15 +963,24 @@ pub async fn reconcile_templates(db: &PgPool) -> Result<usize> {
             }
         };
 
-        // `view` actions are pure-frontend and never invoked server-side, so
-        // an empty `triggers` list is the canonical shape. For everything else,
-        // empty triggers means the action can never fire — fail reconcile so
-        // a manifest typo surfaces immediately rather than silently dropping
-        // the action from the catalog.
-        if template.triggers.is_empty() && template.runtime != "view" {
+        // A face-only applet is never invoked server-side, so an empty
+        // `triggers` list is its canonical shape. For anything that DOES run,
+        // empty triggers means it can never fire — fail reconcile so a
+        // manifest typo surfaces immediately rather than silently dropping the
+        // applet from the catalog.
+        //
+        // Derived from which fields are set, not from a declared `runtime`.
+        // The two could disagree, and when they did the declaration won: a
+        // manifest with a command and `runtime = "view"` passed this check and
+        // then never ran. This is the same derivation the runner and the API
+        // already use.
+        let runs_server_side = template.command.as_ref().is_some_and(|c| !c.is_empty())
+            || template.agent.as_deref().is_some_and(|a| !a.trim().is_empty());
+        if template.triggers.is_empty() && runs_server_side {
             return Err(Error::Other(format!(
-                "template {} has empty triggers list (runtime={}); non-view actions require at least one trigger",
-                id_prefix, template.runtime
+                "template {id_prefix} has an empty triggers list but does run (it has a \
+                 command or an agent prompt) — give it at least one of: cron, manual, \
+                 tool, api, webhook"
             )));
         }
 
@@ -1142,17 +1146,6 @@ async fn upsert_row(
     let triggers_json = serde_json::to_string(&template.triggers)
         .map_err(|e| Error::Other(format!("failed to serialize triggers: {e}")))?;
 
-    // Validate runtime up front so a bad value doesn't slip into SQL.
-    match template.runtime.as_str() {
-        "function" | "service" | "view" => {}
-        other => {
-            return Err(Error::Other(format!(
-                "template {} has invalid runtime '{}' (must be function, service, or view)",
-                applet_id, other
-            )));
-        }
-    }
-
     // Optional polyglot command stored as JSON. Reconcile rewrites the
     // declarative `command` field on every system upsert (matches the rest of
     // the manifest-managed fields).
@@ -1250,7 +1243,7 @@ async fn upsert_row(
         .bind(&template.name)
         .bind(&template.owner)
         .bind(&template.agent)
-        .bind(&template.default_cron)
+        .bind(&template.schedule)
         .bind(template.default_enabled)
         .bind(&config_json)
         .bind(&template.condition)

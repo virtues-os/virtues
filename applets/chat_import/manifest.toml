@@ -1,7 +1,6 @@
 name = "Chat Import"
 description = "Brings a Claude, ChatGPT, or Gemini export into your history — once, and safe to repeat."
 owner = "system"
-runtime = "function"
 command = ["chat_import"]
 # Manual-trigger ONLY — no cron. This is what makes it a one-time/snapshot
 # source rather than a living one. The /api/chat-import/upload route stores the

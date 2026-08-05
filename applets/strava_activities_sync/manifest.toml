@@ -1,10 +1,9 @@
 name = "Strava Activities"
 description = "Brings in your runs, rides, swims, and other workouts from Strava."
 owner = "system"
-runtime = "function"
 command = ["strava_activities_sync"]
 triggers = ["cron", "manual"]
-default_cron = "0 */30 * * * *"
+schedule = "0 */30 * * * *"
 per_credential = true
 source = { id = "strava" }
 
