@@ -5,11 +5,11 @@
 	record, chat is you interrogating it, the day page is its account of you
 	written overnight. Home is the only place the record and the person are in
 	the room at the same time, with the day still open — so the page is built
-	as four turns of that meeting rather than as a dashboard.
+	as turns of that meeting rather than as a dashboard.
 
-	  shows    the whole record as a field, and a door into any day of it
 	  speaks   one counted observation, no model involved
 	  shows    today, from the raw streams, scrubbable down to the rows
+	  opens    the work you had in your hands last
 	  asks     the one thing only the owner can answer
 	  answers  the one line you choose to keep
 
@@ -37,7 +37,6 @@
 		getLifeline,
 		getWeatherNow,
 		getFeed,
-		listOnThisDay,
 		type LifelineRecord,
 		type WikiDayApi,
 		type WikiNote,
@@ -45,17 +44,18 @@
 		type TodayStreamsView,
 		type DayHeartRateSample,
 		type LifelineData,
-		type OnThisDayApi,
 		type WeatherNow,
 	} from "$lib/wiki/api";
 	import { getStreamHealth, type StreamHealth } from "$lib/api/client";
 	import { Page } from "$lib";
 	import Icon from "$lib/components/Icon.svelte";
+	import { notebookStore } from "$lib/stores/notebook.svelte";
+	import { pagesStore } from "$lib/stores/pages.svelte";
+	import { chatSessions } from "$lib/stores/chatSessions.svelte";
 	import { windowShellStore } from "$lib/stores/window-shell.svelte";
 	import DayDeck from "$lib/components/home/DayDeck.svelte";
 	import DayGround from "$lib/components/home/DayGround.svelte";
 	import DayNovelty from "$lib/components/home/DayNovelty.svelte";
-	import RecordField from "$lib/components/home/RecordField.svelte";
 	import RecordRemark from "$lib/components/home/RecordRemark.svelte";
 	import PlaceAsk from "$lib/components/home/PlaceAsk.svelte";
 
@@ -106,7 +106,6 @@
 	let points = $state<TimelineDayPoint[]>([]);
 	let health = $state<Record<string, StreamHealth>>({});
 	let weather = $state<WeatherNow | null>(null);
-	let anniversaries = $state<OnThisDayApi[]>([]);
 	let notes = $state<WikiNote[]>([]);
 	let scrubMs = $state<number | null>(null);
 	let pinnedMs = $state<number | null>(null);
@@ -172,12 +171,13 @@
 		refresh();
 		getDayByDate(yesterdayDate).then((d) => (yDay = d)).catch(() => {});
 		getWeatherNow().then((w) => (weather = w)).catch(() => {});
-		// This date in earlier years, marked on the field it came from.
-		listOnThisDay(todayDate).then((a) => (anniversaries = a)).catch(() => {});
 		// Arm state changes on the scale of connecting a source, not of a day.
 		getStreamHealth()
 			.then((rows) => (health = Object.fromEntries(rows.map((r) => [r.name, r]))))
 			.catch(() => {});
+		notebookStore.load?.();
+		if (!pagesStore.pages.length) pagesStore.loadPages();
+		if (!chatSessions.sessions.length && !chatSessions.isLoading) chatSessions.load();
 
 		const clockId = setInterval(tick, 10_000);
 		let dataId = setInterval(refresh, 30_000);
@@ -201,11 +201,6 @@
 	function open(route: string, label?: string) {
 		windowShellStore.openTabFromRoute(route, label ? { label } : undefined);
 	}
-	/** A day picked off the field. Its own date is the best label it has. */
-	function openDay(date: string) {
-		const d = new Date(`${date}T12:00:00`);
-		open(`/day/day_${date}`, d.toLocaleDateString(undefined, { day: "numeric", month: "short", year: "numeric" }));
-	}
 
 	// ---- lead: yesterday in one line (epigraph, else its first sentence) ----
 	const leadLine = $derived.by(() => {
@@ -224,6 +219,44 @@
 				: null;
 		return [dateline, wx, clock].filter(Boolean).join(" · ");
 	});
+
+	// ---- recents: notebooks, pages and chats blended by recency ----
+	// Not "desk" — the sidebar's Desk is the pinned shelf, and two different
+	// meanings for one word is one too many.
+	type RecentItem = { route: string; title: string; kind: string; ts: number; note?: string };
+	const recentItems = $derived.by<RecentItem[]>(() => {
+		const nb: RecentItem[] = notebookStore.notebooks.map((n: any) => ({
+			route: `/notebook/${n.id}`,
+			title: n.name || "Untitled",
+			kind: "notebook",
+			ts: n.updated_at ? Date.parse(n.updated_at) : 0,
+			note: n.current_status ? "live" : undefined,
+		}));
+		const pg: RecentItem[] = pagesStore.pages.map((p) => ({
+			route: `/page/${p.id}`,
+			title: p.title || "Untitled",
+			kind: "page",
+			ts: p.updated_at ? Date.parse(p.updated_at) : 0,
+		}));
+		const ch: RecentItem[] = chatSessions.sessions.map((c) => ({
+			route: `/chat/${c.conversation_id}`,
+			title: c.title || "Untitled",
+			kind: "chat",
+			ts: c.last_updated ? Date.parse(c.last_updated) : 0,
+		}));
+		return [...nb, ...pg, ...ch].sort((a, b) => b.ts - a.ts).slice(0, 5);
+	});
+
+	function ago(iso: string | null): string {
+		if (!iso) return "";
+		const m = Math.round((Date.now() - Date.parse(iso)) / 60000);
+		if (isNaN(m)) return "";
+		if (m < 60) return `${m}m`;
+		const h = Math.floor(m / 60);
+		if (h < 24) return `${h}h`;
+		const d = Math.floor(h / 24);
+		return d < 7 ? `${d}d` : `${Math.floor(d / 7)}w`;
+	}
 
 	// ---- the keep: one line, stored as a note on today ----
 	// A line you choose is note-shaped: it is about the day, not the day's own
@@ -306,21 +339,15 @@
 	{/snippet}
 
 	<div class="body">
-		<!-- The fold belongs to the record. Everything below it is quieter for
-		     having paid for this. -->
-		<section class="hero rv">
-			<RecordField {health} {tz} {anniversaries} onpick={openDay} />
-		</section>
-
 		<!-- The box speaks, then — if it wrote one — quotes itself. -->
-		<div class="rv" style="animation-delay:.05s">
+		<div class="rv">
 			<RecordRemark {dayStartMs} />
 			{#if leadLine}
 				<p class="lead">{leadLine}</p>
 			{/if}
 		</div>
 
-		<section class="today rv" style="animation-delay:.1s">
+		<section class="today rv" style="animation-delay:.06s">
 			<div class="tbody" class:solo={points.length <= 1}>
 				<DayDeck
 					{dayStartMs}
@@ -375,6 +402,22 @@
 				</div>
 			{/if}
 		</section>
+
+		{#if recentItems.length}
+			<section class="recents rv" style="animation-delay:.12s">
+				<h2 class="kicker">recents</h2>
+				{#each recentItems as it (it.route)}
+					<div class="line">
+						<!-- The kicker's space has to come from CSS: leading whitespace
+						     inside the span is trimmed, which rendered "Untitled— page". -->
+						<button class="t" type="button" onclick={() => open(it.route, it.title)}>
+							{it.title}{#if it.kind !== "notebook"}<span class="s">— {it.kind}</span>{/if}
+						</button>
+						<span class="d mono">{it.note ?? ago(new Date(it.ts).toISOString())}</span>
+					</div>
+				{/each}
+			</section>
+		{/if}
 
 		<!-- The box asks. -->
 		<div class="rv" style="animation-delay:.16s"><PlaceAsk /></div>
@@ -439,6 +482,7 @@
 	@keyframes rv { to { opacity: 1; transform: none; } }
 	@media (prefers-reduced-motion: reduce) { .rv { animation: none; opacity: 1; transform: none; } }
 
+	.kicker { font-family: var(--font-mono); font-size: 10.5px; letter-spacing: 0.04em; color: var(--color-foreground-subtle); margin: 0 0 18px; font-weight: 400; }
 	.link { font-family: var(--font-sans); font-size: 13.5px; font-weight: 500; color: var(--color-primary); background: none; border: 0; padding: 0; cursor: pointer; }
 	.link:hover { text-decoration: underline; text-underline-offset: 3px; }
 	.link .arw { opacity: 0.7; }
@@ -456,12 +500,6 @@
 	.days button + button { border-left: 1px solid var(--color-border); }
 	.days button:hover { background: var(--hover-bg); color: var(--color-foreground); }
 	.days button.now { color: var(--color-foreground); }
-
-	/* How far the plate may break the page's padding. The figure is the one
-	   thing allowed to touch the edges; its caption is not, so the bleed is a
-	   property the field reads rather than a margin on the whole section. */
-	.hero { --field-bleed: 3rem; margin: 4px 0 clamp(56px, 9vh, 104px); }
-	@media (max-width: 640px) { .hero { --field-bleed: 1.5rem; } }
 
 	/* Yesterday's own sentence. Quieter than the page's h1 on purpose — it is a
 	   line the box wrote, not the name of the room. */
@@ -501,6 +539,14 @@
 	.mlist .rp { color: var(--color-foreground-muted); }
 	.mnone { font-family: var(--font-sans); font-size: 12.5px; color: var(--color-foreground-subtle); margin: 0; }
 	@media (max-width: 640px) { .nov, .moment { margin-left: 0; } }
+
+	/* recents — the work you had in your hands last, newest first */
+	.recents { max-width: 640px; }
+	.line { display: flex; align-items: baseline; gap: 14px; padding: 8px 0; }
+	.line .t { font-family: var(--font-serif); font-size: 16.5px; color: var(--color-foreground); min-width: 0; text-align: left; background: none; border: 0; padding: 0; cursor: pointer; }
+	.line .t .s { margin-left: 0.34em; color: var(--color-foreground-subtle); }
+	.line .t:hover { color: var(--color-primary); }
+	.line .d { margin-left: auto; font-size: 11px; color: var(--color-foreground-subtle); white-space: nowrap; flex: none; }
 
 	/* the keep */
 	.keep { margin-top: clamp(48px, 8vh, 92px); max-width: 640px; }
