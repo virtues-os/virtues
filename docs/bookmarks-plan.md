@@ -246,7 +246,7 @@ Landed in `2f5a5c94` (sources spine) and `c814dcb8` (the room):
 Ordered so each step is useful the day it lands, and the riskiest work
 (the iOS extension, the X proxy) blocks nothing ahead of it.
 
-### 1. Note and tags into the embed text — hours, do first
+### 1. Note and tags into the embed text — ✅ LANDED 2026-08-05
 
 `embed_text_sql` for `content_bookmark` is still `title || description`. Extend
 it to include `note` and `tags`. This is the highest ratio change in the
@@ -257,6 +257,15 @@ migration 0073's own comment says is where the retrieval boost belongs.
 `se.doc_hash IS DISTINCT FROM md5(embed_text)` (`search/indexer.rs`), so
 changing the expression self-invalidates every bookmark row and the next
 `embedding_index` cron re-embeds them. Nothing to migrate, nothing to backfill.
+Checked against the dev row: stored hash differs from recomputed, predicate
+returns true.
+
+Tags needed a `jsonb_typeof(t.tags) = 'array'` guard —
+`jsonb_array_elements_text` raises on a non-array, and this expression is
+interpolated into the indexer's scan for every row of the ontology, so one
+malformed value from any producer would abort indexing for all bookmarks rather
+than skipping its own row. Exercised against object, scalar, and empty-array
+tags; all degrade to `''`.
 
 ### 2. URL fetcher — native first, Parallel Extract as escalation
 
