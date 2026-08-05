@@ -1,8 +1,13 @@
 # Bookmarks — capture, enrichment, and retrieval plan
 
-Status: DESIGNED 2026-07-28 (conversation-complete, unbuilt)
-Owner table: `data_content_bookmark` (migration 0007) — schema already fits; no
-migration needed for v1 except the user-authored `why` column (see below).
+Status: **CAPTURE SPINE BUILT 2026-08-04** (`2f5a5c94`, `c814dcb8`);
+enrichment, IR, and the remaining doors unbuilt — see [Build plan](#build-plan-2026-08-05).
+Owner table: `data_content_bookmark` (migration 0007) + `note` (migration 0073).
+
+**Current reality in one line: bookmarks are storable but unfindable.** Three
+capture doors land rows; `embed_text_sql` is still `title || description`, so a
+saved Instagram post embeds as an empty document and the user's own `note` is
+invisible to search.
 
 ## Why this exists
 
@@ -211,79 +216,183 @@ To build:
 "Pinned". `docs/ui-overhaul-plan.md` item 8 (renaming `app_pins` →
 `app_bookmarks`) COLLIDES with this and should be dropped/renamed.
 
-## Build order
+## What shipped (2026-08-04)
 
-### Phase 0 — the spine (prerequisite)
-
-Naming convention: ingest applets are SOURCE-named ({device}_ingest for
-webhook push, {provider}_{stream}_sync for cron pulls) and fan out into
-whatever ontologies their payload supports; pipeline applets are
-function-named (embedding_index, document_extraction). So there is no
+Naming convention that shaped it: ingest applets are SOURCE-named
+({device}_ingest for webhook push, {provider}_{stream}_sync for cron pulls)
+and fan out into whatever ontologies their payload supports; pipeline applets
+are function-named (embedding_index, document_extraction). So there is no
 "bookmark_ingest" — bookmarks are a stream within source applets, plus one
-pipeline applet:
+pipeline applet.
 
-1. Shared normalizer (helper crate fn): raw save → `data_content_bookmark`
-   row + lake archive. Consumed by every door below.
-2. **In-app save**: plain API endpoint (`POST /api/bookmarks`) → shared
-   normalizer. No applet needed; loopback-authenticated.
-3. `bookmark_enrichment` pipeline applet: queue, daily budget, lazy tail;
-   Omni for pixels/audio, Lite for text composition; URL fetcher +
-   readability on box (note: no URL-fetch capability exists today —
-   `web_search` is Exa-search-only; this is a new native capability, and
-   must be native Rust — the `virtues_applet_writer` role can't write
-   `data_*`).
-4. Aspect embedding rows: NOTE `EmbeddingConfig.embed_text_sql` is
-   single-string-per-row today; multi-aspect means bookmark_enrichment
-   writes aspect rows into the search index directly (or EmbeddingConfig
-   grows multi-row support). Decide at build time; direct-write is the
-   less invasive start.
-5. `/bookmarks` view (grid + bento display mode + Inbox/Library) + the
-   three generic ontology API routes.
-6. `note` column migration (user-authored marginalia; the "why" concept
-   writes here); descriptor `embed_text_sql` update; drop the dead
-   `source_streams` vec or leave as-is (harmless).
+Landed in `2f5a5c94` (sources spine) and `c814dcb8` (the room):
 
-### Sources, in order (each exercises a different door before OAuth
-complexity; 1–4 are box-side only)
-1. **In-app save** — URL box in the web app → `POST /api/bookmarks`. No
-   auth story, no applet. The dev harness for the spine; proves
-   save→enrich→embed→surface day one.
-2. **iOS share sheet** — the highest-value door; only capture path for IG
-   reels. A new `bookmark` stream arm in the existing **`ios_ingest`**
-   fan-out (like healthkit/location) — no new applet. New work = Tauri
-   share extension + optional note field (+ dictation free via keyboard).
-3. **Mac browser bookmarks** — new streams through the existing
-   **`mac_ingest`**: Safari `Bookmarks.plist` + Reading List + Chrome/Arc
-   JSON (+ Firefox places.sqlite); folder paths → container whys. Also
-   serves as the backfill-caps test case (thousands of rows) and the
-   retrieval-tuning corpus.
-4. **`github_stars_sync`** — `api_key` (PAT) applet, no proxy work (GitHub
-   OAuth app is dead); `github:star:<node_id>` ids. NOTE (found at build
-   time): star *lists* have no public API, so the container signal is repo
-   topics + language → tags. Unstars are a known gap (needs a full
-   re-walk); initial backfill covers the newest 10k stars (page cap,
-   stated in the run summary when hit).
-5. **`x_bookmarks_sync`** — LAST: only source needing virtues-api proxy work
-   (`/x/start` provider) + a billing spike. X API as of 2026: free tier
-   closed (Feb), Basic legacy-only, pay-per-use default;
-   `GET /2/users/{id}/bookmarks` = "owned read" at $0.001/resource
-   (~$1/1000) since April. Spike must verify proxied user-context reads
-   bill as owned reads. **Known API limit: the bookmarks endpoint only
-   reaches the most recent ~800–1,000 bookmarks** — the whole X-bookmark
-   tool market splits on this (API tools = capped; extension-scrape tools
-   = full history). So API sync covers ongoing capture + recent backfill;
-   FULL-history import needs the extension/scrape path or a one-off
-   export. Incremental sync: page newest-first, stop at known ids.
-   Fallback if economics/classification sour: extension capture from the
-   user's own logged-in session (Dewey/Tweetsmash model, ToS-grey).
+- **Shared normalizer** (`crates/virtues-helpers/src/bookmarks.rs`) — row
+  shape, identity, and the snapshot-vs-event deletion split in one place.
+  Snapshot sources reconcile via `tombstone_absent` scoped to one browser on
+  one device; `note` and `is_archived` are user-owned and deliberately outside
+  the upsert's update set, so a re-sync can never clobber the user's words.
+- **In-app save** — `POST`/`GET /api/bookmarks`; identity is the canonicalized
+  URL, so a re-save upserts rather than duplicating.
+- **Mac browser bookmarks** — Safari/Chrome/Arc snapshots via `mac_ingest`.
+- **`github_stars_sync`** — PAT applet. Found at build time: star *lists* have
+  no public API, so the container signal is repo topics + language → tags.
+  Unstars need a full re-walk (known gap); backfill caps at the newest 10k.
+- **`note` column** (0073) and the `/bookmarks` room — a plain server-paginated
+  grid, deliberately without facets over columns nothing writes yet.
 
-Deferred: browser extension (blocked on the iroh-gate story — webhook auth
-is proven-device-key only; relay via Mac collector native messaging is the
-likely path); file importers (Netscape HTML / Pocket CSV / Omnivore JSON —
-DECIDED 2026-07-28 to skip for now: most incoming users have no existing
-bookmark system, and one-off import sources aren't the habit loop; revisit
-by demand); Raindrop/Readwise/Reddit/Are.na/YouTube-playlists (add by
-demand).
+## Build plan (2026-08-05)
+
+Ordered so each step is useful the day it lands, and the riskiest work
+(the iOS extension, the X proxy) blocks nothing ahead of it.
+
+### 1. Note and tags into the embed text — hours, do first
+
+`embed_text_sql` for `content_bookmark` is still `title || description`. Extend
+it to include `note` and `tags`. This is the highest ratio change in the
+document: it makes the manual-save door retrieve on the user's own words, which
+migration 0073's own comment says is where the retrieval boost belongs.
+
+**Verified**: no reindex plumbing needed. The indexer selects on
+`se.doc_hash IS DISTINCT FROM md5(embed_text)` (`search/indexer.rs`), so
+changing the expression self-invalidates every bookmark row and the next
+`embedding_index` cron re-embeds them. Nothing to migrate, nothing to backfill.
+
+### 2. URL fetcher — native first, Parallel Extract as escalation
+
+Bookmarks need something narrower than a search product: *fetch this one URL I
+already have, give me readable text* — `<title>`, og:image, article body. Two
+tiers, matching the escalation philosophy the video tiers already use:
+
+- **Native default** (`reqwest` + a Mozilla-Readability port; `readability-rust`
+  and `readable-readability` are the live candidates, and `lol_html` /
+  `fast_html2md` are the recommended pair for LLM-bound extraction). Free, keeps
+  the URL on-box, and uses the **residential IP** — which is the whole reason
+  YouTube caption tracks and paywall-lite pages work from here at all.
+- **Parallel Extract on failure** (JS-heavy SPAs, bot walls). Parallel's Search
+  and Extract are now first-class on the Vercel AI Gateway with centralized
+  billing and a single API key — and core already routes chat through
+  `ai-gateway.vercel.sh` (`tools/mod.rs`), so this adds no new vendor
+  relationship. Per-source toggle; it sends the URL off-box, so it is opt-in,
+  never the default.
+
+Must be native Rust in core, not applet code — the `virtues_applet_writer` role
+can't write `data_*`.
+
+**Orthogonal, and now cheap**: `web_search` is Exa-only (`tools/web_search.rs`).
+Parallel Search on the gateway makes an Exa→Parallel migration a small change
+that removes one vendor key. Different job from the fetcher; do it separately.
+
+### 3. `bookmark_enrichment` applet — the queue
+
+Copy `document_extraction`'s shape exactly, because it already solved this:
+cron applet, drain a status column, claim one item at a time, commit per item,
+stale claims recover by age, generous `timeout_s` because a first-run backfill
+is legitimate work and not a hang.
+
+- Migration: `enrichment_status`, `enriched_at`, and the extraction record
+  (JSONB on the row, or a derived table — decide at build time; JSONB keeps the
+  re-runnable-derived-data property either way).
+- Omni slot for anything with pixels or audio, resolved via
+  `default_model_for_slot(ModelSlot::Omni)` the way `transcription_resolution`
+  does it — never a literal.
+- Lite slot for text composition (summaries, chapters, `likely_queries` from
+  fetched page text).
+- Budget: daily cap in Settings, spend read from the prepaid-wallet ledger.
+  Newest-first drain, lazy tail on touch, explicit priced bulk button.
+
+### 4. Aspect embedding — start concatenated
+
+**Decision (revised from the original plan's "direct-write aspect rows"):**
+concatenate the extraction prose into `embed_text_sql` first. The chunker
+already windows at 96 words with 14 overlap, so concatenation yields
+pseudo-aspects for free, with no indexer surgery and no bypass of the normal
+pipeline. The cost is blurred boundaries — a window that is half palette, half
+OCR text.
+
+Build real aspect rows only when per-aspect **attribution** is wanted ("matched
+on palette"), not merely per-aspect recall. That defers the invasive change
+until a surface actually needs it.
+
+### 5. iOS share sheet — spike before committing
+
+The highest-value door (the only capture path for Instagram) and the riskiest
+work in this plan. Shape: a Swift share extension writes to a shared App Group
+container and wakes the app via `openURL`; the app posts to the existing
+`ios_ingest` webhook with `stream: "bookmark"` — a new arm in the dispatcher
+alongside healthkit/location, no new applet.
+
+**Research gap, and it is a real one.** A share extension is a *second Xcode
+target*. Tauri supports overriding the XcodeGen `project.yml` to add one — but
+this repo's `project.yml` is inert post-init (the standing trap: iOS config
+changes go through `Info.ios.plist`), and there is a known upstream issue where
+`cargo tauri ios dev` fails to build once an app extension is added
+(tauri-apps/tauri#10074). Spike this before scheduling it; the fallback is a
+plain iOS Shortcut posting to the webhook, which is uglier but unblocks the
+Instagram story immediately.
+
+**Schema pressure to resolve here**: `url` is `NOT NULL`. A share-sheet save
+carries the post URL, fine — but a raw camera-roll screenshot has none, and
+today has nowhere to live.
+
+### 6. X — bookmarks, likes, and own posts
+
+Needs virtues-api proxy work (`/x/start`) plus the billing spike. Researched
+2026-08-05:
+
+- **Owned reads are $0.001/resource** (~$1/1000) across ~12 endpoints —
+  bookmarks, posts, likes, followers, lists — when pulling *your own*
+  authenticated account. Pay-per-use is the default for new developers; there is
+  no meaningful free tier.
+- **Resources dedupe within a 24h UTC window.** Re-requesting the same post the
+  same day is not charged again — so frequent incremental polling is
+  effectively free, and the sync can be aggressive.
+- **The ~800-bookmark ceiling is real and worse than documented**: pagination
+  frequently dies after 2–3 pages with no `next_token`. API sync covers ongoing
+  capture and recent backfill only; full history needs an export or the
+  extension path.
+- **Bookmark *folders* are dead as a signal** — that endpoint returns only 20
+  IDs and rejects pagination. This kills mechanism #2 (containers-as-native-why)
+  for X specifically. Folders survive as a why source for browser bookmarks and
+  Are.na/Raindrop; for X, the whisper has to come from capture-time or review.
+
+**Ontology mapping — the split that matters:**
+
+- A **like or a bookmark is a save** → `data_content_bookmark`, discriminated by
+  the existing `bookmark_type` (`bookmark` | `like` | `star` | `save`). No new
+  table, and they inherit enrichment and IR for free.
+- An **own post is authored content**, not a save. It needs a new ontology.
+  `data_content_conversation` is the tempting reuse and it is wrong — its `role`
+  is `CHECK`-constrained to `user`/`assistant`/`system` for AI chat logs.
+  `data_communication_message` is 1:1/group messaging; a public post is
+  addressed to no one.
+
+**Proposed `data_content_post`** — things I published, anywhere: `post_type`
+(`post` | `reply` | `repost` | `quote`), `text`, `url`, `conversation_id`,
+`in_reply_to_id`, engagement counts in `metadata`. Replies and comments are the
+same table under a different `post_type`. Embeds trivially (the text is prose),
+and it is the table future Bluesky/Mastodon/LinkedIn streams land in — worth
+designing once, deliberately, rather than bending an existing table now.
+
+### 7. UI — after enrichment writes something
+
+Inbox/Library SubNav, extraction fields as facets, search-by-color off the
+palette hex swatches (deterministic, no ML), status line ("212 awaiting
+enrichment"). Bento becomes a **third** `UniversalDataGrid` display mode
+alongside table and card — note the grid once had a third mode (Board) that was
+removed on principle, so this one needs to earn its place; bookmarks-gated
+until it does.
+
+Also still owed: the generic `/api/ontologies/*` routes (available / overview /
+{table} / data), which apps/web already calls and which 404 for **every**
+ontology today.
+
+Deferred: browser extension (blocked on the iroh-gate story — webhook auth is
+proven-device-key only; relay via Mac collector native messaging is the likely
+path); file importers (Netscape HTML / Pocket CSV / Omnivore JSON — DECIDED
+2026-07-28 to skip: most incoming users have no existing bookmark system, and
+one-off imports aren't the habit loop); Raindrop/Readwise/Reddit/Are.na/
+YouTube-playlists (add by demand).
 
 ## Market notes (surveyed 2026-07-28)
 
@@ -325,7 +434,30 @@ What the market adds to our plan (triaged 2026-07-28):
 
 ## Open questions / spikes
 
-1. X billing classification (owned reads via proxy?) — blocks source #6 only.
-2. Browser-extension → box auth path (iroh gate).
-3. MobileCLIP2-S4 on Hexagon/QNN feasibility (v2 sidecar only).
-4. Reel MP4 lake-insurance default: on or off?
+Live (blocking something):
+
+1. **Tauri iOS share extension** — can a second Xcode target be added given an
+   inert `project.yml` and tauri#10074? Blocks step 5; fallback is a Shortcut.
+2. **X billing classification** — do proxied user-context reads through
+   virtues-api bill as *owned* reads at $0.001? Blocks step 6 only. The
+   per-resource rate, the 24h dedup window, and the endpoint list are settled;
+   the proxy's effect on classification is not.
+3. **`data_content_post` shape** — confirm before writing the migration, since
+   it is the table every future social source lands in.
+4. **URL-fetch failure rate** — what fraction of real saved URLs the native
+   readability path actually handles, which sets how often Parallel Extract
+   gets invoked and therefore whether the escalation tier is worth building.
+5. Browser-extension → box auth path (iroh gate).
+
+Resolved since 2026-07-28:
+
+- ~~Does changing `embed_text_sql` need a reindex?~~ No — the indexer keys on
+  `md5(embed_text)` and self-invalidates.
+- ~~Is there a URL-fetch capability?~~ No, and Parallel Extract on the Vercel
+  gateway is now the escalation tier rather than a second vendor integration.
+- ~~X bookmark folders as container-why?~~ Dead — 20 IDs, no pagination.
+
+Deferred (v2 or later):
+
+- MobileCLIP2-S4 on Hexagon/QNN feasibility (similarity-only sidecar).
+- Reel MP4 lake-insurance default: on or off?
