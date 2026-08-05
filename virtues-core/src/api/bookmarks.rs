@@ -55,7 +55,31 @@ pub struct BookmarkListItem {
     pub tags: Option<serde_json::Value>,
     pub thumbnail_url: Option<String>,
     pub timestamp: crate::types::Timestamp,
+    /// `medium` off the extraction record — "article", "reference",
+    /// "repository". The one machine-derived field worth a facet, because it
+    /// answers "what kind of thing is this" better than the source does.
+    pub medium: Option<String>,
+    /// What the box knows about this row so far: see [`STATE_SQL`].
+    pub state: String,
 }
+
+/// How much the box knows about a bookmark, as one field.
+///
+/// Derived here rather than in the client because the rule involves columns
+/// the client should not have to reason about (`metadata.asset_id`, the
+/// `/drive/file_` url form) — and because the same expression has to serve
+/// both the SELECT and the facet's WHERE.
+///
+/// The states are the ones a person can act on, not the ones the queue uses
+/// internally: `held` and `queued` are both `pending` in the table, but only
+/// one of them is waiting on something that exists.
+const STATE_SQL: &str = "CASE \
+     WHEN enrichment_status = 'done' THEN 'enriched' \
+     WHEN enrichment_status = 'failed' THEN 'failed' \
+     WHEN enrichment_status = 'skipped' THEN 'skipped' \
+     WHEN metadata->>'asset_id' IS NOT NULL OR starts_with(url, '/drive/file_') \
+          THEN 'held' \
+     ELSE 'queued' END";
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct ListBookmarksQuery {
@@ -68,16 +92,47 @@ pub struct ListBookmarksQuery {
     /// `asc` sorts oldest-first; anything else is newest-first.
     #[serde(default)]
     pub dir: Option<String>,
+    #[serde(default)]
+    pub platform: Option<String>,
+    #[serde(default)]
+    pub bookmark_type: Option<String>,
+    #[serde(default)]
+    pub medium: Option<String>,
+    /// One of the [`STATE_SQL`] values.
+    #[serde(default)]
+    pub state: Option<String>,
 }
 
 fn default_limit() -> i64 {
     50
 }
 
+/// Blank filter values arrive as `""` from a cleared control; treat them as
+/// absent rather than as "match the empty string", which matches nothing and
+/// looks like a broken filter.
+fn blank_to_none(v: &Option<String>) -> Option<&str> {
+    v.as_deref().map(str::trim).filter(|s| !s.is_empty())
+}
+
 #[derive(Debug, Clone, Serialize)]
 pub struct BookmarkPage {
     pub items: Vec<BookmarkListItem>,
     pub total: i64,
+    /// Shelf-wide counts, unaffected by the current filters — the status line
+    /// answers "what is the box still working on", which a filtered view must
+    /// not misreport.
+    pub counts: ShelfCounts,
+}
+
+#[derive(Debug, Clone, Default, Serialize, sqlx::FromRow)]
+pub struct ShelfCounts {
+    pub enriched: i64,
+    /// Fetchable pages the sweep will get to.
+    pub queued: i64,
+    /// Asset-backed saves waiting on the image pass, which does not exist yet.
+    /// Counted apart from `queued` so a number that cannot move is never shown
+    /// as a backlog that should be draining.
+    pub held: i64,
 }
 
 /// One page of bookmarks, newest first.
@@ -100,38 +155,75 @@ pub async fn list_bookmarks(db: &PgPool, q: ListBookmarksQuery) -> Result<Bookma
     });
     let ascending = q.dir.as_deref() == Some("asc");
 
-    let where_sql = "WHERE deleted_at_source IS NULL
+    // Every filter is `($n IS NULL OR …)` so one prepared shape serves all
+    // combinations — no dynamic SQL assembly, and nothing user-supplied ever
+    // reaches the statement text.
+    let where_sql = format!(
+        "WHERE deleted_at_source IS NULL
            AND ($1::text IS NULL
                 OR title ILIKE $1 ESCAPE '\\'
                 OR url ILIKE $1 ESCAPE '\\'
                 OR description ILIKE $1 ESCAPE '\\'
-                OR note ILIKE $1 ESCAPE '\\')";
+                OR note ILIKE $1 ESCAPE '\\')
+           AND ($2::text IS NULL OR source_platform = $2)
+           AND ($3::text IS NULL OR bookmark_type = $3)
+           AND ($4::text IS NULL OR extraction->>'medium' = $4)
+           AND ($5::text IS NULL OR ({STATE_SQL}) = $5)"
+    );
+
+    let platform = blank_to_none(&q.platform);
+    let bookmark_type = blank_to_none(&q.bookmark_type);
+    let medium = blank_to_none(&q.medium);
+    let state = blank_to_none(&q.state);
 
     let total: (i64,) = sqlx::query_as(&format!(
         "SELECT COUNT(*) FROM data_content_bookmark {where_sql}"
     ))
     .bind(&pattern)
+    .bind(platform)
+    .bind(bookmark_type)
+    .bind(medium)
+    .bind(state)
     .fetch_one(db)
     .await?;
 
     let items = sqlx::query_as::<_, BookmarkListItem>(&format!(
         "SELECT id, url, title, description, note, source_platform, bookmark_type,
-                author, tags, thumbnail_url, timestamp
+                author, tags, thumbnail_url, timestamp,
+                extraction->>'medium' AS medium,
+                ({STATE_SQL}) AS state
            FROM data_content_bookmark
            {where_sql}
           ORDER BY timestamp {}, id
-          LIMIT $2 OFFSET $3",
+          LIMIT $6 OFFSET $7",
         if ascending { "ASC" } else { "DESC" }
     ))
     .bind(&pattern)
+    .bind(platform)
+    .bind(bookmark_type)
+    .bind(medium)
+    .bind(state)
     .bind(limit)
     .bind(offset)
     .fetch_all(db)
     .await?;
 
+    // Deliberately unfiltered: this is the shelf's state, not the view's.
+    let counts: ShelfCounts = sqlx::query_as(&format!(
+        "SELECT
+           COUNT(*) FILTER (WHERE ({STATE_SQL}) = 'enriched') AS enriched,
+           COUNT(*) FILTER (WHERE ({STATE_SQL}) = 'queued')   AS queued,
+           COUNT(*) FILTER (WHERE ({STATE_SQL}) = 'held')     AS held
+         FROM data_content_bookmark
+         WHERE deleted_at_source IS NULL"
+    ))
+    .fetch_one(db)
+    .await?;
+
     Ok(BookmarkPage {
         items,
         total: total.0,
+        counts,
     })
 }
 

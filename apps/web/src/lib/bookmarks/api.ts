@@ -20,11 +20,35 @@ export interface BookmarkApi {
 	tags: string[] | null;
 	thumbnail_url: string | null;
 	timestamp: string;
+	/** From the extraction record — "article", "reference", "repository". */
+	medium: string | null;
+	/** How much the box knows about this one yet. */
+	state: BookmarkState;
+}
+
+/**
+ * `held` and `queued` are both pending on the box; they are separate here
+ * because only one of them is waiting on something that exists. `held` means
+ * the artifact is an image and the pass that reads images is not built.
+ */
+export type BookmarkState =
+	| "enriched"
+	| "queued"
+	| "held"
+	| "failed"
+	| "skipped";
+
+export interface ShelfCounts {
+	enriched: number;
+	queued: number;
+	held: number;
 }
 
 export interface BookmarkPageApi {
 	items: BookmarkApi[];
 	total: number;
+	/** Shelf-wide, deliberately unaffected by the current filters. */
+	counts: ShelfCounts;
 }
 
 export async function getBookmarksPage(
@@ -33,6 +57,10 @@ export async function getBookmarksPage(
 		limit: number;
 		search?: string;
 		dir?: "asc" | "desc";
+		platform?: string;
+		bookmark_type?: string;
+		medium?: string;
+		state?: string;
 	},
 	fetchFn: FetchFn = fetch
 ): Promise<BookmarkPageApi> {
@@ -41,6 +69,10 @@ export async function getBookmarksPage(
 	params.set("limit", String(opts.limit));
 	if (opts.search) params.set("search", opts.search);
 	if (opts.dir) params.set("dir", opts.dir);
+	if (opts.platform) params.set("platform", opts.platform);
+	if (opts.bookmark_type) params.set("bookmark_type", opts.bookmark_type);
+	if (opts.medium) params.set("medium", opts.medium);
+	if (opts.state) params.set("state", opts.state);
 
 	const res = await fetchFn(`/api/bookmarks?${params}`, { cache: "no-store" });
 	if (!res.ok) {
