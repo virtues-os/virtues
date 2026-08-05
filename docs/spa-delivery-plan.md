@@ -98,6 +98,46 @@ states need copy, not just empty components.
 This copy is the one real design question left in this plan. Everything else is
 mechanical.
 
+## The origin problem — read before writing the resolver
+
+Found 2026-08-05, and it invalidates part of what is written above.
+
+**Web storage is partitioned by origin, and the desktop app changes origin
+between its online and offline states.**
+
+| state | origin |
+|---|---|
+| box reachable | `http://localhost:7117` (`WebviewUrl::External`) |
+| box unreachable | `tauri://localhost` (`WebviewUrl::App`, the baked bundle) |
+
+`lib/config/backend.ts` documents both, so this was always visible; nobody had
+put them side by side. IndexedDB, localStorage, and everything else the SPA
+persists live under the first origin during normal use and are **invisible**
+from the second.
+
+So the offline fallback shipped in `a9db926f` boots the interface but opens it
+against an empty IndexedDB. The Yjs documents that were the entire reason for
+building it are on the other origin. **The plane case does not work**, and the
+empty surfaces observed while testing were partly this, not only the absent API.
+
+This also constrains OTA directly: an overlay served from a *new* scheme (the
+obvious `register_uri_scheme_protocol` design) introduces a **third** origin, so
+applying a bundle would silently empty the user's local documents. A resolver
+written that way is worse than no resolver.
+
+**The requirement this creates:** one stable origin across box-reachable,
+box-unreachable, baked-bundle, and OTA-bundle. Not four states with three
+origins.
+
+The candidate that satisfies it is the loopback: serve the SPA from
+`http://127.0.0.1:7117` always — from the box when it answers, from the local
+bundle cache when it does not — which means the reach loopback, not the webview,
+decides where assets come from. Mobile already has a stable origin
+(`tauri://`), so its constraint is narrower: OTA must overlay *within* that
+origin rather than beside it.
+
+Deciding this is a prerequisite for item 5, not a detail of it.
+
 ## Safety rules (non-negotiable)
 
 Carried from the parked plan, unchanged — they were right.
