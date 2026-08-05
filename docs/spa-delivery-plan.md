@@ -165,6 +165,35 @@ observe"). The displayed release must come from the **active bundle**, not the
 box's claim. They converge on the next pull; the number should not lie in the
 gap.
 
+## Offline is cheap; OTA is the expensive half
+
+Decided 2026-08-05: offline matters, and it should not wait on the machinery.
+
+These are two separable projects and this plan originally conflated them:
+
+**Offline fallback — small.** Bundle the real SPA build into the desktop app
+(`frontendDist` today points at `ui/`, a four-file connect shell) and load it
+when the box does not answer, instead of `pair.html#unreachable`. No resolver,
+no tarball endpoints, no version manifest, no atomic flip. Yjs and IndexedDB
+already do the hard part, so this is the whole plane case: bundle, plus a launch
+branch that already exists in another form.
+
+**OTA overlay — large.** The resolver, `web-bundles/<version>/`, checksum,
+flip, rollback beacon, box endpoints, build manifest. This buys UI *freshness*,
+not offline, and freshness is a convenience until mobile UI churn actually
+outpaces store releases.
+
+So build the fallback now and defer the overlay. The Mac keeps
+`WebviewUrl::External` while the box is reachable — which preserves the
+skew-impossibility `mac-plan.md` values — and falls back to the baked bundle
+only when it is not. That is a smaller change than the retirement this plan
+first proposed, and it settles the §7 disagreement by not needing it resolved.
+
+**The real cost is not plumbing, it is copy.** Offline, every Postgres-backed
+surface has nothing to show. Deciding what each one says — and making "no box"
+read as a state rather than as data loss — is the actual work, and it is design
+work. Budget it there, not in the resolver.
+
 ## Sequencing
 
 **First, and standalone: version legibility.** Nothing on screen today says
