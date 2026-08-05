@@ -14,6 +14,57 @@ async function getInvoke() {
 	return invoke;
 }
 
+// ─── Command-surface negotiation ────────────────────────────────────────────
+//
+// This file is served by the BOX but calls into the APP — two artifacts with
+// separate version lines and, until now, nothing negotiated between them. A box
+// newer than the installed app `invoke()`s a command that does not exist and
+// throws inside whatever feature needed it. That is a live defect today, not a
+// future one; it stayed quiet only because the command list stopped changing.
+//
+// `shellSurface()` asks the app what it supports. `shellSupports(n)` is the
+// gate: check it and degrade the feature deliberately, rather than letting an
+// unknown command reject somewhere the user cannot interpret.
+//
+// The Rust side is `COMMAND_SURFACE_VERSION` in src-tauri/src/main.rs; the two
+// must move together. See docs/spa-delivery-plan.md.
+
+/** Surface version of a shell too old to answer the question at all. */
+const SURFACE_UNKNOWN = 0;
+
+let surfaceCache: number | null = null;
+
+/**
+ * The running shell's command-surface version, or 0 in a plain browser and in
+ * any shell predating the command itself (which is indistinguishable from — and
+ * treated identically to — "supports nothing new"). Cached; the shell cannot
+ * change under a running page.
+ */
+export async function shellSurface(): Promise<number> {
+	if (surfaceCache !== null) return surfaceCache;
+	const invoke = await getInvoke();
+	if (!invoke) return (surfaceCache = SURFACE_UNKNOWN);
+	try {
+		const v = await invoke<number>('command_surface_version');
+		return (surfaceCache = typeof v === 'number' ? v : SURFACE_UNKNOWN);
+	} catch {
+		// Command absent → a shell older than this negotiation. Not an error:
+		// it is exactly the case this mechanism exists to detect.
+		return (surfaceCache = SURFACE_UNKNOWN);
+	}
+}
+
+/**
+ * Whether the running shell is new enough for a feature needing surface `min`.
+ *
+ * Use this to decide, not to assert — the caller should show something honest
+ * when it returns false ("update the app to use this"), never a thrown IPC
+ * error.
+ */
+export async function shellSupports(min: number): Promise<boolean> {
+	return (await shellSurface()) >= min;
+}
+
 /**
  * Open a URL in the user's default *system* browser.
  *

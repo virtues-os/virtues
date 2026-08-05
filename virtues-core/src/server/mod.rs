@@ -329,6 +329,12 @@ pub async fn run(client: Virtues, host: &str, port: u16) -> Result<()> {
         .route("/api/settings/byo-key",   get(crate::api::settings_byo::status_handler)
                                           .post(crate::api::settings_byo::save_handler)
                                           .delete(crate::api::settings_byo::delete_handler))
+        // ─── Web bundle (the box IS the update server) ────────────────
+        // What UI build this box serves, and the build itself. A client that
+        // can only run a bundle the box handed it cannot get ahead of the box,
+        // which is the point — see api/web_bundle.rs.
+        .route("/api/web-bundle/version", get(crate::api::web_bundle::version_handler))
+        .route("/api/web-bundle/tarball", get(crate::api::web_bundle::tarball_handler))
         // ─── Billing-state aggregator (local view) ────────────────────
         .route("/api/billing/state",           get(crate::api::billing_state::state_handler))
         .route("/api/billing/auto-topup",      post(crate::api::billing_state::set_auto_topup_handler))
