@@ -22,6 +22,24 @@ pub struct CollectorStatus {
     pub last_sync: Option<String>,
     pub has_full_disk_access: bool,
     pub has_accessibility: bool,
+    /// True when the two flags above came from the DAEMON's own self-report and
+    /// that report is fresh. False means they describe nothing trustworthy —
+    /// either no daemon has ever written a record, or the one on disk has gone
+    /// stale (see `CollectorHealth`).
+    ///
+    /// The collector has always emitted this. This struct dropped it, so every
+    /// consumer downstream had to treat a possibly-frozen snapshot as live
+    /// fact — which on 2026-08-05 meant showing "accessibility denied" from a
+    /// record six days old, while the permission actually denied went unnamed.
+    /// Absent from an older collector's JSON, hence `serde(default)`: false is
+    /// the honest answer for a binary that cannot tell us.
+    #[serde(default)]
+    pub permissions_reported_by_daemon: bool,
+    /// When the daemon last evaluated its permissions, ISO 8601. `None` if it
+    /// never has. Pair it with the flag above: the UI says *when* it last
+    /// heard rather than asserting a state it cannot observe.
+    #[serde(default)]
+    pub permissions_checked_at: Option<String>,
 }
 
 /// A Virtues server discovered on the local network. Shape mirrors what the
