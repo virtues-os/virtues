@@ -56,7 +56,7 @@ Measured 2026-08-05 on a live pairing.
 | Permission truth | Correct in Swift, **discarded in Rust** before it reaches the UI. |
 | Permission freshness | **Freezes once granted.** Republished only while something is broken. |
 | Collector auto-update | Works. Piggybacks the app, restarts the LaunchAgent. |
-| Web UI delivery | Genuinely OTA from the box. |
+| Web UI delivery | Genuinely OTA from the box — but no offline story at all (see below). |
 | Queue durability | Proven — 891 records held through total routing failure. |
 | App update | **Inverted.** Tree builds 1.0.15; production publishes 1.0.20 from July. |
 | Channel | Per-device file, unrelated to the box's. |
@@ -149,6 +149,10 @@ observe *denied* while an entry exists.
 The app exposes a command-surface version. `bridge.ts` checks it at load and
 degrades a feature explicitly rather than throwing inside it.
 
+This is the same object `spa-delivery-plan.md` calls `minShellVersion`, reached
+independently from the other end. Build it once, name it once — it is
+load-bearing for the coupling above *and* for any bundle the box hands a client.
+
 ---
 
 ## 5. Sequence
@@ -179,3 +183,23 @@ six-day silent outage and a five-minute one.
   seizing the machine from someone mid-sentence.
 - **Per-device channel override.** It's how you get a fleet that disagrees with
   itself, and a support conversation that starts with four unknowns.
+
+---
+
+## 7. Open against `spa-delivery-plan.md`
+
+Not settled here, and this document should not be read as settling it.
+
+That plan proposes the Mac **stop** shelling to `localhost:7117` and adopt the
+same baked-bundle-plus-OTA-overlay resolver as the phone. The case for it is
+offline: `lib/yjs/document.ts` already wires `IndexeddbPersistence` with
+offline-first load and edit-on-disconnect, but an unreachable box sends the
+window to `pair.html#unreachable`, so the SPA never loads and none of that
+capability can be reached. A working editor with no door.
+
+The case against is that the current shell works, is simple, and makes the UI
+structurally incapable of leading the box.
+
+Nothing in Phases 0–5 depends on the answer — they concern versioning,
+permissions, and update delivery, not where the HTML comes from. Decide it
+after Phase 2.
