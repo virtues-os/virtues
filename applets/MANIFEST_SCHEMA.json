@@ -96,17 +96,8 @@
     },
     "config": {
       "type": "object",
-      "description": "Free-form config that flows into app_actions.config JSON. Notable: [config.view] name = \"<applet>\" for view-runtime actions; [config.service] health_path / mem_mb for service-runtime actions; [config.image_url] for custom card hero illustrations.",
+      "description": "Free-form config that flows into app_applets.config JSON. Notable: [config.limits] max_llm_cost / max_llm_cost_per_day / max_runs_per_day / max_runs_per_hour / timeout_s; [config.service] health_path / mem_mb for supervised services.",
       "properties": {
-        "view": {
-          "type": "object",
-          "properties": {
-            "name": {
-              "type": "string",
-              "description": "Folder under apps/web/src/lib/applets/<name>/ holding Card.svelte / Detail.svelte for this action."
-            }
-          }
-        },
         "service": {
           "type": "object",
           "properties": {
