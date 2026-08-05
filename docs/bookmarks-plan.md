@@ -431,31 +431,15 @@ Work items:
   shared with no source URL still has nowhere to live. Decide before building
   the extension, since it changes the payload contract.
 
+If App Group registration or provisioning drags, a plain iOS **Shortcut**
+posting to the webhook unblocks the Instagram story in the meantime — uglier,
+no note field, but it proves the ingest arm end-to-end before the extension
+exists.
+
 Open, and cheap to settle with one build: whether `tauri ios build` re-runs
 xcodegen itself (extension target then survives automatically) or whether the
 regenerated `.pbxproj` must be committed. Both work; it only changes the
 workflow note.
-
-### 5b. Original spike notes (superseded by the above)
-
-The highest-value door (the only capture path for Instagram) and the riskiest
-work in this plan. Shape: a Swift share extension writes to a shared App Group
-container and wakes the app via `openURL`; the app posts to the existing
-`ios_ingest` webhook with `stream: "bookmark"` — a new arm in the dispatcher
-alongside healthkit/location, no new applet.
-
-**Research gap, and it is a real one.** A share extension is a *second Xcode
-target*. Tauri supports overriding the XcodeGen `project.yml` to add one — but
-this repo's `project.yml` is inert post-init (the standing trap: iOS config
-changes go through `Info.ios.plist`), and there is a known upstream issue where
-`cargo tauri ios dev` fails to build once an app extension is added
-(tauri-apps/tauri#10074). Spike this before scheduling it; the fallback is a
-plain iOS Shortcut posting to the webhook, which is uglier but unblocks the
-Instagram story immediately.
-
-**Schema pressure to resolve here**: `url` is `NOT NULL`. A share-sheet save
-carries the post URL, fine — but a raw camera-roll screenshot has none, and
-today has nowhere to live.
 
 ### 6. X — bookmarks, likes, and own posts
 
