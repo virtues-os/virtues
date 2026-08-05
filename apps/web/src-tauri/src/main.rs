@@ -684,12 +684,63 @@ struct ReadyUpdate {
 ///
 /// Read at check time rather than cached, so flipping the channel takes effect
 /// on the next poll instead of on the next launch.
-fn updater_endpoint() -> Option<String> {
-    let path = dirs::config_dir()?.join("virtues").join("channel");
-    let channel = std::fs::read_to_string(path).ok()?;
+/// Ask the box who it is: `(version, channel)` from `/health` via the local
+/// proxy. `None` when the box can't be reached — which is not the same as any
+/// particular answer, and callers must treat it that way.
+///
+/// BLOCKING, same std-only shape as the session probe above.
+fn box_identity_blocking() -> Option<(String, String)> {
+    use std::io::{Read, Write};
+    use std::net::TcpStream;
+
+    let addr = "127.0.0.1:7117".parse().ok()?;
+    let mut s = TcpStream::connect_timeout(&addr, PROBE_CONNECT_TIMEOUT).ok()?;
+    let _ = s.set_read_timeout(Some(PROBE_READ_TIMEOUT));
+    s.write_all(b"GET /health HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n")
+        .ok()?;
+    let mut raw = String::new();
+    let _ = s.read_to_string(&mut raw);
+    parse_box_identity(&raw)
+}
+
+/// Pull `version` + `channel` out of a raw `/health` response.
+///
+/// Body only, so header text can never false-match — same discipline as
+/// `classify_session_response`, and the same reason for not pulling in a JSON
+/// dep: the shape is small, known, and ours.
+fn parse_box_identity(raw: &str) -> Option<(String, String)> {
+    let body = raw.split("\r\n\r\n").nth(1)?;
+    let field = |key: &str| -> Option<String> {
+        let at = body.find(&format!("\"{key}\""))?;
+        let rest = &body[at + key.len() + 2..];
+        let open = rest.find('"')?;
+        let close = rest[open + 1..].find('"')?;
+        Some(rest[open + 1..open + 1 + close].to_string())
+    };
+    Some((field("version")?, field("channel")?))
+}
+
+async fn box_identity() -> Option<(String, String)> {
+    tauri::async_runtime::spawn_blocking(box_identity_blocking)
+        .await
+        .unwrap_or(None)
+}
+
+/// Which release channel this install follows — **the box's**, not its own.
+///
+/// This used to read a per-device file, which is how you get a fleet that
+/// disagrees with itself: the box updates on one channel while the Mac paired
+/// to it follows another, and every support conversation starts with an extra
+/// unknown. The box already owns channel selection for its own updates, so it
+/// is the one place worth asking.
+///
+/// `None` means "use the configured stable endpoint": either the box says
+/// stable, or we could not reach it. Preferring stable on an unreachable box is
+/// deliberate — the alternative is silently pulling a prerelease onto a machine
+/// whose owner never chose one.
+async fn updater_endpoint() -> Option<String> {
+    let (_, channel) = box_identity().await?;
     match channel.trim().to_ascii_lowercase().as_str() {
-        // Only Nightly overrides; anything else (including a corrupt file)
-        // falls through to the configured stable endpoint.
         "prerelease" | "pre" | "edge" | "nightly" => Some(
             "https://github.com/virtues-os/virtues/releases/download/mac-edge/latest.json"
                 .to_string(),
@@ -705,7 +756,7 @@ async fn check_for_update(app: &AppHandle) {
     // Point the updater at the followed channel's manifest. `mac-edge` only
     // started publishing one alongside the channel selector — before that,
     // anyone on an edge build had no update path at all.
-    let updater = match updater_endpoint() {
+    let updater = match updater_endpoint().await {
         Some(url) => match url::Url::parse(&url) {
             Ok(parsed) => match app.updater_builder().endpoints(vec![parsed]) {
                 Ok(b) => match b.build() {
@@ -882,6 +933,10 @@ struct TrayItems {
     /// "Check for Updates…" — a manual trigger for [`check_for_update`]. Its
     /// label flips to "Checking…" then "Up to date ✓" for transient feedback.
     check_now: tauri::menu::MenuItem<tauri::Wry>,
+    /// The RELEASE the user is on — the box's version, refreshed each poll.
+    /// Not this bundle's `package_info().version`, which is a build counter
+    /// for the updater and means nothing to a person.
+    version_label: tauri::menu::MenuItem<tauri::Wry>,
 }
 
 /// Set the "Check for Updates…" item's label + enabled state on the main
@@ -912,6 +967,21 @@ fn refresh_tray(app: &AppHandle, items: TrayItems) {
         } else {
             CollectorStatus::default()
         };
+        // The release line. `None` (box unreachable) leaves it as the bare
+        // product name rather than falling back to the build counter: showing
+        // a number the user cannot find anywhere else is worse than showing
+        // none. See `box_identity_blocking`.
+        let version_text = match box_identity_blocking() {
+            Some((version, channel)) => {
+                let ch = channel.trim().to_ascii_lowercase();
+                if ch.is_empty() || ch == "stable" || ch == "main" || ch == version {
+                    format!("Virtues {version}")
+                } else {
+                    format!("Virtues {version} ({ch})")
+                }
+            }
+            None => "Virtues".to_string(),
+        };
         let (box_dot, box_text) = box_label();
         let (coll_dot, coll_text) = collector_label(installed, &status);
         let sync_text = last_sync_label(installed, &status);
@@ -940,6 +1010,7 @@ fn refresh_tray(app: &AppHandle, items: TrayItems) {
             let _ = items.collector_status.set_icon(dot_image(coll_dot));
             let _ = items.last_sync.set_text(sync_text);
             let _ = items.toggle.set_text(toggle_text);
+            let _ = items.version_label.set_text(&version_text);
             // Disabled when not installed so pause/resume can't be invoked in a
             // state where the CLI would just error — keeps the user from a
             // no-op foot-gun.
@@ -992,7 +1063,9 @@ fn setup_tray(app: &AppHandle) -> tauri::Result<()> {
     let version_label = MenuItem::with_id(
         app,
         "version_label",
-        format!("Virtues v{}", app.package_info().version),
+        // Placeholder only — `refresh_tray` replaces this with the box's
+        // release version on the first poll.
+        "Virtues",
         false,
         None::<&str>,
     )?;
@@ -1026,6 +1099,7 @@ fn setup_tray(app: &AppHandle) -> tauri::Result<()> {
         toggle,
         update,
         check_now,
+        version_label,
     };
 
     // The ∴ mark as a TEMPLATE image: monochrome black+alpha that AppKit recolors
@@ -1469,4 +1543,52 @@ fn main() {
             #[cfg(not(target_os = "macos"))]
             let _ = (app_handle, event);
         });
+}
+
+#[cfg(test)]
+mod box_identity_tests {
+    use super::parse_box_identity;
+
+    fn resp(body: &str) -> String {
+        format!("HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nConnection: close\r\n\r\n{body}")
+    }
+
+    #[test]
+    fn reads_version_and_channel() {
+        // Verbatim shape from a live box (dragon, 2026-08-05), field order and all.
+        let body = r#"{"status":"healthy","version":"0.3.0","channel":"stable","commit":"abc1234"}"#;
+        assert_eq!(
+            parse_box_identity(&resp(body)),
+            Some(("0.3.0".to_string(), "stable".to_string()))
+        );
+    }
+
+    #[test]
+    fn edge_box_reports_edge() {
+        let body = r#"{"status":"healthy","version":"edge","channel":"edge"}"#;
+        assert_eq!(
+            parse_box_identity(&resp(body)),
+            Some(("edge".to_string(), "edge".to_string()))
+        );
+    }
+
+    #[test]
+    fn header_text_cannot_false_match() {
+        // A header naming the field must not be mistaken for the body value.
+        let raw = "HTTP/1.1 200 OK\r\nX-Note: \"version\":\"9.9.9\"\r\n\r\n{\"version\":\"0.3.0\",\"channel\":\"stable\"}";
+        assert_eq!(
+            parse_box_identity(raw),
+            Some(("0.3.0".to_string(), "stable".to_string()))
+        );
+    }
+
+    #[test]
+    fn missing_field_is_none() {
+        assert_eq!(parse_box_identity(&resp(r#"{"status":"healthy"}"#)), None);
+    }
+
+    #[test]
+    fn no_body_is_none() {
+        assert_eq!(parse_box_identity("HTTP/1.1 500 Internal Server Error"), None);
+    }
 }
