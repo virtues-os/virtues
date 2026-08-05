@@ -42,6 +42,15 @@ async fn main() -> Result<()> {
     if summary.remaining > 0 {
         parts.push(format!("{} awaiting enrichment", summary.remaining));
     }
+    // Reported apart from `remaining` on purpose: these are held back until the
+    // pixel pass exists, so folding them into the backlog would show a number
+    // that cannot move and read as a stall.
+    if summary.awaiting_pixels > 0 {
+        parts.push(format!(
+            "{} held for the image pass",
+            summary.awaiting_pixels
+        ));
+    }
     if summary.hit_daily_cap {
         parts.push("daily budget reached".to_string());
     }

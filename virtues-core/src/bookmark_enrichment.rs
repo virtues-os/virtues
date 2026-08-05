@@ -147,7 +147,12 @@ pub struct EnrichmentSummary {
     /// because the queue drained — the difference the run summary must state,
     /// or a throttled queue looks identical to an empty one.
     pub hit_daily_cap: bool,
+    /// Fetchable pages still queued.
     pub remaining: i64,
+    /// Asset-backed bookmarks (screenshots, shared images) held back because
+    /// the pixel pass is not built. Counted separately so a number that cannot
+    /// move yet is never reported as a backlog that should be draining.
+    pub awaiting_pixels: i64,
 }
 
 #[derive(Debug)]
@@ -179,7 +184,9 @@ pub async fn run_enrichment_job(db: &PgPool) -> Result<EnrichmentSummary> {
     let allowance = (cap - done_today.0).max(0);
     if allowance == 0 {
         summary.hit_daily_cap = true;
-        summary.remaining = pending_count(db).await?;
+        let (remaining, awaiting_pixels) = queue_counts(db).await?;
+        summary.remaining = remaining;
+        summary.awaiting_pixels = awaiting_pixels;
         return Ok(summary);
     }
 
@@ -218,18 +225,39 @@ pub async fn run_enrichment_job(db: &PgPool) -> Result<EnrichmentSummary> {
     }
 
     summary.hit_daily_cap = summary.enriched as i64 >= allowance;
-    summary.remaining = pending_count(db).await?;
+    let (remaining, awaiting_pixels) = queue_counts(db).await?;
+    summary.remaining = remaining;
+    summary.awaiting_pixels = awaiting_pixels;
     Ok(summary)
 }
 
-async fn pending_count(db: &PgPool) -> Result<i64> {
-    let row: (i64,) = sqlx::query_as(
-        "SELECT COUNT(*) FROM data_content_bookmark
-          WHERE enrichment_status = 'pending' AND deleted_at_source IS NULL",
-    )
+/// A bookmark whose artifact is a stored asset rather than a fetchable page.
+///
+/// Two shapes qualify, and both are the same fact stated where it belongs:
+/// `metadata.asset_id` (the general case — an Instagram post has a source URL
+/// *and* a screenshot), and a `url` that is already the in-app viewer route
+/// (the pure case — a camera-roll screenshot, whose address is where it lives,
+/// because there is nowhere it came from).
+///
+/// SQL rather than Rust because the claim query has to exclude these before
+/// handing them out. `->>` instead of the `?` containment operator on purpose:
+/// `?` is a bind-parameter marker in enough tooling to be worth avoiding.
+const ASSET_BACKED_SQL: &str =
+    "(metadata->>'asset_id' IS NOT NULL OR starts_with(url, '/drive/file_'))";
+
+/// Counts for the run summary: pages waiting, and assets waiting on a pass that
+/// does not exist yet.
+async fn queue_counts(db: &PgPool) -> Result<(i64, i64)> {
+    let row: (i64, i64) = sqlx::query_as(&format!(
+        "SELECT
+           COUNT(*) FILTER (WHERE NOT {ASSET_BACKED_SQL}),
+           COUNT(*) FILTER (WHERE {ASSET_BACKED_SQL})
+         FROM data_content_bookmark
+          WHERE enrichment_status = 'pending' AND deleted_at_source IS NULL"
+    ))
     .fetch_one(db)
     .await?;
-    Ok(row.0)
+    Ok(row)
 }
 
 /// Take the next bookmark and mark it claimed, atomically.
@@ -242,7 +270,7 @@ async fn pending_count(db: &PgPool) -> Result<i64> {
 /// 'pending' rather than being marked skipped, so a re-add — which clears the
 /// tombstone — picks them straight back up.
 async fn claim_next(db: &PgPool) -> Result<Option<Claimed>> {
-    let row: Option<(String, String, i32)> = sqlx::query_as(
+    let row: Option<(String, String, i32)> = sqlx::query_as(&format!(
             r#"
             UPDATE data_content_bookmark SET
                 enrichment_status = 'enriching',
@@ -252,6 +280,13 @@ async fn claim_next(db: &PgPool) -> Result<Option<Claimed>> {
             WHERE id = (
                 SELECT id FROM data_content_bookmark
                  WHERE deleted_at_source IS NULL
+                   -- Asset-backed bookmarks are held back rather than claimed
+                   -- and marked. They stay 'pending' with no attempt recorded,
+                   -- so when the pixel pass lands, deleting this one clause
+                   -- picks up every screenshot ever saved — no re-queue
+                   -- migration, no terminal state to undo, no attempt budget
+                   -- burned failing at something never tried.
+                   AND NOT {ASSET_BACKED_SQL}
                    AND (
                      enrichment_status = 'pending'
                      -- A claim abandoned by a killed run becomes available again.
@@ -270,8 +305,8 @@ async fn claim_next(db: &PgPool) -> Result<Option<Claimed>> {
                  FOR UPDATE SKIP LOCKED
             )
             RETURNING id, url, enrichment_attempts
-            "#,
-    )
+            "#
+    ))
     .bind(STALE_CLAIM_SECS)
     .bind(MAX_ATTEMPTS)
     .bind(RETRY_BACKOFF_BASE_SECS)
@@ -550,6 +585,24 @@ mod tests {
         // Far-future timestamps so these sort ahead of whatever real bookmarks
         // the dev database already holds — the drain is global, and a test that
         // assumes an empty table passes only on an empty box.
+        // Asset-backed rows, both shapes: a screenshot whose address IS the
+        // viewer route, and an Instagram-style save with a source URL plus a
+        // stored image. Newest of all, so if the hold-back failed they would be
+        // claimed first and the assertion below would catch it immediately.
+        sqlx::query(
+            "INSERT INTO data_content_bookmark
+               (id, url, timestamp, source_stream_id, source_table, source_provider, metadata)
+             VALUES ($1, '/drive/file_abc', '2101-01-01T00:00:00Z'::timestamptz, $1,
+                     'test', 'test', '{}'::jsonb),
+                    ($2, 'https://instagram.com/p/xyz', '2102-01-01T00:00:00Z'::timestamptz, $2,
+                     'test', 'test', '{\"asset_id\": \"file_def\"}'::jsonb)",
+        )
+        .bind(format!("{prefix}screenshot"))
+        .bind(format!("{prefix}igpost"))
+        .execute(&pool)
+        .await
+        .unwrap();
+
         insert("old", "2098-01-01T00:00:00Z", false).await;
         insert("new", "2099-01-01T00:00:00Z", false).await;
         insert("deleted", "2100-01-01T00:00:00Z", true).await;
@@ -582,6 +635,25 @@ mod tests {
             deleted_status, "pending",
             "a tombstoned bookmark was claimed for enrichment"
         );
+
+        // Asset-backed rows must be untouched: still pending, and with NO
+        // attempt recorded. An attempt would mean the queue spent part of a
+        // bookmark's retry budget failing at a pass that does not exist.
+        let held: Vec<(String, String, i32)> = sqlx::query_as(
+            "SELECT id, enrichment_status, enrichment_attempts
+               FROM data_content_bookmark
+              WHERE id IN ($1, $2) ORDER BY id",
+        )
+        .bind(format!("{prefix}screenshot"))
+        .bind(format!("{prefix}igpost"))
+        .fetch_all(&pool)
+        .await
+        .unwrap();
+        assert_eq!(held.len(), 2);
+        for (id, status, attempts) in &held {
+            assert_eq!(status, "pending", "{id} was claimed despite having an asset");
+            assert_eq!(*attempts, 0, "{id} burned a retry attempt on the image pass");
+        }
 
         // A claim stranded by a killed subprocess is recoverable by age.
         sqlx::query(
