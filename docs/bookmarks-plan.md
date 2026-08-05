@@ -250,6 +250,16 @@ Landed in `2f5a5c94` (sources spine) and `c814dcb8` (the room):
 Ordered so each step is useful the day it lands, and the riskiest work
 (the iOS extension, the X proxy) blocks nothing ahead of it.
 
+**Agreed execution order (2026-08-05)** — the section numbers below are stable
+identities, not a sequence. Steps 1–4 are built. The rest run:
+
+> demo seed (done, `31a629d2`) → **7 UI** → **5 iOS share sheet** →
+> **Omni/pixel pass** → **6 X** → **2/2b Parallel**
+
+UI first because it is the only fully unblocked piece and the seed now gives it
+real values to render; the pixel pass follows the iOS door because that door is
+what puts images in the table.
+
 ### 1. Note and tags into the embed text — ✅ LANDED 2026-08-05
 
 `embed_text_sql` for `content_bookmark` is still `title || description`. Extend
