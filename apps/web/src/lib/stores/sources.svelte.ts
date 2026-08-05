@@ -81,11 +81,54 @@ function fromCredential(c: Credential): Connection {
 	};
 }
 
+/** Human "3 minutes ago" for a permission record's own timestamp. */
+function agoLabel(iso: string): string {
+	const then = Date.parse(iso);
+	if (Number.isNaN(then)) return 'an unknown time ago';
+	const mins = Math.max(0, Math.round((Date.now() - then) / 60000));
+	if (mins < 60) return `${mins} minute${mins === 1 ? '' : 's'} ago`;
+	const hours = Math.round(mins / 60);
+	if (hours < 48) return `${hours} hour${hours === 1 ? '' : 's'} ago`;
+	return `${Math.round(hours / 24)} days ago`;
+}
+
 function fromDevice(d: DeviceRow): Connection {
 	// A denied macOS permission is the device equivalent of a dead credential:
 	// the pairing is fine, the data isn't coming. Surfaced as broken so it lands
 	// in the same attention list rather than looking merely quiet.
 	const denied = (d.permissions?.denied as string[] | undefined) ?? [];
+
+	// ...but only if the report is CURRENT. The device writes `stale` itself
+	// (the collector's record is older than it promises to refresh), and this
+	// read used to ignore it and present a frozen snapshot as live fact. On
+	// 2026-08-05 that showed "Access denied: accessibility" — from a record
+	// written six days earlier, naming the one permission that WAS granted,
+	// while the permission actually denied went unmentioned the whole time.
+	//
+	// A stale record supports no claim in either direction. Say when we last
+	// heard instead of inventing a state, and don't file it as broken: we have
+	// not observed a fault, only a silence.
+	const stale = d.permissions?.stale === true;
+	const checkedAt = d.permissions?.checked_at as string | undefined;
+	if (stale) {
+		return {
+			kind: 'device',
+			id: d.id,
+			sourceId: d.source_id ?? '',
+			name: d.label,
+			status: 'unreported',
+			statusLabel: 'not reported',
+			statusReason: checkedAt
+				? `Last reported ${agoLabel(checkedAt)}; what it can read now is unknown.`
+				: 'This device has never reported what it can read.',
+			lastSeenAt: d.last_seen_at,
+			appletCount: null,
+			broken: false,
+			route: null,
+			isCurrent: d.is_current
+		};
+	}
+
 	return {
 		kind: 'device',
 		id: d.id,
