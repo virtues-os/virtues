@@ -6781,10 +6781,12 @@ version = "1.0.0"
 dependencies = [
  "chrono",
  "dirs 5.0.1",
+ "flate2",
  "keyring",
  "objc2",
  "serde",
  "serde_json",
+ "tar",
  "tauri",
  "tauri-build",
  "tauri-plugin-audio",
