@@ -22,23 +22,10 @@
 	const lastStatus = $derived((lastRun as { status?: string } | null)?.status ?? null);
 	const isFailing = $derived(lastStatus === 'error');
 
-	// Excerpt resolution — always prefer a real successful output, never an
-	// error. Falls back to the applet's own sentence.
-	//
-	// That fallback used to come from a hardcoded map in the bundle, keyed on
-	// function_name, which knew seven applets (two of them fictional) and
-	// otherwise took the first sentence of the agent PROMPT — so an applet
-	// introduced itself with an instruction addressed to it ("You are the
-	// user's morning reflection companion"). It now reads the manifest
-	// sentence, which is what that sentence was always for.
-	const excerpt = $derived.by(() => {
-		const success = lastSuccess?.result_summary;
-		if (success) return { text: success, kind: 'output' as const };
-		if (applet.description) {
-			return { text: applet.description, kind: 'description' as const };
-		}
-		return null;
-	});
+	// The right column is the applet's own last words — never an error, always
+	// a real successful output. What it IS lives on the left now, as its own
+	// line, rather than standing in here when there was no output yet.
+	const excerpt = $derived(lastSuccess?.result_summary ?? null);
 
 	const pulseDots = $derived.by(() => {
 		const slots = 10;
@@ -84,7 +71,18 @@
 	onclick={handleClick}
 >
 	<div class="meta-col">
-		<h3 class="name">{applet.name}</h3>
+		<div class="name-row">
+			<h3 class="name">{applet.name}</h3>
+			{#if !applet.enabled}
+				<!-- Explicit, because dimming alone reads as "loading" rather than
+				     "you turned this off". -->
+				<span class="off-pill">off</span>
+			{/if}
+		</div>
+
+		{#if applet.description}
+			<p class="line">{applet.description}</p>
+		{/if}
 
 		<div class="meta">
 			<span>{schedule}</span>
@@ -106,16 +104,9 @@
 
 	<div class="excerpt-col">
 		{#if excerpt}
-			<p
-				class="excerpt"
-				class:agent={isUserOwned && excerpt.kind === 'output'}
-				class:description={excerpt.kind === 'description'}
-				class:output={excerpt.kind === 'output'}
-			>
-				{excerpt.text}
-			</p>
+			<p class="excerpt" class:agent={isUserOwned}>{excerpt}</p>
 		{:else}
-			<p class="excerpt placeholder">Hasn't produced output yet</p>
+			<p class="excerpt placeholder">Hasn't produced anything yet</p>
 		{/if}
 	</div>
 </button>
@@ -149,19 +140,46 @@
 	.meta-col {
 		display: flex;
 		flex-direction: column;
-		gap: 0.5rem;
+		gap: 0.375rem;
 		min-width: 0;
+	}
+	.name-row {
+		display: flex;
+		align-items: center;
+		gap: 0.4rem;
+		min-width: 0;
+	}
+	.off-pill {
+		flex-shrink: 0;
+		padding: 0.05rem 0.375rem;
+		border-radius: 999px;
+		border: 1px solid var(--color-border);
+		background: var(--color-surface-elevated);
+		color: var(--color-foreground-subtle);
+		font-size: 0.625rem;
+		letter-spacing: 0.02em;
+	}
+	/* The plain-English line the plan asks the row to carry. */
+	.line {
+		margin: 0;
+		font-family: var(--font-serif, Georgia, serif);
+		font-size: 0.75rem;
+		line-height: 1.45;
+		color: var(--color-foreground-muted);
+		display: -webkit-box;
+		line-clamp: 2;
+		-webkit-line-clamp: 2;
+		-webkit-box-orient: vertical;
+		overflow: hidden;
 	}
 	.name {
 		margin: 0;
 		font-size: 0.9375rem;
 		font-weight: 600;
 		line-height: 1.3;
-		display: -webkit-box;
-		line-clamp: 2;
-		-webkit-line-clamp: 2;
-		-webkit-box-orient: vertical;
+		white-space: nowrap;
 		overflow: hidden;
+		text-overflow: ellipsis;
 	}
 	.meta {
 		display: flex;
@@ -251,16 +269,14 @@
 		font-size: 0.8125rem;
 		color: var(--color-foreground, #1f2937);
 	}
-	.excerpt.description {
-		font-family: var(--font-serif, Georgia, 'Times New Roman', serif);
-		font-style: italic;
-		color: var(--color-foreground-muted, #6b7280);
-	}
-	.excerpt.output:not(.agent) {
+	.excerpt:not(.agent) {
 		font-family: var(--font-mono, ui-monospace, monospace);
 		font-size: 0.6875rem;
 	}
+	/* Not mono — the placeholder is prose about the applet, not its output. */
 	.excerpt.placeholder {
+		font-family: var(--font-serif, Georgia, serif);
+		font-size: 0.75rem;
 		font-style: italic;
 		opacity: 0.5;
 	}

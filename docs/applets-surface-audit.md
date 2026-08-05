@@ -58,11 +58,11 @@ now have one.
 |---|---|---|---|
 | ~~**D1**~~ | `app_applets` schema · `mod.rs:1163` · `api.rs:219` | **FIXED (0093).** No `description` column; never parsed (the loader struct lacked the field); absent from both API handlers and the TS type | intent-source · gate headline · the list's plain-English line |
 | ~~**D2**~~ | `applets/descriptions.ts` | **FIXED.** File deleted. Hardcoded 7-entry stand-in; 2 keys named nonexistent applets, ~15 real ones missing | (the file's own TODO: delete it) |
-| **L1** | `AppletsPanel.svelte:350` | `defaultViewMode="table"` — the card with the run-pulse and output excerpt is hidden unless the user switches to grid | the row *is* glyph + name + line + activity + toggle + pulse |
-| **L2** | `AppletsPanel.svelte:170–212` | *Partly fixed:* a `What it does` column now carries the sentence. Still no on/off in the row | as above |
-| **L3** | `AppletsPanel.svelte:199–211` | The `Status` column keys on `enabled` but renders the *last run's* status. Enabled/disabled is unreachable from the table except through a filter | on/off is a row affordance |
-| **L4** | `AppletsPanel.svelte:288–297` | `Reconcile` ("re-read applet manifests from disk") is a header button beside `New` | not in the spec; this is an operator verb on a consumer page |
-| **L5** | `AppletsPanel.svelte:355` | Empty state is `"No applets yet — ask for one in chat."` — no examples, no starter set | the contemplative starter set markets as **"Practices"**; `Practices` appears nowhere in the codebase |
+| ~~**L1**~~ | `AppletsPanel.svelte:350` | **FIXED.** Cards are the default; the table stays for anyone who prefers it (the choice is remembered per entity type) | the row *is* glyph + name + line + activity + toggle + pulse |
+| ~~**L2**~~ | `AppletsPanel.svelte:170–212` | **FIXED.** `What it does` carries the sentence, Origin and Lifecycle demoted to filters, and the card leads with the plain-English line | as above |
+| ~~**L3**~~ | `AppletsPanel.svelte:199–211` | **FIXED.** Split into `On` and `Last result`; the card carries an explicit `off` pill, since dimming alone reads as loading | on/off is a row affordance |
+| ~~**L4**~~ | `AppletsPanel.svelte:288–297` | **FIXED.** Behind the overflow, worded as "Re-read from disk" — reachable, not offered | not in the spec; this is an operator verb on a consumer page |
+| ~~**L5**~~ | `AppletsPanel.svelte:355` | **FIXED (partly).** The empty state now shows what to ask for. A curated "Practices" collection is still unbuilt | the contemplative starter set markets as **"Practices"**; `Practices` appears nowhere in the codebase |
 | ~~**T1**~~ | `AppletDetailView.svelte` | **FIXED.** Was four fields. Now carries the intent sentence, what wakes it, the gate, lifecycle, limits, and per-run cost | header → face → *the guts* (schedule, triggers, limits — all editable) |
 | ~~**T2**~~ | `AppletDetailView.svelte:222–228` | **FIXED.** The face is the page; the button now opens it full-screen rather than being the only way to see it | the face **is** the detail body; headless falls back to the run log |
 | ~~**T3**~~ | `AppletDetailView.svelte:68` | **FIXED.** Editability still follows `owner` (that is what the server enforces); the EXPLANATION now follows `origin`, so a source applet says it belongs to a connection you made | `owner` is write-authority, not provenance |

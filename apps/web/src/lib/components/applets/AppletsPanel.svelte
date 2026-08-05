@@ -22,6 +22,7 @@
 	let loading = $state(true);
 	let err = $state<string | null>(null);
 	let newMenuOpen = $state(false);
+	let moreMenuOpen = $state(false);
 	let gitImportOpen = $state(false);
 	let reconciling = $state(false);
 	let reconcileMsg = $state<string | null>(null);
@@ -209,22 +210,21 @@
 			minWidth: '200px',
 			getValue: (a) => a.description ?? '—'
 		},
+		// Origin and Lifecycle are filters, not columns. As columns they were
+		// two badges of provenance and bookkeeping answering questions nobody
+		// walks up to this page with, in the space where "what is this for"
+		// belonged. Both remain in the filter bar and in search.
 		{
 			key: 'origin',
 			label: 'Origin',
-			format: 'badge',
+			hidden: true,
 			getValue: (a) => ORIGIN_LABEL[a.origin] ?? a.origin
 		},
 		{
 			key: 'until',
 			label: 'Lifecycle',
-			format: 'badge',
-			getValue: (a) => lifecycleLabel(a),
-			badgeColors: {
-				forever: 'badge-muted',
-				once: 'badge-info',
-				until: 'badge-info'
-			}
+			hidden: true,
+			getValue: (a) => lifecycleLabel(a)
 		},
 		{
 			key: 'cron_schedule',
@@ -244,9 +244,21 @@
 			// rather than confidently predicting a run that will never come.
 			getValue: (a) => (a.next_due_at ? relativeTime(a.next_due_at) : '—')
 		},
+		// Two facts, two columns. One column headed "Status", keyed on `enabled`
+		// and rendering the last RUN's status, answered neither question: an
+		// applet you had switched off still showed "Success" from whenever it
+		// last ran, and whether it was on at all could only be discovered
+		// through a filter.
 		{
 			key: 'enabled',
-			label: 'Status',
+			label: 'On',
+			format: 'badge',
+			getValue: (a) => (a.enabled ? 'on' : 'off'),
+			badgeColors: { on: 'badge-success', off: 'badge-muted' }
+		},
+		{
+			key: 'last_run',
+			label: 'Last result',
 			format: 'badge',
 			getValue: (a) => lastRunStatus(a),
 			badgeColors: {
@@ -335,16 +347,41 @@
 			>
 				{showSystem ? 'Hide' : 'Show'} built-in ({systemCount})
 			</button>
-			<button
-				type="button"
-				class="reconcile-btn"
-				disabled={reconciling}
-				onclick={reconcile}
-				title="Re-read applet manifests from disk and apply changes"
-			>
-				<Icon icon="ri:refresh-line" width="14" />
-				{reconciling ? 'Reconciling…' : 'Reconcile'}
-			</button>
+			<!-- Reconcile is an operator verb — "re-read manifests from disk" is
+			     a sentence about the box's internals, and it sat at the top of a
+			     consumer page next to New as though it were a thing you do. It
+			     lives behind the overflow now: reachable, not offered. -->
+			<Popover bind:open={moreMenuOpen} placement="bottom-end" offset={4}>
+				{#snippet trigger({ toggle })}
+					<button type="button" class="icon-btn" onclick={toggle} aria-label="More">
+						<Icon icon="ri:more-2-fill" width="16" />
+					</button>
+				{/snippet}
+				{#snippet children()}
+					<div class="new-menu" role="menu">
+						<button
+							type="button"
+							class="new-menu-item"
+							role="menuitem"
+							disabled={reconciling}
+							onclick={() => {
+								moreMenuOpen = false;
+								void reconcile();
+							}}
+						>
+							<Icon icon="ri:refresh-line" width="16" />
+							<div class="new-menu-text">
+								<div class="new-menu-title">
+									{reconciling ? 'Re-reading…' : 'Re-read from disk'}
+								</div>
+								<div class="new-menu-desc">
+									Pick up applet folders that changed outside the app
+								</div>
+							</div>
+						</button>
+					</div>
+				{/snippet}
+			</Popover>
 			<Popover bind:open={newMenuOpen} placement="bottom-end" offset={4}>
 				{#snippet trigger({ toggle })}
 					<button type="button" class="new-btn" onclick={toggle}>
@@ -396,17 +433,22 @@
 		</div>
 	{/if}
 
+	<!-- The card IS the row the plan specifies: glyph, name, plain-English
+	     line, last activity, run-pulse. Defaulting to the table hid every one
+	     of those behind a view toggle most people never find, and showed a
+	     spreadsheet of cron strings instead. Anyone who prefers the table
+	     still has it — dataGridPrefs remembers the choice per entity type. -->
 	<UniversalDataGrid
 		items={visible}
 		{columns}
 		{filters}
 		entityType="applets"
-		defaultViewMode="table"
+		defaultViewMode="grid"
 		gridMinWidth="340px"
 		{loading}
 		error={err}
 		emptyIcon="ri:flashlight-line"
-		emptyMessage="No applets yet — ask for one in chat."
+		emptyMessage="Nothing runs for you yet. Ask in chat — “write my examen each morning,” “remind me on the 25th,” “a dashboard of my heart rate” — and it becomes an applet."
 		searchPlaceholder="Search applets…"
 		pageSize={50}
 		onItemClick={openCard}
@@ -461,22 +503,23 @@
 		align-items: center;
 		gap: 0.75rem;
 	}
-	.reconcile-btn {
+	.icon-btn {
 		display: inline-flex;
 		align-items: center;
-		gap: 0.25rem;
-		padding: 0.375rem 0.625rem;
-		font-size: 0.8125rem;
+		justify-content: center;
+		width: 28px;
+		height: 28px;
 		border: 1px solid var(--color-border, #e5e7eb);
 		border-radius: 6px;
 		background: var(--color-surface, #fff);
-		color: var(--color-foreground, #111827);
+		color: var(--color-foreground-subtle, #6b7280);
 		cursor: pointer;
 	}
-	.reconcile-btn:hover:not(:disabled) {
+	.icon-btn:hover {
 		background: var(--color-surface-elevated, #f3f4f6);
+		color: var(--color-foreground, #111827);
 	}
-	.reconcile-btn:disabled {
+	.new-menu-item:disabled {
 		opacity: 0.6;
 		cursor: default;
 	}
