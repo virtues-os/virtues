@@ -147,9 +147,9 @@ struct Template {
     #[serde(default)]
     command: Option<Vec<String>>,
     /// Free-form config that flows from manifest into `app_applets.config`.
-    /// Notable use: `[config.view] name = "<applet>"` for view-runtime
-    /// actions, which the frontend reads to dispatch the custom Card /
-    /// Detail components from `apps/web/src/lib/applets/<applet>/`.
+    /// Notable use: `[config.limits]`, the ceilings the runner enforces (see
+    /// `applet_runner::limits`). The old `[config.view]` key is gone with the
+    /// Svelte view registry it addressed — faces are sandboxed iframes now.
     ///
     /// For system-owned actions, reconcile **overwrites** this field on every
     /// startup (the manifest is canonical). For user-owned actions, it's only
@@ -1164,8 +1164,8 @@ async fn upsert_row(
         None => None,
     };
 
-    // Manifest-supplied config (e.g. `[config.view]` for view-runtime
-    // actions). Convert TOML → JSON via serde round-trip. Empty manifest
+    // Manifest-supplied config (e.g. `[config.limits]`). Convert TOML → JSON
+    // via serde round-trip. Empty manifest
     // config defaults to `{}` so we don't blow away user-customized config
     // on system reconcile of a manifest with no [config] block.
     let config_json: String = match &template.config {

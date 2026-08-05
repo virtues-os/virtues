@@ -70,9 +70,9 @@ now have one.
 | ~~**T5**~~ | `AppletDetailView.svelte:243` | **FIXED.** | — |
 | ~~**T6**~~ | `AppletDetailView.svelte:259, 299, 304` | **FIXED.** | Applet everywhere (phase 1) |
 | ~~**T7**~~ | `AppletDetailView.svelte:287–293` | **FIXED.** Now "Notes it keeps" — what this applet wrote down for its own next run | *"notes this applet keeps"* |
-| **F1** | `applet-views/index.ts` · `TabContent.svelte:32` | A second face system survives: the Svelte `ui/Card.svelte` / `ui/Detail.svelte` registry keyed on `config.view.name`. `hello_world` ships **both** it and `face/index.html` | *"`{view:{name}}` dies with iframe faces"* |
-| **F2** | `applet-views/index.ts` | `loadCard` is referenced nowhere — dead | — |
-| **F3** | `applets/palette.ts:32–134` | `paletteFor` and its six palettes (~110 lines) are entirely unreferenced, and every stop is a hardcoded light-only hex gradient | dead code; also violates the no-hardcoded-colors rule if ever revived |
+| ~~**F1**~~ | `applet-views/index.ts` · `TabContent.svelte:32` | **FIXED.** Registry deleted, `hello_world/ui/` deleted, `[config.view]` gone from the manifest and the schema. Biscuit now renders through the iframe face like everything else | *"`{view:{name}}` dies with iframe faces"* |
+| ~~**F2**~~ | `applet-views/index.ts` | **FIXED.** Gone with the registry | — |
+| ~~**F3**~~ | `applets/palette.ts:32–134` | **FIXED.** Deleted; the file is 194 → 70 lines and keeps only the schedule/time formatters anything actually imports | dead code; also violates the no-hardcoded-colors rule if ever revived |
 | **M1** | 23 of 24 manifests | `runtime = "…"` still declared | phase 1 drops `runtime` — it is derived from which fields are set |
 | **M2** | 16 manifests | `default_cron`; only 2 use the canonical `schedule` (loader accepts both via `alias`) | manifest key → `schedule` in phase 1 |
 | **M3** | `MANIFEST_SCHEMA.json`, `AUTHORING.md` | Both still speak "action", reference `actions/<name>/`, and route `config.view.name` at `apps/web/src/lib/applets/<name>/` — a path that does not exist (real path is `applets/<name>/ui/`). `AUTHORING.md` announces "the three runtimes" and then lists two | phase 6 cleanup: AUTHORING.md → AGENTS.md + doc-drift fix |
