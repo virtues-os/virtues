@@ -269,19 +269,49 @@ tiers, matching the escalation philosophy the video tiers already use:
   `fast_html2md` are the recommended pair for LLM-bound extraction). Free, keeps
   the URL on-box, and uses the **residential IP** — which is the whole reason
   YouTube caption tracks and paywall-lite pages work from here at all.
-- **Parallel Extract on failure** (JS-heavy SPAs, bot walls). Parallel's Search
-  and Extract are now first-class on the Vercel AI Gateway with centralized
-  billing and a single API key — and core already routes chat through
-  `ai-gateway.vercel.sh` (`tools/mod.rs`), so this adds no new vendor
-  relationship. Per-source toggle; it sends the URL off-box, so it is opt-in,
-  never the default.
+- **Parallel Extract on failure** (JS-heavy SPAs, bot walls). Per-source
+  toggle; it sends the URL off-box, so it is opt-in, never the default.
 
 Must be native Rust in core, not applet code — the `virtues_applet_writer` role
 can't write `data_*`.
 
-**Orthogonal, and now cheap**: `web_search` is Exa-only (`tools/web_search.rs`).
-Parallel Search on the gateway makes an Exa→Parallel migration a small change
-that removes one vendor key. Different job from the fetcher; do it separately.
+### 2b. Exa → Parallel (the search leg)
+
+Same vendor surface, so it rides along here. `web_search` is Exa-only
+(`tools/web_search.rs` → `api/exa.rs`), and Exa is already **proxied through
+virtues-api** via `BearerClient` for budget enforcement, with `Service::Exa` as
+its own line in the wallet ledger (`api/usage.rs`).
+
+**Integration shape — the non-obvious part.** Parallel on the Vercel AI Gateway
+is exposed as `gateway.tools.parallelSearch()`: an *inference-time* tool the
+gateway executes during a model call, in the AI SDK's tool-calling model. Core
+does not work that way — it runs its own executor (`tools/executor.rs`) and
+returns its own `ToolResult`. So the gateway form does **not** drop in, and the
+"centralized billing, one key" pitch doesn't apply to us.
+
+The actually-small change is swapping the upstream behind the proxy we already
+have: `api/parallel.rs` replacing `api/exa.rs` on the same `BearerClient` path,
+`Service::Exa` → `Service::Parallel`, `web_search.rs` mapping arguments to the
+new shape. Keeping the distinct ledger line matters — search spend rolled into
+`ai_gateway` would make the Usage view unable to say what web search cost, and
+that view was just rebuilt to report honestly (`e16312d5`).
+
+**Parameter mapping** (Parallel takes `objective` + up to 5 `search_queries` of
+≤200 chars, `max_results`, `max_chars_per_result`, `processor: base|pro`):
+
+| Exa today | Parallel | Note |
+|---|---|---|
+| `query` | `search_queries` | plus `objective` — a genuine gain; the tool can pass intent, not just keywords |
+| `deep: true` | `processor: "pro"` | same escalation semantics |
+| `search_type` auto/keyword/neural | — | no equivalent; drop the argument |
+| `num_results` | `max_results` | 10/request default |
+| `category`, domain and date filters | partial (`search_domain_filter`) | **hardcoded `None` in `web_search.rs` today** — dead arguments, no real loss |
+| `max_age_hours` | unclear | the one live argument with no documented equivalent — **spike it** |
+
+Cost lands about where Exa is: $0.005 base + $0.001 per additional result.
+
+Requires a virtues-api leg (a `/parallel/*` proxy route beside the Exa one), so
+it is small but not purely local — that repo deploys separately.
 
 ### 3. `bookmark_enrichment` applet — the queue
 
@@ -447,7 +477,11 @@ Live (blocking something):
 4. **URL-fetch failure rate** — what fraction of real saved URLs the native
    readability path actually handles, which sets how often Parallel Extract
    gets invoked and therefore whether the escalation tier is worth building.
-5. Browser-extension → box auth path (iroh gate).
+5. **`max_age_hours` on Parallel** — the one live `web_search` argument with no
+   documented equivalent. If freshness/recrawl control is genuinely absent, the
+   "use `1` for news/sports/live data" instruction in the tool description has
+   to go, and the model loses a lever it currently has.
+6. Browser-extension → box auth path (iroh gate).
 
 Resolved since 2026-07-28:
 
