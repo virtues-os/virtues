@@ -63,13 +63,13 @@ now have one.
 | **L3** | `AppletsPanel.svelte:199–211` | The `Status` column keys on `enabled` but renders the *last run's* status. Enabled/disabled is unreachable from the table except through a filter | on/off is a row affordance |
 | **L4** | `AppletsPanel.svelte:288–297` | `Reconcile` ("re-read applet manifests from disk") is a header button beside `New` | not in the spec; this is an operator verb on a consumer page |
 | **L5** | `AppletsPanel.svelte:355` | Empty state is `"No applets yet — ask for one in chat."` — no examples, no starter set | the contemplative starter set markets as **"Practices"**; `Practices` appears nowhere in the codebase |
-| **T1** | `AppletDetailView.svelte` | Four editable fields: Name, Agent prompt, Schedule, Memory. No description, condition, triggers, `until`, limits, cost, credential/source | header → face → *the guts* (schedule, triggers, limits — all editable) |
-| **T2** | `AppletDetailView.svelte:222–228` | The face is not on the page; it is an "Open view" button to a separate tab | the face **is** the detail body; headless falls back to the run log |
-| **T3** | `AppletDetailView.svelte:68` | `isSystem` gates on `owner === 'system'` — the exact mistake the list already fixed by switching to `origin`. Your Gmail sync's page therefore claims to be system-managed and locks its name | `owner` is write-authority, not provenance |
+| ~~**T1**~~ | `AppletDetailView.svelte` | **FIXED.** Was four fields. Now carries the intent sentence, what wakes it, the gate, lifecycle, limits, and per-run cost | header → face → *the guts* (schedule, triggers, limits — all editable) |
+| ~~**T2**~~ | `AppletDetailView.svelte:222–228` | **FIXED.** The face is the page; the button now opens it full-screen rather than being the only way to see it | the face **is** the detail body; headless falls back to the run log |
+| ~~**T3**~~ | `AppletDetailView.svelte:68` | **FIXED.** Editability still follows `owner` (that is what the server enforces); the EXPLANATION now follows `origin`, so a source applet says it belongs to a connection you made | `owner` is write-authority, not provenance |
 | ~~**T4**~~ | `AppletDetailView.svelte:497–499` | **FIXED.** `.muted-inline` resolved to `--color-warning`, so every applet's "runs forever" rendered orange | lifecycle is a neutral fact |
-| **T5** | `AppletDetailView.svelte:243` | Hint reads `Managed by templates.toml` — a file that no longer exists (per-folder manifests since the rename) | — |
-| **T6** | `AppletDetailView.svelte:259, 299, 304` | "Delete **action**", "System **action** — managed automatically", "What should this **action** do each run?" | Applet everywhere (phase 1) |
-| **T7** | `AppletDetailView.svelte:287–293` | Memory is a bare textarea labeled "Memory" / "Persistent markdown scratchpad, carried across runs" | *"notes this applet keeps"* |
+| ~~**T5**~~ | `AppletDetailView.svelte:243` | **FIXED.** | — |
+| ~~**T6**~~ | `AppletDetailView.svelte:259, 299, 304` | **FIXED.** | Applet everywhere (phase 1) |
+| ~~**T7**~~ | `AppletDetailView.svelte:287–293` | **FIXED.** Now "Notes it keeps" — what this applet wrote down for its own next run | *"notes this applet keeps"* |
 | **F1** | `applet-views/index.ts` · `TabContent.svelte:32` | A second face system survives: the Svelte `ui/Card.svelte` / `ui/Detail.svelte` registry keyed on `config.view.name`. `hello_world` ships **both** it and `face/index.html` | *"`{view:{name}}` dies with iframe faces"* |
 | **F2** | `applet-views/index.ts` | `loadCard` is referenced nowhere — dead | — |
 | **F3** | `applets/palette.ts:32–134` | `paletteFor` and its six palettes (~110 lines) are entirely unreferenced, and every stop is a hardcoded light-only hex gradient | dead code; also violates the no-hardcoded-colors rule if ever revived |

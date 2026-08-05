@@ -106,6 +106,12 @@ pub struct AppletRun {
     pub parent_run_id: Option<String>,
     pub transform_stage: Option<String>,
     pub result_summary: Option<String>,
+    /// What this run spent with the model, in micros-USD. Summed from
+    /// `app_ai_calls`, which records the gateway's authoritative per-call
+    /// figure — never re-estimated here. Zero for runs that called no model,
+    /// and for every run before spend was attributed at all.
+    #[serde(default)]
+    pub cost_micros: i64,
     pub created_at: crate::types::Timestamp,
 }
 
@@ -814,11 +820,20 @@ pub async fn query_runs(
     limit: i64,
 ) -> Result<Vec<AppletRun>> {
     let rows = sqlx::query(
-        r#"SELECT * FROM app_applet_runs
-           WHERE ($1 IS NULL OR applet_id = $2)
-             AND ($3 IS NULL OR status = $4)
-           ORDER BY created_at DESC
-           LIMIT $5"#,
+        // The cost of a run is not on the run — it is the sum of the model
+        // calls it made, which live in `app_ai_calls`. Carried here so the
+        // detail page can answer "what did this cost" beside "what did it do",
+        // which is the pairing that makes a spend ceiling a decision rather
+        // than a guess.
+        r#"SELECT r.*, COALESCE((
+                 SELECT SUM(c.cost_micros) FROM app_ai_calls c
+                  WHERE c.applet_run_id = r.id
+               ), 0)::bigint AS cost_micros
+             FROM app_applet_runs r
+            WHERE ($1 IS NULL OR r.applet_id = $2)
+              AND ($3 IS NULL OR r.status = $4)
+            ORDER BY r.created_at DESC
+            LIMIT $5"#,
     )
     .bind(applet_id)
     .bind(applet_id)
@@ -1001,6 +1016,9 @@ fn run_from_row(row: &sqlx::postgres::PgRow) -> Result<AppletRun> {
         parent_run_id: row.try_get("parent_run_id")?,
         transform_stage: row.try_get("transform_stage")?,
         result_summary: row.try_get("result_summary")?,
+        // Absent from queries that do not ask for it (`SELECT *` on the runs
+        // table alone) — those callers do not show cost, so 0 is right.
+        cost_micros: row.try_get("cost_micros").unwrap_or(0),
         created_at: row.try_get("created_at")?,
     })
 }
