@@ -64,7 +64,7 @@ The primitive was called **Action** until 2026-07. That name was chosen mainly b
 
 Names considered and rejected, in the round that settled it:
 
-- **Practices** — beautiful for the contemplative use cases, awkward for utilities (`housekeeping practice`?). Survives as the name of a gallery collection.
+- **Practices** — beautiful for the contemplative use cases, awkward for utilities (`housekeeping practice`?). Rejected outright; the gallery collection it was reserved for is cut (2026-08-05).
 - **Offices** — monastic, exact fit for scheduled work, collides with workplace usage.
 - **Instruments** — the best semantics on offer (means-of-action, instrument-panel, and the Rule of St. Benedict's "Instruments of Good Works" all land at once), but too long for the nav.
 - **Artifact** — an inert output, not a runner. Also Anthropic's.
