@@ -113,9 +113,20 @@ Carried from the parked plan, unchanged — they were right.
    a boot-ok beacon within a few seconds or the shell flips back (same spirit as
    the box's `virtues.bak` swap).
 
-Rule 1 matters more once the Mac joins: killing UI-ahead-of-box exposes the
-mirror risk, JS ahead of native. Without the floor, OTA converts a store
-round-trip into a white screen in the field.
+**Rule 1 is already owed, today, with no OTA anywhere.** `mac-plan.md` §3 names
+it the *undeclared coupling*: the Mac bundles only `pair.html` and shells to the
+box, so **the box already serves the JavaScript that calls the app's Tauri
+commands**. `bridge.ts` ships with the box and `invoke()`s a surface compiled
+into a separately-versioned binary — no negotiation, no feature detection, no
+error path. A box newer than the app calls a command that does not exist and
+fails at runtime, inside whatever feature needed it. It is latent only because
+that surface has been stable.
+
+So JS-ahead-of-native is not a risk this plan introduces. It is a live,
+unguarded defect that this plan would inherit, and the fix is the same object
+under two names: `minShellVersion` here, "command-surface version" in
+`mac-plan.md` §4 (its Phase 5). One mechanism, built once, load-bearing for both.
+Whoever gets there first should name it for both documents.
 
 ## Apple's position
 
@@ -127,6 +138,32 @@ Note this is also why the phone must *not* simply point a webview at the box the
 way the Mac does today: a pure remote-URL wrapper invites guideline 4.2
 (minimum functionality), on top of costing a cold load over the loopback on
 cellular and making a collector's UI hostage to connectivity.
+
+## Relationship to `mac-plan.md`
+
+That document owns the Mac end to end — onboarding, permissions, and all three
+update paths — written after a six-day silent outage. Two points of contact:
+
+**It does not block this, and this does not block it.** Its Phases 0–2 (version
+monotonicity, a CI gate, three-state permission truth) are about an outage that
+already happened and touch none of the UI-delivery machinery here. They go
+first. This plan is strictly downstream.
+
+**One live disagreement.** `mac-plan.md` §3 records "Web UI delivery — genuinely
+OTA from the box" as a *working* surface, and builds on the Mac continuing to
+shell to `localhost:7117`. This plan proposes retiring that shell for the
+resolver. Both are defensible; the tiebreaker is offline, which `mac-plan.md`
+does not address for the UI. Until someone decides, do not let either document
+be read as settling it.
+
+**A refinement this forces on `mac-plan.md`'s identity model.** Its §4 has the
+Mac display the paired box's release. Once the Mac caches a bundle, the box can
+be upgraded while the client still runs the previous bundle, and reporting the
+box's number would assert something the client has not actually loaded —
+contrary to its own invariant 4 ("no component asserts a fact it didn't
+observe"). The displayed release must come from the **active bundle**, not the
+box's claim. They converge on the next pull; the number should not lie in the
+gap.
 
 ## Sequencing
 
