@@ -196,6 +196,12 @@
 			<div class="hero-top">
 				<div class="title-block">
 					<h1 class="title">{action.name}</h1>
+					{#if action.description}
+						<!-- The intent sentence: what this applet is for, in the user's
+						     terms. The page opened with a name and a cron string before
+						     this, neither of which says what the thing does. -->
+						<p class="intent">{action.description}</p>
+					{/if}
 					<div class="meta">
 						<span>{describeSchedule(action.cron_schedule ?? null)}</span>
 						{#if action.next_due_at && action.enabled && !action.archived_at}
@@ -506,6 +512,14 @@
 		font-size: 1.1875rem;
 		font-weight: 600;
 		line-height: 1.25;
+	}
+	.intent {
+		margin: 0 0 0.375rem;
+		max-width: 68ch;
+		font-family: var(--font-serif, Georgia, serif);
+		font-size: 0.875rem;
+		line-height: 1.5;
+		color: var(--color-foreground-muted);
 	}
 	.meta {
 		display: flex;

@@ -1,5 +1,5 @@
 name = "Google Calendar"
-description = "Sync events from a connected Google account."
+description = "Keeps your Google Calendar events here."
 owner = "system"
 runtime = "function"
 command = ["google_calendar_sync"]

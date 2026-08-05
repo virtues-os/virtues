@@ -98,6 +98,16 @@ struct Template {
     #[serde(default)]
     id_prefix: Option<String>,
     name: String,
+    /// The one-sentence intent: what this applet is for, in the user's terms.
+    ///
+    /// Every manifest in the tree has carried one since the beginning and this
+    /// struct never had the field, so serde discarded it silently on every
+    /// load — there is no `deny_unknown_fields` here, and an unknown key costs
+    /// nothing but the thing it was carrying. The list's plain-English line,
+    /// the detail headline, and the authoring gate's headline all read from
+    /// this, which is why all three were empty.
+    #[serde(default)]
+    description: Option<String>,
     owner: String,
     #[serde(default)]
     triggers: Vec<String>,
@@ -1187,9 +1197,9 @@ async fn upsert_row(
         r#"
         INSERT INTO app_applets (
             id, name, owner, agent, cron_schedule, enabled, config, condition,
-            triggers, credential_id, command, device_id, until
+            triggers, credential_id, command, device_id, until, description
         )
-        VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, $8, $9::jsonb, $10, $11, $12, $13)
+        VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, $8, $9::jsonb, $10, $11, $12, $13, $14)
         ON CONFLICT(id) DO UPDATE SET
             device_id      = EXCLUDED.device_id,
             updated_at     = now()
@@ -1198,9 +1208,9 @@ async fn upsert_row(
         r#"
         INSERT INTO app_applets (
             id, name, owner, agent, cron_schedule, enabled, config, condition,
-            triggers, credential_id, command, device_id, until
+            triggers, credential_id, command, device_id, until, description
         )
-        VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, $8, $9::jsonb, $10, $11, $12, $13)
+        VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, $8, $9::jsonb, $10, $11, $12, $13, $14)
         ON CONFLICT(id) DO UPDATE SET
             name           = EXCLUDED.name,
             agent          = EXCLUDED.agent,
@@ -1209,15 +1219,16 @@ async fn upsert_row(
             condition      = EXCLUDED.condition,
             triggers       = EXCLUDED.triggers,
             until          = EXCLUDED.until,
+            description    = EXCLUDED.description,
             updated_at     = now()
         "#
     } else {
         r#"
         INSERT INTO app_applets (
             id, name, owner, agent, cron_schedule, enabled, config, condition,
-            triggers, credential_id, command, device_id, until
+            triggers, credential_id, command, device_id, until, description
         )
-        VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, $8, $9::jsonb, $10, $11, $12, $13)
+        VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, $8, $9::jsonb, $10, $11, $12, $13, $14)
         ON CONFLICT(id) DO UPDATE SET
             name           = EXCLUDED.name,
             owner          = EXCLUDED.owner,
@@ -1229,6 +1240,7 @@ async fn upsert_row(
             command        = EXCLUDED.command,
             device_id      = EXCLUDED.device_id,
             until          = EXCLUDED.until,
+            description    = EXCLUDED.description,
             updated_at     = now()
         "#
     };
@@ -1247,6 +1259,7 @@ async fn upsert_row(
         .bind(&command_json)
         .bind(device_id)
         .bind(&template.until)
+        .bind(&template.description)
         .execute(db)
         .await?;
 
@@ -1626,6 +1639,51 @@ auth = { kind = "via_proxy", start_path = "/google/start" }
     // applies `core/migrations` automatically, so this runs against the real
     // schema. Set DATABASE_URL when running. `triggers` is JSONB, so we cast it
     // to text for a stable string snapshot comparison.
+    /// Every shipped manifest carries a description, and reconcile must land
+    /// it. It did not for the life of the project: `Template` had no such
+    /// field, serde discarded the key without complaint, and there was no
+    /// column to bind it to — so the sentence the list row, the detail
+    /// headline, and the authoring gate all read from was empty everywhere.
+    #[sqlx::test]
+    async fn reconcile_carries_the_description_to_the_row(pool: sqlx::PgPool) {
+        reconcile_templates(&pool).await.expect("reconcile");
+
+        let missing: Vec<String> = sqlx::query_scalar(
+            "SELECT id FROM app_applets \
+             WHERE owner = 'system' AND (description IS NULL OR btrim(description) = '') \
+             ORDER BY id",
+        )
+        .fetch_all(&pool)
+        .await
+        .unwrap();
+        assert!(
+            missing.is_empty(),
+            "shipped applets with no description on the row: {missing:?}"
+        );
+    }
+
+    /// The sentence is reconcile's to own, like `name` — editing a shipped
+    /// manifest and reconciling has to change what the user reads, or fixing
+    /// a description would require a database migration.
+    #[sqlx::test]
+    async fn an_edited_description_overwrites_on_reconcile(pool: sqlx::PgPool) {
+        reconcile_templates(&pool).await.expect("reconcile");
+        sqlx::query("UPDATE app_applets SET description = 'stale' WHERE owner = 'system'")
+            .execute(&pool)
+            .await
+            .unwrap();
+
+        reconcile_templates(&pool).await.expect("second reconcile");
+
+        let stale: i64 = sqlx::query_scalar(
+            "SELECT count(*) FROM app_applets WHERE description = 'stale'",
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(stale, 0, "reconcile must restore the manifest sentence");
+    }
+
     #[sqlx::test]
     async fn reconcile_is_idempotent(pool: sqlx::PgPool) {
         // Seed an active iOS credential so per_credential templates fan out.

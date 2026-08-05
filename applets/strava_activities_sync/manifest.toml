@@ -1,5 +1,5 @@
 name = "Strava Activities"
-description = "Sync runs, rides, swims, and other workouts from a connected Strava account."
+description = "Brings in your runs, rides, swims, and other workouts from Strava."
 owner = "system"
 runtime = "function"
 command = ["strava_activities_sync"]

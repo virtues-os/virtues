@@ -1,5 +1,5 @@
 name = "Transcription Resolution"
-description = "Resolve pending audio transcriptions; calls the transcription provider and writes results."
+description = "Turns the audio you record into readable text."
 owner = "system"
 runtime = "function"
 command = ["transcription_resolution"]

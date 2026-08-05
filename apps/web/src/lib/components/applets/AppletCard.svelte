@@ -1,7 +1,6 @@
 <script lang="ts">
 	import type { Applet, AppletRun } from '$lib/api/client';
 	import { describeSchedule, relativeTime } from '$lib/applets/palette';
-	import { descriptionFor } from '$lib/applets/descriptions';
 
 	let {
 		applet,
@@ -23,13 +22,21 @@
 	const lastStatus = $derived((lastRun as { status?: string } | null)?.status ?? null);
 	const isFailing = $derived(lastStatus === 'error');
 
-	// Excerpt resolution — always prefer a real successful output, never an error.
-	// Falls back to the applet's description (self-introduction).
+	// Excerpt resolution — always prefer a real successful output, never an
+	// error. Falls back to the applet's own sentence.
+	//
+	// That fallback used to come from a hardcoded map in the bundle, keyed on
+	// function_name, which knew seven applets (two of them fictional) and
+	// otherwise took the first sentence of the agent PROMPT — so an applet
+	// introduced itself with an instruction addressed to it ("You are the
+	// user's morning reflection companion"). It now reads the manifest
+	// sentence, which is what that sentence was always for.
 	const excerpt = $derived.by(() => {
 		const success = lastSuccess?.result_summary;
 		if (success) return { text: success, kind: 'output' as const };
-		const desc = descriptionFor(applet);
-		if (desc) return { text: desc, kind: 'description' as const };
+		if (applet.description) {
+			return { text: applet.description, kind: 'description' as const };
+		}
 		return null;
 	});
 

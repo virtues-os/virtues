@@ -1,5 +1,5 @@
 name = "Google Mail"
-description = "Sync emails from a connected Gmail account."
+description = "Keeps your Gmail here."
 owner = "system"
 runtime = "function"
 command = ["google_gmail_sync"]

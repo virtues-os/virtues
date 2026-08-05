@@ -1,5 +1,5 @@
 name = "Chat Import"
-description = "One-time import of a Claude / ChatGPT / Gemini conversation export into the AI-chat ontology. Parsed box-side; deduped on re-import."
+description = "Brings a Claude, ChatGPT, or Gemini export into your history — once, and safe to repeat."
 owner = "system"
 runtime = "function"
 command = ["chat_import"]

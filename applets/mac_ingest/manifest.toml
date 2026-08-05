@@ -1,5 +1,5 @@
 name = "Mac Ingest"
-description = "Ingest app usage, browser activity, and iMessage history from a paired Mac."
+description = "Receives what your Mac sees — the apps you use, the pages you visit, and your iMessage history."
 owner = "system"
 runtime = "function"
 command = ["mac_ingest"]

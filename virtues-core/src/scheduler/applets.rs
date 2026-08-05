@@ -60,6 +60,9 @@ pub struct Applet {
     pub id: String,
     pub owner: String,
     pub name: String,
+    /// The one-sentence intent the manifest carries — what this applet is for,
+    /// in the user's terms. Reconcile's to own, like `name`.
+    pub description: Option<String>,
     pub agent: Option<String>,
     pub cron_schedule: Option<String>,
     pub enabled: bool,
@@ -899,6 +902,7 @@ pub fn applet_from_row(row: &sqlx::postgres::PgRow) -> Result<Applet> {
         id: row.try_get("id")?,
         owner: row.try_get("owner")?,
         name: row.try_get("name")?,
+        description: row.try_get("description").ok().flatten(),
         agent: row.try_get("agent")?,
         cron_schedule: row.try_get("cron_schedule")?,
         enabled: row.try_get::<bool, _>("enabled")?,

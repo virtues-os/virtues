@@ -1,5 +1,5 @@
 name = "Backup to Volumes"
-description = "Ships a full archive plus a lake increment to every attached backup volume. A volume that is not plugged in is skipped, not an error."
+description = "Copies your whole archive onto every backup drive you have plugged in."
 owner = "system"
 runtime = "function"
 command = ["backup_volumes"]
