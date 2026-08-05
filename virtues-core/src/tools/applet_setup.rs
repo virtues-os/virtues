@@ -145,8 +145,21 @@ pub async fn execute(
     if let Some(ddl) = schema_sql.as_deref() {
         if ddl.len() > SCHEMA_SQL_MAX {
             findings.push(finding("schema_sql", "schema too large (16KB max)", None));
-        } else if let Err(e) = check_schema_sql(pool, ddl, &slug).await {
+        } else if let Err(e) = crate::tools::applet_schema::check(pool, ddl, &slug).await {
             findings.push(finding("schema_sql", &e, None));
+        } else {
+            // The failure a dry-run cannot see: DDL that is valid, applies
+            // cleanly, and changes nothing. `CREATE TABLE IF NOT EXISTS` on an
+            // existing table silently drops every column added since — so the
+            // model would believe a column exists and write a prompt that uses
+            // it, failing at runtime nightly and forever.
+            for drift in crate::tools::applet_schema::detect_drift(pool, ddl).await {
+                findings.push(finding(
+                    "schema_sql",
+                    &drift.message(),
+                    Some(&drift.suggestion()),
+                ));
+            }
         }
     }
 
@@ -237,27 +250,50 @@ pub async fn execute(
     let manifest_toml = toml::to_string_pretty(&manifest)
         .map_err(|e| ToolError::ExecutionFailed(format!("manifest serialize failed: {e}")))?;
 
-    // ---- 4. Apply schema FIRST, then write the folder --------------------
-    // Ordering matters: if the schema apply fails, no folder is written, so a
-    // later global reconcile can't promote an orphan row whose tables were
-    // never created. schema.sql is idempotent, so re-running is safe.
+    // ---- 4. Write the folder; reconcile applies the schema ----------------
+    // Each submission is one numbered, append-only migration rather than a
+    // rewritten file. Identical DDL — the ordinary re-setup that only changed
+    // the prompt — matches the last recorded checksum and is recognized as
+    // already applied, so nothing is appended and nothing is re-run.
+    //
+    // The DDL is NOT applied here. Reconcile's replay pass is the single apply
+    // path, so a folder that arrives any other way (git import, restored
+    // backup) reaches the same tables by the same code. Applying here as well
+    // would run every new version twice — harmless for a CREATE, an outright
+    // error for the ALTER that an edit now produces.
+    //
+    // What used to justify applying first was the orphan row: an applet whose
+    // tables were never created. The transactional dry-run in the check above
+    // covers that better than ordering did — it runs the real DDL and rolls it
+    // back — and the post-reconcile verification below closes the rest.
+    let mut schema_version: Option<i32> = None;
+    let mut schema_file: Option<String> = None;
     if let Some(ddl) = &schema_sql {
-        if let Err(e) = apply_schema_sql(pool, ddl).await {
-            return Ok(ToolResult::success(serde_json::json!({
-                "status": "error",
-                "error": format!("schema apply failed: {e}"),
-            })));
-        }
-        let _ = crate::server::faces::ensure_applet_db_grants(pool).await;
+        use crate::tools::applet_schema as schema;
+        let already = schema::applied(pool, &applet_id).await.unwrap_or_default();
+        schema_version = Some(match schema::classify(ddl, &already) {
+            schema::Submission::AlreadyApplied { version } => version,
+            schema::Submission::NewVersion { version } => version,
+        });
     }
 
     std::fs::create_dir_all(&dir)
         .map_err(|e| ToolError::ExecutionFailed(format!("mkdir failed: {e}")))?;
     std::fs::write(dir.join("manifest.toml"), &manifest_toml)
         .map_err(|e| ToolError::ExecutionFailed(format!("manifest write failed: {e}")))?;
-    if let Some(ddl) = &schema_sql {
-        std::fs::write(dir.join("schema.sql"), ddl)
+    if let (Some(ddl), Some(version)) = (&schema_sql, schema_version) {
+        use crate::tools::applet_schema as schema;
+        let schema_dir = dir.join(schema::SCHEMA_DIR);
+        std::fs::create_dir_all(&schema_dir)
+            .map_err(|e| ToolError::ExecutionFailed(format!("schema dir failed: {e}")))?;
+        let file_name = format!("{version:04}_schema.sql");
+        let path = schema_dir.join(&file_name);
+        // Written unconditionally, including for AlreadyApplied: the row may
+        // exist on a box whose folder was restored from elsewhere, and the
+        // folder is what a fresh box replays.
+        std::fs::write(&path, ddl)
             .map_err(|e| ToolError::ExecutionFailed(format!("schema write failed: {e}")))?;
+        schema_file = Some(file_name);
     }
     if let Some(html) = &face_html {
         let face_dir = dir.join("face");
@@ -270,6 +306,29 @@ pub async fn execute(
     crate::applet_templates::reload_and_reconcile(pool)
         .await
         .map_err(|e| ToolError::ExecutionFailed(format!("reconcile failed: {e}")))?;
+
+    // Reconcile ran the pending version as part of its replay pass. Confirm it
+    // actually landed rather than trusting that it did: the whole point of
+    // this change is that a schema apply which quietly does nothing must never
+    // again be reported as success.
+    if let (Some(version), Some(_)) = (schema_version, &schema_file) {
+        use crate::tools::applet_schema as schema;
+        let landed = schema::applied(pool, &applet_id)
+            .await
+            .unwrap_or_default()
+            .iter()
+            .any(|a| a.version == version);
+        if !landed {
+            return Ok(ToolResult::success(serde_json::json!({
+                "status": "error",
+                "error": format!(
+                    "the applet was created but schema version {version} did not apply — \
+                     check the box logs for the DDL error"
+                ),
+            })));
+        }
+        let _ = crate::server::faces::ensure_applet_db_grants(pool).await;
+    }
 
     // Explicit re-author re-arms a completed applet. Reconcile never
     // un-archives (that would resurrect one-shots on every boot), so clear it
@@ -473,89 +532,6 @@ async fn explain_bool_expr(pool: &PgPool, expr: &str) -> Result<(), String> {
     res.map(|_| ()).map_err(|e| e.to_string())
 }
 
-async fn check_schema_sql(pool: &PgPool, ddl: &str, slug: &str) -> Result<(), String> {
-    validate_schema_text(ddl, slug)?;
-    run_schema_statements(pool, ddl, false).await
-}
-
-/// Apply schema.sql for real (post-check). Idempotent DDL by doctrine.
-async fn apply_schema_sql(pool: &PgPool, ddl: &str) -> Result<(), String> {
-    run_schema_statements(pool, ddl, true).await
-}
-
-/// Textual guards: no transaction control / role / grant statements, and every
-/// schema-qualified identifier must live in the applet's own schema.
-fn validate_schema_text(ddl: &str, slug: &str) -> Result<(), String> {
-    let lowered = ddl.to_lowercase();
-    for kw in ["commit", "rollback", "savepoint", "grant", "revoke", "create role", "drop role"] {
-        if lowered.contains(kw) {
-            return Err(format!("schema_sql may not contain '{kw}'"));
-        }
-    }
-    let expected = format!("applet_{slug}");
-    for token in lowered.split(|c: char| !(c.is_ascii_alphanumeric() || c == '_' || c == '.')) {
-        if let Some((schema, _)) = token.split_once('.') {
-            if (schema.starts_with("applet_") && schema != expected)
-                || schema == "public"
-                || schema.starts_with("data_")
-                || schema.starts_with("app_")
-                || schema.starts_with("wiki_")
-            {
-                return Err(format!(
-                    "schema_sql must only target schema {expected} (found '{token}')"
-                ));
-            }
-        }
-    }
-    if !lowered.contains(&expected) {
-        return Err(format!(
-            "schema_sql must create tables in schema {expected} (start with CREATE SCHEMA IF NOT EXISTS {expected};)"
-        ));
-    }
-    Ok(())
-}
-
-/// Run the DDL statement-by-statement over the extended protocol inside one
-/// transaction (ROLLBACK for the dry-run check, COMMIT for apply). One
-/// statement per query means a smuggled multi-statement string is a protocol
-/// error, not an escape — and it avoids `raw_sql`, whose future trips
-/// rustc's Send-generality inference inside the agent stream.
-async fn run_schema_statements(pool: &PgPool, ddl: &str, commit: bool) -> Result<(), String> {
-    let mut tx = pool.begin().await.map_err(|e| e.to_string())?;
-    sqlx::query("SET LOCAL statement_timeout = '5s'")
-        .execute(&mut *tx)
-        .await
-        .map_err(|e| e.to_string())?;
-    sqlx::query("SET LOCAL lock_timeout = '2s'")
-        .execute(&mut *tx)
-        .await
-        .map_err(|e| e.to_string())?;
-    // Empty search_path is the real guard (the textual check is belt-and-
-    // braces): every table name must be schema-qualified, so an unqualified
-    // `DROP TABLE data_location_points` or `CREATE TABLE evil (...)` resolves
-    // to no schema and errors instead of hitting `public`. Combined with
-    // validate_schema_text rejecting any qualified name outside applet_<slug>,
-    // there is no path for this DDL to touch data_*/wiki_*/app_*/public.
-    sqlx::query("SET LOCAL search_path = ''")
-        .execute(&mut *tx)
-        .await
-        .map_err(|e| e.to_string())?;
-    for stmt in ddl.split(';') {
-        let stmt = stmt.trim();
-        if stmt.is_empty() {
-            continue;
-        }
-        if let Err(e) = sqlx::query(stmt).execute(&mut *tx).await {
-            tx.rollback().await.ok();
-            return Err(format!("in statement '{}…': {e}", &stmt[..stmt.len().min(60)]));
-        }
-    }
-    if commit {
-        tx.commit().await.map_err(|e| e.to_string())
-    } else {
-        tx.rollback().await.map_err(|e| e.to_string())
-    }
-}
 
 /// Did-you-mean for unknown relation/column errors, against the live catalog.
 async fn did_you_mean(pool: &PgPool, error: &str) -> Option<String> {

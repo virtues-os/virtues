@@ -247,6 +247,17 @@ pub const USER_APPLET_PREFIX: &str = "applet_user__";
 /// non-user applets — only `applet_user__<slug>` applets own an `applet_`
 /// schema. Slugs are `[a-z0-9_]`, so the result is a safe unquoted identifier.
 pub(crate) fn applet_schema_name(applet_id: &str) -> Option<String> {
+    applet_slug(applet_id).map(|slug| format!("applet_{slug}"))
+}
+
+/// The bare slug behind a user applet's id, or `None` for anything else.
+///
+/// Same parse and same identifier-safety check as [`applet_schema_name`] —
+/// callers that need to build a name other than the schema (the DDL guard
+/// wants `<slug>`, not `applet_<slug>`) take it from here rather than
+/// stripping the prefix back off, which is how the two spellings drifted
+/// apart the last time.
+pub(crate) fn applet_slug(applet_id: &str) -> Option<String> {
     let slug = applet_id.strip_prefix(USER_APPLET_PREFIX)?;
     if slug.is_empty()
         || !slug
@@ -255,7 +266,7 @@ pub(crate) fn applet_schema_name(applet_id: &str) -> Option<String> {
     {
         return None;
     }
-    Some(format!("applet_{slug}"))
+    Some(slug.to_string())
 }
 
 /// List the base tables in a user applet's owned `applet_<slug>` schema. Empty

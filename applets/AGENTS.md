@@ -22,9 +22,35 @@ applet: that is the edit path.
 | `triggers` | list | `cron` `manual` `tool` `api` `webhook`; defaults follow `schedule` |
 | `condition` | SQL boolean | run gate — local data only, never network |
 | `until` | lifecycle | omit = forever · `"once"` = archive after first success · SQL boolean = archive when true after a success |
-| `schema_sql` | idempotent DDL | **only** schema `applet_<slug>`; start with `CREATE SCHEMA IF NOT EXISTS applet_<slug>;` |
+| `schema_sql` | **one migration** | **only** schema `applet_<slug>`. First call creates; later calls submit *only what changed* — see below |
 | `face_html` | complete index.html | sandboxed iframe; include `<link rel="stylesheet" href="virtues.css">` + `<script src="virtues.js"></script>`; read data with `await virtues.query(sql)` (read-only); 48KB max |
 | `limits` | object | protective ceilings — see below. Only enforced keys are accepted |
+
+## Tables: `schema_sql` is a migration, not a schema
+
+Each `setup_applet` call's `schema_sql` is **one numbered, append-only
+migration**, applied once and never re-run. They accumulate at
+`applets/<slug>/schema/NNNN_*.sql`, and a fresh box replays them in order.
+
+- **Creating**: `CREATE SCHEMA IF NOT EXISTS applet_<slug>;` then your
+  `CREATE TABLE`s. This is version 1.
+- **Changing**: submit **only the change** — `ALTER TABLE applet_<slug>.entries
+  ADD COLUMN protein_g INTEGER;`. That becomes version 2.
+- **Not changing the tables**: resubmit the identical DDL, or omit
+  `schema_sql`. Identical text is recognized as already applied and nothing
+  is appended or re-run.
+
+**Why it cannot be one rewritten file.** `CREATE TABLE IF NOT EXISTS` on a
+table that already exists does *nothing* — it does not add your new column,
+and it does not complain. The apply succeeds, so you would believe the column
+is there and write a prompt that uses it. Every `sql_write` naming it then
+fails at runtime, nightly, forever. The check now catches this specific case
+and hands you the exact `ALTER TABLE` to write instead; when you see that
+finding, do not re-send the `CREATE` with the column added.
+
+Row-level work (`INSERT`/`UPDATE`/`DELETE`) is not this. That happens at
+runtime through `sql_write`, needs no migration, and is how a tracker records
+what the user tells it.
 
 ## Limits
 
