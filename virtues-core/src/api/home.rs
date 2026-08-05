@@ -160,12 +160,40 @@ pub struct UnnamedPlace {
     pub longitude: Option<f64>,
 }
 
+/// The unnamed places worth asking about, busiest first.
+///
+/// `wiki_places.visit_count` is not the count to sort on: it is maintained for
+/// named places and sits at 0 for every `Location %` row on both a dev box and
+/// a nine-year one — which is exactly the set this returns, so ordering by it
+/// ranked the backlog at random and reported every place as never visited.
+///
+/// The count is taken from the visit records instead, with each visit assigned
+/// to the single nearest place. Counting every place within a radius would
+/// credit one afternoon downtown to five stubs on the same block; five
+/// neighbours each claiming ~330 of the same 462 visits is what that produced
+/// here. The bounding box is a cheap prefilter, not the test — roughly two
+/// kilometres, past which a visit belongs to no known place at all.
 pub async fn get_unnamed_places(pool: &PgPool, limit: i64) -> Result<Vec<UnnamedPlace>> {
     let rows = sqlx::query(
         r#"
-        SELECT id, name, visit_count, latitude, longitude
-        FROM wiki_places
-        WHERE name LIKE 'Location %'
+        WITH assigned AS (
+            SELECT (
+                SELECT p.id FROM wiki_places p
+                WHERE p.latitude IS NOT NULL AND p.longitude IS NOT NULL
+                  AND abs(p.latitude - v.latitude) < 0.02
+                  AND abs(p.longitude - v.longitude) < 0.02
+                ORDER BY (p.latitude - v.latitude) ^ 2 + (p.longitude - v.longitude) ^ 2
+                LIMIT 1
+            ) AS place_id
+            FROM data_location_visit v
+            WHERE v.is_archived = FALSE AND v.deleted_at_source IS NULL
+        )
+        SELECT c.id, c.name, c.latitude, c.longitude, count(a.place_id) AS visit_count
+        FROM wiki_places c
+        LEFT JOIN assigned a ON a.place_id = c.id
+        WHERE c.name LIKE 'Location %'
+        GROUP BY c.id, c.name, c.latitude, c.longitude
+        HAVING count(a.place_id) > 0
         ORDER BY visit_count DESC
         LIMIT $1
         "#,
