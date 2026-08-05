@@ -1,0 +1,10 @@
+<!--
+  Virtues ∴ — the two base dots. Same 1024 canvas and coordinates as
+  mark.svg, so this and mark-apex.svg stack with no repositioning.
+-->
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
+	<g fill="#17171A">
+		<circle cx="276" cy="696" r="94"/>
+		<circle cx="748" cy="696" r="94"/>
+	</g>
+</svg>
