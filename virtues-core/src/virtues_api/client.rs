@@ -52,6 +52,52 @@ fn is_ai_path(path: &str) -> bool {
     path.starts_with("/v1/ai/")
 }
 
+/// Turn an upstream's "HTTP 200, but actually an error" into a real error.
+///
+/// Some gateways answer a failed call with a 2xx whose body carries `error`
+/// and no `choices`. **Verified against OpenRouter 2026-08-05**: sending audio
+/// in our `image_url` data-URI shape returns HTTP 200 with
+/// `error.message = "Failed to load image from data:audio/wav;base64,…"` —
+/// the upstream tried to decode the audio as an image, failed, and said so at
+/// status 200.
+///
+/// Left alone, that is the only *quiet* BYO failure. Every other one we probed
+/// is loud: a wrong model id 400s, a missing model 400s, an unfunded account
+/// 402s. This one passes `is_success()`, so callers fall through to parsing
+/// and report something misleading — the transcription applet would raise
+/// "missing choices[0].message.content", blaming its own parse for the
+/// upstream's refusal, and then retry every cron tick, re-billing the user's
+/// key for audio that can never succeed in that shape.
+///
+/// So: a 2xx carrying `error` and no `choices` becomes a 502 with the
+/// upstream's own message preserved. The user reads why their provider said
+/// no, which is the whole point of not translating provider errors.
+fn normalize_upstream_error(resp: ApiResponse) -> ApiResponse {
+    if !resp.is_success() || resp.body.get("choices").is_some() {
+        return resp;
+    }
+    let Some(err) = resp.body.get("error") else {
+        return resp;
+    };
+    let message = err
+        .get("message")
+        .and_then(|m| m.as_str())
+        .unwrap_or("upstream reported an error without a message");
+    tracing::warn!(
+        upstream_status = resp.status,
+        message,
+        "BYO upstream returned an error body at a success status; treating as 502"
+    );
+    ApiResponse {
+        status: 502,
+        body: json!({
+            "error": "byo_upstream_error",
+            "message": message,
+            "upstream_status": resp.status,
+        }),
+    }
+}
+
 /// Splice the BYO credential's `default_model` into a request body that does
 /// not already pin one, so the user's choice "from Settings" wins over a
 /// caller's default.
@@ -377,10 +423,10 @@ impl BearerClient {
             .await
             .map_err(|e| anyhow!("BYO upstream request failed: {e}"))?;
         let status = resp.status().as_u16();
-        let resp = ApiResponse {
+        let resp = normalize_upstream_error(ApiResponse {
             status,
             body: resp.json::<Value>().await.unwrap_or_else(|_| json!({})),
-        };
+        });
         // Still recorded, still keyed on the model actually sent. The row's
         // `cost_micros` lands at 0 because no upstream but our own gateway
         // reports `usage.cost` — and 0 is the honest number here, since
@@ -670,5 +716,95 @@ impl BearerClient {
         let status = resp.status().as_u16();
         let body = resp.json::<Value>().await.unwrap_or_else(|_| json!({}));
         Ok(ApiResponse { status, body })
+    }
+}
+
+#[cfg(test)]
+mod byo_fork_tests {
+    use super::*;
+
+    #[test]
+    fn only_inference_routes_fork_to_byo() {
+        assert!(is_ai_path("/v1/ai/chat/completions"));
+        // Fixed-cost vendor proxies are per-user bills a provider key cannot
+        // pay; they must keep going through the wallet.
+        for path in ["/v1/places/autocomplete", "/v1/exa/search", "/v1/unsplash/search", "/v1/usage"] {
+            assert!(!is_ai_path(path), "{path} must not divert to BYO");
+        }
+    }
+
+    fn byo(default_model: Option<&str>) -> crate::api::settings_byo::ByoCredential {
+        crate::api::settings_byo::ByoCredential {
+            provider: "openrouter.ai".into(),
+            api_key: "k".into(),
+            endpoint_url: "https://openrouter.ai/api/v1/chat/completions".into(),
+            default_model: default_model.map(String::from),
+        }
+    }
+
+    /// A caller's explicit model wins. That is the common case — compaction,
+    /// day summaries, image generation and transcription all pin one — and it
+    /// is why those ids reach the user's gateway in *our* namespace.
+    #[test]
+    fn a_pinned_model_survives_the_splice() {
+        let body = json!({"model": "google/gemini-3-flash", "messages": []});
+        let out = apply_byo_model(&body, &byo(Some("x-ai/grok-4.5")));
+        assert_eq!(out["model"], "google/gemini-3-flash");
+    }
+
+    #[test]
+    fn the_default_model_fills_an_unpinned_body() {
+        let body = json!({"messages": []});
+        let out = apply_byo_model(&body, &byo(Some("x-ai/grok-4.5")));
+        assert_eq!(out["model"], "x-ai/grok-4.5");
+    }
+
+    #[test]
+    fn no_default_model_leaves_the_body_alone() {
+        let body = json!({"messages": []});
+        let out = apply_byo_model(&body, &byo(None));
+        assert!(out.get("model").is_none());
+    }
+
+    /// The OpenRouter shape observed on 2026-08-05: HTTP 200, an `error`
+    /// object, no `choices`. It must not read as success.
+    #[test]
+    fn an_error_body_at_200_becomes_a_502() {
+        let resp = normalize_upstream_error(ApiResponse {
+            status: 200,
+            body: json!({"error": {"message": "Failed to load image from data:audio/wav;base64,…"}}),
+        });
+        assert_eq!(resp.status, 502);
+        assert!(!resp.is_success());
+        assert!(resp.body["message"].as_str().unwrap().contains("Failed to load image"));
+    }
+
+    #[test]
+    fn a_real_completion_is_untouched() {
+        let body = json!({"choices": [{"message": {"content": "hi"}}], "usage": {"cost": 0.01}});
+        let resp = normalize_upstream_error(ApiResponse { status: 200, body: body.clone() });
+        assert_eq!(resp.status, 200);
+        assert_eq!(resp.body, body);
+    }
+
+    /// Some upstreams return both a completion and a non-fatal `error`. A
+    /// present `choices` means we got what we asked for; don't discard it.
+    #[test]
+    fn choices_win_over_a_stray_error_field() {
+        let resp = normalize_upstream_error(ApiResponse {
+            status: 200,
+            body: json!({"choices": [{"message": {"content": "hi"}}], "error": {"message": "warn"}}),
+        });
+        assert_eq!(resp.status, 200);
+    }
+
+    /// A genuine 4xx already carries the provider's message; normalizing would
+    /// only bury it.
+    #[test]
+    fn real_error_statuses_pass_through_verbatim() {
+        let body = json!({"error": {"message": "xai/grok-4.5 is not a valid model ID", "code": 400}});
+        let resp = normalize_upstream_error(ApiResponse { status: 400, body: body.clone() });
+        assert_eq!(resp.status, 400);
+        assert_eq!(resp.body, body);
     }
 }
