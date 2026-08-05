@@ -44,31 +44,51 @@ fn static_dir() -> PathBuf {
     )
 }
 
+/// Outcome of reading the manifest out of a served build. Separated from the
+/// handler so it is testable without an `AppState` (and therefore without a
+/// database), which is what let these endpoints be verified before any box was
+/// running them.
+#[derive(Debug, PartialEq)]
+pub enum ManifestRead {
+    /// The manifest, verbatim.
+    Found(serde_json::Value),
+    /// No static build here. A real state, not a failure: headless installs
+    /// have none, and dev boxes serve the UI from vite instead.
+    Absent,
+    /// A manifest exists but is not valid JSON — a broken build, worth saying
+    /// so loudly rather than reporting "no bundle" and looking normal.
+    Malformed,
+}
+
+/// Read `.virtues-bundle.json` out of a served build directory.
+pub fn read_manifest(dir: &Path) -> ManifestRead {
+    let path = dir.join(MANIFEST_NAME);
+    let Ok(body) = std::fs::read_to_string(&path) else {
+        return ManifestRead::Absent;
+    };
+    match serde_json::from_str::<serde_json::Value>(&body) {
+        Ok(v) => ManifestRead::Found(v),
+        Err(e) => {
+            tracing::warn!("web-bundle manifest at {} is not valid JSON: {e}", path.display());
+            ManifestRead::Malformed
+        }
+    }
+}
+
 /// `GET /api/web-bundle/version` — what build this box is serving.
 ///
 /// Returns the manifest verbatim: `{version, sha, channel, minShellVersion,
 /// contentHash}`. A client compares `contentHash`, not `version`: dev and local
 /// builds all report `dev`, and two builds of one tag can legitimately differ.
-///
-/// 404 when the box serves no static build (headless installs, and dev boxes
-/// where the UI is served by vite instead) — that is a real state, not an
-/// error, and a client must treat it as "nothing to update from" rather than
-/// as a failure worth retrying.
 pub async fn version_handler(State(_state): State<AppState>) -> impl IntoResponse {
-    let path = static_dir().join(MANIFEST_NAME);
-    match std::fs::read_to_string(&path) {
-        Ok(body) => match serde_json::from_str::<serde_json::Value>(&body) {
-            Ok(v) => (StatusCode::OK, Json(v)).into_response(),
-            Err(e) => {
-                tracing::warn!("web-bundle manifest at {} is not valid JSON: {e}", path.display());
-                (
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    Json(json!({ "error": "manifest_unreadable" })),
-                )
-                    .into_response()
-            }
-        },
-        Err(_) => (
+    match read_manifest(&static_dir()) {
+        ManifestRead::Found(v) => (StatusCode::OK, Json(v)).into_response(),
+        ManifestRead::Malformed => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({ "error": "manifest_unreadable" })),
+        )
+            .into_response(),
+        ManifestRead::Absent => (
             StatusCode::NOT_FOUND,
             Json(json!({ "error": "no_bundle", "static_dir": static_dir().display().to_string() })),
         )
@@ -142,4 +162,74 @@ fn build_tarball(dir: &Path) -> anyhow::Result<Vec<u8>> {
     builder.append_dir_all(".", dir)?;
     let encoder = builder.into_inner()?;
     Ok(encoder.finish()?)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::fs;
+
+    fn tmp() -> PathBuf {
+        let d = std::env::temp_dir().join(format!(
+            "virtues-webbundle-{}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        fs::create_dir_all(&d).unwrap();
+        d
+    }
+
+    #[test]
+    fn absent_manifest_is_a_state_not_an_error() {
+        // A headless box, or a dev box serving the UI from vite. The client
+        // must read this as "nothing to update from", never as a retryable
+        // failure — so it is distinct from Malformed.
+        assert_eq!(read_manifest(&tmp()), ManifestRead::Absent);
+    }
+
+    #[test]
+    fn malformed_manifest_is_distinguished_from_absent() {
+        let d = tmp();
+        fs::write(d.join(MANIFEST_NAME), "{not json").unwrap();
+        assert_eq!(read_manifest(&d), ManifestRead::Malformed);
+    }
+
+    #[test]
+    fn reads_a_real_manifest_verbatim() {
+        let d = tmp();
+        fs::write(
+            d.join(MANIFEST_NAME),
+            r#"{"version":"0.3.0","sha":"abc1234","channel":"stable",
+                "minShellVersion":1,"contentHash":"f9f5785de8567c67"}"#,
+        )
+        .unwrap();
+        let ManifestRead::Found(v) = read_manifest(&d) else {
+            panic!("expected Found");
+        };
+        assert_eq!(v["contentHash"], "f9f5785de8567c67");
+        assert_eq!(v["minShellVersion"], 1);
+    }
+
+    #[test]
+    fn tarball_round_trips_the_served_build() {
+        let src = tmp();
+        fs::write(src.join("index.html"), "<html>box</html>").unwrap();
+        fs::create_dir_all(src.join("_app")).unwrap();
+        fs::write(src.join("_app/chunk.js"), "console.log(1)").unwrap();
+        fs::write(src.join(MANIFEST_NAME), r#"{"contentHash":"deadbeef"}"#).unwrap();
+
+        let gz = build_tarball(&src).expect("tarball");
+
+        let dest = tmp();
+        let mut archive = tar::Archive::new(flate2::read::GzDecoder::new(&gz[..]));
+        archive.unpack(&dest).unwrap();
+
+        assert_eq!(fs::read_to_string(dest.join("index.html")).unwrap(), "<html>box</html>");
+        assert_eq!(fs::read_to_string(dest.join("_app/chunk.js")).unwrap(), "console.log(1)");
+        // The manifest must ride inside, so an unpacked bundle carries its own
+        // identity and a client never has to remember what it downloaded.
+        assert!(dest.join(MANIFEST_NAME).is_file(), "manifest travels in the archive");
+    }
 }
