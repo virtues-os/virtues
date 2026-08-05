@@ -267,7 +267,9 @@ malformed value from any producer would abort indexing for all bookmarks rather
 than skipping its own row. Exercised against object, scalar, and empty-array
 tags; all degrade to `''`.
 
-### 2. URL fetcher — native first, Parallel Extract as escalation
+### 2. URL fetcher — ✅ NATIVE LEG LANDED 2026-08-05 (`virtues-core/src/fetch/`)
+
+Escalation tier (Parallel Extract) and step 2b below are still open.
 
 Bookmarks need something narrower than a search product: *fetch this one URL I
 already have, give me readable text* — `<title>`, og:image, article body. Two
