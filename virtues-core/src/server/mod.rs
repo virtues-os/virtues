@@ -405,6 +405,7 @@ pub async fn run(client: Virtues, host: &str, port: u16) -> Result<()> {
                 .layer(DefaultBodyLimit::max(512 * 1024 * 1024)),
         )
         .route("/api/applets/:id/runs", get(api::list_applet_runs_handler))
+        .route("/api/applets/:id/log", get(api::applet_log_handler))
         .route("/api/applets/runs/:id", get(api::get_applet_run_handler))
         .route("/api/runs", get(api::list_runs_handler))
         // Credentials API

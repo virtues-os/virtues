@@ -858,6 +858,90 @@ pub async fn query_runs(
     rows.iter().map(run_from_row).collect()
 }
 
+/// One line of an applet's log: consecutive runs that shared an outcome.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct LogEntry {
+    pub run_id: Option<String>,
+    pub status: String,
+    pub trigger: Option<String>,
+    pub summary: Option<String>,
+    pub message: Option<String>,
+    pub error: Option<String>,
+    pub occurrences: i64,
+    pub first_at: Option<crate::types::Timestamp>,
+    pub last_at: Option<crate::types::Timestamp>,
+    pub cost_micros: i64,
+}
+
+/// The run log with identical consecutive outcomes collapsed into one row.
+///
+/// 99% of run history on a real box is "the machine ticked and there was
+/// nothing to do" — transcription_resolution alone wrote 1,294 runs in a week,
+/// every one a successful no-op. A raw list is unreadable, and worse, it
+/// hides: 3,449 consecutive errors sat in this box's history behind a window
+/// of recent successes.
+///
+/// The grouping is mechanical rather than semantic — same status, same
+/// summary, same message. Nothing here decides what "did nothing" means, which
+/// matters because `records_processed = 0` does not reliably mean it. An
+/// applet whose output varies (any agent, every message exchange) never
+/// collapses at all.
+pub async fn collapsed_log(db: &PgPool, applet_id: &str, limit: i64) -> Result<Vec<LogEntry>> {
+    // Gaps-and-islands: a global row_number minus a per-outcome row_number is
+    // constant exactly while the outcome repeats, so it names each run.
+    let rows = sqlx::query(
+        r#"WITH ordered AS (
+               SELECT r.id, r.status, r.trigger, r.started_at, r.error,
+                      coalesce(r.result_summary, '') AS summary,
+                      coalesce(r.message, '')        AS message,
+                      COALESCE((SELECT SUM(c.cost_micros) FROM app_ai_calls c
+                                 WHERE c.applet_run_id = r.id), 0)::bigint AS cost_micros,
+                      row_number() OVER (ORDER BY r.started_at DESC)
+                    - row_number() OVER (
+                          PARTITION BY r.status,
+                                       coalesce(r.result_summary, ''),
+                                       coalesce(r.message, '')
+                          ORDER BY r.started_at DESC) AS grp
+                 FROM app_applet_runs r
+                WHERE r.applet_id = $1
+           )
+           SELECT status, summary, message,
+                  count(*)                 AS occurrences,
+                  min(started_at)          AS first_at,
+                  max(started_at)          AS last_at,
+                  sum(cost_micros)::bigint AS cost_micros,
+                  (array_agg(id      ORDER BY started_at DESC))[1] AS latest_run_id,
+                  (array_agg(trigger ORDER BY started_at DESC))[1] AS trigger,
+                  (array_agg(error   ORDER BY started_at DESC))[1] AS error
+             FROM ordered
+            GROUP BY grp, status, summary, message
+            ORDER BY max(started_at) DESC
+            LIMIT $2"#,
+    )
+    .bind(applet_id)
+    .bind(limit)
+    .fetch_all(db)
+    .await?;
+
+    let blank_to_none = |s: String| (!s.is_empty()).then_some(s);
+    rows.iter()
+        .map(|r| {
+            Ok(LogEntry {
+                run_id: r.try_get("latest_run_id")?,
+                status: r.try_get("status")?,
+                trigger: r.try_get("trigger")?,
+                summary: blank_to_none(r.try_get("summary")?),
+                message: blank_to_none(r.try_get("message")?),
+                error: r.try_get("error")?,
+                occurrences: r.try_get("occurrences")?,
+                first_at: r.try_get("first_at")?,
+                last_at: r.try_get("last_at")?,
+                cost_micros: r.try_get("cost_micros")?,
+            })
+        })
+        .collect()
+}
+
 /// Record what the user said on a `message` run.
 pub async fn set_run_message(db: &PgPool, run_id: &str, message: &str) -> Result<()> {
     sqlx::query("UPDATE app_applet_runs SET message = $1 WHERE id = $2")
@@ -1049,6 +1133,83 @@ fn run_from_row(row: &sqlx::postgres::PgRow) -> Result<AppletRun> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    async fn seed_run(pool: &PgPool, applet: &str, status: &str, summary: &str, secs: i64) {
+        sqlx::query(
+            "INSERT INTO app_applet_runs (id, applet_id, status, result_summary, trigger, started_at) \
+             VALUES ($1, $2, $3, $4, 'cron', now() - make_interval(secs => $5))",
+        )
+        .bind(format!("run_{applet}_{secs}"))
+        .bind(applet)
+        .bind(status)
+        .bind(summary)
+        .bind(secs as f64)
+        .execute(pool)
+        .await
+        .expect("seed run");
+    }
+
+    async fn applet_row(pool: &PgPool, id: &str) {
+        sqlx::query(
+            "INSERT INTO app_applets (id, name, owner, agent) VALUES ($1, $1, 'user', 'x')",
+        )
+        .bind(id)
+        .execute(pool)
+        .await
+        .expect("insert applet");
+    }
+
+    /// The whole point: a poll that finds nothing still writes a run, so most
+    /// of a real box's history is the same line repeated. Collapsing turns
+    /// 1,294 identical rows into one with a count — and, more importantly,
+    /// stops a long run of errors from hiding behind a window of recent
+    /// successes.
+    #[sqlx::test]
+    async fn the_log_collapses_repeats_but_not_distinct_outcomes(pool: PgPool) {
+        applet_row(&pool, "applet_log").await;
+        // Oldest → newest: 3 identical successes, 2 errors, then 2 more of the
+        // same success text as the first group.
+        for (i, (status, summary)) in [
+            ("success", "nothing to do"),
+            ("success", "nothing to do"),
+            ("success", "nothing to do"),
+            ("error", ""),
+            ("error", ""),
+            ("success", "nothing to do"),
+            ("success", "nothing to do"),
+        ]
+        .iter()
+        .enumerate()
+        {
+            seed_run(&pool, "applet_log", status, summary, (700 - i as i64 * 100)).await;
+        }
+
+        let log = collapsed_log(&pool, "applet_log", 50).await.unwrap();
+        assert_eq!(log.len(), 3, "seven runs, three distinct stretches");
+
+        // Newest first.
+        assert_eq!(log[0].status, "success");
+        assert_eq!(log[0].occurrences, 2);
+        // The error stretch survives in the middle — it is NOT merged with the
+        // successes on either side, which is what makes an incident visible.
+        assert_eq!(log[1].status, "error");
+        assert_eq!(log[1].occurrences, 2);
+        assert_eq!(log[2].occurrences, 3);
+        assert_eq!(log[2].summary.as_deref(), Some("nothing to do"));
+    }
+
+    /// An applet whose output differs every run never collapses — which is the
+    /// case for every agent, and for every message exchange.
+    #[sqlx::test]
+    async fn varied_output_never_collapses(pool: PgPool) {
+        applet_row(&pool, "applet_varied").await;
+        for (i, text) in ["first", "second", "third"].iter().enumerate() {
+            seed_run(&pool, "applet_varied", "success", text, 300 - i as i64 * 100).await;
+        }
+        let log = collapsed_log(&pool, "applet_varied", 50).await.unwrap();
+        assert_eq!(log.len(), 3, "three different things said, three lines");
+        assert!(log.iter().all(|e| e.occurrences == 1));
+    }
 
     /// Turning a finished applet back on un-finishes it. Without this the row
     /// lands in a state that cannot be drawn: its page says "Finished" while
