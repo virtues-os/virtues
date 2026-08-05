@@ -406,11 +406,16 @@ iroh-ffi-mac: ## Build VirtuesIrohMac.xcframework for the Mac collector
 # and `open` on a live app just re-activates the OLD in-memory binary — so a
 # polite `osascript quit` left you staring at stale code after every rebuild.
 # pkill -9 guarantees the new binary actually loads.
+#
+# Ask cargo where the bundle is rather than globbing `src-tauri/target`: that
+# path holds a pre-shared-target-dir build from July, so the find would have
+# hit a months-old .app and cheerfully relaunched it as "freshly built".
 OPEN ?= 1
 mac-app: ## Build the macOS app (Virtues.app + sidecars) and open it (OPEN=0 to skip)
 	tools/build-mac-app.sh
 	@if [ "$(OPEN)" = "1" ]; then \
-	  app=$$(find apps/web/src-tauri/target -maxdepth 6 -path '*/bundle/macos/Virtues.app' -print -quit 2>/dev/null); \
+	  bundle=$$(cargo metadata --no-deps --format-version 1 --manifest-path apps/web/src-tauri/Cargo.toml | jq -r .target_directory)/release/bundle/macos/Virtues.app; \
+	  app=$$([ -d "$$bundle" ] && echo "$$bundle"); \
 	  if [ -n "$$app" ]; then \
 	    echo "→ relaunching $$app"; \
 	    pkill -9 -f "Virtues.app" >/dev/null 2>&1 || true; \
