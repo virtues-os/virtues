@@ -283,7 +283,7 @@ fn stage_and_preflight(
     if let Ok(meta) = fs::metadata(asset_path) {
         ensure_space(
             &layout.releases_dir(),
-            meta.len() * UNPACK_HEADROOM,
+            meta.len() * SLOT_HEADROOM,
             "stage this release",
         )?;
     }
@@ -1521,7 +1521,7 @@ async fn download(url: &str, dest: &Path) -> Result<(), crate::Error> {
     // disk filled to zero by a ~120MB download that was never going to fit its
     // own unpack, on a box that then can't write anything else either.
     if let (Some(len), Some(dir)) = (resp.content_length(), dest.parent()) {
-        ensure_space(dir, len * UNPACK_HEADROOM, "download and unpack this release")?;
+        ensure_space(dir, len * SCRATCH_HEADROOM, "download and unpack this release")?;
     }
     let mut file = File::create(dest)
         .map_err(|e| crate::Error::Other(format!("create {}: {e}", dest.display())))?;
@@ -1778,16 +1778,92 @@ fn ensure_space(path: &Path, need: u64, what: &str) -> Result<(), crate::Error> 
     )))
 }
 
-/// Unpacked-plus-tarball headroom as a multiple of the compressed asset. The
-/// release tarball is mostly already-compressed binaries (`virtues`,
-/// `llama-server`), so it inflates well under 3× — that multiple covers the
-/// tarball AND its unpacked tree sitting in the same directory at once, with
-/// room left over.
-const UNPACK_HEADROOM: u64 = 3;
+/// How far a release tarball inflates when unpacked, as a multiple of the
+/// compressed asset.
+///
+/// Measured on a real box rather than guessed: the aarch64 `edge` tarball is
+/// 120MB and unpacks to 360MB, so 3.0×. (`applets-bin` is two thirds of it —
+/// 236MB — which is why the ratio is higher than "mostly already-compressed
+/// binaries" would suggest.)
+const UNPACK_INFLATION: u64 = 3;
+
+/// Space the SCRATCH directory needs: the tarball and its unpacked tree live
+/// there at the same time, so it is the download plus everything the download
+/// becomes.
+///
+/// This was `UNPACK_INFLATION` alone, which was simply wrong — it budgeted for
+/// the unpacked tree and forgot the ~120MB archive sitting beside it. A box
+/// with 400MB free passed the check and then had 40MB left, which is the exact
+/// outcome the guard exists to prevent.
+const SCRATCH_HEADROOM: u64 = UNPACK_INFLATION + 1;
+
+/// Space the SLOTS directory needs: one copy of the unpacked tree. The tarball
+/// never goes here, so this is genuinely smaller than the scratch requirement —
+/// and they are frequently different filesystems, which is why they are
+/// budgeted apart rather than with one number that has to be wrong somewhere.
+const SLOT_HEADROOM: u64 = UNPACK_INFLATION;
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The scratch directory holds the tarball AND its unpacked tree at once,
+    /// so its budget must exceed the slots budget by exactly one tarball.
+    /// Getting this wrong is silent: the check passes and the disk fills.
+    #[test]
+    fn scratch_budget_covers_the_archive_as_well_as_what_it_unpacks_to() {
+        // The real aarch64 edge tarball, and what it actually unpacks to.
+        const TARBALL_MB: u64 = 120;
+        const UNPACKED_MB: u64 = 360;
+
+        assert_eq!(
+            UNPACKED_MB,
+            TARBALL_MB * UNPACK_INFLATION,
+            "measured inflation drifted from the constant"
+        );
+        assert!(
+            TARBALL_MB * SCRATCH_HEADROOM >= TARBALL_MB + UNPACKED_MB,
+            "scratch budget must hold the archive plus the unpacked tree"
+        );
+        assert!(
+            TARBALL_MB * SLOT_HEADROOM >= UNPACKED_MB,
+            "slot budget must hold the unpacked tree"
+        );
+        assert!(
+            SCRATCH_HEADROOM > SLOT_HEADROOM,
+            "scratch needs strictly more than slots — it also holds the archive"
+        );
+    }
+
+    /// The refusal branch, which no real box has exercised: every machine this
+    /// has run on had tens of gigabytes free. An unmeasurable filesystem is
+    /// allowed through on purpose — blocking a legitimate upgrade because
+    /// `statvfs` didn't answer would be worse than the failure being guarded.
+    #[test]
+    fn ensure_space_refuses_only_when_it_can_measure_a_shortfall() {
+        let dir = std::env::temp_dir();
+        let free = free_bytes(&dir);
+
+        // Never satisfiable on any real disk.
+        let absurd = u64::MAX / 2;
+        match free {
+            Some(_) => {
+                let err = ensure_space(&dir, absurd, "do the thing")
+                    .expect_err("a request for 8EB must be refused");
+                let msg = err.to_string();
+                // The message has to name the path and both numbers, or it
+                // sends someone to the box to work out which disk is full.
+                assert!(msg.contains("do the thing"), "names the operation: {msg}");
+                assert!(msg.contains(&dir.display().to_string()), "names the path: {msg}");
+                assert!(msg.contains("MB free"), "reports what is actually free: {msg}");
+            }
+            // Non-Linux: free_bytes is a stub, so everything passes.
+            None => assert!(ensure_space(&dir, absurd, "do the thing").is_ok()),
+        }
+
+        // Zero need always passes, measurable or not.
+        assert!(ensure_space(&dir, 0, "do nothing").is_ok());
+    }
 
     /// `sha_eq` gates every download decision: it decides whether a box is
     /// already on a release, and whether a staged one still matches. A false
