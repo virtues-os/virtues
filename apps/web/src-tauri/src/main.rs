@@ -1429,40 +1429,34 @@ fn main() {
             //   not paired        → fresh connect screen
             //   box accepts us    → load the box (the in-process :7117 loopback)
             //   box rejects us    → #reset      ("your box was reset, reconnect")
-            //   box unreachable   → the SPA bundled in this app, offline
+            //   box unreachable   → #unreachable ("can't reach it" + Retry)
             //
-            // That last one used to be `pair.html#unreachable`, a dead end. It
-            // meant an unreachable box cost you the whole interface — including
-            // the documents, which do not need the box at all: `yjs/document.ts`
-            // holds every page in IndexedDB and merges on reconnect. The
-            // capability was built and unreachable. Now the app falls back to
-            // its own bundled build and the editor opens on a plane.
-            //
-            // Reachable stays External on purpose. The box serves its own web
-            // build, so while it answers, the UI cannot drift ahead of it — the
-            // property `docs/mac-plan.md` values. The bundle is a floor, not a
-            // replacement, and `docs/spa-delivery-plan.md` covers why the OTA
-            // overlay that WOULD replace it is deferred.
+            // An offline fallback to the app's own bundled build was tried on
+            // 2026-08-05 and reverted the same day. It booted, but web storage
+            // is partitioned by origin: the box-served UI lives at
+            // `http://localhost:7117` and a bundled one at `tauri://localhost`,
+            // so the offline app opened against an empty IndexedDB and showed
+            // none of the documents that were the entire point. Offline needs
+            // ONE origin across all four states (box up, box down, baked
+            // bundle, OTA bundle) — see "The origin problem" in
+            // docs/spa-delivery-plan.md. Do not re-add the fallback alone;
+            // it looks like it works and does not.
             // A SINGLE fast probe (not the multi-retry loop): reachable boxes
             // reconnect silently with no connect-screen flash (the
             // silent-reconnect doctrine), and an unreachable box bounds the
             // pre-window delay. The connect screen polls asynchronously off the
             // UI thread, so recovery doesn't cost main-thread time.
-            let mut offline = false;
             let url = if !is_paired() {
                 WebviewUrl::App("pair.html".into())
             } else {
                 match probe_box_session_blocking(1) {
                     Some(true) => WebviewUrl::External("http://localhost:7117".parse().unwrap()),
                     Some(false) => WebviewUrl::App("pair.html#reset".into()),
-                    None => {
-                        offline = true;
-                        WebviewUrl::App("offline.html".into())
-                    }
+                    None => WebviewUrl::App("pair.html#unreachable".into()),
                 }
             };
 
-            let mut builder = WebviewWindowBuilder::new(app, "main", url)
+            let window = WebviewWindowBuilder::new(app, "main", url)
                 .title("Virtues")
                 .inner_size(1200.0, 800.0)
                 .min_inner_size(800.0, 600.0)
@@ -1481,25 +1475,8 @@ fn main() {
                 // file drops before they reach the webview, so the chat composer's
                 // HTML5 ondrop/dataTransfer.files never fires. Disable it to let
                 // drops fall through to the web layer (works in-browser already).
-                .disable_drag_drop_handler();
-
-            // Offline boot only. The bundled SPA is served from this app's own
-            // `tauri://` origin, which has no `/api` — so point it at the box.
-            // Requests fail while the box is down (expected) and start
-            // succeeding the moment it answers, without a relaunch.
-            //
-            // `__VIRTUES_OFFLINE__` is what the UI reads to say "no box"
-            // instead of rendering empty surfaces that look like data loss.
-            // Both names match the mobile shell's contract in `lib.rs`, so
-            // `lib/config/backend.ts` needs no new cases.
-            if offline {
-                builder = builder.initialization_script(
-                    "window.__VIRTUES_OFFLINE__ = true; \
-                     window.__VIRTUES_BACKEND_ORIGIN__ = 'http://localhost:7117';",
-                );
-            }
-
-            let window = builder.build()?;
+                .disable_drag_drop_handler()
+                .build()?;
 
             // Only used in debug; silence the release-build unused warning.
             #[cfg(debug_assertions)]
