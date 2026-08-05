@@ -98,22 +98,53 @@ fn normalize_upstream_error(resp: ApiResponse) -> ApiResponse {
     }
 }
 
-/// Splice the BYO credential's `default_model` into a request body that does
-/// not already pin one, so the user's choice "from Settings" wins over a
-/// caller's default.
+/// Re-address a request body for the user's endpoint.
 ///
-/// A body that *does* pin a model keeps it — which is the common case for
-/// every non-chat caller (compaction, day summaries, image generation,
-/// transcription all pass an explicit `model`). Those ids are namespaced for
-/// *our* gateway (`xai/grok-4.5`, `google/gemini-3-flash`), and a different
-/// gateway may spell them differently or not carry them at all, so a BYO route
-/// can 404 here through no fault of the user. Per-slot model ids are what fix
-/// that properly — `docs/byo-ai-plan.md` phase 3.
+/// **A model id is an address on one gateway, not a portable name.** Callers
+/// build bodies with ours — `xai/grok-4.5` is where *Vercel* keeps the chat
+/// model — and every caller names one explicitly. OpenRouter spells that same
+/// model `x-ai/grok-4.5` and does not carry `google/gemini-3-flash` at all. So
+/// sending our string to their endpoint is not a near miss; it is the wrong
+/// kind of thing.
+///
+/// The fix is to let the address belong to the route while the slot keeps only
+/// the role. We turn the body's model back into the slot it stands for, then
+/// look up what the user calls that slot. Nothing here knows or cares *which*
+/// slot — Omni is not special-cased, and must not be. Which model actually
+/// suits a role is advice, and advice belongs in the UI where it can change
+/// without a release.
+///
+/// Untranslated cases pass through deliberately:
+///
+/// - **The user's map has no entry for the slot.** Their endpoint may well use
+///   our ids (Vercel does; a LiteLLM can be aliased to). If it does not, the
+///   route answers with a loud 400 naming the model, which reads better than
+///   anything we could substitute.
+/// - **The body's model is not a slot default**, i.e. the user pinned an
+///   arbitrary model from the picker. That choice is theirs; we do not
+///   second-guess it.
+/// - **The body names no model at all.** No caller does this today, but the
+///   legacy `default_model` still fills it if set.
 fn apply_byo_model(body: &Value, byo: &crate::api::settings_byo::ByoCredential) -> Value {
     let mut body = body.clone();
-    if let (Some(model), Value::Object(map)) = (byo.default_model.as_deref(), &mut body) {
-        if !map.contains_key("model") {
-            map.insert("model".to_string(), Value::String(model.to_string()));
+    let Value::Object(map) = &mut body else {
+        return body;
+    };
+
+    let ours = map.get("model").and_then(|m| m.as_str()).map(String::from);
+    let Some(ours) = ours else {
+        // Unpinned body: the legacy single-model field is the only thing that
+        // can speak to it, since we have no slot to look up.
+        if let Some(fallback) = byo.default_model.as_deref() {
+            map.insert("model".into(), Value::String(fallback.into()));
+        }
+        return body;
+    };
+
+    if let Some(slot) = crate::api::model_catalog::slot_for_model(&ours) {
+        if let Some(theirs) = byo.models.get(slot.as_str()) {
+            tracing::debug!(slot = slot.as_str(), ours = %ours, theirs = %theirs, "re-addressed for BYO route");
+            map.insert("model".into(), Value::String(theirs.clone()));
         }
     }
     body
@@ -743,19 +774,84 @@ mod byo_fork_tests {
     }
 
     fn byo(default_model: Option<&str>) -> crate::api::settings_byo::ByoCredential {
+        byo_with(default_model, &[])
+    }
+
+    fn byo_with(
+        default_model: Option<&str>,
+        models: &[(&str, &str)],
+    ) -> crate::api::settings_byo::ByoCredential {
         crate::api::settings_byo::ByoCredential {
             provider: "openrouter.ai".into(),
             api_key: "k".into(),
             endpoint_url: "https://openrouter.ai/api/v1/chat/completions".into(),
+            models: models
+                .iter()
+                .map(|(k, v)| (k.to_string(), v.to_string()))
+                .collect(),
             default_model: default_model.map(String::from),
         }
     }
 
-    /// A caller's explicit model wins. That is the common case — compaction,
-    /// day summaries, image generation and transcription all pin one — and it
-    /// is why those ids reach the user's gateway in *our* namespace.
+    fn model_of(v: &Value) -> &str {
+        v["model"].as_str().unwrap_or_default()
+    }
+
+    /// The whole point: our address in, theirs out. Verified against real
+    /// OpenRouter spellings — it calls our `xai/…` chat model `x-ai/…`.
     #[test]
-    fn a_pinned_model_survives_the_splice() {
+    fn our_address_is_swapped_for_theirs() {
+        use virtues_registry::models::{default_model_for_slot, ModelSlot};
+        let ours = default_model_for_slot(ModelSlot::Chat);
+        let body = json!({"model": ours, "messages": []});
+        let out = apply_byo_model(&body, &byo_with(None, &[("chat", "x-ai/grok-4.5")]));
+        assert_eq!(model_of(&out), "x-ai/grok-4.5");
+    }
+
+    /// No entry for the slot means the route is assumed to use our ids — true
+    /// for Vercel. Substituting anything would be a guess; a 400 naming the
+    /// model is better than a wrong model answering.
+    #[test]
+    fn an_unmapped_slot_passes_through_untouched() {
+        use virtues_registry::models::{default_model_for_slot, ModelSlot};
+        let ours = default_model_for_slot(ModelSlot::Chat);
+        let body = json!({"model": ours, "messages": []});
+        let out = apply_byo_model(&body, &byo_with(None, &[("omni", "google/gemini-3.5-flash")]));
+        assert_eq!(model_of(&out), ours);
+    }
+
+    /// A model the user pinned from the picker is not a slot default, so there
+    /// is no role to look up. Their choice stands.
+    #[test]
+    fn a_hand_picked_model_is_never_rewritten() {
+        let body = json!({"model": "some/exotic-model", "messages": []});
+        let out = apply_byo_model(&body, &byo_with(None, &[("chat", "x-ai/grok-4.5")]));
+        assert_eq!(model_of(&out), "some/exotic-model");
+    }
+
+    /// Nothing in the mapping knows which slot is which. Omni is re-addressed
+    /// by exactly the same path as chat — the "which model suits audio"
+    /// judgment lives in the UI, not here.
+    #[test]
+    fn every_slot_maps_by_the_same_rule_including_omni() {
+        use virtues_registry::models::{default_model_for_slot, ModelSlot};
+        for (slot, theirs) in [
+            (ModelSlot::Omni, "google/gemini-3.5-flash"),
+            (ModelSlot::Image, "google/gemini-3-pro-image"),
+            (ModelSlot::Lite, "z-ai/glm-4.7"),
+        ] {
+            let ours = default_model_for_slot(slot);
+            let body = json!({"model": ours, "messages": []});
+            let out = apply_byo_model(&body, &byo_with(None, &[(slot.as_str(), theirs)]));
+            assert_eq!(model_of(&out), theirs, "slot {} did not re-address", slot.as_str());
+        }
+    }
+
+    /// The legacy `default_model` never clobbers a pinned model, because it
+    /// cannot know which role that model was filling. Only the slot map may
+    /// re-address a pinned body.
+    #[test]
+    fn the_legacy_default_model_never_clobbers_a_pinned_one() {
         let body = json!({"model": "google/gemini-3-flash", "messages": []});
         let out = apply_byo_model(&body, &byo(Some("x-ai/grok-4.5")));
         assert_eq!(out["model"], "google/gemini-3-flash");

@@ -83,7 +83,16 @@ pub struct SaveRequest {
     /// see [`legacy_preset_endpoint`] for why the table is going away.
     #[serde(default)]
     pub provider: Option<String>,
-    /// Optional model id to send when a request body does not pin one.
+    /// What the user's endpoint calls each of our slots: `{"chat":
+    /// "x-ai/grok-4.5", "omni": "google/gemini-3.5-flash", …}`. Keys are slot
+    /// names; every one is optional.
+    ///
+    /// This is the field that makes a non-Vercel route work. See
+    /// [`ByoCredential::models`].
+    #[serde(default)]
+    pub models: Option<std::collections::BTreeMap<String, String>>,
+    /// **Deprecated by `models`.** One id for every slot, applied only when a
+    /// request body named no model — which no caller does, so it never fired.
     #[serde(default)]
     pub default_model: Option<String>,
 }
@@ -97,6 +106,7 @@ pub struct DeleteRequest {
 pub struct ByoStatus {
     pub configured: bool,
     pub provider: Option<String>,
+    pub models: std::collections::BTreeMap<String, String>,
     pub default_model: Option<String>,
     pub endpoint_url: Option<String>,
     pub created_at: Option<String>,
@@ -121,6 +131,7 @@ pub async fn status_handler(State(pool): State<PgPool>, _user: AuthUser) -> impl
     match row {
         Some((metadata, created_at)) => {
             let provider = metadata.get("provider").and_then(|v| v.as_str()).map(String::from);
+            let models = read_models(&metadata);
             let default_model = metadata
                 .get("default_model")
                 .and_then(|v| v.as_str())
@@ -134,6 +145,7 @@ pub async fn status_handler(State(pool): State<PgPool>, _user: AuthUser) -> impl
                 Json(ByoStatus {
                     configured: true,
                     provider,
+                    models,
                     default_model,
                     endpoint_url,
                     created_at: Some(created_at.to_rfc3339()),
@@ -146,6 +158,7 @@ pub async fn status_handler(State(pool): State<PgPool>, _user: AuthUser) -> impl
             Json(ByoStatus {
                 configured: false,
                 provider: None,
+                models: Default::default(),
                 default_model: None,
                 endpoint_url: None,
                 created_at: None,
@@ -228,6 +241,9 @@ pub async fn save_handler(
         "endpoint_url": endpoint_url,
         "default_model": req.default_model,
     });
+    if let Some(models) = req.models.as_ref().filter(|m| !m.is_empty()) {
+        metadata["models"] = json!(models);
+    }
     if let Some(p) = req.provider.as_deref() {
         metadata["provider"] = json!(p);
     }
@@ -467,7 +483,35 @@ pub struct ByoCredential {
     pub provider: String,
     pub api_key: String,
     pub endpoint_url: String,
+    /// Slot name → the model id **on the user's endpoint**.
+    ///
+    /// A model id is an address on one gateway, not a portable name. Ours are
+    /// Vercel's (`xai/grok-4.5`, `google/gemini-3-flash`); OpenRouter spells
+    /// the first `x-ai/grok-4.5` and does not carry the second at all. So the
+    /// address has to belong to the route, and the slot keeps only the role.
+    ///
+    /// Empty is fine and means "your endpoint uses the same ids we do", which
+    /// is true for Vercel and for a LiteLLM aliased to match.
+    pub models: std::collections::BTreeMap<String, String>,
+    /// Legacy single-model field. Superseded by `models`; still honored for a
+    /// body that names no model, which is no caller today.
     pub default_model: Option<String>,
+}
+
+/// Read the slot→model map out of credential metadata, ignoring malformed
+/// entries rather than failing the call: a bad map should cost the user a
+/// wrong-model error they can read, not a dead box.
+fn read_models(metadata: &serde_json::Value) -> std::collections::BTreeMap<String, String> {
+    metadata
+        .get("models")
+        .and_then(|v| v.as_object())
+        .map(|obj| {
+            obj.iter()
+                .filter_map(|(k, v)| v.as_str().map(|s| (k.clone(), s.to_string())))
+                .filter(|(_, v)| !v.trim().is_empty())
+                .collect()
+        })
+        .unwrap_or_default()
 }
 
 /// Look up the active BYO credential, decrypt the key, and return the
@@ -527,6 +571,7 @@ pub async fn load_byo_credential(pool: &PgPool) -> Result<Option<ByoCredential>,
         provider,
         api_key,
         endpoint_url,
+        models: read_models(&metadata),
         default_model,
     }))
 }
