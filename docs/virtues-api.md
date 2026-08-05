@@ -80,12 +80,12 @@ than hiding behind "we don't store it."
 history, the health records, the files, the day pages — is collected, indexed,
 and queried entirely on your box. It never transits our infrastructure at all.
 
-**If that trade doesn't suit you — not yet.** Bringing your own provider key is
-designed to take the gateway out of the path entirely, with the box talking to
-your provider directly. **It is not built.** The Billing screen stores a key,
-but nothing reads it during a chat, so today every call still goes through the
-gateway whether or not a key is set. Do not make this promise to anyone until
-the routing lands.
+**If that trade doesn't suit you, remove it — for chat.** Bring your own
+provider key and the conversation goes box → provider directly, with the
+gateway out of that path. **It does not yet cover everything.** Conversation
+compaction, day summaries, image generation, and transcription still run
+through the gateway and bill the wallet, because only `stream()` consults the
+key. Say "your chat" rather than "your AI" until those four close.
 
 ---
 
@@ -178,11 +178,10 @@ The recurring images. Reach for them in copy, docs, support replies, talks:
   what the ledger is.
 - **"Nothing to decrypt with."** The relay's blindness — the strongest fully
   structural claim we have.
-- ~~**"Bring your own key and we're out of the path."**~~ **Do not use — not
-  true yet.** The key is stored but never read during inference (see
-  `api/settings_byo.rs`). Restore this line when routing ships; per
-  `docs/byo-ai-plan.md` it will still only cover `stream()`, so even then it
-  needs qualifying rather than stating flat.
+- **"Bring your own key and we're out of your chat."** Use this wording, not
+  "out of the path" — the key covers `stream()` only, so compaction, day
+  summaries, image generation, and transcription still run through us. True as
+  stated, false if broadened. `docs/byo-ai-plan.md` phase 1 closes the gap.
 
 **Retired — do not use.** These described the voucher model and are now false:
 *"the link lives in your house"* (it also lives with us), *"two rooms, no shared
@@ -204,10 +203,11 @@ unlinkability for a month after the structure changed.
 > No. We don't log or store your prompts or the answers, and we never train on
 > them. All that lands in our database is an amount and a timestamp — the charge
 > row doesn't even record which model served the request. Your prompts do pass
-> through our gateway on the way to the model provider, and today there is no
-> way to avoid that. Bringing your own provider key is designed to remove us
-> from that path, but it is not built yet — the setting stores a key without
-> using it.
+> through our gateway on the way to the model provider; if you'd rather they
+> didn't, bring your own provider key and your chat goes straight from your box
+> to the provider. Some background work — summarizing your day, compacting long
+> conversations, generating images, transcription — still runs through us even
+> then.
 
 **Q: Can you see my notes, location, or health data?**
 > No, and not as a matter of policy — that data never leaves your box. We have

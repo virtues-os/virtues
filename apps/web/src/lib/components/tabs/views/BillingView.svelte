@@ -172,19 +172,20 @@
 	// ─── BYO AI provider key (inline management, formerly ByoKeyView) ──────
 	// Intended as the escape hatch from the Virtues wallet.
 	//
-	// STORAGE ONLY — the routing half does not exist yet. The key is saved
-	// sudo-gated and encrypted, but nothing in the inference path reads it:
-	// the only consumers of `BYO_SOURCE_ID` are status_json.rs, box_status.rs,
-	// billing_state.rs and credentials.rs, all of which merely *report* that a
-	// key is present. Every chat token still routes through virtues-api on the
-	// Virtues wallet.
+	// A HALF DOOR — say so, and say which half. `BearerClient::stream` reads
+	// the key (`load_byo_credential`) and diverts to `stream_direct_upstream`,
+	// so interactive chat really does go box → provider. But `post_json` never
+	// consults it, so compaction, day summaries, image generation and the
+	// transcription applet keep billing the wallet.
 	//
-	// This copy said the opposite until 2026-08-05 ("Skip the Virtues wallet",
-	// "every future chat call will route through this key") and shipped that
-	// claim to TestFlight. Keep the copy honest until routing lands — see
-	// docs/byo-ai-plan.md, where it arrives as a HALF door even then
-	// (only `stream()` honors it; compaction, day summaries, image gen and
-	// transcription keep billing the wallet).
+	// Do NOT verify this by grepping `BYO_SOURCE_ID` — the stream call site
+	// reaches it through `load_byo_credential` and never names the constant.
+	// Grepping the constant is how this copy got rewritten on 2026-08-05 to
+	// claim nothing read the key at all, which was as wrong as the original
+	// "Skip the Virtues wallet" it replaced. See api/settings_byo.rs.
+	//
+	// The unqualified promise becomes true when those four paths close;
+	// docs/byo-ai-plan.md phase 1 is the plan of record.
 	//
 	// Save and Delete are both sudo-gated (`change_byo_key` is one of the four
 	// locked sensitive actions); the SudoModal handles the prompt + CLI
@@ -268,7 +269,7 @@
 	async function performByoDelete(sudoRequestId: string) {
 		try {
 			await deleteByoKey(sudoRequestId);
-			toast.success('BYO key removed');
+			toast.success('BYO key removed — chat is back on your Virtues wallet');
 			await Promise.all([loadByo(), loadLocal()]);
 		} catch (e) {
 			toast.error('Delete failed', {
@@ -525,11 +526,11 @@
 							<div class="font-medium text-sm">BYO AI provider key</div>
 							<div class="text-xs text-foreground-muted">
 								{#if local.byo.configured}
-									Stored: {local.byo.provider ?? '?'}
+									Active: {local.byo.provider ?? '?'}
 									{#if local.byo.default_model}· {local.byo.default_model}{/if}.
-									Not in use yet — chat still runs on the Virtues wallet.
+									Chat goes direct; background AI still bills the wallet.
 								{:else}
-									Store a provider key now, ahead of the routing that will use it.
+									Send chat straight to your own provider instead of the Virtues wallet.
 								{/if}
 							</div>
 						</div>
@@ -549,9 +550,11 @@
 								approval at the CLI.
 							</p>
 							<p class="text-xs text-warning mb-4">
-								<strong>Storage only, for now.</strong> Nothing reads this key during
-								a chat yet, so every call still routes through the Virtues wallet
-								whether or not a key is set. We will say so here when that changes.
+								<strong>This covers chat, not everything.</strong> With a key set,
+								the conversation itself goes from your box straight to your provider.
+								Four things still run through Virtues and bill the wallet:
+								conversation compaction, day summaries, image generation, and
+								transcription.
 							</p>
 
 							{#if byoLoading}
@@ -561,11 +564,11 @@
 							{:else if byoStatus?.configured}
 								<div class="rounded-lg border border-border bg-surface p-5 mb-4">
 									<div class="flex items-start gap-3">
-										<div class="flex-shrink-0 w-10 h-10 rounded-lg bg-surface-alt border border-border flex items-center justify-center">
-											<Icon icon="ri:key-line" class="text-foreground-muted" />
+										<div class="flex-shrink-0 w-10 h-10 rounded-lg bg-success/10 border border-success/30 flex items-center justify-center">
+											<Icon icon="ri:key-line" class="text-success" />
 										</div>
 										<div class="flex-1 min-w-0">
-											<div class="font-medium">BYO key stored</div>
+											<div class="font-medium">BYO key active for chat</div>
 											<div class="text-xs text-foreground-muted mt-1 flex flex-wrap gap-x-3 gap-y-1">
 												<span>Provider: <Badge>{byoStatus.provider ?? '?'}</Badge></span>
 												{#if byoStatus.default_model}
@@ -576,8 +579,9 @@
 												{/if}
 											</div>
 											<p class="text-xs text-foreground-muted mt-2">
-												Held encrypted on your box and not yet used. Virtues is still
-												in your inference path, and the wallet still pays for chat.
+												Chat calls go box → provider directly. Compaction, day
+												summaries, image generation and transcription still go through
+												Virtues, so the wallet and top-up stay live.
 											</p>
 										</div>
 										<Button variant="ghost" onclick={startByoDelete}>
@@ -598,8 +602,8 @@
 								<div class="rounded-lg border border-border bg-surface p-5">
 									<div class="font-medium mb-1">No BYO key set</div>
 									<p class="text-xs text-foreground-muted mb-4">
-										Chat routes through the Virtues wallet ($20/mo subscription +
-										usage), and will continue to whether or not you set a key here.
+										Everything routes through the Virtues wallet ($20/mo subscription
+										+ usage). Set a key to send chat direct instead.
 									</p>
 									{@render byoKeyForm()}
 									<div class="flex justify-end mt-4">
@@ -701,7 +705,7 @@
 	bind:show={showSudoSave}
 	action="change_byo_key"
 	title="Save BYO AI key"
-	description="Sensitive action — stores a provider key on your box. It is not used for chat yet. Confirm at the box CLI."
+	description="Sensitive action — chat will route through this key instead of the Virtues wallet. Background AI still bills the wallet. Confirm at the box CLI."
 	onApproved={performByoSave}
 />
 
@@ -709,6 +713,6 @@
 	bind:show={showSudoDelete}
 	action="change_byo_key"
 	title="Remove BYO AI key"
-	description="Sensitive action — deletes the stored provider key. Chat is unaffected. Confirm at the box CLI."
+	description="Sensitive action — chat will switch back to the Virtues wallet. Confirm at the box CLI."
 	onApproved={performByoDelete}
 />
