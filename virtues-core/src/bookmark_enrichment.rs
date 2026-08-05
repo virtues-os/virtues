@@ -305,7 +305,8 @@ async fn enrich_one(db: &PgPool, client: &BearerClient, item: &Claimed) -> Resul
             description       = COALESCE(description, $3),
             thumbnail_url     = COALESCE(thumbnail_url, $4),
             extraction        = $5,
-            enrichment_model  = $6,
+            extraction_text   = NULLIF($6, ''),
+            enrichment_model  = $7,
             enrichment_status = 'done',
             enriched_at       = now(),
             updated_at        = now()
@@ -322,6 +323,10 @@ async fn enrich_one(db: &PgPool, client: &BearerClient, item: &Claimed) -> Resul
     )
     .bind(page.article.image_url.as_deref())
     .bind(serde_json::to_value(&record).unwrap_or(Value::Null))
+    // The rendering the search index reads. Written here rather than assembled
+    // from JSONB in embed_text_sql so there is one definition of how a record
+    // reads, and it is the tested one.
+    .bind(record.to_embed_text())
     .bind(model)
     .execute(db)
     .await?;
