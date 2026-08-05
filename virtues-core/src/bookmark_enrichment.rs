@@ -43,9 +43,17 @@ use virtues_registry::models::{default_model_for_slot, ModelSlot};
 /// subprocess open for an hour.
 const BATCH_SIZE: i64 = 20;
 
-/// Default ceiling on enrichments per day. At roughly a fifth of a cent each on
-/// the Lite slot this is pennies, but it is the guard that turns a 10,000-row
-/// browser import from a surprise into a queue that drains over days.
+/// Default ceiling on enrichments per day.
+///
+/// Measured 2026-08-05 against the live gateway: a real page costs about
+/// **$0.0001** on the Lite slot (`zai/glm-4.7-flash`, ~590 tokens round trip).
+/// So this cap is around two cents a day, and even a 10,000-row browser import
+/// is roughly a dollar in total.
+///
+/// It is set low anyway, and deliberately. The cap's job is not to save that
+/// dollar — it is to make a first sync *visible and interruptible* rather than
+/// something that happens to a person all at once. Raise it freely once the
+/// Settings knob exists and the user can see what it is doing.
 ///
 /// Overridable with `VIRTUES_BOOKMARK_ENRICH_DAILY_CAP`; the Settings knob
 /// (docs/bookmarks-plan.md) writes the same value.
