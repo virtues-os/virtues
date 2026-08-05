@@ -104,9 +104,10 @@
 	/* A hairline, not a card. Throughout this page a rule is the box talking
 	   and a card is you answering; the ask belongs to the box. */
 	.ask {
-		/* The deck above already pays for a movement's worth of air; matching
-		   the keep's own margin here stacked the two and left a hole. */
-		margin-top: clamp(28px, 4vh, 52px);
+		/* Enough to read as its own turn, less than the keep's below it: the
+		   question and the answer belong nearer each other than either does to
+		   the list above. */
+		margin-top: clamp(40px, 6vh, 72px);
 		padding-top: 14px;
 		border-top: 1px solid var(--color-border);
 		max-width: 640px;
