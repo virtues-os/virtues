@@ -427,9 +427,48 @@ Work items:
   extension — the memory ceiling is real and an Instagram screenshot is the
   common case.
 - App-side drain + `bookmark` arm in `ios_ingest` (core-side, still owed).
-- **`url` is `NOT NULL`** on `data_content_bookmark`: a camera-roll screenshot
-  shared with no source URL still has nowhere to live. Decide before building
-  the extension, since it changes the payload contract.
+**DECIDED 2026-08-05 — what `url` holds for a screenshot.**
+
+`url` means **where the thing is**, not where it came from. That reframing is
+what resolves it, because provenance already has three better homes.
+
+- A screenshot with no source: `url` = the in-app viewer route
+  `/drive/file_{id}` (the route `registry.ts` already serves). The screenshot
+  *is* the artifact; its address is where it lives.
+- A share that carries a source URL (the common Instagram case): `url` = that
+  URL, **and** the image is kept as an asset — both, not either. The asset is
+  named in `metadata.asset_id`.
+- Provenance goes where it belongs: `source_platform` = `"instagram"` (the
+  column already holds `"safari"`, `"chrome"`, `"github"`), `bookmark_type` =
+  `"screenshot"`, and the observed source-app bundle id in `metadata`.
+- Identity is the image's **content hash** — `ios:share:sha256:{hash}` — so
+  re-sharing the same screenshot upserts instead of duplicating, exactly as
+  `canonical_url_for_identity` does for pages.
+
+**Rejected: letting a model guess the URL.** A URL is *actionable* in a way a
+description is not — a wrong description is noise, a wrong link sends the user
+somewhere they never saved. Worse, it poisons enrichment: the fetcher would
+read the guessed page and build a record from content the user never saw,
+leaving the bookmark confidently about the wrong thing. Same reason the
+extraction prompt is told that "unknown" is a correct answer. A domain
+*observed* from the share sheet is an honest fact and belongs in
+`source_platform`; a domain *inferred* from pixels is the same disease, smaller.
+
+**Rejected: making `url` nullable.** Every consumer assumes it — list search,
+the citation chip, canonicalization. Nullable pushes a null branch into all of
+them and leaves the UI holding a bookmark with no address. A real internal
+address is both less invasive and more honest.
+
+**Consequence, already built (`bookmark_enrichment`):** an asset-backed
+bookmark is not fetchable, so the sweep now routes on *artifact kind* rather
+than always reading `url`. Asset-backed rows — `metadata.asset_id` set, or a
+`/drive/file_` url — are **held back from the claim query entirely**: they stay
+`pending` with zero attempts recorded, and are counted separately
+(`awaiting_pixels`, surfaced as "N held for the image pass"). That way they
+burn no retry budget failing at a pass that does not exist, they are never
+reported as a backlog that should be draining, and when the Omni path lands,
+deleting one clause picks up every screenshot ever saved — no re-queue
+migration, no terminal state to undo.
 
 If App Group registration or provisioning drags, a plain iOS **Shortcut**
 posting to the webhook unblocks the Instagram story in the meantime — uglier,
@@ -559,8 +598,7 @@ Live (blocking something):
    bears on this: the box is served in-process on `:7117`, so anything outside
    the app's own process has the same problem and the same answer — hand off,
    don't dial.
-6. **Screenshot with no source URL** — `url` is `NOT NULL`, so a camera-roll
-   share has nowhere to live. Blocks the extension's payload contract.
+
 
 Resolved since 2026-07-28:
 
@@ -569,6 +607,8 @@ Resolved since 2026-07-28:
 - ~~Is there a URL-fetch capability?~~ No, and Parallel Extract on the Vercel
   gateway is now the escalation tier rather than a second vendor integration.
 - ~~X bookmark folders as container-why?~~ Dead — 20 IDs, no pagination.
+- ~~What does `url` hold for a screenshot?~~ The viewer route; provenance goes
+  to `source_platform`/`metadata`. Decided — see step 5.
 - ~~Can a share extension target be added (tauri#10074, inert project.yml)?~~
   Yes — the issue is fixed in our CLI, and project.yml provably regenerates the
   project. The real constraint is the in-process loopback; see step 5.
