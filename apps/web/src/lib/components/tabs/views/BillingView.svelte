@@ -144,6 +144,8 @@
 	};
 	type ByoState = {
 		configured: boolean;
+		endpoint_url: string | null;
+		/** Legacy label on credentials saved before the picker was removed. */
 		provider: string | null;
 		default_model: string | null;
 	};
@@ -169,42 +171,53 @@
 
 	$effect(() => { void loadLocal(); });
 
-	// ─── BYO AI provider key (inline management, formerly ByoKeyView) ──────
-	// Intended as the escape hatch from the Virtues wallet.
+	// ─── BYO AI (inline management, formerly ByoKeyView) ───────────────────
+	// The escape hatch from the Virtues wallet, and as of 2026-08-05 a whole
+	// door rather than half of one: `BearerClient` diverts every `/v1/ai/*`
+	// call — streaming and not — so chat, compaction, day summaries, image
+	// generation and transcription all leave by the user's endpoint.
 	//
-	// A HALF DOOR — say so, and say which half. `BearerClient::stream` reads
-	// the key (`load_byo_credential`) and diverts to `stream_direct_upstream`,
-	// so interactive chat really does go box → provider. But `post_json` never
-	// consults it, so compaction, day summaries, image generation and the
-	// transcription applet keep billing the wallet.
+	// The copy here is load-bearing and has been wrong in both directions
+	// within a single day. It claimed "Skip the Virtues wallet" while seven
+	// callers still billed it, then got rewritten to say nothing read the key
+	// at all — from grepping `BYO_SOURCE_ID`, which the routing reaches
+	// through `load_byo_credential` and never names. If you change this text,
+	// verify against api/settings_byo.rs and virtues_api/client.rs, not grep.
 	//
-	// Do NOT verify this by grepping `BYO_SOURCE_ID` — the stream call site
-	// reaches it through `load_byo_credential` and never names the constant.
-	// Grepping the constant is how this copy got rewritten on 2026-08-05 to
-	// claim nothing read the key at all, which was as wrong as the original
-	// "Skip the Virtues wallet" it replaced. See api/settings_byo.rs.
-	//
-	// The unqualified promise becomes true when those four paths close;
-	// docs/byo-ai-plan.md phase 1 is the plan of record.
+	// A credential is a URL and a key. There is no provider picker: one
+	// contract (OpenAI-style /chat/completions + bearer), so only the address
+	// varies. Example URLs live in the markup as *copy*, never as <option>s —
+	// a stale doc line is wrong, a stale option is a broken feature, which is
+	// precisely how `anthropic` and `google` shipped pointing at APIs we
+	// cannot call. Plan of record: docs/byo-ai-plan.md.
 	//
 	// Save and Delete are both sudo-gated (`change_byo_key` is one of the four
 	// locked sensitive actions); the SudoModal handles the prompt + CLI
 	// approval round-trip.
 	type ByoStatus = {
 		configured: boolean;
+		/** Legacy label on credentials saved before the picker was removed. */
 		provider: string | null;
 		default_model: string | null;
 		endpoint_url: string | null;
 		created_at: string | null;
 	};
 
+	/** Host of an endpoint URL, for display. Falls back to the raw string. */
+	function byoHost(url: string): string {
+		try {
+			return new URL(url).host;
+		} catch {
+			return url;
+		}
+	}
+
 	let byoOpen = $state(false);
 	let byoStatus = $state<ByoStatus | null>(null);
 	let byoLoading = $state(false);
 	let byoLoadError = $state<string | null>(null);
 
-	// Form state
-	let byoProvider = $state<'openai' | 'anthropic' | 'xai' | 'google' | 'custom'>('openai');
+	// Form state. No provider field — a credential is a URL and a key.
 	let byoApiKey = $state('');
 	let byoEndpointUrl = $state('');
 	let byoDefaultModel = $state('');
@@ -232,12 +245,12 @@
 	}
 
 	function startByoSave() {
-		if (!byoApiKey.trim()) {
-			toast.error('Paste an API key first');
+		if (!byoEndpointUrl.trim()) {
+			toast.error('Paste the endpoint URL to send chat to');
 			return;
 		}
-		if (byoProvider === 'custom' && !byoEndpointUrl.trim()) {
-			toast.error('Custom provider requires an endpoint URL');
+		if (!byoApiKey.trim()) {
+			toast.error('Paste an API key first');
 			return;
 		}
 		showSudoSave = true;
@@ -245,11 +258,13 @@
 
 	async function performByoSave(sudoRequestId: string) {
 		try {
+			// No `provider` — the box takes the URL as given. The field still
+			// exists server-side to resolve credentials saved before the picker
+			// was removed; nothing new should send it.
 			await setByoKey({
 				sudo_request_id: sudoRequestId,
-				provider: byoProvider,
 				api_key: byoApiKey,
-				endpoint_url: byoEndpointUrl || null,
+				endpoint_url: byoEndpointUrl,
 				default_model: byoDefaultModel || null,
 			});
 			toast.success('BYO key saved');
@@ -523,14 +538,17 @@
 				<div class="mt-4 pt-4 border-t border-border">
 					<div class="flex items-center justify-between">
 						<div>
-							<div class="font-medium text-sm">BYO AI provider key</div>
+							<div class="font-medium text-sm">Bring your own AI</div>
 							<div class="text-xs text-foreground-muted">
 								{#if local.byo.configured}
-									Active: {local.byo.provider ?? '?'}
+									Active: {local.byo.endpoint_url
+										? byoHost(local.byo.endpoint_url)
+										: (local.byo.provider ?? 'your endpoint')}
 									{#if local.byo.default_model}· {local.byo.default_model}{/if}.
-									Chat goes direct; background AI still bills the wallet.
+									Every AI call leaves by your endpoint.
 								{:else}
-									Send chat straight to your own provider instead of the Virtues wallet.
+									Send every AI call to your own endpoint instead of the Virtues
+									wallet.
 								{/if}
 							</div>
 						</div>
@@ -545,16 +563,24 @@
 					{#if byoOpen}
 						<div class="mt-4 pt-4 border-t border-border-subtle">
 							<p class="text-xs text-foreground-muted mb-4">
-								Bring your own OpenAI / Anthropic / xAI / Google / custom key.
-								Saving it here stores it on your box, encrypted, behind a sudo
-								approval at the CLI.
+								Point your box at any endpoint that speaks OpenAI-style
+								<code class="bg-surface-alt px-1 rounded">/chat/completions</code>
+								with a bearer token. The key is stored on your box, encrypted,
+								behind a sudo approval at the CLI.
+							</p>
+							<p class="text-xs text-foreground-muted mb-4">
+								<strong>This covers every AI call</strong> — chat, compaction, day
+								summaries, image generation and transcription all leave by your
+								endpoint. The wallet stays live for the things that aren't AI and
+								that your key can't pay for: maps, web search, photos, and bank
+								connections.
 							</p>
 							<p class="text-xs text-warning mb-4">
-								<strong>This covers chat, not everything.</strong> With a key set,
-								the conversation itself goes from your box straight to your provider.
-								Four things still run through Virtues and bill the wallet:
-								conversation compaction, day summaries, image generation, and
-								transcription.
+								<strong>Consider whose key it is.</strong> Routing through an
+								employer's account means your personal life passes through
+								infrastructure they can read. Bringing your own key gives you
+								control of the vendor and the bill; it does not, by itself, give
+								you more privacy.
 							</p>
 
 							{#if byoLoading}
@@ -568,20 +594,27 @@
 											<Icon icon="ri:key-line" class="text-success" />
 										</div>
 										<div class="flex-1 min-w-0">
-											<div class="font-medium">BYO key active for chat</div>
+											<div class="font-medium">
+												AI is going to your own endpoint
+											</div>
 											<div class="text-xs text-foreground-muted mt-1 flex flex-wrap gap-x-3 gap-y-1">
-												<span>Provider: <Badge>{byoStatus.provider ?? '?'}</Badge></span>
-												{#if byoStatus.default_model}
-													<span>Model: <code class="text-xs">{byoStatus.default_model}</code></span>
-												{/if}
 												{#if byoStatus.endpoint_url}
-													<span>Endpoint: <code class="text-xs">{byoStatus.endpoint_url}</code></span>
+													<!-- The host, not a chosen label: it says where traffic
+													     actually goes, which a slug never did. -->
+													<span
+														>Sending to <Badge>{byoHost(byoStatus.endpoint_url)}</Badge
+														></span
+													>
+													<span><code class="text-xs">{byoStatus.endpoint_url}</code></span>
+												{/if}
+												{#if byoStatus.default_model}
+													<span>Default model: <code class="text-xs">{byoStatus.default_model}</code></span>
 												{/if}
 											</div>
 											<p class="text-xs text-foreground-muted mt-2">
-												Chat calls go box → provider directly. Compaction, day
-												summaries, image generation and transcription still go through
-												Virtues, so the wallet and top-up stay live.
+												Every AI call goes box → your endpoint, so Virtues is not in
+												the path and your wallet isn't charged for it. The wallet
+												stays live for maps, web search, photos and bank connections.
 											</p>
 										</div>
 										<Button variant="ghost" onclick={startByoDelete}>
@@ -612,12 +645,24 @@
 								</div>
 							{/if}
 
-							<div class="text-xs text-foreground-muted mt-4">
-								<strong>v1 supports OpenAI-compatible APIs.</strong> For Anthropic-native
-								or Google-native shapes, point BYO at a translation proxy like
-								LiteLLM or OpenRouter and choose
-								<code class="bg-surface-alt px-1 rounded">custom</code> with their
-								endpoint URL.
+							<div class="text-xs text-foreground-muted mt-4 space-y-2">
+								<p>
+									<strong>An AI gateway is usually the best answer.</strong> Vercel
+									AI Gateway, OpenRouter, LiteLLM or your work's proxy each reach
+									every provider through one key — including models we pick that
+									yours may not carry otherwise. Point this at theirs.
+								</p>
+								<p>
+									Provider APIs work directly too: OpenAI, xAI, Groq, DeepSeek,
+									Mistral, and Anthropic and Google on their OpenAI-compatible
+									endpoints. So does a local Ollama, LM Studio or llama.cpp on
+									<code class="bg-surface-alt px-1 rounded">http://localhost</code>.
+								</p>
+								<p>
+									<strong>AWS Bedrock needs a gateway in front.</strong> It signs
+									requests rather than taking a bearer token, so a pasted key
+									can't reach it — but every gateway above can.
+								</p>
 							</div>
 						</div>
 					{/if}
@@ -646,23 +691,30 @@
 		</div>
 </Page>
 
+<!--
+	Endpoint URL, not a provider picker. There is no provider taxonomy: we
+	speak one contract, so the only thing that varies is the address. The
+	examples below are copy, deliberately — when a vendor moves a path, stale
+	help text is wrong, whereas a stale <option> is a broken shipped feature.
+	That is exactly how `anthropic` and `google` came to point at APIs we
+	cannot call. See docs/byo-ai-plan.md.
+-->
 {#snippet byoKeyForm()}
 	<div class="space-y-3">
 		<div>
-			<label class="block text-xs text-foreground-muted mb-1" for="byo-provider"
-				>Provider</label
+			<label class="block text-xs text-foreground-muted mb-1" for="byo-url"
+				>Endpoint URL</label
 			>
-			<select
-				id="byo-provider"
-				bind:value={byoProvider}
-				class="w-full rounded border border-border bg-surface px-3 py-2 text-sm"
-			>
-				<option value="openai">OpenAI</option>
-				<option value="anthropic">Anthropic (via translation proxy)</option>
-				<option value="xai">xAI</option>
-				<option value="google">Google (via translation proxy)</option>
-				<option value="custom">Custom (OpenAI-compatible)</option>
-			</select>
+			<Input
+				id="byo-url"
+				bind:value={byoEndpointUrl}
+				placeholder="https://ai-gateway.vercel.sh/v1/chat/completions"
+			/>
+			<p class="text-xs text-foreground-muted mt-1.5">
+				Any endpoint speaking OpenAI-style <code class="bg-surface-alt px-1 rounded"
+					>/chat/completions</code
+				> with a bearer token.
+			</p>
 		</div>
 		<div>
 			<label class="block text-xs text-foreground-muted mb-1" for="byo-key"
@@ -675,18 +727,6 @@
 				placeholder="sk-…"
 			/>
 		</div>
-		{#if byoProvider === 'custom'}
-			<div>
-				<label class="block text-xs text-foreground-muted mb-1" for="byo-url"
-					>Endpoint URL</label
-				>
-				<Input
-					id="byo-url"
-					bind:value={byoEndpointUrl}
-					placeholder="https://api.example.com/v1/chat/completions"
-				/>
-			</div>
-		{/if}
 		<div>
 			<label
 				class="block text-xs text-foreground-muted mb-1"
@@ -695,8 +735,12 @@
 			<Input
 				id="byo-model"
 				bind:value={byoDefaultModel}
-				placeholder="gpt-4o, claude-3-5-sonnet-latest, …"
+				placeholder="anthropic/claude-opus-5, openai/gpt-4o, …"
 			/>
+			<p class="text-xs text-foreground-muted mt-1.5">
+				Used only when a request does not already name a model. Model ids are
+				spelled differently on every gateway — copy yours from theirs.
+			</p>
 		</div>
 	</div>
 {/snippet}
