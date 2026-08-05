@@ -73,7 +73,12 @@
 	<div class="meta-col">
 		<div class="name-row">
 			<h3 class="name">{applet.name}</h3>
-			{#if !applet.enabled}
+			{#if applet.archived_at}
+				<!-- Finished is not off. Its lifecycle completed — it did the one
+				     thing it was for — and reading that as "you switched this off"
+				     loses the distinction the `until` field exists to draw. -->
+				<span class="off-pill">finished</span>
+			{:else if !applet.enabled}
 				<!-- Explicit, because dimming alone reads as "loading" rather than
 				     "you turned this off". -->
 				<span class="off-pill">off</span>

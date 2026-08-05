@@ -479,6 +479,15 @@ pub async fn update_applet(
     }
     if obj.contains_key("enabled") {
         sets.push(format!("enabled = ${}", next()));
+        // Turning a finished applet back on un-finishes it. There is no
+        // coherent "enabled AND archived" state — archiving sets enabled =
+        // FALSE precisely so the scheduler skips it, and leaving archived_at
+        // behind would show a running applet as finished on its own page.
+        // Takes no bind: it is a consequence of the flag, not a field a
+        // caller may set.
+        if obj.get("enabled").and_then(|v| v.as_bool()) == Some(true) {
+            sets.push("archived_at = NULL".to_string());
+        }
     }
     if obj.contains_key("config") {
         sets.push(format!("config = ${}::jsonb", next()));
@@ -1026,6 +1035,45 @@ fn run_from_row(row: &sqlx::postgres::PgRow) -> Result<AppletRun> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Turning a finished applet back on un-finishes it. Without this the row
+    /// lands in a state that cannot be drawn: its page says "Finished" while
+    /// it is switched on and (before the scheduler learned to check) queued to
+    /// run. "Run again" on the detail page is exactly this one PATCH.
+    #[sqlx::test]
+    async fn enabling_a_finished_applet_clears_the_finish(pool: PgPool) {
+        sqlx::query(
+            "INSERT INTO app_applets (id, name, owner, agent, enabled, archived_at) \
+             VALUES ('applet_x', 'X', 'user', 'do a thing', FALSE, now())",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        let updated = update_applet(&pool, "applet_x", &serde_json::json!({ "enabled": true }))
+            .await
+            .expect("patch");
+        assert!(updated.enabled);
+        assert!(updated.archived_at.is_none(), "finishing is cleared, not kept");
+    }
+
+    /// Disabling is not finishing, and must not pretend to be.
+    #[sqlx::test]
+    async fn disabling_does_not_finish_an_applet(pool: PgPool) {
+        sqlx::query(
+            "INSERT INTO app_applets (id, name, owner, agent, enabled) \
+             VALUES ('applet_y', 'Y', 'user', 'do a thing', TRUE)",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        let updated = update_applet(&pool, "applet_y", &serde_json::json!({ "enabled": false }))
+            .await
+            .expect("patch");
+        assert!(!updated.enabled);
+        assert!(updated.archived_at.is_none());
+    }
 
     /// The regression this file earned the hard way.
     ///

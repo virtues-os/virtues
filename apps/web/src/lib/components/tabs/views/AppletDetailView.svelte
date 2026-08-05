@@ -196,6 +196,25 @@
 		windowShellStore.openTabFromRoute(`/applet/${action.id}/view`);
 	}
 
+	// Put a finished applet back to work. Enabling clears `archived_at`
+	// server-side — there is no coherent "enabled and finished" state — so this
+	// is one PATCH and then a run, not a separate un-archive verb.
+	async function runAgain() {
+		if (!action) return;
+		saving = true;
+		err = null;
+		try {
+			action = await patchApplet(action.id, { enabled: true });
+			await runAction(action.id);
+			runs = await listActionRuns(action.id, { limit: 30 });
+			action = await getApplet(action.id);
+		} catch (e) {
+			err = e instanceof Error ? e.message : String(e);
+		} finally {
+			saving = false;
+		}
+	}
+
 	async function runNow() {
 		if (!action) return;
 		saving = true;
@@ -293,12 +312,21 @@
 					</div>
 				</div>
 				<div class="hero-actions">
-					<Button variant="secondary" onclick={toggleEnabled} disabled={saving}>
-						{action.enabled ? 'Disable' : 'Enable'}
-					</Button>
-					<Button variant="primary" onclick={runNow} disabled={saving}>
-						Run now
-					</Button>
+					{#if action.archived_at}
+						<!-- A finished applet has enabled = FALSE, so "Disable" is
+						     meaningless and "Run now" would be refused as not-found.
+						     One honest affordance instead: put it back to work. -->
+						<Button variant="primary" onclick={runAgain} disabled={saving}>
+							Run again
+						</Button>
+					{:else}
+						<Button variant="secondary" onclick={toggleEnabled} disabled={saving}>
+							{action.enabled ? 'Disable' : 'Enable'}
+						</Button>
+						<Button variant="primary" onclick={runNow} disabled={saving}>
+							Run now
+						</Button>
+					{/if}
 				</div>
 			</div>
 
