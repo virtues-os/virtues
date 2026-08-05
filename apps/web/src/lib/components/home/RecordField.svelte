@@ -1,16 +1,22 @@
 <!--
-	RecordField.svelte — the whole record, as a field of light.
+	RecordField.svelte — the whole record, as a field of light, and a door into it.
 
 	Every hour this box has ever seen you awake, plotted as time-of-day against
 	date: nine years across, one midnight-to-midnight down. Intensity is how
 	much happened in that hour.
 
-	It is not decoration. It is the only place in the product where the scale of
-	what the box holds is visible — four hundred thousand records, eight and a
-	half years — and it is legible as a *life*: the dark band across the small
-	hours is sleep, the bright plateau is the working day, a vertical tear is a
-	week the collectors were down, a sideways shift is a move or a flight.
-	Nothing here is generated or interpreted; every lit pixel is a count.
+	It is not decoration, and it is not a picture of the record either — it is
+	the record's index. Point anywhere in nine years and it names that day;
+	click and it opens. That is the same contract the deck makes at fifteen
+	minutes, made again at nine years, and it is what stops the past being
+	wallpaper: the largest object on the page is also the fastest way into any
+	day the box holds.
+
+	The ticks along the top are this date in earlier years. They are the record
+	reaching up rather than waiting to be asked, and they are counted, not
+	written: a tick knows its date and how many entries the day holds, and
+	nothing else. A pick within a few pixels of one snaps to it, so the marks
+	are targets rather than ornament.
 
 	Drawn as a 1200×24 raster upscaled with smoothing rather than as tens of
 	thousands of shapes: the interpolation is what makes a bar chart into an
@@ -23,15 +29,19 @@
 	boldness is spent here and nowhere else.
 -->
 <script lang="ts">
-	import { getLifeline, getClock } from "$lib/wiki/api";
+	import { getLifeline, getClock, type OnThisDayApi } from "$lib/wiki/api";
 	import type { StreamHealth } from "$lib/api/client";
 
 	interface Props {
 		/** Stream totals, for the true size of the record. */
 		health: Record<string, StreamHealth>;
 		tz: string;
+		/** This date in earlier years, marked along the top. */
+		anniversaries?: OnThisDayApi[];
+		/** Open a day, `YYYY-MM-DD`. */
+		onpick?: (date: string) => void;
 	}
-	let { health, tz }: Props = $props();
+	let { health, tz, anniversaries = [], onpick }: Props = $props();
 
 	const reduce =
 		typeof window !== "undefined" &&
@@ -146,6 +156,91 @@
 		return out;
 	});
 
+	// ── the door ────────────────────────────────────────────────
+	function ymd(d: Date): string {
+		return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+	}
+	function msAt(p: number): number {
+		return span ? span.from + p * (span.to - span.from) : 0;
+	}
+
+	/** Earlier years sharing today's date, placed on the field they came from. */
+	const marks = $derived.by(() => {
+		const s = span;
+		if (!s) return [] as Array<{ x: number; date: string; entry: OnThisDayApi }>;
+		return anniversaries
+			.map((e) => {
+				// Noon, so a mark sits in the middle of its day rather than on the
+				// midnight seam between two.
+				const ms = Date.parse(`${e.date}T12:00:00`);
+				return { x: (ms - s.from) / (s.to - s.from), date: e.date, entry: e };
+			})
+			.filter((m) => m.x > 0 && m.x < 1);
+	});
+
+	/** Where the pointer or the keyboard is, as a fraction of the span. */
+	let at = $state<number | null>(null);
+	let focused = $state(false);
+
+	/** A pick this close to a mark takes the mark's exact day. */
+	const SNAP_PX = 8;
+	const picked = $derived.by(() => {
+		if (at == null || !span) return null;
+		const px = at * W;
+		for (const m of marks) {
+			if (Math.abs(m.x * W - px) <= SNAP_PX) return { date: m.date, entry: m.entry, x: m.x };
+		}
+		return { date: ymd(new Date(msAt(at))), entry: null, x: at };
+	});
+	const pickLabel = $derived.by(() => {
+		if (!picked) return "";
+		const d = new Date(`${picked.date}T12:00:00`);
+		const day = d.toLocaleDateString(undefined, { day: "numeric", month: "short", year: "numeric" });
+		if (picked.entry) {
+			const n = picked.entry.event_count;
+			return n > 0 ? `${day} · ${n} ${n === 1 ? "entry" : "entries"}` : day;
+		}
+		return day;
+	});
+
+	function onmove(e: PointerEvent) {
+		const r = (e.currentTarget as HTMLElement).getBoundingClientRect();
+		if (r.width <= 0) return;
+		at = Math.min(1, Math.max(0, (e.clientX - r.left) / r.width));
+	}
+	function take() {
+		if (picked) onpick?.(picked.date);
+	}
+	function onkey(e: KeyboardEvent) {
+		if (!span || !days) return;
+		const week = 7 / days,
+			year = 365 / days;
+		let next = at ?? 1;
+		switch (e.key) {
+			case "ArrowLeft":
+				next -= e.shiftKey ? year : week;
+				break;
+			case "ArrowRight":
+				next += e.shiftKey ? year : week;
+				break;
+			case "Home":
+				next = 0;
+				break;
+			case "End":
+				next = 1;
+				break;
+			case "Enter":
+			case " ":
+				e.preventDefault();
+				take();
+				return;
+			default:
+				return;
+		}
+		e.preventDefault();
+		at = Math.min(1, Math.max(0, next));
+	}
+
 	// The reveal is a one-shot, deliberately separate from drawing. Tying it to
 	// the canvas size meant every resize observation restarted the sweep — and
 	// a plate that replays its own arrival whenever the window moves never
@@ -218,14 +313,16 @@
 </script>
 
 <figure class="field">
-	<div
-		class="plate"
-		bind:clientWidth={W}
-		bind:clientHeight={H}
-		role="img"
-		aria-label="Every hour of activity this box has recorded, {startLabel} to now: time of day down, date across."
-	>
-		<canvas bind:this={canvas} aria-hidden="true"></canvas>
+	<div class="plate" bind:clientWidth={W} bind:clientHeight={H}>
+		<!-- The image is the wrapper, not the canvas: a canvas is an interactive
+		     element and cannot take the img role itself. -->
+		<div
+			class="img"
+			role="img"
+			aria-label="Every hour of activity this box has recorded, {startLabel} to now: time of day down, date across."
+		>
+			<canvas bind:this={canvas} aria-hidden="true"></canvas>
+		</div>
 
 		{#if raster}
 			<div class="axes" aria-hidden="true">
@@ -238,6 +335,51 @@
 				<span class="now" style="left:100%"></span>
 				<span class="nowlab mono" style="left:100%">today</span>
 			</div>
+
+			<!-- This date, in earlier years. -->
+			<div class="anns" aria-hidden="true">
+				{#each marks as m (m.date)}
+					<span class="ann" class:hit={picked?.date === m.date} style="left:{m.x * 100}%"></span>
+				{/each}
+			</div>
+
+			<!--
+				The picking surface. A slider rather than a button: the value is a
+				position in the record, arrows walk it a week at a time (a year with
+				Shift), and Enter opens what it names — the same gesture the deck
+				uses for a moment, at nine years instead of fifteen minutes.
+			-->
+			<div
+				class="pick"
+				role="slider"
+				tabindex="0"
+				aria-label="Pick a day in the record"
+				aria-valuemin={0}
+				aria-valuemax={100}
+				aria-valuenow={Math.round((at ?? 1) * 100)}
+				aria-valuetext={pickLabel || "today"}
+				onpointermove={onmove}
+				onpointerleave={() => {
+					if (!focused) at = null;
+				}}
+				onfocus={() => {
+					focused = true;
+					if (at == null) at = 1;
+				}}
+				onblur={() => {
+					focused = false;
+					at = null;
+				}}
+				onkeydown={onkey}
+				onclick={take}
+			></div>
+
+			{#if picked}
+				<span class="cross" class:snap={!!picked.entry} style="left:{picked.x * 100}%"></span>
+				<span class="pill mono" style="left:clamp(66px, {picked.x * 100}%, calc(100% - 66px))">
+					{pickLabel}
+				</span>
+			{/if}
 		{:else if !failed}
 			<p class="loading mono">reading the record…</p>
 		{/if}
@@ -246,7 +388,8 @@
 	<figcaption>
 		<span class="cap">
 			<span class="figno mono">Fig. 1</span>
-			Time of day against date. Every lit hour is a count, never an estimate.
+			Time of day against date; every lit hour is a count, never an estimate. Marks along the top are
+			this date in earlier years. Point to name a day, click to open it.
 		</span>
 		{#if totals.records}
 			<!-- The margin: the size of the thing, stated once, without adjectives. -->
@@ -268,12 +411,18 @@
 	 */
 	.plate {
 		position: relative;
+		/* Only the image breaks the page's measure. The caption stays on the
+		   text column, where the rest of the page's prose lives — the figure
+		   is allowed to touch the edges, its caption is not. The page says how
+		   much room it has to give. */
+		margin-inline: calc(-1 * var(--field-bleed, 0px));
 		height: clamp(300px, 44vh, 460px);
 		background: #0a0c11;
 		border-radius: 3px;
 		overflow: hidden;
 		isolation: isolate;
 	}
+	.img { position: absolute; inset: 0; }
 	.plate canvas { display: block; width: 100%; height: 100%; }
 
 	.axes { position: absolute; inset: 0; pointer-events: none; }
@@ -296,6 +445,30 @@
 	.loading {
 		position: absolute; inset: 0; display: grid; place-items: center;
 		font-size: 10.5px; letter-spacing: 0.06em; color: rgba(255, 255, 255, 0.3); margin: 0;
+	}
+
+	/* This date in earlier years: a short comb hanging from the top rule. */
+	.anns { position: absolute; inset: 0; pointer-events: none; }
+	.ann {
+		position: absolute; top: 0; width: 1px; height: 11px;
+		background: rgba(255, 255, 255, 0.34); transform: translateX(-0.5px);
+		transition: height 0.18s, background-color 0.18s;
+	}
+	.ann.hit { height: 100%; background: rgba(255, 255, 255, 0.22); }
+
+	.pick { position: absolute; inset: 0; cursor: crosshair; }
+	.pick:focus-visible { outline: 2px solid rgba(255, 255, 255, 0.7); outline-offset: -2px; }
+	.cross {
+		position: absolute; top: 0; bottom: 0; width: 1px;
+		background: rgba(255, 255, 255, 0.45); transform: translateX(-0.5px);
+		pointer-events: none;
+	}
+	.cross.snap { background: rgba(255, 255, 255, 0.75); }
+	.pill {
+		position: absolute; top: 10px; transform: translateX(-50%);
+		padding: 3px 8px; border-radius: 3px; white-space: nowrap; pointer-events: none;
+		background: rgba(10, 12, 17, 0.82); color: rgba(255, 255, 255, 0.88);
+		font-size: 10px; letter-spacing: 0.03em;
 	}
 
 	figcaption {
