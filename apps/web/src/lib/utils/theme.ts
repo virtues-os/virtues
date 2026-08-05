@@ -483,7 +483,7 @@ export const themeMetadata: Record<
 	},
 	oxford: {
 		icon: 'ph:feather-bold',
-		description: 'American heritage, navy & claret'
+		description: 'Heritage, navy & claret'
 	},
 	netherfield: {
 		icon: 'ph:building-bold',
