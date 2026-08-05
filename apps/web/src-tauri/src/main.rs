@@ -254,39 +254,28 @@ mod session_probe_tests {
 // Tauri Commands (IPC from web frontend)
 // ============================================================================
 
-/// Version of the Tauri command surface this binary exposes.
-///
-/// **Why this exists.** The box serves the JavaScript that calls these
-/// commands: the desktop app shells to `localhost:7117`, so `bridge.ts` ships
-/// with the *box* and `invoke()`s a surface compiled into a *separately
-/// versioned* binary. Nothing negotiated between them. A box newer than the app
-/// called a command that did not exist and failed at runtime, inside whatever
-/// feature needed it — latent only because this list stayed still. Once the
-/// box can also hand the app new bundles (`docs/spa-delivery-plan.md`), it
-/// stops being latent.
-///
-/// **The contract.** A bundle declares the lowest surface it can run against as
-/// `minShellVersion`. A shell reporting less than that must refuse the bundle
-/// rather than load it and fail somewhere unpredictable. Within a bundle that
-/// does load, `bridge.ts` gates individual features on this number so a missing
-/// command degrades visibly instead of throwing.
-///
-/// **Bump this** when you add a command the SPA may require, or change an
-/// existing command's arguments or return shape. Do NOT bump for internal
-/// changes that leave the surface identical — the number tracks the contract,
-/// not the code.
-///
-/// | v | change |
-/// |---|---|
-/// | 1 | baseline: the surface as of 2026-08-05 (see `generate_handler!`) |
-pub const COMMAND_SURFACE_VERSION: u32 = 1;
-
 /// Returns this shell's command-surface version. Deliberately the simplest
 /// possible command — it is the one call a bundle makes *before* it knows
 /// whether any other call is safe, so it must never gain arguments.
+///
+/// The constant itself lives in `lib.rs` (`virtues_lib::COMMAND_SURFACE_VERSION`)
+/// because mobile needs it too and never compiles this file. Its doc comment is
+/// where the contract is written down — read that before bumping.
 #[tauri::command]
 fn command_surface_version() -> u32 {
-    COMMAND_SURFACE_VERSION
+    virtues_lib::COMMAND_SURFACE_VERSION
+}
+
+/// Tell the shell the UI booted successfully from the active OTA bundle.
+///
+/// A freshly applied bundle stays *pending* until this lands, and a pending
+/// bundle found at the next startup is treated as one that failed to come up —
+/// abandoned, pointer reverted. Downloading proved nothing; rendering does.
+#[tauri::command]
+fn bundle_boot_ok(app: AppHandle) {
+    if let Ok(dir) = app.path().app_data_dir() {
+        virtues_lib::web_bundle::mark_boot_ok(&dir);
+    }
 }
 
 /// Returns whether the machine is currently paired to a Virtues server.
@@ -1342,6 +1331,7 @@ fn main() {
         .plugin(tauri_plugin_reach::init())
         .invoke_handler(tauri::generate_handler![
             command_surface_version,
+            bundle_boot_ok,
             get_client_status,
             discover_servers,
             pair_with_code,
