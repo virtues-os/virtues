@@ -359,7 +359,84 @@ Build real aspect rows only when per-aspect **attribution** is wanted ("matched
 on palette"), not merely per-aspect recall. That defers the invasive change
 until a surface actually needs it.
 
-### 5. iOS share sheet — spike before committing
+### 5. iOS share sheet — SPIKE DONE 2026-08-05, unblocked
+
+**The Xcode risk was the wrong thing to worry about.** Both cited blockers are
+gone, and the real constraint is the transport.
+
+*Blocker 1 — tauri#10074 (an app extension breaks simulator builds with
+`arm64-sim`): CLOSED*, fixed by PR #10431 in tauri-cli 2.0.0-rc.5. This repo
+runs tauri-cli 2.11.3 and tauri 2.11.5, far past it.
+
+*Blocker 2 — "`project.yml` is inert post-init": not true for builds.* Measured:
+running `xcodegen generate` over the committed `project.yml` reproduces the
+committed `.pbxproj` with **four** differing lines —
+
+- `web_bundle.rs` added to `fileGroups` (cosmetic: the committed `.pbxproj`
+  does not list it, and the app ships anyway, because Rust is compiled by cargo
+  through a script phase and `fileGroups` only populates Xcode's navigator)
+- `PRODUCT_NAME` quoting
+- **`DEVELOPMENT_TEAM` dropped** — xcodegen does not emit it; Tauri injects it
+  from `tauri.ios.conf.json` (`bundle.iOS.developmentTeam`)
+
+So `project.yml` is the faithful source of the project and a new target added
+there is legitimate. `xcodegen` 2.45.4 is installed. Two standing cautions: the
+"inert" note applies to **`tauri ios init`**, which regenerates `project.yml`
+from its template — never re-run it on this repo; and never commit a bare
+`xcodegen` output without `DEVELOPMENT_TEAM`, or let Tauri re-inject it first.
+
+**The actual constraint: the box is served in-process.** The app embeds iroh and
+serves the box on `127.0.0.1:7117` inside its own process (`src-tauri/src/main.rs`).
+A share extension is a separate process with a ~120MB ceiling and a short life,
+so it **cannot reach that loopback**, and giving it its own iroh endpoint means
+QUIC hole-punching inside a share sheet plus a duplicate endpoint identity.
+
+Therefore: **the extension writes, the app sends.**
+
+1. Extension accepts `public.url` / `public.text` / `public.image`, writes a
+   small JSON payload (plus any image file) into a shared **App Group**
+   container, and returns immediately. No network, no auth, no iroh.
+2. The app drains that container on launch and on background wake, POSTs to
+   `:7117`, and the box's `ios_ingest` fans it out on `stream: "bookmark"`.
+
+**This queues less than it sounds like.** The app already declares
+`UIBackgroundModes: location, audio, processing, fetch`, so it wakes regularly
+on its own (the battery work: motion-adaptive GPS, location keepalive). A share
+should reach the box within minutes without the user opening anything. That is
+worth measuring on-device, and it is the one number that decides whether any
+wake-the-app trickery is warranted — the `openURL`-from-extension hacks are
+fragile and review-risky, and should stay unbuilt unless the measurement says
+otherwise.
+
+**Pairing state does not need to move.** `box.json` lives at
+`dirs::data_dir()/virtues/box.json` in the app's private container. Because the
+extension never talks to the box, it never reads pairing — so the App Group
+carries only outbound payloads, and this stays a small change.
+
+Work items:
+
+- Register an App Group under team `4YV9K677RY`; add
+  `com.apple.security.application-groups` to the app entitlements and a new
+  entitlements file for the extension. Heed the existing entitlements comment:
+  values must match the provisioning profile exactly (HealthKit is an array,
+  not `true`) — the same discipline applies here.
+- Add the extension target to `project.yml` (`type: app-extension`,
+  `NSExtensionPointIdentifier = com.apple.share-services`), own bundle id
+  `com.virtues.app.share`, own provisioning profile.
+- Swift extension: write payload, return. Do not decode or resize images in the
+  extension — the memory ceiling is real and an Instagram screenshot is the
+  common case.
+- App-side drain + `bookmark` arm in `ios_ingest` (core-side, still owed).
+- **`url` is `NOT NULL`** on `data_content_bookmark`: a camera-roll screenshot
+  shared with no source URL still has nowhere to live. Decide before building
+  the extension, since it changes the payload contract.
+
+Open, and cheap to settle with one build: whether `tauri ios build` re-runs
+xcodegen itself (extension target then survives automatically) or whether the
+regenerated `.pbxproj` must be committed. Both work; it only changes the
+workflow note.
+
+### 5b. Original spike notes (superseded by the above)
 
 The highest-value door (the only capture path for Instagram) and the riskiest
 work in this plan. Shape: a Swift share extension writes to a shared App Group
@@ -481,22 +558,25 @@ What the market adds to our plan (triaged 2026-07-28):
 
 Live (blocking something):
 
-1. **Tauri iOS share extension** — can a second Xcode target be added given an
-   inert `project.yml` and tauri#10074? Blocks step 5; fallback is a Shortcut.
-2. **X billing classification** — do proxied user-context reads through
+1. **X billing classification** — do proxied user-context reads through
    virtues-api bill as *owned* reads at $0.001? Blocks step 6 only. The
    per-resource rate, the 24h dedup window, and the endpoint list are settled;
    the proxy's effect on classification is not.
-3. **`data_content_post` shape** — confirm before writing the migration, since
+2. **`data_content_post` shape** — confirm before writing the migration, since
    it is the table every future social source lands in.
-4. **URL-fetch failure rate** — what fraction of real saved URLs the native
+3. **URL-fetch failure rate** — what fraction of real saved URLs the native
    readability path actually handles, which sets how often Parallel Extract
    gets invoked and therefore whether the escalation tier is worth building.
-5. **`max_age_hours` on Parallel** — the one live `web_search` argument with no
+4. **`max_age_hours` on Parallel** — the one live `web_search` argument with no
    documented equivalent. If freshness/recrawl control is genuinely absent, the
    "use `1` for news/sports/live data" instruction in the tool description has
    to go, and the model loses a lever it currently has.
-6. Browser-extension → box auth path (iroh gate).
+5. Browser-extension → box auth path (iroh gate). The share-extension spike
+   bears on this: the box is served in-process on `:7117`, so anything outside
+   the app's own process has the same problem and the same answer — hand off,
+   don't dial.
+6. **Screenshot with no source URL** — `url` is `NOT NULL`, so a camera-roll
+   share has nowhere to live. Blocks the extension's payload contract.
 
 Resolved since 2026-07-28:
 
@@ -505,6 +585,9 @@ Resolved since 2026-07-28:
 - ~~Is there a URL-fetch capability?~~ No, and Parallel Extract on the Vercel
   gateway is now the escalation tier rather than a second vendor integration.
 - ~~X bookmark folders as container-why?~~ Dead — 20 IDs, no pagination.
+- ~~Can a share extension target be added (tauri#10074, inert project.yml)?~~
+  Yes — the issue is fixed in our CLI, and project.yml provably regenerates the
+  project. The real constraint is the in-process loopback; see step 5.
 
 Deferred (v2 or later):
 
