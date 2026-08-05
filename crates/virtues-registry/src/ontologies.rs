@@ -1009,9 +1009,13 @@ pub fn registered_ontologies() -> Vec<OntologyDescriptor> {
             // phrase. Intent language is also the closest match to future query
             // language, so it earns its place ahead of most machine text.
             //
-            // Titles alone still leave thin documents (a saved Instagram post
-            // has neither title nor description until something fetches one) —
-            // that is the enrichment pass's job, not this expression's.
+            // `extraction_text` (0095) is the machine half: the enrichment
+            // sweep's record rendered as prose, which is what makes a saved
+            // Instagram post — no title, no description — findable at all. It
+            // is written by `ExtractionRecord::to_embed_text` rather than
+            // assembled from JSONB here, so the rendering has one definition.
+            // Rows not yet enriched contribute an empty string and lose
+            // nothing.
             //
             // The `jsonb_typeof` guard is load-bearing: `jsonb_array_elements_text`
             // raises on a non-array, and this expression is interpolated into the
@@ -1024,7 +1028,8 @@ pub fn registered_ontologies() -> Vec<OntologyDescriptor> {
                      CASE WHEN jsonb_typeof(t.tags) = 'array' \
                           THEN COALESCE((SELECT string_agg(tag, ', ') \
                                            FROM jsonb_array_elements_text(t.tags) AS tag), '') \
-                          ELSE '' END",
+                          ELSE '' END \
+                     || '\n\n' || COALESCE(t.extraction_text, '')",
                 content_type: "bookmark",
                 title_sql: Some("t.title"),
                 preview_sql: "COALESCE(SUBSTR(t.description, 1, 200), t.url)",

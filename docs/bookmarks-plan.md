@@ -324,7 +324,7 @@ Cost lands about where Exa is: $0.005 base + $0.001 per additional result.
 Requires a virtues-api leg (a `/parallel/*` proxy route beside the Exa one), so
 it is small but not purely local — that repo deploys separately.
 
-### 3. `bookmark_enrichment` applet — the queue
+### 3. `bookmark_enrichment` applet — ✅ LANDED 2026-08-05
 
 Copy `document_extraction`'s shape exactly, because it already solved this:
 cron applet, drain a status column, claim one item at a time, commit per item,
@@ -342,7 +342,7 @@ is legitimate work and not a hang.
 - Budget: daily cap in Settings, spend read from the prepaid-wallet ledger.
   Newest-first drain, lazy tail on touch, explicit priced bulk button.
 
-### 4. Aspect embedding — start concatenated
+### 4. Aspect embedding — ✅ LANDED 2026-08-05 (concatenated, as decided)
 
 **Decision (revised from the original plan's "direct-write aspect rows"):**
 concatenate the extraction prose into `embed_text_sql` first. The chunker
