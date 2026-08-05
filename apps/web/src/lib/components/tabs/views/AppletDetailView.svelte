@@ -10,14 +10,14 @@
 	import type { Tab } from '$lib/tabs/types';
 	import {
 		getApplet,
-		listActionRuns,
+		getAppletLog,
 		patchApplet,
 		deleteAction,
 		getAppletData,
 		runAction,
 		messageApplet,
 		type Applet,
-		type AppletRun,
+		type AppletLogEntry,
 		type AppletData,
 		type PatchAppletBody
 	} from '$lib/api/client';
@@ -28,7 +28,7 @@
 	const actionId = $derived(routeToEntityId(tab.route));
 
 	let action = $state<Applet | null>(null);
-	let runs = $state<AppletRun[]>([]);
+	let log = $state<AppletLogEntry[]>([]);
 	let loading = $state(false);
 	let saving = $state(false);
 	let err = $state<string | null>(null);
@@ -49,9 +49,14 @@
 		loading = true;
 		err = null;
 		try {
-			const [a, rs] = await Promise.all([getApplet(id), listActionRuns(id, { limit: 30 })]);
+			// The applet loads on its own. The log is a second, weaker request:
+			// awaiting both together meant one failing log blanked the entire
+			// page, because `action` stayed null and the template fell through
+			// to the error state. An applet you cannot see is a worse outcome
+			// than a log you cannot see.
+			const a = await getApplet(id);
 			action = a;
-			runs = rs;
+			log = await getAppletLog(id).catch(() => []);
 			edit = {
 				name: a.name,
 				agent: a.agent ?? '',
@@ -125,8 +130,11 @@
 		return micros < 10_000 ? `$${(micros / 1_000_000).toFixed(4)}` : `$${(micros / 1_000_000).toFixed(2)}`;
 	}
 
-	// What the last 30 runs cost, so the ceiling above has something to mean.
-	const recentSpend = $derived(runs.reduce((n, r) => n + (r.cost_micros ?? 0), 0));
+	// What recent runs cost, so the ceiling above has something to mean. Read
+	// off the log, whose per-entry cost is already summed across the runs it
+	// collapsed — so this is the true total, not the total of what is visible.
+	const recentSpend = $derived(log.reduce((n, e) => n + (e.cost_micros ?? 0), 0));
+	const recentRuns = $derived(log.reduce((n, e) => n + (e.occurrences ?? 1), 0));
 
 	// Milliseconds past the owed slot. Same hour of grace the scheduler and the
 	// needs-attention strip use, so the three surfaces never disagree about
@@ -207,7 +215,7 @@
 		try {
 			action = await patchApplet(action.id, { enabled: true });
 			await runAction(action.id);
-			runs = await listActionRuns(action.id, { limit: 30 });
+			log = await getAppletLog(action.id).catch(() => log);
 			action = await getApplet(action.id);
 		} catch (e) {
 			err = e instanceof Error ? e.message : String(e);
@@ -237,9 +245,11 @@
 			draft = '';
 			// The run row exists before the POST returns; the agent turn keeps
 			// going. Re-read shortly so the reply lands without a manual refresh.
-			runs = await listActionRuns(action.id, { limit: 30 });
+			log = await getAppletLog(action.id).catch(() => log);
+			// The run row exists before the POST returns; the agent turn keeps
+			// going. Re-read shortly so the reply lands without a manual refresh.
 			setTimeout(() => {
-				if (action) void listActionRuns(action.id, { limit: 30 }).then((r) => (runs = r));
+				if (action) void getAppletLog(action.id).then((l) => (log = l)).catch(() => {});
 			}, 2500);
 		} catch (e) {
 			err = e instanceof Error ? e.message : String(e);
@@ -254,7 +264,7 @@
 		err = null;
 		try {
 			await runAction(action.id);
-			runs = await listActionRuns(action.id, { limit: 30 });
+			log = await getAppletLog(action.id).catch(() => log);
 		} catch (e) {
 			err = e instanceof Error ? e.message : String(e);
 		} finally {
@@ -414,11 +424,16 @@
 					</div>
 				{/if}
 
-				<!-- A pure View (a face with no agent) has no server-side run and
-				     no prompt — don't show an empty agent editor for it. -->
+				<!-- A face-only applet has no server-side run and no prompt —
+				     don't show an empty agent editor for it. -->
 				{#if isAgent || !action.has_face}
 					<label class="field">
-						<span class="label">Agent prompt</span>
+						<!-- An applet's shape comes from which fields are set, and this
+						     label is where a reader first learns which one they are
+						     looking at. Calling a compiled sync's field "Agent prompt"
+						     said the opposite of the truth on 22 of the 24 shipped
+						     applets. -->
+						<span class="label">{isAgent ? 'What it does each run' : 'What it runs'}</span>
 						{#if isAgent || !isSystem}
 							<textarea
 								rows="10"
@@ -430,7 +445,11 @@
 						{:else}
 							<div class="pipeline-note">
 								<Icon icon="ri:terminal-line" width="14" />
-								<span>Subprocess pipeline: <code>{action.function_name}</code></span>
+								<span>
+									Compiled program, run fresh each time it fires —
+									<code>{action.command?.join(' ') ?? action.function_name ?? 'built in'}</code>.
+									No model is involved.
+								</span>
 							</div>
 						{/if}
 						{#if isSystem && isAgent}
@@ -492,10 +511,10 @@
 					{/if}
 					{#if recentSpend > 0}
 						<span class="hint">
-							The last {runs.length} runs cost {usd(recentSpend)}.
+							The last {recentRuns} runs cost {usd(recentSpend)}.
 						</span>
 					{:else if isAgent}
-						<span class="hint">The runs below have cost nothing so far.</span>
+						<span class="hint">Nothing spent so far.</span>
 					{/if}
 				</div>
 
@@ -562,42 +581,55 @@
 					</form>
 				{/if}
 				<h3>{canMessage ? 'Exchange' : 'Recent runs'}</h3>
-				{#if runs.length === 0}
+				{#if log.length === 0}
 					<p class="muted">No runs yet.</p>
 				{:else}
 					<ul class="runs-list">
-						{#each runs as r}
-							<li class="run-item" data-status={r.status}>
+						{#each log as e (e.run_id ?? e.last_at)}
+							<li class="run-item" data-status={e.status}>
 								<div class="run-top">
 									<Badge
-										variant={r.status === 'success'
+										variant={e.status === 'success'
 											? 'success'
-											: r.status === 'error'
+											: e.status === 'error'
 												? 'error'
-												: r.status === 'skipped'
+												: e.status === 'skipped'
 													? 'muted'
-													: r.status === 'budget_exceeded'
+													: e.status === 'budget_exceeded'
 														? 'warning'
 														: 'info'}
 									>
-										{r.status === 'budget_exceeded' ? 'over budget' : r.status}
+										{e.status === 'budget_exceeded' ? 'over budget' : e.status}
 									</Badge>
-									<span class="run-trigger">{r.trigger}</span>
-									{#if r.cost_micros}
-										<span class="run-cost" title="What this run spent with the model">
-											{usd(r.cost_micros)}
+									{#if e.occurrences > 1}
+										<!-- The applet repeated itself. On a real box this is most
+										     of history — a poll that finds nothing still records a
+										     run — so saying it once with a count is both shorter
+										     and more honest than 600 identical lines. -->
+										<span class="run-count">×{e.occurrences}</span>
+									{:else if e.trigger}
+										<span class="run-trigger">{e.trigger}</span>
+									{/if}
+									{#if e.cost_micros}
+										<span class="run-cost" title="What these runs spent with the model">
+											{usd(e.cost_micros)}
 										</span>
 									{/if}
-									<span class="run-time">{relativeTime(r.started_at)}</span>
+									<span class="run-time">{relativeTime(e.last_at)}</span>
 								</div>
-								{#if r.message}
-									<p class="run-said">{r.message}</p>
+								{#if e.message}
+									<p class="run-said">{e.message}</p>
 								{/if}
-								{#if r.result_summary}
-									<p class="run-summary">{r.result_summary}</p>
+								{#if e.summary}
+									<p class="run-summary">{e.summary}</p>
 								{/if}
-								{#if r.error}
-									<p class="run-error">{r.error}</p>
+								{#if e.error}
+									<p class="run-error">{e.error}</p>
+								{/if}
+								{#if e.occurrences > 1 && e.first_at}
+									<p class="run-span">
+										{e.occurrences} times, {relativeTime(e.first_at)} to {relativeTime(e.last_at)}
+									</p>
 								{/if}
 							</li>
 						{/each}
@@ -964,6 +996,16 @@
 		align-items: center;
 		gap: 0.5rem;
 		font-size: 0.75rem;
+	}
+	.run-count {
+		font-variant-numeric: tabular-nums;
+		font-size: 0.6875rem;
+		color: var(--color-foreground-subtle);
+	}
+	.run-span {
+		margin: 0.25rem 0 0;
+		font-size: 0.6875rem;
+		color: var(--color-foreground-subtle);
 	}
 	.run-cost {
 		font-variant-numeric: tabular-nums;

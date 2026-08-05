@@ -504,6 +504,30 @@ export async function deleteAction(id: string, dropData = false): Promise<void> 
 	}
 }
 
+/** One line of an applet's log: consecutive runs that shared an outcome,
+ *  counted. `occurrences > 1` means the applet repeated itself — which on a
+ *  real box is most of history, since a poll that finds nothing still records
+ *  a run. An agent's output varies, so its entries never group. */
+export interface AppletLogEntry {
+	run_id: string | null;
+	status: AppletRun['status'];
+	trigger: ActionTrigger | null;
+	summary: string | null;
+	/** What the user said, for `message` runs. */
+	message: string | null;
+	error: string | null;
+	occurrences: number;
+	first_at: string | null;
+	last_at: string | null;
+	cost_micros: number;
+}
+
+export async function getAppletLog(id: string, limit = 50): Promise<AppletLogEntry[]> {
+	const res = await fetch(`${API_BASE}/applets/${encodeURIComponent(id)}/log?limit=${limit}`);
+	if (!res.ok) throw new Error(`Failed to load log: ${res.statusText}`);
+	return res.json();
+}
+
 /** Say something to an applet — the `message` wake. Returns once the run row
  *  exists; the agent turn continues detached. */
 export async function messageApplet(id: string, message: string): Promise<{ run_id: string | null; status: string }> {

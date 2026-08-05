@@ -369,6 +369,35 @@ fn run_status_response(
         .into_response()
 }
 
+/// GET /api/applets/:id/log — the run log with identical outcomes collapsed.
+///
+/// 99% of run history on a real box is "the machine ticked and there was
+/// nothing to do": transcription_resolution alone wrote 1,294 runs in a week,
+/// every one of them a successful no-op. A raw list is unreadable, and worse,
+/// it hides things — 3,449 consecutive errors sat in this box's history behind
+/// a window of recent successes.
+///
+/// So consecutive runs sharing an outcome become one row with a count. The
+/// grouping is mechanical, not semantic: same status, same summary, same
+/// message. Nothing here decides what "did nothing" means, which is good,
+/// because `records_processed = 0` does not reliably mean it. An applet whose
+/// output varies — any agent, every message exchange — never collapses at all.
+pub async fn applet_log_handler(
+    State(state): State<AppState>,
+    Path(applet_id): Path<String>,
+    axum::extract::Query(q): axum::extract::Query<RunsQuery>,
+) -> Response {
+    let limit = q.limit.unwrap_or(50).clamp(1, 200);
+    match crate::scheduler::applets::collapsed_log(state.db.pool(), &applet_id, limit).await {
+        Ok(entries) => (StatusCode::OK, Json(entries)).into_response(),
+        Err(e) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({ "error": e.to_string() })),
+        )
+            .into_response(),
+    }
+}
+
 /// POST /api/applets/:id/message — say something to an applet.
 ///
 /// The sixth wake. Until this existed every trigger was the box acting on
