@@ -49,6 +49,7 @@
 	import PageEditResult from "$lib/components/chat/PageEditResult.svelte";
 	import EditDiffCard from "$lib/components/chat/EditDiffCard.svelte";
 	import CodeInterpreterCard from "$lib/components/chat/CodeInterpreterCard.svelte";
+	import AppletProposalCard from '$lib/components/chat/AppletProposalCard.svelte';
 	import CompactionCheckpoint from "$lib/components/chat/CompactionCheckpoint.svelte";
 	import ContextViewPanel from "$lib/components/chat/ContextViewPanel.svelte";
 	import { ChatError } from "$lib/components/chat";
@@ -1755,6 +1756,25 @@
 														} : undefined}
 													/>
 												{/if}
+											{:else if part.type === "tool-setup_applet" && (part as any).state === "output-available"}
+											{@const out = (part as any).output}
+											{#if out?.applet_id && out?.status !== "check_failed"}
+												<!-- The gate, in the conversation. An applet that crosses a
+												     boundary is created disabled and the model cannot enable
+												     it; that invariant stands. What changes is that approving
+												     no longer means walking to another page to find a toggle. -->
+												<AppletProposalCard
+													appletId={out.applet_id}
+													name={out.name}
+													description={out.description}
+													schedule={out.schedule}
+													capabilities={out.capabilities ?? []}
+													estimatedCostPerDay={out.estimated_cost_per_day}
+													gated={out.gated}
+													lifecycle={out.lifecycle}
+													updated={out.status === "updated"}
+												/>
+											{/if}
 											{:else if part.type === "tool-code_interpreter"}
 												{@const toolPart = part as any}
 												{@const isRunning = toolPart.state === "pending" || toolPart.state === "input-available"}
