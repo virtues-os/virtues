@@ -403,9 +403,15 @@
 	@reference "../../../app.css";
 	@reference "$lib/styles/sidebar.css";
 
+	/* The 2px seam the mode panels (Settings, Developer, Sources) already put
+	   between their rows. The Library shelf had none, so its seven rows read as
+	   one block while every sub-navigation read as a list — the same control at
+	   two different rhythms. Margin rather than a parent `gap`, because
+	   `.sidebar-expandable-inner` spaces its children this way for DnD. */
 	.system-section {
 		display: flex;
 		flex-direction: column;
+		margin-bottom: 2px;
 	}
 
 	/* ------- Icon ↔ Chevron slide toggle (matches UnifiedFolder) ------- */

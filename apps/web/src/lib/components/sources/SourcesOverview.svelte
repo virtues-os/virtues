@@ -16,7 +16,8 @@
 	import { Page } from '$lib';
 	import Icon from '$lib/components/Icon.svelte';
 	import { getStreamHealth, getStreamDays, type StreamHealth, type StreamDays } from '$lib/api/client';
-	import StreamGrid from './StreamGrid.svelte';
+	import StreamGrid, { type GridRow } from './StreamGrid.svelte';
+	import { domainOf, domainLabel, domainRank } from '$lib/sources/domains';
 	import { sourcesStore } from '$lib/stores/sources.svelte';
 	import { connectFlow } from '$lib/stores/connectFlow.svelte';
 	import { windowShellStore } from '$lib/stores/window-shell.svelte';
@@ -71,28 +72,44 @@
 		void loadStreams();
 	});
 
-	// Rows group by the provider recorded on the data, because everything wrong
-	// here is fixed by going to a device. What is *missing* is the opposite
-	// question with the opposite answer ("connect something") and lives in the
-	// catalog — which is why no prose about absence remains on this page.
-	const bySourceGrid = $derived.by(() => {
-		const groups = new Map<string, StreamDays[]>();
+	// Sections are life-domains, not vendors. This page answers "what does the
+	// box hold, and is it still arriving" — a question asked in the vocabulary
+	// of a life, where Health is a category and Google is not. Each row still
+	// names the provider that wrote it (see StreamGrid), so the "go look at that
+	// device" reading that grouping-by-source gave for free survives.
+	//
+	// What is *missing* is the opposite question with the opposite answer
+	// ("connect something") and lives in the catalog — which is why no prose
+	// about absence remains on this page.
+	const byDomain = $derived.by(() => {
+		const groups = new Map<string, GridRow[]>();
 		for (const row of dayRows) {
-			const list = groups.get(row.provider);
-			if (list) list.push(row);
-			else groups.set(row.provider, [row]);
+			const domain = domainOf(row.name);
+			// The provider is a source id on the data; name it the way the
+			// catalog does when we know it, and leave it verbatim when we don't —
+			// a row written by something the catalog never heard of is still a
+			// true row, and hiding it would be the bigger lie.
+			const enriched: GridRow = {
+				...row,
+				providerLabel: store.catalogById.get(row.provider)?.name ?? row.provider
+			};
+			const list = groups.get(domain);
+			if (list) list.push(enriched);
+			else groups.set(domain, [enriched]);
 		}
 		return [...groups]
-			.map(([provider, rows]) => ({
-				provider,
-				// The provider is a source id on the data; name it the way the
-				// catalog does when we know it, and leave it verbatim when we
-				// don't — a row written by something the catalog never heard of is
-				// still a true row, and hiding it would be the bigger lie.
-				label: store.catalogById.get(provider)?.name ?? provider,
-				rows: rows.slice().sort((a, b) => a.display_name.localeCompare(b.display_name))
+			.map(([domain, rows]) => ({
+				domain,
+				label: domainLabel(domain),
+				rows: rows
+					.slice()
+					.sort(
+						(a, b) =>
+							a.display_name.localeCompare(b.display_name) ||
+							(a.providerLabel ?? '').localeCompare(b.providerLabel ?? '')
+					)
 			}))
-			.sort((a, b) => a.label.localeCompare(b.label));
+			.sort((a, b) => domainRank(a.domain) - domainRank(b.domain) || a.label.localeCompare(b.label));
 	});
 
 	const connected = $derived(streams.filter((s) => s.total > 0));
@@ -239,7 +256,7 @@
 			<ul class="attention">
 				{#each store.broken as c (c.id)}
 					<li>
-						<Icon icon="ri:error-warning-line" width="16" />
+						<span class="mark" aria-hidden="true"></span>
 						<div class="what">
 							<span class="who">{store.sourceLabel(c.sourceId)} · {c.name}</span>
 							<span class="why">{c.statusReason ?? 'This connection stopped working.'}</span>
@@ -256,26 +273,23 @@
 	{/if}
 
 	<!-- ─── ARRIVALS ────────────────────────────────────────────────────── -->
-	{#if streamsErr}
-		<div class="error">{streamsErr}</div>
-	{:else if daysUnavailable}
-		<p class="muted">This box is running a build without the arrivals grid yet.</p>
-	{:else if bySourceGrid.length === 0}
-		<p class="muted">
-			Nothing has arrived yet. The <button type="button" class="inline" onclick={openCatalog}
-				>catalog</button
-			> lists everything Virtues can draw from.
-		</p>
-	{:else}
-		{#each bySourceGrid as g (g.provider)}
-			<StreamGrid title={g.label} streams={g.rows} start={gridStart} />
-		{/each}
-		<p class="legend">
-			Each square is a day. Darker means more arrived — measured against that
-			stream's own busiest day, since a location fix a second and one calendar
-			event a day are both normal.
-		</p>
-	{/if}
+	<section class="chapter">
+		{#if streamsErr}
+			<div class="error">{streamsErr}</div>
+		{:else if daysUnavailable}
+			<p class="muted">This box is running a build without the arrivals grid yet.</p>
+		{:else if byDomain.length === 0}
+			<p class="muted">
+				Nothing has arrived yet. The <button type="button" class="inline" onclick={openCatalog}
+					>catalog</button
+				> lists everything Virtues can draw from.
+			</p>
+		{:else}
+			{#each byDomain as g (g.domain)}
+				<StreamGrid title={g.label} streams={g.rows} start={gridStart} />
+			{/each}
+		{/if}
+	</section>
 
 </Page>
 
@@ -397,54 +411,82 @@
 		font-size: 0.75rem;
 		color: var(--color-foreground-subtle, #9ca3af);
 	}
-	.mono {
-		font-variant-numeric: tabular-nums;
-		color: var(--color-foreground-muted, #6b7280);
-	}
 
 	/* ── Attention ────────────────────────────────────────────────────── */
+	/* One card with hairline seams, built like the vitals above it — not a
+	   stack of red boxes.
+
+	   The old treatment gave every row a red border, a red fill and red text:
+	   severity stated three times, which is how a list of two broken
+	   connections came to be the loudest thing on a page otherwise made of
+	   hairlines and one accent. Colour now appears exactly once per row, as a
+	   small mark, and carries all of it. */
 	.attention {
 		list-style: none;
 		margin: 0;
 		padding: 0;
-		display: flex;
-		flex-direction: column;
-		gap: 0.5rem;
+		border: 1px solid color-mix(in srgb, var(--color-foreground) 9%, transparent);
+		border-radius: 9px;
+		overflow: hidden;
+	}
+	@media (min-resolution: 2dppx) {
+		.attention {
+			border-width: 0.5px;
+			border-color: color-mix(in srgb, var(--color-foreground) 14%, transparent);
+		}
 	}
 	.attention li {
 		display: flex;
 		align-items: center;
-		gap: 0.625rem;
-		padding: 0.625rem 0.75rem;
-		border-radius: 8px;
-		border: 1px solid color-mix(in srgb, var(--color-error) 30%, transparent);
-		background: var(--color-error-subtle);
-		color: color-mix(in srgb, var(--color-error) 75%, #000);
+		gap: 0.6875rem;
+		padding: 0.75rem 0.9375rem;
+	}
+	.attention li + li {
+		border-top: 1px solid color-mix(in srgb, var(--color-foreground) 8%, transparent);
+	}
+	/* The one piece of colour. A dot rather than a warning glyph: the sentence
+	   beside it already says what is wrong, and an icon repeating "warning"
+	   next to the words is the third statement of the same fact. */
+	.mark {
+		flex-shrink: 0;
+		width: 6px;
+		height: 6px;
+		border-radius: 50%;
+		background: var(--color-error);
 	}
 	.what {
 		flex: 1;
 		min-width: 0;
 		display: flex;
 		flex-direction: column;
+		gap: 0.125rem;
 	}
 	.who {
 		font-size: 0.8125rem;
-		font-weight: 600;
+		font-weight: 500;
+		color: var(--color-foreground, #111827);
 	}
 	.why {
 		font-size: 0.75rem;
-		opacity: 0.85;
+		line-height: 1.45;
+		color: var(--color-foreground-muted, #6b7280);
 	}
+	/* The remedy, so it reads as the thing to do rather than as the damage:
+	   the page's own quiet button, not an outline in the error colour. */
 	.act {
 		flex-shrink: 0;
 		padding: 0.3125rem 0.75rem;
 		border-radius: 6px;
-		border: 1px solid currentColor;
-		background: transparent;
-		color: inherit;
+		border: 1px solid var(--color-border, #d1d5db);
+		background: var(--color-background, #fff);
+		color: var(--color-foreground, #111827);
 		font-size: 0.75rem;
-		font-weight: 600;
+		font-weight: 500;
+		white-space: nowrap;
 		cursor: pointer;
+	}
+	.act:hover {
+		background: var(--color-muted, #f3f4f6);
 	}
 
 	/* ── Misc ─────────────────────────────────────────────────────────── */
@@ -489,9 +531,4 @@
 		padding: 0;
 	}
 
-	@media (max-width: 640px) {
-		.ledger-count {
-			display: none;
-		}
-	}
 </style>

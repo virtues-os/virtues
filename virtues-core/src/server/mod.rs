@@ -551,7 +551,7 @@ pub async fn run(client: Virtues, host: &str, port: u16) -> Result<()> {
         .route("/api/billing/usage", get(api::billing_usage_handler))
         // Box-local AI spend breakdown (app_ai_calls) for the Usage tab.
         .route("/api/usage/summary", get(api::usage_summary_handler))
-        // Recent individual AI calls (app_ai_calls) for the Telemetry tab log.
+        // Paged individual AI calls (app_ai_calls) for the Usage page's log.
         .route("/api/telemetry/ai-calls", get(api::ai_calls_handler))
         // Device-authorization link flow (web "Connect subscription").
         .route(

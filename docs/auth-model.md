@@ -89,7 +89,7 @@ Three tables support the auth machinery:
 |---|---|
 | `app_pair_token` | RFC-8628-shape bootstrap tokens. SHA-256 hash persisted, raw token only exists in the response/QR. State machine: `pending → authorized → consumed | expired | denied`. |
 | `app_sudo_request` | Pending confirmations for the four gated actions. 5-min TTL. State: `pending → approved → consumed | expired | denied`. Approved by `virtues sudo` (v1) or push-confirm (v1.1). `consumed` is the terminal "approval was actually used" state — distinguished from `expired` so the audit log can tell them apart. |
-| `app_auth_event` | Append-only audit log of pair/revoke/session/sudo events with IP + UA. Surfaced at `/virtues/activity`. |
+| `app_auth_event` | Append-only audit log of pair/revoke/session/sudo events with IP + UA. Written on every event and served by `GET /api/audit/auth`; **no UI surfaces it** since the Activity page was removed. |
 
 ## Flows
 
@@ -188,7 +188,7 @@ bump the timestamp, so a polling check doesn't keep an idle session alive.
 | Token leakage via server logs | Raw tokens are never logged. Only SHA-256(token) is persisted in `app_pair_token`. |
 | Shoulder-surfing the QR | Web-minted tokens start `pending` and require the minting device to explicitly confirm before they become `authorized`. |
 | Network died mid-consume | The consume path uses a single transaction; partial failure leaves the token unconsumed and retryable until TTL. |
-| Stolen device — read access | Inherent to "logged in." Mitigated by: 8h idle timeout, activity log surfaced at `/virtues/activity`, easy revoke from any other device. |
+| Stolen device — read access | Inherent to "logged in." Mitigated by: 8h idle timeout, easy revoke from any other device (Settings → Devices). The auth-event log is recorded and readable at `GET /api/audit/auth`, but has no UI — so noticing an unfamiliar pairing depends on the Devices list, not on a log anyone reads. |
 | Stolen device — irreversible actions | Sudo gate on `export_data`, `change_byo_key`, `wipe_box`, `revoke_last_device`. A thief without physical access to the box can't approve. |
 | Clickjacking the Add-Device modal | `X-Frame-Options: DENY` + CSP `frame-ancestors 'none'` on every response. |
 | CSRF on state-changing requests | Double-submit cookie: `virtues.csrf-token` (NOT HttpOnly) + `X-CSRF-Token` header. Client-side `hooks.client.ts` wraps `fetch` to auto-attach. Exempt: `/api/pair/consume` (anonymous, body-token = capability), `/auth/signout` (idempotent, kills only own session), `/webhook/*`, `/internal/*`, `/oauth/callback`. |

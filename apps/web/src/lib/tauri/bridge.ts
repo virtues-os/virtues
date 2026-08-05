@@ -69,11 +69,30 @@ export interface CollectorStatus {
 // ============================================================================
 
 /**
- * Get the current status of the collector daemon
+ * The outcome of one status read.
+ *
+ * `null` used to be the answer to three different questions — "not running
+ * under Tauri", "the daemon read failed", and "there is no daemon" — and This
+ * Mac, which can only act on the third, treated all three as "keep waiting".
+ * A box whose `virtues-collector status` exits non-zero (the Rust command
+ * returns Err for exactly that case) therefore sat on "Checking this Mac…"
+ * forever. Naming the three outcomes is what lets a caller say something true
+ * about each.
  */
-export async function getCollectorStatus(): Promise<CollectorStatus | null> {
+export type CollectorProbe =
+	/** Read succeeded. */
+	| { kind: 'ok'; status: CollectorStatus }
+	/** Not inside the desktop app — there is no daemon to ask. */
+	| { kind: 'unavailable' }
+	/** The daemon was asked and could not answer. */
+	| { kind: 'error'; message: string };
+
+/**
+ * Read the collector daemon's status, keeping the failure reason.
+ */
+export async function probeCollectorStatus(): Promise<CollectorProbe> {
 	const invoke = await getInvoke();
-	if (!invoke) return null;
+	if (!invoke) return { kind: 'unavailable' };
 
 	try {
 		const status = await invoke<{
@@ -90,22 +109,35 @@ export async function getCollectorStatus(): Promise<CollectorStatus | null> {
 
 		// Convert snake_case to camelCase
 		return {
-			running: status.running,
-			paused: status.paused,
-			pendingEvents: status.pending_events,
-			pendingMessages: status.pending_messages,
-			lastSync: status.last_sync,
-			hasFullDiskAccess: status.has_full_disk_access,
-			hasAccessibility: status.has_accessibility,
-			// Absent on collector builds predating the self-report — treat as
-			// "not from the daemon" rather than assuming the flags are authoritative.
-			permissionsReportedByDaemon: status.permissions_reported_by_daemon ?? false,
-			permissionsCheckedAt: status.permissions_checked_at ?? null
+			kind: 'ok',
+			status: {
+				running: status.running,
+				paused: status.paused,
+				pendingEvents: status.pending_events,
+				pendingMessages: status.pending_messages,
+				lastSync: status.last_sync,
+				hasFullDiskAccess: status.has_full_disk_access,
+				hasAccessibility: status.has_accessibility,
+				// Absent on collector builds predating the self-report — treat as
+				// "not from the daemon" rather than assuming the flags are authoritative.
+				permissionsReportedByDaemon: status.permissions_reported_by_daemon ?? false,
+				permissionsCheckedAt: status.permissions_checked_at ?? null
+			}
 		};
 	} catch (e) {
 		console.error('[Tauri] Failed to get collector status:', e);
-		return null;
+		return { kind: 'error', message: e instanceof Error ? e.message : String(e) };
 	}
+}
+
+/**
+ * Get the current status of the collector daemon, or null if it can't be read.
+ * For callers that only poll for a *good* answer and have nothing to say about
+ * the difference between the failure modes (see `probeCollectorStatus`).
+ */
+export async function getCollectorStatus(): Promise<CollectorStatus | null> {
+	const probe = await probeCollectorStatus();
+	return probe.kind === 'ok' ? probe.status : null;
 }
 
 /**

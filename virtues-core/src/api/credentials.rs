@@ -88,6 +88,18 @@ pub struct CredentialListItem {
     pub sync_state: Option<String>,
 }
 
+/// Credentials that are the box's own plumbing rather than a source the user
+/// connected: the subscription key that pays for inference (`virtues_api`) and
+/// the BYO provider key (`__byo_ai_key__`). Both are `credentials` rows because
+/// that is where encrypted secrets live, and neither has a `[[source]]` in the
+/// catalog — so the Sources room rendered them as orphaned connections whose
+/// "source is no longer installed", offering to disconnect the thing paying for
+/// the box. Each already has its own surface in Settings → Billing.
+const INTERNAL_SOURCE_IDS: [&str; 2] = [
+    crate::virtues_api::renew::SOURCE_ID,
+    crate::api::settings_byo::BYO_SOURCE_ID,
+];
+
 /// List credentials. Returns pending and revoked rows too so the UI can show
 /// them with a distinct status. Ordered newest first.
 pub async fn list_credentials(db: &PgPool) -> Result<Vec<CredentialListItem>> {
@@ -119,8 +131,10 @@ pub async fn list_credentials(db: &PgPool) -> Result<Vec<CredentialListItem>> {
               (SELECT COUNT(*) FROM app_applet_runs r JOIN app_applets a ON a.id = r.applet_id
                  WHERE a.credential_id = c.id AND r.status = 'success') AS success_runs
            FROM credentials c
+          WHERE c.source_id <> ALL($1)
            ORDER BY c.created_at DESC"#,
     )
+    .bind(&INTERNAL_SOURCE_IDS[..])
     .fetch_all(db)
     .await?;
 

@@ -255,101 +255,102 @@
 
 </script>
 
-<Page>
-	<div class="px-6 py-6 max-w-3xl mx-auto w-full">
-		<div class="flex items-baseline justify-between mb-6">
-			<div>
-				<h1 class="text-2xl font-semibold tracking-tight">Devices</h1>
-				<p class="text-sm text-foreground-muted mt-1">
-					Every browser, app, and sensor paired with this box.
-				</p>
-			</div>
-			<div class="flex items-center gap-2">
-				<Button variant="primary" onclick={startAdd}>
-					<Icon icon="ri:add-line" />
-					Add device
-				</Button>
-			</div>
-		</div>
+<!--
+	The page's own heading, not a hand-rolled one. This view used to draw its
+	own `<h1 class="text-2xl font-semibold">` inside a bare `<Page>` with its own
+	measure and padding — so Devices was a sans 24px heading in a 3xl column
+	while every neighbouring room was a serif 30px heading in a 6xl one, for no
+	reason anyone chose.
+-->
+<Page
+	title="Devices"
+	description="Every browser, app, and sensor paired with this box."
+	maxWidth="wide"
+>
+	{#snippet actions()}
+		<Button variant="primary" onclick={startAdd}>
+			<Icon icon="ri:add-line" />
+			Add device
+		</Button>
+	{/snippet}
 
-		{#if res.loading}
-			<LoadingState />
-		{:else if res.error}
-			<ErrorState message={res.error} onRetry={res.reload} />
-		{:else if devices.length === 0}
-			<EmptyState
-				icon="ri:device-line"
-				title="No paired devices"
-				message="Run `virtues pair` on the box to pair this browser, or click Add device above."
-			/>
-		{:else}
-			<ul class="divide-y divide-border rounded-lg border border-border bg-surface">
-				{#each devices as device (device.id)}
-					<li class="p-4 flex items-start gap-4">
-						<div
-							class="flex-shrink-0 w-10 h-10 rounded-lg bg-surface-alt border border-border flex items-center justify-center"
-						>
-							<Icon icon={kindIcon(device.kind)} class="text-foreground-muted text-lg" />
-						</div>
-						<div class="flex-1 min-w-0">
-							<div class="flex items-center gap-2 flex-wrap">
-								<span class="font-medium text-foreground truncate">{device.label}</span>
-								<Badge>{kindLabel(device.kind)}</Badge>
-								{#if device.is_current}
-									<Badge>This device</Badge>
-								{/if}
-							</div>
-							<div class="text-xs text-foreground-muted mt-1 flex flex-wrap gap-x-3 gap-y-1">
-								{#if device.version}
-									<span class="font-mono text-foreground"
-										>{device.version}{device.sha && device.sha !== "dev"
-											? ` · ${device.sha}`
-											: ""}{device.channel ? ` · ${device.channel}` : ""}</span
-									>
-								{:else}
-									<span class="italic">version unknown</span>
-								{/if}
-								<span>Last seen {formatTimeAgo(device.last_seen_at)}</span>
-								<span>Paired {formatTimeAgo(device.paired_at)}</span>
-								{#if device.paired_from_ip}
-									<span>from {device.paired_from_ip}</span>
-								{/if}
-							</div>
-							{#each deniedPermissions(device) as perm}
-								<!-- A collector missing a permission isn't an error — nothing
-								     crashed, and the rest of its streams are fine. It's a
-								     capability the box has been quietly denied, so it reads as
-								     a standing warning with the remedy attached, not a toast
-								     that can be dismissed and forgotten. -->
-								<div
-									class="mt-2 flex items-start gap-2 rounded-md border border-warning/40 bg-warning/10 px-3 py-2 text-xs"
-								>
-									<Icon icon="ri:lock-line" class="text-warning mt-0.5 flex-shrink-0" />
-									<div class="min-w-0">
-										<span class="text-foreground font-medium">{perm.label} is off</span>
-										<span class="text-foreground-muted"> — {perm.costs}.</span>
-										<div class="text-foreground-muted mt-0.5">
-											Grant it in System Settings → Privacy &amp; Security → {perm.label}, then
-											restart the collector.
-										</div>
-									</div>
-								</div>
-							{/each}
-							{#if device.permissions?.stale}
-								<div class="text-xs text-foreground-muted mt-2 italic">
-									Permission report is stale — the collector may not be running.
-								</div>
+	{#if res.loading}
+		<LoadingState />
+	{:else if res.error}
+		<ErrorState message={res.error} onRetry={res.reload} />
+	{:else if devices.length === 0}
+		<EmptyState
+			icon="ri:device-line"
+			title="No paired devices"
+			message="Run `virtues pair` on the box to pair this browser, or click Add device above."
+		/>
+	{:else}
+		<ul class="divide-y divide-border rounded-lg border border-border bg-surface">
+			{#each devices as device (device.id)}
+				<li class="p-4 flex items-start gap-4">
+					<div
+						class="flex-shrink-0 w-10 h-10 rounded-lg bg-surface-alt border border-border flex items-center justify-center"
+					>
+						<Icon icon={kindIcon(device.kind)} class="text-foreground-muted text-lg" />
+					</div>
+					<div class="flex-1 min-w-0">
+						<div class="flex items-center gap-2 flex-wrap">
+							<span class="font-medium text-foreground truncate">{device.label}</span>
+							<Badge>{kindLabel(device.kind)}</Badge>
+							{#if device.is_current}
+								<Badge>This device</Badge>
 							{/if}
 						</div>
-						<Button variant="ghost" onclick={() => revoke(device)}>
-							<Icon icon="ri:close-circle-line" />
-							Revoke
-						</Button>
-					</li>
-				{/each}
-			</ul>
-		{/if}
-	</div>
+						<div class="text-xs text-foreground-muted mt-1 flex flex-wrap gap-x-3 gap-y-1">
+							{#if device.version}
+								<span class="font-mono text-foreground"
+									>{device.version}{device.sha && device.sha !== "dev"
+										? ` · ${device.sha}`
+										: ""}{device.channel ? ` · ${device.channel}` : ""}</span
+								>
+							{:else}
+								<span class="italic">version unknown</span>
+							{/if}
+							<span>Last seen {formatTimeAgo(device.last_seen_at)}</span>
+							<span>Paired {formatTimeAgo(device.paired_at)}</span>
+							{#if device.paired_from_ip}
+								<span>from {device.paired_from_ip}</span>
+							{/if}
+						</div>
+						{#each deniedPermissions(device) as perm}
+							<!-- A collector missing a permission isn't an error — nothing
+							     crashed, and the rest of its streams are fine. It's a
+							     capability the box has been quietly denied, so it reads as
+							     a standing warning with the remedy attached, not a toast
+							     that can be dismissed and forgotten. -->
+							<div
+								class="mt-2 flex items-start gap-2 rounded-md border border-warning/40 bg-warning/10 px-3 py-2 text-xs"
+							>
+								<Icon icon="ri:lock-line" class="text-warning mt-0.5 flex-shrink-0" />
+								<div class="min-w-0">
+									<span class="text-foreground font-medium">{perm.label} is off</span>
+									<span class="text-foreground-muted"> — {perm.costs}.</span>
+									<div class="text-foreground-muted mt-0.5">
+										Grant it in System Settings → Privacy &amp; Security → {perm.label}, then
+										restart the collector.
+									</div>
+								</div>
+							</div>
+						{/each}
+						{#if device.permissions?.stale}
+							<div class="text-xs text-foreground-muted mt-2 italic">
+								Permission report is stale — the collector may not be running.
+							</div>
+						{/if}
+					</div>
+					<Button variant="ghost" onclick={() => revoke(device)}>
+						<Icon icon="ri:close-circle-line" />
+						Revoke
+					</Button>
+				</li>
+			{/each}
+		</ul>
+	{/if}
 </Page>
 
 {#if addOpen}
