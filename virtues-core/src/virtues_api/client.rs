@@ -9,6 +9,24 @@
 //! Use this for the proxy routes (`/v1/ai/*`, `/v1/places/*`, `/v1/exa/*`,
 //! `/v1/unsplash/*`).
 //!
+//! ## The BYO fork
+//!
+//! When the user has set a BYO provider key, **every `/v1/ai/*` call** leaves
+//! by the user's endpoint instead of ours — streaming via [`Self::stream`],
+//! non-streaming via [`Self::post_json`]. Both consult
+//! [`crate::api::settings_byo::load_byo_credential`] and divert before any
+//! bearer is read, so virtues-api (wallet, markup, caps, auto-top-up) is out
+//! of the inference path entirely. That is the whole point of BYO.
+//!
+//! The fork is keyed on [`is_ai_path`] — the same predicate that decides cost
+//! capture — rather than on a separate `post_ai()` method, specifically so a
+//! new AI caller cannot forget to opt in. That mattered: until 2026-08-05
+//! only `stream()` honored the key, and compaction, day summaries, image
+//! generation and transcription quietly billed the wallet while the UI said
+//! "BYO active". Non-AI routes (`/v1/places/*`, `/v1/exa/*`, `/v1/unsplash/*`)
+//! are per-user vendor bills that BYO says nothing about, so they keep going
+//! through the wallet. Plan of record: `docs/byo-ai-plan.md`.
+//!
 //! ## Purpose tagging (vestige — no-op)
 //!
 //! Calls still carry an `X-Virtues-Purpose` header (`user`/`system`), but the
@@ -22,6 +40,38 @@ use serde_json::{json, Value};
 use sqlx::PgPool;
 
 use super::renew;
+
+/// Is this one of the metered *inference* routes, as opposed to the fixed-cost
+/// vendor proxies (`/v1/places/*`, `/v1/exa/*`, `/v1/unsplash/*`)?
+///
+/// Two things key on this and must not drift apart: whether a call may divert
+/// to the user's BYO endpoint, and whether its `usage` block is captured into
+/// `app_ai_calls`. A route that is one but not the other would either bill a
+/// BYO call to the wallet or record a wallet call as free.
+fn is_ai_path(path: &str) -> bool {
+    path.starts_with("/v1/ai/")
+}
+
+/// Splice the BYO credential's `default_model` into a request body that does
+/// not already pin one, so the user's choice "from Settings" wins over a
+/// caller's default.
+///
+/// A body that *does* pin a model keeps it — which is the common case for
+/// every non-chat caller (compaction, day summaries, image generation,
+/// transcription all pass an explicit `model`). Those ids are namespaced for
+/// *our* gateway (`xai/grok-4.5`, `google/gemini-3-flash`), and a different
+/// gateway may spell them differently or not carry them at all, so a BYO route
+/// can 404 here through no fault of the user. Per-slot model ids are what fix
+/// that properly — `docs/byo-ai-plan.md` phase 3.
+fn apply_byo_model(body: &Value, byo: &crate::api::settings_byo::ByoCredential) -> Value {
+    let mut body = body.clone();
+    if let (Some(model), Value::Object(map)) = (byo.default_model.as_deref(), &mut body) {
+        if !map.contains_key("model") {
+            map.insert("model".to_string(), Value::String(model.to_string()));
+        }
+    }
+    body
+}
 
 /// Convert an `AutoTopupOutcome` non-Funded variant into the same 402
 /// error shape virtues-api would have returned. Lets iOS handle every
@@ -282,11 +332,62 @@ impl BearerClient {
     /// captured into `app_ai_calls` here — the single chokepoint, so every
     /// non-streaming AI feature (compaction, day summaries, transcription, …)
     /// is accounted for without per-caller bookkeeping.
+    ///
+    /// **BYO fork.** For `/v1/ai/*` a configured BYO key diverts the call to
+    /// the user's own endpoint before any bearer is read — see the module
+    /// docs. Non-AI routes never divert.
     pub async fn post_json(&self, path: &str, body: &Value) -> Result<ApiResponse> {
+        if is_ai_path(path) {
+            if let Ok(Some(byo)) = crate::api::settings_byo::load_byo_credential(&self.pool).await {
+                return self.post_direct_upstream(path, body, &byo).await;
+            }
+        }
         let bearer = self.ensure_bearer().await?;
         let resp = self.send(path, body, &bearer).await?;
         let resp = self.handle_402_and_retry_post(path, body, resp).await?;
         self.record_ai_usage(path, body, &resp).await;
+        Ok(resp)
+    }
+
+    /// BYO path for non-streaming AI calls — the `post_json` twin of
+    /// [`Self::stream_direct_upstream`].
+    ///
+    /// Deliberately has **no 402 handling**: auto-top-up exists to refill our
+    /// wallet, and this call never touches it. Whatever the user's provider
+    /// says — 401 on a revoked key, 404 on a model their gateway does not
+    /// carry, 429 on their own rate limit — is returned verbatim, because
+    /// translating it would only obscure whose limit was hit. There is also no
+    /// silent fallback to the wallet: spending the user's Virtues balance to
+    /// paper over their misconfiguration is exactly the surprise BYO exists to
+    /// prevent.
+    async fn post_direct_upstream(
+        &self,
+        path: &str,
+        body: &Value,
+        byo: &crate::api::settings_byo::ByoCredential,
+    ) -> Result<ApiResponse> {
+        let body = apply_byo_model(body, byo);
+        let resp = self
+            .http
+            .post(&byo.endpoint_url)
+            .header("Authorization", format!("Bearer {}", byo.api_key))
+            .header("Content-Type", "application/json")
+            .json(&body)
+            .send()
+            .await
+            .map_err(|e| anyhow!("BYO upstream request failed: {e}"))?;
+        let status = resp.status().as_u16();
+        let resp = ApiResponse {
+            status,
+            body: resp.json::<Value>().await.unwrap_or_else(|_| json!({})),
+        };
+        // Still recorded, still keyed on the model actually sent. The row's
+        // `cost_micros` lands at 0 because no upstream but our own gateway
+        // reports `usage.cost` — and 0 is the honest number here, since
+        // `app_ai_calls` measures what the *wallet* spent, which for a BYO call
+        // is nothing. Presenting that as the user's total AI cost would be the
+        // lie; showing tokens instead is `docs/byo-ai-plan.md` phase 5.
+        self.record_ai_usage(path, &body, &resp).await;
         Ok(resp)
     }
 
@@ -432,13 +533,13 @@ impl BearerClient {
     /// caller to stream; non-recoverable 402s (card_declined, wallet_expired, …)
     /// come back as `StreamOutcome::Error` with the drained body.
     pub async fn stream(&self, path: &str, body: &Value) -> Result<StreamOutcome> {
-        // BYO key escape hatch. When the user has set their own provider
-        // key, every chat call goes box → upstream directly. virtues-api
-        // (wallet, markup, renewal, caps) is bypassed entirely — that's
-        // the point of "bring your own key": Virtues is no longer in the
-        // inference path.
-        if let Ok(Some(byo)) = crate::api::settings_byo::load_byo_credential(&self.pool).await {
-            return self.stream_direct_upstream(body, &byo).await;
+        // BYO fork — the streaming twin of the one in `post_json`. Gated on
+        // the same `is_ai_path` predicate so the two cannot drift, even though
+        // every caller of `stream()` today is already an AI route.
+        if is_ai_path(path) {
+            if let Ok(Some(byo)) = crate::api::settings_byo::load_byo_credential(&self.pool).await {
+                return self.stream_direct_upstream(body, &byo).await;
+            }
         }
 
         let bearer = self.ensure_bearer().await?;
@@ -502,20 +603,15 @@ impl BearerClient {
     /// at a translation proxy (LiteLLM / OpenRouter) — keeps the per-
     /// provider request-shape mess out of our codebase.
     ///
-    /// If `default_model` is set on the credential AND the request body
-    /// doesn't already pin a model, we splice it in so the user's choice
-    /// "from Settings" wins over the agent's default.
+    /// Model selection follows [`apply_byo_model`]. Same no-fallback rule as
+    /// [`Self::post_direct_upstream`]: a failure here surfaces as the
+    /// provider's own error, never as a quiet wallet charge.
     async fn stream_direct_upstream(
         &self,
         body: &Value,
         byo: &crate::api::settings_byo::ByoCredential,
     ) -> Result<StreamOutcome> {
-        let mut body = body.clone();
-        if let (Some(model), Value::Object(map)) = (byo.default_model.as_deref(), &mut body) {
-            if !map.contains_key("model") {
-                map.insert("model".to_string(), Value::String(model.to_string()));
-            }
-        }
+        let body = apply_byo_model(body, byo);
         let resp = self
             .stream_http
             .post(&byo.endpoint_url)
