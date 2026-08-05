@@ -47,6 +47,19 @@
 	import DayDeck from "$lib/components/home/DayDeck.svelte";
 	import DayGround from "$lib/components/home/DayGround.svelte";
 	import DayNovelty from "$lib/components/home/DayNovelty.svelte";
+	import RecordField from "$lib/components/home/RecordField.svelte";
+
+	// A `TEMP-VERIFY` global fetch patch lived here until 2026-08-05: it
+	// rewrote every `/api/` call to `http://127.0.0.1:7117` from this module's
+	// body. Removed because it overrode all three real paths at once — the
+	// vite dev proxy (`/api` → :8000, vite.config.ts), same-origin on the
+	// box-served desktop app, and the mobile shell's injected origin
+	// (`initBackendFromShell`, lib/config/backend.ts). It patched
+	// `window.fetch` globally, so the blast radius was the whole app, not this
+	// view. It also reached TestFlight in 1.2.5.
+	//
+	// If you need this view pointed at a real box while developing, set
+	// `BACKEND_URL` for the vite proxy rather than patching fetch.
 
 	// ---- the day's window ----
 	// The browser's zone decides which day this is and where its midnights
@@ -263,13 +276,24 @@
 	let keepEl = $state<HTMLTextAreaElement | undefined>(undefined);
 	const keptToday = $derived(notes.filter((n) => n.author === "human"));
 
-	/** Grow to the text, up to a point — past that it wants the day's article. */
+	/**
+	 * Grow to the text, up to a point — past that it wants the day's article.
+	 *
+	 * `auto` before measuring, so an already-tall box reports its content rather
+	 * than latching at whatever height it reached and never shrinking back.
+	 */
 	function grow() {
 		const el = keepEl;
 		if (!el) return;
 		el.style.height = "auto";
-		el.style.height = `${Math.min(el.scrollHeight, 180)}px`;
+		el.style.height = `${Math.min(el.scrollHeight, 160)}px`;
 	}
+	// Driven by the value rather than by the input event, so it is correct after
+	// a programmatic clear (saving) as well as after typing.
+	$effect(() => {
+		keepText;
+		grow();
+	});
 
 	async function keep() {
 		const body = keepText.trim();
@@ -282,7 +306,6 @@
 			const saved = await createNote("day", day.id, body, "memo");
 			notes = [...notes, saved];
 			keepText = "";
-			grow();
 		} catch {
 			keepError = "That didn't save. The box may be offline — try again.";
 		} finally {
@@ -323,6 +346,10 @@
 	{/snippet}
 
 	<div class="body">
+		<!-- The fold belongs to the record. Everything below it is quieter for
+		     having paid for this. -->
+		<section class="hero rv"><RecordField {health} {tz} /></section>
+
 		{#if leadLine}
 			<p class="lead rv" style="animation-delay:.05s">{leadLine}</p>
 		{/if}
@@ -414,32 +441,40 @@
 		</section>
 
 		<section class="keep rv" style="animation-delay:.2s">
-			<h2 class="kicker">keep one thing from today</h2>
-			<div class="card">
-				<p class="kq">What do you want to remember from today?</p>
+			<!-- The card is the writing surface: the question is the only prompt,
+			     so clicking anywhere that isn't already a control puts the cursor
+			     where you'd expect it. -->
+			<!-- svelte-ignore a11y_no_static_element_interactions, a11y_click_events_have_key_events -->
+			<div
+				class="card"
+				onclick={(e) => {
+					if (!(e.target as HTMLElement).closest("button")) keepEl?.focus();
+				}}
+			>
+				<h2 class="kq">What do you want to remember from today?</h2>
 				<textarea
 					bind:this={keepEl}
 					bind:value={keepText}
 					disabled={keeping}
 					rows="1"
-					placeholder="answer in a line…"
-					aria-label="One thing to remember from today"
-					oninput={grow}
+					aria-label="What do you want to remember from today?"
 					onkeydown={(e) => {
-						// Enter keeps, as everywhere else you type a short thing here.
-						// A longer thought still wants a second line, so Shift holds it.
+						// Enter saves. A longer thought still wants a second line,
+						// so Shift holds it.
 						if (e.key === "Enter" && !e.shiftKey) {
 							e.preventDefault();
 							keep();
 						}
 					}}
 				></textarea>
-				<div class="krow">
-					<span class="khint">{keepText.includes("\n") || keepText.length > 60 ? "Shift + Enter for a new line" : ""}</span>
-					<button class="ksave" type="button" onclick={keep} disabled={!keepText.trim() || keeping}>
-						{keeping ? "Keeping…" : "Keep"}
-					</button>
-				</div>
+				{#if keepText.trim() || keeping}
+					<div class="krow">
+						<span class="khint">Shift + Enter for a new line</span>
+						<button class="ksave" type="button" onclick={keep} disabled={keeping}>
+							{keeping ? "Saving…" : "Save"}
+						</button>
+					</div>
+				{/if}
 
 				{#if keepError}<p class="kerr">{keepError}</p>{/if}
 
@@ -483,6 +518,11 @@
 	.days button + button { border-left: 1px solid var(--color-border); }
 	.days button:hover { background: var(--hover-bg); color: var(--color-foreground); }
 	.days button.now { color: var(--color-foreground); }
+
+	/* Breaks the page's 3rem padding so the plate runs the full measure. The
+	   figure is the one thing allowed to touch the edges. */
+	.hero { margin: 4px -3rem clamp(56px, 9vh, 104px); }
+	@media (max-width: 640px) { .hero { margin-left: -1.5rem; margin-right: -1.5rem; } }
 
 	/* Yesterday's own sentence. Quieter than the page's h1 on purpose — it is a
 	   line the box wrote, not the name of the room. */
@@ -541,28 +581,29 @@
 		background: var(--color-surface-elevated); border: 1px solid var(--color-border);
 		border-radius: 14px; padding: clamp(18px, 3vw, 24px);
 		transition: border-color 0.2s;
+		/* The card is the field. Its border is the only affordance the question
+		   needs, so no placeholder has to explain itself. */
+		cursor: text;
 	}
+	.card:hover { border-color: var(--color-border-strong, var(--color-border)); }
 	.card:focus-within { border-color: color-mix(in srgb, var(--color-primary) 45%, var(--color-border)); }
-	.kq { font-family: var(--font-serif); font-size: 18px; line-height: 1.4; color: var(--color-foreground); margin: 0 0 14px; }
+	.kq { font-family: var(--font-serif); font-size: 18px; font-weight: 400; line-height: 1.4; color: var(--color-foreground); margin: 0 0 12px; }
 	.card textarea {
-		display: block; width: 100%; resize: none; overflow-y: auto;
+		display: block; width: 100%; resize: none; overflow-y: auto; min-height: 1.6em;
 		font-family: var(--font-serif); font-size: 17px; line-height: 1.5;
 		color: var(--color-foreground); background: none; border: 0; padding: 0;
 	}
 	.card textarea:focus { outline: none; }
-	.card textarea::placeholder { font-family: var(--font-sans); font-size: 14px; color: var(--color-foreground-subtle); }
-	.krow { display: flex; align-items: center; gap: 12px; margin-top: 14px; }
+	.krow { display: flex; align-items: center; gap: 12px; margin-top: 12px; }
 	.khint { font-family: var(--font-mono); font-size: 10px; color: var(--color-foreground-subtle); }
 	.ksave {
 		margin-left: auto; flex: none; cursor: pointer;
 		font-family: var(--font-sans); font-size: 12.5px; font-weight: 500;
-		padding: 6px 14px; border-radius: 7px;
-		border: 1px solid color-mix(in srgb, var(--color-primary) 35%, transparent);
-		background: color-mix(in srgb, var(--color-primary) 10%, transparent);
+		background: none; border: 0; padding: 0;
 		color: var(--color-primary);
 	}
-	.ksave:hover:not(:disabled) { background: color-mix(in srgb, var(--color-primary) 16%, transparent); }
-	.ksave:disabled { color: var(--color-foreground-disabled); border-color: var(--color-border); background: none; cursor: default; }
+	.ksave:hover:not(:disabled) { text-decoration: underline; text-underline-offset: 3px; }
+	.ksave:disabled { color: var(--color-foreground-disabled); cursor: default; }
 	.kerr { font-family: var(--font-sans); font-size: 12.5px; color: var(--color-error); margin: 12px 0 0; }
 	.kept { list-style: none; margin: 20px 0 0; padding: 0; }
 	.kept li { display: flex; gap: 14px; align-items: baseline; padding: 6px 0; }
