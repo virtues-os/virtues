@@ -240,7 +240,12 @@
 					<span class="text-foreground">Unverified.</span>
 					<span class="text-foreground-muted">
 						The collector hasn't reported its own access, so the state below may not match what
-						it can actually read. Update the collector to confirm.
+						it can actually read.
+						{#if status.permissionsCheckedAt}
+							It last reported {new Date(status.permissionsCheckedAt).toLocaleString()}.
+						{:else}
+							It has never reported.
+						{/if}
 					</span>
 				</div>
 			</div>
