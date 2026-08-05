@@ -7,7 +7,7 @@
 .DEFAULT_GOAL := help
 .PHONY: help init commit migration dev seed dev-info dev-core dev-api dev-web dev-embed _embed-ensure _embed-run \
         dev-link dev-reset dev-wipe-mac dev-clean dev-pull dev-real db db-stop deploy-atlas deploy-virtues-api _ecr-push mac-app \
-        iroh-ffi-ios iroh-ffi-mac
+        iroh-ffi-ios iroh-ffi-mac ios-release
 
 AWS_REGION ?= us-east-1
 
@@ -398,6 +398,18 @@ iroh-ffi-ios: ## Build VirtuesIroh.xcframework for the iOS app (run before Xcode
 
 iroh-ffi-mac: ## Build VirtuesIrohMac.xcframework for the Mac collector
 	crates/virtues-iroh-ffi/build-macos.sh
+
+# ── iOS release ─────────────────────────────────────────────────────────────
+# The TestFlight path, which was tribal knowledge until 2026-08-05 and went two
+# weeks stale unnoticed as a result. Encodes the two traps that each cost a
+# build: the FFI framework must be rebuilt first, and the app icons must be
+# flattened to RGB after any `tauri icon` run or App Store validation 409s on
+# an alpha channel it rejects even when fully opaque.
+#
+# Upload stays manual — it publishes under your Apple ID.
+
+ios-release: ## Build a signed iOS IPA for TestFlight (VERSION=1.2.6 to bump first)
+	tools/ios-release.sh $(VERSION)
 
 # ── macOS desktop app (one signed DMG: app + both helper sidecars) ───────────
 
