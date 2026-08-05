@@ -1457,15 +1457,25 @@ pub async fn usage_summary_handler(State(state): State<AppState>) -> Response {
         .into_response()
 }
 
-/// GET /api/telemetry/ai-calls — recent individual AI calls for the Telemetry
-/// tab's AI-call log (the window that was missing when the transcription runaway
-/// burned the wallet invisibly). Box-local `app_ai_calls`, newest first.
-pub async fn ai_calls_handler(State(state): State<AppState>) -> Response {
-    match crate::api::ai_calls::recent_calls(state.db.pool(), 100).await {
-        Ok(rows) => (StatusCode::OK, Json(rows)).into_response(),
+/// GET /api/telemetry/ai-calls — one page of the AI-call log for the Usage page
+/// (the window that was missing when the transcription runaway burned the
+/// wallet invisibly). Box-local `app_ai_calls`, newest first.
+pub async fn ai_calls_handler(
+    State(state): State<AppState>,
+    Query(query): Query<crate::api::ai_calls::AiCallsQuery>,
+) -> Response {
+    match crate::api::ai_calls::list_calls(state.db.pool(), query).await {
+        Ok(page) => (StatusCode::OK, Json(page)).into_response(),
         Err(e) => {
             tracing::warn!(error = %e, "ai_calls query failed");
-            (StatusCode::OK, Json(Vec::<crate::api::ai_calls::AiCallRow>::new())).into_response()
+            (
+                StatusCode::OK,
+                Json(crate::api::ai_calls::AiCallPage {
+                    items: Vec::new(),
+                    total: 0,
+                }),
+            )
+                .into_response()
         }
     }
 }

@@ -237,7 +237,8 @@ pub async fn save_handler(
             .into_response();
     }
 
-    // Audit log so the user can see "BYO key changed" in /virtues/activity.
+    // Audit log — `app_auth_event`, readable at GET /api/audit/auth. (It had a
+    // UI at /virtues/activity; that page is gone. The row is still written.)
     let _ = sqlx::query(
         "INSERT INTO app_auth_event (user_id, device_id, event_type, detail) \
          VALUES ($1, $2, 'byo_key_set', $3)",

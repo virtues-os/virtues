@@ -112,9 +112,13 @@ pub async fn spend_by_model(
     .await
 }
 
-/// Recent individual calls (for the Telemetry tab AI-call log).
+/// Recent individual calls (for the Usage page's AI-call log).
 #[derive(Debug, Serialize, sqlx::FromRow)]
 pub struct AiCallRow {
+    /// Stable row id, so the grid can key on it. Two calls in the same
+    /// millisecond to the same model are distinct rows, and keying a paged
+    /// grid on a timestamp makes them collide.
+    pub id: String,
     pub created_at: chrono::DateTime<chrono::Utc>,
     pub feature: Option<String>,
     pub model: Option<String>,
@@ -125,18 +129,83 @@ pub struct AiCallRow {
     pub status: String,
 }
 
-/// The most recent `limit` calls, newest first.
-pub async fn recent_calls(pool: &PgPool, limit: i64) -> Result<Vec<AiCallRow>, sqlx::Error> {
-    sqlx::query_as::<_, AiCallRow>(
-        r#"
-        SELECT created_at, feature, model, prompt_tokens, completion_tokens,
-               reasoning_tokens, cost_micros, status
-        FROM app_ai_calls
-        ORDER BY created_at DESC
-        LIMIT $1
-        "#,
-    )
+/// Query for one page of the call log.
+#[derive(Debug, serde::Deserialize)]
+pub struct AiCallsQuery {
+    #[serde(default)]
+    pub offset: i64,
+    #[serde(default = "default_calls_limit")]
+    pub limit: i64,
+    /// Matched against feature and model.
+    #[serde(default)]
+    pub search: Option<String>,
+    /// `asc` sorts oldest-first; anything else is newest-first.
+    #[serde(default)]
+    pub dir: Option<String>,
+}
+
+fn default_calls_limit() -> i64 {
+    50
+}
+
+/// One page of the call log, plus the total the query matches.
+#[derive(Debug, Serialize)]
+pub struct AiCallPage {
+    pub items: Vec<AiCallRow>,
+    pub total: i64,
+}
+
+/// One page of calls, newest first by default.
+///
+/// Paged rather than a fixed `LIMIT 100`: the log is the only window onto a
+/// runaway (an applet burning the wallet in a loop writes thousands of rows in
+/// an hour), and a page that silently stops at 100 hides exactly the case it
+/// exists to catch — while shipping every row to the browser would be worse.
+pub async fn list_calls(pool: &PgPool, q: AiCallsQuery) -> Result<AiCallPage, sqlx::Error> {
+    let limit = q.limit.clamp(1, 200);
+    let offset = q.offset.max(0);
+    // `%` and `_` are LIKE wildcards, not text — escape them so a search for
+    // "gpt_4" doesn't match everything.
+    let pattern = q
+        .search
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(|s| {
+            format!(
+                "%{}%",
+                s.replace('\\', "\\\\").replace('%', "\\%").replace('_', "\\_")
+            )
+        });
+    let ascending = q.dir.as_deref() == Some("asc");
+
+    let where_sql = "WHERE ($1::text IS NULL
+                            OR feature ILIKE $1 ESCAPE '\\'
+                            OR model ILIKE $1 ESCAPE '\\')";
+
+    let total: (i64,) =
+        sqlx::query_as(&format!("SELECT COUNT(*) FROM app_ai_calls {where_sql}"))
+            .bind(&pattern)
+            .fetch_one(pool)
+            .await?;
+
+    let items = sqlx::query_as::<_, AiCallRow>(&format!(
+        "SELECT id, created_at, feature, model, prompt_tokens, completion_tokens,
+                reasoning_tokens, cost_micros, status
+           FROM app_ai_calls
+           {where_sql}
+          ORDER BY created_at {}, id
+          LIMIT $2 OFFSET $3",
+        if ascending { "ASC" } else { "DESC" }
+    ))
+    .bind(&pattern)
     .bind(limit)
+    .bind(offset)
     .fetch_all(pool)
-    .await
+    .await?;
+
+    Ok(AiCallPage {
+        items,
+        total: total.0,
+    })
 }

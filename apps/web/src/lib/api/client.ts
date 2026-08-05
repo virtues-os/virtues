@@ -2351,11 +2351,32 @@ export function getSystemHistory<T = unknown>(): Promise<T> {
 export function getMetricsActivity<T = unknown>(): Promise<T> {
 	return apiGet<T>('/metrics/activity');
 }
-export function getAiCalls<T = unknown>(): Promise<T> {
-	return apiGet<T>('/telemetry/ai-calls');
+/** One row of the box-local AI-call log. Metadata only — never content. */
+export interface AiCallRow {
+	id: string;
+	created_at: string;
+	feature: string | null;
+	model: string | null;
+	prompt_tokens: number;
+	completion_tokens: number;
+	reasoning_tokens: number;
+	cost_micros: number;
+	status: string;
 }
-export function getAuthAudit<T = unknown>(): Promise<T> {
-	return apiGet<T>('/audit/auth');
+
+/** GET /api/telemetry/ai-calls — one page of the call log, newest first. */
+export function getAiCallsPage(opts: {
+	offset: number;
+	limit: number;
+	search?: string;
+	dir?: 'asc' | 'desc';
+}): Promise<{ items: AiCallRow[]; total: number }> {
+	return apiGet<{ items: AiCallRow[]; total: number }>('/telemetry/ai-calls', {
+		offset: opts.offset,
+		limit: opts.limit,
+		search: opts.search,
+		dir: opts.dir
+	});
 }
 export function getUsageSummary<T = unknown>(): Promise<T> {
 	return apiGet<T>('/usage/summary');

@@ -329,7 +329,7 @@
 	};
 </script>
 
-<Page title="Billing" description="Manage your subscription and payment method" maxWidth="prose">
+<Page title="Billing" description="Manage your subscription and payment method" maxWidth="wide">
 
 		<!-- Subscription Status -->
 		<div class="border border-border rounded-lg p-6 mb-6">
