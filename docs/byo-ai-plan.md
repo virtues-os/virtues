@@ -233,6 +233,38 @@ Where the three diverge, costliest first:
 The practical read: text chat/coding/lite is near-free to port. Audio is the
 exception, and it is the exception that pays for the feature.
 
+### Probed against live OpenRouter, 2026-08-05
+
+Reasoning replaced by measurement. A free key, four probes:
+
+| probe | result |
+|---|---|
+| our body shape + `x-ai/grok-4.5` | **200, `"OK"`** — the contract is right |
+| `xai/grok-4.5` (our namespace) | 400 `is not a valid model ID` |
+| `google/gemini-3-flash` (Omni's pin) | 400 — **OpenRouter does not carry it at all** |
+| audio as `image_url` data-URI (ours) | **200** with `error.message = "Failed to load image from data:audio/wav…"` |
+| audio as `input_audio` (OpenAI spec) | 402 — recognized *as audio*, gated on credit |
+
+Three things this settles:
+
+1. **The per-route audio encoder is required, not prudent.** Our shape isn't
+   merely unsupported — the upstream tries to decode audio as an *image*.
+2. **Only one BYO failure is quiet, and it was that one.** Wrong model id,
+   missing model, unfunded account all fail loudly. The audio refusal arrived
+   at HTTP 200, passed `is_success()`, and would have surfaced as
+   "missing choices[0].message.content" — the applet blaming its own parse for
+   the upstream's refusal, then retrying every cron tick and re-billing the
+   user's key. Fixed by `normalize_upstream_error`: a 2xx carrying `error` and
+   no `choices` becomes a 502 with the upstream's own message.
+3. **Phase 3 is bigger than "spelled differently".** Of our five slot ids, one
+   matches verbatim (`google/gemini-3-pro-image`), one is respelled
+   (`xai/`→`x-ai/`), and two have **no equivalent** — `zai/glm-4.7-flash` and
+   `google/gemini-3-flash`. So a BYO route needs its own model id per slot,
+   and the Omni doctrine needs a caveat: pinning the model means BYO Omni
+   works only on routes that carry that exact id. OpenRouter users would need
+   `google/gemini-3-flash-preview` or a Gemini 3.5/3.6 flash. Vercel and a
+   direct Google AI Studio key are the clean paths.
+
 ## Traps
 
 - **`image_gen.rs` posts to `/v1/ai/chat/completions`.** That works on
