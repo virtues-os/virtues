@@ -9,7 +9,7 @@
 	import { getBackupStatus } from "$lib/api/client";
 
 	import { BUILD, buildLabel } from "$lib/build";
-	import { shellIdentity, type ShellIdentity } from "$lib/tauri/bridge";
+	import { shellIdentity, describeOtaCheck, type ShellIdentity } from "$lib/tauri/bridge";
 
 	// @ts-ignore — Vite compile-time constant (see vite.config.ts + app.d.ts)
 	const BUILD_COMMIT: string = __BUILD_COMMIT__;
@@ -557,6 +557,15 @@
 							`${shell.appVersion} · surface ${shell.commandSurface}`,
 							true
 						)}
+						<!--
+							Only speaks when there is something to say. The loud case is
+							a shell too old for the bundle the box offers: everything is
+							working correctly and the user still sees stale UI, which
+							without a reason on screen reads as OTA being broken.
+						-->
+						{#if describeOtaCheck(shell.lastCheck)}
+							<p class="ota-note">{describeOtaCheck(shell.lastCheck)}</p>
+						{/if}
 					{/if}
 				</div>
 			</div>
@@ -731,6 +740,14 @@
 	.cols { display: grid; grid-template-columns: 1fr 1fr; gap: 14px 48px; }
 	@media (max-width: 720px) { .cols { grid-template-columns: 1fr; } }
 	.col { display: flex; flex-direction: column; gap: 11px; }
+	/* Only rendered when there is something to say — see describeOtaCheck. */
+	.ota-note {
+		margin: 0.5rem 0 0;
+		font-size: 0.75rem;
+		line-height: 1.4;
+		color: var(--warning);
+	}
+
 	.ledger-row { display: flex; align-items: baseline; gap: 4px; }
 	.ledger-label { font-size: 13px; color: var(--foreground); flex-shrink: 0; }
 	.leader {

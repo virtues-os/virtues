@@ -185,6 +185,82 @@ pub fn mark_boot_ok(app_data: &Path) {
     clear_pointer(&root, PTR_PENDING);
 }
 
+/// Delete bundle directories nothing points at.
+///
+/// Without this a phone accumulates one directory per update, forever — a few
+/// MB each, on a device where storage is the user's, not ours. Keeps whatever
+/// the three pointers name (active, previous, pending) and removes the rest.
+///
+/// Deliberately conservative: an unreadable directory is skipped rather than
+/// forced, and failure is silent. Reclaiming disk is never worth risking the
+/// bundle the app is about to boot from.
+pub fn prune(app_data: &Path) -> usize {
+    let root = bundles_root(app_data);
+    let keep: Vec<String> = [PTR_ACTIVE, PTR_PREVIOUS, PTR_PENDING]
+        .iter()
+        .filter_map(|p| read_pointer(&root, p))
+        .collect();
+
+    let Ok(entries) = fs::read_dir(&root) else {
+        return 0;
+    };
+
+    let mut removed = 0;
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if !path.is_dir() {
+            continue; // pointers and the outcome record are files
+        }
+        let Some(name) = path.file_name().and_then(|n| n.to_str()) else {
+            continue;
+        };
+        // `.staging-*` dirs are abandoned mid-download attempts; they are never
+        // pointed at, so they fall out here too.
+        if keep.iter().any(|k| k == name) {
+            continue;
+        }
+        if fs::remove_dir_all(&path).is_ok() {
+            removed += 1;
+        }
+    }
+    removed
+}
+
+/// Filename holding the last check's outcome, so the UI can say why an update
+/// did or did not happen.
+const OUTCOME_FILE: &str = "last-outcome.json";
+
+/// Record what the last check concluded.
+///
+/// The check runs on a background thread after launch, so by the time anyone
+/// looks at a screen the result is long gone from anywhere it could be read.
+/// Without this, a shell refusing every bundle because it is too old is
+/// indistinguishable from OTA simply not being configured — the user sees
+/// stale UI and no reason for it. Silence is the failure mode this whole
+/// session kept running into; this is the fix for it here.
+pub fn record_outcome(app_data: &Path, outcome: &Outcome) {
+    let value = match outcome {
+        Outcome::UpToDate => serde_json::json!({ "state": "up_to_date" }),
+        Outcome::Applied { content_hash } => serde_json::json!({
+            "state": "applied", "contentHash": content_hash,
+        }),
+        Outcome::ShellTooOld { needs, have } => serde_json::json!({
+            "state": "shell_too_old", "needs": needs, "have": have,
+        }),
+        Outcome::NoBundleOnBox => serde_json::json!({ "state": "no_bundle_on_box" }),
+    };
+    let root = bundles_root(app_data);
+    if fs::create_dir_all(&root).is_ok() {
+        let _ = fs::write(root.join(OUTCOME_FILE), value.to_string());
+    }
+}
+
+/// The last recorded outcome, for display. `None` when no check has run.
+pub fn last_outcome(app_data: &Path) -> Option<serde_json::Value> {
+    let raw = fs::read_to_string(bundles_root(app_data).join(OUTCOME_FILE)).ok()?;
+    serde_json::from_str(&raw).ok()
+}
+
 /// Check the box and apply a newer bundle if there is one this shell can run.
 ///
 /// `shell_surface` is `COMMAND_SURFACE_VERSION` — the contract the bundle is
@@ -237,6 +313,11 @@ pub fn check_and_apply(app_data: &Path, shell_surface: u32) -> std::io::Result<O
     }
     write_pointer(&root, PTR_ACTIVE, &remote.content_hash)?;
     write_pointer(&root, PTR_PENDING, &remote.content_hash)?;
+
+    // Sweep anything the three pointers no longer name. Done here rather than
+    // at startup so it never delays a launch, and after the pointers move so a
+    // crash mid-prune cannot orphan the bundle we just staged.
+    prune(app_data);
 
     Ok(Outcome::Applied {
         content_hash: remote.content_hash,
@@ -359,14 +440,22 @@ fn unpack(tar_gz: &[u8], dest: &Path) -> std::io::Result<()> {
 mod tests {
     use super::*;
 
+    /// A directory unique to this call.
+    ///
+    /// The counter is not belt-and-braces: tests run in parallel, and naming by
+    /// timestamp alone let two of them land in the same nanosecond and share a
+    /// directory — which showed up once as `prune_keeps_what_the_pointers_name`
+    /// failing in isolation and passing on every rerun. A monotonic counter
+    /// removes the possibility rather than making it rarer.
     fn tmp() -> PathBuf {
+        use std::sync::atomic::{AtomicU64, Ordering};
+        static SEQ: AtomicU64 = AtomicU64::new(0);
         let d = std::env::temp_dir().join(format!(
-            "virtues-bundle-test-{}",
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
-                .as_nanos()
+            "virtues-bundle-test-{}-{}",
+            std::process::id(),
+            SEQ.fetch_add(1, Ordering::Relaxed)
         ));
+        let _ = fs::remove_dir_all(&d);
         fs::create_dir_all(&d).unwrap();
         d
     }
@@ -501,6 +590,55 @@ mod tests {
         assert!(read_from_overlay(&d, "index.html").is_some(), "serves from overlay");
         // Present overlay, absent file → fall through, not an error.
         assert_eq!(read_from_overlay(&d, "_app/missing.js"), None);
+    }
+
+    #[test]
+    fn prune_keeps_what_the_pointers_name() {
+        let d = tmp();
+        let root = bundles_root(&d);
+        plant(&root, "active1");
+        plant(&root, "prev2");
+        plant(&root, "orphan3");
+        plant(&root, "orphan4");
+        fs::create_dir_all(root.join(".staging-abandoned")).unwrap();
+        write_pointer(&root, PTR_ACTIVE, "active1").unwrap();
+        write_pointer(&root, PTR_PREVIOUS, "prev2").unwrap();
+
+        let removed = prune(&d);
+        assert_eq!(removed, 3, "two orphans and one abandoned staging dir");
+        assert!(root.join("active1").exists());
+        assert!(root.join("prev2").exists());
+        assert!(!root.join("orphan3").exists());
+        assert!(!root.join(".staging-abandoned").exists());
+        // Pointers are files, never swept.
+        assert_eq!(read_pointer(&root, PTR_ACTIVE).as_deref(), Some("active1"));
+    }
+
+    #[test]
+    fn prune_keeps_a_pending_bundle() {
+        // A pending bundle has not booted yet — sweeping it would delete the
+        // thing the next launch is about to try.
+        let d = tmp();
+        let root = bundles_root(&d);
+        plant(&root, "staged9");
+        write_pointer(&root, PTR_PENDING, "staged9").unwrap();
+        assert_eq!(prune(&d), 0);
+        assert!(root.join("staged9").exists());
+    }
+
+    #[test]
+    fn outcome_round_trips_for_display() {
+        let d = tmp();
+        assert_eq!(last_outcome(&d), None, "no check has run");
+
+        record_outcome(&d, &Outcome::ShellTooOld { needs: 3, have: 1 });
+        let v = last_outcome(&d).expect("recorded");
+        assert_eq!(v["state"], "shell_too_old");
+        assert_eq!(v["needs"], 3);
+        assert_eq!(v["have"], 1);
+
+        record_outcome(&d, &Outcome::UpToDate);
+        assert_eq!(last_outcome(&d).unwrap()["state"], "up_to_date");
     }
 
     #[test]
