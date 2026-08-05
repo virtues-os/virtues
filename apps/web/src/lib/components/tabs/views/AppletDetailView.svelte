@@ -333,9 +333,11 @@
 												? 'error'
 												: r.status === 'skipped'
 													? 'muted'
-													: 'info'}
+													: r.status === 'budget_exceeded'
+														? 'warning'
+														: 'info'}
 									>
-										{r.status}
+										{r.status === 'budget_exceeded' ? 'over budget' : r.status}
 									</Badge>
 									<span class="run-trigger">{r.trigger}</span>
 									<span class="run-time">{relativeTime(r.started_at)}</span>

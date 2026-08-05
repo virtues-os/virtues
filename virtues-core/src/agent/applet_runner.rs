@@ -23,6 +23,13 @@ pub struct AgentLoopResult {
     pub chat_id: Option<String>,
     pub steps: u32,
     pub message: Option<String>,
+    /// What this run spent with the model, in micros-USD — the sum of the
+    /// gateway's authoritative per-call figures, never an estimate.
+    pub cost_micros: i64,
+    /// Set when the loop was stopped by `config.limits.max_llm_cost` rather
+    /// than finishing. The run is recorded `budget_exceeded`, not `error`:
+    /// nothing broke, a ceiling the owner set was reached.
+    pub budget_stopped: Option<String>,
 }
 
 /// Run one pass of the LLM agent loop for an action.
@@ -31,14 +38,21 @@ pub struct AgentLoopResult {
 /// optional dynamic context block — typically the result summary from a
 /// subprocess phase that ran immediately before. Concurrency/condition gating
 /// is handled upstream by `crate::applet_runner::run_applet`.
+///
+/// `run_id` is the row this run's model spend is attributed to. Every `Usage`
+/// event becomes one `app_ai_calls` row tagged with it — which is what makes
+/// applet spend visible in the Usage tab at all, and what the per-run ceiling
+/// is checked against.
 pub async fn run_agent_loop(
     pool: &PgPool,
     yjs_state: &YjsState,
     action: &Applet,
     prompt: &str,
     context: Option<&str>,
+    run_id: &str,
 ) -> Result<AgentLoopResult> {
     let applet_id = &action.id;
+    let limits = crate::applet_runner::limits::Limits::from_config(&action.config);
 
     // Extract optional chat_id and model from config
     let chat_id = action.config.get("chat_id").and_then(|v| v.as_str()).map(|s| s.to_string());
@@ -115,6 +129,8 @@ pub async fn run_agent_loop(
 
     let mut assistant_content = String::new();
     let mut step_count: u32 = 0;
+    let mut cost_micros: i64 = 0;
+    let mut budget_stopped: Option<String> = None;
 
     while let Some(event) = stream.next().await {
         match event {
@@ -123,6 +139,59 @@ pub async fn run_agent_loop(
             }
             crate::agent::AgentEvent::StepComplete { step, .. } => {
                 step_count = step;
+            }
+            // One LLM call, one `app_ai_calls` row — the table's own contract,
+            // and the only reason applet spend appears in the Usage tab. This
+            // arm used to fall through the catch-all below, so every agent
+            // applet's cost was silently discarded.
+            crate::agent::AgentEvent::Usage {
+                prompt_tokens,
+                completion_tokens,
+                reasoning_tokens,
+                cost_micros: step_cost,
+                ..
+            } => {
+                let step_cost = step_cost.unwrap_or(0);
+                cost_micros += step_cost;
+
+                if let Err(e) = crate::api::ai_calls::record_ai_call(
+                    pool,
+                    &crate::api::ai_calls::AiCall {
+                        feature: "applet".to_string(),
+                        model: model.clone(),
+                        prompt_tokens: prompt_tokens as i64,
+                        completion_tokens: completion_tokens as i64,
+                        reasoning_tokens: reasoning_tokens.unwrap_or(0) as i64,
+                        cost_micros: step_cost,
+                        chat_id: chat_id.clone(),
+                        applet_run_id: Some(run_id.to_string()),
+                    },
+                )
+                .await
+                {
+                    // Best-effort, exactly as on the chat path: a cost row we
+                    // failed to write must not fail the run that earned it.
+                    tracing::warn!(applet_id, error = %e, "failed to record applet ai_call");
+                }
+
+                // The ceiling is checked against what the gateway actually
+                // charged, in memory, so it can stop the loop between steps
+                // rather than after the fact. Enforced outside the model: the
+                // applet is never asked whether it is over budget.
+                if let Some(cap) = limits.max_llm_cost_micros {
+                    if cost_micros >= cap {
+                        let msg = format!(
+                            "stopped at the spend ceiling — {} of {} used after {} step{}",
+                            crate::applet_runner::limits::format_usd(cost_micros),
+                            crate::applet_runner::limits::format_usd(cap),
+                            step_count.max(1),
+                            if step_count == 1 { "" } else { "s" }
+                        );
+                        tracing::info!(applet_id, cost_micros, cap, "applet hit spend ceiling");
+                        budget_stopped = Some(msg);
+                        break;
+                    }
+                }
             }
             crate::agent::AgentEvent::Error { message, .. } => {
                 tracing::error!(applet_id, error = %message, "Applet run error");
@@ -171,7 +240,12 @@ pub async fn run_agent_loop(
         }
     }
 
-    tracing::info!(applet_id, steps = step_count, "Applet run complete");
+    tracing::info!(
+        applet_id,
+        steps = step_count,
+        cost_micros,
+        "Applet run complete"
+    );
 
     Ok(AgentLoopResult {
         applet_id: applet_id.to_string(),
@@ -182,6 +256,8 @@ pub async fn run_agent_loop(
         } else {
             Some(assistant_content)
         },
+        cost_micros,
+        budget_stopped,
     })
 }
 

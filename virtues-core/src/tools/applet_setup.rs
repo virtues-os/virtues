@@ -150,6 +150,14 @@ pub async fn execute(
         }
     }
 
+    // A limit nobody enforces is worse than no limit: it reads as protection
+    // on the gate and does nothing. So an unknown key is a finding, not a
+    // silently-ignored field. (This is how `timeout` came to be advertised
+    // for months while only `timeout_s` was ever read.)
+    for f in check_limits(limits.as_ref()) {
+        findings.push(f);
+    }
+
     if !findings.is_empty() {
         return Ok(ToolResult::success(serde_json::json!({
             "status": "check_failed",
@@ -340,6 +348,67 @@ fn opt_str(args: &serde_json::Value, key: &str) -> Option<String> {
 
 fn finding(field: &str, error: &str, suggestion: Option<&str>) -> serde_json::Value {
     serde_json::json!({ "field": field, "error": error, "suggestion": suggestion })
+}
+
+/// The `limits` keys the runner actually enforces, with the unit each is read
+/// in. Anything outside this set is rejected at check time rather than written
+/// into `config.limits` to be ignored forever.
+const LIMIT_KEYS: &[(&str, &str)] = &[
+    ("max_llm_cost", "dollars — ceiling on model spend within one run, e.g. 0.25"),
+    ("max_llm_cost_per_day", "dollars — ceiling on model spend across a rolling 24h"),
+    ("max_runs_per_hour", "whole number of runs"),
+    ("max_runs_per_day", "whole number of runs (`max_runs` is accepted for this)"),
+    ("timeout_s", "seconds of wall clock for the subprocess phase"),
+];
+
+/// Validate the `limits` object: known keys, right types, sane values.
+fn check_limits(limits: Option<&serde_json::Value>) -> Vec<serde_json::Value> {
+    let mut out = Vec::new();
+    let Some(obj) = limits.and_then(|v| v.as_object()) else {
+        return out;
+    };
+
+    let known: Vec<&str> = LIMIT_KEYS.iter().map(|(k, _)| *k).collect();
+    for (key, value) in obj {
+        // `max_runs` and `timeout` are accepted aliases, not typos.
+        let canonical = matches!(key.as_str(), "max_runs" | "timeout")
+            || known.contains(&key.as_str());
+        if !canonical {
+            let suggestion = known
+                .iter()
+                .map(|k| (levenshtein(key, k), *k))
+                .min_by_key(|(d, _)| *d)
+                .filter(|(d, _)| *d <= 4)
+                .map(|(_, k)| format!("did you mean `{k}`?"))
+                .unwrap_or_else(|| format!("enforced limits are: {}", known.join(", ")));
+            out.push(finding(
+                "limits",
+                &format!("unknown limit `{key}` — it would be stored and never enforced"),
+                Some(&suggestion),
+            ));
+            continue;
+        }
+
+        let is_money = key.starts_with("max_llm_cost");
+        let ok = if is_money {
+            value.as_f64().is_some_and(|d| d.is_finite() && d >= 0.0)
+        } else {
+            value.as_u64().is_some()
+        };
+        if !ok {
+            let unit = LIMIT_KEYS
+                .iter()
+                .find(|(k, _)| *k == key || (*k == "max_runs_per_day" && key == "max_runs"))
+                .map(|(_, u)| *u)
+                .unwrap_or("a positive number");
+            out.push(finding(
+                "limits",
+                &format!("`{key}` must be a positive number — got {value}"),
+                Some(unit),
+            ));
+        }
+    }
+    out
 }
 
 /// Return a slug that is either free, or already owned by an applet with the

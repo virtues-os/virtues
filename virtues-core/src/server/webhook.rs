@@ -216,6 +216,19 @@ pub async fn webhook(
                 }),
             )
                 .into_response(),
+            // Same contract as `Skipped`, for the same reason: a run stopped
+            // at its spend ceiling did not durably ingest the payload, so the
+            // device must keep the batch and resend rather than delete it. A
+            // retryable 409 (not a 5xx) leaves the circuit breaker alone; the
+            // post succeeds once the rolling window frees the budget.
+            AppletRunStatus::BudgetExceeded => (
+                StatusCode::CONFLICT,
+                Json(WebhookResponse {
+                    run_id: result.run_id,
+                    status: "budget_exceeded",
+                }),
+            )
+                .into_response(),
             AppletRunStatus::Forbidden => (
                 StatusCode::FORBIDDEN,
                 Json(serde_json::json!({
