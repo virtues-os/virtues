@@ -106,6 +106,9 @@ pub struct AppletRun {
     pub parent_run_id: Option<String>,
     pub transform_stage: Option<String>,
     pub result_summary: Option<String>,
+    /// What the user said, for `trigger = "message"` runs. The exchange lives
+    /// on the run — this plus `result_summary` IS the conversation.
+    pub message: Option<String>,
     /// What this run spent with the model, in micros-USD. Summed from
     /// `app_ai_calls`, which records the gateway's authoritative per-call
     /// figure — never re-estimated here. Zero for runs that called no model,
@@ -321,7 +324,7 @@ pub async fn create_user_applet(
         return Err(Error::InvalidInput("triggers cannot be empty".into()));
     }
     for t in triggers {
-        if !matches!(t.as_str(), "cron" | "manual" | "tool" | "api" | "webhook") {
+        if !matches!(t.as_str(), "cron" | "manual" | "tool" | "api" | "webhook" | "message") {
             return Err(Error::InvalidInput(format!(
                 "invalid trigger '{t}': must be one of cron, manual, tool, api, webhook"
             )));
@@ -574,7 +577,7 @@ pub async fn update_applet(
             })
             .collect::<Result<_>>()?;
         for t in &triggers {
-            if !matches!(t.as_str(), "cron" | "manual" | "tool" | "api" | "webhook") {
+            if !matches!(t.as_str(), "cron" | "manual" | "tool" | "api" | "webhook" | "message") {
                 return Err(Error::InvalidInput(format!(
                     "invalid trigger '{t}': must be one of cron, manual, tool, api, webhook"
                 )));
@@ -855,6 +858,16 @@ pub async fn query_runs(
     rows.iter().map(run_from_row).collect()
 }
 
+/// Record what the user said on a `message` run.
+pub async fn set_run_message(db: &PgPool, run_id: &str, message: &str) -> Result<()> {
+    sqlx::query("UPDATE app_applet_runs SET message = $1 WHERE id = $2")
+        .bind(truncate_utf8_bytes(message, RESULT_SUMMARY_MAX_BYTES))
+        .bind(run_id)
+        .execute(db)
+        .await?;
+    Ok(())
+}
+
 /// Cancel a running run.
 pub async fn cancel_run(db: &PgPool, run_id: &str) -> Result<()> {
     let affected = sqlx::query(
@@ -1027,6 +1040,7 @@ fn run_from_row(row: &sqlx::postgres::PgRow) -> Result<AppletRun> {
         result_summary: row.try_get("result_summary")?,
         // Absent from queries that do not ask for it (`SELECT *` on the runs
         // table alone) — those callers do not show cost, so 0 is right.
+        message: row.try_get("message").ok().flatten(),
         cost_micros: row.try_get("cost_micros").unwrap_or(0),
         created_at: row.try_get("created_at")?,
     })

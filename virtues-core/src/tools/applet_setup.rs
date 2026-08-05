@@ -98,11 +98,11 @@ pub async fn execute(
     }
 
     for t in &triggers {
-        if !matches!(t.as_str(), "cron" | "manual" | "tool" | "api" | "webhook") {
+        if !matches!(t.as_str(), "cron" | "manual" | "tool" | "api" | "webhook" | "message") {
             findings.push(finding(
                 "triggers",
                 &format!("invalid trigger '{t}'"),
-                Some("one of: cron, manual, tool, api, webhook"),
+                Some("one of: cron, manual, tool, api, webhook, message"),
             ));
         }
     }

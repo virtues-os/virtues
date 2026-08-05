@@ -15,6 +15,7 @@
 		deleteAction,
 		getAppletData,
 		runAction,
+		messageApplet,
 		type Applet,
 		type AppletRun,
 		type AppletData,
@@ -212,6 +213,38 @@
 			err = e instanceof Error ? e.message : String(e);
 		} finally {
 			saving = false;
+		}
+	}
+
+	// The message wake. Deliberately a composer on this page rather than a
+	// thread: on a page the input box and the prompt editor are visibly
+	// different controls, so "I had eggs" and "make it weekly" can't be
+	// confused. In a thread they would be the same box, which is why
+	// correspondent threads were deferred in the first place.
+	let draft = $state('');
+	let sending = $state(false);
+	const canMessage = $derived(
+		Boolean(action?.triggers?.includes('message')) && !action?.archived_at
+	);
+
+	async function send() {
+		const text = draft.trim();
+		if (!action || !text) return;
+		sending = true;
+		err = null;
+		try {
+			await messageApplet(action.id, text);
+			draft = '';
+			// The run row exists before the POST returns; the agent turn keeps
+			// going. Re-read shortly so the reply lands without a manual refresh.
+			runs = await listActionRuns(action.id, { limit: 30 });
+			setTimeout(() => {
+				if (action) void listActionRuns(action.id, { limit: 30 }).then((r) => (runs = r));
+			}, 2500);
+		} catch (e) {
+			err = e instanceof Error ? e.message : String(e);
+		} finally {
+			sending = false;
 		}
 	}
 
@@ -509,7 +542,26 @@
 			</section>
 
 			<aside class="col runs">
-				<h3>Recent runs</h3>
+				{#if canMessage}
+					<form
+						class="composer"
+						onsubmit={(e) => {
+							e.preventDefault();
+							void send();
+						}}
+					>
+						<input
+							type="text"
+							bind:value={draft}
+							disabled={sending}
+							placeholder="Tell it something…"
+						/>
+						<Button variant="primary" onclick={send} disabled={sending || !draft.trim()}>
+							{sending ? 'Sending…' : 'Send'}
+						</Button>
+					</form>
+				{/if}
+				<h3>{canMessage ? 'Exchange' : 'Recent runs'}</h3>
 				{#if runs.length === 0}
 					<p class="muted">No runs yet.</p>
 				{:else}
@@ -538,6 +590,9 @@
 									{/if}
 									<span class="run-time">{relativeTime(r.started_at)}</span>
 								</div>
+								{#if r.message}
+									<p class="run-said">{r.message}</p>
+								{/if}
 								{#if r.result_summary}
 									<p class="run-summary">{r.result_summary}</p>
 								{/if}
@@ -921,6 +976,31 @@
 	.run-time {
 		margin-left: auto;
 		color: var(--color-foreground-subtle, #9ca3af);
+	}
+	.composer {
+		display: flex;
+		gap: 0.375rem;
+		margin-bottom: 0.75rem;
+	}
+	.composer input {
+		flex: 1;
+		min-width: 0;
+		font: inherit;
+		font-size: 0.8125rem;
+		padding: 0.4rem 0.6rem;
+		border: 1px solid var(--color-border);
+		border-radius: 6px;
+		background: var(--color-surface);
+		color: var(--color-foreground);
+	}
+	/* What the person said — set apart from what the applet answered, so the
+	   run log reads as the two-sided thing it now is. */
+	.run-said {
+		margin: 0.375rem 0 0;
+		padding-left: 0.5rem;
+		border-left: 2px solid var(--color-border);
+		font-size: 0.8125rem;
+		color: var(--color-foreground);
 	}
 	.run-summary {
 		margin: 0.375rem 0 0;

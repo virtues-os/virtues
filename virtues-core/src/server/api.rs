@@ -119,30 +119,7 @@ pub async fn trigger_applet_handler(
         }
     };
 
-    use crate::applet_runner::AppletRunStatus;
-    let (status_code, status_label) = match result.status {
-        AppletRunStatus::Running => (StatusCode::ACCEPTED, "running"),
-        AppletRunStatus::Success => (StatusCode::OK, "success"),
-        AppletRunStatus::Skipped => (StatusCode::OK, "skipped"),
-        AppletRunStatus::Failed => (StatusCode::INTERNAL_SERVER_ERROR, "error"),
-        // Not an error: a ceiling the owner set was reached. 200 so the UI
-        // renders the run and its explanation rather than a failure toast.
-        AppletRunStatus::BudgetExceeded => (StatusCode::OK, "budget_exceeded"),
-        AppletRunStatus::NotFound => (StatusCode::NOT_FOUND, "not_found"),
-        AppletRunStatus::Forbidden => (StatusCode::FORBIDDEN, "forbidden"),
-    };
-
-    (
-        status_code,
-        Json(serde_json::json!({
-            "run_id": result.run_id,
-            "applet_id": applet_id,
-            "status": status_label,
-            "summary": result.summary,
-            "error": result.error,
-        })),
-    )
-        .into_response()
+    run_status_response(result, &applet_id)
 }
 
 /// POST /api/chat-import/upload — multipart upload of a Claude / ChatGPT /
@@ -353,6 +330,80 @@ pub async fn list_applets_handler(State(state): State<AppState>) -> Response {
 
             (StatusCode::OK, Json(actions)).into_response()
         }
+        Err(e) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({ "error": e.to_string() })),
+        )
+            .into_response(),
+    }
+}
+
+/// One shape for "a run was requested" — shared by the manual-run and the
+/// message handlers so the two can never disagree about what a status means.
+fn run_status_response(
+    result: crate::applet_runner::AppletRunResult,
+    applet_id: &str,
+) -> Response {
+    use crate::applet_runner::AppletRunStatus;
+    let (status_code, status_label) = match result.status {
+        AppletRunStatus::Running => (StatusCode::ACCEPTED, "running"),
+        AppletRunStatus::Success => (StatusCode::OK, "success"),
+        AppletRunStatus::Skipped => (StatusCode::OK, "skipped"),
+        AppletRunStatus::Failed => (StatusCode::INTERNAL_SERVER_ERROR, "error"),
+        // Not an error: a ceiling the owner set was reached. 200 so the UI
+        // renders the run and its explanation rather than a failure toast.
+        AppletRunStatus::BudgetExceeded => (StatusCode::OK, "budget_exceeded"),
+        AppletRunStatus::NotFound => (StatusCode::NOT_FOUND, "not_found"),
+        AppletRunStatus::Forbidden => (StatusCode::FORBIDDEN, "forbidden"),
+    };
+    (
+        status_code,
+        Json(serde_json::json!({
+            "run_id": result.run_id,
+            "applet_id": applet_id,
+            "status": status_label,
+            "summary": result.summary,
+            "error": result.error,
+        })),
+    )
+        .into_response()
+}
+
+/// POST /api/applets/:id/message — say something to an applet.
+///
+/// The sixth wake. Until this existed every trigger was the box acting on
+/// itself — a clock, a poll, a device, a tool call — and a person could turn an
+/// applet on, off, or run it, but could not tell it anything.
+pub async fn message_applet_handler(
+    State(state): State<AppState>,
+    Path(applet_id): Path<String>,
+    Json(body): Json<serde_json::Value>,
+) -> Response {
+    let text = body
+        .get("message")
+        .and_then(|v| v.as_str())
+        .map(str::trim)
+        .filter(|s| !s.is_empty());
+    let Some(text) = text else {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({ "error": "message is required" })),
+        )
+            .into_response();
+    };
+
+    let deps = crate::applet_runner::RunnerDeps {
+        db: state.db.pool().clone(),
+        yjs: state.yjs_state.clone(),
+    };
+    // Detached, like the manual-run handler: a long agent turn must not hang on
+    // the client staying connected. The run row exists before this returns, so
+    // the UI can show the exchange immediately.
+    let payload = serde_json::json!({ "message": text });
+    match crate::applet_runner::run_applet_detached(&deps, &applet_id, "message", Some(&payload))
+        .await
+    {
+        Ok(result) => run_status_response(result, &applet_id),
         Err(e) => (
             StatusCode::INTERNAL_SERVER_ERROR,
             Json(serde_json::json!({ "error": e.to_string() })),
