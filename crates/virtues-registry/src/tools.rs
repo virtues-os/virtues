@@ -1034,7 +1034,7 @@ Parameters:
 - triggers: subset of cron/manual/tool/api/webhook. Defaults: with schedule ["cron","manual","tool"], else ["manual","tool"].
 - condition: SQL boolean gating each run (skipped when false). Local data only.
 - until: omit = forever · "once" = archive after first success · SQL boolean = archive when true after a success.
-- schema_sql: idempotent DDL, MUST target only schema applet_<slug> (start with CREATE SCHEMA IF NOT EXISTS applet_<slug>;).
+- schema_sql: ONE MIGRATION, not the whole schema. MUST target only schema applet_<slug>. First call: CREATE SCHEMA IF NOT EXISTS applet_<slug>; then your CREATE TABLEs. Later calls: submit ONLY what changed (ALTER TABLE applet_<slug>.t ADD COLUMN ...) — re-sending a CREATE TABLE IF NOT EXISTS with an extra column silently adds nothing, and the check will refuse it with the ALTER to write. Resubmitting identical DDL is recognized as already applied.
 - face_html: a complete index.html for the applet's face (sandboxed iframe; include <link rel="stylesheet" href="virtues.css"> and <script src="virtues.js"></script>; read data with await virtues.query(sql); max 48KB).
 - limits: protective ceilings, user-editable. Only these keys are enforced; any other key is a check failure, because a stored-but-ignored limit reads as protection and is not:
     max_llm_cost         — DOLLARS, ceiling on model spend within one run (0.25 = 25 cents). The run stops mid-loop and records `budget_exceeded`.
@@ -1059,7 +1059,7 @@ If the result status is "check_failed", fix the findings and call again — noth
                 },
                 "condition": { "type": "string", "description": "SQL boolean run gate" },
                 "until": { "type": "string", "description": "forever (omit) | 'once' | SQL boolean" },
-                "schema_sql": { "type": "string", "description": "Idempotent DDL in schema applet_<slug> only" },
+                "schema_sql": { "type": "string", "description": "ONE migration in schema applet_<slug> only. First call CREATEs; later calls submit only the change (ALTER TABLE ...)." },
                 "face_html": { "type": "string", "description": "Complete face index.html (48KB max)" },
                 "limits": {
                     "type": "object",

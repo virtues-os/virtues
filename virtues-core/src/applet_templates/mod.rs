@@ -1045,6 +1045,29 @@ pub async fn reconcile_templates(db: &PgPool) -> Result<usize> {
             }
         } else {
             upsert_row(db, template, id_prefix, None, None).await?;
+
+            // Bring the applet's own tables up to whatever its folder declares.
+            // Only concrete (non-fan-out) applets own a schema — a per-credential
+            // template expands to many rows and none of them owns tables.
+            //
+            // After the upsert, because the migrations table references the
+            // applet row. A no-op when the box is already current, so this
+            // costs one query per reconcile per schema-owning applet.
+            if let Some(slug) = crate::scheduler::applets::applet_slug(id_prefix) {
+                let dir = resolve_applet_dir(&template.dir);
+                let ran = crate::tools::applet_schema::replay_pending(
+                    db, id_prefix, &slug, &dir,
+                )
+                .await;
+                if ran > 0 {
+                    tracing::info!(
+                        applet_id = id_prefix,
+                        versions = ran,
+                        "applied applet schema versions from disk"
+                    );
+                }
+            }
+
             live_ids.push(id_prefix.to_string());
             upserted += 1;
         }
