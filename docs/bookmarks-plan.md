@@ -1,13 +1,17 @@
 # Bookmarks — capture, enrichment, and retrieval plan
 
-Status: **CAPTURE SPINE BUILT 2026-08-04** (`2f5a5c94`, `c814dcb8`);
-enrichment, IR, and the remaining doors unbuilt — see [Build plan](#build-plan-2026-08-05).
-Owner table: `data_content_bookmark` (migration 0007) + `note` (migration 0073).
+Status: **CAPTURE SPINE + ENRICHMENT LOOP BUILT** — capture 2026-08-04
+(`2f5a5c94`, `c814dcb8`), enrichment 2026-08-05 (steps 1–4 of the
+[build plan](#build-plan-2026-08-05)). Remaining: the iOS and X doors, the UI,
+and the Parallel tiers.
+Owner table: `data_content_bookmark` (0007) + `note` (0073) + enrichment queue
+(0094) + `extraction_text` (0095).
 
-**Current reality in one line: bookmarks are storable but unfindable.** Three
-capture doors land rows; `embed_text_sql` is still `title || description`, so a
-saved Instagram post embeds as an empty document and the user's own `note` is
-invisible to search.
+**Where this stands:** a saved URL now becomes findable on its own. The sweep
+fetches the page, composes an extraction record, and that record plus the
+user's `note` and harvested `tags` are all in the embed text. What is still
+missing is doors — the highest-value one (iOS share sheet, the only path for
+Instagram) and X — plus the rooms to browse it all in.
 
 ## Why this exists
 
