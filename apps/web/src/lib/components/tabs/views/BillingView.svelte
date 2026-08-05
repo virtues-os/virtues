@@ -198,6 +198,8 @@
 		configured: boolean;
 		/** Legacy label on credentials saved before the picker was removed. */
 		provider: string | null;
+		/** Slot name → the model id on the user's endpoint. */
+		models: Record<string, string>;
 		default_model: string | null;
 		endpoint_url: string | null;
 		created_at: string | null;
@@ -220,7 +222,33 @@
 	// Form state. No provider field — a credential is a URL and a key.
 	let byoApiKey = $state('');
 	let byoEndpointUrl = $state('');
-	let byoDefaultModel = $state('');
+	let byoModels = $state<Record<string, string>>({});
+
+	/**
+	 * The slot map form. Keys match the box's slot names exactly.
+	 *
+	 * `note` is where judgment about *which* model suits a role lives —
+	 * deliberately here and not in the schema or the resolver, both of which
+	 * treat all five slots identically. Model landscapes shift faster than we
+	 * ship boxes, so guidance belongs somewhere a copy edit can fix.
+	 */
+	const SLOT_FIELDS = [
+		{ key: 'chat', label: 'Chat', placeholder: 'x-ai/grok-4.5', note: '' },
+		{ key: 'coding', label: 'Coding', placeholder: 'x-ai/grok-4.5', note: '' },
+		{
+			key: 'lite',
+			label: 'Lite',
+			placeholder: 'z-ai/glm-4.7',
+			note: 'Titles, summaries, background jobs — high volume, so favor something cheap and quick.',
+		},
+		{ key: 'image', label: 'Image', placeholder: 'google/gemini-3-pro-image', note: '' },
+		{
+			key: 'omni',
+			label: 'Audio',
+			placeholder: 'google/gemini-3.5-flash',
+			note: 'Transcription, and usually the largest line item. In practice Gemini 3 flash or flash-lite is the only workable choice: it has to hear muffled, in-pocket audio and reason about it, and the alternatives either reject audio outright or return words with no sense of the scene. Speech-to-text models will not do.',
+		},
+	] as const;
 
 	// Sudo modal coordination — we mint a sudo request, then on approval we
 	// fire the actual save/delete with the approved request id.
@@ -232,6 +260,8 @@
 		byoLoadError = null;
 		try {
 			byoStatus = await getByoKey<ByoStatus>();
+			// Prefill so "Manage" edits the map instead of silently clearing it.
+			if (byoStatus?.models) byoModels = { ...byoStatus.models };
 		} catch (e) {
 			byoLoadError = e instanceof Error ? e.message : 'Failed to load BYO status';
 		} finally {
@@ -261,11 +291,18 @@
 			// No `provider` — the box takes the URL as given. The field still
 			// exists server-side to resolve credentials saved before the picker
 			// was removed; nothing new should send it.
+			// Blank rows are omitted, not sent as "": an absent slot means
+			// "your endpoint uses our id", which is the right default.
+			const models = Object.fromEntries(
+				Object.entries(byoModels)
+					.map(([k, v]) => [k, (v ?? '').trim()])
+					.filter(([, v]) => v.length > 0),
+			);
 			await setByoKey({
 				sudo_request_id: sudoRequestId,
 				api_key: byoApiKey,
 				endpoint_url: byoEndpointUrl,
-				default_model: byoDefaultModel || null,
+				models,
 			});
 			toast.success('BYO key saved');
 			byoApiKey = '';
@@ -727,20 +764,40 @@
 				placeholder="sk-…"
 			/>
 		</div>
-		<div>
-			<label
-				class="block text-xs text-foreground-muted mb-1"
-				for="byo-model">Default model (optional)</label
-			>
-			<Input
-				id="byo-model"
-				bind:value={byoDefaultModel}
-				placeholder="anthropic/claude-opus-5, openai/gpt-4o, …"
-			/>
-			<p class="text-xs text-foreground-muted mt-1.5">
-				Used only when a request does not already name a model. Model ids are
-				spelled differently on every gateway — copy yours from theirs.
+		<div class="pt-1">
+			<div class="text-xs font-medium mb-1">What your endpoint calls each model</div>
+			<p class="text-xs text-foreground-muted mb-3">
+				Optional. A model id is an address on one gateway, not a portable
+				name — the same model we call <code class="bg-surface-alt px-1 rounded"
+					>xai/grok-4.5</code
+				>
+				is <code class="bg-surface-alt px-1 rounded">x-ai/grok-4.5</code> on
+				OpenRouter. Leave a row blank if your endpoint uses the same ids we do,
+				which is true for Vercel AI Gateway. Blank rows that your endpoint
+				doesn't carry will fail with its own error naming the model.
 			</p>
+			<div class="space-y-2">
+				{#each SLOT_FIELDS as slot (slot.key)}
+					<div class="flex flex-col sm:flex-row sm:items-center gap-1 sm:gap-3">
+						<label
+							class="text-xs text-foreground-muted sm:w-28 sm:shrink-0 sm:text-right"
+							for="byo-model-{slot.key}">{slot.label}</label
+						>
+						<div class="flex-1">
+							<Input
+								id="byo-model-{slot.key}"
+								bind:value={byoModels[slot.key]}
+								placeholder={slot.placeholder}
+							/>
+						</div>
+					</div>
+					{#if slot.note}
+						<p class="text-xs text-foreground-muted sm:ml-[7.75rem] -mt-1">
+							{slot.note}
+						</p>
+					{/if}
+				{/each}
+			</div>
 		</div>
 	</div>
 {/snippet}

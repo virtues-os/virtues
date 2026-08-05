@@ -126,7 +126,38 @@ is also the one most likely to 400 on a different gateway. A two-arm match on
 route kind, ~60 lines, but it must exist before Omni can be routed anywhere
 but Vercel.
 
-### Phase 3 — Data model
+### Phase 3a — The model map *(done 2026-08-05)*
+
+**A model id is an address on one gateway, not a portable name.** That single
+sentence is the whole of it, and everything else in this plan was downstream of
+getting it wrong: `xai/grok-4.5` is where *Vercel* keeps the chat model, means
+`x-ai/grok-4.5` on OpenRouter, and means nothing at all on an endpoint that
+does not carry it. Since every caller pins a model, sending ours to someone
+else's endpoint failed for four of our five slots — so BYO in practice only
+worked on Vercel, while the UI promised any OpenAI-compatible endpoint.
+
+So the address belongs to the **route**, and the slot keeps only the **role**.
+A credential carries a `models` map — slot name → the id on the user's
+endpoint, every entry optional. At the fork, `apply_byo_model` turns the body's
+model back into the slot it stands for (`model_catalog::slot_for_model`) and
+substitutes the user's id for that role.
+
+Three things pass through untranslated, all deliberately: an unmapped slot
+(their endpoint may use our ids — Vercel does), a model the user hand-picked
+from the picker (not a slot default, so there is no role to look up), and a
+body naming no model (no caller does this; legacy `default_model` still fills
+it). Each failure is loud and names the model.
+
+**Nothing in the resolver knows which slot is which — Omni included.** Which
+model actually suits a role is *advice*, and advice lives in the Billing UI
+where a copy edit can fix it, not in a schema or a match arm. The audio field
+carries the reasoning about Gemini flash there.
+
+This was mis-scoped as invasive because it was bundled with many-credentials
+below. It is not: no migration, no new table, one JSON blob on the credential
+and one resolver branch.
+
+### Phase 3b — Many credentials *(still deferred)*
 
 Claim the migration number first (`make migration NAME=byo_slot_routes`), and
 remember the placeholder is `.sql.pending` until the SQL is written.
