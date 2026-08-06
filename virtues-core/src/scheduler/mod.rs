@@ -423,6 +423,20 @@ mod tests {
         assert!(result.is_ok());
     }
 
+    /// `Utc::now()` truncated to what Postgres can actually store.
+    ///
+    /// `timestamptz` keeps microseconds; `Utc::now()` carries nanoseconds. A
+    /// timestamp written and read back therefore differs from the one
+    /// generated, by whatever sub-microsecond remainder the clock handed out —
+    /// so `assert_eq!` against the original fails roughly 999 times in 1000.
+    /// It passed locally often enough to look stable and failed in CI.
+    ///
+    /// Truncate at the source: the value written is then the value returned.
+    fn now_pg() -> chrono::DateTime<chrono::Utc> {
+        use chrono::SubsecRound;
+        chrono::Utc::now().trunc_subsecs(6)
+    }
+
     async fn insert_applet(pool: &PgPool, id: &str, cron: &str) {
         sqlx::query(
             "INSERT INTO app_applets (id, name, owner, cron_schedule, command)
@@ -531,7 +545,7 @@ mod tests {
         insert_applet(&pool, "applet_a", "0 0 7 * * *").await;
         sched.sync_jobs().await.unwrap();
 
-        let missed = chrono::Utc::now() - chrono::Duration::hours(3);
+        let missed = now_pg() - chrono::Duration::hours(3);
         set_due(&pool, "applet_a", missed).await;
         sched.sync_jobs().await.unwrap();
 
@@ -552,7 +566,7 @@ mod tests {
         insert_applet(&pool, "applet_a", "0 */15 * * * *").await;
         sched.sync_jobs().await.unwrap();
 
-        let missed = chrono::Utc::now() - chrono::Duration::hours(2);
+        let missed = now_pg() - chrono::Duration::hours(2);
         set_due(&pool, "applet_a", missed).await;
         sched.sync_jobs().await.unwrap();
 

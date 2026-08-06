@@ -117,7 +117,14 @@ jobs:
             https://apt.postgresql.org/pub/repos/apt $(lsb_release -cs)-pgdg main" \
             | sudo tee /etc/apt/sources.list.d/pgdg.list
           sudo apt-get update
-          sudo apt-get install -y postgresql-client-18
+          # `git` is not a given on this runner image — actions/checkout falls
+          # back to the REST API when it is absent, so the repo appears without
+          # git ever being installed. `applet_git_import` shells out to it and
+          # failed with "failed to spawn: No such file or directory", which
+          # reads like a code bug and is not one. The box needs git for the same
+          # feature, so installing it here matches production rather than
+          # papering over the test.
+          sudo apt-get install -y postgresql-client-18 git
           # Installing the package is not enough: the runner already ships an
           # older postgresql-client, and /usr/bin/pg_dump keeps resolving to it.
           # Put the versioned bindir ahead of it for every later step.
