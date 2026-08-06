@@ -495,10 +495,13 @@
 	// init time captures the initial value, which is fine — the $effect below
 	// re-syncs on subsequent prop changes.
 	// ────────────────────────────────────────────────────────────────────────
-	// On the phone, cards are the default (tables need width); an explicit
-	// user preference still wins.
+	// On the phone, escape the *table* — that is the mode that needs width. It
+	// used to force 'grid' for any narrow viewport, which also overrode a
+	// consumer that had deliberately asked for the Wall; the Wall drops to one
+	// column on its own and is fine there. An explicit user preference still
+	// wins over both.
 	const fallbackViewMode = $derived<ViewMode>(
-		mobileLayout.isMobile ? 'grid' : defaultViewMode
+		mobileLayout.isMobile && defaultViewMode === 'table' ? 'grid' : defaultViewMode
 	);
 
 	// svelte-ignore state_referenced_locally
