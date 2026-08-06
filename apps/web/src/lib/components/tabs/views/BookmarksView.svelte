@@ -24,6 +24,7 @@
 
 <script lang="ts">
 	import { Page } from '$lib';
+	import { windowShellStore } from '$lib/stores/window-shell.svelte';
 	import Icon from '$lib/components/Icon.svelte';
 	import UniversalDataGrid, {
 		type Column,
@@ -272,8 +273,16 @@
 
 	const filters = [platformFilter, mediumFilter, typeFilter, stateFilter];
 
+	/**
+	 * A bookmark is a thing in the library, so clicking one opens it here
+	 * rather than throwing the person out to the web. The original is one
+	 * click further on — the record view linkifies the url — which is the
+	 * right order: what we know about the save first, the save second.
+	 */
+	const recordRoute = (item: BookmarkApi) => `/record/content_bookmark/${item.id}`;
+
 	function open(item: BookmarkApi) {
-		window.open(item.url, '_blank', 'noopener,noreferrer');
+		windowShellStore.openTabFromRoute(recordRoute(item));
 	}
 </script>
 
@@ -313,6 +322,7 @@
 		defaultViewMode="wall"
 		pageSize={25}
 		onItemClick={open}
+		rowHref={recordRoute}
 		emptyIcon="ri:bookmark-line"
 		emptyMessage="Nothing saved yet — paste a link above, or connect a browser."
 		loadingMessage="Reading the shelf..."
