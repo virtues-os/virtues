@@ -8,10 +8,18 @@
 	bookmark import is thousands of rows on day one, and the grid should hold a
 	page, not a library.
 
-	Deliberately plain for now. The bento wall, the Inbox/Library split, and
-	filtering by colour all wait on the enrichment pass (docs/bookmarks-plan.md)
-	— they read fields that nothing writes yet, and a facet over empty columns
-	is furniture.
+	Three views. Table and Cards come from the grid; the Wall is this room's
+	own — tiles pack at their natural heights and each takes the form its
+	content calls for, so a saved image is recognizable without reading.
+
+	The tile form encodes what the box knows, which is why there is no separate
+	"enrichment status" badge: a thing we have looked at is a picture or a
+	paragraph, and a thing we have not is a spine. Three spines among the
+	pictures reads as "still working" without a word of status copy.
+
+	Filtering by colour still waits on the image pass — palette hexes are the
+	one facet nothing writes yet, and a facet over an empty column is
+	furniture.
 -->
 
 <script lang="ts">
@@ -21,7 +29,13 @@
 		type Column,
 	} from '$lib/components/datagrid/UniversalDataGrid.svelte';
 	import type { GridQuery, GridPage } from '$lib/components/datagrid/types';
-	import { getBookmarksPage, saveBookmark, type BookmarkApi } from '$lib/bookmarks/api';
+	import type { FilterDef } from '$lib/components/datagrid/types';
+	import {
+		getBookmarksPage,
+		saveBookmark,
+		type BookmarkApi,
+		type ShelfCounts,
+	} from '$lib/bookmarks/api';
 
 	let { active: _active }: { tab?: unknown; active?: boolean } = $props();
 
@@ -34,13 +48,23 @@
 
 	const serverExtra = $derived({ revision });
 
+	// Shelf-wide, not page-wide: the status line answers what the box is still
+	// working on, so it must not change when a filter narrows the view.
+	let counts = $state<ShelfCounts | null>(null);
+
 	async function fetchPage(q: GridQuery): Promise<GridPage<BookmarkApi>> {
+		const one = (v: unknown) => (typeof v === 'string' && v ? v : undefined);
 		const page = await getBookmarksPage({
 			offset: q.offset,
 			limit: q.limit,
 			search: q.search || undefined,
 			dir: q.sort?.key === 'timestamp' && q.sort.dir === 'asc' ? 'asc' : 'desc',
+			platform: one(q.filters.platform),
+			bookmark_type: one(q.filters.bookmark_type),
+			medium: one(q.filters.medium),
+			state: one(q.filters.state),
 		});
+		counts = page.counts;
 		return { items: page.items, total: page.total };
 	}
 
@@ -140,6 +164,114 @@
 		},
 	];
 
+	/**
+	 * Which form a tile takes. Order is the argument: the user's own words
+	 * outrank anything the box wrote about the page, and a picture outranks
+	 * both because it is the fastest thing to recognize.
+	 *
+	 * `spine` is the residue — a save we have not read yet. It is the thinnest
+	 * tile on the wall on purpose: little is known, so little is shown, and
+	 * the shelf tells you its own state by texture instead of by badge.
+	 */
+	type TileForm = 'picture' | 'quote' | 'text' | 'spine';
+
+	function tileForm(item: BookmarkApi): TileForm {
+		if (item.thumbnail_url) return 'picture';
+		if (item.note?.trim()) return 'quote';
+		if (item.state === 'enriched' && (item.description || item.title)) return 'text';
+		return 'spine';
+	}
+
+	/**
+	 * Where a save came from, in the fewest honest words.
+	 *
+	 * An asset-backed bookmark's `url` is the in-app viewer route, so its host
+	 * is `/drive/file_…` — true, and useless to read. Provenance for those
+	 * lives in `source_platform` by design (docs/bookmarks-plan.md), so that
+	 * is what gets shown.
+	 */
+	function originLabel(item: BookmarkApi): string {
+		if (item.url.startsWith('/drive/')) return item.source_platform ?? 'Saved image';
+		return hostOf(item.url);
+	}
+
+	/**
+	 * The title, or nothing.
+	 *
+	 * A screenshot has no title until something reads it, and falling back to
+	 * the URL would print a storage path at people. Better to show no title
+	 * than to show plumbing.
+	 */
+	function displayTitle(item: BookmarkApi): string | null {
+		if (item.title?.trim()) return item.title;
+		if (item.url.startsWith('/drive/')) return null;
+		return hostOf(item.url);
+	}
+
+	/** Only said when it changes what you are looking at. */
+	function stateNote(item: BookmarkApi): string | null {
+		if (item.state === 'held') return 'image not read yet';
+		if (item.state === 'queued') return 'not read yet';
+		if (item.state === 'failed') return "couldn't be read";
+		return null;
+	}
+
+	// Hardcoded rather than derived: a server page cannot honestly enumerate
+	// the values across the whole shelf, and these are the doors that exist.
+	const platformFilter: FilterDef<BookmarkApi> = {
+		id: 'platform',
+		label: 'Source',
+		kind: 'enum',
+		options: [
+			{ value: 'safari', label: 'Safari' },
+			{ value: 'chrome', label: 'Chrome' },
+			{ value: 'arc', label: 'Arc' },
+			{ value: 'github', label: 'GitHub' },
+			{ value: 'instagram', label: 'Instagram' },
+			{ value: 'web', label: 'Saved by hand' },
+		],
+	};
+
+	const mediumFilter: FilterDef<BookmarkApi> = {
+		id: 'medium',
+		label: 'Kind',
+		kind: 'enum',
+		options: [
+			{ value: 'article', label: 'Article' },
+			{ value: 'reference', label: 'Reference' },
+			{ value: 'documentation', label: 'Documentation' },
+			{ value: 'repository', label: 'Repository' },
+			{ value: 'product', label: 'Product' },
+			{ value: 'video', label: 'Video' },
+		],
+	};
+
+	const stateFilter: FilterDef<BookmarkApi> = {
+		id: 'state',
+		label: 'Read',
+		kind: 'enum',
+		options: [
+			{ value: 'enriched', label: 'Read' },
+			{ value: 'queued', label: 'Not read yet' },
+			{ value: 'held', label: 'Waiting on images' },
+		],
+	};
+
+	const typeFilter: FilterDef<BookmarkApi> = {
+		id: 'bookmark_type',
+		label: 'Type',
+		kind: 'enum',
+		options: [
+			{ value: 'bookmark', label: 'Bookmark' },
+			{ value: 'reading_list', label: 'Reading list' },
+			{ value: 'star', label: 'Star' },
+			{ value: 'save', label: 'Saved link' },
+			{ value: 'screenshot', label: 'Screenshot' },
+		],
+	};
+
+	const filters = [platformFilter, mediumFilter, typeFilter, stateFilter];
+
 	function open(item: BookmarkApi) {
 		window.open(item.url, '_blank', 'noopener,noreferrer');
 	}
@@ -174,16 +306,68 @@
 	<UniversalDataGrid
 		items={[]}
 		{columns}
+		{filters}
 		entityType="bookmarks"
 		server={fetchPage}
 		{serverExtra}
+		defaultViewMode="wall"
 		pageSize={25}
 		onItemClick={open}
 		emptyIcon="ri:bookmark-line"
 		emptyMessage="Nothing saved yet — paste a link above, or connect a browser."
 		loadingMessage="Reading the shelf..."
 		searchPlaceholder="Search bookmarks..."
-	/>
+	>
+		{#snippet wallTile(item)}
+			{@const form = tileForm(item)}
+			{@const note = stateNote(item)}
+			{@const title = displayTitle(item)}
+			<article class="tile" class:spine={form === 'spine'}>
+				{#if form === 'picture'}
+					<!-- A dead og:image should cost nothing: hide the element and let
+					     the tile read as the text one it would otherwise have been,
+					     rather than leaving a broken-image glyph on the wall. -->
+					<img
+						class="tile-image"
+						src={item.thumbnail_url}
+						alt=""
+						loading="lazy"
+						onerror={(e) => ((e.currentTarget as HTMLImageElement).hidden = true)}
+					/>
+					{#if title}<h3 class="tile-title">{title}</h3>{/if}
+				{:else if form === 'quote'}
+					<!-- Her words, given the weight they earn. -->
+					<blockquote class="tile-note">{item.note}</blockquote>
+					{#if title}<h3 class="tile-title">{title}</h3>{/if}
+				{:else if form === 'text'}
+					{#if title}<h3 class="tile-title tile-title-lead">{title}</h3>{/if}
+					{#if item.description}
+						<p class="tile-desc">{item.description}</p>
+					{/if}
+				{:else if title}
+					<h3 class="tile-title">{title}</h3>
+				{/if}
+
+				<footer class="tile-foot">
+					<span class="tile-host">{originLabel(item)}</span>
+					{#if item.medium}<span class="tile-kind">{item.medium}</span>{/if}
+					{#if note}<span class="tile-state">{note}</span>{/if}
+				</footer>
+			</article>
+		{/snippet}
+	</UniversalDataGrid>
+
+	{#if counts && (counts.queued > 0 || counts.held > 0)}
+		<!-- Two numbers, not one: only the first is a backlog that drains. -->
+		<p class="shelf-status">
+			{#if counts.queued > 0}
+				<span>{counts.queued} still to read</span>
+			{/if}
+			{#if counts.held > 0}
+				<span>{counts.held} waiting on the image pass</span>
+			{/if}
+		</p>
+	{/if}
 </Page>
 
 <style>
@@ -244,5 +428,122 @@
 		margin: 0 0 0.75rem;
 		font-size: 0.75rem;
 		color: var(--color-danger, #dc2626);
+	}
+
+	/* ── Wall tiles ───────────────────────────────────────────────────────
+	   One hairline, one surface, no shadows. The variation between tiles
+	   should come from their content, so the frame stays identical. */
+	.tile {
+		display: flex;
+		flex-direction: column;
+		gap: 0.5rem;
+		padding: 0.875rem;
+		background: var(--color-surface-elevated);
+		border: 1px solid var(--color-border-subtle, var(--color-border));
+		border-radius: 0.375rem;
+		transition:
+			border-color 0.16s ease,
+			transform 0.16s cubic-bezier(0.2, 0.9, 0.3, 1.2);
+	}
+
+	.tile:hover {
+		border-color: var(--color-foreground-muted);
+		transform: translateY(-2px);
+	}
+
+	/* The spine: a save we have not read. Thin, quiet, and marked down the
+	   left edge like a book turned outward on a shelf. */
+	.tile.spine {
+		gap: 0.35rem;
+		padding: 0.5rem 0.75rem;
+		background: transparent;
+		border-color: transparent;
+		border-left: 2px solid var(--color-border);
+		border-radius: 0;
+	}
+
+	.tile.spine:hover {
+		border-left-color: var(--color-foreground-muted);
+	}
+
+	/* Capped, and cropped rather than letterboxed. A square logo at full column
+	   width takes over the wall and starves everything below it of attention —
+	   the tile is a way to recognize a save, not a place to display artwork. */
+	.tile-image {
+		display: block;
+		width: 100%;
+		max-height: 15rem;
+		object-fit: cover;
+		border-radius: 0.25rem;
+		background: var(--color-surface);
+	}
+
+	.tile-title {
+		margin: 0;
+		font-family: var(--font-serif);
+		font-size: 0.9375rem;
+		font-weight: 400;
+		line-height: 1.3;
+		color: var(--color-foreground);
+	}
+
+	.tile-title-lead {
+		font-size: 1.0625rem;
+	}
+
+	.tile.spine .tile-title {
+		font-family: var(--font-sans);
+		font-size: 0.8125rem;
+		color: var(--color-foreground-muted);
+	}
+
+	.tile-note {
+		margin: 0;
+		font-family: var(--font-serif);
+		font-size: 1.0625rem;
+		line-height: 1.4;
+		color: var(--color-foreground);
+	}
+
+	.tile-desc {
+		margin: 0;
+		font-size: 0.8125rem;
+		line-height: 1.5;
+		color: var(--color-foreground-muted);
+	}
+
+	.tile-foot {
+		display: flex;
+		flex-wrap: wrap;
+		gap: 0.5rem;
+		font-size: 0.6875rem;
+		color: var(--color-foreground-subtle);
+	}
+
+	.tile-kind::before,
+	.tile-state::before {
+		content: '·';
+		margin-right: 0.5rem;
+	}
+
+	.tile-state {
+		font-style: italic;
+	}
+
+	.shelf-status {
+		display: flex;
+		gap: 1rem;
+		margin: 0.75rem 0 0;
+		font-size: 0.75rem;
+		color: var(--color-foreground-subtle);
+	}
+
+	@media (prefers-reduced-motion: reduce) {
+		.tile {
+			transition: border-color 0.16s ease;
+		}
+		.tile:hover {
+			transform: none;
+		}
 	}
 </style>

@@ -316,3 +316,122 @@ pub async fn save_bookmark(db: &PgPool, req: SaveBookmarkRequest) -> Result<Save
 fn from_anyhow(e: anyhow::Error) -> Error {
     Error::Database(e.to_string())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The list query against a real table (needs DATABASE_URL; run explicitly):
+    ///
+    ///     cargo test -p virtues --lib -- --ignored list_bookmarks_shape
+    ///
+    /// Worth a database test rather than trusting the compiler: `state` is
+    /// decoded from a CASE expression, and a type-inference mistake there is a
+    /// runtime decode error on a live page, not a build failure.
+    #[tokio::test]
+    #[ignore]
+    async fn list_bookmarks_shape_and_states() {
+        let _ = dotenv::dotenv();
+        let db_url = std::env::var("DATABASE_URL").expect("DATABASE_URL required");
+        let pool = sqlx::PgPool::connect(&db_url).await.expect("connect");
+        let prefix = format!("test:list:{}:", Uuid::new_v4());
+
+        // One of each state the room renders, plus a tombstone that must not
+        // appear at all.
+        let rows = [
+            ("enriched", "https://example.com/read", "done", "{}"),
+            ("queued", "https://example.com/unread", "pending", "{}"),
+            ("held", "/drive/file_x", "pending", "{}"),
+            (
+                "held-with-source",
+                "https://instagram.com/p/x",
+                "pending",
+                r#"{"asset_id":"file_y"}"#,
+            ),
+        ];
+        for (name, url, status, meta) in rows {
+            sqlx::query(
+                "INSERT INTO data_content_bookmark
+                   (id, url, title, timestamp, source_stream_id, source_table,
+                    source_provider, enrichment_status, metadata, extraction)
+                 VALUES ($1, $2, $3, now(), $1, 'test', 'test', $4, $5::jsonb,
+                         '{\"medium\":\"article\"}'::jsonb)",
+            )
+            .bind(format!("{prefix}{name}"))
+            .bind(url)
+            // The title carries the prefix because `search` matches title/url,
+            // not id — this is how the query scopes itself to its own rows.
+            .bind(format!("{prefix}{name}"))
+            .bind(status)
+            .bind(meta)
+            .execute(&pool)
+            .await
+            .unwrap();
+        }
+
+        let page = list_bookmarks(
+            &pool,
+            ListBookmarksQuery {
+                offset: 0,
+                limit: 200,
+                search: Some(prefix.clone()),
+                dir: None,
+                platform: None,
+                bookmark_type: None,
+                medium: None,
+                state: None,
+            },
+        )
+        .await
+        .expect("list");
+
+        let state_of = |name: &str| {
+            page.items
+                .iter()
+                .find(|i| i.title.as_deref() == Some(format!("{prefix}{name}").as_str()))
+                .unwrap_or_else(|| panic!("{name} missing from page"))
+                .state
+                .clone()
+        };
+        assert_eq!(state_of("enriched"), "enriched");
+        assert_eq!(state_of("queued"), "queued");
+        // Both asset shapes must read as held: the viewer-route url and the
+        // source-url-plus-asset_id case.
+        assert_eq!(state_of("held"), "held");
+        assert_eq!(state_of("held-with-source"), "held");
+        assert_eq!(
+            page.items.iter().filter(|i| i.medium.is_some()).count(),
+            4,
+            "medium did not come through the extraction record"
+        );
+
+        // A state facet narrows, and the counts do NOT — they describe the
+        // shelf, so a filtered view cannot misreport what the box is doing.
+        let held_only = list_bookmarks(
+            &pool,
+            ListBookmarksQuery {
+                offset: 0,
+                limit: 200,
+                search: Some(prefix.clone()),
+                dir: None,
+                platform: None,
+                bookmark_type: None,
+                medium: None,
+                state: Some("held".to_string()),
+            },
+        )
+        .await
+        .expect("list held");
+        assert_eq!(held_only.total, 2, "state facet did not narrow");
+        assert_eq!(
+            held_only.counts.held, page.counts.held,
+            "counts changed under a filter"
+        );
+
+        sqlx::query("DELETE FROM data_content_bookmark WHERE starts_with(id, $1)")
+            .bind(&prefix)
+            .execute(&pool)
+            .await
+            .unwrap();
+    }
+}
