@@ -49,6 +49,10 @@ name = "document_extraction"
 path = "document_extraction/main.rs"
 
 [[bin]]
+name = "bookmark_enrichment"
+path = "bookmark_enrichment/main.rs"
+
+[[bin]]
 name = "credential_refresh"
 path = "credential_refresh/main.rs"
 

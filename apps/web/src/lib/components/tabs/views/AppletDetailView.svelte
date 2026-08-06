@@ -1,6 +1,7 @@
 <script lang="ts">
 	import Icon from '$lib/components/Icon.svelte';
 	import AppletSource from '$lib/components/applets/AppletSource.svelte';
+	import FaceFrame from '$lib/components/applets/FaceFrame.svelte';
 	import Badge from '$lib/components/Badge.svelte';
 	import Button from '$lib/components/Button.svelte';
 	import Modal from '$lib/components/Modal.svelte';
@@ -9,13 +10,14 @@
 	import type { Tab } from '$lib/tabs/types';
 	import {
 		getApplet,
-		listActionRuns,
+		getAppletLog,
 		patchApplet,
 		deleteAction,
 		getAppletData,
 		runAction,
+		messageApplet,
 		type Applet,
-		type AppletRun,
+		type AppletLogEntry,
 		type AppletData,
 		type PatchAppletBody
 	} from '$lib/api/client';
@@ -26,7 +28,7 @@
 	const actionId = $derived(routeToEntityId(tab.route));
 
 	let action = $state<Applet | null>(null);
-	let runs = $state<AppletRun[]>([]);
+	let log = $state<AppletLogEntry[]>([]);
 	let loading = $state(false);
 	let saving = $state(false);
 	let err = $state<string | null>(null);
@@ -47,9 +49,14 @@
 		loading = true;
 		err = null;
 		try {
-			const [a, rs] = await Promise.all([getApplet(id), listActionRuns(id, { limit: 30 })]);
+			// The applet loads on its own. The log is a second, weaker request:
+			// awaiting both together meant one failing log blanked the entire
+			// page, because `action` stayed null and the template fell through
+			// to the error state. An applet you cannot see is a worse outcome
+			// than a log you cannot see.
+			const a = await getApplet(id);
 			action = a;
-			runs = rs;
+			log = await getAppletLog(id).catch(() => []);
 			edit = {
 				name: a.name,
 				agent: a.agent ?? '',
@@ -65,8 +72,79 @@
 		}
 	}
 
+	// Editability follows `owner`, because that is genuinely what the server
+	// enforces: reconcile owns those rows and would overwrite an edit anyway.
 	const isSystem = $derived(action?.owner === 'system');
 	const isAgent = $derived(Boolean(action?.agent && action.agent.trim().length > 0));
+
+	// What the user is told, though, follows `origin` — the distinction the
+	// list page already learned. Every source fan-out row is owner='system',
+	// so keying the EXPLANATION off owner told you the Gmail sync you
+	// connected on purpose was an internal system pipeline.
+	const managedNote = $derived.by(() => {
+		if (!action || !isSystem) return null;
+		switch (action.origin) {
+			case 'source':
+				return 'Part of a source you connected. Its settings come from the connection — disconnect the source to remove it.';
+			default:
+				return 'Built in. It keeps the box running, so it can be turned off but not deleted — reconcile would recreate it.';
+		}
+	});
+
+	const triggers = $derived(action?.triggers ?? []);
+
+	// Lifecycle, in words rather than a raw SQL string.
+	const lifecycle = $derived.by(() => {
+		if (!action) return '';
+		if (action.archived_at) {
+			return `Finished ${new Date(action.archived_at).toLocaleDateString()}`;
+		}
+		if (!action.until) return 'Runs for as long as it is on';
+		if (action.until.toLowerCase() === 'once') return 'Runs once, then finishes';
+		return `Finishes when: ${action.until}`;
+	});
+
+	// The ceilings this applet declares, in the same words the gate uses.
+	// Read from config rather than a new endpoint — config already ships.
+	const limits = $derived.by(() => {
+		const l = (action?.config?.limits ?? {}) as Record<string, unknown>;
+		const out: string[] = [];
+		const money = (k: string, label: string) => {
+			const v = typeof l[k] === 'number' ? (l[k] as number) : null;
+			if (v !== null) out.push(`${label} $${v.toFixed(2)}`);
+		};
+		const count = (k: string, label: string) => {
+			const v = typeof l[k] === 'number' ? (l[k] as number) : null;
+			if (v !== null) out.push(`${label} ${v}`);
+		};
+		money('max_llm_cost', 'at most'); // per run
+		money('max_llm_cost_per_day', 'at most');
+		count('max_runs_per_day', 'at most');
+		count('max_runs_per_hour', 'at most');
+		return out;
+	});
+
+	function usd(micros: number): string {
+		if (!micros) return '';
+		// Sub-cent spend is real and worth showing as more than "$0.00".
+		return micros < 10_000 ? `$${(micros / 1_000_000).toFixed(4)}` : `$${(micros / 1_000_000).toFixed(2)}`;
+	}
+
+	// What recent runs cost, so the ceiling above has something to mean. Read
+	// off the log, whose per-entry cost is already summed across the runs it
+	// collapsed — so this is the true total, not the total of what is visible.
+	const recentSpend = $derived(log.reduce((n, e) => n + (e.cost_micros ?? 0), 0));
+	const recentRuns = $derived(log.reduce((n, e) => n + (e.occurrences ?? 1), 0));
+
+	// Milliseconds past the owed slot. Same hour of grace the scheduler and the
+	// needs-attention strip use, so the three surfaces never disagree about
+	// whether an applet is late.
+	const OVERDUE_GRACE_MS = 60 * 60 * 1000;
+	const overdueBy = $derived(
+		action?.next_due_at
+			? Date.now() - new Date(action.next_due_at).getTime() - OVERDUE_GRACE_MS
+			: 0
+	);
 
 	function markDirty() {
 		isDirty = true;
@@ -127,13 +205,66 @@
 		windowShellStore.openTabFromRoute(`/applet/${action.id}/view`);
 	}
 
+	// Put a finished applet back to work. Enabling clears `archived_at`
+	// server-side — there is no coherent "enabled and finished" state — so this
+	// is one PATCH and then a run, not a separate un-archive verb.
+	async function runAgain() {
+		if (!action) return;
+		saving = true;
+		err = null;
+		try {
+			action = await patchApplet(action.id, { enabled: true });
+			await runAction(action.id);
+			log = await getAppletLog(action.id).catch(() => log);
+			action = await getApplet(action.id);
+		} catch (e) {
+			err = e instanceof Error ? e.message : String(e);
+		} finally {
+			saving = false;
+		}
+	}
+
+	// The message wake. Deliberately a composer on this page rather than a
+	// thread: on a page the input box and the prompt editor are visibly
+	// different controls, so "I had eggs" and "make it weekly" can't be
+	// confused. In a thread they would be the same box, which is why
+	// correspondent threads were deferred in the first place.
+	let draft = $state('');
+	let sending = $state(false);
+	const canMessage = $derived(
+		Boolean(action?.triggers?.includes('message')) && !action?.archived_at
+	);
+
+	async function send() {
+		const text = draft.trim();
+		if (!action || !text) return;
+		sending = true;
+		err = null;
+		try {
+			await messageApplet(action.id, text);
+			draft = '';
+			// The run row exists before the POST returns; the agent turn keeps
+			// going. Re-read shortly so the reply lands without a manual refresh.
+			log = await getAppletLog(action.id).catch(() => log);
+			// The run row exists before the POST returns; the agent turn keeps
+			// going. Re-read shortly so the reply lands without a manual refresh.
+			setTimeout(() => {
+				if (action) void getAppletLog(action.id).then((l) => (log = l)).catch(() => {});
+			}, 2500);
+		} catch (e) {
+			err = e instanceof Error ? e.message : String(e);
+		} finally {
+			sending = false;
+		}
+	}
+
 	async function runNow() {
 		if (!action) return;
 		saving = true;
 		err = null;
 		try {
 			await runAction(action.id);
-			runs = await listActionRuns(action.id, { limit: 30 });
+			log = await getAppletLog(action.id).catch(() => log);
 		} catch (e) {
 			err = e instanceof Error ? e.message : String(e);
 		} finally {
@@ -186,8 +317,25 @@
 			<div class="hero-top">
 				<div class="title-block">
 					<h1 class="title">{action.name}</h1>
+					{#if action.description}
+						<!-- The intent sentence: what this applet is for, in the user's
+						     terms. The page opened with a name and a cron string before
+						     this, neither of which says what the thing does. -->
+						<p class="intent">{action.description}</p>
+					{/if}
 					<div class="meta">
 						<span>{describeSchedule(action.cron_schedule ?? null)}</span>
+						{#if action.next_due_at && action.enabled && !action.archived_at}
+							<span class="dot-sep">·</span>
+							<!-- The scheduler's own pointer, not a re-derivation from the
+							     cron string: an applet that silently stopped firing says
+							     so here instead of predicting a run that never comes. -->
+							<span class:overdue={overdueBy > 0}>
+								{overdueBy > 0
+									? `expected ${relativeTime(action.next_due_at)}`
+									: `next ${relativeTime(action.next_due_at)}`}
+							</span>
+						{/if}
 						<span class="dot-sep">·</span>
 						<span class="muted-inline">
 							{#if action.archived_at}
@@ -207,29 +355,48 @@
 					</div>
 				</div>
 				<div class="hero-actions">
-					<Button variant="secondary" onclick={toggleEnabled} disabled={saving}>
-						{action.enabled ? 'Disable' : 'Enable'}
-					</Button>
-					<Button variant="primary" onclick={runNow} disabled={saving}>
-						Run now
-					</Button>
+					{#if action.archived_at}
+						<!-- A finished applet has enabled = FALSE, so "Disable" is
+						     meaningless and "Run now" would be refused as not-found.
+						     One honest affordance instead: put it back to work. -->
+						<Button variant="primary" onclick={runAgain} disabled={saving}>
+							Run again
+						</Button>
+					{:else}
+						<Button variant="secondary" onclick={toggleEnabled} disabled={saving}>
+							{action.enabled ? 'Disable' : 'Enable'}
+						</Button>
+						<Button variant="primary" onclick={runNow} disabled={saving}>
+							Run now
+						</Button>
+					{/if}
 				</div>
 			</div>
 
 			{#if err}
 				<div class="error-banner">{err}</div>
 			{/if}
-			{#if action.has_face}
-				<div class="meta view-link">
+		</header>
+
+		<!-- The face IS the page when there is one. It was a button to another
+		     tab before, which put the applet's own output one click further away
+		     than its cron string. -->
+		{#if action.has_face}
+			<section class="face-block">
+				<div class="face-head">
+					<h2>What it shows</h2>
 					<button type="button" class="open-view" onclick={openView}>
-						<Icon icon="ri:layout-2-line" width="13" /> Open view
+						<Icon icon="ri:external-link-line" width="12" /> Open full page
 					</button>
 				</div>
-			{/if}
-		</header>
+				<FaceFrame actionId={action.id} height="460px" />
+			</section>
+		{/if}
 
 		<div class="body">
 			<section class="col main">
+				<h2 class="section-head">How it works</h2>
+
 				<label class="field">
 					<span class="label">Name</span>
 					<input
@@ -238,35 +405,56 @@
 						disabled={isSystem}
 						oninput={markDirty}
 					/>
-					{#if isSystem}
+					{#if managedNote}
 						<span class="hint">
-							<Icon icon="ri:lock-line" width="12" /> Managed by templates.toml
+							<Icon icon="ri:lock-line" width="12" />
+							{managedNote}
 						</span>
 					{/if}
 				</label>
 
-				<!-- A pure View (a face with no agent) has no server-side run and
-				     no prompt — don't show an empty agent editor for it. -->
+				{#if action.description}
+					<div class="field">
+						<span class="label">What it does</span>
+						<p class="readonly-value">{action.description}</p>
+						<span class="hint">
+							Comes from the applet's manifest. Editing it there and
+							reconciling changes it here.
+						</span>
+					</div>
+				{/if}
+
+				<!-- A face-only applet has no server-side run and no prompt —
+				     don't show an empty agent editor for it. -->
 				{#if isAgent || !action.has_face}
 					<label class="field">
-						<span class="label">Agent prompt</span>
+						<!-- An applet's shape comes from which fields are set, and this
+						     label is where a reader first learns which one they are
+						     looking at. Calling a compiled sync's field "Agent prompt"
+						     said the opposite of the truth on 22 of the 24 shipped
+						     applets. -->
+						<span class="label">{isAgent ? 'What it does each run' : 'What it runs'}</span>
 						{#if isAgent || !isSystem}
 							<textarea
 								rows="10"
 								bind:value={edit.agent}
 								disabled={isSystem}
 								oninput={markDirty}
-								placeholder="What should this action do each run?"
+								placeholder="What should this applet do each run?"
 							></textarea>
 						{:else}
 							<div class="pipeline-note">
 								<Icon icon="ri:terminal-line" width="14" />
-								<span>Subprocess pipeline: <code>{action.function_name}</code></span>
+								<span>
+									Compiled program, run fresh each time it fires —
+									<code>{action.command?.join(' ') ?? action.function_name ?? 'built in'}</code>.
+									No model is involved.
+								</span>
 							</div>
 						{/if}
 						{#if isSystem && isAgent}
 							<span class="hint">
-								<Icon icon="ri:lock-line" width="12" /> System prompt — read only
+								<Icon icon="ri:lock-line" width="12" /> Read-only — this prompt ships with the applet
 							</span>
 						{/if}
 					</label>
@@ -283,25 +471,80 @@
 					<span class="hint">{describeSchedule(edit.cron_schedule || null)}</span>
 				</label>
 
+				<!-- Three facts the page never showed, and the reason a person
+				     could not tell why an applet had or hadn't run: what wakes
+				     it, what it checks once awake, and when it is done. -->
+				<div class="field">
+					<span class="label">What wakes it</span>
+					<div class="chips">
+						{#each triggers as t (t)}
+							<span class="chip">{t === 'cron' ? 'schedule' : t}</span>
+						{/each}
+						{#if triggers.length === 0}
+							<span class="readonly-value dim">nothing — it never runs on its own</span>
+						{/if}
+					</div>
+				</div>
+
+				{#if action.condition}
+					<div class="field">
+						<span class="label">Only when</span>
+						<code class="readonly-value mono">{action.condition}</code>
+						<span class="hint">
+							Checked before each run. When it is false the run is skipped, not
+							failed.
+						</span>
+					</div>
+				{/if}
+
+				<div class="field">
+					<span class="label">Lifecycle</span>
+					<p class="readonly-value">{lifecycle}</p>
+				</div>
+
+				<div class="field">
+					<span class="label">Limits</span>
+					{#if limits.length > 0}
+						<p class="readonly-value">{limits.join(' · ')}</p>
+					{:else}
+						<p class="readonly-value dim">No ceilings set.</p>
+					{/if}
+					{#if recentSpend > 0}
+						<span class="hint">
+							The last {recentRuns} runs cost {usd(recentSpend)}.
+						</span>
+					{:else if isAgent}
+						<span class="hint">Nothing spent so far.</span>
+					{/if}
+				</div>
+
 				<label class="field">
-					<span class="label">Memory</span>
+					<!-- Not a settings field: this is the applet's own scratchpad,
+					     written by it, for its next run. Editing it by hand is
+					     allowed and is closer to amending a diary than filling a
+					     form, so the label says whose it is. -->
+					<span class="label">Notes it keeps</span>
 					<textarea
 						rows="6"
 						bind:value={edit.memory}
 						oninput={markDirty}
-						placeholder="Persistent markdown scratchpad, carried across runs"
+						placeholder="Empty — this applet has not written itself any notes yet."
 					></textarea>
+					<span class="hint">
+						What this applet wrote down for its own next run. Yours to read, and
+						to correct.
+					</span>
 				</label>
 
 				<div class="save-row">
 					{#if !isSystem}
 						<Button variant="danger" onclick={openDelete} disabled={saving}>
-							Delete action
+							Delete applet
 						</Button>
 					{:else}
 						<span class="system-note">
 							<Icon icon="ri:lock-line" width="12" />
-							System action — managed automatically. Disable it to stop it running; it can't be deleted (reconcile would recreate it).
+							{managedNote}
 						</span>
 					{/if}
 					<Button variant="primary" onclick={save} disabled={!isDirty || saving}>
@@ -318,33 +561,75 @@
 			</section>
 
 			<aside class="col runs">
-				<h3>Recent runs</h3>
-				{#if runs.length === 0}
+				{#if canMessage}
+					<form
+						class="composer"
+						onsubmit={(e) => {
+							e.preventDefault();
+							void send();
+						}}
+					>
+						<input
+							type="text"
+							bind:value={draft}
+							disabled={sending}
+							placeholder="Tell it something…"
+						/>
+						<Button variant="primary" onclick={send} disabled={sending || !draft.trim()}>
+							{sending ? 'Sending…' : 'Send'}
+						</Button>
+					</form>
+				{/if}
+				<h3>{canMessage ? 'Exchange' : 'Recent runs'}</h3>
+				{#if log.length === 0}
 					<p class="muted">No runs yet.</p>
 				{:else}
 					<ul class="runs-list">
-						{#each runs as r}
-							<li class="run-item" data-status={r.status}>
+						{#each log as e (e.run_id ?? e.last_at)}
+							<li class="run-item" data-status={e.status}>
 								<div class="run-top">
 									<Badge
-										variant={r.status === 'success'
+										variant={e.status === 'success'
 											? 'success'
-											: r.status === 'error'
+											: e.status === 'error'
 												? 'error'
-												: r.status === 'skipped'
+												: e.status === 'skipped'
 													? 'muted'
-													: 'info'}
+													: e.status === 'budget_exceeded'
+														? 'warning'
+														: 'info'}
 									>
-										{r.status}
+										{e.status === 'budget_exceeded' ? 'over budget' : e.status}
 									</Badge>
-									<span class="run-trigger">{r.trigger}</span>
-									<span class="run-time">{relativeTime(r.started_at)}</span>
+									{#if e.occurrences > 1}
+										<!-- The applet repeated itself. On a real box this is most
+										     of history — a poll that finds nothing still records a
+										     run — so saying it once with a count is both shorter
+										     and more honest than 600 identical lines. -->
+										<span class="run-count">×{e.occurrences}</span>
+									{:else if e.trigger}
+										<span class="run-trigger">{e.trigger}</span>
+									{/if}
+									{#if e.cost_micros}
+										<span class="run-cost" title="What these runs spent with the model">
+											{usd(e.cost_micros)}
+										</span>
+									{/if}
+									<span class="run-time">{relativeTime(e.last_at)}</span>
 								</div>
-								{#if r.result_summary}
-									<p class="run-summary">{r.result_summary}</p>
+								{#if e.message}
+									<p class="run-said">{e.message}</p>
 								{/if}
-								{#if r.error}
-									<p class="run-error">{r.error}</p>
+								{#if e.summary}
+									<p class="run-summary">{e.summary}</p>
+								{/if}
+								{#if e.error}
+									<p class="run-error">{e.error}</p>
+								{/if}
+								{#if e.occurrences > 1 && e.first_at}
+									<p class="run-span">
+										{e.occurrences} times, {relativeTime(e.first_at)} to {relativeTime(e.last_at)}
+									</p>
 								{/if}
 							</li>
 						{/each}
@@ -431,9 +716,6 @@
 	.del .dim {
 		color: var(--color-foreground-subtle);
 	}
-	.view-link {
-		margin-top: 0.5rem;
-	}
 	.open-view {
 		display: inline-flex;
 		align-items: center;
@@ -484,6 +766,70 @@
 		font-weight: 600;
 		line-height: 1.25;
 	}
+	.section-head {
+		margin: 0;
+		font-size: 0.8125rem;
+		font-weight: 600;
+		color: var(--color-foreground-muted);
+	}
+	.readonly-value {
+		margin: 0;
+		font-size: 0.875rem;
+		line-height: 1.5;
+		color: var(--color-foreground);
+	}
+	.readonly-value.dim {
+		color: var(--color-foreground-subtle);
+	}
+	.readonly-value.mono {
+		font-family: var(--font-mono, ui-monospace, monospace);
+		font-size: 0.8125rem;
+		padding: 0.5rem 0.625rem;
+		border-radius: 6px;
+		background: var(--color-surface-elevated);
+		border: 1px solid var(--color-border-subtle);
+		display: block;
+		overflow-x: auto;
+	}
+	.chips {
+		display: flex;
+		flex-wrap: wrap;
+		gap: 0.3rem;
+	}
+	.chip {
+		padding: 0.1rem 0.5rem;
+		border: 1px solid var(--color-border);
+		border-radius: 999px;
+		background: var(--color-surface-elevated);
+		font-size: 0.75rem;
+		color: var(--color-foreground-muted);
+	}
+	.face-block {
+		padding: 1.25rem 2rem 0;
+		max-width: 1400px;
+		width: 100%;
+		margin: 0 auto;
+	}
+	.face-head {
+		display: flex;
+		align-items: baseline;
+		justify-content: space-between;
+		margin-bottom: 0.5rem;
+	}
+	.face-head h2 {
+		margin: 0;
+		font-size: 0.8125rem;
+		font-weight: 600;
+		color: var(--color-foreground-muted);
+	}
+	.intent {
+		margin: 0 0 0.375rem;
+		max-width: 68ch;
+		font-family: var(--font-serif, Georgia, serif);
+		font-size: 0.875rem;
+		line-height: 1.5;
+		color: var(--color-foreground-muted);
+	}
 	.meta {
 		display: flex;
 		align-items: center;
@@ -494,8 +840,17 @@
 	.dot-sep {
 		opacity: 0.5;
 	}
+	/* Lifecycle is a neutral fact — "runs forever" is not a warning. This was
+	   tinted `--color-warning`, which made every applet's normal state read as
+	   a problem and left nothing distinct for the state that IS one. */
 	.muted-inline {
+		color: inherit;
+	}
+	/* The slot passed and nothing ran. The one thing in this row that earns a
+	   colour, now that it is the only one taking it. */
+	.overdue {
 		color: var(--color-warning);
+		font-weight: 500;
 	}
 	.hero-actions {
 		display: flex;
@@ -642,6 +997,20 @@
 		gap: 0.5rem;
 		font-size: 0.75rem;
 	}
+	.run-count {
+		font-variant-numeric: tabular-nums;
+		font-size: 0.6875rem;
+		color: var(--color-foreground-subtle);
+	}
+	.run-span {
+		margin: 0.25rem 0 0;
+		font-size: 0.6875rem;
+		color: var(--color-foreground-subtle);
+	}
+	.run-cost {
+		font-variant-numeric: tabular-nums;
+		color: var(--color-foreground-muted);
+	}
 	.run-trigger {
 		font-family: var(--font-mono, monospace);
 		color: var(--color-foreground-subtle, #9ca3af);
@@ -649,6 +1018,31 @@
 	.run-time {
 		margin-left: auto;
 		color: var(--color-foreground-subtle, #9ca3af);
+	}
+	.composer {
+		display: flex;
+		gap: 0.375rem;
+		margin-bottom: 0.75rem;
+	}
+	.composer input {
+		flex: 1;
+		min-width: 0;
+		font: inherit;
+		font-size: 0.8125rem;
+		padding: 0.4rem 0.6rem;
+		border: 1px solid var(--color-border);
+		border-radius: 6px;
+		background: var(--color-surface);
+		color: var(--color-foreground);
+	}
+	/* What the person said — set apart from what the applet answered, so the
+	   run log reads as the two-sided thing it now is. */
+	.run-said {
+		margin: 0.375rem 0 0;
+		padding-left: 0.5rem;
+		border-left: 2px solid var(--color-border);
+		font-size: 0.8125rem;
+		color: var(--color-foreground);
 	}
 	.run-summary {
 		margin: 0.375rem 0 0;

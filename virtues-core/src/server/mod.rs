@@ -329,6 +329,12 @@ pub async fn run(client: Virtues, host: &str, port: u16) -> Result<()> {
         .route("/api/settings/byo-key",   get(crate::api::settings_byo::status_handler)
                                           .post(crate::api::settings_byo::save_handler)
                                           .delete(crate::api::settings_byo::delete_handler))
+        // ─── Web bundle (the box IS the update server) ────────────────
+        // What UI build this box serves, and the build itself. A client that
+        // can only run a bundle the box handed it cannot get ahead of the box,
+        // which is the point — see api/web_bundle.rs.
+        .route("/api/web-bundle/version", get(crate::api::web_bundle::version_handler))
+        .route("/api/web-bundle/tarball", get(crate::api::web_bundle::tarball_handler))
         // ─── Billing-state aggregator (local view) ────────────────────
         .route("/api/billing/state",           get(crate::api::billing_state::state_handler))
         .route("/api/billing/auto-topup",      post(crate::api::billing_state::set_auto_topup_handler))
@@ -374,6 +380,7 @@ pub async fn run(client: Virtues, host: &str, port: u16) -> Result<()> {
                 .delete(api::delete_applet_handler),
         )
         .route("/api/applets/:id/run", post(api::trigger_applet_handler))
+        .route("/api/applets/:id/message", post(api::message_applet_handler))
         .route("/api/applets/:id/data", get(api::get_applet_data_handler))
         // Read the applet's own code. Read-only, owner-authed like everything
         // in this group; see api/applet_source.rs for why it guards harder than
@@ -398,6 +405,7 @@ pub async fn run(client: Virtues, host: &str, port: u16) -> Result<()> {
                 .layer(DefaultBodyLimit::max(512 * 1024 * 1024)),
         )
         .route("/api/applets/:id/runs", get(api::list_applet_runs_handler))
+        .route("/api/applets/:id/log", get(api::applet_log_handler))
         .route("/api/applets/runs/:id", get(api::get_applet_run_handler))
         .route("/api/runs", get(api::list_runs_handler))
         // Credentials API
@@ -551,7 +559,7 @@ pub async fn run(client: Virtues, host: &str, port: u16) -> Result<()> {
         .route("/api/billing/usage", get(api::billing_usage_handler))
         // Box-local AI spend breakdown (app_ai_calls) for the Usage tab.
         .route("/api/usage/summary", get(api::usage_summary_handler))
-        // Recent individual AI calls (app_ai_calls) for the Telemetry tab log.
+        // Paged individual AI calls (app_ai_calls) for the Usage page's log.
         .route("/api/telemetry/ai-calls", get(api::ai_calls_handler))
         // Device-authorization link flow (web "Connect subscription").
         .route(

@@ -22,6 +22,24 @@ pub struct CollectorStatus {
     pub last_sync: Option<String>,
     pub has_full_disk_access: bool,
     pub has_accessibility: bool,
+    /// True when the two flags above came from the DAEMON's own self-report and
+    /// that report is fresh. False means they describe nothing trustworthy —
+    /// either no daemon has ever written a record, or the one on disk has gone
+    /// stale (see `CollectorHealth`).
+    ///
+    /// The collector has always emitted this. This struct dropped it, so every
+    /// consumer downstream had to treat a possibly-frozen snapshot as live
+    /// fact — which on 2026-08-05 meant showing "accessibility denied" from a
+    /// record six days old, while the permission actually denied went unnamed.
+    /// Absent from an older collector's JSON, hence `serde(default)`: false is
+    /// the honest answer for a binary that cannot tell us.
+    #[serde(default)]
+    pub permissions_reported_by_daemon: bool,
+    /// When the daemon last evaluated its permissions, ISO 8601. `None` if it
+    /// never has. Pair it with the flag above: the UI says *when* it last
+    /// heard rather than asserting a state it cannot observe.
+    #[serde(default)]
+    pub permissions_checked_at: Option<String>,
 }
 
 /// A Virtues server discovered on the local network. Shape mirrors what the
@@ -235,6 +253,43 @@ mod session_probe_tests {
 // ============================================================================
 // Tauri Commands (IPC from web frontend)
 // ============================================================================
+
+/// Returns this shell's command-surface version. Deliberately the simplest
+/// possible command — it is the one call a bundle makes *before* it knows
+/// whether any other call is safe, so it must never gain arguments.
+///
+/// The constant itself lives in `lib.rs` (`virtues_lib::COMMAND_SURFACE_VERSION`)
+/// because mobile needs it too and never compiles this file. Its doc comment is
+/// where the contract is written down — read that before bumping.
+#[tauri::command]
+fn command_surface_version() -> u32 {
+    virtues_lib::COMMAND_SURFACE_VERSION
+}
+
+/// What this shell is: its own version, the command contract it exposes, and
+/// which OTA bundle (if any) is serving the UI.
+///
+/// The SPA knows what it was built from but not whether it arrived over the air
+/// or shipped inside the app — only the shell can answer that. Together with
+/// `$lib/build` and the box's `/health`, this is the third of the three version
+/// lines, and the one that was missing when a phone visibly outran the Mac
+/// beside it with no way to see why.
+#[tauri::command]
+fn shell_identity_cmd(app: AppHandle) -> virtues_lib::ShellIdentity {
+    virtues_lib::shell_identity(&app)
+}
+
+/// Tell the shell the UI booted successfully from the active OTA bundle.
+///
+/// A freshly applied bundle stays *pending* until this lands, and a pending
+/// bundle found at the next startup is treated as one that failed to come up —
+/// abandoned, pointer reverted. Downloading proved nothing; rendering does.
+#[tauri::command]
+fn bundle_boot_ok(app: AppHandle) {
+    if let Ok(dir) = app.path().app_data_dir() {
+        virtues_lib::web_bundle::mark_boot_ok(&dir);
+    }
+}
 
 /// Returns whether the machine is currently paired to a Virtues server.
 #[tauri::command]
@@ -613,30 +668,92 @@ async fn set_summon_shortcut(app: AppHandle, accelerator: String) -> Result<Stri
 #[derive(Default)]
 struct UpdateState {
     ready: Option<ReadyUpdate>,
+    /// Consecutive staging failures. We say nothing about the first: a download
+    /// interrupted by a closing laptop lid is not news, and the next tick
+    /// retries. Two in a row is a real problem worth one line.
+    failures: u8,
 }
 
 struct ReadyUpdate {
     version: String,
-    /// When we first saw it ready — drives the escalating amber→red tray nudge.
-    ready_at: std::time::Instant,
 }
 
-/// Check the **stable** channel (mac-latest `latest.json`) for a newer version.
-/// On a hit: record it + fire ONE native notification; the tray's own poll then
-/// surfaces the "Restart to update" line. Silent best-effort — `None`/errors are
-/// no-ops (up to date, or offline; retried next tick). The actual download runs
-/// on the user's click ([`apply_update`]) so we don't hold an `Update` in state.
+/// Check the followed channel for a newer version and, on a hit, STAGE it —
+/// download and install silently, so the next launch is already the new
+/// version. No notification, no "Restart to update" prompt, nothing the user
+/// has to decide.
+///
+/// The old flow asked. That is a question the user has no basis to answer —
+/// they cannot know what is in the release or whether it matters — and the
+/// honest default for a background helper is to keep itself current the way
+/// the browser does. macOS lets us replace the bundle under a running app, so
+/// "apply on quit" costs nothing: whenever they next start Virtues, it is
+/// current.
+///
+/// Silent best-effort. Up-to-date and offline are both no-ops, retried next
+/// tick. Only a SECOND consecutive staging failure is worth a word.
 /// Which release channel this install follows. Stored beside the app's other
 /// config; absent means Main, so an existing install keeps its behaviour.
 ///
 /// Read at check time rather than cached, so flipping the channel takes effect
 /// on the next poll instead of on the next launch.
-fn updater_endpoint() -> Option<String> {
-    let path = dirs::config_dir()?.join("virtues").join("channel");
-    let channel = std::fs::read_to_string(path).ok()?;
+/// Ask the box who it is: `(version, channel)` from `/health` via the local
+/// proxy. `None` when the box can't be reached — which is not the same as any
+/// particular answer, and callers must treat it that way.
+///
+/// BLOCKING, same std-only shape as the session probe above.
+fn box_identity_blocking() -> Option<(String, String)> {
+    use std::io::{Read, Write};
+    use std::net::TcpStream;
+
+    let addr = "127.0.0.1:7117".parse().ok()?;
+    let mut s = TcpStream::connect_timeout(&addr, PROBE_CONNECT_TIMEOUT).ok()?;
+    let _ = s.set_read_timeout(Some(PROBE_READ_TIMEOUT));
+    s.write_all(b"GET /health HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n")
+        .ok()?;
+    let mut raw = String::new();
+    let _ = s.read_to_string(&mut raw);
+    parse_box_identity(&raw)
+}
+
+/// Pull `version` + `channel` out of a raw `/health` response.
+///
+/// Body only, so header text can never false-match — same discipline as
+/// `classify_session_response`, and the same reason for not pulling in a JSON
+/// dep: the shape is small, known, and ours.
+fn parse_box_identity(raw: &str) -> Option<(String, String)> {
+    let body = raw.split("\r\n\r\n").nth(1)?;
+    let field = |key: &str| -> Option<String> {
+        let at = body.find(&format!("\"{key}\""))?;
+        let rest = &body[at + key.len() + 2..];
+        let open = rest.find('"')?;
+        let close = rest[open + 1..].find('"')?;
+        Some(rest[open + 1..open + 1 + close].to_string())
+    };
+    Some((field("version")?, field("channel")?))
+}
+
+async fn box_identity() -> Option<(String, String)> {
+    tauri::async_runtime::spawn_blocking(box_identity_blocking)
+        .await
+        .unwrap_or(None)
+}
+
+/// Which release channel this install follows — **the box's**, not its own.
+///
+/// This used to read a per-device file, which is how you get a fleet that
+/// disagrees with itself: the box updates on one channel while the Mac paired
+/// to it follows another, and every support conversation starts with an extra
+/// unknown. The box already owns channel selection for its own updates, so it
+/// is the one place worth asking.
+///
+/// `None` means "use the configured stable endpoint": either the box says
+/// stable, or we could not reach it. Preferring stable on an unreachable box is
+/// deliberate — the alternative is silently pulling a prerelease onto a machine
+/// whose owner never chose one.
+async fn updater_endpoint() -> Option<String> {
+    let (_, channel) = box_identity().await?;
     match channel.trim().to_ascii_lowercase().as_str() {
-        // Only Nightly overrides; anything else (including a corrupt file)
-        // falls through to the configured stable endpoint.
         "prerelease" | "pre" | "edge" | "nightly" => Some(
             "https://github.com/virtues-os/virtues/releases/download/mac-edge/latest.json"
                 .to_string(),
@@ -652,7 +769,7 @@ async fn check_for_update(app: &AppHandle) {
     // Point the updater at the followed channel's manifest. `mac-edge` only
     // started publishing one alongside the channel selector — before that,
     // anyone on an edge build had no update path at all.
-    let updater = match updater_endpoint() {
+    let updater = match updater_endpoint().await {
         Some(url) => match url::Url::parse(&url) {
             Ok(parsed) => match app.updater_builder().endpoints(vec![parsed]) {
                 Ok(b) => match b.build() {
@@ -681,42 +798,60 @@ async fn check_for_update(app: &AppHandle) {
         .unwrap_or("")
         .to_string();
 
-    // Record + dedupe so we notify at most once per version.
+    // Already staged this version? Nothing to do. Scoped so the guard is
+    // dropped before the await below — holding a std Mutex across an await
+    // would be a deadlock waiting for a slow download.
     {
         let state = app.state::<std::sync::Mutex<UpdateState>>();
-        let mut g = state.lock().unwrap();
+        let g = state.lock().unwrap();
         if g.ready.as_ref().map(|r| r.version.as_str()) == Some(version.as_str()) {
             return;
         }
-        g.ready = Some(ReadyUpdate {
-            version: version.clone(),
-            ready_at: std::time::Instant::now(),
-        });
     }
 
-    let body = if note.is_empty() {
-        "Restart Virtues to apply.".to_string()
-    } else {
-        format!("{note}\n\nRestart Virtues to apply.")
-    };
-    let _ = app
-        .notification()
-        .builder()
-        .title(format!("Virtues {version} is ready"))
-        .body(body)
-        .show();
+    let staged = update.download_and_install(|_, _| {}, || {}).await;
+
+    let state = app.state::<std::sync::Mutex<UpdateState>>();
+    let mut g = state.lock().unwrap();
+    match staged {
+        Ok(()) => {
+            g.failures = 0;
+            g.ready = Some(ReadyUpdate { version: version.clone() });
+        }
+        Err(e) => {
+            g.failures = g.failures.saturating_add(1);
+            // Exactly at two: report once, then go quiet again rather than
+            // nagging every six hours about something the user cannot fix.
+            if g.failures == 2 {
+                drop(g);
+                let _ = app
+                    .notification()
+                    .builder()
+                    .title("Virtues could not update itself")
+                    .body(format!("{e}\n\nIt will keep trying."))
+                    .show();
+            }
+        }
+    }
+    // `note` is read only for the tray line now; the release body is not
+    // pushed at the user unasked.
+    let _ = note;
 }
 
-/// Apply a pending update: re-check (cheap), download + install, then relaunch.
+/// Restart into an already-staged update, for the user who does not want to
+/// wait until their next launch. Optional by design: the staged bundle takes
+/// effect on quit whether or not anyone clicks this.
+///
 /// On relaunch the helper-reconcile redeploys the new sidecars — loop closed.
 /// `app.restart()` never returns.
-async fn apply_update(app: AppHandle) {
-    use tauri_plugin_updater::UpdaterExt;
-    let Ok(updater) = app.updater() else { return };
-    if let Ok(Some(update)) = updater.check().await {
-        if update.download_and_install(|_, _| {}, || {}).await.is_ok() {
-            app.restart();
-        }
+fn apply_update(app: AppHandle) {
+    let staged = {
+        let state = app.state::<std::sync::Mutex<UpdateState>>();
+        let g = state.lock().unwrap();
+        g.ready.is_some()
+    };
+    if staged {
+        app.restart();
     }
 }
 
@@ -829,6 +964,10 @@ struct TrayItems {
     /// "Check for Updates…" — a manual trigger for [`check_for_update`]. Its
     /// label flips to "Checking…" then "Up to date ✓" for transient feedback.
     check_now: tauri::menu::MenuItem<tauri::Wry>,
+    /// The RELEASE the user is on — the box's version, refreshed each poll.
+    /// Not this bundle's `package_info().version`, which is a build counter
+    /// for the updater and means nothing to a person.
+    version_label: tauri::menu::MenuItem<tauri::Wry>,
 }
 
 /// Set the "Check for Updates…" item's label + enabled state on the main
@@ -859,25 +998,37 @@ fn refresh_tray(app: &AppHandle, items: TrayItems) {
         } else {
             CollectorStatus::default()
         };
+        // The release line. `None` (box unreachable) leaves it as the bare
+        // product name rather than falling back to the build counter: showing
+        // a number the user cannot find anywhere else is worse than showing
+        // none. See `box_identity_blocking`.
+        let version_text = match box_identity_blocking() {
+            Some((version, channel)) => {
+                let ch = channel.trim().to_ascii_lowercase();
+                if ch.is_empty() || ch == "stable" || ch == "main" || ch == version {
+                    format!("Virtues {version}")
+                } else {
+                    format!("Virtues {version} ({ch})")
+                }
+            }
+            None => "Virtues".to_string(),
+        };
         let (box_dot, box_text) = box_label();
         let (coll_dot, coll_text) = collector_label(installed, &status);
         let sync_text = last_sync_label(installed, &status);
         let toggle_text = if status.paused { "Resume collecting" } else { "Pause collecting" };
 
-        // Update line: amber "Restart to update (vX)" when staged, escalating to
-        // red after ~3 days unapplied (Chrome's green→orange→red nudge); a
-        // disabled "up to date" otherwise.
+        // Update line: a staged update is INFORMATION, not a task. It applies
+        // on the next launch on its own, so the escalating amber→red nudge that
+        // used to live here would be pressuring the user about something that
+        // needs nothing from them. Green, stated once; clicking is a shortcut
+        // for the impatient, not a chore.
         let update = {
             let st = app.state::<std::sync::Mutex<UpdateState>>();
             let g = st.lock().unwrap();
-            g.ready.as_ref().map(|r| {
-                let dot = if r.ready_at.elapsed() > std::time::Duration::from_secs(3 * 24 * 3600) {
-                    Dot::Red
-                } else {
-                    Dot::Amber
-                };
-                (dot, format!("Restart to update ({})", r.version))
-            })
+            g.ready
+                .as_ref()
+                .map(|r| (Dot::Green, format!("Virtues {} installs on next launch", r.version)))
         };
 
         let _ = app.run_on_main_thread(move || {
@@ -887,6 +1038,7 @@ fn refresh_tray(app: &AppHandle, items: TrayItems) {
             let _ = items.collector_status.set_icon(dot_image(coll_dot));
             let _ = items.last_sync.set_text(sync_text);
             let _ = items.toggle.set_text(toggle_text);
+            let _ = items.version_label.set_text(&version_text);
             // Disabled when not installed so pause/resume can't be invoked in a
             // state where the CLI would just error — keeps the user from a
             // no-op foot-gun.
@@ -939,7 +1091,9 @@ fn setup_tray(app: &AppHandle) -> tauri::Result<()> {
     let version_label = MenuItem::with_id(
         app,
         "version_label",
-        format!("Virtues v{}", app.package_info().version),
+        // Placeholder only — `refresh_tray` replaces this with the box's
+        // release version on the first poll.
+        "Virtues",
         false,
         None::<&str>,
     )?;
@@ -973,6 +1127,7 @@ fn setup_tray(app: &AppHandle) -> tauri::Result<()> {
         toggle,
         update,
         check_now,
+        version_label,
     };
 
     // The ∴ mark as a TEMPLATE image: monochrome black+alpha that AppKit recolors
@@ -1004,7 +1159,7 @@ fn setup_tray(app: &AppHandle) -> tauri::Result<()> {
             // always has something to apply.
             "update_item" => {
                 let app = app.clone();
-                tauri::async_runtime::spawn(async move { apply_update(app).await });
+                apply_update(app);
             }
             // Manual update check. Flip the label to "Checking…" while it runs,
             // then either let the staged-update path take over (refresh_tray
@@ -1214,6 +1369,9 @@ fn main() {
         // (replaces the retired virtues-client proxy sidecar).
         .plugin(tauri_plugin_reach::init())
         .invoke_handler(tauri::generate_handler![
+            command_surface_version,
+            shell_identity_cmd,
+            bundle_boot_ok,
             get_client_status,
             discover_servers,
             pair_with_code,
@@ -1286,6 +1444,17 @@ fn main() {
             //   box accepts us    → load the box (the in-process :7117 loopback)
             //   box rejects us    → #reset      ("your box was reset, reconnect")
             //   box unreachable   → #unreachable ("can't reach it" + Retry)
+            //
+            // An offline fallback to the app's own bundled build was tried on
+            // 2026-08-05 and reverted the same day. It booted, but web storage
+            // is partitioned by origin: the box-served UI lives at
+            // `http://localhost:7117` and a bundled one at `tauri://localhost`,
+            // so the offline app opened against an empty IndexedDB and showed
+            // none of the documents that were the entire point. Offline needs
+            // ONE origin across all four states (box up, box down, baked
+            // bundle, OTA bundle) — see "The origin problem" in
+            // docs/spa-delivery-plan.md. Do not re-add the fallback alone;
+            // it looks like it works and does not.
             // A SINGLE fast probe (not the multi-retry loop): reachable boxes
             // reconnect silently with no connect-screen flash (the
             // silent-reconnect doctrine), and an unreachable box bounds the
@@ -1381,4 +1550,52 @@ fn main() {
             #[cfg(not(target_os = "macos"))]
             let _ = (app_handle, event);
         });
+}
+
+#[cfg(test)]
+mod box_identity_tests {
+    use super::parse_box_identity;
+
+    fn resp(body: &str) -> String {
+        format!("HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nConnection: close\r\n\r\n{body}")
+    }
+
+    #[test]
+    fn reads_version_and_channel() {
+        // Verbatim shape from a live box (dragon, 2026-08-05), field order and all.
+        let body = r#"{"status":"healthy","version":"0.3.0","channel":"stable","commit":"abc1234"}"#;
+        assert_eq!(
+            parse_box_identity(&resp(body)),
+            Some(("0.3.0".to_string(), "stable".to_string()))
+        );
+    }
+
+    #[test]
+    fn edge_box_reports_edge() {
+        let body = r#"{"status":"healthy","version":"edge","channel":"edge"}"#;
+        assert_eq!(
+            parse_box_identity(&resp(body)),
+            Some(("edge".to_string(), "edge".to_string()))
+        );
+    }
+
+    #[test]
+    fn header_text_cannot_false_match() {
+        // A header naming the field must not be mistaken for the body value.
+        let raw = "HTTP/1.1 200 OK\r\nX-Note: \"version\":\"9.9.9\"\r\n\r\n{\"version\":\"0.3.0\",\"channel\":\"stable\"}";
+        assert_eq!(
+            parse_box_identity(raw),
+            Some(("0.3.0".to_string(), "stable".to_string()))
+        );
+    }
+
+    #[test]
+    fn missing_field_is_none() {
+        assert_eq!(parse_box_identity(&resp(r#"{"status":"healthy"}"#)), None);
+    }
+
+    #[test]
+    fn no_body_is_none() {
+        assert_eq!(parse_box_identity("HTTP/1.1 500 Internal Server Error"), None);
+    }
 }

@@ -1,10 +1,9 @@
 name = "Entity Articles"
-description = "Writes and revises the wikipedia-style article on each entity page (people, places, organizations) whenever enough new records accumulate. Growth-gated: a quiet entity never costs a model call."
+description = "Writes the article on each person, place, and organization in your life, and revises it as more accumulates."
 owner = "system"
-runtime = "function"
 command = ["entity_article"]
 triggers = ["cron", "manual", "tool"]
-default_cron = "0 30 * * * *"
+schedule = "0 30 * * * *"
 
 # Ships OFF. On a box with real history several hundred entities clear the gate
 # immediately, so the first thing this would do on upgrade is spend its way

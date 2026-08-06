@@ -195,6 +195,25 @@ pub fn model_for_slot(slot: virtues_registry::models::ModelSlot) -> String {
     }
 }
 
+/// Which slot, if any, currently resolves to this model id — the inverse of
+/// [`model_for_slot`].
+///
+/// Exists for the BYO fork. A model id is an *address on a specific gateway*,
+/// not a name: `xai/grok-4.5` is where our gateway keeps the chat model, and
+/// means nothing on someone else's. Callers build bodies with our address, so
+/// the fork has to turn it back into the role it stands for before it can look
+/// up the user's address for that role.
+///
+/// `None` when the id is not a slot default — which is the case for a user who
+/// pinned an arbitrary model from the picker. Nothing to translate then: their
+/// choice is passed through, and a route that does not carry it fails loudly.
+pub fn slot_for_model(model_id: &str) -> Option<virtues_registry::models::ModelSlot> {
+    use virtues_registry::models::ModelSlot;
+    ModelSlot::all()
+        .into_iter()
+        .find(|slot| model_for_slot(*slot) == model_id)
+}
+
 /// Whether a model can read images, per the live catalog. `None` when we are
 /// cold or the model is unknown.
 ///

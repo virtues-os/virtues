@@ -12,14 +12,28 @@
 	weekdays is healthy; a heart rate that fills only on weekdays is a phone left
 	at home.
 
-	Rows group by source rather than by ontology because the fix for anything
-	wrong here is always "go look at that device". What's *missing* is a
-	different question with a different answer ("connect something"), and it
-	lives in the catalog.
+	Sections are life-domains — Health, Location, Communication — not the
+	companies the rows came from. The page is read as "what does the box hold,
+	and is it still arriving", and that question is asked in the vocabulary of a
+	life rather than of vendors: a heart rate is a heart rate whether an iPhone
+	or a watch wrote it, and Google is not a category of anything.
+
+	Grouping by source instead would put every stream a device feeds side by
+	side, which is what made a device's cliff obvious. Each row therefore names
+	its own provider — same information, attached to the row it describes
+	instead of to the heading, so "go look at that device" survives the regroup.
+
+	What's *missing* is a different question with a different answer ("connect
+	something"), and it lives in the catalog.
 -->
-<script lang="ts">
+<script lang="ts" module>
 	import type { StreamDays } from '$lib/api/client';
 
+	/** A stream's arrivals, plus the human name of whatever wrote them. */
+	export type GridRow = StreamDays & { providerLabel?: string };
+</script>
+
+<script lang="ts">
 	let {
 		title,
 		subtitle,
@@ -28,7 +42,7 @@
 	}: {
 		title: string;
 		subtitle?: string;
-		streams: StreamDays[];
+		streams: GridRow[];
 		/** UTC date of column 0, from the server. Labels must come from the same
 		 *  calendar the server bucketed on — deriving them from a local
 		 *  `new Date()` shifts every tick and tooltip by a day for anyone west of
@@ -107,9 +121,15 @@
 		{/each}
 	</div>
 
-	{#each rows as r (r.name)}
+	<!-- Keyed on stream AND provider: one stream fed by two sources is two rows
+	     (bookmarks from a Mac and from GitHub), and within a domain section both
+	     are present, so the stream name alone is not unique. -->
+	{#each rows as r (`${r.name}:${r.provider}`)}
 		<div class="row">
-			<span class="name" class:empty={r.total === 0}>{r.display_name}</span>
+			<span class="label" class:empty={r.total === 0}>
+				<span class="name">{r.display_name}</span>
+				{#if r.providerLabel}<span class="provider">{r.providerLabel}</span>{/if}
+			</span>
 			<div class="cells" style="--n: {r.cells.length}">
 				{#each r.cells as level, i (i)}
 					<span
@@ -151,7 +171,8 @@
 	.scale {
 		display: grid;
 		grid-template-columns: repeat(var(--n), 1fr);
-		margin-left: 9.5rem;
+		/* label width + the row's gap */
+		margin-left: 13.25rem;
 		margin-bottom: 0.25rem;
 		height: 0.875rem;
 	}
@@ -168,19 +189,40 @@
 		gap: 0.75rem;
 		padding: 0.0625rem 0;
 	}
-	.name {
+	/* One fixed-width label holding two facts: what the stream is, and who
+	   wrote it. Fixed so every lane starts at the same x and a cliff reads
+	   straight down the column. */
+	.label {
 		flex-shrink: 0;
-		width: 8.75rem;
+		display: flex;
+		align-items: baseline;
+		gap: 0.4375rem;
+		width: 12.5rem;
 		font-size: 0.8125rem;
-		color: var(--color-foreground, #111827);
+		overflow: hidden;
+		white-space: nowrap;
+	}
+	.name {
+		flex: 0 1 auto;
+		min-width: 0;
 		overflow: hidden;
 		text-overflow: ellipsis;
-		white-space: nowrap;
+		color: var(--color-foreground, #111827);
+	}
+	/* Secondary: you read down the stream names and only ask "which device"
+	   when a lane looks wrong. First to truncate, for the same reason. */
+	.provider {
+		flex: 1 1 auto;
+		min-width: 0;
+		overflow: hidden;
+		text-overflow: ellipsis;
+		font-size: 0.75rem;
+		color: var(--color-foreground-subtle, #9ca3af);
 	}
 	/* A stream that has never delivered keeps its row — an empty lane is the
 	   clearest possible statement of "nothing here", and it stays aligned with
 	   its neighbours so the eye can compare. */
-	.name.empty {
+	.label.empty .name {
 		color: var(--color-foreground-subtle, #9ca3af);
 	}
 
@@ -208,11 +250,15 @@
 	}
 
 	@media (max-width: 720px) {
-		.name {
-			width: 6.5rem;
+		.label {
+			width: 7.5rem;
+		}
+		/* No room for both; the stream name is the one you scan. */
+		.provider {
+			display: none;
 		}
 		.scale {
-			margin-left: 7.25rem;
+			margin-left: 8.25rem;
 		}
 	}
 </style>

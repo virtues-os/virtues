@@ -26,7 +26,7 @@
 	// A remembered `activeHref` only knows about clicks in here, so Back, a
 	// deep link, or SettingsView rewriting a legacy route left the highlight
 	// pointing at a section the pane had already left. Longest match wins, so
-	// `/virtues/developer/telemetry` picks Telemetry over any shorter prefix;
+	// `/virtues/developer/terminal` picks Terminal over any shorter prefix;
 	// nothing matches when the pane is showing something outside the mode
 	// (entering a mode doesn't navigate), and then nothing is highlighted.
 	const activeTab = $derived.by(() => {

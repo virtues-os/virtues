@@ -323,12 +323,42 @@ class Uploader {
         if let id = await refetchMacActivityAppletId() {
             cachedAppletId = id
             appletIdIsStale = false
+            persistAppletId(id)
             return id
         }
         // The refetch failed (box unreachable, or it genuinely has no
         // mac_ingest applet). Keep the stale flag set so the next cycle tries
         // again rather than falling back to the id we already know is dead.
         return nil
+    }
+
+    /// Write a recovered applet id back to `config.json`.
+    ///
+    /// Without this the recovery is in-memory only, so the id on disk stays
+    /// dead forever: every restart posts to it, takes a 404, holds the batch,
+    /// and refetches — a wasted cycle and a scary log line on every launch, in
+    /// perpetuity. Observed twice on this machine before it was fixed.
+    ///
+    /// Best-effort: a failed write costs one more recovery cycle next launch,
+    /// which is strictly better than taking collection down over it.
+    private func persistAppletId(_ id: String) {
+        var ids = config.appletIds
+        guard ids["mac_ingest"] != id else { return }
+        ids["mac_ingest"] = id
+        do {
+            try Config(
+                deviceId: config.deviceId,
+                apiEndpoint: config.apiEndpoint,
+                appletIds: ids,
+                boxNodeId: config.boxNodeId,
+                relayUrl: config.relayUrl,
+                createdAt: config.createdAt,
+                deviceSeed: config.deviceSeed
+            ).save()
+            print("✓ recovered applet id written to config: \(id)")
+        } catch {
+            print("⚠️ could not persist recovered applet id: \(error.localizedDescription)")
+        }
     }
 
     private func refetchMacActivityAppletId() async -> String? {

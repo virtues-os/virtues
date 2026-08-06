@@ -1031,12 +1031,18 @@ Parameters:
 - description (required): ONE sentence of the user's intent — shown as the applet's headline.
 - agent (required): the runtime prompt. It runs with a kickoff message "Run your action instruction now." and NO chat history — write it self-contained.
 - schedule: 6-field cron (sec min hour day month dow), box-LOCAL timezone. "0 0 9 25 7 *" = July 25, 9am. Date-anchored one-offs: nearest future occurrence + until="once".
-- triggers: subset of cron/manual/tool/api/webhook. Defaults: with schedule ["cron","manual","tool"], else ["manual","tool"].
+- triggers: subset of cron/manual/tool/api/webhook/message. Defaults: with schedule ["cron","manual","tool"], else ["manual","tool"]. Add "message" when the user should be able to TALK to the applet — their text becomes the run's opening turn and the reply is the run result. This is the front door for trackers ("I had eggs" → sql_write a row) and anything the user feeds rather than schedules; check it before declining an ask for lack of input.
 - condition: SQL boolean gating each run (skipped when false). Local data only.
 - until: omit = forever · "once" = archive after first success · SQL boolean = archive when true after a success.
-- schema_sql: idempotent DDL, MUST target only schema applet_<slug> (start with CREATE SCHEMA IF NOT EXISTS applet_<slug>;).
+- schema_sql: ONE MIGRATION, not the whole schema. MUST target only schema applet_<slug>. First call: CREATE SCHEMA IF NOT EXISTS applet_<slug>; then your CREATE TABLEs. Later calls: submit ONLY what changed (ALTER TABLE applet_<slug>.t ADD COLUMN ...) — re-sending a CREATE TABLE IF NOT EXISTS with an extra column silently adds nothing, and the check will refuse it with the ALTER to write. Resubmitting identical DDL is recognized as already applied.
 - face_html: a complete index.html for the applet's face (sandboxed iframe; include <link rel="stylesheet" href="virtues.css"> and <script src="virtues.js"></script>; read data with await virtues.query(sql); max 48KB).
-- limits: {max_llm_cost, timeout, max_runs} — protective defaults, user-editable.
+- limits: protective ceilings, user-editable. Only these keys are enforced; any other key is a check failure, because a stored-but-ignored limit reads as protection and is not:
+    max_llm_cost         — DOLLARS, ceiling on model spend within one run (0.25 = 25 cents). The run stops mid-loop and records `budget_exceeded`.
+    max_llm_cost_per_day — DOLLARS, ceiling across a rolling 24h; checked before the run starts.
+    max_runs_per_day     — whole runs in a rolling 24h (`max_runs` means this). Manual "Run now" is exempt.
+    max_runs_per_hour    — whole runs in a rolling hour. Manual "Run now" is exempt.
+    timeout_s            — SECONDS of wall clock for the subprocess phase.
+  Set a spend ceiling on anything scheduled that calls a model: it is the difference between a cap and a hope.
 
 If the result status is "check_failed", fix the findings and call again — nothing was created."#.to_string(),
         parameters: serde_json::json!({
@@ -1049,13 +1055,23 @@ If the result status is "check_failed", fix the findings and call again — noth
                 "schedule": { "type": "string", "description": "6-field cron, box-local tz" },
                 "triggers": {
                     "type": "array",
-                    "items": { "type": "string", "enum": ["cron", "manual", "tool", "api", "webhook"] }
+                    "items": { "type": "string", "enum": ["cron", "manual", "tool", "api", "webhook", "message"] }
                 },
                 "condition": { "type": "string", "description": "SQL boolean run gate" },
                 "until": { "type": "string", "description": "forever (omit) | 'once' | SQL boolean" },
-                "schema_sql": { "type": "string", "description": "Idempotent DDL in schema applet_<slug> only" },
+                "schema_sql": { "type": "string", "description": "ONE migration in schema applet_<slug> only. First call CREATEs; later calls submit only the change (ALTER TABLE ...)." },
                 "face_html": { "type": "string", "description": "Complete face index.html (48KB max)" },
-                "limits": { "type": "object", "description": "{max_llm_cost, timeout, max_runs}" }
+                "limits": {
+                    "type": "object",
+                    "description": "Enforced ceilings only. max_llm_cost / max_llm_cost_per_day in DOLLARS; max_runs_per_day (alias max_runs) / max_runs_per_hour as whole runs; timeout_s in seconds. Unknown keys fail the check.",
+                    "properties": {
+                        "max_llm_cost":         { "type": "number"  },
+                        "max_llm_cost_per_day": { "type": "number"  },
+                        "max_runs_per_day":     { "type": "integer" },
+                        "max_runs_per_hour":    { "type": "integer" },
+                        "timeout_s":            { "type": "integer" }
+                    }
+                }
             }
         }),
         tool_type: ToolType::Builtin,
@@ -1082,7 +1098,7 @@ Use this when:
 Optional filters:
 - owner: "system" or "user" (system = built-in, user = user-created)
 - enabled: true/false
-- trigger: "cron" | "manual" | "tool" | "api" | "webhook"
+- trigger: "cron" | "manual" | "tool" | "api" | "webhook" | "message"
 "#.to_string(),
         parameters: serde_json::json!({
             "type": "object",

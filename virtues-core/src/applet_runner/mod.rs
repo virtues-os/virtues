@@ -39,9 +39,12 @@ use std::process::Stdio;
 use tokio::io::AsyncWriteExt;
 use tokio::process::Command;
 
+pub mod limits;
+
 use crate::error::{Error, Result};
 use crate::scheduler::applets::{self, Applet};
 use crate::server::yjs::YjsState;
+use limits::Limits;
 
 /// Dependencies threaded into the runner. Cheap to clone; holds references.
 #[derive(Clone)]
@@ -70,6 +73,11 @@ pub enum AppletRunStatus {
     Skipped,
     NotFound,
     Forbidden,
+    /// Stopped by a spend ceiling the owner set (`config.limits.max_llm_cost`
+    /// or `max_llm_cost_per_day`). Distinct from `Failed` on purpose: nothing
+    /// broke, so it does not belong in the needs-attention strip beside
+    /// genuine breakage.
+    BudgetExceeded,
     /// Run row was created and execution was spawned on a detached task.
     /// Used only by `run_applet_detached` so the HTTP handler can return
     /// immediately with the run_id while the subprocess/agent finishes.
@@ -118,7 +126,7 @@ pub async fn run_applet(
         PrepareOutcome::Early(result) => Ok(result),
         PrepareOutcome::Ready { action, run_id } => {
             let payload = payload.cloned();
-            Ok(execute_prepared(deps.clone(), action, run_id, payload).await)
+            Ok(execute_prepared(deps.clone(), action, run_id, trigger.to_string(), payload).await)
         }
     }
 }
@@ -142,8 +150,11 @@ pub async fn run_applet_detached(
             let payload = payload.cloned();
             let deps_owned = deps.clone();
             let run_id_for_task = run_id.clone();
+            let trigger_owned = trigger.to_string();
             tokio::spawn(async move {
-                let _ = execute_prepared(deps_owned, action, run_id_for_task, payload).await;
+                let _ =
+                    execute_prepared(deps_owned, action, run_id_for_task, trigger_owned, payload)
+                        .await;
             });
             Ok(AppletRunResult {
                 run_id: Some(run_id),
@@ -221,8 +232,25 @@ async fn prepare_run(
     }
 
     // 3. Condition (SQL gate). Evaluate before creating a run row.
+    //
+    // Only `message` is exempt, and the line is narrower than "a person did
+    // it deliberately" — `manual` is deliberate too and is still gated.
+    //
+    // The difference is what the condition is FOR. A condition guards whether
+    // the applet's scheduled work should happen, and AGENTS.md tells authors
+    // to write exactly that: `NOT EXISTS (a successful run today)` is the
+    // recommended cooldown idiom. "Run now" means "do your scheduled thing
+    // now", so bypassing that guard would let a button press double-write the
+    // day's entry — the condition is an idempotency check, not a preference.
+    //
+    // A message is not the scheduled work. It is new input that did not exist
+    // when the gate was written, there is nothing to duplicate, and a clock
+    // gate would silently swallow what someone typed (a falsy condition
+    // records no run at all). So the message goes through and `manual` does
+    // not.
+    let gated = trigger != "message";
     if let Some(condition) = &action.condition {
-        if !condition.trim().is_empty() {
+        if gated && !condition.trim().is_empty() {
             match eval_condition(&deps.db, condition).await {
                 Ok(false) => {
                     tracing::debug!(applet_id, "condition falsy, skipping silently");
@@ -278,6 +306,46 @@ async fn prepare_run(
         }));
     }
 
+    // 4b. Limits that can be answered before spending anything: the rate caps
+    // and the rolling daily spend ceiling. Deliberately after the concurrency
+    // gate — an overlap skip is not an attempt, and must not eat a rate
+    // budget. The refusal records a real run row, because "your applet did
+    // not run, and here is exactly why" is the whole point of having a cap.
+    let applet_limits = Limits::from_config(&action.config);
+    match limits::check_pre_run(&deps.db, &action.id, &applet_limits, trigger).await {
+        Ok(Some(refusal)) => {
+            tracing::info!(applet_id, reason = refusal.message(), "run refused by limits");
+            let run = applets::create_run(&deps.db, Some(&action.id), trigger).await?;
+            applets::complete_run(
+                &deps.db,
+                &run.id,
+                refusal.status(),
+                0,
+                None,
+                Some(refusal.message()),
+            )
+            .await?;
+            let status = match refusal {
+                limits::Refusal::RateLimited(_) => AppletRunStatus::Skipped,
+                limits::Refusal::OverDailyBudget(_) => AppletRunStatus::BudgetExceeded,
+            };
+            return Ok(PrepareOutcome::Early(AppletRunResult {
+                run_id: Some(run.id),
+                status,
+                summary: refusal.message().to_string(),
+                error: None,
+            }));
+        }
+        Ok(None) => {}
+        // A limits query that fails must not become a limit that blocks. The
+        // caps are protective, not load-bearing: if we cannot read the ledger
+        // we let the run through and say so, rather than silently freezing an
+        // applet on a transient database error.
+        Err(e) => {
+            tracing::warn!(applet_id, error = %e, "limits check failed — allowing the run");
+        }
+    }
+
     // 5. Create run row.
     let run = applets::create_run(&deps.db, Some(&action.id), trigger).await?;
     Ok(PrepareOutcome::Ready {
@@ -294,9 +362,28 @@ async fn execute_prepared(
     deps: RunnerDeps,
     action: Applet,
     run_id: String,
+    trigger: String,
     payload: Option<serde_json::Value>,
 ) -> AppletRunResult {
     let applet_id = action.id.clone();
+
+    // What the person said, when this wake was a person saying something. The
+    // exchange lives on the run — this plus `result_summary` IS the
+    // conversation, which is why no separate thread object is minted.
+    let message: Option<String> = (trigger == "message")
+        .then(|| {
+            payload
+                .as_ref()
+                .and_then(|p| p.get("message").or_else(|| p.get("text")))
+                .and_then(|v| v.as_str())
+                .map(str::to_string)
+        })
+        .flatten();
+    if let Some(text) = &message {
+        if let Err(e) = applets::set_run_message(&deps.db, &run_id, text).await {
+            tracing::warn!(applet_id, error = %e, "failed to record run message");
+        }
+    }
 
     // Helper: persist `error` status and return a Failed result. Logs and
     // swallows DB errors from `complete_run` since at this point we have
@@ -365,12 +452,44 @@ async fn execute_prepared(
     if let Some(prompt) = action.agent.as_ref().filter(|s| !s.trim().is_empty()) {
         let ctx = subprocess_summary.as_deref();
         match crate::agent::applet_runner::run_agent_loop(
-            &deps.db, &deps.yjs, &action, prompt, ctx,
+            &deps.db,
+            &deps.yjs,
+            &action,
+            prompt,
+            ctx,
+            &run_id,
+            message.as_deref(),
         )
         .await
         {
             Ok(agent_result) => {
                 let steps = agent_result.steps as i64;
+
+                // Stopped at the ceiling: the work is partial by definition, so
+                // it is neither a success nor a failure. Recording it as
+                // `success` would let `until = "once"` archive an applet that
+                // never finished its one job.
+                if let Some(reason) = agent_result.budget_stopped {
+                    if let Err(e) = applets::complete_run(
+                        &deps.db,
+                        &run_id,
+                        "budget_exceeded",
+                        steps,
+                        None,
+                        Some(&reason),
+                    )
+                    .await
+                    {
+                        tracing::error!(applet_id, error = %e, "complete_run failed after budget stop");
+                    }
+                    return AppletRunResult {
+                        run_id: Some(run_id),
+                        status: AppletRunStatus::BudgetExceeded,
+                        summary: reason,
+                        error: None,
+                    };
+                }
+
                 let summary = agent_result
                     .message
                     .clone()
@@ -573,26 +692,16 @@ async fn load_credentials(db: &PgPool, credential_id: &str) -> Result<serde_json
 // Subprocess phase
 // ============================================================================
 
-/// Hard ceiling on a single action subprocess. Generous enough for the largest
-/// legitimate batch, short enough that a hung/wedged process frees the per-action
-/// run lock instead of blocking the action until the box restarts. (A device
-/// upload gives up far sooner; the box still finishes idempotently if it can.)
-const SUBPROCESS_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(300);
-
-/// Per-applet ceiling: `config.limits.timeout_s` (the first limits-block
-/// field enforced), falling back to the global default. Actions with long
-/// legitimate runs declare their ceiling in their own manifest — e.g.
-/// embedding_index's initial-onboarding drain is hours of real work, so its
-/// manifest carries `[config.limits] timeout_s = 7500` and its internal
+/// Per-applet subprocess ceiling: `config.limits.timeout_s`, falling back to
+/// the global default. Applets with long legitimate runs declare their own —
+/// e.g. embedding_index's initial-onboarding drain is hours of real work, so
+/// its manifest carries `[config.limits] timeout_s = 7500` and its internal
 /// 2-hour wall-clock limit exits cleanly rather than being SIGKILLed.
+///
+/// Parsing lives in [`limits::Limits`] with every other cap; this stays as the
+/// call-site shorthand.
 fn subprocess_timeout(action: &Applet) -> std::time::Duration {
-    action
-        .config
-        .get("limits")
-        .and_then(|l| l.get("timeout_s"))
-        .and_then(|v| v.as_u64())
-        .map(std::time::Duration::from_secs)
-        .unwrap_or(SUBPROCESS_TIMEOUT)
+    Limits::from_config(&action.config).subprocess_timeout()
 }
 
 /// What a successful subprocess phase produced: the one-line summary plus the
@@ -1059,6 +1168,85 @@ fn resolve_program(argv0: &str) -> PathBuf {
 #[cfg(test)]
 mod tests {
     use super::ENV_PASSTHROUGH;
+    use super::*;
+    use crate::server::yjs::YjsState;
+
+    async fn applet_with_falsy_condition(pool: &sqlx::PgPool, id: &str, triggers: &str) {
+        sqlx::query(
+            "INSERT INTO app_applets (id, name, owner, command, condition, triggers, enabled) \
+             VALUES ($1, $1, 'user', '[\"echo\"]', 'FALSE', $2::jsonb, TRUE)",
+        )
+        .bind(id)
+        .bind(triggers)
+        .execute(pool)
+        .await
+        .expect("insert");
+    }
+
+    async fn run_count(pool: &sqlx::PgPool, id: &str) -> i64 {
+        sqlx::query_scalar("SELECT count(*) FROM app_applet_runs WHERE applet_id = $1")
+            .bind(id)
+            .fetch_one(pool)
+            .await
+            .unwrap()
+    }
+
+    /// A condition gates POLLS. Someone who just pressed send is not a poll, and
+    /// a clock gate like `extract(hour from now()) < 8` would otherwise swallow
+    /// what they typed — silently, since a falsy condition records nothing.
+    /// Same shape as the catch-up × time-of-day trap, same answer as rate caps
+    /// exempting "Run now".
+    #[sqlx::test]
+    async fn a_condition_does_not_swallow_a_message(pool: sqlx::PgPool) {
+        let deps = RunnerDeps {
+            db: pool.clone(),
+            yjs: YjsState::new(pool.clone()),
+        };
+        applet_with_falsy_condition(&pool, "applet_m", r#"["cron","manual","message"]"#).await;
+
+        // The cron wake is gated, and silently: no run row at all.
+        let cron = run_applet(&deps, "applet_m", "cron", None).await.unwrap();
+        assert_eq!(cron.status, AppletRunStatus::Skipped);
+        assert_eq!(run_count(&pool, "applet_m").await, 0, "a poll is gated silently");
+
+        // And so is "Run now". The condition guards whether the scheduled work
+        // should happen — AGENTS.md's own cooldown idiom is
+        // `NOT EXISTS (a successful run today)` — so a button press that
+        // bypassed it would double-write the day's entry.
+        let manual = run_applet(&deps, "applet_m", "manual", None).await.unwrap();
+        assert_eq!(manual.status, AppletRunStatus::Skipped, "manual is not exempt");
+        assert_eq!(run_count(&pool, "applet_m").await, 0);
+
+        // The message is not.
+        let payload = serde_json::json!({ "message": "I had eggs" });
+        let msg = run_applet(&deps, "applet_m", "message", Some(&payload))
+            .await
+            .unwrap();
+        assert_ne!(msg.status, AppletRunStatus::Skipped, "the person was heard");
+        assert_eq!(run_count(&pool, "applet_m").await, 1);
+
+        let said: Option<String> =
+            sqlx::query_scalar("SELECT message FROM app_applet_runs WHERE applet_id = 'applet_m'")
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(said.as_deref(), Some("I had eggs"), "the words are on the run");
+    }
+
+    /// `message` still has to be granted like any other trigger.
+    #[sqlx::test]
+    async fn an_applet_that_does_not_take_messages_refuses_one(pool: sqlx::PgPool) {
+        let deps = RunnerDeps {
+            db: pool.clone(),
+            yjs: YjsState::new(pool.clone()),
+        };
+        applet_with_falsy_condition(&pool, "applet_n", r#"["cron"]"#).await;
+        let payload = serde_json::json!({ "message": "hello" });
+        let r = run_applet(&deps, "applet_n", "message", Some(&payload))
+            .await
+            .unwrap();
+        assert_eq!(r.status, AppletRunStatus::Forbidden);
+    }
 
     /// The vault master key must never be granted by the blanket passthrough.
     /// It is handed out in `apply_env` only to shipped code, and the tempting

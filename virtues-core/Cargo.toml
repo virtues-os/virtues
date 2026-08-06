@@ -123,6 +123,10 @@ dotenv = "0.15"
 
 # Scheduler
 tokio-cron-scheduler = "0.13"
+# The same cron parser tokio-cron-scheduler uses underneath, taken directly so
+# slot prediction and slot firing cannot disagree about an edge case. Already
+# in the lock as its transitive dependency — this pins nothing new.
+croner = "2.2"
 
 # Encryption for credentials
 ring = "0.17"

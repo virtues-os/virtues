@@ -999,8 +999,37 @@ pub fn registered_ontologies() -> Vec<OntologyDescriptor> {
             source_streams: vec!["stream_github_events"],
             timestamp_column: "timestamp",
             end_timestamp_column: None,
+            // THE USER'S OWN WORDS ARE THE BEST TEXT ON THE ROW.
+            //
+            // `note` is user-authored marginalia (migration 0073) and `tags` are
+            // containers harvested at the source — browser folder paths, GitHub
+            // topics. Both were absent here, which meant the one thing a person
+            // deliberately wrote about a save was invisible to search, and a
+            // bookmark filed under "Kitchen reno" could not be found by that
+            // phrase. Intent language is also the closest match to future query
+            // language, so it earns its place ahead of most machine text.
+            //
+            // `extraction_text` (0095) is the machine half: the enrichment
+            // sweep's record rendered as prose, which is what makes a saved
+            // Instagram post — no title, no description — findable at all. It
+            // is written by `ExtractionRecord::to_embed_text` rather than
+            // assembled from JSONB here, so the rendering has one definition.
+            // Rows not yet enriched contribute an empty string and lose
+            // nothing.
+            //
+            // The `jsonb_typeof` guard is load-bearing: `jsonb_array_elements_text`
+            // raises on a non-array, and this expression is interpolated into the
+            // indexer's scan for EVERY bookmark row — so one malformed `tags`
+            // value from any producer would abort indexing for the whole
+            // ontology, not just skip its own row.
             embedding: Some(EmbeddingConfig {
-                embed_text_sql: "COALESCE(t.title, '') || '\n\n' || COALESCE(t.description, '')",
+                embed_text_sql: "COALESCE(t.title, '') || '\n\n' || COALESCE(t.description, '') \
+                     || '\n\n' || COALESCE(t.note, '') || '\n\n' || \
+                     CASE WHEN jsonb_typeof(t.tags) = 'array' \
+                          THEN COALESCE((SELECT string_agg(tag, ', ') \
+                                           FROM jsonb_array_elements_text(t.tags) AS tag), '') \
+                          ELSE '' END \
+                     || '\n\n' || COALESCE(t.extraction_text, '')",
                 content_type: "bookmark",
                 title_sql: Some("t.title"),
                 preview_sql: "COALESCE(SUBSTR(t.description, 1, 200), t.url)",

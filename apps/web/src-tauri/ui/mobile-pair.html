@@ -52,10 +52,27 @@
     <p class="hint">The code is shown by <b>virtues pair</b> on the box (or in its Devices screen). It expires after a few minutes.</p>
 
     <script>
-      // Already paired → straight to the bundled SPA at root (loopback is up).
-      if (window.__VIRTUES_PAIRED__) { location.replace('/'); }
-
       const invoke = window.__TAURI__.core.invoke;
+
+      // Already paired → straight to the bundled SPA at root (loopback is up).
+      //
+      // `__VIRTUES_PAIRED__` is injected once, when the window is built, and is
+      // never re-evaluated — so after an in-session unpair it still says true
+      // and would bounce the user straight back into the app they just left.
+      // That is why unpairing appeared to do nothing until the app was force
+      // quit: only a fresh launch re-read the pairing.
+      //
+      // So the injected flag is a fast path, not the truth. It skips a round
+      // trip on the common case (launch while paired) and is then confirmed
+      // against the plugin, which reads the real record. If the check fails we
+      // stay on this screen: showing the connect screen to someone who is
+      // paired is a recoverable annoyance, and dropping someone unpaired into
+      // the app is not.
+      if (window.__VIRTUES_PAIRED__) {
+        invoke('plugin:reach|reach_status')
+          .then((s) => { if (s && s.paired) location.replace('/'); })
+          .catch(() => {});
+      }
       const form = document.getElementById('form');
       const go = document.getElementById('go');
       const msg = document.getElementById('msg');

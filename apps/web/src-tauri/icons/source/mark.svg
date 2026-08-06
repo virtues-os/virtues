@@ -1,0 +1,29 @@
+<!--
+  Virtues ∴ — app-icon master, 1024×1024, full-bleed canvas.
+
+  Geometry is the `virtues:logo` mark from apps/web/src/lib/icons.ts scaled up:
+  24-unit viewBox → 1024, r=3 → r=94, base dots 15 units apart → 472px.
+
+  Mark bbox is 660×596 (64% of canvas width), sat 20px above true center —
+  a ∴ is bottom-heavy (two dots below, one above), so a bbox-centered
+  triangle reads as sitting low. That 20px is the optical correction.
+
+  Transparent ground on purpose: Icon Composer owns the background layer.
+
+  The bundler does NOT give iOS an opaque ground — assuming it did cost a
+  TestFlight upload (409: "The large app icon ... can't be transparent or
+  contain an alpha channel"). `tauri icon` writes RGBA into
+  gen/apple/Assets.xcassets/AppIcon.appiconset, and App Store validation
+  rejects an alpha channel on the app icon even when it is fully opaque —
+  ours was alpha 254-255 everywhere and still failed.
+
+  So after any `tauri icon` run, flatten that appiconset back to RGB before
+  archiving, or the upload dies at validation. See tools/strip-icon-alpha.py.
+-->
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
+	<g fill="#17171A">
+		<circle cx="512" cy="288" r="94"/>
+		<circle cx="276" cy="696" r="94"/>
+		<circle cx="748" cy="696" r="94"/>
+	</g>
+</svg>

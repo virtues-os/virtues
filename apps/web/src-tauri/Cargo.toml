@@ -28,6 +28,13 @@ tauri = { version = "2", features = ["macos-private-api"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
+# OTA web-bundle overlay (src/web_bundle.rs): unpack the build the box hands us.
+# Pure Rust, no TLS — the box is reached over the in-process iroh loopback with
+# a hand-rolled HTTP GET, the same way main.rs already probes it. Keeping an
+# HTTP client (and its TLS stack) out of this crate is deliberate: it is the
+# part that cross-compiles worst to iOS.
+tar = "0.4"
+flate2 = "1.0"
 
 # Desktop-only: the tray, self-updater, keychain and shell/opener helpers, plus
 # the tauri desktop features (tray-icon, macos-private-api) that don't build on

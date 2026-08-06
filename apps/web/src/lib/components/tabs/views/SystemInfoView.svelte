@@ -8,10 +8,29 @@
 	import { paneActions } from "$lib/stores/paneActions.svelte";
 	import { getBackupStatus } from "$lib/api/client";
 
+	import { BUILD, buildLabel } from "$lib/build";
+	import { shellIdentity, describeOtaCheck, type ShellIdentity } from "$lib/tauri/bridge";
+
 	// @ts-ignore — Vite compile-time constant (see vite.config.ts + app.d.ts)
 	const BUILD_COMMIT: string = __BUILD_COMMIT__;
 
 	let { tab, active }: { tab: Tab; active: boolean } = $props();
+
+	// ─── The three version lines ────────────────────────────────────────────
+	// A box, a UI bundle, and a native shell, each with its own version and no
+	// reason to agree. On 2026-08-05 a phone was running visibly newer UI than
+	// the Mac beside it and the reason was not discoverable from either screen —
+	// it took ssh and a git log. With OTA moving the UI independently of the
+	// app, that question gets asked more often, not less.
+	//
+	// `Package` below is the box. These two are the other two: `BUILD` is this
+	// bundle's own identity, baked at build time, and the shell reports whether
+	// the bundle arrived over the air or shipped inside the app — which the
+	// bundle itself cannot know.
+	let shell = $state<ShellIdentity | null>(null);
+	onMount(async () => {
+		shell = await shellIdentity();
+	});
 
 	// A toggle, not an event — `active` renders it held down, so the toolbar can
 	// show what mode the view is in rather than just what you can do to it.
@@ -517,6 +536,37 @@
 					{@render ledger("Package", version || "—")}
 					{@render ledger("Built", formatBuildTime(builtAt) || "—")}
 					{@render ledger("Commit", commit ? commit.slice(0, 12) : "—", true)}
+					<!--
+						The other two version lines. "Interface" is this bundle; when it
+						came over the air the shell knows its content hash and we show
+						that, because two bundles can report the same version (every dev
+						build says "dev") while being different builds. "App" only
+						renders inside the native shell — in a browser there is no third
+						artifact to name, and an em-dash there would imply one exists.
+					-->
+					{@render ledger(
+						"Interface",
+						shell?.activeBundle
+							? `${buildLabel(BUILD)} · ota ${shell.activeBundle.slice(0, 8)}`
+							: `${buildLabel(BUILD)} · bundled`,
+						true
+					)}
+					{#if shell}
+						{@render ledger(
+							"App",
+							`${shell.appVersion} · surface ${shell.commandSurface}`,
+							true
+						)}
+						<!--
+							Only speaks when there is something to say. The loud case is
+							a shell too old for the bundle the box offers: everything is
+							working correctly and the user still sees stale UI, which
+							without a reason on screen reads as OTA being broken.
+						-->
+						{#if describeOtaCheck(shell.lastCheck)}
+							<p class="ota-note">{describeOtaCheck(shell.lastCheck)}</p>
+						{/if}
+					{/if}
 				</div>
 			</div>
 
@@ -690,6 +740,14 @@
 	.cols { display: grid; grid-template-columns: 1fr 1fr; gap: 14px 48px; }
 	@media (max-width: 720px) { .cols { grid-template-columns: 1fr; } }
 	.col { display: flex; flex-direction: column; gap: 11px; }
+	/* Only rendered when there is something to say — see describeOtaCheck. */
+	.ota-note {
+		margin: 0.5rem 0 0;
+		font-size: 0.75rem;
+		line-height: 1.4;
+		color: var(--warning);
+	}
+
 	.ledger-row { display: flex; align-items: baseline; gap: 4px; }
 	.ledger-label { font-size: 13px; color: var(--foreground); flex-shrink: 0; }
 	.leader {

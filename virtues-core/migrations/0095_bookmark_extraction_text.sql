@@ -1,0 +1,23 @@
+-- ---------------------------------------------------------------------------
+-- The extraction record, rendered as prose for the search index
+-- (docs/bookmarks-plan.md §4).
+--
+-- `extraction` (0094) is the structured record; this is the same content
+-- flattened to labelled lines. It exists as its own column because
+-- `EmbeddingConfig.embed_text_sql` is a SQL expression evaluated per row by the
+-- indexer, and assembling the prose out of JSONB in SQL would put a second,
+-- diverging definition of that rendering next to the Rust one. Writing it once
+-- at enrichment time — `ExtractionRecord::to_embed_text`, which is unit-tested
+-- — keeps a single source of truth for how a record reads.
+--
+-- Machine-authored, and kept apart from `note` (0073) on purpose. Both feed the
+-- embed text, but only one of them is the user's own words, and blending the
+-- two would make it impossible to ever weight them differently.
+--
+-- No backfill: the indexer selects on `md5(embed_text)`, so every bookmark row
+-- goes stale the moment the descriptor changes and re-embeds on the next
+-- embedding_index cron. Rows that have not been enriched yet contribute an
+-- empty string here and lose nothing.
+-- ---------------------------------------------------------------------------
+
+ALTER TABLE data_content_bookmark ADD COLUMN extraction_text TEXT;

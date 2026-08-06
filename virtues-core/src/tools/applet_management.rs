@@ -240,6 +240,7 @@ pub async fn run_applet(
         AppletRunStatus::Success => "success",
         AppletRunStatus::Skipped => "skipped",
         AppletRunStatus::Failed => "error",
+        AppletRunStatus::BudgetExceeded => "budget_exceeded",
         AppletRunStatus::NotFound => "not_found",
         AppletRunStatus::Forbidden => "forbidden",
         // Tool-call dispatch awaits the full run via `run_applet`, never

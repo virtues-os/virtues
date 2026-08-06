@@ -60,6 +60,9 @@ pub struct Applet {
     pub id: String,
     pub owner: String,
     pub name: String,
+    /// The one-sentence intent the manifest carries — what this applet is for,
+    /// in the user's terms. Reconcile's to own, like `name`.
+    pub description: Option<String>,
     pub agent: Option<String>,
     pub cron_schedule: Option<String>,
     pub enabled: bool,
@@ -79,6 +82,12 @@ pub struct Applet {
     /// Set when the lifecycle completed; archived applets also get
     /// `enabled = FALSE` so the scheduler skips them naturally.
     pub archived_at: Option<crate::types::Timestamp>,
+    /// The scheduled slot most recently handled — fired, or consciously
+    /// declined for catch-up. Derived; the scheduler recomputes it.
+    pub last_slot_at: Option<crate::types::Timestamp>,
+    /// The slot currently owed. Far enough in the past = "expected but didn't
+    /// run". Derived; see [`crate::scheduler::slots`].
+    pub next_due_at: Option<crate::types::Timestamp>,
     pub created_at: crate::types::Timestamp,
     pub updated_at: crate::types::Timestamp,
 }
@@ -94,9 +103,25 @@ pub struct AppletRun {
     pub records_processed: i64,
     pub error: Option<String>,
     pub trigger: String,
+    // Chaining. Both columns exist from the original schema and NEITHER HAS
+    // EVER BEEN WRITTEN — 13,359 runs on a real box, zero non-null. The
+    // functions that would have written them (`create_child_run`,
+    // `get_child_runs`) had no callers and are deleted; composition is not on
+    // the roadmap, because cron + condition already covers what data triggers
+    // would buy and no applet has ever wanted to chain. Kept only so the API
+    // shape does not change; do not read them expecting data.
     pub parent_run_id: Option<String>,
     pub transform_stage: Option<String>,
     pub result_summary: Option<String>,
+    /// What the user said, for `trigger = "message"` runs. The exchange lives
+    /// on the run — this plus `result_summary` IS the conversation.
+    pub message: Option<String>,
+    /// What this run spent with the model, in micros-USD. Summed from
+    /// `app_ai_calls`, which records the gateway's authoritative per-call
+    /// figure — never re-estimated here. Zero for runs that called no model,
+    /// and for every run before spend was attributed at all.
+    #[serde(default)]
+    pub cost_micros: i64,
     pub created_at: crate::types::Timestamp,
 }
 
@@ -241,6 +266,17 @@ pub const USER_APPLET_PREFIX: &str = "applet_user__";
 /// non-user applets — only `applet_user__<slug>` applets own an `applet_`
 /// schema. Slugs are `[a-z0-9_]`, so the result is a safe unquoted identifier.
 pub(crate) fn applet_schema_name(applet_id: &str) -> Option<String> {
+    applet_slug(applet_id).map(|slug| format!("applet_{slug}"))
+}
+
+/// The bare slug behind a user applet's id, or `None` for anything else.
+///
+/// Same parse and same identifier-safety check as [`applet_schema_name`] —
+/// callers that need to build a name other than the schema (the DDL guard
+/// wants `<slug>`, not `applet_<slug>`) take it from here rather than
+/// stripping the prefix back off, which is how the two spellings drifted
+/// apart the last time.
+pub(crate) fn applet_slug(applet_id: &str) -> Option<String> {
     let slug = applet_id.strip_prefix(USER_APPLET_PREFIX)?;
     if slug.is_empty()
         || !slug
@@ -249,7 +285,7 @@ pub(crate) fn applet_schema_name(applet_id: &str) -> Option<String> {
     {
         return None;
     }
-    Some(format!("applet_{slug}"))
+    Some(slug.to_string())
 }
 
 /// List the base tables in a user applet's owned `applet_<slug>` schema. Empty
@@ -295,7 +331,7 @@ pub async fn create_user_applet(
         return Err(Error::InvalidInput("triggers cannot be empty".into()));
     }
     for t in triggers {
-        if !matches!(t.as_str(), "cron" | "manual" | "tool" | "api" | "webhook") {
+        if !matches!(t.as_str(), "cron" | "manual" | "tool" | "api" | "webhook" | "message") {
             return Err(Error::InvalidInput(format!(
                 "invalid trigger '{t}': must be one of cron, manual, tool, api, webhook"
             )));
@@ -453,6 +489,15 @@ pub async fn update_applet(
     }
     if obj.contains_key("enabled") {
         sets.push(format!("enabled = ${}", next()));
+        // Turning a finished applet back on un-finishes it. There is no
+        // coherent "enabled AND archived" state — archiving sets enabled =
+        // FALSE precisely so the scheduler skips it, and leaving archived_at
+        // behind would show a running applet as finished on its own page.
+        // Takes no bind: it is a consequence of the flag, not a field a
+        // caller may set.
+        if obj.get("enabled").and_then(|v| v.as_bool()) == Some(true) {
+            sets.push("archived_at = NULL".to_string());
+        }
     }
     if obj.contains_key("config") {
         sets.push(format!("config = ${}::jsonb", next()));
@@ -539,7 +584,7 @@ pub async fn update_applet(
             })
             .collect::<Result<_>>()?;
         for t in &triggers {
-            if !matches!(t.as_str(), "cron" | "manual" | "tool" | "api" | "webhook") {
+            if !matches!(t.as_str(), "cron" | "manual" | "tool" | "api" | "webhook" | "message") {
                 return Err(Error::InvalidInput(format!(
                     "invalid trigger '{t}': must be one of cron, manual, tool, api, webhook"
                 )));
@@ -664,37 +709,6 @@ pub async fn create_run(
     run_from_row(&row)
 }
 
-/// Create a child run (for transform chaining).
-pub async fn create_child_run(
-    db: &PgPool,
-    parent_run_id: &str,
-    transform_stage: &str,
-    trigger: &str,
-) -> Result<AppletRun> {
-    let run_id = generate_id(
-        RUN_PREFIX,
-        &[
-            parent_run_id,
-            transform_stage,
-            &chrono::Utc::now().to_rfc3339(),
-        ],
-    );
-
-    let row = sqlx::query(
-        r#"INSERT INTO app_applet_runs (id, parent_run_id, transform_stage, trigger)
-           VALUES ($1, $2, $3, $4)
-           RETURNING *"#,
-    )
-    .bind(&run_id)
-    .bind(parent_run_id)
-    .bind(transform_stage)
-    .bind(trigger)
-    .fetch_one(db)
-    .await?;
-
-    run_from_row(&row)
-}
-
 /// Complete a run (success, error, skipped, cancelled).
 pub async fn complete_run(
     db: &PgPool,
@@ -794,11 +808,20 @@ pub async fn query_runs(
     limit: i64,
 ) -> Result<Vec<AppletRun>> {
     let rows = sqlx::query(
-        r#"SELECT * FROM app_applet_runs
-           WHERE ($1 IS NULL OR applet_id = $2)
-             AND ($3 IS NULL OR status = $4)
-           ORDER BY created_at DESC
-           LIMIT $5"#,
+        // The cost of a run is not on the run — it is the sum of the model
+        // calls it made, which live in `app_ai_calls`. Carried here so the
+        // detail page can answer "what did this cost" beside "what did it do",
+        // which is the pairing that makes a spend ceiling a decision rather
+        // than a guess.
+        r#"SELECT r.*, COALESCE((
+                 SELECT SUM(c.cost_micros) FROM app_ai_calls c
+                  WHERE c.applet_run_id = r.id
+               ), 0)::bigint AS cost_micros
+             FROM app_applet_runs r
+            WHERE ($1 IS NULL OR r.applet_id = $2)
+              AND ($3 IS NULL OR r.status = $4)
+            ORDER BY r.created_at DESC
+            LIMIT $5"#,
     )
     .bind(applet_id)
     .bind(applet_id)
@@ -809,6 +832,100 @@ pub async fn query_runs(
     .await?;
 
     rows.iter().map(run_from_row).collect()
+}
+
+/// One line of an applet's log: consecutive runs that shared an outcome.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct LogEntry {
+    pub run_id: Option<String>,
+    pub status: String,
+    pub trigger: Option<String>,
+    pub summary: Option<String>,
+    pub message: Option<String>,
+    pub error: Option<String>,
+    pub occurrences: i64,
+    pub first_at: Option<crate::types::Timestamp>,
+    pub last_at: Option<crate::types::Timestamp>,
+    pub cost_micros: i64,
+}
+
+/// The run log with identical consecutive outcomes collapsed into one row.
+///
+/// 99% of run history on a real box is "the machine ticked and there was
+/// nothing to do" — transcription_resolution alone wrote 1,294 runs in a week,
+/// every one a successful no-op. A raw list is unreadable, and worse, it
+/// hides: 3,449 consecutive errors sat in this box's history behind a window
+/// of recent successes.
+///
+/// The grouping is mechanical rather than semantic — same status, same
+/// summary, same message. Nothing here decides what "did nothing" means, which
+/// matters because `records_processed = 0` does not reliably mean it. An
+/// applet whose output varies (any agent, every message exchange) never
+/// collapses at all.
+pub async fn collapsed_log(db: &PgPool, applet_id: &str, limit: i64) -> Result<Vec<LogEntry>> {
+    // Gaps-and-islands: a global row_number minus a per-outcome row_number is
+    // constant exactly while the outcome repeats, so it names each run.
+    let rows = sqlx::query(
+        r#"WITH ordered AS (
+               SELECT r.id, r.status, r.trigger, r.started_at, r.error,
+                      coalesce(r.result_summary, '') AS summary,
+                      coalesce(r.message, '')        AS message,
+                      COALESCE((SELECT SUM(c.cost_micros) FROM app_ai_calls c
+                                 WHERE c.applet_run_id = r.id), 0)::bigint AS cost_micros,
+                      row_number() OVER (ORDER BY r.started_at DESC)
+                    - row_number() OVER (
+                          PARTITION BY r.status,
+                                       coalesce(r.result_summary, ''),
+                                       coalesce(r.message, '')
+                          ORDER BY r.started_at DESC) AS grp
+                 FROM app_applet_runs r
+                WHERE r.applet_id = $1
+           )
+           SELECT status, summary, message,
+                  count(*)                 AS occurrences,
+                  min(started_at)          AS first_at,
+                  max(started_at)          AS last_at,
+                  sum(cost_micros)::bigint AS cost_micros,
+                  (array_agg(id      ORDER BY started_at DESC))[1] AS latest_run_id,
+                  (array_agg(trigger ORDER BY started_at DESC))[1] AS trigger,
+                  (array_agg(error   ORDER BY started_at DESC))[1] AS error
+             FROM ordered
+            GROUP BY grp, status, summary, message
+            ORDER BY max(started_at) DESC
+            LIMIT $2"#,
+    )
+    .bind(applet_id)
+    .bind(limit)
+    .fetch_all(db)
+    .await?;
+
+    let blank_to_none = |s: String| (!s.is_empty()).then_some(s);
+    rows.iter()
+        .map(|r| {
+            Ok(LogEntry {
+                run_id: r.try_get("latest_run_id")?,
+                status: r.try_get("status")?,
+                trigger: r.try_get("trigger")?,
+                summary: blank_to_none(r.try_get("summary")?),
+                message: blank_to_none(r.try_get("message")?),
+                error: r.try_get("error")?,
+                occurrences: r.try_get("occurrences")?,
+                first_at: r.try_get("first_at")?,
+                last_at: r.try_get("last_at")?,
+                cost_micros: r.try_get("cost_micros")?,
+            })
+        })
+        .collect()
+}
+
+/// Record what the user said on a `message` run.
+pub async fn set_run_message(db: &PgPool, run_id: &str, message: &str) -> Result<()> {
+    sqlx::query("UPDATE app_applet_runs SET message = $1 WHERE id = $2")
+        .bind(truncate_utf8_bytes(message, RESULT_SUMMARY_MAX_BYTES))
+        .bind(run_id)
+        .execute(db)
+        .await?;
+    Ok(())
 }
 
 /// Cancel a running run.
@@ -845,18 +962,6 @@ pub async fn cleanup_stale_runs(db: &PgPool) -> Result<u64> {
     Ok(affected)
 }
 
-/// Get child runs for a parent run.
-pub async fn get_child_runs(db: &PgPool, parent_run_id: &str) -> Result<Vec<AppletRun>> {
-    let rows = sqlx::query(
-        "SELECT * FROM app_applet_runs WHERE parent_run_id = $1 ORDER BY created_at ASC",
-    )
-    .bind(parent_run_id)
-    .fetch_all(db)
-    .await?;
-
-    rows.iter().map(run_from_row).collect()
-}
-
 // ============================================================================
 // Row mapping helpers
 // ============================================================================
@@ -882,6 +987,7 @@ pub fn applet_from_row(row: &sqlx::postgres::PgRow) -> Result<Applet> {
         id: row.try_get("id")?,
         owner: row.try_get("owner")?,
         name: row.try_get("name")?,
+        description: row.try_get("description").ok().flatten(),
         agent: row.try_get("agent")?,
         cron_schedule: row.try_get("cron_schedule")?,
         enabled: row.try_get::<bool, _>("enabled")?,
@@ -894,6 +1000,8 @@ pub fn applet_from_row(row: &sqlx::postgres::PgRow) -> Result<Applet> {
         command,
         until: row.try_get("until").ok().flatten(),
         archived_at: row.try_get("archived_at").ok().flatten(),
+        last_slot_at: row.try_get("last_slot_at").ok().flatten(),
+        next_due_at: row.try_get("next_due_at").ok().flatten(),
         created_at: row.try_get("created_at")?,
         updated_at: row.try_get("updated_at")?,
     })
@@ -978,6 +1086,10 @@ fn run_from_row(row: &sqlx::postgres::PgRow) -> Result<AppletRun> {
         parent_run_id: row.try_get("parent_run_id")?,
         transform_stage: row.try_get("transform_stage")?,
         result_summary: row.try_get("result_summary")?,
+        // Absent from queries that do not ask for it (`SELECT *` on the runs
+        // table alone) — those callers do not show cost, so 0 is right.
+        message: row.try_get("message").ok().flatten(),
+        cost_micros: row.try_get("cost_micros").unwrap_or(0),
         created_at: row.try_get("created_at")?,
     })
 }
@@ -985,6 +1097,122 @@ fn run_from_row(row: &sqlx::postgres::PgRow) -> Result<AppletRun> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    async fn seed_run(pool: &PgPool, applet: &str, status: &str, summary: &str, secs: i64) {
+        sqlx::query(
+            "INSERT INTO app_applet_runs (id, applet_id, status, result_summary, trigger, started_at) \
+             VALUES ($1, $2, $3, $4, 'cron', now() - make_interval(secs => $5))",
+        )
+        .bind(format!("run_{applet}_{secs}"))
+        .bind(applet)
+        .bind(status)
+        .bind(summary)
+        .bind(secs as f64)
+        .execute(pool)
+        .await
+        .expect("seed run");
+    }
+
+    async fn applet_row(pool: &PgPool, id: &str) {
+        sqlx::query(
+            "INSERT INTO app_applets (id, name, owner, agent) VALUES ($1, $1, 'user', 'x')",
+        )
+        .bind(id)
+        .execute(pool)
+        .await
+        .expect("insert applet");
+    }
+
+    /// The whole point: a poll that finds nothing still writes a run, so most
+    /// of a real box's history is the same line repeated. Collapsing turns
+    /// 1,294 identical rows into one with a count — and, more importantly,
+    /// stops a long run of errors from hiding behind a window of recent
+    /// successes.
+    #[sqlx::test]
+    async fn the_log_collapses_repeats_but_not_distinct_outcomes(pool: PgPool) {
+        applet_row(&pool, "applet_log").await;
+        // Oldest → newest: 3 identical successes, 2 errors, then 2 more of the
+        // same success text as the first group.
+        for (i, (status, summary)) in [
+            ("success", "nothing to do"),
+            ("success", "nothing to do"),
+            ("success", "nothing to do"),
+            ("error", ""),
+            ("error", ""),
+            ("success", "nothing to do"),
+            ("success", "nothing to do"),
+        ]
+        .iter()
+        .enumerate()
+        {
+            seed_run(&pool, "applet_log", status, summary, (700 - i as i64 * 100)).await;
+        }
+
+        let log = collapsed_log(&pool, "applet_log", 50).await.unwrap();
+        assert_eq!(log.len(), 3, "seven runs, three distinct stretches");
+
+        // Newest first.
+        assert_eq!(log[0].status, "success");
+        assert_eq!(log[0].occurrences, 2);
+        // The error stretch survives in the middle — it is NOT merged with the
+        // successes on either side, which is what makes an incident visible.
+        assert_eq!(log[1].status, "error");
+        assert_eq!(log[1].occurrences, 2);
+        assert_eq!(log[2].occurrences, 3);
+        assert_eq!(log[2].summary.as_deref(), Some("nothing to do"));
+    }
+
+    /// An applet whose output differs every run never collapses — which is the
+    /// case for every agent, and for every message exchange.
+    #[sqlx::test]
+    async fn varied_output_never_collapses(pool: PgPool) {
+        applet_row(&pool, "applet_varied").await;
+        for (i, text) in ["first", "second", "third"].iter().enumerate() {
+            seed_run(&pool, "applet_varied", "success", text, 300 - i as i64 * 100).await;
+        }
+        let log = collapsed_log(&pool, "applet_varied", 50).await.unwrap();
+        assert_eq!(log.len(), 3, "three different things said, three lines");
+        assert!(log.iter().all(|e| e.occurrences == 1));
+    }
+
+    /// Turning a finished applet back on un-finishes it. Without this the row
+    /// lands in a state that cannot be drawn: its page says "Finished" while
+    /// it is switched on and (before the scheduler learned to check) queued to
+    /// run. "Run again" on the detail page is exactly this one PATCH.
+    #[sqlx::test]
+    async fn enabling_a_finished_applet_clears_the_finish(pool: PgPool) {
+        sqlx::query(
+            "INSERT INTO app_applets (id, name, owner, agent, enabled, archived_at) \
+             VALUES ('applet_x', 'X', 'user', 'do a thing', FALSE, now())",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        let updated = update_applet(&pool, "applet_x", &serde_json::json!({ "enabled": true }))
+            .await
+            .expect("patch");
+        assert!(updated.enabled);
+        assert!(updated.archived_at.is_none(), "finishing is cleared, not kept");
+    }
+
+    /// Disabling is not finishing, and must not pretend to be.
+    #[sqlx::test]
+    async fn disabling_does_not_finish_an_applet(pool: PgPool) {
+        sqlx::query(
+            "INSERT INTO app_applets (id, name, owner, agent, enabled) \
+             VALUES ('applet_y', 'Y', 'user', 'do a thing', TRUE)",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        let updated = update_applet(&pool, "applet_y", &serde_json::json!({ "enabled": false }))
+            .await
+            .expect("patch");
+        assert!(!updated.enabled);
+        assert!(updated.archived_at.is_none());
+    }
 
     /// The regression this file earned the hard way.
     ///

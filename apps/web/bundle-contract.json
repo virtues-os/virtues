@@ -1,0 +1,4 @@
+{
+  "$comment": "What this SPA bundle needs from the native shell it runs inside. Read at build time by scripts/write-bundle-manifest.mjs and stamped into build/.virtues-bundle.json, which the box serves as GET /api/web-bundle/version. A shell whose COMMAND_SURFACE_VERSION (src-tauri/src/main.rs) is lower than minShellVersion must REFUSE this bundle rather than load it and fail unpredictably. Raise minShellVersion only when the SPA genuinely cannot function on the older surface — raising it strands every client that has not updated its native app, which is exactly the white-screen-in-the-field this mechanism exists to prevent.",
+  "minShellVersion": 1
+}

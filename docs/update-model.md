@@ -95,7 +95,7 @@ That's the whole discipline. Everything else is per-tier native mechanism.
 
 ## What to build, in leverage order
 
-1. **SPA-OTA** — so the web layer actually updates freely on mobile (turns the
-   whole model on). Spec: `mobile-spa-ota-plan.md`.
+1. **SPA delivery** — so the web layer updates freely on every client, not just
+   mobile (turns the whole model on). Spec: `spa-delivery-plan.md`.
 2. **One `fastlane → TestFlight` lane** — the only native pipeline worth having.
 3. **Keep shrinking the collector into the box.**

@@ -119,27 +119,7 @@ pub async fn trigger_applet_handler(
         }
     };
 
-    use crate::applet_runner::AppletRunStatus;
-    let (status_code, status_label) = match result.status {
-        AppletRunStatus::Running => (StatusCode::ACCEPTED, "running"),
-        AppletRunStatus::Success => (StatusCode::OK, "success"),
-        AppletRunStatus::Skipped => (StatusCode::OK, "skipped"),
-        AppletRunStatus::Failed => (StatusCode::INTERNAL_SERVER_ERROR, "error"),
-        AppletRunStatus::NotFound => (StatusCode::NOT_FOUND, "not_found"),
-        AppletRunStatus::Forbidden => (StatusCode::FORBIDDEN, "forbidden"),
-    };
-
-    (
-        status_code,
-        Json(serde_json::json!({
-            "run_id": result.run_id,
-            "applet_id": applet_id,
-            "status": status_label,
-            "summary": result.summary,
-            "error": result.error,
-        })),
-    )
-        .into_response()
+    run_status_response(result, &applet_id)
 }
 
 /// POST /api/chat-import/upload — multipart upload of a Claude / ChatGPT /
@@ -221,18 +201,37 @@ pub async fn list_applets_handler(State(state): State<AppState>) -> Response {
 
     let rows = sqlx::query(
         r#"SELECT
-            t.id, t.owner, t.name, t.agent, t.cron_schedule,
+            t.id, t.owner, t.name, t.description, t.agent, t.cron_schedule,
             t.enabled, t.config, t.condition, t.triggers,
             t.memory, t.credential_id, t.device_id,
             t.command,
             t.until, t.archived_at,
+            t.next_due_at, t.last_slot_at,
             t.created_at, t.updated_at,
             r.status AS last_run_status,
             r.started_at AS last_run_at,
             r.records_processed AS last_run_records,
             r.error AS last_run_error,
-            r.result_summary AS last_run_summary
+            r.result_summary AS last_run_summary,
+            -- The card's pulse and its excerpt, fetched with the row instead
+            -- of by the client afterwards. The list was firing two extra
+            -- requests PER APPLET — around fifty on a page — for two small
+            -- facts that the database can hand over in the same pass.
+            p.pulse,
+            s.summary AS last_success_summary
            FROM app_applets t
+           LEFT JOIN LATERAL (
+               SELECT array_agg(status ORDER BY started_at DESC) AS pulse
+                 FROM (SELECT status, started_at FROM app_applet_runs
+                        WHERE applet_id = t.id
+                        ORDER BY started_at DESC LIMIT 10) recent
+           ) p ON TRUE
+           LEFT JOIN LATERAL (
+               SELECT result_summary AS summary FROM app_applet_runs
+                WHERE applet_id = t.id AND status = 'success'
+                  AND result_summary IS NOT NULL AND btrim(result_summary) <> ''
+                ORDER BY started_at DESC LIMIT 1
+           ) s ON TRUE
            LEFT JOIN app_applet_runs r ON r.id = (
                SELECT id FROM app_applet_runs
                WHERE applet_id = t.id
@@ -252,6 +251,7 @@ pub async fn list_applets_handler(State(state): State<AppState>) -> Response {
                     let id: String = r.try_get("id").unwrap_or_default();
                     let owner: String = r.try_get("owner").unwrap_or_else(|_| "user".to_string());
                     let name: String = r.try_get("name").unwrap_or_default();
+                    let description: Option<String> = r.try_get("description").unwrap_or(None);
                     let agent: Option<String> = r.try_get("agent").unwrap_or(None);
                     let cron: Option<String> = r.try_get("cron_schedule").unwrap_or(None);
                     let enabled: bool = r.try_get("enabled").unwrap_or(false);
@@ -275,6 +275,10 @@ pub async fn list_applets_handler(State(state): State<AppState>) -> Response {
                     let until: Option<String> = r.try_get("until").unwrap_or(None);
                     let archived_at: Option<chrono::DateTime<chrono::Utc>> =
                         r.try_get("archived_at").unwrap_or(None);
+                    let next_due_at: Option<chrono::DateTime<chrono::Utc>> =
+                        r.try_get("next_due_at").unwrap_or(None);
+                    let last_slot_at: Option<chrono::DateTime<chrono::Utc>> =
+                        r.try_get("last_slot_at").unwrap_or(None);
                     let has_face = crate::server::faces::face_dir_for(&id).is_some();
                     let origin = crate::scheduler::applets::origin_of(
                         &owner,
@@ -295,6 +299,12 @@ pub async fn list_applets_handler(State(state): State<AppState>) -> Response {
                     let updated: chrono::DateTime<chrono::Utc> =
                         r.try_get("updated_at").unwrap_or_else(|_| chrono::Utc::now());
 
+                    let pulse: Vec<String> = r
+                        .try_get::<Option<Vec<String>>, _>("pulse")
+                        .unwrap_or(None)
+                        .unwrap_or_default();
+                    let last_success_summary: Option<String> =
+                        r.try_get("last_success_summary").unwrap_or(None);
                     let last_run_status: Option<String> =
                         r.try_get("last_run_status").unwrap_or(None);
                     let last_run = last_run_status.map(|s| {
@@ -316,6 +326,7 @@ pub async fn list_applets_handler(State(state): State<AppState>) -> Response {
                         "id": id,
                         "owner": owner,
                         "name": name,
+                        "description": description,
                         "agent": agent,
                         "cron_schedule": cron,
                         "enabled": enabled,
@@ -330,7 +341,11 @@ pub async fn list_applets_handler(State(state): State<AppState>) -> Response {
                         "command": command,
                         "until": until,
                         "archived_at": archived_at,
+                        "next_due_at": next_due_at,
+                        "last_slot_at": last_slot_at,
                         "has_face": has_face,
+                        "pulse": pulse,
+                        "last_success_summary": last_success_summary,
                         "created_at": created,
                         "updated_at": updated,
                         "is_system": owner == "system",
@@ -341,6 +356,109 @@ pub async fn list_applets_handler(State(state): State<AppState>) -> Response {
 
             (StatusCode::OK, Json(actions)).into_response()
         }
+        Err(e) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({ "error": e.to_string() })),
+        )
+            .into_response(),
+    }
+}
+
+/// One shape for "a run was requested" — shared by the manual-run and the
+/// message handlers so the two can never disagree about what a status means.
+fn run_status_response(
+    result: crate::applet_runner::AppletRunResult,
+    applet_id: &str,
+) -> Response {
+    use crate::applet_runner::AppletRunStatus;
+    let (status_code, status_label) = match result.status {
+        AppletRunStatus::Running => (StatusCode::ACCEPTED, "running"),
+        AppletRunStatus::Success => (StatusCode::OK, "success"),
+        AppletRunStatus::Skipped => (StatusCode::OK, "skipped"),
+        AppletRunStatus::Failed => (StatusCode::INTERNAL_SERVER_ERROR, "error"),
+        // Not an error: a ceiling the owner set was reached. 200 so the UI
+        // renders the run and its explanation rather than a failure toast.
+        AppletRunStatus::BudgetExceeded => (StatusCode::OK, "budget_exceeded"),
+        AppletRunStatus::NotFound => (StatusCode::NOT_FOUND, "not_found"),
+        AppletRunStatus::Forbidden => (StatusCode::FORBIDDEN, "forbidden"),
+    };
+    (
+        status_code,
+        Json(serde_json::json!({
+            "run_id": result.run_id,
+            "applet_id": applet_id,
+            "status": status_label,
+            "summary": result.summary,
+            "error": result.error,
+        })),
+    )
+        .into_response()
+}
+
+/// GET /api/applets/:id/log — the run log with identical outcomes collapsed.
+///
+/// 99% of run history on a real box is "the machine ticked and there was
+/// nothing to do": transcription_resolution alone wrote 1,294 runs in a week,
+/// every one of them a successful no-op. A raw list is unreadable, and worse,
+/// it hides things — 3,449 consecutive errors sat in this box's history behind
+/// a window of recent successes.
+///
+/// So consecutive runs sharing an outcome become one row with a count. The
+/// grouping is mechanical, not semantic: same status, same summary, same
+/// message. Nothing here decides what "did nothing" means, which is good,
+/// because `records_processed = 0` does not reliably mean it. An applet whose
+/// output varies — any agent, every message exchange — never collapses at all.
+pub async fn applet_log_handler(
+    State(state): State<AppState>,
+    Path(applet_id): Path<String>,
+    axum::extract::Query(q): axum::extract::Query<RunsQuery>,
+) -> Response {
+    let limit = q.limit.unwrap_or(50).clamp(1, 200);
+    match crate::scheduler::applets::collapsed_log(state.db.pool(), &applet_id, limit).await {
+        Ok(entries) => (StatusCode::OK, Json(entries)).into_response(),
+        Err(e) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({ "error": e.to_string() })),
+        )
+            .into_response(),
+    }
+}
+
+/// POST /api/applets/:id/message — say something to an applet.
+///
+/// The sixth wake. Until this existed every trigger was the box acting on
+/// itself — a clock, a poll, a device, a tool call — and a person could turn an
+/// applet on, off, or run it, but could not tell it anything.
+pub async fn message_applet_handler(
+    State(state): State<AppState>,
+    Path(applet_id): Path<String>,
+    Json(body): Json<serde_json::Value>,
+) -> Response {
+    let text = body
+        .get("message")
+        .and_then(|v| v.as_str())
+        .map(str::trim)
+        .filter(|s| !s.is_empty());
+    let Some(text) = text else {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({ "error": "message is required" })),
+        )
+            .into_response();
+    };
+
+    let deps = crate::applet_runner::RunnerDeps {
+        db: state.db.pool().clone(),
+        yjs: state.yjs_state.clone(),
+    };
+    // Detached, like the manual-run handler: a long agent turn must not hang on
+    // the client staying connected. The run row exists before this returns, so
+    // the UI can show the exchange immediately.
+    let payload = serde_json::json!({ "message": text });
+    match crate::applet_runner::run_applet_detached(&deps, &applet_id, "message", Some(&payload))
+        .await
+    {
+        Ok(result) => run_status_response(result, &applet_id),
         Err(e) => (
             StatusCode::INTERNAL_SERVER_ERROR,
             Json(serde_json::json!({ "error": e.to_string() })),
@@ -367,6 +485,7 @@ pub async fn get_applet_handler(
                     "id": action.id,
                     "owner": action.owner,
                     "name": action.name,
+                    "description": action.description,
                     "agent": action.agent,
                     "cron_schedule": action.cron_schedule,
                     "enabled": action.enabled,
@@ -381,6 +500,8 @@ pub async fn get_applet_handler(
                     "runtime": crate::scheduler::applets::derived_runtime(&action),
                     "until": action.until,
                     "archived_at": action.archived_at,
+                    "next_due_at": action.next_due_at,
+                    "last_slot_at": action.last_slot_at,
                     "has_face": crate::server::faces::face_dir_for(&action.id).is_some(),
                     "created_at": action.created_at,
                     "updated_at": action.updated_at,
@@ -1457,15 +1578,25 @@ pub async fn usage_summary_handler(State(state): State<AppState>) -> Response {
         .into_response()
 }
 
-/// GET /api/telemetry/ai-calls — recent individual AI calls for the Telemetry
-/// tab's AI-call log (the window that was missing when the transcription runaway
-/// burned the wallet invisibly). Box-local `app_ai_calls`, newest first.
-pub async fn ai_calls_handler(State(state): State<AppState>) -> Response {
-    match crate::api::ai_calls::recent_calls(state.db.pool(), 100).await {
-        Ok(rows) => (StatusCode::OK, Json(rows)).into_response(),
+/// GET /api/telemetry/ai-calls — one page of the AI-call log for the Usage page
+/// (the window that was missing when the transcription runaway burned the
+/// wallet invisibly). Box-local `app_ai_calls`, newest first.
+pub async fn ai_calls_handler(
+    State(state): State<AppState>,
+    Query(query): Query<crate::api::ai_calls::AiCallsQuery>,
+) -> Response {
+    match crate::api::ai_calls::list_calls(state.db.pool(), query).await {
+        Ok(page) => (StatusCode::OK, Json(page)).into_response(),
         Err(e) => {
             tracing::warn!(error = %e, "ai_calls query failed");
-            (StatusCode::OK, Json(Vec::<crate::api::ai_calls::AiCallRow>::new())).into_response()
+            (
+                StatusCode::OK,
+                Json(crate::api::ai_calls::AiCallPage {
+                    items: Vec::new(),
+                    total: 0,
+                }),
+            )
+                .into_response()
         }
     }
 }
