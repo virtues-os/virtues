@@ -2,13 +2,7 @@
 	import Icon from '$lib/components/Icon.svelte';
 	import UniversalDataGrid, { type Column } from '$lib/components/datagrid/UniversalDataGrid.svelte';
 	import type { FilterDef } from '$lib/components/datagrid/types';
-	import {
-		listApplets,
-		listActionRuns,
-		adminReconcile,
-		type Applet,
-		type AppletRun
-	} from '$lib/api/client';
+	import { listApplets, adminReconcile, type Applet } from '$lib/api/client';
 	import { windowShellStore } from '$lib/stores/window-shell.svelte';
 	import { describeSchedule, relativeTime } from '$lib/applets/palette';
 	import AppletCard from './AppletCard.svelte';
@@ -17,8 +11,6 @@
 	import { contextMenu } from '$lib/stores/contextMenu.svelte';
 
 	let applets = $state<Applet[]>([]);
-	let pulseByAction = $state<Record<string, AppletRun[]>>({});
-	let lastSuccessByAction = $state<Record<string, AppletRun | null>>({});
 	let loading = $state(true);
 	let err = $state<string | null>(null);
 	let newMenuOpen = $state(false);
@@ -114,24 +106,10 @@
 		loading = true;
 		err = null;
 		try {
+			// One request. This used to fan out two more per applet — about
+			// fifty on a page — for the pulse and the last output, both of
+			// which the list query now carries.
 			applets = await listApplets();
-			void Promise.all(
-				applets.map(async (a) => {
-					try {
-						const [runs, successRuns] = await Promise.all([
-							listActionRuns(a.id, { limit: 10 }),
-							listActionRuns(a.id, { limit: 1, status: 'success' })
-						]);
-						pulseByAction = { ...pulseByAction, [a.id]: runs };
-						lastSuccessByAction = {
-							...lastSuccessByAction,
-							[a.id]: successRuns[0] ?? null
-						};
-					} catch {
-						// decorative
-					}
-				})
-			);
 		} catch (e) {
 			err = e instanceof Error ? e.message : String(e);
 		} finally {
@@ -479,8 +457,8 @@
 			<AppletCard
 				{applet}
 				lastRun={applet.last_run}
-				lastSuccess={lastSuccessByAction[applet.id] ?? null}
-				pulseRuns={pulseByAction[applet.id] ?? []}
+				lastSuccessSummary={applet.last_success_summary}
+				pulse={applet.pulse ?? []}
 			/>
 		{/snippet}
 	</UniversalDataGrid>
