@@ -118,11 +118,22 @@ impl Vad {
     }
 
     /// Total measured speech seconds in the recording. Drives the drain's
-    /// no-speech skip (total < `MIN_SPEECH_SECS` → silent, no Gemini call), the
-    /// honesty ground-truth handed to the model, and the post-transcription
-    /// hallucination guard. `None` on any decode/inference error — callers treat
-    /// that as "unknown" and never suppress on it (fail-open: a VAD problem can
-    /// never silently drop real speech, at worst one unnecessary Gemini call).
+    /// no-speech skip (total < `MIN_SPEECH_SECS` → silent, no Gemini call) and
+    /// the honesty ground-truth handed to the model. `None` on any
+    /// decode/inference error — callers treat that as "unknown" and never
+    /// suppress on it (fail-open: a VAD problem can never silently drop real
+    /// speech, at worst one unnecessary Gemini call).
+    ///
+    /// PRESENCE, NOT DURATION. Treat this as "was there speech at all", never
+    /// as "how much speech there was". MarbleNet fires on onsets, so on real
+    /// conversation it recovers only a fraction of the true speech time —
+    /// measured 5.6-31.5s against 50-86s of actual voice activity on a 17-clip
+    /// corpus from this box, i.e. undermeasuring by 1.5-14×, with a longest
+    /// contiguous run of ~3-6s even at p=0.5. As a presence signal it is
+    /// excellent on that same corpus (17/17 speech pass, 0/21 silence pass, and
+    /// stable across p=0.6..0.75). Budgeting anything proportional to this
+    /// value silently deleted 16 days of transcripts once already — see
+    /// MAX_CHARS_PER_AUDIO_SEC in transform.rs.
     pub fn speech_seconds(&self, m4a: &[u8]) -> Option<f32> {
         match self.speech_probs(m4a) {
             Ok(Some((probs, dur))) => {
