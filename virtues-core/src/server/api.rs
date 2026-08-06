@@ -212,8 +212,26 @@ pub async fn list_applets_handler(State(state): State<AppState>) -> Response {
             r.started_at AS last_run_at,
             r.records_processed AS last_run_records,
             r.error AS last_run_error,
-            r.result_summary AS last_run_summary
+            r.result_summary AS last_run_summary,
+            -- The card's pulse and its excerpt, fetched with the row instead
+            -- of by the client afterwards. The list was firing two extra
+            -- requests PER APPLET — around fifty on a page — for two small
+            -- facts that the database can hand over in the same pass.
+            p.pulse,
+            s.summary AS last_success_summary
            FROM app_applets t
+           LEFT JOIN LATERAL (
+               SELECT array_agg(status ORDER BY started_at DESC) AS pulse
+                 FROM (SELECT status, started_at FROM app_applet_runs
+                        WHERE applet_id = t.id
+                        ORDER BY started_at DESC LIMIT 10) recent
+           ) p ON TRUE
+           LEFT JOIN LATERAL (
+               SELECT result_summary AS summary FROM app_applet_runs
+                WHERE applet_id = t.id AND status = 'success'
+                  AND result_summary IS NOT NULL AND btrim(result_summary) <> ''
+                ORDER BY started_at DESC LIMIT 1
+           ) s ON TRUE
            LEFT JOIN app_applet_runs r ON r.id = (
                SELECT id FROM app_applet_runs
                WHERE applet_id = t.id
@@ -281,6 +299,12 @@ pub async fn list_applets_handler(State(state): State<AppState>) -> Response {
                     let updated: chrono::DateTime<chrono::Utc> =
                         r.try_get("updated_at").unwrap_or_else(|_| chrono::Utc::now());
 
+                    let pulse: Vec<String> = r
+                        .try_get::<Option<Vec<String>>, _>("pulse")
+                        .unwrap_or(None)
+                        .unwrap_or_default();
+                    let last_success_summary: Option<String> =
+                        r.try_get("last_success_summary").unwrap_or(None);
                     let last_run_status: Option<String> =
                         r.try_get("last_run_status").unwrap_or(None);
                     let last_run = last_run_status.map(|s| {
@@ -320,6 +344,8 @@ pub async fn list_applets_handler(State(state): State<AppState>) -> Response {
                         "next_due_at": next_due_at,
                         "last_slot_at": last_slot_at,
                         "has_face": has_face,
+                        "pulse": pulse,
+                        "last_success_summary": last_success_summary,
                         "created_at": created,
                         "updated_at": updated,
                         "is_system": owner == "system",

@@ -205,7 +205,7 @@ pub async fn get_activity_metrics(db: &Database) -> Result<ActivityMetrics> {
         SELECT r.id, CASE WHEN t.id IS NULL THEN 'transform'
                  WHEN t.command IS NULL AND (t.agent IS NULL OR btrim(t.agent) = '') THEN 'view'
                  ELSE 'function' END as applet_type,
-               r.transform_stage, r.error, r.completed_at
+               r.error, r.completed_at
         FROM app_applet_runs r
         LEFT JOIN app_applets t ON r.applet_id = t.id
         WHERE r.status = 'error' AND r.error IS NOT NULL
@@ -221,7 +221,10 @@ pub async fn get_activity_metrics(db: &Database) -> Result<ActivityMetrics> {
         .map(|row| RecentError {
             job_id: row.try_get::<String, _>("id").unwrap_or_default(),
             job_type: row.try_get("applet_type").unwrap_or_default(),
-            stream_name: row.try_get("transform_stage").ok(),
+            // Always None. It read `transform_stage`, a column nothing has
+            // ever written; reporting a null as if it were a measurement is
+            // the same lie in miniature as an unenforced limit.
+            stream_name: None,
             error_message: row.try_get("error").unwrap_or_default(),
             error_class: None,
             failed_at: row.try_get("completed_at").unwrap_or_else(|_| Utc::now()),

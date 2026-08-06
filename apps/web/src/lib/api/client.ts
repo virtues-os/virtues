@@ -199,6 +199,11 @@ export interface Applet {
 	/** True when the applet folder ships a face/ (sandboxed-iframe HTML UI). */
 	has_face: boolean;
 	is_system: boolean;
+	/** The last 10 run statuses, newest first — the card's pulse. Comes with
+	 *  the row so the list does not fetch it per applet. */
+	pulse: AppletRun['status'][];
+	/** The last successful run's summary — what the applet last produced. */
+	last_success_summary: string | null;
 	created_at: string;
 	updated_at: string;
 	last_run: ActionLastRun | null;

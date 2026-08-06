@@ -5,14 +5,16 @@
 	let {
 		applet,
 		lastRun,
-		lastSuccess,
-		pulseRuns = [],
+		lastSuccessSummary = null,
+		pulse = [],
 		onclick
 	}: {
 		applet: Applet;
 		lastRun?: AppletRun | Applet['last_run'] | null;
-		lastSuccess?: AppletRun | null;
-		pulseRuns?: AppletRun[];
+		/** What the applet last produced — carried on the list row now. */
+		lastSuccessSummary?: string | null;
+		/** Last 10 run statuses, newest first. */
+		pulse?: AppletRun['status'][];
 		onclick?: (applet: Applet) => void;
 	} = $props();
 
@@ -25,20 +27,16 @@
 	// The right column is the applet's own last words — never an error, always
 	// a real successful output. What it IS lives on the left now, as its own
 	// line, rather than standing in here when there was no output yet.
-	const excerpt = $derived(lastSuccess?.result_summary ?? null);
+	const excerpt = $derived(lastSuccessSummary);
 
 	const pulseDots = $derived.by(() => {
 		const slots = 10;
-		const arr = pulseRuns.slice(0, slots).reverse();
-		const empty = slots - arr.length;
-		return [
-			...Array.from({ length: empty }, () => null),
-			...arr.map((r) => r.status)
-		];
+		const arr = pulse.slice(0, slots).reverse();
+		return [...Array.from({ length: slots - arr.length }, () => null), ...arr];
 	});
 
 	const pulseLabel = $derived.by(() => {
-		if (pulseRuns.length === 0) return 'No recent runs';
+		if (pulse.length === 0) return 'No recent runs';
 		const counts = {
 			success: 0,
 			error: 0,
@@ -47,8 +45,8 @@
 			cancelled: 0,
 			budget_exceeded: 0
 		};
-		for (const r of pulseRuns) {
-			if (r.status in counts) counts[r.status as keyof typeof counts]++;
+		for (const status of pulse) {
+			if (status in counts) counts[status as keyof typeof counts]++;
 		}
 		const parts: string[] = [];
 		if (counts.success) parts.push(`${counts.success} succeeded`);
@@ -56,7 +54,7 @@
 		if (counts.skipped) parts.push(`${counts.skipped} skipped`);
 		if (counts.running) parts.push(`${counts.running} running`);
 		if (counts.budget_exceeded) parts.push(`${counts.budget_exceeded} stopped on budget`);
-		return `Last ${pulseRuns.length} runs: ${parts.join(', ') || 'none completed'}`;
+		return `Last ${pulse.length} runs: ${parts.join(', ') || 'none completed'}`;
 	});
 
 	function handleClick() {

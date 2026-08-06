@@ -103,6 +103,13 @@ pub struct AppletRun {
     pub records_processed: i64,
     pub error: Option<String>,
     pub trigger: String,
+    // Chaining. Both columns exist from the original schema and NEITHER HAS
+    // EVER BEEN WRITTEN — 13,359 runs on a real box, zero non-null. The
+    // functions that would have written them (`create_child_run`,
+    // `get_child_runs`) had no callers and are deleted; composition is not on
+    // the roadmap, because cron + condition already covers what data triggers
+    // would buy and no applet has ever wanted to chain. Kept only so the API
+    // shape does not change; do not read them expecting data.
     pub parent_run_id: Option<String>,
     pub transform_stage: Option<String>,
     pub result_summary: Option<String>,
@@ -702,37 +709,6 @@ pub async fn create_run(
     run_from_row(&row)
 }
 
-/// Create a child run (for transform chaining).
-pub async fn create_child_run(
-    db: &PgPool,
-    parent_run_id: &str,
-    transform_stage: &str,
-    trigger: &str,
-) -> Result<AppletRun> {
-    let run_id = generate_id(
-        RUN_PREFIX,
-        &[
-            parent_run_id,
-            transform_stage,
-            &chrono::Utc::now().to_rfc3339(),
-        ],
-    );
-
-    let row = sqlx::query(
-        r#"INSERT INTO app_applet_runs (id, parent_run_id, transform_stage, trigger)
-           VALUES ($1, $2, $3, $4)
-           RETURNING *"#,
-    )
-    .bind(&run_id)
-    .bind(parent_run_id)
-    .bind(transform_stage)
-    .bind(trigger)
-    .fetch_one(db)
-    .await?;
-
-    run_from_row(&row)
-}
-
 /// Complete a run (success, error, skipped, cancelled).
 pub async fn complete_run(
     db: &PgPool,
@@ -984,18 +960,6 @@ pub async fn cleanup_stale_runs(db: &PgPool) -> Result<u64> {
     .rows_affected();
 
     Ok(affected)
-}
-
-/// Get child runs for a parent run.
-pub async fn get_child_runs(db: &PgPool, parent_run_id: &str) -> Result<Vec<AppletRun>> {
-    let rows = sqlx::query(
-        "SELECT * FROM app_applet_runs WHERE parent_run_id = $1 ORDER BY created_at ASC",
-    )
-    .bind(parent_run_id)
-    .fetch_all(db)
-    .await?;
-
-    rows.iter().map(run_from_row).collect()
 }
 
 // ============================================================================
