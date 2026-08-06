@@ -117,13 +117,17 @@ jobs:
             https://apt.postgresql.org/pub/repos/apt $(lsb_release -cs)-pgdg main" \
             | sudo tee /etc/apt/sources.list.d/pgdg.list
           sudo apt-get update
-          # `git` is not a given on this runner image — actions/checkout falls
-          # back to the REST API when it is absent, so the repo appears without
-          # git ever being installed. `applet_git_import` shells out to it and
-          # failed with "failed to spawn: No such file or directory", which
-          # reads like a code bug and is not one. The box needs git for the same
-          # feature, so installing it here matches production rather than
-          # papering over the test.
+          # `git` is pinned here only to make the dependency explicit —
+          # `applet_git_import` shells out to it, and the box needs it for the
+          # same feature. The runner image already ships 2.52, so this is a
+          # no-op assertion rather than a fix.
+          #
+          # It was briefly mistaken FOR a fix: the test failed with "git init …
+          # failed to spawn: No such file or directory (os error 2)", which
+          # reads as a missing binary. `os error 2` on spawn also means the
+          # *working directory* does not exist, and that was the real cause —
+          # see the create_dir_all in applet_git_import.rs. Read the apt log
+          # before believing a package is missing.
           sudo apt-get install -y postgresql-client-18 git
           # Installing the package is not enough: the runner already ships an
           # older postgresql-client, and /usr/bin/pg_dump keeps resolving to it.

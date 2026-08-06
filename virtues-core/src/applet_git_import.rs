@@ -350,7 +350,21 @@ async fn clone_or_update(target: &Path, url: &str, git_ref: &str) -> Result<()> 
         // pinning to a SHA, which the request has always claimed to support,
         // silently failed at the one moment it matters most. init + fetch +
         // checkout takes all three.
-        run_git(&applets_root_buf(), &["init", "--quiet", dest]).await?;
+        // `git init` runs *inside* the state root, so that directory has to
+        // exist before we spawn — otherwise `current_dir` fails with
+        // `No such file or directory (os error 2)`, which reads exactly like
+        // git being missing and is not. It fooled CI (and me) into installing
+        // git on a runner that already had 2.52 before anyone read the log
+        // closely enough to notice.
+        //
+        // The root is absent on any box that has never authored or imported an
+        // applet — a fresh install, and every CI run — so this is the first
+        // import on a new box failing, not only a test artifact.
+        let root = applets_root_buf();
+        std::fs::create_dir_all(&root).map_err(|e| {
+            Error::Other(format!("cannot create applet state root {}: {e}", root.display()))
+        })?;
+        run_git(&root, &["init", "--quiet", dest]).await?;
         if let Err(e) = run_git(target, &["remote", "add", "origin", url]).await {
             // Without this the slug is wedged permanently: `.git` exists so the
             // next attempt takes the update branch, whose first call is
