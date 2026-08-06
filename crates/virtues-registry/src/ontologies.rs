@@ -1035,7 +1035,25 @@ pub fn registered_ontologies() -> Vec<OntologyDescriptor> {
                 preview_sql: "COALESCE(SUBSTR(t.description, 1, 200), t.url)",
                 author_sql: Some("t.author"),
                 timestamp_sql: "t.timestamp",
-                embed_where: None,
+                // A saved URL with no title, no description, no note and no
+                // extraction record yet has NOTHING to embed — the expression
+                // above evaluates to a few newlines. Indexing that is not
+                // merely wasteful: an empty document is a vector at an
+                // arbitrary point in the space that can match any query, and it
+                // skews the BM25 corpus statistics every other query is scored
+                // against (the same reason silent transcriptions are excluded).
+                //
+                // The row stays and stays visible; it simply is not something a
+                // retriever should match. Enrichment gives it text, and the
+                // indexer picks it up on the next pass with no intervention.
+                //
+                // Tags are deliberately not part of this test: a bookmark whose
+                // only text is a folder name is a bare link, and the folder is
+                // already searchable as structure.
+                embed_where: Some(
+                    "AND btrim(COALESCE(t.title, '') || COALESCE(t.description, '') \
+                     || COALESCE(t.note, '') || COALESCE(t.extraction_text, '')) <> ''",
+                ),
             }),
             extraction: None,
             temporal_type: TemporalType::Discrete,
