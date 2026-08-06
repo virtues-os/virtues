@@ -280,6 +280,13 @@
 	dd.muted {
 		color: var(--color-foreground-muted, var(--color-foreground-subtle));
 	}
+	/* JSON blobs wrap rather than scroll sideways.
+	   `white-space: pre` kept the record's own indentation but turned every
+	   long value — an extraction record's likely_queries, a signed image URL —
+	   into a horizontal scroll the reader had to find and drag. `pre-wrap`
+	   keeps the indentation and lets lines fold; `overflow-wrap: anywhere`
+	   handles the unbreakable case, a single token longer than the column,
+	   which is exactly what a URL is. */
 	dd.mono pre {
 		font-family: var(--font-mono);
 		font-size: 0.8rem;
@@ -287,8 +294,8 @@
 		padding: 0.75rem;
 		background: var(--color-surface-elevated);
 		border-radius: 6px;
-		overflow-x: auto;
-		white-space: pre;
+		white-space: pre-wrap;
+		overflow-wrap: anywhere;
 	}
 
 	.foot {
