@@ -104,6 +104,12 @@
 		// Custom renderers — receive RowMeta for stagger / index-aware rendering.
 		tableRow?: Snippet<[T, RowMeta]>;
 		card?: Snippet<[T, RowMeta]>;
+		/**
+		 * Tile renderer for the Wall. Supplying it is what makes the Wall mode
+		 * available at all — the grid can pack tiles, but only the consumer
+		 * knows which form a given item's content calls for.
+		 */
+		wallTile?: Snippet<[T, RowMeta]>;
 		/** Grid-level actions (add, import…) rendered beside the view controls,
 		 *  so a consumer doesn't need its own header row above the toolbar. */
 		toolbarActions?: Snippet;
@@ -161,6 +167,7 @@
 		onRetry,
 		tableRow,
 		card,
+		wallTile,
 		toolbarActions,
 		selectable = false,
 		bulkActions,
@@ -531,10 +538,26 @@
 	const VIEW_META: Record<ViewMode, { icon: string; label: string }> = {
 		table: { icon: 'ri:list-check-2', label: 'Table' },
 		grid: { icon: 'ri:layout-grid-line', label: 'Cards' },
+		wall: { icon: 'ri:gallery-line', label: 'Wall' },
 	};
 
+	/** Wall is offered only where a tile renderer was supplied. */
+	const availableModes = $derived<ViewMode[]>(
+		wallTile ? ['table', 'grid', 'wall'] : ['table', 'grid']
+	);
+
+	/**
+	 * A stored preference can outlive the thing it names — someone views the
+	 * Wall, the consumer later stops passing `wallTile`, and the grid would
+	 * render a mode with no renderer. Fall back rather than blank.
+	 */
+	const effectiveViewMode = $derived<ViewMode>(
+		availableModes.includes(viewMode) ? viewMode : 'table'
+	);
+
 	function toggleViewMode() {
-		const next: ViewMode = viewMode === 'table' ? 'grid' : 'table';
+		const modes = availableModes;
+		const next = modes[(modes.indexOf(effectiveViewMode) + 1) % modes.length];
 		viewMode = next;
 		dataGridPrefs.setViewMode(entityType, next);
 	}
@@ -725,7 +748,7 @@
 		if (!animateMount) return;
 		const fsig = JSON.stringify(filterValues);
 		// NOTE: searchQuery intentionally excluded — search shouldn't replay the cascade.
-		const sig = `${items.length}|${String(sortKey)}|${String(sortDir)}|${viewMode}|${fsig}`;
+		const sig = `${items.length}|${String(sortKey)}|${String(sortDir)}|${effectiveViewMode}|${fsig}`;
 		if (sig !== lastIdentity) {
 			lastIdentity = sig;
 			mountToken++;
@@ -820,9 +843,10 @@
 	/** Row index in visual order, for RowMeta, the stagger, and range selection. */
 	const rowIndexById = $derived(new Map(visualOrder.map((item, i) => [item.id, i])));
 
-	const isTable = $derived(viewMode === 'table');
+	const isTable = $derived(effectiveViewMode === 'table');
+	const isWall = $derived(effectiveViewMode === 'wall');
 	/** Cards + a grouping = a board. That is the whole of what Board ever was. */
-	const asBoard = $derived(viewMode === 'grid' && isGrouped);
+	const asBoard = $derived(effectiveViewMode === 'grid' && isGrouped);
 
 	// Motion duration, zeroed when the OS asks for reduced motion. Svelte's JS
 	// transitions don't honour the media query on their own — the CSS-only
@@ -969,10 +993,10 @@
 				<button
 					class="ctrl-btn"
 					onclick={toggleViewMode}
-					aria-label={isTable ? 'Switch to card view' : 'Switch to table view'}
-					title={VIEW_META[viewMode].label}
+					aria-label={`Switch view — showing ${VIEW_META[effectiveViewMode].label}`}
+					title={VIEW_META[effectiveViewMode].label}
 				>
-					<Icon icon={VIEW_META[viewMode].icon} width="16" />
+					<Icon icon={VIEW_META[effectiveViewMode].icon} width="16" />
 				</button>
 				{#if toolbarActions}
 					{@render toolbarActions()}
@@ -1230,6 +1254,42 @@
 				{/key}
 			</table>
 		</div>
+	{:else if isWall && wallTile}
+		<!--
+			The Wall. Tiles pack at their natural heights in flowing columns,
+			so a tall picture and a one-line spine can sit side by side without
+			either being padded to a common row height — which is the whole
+			difference from Cards.
+
+			CSS multi-column rather than a measured grid: it is real packing
+			with no layout JS, and `break-inside: avoid` is enough to keep a
+			tile whole. The cost is that reading order runs down a column
+			before across, which is the right trade for a wall you scan rather
+			than read.
+
+			Grouping is not expressed here. Nothing is lost today — the Group
+			control is already unavailable in server mode, which is how every
+			consumer of the Wall currently loads.
+		-->
+		{@const total = displayedItems.length}
+		{#key mountToken}
+			<div class="wall" in:fly={{ y: 6, duration: motionMs, easing: cubicOut }}>
+				{#each displayedItems as item, i (item.id)}
+					{@const meta = { rowIndex: i, colIndex: 0, total } as RowMeta}
+					<button
+						class="wall-tile"
+						class:animate-in={animateMount}
+						style:--stagger="{staggerMs(Math.floor(i / 3), i % 3)}ms"
+						onclick={() => handleRowClick(item)}
+						oncontextmenu={rowContextMenu ? (e) => rowContextMenu(item, e) : undefined}
+						onkeydown={(e) => handleKeyDown(e, item)}
+						aria-label={`Open ${getItemLabel(item)}`}
+					>
+						{@render wallTile(item, meta)}
+					</button>
+				{/each}
+			</div>
+		{/key}
 	{:else}
 		{@const total = displayedItems.length}
 		{@const cardCols = 4}
@@ -2039,6 +2099,48 @@
 		grid-template-columns: repeat(auto-fill, minmax(var(--grid-min, 200px), 1fr));
 		gap: 0.75rem;
 		padding-top: 1rem;
+	}
+
+	/* ── The Wall ─────────────────────────────────────────────────────────
+	   Columns, not a grid: tiles keep their own heights and pack. */
+	.wall {
+		columns: 3;
+		column-gap: 0.75rem;
+		padding-top: 1rem;
+	}
+
+	.wall-tile {
+		display: block;
+		width: 100%;
+		/* A tile must not be split across a column break — half a bookmark at
+		   the foot of one column is worse than a shorter column. */
+		break-inside: avoid;
+		margin-bottom: 0.75rem;
+		padding: 0;
+		background: transparent;
+		border: none;
+		text-align: left;
+		font: inherit;
+		color: inherit;
+		cursor: pointer;
+	}
+
+	.wall-tile:focus-visible {
+		outline: 2px solid var(--color-primary);
+		outline-offset: 2px;
+		border-radius: 0.375rem;
+	}
+
+	@media (max-width: 900px) {
+		.wall {
+			columns: 2;
+		}
+	}
+
+	@media (max-width: 560px) {
+		.wall {
+			columns: 1;
+		}
 	}
 
 	.card {
