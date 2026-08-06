@@ -1,19 +1,20 @@
 <script lang="ts">
 	import type { Applet, AppletRun } from '$lib/api/client';
 	import { describeSchedule, relativeTime } from '$lib/applets/palette';
-	import { descriptionFor } from '$lib/applets/descriptions';
 
 	let {
 		applet,
 		lastRun,
-		lastSuccess,
-		pulseRuns = [],
+		lastSuccessSummary = null,
+		pulse = [],
 		onclick
 	}: {
 		applet: Applet;
 		lastRun?: AppletRun | Applet['last_run'] | null;
-		lastSuccess?: AppletRun | null;
-		pulseRuns?: AppletRun[];
+		/** What the applet last produced — carried on the list row now. */
+		lastSuccessSummary?: string | null;
+		/** Last 10 run statuses, newest first. */
+		pulse?: AppletRun['status'][];
 		onclick?: (applet: Applet) => void;
 	} = $props();
 
@@ -23,38 +24,37 @@
 	const lastStatus = $derived((lastRun as { status?: string } | null)?.status ?? null);
 	const isFailing = $derived(lastStatus === 'error');
 
-	// Excerpt resolution — always prefer a real successful output, never an error.
-	// Falls back to the applet's description (self-introduction).
-	const excerpt = $derived.by(() => {
-		const success = lastSuccess?.result_summary;
-		if (success) return { text: success, kind: 'output' as const };
-		const desc = descriptionFor(applet);
-		if (desc) return { text: desc, kind: 'description' as const };
-		return null;
-	});
+	// The right column is the applet's own last words — never an error, always
+	// a real successful output. What it IS lives on the left now, as its own
+	// line, rather than standing in here when there was no output yet.
+	const excerpt = $derived(lastSuccessSummary);
 
 	const pulseDots = $derived.by(() => {
 		const slots = 10;
-		const arr = pulseRuns.slice(0, slots).reverse();
-		const empty = slots - arr.length;
-		return [
-			...Array.from({ length: empty }, () => null),
-			...arr.map((r) => r.status)
-		];
+		const arr = pulse.slice(0, slots).reverse();
+		return [...Array.from({ length: slots - arr.length }, () => null), ...arr];
 	});
 
 	const pulseLabel = $derived.by(() => {
-		if (pulseRuns.length === 0) return 'No recent runs';
-		const counts = { success: 0, error: 0, skipped: 0, running: 0, cancelled: 0 };
-		for (const r of pulseRuns) {
-			if (r.status in counts) counts[r.status as keyof typeof counts]++;
+		if (pulse.length === 0) return 'No recent runs';
+		const counts = {
+			success: 0,
+			error: 0,
+			skipped: 0,
+			running: 0,
+			cancelled: 0,
+			budget_exceeded: 0
+		};
+		for (const status of pulse) {
+			if (status in counts) counts[status as keyof typeof counts]++;
 		}
 		const parts: string[] = [];
 		if (counts.success) parts.push(`${counts.success} succeeded`);
 		if (counts.error) parts.push(`${counts.error} failed`);
 		if (counts.skipped) parts.push(`${counts.skipped} skipped`);
 		if (counts.running) parts.push(`${counts.running} running`);
-		return `Last ${pulseRuns.length} runs: ${parts.join(', ') || 'none completed'}`;
+		if (counts.budget_exceeded) parts.push(`${counts.budget_exceeded} stopped on budget`);
+		return `Last ${pulse.length} runs: ${parts.join(', ') || 'none completed'}`;
 	});
 
 	function handleClick() {
@@ -69,7 +69,23 @@
 	onclick={handleClick}
 >
 	<div class="meta-col">
-		<h3 class="name">{applet.name}</h3>
+		<div class="name-row">
+			<h3 class="name">{applet.name}</h3>
+			{#if applet.archived_at}
+				<!-- Finished is not off. Its lifecycle completed — it did the one
+				     thing it was for — and reading that as "you switched this off"
+				     loses the distinction the `until` field exists to draw. -->
+				<span class="off-pill">finished</span>
+			{:else if !applet.enabled}
+				<!-- Explicit, because dimming alone reads as "loading" rather than
+				     "you turned this off". -->
+				<span class="off-pill">off</span>
+			{/if}
+		</div>
+
+		{#if applet.description}
+			<p class="line">{applet.description}</p>
+		{/if}
 
 		<div class="meta">
 			<span>{schedule}</span>
@@ -91,16 +107,9 @@
 
 	<div class="excerpt-col">
 		{#if excerpt}
-			<p
-				class="excerpt"
-				class:agent={isUserOwned && excerpt.kind === 'output'}
-				class:description={excerpt.kind === 'description'}
-				class:output={excerpt.kind === 'output'}
-			>
-				{excerpt.text}
-			</p>
+			<p class="excerpt" class:agent={isUserOwned}>{excerpt}</p>
 		{:else}
-			<p class="excerpt placeholder">Hasn't produced output yet</p>
+			<p class="excerpt placeholder">Hasn't produced anything yet</p>
 		{/if}
 	</div>
 </button>
@@ -134,19 +143,46 @@
 	.meta-col {
 		display: flex;
 		flex-direction: column;
-		gap: 0.5rem;
+		gap: 0.375rem;
 		min-width: 0;
+	}
+	.name-row {
+		display: flex;
+		align-items: center;
+		gap: 0.4rem;
+		min-width: 0;
+	}
+	.off-pill {
+		flex-shrink: 0;
+		padding: 0.05rem 0.375rem;
+		border-radius: 999px;
+		border: 1px solid var(--color-border);
+		background: var(--color-surface-elevated);
+		color: var(--color-foreground-subtle);
+		font-size: 0.625rem;
+		letter-spacing: 0.02em;
+	}
+	/* The plain-English line the plan asks the row to carry. */
+	.line {
+		margin: 0;
+		font-family: var(--font-serif, Georgia, serif);
+		font-size: 0.75rem;
+		line-height: 1.45;
+		color: var(--color-foreground-muted);
+		display: -webkit-box;
+		line-clamp: 2;
+		-webkit-line-clamp: 2;
+		-webkit-box-orient: vertical;
+		overflow: hidden;
 	}
 	.name {
 		margin: 0;
 		font-size: 0.9375rem;
 		font-weight: 600;
 		line-height: 1.3;
-		display: -webkit-box;
-		line-clamp: 2;
-		-webkit-line-clamp: 2;
-		-webkit-box-orient: vertical;
+		white-space: nowrap;
 		overflow: hidden;
+		text-overflow: ellipsis;
 	}
 	.meta {
 		display: flex;
@@ -200,6 +236,13 @@
 		background: var(--color-warning-subtle);
 		border-color: var(--color-warning);
 	}
+	/* Stopped at a spend ceiling — deliberately not the error red. The run
+	   did what it was told to do; the pulse should read as "held", not
+	   "broken". */
+	.dot[data-status='budget_exceeded'] {
+		background: var(--color-warning-subtle);
+		border-color: var(--color-warning);
+	}
 	.dot[data-status='empty'] {
 		background: transparent;
 	}
@@ -229,16 +272,14 @@
 		font-size: 0.8125rem;
 		color: var(--color-foreground, #1f2937);
 	}
-	.excerpt.description {
-		font-family: var(--font-serif, Georgia, 'Times New Roman', serif);
-		font-style: italic;
-		color: var(--color-foreground-muted, #6b7280);
-	}
-	.excerpt.output:not(.agent) {
+	.excerpt:not(.agent) {
 		font-family: var(--font-mono, ui-monospace, monospace);
 		font-size: 0.6875rem;
 	}
+	/* Not mono — the placeholder is prose about the applet, not its output. */
 	.excerpt.placeholder {
+		font-family: var(--font-serif, Georgia, serif);
+		font-size: 0.75rem;
 		font-style: italic;
 		opacity: 0.5;
 	}

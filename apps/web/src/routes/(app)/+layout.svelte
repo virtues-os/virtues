@@ -33,6 +33,7 @@
 	import type { Snippet } from "svelte";
 
 	import { installClientHeader } from "$lib/build";
+	import { reportBootOk, otaCheckNow } from "$lib/tauri/bridge";
 	import { shortcuts } from "$lib/shortcuts/registry.svelte";
 	import { modifierHint } from "$lib/stores/modifierHint.svelte";
 
@@ -42,6 +43,12 @@
 	// Stamp X-Virtues-Client on box requests so this browser's build shows up on
 	// the Devices page (update-manifold Phase 1). Idempotent, SSR-safe.
 	installClientHeader();
+
+	// Foreground OTA check — hoisted to component scope so onDestroy can remove
+	// it. `onMount` is async here, so a returned cleanup would never run.
+	function checkForNewUi() {
+		if (!document.hidden) void otaCheckNow();
+	}
 
 	// Get session expiry from page data
 	// Note: children is intentionally not rendered - this app uses a custom tab-based routing system
@@ -65,6 +72,27 @@
 
 	// Load chat sessions, workspaces, and initialize theme on mount
 	onMount(async () => {
+		// Confirm to the shell that this build actually rendered. An OTA bundle
+		// stays pending until this lands, and a bundle still pending at the next
+		// launch is treated as one that failed to boot and is rolled back — so
+		// removing this call silently reverts every update. It lives in onMount,
+		// not at module scope, because a module that parses is not a page that
+		// renders, and rendering is the thing being proven. See
+		// src-tauri/src/web_bundle.rs.
+		void reportBootOk();
+
+		// Ask the shell to look for newer UI whenever we come back to the
+		// foreground. The shell also checks at launch, but this app is not
+		// relaunched often — the mic session keeps it alive for days — so
+		// without this a phone could sit on a stale bundle indefinitely. The
+		// check is cheap when there is nothing new (one small GET) and never
+		// swaps the bundle underneath the running session; anything it applies
+		// takes effect at the next launch.
+		function checkForNewUi() {
+			if (!document.hidden) void otaCheckNow();
+		}
+		document.addEventListener("visibilitychange", checkForNewUi);
+
 		// Global dragover handler: Allow drops on document by preventing default
 		// This is a fallback to ensure drops are never blocked by missing handlers
 		document.addEventListener("dragover", (e) => {
@@ -214,6 +242,7 @@
 	});
 
 	onDestroy(() => {
+		document.removeEventListener("visibilitychange", checkForNewUi);
 		if (sessionExpiryTimer) {
 			clearInterval(sessionExpiryTimer);
 		}

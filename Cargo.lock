@@ -8688,6 +8688,7 @@ dependencies = [
  "chrono-tz",
  "clap",
  "console 0.15.11",
+ "croner",
  "dialoguer",
  "dotenv",
  "fake",

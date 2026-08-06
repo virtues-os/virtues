@@ -44,6 +44,10 @@ export const SETTINGS_MODE: SidebarMode = {
 			href: '/virtues/assistant',
 		},
 		{ id: 'billing', label: 'Billing', icon: 'ri:bank-card-line', href: '/virtues/billing' },
+		// Was "Telemetry", filed under Developer. It is the user's own AI spend
+		// and what the box has been running — not something anyone sends
+		// anywhere, and not a developer console.
+		{ id: 'usage', label: 'Usage', icon: 'ri:pulse-line', href: '/virtues/usage' },
 		{ id: 'box', label: 'Box', icon: 'ri:server-line', href: '/virtues/box' },
 		{ id: 'devices', label: 'Devices', icon: 'ri:device-line', href: '/virtues/devices' },
 	],
@@ -61,18 +65,10 @@ export const DEVELOPER_MODE: SidebarMode = {
 			href: '/virtues/developer/terminal',
 		},
 		{ id: 'lake', label: 'Lake', icon: 'ri:database-2-line', href: '/virtues/developer/lake' },
-		{
-			id: 'telemetry',
-			label: 'Telemetry',
-			icon: 'ri:pulse-line',
-			href: '/virtues/developer/telemetry',
-		},
-		{
-			id: 'activity',
-			label: 'Activity',
-			icon: 'ri:history-line',
-			href: '/virtues/developer/activity',
-		},
+		// Telemetry moved out and became Settings → Usage. Activity — the
+		// auth-audit log — is gone; what it reported on (what is paired, what
+		// you can revoke) is Devices' job, and it had a second reading of the
+		// word "activity" that already meant something else in Sources.
 	],
 };
 

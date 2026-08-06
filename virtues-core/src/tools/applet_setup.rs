@@ -98,11 +98,11 @@ pub async fn execute(
     }
 
     for t in &triggers {
-        if !matches!(t.as_str(), "cron" | "manual" | "tool" | "api" | "webhook") {
+        if !matches!(t.as_str(), "cron" | "manual" | "tool" | "api" | "webhook" | "message") {
             findings.push(finding(
                 "triggers",
                 &format!("invalid trigger '{t}'"),
-                Some("one of: cron, manual, tool, api, webhook"),
+                Some("one of: cron, manual, tool, api, webhook, message"),
             ));
         }
     }
@@ -145,9 +145,30 @@ pub async fn execute(
     if let Some(ddl) = schema_sql.as_deref() {
         if ddl.len() > SCHEMA_SQL_MAX {
             findings.push(finding("schema_sql", "schema too large (16KB max)", None));
-        } else if let Err(e) = check_schema_sql(pool, ddl, &slug).await {
+        } else if let Err(e) = crate::tools::applet_schema::check(pool, ddl, &slug).await {
             findings.push(finding("schema_sql", &e, None));
+        } else {
+            // The failure a dry-run cannot see: DDL that is valid, applies
+            // cleanly, and changes nothing. `CREATE TABLE IF NOT EXISTS` on an
+            // existing table silently drops every column added since — so the
+            // model would believe a column exists and write a prompt that uses
+            // it, failing at runtime nightly and forever.
+            for drift in crate::tools::applet_schema::detect_drift(pool, ddl).await {
+                findings.push(finding(
+                    "schema_sql",
+                    &drift.message(),
+                    Some(&drift.suggestion()),
+                ));
+            }
         }
+    }
+
+    // A limit nobody enforces is worse than no limit: it reads as protection
+    // on the gate and does nothing. So an unknown key is a finding, not a
+    // silently-ignored field. (This is how `timeout` came to be advertised
+    // for months while only `timeout_s` was ever read.)
+    for f in check_limits(limits.as_ref()) {
+        findings.push(f);
     }
 
     if !findings.is_empty() {
@@ -229,27 +250,50 @@ pub async fn execute(
     let manifest_toml = toml::to_string_pretty(&manifest)
         .map_err(|e| ToolError::ExecutionFailed(format!("manifest serialize failed: {e}")))?;
 
-    // ---- 4. Apply schema FIRST, then write the folder --------------------
-    // Ordering matters: if the schema apply fails, no folder is written, so a
-    // later global reconcile can't promote an orphan row whose tables were
-    // never created. schema.sql is idempotent, so re-running is safe.
+    // ---- 4. Write the folder; reconcile applies the schema ----------------
+    // Each submission is one numbered, append-only migration rather than a
+    // rewritten file. Identical DDL — the ordinary re-setup that only changed
+    // the prompt — matches the last recorded checksum and is recognized as
+    // already applied, so nothing is appended and nothing is re-run.
+    //
+    // The DDL is NOT applied here. Reconcile's replay pass is the single apply
+    // path, so a folder that arrives any other way (git import, restored
+    // backup) reaches the same tables by the same code. Applying here as well
+    // would run every new version twice — harmless for a CREATE, an outright
+    // error for the ALTER that an edit now produces.
+    //
+    // What used to justify applying first was the orphan row: an applet whose
+    // tables were never created. The transactional dry-run in the check above
+    // covers that better than ordering did — it runs the real DDL and rolls it
+    // back — and the post-reconcile verification below closes the rest.
+    let mut schema_version: Option<i32> = None;
+    let mut schema_file: Option<String> = None;
     if let Some(ddl) = &schema_sql {
-        if let Err(e) = apply_schema_sql(pool, ddl).await {
-            return Ok(ToolResult::success(serde_json::json!({
-                "status": "error",
-                "error": format!("schema apply failed: {e}"),
-            })));
-        }
-        let _ = crate::server::faces::ensure_applet_db_grants(pool).await;
+        use crate::tools::applet_schema as schema;
+        let already = schema::applied(pool, &applet_id).await.unwrap_or_default();
+        schema_version = Some(match schema::classify(ddl, &already) {
+            schema::Submission::AlreadyApplied { version } => version,
+            schema::Submission::NewVersion { version } => version,
+        });
     }
 
     std::fs::create_dir_all(&dir)
         .map_err(|e| ToolError::ExecutionFailed(format!("mkdir failed: {e}")))?;
     std::fs::write(dir.join("manifest.toml"), &manifest_toml)
         .map_err(|e| ToolError::ExecutionFailed(format!("manifest write failed: {e}")))?;
-    if let Some(ddl) = &schema_sql {
-        std::fs::write(dir.join("schema.sql"), ddl)
+    if let (Some(ddl), Some(version)) = (&schema_sql, schema_version) {
+        use crate::tools::applet_schema as schema;
+        let schema_dir = dir.join(schema::SCHEMA_DIR);
+        std::fs::create_dir_all(&schema_dir)
+            .map_err(|e| ToolError::ExecutionFailed(format!("schema dir failed: {e}")))?;
+        let file_name = format!("{version:04}_schema.sql");
+        let path = schema_dir.join(&file_name);
+        // Written unconditionally, including for AlreadyApplied: the row may
+        // exist on a box whose folder was restored from elsewhere, and the
+        // folder is what a fresh box replays.
+        std::fs::write(&path, ddl)
             .map_err(|e| ToolError::ExecutionFailed(format!("schema write failed: {e}")))?;
+        schema_file = Some(file_name);
     }
     if let Some(html) = &face_html {
         let face_dir = dir.join("face");
@@ -262,6 +306,29 @@ pub async fn execute(
     crate::applet_templates::reload_and_reconcile(pool)
         .await
         .map_err(|e| ToolError::ExecutionFailed(format!("reconcile failed: {e}")))?;
+
+    // Reconcile ran the pending version as part of its replay pass. Confirm it
+    // actually landed rather than trusting that it did: the whole point of
+    // this change is that a schema apply which quietly does nothing must never
+    // again be reported as success.
+    if let (Some(version), Some(_)) = (schema_version, &schema_file) {
+        use crate::tools::applet_schema as schema;
+        let landed = schema::applied(pool, &applet_id)
+            .await
+            .unwrap_or_default()
+            .iter()
+            .any(|a| a.version == version);
+        if !landed {
+            return Ok(ToolResult::success(serde_json::json!({
+                "status": "error",
+                "error": format!(
+                    "the applet was created but schema version {version} did not apply — \
+                     check the box logs for the DDL error"
+                ),
+            })));
+        }
+        let _ = crate::server::faces::ensure_applet_db_grants(pool).await;
+    }
 
     // Explicit re-author re-arms a completed applet. Reconcile never
     // un-archives (that would resurrect one-shots on every boot), so clear it
@@ -295,8 +362,14 @@ pub async fn execute(
         capabilities.push("posts run results to this chat".into());
     }
 
+    // Only an applet with a prompt spends anything — a face renders and a
+    // subprocess runs compiled code, and quoting a model cost for either would
+    // be inventing a number. The per-run figure is a slot constant, not a
+    // measurement, which is why the card calls it an estimate.
     let runs_per_day = schedule.as_deref().map(estimate_runs_per_day);
-    let est_cost = runs_per_day.map(|r| format!("~${:.2}/day", r * 0.01));
+    let est_cost_per_day = runs_per_day
+        .filter(|_| agent.is_some())
+        .map(|r| r * 0.01);
 
     Ok(ToolResult::success(serde_json::json!({
         "status": if existed { "updated" } else { "created" },
@@ -305,16 +378,21 @@ pub async fn execute(
         "slug": slug,
         "folder": format!("user/{slug}"),
         "enabled": default_enabled,
+        // The card renders from these; the string below is for the model, so
+        // it says the same thing in its own reply.
+        "description": description,
+        "schedule": schedule,
+        "gated": !default_enabled,
         "gate": if !default_enabled {
-            "DISABLED — the user must enable it on the applet page (tell them)"
+            "DISABLED — an Enable card is shown to the user in this chat. Say what it does and that it is waiting for them; do NOT tell them to go to the applet page."
         } else {
-            "manual-only: enabled"
+            "no boundary crossed: enabled already, nothing for the user to approve"
         },
         "lifecycle": until.as_deref().map(|u| {
             if u.eq_ignore_ascii_case("once") { "once" } else { "until" }
         }).unwrap_or("forever"),
         "capabilities": capabilities,
-        "estimated_cost": est_cost,
+        "estimated_cost_per_day": est_cost_per_day,
         "manifest": manifest_toml,
     })))
 }
@@ -340,6 +418,67 @@ fn opt_str(args: &serde_json::Value, key: &str) -> Option<String> {
 
 fn finding(field: &str, error: &str, suggestion: Option<&str>) -> serde_json::Value {
     serde_json::json!({ "field": field, "error": error, "suggestion": suggestion })
+}
+
+/// The `limits` keys the runner actually enforces, with the unit each is read
+/// in. Anything outside this set is rejected at check time rather than written
+/// into `config.limits` to be ignored forever.
+const LIMIT_KEYS: &[(&str, &str)] = &[
+    ("max_llm_cost", "dollars — ceiling on model spend within one run, e.g. 0.25"),
+    ("max_llm_cost_per_day", "dollars — ceiling on model spend across a rolling 24h"),
+    ("max_runs_per_hour", "whole number of runs"),
+    ("max_runs_per_day", "whole number of runs (`max_runs` is accepted for this)"),
+    ("timeout_s", "seconds of wall clock for the subprocess phase"),
+];
+
+/// Validate the `limits` object: known keys, right types, sane values.
+fn check_limits(limits: Option<&serde_json::Value>) -> Vec<serde_json::Value> {
+    let mut out = Vec::new();
+    let Some(obj) = limits.and_then(|v| v.as_object()) else {
+        return out;
+    };
+
+    let known: Vec<&str> = LIMIT_KEYS.iter().map(|(k, _)| *k).collect();
+    for (key, value) in obj {
+        // `max_runs` and `timeout` are accepted aliases, not typos.
+        let canonical = matches!(key.as_str(), "max_runs" | "timeout")
+            || known.contains(&key.as_str());
+        if !canonical {
+            let suggestion = known
+                .iter()
+                .map(|k| (levenshtein(key, k), *k))
+                .min_by_key(|(d, _)| *d)
+                .filter(|(d, _)| *d <= 4)
+                .map(|(_, k)| format!("did you mean `{k}`?"))
+                .unwrap_or_else(|| format!("enforced limits are: {}", known.join(", ")));
+            out.push(finding(
+                "limits",
+                &format!("unknown limit `{key}` — it would be stored and never enforced"),
+                Some(&suggestion),
+            ));
+            continue;
+        }
+
+        let is_money = key.starts_with("max_llm_cost");
+        let ok = if is_money {
+            value.as_f64().is_some_and(|d| d.is_finite() && d >= 0.0)
+        } else {
+            value.as_u64().is_some()
+        };
+        if !ok {
+            let unit = LIMIT_KEYS
+                .iter()
+                .find(|(k, _)| *k == key || (*k == "max_runs_per_day" && key == "max_runs"))
+                .map(|(_, u)| *u)
+                .unwrap_or("a positive number");
+            out.push(finding(
+                "limits",
+                &format!("`{key}` must be a positive number — got {value}"),
+                Some(unit),
+            ));
+        }
+    }
+    out
 }
 
 /// Return a slug that is either free, or already owned by an applet with the
@@ -404,89 +543,6 @@ async fn explain_bool_expr(pool: &PgPool, expr: &str) -> Result<(), String> {
     res.map(|_| ()).map_err(|e| e.to_string())
 }
 
-async fn check_schema_sql(pool: &PgPool, ddl: &str, slug: &str) -> Result<(), String> {
-    validate_schema_text(ddl, slug)?;
-    run_schema_statements(pool, ddl, false).await
-}
-
-/// Apply schema.sql for real (post-check). Idempotent DDL by doctrine.
-async fn apply_schema_sql(pool: &PgPool, ddl: &str) -> Result<(), String> {
-    run_schema_statements(pool, ddl, true).await
-}
-
-/// Textual guards: no transaction control / role / grant statements, and every
-/// schema-qualified identifier must live in the applet's own schema.
-fn validate_schema_text(ddl: &str, slug: &str) -> Result<(), String> {
-    let lowered = ddl.to_lowercase();
-    for kw in ["commit", "rollback", "savepoint", "grant", "revoke", "create role", "drop role"] {
-        if lowered.contains(kw) {
-            return Err(format!("schema_sql may not contain '{kw}'"));
-        }
-    }
-    let expected = format!("applet_{slug}");
-    for token in lowered.split(|c: char| !(c.is_ascii_alphanumeric() || c == '_' || c == '.')) {
-        if let Some((schema, _)) = token.split_once('.') {
-            if (schema.starts_with("applet_") && schema != expected)
-                || schema == "public"
-                || schema.starts_with("data_")
-                || schema.starts_with("app_")
-                || schema.starts_with("wiki_")
-            {
-                return Err(format!(
-                    "schema_sql must only target schema {expected} (found '{token}')"
-                ));
-            }
-        }
-    }
-    if !lowered.contains(&expected) {
-        return Err(format!(
-            "schema_sql must create tables in schema {expected} (start with CREATE SCHEMA IF NOT EXISTS {expected};)"
-        ));
-    }
-    Ok(())
-}
-
-/// Run the DDL statement-by-statement over the extended protocol inside one
-/// transaction (ROLLBACK for the dry-run check, COMMIT for apply). One
-/// statement per query means a smuggled multi-statement string is a protocol
-/// error, not an escape — and it avoids `raw_sql`, whose future trips
-/// rustc's Send-generality inference inside the agent stream.
-async fn run_schema_statements(pool: &PgPool, ddl: &str, commit: bool) -> Result<(), String> {
-    let mut tx = pool.begin().await.map_err(|e| e.to_string())?;
-    sqlx::query("SET LOCAL statement_timeout = '5s'")
-        .execute(&mut *tx)
-        .await
-        .map_err(|e| e.to_string())?;
-    sqlx::query("SET LOCAL lock_timeout = '2s'")
-        .execute(&mut *tx)
-        .await
-        .map_err(|e| e.to_string())?;
-    // Empty search_path is the real guard (the textual check is belt-and-
-    // braces): every table name must be schema-qualified, so an unqualified
-    // `DROP TABLE data_location_points` or `CREATE TABLE evil (...)` resolves
-    // to no schema and errors instead of hitting `public`. Combined with
-    // validate_schema_text rejecting any qualified name outside applet_<slug>,
-    // there is no path for this DDL to touch data_*/wiki_*/app_*/public.
-    sqlx::query("SET LOCAL search_path = ''")
-        .execute(&mut *tx)
-        .await
-        .map_err(|e| e.to_string())?;
-    for stmt in ddl.split(';') {
-        let stmt = stmt.trim();
-        if stmt.is_empty() {
-            continue;
-        }
-        if let Err(e) = sqlx::query(stmt).execute(&mut *tx).await {
-            tx.rollback().await.ok();
-            return Err(format!("in statement '{}…': {e}", &stmt[..stmt.len().min(60)]));
-        }
-    }
-    if commit {
-        tx.commit().await.map_err(|e| e.to_string())
-    } else {
-        tx.rollback().await.map_err(|e| e.to_string())
-    }
-}
 
 /// Did-you-mean for unknown relation/column errors, against the live catalog.
 async fn did_you_mean(pool: &PgPool, error: &str) -> Option<String> {

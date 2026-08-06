@@ -18,6 +18,11 @@ pub enum SubagentStatus {
     Failed,
 }
 
+/// Ceiling on an applet's notes. Generous for a scratchpad, small enough that
+/// a runaway transcript is refused before it becomes the applet's context on
+/// every future run.
+const MEMORY_MAX_BYTES: usize = 8000;
+
 impl SubagentStatus {
     pub fn as_str(&self) -> &'static str {
         match self {
@@ -633,17 +638,27 @@ impl ToolExecutor {
         let applet_id = context.applet_id.as_deref()
             .ok_or_else(|| ToolError::ExecutionFailed("No action context — this tool can only be used by actions".into()))?;
 
-        // Cap at 8000 chars
-        let content = if content.len() > 8000 {
-            let end = content.char_indices()
-                .map(|(i, c)| i + c.len_utf8())
-                .take_while(|&i| i <= 8000)
-                .last()
-                .unwrap_or(0);
-            &content[..end]
-        } else {
-            content
-        };
+        // Refuse rather than mutilate.
+        //
+        // This used to slice the first 8000 chars and save them without a
+        // word. Two things were wrong with that. Notes are usually written
+        // oldest-first, so keeping the HEAD threw away exactly the newest
+        // thing the applet had just learned — and it did so silently, so the
+        // applet's next run read a scratchpad that looked complete and was
+        // not. Refusing leaves the previous memory intact: stale, but whole
+        // and coherent, and the model is in a loop that can retry shorter.
+        if content.len() > MEMORY_MAX_BYTES {
+            return Ok(ToolResult::success(serde_json::json!({
+                "saved": false,
+                "error": format!(
+                    "memory is {} bytes; the ceiling is {MEMORY_MAX_BYTES}. Nothing was saved and \
+                     your previous notes are unchanged.",
+                    content.len()
+                ),
+                "hint": "these notes are for your own next run, not a transcript — keep what \
+                         changes future behaviour and drop the narration, then call again",
+            })));
+        }
 
         crate::scheduler::applets::update_memory(&self._pool, &applet_id, content)
             .await

@@ -8,15 +8,25 @@
 const STORAGE_KEY = 'virtues-datagrid-prefs';
 
 /**
- * Two modes, not three. A board *is* the card view with a grouping applied —
- * it was a third mode that could only differ from cards by being grouped, so
+ * Board was removed and is not coming back: a board *is* the card view with a
+ * grouping applied, so it could only differ from cards by being grouped, and
  * the user had to pick "board" and *then* pick a group to get anywhere.
  * Grouping is an orthogonal axis now: set a group in cards and you get columns.
+ *
+ * `wall` passes that test where board failed. Table and cards are
+ * metadata-led — one uniform shape per row, sized by the layout. The wall is
+ * artifact-led: tiles pack at their natural heights and each one takes the
+ * form its *content* calls for, so a saved image is recognizable without
+ * reading and a bare link is visibly a bare link. No combination of grouping
+ * and cards expresses that.
+ *
+ * It is offered only where a consumer supplies a tile renderer, because the
+ * form-per-content rule is domain knowledge the grid does not have.
  */
-export type ViewMode = 'table' | 'grid';
+export type ViewMode = 'table' | 'grid' | 'wall';
 export type Density = 'compact' | 'comfortable';
 
-const VALID_VIEW_MODES: ViewMode[] = ['table', 'grid'];
+const VALID_VIEW_MODES: ViewMode[] = ['table', 'grid', 'wall'];
 const VALID_DENSITIES: Density[] = ['compact', 'comfortable'];
 
 function isValidViewMode(value: unknown): value is ViewMode {

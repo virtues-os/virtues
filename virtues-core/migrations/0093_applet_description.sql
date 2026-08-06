@@ -1,0 +1,28 @@
+-- 0093 — the sentence an applet introduces itself with reaches the database.
+--
+-- Every manifest carries a `description`. The template loader has always
+-- parsed it. Every upsert branch then bound thirteen fields, and that was not
+-- among them — because there was no column to bind it to. It was read off
+-- disk and dropped on the floor, on every reconcile, since the beginning.
+--
+-- Which makes the one field the applets plan leans on three separate times
+-- the one field the product cannot see:
+--
+--   · "description is the intent-source, not decoration" — the distilled
+--     sentence the authoring chat compiles the other fields from.
+--   · "the gate headline" — what a person actually approves.
+--   · the list row's "plain-English line" — the whole informational payload of
+--     a row whose name and cron the reader could already guess.
+--
+-- What stood in for it was a hardcoded seven-entry map in the web bundle,
+-- keyed on function_name, two of whose keys named applets that do not exist
+-- in this repo and which was missing roughly fifteen that do. Its own header
+-- carried the fix: promote this to a description field so the map can go away.
+--
+-- Nullable, because a row may predate the column or come from a manifest
+-- without one, and an absent sentence is a thing the UI must handle anyway.
+-- It is reconcile's to own, exactly like `name`: overwritten for system and ai
+-- applets, seeded once for user-owned ones. No backfill — the next reconcile
+-- fills every row from the manifests already on disk.
+
+ALTER TABLE app_applets ADD COLUMN description TEXT;

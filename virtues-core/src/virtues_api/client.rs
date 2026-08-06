@@ -9,6 +9,24 @@
 //! Use this for the proxy routes (`/v1/ai/*`, `/v1/places/*`, `/v1/exa/*`,
 //! `/v1/unsplash/*`).
 //!
+//! ## The BYO fork
+//!
+//! When the user has set a BYO provider key, **every `/v1/ai/*` call** leaves
+//! by the user's endpoint instead of ours — streaming via [`Self::stream`],
+//! non-streaming via [`Self::post_json`]. Both consult
+//! [`crate::api::settings_byo::load_byo_credential`] and divert before any
+//! bearer is read, so virtues-api (wallet, markup, caps, auto-top-up) is out
+//! of the inference path entirely. That is the whole point of BYO.
+//!
+//! The fork is keyed on [`is_ai_path`] — the same predicate that decides cost
+//! capture — rather than on a separate `post_ai()` method, specifically so a
+//! new AI caller cannot forget to opt in. That mattered: until 2026-08-05
+//! only `stream()` honored the key, and compaction, day summaries, image
+//! generation and transcription quietly billed the wallet while the UI said
+//! "BYO active". Non-AI routes (`/v1/places/*`, `/v1/exa/*`, `/v1/unsplash/*`)
+//! are per-user vendor bills that BYO says nothing about, so they keep going
+//! through the wallet. Plan of record: `docs/byo-ai-plan.md`.
+//!
 //! ## Purpose tagging (vestige — no-op)
 //!
 //! Calls still carry an `X-Virtues-Purpose` header (`user`/`system`), but the
@@ -22,6 +40,115 @@ use serde_json::{json, Value};
 use sqlx::PgPool;
 
 use super::renew;
+
+/// Is this one of the metered *inference* routes, as opposed to the fixed-cost
+/// vendor proxies (`/v1/places/*`, `/v1/exa/*`, `/v1/unsplash/*`)?
+///
+/// Two things key on this and must not drift apart: whether a call may divert
+/// to the user's BYO endpoint, and whether its `usage` block is captured into
+/// `app_ai_calls`. A route that is one but not the other would either bill a
+/// BYO call to the wallet or record a wallet call as free.
+fn is_ai_path(path: &str) -> bool {
+    path.starts_with("/v1/ai/")
+}
+
+/// Turn an upstream's "HTTP 200, but actually an error" into a real error.
+///
+/// Some gateways answer a failed call with a 2xx whose body carries `error`
+/// and no `choices`. **Verified against OpenRouter 2026-08-05**: sending audio
+/// in our `image_url` data-URI shape returns HTTP 200 with
+/// `error.message = "Failed to load image from data:audio/wav;base64,…"` —
+/// the upstream tried to decode the audio as an image, failed, and said so at
+/// status 200.
+///
+/// Left alone, that is the only *quiet* BYO failure. Every other one we probed
+/// is loud: a wrong model id 400s, a missing model 400s, an unfunded account
+/// 402s. This one passes `is_success()`, so callers fall through to parsing
+/// and report something misleading — the transcription applet would raise
+/// "missing choices[0].message.content", blaming its own parse for the
+/// upstream's refusal, and then retry every cron tick, re-billing the user's
+/// key for audio that can never succeed in that shape.
+///
+/// So: a 2xx carrying `error` and no `choices` becomes a 502 with the
+/// upstream's own message preserved. The user reads why their provider said
+/// no, which is the whole point of not translating provider errors.
+fn normalize_upstream_error(resp: ApiResponse) -> ApiResponse {
+    if !resp.is_success() || resp.body.get("choices").is_some() {
+        return resp;
+    }
+    let Some(err) = resp.body.get("error") else {
+        return resp;
+    };
+    let message = err
+        .get("message")
+        .and_then(|m| m.as_str())
+        .unwrap_or("upstream reported an error without a message");
+    tracing::warn!(
+        upstream_status = resp.status,
+        message,
+        "BYO upstream returned an error body at a success status; treating as 502"
+    );
+    ApiResponse {
+        status: 502,
+        body: json!({
+            "error": "byo_upstream_error",
+            "message": message,
+            "upstream_status": resp.status,
+        }),
+    }
+}
+
+/// Re-address a request body for the user's endpoint.
+///
+/// **A model id is an address on one gateway, not a portable name.** Callers
+/// build bodies with ours — `xai/grok-4.5` is where *Vercel* keeps the chat
+/// model — and every caller names one explicitly. OpenRouter spells that same
+/// model `x-ai/grok-4.5` and does not carry `google/gemini-3-flash` at all. So
+/// sending our string to their endpoint is not a near miss; it is the wrong
+/// kind of thing.
+///
+/// The fix is to let the address belong to the route while the slot keeps only
+/// the role. We turn the body's model back into the slot it stands for, then
+/// look up what the user calls that slot. Nothing here knows or cares *which*
+/// slot — Omni is not special-cased, and must not be. Which model actually
+/// suits a role is advice, and advice belongs in the UI where it can change
+/// without a release.
+///
+/// Untranslated cases pass through deliberately:
+///
+/// - **The user's map has no entry for the slot.** Their endpoint may well use
+///   our ids (Vercel does; a LiteLLM can be aliased to). If it does not, the
+///   route answers with a loud 400 naming the model, which reads better than
+///   anything we could substitute.
+/// - **The body's model is not a slot default**, i.e. the user pinned an
+///   arbitrary model from the picker. That choice is theirs; we do not
+///   second-guess it.
+/// - **The body names no model at all.** No caller does this today, but the
+///   legacy `default_model` still fills it if set.
+fn apply_byo_model(body: &Value, byo: &crate::api::settings_byo::ByoCredential) -> Value {
+    let mut body = body.clone();
+    let Value::Object(map) = &mut body else {
+        return body;
+    };
+
+    let ours = map.get("model").and_then(|m| m.as_str()).map(String::from);
+    let Some(ours) = ours else {
+        // Unpinned body: the legacy single-model field is the only thing that
+        // can speak to it, since we have no slot to look up.
+        if let Some(fallback) = byo.default_model.as_deref() {
+            map.insert("model".into(), Value::String(fallback.into()));
+        }
+        return body;
+    };
+
+    if let Some(slot) = crate::api::model_catalog::slot_for_model(&ours) {
+        if let Some(theirs) = byo.models.get(slot.as_str()) {
+            tracing::debug!(slot = slot.as_str(), ours = %ours, theirs = %theirs, "re-addressed for BYO route");
+            map.insert("model".into(), Value::String(theirs.clone()));
+        }
+    }
+    body
+}
 
 /// Convert an `AutoTopupOutcome` non-Funded variant into the same 402
 /// error shape virtues-api would have returned. Lets iOS handle every
@@ -282,18 +409,77 @@ impl BearerClient {
     /// captured into `app_ai_calls` here — the single chokepoint, so every
     /// non-streaming AI feature (compaction, day summaries, transcription, …)
     /// is accounted for without per-caller bookkeeping.
+    ///
+    /// **BYO fork.** For `/v1/ai/*` a configured BYO key diverts the call to
+    /// the user's own endpoint before any bearer is read — see the module
+    /// docs. Non-AI routes never divert.
     pub async fn post_json(&self, path: &str, body: &Value) -> Result<ApiResponse> {
+        if is_ai_path(path) {
+            if let Ok(Some(byo)) = crate::api::settings_byo::load_byo_credential(&self.pool).await {
+                return self.post_direct_upstream(path, body, &byo).await;
+            }
+        }
         let bearer = self.ensure_bearer().await?;
         let resp = self.send(path, body, &bearer).await?;
         let resp = self.handle_402_and_retry_post(path, body, resp).await?;
-        self.record_ai_usage(path, body, &resp).await;
+        self.record_ai_usage(path, body, &resp, crate::api::ai_calls::Route::Wallet)
+            .await;
+        Ok(resp)
+    }
+
+    /// BYO path for non-streaming AI calls — the `post_json` twin of
+    /// [`Self::stream_direct_upstream`].
+    ///
+    /// Deliberately has **no 402 handling**: auto-top-up exists to refill our
+    /// wallet, and this call never touches it. Whatever the user's provider
+    /// says — 401 on a revoked key, 404 on a model their gateway does not
+    /// carry, 429 on their own rate limit — is returned verbatim, because
+    /// translating it would only obscure whose limit was hit. There is also no
+    /// silent fallback to the wallet: spending the user's Virtues balance to
+    /// paper over their misconfiguration is exactly the surprise BYO exists to
+    /// prevent.
+    async fn post_direct_upstream(
+        &self,
+        path: &str,
+        body: &Value,
+        byo: &crate::api::settings_byo::ByoCredential,
+    ) -> Result<ApiResponse> {
+        let body = apply_byo_model(body, byo);
+        let resp = self
+            .http
+            .post(&byo.endpoint_url)
+            .header("Authorization", format!("Bearer {}", byo.api_key))
+            .header("Content-Type", "application/json")
+            .json(&body)
+            .send()
+            .await
+            .map_err(|e| anyhow!("BYO upstream request failed: {e}"))?;
+        let status = resp.status().as_u16();
+        let resp = normalize_upstream_error(ApiResponse {
+            status,
+            body: resp.json::<Value>().await.unwrap_or_else(|_| json!({})),
+        });
+        // Still recorded, still keyed on the model actually sent. The row's
+        // `cost_micros` lands at 0 because no upstream but our own gateway
+        // reports `usage.cost` — and 0 is the honest number here, since
+        // `app_ai_calls` measures what the *wallet* spent, which for a BYO call
+        // is nothing. Presenting that as the user's total AI cost would be the
+        // lie; showing tokens instead is `docs/byo-ai-plan.md` phase 5.
+        self.record_ai_usage(path, &body, &resp, crate::api::ai_calls::Route::Byo)
+            .await;
         Ok(resp)
     }
 
     /// Best-effort: record one `app_ai_calls` row for a successful `/v1/ai/*`
     /// response that carries a `usage` block. Never fails the request.
-    async fn record_ai_usage(&self, path: &str, req_body: &Value, resp: &ApiResponse) {
-        if !path.starts_with("/v1/ai/") || !resp.is_success() {
+    async fn record_ai_usage(
+        &self,
+        path: &str,
+        req_body: &Value,
+        resp: &ApiResponse,
+        route: crate::api::ai_calls::Route,
+    ) {
+        if !is_ai_path(path) || !resp.is_success() {
             return;
         }
         let Some(usage) = resp.body.get("usage") else { return };
@@ -323,6 +509,7 @@ impl BearerClient {
             completion_tokens: as_i64("completion_tokens"),
             reasoning_tokens: reasoning,
             cost_micros,
+            route,
             chat_id: None,
             applet_run_id: None,
         };
@@ -432,13 +619,13 @@ impl BearerClient {
     /// caller to stream; non-recoverable 402s (card_declined, wallet_expired, …)
     /// come back as `StreamOutcome::Error` with the drained body.
     pub async fn stream(&self, path: &str, body: &Value) -> Result<StreamOutcome> {
-        // BYO key escape hatch. When the user has set their own provider
-        // key, every chat call goes box → upstream directly. virtues-api
-        // (wallet, markup, renewal, caps) is bypassed entirely — that's
-        // the point of "bring your own key": Virtues is no longer in the
-        // inference path.
-        if let Ok(Some(byo)) = crate::api::settings_byo::load_byo_credential(&self.pool).await {
-            return self.stream_direct_upstream(body, &byo).await;
+        // BYO fork — the streaming twin of the one in `post_json`. Gated on
+        // the same `is_ai_path` predicate so the two cannot drift, even though
+        // every caller of `stream()` today is already an AI route.
+        if is_ai_path(path) {
+            if let Ok(Some(byo)) = crate::api::settings_byo::load_byo_credential(&self.pool).await {
+                return self.stream_direct_upstream(body, &byo).await;
+            }
         }
 
         let bearer = self.ensure_bearer().await?;
@@ -502,20 +689,15 @@ impl BearerClient {
     /// at a translation proxy (LiteLLM / OpenRouter) — keeps the per-
     /// provider request-shape mess out of our codebase.
     ///
-    /// If `default_model` is set on the credential AND the request body
-    /// doesn't already pin a model, we splice it in so the user's choice
-    /// "from Settings" wins over the agent's default.
+    /// Model selection follows [`apply_byo_model`]. Same no-fallback rule as
+    /// [`Self::post_direct_upstream`]: a failure here surfaces as the
+    /// provider's own error, never as a quiet wallet charge.
     async fn stream_direct_upstream(
         &self,
         body: &Value,
         byo: &crate::api::settings_byo::ByoCredential,
     ) -> Result<StreamOutcome> {
-        let mut body = body.clone();
-        if let (Some(model), Value::Object(map)) = (byo.default_model.as_deref(), &mut body) {
-            if !map.contains_key("model") {
-                map.insert("model".to_string(), Value::String(model.to_string()));
-            }
-        }
+        let body = apply_byo_model(body, byo);
         let resp = self
             .stream_http
             .post(&byo.endpoint_url)
@@ -574,5 +756,160 @@ impl BearerClient {
         let status = resp.status().as_u16();
         let body = resp.json::<Value>().await.unwrap_or_else(|_| json!({}));
         Ok(ApiResponse { status, body })
+    }
+}
+
+#[cfg(test)]
+mod byo_fork_tests {
+    use super::*;
+
+    #[test]
+    fn only_inference_routes_fork_to_byo() {
+        assert!(is_ai_path("/v1/ai/chat/completions"));
+        // Fixed-cost vendor proxies are per-user bills a provider key cannot
+        // pay; they must keep going through the wallet.
+        for path in ["/v1/places/autocomplete", "/v1/exa/search", "/v1/unsplash/search", "/v1/usage"] {
+            assert!(!is_ai_path(path), "{path} must not divert to BYO");
+        }
+    }
+
+    fn byo(default_model: Option<&str>) -> crate::api::settings_byo::ByoCredential {
+        byo_with(default_model, &[])
+    }
+
+    fn byo_with(
+        default_model: Option<&str>,
+        models: &[(&str, &str)],
+    ) -> crate::api::settings_byo::ByoCredential {
+        crate::api::settings_byo::ByoCredential {
+            provider: "openrouter.ai".into(),
+            api_key: "k".into(),
+            endpoint_url: "https://openrouter.ai/api/v1/chat/completions".into(),
+            models: models
+                .iter()
+                .map(|(k, v)| (k.to_string(), v.to_string()))
+                .collect(),
+            default_model: default_model.map(String::from),
+        }
+    }
+
+    fn model_of(v: &Value) -> &str {
+        v["model"].as_str().unwrap_or_default()
+    }
+
+    /// The whole point: our address in, theirs out. Verified against real
+    /// OpenRouter spellings — it calls our `xai/…` chat model `x-ai/…`.
+    #[test]
+    fn our_address_is_swapped_for_theirs() {
+        use virtues_registry::models::{default_model_for_slot, ModelSlot};
+        let ours = default_model_for_slot(ModelSlot::Chat);
+        let body = json!({"model": ours, "messages": []});
+        let out = apply_byo_model(&body, &byo_with(None, &[("chat", "x-ai/grok-4.5")]));
+        assert_eq!(model_of(&out), "x-ai/grok-4.5");
+    }
+
+    /// No entry for the slot means the route is assumed to use our ids — true
+    /// for Vercel. Substituting anything would be a guess; a 400 naming the
+    /// model is better than a wrong model answering.
+    #[test]
+    fn an_unmapped_slot_passes_through_untouched() {
+        use virtues_registry::models::{default_model_for_slot, ModelSlot};
+        let ours = default_model_for_slot(ModelSlot::Chat);
+        let body = json!({"model": ours, "messages": []});
+        let out = apply_byo_model(&body, &byo_with(None, &[("omni", "google/gemini-3.5-flash")]));
+        assert_eq!(model_of(&out), ours);
+    }
+
+    /// A model the user pinned from the picker is not a slot default, so there
+    /// is no role to look up. Their choice stands.
+    #[test]
+    fn a_hand_picked_model_is_never_rewritten() {
+        let body = json!({"model": "some/exotic-model", "messages": []});
+        let out = apply_byo_model(&body, &byo_with(None, &[("chat", "x-ai/grok-4.5")]));
+        assert_eq!(model_of(&out), "some/exotic-model");
+    }
+
+    /// Nothing in the mapping knows which slot is which. Omni is re-addressed
+    /// by exactly the same path as chat — the "which model suits audio"
+    /// judgment lives in the UI, not here.
+    #[test]
+    fn every_slot_maps_by_the_same_rule_including_omni() {
+        use virtues_registry::models::{default_model_for_slot, ModelSlot};
+        for (slot, theirs) in [
+            (ModelSlot::Omni, "google/gemini-3.5-flash"),
+            (ModelSlot::Image, "google/gemini-3-pro-image"),
+            (ModelSlot::Lite, "z-ai/glm-4.7"),
+        ] {
+            let ours = default_model_for_slot(slot);
+            let body = json!({"model": ours, "messages": []});
+            let out = apply_byo_model(&body, &byo_with(None, &[(slot.as_str(), theirs)]));
+            assert_eq!(model_of(&out), theirs, "slot {} did not re-address", slot.as_str());
+        }
+    }
+
+    /// The legacy `default_model` never clobbers a pinned model, because it
+    /// cannot know which role that model was filling. Only the slot map may
+    /// re-address a pinned body.
+    #[test]
+    fn the_legacy_default_model_never_clobbers_a_pinned_one() {
+        let body = json!({"model": "google/gemini-3-flash", "messages": []});
+        let out = apply_byo_model(&body, &byo(Some("x-ai/grok-4.5")));
+        assert_eq!(out["model"], "google/gemini-3-flash");
+    }
+
+    #[test]
+    fn the_default_model_fills_an_unpinned_body() {
+        let body = json!({"messages": []});
+        let out = apply_byo_model(&body, &byo(Some("x-ai/grok-4.5")));
+        assert_eq!(out["model"], "x-ai/grok-4.5");
+    }
+
+    #[test]
+    fn no_default_model_leaves_the_body_alone() {
+        let body = json!({"messages": []});
+        let out = apply_byo_model(&body, &byo(None));
+        assert!(out.get("model").is_none());
+    }
+
+    /// The OpenRouter shape observed on 2026-08-05: HTTP 200, an `error`
+    /// object, no `choices`. It must not read as success.
+    #[test]
+    fn an_error_body_at_200_becomes_a_502() {
+        let resp = normalize_upstream_error(ApiResponse {
+            status: 200,
+            body: json!({"error": {"message": "Failed to load image from data:audio/wav;base64,…"}}),
+        });
+        assert_eq!(resp.status, 502);
+        assert!(!resp.is_success());
+        assert!(resp.body["message"].as_str().unwrap().contains("Failed to load image"));
+    }
+
+    #[test]
+    fn a_real_completion_is_untouched() {
+        let body = json!({"choices": [{"message": {"content": "hi"}}], "usage": {"cost": 0.01}});
+        let resp = normalize_upstream_error(ApiResponse { status: 200, body: body.clone() });
+        assert_eq!(resp.status, 200);
+        assert_eq!(resp.body, body);
+    }
+
+    /// Some upstreams return both a completion and a non-fatal `error`. A
+    /// present `choices` means we got what we asked for; don't discard it.
+    #[test]
+    fn choices_win_over_a_stray_error_field() {
+        let resp = normalize_upstream_error(ApiResponse {
+            status: 200,
+            body: json!({"choices": [{"message": {"content": "hi"}}], "error": {"message": "warn"}}),
+        });
+        assert_eq!(resp.status, 200);
+    }
+
+    /// A genuine 4xx already carries the provider's message; normalizing would
+    /// only bury it.
+    #[test]
+    fn real_error_statuses_pass_through_verbatim() {
+        let body = json!({"error": {"message": "xai/grok-4.5 is not a valid model ID", "code": 400}});
+        let resp = normalize_upstream_error(ApiResponse { status: 400, body: body.clone() });
+        assert_eq!(resp.status, 400);
+        assert_eq!(resp.body, body);
     }
 }

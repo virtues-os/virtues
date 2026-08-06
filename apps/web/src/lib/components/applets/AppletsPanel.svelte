@@ -2,13 +2,7 @@
 	import Icon from '$lib/components/Icon.svelte';
 	import UniversalDataGrid, { type Column } from '$lib/components/datagrid/UniversalDataGrid.svelte';
 	import type { FilterDef } from '$lib/components/datagrid/types';
-	import {
-		listApplets,
-		listActionRuns,
-		adminReconcile,
-		type Applet,
-		type AppletRun
-	} from '$lib/api/client';
+	import { listApplets, adminReconcile, type Applet } from '$lib/api/client';
 	import { windowShellStore } from '$lib/stores/window-shell.svelte';
 	import { describeSchedule, relativeTime } from '$lib/applets/palette';
 	import AppletCard from './AppletCard.svelte';
@@ -17,20 +11,26 @@
 	import { contextMenu } from '$lib/stores/contextMenu.svelte';
 
 	let applets = $state<Applet[]>([]);
-	let pulseByAction = $state<Record<string, AppletRun[]>>({});
-	let lastSuccessByAction = $state<Record<string, AppletRun | null>>({});
 	let loading = $state(true);
 	let err = $state<string | null>(null);
 	let newMenuOpen = $state(false);
+	let moreMenuOpen = $state(false);
 	let gitImportOpen = $state(false);
 	let reconciling = $state(false);
 	let reconcileMsg = $state<string | null>(null);
 	// Built-in (system) applets are plumbing — inspectable on demand, hidden
 	// by default so they don't crowd out yours. A filter, not a wall.
 	let showSystem = $state(false);
+	// Finished applets (lifecycle complete) are out of the way, not gone. They
+	// used to be filtered out with no way back: no archived filter, no history
+	// route since the phase-1 collapse, and the detail page's "Finished" branch
+	// reachable only by typing the URL. So a one-shot reminder fired, archived
+	// itself, and took its own output out of the interface — while the MODEL
+	// could still list it (`list_applets` has include_archived) and the person
+	// could not.
+	let showFinished = $state(false);
 
-	// Archived applets (lifecycle complete) are hidden: the list holds
-	// living things. Their run history stays reachable from chat/detail.
+	const finished = $derived(applets.filter((a) => a.archived_at));
 	const living = $derived(applets.filter((a) => !a.archived_at));
 
 	// Hide on `origin`, not `owner`. Every source fan-out row is owner='system'
@@ -39,14 +39,44 @@
 	// indexer you have never thought about. `origin === 'system'` is the actual
 	// plumbing; a source's applets are yours and stay visible.
 	const systemCount = $derived(living.filter((a) => a.origin === 'system').length);
-	const visible = $derived(showSystem ? living : living.filter((a) => a.origin !== 'system'));
+	const pool = $derived(showFinished ? [...living, ...finished] : living);
+	const visible = $derived(showSystem ? pool : pool.filter((a) => a.origin !== 'system'));
 
-	// Needs-attention strip: enabled applets whose last run errored.
-	// (Expected-but-didn't-run and credential-expired join when the slot
-	// bookkeeping and credential surfacing land.)
-	const needsAttention = $derived(
-		living.filter((a) => a.enabled && a.last_run?.status === 'error')
-	);
+	// Needs-attention strip. Two signals now; credential-expired joins when
+	// credential surfacing lands.
+	//
+	// `budget_exceeded` is deliberately NOT here: a run stopped at a ceiling
+	// its owner set is working as configured, and filing it beside genuine
+	// breakage teaches people to ignore the strip.
+	//
+	// An hour is the grace, matching the scheduler's own ceiling — long enough
+	// that a busy box isn't accused, short enough that a daily applet which
+	// silently stopped firing is caught the same morning.
+	const OVERDUE_GRACE_MS = 60 * 60 * 1000;
+
+	type Attention = { applet: Applet; why: string };
+
+	const needsAttention = $derived.by((): Attention[] => {
+		const out: Attention[] = [];
+		for (const a of living) {
+			if (!a.enabled) continue;
+			if (a.last_run?.status === 'error') {
+				out.push({ applet: a, why: 'last run failed' });
+				continue;
+			}
+			// Silent non-execution: the slot passed and nothing ran. This is
+			// the failure the strip could not see before — an unschedulable
+			// cron, a job that never registered, a box that was off. It looks
+			// identical to health in every other view.
+			if (a.next_due_at) {
+				const late = Date.now() - new Date(a.next_due_at).getTime();
+				if (late > OVERDUE_GRACE_MS) {
+					out.push({ applet: a, why: `expected ${relativeTime(a.next_due_at)}` });
+				}
+			}
+		}
+		return out;
+	});
 
 	function startChatFlow() {
 		newMenuOpen = false;
@@ -76,24 +106,10 @@
 		loading = true;
 		err = null;
 		try {
+			// One request. This used to fan out two more per applet — about
+			// fifty on a page — for the pulse and the last output, both of
+			// which the list query now carries.
 			applets = await listApplets();
-			void Promise.all(
-				applets.map(async (a) => {
-					try {
-						const [runs, successRuns] = await Promise.all([
-							listActionRuns(a.id, { limit: 10 }),
-							listActionRuns(a.id, { limit: 1, status: 'success' })
-						]);
-						pulseByAction = { ...pulseByAction, [a.id]: runs };
-						lastSuccessByAction = {
-							...lastSuccessByAction,
-							[a.id]: successRuns[0] ?? null
-						};
-					} catch {
-						// decorative
-					}
-				})
-			);
 		} catch (e) {
 			err = e instanceof Error ? e.message : String(e);
 		} finally {
@@ -168,23 +184,33 @@
 	};
 
 	const columns: Column<Applet>[] = [
-		{ key: 'name', label: 'Name', width: '30%', minWidth: '140px' },
+		{ key: 'name', label: 'Name', width: '22%', minWidth: '140px' },
+		{
+			// The row's whole informational payload. Without it the table is six
+			// columns of machine vocabulary and a name the reader could already
+			// guess — Origin and Lifecycle badges answering questions nobody
+			// asked, while "what is this thing for" went unanswered.
+			key: 'description',
+			label: 'What it does',
+			width: '32%',
+			minWidth: '200px',
+			getValue: (a) => a.description ?? '—'
+		},
+		// Origin and Lifecycle are filters, not columns. As columns they were
+		// two badges of provenance and bookkeeping answering questions nobody
+		// walks up to this page with, in the space where "what is this for"
+		// belonged. Both remain in the filter bar and in search.
 		{
 			key: 'origin',
 			label: 'Origin',
-			format: 'badge',
+			hidden: true,
 			getValue: (a) => ORIGIN_LABEL[a.origin] ?? a.origin
 		},
 		{
 			key: 'until',
 			label: 'Lifecycle',
-			format: 'badge',
-			getValue: (a) => lifecycleLabel(a),
-			badgeColors: {
-				forever: 'badge-muted',
-				once: 'badge-info',
-				until: 'badge-info'
-			}
+			hidden: true,
+			getValue: (a) => lifecycleLabel(a)
 		},
 		{
 			key: 'cron_schedule',
@@ -197,8 +223,28 @@
 			getValue: (a) => a.last_run?.started_at ? relativeTime(a.last_run.started_at) : '—'
 		},
 		{
+			key: 'next_due_at',
+			label: 'Next run',
+			// The scheduler's own answer, not a re-derivation from the cron
+			// string — so a row that stopped firing reads as overdue here
+			// rather than confidently predicting a run that will never come.
+			getValue: (a) => (a.next_due_at ? relativeTime(a.next_due_at) : '—')
+		},
+		// Two facts, two columns. One column headed "Status", keyed on `enabled`
+		// and rendering the last RUN's status, answered neither question: an
+		// applet you had switched off still showed "Success" from whenever it
+		// last ran, and whether it was on at all could only be discovered
+		// through a filter.
+		{
 			key: 'enabled',
-			label: 'Status',
+			label: 'On',
+			format: 'badge',
+			getValue: (a) => (a.archived_at ? 'finished' : a.enabled ? 'on' : 'off'),
+			badgeColors: { on: 'badge-success', off: 'badge-muted', finished: 'badge-info' }
+		},
+		{
+			key: 'last_run',
+			label: 'Last result',
 			format: 'badge',
 			getValue: (a) => lastRunStatus(a),
 			badgeColors: {
@@ -206,6 +252,7 @@
 				error: 'badge-error',
 				skipped: 'badge-muted',
 				running: 'badge-warning',
+				budget_exceeded: 'badge-warning',
 				'—': 'badge-muted'
 			}
 		}
@@ -229,10 +276,12 @@
 			kind: 'enum',
 			label: 'Status',
 			options: [
-				{ value: 'true', label: 'Enabled', badgeColor: 'badge-success' },
-				{ value: 'false', label: 'Disabled', badgeColor: 'badge-muted' }
+				{ value: 'true', label: 'On', badgeColor: 'badge-success' },
+				{ value: 'false', label: 'Off', badgeColor: 'badge-muted' },
+				{ value: 'finished', label: 'Finished', badgeColor: 'badge-info' }
 			],
-			predicate: (a, v) => String(a.enabled) === v
+			predicate: (a, v) =>
+				v === 'finished' ? Boolean(a.archived_at) : !a.archived_at && String(a.enabled) === v
 		},
 		{
 			id: 'schedule_type',
@@ -255,7 +304,8 @@
 				{ value: 'success', label: 'Success', badgeColor: 'badge-success' },
 				{ value: 'error', label: 'Error', badgeColor: 'badge-error' },
 				{ value: 'running', label: 'Running', badgeColor: 'badge-warning' },
-				{ value: 'skipped', label: 'Skipped', badgeColor: 'badge-muted' }
+				{ value: 'skipped', label: 'Skipped', badgeColor: 'badge-muted' },
+				{ value: 'budget_exceeded', label: 'Over budget', badgeColor: 'badge-warning' }
 			],
 			predicate: (a, v) => (a.last_run?.status ?? null) === v
 		}
@@ -285,16 +335,52 @@
 			>
 				{showSystem ? 'Hide' : 'Show'} built-in ({systemCount})
 			</button>
-			<button
-				type="button"
-				class="reconcile-btn"
-				disabled={reconciling}
-				onclick={reconcile}
-				title="Re-read applet manifests from disk and apply changes"
-			>
-				<Icon icon="ri:refresh-line" width="14" />
-				{reconciling ? 'Reconciling…' : 'Reconcile'}
-			</button>
+			{#if finished.length > 0}
+				<button
+					type="button"
+					class="show-system-btn"
+					class:active={showFinished}
+					onclick={() => (showFinished = !showFinished)}
+					title="Applets whose lifecycle completed — a one-off reminder that fired, or an `until` condition that came true. Their work and their run history are still here."
+				>
+					{showFinished ? 'Hide' : 'Show'} finished ({finished.length})
+				</button>
+			{/if}
+			<!-- Reconcile is an operator verb — "re-read manifests from disk" is
+			     a sentence about the box's internals, and it sat at the top of a
+			     consumer page next to New as though it were a thing you do. It
+			     lives behind the overflow now: reachable, not offered. -->
+			<Popover bind:open={moreMenuOpen} placement="bottom-end" offset={4}>
+				{#snippet trigger({ toggle })}
+					<button type="button" class="icon-btn" onclick={toggle} aria-label="More">
+						<Icon icon="ri:more-2-fill" width="16" />
+					</button>
+				{/snippet}
+				{#snippet children()}
+					<div class="new-menu" role="menu">
+						<button
+							type="button"
+							class="new-menu-item"
+							role="menuitem"
+							disabled={reconciling}
+							onclick={() => {
+								moreMenuOpen = false;
+								void reconcile();
+							}}
+						>
+							<Icon icon="ri:refresh-line" width="16" />
+							<div class="new-menu-text">
+								<div class="new-menu-title">
+									{reconciling ? 'Re-reading…' : 'Re-read from disk'}
+								</div>
+								<div class="new-menu-desc">
+									Pick up applet folders that changed outside the app
+								</div>
+							</div>
+						</button>
+					</div>
+				{/snippet}
+			</Popover>
 			<Popover bind:open={newMenuOpen} placement="bottom-end" offset={4}>
 				{#snippet trigger({ toggle })}
 					<button type="button" class="new-btn" onclick={toggle}>
@@ -332,27 +418,36 @@
 					: `${needsAttention.length} applets need attention`}
 			</span>
 			<div class="attention-items">
-				{#each needsAttention as a (a.id)}
-					<button type="button" class="attention-item" onclick={() => openCard(a)}>
-						{a.name}
-						<span class="attention-why">last run failed</span>
+				{#each needsAttention as item (item.applet.id)}
+					<button
+						type="button"
+						class="attention-item"
+						onclick={() => openCard(item.applet)}
+					>
+						{item.applet.name}
+						<span class="attention-why">{item.why}</span>
 					</button>
 				{/each}
 			</div>
 		</div>
 	{/if}
 
+	<!-- The card IS the row the plan specifies: glyph, name, plain-English
+	     line, last activity, run-pulse. Defaulting to the table hid every one
+	     of those behind a view toggle most people never find, and showed a
+	     spreadsheet of cron strings instead. Anyone who prefers the table
+	     still has it — dataGridPrefs remembers the choice per entity type. -->
 	<UniversalDataGrid
 		items={visible}
 		{columns}
 		{filters}
 		entityType="applets"
-		defaultViewMode="table"
+		defaultViewMode="grid"
 		gridMinWidth="340px"
 		{loading}
 		error={err}
 		emptyIcon="ri:flashlight-line"
-		emptyMessage="No applets yet — ask for one in chat."
+		emptyMessage="Nothing runs for you yet. Ask in chat — “write my examen each morning,” “remind me on the 25th,” “a dashboard of my heart rate” — and it becomes an applet."
 		searchPlaceholder="Search applets…"
 		pageSize={50}
 		onItemClick={openCard}
@@ -362,8 +457,8 @@
 			<AppletCard
 				{applet}
 				lastRun={applet.last_run}
-				lastSuccess={lastSuccessByAction[applet.id] ?? null}
-				pulseRuns={pulseByAction[applet.id] ?? []}
+				lastSuccessSummary={applet.last_success_summary}
+				pulse={applet.pulse ?? []}
 			/>
 		{/snippet}
 	</UniversalDataGrid>
@@ -407,22 +502,23 @@
 		align-items: center;
 		gap: 0.75rem;
 	}
-	.reconcile-btn {
+	.icon-btn {
 		display: inline-flex;
 		align-items: center;
-		gap: 0.25rem;
-		padding: 0.375rem 0.625rem;
-		font-size: 0.8125rem;
+		justify-content: center;
+		width: 28px;
+		height: 28px;
 		border: 1px solid var(--color-border, #e5e7eb);
 		border-radius: 6px;
 		background: var(--color-surface, #fff);
-		color: var(--color-foreground, #111827);
+		color: var(--color-foreground-subtle, #6b7280);
 		cursor: pointer;
 	}
-	.reconcile-btn:hover:not(:disabled) {
+	.icon-btn:hover {
 		background: var(--color-surface-elevated, #f3f4f6);
+		color: var(--color-foreground, #111827);
 	}
-	.reconcile-btn:disabled {
+	.new-menu-item:disabled {
 		opacity: 0.6;
 		cursor: default;
 	}

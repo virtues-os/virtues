@@ -98,7 +98,7 @@ listed below.
 |---|---|---|
 | [cross-platform-apps-plan.md](cross-platform-apps-plan.md) | Planned | Shipping the viewer on Windows, Linux, and Android. Collectors deliberately out of scope, with the seams left in place for them. |
 | [mobile-ux-plan.md](mobile-ux-plan.md) | Partly built | Pragmatic mobile next steps: keep the tab strip on phone, block split view, keyboard work gets a spike first. Edge-to-edge safe-area theming already shipped. |
-| [mobile-spa-ota-plan.md](mobile-spa-ota-plan.md) | Parked | Pull new SPA bundles from the box over the iroh loopback instead of shipping an app build. Ship when UI churn outpaces app-store releases. |
+| [spa-delivery-plan.md](spa-delivery-plan.md) | Ready to schedule | One UI-delivery architecture for phone and Mac: baked bundle, OTA overlay pulled from the box, local data. Unlocks the offline editing already built into Yjs, and makes UI-ahead-of-box skew impossible. |
 | [mac-presence-plan.md](mac-presence-plan.md) | Planned | `data_activity_app_usage` is close to an inversion of the truth — real focused work is invisible while artifacts are the headline numbers. |
 | [audio-collector-plan.md](audio-collector-plan.md) | Partly built | Porting continuous mic capture to Tauri. The hardest collector: iOS audio-session lifecycle, and the only continuous, high-volume, binary stream. |
 | [data-durability.md](data-durability.md) | Partly built | Three-pass audit of the iOS → box ingestion path against the stated "zero silent data loss" promise, split into a data-integrity track and a background-reliability track. |

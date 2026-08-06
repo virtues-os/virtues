@@ -101,12 +101,15 @@ export function apiSend<T>(method: string, path: string, jsonBody?: unknown): Pr
 // Actions — new schema (post cutover + PR 2 endpoints)
 // ============================================================================
 
-export type ActionTrigger = 'cron' | 'manual' | 'tool' | 'api' | 'webhook';
+export type ActionTrigger = 'cron' | 'manual' | 'tool' | 'api' | 'webhook' | 'message';
 
 export interface AppletRun {
 	id: string;
 	applet_id: string | null;
-	status: 'running' | 'success' | 'error' | 'cancelled' | 'skipped';
+	/** `budget_exceeded` is not a failure: a spend ceiling the owner set in
+	 *  `config.limits` was reached, so the run stopped deliberately. It stays
+	 *  out of the needs-attention strip for that reason. */
+	status: 'running' | 'success' | 'error' | 'cancelled' | 'skipped' | 'budget_exceeded';
 	started_at: string;
 	completed_at: string | null;
 	records_processed: number;
@@ -115,6 +118,13 @@ export interface AppletRun {
 	parent_run_id: string | null;
 	transform_stage: string | null;
 	result_summary: string | null;
+	/** What the user said, for `message` runs. This plus `result_summary` is
+	 *  the exchange — the conversation lives on the run, not in a thread. */
+	message: string | null;
+	/** What this run spent with the model, in micros-USD — summed from the
+	 *  gateway's authoritative per-call figures. Zero for runs that called no
+	 *  model, and for every run recorded before spend was attributed. */
+	cost_micros: number;
 	created_at: string;
 }
 
@@ -151,6 +161,10 @@ export interface Applet {
 	id: string;
 	owner: 'system' | 'user' | 'ai';
 	name: string;
+	/** The applet's one-sentence intent, from its manifest — what it is for,
+	 *  in the user's terms. The list row's plain-English line and the detail
+	 *  headline. Null only for a row whose manifest omits it. */
+	description: string | null;
 	agent: string | null;
 	cron_schedule: string | null;
 	enabled: boolean;
@@ -174,9 +188,22 @@ export interface Applet {
 	until: string | null;
 	/** Set when the lifecycle completed; archived applets are disabled. */
 	archived_at: string | null;
+	/** The scheduled slot this applet currently owes. Null when it has no
+	 *  schedule, or the scheduler has not seen it yet. Far enough in the past
+	 *  means it was expected and didn't run. */
+	next_due_at: string | null;
+	/** The last scheduled slot actually handled — fired, or consciously
+	 *  skipped. Not the same as the last run's `started_at`: a catch-up run at
+	 *  07:12 handles the 06:00 slot. */
+	last_slot_at: string | null;
 	/** True when the applet folder ships a face/ (sandboxed-iframe HTML UI). */
 	has_face: boolean;
 	is_system: boolean;
+	/** The last 10 run statuses, newest first — the card's pulse. Comes with
+	 *  the row so the list does not fetch it per applet. */
+	pulse: AppletRun['status'][];
+	/** The last successful run's summary — what the applet last produced. */
+	last_success_summary: string | null;
 	created_at: string;
 	updated_at: string;
 	last_run: ActionLastRun | null;
@@ -480,6 +507,45 @@ export async function deleteAction(id: string, dropData = false): Promise<void> 
 		const err = await res.json().catch(() => ({ error: res.statusText }));
 		throw new Error(err.error || `Failed to delete applet: ${res.statusText}`);
 	}
+}
+
+/** One line of an applet's log: consecutive runs that shared an outcome,
+ *  counted. `occurrences > 1` means the applet repeated itself — which on a
+ *  real box is most of history, since a poll that finds nothing still records
+ *  a run. An agent's output varies, so its entries never group. */
+export interface AppletLogEntry {
+	run_id: string | null;
+	status: AppletRun['status'];
+	trigger: ActionTrigger | null;
+	summary: string | null;
+	/** What the user said, for `message` runs. */
+	message: string | null;
+	error: string | null;
+	occurrences: number;
+	first_at: string | null;
+	last_at: string | null;
+	cost_micros: number;
+}
+
+export async function getAppletLog(id: string, limit = 50): Promise<AppletLogEntry[]> {
+	const res = await fetch(`${API_BASE}/applets/${encodeURIComponent(id)}/log?limit=${limit}`);
+	if (!res.ok) throw new Error(`Failed to load log: ${res.statusText}`);
+	return res.json();
+}
+
+/** Say something to an applet — the `message` wake. Returns once the run row
+ *  exists; the agent turn continues detached. */
+export async function messageApplet(id: string, message: string): Promise<{ run_id: string | null; status: string }> {
+	const res = await fetch(`${API_BASE}/applets/${encodeURIComponent(id)}/message`, {
+		method: 'POST',
+		headers: { 'Content-Type': 'application/json' },
+		body: JSON.stringify({ message })
+	});
+	if (!res.ok) {
+		const err = await res.json().catch(() => ({ error: res.statusText }));
+		throw new Error(err.error || `Failed to send: ${res.statusText}`);
+	}
+	return res.json();
 }
 
 /** The private tables an applet owns — shown on the delete confirm so the user
@@ -2351,11 +2417,39 @@ export function getSystemHistory<T = unknown>(): Promise<T> {
 export function getMetricsActivity<T = unknown>(): Promise<T> {
 	return apiGet<T>('/metrics/activity');
 }
-export function getAiCalls<T = unknown>(): Promise<T> {
-	return apiGet<T>('/telemetry/ai-calls');
+/** One row of the box-local AI-call log. Metadata only — never content. */
+export interface AiCallRow {
+	id: string;
+	created_at: string;
+	feature: string | null;
+	model: string | null;
+	prompt_tokens: number;
+	completion_tokens: number;
+	reasoning_tokens: number;
+	/**
+	 * Micros-USD, authoritative ONLY when `route === 'wallet'`. Our gateway is
+	 * the only upstream that reports a price, so a BYO row is 0-as-unknown —
+	 * render it as "your key", never as "$0.00".
+	 */
+	cost_micros: number;
+	/** `wallet` | `byo` — which purse paid. */
+	route: string;
+	status: string;
 }
-export function getAuthAudit<T = unknown>(): Promise<T> {
-	return apiGet<T>('/audit/auth');
+
+/** GET /api/telemetry/ai-calls — one page of the call log, newest first. */
+export function getAiCallsPage(opts: {
+	offset: number;
+	limit: number;
+	search?: string;
+	dir?: 'asc' | 'desc';
+}): Promise<{ items: AiCallRow[]; total: number }> {
+	return apiGet<{ items: AiCallRow[]; total: number }>('/telemetry/ai-calls', {
+		offset: opts.offset,
+		limit: opts.limit,
+		search: opts.search,
+		dir: opts.dir
+	});
 }
 export function getUsageSummary<T = unknown>(): Promise<T> {
 	return apiGet<T>('/usage/summary');

@@ -30,9 +30,36 @@ const THEME_STORAGE_KEY = 'virtues-theme';
 /** Resolved `--background` for the active theme; read by app.html pre-paint. */
 const THEME_BG_STORAGE_KEY = 'virtues-theme-bg';
 
+/**
+ * The two themes Virtues stands behind — one light, one dark.
+ *
+ * Sixteen themes with no marked pair is sixteen equal strangers: nothing tells
+ * you which one the app was designed in, so picking is guesswork and the answer
+ * to "just give me dark mode" is a shrug. These two are that answer. They are
+ * surfaced by name — Pemberley stays Pemberley — with the role as a qualifier,
+ * because the names are part of the product and "Light"/"Dark" are not names.
+ *
+ * `light` must agree with virtues-registry's DEFAULT_THEME (Rust), which is what
+ * a new box actually lands on. Calling a theme the default while new boxes open
+ * on a different one would be a label that isn't true.
+ */
+export const DEFAULT_THEMES = {
+	light: 'pemberley',
+	dark: 'asgard'
+} as const satisfies Record<'light' | 'dark', Theme>;
+
+/** "Virtues Light" / "Virtues Dark" for the two above; null for the rest. */
+export function themeDefaultLabel(theme: Theme): string | null {
+	if (theme === DEFAULT_THEMES.light) return 'Virtues Light';
+	if (theme === DEFAULT_THEMES.dark) return 'Virtues Dark';
+	return null;
+}
+
 // Fallback theme used only before the API responds (flash prevention).
-// The real default is set in virtues-registry (Rust) and delivered via /api/assistant-profile.
-const FALLBACK_THEME: Theme = 'caladan';
+// The real default is set in virtues-registry (Rust) and delivered via
+// /api/assistant-profile; this must match it, or a cold start paints one theme
+// and swaps to another the moment the profile lands.
+const FALLBACK_THEME: Theme = DEFAULT_THEMES.light;
 
 /**
  * Themes that no longer exist, and where their users go instead.
@@ -218,11 +245,16 @@ export function isThemeDark(theme: Theme): boolean {
 }
 
 /**
- * Get all available themes
+ * Get all available themes.
+ *
+ * The two defaults lead, light then dark, so the pair reads as a pair. Every
+ * surface that lists themes uses this order, which is the only thing keeping
+ * "recommended" from meaning something different in ⌘K than in Settings.
  */
 export function getAvailableThemes(): Theme[] {
 	return [
-		'pemberley',
+		DEFAULT_THEMES.light,
+		DEFAULT_THEMES.dark,
 		'oxford',
 		'caladan',
 		'rivendell',
@@ -235,7 +267,6 @@ export function getAvailableThemes(): Theme[] {
 		'canterbury',
 		'borghese',
 		'lyceum',
-		'asgard',
 		'agora',
 		'shire'
 	];
@@ -452,7 +483,7 @@ export const themeMetadata: Record<
 	},
 	oxford: {
 		icon: 'ph:feather-bold',
-		description: 'American heritage, navy & claret'
+		description: 'Heritage, navy & claret'
 	},
 	netherfield: {
 		icon: 'ph:building-bold',

@@ -13,7 +13,11 @@ set -euo pipefail
 
 CRATE_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 WORKSPACE_ROOT="$(cd "$CRATE_DIR/../.." && pwd)"
-TARGET_DIR="$WORKSPACE_ROOT/target"
+# Where cargo actually writes. NOT `$WORKSPACE_ROOT/target`: `.cargo/config.toml`
+# redirects `build.target-dir` to the shared cache, so that path stopped
+# existing and every per-target lookup below missed. Ask cargo.
+TARGET_DIR="$(cargo metadata --no-deps --format-version 1 \
+  --manifest-path "$WORKSPACE_ROOT/Cargo.toml" | jq -r .target_directory)"
 OUT="$CRATE_DIR/generated"
 LIB=libvirtues_iroh_ffi.a
 NAME=VirtuesIrohMac

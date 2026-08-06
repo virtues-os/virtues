@@ -1,8 +1,8 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://virtues.com/schemas/manifest.json",
-  "title": "Virtues action manifest",
-  "description": "Schema for actions/<name>/manifest.toml. The folder name supplies id_prefix as `action_<folder>` if not set explicitly. See actions/AUTHORING.md for the user-facing guide.",
+  "title": "Virtues applet manifest",
+  "description": "Schema for applets/<name>/manifest.toml. The folder name supplies id_prefix as `applet_<folder>` if not set explicitly. See applets/AGENTS.md for the authoring contract and applets/AUTHORING.md for the builtin (Rust) guide.",
   "type": "object",
   "required": [
     "name",
@@ -15,32 +15,16 @@
     },
     "description": {
       "type": "string",
-      "description": "One-sentence summary of what this action does."
+      "description": "The applet's one sentence of intent \u2014 what it does FOR the user, in their terms, not how it is implemented. Shown as the list row's line and the detail page headline."
     },
     "owner": {
       "type": "string",
       "enum": [
         "system",
-        "user"
+        "user",
+        "ai"
       ],
-      "description": "system: shipped with Virtues; reconcile overwrites declarative fields. user: authored by user/LLM; INSERT-OR-IGNORE \u2014 preserved after first seed."
-    },
-    "runtime": {
-      "type": "string",
-      "enum": [
-        "function",
-        "service",
-        "view"
-      ],
-      "default": "function",
-      "description": "function: fork-per-trigger CLI (stdin/stdout JSON). service: long-running supervised HTTP server. view: pure Svelte component, no server-side execution."
-    },
-    "command": {
-      "type": "array",
-      "items": {
-        "type": "string"
-      },
-      "description": "Argv to spawn (function = subprocess, service = supervised daemon). A bare command[0] resolves to a Cargo-built action binary under target/{debug,release}; anything else runs via PATH. Examples: [\"ios_healthkit\"], [\"python3\", \"main.py\"], [\"node\", \"server.js\"], [\"./build/handler\"]."
+      "description": "system: shipped with Virtues; reconcile overwrites declarative fields. user: authored by hand; INSERT-OR-IGNORE, preserved after first seed. ai: written by setup_applet; reconcile overwrites compiled fields but never operational state (enabled, memory)."
     },
     "triggers": {
       "type": "array",
@@ -48,33 +32,57 @@
         "type": "string",
         "enum": [
           "cron",
-          "webhook",
           "manual",
-          "tool"
+          "tool",
+          "api",
+          "webhook"
         ]
       },
-      "description": "What can fire this action. webhook requires per_credential=true. view-runtime actions should set [] (never invoked server-side)."
+      "description": "What can fire this applet. `webhook` requires per_credential=true. A face-only applet (no command, no agent) never runs server-side and sets []."
     },
-    "default_cron": {
+    "schedule": {
       "type": "string",
-      "description": "Cron expression (sec min hour dom month dow), e.g. \"0 0 7 * * *\" for 7am daily. Seeds cron_schedule on first reconcile; user edits via UI win after. Legacy alias of `schedule`."
+      "description": "Cron expression (sec min hour dom month dow), box-local timezone \u2014 e.g. \"0 0 7 * * *\" for 7am daily. Seeds cron_schedule on first reconcile; user edits in the UI win after that. The legacy spelling `default_cron` is still accepted."
     },
     "default_enabled": {
       "type": "boolean",
       "default": true,
-      "description": "Whether this action is enabled when first seeded."
+      "description": "Whether this applet is enabled when first seeded."
+    },
+    "condition": {
+      "type": "string",
+      "description": "SQL expression evaluated before each run; if false, run is skipped silently. Used to gate hourly-cron-but-only-fire-once-a-day applets."
+    },
+    "until": {
+      "type": "string",
+      "description": "Lifecycle: absent = forever; 'once' = archive after first successful run; any other value = SQL boolean checked after each success, archive when true."
+    },
+    "agent": {
+      "type": "string",
+      "description": "Prompt for an LLM-driven applet. When set with no command, the applet runs as an agent loop (no subprocess)."
+    },
+    "command": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "description": "Argv to spawn (function = subprocess, service = supervised daemon). A bare command[0] resolves to a Cargo-built applet binary under target/{debug,release}; anything else runs via PATH. Examples: [\"ios_healthkit\"], [\"python3\", \"main.py\"], [\"node\", \"server.js\"], [\"./build/handler\"]."
+    },
+    "supervise": {
+      "type": "boolean",
+      "description": "Command applets: run as a long-lived supervised service instead of fork-per-trigger (replaces runtime='service')."
     },
     "per_credential": {
       "type": "boolean",
       "default": false,
-      "description": "When true, fan out one app_actions row per active credential of `source.id`. Required for webhook-triggered actions."
+      "description": "When true, fan out one app_applets row per active credential of `source.id`. Required for webhook-triggered applets."
     },
     "source": {
       "type": "object",
       "properties": {
         "id": {
           "type": "string",
-          "description": "References a [[source]] entry in actions/sources.toml."
+          "description": "References a [[source]] entry in applets/sources.toml."
         }
       },
       "required": [
@@ -82,31 +90,14 @@
       ],
       "description": "Required when per_credential=true. Match credentials by source_id."
     },
-    "agent": {
-      "type": "string",
-      "description": "Prompt for an LLM-driven action. When set with no command, the action runs as an agent loop (no subprocess)."
-    },
-    "condition": {
-      "type": "string",
-      "description": "SQL expression evaluated before each run; if false, run is skipped silently. Used to gate hourly-cron-but-only-fire-once-a-day actions."
-    },
     "id_prefix": {
       "type": "string",
-      "description": "Override the auto-derived `action_<folder>` id. Rare \u2014 change only if migrating an existing action that needs a stable id."
+      "description": "Override the auto-derived `applet_<folder>` id. Rare \u2014 change only if migrating an existing applet that needs a stable id."
     },
     "config": {
       "type": "object",
-      "description": "Free-form config that flows into app_actions.config JSON. Notable: [config.view] name = \"<applet>\" for view-runtime actions; [config.service] health_path / mem_mb for service-runtime actions; [config.image_url] for custom card hero illustrations.",
+      "description": "Free-form config that flows into app_applets.config JSON. Notable: [config.limits] max_llm_cost / max_llm_cost_per_day / max_runs_per_day / max_runs_per_hour / timeout_s; [config.service] health_path / mem_mb for supervised services.",
       "properties": {
-        "view": {
-          "type": "object",
-          "properties": {
-            "name": {
-              "type": "string",
-              "description": "Folder under apps/web/src/lib/applets/<name>/ holding Card.svelte / Detail.svelte for this action."
-            }
-          }
-        },
         "service": {
           "type": "object",
           "properties": {
@@ -127,101 +118,43 @@
         }
       },
       "additionalProperties": true
-    },
-    "schedule": {
-      "type": "string",
-      "description": "Cron seed (6-field, seconds first, box-local timezone) for the live cron_schedule value. Canonical spelling; default_cron is the legacy alias."
-    },
-    "until": {
-      "type": "string",
-      "description": "Lifecycle: absent = forever; 'once' = archive after first successful run; any other value = SQL boolean checked after each success, archive when true."
-    },
-    "supervise": {
-      "type": "boolean",
-      "description": "Command applets: run as a long-lived supervised service instead of fork-per-trigger (replaces runtime='service')."
     }
   },
-  "oneOf": [
-    {
-      "properties": {
-        "runtime": {
-          "const": "view"
-        }
-      },
-      "not": {
-        "required": [
-          "command"
-        ]
-      }
-    },
-    {
-      "properties": {
-        "runtime": {
-          "enum": [
-            "function",
-            "service"
-          ]
-        }
-      }
-    }
-  ],
   "examples": [
     {
       "name": "Morning Examen",
-      "description": "Daily morning reflection.",
+      "description": "Reads yesterday and offers one observation and one question for today.",
       "owner": "user",
-      "runtime": "function",
       "triggers": [
         "cron",
         "manual"
       ],
-      "default_cron": "0 0 7 * * *",
+      "schedule": "0 0 7 * * *",
       "agent": "You are the user's morning reflection companion. ..."
     },
     {
-      "name": "iOS HealthKit",
-      "description": "Ingest HealthKit metrics from a paired iPhone.",
+      "name": "Google Calendar",
+      "description": "Keeps your Google Calendar events here.",
       "owner": "system",
-      "runtime": "function",
-      "command": [
-        "ios_healthkit"
-      ],
       "triggers": [
-        "webhook"
+        "cron",
+        "manual"
+      ],
+      "schedule": "0 */15 * * * *",
+      "command": [
+        "google_calendar_sync"
       ],
       "per_credential": true,
       "source": {
-        "id": "ios"
+        "id": "google"
       }
     },
     {
-      "name": "Echo Service",
-      "description": "Long-running HTTP server demonstration.",
-      "owner": "system",
-      "runtime": "service",
-      "command": [
-        "echo_service"
-      ],
-      "triggers": [
-        "manual"
-      ],
-      "config": {
-        "service": {
-          "health_path": "/__health"
-        }
-      }
-    },
-    {
-      "name": "Hello World",
-      "description": "Pure-frontend Svelte applet.",
+      "name": "Biscuit",
+      "description": "A small dog who lives on your box.",
       "owner": "user",
-      "runtime": "view",
       "triggers": [],
-      "config": {
-        "view": {
-          "name": "hello_world"
-        }
-      }
+      "default_enabled": true
     }
   ]
 }

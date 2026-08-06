@@ -80,9 +80,12 @@ than hiding behind "we don't store it."
 history, the health records, the files, the day pages — is collected, indexed,
 and queried entirely on your box. It never transits our infrastructure at all.
 
-**If that trade doesn't suit you, remove it.** Bring your own provider key and
-the gateway is out of the path entirely; the box talks to your provider
-directly. The rest of Virtues works the same.
+**If that trade doesn't suit you, remove it — for chat.** Bring your own
+provider key and the conversation goes box → provider directly, with the
+gateway out of that path. **It does not yet cover everything.** Conversation
+compaction, day summaries, image generation, and transcription still run
+through the gateway and bill the wallet, because only `stream()` consults the
+key. Say "your chat" rather than "your AI" until those four close.
 
 ---
 
@@ -175,8 +178,10 @@ The recurring images. Reach for them in copy, docs, support replies, talks:
   what the ledger is.
 - **"Nothing to decrypt with."** The relay's blindness — the strongest fully
   structural claim we have.
-- **"Bring your own key and we're out of the path."** The escape hatch is real
-  and worth naming.
+- **"Bring your own key and we're out of your chat."** Use this wording, not
+  "out of the path" — the key covers `stream()` only, so compaction, day
+  summaries, image generation, and transcription still run through us. True as
+  stated, false if broadened. `docs/byo-ai-plan.md` phase 1 closes the gap.
 
 **Retired — do not use.** These described the voucher model and are now false:
 *"the link lives in your house"* (it also lives with us), *"two rooms, no shared
@@ -199,7 +204,10 @@ unlinkability for a month after the structure changed.
 > them. All that lands in our database is an amount and a timestamp — the charge
 > row doesn't even record which model served the request. Your prompts do pass
 > through our gateway on the way to the model provider; if you'd rather they
-> didn't, bring your own provider key and we're out of the path entirely.
+> didn't, bring your own provider key and your chat goes straight from your box
+> to the provider. Some background work — summarizing your day, compacting long
+> conversations, generating images, transcription — still runs through us even
+> then.
 
 **Q: Can you see my notes, location, or health data?**
 > No, and not as a matter of policy — that data never leaves your box. We have

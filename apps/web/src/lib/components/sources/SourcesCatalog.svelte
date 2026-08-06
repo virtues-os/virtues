@@ -25,6 +25,7 @@
 	import { windowShellStore } from '$lib/stores/window-shell.svelte';
 	import { relativeTime } from '$lib/applets/palette';
 	import { isMacOS, isTauri, thisComputerLabel } from '$lib/utils/platform';
+	import { domainLabel } from '$lib/sources/domains';
 	import type { SourceCatalogItem } from '$lib/api/client';
 
 	const store = sourcesStore;
@@ -76,18 +77,6 @@
 		provides: string;
 		/** Null when the connection's source is no longer in the catalog. */
 		source: SourceCatalogItem | null;
-	};
-
-	// Domain labels match the Overview's, since they name the same buckets.
-	const DOMAIN_LABEL: Record<string, string> = {
-		health: 'Health',
-		location: 'Location',
-		communication: 'Communication',
-		calendar: 'Calendar',
-		activity: 'Activity',
-		content: 'Content',
-		financial: 'Finance',
-		audio: 'Audio'
 	};
 
 	const AUTH_LABEL: Record<string, string> = {
@@ -151,8 +140,7 @@
 						: 'not connected',
 				last_activity: newest ? relativeTime(newest) : '—',
 				applets: connections.reduce((n, c) => n + (c.appletCount ?? 0), 0),
-				provides:
-					(source.domains ?? []).map((d) => DOMAIN_LABEL[d] ?? d).join(' · ') || '—',
+				provides: (source.domains ?? []).map(domainLabel).join(' · ') || '—',
 				source
 			};
 		})
