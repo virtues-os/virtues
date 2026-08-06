@@ -327,9 +327,13 @@ export const tabRegistry: Record<TabType, TabDefinition> = {
 	// BOOKMARK NAMESPACE: /bookmarks
 	//
 	// Saved web content — browser bookmarks, GitHub stars, hand-saved links.
-	// No detail route: a bookmark's detail IS the page it points at, and the
-	// generic record view (/record/…) already renders the row for anyone who
-	// wants the provenance.
+	//
+	// Still no bookmark-specific detail route, but the reasoning changed. It
+	// used to be "a bookmark's detail IS the page it points at" — true when a
+	// row was just a URL. A row now carries a note, tags, an extraction record
+	// and a read-state, so there is something of our own to show, and clicking
+	// one opens `/record/content_bookmark/{id}` rather than leaving the app.
+	// The original is one click on from there (the record view linkifies urls).
 	// ========================================================================
 	bookmarks: {
 		match: (path) => path === '/bookmarks',

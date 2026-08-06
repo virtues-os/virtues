@@ -118,7 +118,10 @@
 		});
 	}
 
-	type Rendered = { kind: "text" | "date" | "bool" | "num" | "json"; text: string };
+	type Rendered = {
+		kind: "text" | "date" | "bool" | "num" | "json" | "link";
+		text: string;
+	};
 
 	function render(value: unknown): Rendered {
 		if (typeof value === "boolean") return { kind: "bool", text: value ? "Yes" : "No" };
@@ -126,6 +129,10 @@
 			return { kind: "num", text: value.toLocaleString() };
 		if (typeof value === "string") {
 			if (looksLikeDate(value)) return { kind: "date", text: formatDate(value) };
+			// A record whose whole point is an address — a bookmark, an asset —
+			// is useless if the address is only selectable text. Linkifying is
+			// generic on purpose: any ontology with a url field benefits.
+			if (/^https?:\/\//i.test(value)) return { kind: "link", text: value };
 			return { kind: "text", text: value };
 		}
 		if (value && typeof value === "object")
@@ -163,6 +170,11 @@
 						<dd class:mono={r.kind === "json"} class:muted={r.kind === "date"}>
 							{#if r.kind === "json"}
 								<pre>{r.text}</pre>
+							{:else if r.kind === "link"}
+								<a href={r.text} target="_blank" rel="noopener noreferrer">
+									{r.text}
+									<Icon icon="ri:external-link-line" width="12" />
+								</a>
 							{:else}
 								{r.text}
 							{/if}
@@ -232,6 +244,19 @@
 		margin: 0;
 		border-top: 1px solid var(--color-border);
 	}
+	.field dd a {
+		display: inline-flex;
+		align-items: center;
+		gap: 0.25rem;
+		color: var(--color-primary);
+		text-decoration: none;
+		word-break: break-all;
+	}
+
+	.field dd a:hover {
+		text-decoration: underline;
+	}
+
 	.field {
 		display: grid;
 		grid-template-columns: 180px 1fr;
