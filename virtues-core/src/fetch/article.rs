@@ -180,6 +180,16 @@ pub fn parse(html: &str) -> Article {
 
                 match name.as_slice() {
                     b"head" => head_depth += 1,
+                    // `</head>` is optional in HTML and routinely omitted —
+                    // browsers close it implicitly when <body> starts. quick-xml
+                    // does not, so without this the head counter never returned
+                    // to zero and EVERY text node in the document was suppressed:
+                    // the page came back with a title and no body at all.
+                    //
+                    // It failed silently, which is what made it worth a test.
+                    // The row still enriched, because `<title>` survives, so the
+                    // only symptom was a thinner record than the page deserved.
+                    b"body" => head_depth = 0,
                     b"title" => in_title = true,
                     n if BLOCK.contains(&n) => out.push_str("\n\n"),
                     _ => {}
@@ -406,6 +416,23 @@ mod tests {
         let a = parse(html);
         assert_eq!(a.title.as_deref(), Some("Just a title"));
         assert_eq!(a.text, "Body.");
+    }
+
+    #[test]
+    fn unclosed_head_does_not_swallow_the_body() {
+        // Regression, found by audit rather than by failure: `</head>` is
+        // optional in HTML, and omitting it left head_depth pinned above zero
+        // so every text node was suppressed. The page still had a title, so
+        // nothing errored — it just quietly extracted nothing.
+        let html = "<html><head><title>T</title><meta charset=\"utf-8\">\
+                    <body><p>The article body.</p></body></html>";
+        let a = parse(html);
+        assert!(
+            a.text.contains("The article body."),
+            "unclosed </head> swallowed the document: {:?}",
+            a.text
+        );
+        assert_eq!(a.title.as_deref(), Some("T"));
     }
 
     #[test]
