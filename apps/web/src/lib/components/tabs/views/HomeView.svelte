@@ -548,6 +548,24 @@
 	.line .t:hover { color: var(--color-primary); }
 	.line .d { margin-left: auto; font-size: 11px; color: var(--color-foreground-subtle); white-space: nowrap; flex: none; }
 
+	/* Home is what the bottom bar points at first, and every control on it sat
+	   under Apple's 44pt floor — the day stepper 34px tall, these recents 25px.
+	   Both grow by padding, so the type and the rhythm are unchanged and only
+	   the hit area moves; the row's own padding moves into the button so the
+	   spacing doesn't double. Keyed to touch as well as to width, because an
+	   iPad in a wide layout has the same fingers.
+
+	   Placed here, below the rules it overrides: these selectors match the base
+	   ones exactly, so at equal specificity it is source order that decides,
+	   and a media query does not change that. */
+	@media (max-width: 768px), (pointer: coarse) {
+		/* 13, not 12: the label measures 19.6px, so 12 lands at 43.6 — under the
+		   floor by the kind of fraction that only a measurement catches. */
+		.days button { padding: 13px 14px; }
+		.line { padding: 0; }
+		.line .t { padding: 10px 0; }
+	}
+
 	/* the keep */
 	.keep { margin-top: clamp(48px, 8vh, 92px); max-width: 640px; }
 	.card {

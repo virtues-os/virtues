@@ -15,6 +15,7 @@
 	import { windowShellStore } from "$lib/stores/window-shell.svelte";
 	import { mobileLayout } from "$lib/stores/mobileLayout.svelte";
 	import { keyboard } from "$lib/stores/keyboard.svelte";
+	import { search } from "$lib/stores/search.svelte";
 
 	interface Tab {
 		id: string;
@@ -42,13 +43,22 @@
 			match: ["/home"],
 			activate: () => go("/home", "Home"),
 		},
+		// Search, not Today. Search had no primary door on the phone at all,
+		// while Today is the one destination here that is already one tap away
+		// somewhere else: Home *is* the daily office, and its stepper goes to
+		// yesterday and today. Giving a slot to the thing with no other door,
+		// and taking it from the thing with two, is the trade. (To put Today
+		// back, restore this entry — the route and the icons are unchanged.)
 		{
-			id: "today",
-			label: "Today",
-			icon: "ri:sun-line",
-			iconActive: "ri:sun-fill",
-			match: ["/day"],
-			activate: () => go("/day", "Today"),
+			id: "search",
+			label: "Search",
+			icon: "ri:search-line",
+			iconActive: "ri:search-line",
+			match: [],
+			activate: () => {
+				mobileLayout.closeMenu();
+				search.show();
+			},
 		},
 		{
 			id: "capture",
@@ -83,7 +93,11 @@
 
 	function isActive(tab: Tab): boolean {
 		if (tab.id === "more") return mobileLayout.menuOpen;
-		if (mobileLayout.menuOpen) return false;
+		// Search is a state you are in, not a place you went — it lights up while
+		// the palette is up and goes out with it. `match` can't express that,
+		// because the route underneath never changed.
+		if (tab.id === "search") return search.open;
+		if (mobileLayout.menuOpen || search.open) return false;
 		return tab.match.some((p) => activeRoute === p || activeRoute.startsWith(p + "/"));
 	}
 </script>
