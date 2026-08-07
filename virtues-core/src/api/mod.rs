@@ -190,8 +190,8 @@ pub use updates::{
 };
 pub use search_local::{search_local, LocalSearchRequest, LocalSearchResponse};
 pub use bookmarks::{
-    list_bookmarks, save_bookmark, BookmarkListItem, BookmarkPage, ListBookmarksQuery,
-    SaveBookmarkRequest, SavedBookmark,
+    get_bookmark, list_bookmarks, save_bookmark, update_note, BookmarkDetail, BookmarkListItem,
+    BookmarkPage, ListBookmarksQuery, SaveBookmarkRequest, SavedBookmark, UpdateNoteRequest,
 };
 pub use pins::{
     create_pin, delete_pin, list_pins, reorder_pins, update_pin, CreatePinRequest, Pin,

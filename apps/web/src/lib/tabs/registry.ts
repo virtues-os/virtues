@@ -33,6 +33,7 @@ import DogJumpView from '$lib/components/tabs/views/DogJumpView.svelte';
 import PagesView from '$lib/components/tabs/views/PagesView.svelte';
 import PageDetailView from '$lib/components/tabs/views/PageDetailView.svelte';
 import BookmarksView from '$lib/components/tabs/views/BookmarksView.svelte';
+import BookmarkDetailView from '$lib/components/tabs/views/BookmarkDetailView.svelte';
 import NotebooksListView from '$lib/components/tabs/views/NotebooksListView.svelte';
 import NotebookDetailView from '$lib/components/tabs/views/NotebookDetailView.svelte';
 import NarrativeIdentityView from '$lib/components/tabs/views/NarrativeIdentityView.svelte';
@@ -328,12 +329,12 @@ export const tabRegistry: Record<TabType, TabDefinition> = {
 	//
 	// Saved web content — browser bookmarks, GitHub stars, hand-saved links.
 	//
-	// Still no bookmark-specific detail route, but the reasoning changed. It
-	// used to be "a bookmark's detail IS the page it points at" — true when a
-	// row was just a URL. A row now carries a note, tags, an extraction record
-	// and a read-state, so there is something of our own to show, and clicking
-	// one opens `/record/content_bookmark/{id}` rather than leaving the app.
-	// The original is one click on from there (the record view linkifies urls).
+	// /bookmark/{id} is the detail. It used to be "a bookmark's detail IS the
+	// page it points at" — true when a row was just a URL, wrong once a row
+	// carries a note, tags, an extraction record and a read-state. The generic
+	// /record/… view still renders the raw row for anyone who wants it; this
+	// one leads with the note, because that is the only text on the page a
+	// person wrote.
 	// ========================================================================
 	bookmarks: {
 		match: (path) => path === '/bookmarks',
@@ -348,6 +349,24 @@ export const tabRegistry: Record<TabType, TabDefinition> = {
 		icon: 'ri:bookmark-line',
 		defaultLabel: 'Bookmarks',
 		component: BookmarksView,
+	},
+
+	// BOOKMARK DETAIL: /bookmark/{id} — singular, matching /notebook/{id}.
+	bookmark: {
+		match: (path) => /^\/bookmark\/.+$/.test(path),
+		parse: (path) => ({
+			type: 'bookmark',
+			label: 'Bookmark',
+			icon: 'ri:bookmark-line',
+			entityId: path.match(/^\/bookmark\/(.+)$/)?.[1],
+		}),
+		serialize: (id) => (id ? `bookmark_${id}` : 'bookmark'),
+		deserialize: (serialized) =>
+			serialized.startsWith('bookmark_') ? `/bookmark/${serialized.slice(9)}` : '/bookmarks',
+		icon: 'ri:bookmark-line',
+		defaultLabel: 'Bookmark',
+		component: BookmarkDetailView,
+		detailComponent: BookmarkDetailView,
 	},
 
 	// ========================================================================
@@ -940,6 +959,11 @@ export function parseRoute(route: string): ParsedRoute {
 		'place',
 		'org',
 		'notebook',
+		// Detail before the room: /bookmark/{id} and /bookmarks are distinct
+		// paths, but keeping the pair adjacent is how the next person notices
+		// that BOTH have to be listed here. An entry in `tabRegistry` alone is
+		// unreachable — this array is what routing actually walks.
+		'bookmark',
 		'bookmarks',
 		'day',
 		'year',

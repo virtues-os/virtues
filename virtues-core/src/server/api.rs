@@ -4016,6 +4016,23 @@ pub async fn apply_update_handler() -> Response {
 // ============================================================================
 
 /// GET /api/bookmarks — one page of saved bookmarks, newest first.
+/// GET /api/bookmarks/:id — one bookmark, for its detail view.
+pub async fn get_bookmark_handler(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> Response {
+    api_response(crate::api::get_bookmark(state.db.pool(), &id).await)
+}
+
+/// PATCH /api/bookmarks/:id/note — write the user's marginalia.
+pub async fn update_bookmark_note_handler(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    Json(req): Json<crate::api::UpdateNoteRequest>,
+) -> Response {
+    api_response(crate::api::update_note(state.db.pool(), &id, req).await)
+}
+
 pub async fn list_bookmarks_handler(
     State(state): State<AppState>,
     Query(query): Query<crate::api::ListBookmarksQuery>,

@@ -838,6 +838,14 @@ pub async fn run(client: Virtues, host: &str, port: u16) -> Result<()> {
             "/api/bookmarks",
             get(api::list_bookmarks_handler).post(api::save_bookmark_handler),
         )
+        .route("/api/bookmarks/{id}", get(api::get_bookmark_handler))
+        // The note has its own route rather than a general PATCH: every other
+        // column here belongs to a source or to the enrichment pass, and an
+        // endpoint that could write them would eventually be used to.
+        .route(
+            "/api/bookmarks/{id}/note",
+            axum::routing::patch(api::update_bookmark_note_handler),
+        )
         // Sidebar pins API
         .route(
             "/api/pins",

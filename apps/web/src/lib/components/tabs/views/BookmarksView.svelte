@@ -276,13 +276,13 @@
 	/**
 	 * A bookmark is a thing in the library, so clicking one opens it here
 	 * rather than throwing the person out to the web. The original is one
-	 * click further on — the record view linkifies the url — which is the
-	 * right order: what we know about the save first, the save second.
+	 * click further on, which is the right order: your note and what we made
+	 * of the save first, the save itself second.
 	 */
-	const recordRoute = (item: BookmarkApi) => `/record/content_bookmark/${item.id}`;
+	const detailRoute = (item: BookmarkApi) => `/bookmark/${item.id}`;
 
 	function open(item: BookmarkApi) {
-		windowShellStore.openTabFromRoute(recordRoute(item));
+		windowShellStore.openTabFromRoute(detailRoute(item));
 	}
 </script>
 
@@ -322,7 +322,7 @@
 		defaultViewMode="wall"
 		pageSize={25}
 		onItemClick={open}
-		rowHref={recordRoute}
+		rowHref={detailRoute}
 		emptyIcon="ri:bookmark-line"
 		emptyMessage="Nothing saved yet — paste a link above, or connect a browser."
 		loadingMessage="Reading the shelf..."
