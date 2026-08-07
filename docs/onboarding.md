@@ -4,6 +4,51 @@
 > and earning its keep" — across both hardware tiers, with and without a
 > screen. Decided 2026-06-12; supersedes the TTY-wizard model of `virtues init`.
 
+## As built — read this before the rest (2026-08-07)
+
+Most of the doctrine below survived contact with hardware. Four specifics did
+not, and the document still argues for them further down. Where they conflict,
+this section is right.
+
+**A browser cannot pair.** The iroh pivot landed after this spec was written and
+made a held Ed25519 key the credential. A browser tab has none, so `/pair` is
+purely informational and every "open the URL on your phone and pair" flow below
+is counterfactual. The app pairs; the browser cannot. The one exception is a
+browser running *on the box*, which authenticates as the loopback console.
+
+**The panel is called the `display`**, it is **not touch**, and the canvas is
+**585 × 329 CSS px**. The digitizer does not work through the cover glass, so
+the display is output-only — the pair code is *shown* there and typed elsewhere.
+The 7" panel's EDID claims 53 × 30 cm (~24"), so every DPI heuristic renders the
+UI 3.28× too small; the kiosk pins `devicePixelRatio`. Never trust EDID here.
+
+**The kiosk is `cage` + WebKit, not Chromium.** On Ubuntu 24.04 arm64
+`chromium-browser` is a snap transition stub, which would put a second
+self-updating release channel under ours; `cog`/WPE has no arm64 build.
+`libwebkit2gtk-4.1` is a first-class deb and is already Tauri's Linux webview.
+
+**Wifi comes from the phone over a setup AP, not from the panel.** The box hosts
+`Virtues-XXXX` (WPA2 — the owner's home password crosses that link), the display
+shows a join QR, and `/provision` collects the credentials. The AP lives until a
+device **pairs**, not until the box has wifi: dropping it on "got wifi" would
+tear down the network the phone is still sitting on. AP+STA concurrency does
+**not** work on the Q6A despite what `iw list` advertises, so the switchover is
+sequential.
+
+Built and running on hardware: `/display`, `/api/display/state` (loopback-only —
+it carries the live pair code), `/provision`, `/api/provision/*` (AP-subnet +
+unclaimed, re-checked per request), the setup-AP lifecycle, captive-portal
+detection, `--appliance` install profile, `virtues deprovision`, and per-unit
+first-boot minting. Not yet built: the iOS `NEHotspotConfiguration` flow, and
+the app-side wifi picker.
+
+**Delivery is: flash a pre-baked image, then `virtues upgrade` on first
+connect.** Provisioning happens on our bench, never the customer's — their box
+has no network until onboarding finishes, and onboarding needs the software
+already installed. `deprovision` strips per-unit identity before imaging,
+because the iroh secret *is* the box's identity and clones of an
+un-deprovisioned master are literally the same box.
+
 ## Doctrine
 
 Four rules everything else follows from:
@@ -42,24 +87,30 @@ Four rules everything else follows from:
 
 ## The two journeys
 
-### Appliance (flashed Virtues hardware, 8" non-touch screen)
+### Appliance (flashed Virtues hardware, 7" non-touch display)
+
+As built. The flow below is what runs on hardware today; the version this
+document originally described (open a URL on the LAN, pair in a browser, name
+the box) assumed a browser could pair, which it cannot.
 
 ```
 power on
-  → splash (static image; covers Chromium warm-up)
-  → panel: a 6-digit code (rotating) + "open my-box.local from any device"
-  → on the phone/desktop: open the URL → setup wizard → type the code to pair
-  → wizard: account → subscribe → name the box → done
-  → panel ticks each step live, then flips to the ambient dashboard
+  → boot ~10s (no desktop session, no wait-online)
+  → display: setup screen — join QR (left) + the live 6-digit code (right)
+  → box hosts Virtues-XXXX; phone camera scans the QR and joins it
+  → the phone's OS auto-opens /provision (captive-portal detection)
+  → owner picks their network from the BOX's scan list, types one password
+  → sequential switchover: AP down, join, AP back up if it failed
+  → owner opens the app, types the code off the display → paired
+  → AP retires; display flips to the ambient screen
 ```
 
-The CLI is never seen. The screen is never *required* — it displays the same
-URL + code any browser on the LAN can reach.
+The CLI is never seen. The **display is output-only** — the digitizer does not
+work through the cover glass, so nothing is ever typed on it.
 
-> **Pairing is a typed 6-digit code, not a QR.** The primary client is the
-> desktop app, which has no camera to scan — so the universal mechanism is a
-> short code a human reads off the panel (or the box's terminal) and types. See
-> "The universal rotating code" below.
+> **The pair code is typed, never scanned.** The primary client is the desktop
+> app, which has no camera. QR is used for public payloads only — the app
+> download link and the `WIFI:` join string — never for the code.
 
 ### DIY / headless (`curl virtues.com/sh | sudo sh`)
 
@@ -67,7 +118,8 @@ URL + code any browser on the LAN can reach.
 installer: deps → db → user → env → binary → systemd → health check
   → execs `sudo -u virtues virtues init` (plumbing: migrations + handoff)
   → ONE handoff block: mDNS URL · IP fallback · loopback · expiry · verdict line
-  → user opens the URL from any browser on the LAN → same wizard
+  → user enters the code in the desktop/mobile app (NOT a browser — a
+    browser holds no iroh key and cannot pair)
 ```
 
 The SSH session the installer ran in is itself the fallback transport on
@@ -93,13 +145,15 @@ off a screen and typing it, so digits beat a letter alphabet on a numeric pad.
   several devices over its life (unlike the single-use "+ Add Device" token).
 - **Stored encrypted, shown only on physical surfaces.** Only `SHA-256(code)` is
   used for matching; the raw code is kept encrypted (vault key) so box-local
-  surfaces — the `/panel` render and `virtues pair` in the box's terminal — can
+  surfaces — the `/display` render and `virtues pair` in the box's terminal — can
   *display* it. It is **never served over the LAN**. Proximity = authority,
   consistent with the `virtues sudo` physical-presence doctrine: a LAN stranger
   who cannot see the screen cannot claim the box.
-- **No QR.** The desktop app has no camera; the typed code is the one mechanism.
-  The displayed name still leads with mDNS for humans; the URL is for opening
-  the wizard in a browser, not for carrying the secret.
+- **No QR *for the code*.** The desktop app has no camera, so the typed code is
+  the one mechanism for pairing. QR is used elsewhere on the display and that is
+  not a contradiction: a QR is fine for a **public** value (the app download
+  link, the `WIFI:` join payload for the setup AP) and never for a secret. The
+  distinction is what the payload is worth to a stranger, not the encoding.
 
 ## Setup vs onboarding (they are different things)
 
@@ -213,9 +267,14 @@ survives re-installs, restores, and out-of-band changes.
   naming move out of the TTY).
 - **P2 — CLI parity:** `login` verb rename; terminal ANSI QR;
   client-isolation hint; installer handoff final polish.
-- **P3 — kiosk:** `/panel` route; cage+Chromium unit; splash; DRM guard.
-- **P4 — appliance image:** flash with kiosk enabled; AP-mode wifi
-  onboarding; naming step end-to-end.
+- **P3 — kiosk:** ✅ shipped as the **display**, not `/panel`: `/display`
+  route, `cage` + **WebKit** unit (not Chromium — see "As built"), DRM-connector
+  guard so the same image boots headless. Splash still outstanding.
+- **P4 — appliance image:** partially shipped. `--appliance` install profile,
+  setup AP, `/provision`, captive-portal detection and `virtues deprovision`
+  are built and running on hardware. The image itself (flash → deprovision →
+  `dd` → clone) is specified but not yet cut. The naming step was cut entirely
+  — reach is by EndpointId, so the box keeps its default name.
 - **P5 — reachability surface:** `[Fix remote access]` tiered flow. Note the
   doctrine moved after this was written: reach is the blind relay, not
   IPv6-direct, and BYO transport is the power-user escape rather than a tier —
