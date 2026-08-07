@@ -4,7 +4,7 @@
 //!
 //! Routes (all metered calls use bearer-auth + DB entitlement::charge):
 //! - /v1/ai/*            - LLM chat / completions / embeddings / models
-//! - /v1/exa/*           - Web search
+//! - /v1/parallel/*      - Web search
 //! - /v1/places/*        - Location autocomplete
 //! - /v1/unsplash/*      - Image search
 //! - /v1/services/plaid/* - Bank data (keeps the master Plaid secret off the box)
@@ -15,7 +15,6 @@
 
 pub mod ai;
 pub mod bearer_test;
-pub mod exa;
 pub mod parallel;
 pub mod health;
 pub mod internal;

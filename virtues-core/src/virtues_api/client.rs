@@ -6,7 +6,7 @@
 //! (which charges the card + credits the wallet) and retries; other 402s
 //! (wallet_expired) and 401 (unknown_key → re-link) surface to the caller.
 //!
-//! Use this for the proxy routes (`/v1/ai/*`, `/v1/places/*`, `/v1/exa/*`,
+//! Use this for the proxy routes (`/v1/ai/*`, `/v1/places/*`, `/v1/parallel/*`,
 //! `/v1/unsplash/*`).
 //!
 //! ## The BYO fork
@@ -23,7 +23,7 @@
 //! new AI caller cannot forget to opt in. That mattered: until 2026-08-05
 //! only `stream()` honored the key, and compaction, day summaries, image
 //! generation and transcription quietly billed the wallet while the UI said
-//! "BYO active". Non-AI routes (`/v1/places/*`, `/v1/exa/*`, `/v1/unsplash/*`)
+//! "BYO active". Non-AI routes (`/v1/places/*`, `/v1/parallel/*`, `/v1/unsplash/*`)
 //! are per-user vendor bills that BYO says nothing about, so they keep going
 //! through the wallet. Plan of record: `docs/byo-ai-plan.md`.
 //!
@@ -42,7 +42,7 @@ use sqlx::PgPool;
 use super::renew;
 
 /// Is this one of the metered *inference* routes, as opposed to the fixed-cost
-/// vendor proxies (`/v1/places/*`, `/v1/exa/*`, `/v1/unsplash/*`)?
+/// vendor proxies (`/v1/places/*`, `/v1/parallel/*`, `/v1/unsplash/*`)?
 ///
 /// Two things key on this and must not drift apart: whether a call may divert
 /// to the user's BYO endpoint, and whether its `usage` block is captured into
@@ -768,7 +768,7 @@ mod byo_fork_tests {
         assert!(is_ai_path("/v1/ai/chat/completions"));
         // Fixed-cost vendor proxies are per-user bills a provider key cannot
         // pay; they must keep going through the wallet.
-        for path in ["/v1/places/autocomplete", "/v1/exa/search", "/v1/unsplash/search", "/v1/usage"] {
+        for path in ["/v1/places/autocomplete", "/v1/parallel/search", "/v1/unsplash/search", "/v1/usage"] {
             assert!(!is_ai_path(path), "{path} must not divert to BYO");
         }
     }

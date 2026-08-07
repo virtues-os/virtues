@@ -614,7 +614,7 @@ pub async fn run(client: Virtues, host: &str, port: u16) -> Result<()> {
             get(api::billing_link_status_handler),
         )
         // Search API (Exa) — reaches outside the box
-        .route("/api/search/web", post(api::exa_search_handler))
+        .route("/api/search/web", post(api::web_search_handler))
         // Local content search — the ⌘K palette. Never leaves the box.
         .route("/api/search/local", post(api::search_local_handler))
         // Unsplash API (cover image search)

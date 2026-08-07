@@ -36,7 +36,6 @@ pub struct Config {
     // External Service API Keys (All billable services proxied through virtues-api)
     // =========================================================================
     /// Exa API key (for web search)
-    pub exa_api_key: Option<String>,
     pub parallel_api_key: Option<String>,
 
     /// Google API key (for Places autocomplete)
@@ -95,7 +94,6 @@ impl Config {
                 .unwrap_or_else(|_| "https://ai-gateway.vercel.sh".to_string()),
 
             // External service API keys
-            exa_api_key: std::env::var("EXA_API_KEY").ok(),
             parallel_api_key: std::env::var("PARALLEL_API_KEY").ok(),
             google_api_key: std::env::var("GOOGLE_API_KEY").ok(),
             unsplash_access_key: std::env::var("UNSPLASH_ACCESS_KEY").ok(),

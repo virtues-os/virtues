@@ -32,7 +32,6 @@ pub mod day_summary;
 pub mod developer;
 pub mod drive;
 pub mod entities;
-pub mod exa;
 pub mod parallel;
 pub mod home;
 pub mod internal;
@@ -116,9 +115,6 @@ pub use drive::{
 pub use entities::{
     create_place, delete_place, get_place, list_places, set_home_place as set_home_place_entity,
     update_place, CreatePlaceRequest, CreatePlaceResponse, Place, UpdatePlaceRequest,
-};
-pub use exa::{
-    search as exa_search, SearchRequest as ExaSearchRequest, SearchResponse as ExaSearchResponse,
 };
 pub use media::{
     get_media, is_audio_type, is_image_type, is_supported_media_type, is_video_type, upload_media,
