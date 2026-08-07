@@ -10,6 +10,8 @@
 	import MobileOnboarding from "$lib/components/mobile/MobileOnboarding.svelte";
 	import { mobileLayout } from "$lib/stores/mobileLayout.svelte";
 	import { ContextMenuProvider } from "$lib/components/contextMenu";
+	import SearchModal from "$lib/components/sidebar/SearchModal.svelte";
+	import { search } from "$lib/stores/search.svelte";
 	import DialogHost from "$lib/components/DialogHost.svelte";
 	import ServerProvisioning from "$lib/components/ServerProvisioning.svelte";
 	import { FloatingContent } from "$lib/floating";
@@ -357,6 +359,11 @@
 
 <!-- Global confirm/prompt dialogs (replaces window.confirm/prompt) -->
 <DialogHost />
+
+<!-- Ask/search palette. Mounted here rather than inside UnifiedSidebar, which
+     is where it used to live: the sidebar doesn't render on the phone shell,
+     so the app's only way to find anything didn't exist there. -->
+<SearchModal open={search.open} onClose={() => search.hide()} />
 
 <div
 	class="app-shell flex h-screen w-full bg-surface-elevated"

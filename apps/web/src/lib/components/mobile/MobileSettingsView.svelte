@@ -14,6 +14,9 @@
 	import Icon from "$lib/components/Icon.svelte";
 	import { windowShellStore } from "$lib/stores/window-shell.svelte";
 	import { mobileLayout } from "$lib/stores/mobileLayout.svelte";
+	import { search } from "$lib/stores/search.svelte";
+	import { pinsStore } from "$lib/stores/pins.svelte";
+	import { isEmoji } from "$lib/utils/iconHelpers";
 	import MobileDeviceScreen from "./MobileDeviceScreen.svelte";
 
 	interface Row {
@@ -27,9 +30,24 @@
 		{ label: "Narrative", icon: "ri:quill-pen-line", route: "/narrative-identity" },
 		{ label: "Notebooks", icon: "ri:booklet-line", route: "/notebooks" },
 		{ label: "Wiki", icon: "ri:book-open-line", route: "/wiki" },
+		{ label: "Bookmarks", icon: "ri:bookmark-line", route: "/bookmarks" },
 		{ label: "Drive", icon: "ri:cloud-line", route: "/drive" },
 		{ label: "Applets", icon: "ri:flashlight-line", route: "/applets" },
 	];
+
+	// What the user deliberately put within reach. The desktop keeps these in
+	// the sidebar's Desk, which the phone doesn't render — so pinning something
+	// on the desktop and then picking up your phone lost it entirely.
+	const pinned = $derived(pinsStore.pins);
+
+	function openPin(pin: { url: string; label: string | null }) {
+		open(pin.url, pin.label || pin.url);
+	}
+
+	function openSearch() {
+		mobileLayout.closeMenu();
+		search.show();
+	}
 
 	// One Settings room, flat sections — mirrors the desktop sidebar's single door.
 	const settings: Row[] = [
@@ -65,6 +83,37 @@
 			{#if mobileLayout.menuView === "device"}
 				<MobileDeviceScreen />
 			{:else}
+				<!-- Search first, and as a field rather than a list row. The phone
+				     had no way to find anything at all before this — only to
+				     browse — so it should not arrive looking like the seventh
+				     item in a directory. Tapping hands off to the same palette
+				     ⌘K opens on the desktop. -->
+				<button class="search-entry" onclick={openSearch}>
+					<Icon icon="ri:search-line" width={18} />
+					<span>Search or ask…</span>
+				</button>
+
+				{#if pinned.length > 0}
+					<div class="group-label">Pinned</div>
+					<div class="card">
+						{#each pinned as pin (pin.id)}
+							<button class="row" onclick={() => openPin(pin)}>
+								{#if pin.icon && isEmoji(pin.icon)}
+									<span class="pin-emoji">{pin.icon}</span>
+								{:else}
+									<Icon
+										icon={pin.icon || "ri:bookmark-line"}
+										width={18}
+										style={pin.color ? `color: var(--cat-${pin.color})` : undefined}
+									/>
+								{/if}
+								<span>{pin.label || pin.url}</span>
+								<Icon icon="ri:arrow-right-s-line" width={18} />
+							</button>
+						{/each}
+					</div>
+				{/if}
+
 				{#if mobileLayout.isNativeShell}
 					<button class="device-entry" onclick={() => mobileLayout.openDevice()}>
 						<div class="de-icon"><Icon icon="ri:smartphone-line" width={20} /></div>
@@ -190,6 +239,36 @@
 	}
 
 	/* "This device" entry — highlighted, sits above the directory. */
+	/* Dressed as the field it stands in for, not as a row. It sits above the
+	   groups because finding a thing is a different act from browsing to it. */
+	.search-entry {
+		display: flex;
+		align-items: center;
+		gap: 8px;
+		width: 100%;
+		margin-top: 8px;
+		padding: 11px 12px;
+		border: 1px solid var(--color-border);
+		border-radius: 10px;
+		background: var(--hover-bg, color-mix(in srgb, var(--color-foreground) 4%, transparent));
+		color: var(--color-foreground-muted);
+		font-size: 15px;
+		text-align: left;
+		cursor: pointer;
+		-webkit-tap-highlight-color: transparent;
+	}
+
+	.search-entry:active {
+		opacity: 0.6;
+	}
+
+	.pin-emoji {
+		font-size: 16px;
+		line-height: 1;
+		width: 18px;
+		text-align: center;
+	}
+
 	.device-entry {
 		display: flex;
 		align-items: center;
