@@ -289,11 +289,22 @@
 </section>
 
 <style>
+	/* Carries its own gutter, matching the Page shell's, because Settings
+	   renders this section as a bare sibling of a Page-shelled view (`box` =
+	   UpdateSection + SystemInfoView). With no horizontal padding it sat flush
+	   to the window edge while the System page below it was inset — legible as
+	   a mistake at any width, glaring at 375px. */
 	.updates {
 		display: flex;
 		flex-direction: column;
 		gap: 12px;
-		padding: 16px 0;
+		padding: 16px 1.25rem;
+	}
+
+	@media (min-width: 768px) {
+		.updates {
+			padding: 16px 3rem;
+		}
 	}
 
 	header {

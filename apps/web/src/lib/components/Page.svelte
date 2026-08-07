@@ -33,9 +33,21 @@
         heading?: Snippet;
     } = $props();
 
+    /**
+     * Mobile-first, because 48px of gutter on each side of a 375px screen left
+     * 279px of content — a quarter of the phone spent on margin, and narrow
+     * enough that rows with an intrinsic width (a dot-leader ledger, a toolbar)
+     * pushed the page into sideways scrolling. The `md:` step is 768px, the
+     * same line `mobileLayout` draws, so the desktop measure is unchanged.
+     *
+     * Viewport-keyed rather than container-keyed on purpose: `container-type`
+     * implies `contain: layout`, which would make every page a containing block
+     * for its `position: fixed` descendants — modals, popovers, the editor's
+     * footer bar. Not a trade worth making for a gutter.
+     */
     const paddingClass = $derived({
-        default: "p-12",
-        compact: "px-6 py-8",
+        default: "px-5 py-8 md:p-12",
+        compact: "px-4 py-6 md:px-6 md:py-8",
         none: "",
     }[padding]);
 

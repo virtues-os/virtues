@@ -1153,8 +1153,19 @@
 	}
 
 	/* Sources table */
+	/* Full-bleed: the records table breaks out of the reading column by the
+	   width of the desktop gutter. A phone's gutter is narrower than 2rem, so
+	   the same bleed hung the table off both edges of the screen — where the
+	   page can't scroll to it and the datagrid's own controls sat outside the
+	   viewport. The bleed starts at the shell's breakpoint, with the gutter. */
 	.sources-table-wrapper {
-		margin: 0 -2rem;
+		margin: 0;
+	}
+
+	@media (min-width: 768px) {
+		.sources-table-wrapper {
+			margin: 0 -2rem;
+		}
 	}
 
 	/* Ontology filter chips */

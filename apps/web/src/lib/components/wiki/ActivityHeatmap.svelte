@@ -159,6 +159,11 @@
 </div>
 
 <style>
+	/* Six months of 13px columns is ~366px — wider than a phone's content
+	   column, and the absolutely-positioned month labels reach further still.
+	   The heatmap scrolls itself rather than handing that width to the page:
+	   the rows below keep their intrinsic width, and `contain` stops the swipe
+	   chaining out to the shell when the grid reaches its end. */
 	.heatmap {
 		--cell-size: 10px;
 		--cell-gap: 3px;
@@ -166,12 +171,16 @@
 		display: flex;
 		flex-direction: column;
 		gap: 4px;
+		overflow-x: auto;
+		overscroll-behavior-x: contain;
 	}
 
 	/* Month labels */
 	.month-row {
 		display: flex;
 		height: 14px;
+		width: max-content;
+		min-width: 100%;
 	}
 
 	.day-labels-spacer {
@@ -194,6 +203,8 @@
 	.grid-row {
 		display: flex;
 		gap: 4px;
+		width: max-content;
+		min-width: 100%;
 	}
 
 	.day-labels {
