@@ -1715,7 +1715,7 @@ auth = { kind = "via_proxy", start_path = "/google/start" }
         // Recorded, so a second reconcile does not run it again.
         let applied: Vec<(i32, String)> = sqlx::query_as(
             "SELECT version, name FROM app_applet_schema_migrations \
-              WHERE applet_id = 'applet_user__calorie_tracker' ORDER BY version",
+              WHERE applet_id = 'applet_calorie_tracker' ORDER BY version",
         )
         .fetch_all(&pool)
         .await
@@ -1726,7 +1726,7 @@ auth = { kind = "via_proxy", start_path = "/google/start" }
         reconcile_templates(&pool).await.expect("second reconcile");
         let after: i64 = sqlx::query_scalar(
             "SELECT count(*) FROM app_applet_schema_migrations \
-              WHERE applet_id = 'applet_user__calorie_tracker'",
+              WHERE applet_id = 'applet_calorie_tracker'",
         )
         .fetch_one(&pool)
         .await

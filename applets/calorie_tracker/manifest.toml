@@ -9,11 +9,6 @@ triggers = ["message"]
 # Ships OFF. A food log is a thing you opt into, not a thing you find running.
 default_enabled = false
 
-# A shipped folder that owns tables declares the authored id shape, because
-# owning tables is what makes an applet the user's rather than the box's. The
-# slug behind it (`calorie_tracker`) is the schema below.
-id_prefix = "applet_user__calorie_tracker"
-
 # No schedule, on purpose. It wakes only when you say something to it, so it
 # costs nothing on the days you don't — and every row can be traced to
 # something you actually sent, rather than inferred from your messages.

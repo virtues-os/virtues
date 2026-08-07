@@ -13,7 +13,6 @@ An applet's shape is **derived from which fields you set**, never declared. Ther
 | You set | What it is |
 |---|---|
 | `command` | a subprocess: forked per trigger, stdin/stdout JSON |
-| `command` + `supervise = true` | a long-lived supervised service |
 | `agent` | an LLM agent loop (runs after the subprocess phase, if both are set) |
 | a `face/index.html` and neither of the above | a face-only applet — never invoked server-side, so `triggers = []` |
 
