@@ -81,6 +81,33 @@ fn random_pair_code() -> String {
     code
 }
 
+/// How many devices the owner has actually paired.
+///
+/// **Excludes `local-console`.** Every box mints that row at first boot —
+/// `middleware::auth::ensure_console_device` creates it so a browser running on
+/// the box itself is authenticated — so a bare `count(*) FROM app_device` is
+/// `1` on a box nobody has ever touched. Anything asking "has someone claimed
+/// this box" and counting rows naively gets `true` from the moment it powers
+/// on. Found on a fresh Dragon 2026-08-07, where it silently disabled the whole
+/// appliance onboarding path: the setup AP never rose, `/api/provision/*` 404'd,
+/// and the display skipped to its ambient screen.
+///
+/// `api::box_status::compute_setup_state` deliberately still counts the console
+/// row. Its `claimed` step is in `REQUIRED_SETUP_STEPS`, so making it honest
+/// would push a box whose only session is the on-box browser permanently back
+/// into `/setup` — that surface's console user has no device to pair *with*.
+/// The two answers differ because the questions do: "is there any session here"
+/// versus "did a human bring a device to this box".
+pub async fn paired_device_count(pool: &PgPool) -> i64 {
+    sqlx::query_scalar(
+        "SELECT count(*) FROM app_device WHERE revoked_at IS NULL AND id <> $1",
+    )
+    .bind(crate::middleware::auth::CONSOLE_DEVICE_ID)
+    .fetch_one(pool)
+    .await
+    .unwrap_or(0)
+}
+
 pub(crate) fn hash_token(token: &str) -> String {
     let mut h = Sha256::new();
     h.update(token.as_bytes());

@@ -95,12 +95,10 @@ fn is_setup_peer(peer: &SocketAddr, headers: &HeaderMap) -> bool {
 
 /// Setup is open only until the box has an owner.
 async fn setup_is_open(state: &AppState) -> bool {
-    let claimed: i64 =
-        sqlx::query_scalar("SELECT count(*) FROM app_device WHERE revoked_at IS NULL")
-            .fetch_one(state.db.pool())
-            .await
-            .unwrap_or(1); // fail closed: an unreadable DB is not an open door
-    claimed == 0
+    // Excludes `local-console`, which every box mints at boot — counting it
+    // closed this door before anyone had walked through it. See
+    // `api::pair::paired_device_count`.
+    crate::api::pair::paired_device_count(state.db.pool()).await == 0
 }
 
 /// Both gates. Returns the response to send when refused.
