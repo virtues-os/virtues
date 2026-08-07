@@ -13,8 +13,8 @@
    They were three magic numbers; they are one set of names now. Not in
    themes.css — a theme picks colors, not geometry. */
 :root {
-	--tabbar-h: 58px; /* at rest, labels showing */
-	--tabbar-h-min: 46px; /* minimized, icons only */
+	--tabbar-h: 52px; /* at rest */
+	--tabbar-h-min: 44px; /* minimized */
 	--tabbar-gap: 10px; /* float above the home indicator */
 	/* What content must keep clear so its last row isn't parked under glass. */
 	--tabbar-reserve: calc(var(--tabbar-h) + var(--tabbar-gap));
