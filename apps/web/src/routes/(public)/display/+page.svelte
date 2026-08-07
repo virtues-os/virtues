@@ -97,9 +97,15 @@
 					<!-- The passphrase in readable text, not only inside the QR. A QR
 					     needs a camera, and the device that needs this network is often
 					     a laptop. Shipping it QR-only stranded the lab box. -->
+					<!-- LABELLED, because this screen carries two different secrets and
+					     a demo proved they get confused: someone read the big pair code
+					     on the right and typed it as the wifi password. One is for
+					     joining this network, the other is for the app. Say which. -->
 					<div class="apcreds">
+						<div class="aplabel">Wi-Fi network</div>
 						<div class="apssid">{state_.ap_ssid}</div>
 						{#if state_.ap_passphrase}
+							<div class="aplabel">Password</div>
 							<div class="appass">{state_.ap_passphrase}</div>
 						{/if}
 					</div>
@@ -109,7 +115,7 @@
 			</div>
 			<div class="dark">
 				<div class="brand">∴ &nbsp;Virtues</div>
-				<div class="lead">Scan with your phone, then enter</div>
+				<div class="lead">Then, in the Virtues app, enter</div>
 				{#if grouped}
 					<div class="code">{grouped}</div>
 				{:else}
@@ -186,9 +192,17 @@
 		font-family: ui-monospace, Menlo, monospace;
 		line-height: 1.45;
 	}
+	.aplabel {
+		font-family: system-ui, sans-serif;
+		font-size: 0.5rem;
+		text-transform: uppercase;
+		letter-spacing: 0.13em;
+		color: #a8a294;
+		margin-top: 6px;
+	}
 	.apssid {
-		font-size: 0.62rem;
-		color: #8a8578;
+		font-size: 0.7rem;
+		color: #3a3833;
 		letter-spacing: 0.04em;
 	}
 	.appass {
