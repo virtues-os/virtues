@@ -56,7 +56,6 @@
 	import DayDeck from "$lib/components/home/DayDeck.svelte";
 	import DayGround from "$lib/components/home/DayGround.svelte";
 	import DayNovelty from "$lib/components/home/DayNovelty.svelte";
-	import RecordRemark from "$lib/components/home/RecordRemark.svelte";
 	import PlaceAsk from "$lib/components/home/PlaceAsk.svelte";
 
 	// A `TEMP-VERIFY` global fetch patch lived here until 2026-08-05: it
@@ -339,9 +338,10 @@
 	{/snippet}
 
 	<div class="body">
-		<!-- The box speaks, then — if it wrote one — quotes itself. -->
+		<!-- The box speaks — today's rhythm against the trailing twelve weeks —
+		     then, if it wrote one, quotes itself. -->
 		<div class="rv">
-			<RecordRemark {dayStartMs} />
+			<DayNovelty {dayStartMs} {nowMs} {tz} />
 			{#if leadLine}
 				<p class="lead">{leadLine}</p>
 			{/if}
@@ -364,13 +364,11 @@
 				/>
 				{#if points.length > 1}
 					<aside class="ground">
-						<span class="glabel mono">ground</span>
+						<span class="glabel mono">map</span>
 						<div class="gcanvas"><DayGround {points} scrubMs={scrubMs ?? pinnedMs} {nowMs} /></div>
 					</aside>
 				{/if}
 			</div>
-
-			<div class="nov"><DayNovelty {dayStartMs} {nowMs} {tz} /></div>
 
 			{#if pinnedMs != null}
 				<div class="moment">
@@ -510,8 +508,8 @@
 
 	/* the deck */
 	.today { padding-bottom: clamp(44px, 7vh, 84px); }
-	/* No fixes today means no ground track — the deck takes the whole width
-	   rather than leaving a column of air where a map would have been. */
+	/* No fixes today means no map — the deck takes the whole width
+	   rather than leaving a column of air where it would have been. */
 	.tbody { display: grid; grid-template-columns: minmax(0, 1fr) 170px; gap: clamp(20px, 3vw, 34px); align-items: center; }
 	.tbody.solo { grid-template-columns: minmax(0, 1fr); }
 	.ground { display: flex; flex-direction: column; gap: 7px; }
@@ -522,9 +520,7 @@
 		.gcanvas { height: 140px; }
 	}
 
-	/* order and chaos, and the rows behind a point — both align to the plot,
-	   not to the lane-name gutter. */
-	.nov { margin-left: 62px; max-width: 720px; }
+	/* the rows behind a point — aligned to the plot, not the lane-name gutter. */
 	.moment { margin-top: 22px; margin-left: 62px; max-width: 720px; }
 	.mhead { display: flex; align-items: baseline; gap: 10px; margin-bottom: 10px; }
 	.mhead .mt { font-size: 12px; color: var(--color-foreground); }
@@ -538,7 +534,7 @@
 	.mlist .rb { font-family: var(--font-sans); color: var(--color-foreground); min-width: 0; }
 	.mlist .rp { color: var(--color-foreground-muted); }
 	.mnone { font-family: var(--font-sans); font-size: 12.5px; color: var(--color-foreground-subtle); margin: 0; }
-	@media (max-width: 640px) { .nov, .moment { margin-left: 0; } }
+	@media (max-width: 640px) { .moment { margin-left: 0; } }
 
 	/* recents — the work you had in your hands last, newest first */
 	.recents { max-width: 640px; }
