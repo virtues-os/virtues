@@ -45,9 +45,19 @@
      * for its `position: fixed` descendants — modals, popovers, the editor's
      * footer bar. Not a trade worth making for a gutter.
      */
+    /**
+     * The extra bottom room on the phone is the floating tab bar's. The shell
+     * deliberately does NOT reserve that space — the view runs under the bar so
+     * content passes behind the glass, which is the whole point of it being
+     * glass — so the scroller has to be the thing that ends above it, or the
+     * last row would sit under the bar unreachable.
+     */
+    const phoneTabbarRoom =
+        "pb-[calc(1.5rem+var(--tabbar-reserve)+env(safe-area-inset-bottom))]";
+
     const paddingClass = $derived({
-        default: "px-5 py-8 md:p-12",
-        compact: "px-4 py-6 md:px-6 md:py-8",
+        default: `px-5 py-8 ${phoneTabbarRoom} md:p-12`,
+        compact: `px-4 py-6 ${phoneTabbarRoom} md:px-6 md:py-8`,
         none: "",
     }[padding]);
 

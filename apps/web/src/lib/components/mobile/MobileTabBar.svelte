@@ -161,15 +161,26 @@
 	// It tracks the active tab's glyph box; the transition on `transform` and
 	// `width` is what turns a jump into a slide.
 	let glassEl = $state<HTMLElement | null>(null);
-	let pill = $state<{ x: number; w: number; h: number } | null>(null);
+	let pill = $state<{ x: number; y: number; w: number; h: number } | null>(null);
 
 	// Queried rather than bound. `bind:this` into an array index inside a keyed
 	// `{#each}` left the refs empty here, and the pill silently never rendered —
 	// the glyphs are already findable from the container, so this needs no
 	// bookkeeping to go wrong.
+	/**
+	 * Measured off the whole tab, not the icon.
+	 *
+	 * Hugging the glyph left the label dangling below the highlight, which read
+	 * as a bubble stuck behind the icon rather than as a selected tab. The
+	 * reference gets away with a capsule around the icon because it has no
+	 * labels at all; with labels, the thing being selected is the pair.
+	 */
+	const INSET_X = 5;
+	const INSET_Y = 5;
+
 	function measurePill(idx: number) {
 		const g = glassEl;
-		const el = g?.querySelectorAll<HTMLElement>(".glyph")[idx];
+		const el = g?.querySelectorAll<HTMLElement>(".tab")[idx];
 		if (!g || !el) {
 			pill = null;
 			return;
@@ -177,7 +188,12 @@
 		const gb = g.getBoundingClientRect();
 		const eb = el.getBoundingClientRect();
 		if (eb.width === 0) return; // not laid out yet — keep the last good value
-		pill = { x: eb.left - gb.left, w: eb.width, h: eb.height };
+		pill = {
+			x: eb.left - gb.left + INSET_X,
+			y: eb.top - gb.top + INSET_Y,
+			w: eb.width - INSET_X * 2,
+			h: eb.height - INSET_Y * 2,
+		};
 	}
 
 	/**
@@ -206,6 +222,13 @@
 		// pill would then be missing entirely rather than merely un-animated.
 		measurePill(idx);
 
+		// …and once more off a timer, because the synchronous attempt above can
+		// land before the row has been laid out (it measures zero width and
+		// keeps the last good value). rAF would normally catch that on the next
+		// frame, but a throttled page runs no frames — so the retry that must
+		// not depend on them gets a timeout instead.
+		const retry = setTimeout(() => measurePill(idx), 0);
+
 		let raf = 0;
 		const until = performance.now() + 460;
 		const tick = () => {
@@ -217,6 +240,7 @@
 		const onResize = () => measurePill(idx);
 		window.addEventListener("resize", onResize);
 		return () => {
+			clearTimeout(retry);
 			cancelAnimationFrame(raf);
 			window.removeEventListener("resize", onResize);
 		};
@@ -233,7 +257,7 @@
 		{#if pill}
 			<span
 				class="pill"
-				style:transform="translateX({pill.x}px)"
+				style:transform="translate({pill.x}px, {pill.y}px)"
 				style:width="{pill.w}px"
 				style:height="{pill.h}px"
 				aria-hidden="true"
@@ -298,9 +322,13 @@
 		max-width: calc(100% - 0px);
 		height: var(--tabbar-h);
 		border-radius: 20px;
-		background-color: color-mix(in srgb, var(--color-surface) 76%, transparent);
-		backdrop-filter: blur(28px) saturate(180%);
-		-webkit-backdrop-filter: blur(28px) saturate(180%);
+		/* Thin enough that the blur has something to say. At 76% the fill was
+		   doing all the work and the result was a flat panel that happened to
+		   sit at the bottom — you could not tell there was anything behind it,
+		   which is the only thing separating glass from grey. */
+		background-color: color-mix(in srgb, var(--color-surface) 60%, transparent);
+		backdrop-filter: blur(32px) saturate(200%);
+		-webkit-backdrop-filter: blur(32px) saturate(200%);
 		border: 0.5px solid color-mix(in srgb, var(--color-border) 70%, transparent);
 		/* The lit top edge that reads as thickness. */
 		box-shadow: inset 0 0.5px 0 color-mix(in srgb, var(--color-foreground) 12%, transparent);
@@ -322,15 +350,19 @@
 		max-width: calc(100% - 64px);
 		height: var(--tabbar-h-min);
 		border-radius: 23px;
-		background-color: color-mix(in srgb, var(--color-surface) 58%, transparent);
+		background-color: color-mix(in srgb, var(--color-surface) 44%, transparent);
 	}
 
 	/* The pill sits behind the row and travels. */
+	/* Positioned from the container's own origin — `top: 0; left: 0` plus a
+	   two-axis translate — rather than relying on an absolutely-positioned
+	   flex child's static position, which is not somewhere to build on. */
 	.pill {
 		position: absolute;
+		top: 0;
 		left: 0;
-		border-radius: 999px;
-		background: color-mix(in srgb, var(--color-foreground) 12%, transparent);
+		border-radius: 15px;
+		background: color-mix(in srgb, var(--color-foreground) 11%, transparent);
 		pointer-events: none;
 		transition:
 			transform 0.36s cubic-bezier(0.32, 0.72, 0, 1),
