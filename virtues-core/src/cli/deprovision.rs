@@ -123,6 +123,16 @@ pub async fn run(yes: bool, force: bool) -> Result<(), crate::Error> {
         .output();
     println!("  ✓ journal vacuumed");
 
+    // ── 5. Arm first boot ───────────────────────────────────────────────────
+    // The marker is what licenses `virtues-firstboot` to mint a NEW encryption
+    // key. Without it, a box whose key went missing for any other reason (a
+    // botched edit, a half-restored backup) would silently get a fresh one —
+    // and every credential encrypted under the old key becomes undecryptable
+    // with no error, because the ciphertext is still there and still parses.
+    // Minting must therefore be something deprovision explicitly asked for,
+    // never a repair that happens on its own.
+    write_firstboot_marker()?;
+
     println!();
     println!("✓ deprovisioned — safe to image.");
     println!("  Power off WITHOUT booting again (a boot re-mints machine-id and");
@@ -132,6 +142,32 @@ pub async fn run(yes: bool, force: bool) -> Result<(), crate::Error> {
     println!();
     println!("  On first boot each unit mints its own encryption key, identity,");
     println!("  and host keys via the first-boot unit.");
+    Ok(())
+}
+
+/// Path of the marker that licenses `virtues-firstboot` to mint a fresh
+/// encryption key. Lives beside the env file so it travels with the image.
+pub fn firstboot_marker_path() -> std::path::PathBuf {
+    env_file_path()
+        .parent()
+        .unwrap_or(Path::new("/var/lib/virtues"))
+        .join(".needs-firstboot")
+}
+
+/// Arm first boot. Written last, so a deprovision that died partway through
+/// does not leave a box licensed to rotate a key it still needs.
+fn write_firstboot_marker() -> Result<(), crate::Error> {
+    let p = firstboot_marker_path();
+    std::fs::write(
+        &p,
+        "# Written by `virtues deprovision`.\n\
+         # Licenses virtues-firstboot to mint a per-unit encryption key on the\n\
+         # next boot, then delete this file. Do NOT create it by hand on a box\n\
+         # that holds data — minting a new key makes existing credentials\n\
+         # undecryptable, silently.\n",
+    )
+    .map_err(|e| crate::Error::Other(format!("write {}: {e}", p.display())))?;
+    println!("  ✓ armed first boot ({})", p.display());
     Ok(())
 }
 
