@@ -30,7 +30,7 @@ use axum::{
 use serde::Serialize;
 use std::net::SocketAddr;
 
-use crate::server::webhook::AppState;
+use crate::server::AppState;
 
 #[derive(Debug, Serialize)]
 pub struct DisplayState {
@@ -92,6 +92,47 @@ pub async fn display_state_handler(
         }),
     )
         .into_response()
+}
+
+/// `GET /api/display/qr` — the setup AP's join code, as an SVG.
+///
+/// Takes **no parameters**: the server renders the payload for the AP it is
+/// actually running, rather than encoding whatever a caller hands it. An
+/// endpoint that turns arbitrary text into a scannable QR on the owner's own
+/// screen is a small but real oracle — the panel is a trusted surface, and
+/// anything it displays should originate on the box.
+///
+/// `T:WPA` and not an open network: the customer's home wifi password crosses
+/// this link during provisioning, and on an open AP that is cleartext to anyone
+/// in range. The QR carries the passphrase, so a WPA2 network costs the user
+/// nothing — the phone camera joins either way, with no typing.
+pub async fn display_qr_handler(
+    ConnectInfo(peer): ConnectInfo<SocketAddr>,
+    headers: HeaderMap,
+) -> impl IntoResponse {
+    if !is_box_local(&peer, &headers) {
+        return (StatusCode::FORBIDDEN, "not available off-box").into_response();
+    }
+    let Some(ssid) = current_ap_ssid() else {
+        return (StatusCode::NOT_FOUND, "no setup network is up").into_response();
+    };
+    let svg = crate::api::pair::render_qr_svg(&wifi_payload(&ssid));
+    (
+        StatusCode::OK,
+        [
+            (axum::http::header::CONTENT_TYPE, "image/svg+xml"),
+            // The AP can be raised or dropped at any moment, so this must never
+            // be cached — a stale QR points a camera at a network that is gone.
+            (axum::http::header::CACHE_CONTROL, "no-store"),
+        ],
+        svg,
+    )
+        .into_response()
+}
+
+/// The `WIFI:` URI both iOS and Android cameras join natively.
+fn wifi_payload(ssid: &str) -> String {
+    format!("WIFI:S:{ssid};T:WPA;;")
 }
 
 /// Is this request from a process on the box itself?

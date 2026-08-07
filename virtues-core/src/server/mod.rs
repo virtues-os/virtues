@@ -237,6 +237,10 @@ pub async fn run(client: Virtues, host: &str, port: u16) -> Result<()> {
             "/api/display/state",
             get(crate::api::display::display_state_handler),
         )
+        .route(
+            "/api/display/qr",
+            get(crate::api::display::display_qr_handler),
+        )
         // Auth — pair-only model. Public consume + session probe (returns the
         // AuthUser resolved from the request's proven iroh key, if any).
         // /api/pair/{mint,confirm,deny,status} are auth'd and live under the
