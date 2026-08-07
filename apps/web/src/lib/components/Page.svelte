@@ -55,9 +55,16 @@
     const phoneTabbarRoom =
         "pb-[calc(1.5rem+var(--tabbar-reserve)+env(safe-area-inset-bottom))]";
 
+    /**
+     * A touch more room at the top on the phone than the old `py-8`, because
+     * the shell no longer puts anything above the view — no toolbar, no back
+     * chevron, nothing. The page begins directly under the status bar, and
+     * without a little air it reads as though it has been shoved up against
+     * the notch.
+     */
     const paddingClass = $derived({
-        default: `px-5 py-8 ${phoneTabbarRoom} md:p-12`,
-        compact: `px-4 py-6 ${phoneTabbarRoom} md:px-6 md:py-8`,
+        default: `px-5 pt-10 ${phoneTabbarRoom} md:p-12`,
+        compact: `px-4 pt-8 ${phoneTabbarRoom} md:px-6 md:py-8`,
         none: "",
     }[padding]);
 
