@@ -1,10 +1,10 @@
 //! daily_readings — the day's lectionary readings, cached on the box.
 //!
 //! Fetches from the USCCB daily-readings pages and stores them in
-//! `applet_daily_readings.readings`. Runs ahead rather than on demand: the
-//! lectionary is deterministic, so a fortnight is knowable in advance, and
-//! fetching in a batch means the examen never waits on someone else's server
-//! and a bad morning for bible.usccb.org is not a bad morning for the applet.
+//! `applet_daily_readings.readings`. One day ahead, once a day: the examen
+//! never waits on someone else's server, and in the steady state this is a
+//! single request — the same traffic as a person opening the page each
+//! morning, which is what it is.
 //!
 //! It is deliberately its OWN applet rather than a phase of the examen. A
 //! subprocess that fails takes the whole run down with it, so folding the
@@ -23,20 +23,26 @@ use sqlx::PgPool;
 use virtues_applets::http_client;
 use virtues_helpers::{connect_from_env, output, read_input};
 
-/// How far ahead to keep the cache stocked. Two weeks is enough that a week of
-/// outages never reaches the examen, and short enough that a lectionary
-/// correction upstream is picked up in reasonable time.
-const HORIZON_DAYS: i64 = 14;
-
-/// How many pages to fetch in one run, and how long to wait between them.
+/// Today and tomorrow, and that is the whole cache.
 ///
-/// Learned the hard way: asking for all fourteen back-to-back got this box's
-/// IP 403'd within a second, and the block outlasted the run — plain curl was
-/// still refused afterwards. A burst reads as scraping because it is one. So
-/// the horizon fills over several mornings instead, a few days at a time, and
-/// then costs one or two requests a day to maintain. Nothing is waiting on it.
-const MAX_PER_RUN: usize = 3;
-const PAUSE_BETWEEN: std::time::Duration = std::time::Duration::from_secs(3);
+/// The first version fetched a fortnight ahead to be resilient to a flaky
+/// source, and the burst is what made the source flaky: fourteen distinct
+/// pages in a second got this box 403'd for minutes. USCCB runs a Fastly
+/// metering layer, so a burst is exactly the pattern it exists to stop —
+/// pacing against a meter whose thresholds you cannot see is a poor
+/// foundation for something wanted every morning.
+///
+/// One day ahead buys the same resilience for a fraction of the traffic. In
+/// the steady state this fetches tomorrow's and nothing else — ONE request a
+/// day, indistinguishable from a person opening the page — because today's
+/// was already fetched yesterday. A failed morning has until the next one to
+/// recover, and the examen still has today's in hand.
+const HORIZON_DAYS: i64 = 2;
+
+/// A cold start wants both days at once; after that there is only ever one to
+/// get. The pause is for that first run alone.
+const MAX_PER_RUN: usize = 2;
+const PAUSE_BETWEEN: std::time::Duration = std::time::Duration::from_secs(5);
 
 /// Identify the client honestly. An unattributed burst is indistinguishable
 /// from a scraper; a named one can at least be asked to stop.
@@ -44,6 +50,11 @@ const USER_AGENT: &str =
     "virtues-box/0.3 (personal appliance; daily readings for one household)";
 
 /// Per-day page. The path is MMDDYY.
+///
+/// Feast days redirect to a slug — 080826.cfm becomes
+/// /readings/memorial-saint-dominic-priest — so the client must follow
+/// redirects, which reqwest does by default. The parse is the same either way;
+/// only the URL differs.
 const BASE: &str = "https://bible.usccb.org/bible/readings";
 
 /// One reading slot as the page presents it.
@@ -109,8 +120,7 @@ async fn main() -> Result<()> {
     output(
         &format!(
             "daily_readings: {fetched} fetched, {skipped} already cached, \
-             {failed} unavailable, {pruned} pruned (up to {MAX_PER_RUN} a run, \
-             so the fortnight fills over several days)"
+             {failed} unavailable, {pruned} pruned"
         ),
         &input.config,
     )
