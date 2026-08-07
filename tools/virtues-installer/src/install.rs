@@ -1313,6 +1313,23 @@ pub async fn apply_appliance_profile(cfg: &InstallConfig) -> Result<()> {
     seat.args(["enable", "--now", "seatd"]);
     let _ = seat.output().await;
 
+    // Let the service user drive NetworkManager.
+    //
+    // virtues.service runs as `User=virtues`, and polkit refuses networking
+    // control to unprivileged users — so `nmcli device wifi hotspot` fails with
+    // "Not authorized to control networking" and the setup AP never rises. On a
+    // DIY box that is correct and we leave it alone; on an appliance the box IS
+    // the network administrator, and there is no human at a console to
+    // authenticate to.
+    //
+    // Scoped to the three actions onboarding actually needs rather than the
+    // whole `org.freedesktop.NetworkManager.*` tree: raise the AP, join a
+    // network, and persist the resulting connection.
+    fs::create_dir_all("/etc/polkit-1/rules.d").context("mkdir polkit rules.d")?;
+    fs::write("/etc/polkit-1/rules.d/50-virtues-network.rules", POLKIT_NETWORK_RULE)
+        .context("writing polkit network rule")?;
+    ui::ok("NetworkManager control granted to the virtues user");
+
     // Boot: no display manager, no waiting on a network we don't have.
     for args in [
         vec!["disable", "NetworkManager-wait-online.service"],
@@ -1348,6 +1365,25 @@ pub async fn apply_appliance_profile(cfg: &InstallConfig) -> Result<()> {
     en.args(["enable", "virtues-display"]);
     run_step("Install display kiosk", en).await
 }
+
+/// Lets `User=virtues` raise the setup AP and join a network. See
+/// `apply_appliance_profile` for why an appliance needs this and a DIY box
+/// must not get it.
+const POLKIT_NETWORK_RULE: &str = r#"// Installed by virtues-installer (appliance profile).
+// The box administers its own network during onboarding; there is no human at
+// a console to authenticate to. Scoped to what onboarding needs, not the whole
+// NetworkManager action tree.
+polkit.addRule(function(action, subject) {
+    if (subject.user !== "virtues") { return undefined; }
+    switch (action.id) {
+        case "org.freedesktop.NetworkManager.network-control":
+        case "org.freedesktop.NetworkManager.wifi.share.protected":
+        case "org.freedesktop.NetworkManager.settings.modify.system":
+            return polkit.Result.YES;
+    }
+    return undefined;
+});
+"#;
 
 /// The kiosk unit.
 ///
@@ -1405,6 +1441,11 @@ import os
 import gi
 
 gi.require_version("Gtk", "3.0")
+# Gdk needs its own require_version even though Gtk pulls it in: without this
+# the import resolves to Gdk 4.0 and dies with "version '3.0', but '4.0' is
+# already loaded", which surfaces as cage failing to start a session — an error
+# that reads like a seat/DRM problem and sends you looking in the wrong place.
+gi.require_version("Gdk", "3.0")
 gi.require_version("WebKit2", "4.1")
 from gi.repository import Gdk, GLib, Gtk, WebKit2  # noqa: E402
 
