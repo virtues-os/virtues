@@ -156,20 +156,47 @@ pub async fn join_handler(
             .into_response();
     }
 
-    // NOTE: the AP is deliberately NOT torn down here, even though joining
-    // another network is the moment it would be tempting to. The phone issuing
-    // this request is sitting on that AP; dropping it would kill the connection
-    // mid-flight and leave the owner staring at a spinner with no way to learn
-    // whether their password was right. `maintenance::setup_ap` retires the AP
-    // when a device pairs, which is strictly later.
+    // THE SWITCHOVER IS SEQUENTIAL, and it has to be.
+    //
+    // Measured on the Q6A 2026-08-07: the radio can scan happily while hosting
+    // the AP, but it cannot hold an AP and a client association at the same
+    // time. A second virtual interface is created and adopted by NetworkManager,
+    // and then the join fails with "object is in an unsuitable state". So the
+    // AP must come down for the join to have any chance.
+    //
+    // That means the phone issuing this request loses its link to us partway
+    // through, and there is no way to avoid it — which is why /provision warns
+    // the owner up front rather than letting it read as a crash. The lock stops
+    // maintenance::setup_ap from noticing "unclaimed and no AP" and putting the
+    // AP straight back on top of the association being formed.
+    let _lock = ProvisioningLock::take();
+
+    let ap_was_up = ap_is_up().await;
+    if ap_was_up {
+        let _ = nmcli(&["connection", "down", crate::maintenance::setup_ap::AP_CON_NAME]).await;
+    }
+
     let out = nmcli_join(&req.ssid, req.psk.as_deref()).await;
     match out {
         Some(o) if o.status.success() => {
+            // Leave the AP down. The box is on the owner's network now, their
+            // phone rejoins its own wifi on its own, and both meet again on the
+            // LAN. setup_ap will not re-raise it while unclaimed... it will, in
+            // fact, on the next tick — deliberately, because the owner still has
+            // to pair, and until they do the AP is the only guaranteed route to
+            // a box whose new network might yet prove flaky.
             (StatusCode::OK, Json(JoinResult { ok: true, detail: None })).into_response()
         }
         Some(o) => {
             let detail = String::from_utf8_lossy(&o.stderr).trim().to_string();
             tracing::warn!(ssid = %req.ssid, %detail, "provision: join failed");
+            // Put the AP back immediately rather than waiting for the
+            // reconciler: the owner's phone is trying to get back to us right
+            // now, and every second it cannot is a second they spend believing
+            // they have bricked the thing.
+            if ap_was_up {
+                let _ = nmcli(&["connection", "up", crate::maintenance::setup_ap::AP_CON_NAME]).await;
+            }
             (
                 StatusCode::OK,
                 Json(JoinResult { ok: false, detail: Some(detail) }),
@@ -182,6 +209,35 @@ pub async fn join_handler(
         )
             .into_response(),
     }
+}
+
+/// Holds the provisioning lock for the life of a join, and releases it however
+/// the join ends — including a panic. A leaked lock would leave the box unable
+/// to raise its own setup network, which is the one failure an owner has no way
+/// to diagnose; the file also carries a TTL as a second backstop.
+struct ProvisioningLock;
+
+impl ProvisioningLock {
+    fn take() -> Self {
+        let _ = std::fs::write(crate::maintenance::setup_ap::PROVISIONING_LOCK, b"");
+        Self
+    }
+}
+
+impl Drop for ProvisioningLock {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_file(crate::maintenance::setup_ap::PROVISIONING_LOCK);
+    }
+}
+
+/// Is our setup AP the active connection right now?
+async fn ap_is_up() -> bool {
+    let Some(out) = nmcli(&["-t", "-f", "NAME", "connection", "show", "--active"]).await else {
+        return false;
+    };
+    String::from_utf8_lossy(&out.stdout)
+        .lines()
+        .any(|l| l.trim() == crate::maintenance::setup_ap::AP_CON_NAME)
 }
 
 /// `GET /api/provision/status` — did it work?
