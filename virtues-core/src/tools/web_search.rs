@@ -1,29 +1,32 @@
-//! Web Search tool implementation (Exa AI)
+//! Web Search tool implementation (Parallel).
 //!
-//! Provides web search capabilities using Exa AI.
+//! Answers "find me pages about X". Distinct from `fetch` (`virtues-core/src/fetch`),
+//! which answers "read the one page I already have" — different jobs, no shared
+//! code.
 
 use serde::{Deserialize, Serialize};
 use sqlx::PgPool;
 
 use super::executor::{ToolError, ToolResult};
-use crate::api::exa;
+use crate::api::parallel;
 
 /// Web search tool arguments (from LLM)
 #[derive(Debug, Deserialize)]
 pub struct WebSearchArgs {
     /// Search query
     pub query: String,
+    /// What the caller is actually trying to learn. Optional, and the reason
+    /// this API beats a bare keyword search — it disambiguates a short query.
+    #[serde(default)]
+    pub objective: Option<String>,
     /// Number of results (1-10, default 5)
     #[serde(default)]
     pub num_results: Option<u8>,
-    /// Search type: auto, keyword, neural
-    #[serde(default)]
-    pub search_type: Option<String>,
-    /// Escalate to comprehensive multi-step "deep" search for hard or
-    /// thin-result queries. Higher cost/latency — off by default.
+    /// Escalate to a comprehensive multi-step search for hard or thin-result
+    /// queries. Higher cost/latency — off by default.
     #[serde(default)]
     pub deep: Option<bool>,
-    /// Freshness: max age (hours) of a cached result before re-crawling live.
+    /// Freshness: max age (hours) of a cached result before re-fetching live.
     /// Use `1` for news/sports/odds/live data; omit for stable information.
     #[serde(default)]
     pub max_age_hours: Option<u32>,
@@ -34,8 +37,6 @@ pub struct WebSearchArgs {
 pub struct WebSearchResult {
     pub title: String,
     pub url: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub summary: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub text: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -55,67 +56,57 @@ impl WebSearchTool {
 
     /// Execute web search
     pub async fn execute(&self, arguments: serde_json::Value) -> Result<ToolResult, ToolError> {
-        // Parse arguments
         let args: WebSearchArgs = serde_json::from_value(arguments)
             .map_err(|e| ToolError::InvalidParameters(format!("Invalid arguments: {}", e)))?;
 
-        // Validate query
         if args.query.trim().is_empty() {
             return Err(ToolError::InvalidParameters(
                 "Search query cannot be empty".to_string(),
             ));
         }
 
-        // Map search type. An explicit `deep: true` wins over `search_type`,
-        // since it's the escalation tier the model reaches for deliberately.
-        let search_type = if args.deep.unwrap_or(false) {
-            Some(exa::SearchType::Deep)
-        } else {
-            match args.search_type.as_deref() {
-                Some("keyword") => Some(exa::SearchType::Keyword),
-                Some("neural") => Some(exa::SearchType::Neural),
-                _ => Some(exa::SearchType::Auto),
-            }
+        let request = parallel::SearchRequest {
+            objective: args.objective,
+            queries: vec![args.query.clone()],
+            mode: if args.deep.unwrap_or(false) {
+                parallel::Mode::Advanced
+            } else {
+                parallel::Mode::Basic
+            },
+            max_results: args.num_results,
+            // The tool speaks hours because that is the unit a model reasons
+            // in; the API wants seconds.
+            max_age_seconds: args.max_age_hours.map(|h| h.saturating_mul(3600)),
         };
 
-        // Build request
-        let request = exa::SearchRequest {
-            query: args.query,
-            num_results: args.num_results,
-            search_type,
-            category: None,
-            include_domains: None,
-            exclude_domains: None,
-            start_published_date: None,
-            end_published_date: None,
-            max_age_hours: args.max_age_hours,
-        };
-
-        // Execute search via the shared Exa client (bearer-auth + charge).
-        let response = exa::search(&self.pool, request)
+        let response = parallel::search(&self.pool, request)
             .await
             .map_err(|e| ToolError::ExecutionFailed(e.to_string()))?;
 
-        // Convert to tool result format
         let results: Vec<WebSearchResult> = response
             .results
             .into_iter()
             .map(|r| WebSearchResult {
-                title: r.title,
+                // A result with no title is still a usable answer; its host is
+                // the most honest stand-in.
+                title: r.title.unwrap_or_else(|| {
+                    url::Url::parse(&r.url)
+                        .ok()
+                        .and_then(|u| u.host_str().map(|h| h.to_string()))
+                        .unwrap_or_else(|| r.url.clone())
+                }),
                 url: r.url,
-                summary: r.summary,
                 text: r.text,
                 published_date: r.published_date,
             })
             .collect();
 
         Ok(ToolResult::success(serde_json::json!({
-            "query": response.query,
+            "query": args.query,
             "results_count": results.len(),
             "results": results,
         })))
     }
-
 }
 
 impl std::fmt::Debug for WebSearchTool {

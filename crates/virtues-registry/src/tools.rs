@@ -355,7 +355,7 @@ fn web_search_tool() -> ToolConfig {
         id: "web_search".to_string(),
         name: "Web Search".to_string(),
         description: "Search the web for current information".to_string(),
-        llm_description: r#"Search the web for current information using Exa AI.
+        llm_description: r#"Search the web for current information.
 
 Use this tool when:
 - User asks about recent events, news, or current information
@@ -367,7 +367,7 @@ Do NOT use when:
 - User is asking about their personal data (use sql_query instead)
 - The question is purely conversational or opinion-based
 
-You synthesize the results yourself — Exa returns evidence, not answers. Two tiers:
+You synthesize the results yourself — the search returns evidence, not answers. Two tiers:
 - Default search: fast, for most lookups.
 - deep=true: comprehensive multi-step search for hard, multi-faceted, or
   thin-result questions (e.g. cross-referenced standings, multi-entity research).
@@ -376,7 +376,10 @@ You synthesize the results yourself — Exa returns evidence, not answers. Two t
 For time-sensitive topics (news, sports scores, odds, prices, live data) set
 max_age_hours=1 so results are fresh rather than cached.
 
-Returns: Relevant web pages with titles, URLs, summaries, and text excerpts."#.to_string(),
+Set `objective` to what you are actually trying to learn whenever the query
+alone is ambiguous — it disambiguates a short query and improves results.
+
+Returns: Relevant web pages with titles, URLs, and the passages judged relevant."#.to_string(),
         parameters: serde_json::json!({
             "type": "object",
             "required": ["query"],
@@ -392,11 +395,9 @@ Returns: Relevant web pages with titles, URLs, summaries, and text excerpts."#.t
                     "minimum": 1,
                     "maximum": 10
                 },
-                "search_type": {
+                "objective": {
                     "type": "string",
-                    "enum": ["auto", "keyword", "neural"],
-                    "description": "Search type: 'auto' (recommended), 'keyword' for exact matches, 'neural' for semantic",
-                    "default": "auto"
+                    "description": "What you are trying to learn, in a sentence. Optional, but it disambiguates a short or broad query."
                 },
                 "deep": {
                     "type": "boolean",

@@ -20,6 +20,9 @@ pub enum Service {
     AiGateway,
     GooglePlaces,
     Exa,
+    /// Web search. Replaced Exa 2026-08-07; the Exa variant stays so historical
+    /// rows written under it still have a name.
+    Parallel,
     Unsplash,
 }
 
@@ -29,12 +32,18 @@ impl Service {
             Service::AiGateway => "ai_gateway",
             Service::GooglePlaces => "google_places",
             Service::Exa => "exa",
+            Service::Parallel => "parallel",
             Service::Unsplash => "unsplash",
         }
     }
 
     pub fn all() -> &'static [Service] {
-        &[Service::AiGateway, Service::GooglePlaces, Service::Exa, Service::Unsplash]
+        &[
+            Service::AiGateway,
+            Service::GooglePlaces,
+            Service::Parallel,
+            Service::Unsplash,
+        ]
     }
 }
 
@@ -131,11 +140,13 @@ impl Tier {
             (Tier::Standard, Service::AiGateway) => 1_000_000,
             (Tier::Standard, Service::GooglePlaces) => 1_000,
             (Tier::Standard, Service::Exa) => 1_000,
+            (Tier::Standard, Service::Parallel) => 1_000,
             (Tier::Standard, Service::Unsplash) => 1_000,
             // Pro tier
             (Tier::Pro, Service::AiGateway) => 5_000_000,
             (Tier::Pro, Service::GooglePlaces) => 5_000,
             (Tier::Pro, Service::Exa) => 5_000,
+            (Tier::Pro, Service::Parallel) => 5_000,
             (Tier::Pro, Service::Unsplash) => 5_000,
         }
     }
