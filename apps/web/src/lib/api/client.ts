@@ -138,16 +138,6 @@ export interface ActionLastRun {
 }
 
 /**
- * Two-runtime model — see ARCHITECTURE.md.
- *
- * - `function`: fork-per-trigger CLI; the default. Server forks the binary
- *   on every trigger, pipes ActionInput/Output JSON.
- * - `view`: pure Svelte component, never invoked server-side. Lives at
- *   `apps/web/src/lib/applets/<name>/`.
- */
-export type ActionRuntime = 'function' | 'view';
-
-/**
  * Which of the four things made this applet — the facet lists and filters use.
  *
  * Derived server-side, not stored: `owner` is the write-authority field
@@ -172,13 +162,11 @@ export interface Applet {
 	condition: string | null;
 	triggers: ActionTrigger[];
 	memory: string | null;
-	function_name: string | null;
 	/** Set when the applet is one source connection's fan-out (OAuth/API-key). */
 	credential_id: string | null;
 	/** Set when the applet is one paired device's ingest webhook (iOS/Mac). */
 	device_id: string | null;
 	origin: AppletOrigin;
-	runtime: ActionRuntime;
 	/** Polyglot escape: explicit argv to spawn instead of resolving a Cargo
 	 *  binary by `function_name`. Null when the action uses the function_name
 	 *  shortcut. */

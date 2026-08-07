@@ -146,6 +146,54 @@
 			: 0
 	);
 
+	// A run is detached: the POST returns as soon as the row exists and the
+	// agent keeps going. The server's own comment said "the UI polls for the
+	// final status" and the UI never did — it read the log once, while the run
+	// was still `running`, and nothing updated it again. So pressing Run now
+	// showed you a spinner that never resolved until you reloaded the page.
+	//
+	// Poll while anything is running, and stop the moment nothing is. Bounded
+	// so a wedged run cannot leave a timer chain going forever.
+	const POLL_MS = 1500;
+	const POLL_MAX = 40; // ~60s, past which a run is not "just finishing"
+	let pollTimer: ReturnType<typeof setTimeout> | null = null;
+	let pollsLeft = 0;
+
+	function stopPolling() {
+		if (pollTimer) clearTimeout(pollTimer);
+		pollTimer = null;
+		pollsLeft = 0;
+	}
+
+	function pollSoon() {
+		if (pollTimer) clearTimeout(pollTimer);
+		if (pollsLeft <= 0) return;
+		pollTimer = setTimeout(async () => {
+			pollsLeft -= 1;
+			const id = action?.id;
+			if (!id) return;
+			log = await getAppletLog(id).catch(() => log);
+			if (log.some((e) => e.status === 'running')) {
+				pollSoon();
+			} else {
+				stopPolling();
+				// The run may have archived it, or spent something worth showing.
+				action = await getApplet(id).catch(() => action);
+			}
+		}, POLL_MS);
+	}
+
+	function watchForResult() {
+		pollsLeft = POLL_MAX;
+		pollSoon();
+	}
+
+	// Leaving the page, or switching applets, must not leave a chain running.
+	$effect(() => {
+		void actionId;
+		return stopPolling;
+	});
+
 	function markDirty() {
 		isDirty = true;
 	}
@@ -216,6 +264,7 @@
 			action = await patchApplet(action.id, { enabled: true });
 			await runAction(action.id);
 			log = await getAppletLog(action.id).catch(() => log);
+			watchForResult();
 			action = await getApplet(action.id);
 		} catch (e) {
 			err = e instanceof Error ? e.message : String(e);
@@ -255,14 +304,10 @@
 		try {
 			await messageApplet(action.id, text);
 			draft = '';
-			// The run row exists before the POST returns; the agent turn keeps
-			// going. Re-read shortly so the reply lands without a manual refresh.
+			// The row exists before the POST returns; the agent turn keeps going.
+			// Show the question immediately, then watch for the answer.
 			log = await getAppletLog(action.id).catch(() => log);
-			// The run row exists before the POST returns; the agent turn keeps
-			// going. Re-read shortly so the reply lands without a manual refresh.
-			setTimeout(() => {
-				if (action) void getAppletLog(action.id).then((l) => (log = l)).catch(() => {});
-			}, 2500);
+			watchForResult();
 		} catch (e) {
 			err = e instanceof Error ? e.message : String(e);
 		} finally {
@@ -277,6 +322,7 @@
 		try {
 			await runAction(action.id);
 			log = await getAppletLog(action.id).catch(() => log);
+			watchForResult();
 		} catch (e) {
 			err = e instanceof Error ? e.message : String(e);
 		} finally {
@@ -461,7 +507,7 @@
 								<Icon icon="ri:terminal-line" width="14" />
 								<span>
 									Compiled program, run fresh each time it fires —
-									<code>{action.command?.join(' ') ?? action.function_name ?? 'built in'}</code>.
+									<code>{action.command?.join(' ') ?? 'built in'}</code>.
 									No model is involved.
 								</span>
 							</div>

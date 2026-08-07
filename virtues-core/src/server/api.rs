@@ -284,14 +284,6 @@ pub async fn list_applets_handler(State(state): State<AppState>) -> Response {
                         &owner,
                         credential_id.is_some() || device_id.is_some(),
                     );
-                    // Derived display shape (the old runtime taxonomy).
-                    let runtime = if command.as_ref().is_none_or(|c| c.is_empty())
-                        && agent.as_deref().is_none_or(|s| s.trim().is_empty())
-                    {
-                        "view"
-                    } else {
-                        "function"
-                    };
                     // TIMESTAMPTZ columns decode to DateTime<Utc>; serde emits
                     // RFC3339 in the JSON. Reading them as String failed (empty).
                     let created: chrono::DateTime<chrono::Utc> =
@@ -337,7 +329,6 @@ pub async fn list_applets_handler(State(state): State<AppState>) -> Response {
                         "credential_id": credential_id,
                         "device_id": device_id,
                         "origin": origin,
-                        "runtime": runtime,
                         "command": command,
                         "until": until,
                         "archived_at": archived_at,
@@ -497,7 +488,6 @@ pub async fn get_applet_handler(
                     "credential_id": action.credential_id,
                     "device_id": action.device_id,
                     "origin": crate::scheduler::applets::derived_origin(&action),
-                    "runtime": crate::scheduler::applets::derived_runtime(&action),
                     "until": action.until,
                     "archived_at": action.archived_at,
                     "next_due_at": action.next_due_at,

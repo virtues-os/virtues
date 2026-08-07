@@ -1013,19 +1013,6 @@ pub fn applet_from_row(row: &sqlx::postgres::PgRow) -> Result<Applet> {
     })
 }
 
-/// Derived display shape — the old `runtime` taxonomy, computed from fields:
-/// no command and no agent ⇒ view (face-only); otherwise function.
-/// Presentation only; nothing executes off this.
-pub fn derived_runtime(a: &Applet) -> &'static str {
-    if a.command.as_ref().is_none_or(|c| c.is_empty())
-        && a.agent.as_deref().is_none_or(|s| s.trim().is_empty())
-    {
-        "view"
-    } else {
-        "function"
-    }
-}
-
 /// Derived provenance for the UI: which of the four things made this applet.
 /// `owner` cannot answer that on its own — it is the write-authority field
 /// (reconcile overwrites and GCs `system` rows and leaves `user`/`ai` alone),
