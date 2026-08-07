@@ -134,10 +134,16 @@
 		});
 	}
 
-	// Default open: an applet with a face goes straight to its full-page view;
-	// otherwise to its settings/detail.
+	// Default open: wherever you can actually use the thing.
+	//
+	// An applet you can talk to opens its detail page, because that is where
+	// the composer lives — a tracker has a face AND takes messages, and
+	// sending it to the full-page face landed you somewhere you could look at
+	// it but not say anything to it. A face you can only look at still opens
+	// full-page. Everything else opens its settings.
 	function openCard(a: Applet) {
-		if (a.has_face) openView(a);
+		if (a.triggers?.includes('message')) openDetail(a);
+		else if (a.has_face) openView(a);
 		else openDetail(a);
 	}
 

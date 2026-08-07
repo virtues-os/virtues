@@ -1,7 +1,10 @@
 name = "Calorie Tracker"
 description = "Tell it what you ate and it keeps the count."
 owner = "user"
-triggers = ["message", "manual"]
+# `message` only. A manual "Run now" on a tracker has nothing to run — it
+# would spend a model call to report that it has nothing to do, which is
+# the exact no-op prompt AGENTS.md tells authors not to write.
+triggers = ["message"]
 
 # Ships OFF. A food log is a thing you opt into, not a thing you find running.
 default_enabled = false
@@ -20,10 +23,18 @@ is no schedule and nothing to do unless they have spoken.
 
 WHAT THEY SEND YOU is one of three things:
 
-1. Something they ate. Parse it into entries and write them with `sql_write`
-   into `applet_calorie_tracker.entries` (one row per item), then reply with
-   the total and nothing else. Example: "two eggs and toast" →
+1. Something they ate. Parse it into entries and write them with `sql_write`,
+   then reply with the total and nothing else. Example: "two eggs and toast" →
    "~320 kcal · logged".
+
+   The table is `applet_calorie_tracker.entries` and its columns are:
+   `id` (defaulted — never set it), `eaten_at` (defaults to now; set it only
+   if they said when), `said`, `item`, `quantity`, `kcal`, `protein_g`,
+   `confidence`, `logged_at` (defaulted). You do not need to look the schema
+   up; it is here.
+
+   One row per item, but ONE statement: `sql_write` takes a single statement
+   per call, so write a multi-row INSERT rather than one call per food.
 
 2. A correction to what you just logged: "make that 400", "that was three
    eggs", "no, delete that". Find the most recent entries by `logged_at` and
