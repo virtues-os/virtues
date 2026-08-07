@@ -491,9 +491,22 @@
 	   height so scrollable content ends above it (the bar is position:fixed).
 	   The padded zones show the themed shell background instead of the bare
 	   native window. */
+	/* The bottom reservation is whichever is taller: the tab bar (plus the home
+	   indicator), or the keyboard. They are never both owed — the bar hides
+	   while the keyboard is up, and the home indicator is behind the keyboard
+	   anyway — so `max()` is the whole rule. `--keyboard-inset` is 0 until
+	   `stores/keyboard.svelte.ts` measures otherwise, which makes this
+	   identical to what it was on every surface without a keyboard.
+
+	   This is also what lifts the composer: the chat input sits in normal flow
+	   at the bottom of its view, so shrinking main's content box moves it up
+	   with the keyboard. No component needs to know it happened. */
 	main.is-mobile {
 		padding-top: env(safe-area-inset-top);
-		padding-bottom: calc(50px + env(safe-area-inset-bottom));
+		padding-bottom: max(
+			calc(50px + env(safe-area-inset-bottom)),
+			var(--keyboard-inset, 0px)
+		);
 	}
 
 	/* Pin the whole shell to the viewport on mobile. Without this, iOS lets the
