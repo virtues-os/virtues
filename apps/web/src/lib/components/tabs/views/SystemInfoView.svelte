@@ -748,7 +748,14 @@
 		color: var(--warning);
 	}
 
-	.ledger-row { display: flex; align-items: baseline; gap: 4px; }
+	/* Wraps rather than overflows. Label and value both refuse to shrink (a
+	   truncated reading is a wrong reading), so a long pair — "Accelerator"
+	   against "llama-server (GPU or CPU per sidecar build)" — needs 397px and
+	   had been scrolling the whole page sideways on a phone. Wrapped, the
+	   leader runs out to the end of the first line and the value takes the
+	   second, right-aligned by the auto margin; on a wide window nothing
+	   changes, because nothing wraps. */
+	.ledger-row { display: flex; align-items: baseline; gap: 4px; flex-wrap: wrap; }
 	.ledger-label { font-size: 13px; color: var(--foreground); flex-shrink: 0; }
 	.leader {
 		flex: 1;
@@ -756,7 +763,7 @@
 		transform: translateY(-3px);
 		min-width: 12px;
 	}
-	.ledger-value { font-size: 13px; color: var(--foreground-muted); flex-shrink: 0; user-select: text; }
+	.ledger-value { font-size: 13px; color: var(--foreground-muted); flex-shrink: 0; user-select: text; margin-left: auto; }
 	.ledger-value.mono { font-family: var(--font-mono); font-size: 12px; }
 	.ledger-value.ok { color: var(--success); }
 	.ledger-value.warn { color: var(--warning); }

@@ -4,6 +4,7 @@
 	import "$lib/icons"; // Pre-load all icons
 	import { UnifiedSidebar } from "$lib/components/sidebar";
 	import { SplitContainer } from "$lib/components/tabs";
+	import MobileShell from "$lib/components/mobile/MobileShell.svelte";
 	import MobileTabBar from "$lib/components/mobile/MobileTabBar.svelte";
 	import MobileSettingsView from "$lib/components/mobile/MobileSettingsView.svelte";
 	import MobileOnboarding from "$lib/components/mobile/MobileOnboarding.svelte";
@@ -382,8 +383,14 @@
 		style="background-image: {windowShellStore.isSplit ? 'none' : 'var(--background-image)'}; background-blend-mode: multiply;"
 	>
 		{#if initialized}
-			<!-- SplitContainer handles both split and mono modes -->
-			<SplitContainer />
+			{#if mobileLayout.isMobile}
+				<!-- One window, no panes, no tabs — and only the visible view
+				     is mounted. -->
+				<MobileShell />
+			{:else}
+				<!-- SplitContainer handles both split and mono modes -->
+				<SplitContainer />
+			{/if}
 		{/if}
 	</main>
 </div>
