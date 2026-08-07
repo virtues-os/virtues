@@ -248,6 +248,25 @@ pub async fn run(client: Virtues, host: &str, port: u16) -> Result<()> {
             "/api/display/qr",
             get(crate::api::display::display_qr_handler),
         )
+        // Wifi provisioning over the setup AP. The one unauthenticated WRITE
+        // surface on the box, and unauthenticated by necessity: the phone that
+        // just joined the AP has no credential yet, because obtaining one is
+        // what the rest of onboarding is for. Each handler re-checks both gates
+        // itself — caller is on the AP subnet (or loopback), and the box is
+        // still unclaimed — rather than trusting placement in this router.
+        // See api/provision.rs.
+        .route(
+            "/api/provision/networks",
+            get(crate::api::provision::networks_handler),
+        )
+        .route(
+            "/api/provision/join",
+            post(crate::api::provision::join_handler),
+        )
+        .route(
+            "/api/provision/status",
+            get(crate::api::provision::status_handler),
+        )
         // Auth — pair-only model. Public consume + session probe (returns the
         // AuthUser resolved from the request's proven iroh key, if any).
         // /api/pair/{mint,confirm,deny,status} are auth'd and live under the

@@ -49,6 +49,7 @@ pub mod pins;
 pub mod search_local;
 pub mod places;
 pub mod profile;
+pub mod provision;
 pub mod notebooks;
 pub mod records;
 pub mod refs;
