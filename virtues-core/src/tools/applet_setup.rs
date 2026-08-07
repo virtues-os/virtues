@@ -62,7 +62,7 @@ pub async fn execute(
     let agent = opt_str(&arguments, "agent")
         .or_else(|| opt_str(&arguments, "instruction"));
     let schedule = opt_str(&arguments, "schedule")
-        .or_else(|| opt_str(&arguments, "cron_schedule"));
+        .or_else(|| opt_str(&arguments, "schedule"));
     let condition = opt_str(&arguments, "condition");
     let until = opt_str(&arguments, "until");
     let schema_sql = opt_str(&arguments, "schema_sql");
@@ -204,7 +204,7 @@ pub async fn execute(
     let (was_boundary, was_enabled) = if existed {
         match applets::get_applet(pool, &applet_id).await {
             Ok(a) => (
-                a.cron_schedule.is_some()
+                a.schedule.is_some()
                     || a.triggers.iter().any(|t| t == "api" || t == "webhook"),
                 a.enabled,
             ),

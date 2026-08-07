@@ -18,7 +18,7 @@
 		onclick?: (applet: Applet) => void;
 	} = $props();
 
-	const schedule = $derived(describeSchedule(applet.cron_schedule));
+	const schedule = $derived(describeSchedule(applet.schedule));
 	const isUserOwned = $derived(applet.owner === 'user');
 
 	const lastStatus = $derived((lastRun as { status?: string } | null)?.status ?? null);

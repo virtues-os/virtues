@@ -64,7 +64,7 @@ pub struct Applet {
     /// in the user's terms. Reconcile's to own, like `name`.
     pub description: Option<String>,
     pub agent: Option<String>,
-    pub cron_schedule: Option<String>,
+    pub schedule: Option<String>,
     pub enabled: bool,
     pub config: serde_json::Value,
     pub condition: Option<String>,
@@ -330,7 +330,7 @@ pub async fn applet_data_tables(db: &PgPool, applet_id: &str) -> Result<Vec<Stri
 /// set of fields that template reconcile preserves (see
 /// `applet_templates::upsert_row`) — otherwise the next reconcile would
 /// silently clobber what the user just changed.
-pub const SYSTEM_EDITABLE_FIELDS: &[&str] = &["enabled", "cron_schedule", "config", "memory"];
+pub const SYSTEM_EDITABLE_FIELDS: &[&str] = &["enabled", "schedule", "config", "memory"];
 
 /// Create a new user-owned action. Used by chat tools + the HTTP POST
 /// endpoint. `id` is generated from the name if not provided.
@@ -340,7 +340,7 @@ pub async fn create_user_applet(
     id: Option<&str>,
     name: &str,
     agent: Option<&str>,
-    cron_schedule: Option<&str>,
+    schedule: Option<&str>,
     triggers: &[String],
     config: Option<&serde_json::Value>,
 ) -> Result<Applet> {
@@ -381,13 +381,13 @@ pub async fn create_user_applet(
     let mut applet_id = base_id.clone();
     for attempt in 1u32..=MAX_ATTEMPTS {
         let result = sqlx::query(
-            r#"INSERT INTO app_applets (id, name, owner, agent, cron_schedule, enabled, config, triggers)
+            r#"INSERT INTO app_applets (id, name, owner, agent, schedule, enabled, config, triggers)
                VALUES ($1, $2, 'user', $3, $4, TRUE, $5::jsonb, $6::jsonb)"#,
         )
         .bind(&applet_id)
         .bind(name)
         .bind(agent)
-        .bind(cron_schedule)
+        .bind(schedule)
         .bind(&config_json)
         .bind(&triggers_json)
         .execute(db)
@@ -426,7 +426,7 @@ fn is_unique_violation(dbe: &dyn sqlx::error::DatabaseError) -> bool {
 /// system-owner guard: `system` rows accept only `SYSTEM_EDITABLE_FIELDS`.
 ///
 /// Unknown field names are rejected (400). Null values are allowed for
-/// nullable columns (`agent`, `cron_schedule`, `condition`, `memory`).
+/// nullable columns (`agent`, `schedule`, `condition`, `memory`).
 pub async fn update_applet(
     db: &PgPool,
     applet_id: &str,
@@ -447,7 +447,7 @@ pub async fn update_applet(
     const ALLOWED: &[&str] = &[
         "name",
         "agent",
-        "cron_schedule",
+        "schedule",
         "enabled",
         "config",
         "condition",
@@ -504,8 +504,8 @@ pub async fn update_applet(
     if obj.contains_key("agent") {
         sets.push(format!("agent = ${}", next()));
     }
-    if obj.contains_key("cron_schedule") {
-        sets.push(format!("cron_schedule = ${}", next()));
+    if obj.contains_key("schedule") {
+        sets.push(format!("schedule = ${}", next()));
     }
     if obj.contains_key("enabled") {
         sets.push(format!("enabled = ${}", next()));
@@ -558,12 +558,12 @@ pub async fn update_applet(
             q = q.bind(Some(s.to_string()));
         }
     }
-    if let Some(v) = obj.get("cron_schedule") {
+    if let Some(v) = obj.get("schedule") {
         if v.is_null() {
             q = q.bind(Option::<String>::None);
         } else {
             let s = v.as_str().ok_or_else(|| {
-                Error::InvalidInput("cron_schedule must be a string or null".into())
+                Error::InvalidInput("schedule must be a string or null".into())
             })?;
             validate_cron(s)?;
             q = q.bind(Some(s.to_string()));
@@ -1009,7 +1009,7 @@ pub fn applet_from_row(row: &sqlx::postgres::PgRow) -> Result<Applet> {
         name: row.try_get("name")?,
         description: row.try_get("description").ok().flatten(),
         agent: row.try_get("agent")?,
-        cron_schedule: row.try_get("cron_schedule")?,
+        schedule: row.try_get("schedule")?,
         enabled: row.try_get::<bool, _>("enabled")?,
         config,
         condition: row.try_get("condition")?,

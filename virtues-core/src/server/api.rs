@@ -201,7 +201,7 @@ pub async fn list_applets_handler(State(state): State<AppState>) -> Response {
 
     let rows = sqlx::query(
         r#"SELECT
-            t.id, t.owner, t.name, t.description, t.agent, t.cron_schedule,
+            t.id, t.owner, t.name, t.description, t.agent, t.schedule,
             t.enabled, t.config, t.condition, t.triggers,
             t.memory, t.credential_id, t.device_id,
             t.command,
@@ -253,7 +253,7 @@ pub async fn list_applets_handler(State(state): State<AppState>) -> Response {
                     let name: String = r.try_get("name").unwrap_or_default();
                     let description: Option<String> = r.try_get("description").unwrap_or(None);
                     let agent: Option<String> = r.try_get("agent").unwrap_or(None);
-                    let cron: Option<String> = r.try_get("cron_schedule").unwrap_or(None);
+                    let cron: Option<String> = r.try_get("schedule").unwrap_or(None);
                     let enabled: bool = r.try_get("enabled").unwrap_or(false);
                     // `config`/`triggers` are JSONB — decode straight to a Value
                     // (decoding to String fails and the `unwrap_or` swallowed it,
@@ -320,7 +320,7 @@ pub async fn list_applets_handler(State(state): State<AppState>) -> Response {
                         "name": name,
                         "description": description,
                         "agent": agent,
-                        "cron_schedule": cron,
+                        "schedule": cron,
                         "enabled": enabled,
                         "config": config,
                         "condition": condition,
@@ -339,7 +339,6 @@ pub async fn list_applets_handler(State(state): State<AppState>) -> Response {
                         "last_success_summary": last_success_summary,
                         "created_at": created,
                         "updated_at": updated,
-                        "is_system": owner == "system",
                         "last_run": last_run,
                     })
                 })
@@ -478,7 +477,7 @@ pub async fn get_applet_handler(
                     "name": action.name,
                     "description": action.description,
                     "agent": action.agent,
-                    "cron_schedule": action.cron_schedule,
+                    "schedule": action.schedule,
                     "enabled": action.enabled,
                     "config": action.config,
                     "condition": action.condition,
@@ -495,7 +494,6 @@ pub async fn get_applet_handler(
                     "has_face": crate::server::faces::face_dir_for(&action.id).is_some(),
                     "created_at": action.created_at,
                     "updated_at": action.updated_at,
-                    "is_system": action.owner == "system",
                     "last_run": last_run,
                 })),
             )
@@ -514,7 +512,7 @@ pub async fn get_applet_handler(
 pub struct CreateAppletBody {
     pub name: String,
     pub agent: Option<String>,
-    pub cron_schedule: Option<String>,
+    pub schedule: Option<String>,
     #[serde(default)]
     pub triggers: Option<Vec<String>>,
     pub config: Option<serde_json::Value>,
@@ -525,7 +523,7 @@ pub async fn create_applet_handler(
     Json(body): Json<CreateAppletBody>,
 ) -> Response {
     let triggers = body.triggers.unwrap_or_else(|| {
-        if body.cron_schedule.is_some() {
+        if body.schedule.is_some() {
             vec!["cron".into(), "manual".into(), "tool".into()]
         } else {
             vec!["manual".into(), "tool".into()]
@@ -537,7 +535,7 @@ pub async fn create_applet_handler(
         None,
         &body.name,
         body.agent.as_deref(),
-        body.cron_schedule.as_deref(),
+        body.schedule.as_deref(),
         &triggers,
         body.config.as_ref(),
     )
@@ -923,7 +921,7 @@ pub async fn admin_reconcile_handler(State(state): State<AppState>) -> Response 
 
     // 2. Reconcile `app_applets` SQL rows against the fresh catalog. Manifest
     //    fields overwrite for system actions; user-managed runtime state
-    //    (enabled, cron_schedule, config) is preserved per the field-ownership
+    //    (enabled, schedule, config) is preserved per the field-ownership
     //    rule documented in applet_templates/mod.rs.
     let upserted = match crate::applet_templates::reconcile_templates(state.db.pool()).await {
         Ok(n) => n,

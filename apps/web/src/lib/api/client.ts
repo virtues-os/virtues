@@ -101,7 +101,7 @@ export function apiSend<T>(method: string, path: string, jsonBody?: unknown): Pr
 // Actions — new schema (post cutover + PR 2 endpoints)
 // ============================================================================
 
-export type ActionTrigger = 'cron' | 'manual' | 'tool' | 'api' | 'webhook' | 'message';
+export type AppletTrigger = 'cron' | 'manual' | 'tool' | 'api' | 'webhook' | 'message';
 
 export interface AppletRun {
 	id: string;
@@ -114,7 +114,7 @@ export interface AppletRun {
 	completed_at: string | null;
 	records_processed: number;
 	error: string | null;
-	trigger: ActionTrigger;
+	trigger: AppletTrigger;
 	parent_run_id: string | null;
 	transform_stage: string | null;
 	result_summary: string | null;
@@ -128,7 +128,7 @@ export interface AppletRun {
 	created_at: string;
 }
 
-export interface ActionLastRun {
+export interface AppletLastRun {
 	status: string;
 	started_at: string | null;
 	completed_at?: string | null;
@@ -156,11 +156,11 @@ export interface Applet {
 	 *  headline. Null only for a row whose manifest omits it. */
 	description: string | null;
 	agent: string | null;
-	cron_schedule: string | null;
+	schedule: string | null;
 	enabled: boolean;
 	config: Record<string, unknown>;
 	condition: string | null;
-	triggers: ActionTrigger[];
+	triggers: AppletTrigger[];
 	memory: string | null;
 	/** Set when the applet is one source connection's fan-out (OAuth/API-key). */
 	credential_id: string | null;
@@ -186,7 +186,6 @@ export interface Applet {
 	last_slot_at: string | null;
 	/** True when the applet folder ships a face/ (sandboxed-iframe HTML UI). */
 	has_face: boolean;
-	is_system: boolean;
 	/** The last 10 run statuses, newest first — the card's pulse. Comes with
 	 *  the row so the list does not fetch it per applet. */
 	pulse: AppletRun['status'][];
@@ -194,17 +193,17 @@ export interface Applet {
 	last_success_summary: string | null;
 	created_at: string;
 	updated_at: string;
-	last_run: ActionLastRun | null;
+	last_run: AppletLastRun | null;
 }
 
-export interface ActionDetail extends Applet {
+export interface AppletDetail extends Applet {
 	recent_runs?: AppletRun[];
 }
 
 export async function mintFaceToken(
-	actionId: string
+	appletId: string
 ): Promise<{ token: string; expires_in_seconds: number }> {
-	return request(`/applets/${encodeURIComponent(actionId)}/face-token`);
+	return request(`/applets/${encodeURIComponent(appletId)}/face-token`);
 }
 
 export async function listApplets(): Promise<Applet[]> {
@@ -444,8 +443,8 @@ export async function importActionsFromGit(body: {
 export interface CreateAppletRequest {
 	name: string;
 	agent?: string;
-	cron_schedule?: string;
-	triggers?: ActionTrigger[];
+	schedule?: string;
+	triggers?: AppletTrigger[];
 	config?: Record<string, unknown>;
 }
 
@@ -465,11 +464,11 @@ export async function createApplet(body: CreateAppletRequest): Promise<Applet> {
 export interface PatchAppletBody {
 	name?: string;
 	agent?: string | null;
-	cron_schedule?: string | null;
+	schedule?: string | null;
 	enabled?: boolean;
 	config?: Record<string, unknown>;
 	condition?: string | null;
-	triggers?: ActionTrigger[];
+	triggers?: AppletTrigger[];
 	memory?: string | null;
 }
 
@@ -486,7 +485,7 @@ export async function patchApplet(id: string, patch: PatchAppletBody): Promise<A
 	return res.json();
 }
 
-export async function deleteAction(id: string, dropData = false): Promise<void> {
+export async function deleteApplet(id: string, dropData = false): Promise<void> {
 	const q = dropData ? '?drop_data=true' : '';
 	const res = await fetch(`${API_BASE}/applets/${encodeURIComponent(id)}${q}`, {
 		method: 'DELETE'
@@ -504,7 +503,7 @@ export async function deleteAction(id: string, dropData = false): Promise<void> 
 export interface AppletLogEntry {
 	run_id: string | null;
 	status: AppletRun['status'];
-	trigger: ActionTrigger | null;
+	trigger: AppletTrigger | null;
 	summary: string | null;
 	/** What the user said, for `message` runs. */
 	message: string | null;
@@ -557,7 +556,7 @@ export interface TriggerActionResponse {
 	error: string | null;
 }
 
-export async function runAction(
+export async function runApplet(
 	id: string,
 	payload?: Record<string, unknown>
 ): Promise<TriggerActionResponse> {
@@ -616,7 +615,7 @@ export async function getAppletSourceFile(
 	);
 }
 
-export async function listActionRuns(
+export async function listAppletRuns(
 	id: string,
 	opts?: { limit?: number; status?: string }
 ): Promise<AppletRun[]> {

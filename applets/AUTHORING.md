@@ -168,7 +168,7 @@ Manifest is **declarative** — what the applet *is*. SQL (`app_applets`) holds 
 | Field | Lives in | Wins on conflict |
 |---|---|---|
 | `name`, `description`, `command`, `triggers`, `schedule`, `default_enabled`, `per_credential`, `source`, `condition`, `until`, `agent`, `config` | manifest.toml | manifest (system + ai applets) / first-seed-only (user applets) |
-| current `enabled`, current `cron_schedule`, `memory`, `last_slot_at` / `next_due_at`, last_run, runs[], `credential_id` (if fanned out) | SQL | always SQL |
+| current `enabled`, current `schedule`, `memory`, `last_slot_at` / `next_due_at`, last_run, runs[], `credential_id` (if fanned out) | SQL | always SQL |
 
 User toggles via the UI (enable/disable, change cron) write SQL only — your manifest is unchanged. User edits to manifest.toml propagate via reconcile but don't blow away user-managed runtime state.
 

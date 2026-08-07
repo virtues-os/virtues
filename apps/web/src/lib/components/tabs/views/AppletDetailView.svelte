@@ -12,9 +12,9 @@
 		getApplet,
 		getAppletLog,
 		patchApplet,
-		deleteAction,
+		deleteApplet,
 		getAppletData,
-		runAction,
+		runApplet,
 		messageApplet,
 		type Applet,
 		type AppletLogEntry,
@@ -25,7 +25,7 @@
 
 	let { tab }: { tab: Tab; active: boolean } = $props();
 
-	const actionId = $derived(routeToEntityId(tab.route));
+	const appletId = $derived(routeToEntityId(tab.route));
 
 	let action = $state<Applet | null>(null);
 	let log = $state<AppletLogEntry[]>([]);
@@ -33,16 +33,16 @@
 	let saving = $state(false);
 	let err = $state<string | null>(null);
 
-	let edit = $state<{ name: string; agent: string; cron_schedule: string; memory: string }>({
+	let edit = $state<{ name: string; agent: string; schedule: string; memory: string }>({
 		name: '',
 		agent: '',
-		cron_schedule: '',
+		schedule: '',
 		memory: ''
 	});
 	let isDirty = $state(false);
 
 	$effect(() => {
-		if (actionId) void load(actionId);
+		if (appletId) void load(appletId);
 	});
 
 	async function load(id: string) {
@@ -60,7 +60,7 @@
 			edit = {
 				name: a.name,
 				agent: a.agent ?? '',
-				cron_schedule: a.cron_schedule ?? '',
+				schedule: a.schedule ?? '',
 				memory: a.memory ?? ''
 			};
 			isDirty = false;
@@ -190,7 +190,7 @@
 
 	// Leaving the page, or switching applets, must not leave a chain running.
 	$effect(() => {
-		void actionId;
+		void appletId;
 		return stopPolling;
 	});
 
@@ -208,8 +208,8 @@
 			if (!isSystem && edit.agent !== (action.agent ?? '')) {
 				patch.agent = edit.agent.trim() ? edit.agent : null;
 			}
-			if (edit.cron_schedule !== (action.cron_schedule ?? '')) {
-				patch.cron_schedule = edit.cron_schedule.trim() ? edit.cron_schedule : null;
+			if (edit.schedule !== (action.schedule ?? '')) {
+				patch.schedule = edit.schedule.trim() ? edit.schedule : null;
 			}
 			if (edit.memory !== (action.memory ?? '')) {
 				patch.memory = edit.memory.trim() ? edit.memory : null;
@@ -223,7 +223,7 @@
 			edit = {
 				name: updated.name,
 				agent: updated.agent ?? '',
-				cron_schedule: updated.cron_schedule ?? '',
+				schedule: updated.schedule ?? '',
 				memory: updated.memory ?? ''
 			};
 			isDirty = false;
@@ -262,7 +262,7 @@
 		err = null;
 		try {
 			action = await patchApplet(action.id, { enabled: true });
-			await runAction(action.id);
+			await runApplet(action.id);
 			log = await getAppletLog(action.id).catch(() => log);
 			watchForResult();
 			action = await getApplet(action.id);
@@ -320,7 +320,7 @@
 		saving = true;
 		err = null;
 		try {
-			await runAction(action.id);
+			await runApplet(action.id);
 			log = await getAppletLog(action.id).catch(() => log);
 			watchForResult();
 		} catch (e) {
@@ -350,7 +350,7 @@
 		deleting = true;
 		err = null;
 		try {
-			await deleteAction(action.id, dropData);
+			await deleteApplet(action.id, dropData);
 			deleteOpen = false;
 			windowShellStore.closeTab(tab.id);
 		} catch (e) {
@@ -382,7 +382,7 @@
 						<p class="intent">{action.description}</p>
 					{/if}
 					<div class="meta">
-						<span>{describeSchedule(action.cron_schedule ?? null)}</span>
+						<span>{describeSchedule(action.schedule ?? null)}</span>
 						{#if action.next_due_at && action.enabled && !action.archived_at}
 							<span class="dot-sep">·</span>
 							<!-- The scheduler's own pointer, not a re-derivation from the
@@ -449,7 +449,7 @@
 						<Icon icon="ri:external-link-line" width="12" /> Open full page
 					</button>
 				</div>
-				<FaceFrame actionId={action.id} height="460px" />
+				<FaceFrame appletId={action.id} height="460px" />
 			</section>
 		{/if}
 
@@ -524,11 +524,11 @@
 					<span class="label">Schedule</span>
 					<input
 						type="text"
-						bind:value={edit.cron_schedule}
+						bind:value={edit.schedule}
 						placeholder="0 0 * * * *  (6-field cron, empty = on-demand)"
 						oninput={markDirty}
 					/>
-					<span class="hint">{describeSchedule(edit.cron_schedule || null)}</span>
+					<span class="hint">{describeSchedule(edit.schedule || null)}</span>
 				</label>
 
 				<!-- Three facts the page never showed, and the reason a person
