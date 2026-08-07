@@ -6,27 +6,24 @@
 	 *
 	 * It floats rather than being welded to the bottom edge, which is the whole
 	 * point: content passes under it and reads through it, so the screen belongs
-	 * to what you are looking at and the chrome is a slab hovering over it. That
-	 * agrees with the rest of the phone shell — one window, no tabs, swipe to go
-	 * back — where an edge-to-edge bar argued with it.
+	 * to what you are looking at and the chrome is a slab hovering over it.
 	 *
 	 * Two states, and the difference is inset and opacity rather than content:
-	 * at rest it is nearly full width, softly rounded and fairly solid, with
-	 * labels; scrolling down it draws in to a narrower capsule, more transparent,
-	 * icons only. Nothing leaves the row — the same five destinations are there
-	 * in both, so the bar never has to be re-learned.
+	 * at rest it is nearly full width, a rounded rectangle, fairly solid, with
+	 * labels; scrolling down it draws in to a narrower capsule, shorter and more
+	 * transparent, icons only. Nothing leaves the row — the same five
+	 * destinations are in both, so the bar never has to be re-learned.
 	 *
-	 * The selection mechanic is a filled capsule *behind* the icon rather than a
-	 * color change: it survives being read through glass, which a tint does not.
-	 *
-	 * There is no raised capture button any more. New chat is now published by
-	 * ChatView as a view action, which puts it in the top action bar here and in
-	 * the pane toolbar on the desktop: destinations belong in the bar, actions
-	 * belong to the view.
+	 * Selection is a capsule that SLIDES between tabs rather than appearing under
+	 * the new one. That movement is most of what makes a bar like this feel
+	 * alive, and it is the reason the pill is one absolutely-positioned element
+	 * measured against the buttons rather than a background on each of them.
 	 *
 	 * On the material — this is a WKWebView, so it is `backdrop-filter` and a
-	 * hairline, not Apple's Liquid Glass. It cannot refract what is behind it or
-	 * track device motion. Static, it is close; in motion it is an impression.
+	 * hairline rim, not Apple's Liquid Glass. It cannot refract what is behind it
+	 * or track device motion. There is deliberately no drop shadow: the lift
+	 * comes from the rim and the blur, and a cast shadow under a translucent
+	 * object only muddies what you are meant to be reading through it.
 	 */
 	import Icon from "$lib/components/Icon.svelte";
 	import { windowShellStore } from "$lib/stores/window-shell.svelte";
@@ -112,6 +109,8 @@
 		return tab.match.some((p) => activeRoute === p || activeRoute.startsWith(p + "/"));
 	}
 
+	const activeIndex = $derived(tabs.findIndex(isActive));
+
 	// ── Minimize on scroll ───────────────────────────────────────────────────
 	// Every view owns its own scroller — the shell is fixed and the document
 	// never scrolls — so there is no one element to listen to. A capture-phase
@@ -156,6 +155,72 @@
 		window.addEventListener("scroll", onScroll, { capture: true, passive: true });
 		return () => window.removeEventListener("scroll", onScroll, true);
 	});
+
+	// ── The sliding selection pill ───────────────────────────────────────────
+	// Measured rather than styled, because it has to travel between buttons.
+	// It tracks the active tab's glyph box; the transition on `transform` and
+	// `width` is what turns a jump into a slide.
+	let glassEl = $state<HTMLElement | null>(null);
+	let pill = $state<{ x: number; w: number; h: number } | null>(null);
+
+	// Queried rather than bound. `bind:this` into an array index inside a keyed
+	// `{#each}` left the refs empty here, and the pill silently never rendered —
+	// the glyphs are already findable from the container, so this needs no
+	// bookkeeping to go wrong.
+	function measurePill(idx: number) {
+		const g = glassEl;
+		const el = g?.querySelectorAll<HTMLElement>(".glyph")[idx];
+		if (!g || !el) {
+			pill = null;
+			return;
+		}
+		const gb = g.getBoundingClientRect();
+		const eb = el.getBoundingClientRect();
+		if (eb.width === 0) return; // not laid out yet — keep the last good value
+		pill = { x: eb.left - gb.left, w: eb.width, h: eb.height };
+	}
+
+	/**
+	 * What the pill is aiming at. A derived object rather than two loose reads,
+	 * because the effect below has to depend on both and a *bare* read is not a
+	 * dependency — `void activeIndex;` compiles away, the effect never re-runs,
+	 * and the pill sits on whichever tab happened to be active at mount. It did
+	 * exactly that until a resize (which calls the measure directly) proved the
+	 * measurement was fine and the tracking was not.
+	 */
+	const pillTarget = $derived({ idx: activeIndex, min: collapsed, glass: glassEl });
+
+	// Re-measure whenever the target moves. Two of these are instantaneous (the
+	// active tab changing, the row re-laying out) and one is not: the state
+	// transition takes ~340ms, during which the buttons are still moving. A
+	// short rAF follow keeps the pill glued to its glyph for the duration
+	// instead of arriving before the row it belongs to.
+	$effect(() => {
+		const { idx, glass } = pillTarget;
+		if (!glass) return;
+
+		// Place it now, synchronously. The rAF follow below only *refines* the
+		// position while the row is still moving; it must not be what puts the
+		// pill on screen in the first place, because a throttled page (hidden
+		// tab, backgrounded app) doesn't run animation frames at all — and the
+		// pill would then be missing entirely rather than merely un-animated.
+		measurePill(idx);
+
+		let raf = 0;
+		const until = performance.now() + 460;
+		const tick = () => {
+			measurePill(idx);
+			if (performance.now() < until) raf = requestAnimationFrame(tick);
+		};
+		raf = requestAnimationFrame(tick);
+
+		const onResize = () => measurePill(idx);
+		window.addEventListener("resize", onResize);
+		return () => {
+			cancelAnimationFrame(raf);
+			window.removeEventListener("resize", onResize);
+		};
+	});
 </script>
 
 <!-- While the keyboard is up the bar steps aside: on iOS the composer owns the
@@ -164,7 +229,17 @@
      slides rather than vanishes, so dismissing the keyboard brings it back the
      way it left. Stowing beats minimizing — a bar that is gone has no state. -->
 <nav class="tabbar" class:min={collapsed} class:stowed={keyboard.open} aria-label="Main">
-	<div class="glass">
+	<div class="glass" class:min={collapsed} bind:this={glassEl}>
+		{#if pill}
+			<span
+				class="pill"
+				style:transform="translateX({pill.x}px)"
+				style:width="{pill.w}px"
+				style:height="{pill.h}px"
+				aria-hidden="true"
+			></span>
+		{/if}
+
 		{#each tabs as tab (tab.id)}
 			{@const active = isActive(tab)}
 			<button
@@ -175,7 +250,7 @@
 				aria-current={active ? "page" : undefined}
 			>
 				<span class="glyph">
-					<Icon icon={active ? tab.iconActive : tab.icon} width={23} />
+					<Icon icon={active ? tab.iconActive : tab.icon} width={25} />
 				</span>
 				<span class="label">{tab.label}</span>
 			</button>
@@ -184,8 +259,10 @@
 </nav>
 
 <style>
-	/* The frame: full width, pinned above the home indicator. Only its inline
-	   padding animates, which is what draws the capsule in and out. */
+	/* The frame: full width, pinned above the home indicator, and static — the
+	   capsule's width lives on `.glass` as an interpolatable calc rather than as
+	   padding here, because a shorthand logical property is the kind of thing a
+	   browser is entitled to decline to animate. */
 	.tabbar {
 		position: fixed;
 		left: 0;
@@ -195,14 +272,7 @@
 		display: flex;
 		justify-content: center;
 		padding-inline: 10px;
-		transition:
-			padding-inline 0.32s cubic-bezier(0.32, 0.72, 0, 1),
-			transform 0.24s cubic-bezier(0.32, 0.72, 0, 1);
-	}
-
-	/* Drawn in and centred. */
-	.tabbar.min {
-		padding-inline: 42px;
+		transition: transform 0.26s cubic-bezier(0.32, 0.72, 0, 1);
 	}
 
 	.tabbar.stowed {
@@ -212,41 +282,64 @@
 		pointer-events: none;
 	}
 
-	/* The material. Theme-derived rather than a fixed dark, because a theme here
-	   can be paper-white — a hardcoded smoked glass would be a hole in it. */
+	/* The material. Theme-derived rather than a fixed smoked grey, because a
+	   theme here can be paper-white and a hardcoded dark pane would be a hole
+	   punched in it.
+
+	   No drop shadow. The lift is the rim and the blur; a cast shadow under a
+	   translucent object darkens the very content you are supposed to be able to
+	   read through it. */
 	.glass {
+		position: relative;
 		display: flex;
-		align-items: stretch;
+		align-items: center;
 		justify-content: space-around;
 		width: 100%;
+		max-width: calc(100% - 0px);
 		height: var(--tabbar-h);
-		border-radius: 26px;
-		background: color-mix(in srgb, var(--color-surface) 76%, transparent);
+		border-radius: 20px;
+		background-color: color-mix(in srgb, var(--color-surface) 76%, transparent);
 		backdrop-filter: blur(28px) saturate(180%);
 		-webkit-backdrop-filter: blur(28px) saturate(180%);
 		border: 0.5px solid color-mix(in srgb, var(--color-border) 70%, transparent);
-		/* Two shadows doing different jobs: an inset hairline along the top edge
-		   for the lit rim that reads as thickness, and a soft drop that lifts the
-		   whole thing off the content. */
-		box-shadow:
-			inset 0 0.5px 0 color-mix(in srgb, var(--color-foreground) 10%, transparent),
-			0 8px 28px color-mix(in srgb, var(--color-foreground) 14%, transparent);
+		/* The lit top edge that reads as thickness. */
+		box-shadow: inset 0 0.5px 0 color-mix(in srgb, var(--color-foreground) 12%, transparent);
 		overflow: hidden;
+		/* Both ends of max-width are calc(), so there is no percentage-to-keyword
+		   interpolation for the browser to give up on. */
 		transition:
-			height 0.32s cubic-bezier(0.32, 0.72, 0, 1),
-			border-radius 0.32s cubic-bezier(0.32, 0.72, 0, 1),
-			background-color 0.32s ease;
+			max-width 0.34s cubic-bezier(0.32, 0.72, 0, 1),
+			height 0.34s cubic-bezier(0.32, 0.72, 0, 1),
+			border-radius 0.34s cubic-bezier(0.32, 0.72, 0, 1),
+			background-color 0.34s ease;
 	}
 
-	/* Minimized: shorter, fully capsule, and thinner — you should be able to
-	   read the content through it, which is the tell that it is floating. */
-	.tabbar.min .glass {
+	/* Minimized: drawn in, shorter, fully capsule, and thin enough that content
+	   reads through it — which is the tell that it is floating. 23px is exactly
+	   half the minimized height, so the radius lands on a true capsule instead
+	   of racing there via a large number. */
+	.glass.min {
+		max-width: calc(100% - 64px);
 		height: var(--tabbar-h-min);
+		border-radius: 23px;
+		background-color: color-mix(in srgb, var(--color-surface) 58%, transparent);
+	}
+
+	/* The pill sits behind the row and travels. */
+	.pill {
+		position: absolute;
+		left: 0;
 		border-radius: 999px;
-		background: color-mix(in srgb, var(--color-surface) 58%, transparent);
+		background: color-mix(in srgb, var(--color-foreground) 12%, transparent);
+		pointer-events: none;
+		transition:
+			transform 0.36s cubic-bezier(0.32, 0.72, 0, 1),
+			width 0.28s cubic-bezier(0.32, 0.72, 0, 1),
+			height 0.28s cubic-bezier(0.32, 0.72, 0, 1);
 	}
 
 	.tab {
+		position: relative; /* above the pill */
 		flex: 1;
 		display: flex;
 		flex-direction: column;
@@ -259,30 +352,22 @@
 		color: var(--color-foreground-muted);
 		cursor: pointer;
 		-webkit-tap-highlight-color: transparent;
-		transition: color 0.18s ease;
+		transition: color 0.22s ease;
 	}
 
 	.tab.active {
 		color: var(--color-foreground);
 	}
 
-	/* The selection pill lives here, and the padding is always applied so that
-	   activating a tab changes a color and nothing else — if the padding
-	   appeared with the background, every tap would nudge the row. */
+	/* The pill is measured off this box, so its padding is what gives the
+	   selection its shape. */
 	.glyph {
 		display: flex;
 		align-items: center;
 		justify-content: center;
-		padding: 4px 16px;
+		padding: 5px 18px;
 		border-radius: 999px;
-		background: transparent;
-		transition:
-			background-color 0.2s ease,
-			transform 0.12s cubic-bezier(0.32, 0.72, 0, 1);
-	}
-
-	.tab.active .glyph {
-		background: color-mix(in srgb, var(--color-foreground) 12%, transparent);
+		transition: transform 0.12s cubic-bezier(0.32, 0.72, 0, 1);
 	}
 
 	/* Physical tap feedback. */
@@ -301,8 +386,8 @@
 		opacity: 1;
 		overflow: hidden;
 		transition:
-			max-height 0.28s cubic-bezier(0.32, 0.72, 0, 1),
-			opacity 0.18s ease;
+			max-height 0.3s cubic-bezier(0.32, 0.72, 0, 1),
+			opacity 0.2s ease;
 	}
 
 	.tab.active .label {
@@ -314,14 +399,24 @@
 		opacity: 0;
 	}
 
-	/* Reduced motion: the states still differ, they just arrive rather than
-	   travel. The bar changing size under a finger is exactly the kind of
-	   movement this setting is asking us not to make. */
+	/* Reduce Motion asks for less movement, not for none — and `transition:
+	   none` here is why the bar snapped between its two states for anyone who
+	   had it switched on. Keep the change legible, take the travel out of it:
+	   everything crossfades quickly and the pill stops sliding. */
 	@media (prefers-reduced-motion: reduce) {
 		.tabbar,
 		.glass,
-		.glyph,
-		.label {
+		.label,
+		.tab {
+			transition-duration: 0.12s;
+			transition-timing-function: ease;
+		}
+
+		.pill {
+			transition: opacity 0.12s ease;
+		}
+
+		.glyph {
 			transition: none;
 		}
 	}
