@@ -1006,7 +1006,7 @@ pub(crate) async fn insert_device_row(
     Ok(row.0)
 }
 
-fn render_qr_svg(data: &str) -> String {
+pub(crate) fn render_qr_svg(data: &str) -> String {
     use qrcode::{render::svg, QrCode};
     match QrCode::new(data.as_bytes()) {
         Ok(code) => code
