@@ -1,6 +1,7 @@
 <script lang="ts">
 	import type { Tab } from "$lib/tabs/types";
 	import { windowShellStore } from "$lib/stores/window-shell.svelte";
+	import { paneActions } from "$lib/stores/paneActions.svelte";
 	import ChatInput from "$lib/components/ChatInput.svelte";
 	import MediaLightbox from "$lib/components/MediaLightbox.svelte";
 	import {
@@ -77,6 +78,31 @@
 
 	// Props
 	let { tab, active }: { tab: Tab; active: boolean } = $props();
+
+	/**
+	 * New chat, published as this view's action.
+	 *
+	 * It used to be the raised ⊕ in the phone's tab bar. That bar is a floating
+	 * capsule now, and a bump breaking its outline fought the shape — but more
+	 * than that, the bar holds *destinations* and starting a conversation is an
+	 * act, not a place. So it lands where the view's own actions go: the action
+	 * bar on the phone, the pane toolbar on the desktop, the same slot from the
+	 * same registration.
+	 */
+	$effect(() =>
+		paneActions.set(tab.id, [
+			{
+				id: "chat.new",
+				label: "New chat",
+				icon: "ri:add-line",
+				run: () =>
+					windowShellStore.openTabFromRoute("/", {
+						label: "New Chat",
+						forceNew: true,
+					}),
+			},
+		]),
+	);
 
 	// Extract conversationId from tab route (format: /chat/chat_abc123 or / for new chat)
 	// Returns the full chat ID including 'chat_' prefix, or undefined for new chat

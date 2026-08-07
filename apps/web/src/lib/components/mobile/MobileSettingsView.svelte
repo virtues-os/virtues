@@ -161,7 +161,7 @@
 		top: 0;
 		left: 0;
 		right: 0;
-		bottom: calc(50px + env(safe-area-inset-bottom));
+		bottom: calc(var(--tabbar-reserve) + env(safe-area-inset-bottom));
 		z-index: var(--z-sticky);
 		display: flex;
 		flex-direction: column;
