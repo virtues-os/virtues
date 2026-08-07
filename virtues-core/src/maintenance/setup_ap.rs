@@ -14,16 +14,28 @@
 //! visit, while the phone is still on the box's own network, where proximity
 //! already proves ownership.
 //!
-//! **Concurrency is real on this radio but deliberately unused.** The Q6A
-//! reports `#{managed} <= 1, #{AP} <= 1, total <= 4`, so it can run the AP and
-//! a client connection at once — which is what lets the box join the owner's
-//! wifi without dropping the network their phone is sitting on. We rely on
-//! NetworkManager to place the AP on its own virtual interface rather than
-//! managing one ourselves: hand-created interfaces get renamed out from under
-//! you by udev's predictable-naming (`ap0` becomes `wlx<mac>`), get flipped to
-//! `managed` by wpa_supplicant on sight, and silently consume the 4-interface
-//! budget until creation fails with a bare `-22`. All three cost an afternoon;
-//! none of them are worth re-discovering.
+//! **AP+STA concurrency does NOT work on this radio — measured, not assumed.**
+//! `iw list` advertises `#{managed} <= 1, #{AP} <= 1, total <= 4`, which reads
+//! like the box could host the AP and join the owner's wifi at once. It cannot.
+//! Tested on the Q6A 2026-08-07: a second virtual interface is created fine and
+//! adopted by NetworkManager, and then the join fails with *"object is in an
+//! unsuitable state"*. Do not re-derive optimism from the capability table.
+//!
+//! What the radio *can* do while hosting the AP is **scan** — 21 SSIDs, 133
+//! BSSs — which is what makes `/api/provision/networks` viable at all.
+//!
+//! So the switchover is sequential: drop the AP, join, re-raise it if the join
+//! failed. `api::provision` holds [`PROVISIONING_LOCK`] across that window so
+//! this reconciler does not put the AP back on top of the association being
+//! formed. Sequential is cheap in practice — the re-join succeeded on the first
+//! attempt, within seconds, in every measured run.
+//!
+//! Three traps if anyone revisits the virtual-interface route: hand-created
+//! interfaces get renamed by udev's predictable-naming (`ap0` becomes
+//! `wlx<mac>`, so `nmcli ... ifname ap0` fails with "not a Wi-Fi device"), get
+//! flipped to `managed` by wpa_supplicant on sight, and silently consume the
+//! 4-interface budget until creation fails with a bare `-22`. All three cost an
+//! afternoon.
 //!
 //! One tokio task spawned by `server::run`, mirroring `maintenance::sweeper`
 //! and `maintenance::pair_rotator`.
@@ -38,9 +50,46 @@ use tokio::time::{interval, MissedTickBehavior};
 /// How often to reconcile the AP against the box's claimed state.
 const RECONCILE_SECS: u64 = 20;
 
+/// Set by `api::provision` for the duration of a join attempt, so the
+/// reconciler does not re-raise the AP on top of it.
+///
+/// Measured on the Q6A 2026-08-07: the radio **can** scan while hosting the AP
+/// (21 SSIDs, 133 BSSs), but it **cannot** hold an AP and a client association
+/// at once — a second virtual interface is created and adopted by NM, then the
+/// join fails with "object is in an unsuitable state". So the switchover is
+/// necessarily sequential: drop the AP, join, and re-raise it if the join
+/// failed. Without this guard the reconciler would notice "unclaimed and no AP"
+/// mid-join and raise the AP straight back onto the radio the join needs.
+///
+/// Lives in `/run` so it can never survive a reboot, and carries a deadline so
+/// a process that dies mid-join cannot suppress the AP forever.
+pub const PROVISIONING_LOCK: &str = "/run/virtues-provisioning";
+
+/// How long a provisioning lock is honoured before it is treated as abandoned.
+/// Generous relative to a join (seconds) and short relative to a person's
+/// patience with a box that never shows its network again.
+const LOCK_TTL_SECS: u64 = 120;
+
+/// Is a join in flight right now?
+pub fn provisioning_in_flight() -> bool {
+    let Ok(meta) = std::fs::metadata(PROVISIONING_LOCK) else {
+        return false;
+    };
+    let Ok(modified) = meta.modified() else {
+        return false;
+    };
+    match modified.elapsed() {
+        Ok(age) => age.as_secs() < LOCK_TTL_SECS,
+        // A clock that moved backwards makes the lock look like it is from the
+        // future. Honour it — the failure mode of waiting is a delayed AP; the
+        // failure mode of ignoring it is stomping a live join.
+        Err(_) => true,
+    }
+}
+
 /// NetworkManager connection name for the setup AP. Also how we recognise it
 /// later — `api::display` looks for a `Virtues-` prefixed wireless connection.
-const AP_CON_NAME: &str = "virtues-setup-ap";
+pub const AP_CON_NAME: &str = "virtues-setup-ap";
 
 /// Only appliances raise an AP. A DIY box is someone's general-purpose Linux
 /// server, reached over a network they already run; hijacking its radio to
@@ -70,6 +119,13 @@ pub fn spawn(pool: PgPool) {
 }
 
 async fn reconcile(pool: &PgPool) -> Result<(), crate::Error> {
+    // A join is in flight. It needed the radio, so the AP is down on purpose —
+    // do not helpfully put it back underneath the association being formed.
+    if provisioning_in_flight() {
+        tracing::debug!("setup_ap: join in flight, leaving the radio alone");
+        return Ok(());
+    }
+
     let claimed: i64 =
         sqlx::query_scalar("SELECT count(*) FROM app_device WHERE revoked_at IS NULL")
             .fetch_one(pool)
