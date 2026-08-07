@@ -16,7 +16,10 @@ use axum::{
 use std::env;
 use std::sync::Arc;
 
-use self::webhook::AppState;
+// Re-exported: `AppState` is the handler state for the whole crate, and
+// modules outside `server` (api::display, …) legitimately name it. Importing it
+// privately here made `crate::server::AppState` fail to resolve for them.
+pub use self::webhook::AppState;
 use self::yjs::yjs_websocket_handler;
 use crate::error::Result;
 use crate::mcp::{http::add_mcp_routes, VirtuesMcpServer};
@@ -223,6 +226,16 @@ pub async fn run(client: Virtues, host: &str, port: u16) -> Result<()> {
         .route(
             "/api/setup/state",
             get(crate::api::box_status::setup_state_handler),
+        )
+        // What the attached 7" display renders. Registered here because the
+        // kiosk draws before any device is paired, but UNLIKE its neighbours
+        // above it carries the live pair code — so the handler itself refuses
+        // anything that isn't loopback. Proximity is the authority: a stranger
+        // on the wifi who cannot see the screen must not be able to claim the
+        // box. See api/display.rs.
+        .route(
+            "/api/display/state",
+            get(crate::api::display::display_state_handler),
         )
         // Auth — pair-only model. Public consume + session probe (returns the
         // AuthUser resolved from the request's proven iroh key, if any).

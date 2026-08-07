@@ -13,6 +13,7 @@ pub mod auth;
 pub mod billing_state;
 pub mod box_status;
 pub mod devices;
+pub mod display;
 pub mod pair;
 pub mod settings_byo;
 pub mod setup;
