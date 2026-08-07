@@ -295,8 +295,32 @@ tiers, matching the escalation philosophy the video tiers already use:
   `fast_html2md` are the recommended pair for LLM-bound extraction). Free, keeps
   the URL on-box, and uses the **residential IP** — which is the whole reason
   YouTube caption tracks and paywall-lite pages work from here at all.
-- **Parallel Extract on failure** (JS-heavy SPAs, bot walls). Per-source
-  toggle; it sends the URL off-box, so it is opt-in, never the default.
+- **Parallel Extract on failure** — **MEASURED 2026-08-07, and the answer is
+  don't build it.** A 34-URL survey spanning references, docs, code, news,
+  paywalled news, video, social, design, SPAs, commerce and a PDF produced:
+
+  | | count | |
+  |---|---|---|
+  | full body text | 14 | 41% |
+  | metadata only (og tags, no body) | 15 | 44% |
+  | **neither — Extract's supposed target** | **0** | **0%** |
+  | refused on content type (a PDF) | 1 | 3% |
+  | HTTP error (bot wall / 401) | 4 | 12% |
+
+  **85% enrichable, and the empty set is empty.** The hypothesis was that
+  JS-rendered pages would come back with nothing; they come back with og tags,
+  which is enough for a real extraction record (the Unsplash rows in the seed
+  are exactly this case and they enriched well). Metadata extraction, not
+  Extract, is what carries those.
+
+  Extract's actual market is the 4 HTTP errors — Stack Overflow, WSJ (401),
+  Figma, Zillow — bot walls and paywalls, not SPAs. That is a much smaller and
+  much less winnable set: a paywall defeats Parallel too. Revisit only if real
+  usage shows a different distribution.
+
+  *Corpus caveat, in Extract's favour*: it over-samples section and home pages
+  (`bbc.com/news`, `theverge.com/tech`) where real saves are deep links, which
+  carry more text. The true TEXT share is likely higher, not lower.
 
 Must be native Rust in core, not applet code — the `virtues_applet_writer` role
 can't write `data_*`.
