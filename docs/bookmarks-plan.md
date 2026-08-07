@@ -1,17 +1,18 @@
 # Bookmarks — capture, enrichment, and retrieval plan
 
-Status: **CAPTURE SPINE + ENRICHMENT LOOP BUILT** — capture 2026-08-04
-(`2f5a5c94`, `c814dcb8`), enrichment 2026-08-05 (steps 1–4 of the
-[build plan](#build-plan-2026-08-05)). Remaining: the iOS and X doors, the UI,
-and the Parallel tiers.
-Owner table: `data_content_bookmark` (0007) + `note` (0073) + enrichment queue
-(0094) + `extraction_text` (0095).
+Status: **v1 SHIPPABLE** — capture spine 2026-08-04, enrichment loop and the
+room 2026-08-05/07 (steps 1–4 and 7 of the [build plan](#build-plan-2026-08-05)).
 
-**Where this stands:** a saved URL now becomes findable on its own. The sweep
-fetches the page, composes an extraction record, and that record plus the
-user's `note` and harvested `tags` are all in the embed text. What is still
-missing is doors — the highest-value one (iOS share sheet, the only path for
-Instagram) and X — plus the rooms to browse it all in.
+**What v1 is:** three capture doors — in-app save, Mac browser bookmarks,
+GitHub stars — a budgeted enrichment sweep that reads each page and writes an
+extraction record, and a room that renders saves as an artifact-led Wall with a
+detail view whose first field is the user's own note. A save becomes findable
+by what it is about, by the user's words, and by the phrases they would
+plausibly type.
+
+**What v1 deliberately is not:** no Instagram (the iOS share extension is
+[deferred](#5-ios-share-sheet--deferred-2026-08-07-box-side-landed) — too much
+platform machinery for one door), no image understanding, no X, no Inbox.
 
 ## Why this exists
 
@@ -369,7 +370,30 @@ Build real aspect rows only when per-aspect **attribution** is wanted ("matched
 on palette"), not merely per-aspect recall. That defers the invasive change
 until a surface actually needs it.
 
-### 5. iOS share sheet — SPIKE DONE 2026-08-05, unblocked
+### 5. iOS share sheet — DEFERRED 2026-08-07 (box side landed)
+
+**Decision: not in the first version.** The spike below found no blocker, but
+the shape it found is the reason to wait: a share extension is a separate
+process with a hard memory ceiling, it cannot reach the box (which is served
+in-process by the app on `:7117`), so it has to hand off through an App Group
+container that the app drains later. That is an Apple-account registration, two
+entitlements files, a new Xcode target, a Swift extension, and an app-side
+drain — a lot of platform machinery for one door.
+
+What already landed and stays: the **`bookmark` arm in `ios_ingest`**
+(`f4eda86c`). It cost little, it is tested against the database, and whichever
+door eventually arrives — extension, Shortcut, or something else — posts the
+same shape. The receiving end is done.
+
+The Shortcut stopgap was considered and rejected: `ios_ingest` is
+`per_credential = true`, so the webhook wants the paired device's credential,
+which lives inside the app and is not reachable from a Shortcut. Making it work
+would mean a second auth path for a throwaway.
+
+**What v1 captures instead**: in-app save, Mac browser bookmarks, GitHub stars.
+Instagram is simply not covered until this is picked back up.
+
+#### Original spike (2026-08-05) — still accurate, kept for when this resumes
 
 **The Xcode risk was the wrong thing to worry about.** Both cited blockers are
 gone, and the real constraint is the transport.
@@ -529,7 +553,40 @@ same table under a different `post_type`. Embeds trivially (the text is prose),
 and it is the table future Bluesky/Mastodon/LinkedIn streams land in — worth
 designing once, deliberately, rather than bending an existing table now.
 
-### 7. UI — after enrichment writes something
+### 7. UI — ✅ LANDED 2026-08-05/07, minus the Inbox
+
+Built: the Wall (artifact-led tiles, form encodes what the box knows), facets
+over source/kind/type/read-state, the shelf status line, and `/bookmark/{id}` —
+a detail view that leads with the user's note and separates their words from
+the model's under a hairline.
+
+**Decision 2026-08-07: no Inbox room.** It is a chore surface — an unread count
+nobody clears — and it existed mainly to host a prompt we have since softened.
+Instead the note field is simply present on the detail view, and a "needs a
+note" filter on the Wall covers triage without obligation. Resurfacing belongs
+in the Daily Office, where the plan already puts it.
+
+That leaves `is_archived` with no writer. Deliberately left unused: an unused
+column is cheaper than a surface nobody wants.
+
+**Decision 2026-08-07: "why" leaves the vocabulary.** It is interrogative —
+asking someone to justify a save — it presumes one reason exists, and it does
+not describe what people actually write (todos, pointers, fragments). Migration
+0073 had already reached this conclusion for the column name; this extends it to
+the product language. The field is a **note**. When we prompt, the words are
+"What's this for?", not "Why did you save this?"
+
+**Rule worth keeping: `tags` is source-owned.** It is in the shared upsert's
+update set, so anything a user writes there is destroyed by the next sync. User
+filing goes through notebooks, which already exist and which this plan already
+calls the highest-fidelity signal. Two filing systems is the maintenance cost;
+one is the fix. The UI must never offer tag editing.
+
+#### Still open
+
+Colour search waits on palette hexes, which wait on the image pass.
+
+### 7b. Original UI notes — after enrichment writes something
 
 Inbox/Library SubNav, extraction fields as facets, search-by-color off the
 palette hex swatches (deterministic, no ML), status line ("212 awaiting
