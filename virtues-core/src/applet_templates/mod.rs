@@ -1677,6 +1677,49 @@ auth = { kind = "via_proxy", start_path = "/google/start" }
         assert_eq!(stale, 0, "reconcile must restore the manifest sentence");
     }
 
+    /// End-to-end for the schema-replay path: a folder on disk carrying
+    /// `schema/NNNN_*.sql` must reach real tables through reconcile alone.
+    /// Nothing had ever exercised this — the versioned-migration work shipped
+    /// with unit tests over the collapse logic and no applet that used it.
+    #[sqlx::test]
+    async fn a_shipped_applet_gets_its_tables_from_disk(pool: sqlx::PgPool) {
+        reconcile_templates(&pool).await.expect("reconcile");
+
+        let table: Option<String> = sqlx::query_scalar(
+            "SELECT table_name FROM information_schema.tables \
+              WHERE table_schema = 'applet_calorie_tracker' AND table_name = 'entries'",
+        )
+        .fetch_optional(&pool)
+        .await
+        .unwrap();
+        assert_eq!(
+            table.as_deref(),
+            Some("entries"),
+            "the tracker's schema/0001 did not reach the database"
+        );
+
+        // Recorded, so a second reconcile does not run it again.
+        let applied: Vec<(i32, String)> = sqlx::query_as(
+            "SELECT version, name FROM app_applet_schema_migrations \
+              WHERE applet_id = 'applet_user__calorie_tracker' ORDER BY version",
+        )
+        .fetch_all(&pool)
+        .await
+        .unwrap();
+        assert_eq!(applied.len(), 1);
+        assert_eq!(applied[0].0, 1);
+
+        reconcile_templates(&pool).await.expect("second reconcile");
+        let after: i64 = sqlx::query_scalar(
+            "SELECT count(*) FROM app_applet_schema_migrations \
+              WHERE applet_id = 'applet_user__calorie_tracker'",
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(after, 1, "a version must be applied exactly once");
+    }
+
     #[sqlx::test]
     async fn reconcile_is_idempotent(pool: sqlx::PgPool) {
         // Seed an active iOS credential so per_credential templates fan out.
