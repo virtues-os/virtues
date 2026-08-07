@@ -14,6 +14,7 @@
 	import Icon from "$lib/components/Icon.svelte";
 	import { windowShellStore } from "$lib/stores/window-shell.svelte";
 	import { mobileLayout } from "$lib/stores/mobileLayout.svelte";
+	import { keyboard } from "$lib/stores/keyboard.svelte";
 
 	interface Tab {
 		id: string;
@@ -87,7 +88,12 @@
 	}
 </script>
 
-<nav class="mobile-tabbar">
+<!-- While the keyboard is up the bar steps aside: on iOS the composer owns the
+     bottom edge, and a tab bar wedged between the text you are writing and the
+     keyboard you are writing it with is the thing that reads as broken. It
+     slides rather than vanishes, so dismissing the keyboard brings it back the
+     way it left. -->
+<nav class="mobile-tabbar" class:stowed={keyboard.open}>
 	{#each tabs as tab (tab.id)}
 		{@const active = isActive(tab)}
 		<button
@@ -126,6 +132,18 @@
 		-webkit-backdrop-filter: saturate(1.8) blur(22px);
 		border-top: 0.5px solid color-mix(in srgb, var(--color-border) 90%, transparent);
 		box-shadow: 0 -0.5px 0 color-mix(in srgb, var(--color-foreground) 4%, transparent);
+		transition: transform 0.22s cubic-bezier(0.32, 0.72, 0, 1);
+	}
+
+	.mobile-tabbar.stowed {
+		transform: translateY(100%);
+		pointer-events: none;
+	}
+
+	@media (prefers-reduced-motion: reduce) {
+		.mobile-tabbar {
+			transition: none;
+		}
 	}
 
 	.tab {
