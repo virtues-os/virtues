@@ -1257,10 +1257,114 @@ pub async fn install_systemd_unit(cfg: &InstallConfig) -> Result<()> {
     fs::write("/etc/systemd/system/virtues.service", body)
         .context("writing /etc/systemd/system/virtues.service")?;
 
+    install_firstboot_unit(cfg)?;
+
     let mut cmd = Command::new("systemctl");
     cmd.arg("daemon-reload");
-    run_step("Install systemd unit", cmd).await
+    run_step("Install systemd unit", cmd).await?;
+
+    // Ordered Before=virtues.service, so it must be enabled or the ordering
+    // never applies — an enabled-but-inert oneshot is the normal steady state.
+    let mut en = Command::new("systemctl");
+    en.args(["enable", "virtues-firstboot"]);
+    run_step("Enable first-boot unit", en).await
 }
+
+/// The first-boot oneshot: mint this unit's own encryption key.
+///
+/// Exists because `virtues deprovision` strips `VIRTUES_ENCRYPTION_KEY` before
+/// a box is imaged — a key minted on the master would be baked into the image
+/// and shared by every clone, so it has to be minted per unit, here, on the
+/// customer's first boot.
+///
+/// Everything else identity-shaped already self-mints: systemd repopulates an
+/// empty `machine-id`, sshd regenerates host keys, and the box's iroh secret is
+/// created by `load_or_create_secret` when `virtues.service` first starts. The
+/// encryption key is the one secret that must exist *before* the service comes
+/// up, because the unit reads it from the env file — hence a separate oneshot
+/// ordered `Before=virtues.service` rather than folding it into bringup.
+///
+/// **It mints only when the marker is present.** A box that lost its key some
+/// other way — a botched edit, a half-restored backup — must fail loudly, not
+/// receive a fresh key: the old ciphertext is still on disk and still parses,
+/// so a silent rotation turns every stored credential into undecryptable
+/// garbage with nothing in the logs to say why.
+fn install_firstboot_unit(cfg: &InstallConfig) -> Result<()> {
+    let data_dir = cfg.data_dir.display().to_string();
+
+    let script = FIRSTBOOT_SCRIPT.replace("__DATA_DIR__", &data_dir);
+    fs::write("/usr/local/sbin/virtues-firstboot.sh", script)
+        .context("writing /usr/local/sbin/virtues-firstboot.sh")?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        fs::set_permissions(
+            "/usr/local/sbin/virtues-firstboot.sh",
+            fs::Permissions::from_mode(0o750),
+        )
+        .context("chmod virtues-firstboot.sh")?;
+    }
+
+    fs::write(
+        "/etc/systemd/system/virtues-firstboot.service",
+        FIRSTBOOT_UNIT_TEMPLATE,
+    )
+    .context("writing /etc/systemd/system/virtues-firstboot.service")?;
+    Ok(())
+}
+
+const FIRSTBOOT_UNIT_TEMPLATE: &str = r#"[Unit]
+Description=Virtues first boot — mint this unit's per-box secrets
+Documentation=https://virtues.com/docs
+Before=virtues.service
+# Nothing here touches the network or the database; it only writes the env
+# file, so it can run as early as systemd will let it.
+DefaultDependencies=yes
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/local/sbin/virtues-firstboot.sh
+
+[Install]
+WantedBy=multi-user.target
+"#;
+
+/// Idempotent and self-disarming: it does nothing at all unless
+/// `virtues deprovision` left the marker, and it removes the marker once the
+/// key is written, so a second boot is a no-op.
+const FIRSTBOOT_SCRIPT: &str = r#"#!/bin/sh
+# Mint this unit's per-box encryption key. Installed by virtues-installer.
+#
+# Runs on EVERY boot and does nothing on almost all of them: the marker is
+# written only by `virtues deprovision`, which is the last thing run before a
+# box's disk is imaged. See install.rs::install_firstboot_unit for why minting
+# is gated on the marker rather than simply on "the key is missing".
+set -eu
+
+DATA_DIR=__DATA_DIR__
+ENV_FILE="$DATA_DIR/virtues.env"
+MARKER="$DATA_DIR/.needs-firstboot"
+
+[ -e "$MARKER" ] || exit 0
+
+if grep -q '^VIRTUES_ENCRYPTION_KEY=' "$ENV_FILE" 2>/dev/null; then
+    # Marker present but a key already exists: do NOT rotate it — that would
+    # strand whatever is already encrypted. Just disarm and carry on.
+    rm -f "$MARKER"
+    logger -t virtues-firstboot "marker present but key already set - disarming, not rotating"
+    exit 0
+fi
+
+umask 077
+KEY="$(openssl rand -base64 32)"
+printf 'VIRTUES_ENCRYPTION_KEY=%s\n' "$KEY" >> "$ENV_FILE"
+chown virtues:virtues "$ENV_FILE" 2>/dev/null || true
+chmod 600 "$ENV_FILE"
+
+rm -f "$MARKER"
+logger -t virtues-firstboot "minted per-unit encryption key"
+"#;
 
 const SYSTEMD_UNIT_TEMPLATE: &str = r#"[Unit]
 Description=Virtues — your data, on your hardware
