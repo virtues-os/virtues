@@ -1330,6 +1330,37 @@ pub async fn apply_appliance_profile(cfg: &InstallConfig) -> Result<()> {
         .context("writing polkit network rule")?;
     ui::ok("NetworkManager control granted to the virtues user");
 
+    // Captive-portal plumbing. Two halves, both needed before an OS probe can
+    // reach `api::captive`:
+    //
+    //   DNS — NetworkManager's shared mode already runs a dnsmasq for the AP,
+    //   and it has a drop-in directory. Resolving every name to the box is what
+    //   puts `captive.apple.com` in front of us at all.
+    //
+    //   PORT — probes go to :80, the box serves :8000. Redirected in nftables
+    //   rather than by binding :80, so nothing changes for a DIY box and the
+    //   rule is scoped to traffic arriving on the AP's own subnet.
+    //
+    // Without these the phone joins the setup network, sees no internet, and is
+    // given no hint that /provision exists.
+    fs::create_dir_all("/etc/NetworkManager/dnsmasq-shared.d")
+        .context("mkdir dnsmasq-shared.d")?;
+    fs::write(
+        "/etc/NetworkManager/dnsmasq-shared.d/00-virtues-captive.conf",
+        "# Installed by virtues-installer (appliance profile).\n\
+         # Every name resolves to the box while it is hosting the setup AP, so\n\
+         # the OS connectivity probe reaches us and opens /provision by itself.\n\
+         address=/#/10.42.0.1\n",
+    )
+    .context("writing dnsmasq captive conf")?;
+
+    fs::write("/etc/systemd/system/virtues-captive-redirect.service", CAPTIVE_REDIRECT_UNIT)
+        .context("writing captive redirect unit")?;
+    let mut en = Command::new("systemctl");
+    en.args(["enable", "virtues-captive-redirect"]);
+    let _ = en.output().await;
+    ui::ok("Captive-portal DNS + :80 redirect installed");
+
     // Boot: no display manager, no waiting on a network we don't have.
     for args in [
         vec!["disable", "NetworkManager-wait-online.service"],
@@ -1365,6 +1396,27 @@ pub async fn apply_appliance_profile(cfg: &InstallConfig) -> Result<()> {
     en.args(["enable", "virtues-display"]);
     run_step("Install display kiosk", en).await
 }
+
+/// Redirects :80 to the box's :8000 for traffic arriving on the setup AP.
+///
+/// OS connectivity probes are hard-coded to port 80; the box serves 8000.
+/// Rather than binding a second port in the app (which would change the DIY
+/// box too), this NATs on the way in, scoped to the AP's subnet so nothing on
+/// the owner's LAN is touched. Idempotent — the rule is deleted before it is
+/// added, so a restart does not stack duplicates.
+const CAPTIVE_REDIRECT_UNIT: &str = r#"[Unit]
+Description=Virtues captive portal — redirect :80 to :8000 on the setup AP
+After=network.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/bin/sh -c "iptables -t nat -D PREROUTING -s 10.42.0.0/24 -p tcp --dport 80 -j REDIRECT --to-port 8000 2>/dev/null; iptables -t nat -A PREROUTING -s 10.42.0.0/24 -p tcp --dport 80 -j REDIRECT --to-port 8000"
+ExecStop=/bin/sh -c "iptables -t nat -D PREROUTING -s 10.42.0.0/24 -p tcp --dport 80 -j REDIRECT --to-port 8000 2>/dev/null || true"
+
+[Install]
+WantedBy=multi-user.target
+"#;
 
 /// Lets `User=virtues` raise the setup AP and join a network. See
 /// `apply_appliance_profile` for why an appliance needs this and a DIY box
