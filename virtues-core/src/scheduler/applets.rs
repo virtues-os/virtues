@@ -54,7 +54,7 @@ fn truncate_utf8_bytes(s: &str, max: usize) -> String {
 /// `command` is the argv to spawn (JSON array in SQL). A bare `command[0]`
 /// (no path separator) resolves to a Cargo-built action binary under
 /// `target/{debug,release}`; anything else (`./x`, `python3`, `node`) runs via
-/// PATH. Same field for both the `function` runner and the `service` supervisor.
+/// PATH.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct Applet {
     pub id: String,
@@ -277,13 +277,27 @@ pub(crate) fn applet_schema_name(applet_id: &str) -> Option<String> {
 /// stripping the prefix back off, which is how the two spellings drifted
 /// apart the last time.
 pub(crate) fn applet_slug(applet_id: &str) -> Option<String> {
-    // Deliberately ONLY this prefix. Accepting a bare `applet_` too would make
-    // `applet_user_foo` — the malformed, one-underscore-short id that once
-    // silently cost an applet its schema — resolve to a schema again, just the
-    // wrong one. A shipped folder that wants its own tables declares
-    // `id_prefix = "applet_user__<slug>"` in its manifest instead, which is
-    // honest: owning tables is what makes an applet the user's.
-    let slug = applet_id.strip_prefix(USER_APPLET_PREFIX)?;
+    // An applet owns the schema named after it. That is the whole rule — not
+    // "authored applets own schemas and shipped ones do not", which forced a
+    // shipped folder wanting tables to declare
+    // `id_prefix = "applet_user__<slug>"` and know an internal convention to
+    // do an ordinary thing.
+    //
+    // The one shape that must NOT resolve is `applet_user_foo`: one underscore
+    // short, the malformed id that once silently cost an applet its private
+    // schema. It is indistinguishable by string from a shipped folder called
+    // `user_foo`, so `user_` is simply reserved — `applets/user/` is where
+    // authored applets live, and no shipped folder may be named for it.
+    let slug = match applet_id.strip_prefix(USER_APPLET_PREFIX) {
+        Some(authored) => authored,
+        None => {
+            let shipped = applet_id.strip_prefix("applet_")?;
+            if shipped.starts_with("user_") {
+                return None;
+            }
+            shipped
+        }
+    };
     if slug.is_empty()
         || !slug
             .bytes()
@@ -1231,18 +1245,33 @@ mod tests {
         );
     }
 
-    /// The shape the bug produced: one underscore short, silently unowned.
+    /// The shape the bug produced: one underscore short. It must stay unowned
+    /// now that a bare `applet_` resolves, or it would quietly get a schema
+    /// again — just the wrong one, named for the prefix instead of the applet.
+    /// `user_` is reserved for exactly this reason.
     #[test]
     fn a_single_underscore_id_owns_no_schema() {
         assert_eq!(applet_schema_name("applet_user_heart_rate_explorer"), None);
+        assert_eq!(applet_schema_name("applet_user_anything"), None);
     }
 
-    /// Shipped applets are not user applets and own nothing.
+    /// An applet owns the schema named after it, however it got here. Both id
+    /// shapes land on the same name, which is what lets a shipped folder carry
+    /// tables without declaring an internal prefix to be allowed to.
     #[test]
-    fn shipped_applets_own_no_schema() {
-        assert_eq!(applet_schema_name("applet_credential_refresh"), None);
+    fn an_applet_owns_the_schema_named_after_it() {
+        assert_eq!(
+            applet_schema_name("applet_calorie_tracker").as_deref(),
+            Some("applet_calorie_tracker"),
+        );
+        assert_eq!(
+            applet_schema_name(&format!("{USER_APPLET_PREFIX}calorie_tracker")).as_deref(),
+            Some("applet_calorie_tracker"),
+            "authored and shipped must agree, or the same applet would own two schemas",
+        );
         assert_eq!(applet_schema_name(""), None);
         assert_eq!(applet_schema_name(USER_APPLET_PREFIX), None);
+        assert_eq!(applet_schema_name("applet_"), None);
     }
 
     /// Slugs are interpolated unquoted into SQL, so anything outside
