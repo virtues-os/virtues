@@ -33,6 +33,7 @@ pub mod developer;
 pub mod drive;
 pub mod entities;
 pub mod exa;
+pub mod parallel;
 pub mod home;
 pub mod internal;
 pub mod lake;

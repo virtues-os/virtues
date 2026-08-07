@@ -16,6 +16,7 @@
 pub mod ai;
 pub mod bearer_test;
 pub mod exa;
+pub mod parallel;
 pub mod health;
 pub mod internal;
 pub mod oauth;
