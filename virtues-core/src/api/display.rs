@@ -75,11 +75,10 @@ pub async fn display_state_handler(
         }
     };
 
-    let devices: i64 =
-        sqlx::query_scalar("SELECT count(*) FROM app_device WHERE revoked_at IS NULL")
-            .fetch_one(pool)
-            .await
-            .unwrap_or(0);
+    // Excludes `local-console` — otherwise a box nobody has paired reports one
+    // device and the display skips its setup screen entirely. See
+    // `api::pair::paired_device_count`.
+    let devices = crate::api::pair::paired_device_count(pool).await;
 
     (
         StatusCode::OK,
@@ -153,20 +152,35 @@ fn is_box_local(peer: &SocketAddr, headers: &HeaderMap) -> bool {
 /// a network that no longer exists — which is worse than showing nothing, since
 /// the owner would sit there scanning for it.
 fn current_ap_ssid() -> Option<String> {
-    let out = std::process::Command::new("nmcli")
-        .args(["-t", "-f", "NAME,TYPE,DEVICE", "connection", "show", "--active"])
+    // Ask for the AP connection BY NAME, then read its SSID out of the profile.
+    // These are two different strings and conflating them is easy: the
+    // connection is named `virtues-setup-ap` while the SSID it broadcasts is
+    // `Virtues-XXXX`. Matching the connection list for a `Virtues-` prefix — as
+    // this did originally — never matches anything, so the display silently
+    // rendered "no setup network" while the AP was up and broadcasting.
+    let active = std::process::Command::new("nmcli")
+        .args(["-t", "-f", "NAME", "connection", "show", "--active"])
         .output()
         .ok()?;
-    let text = String::from_utf8_lossy(&out.stdout);
-    for line in text.lines() {
-        let mut f = line.split(':');
-        let name = f.next()?;
-        let kind = f.next().unwrap_or("");
-        if kind.contains("wireless") && name.starts_with("Virtues-") {
-            return Some(name.to_string());
-        }
+    let is_up = String::from_utf8_lossy(&active.stdout)
+        .lines()
+        .any(|l| l.trim() == crate::maintenance::setup_ap::AP_CON_NAME);
+    if !is_up {
+        return None;
     }
-    None
+
+    let out = std::process::Command::new("nmcli")
+        .args([
+            "-g",
+            "802-11-wireless.ssid",
+            "connection",
+            "show",
+            crate::maintenance::setup_ap::AP_CON_NAME,
+        ])
+        .output()
+        .ok()?;
+    let ssid = String::from_utf8_lossy(&out.stdout).trim().to_string();
+    (!ssid.is_empty()).then_some(ssid)
 }
 
 #[cfg(test)]

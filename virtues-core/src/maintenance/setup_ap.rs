@@ -87,8 +87,12 @@ pub fn provisioning_in_flight() -> bool {
     }
 }
 
-/// NetworkManager connection name for the setup AP. Also how we recognise it
-/// later — `api::display` looks for a `Virtues-` prefixed wireless connection.
+/// NetworkManager connection NAME for the setup AP.
+///
+/// Distinct from the SSID it broadcasts (`Virtues-XXXX`, see [`ap_ssid`]), and
+/// conflating the two is easy: `api::display` originally scanned the connection
+/// list for a `Virtues-` prefix, which never matches this, so the display
+/// reported "no setup network" while the AP was up and broadcasting.
 pub const AP_CON_NAME: &str = "virtues-setup-ap";
 
 /// Only appliances raise an AP. A DIY box is someone's general-purpose Linux
@@ -126,11 +130,10 @@ async fn reconcile(pool: &PgPool) -> Result<(), crate::Error> {
         return Ok(());
     }
 
-    let claimed: i64 =
-        sqlx::query_scalar("SELECT count(*) FROM app_device WHERE revoked_at IS NULL")
-            .fetch_one(pool)
-            .await
-            .unwrap_or(0);
+    // Excludes the always-present `local-console` row; see
+    // `api::pair::paired_device_count`. Counting it made a fresh box look
+    // claimed from first boot, so the AP never rose at all.
+    let claimed = crate::api::pair::paired_device_count(pool).await;
     let up = ap_is_up().await;
 
     match (claimed > 0, up) {
