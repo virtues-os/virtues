@@ -277,6 +277,12 @@ pub(crate) fn applet_schema_name(applet_id: &str) -> Option<String> {
 /// stripping the prefix back off, which is how the two spellings drifted
 /// apart the last time.
 pub(crate) fn applet_slug(applet_id: &str) -> Option<String> {
+    // Deliberately ONLY this prefix. Accepting a bare `applet_` too would make
+    // `applet_user_foo` — the malformed, one-underscore-short id that once
+    // silently cost an applet its schema — resolve to a schema again, just the
+    // wrong one. A shipped folder that wants its own tables declares
+    // `id_prefix = "applet_user__<slug>"` in its manifest instead, which is
+    // honest: owning tables is what makes an applet the user's.
     let slug = applet_id.strip_prefix(USER_APPLET_PREFIX)?;
     if slug.is_empty()
         || !slug

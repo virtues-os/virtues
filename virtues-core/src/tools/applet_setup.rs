@@ -490,6 +490,14 @@ fn disambiguate_slug(root: &std::path::Path, base: &str, name: &str) -> String {
         // Some(true) = folder exists and its manifest name matches (ours to update)
         // Some(false) = folder exists, different name (collision)
         // None = free
+        //
+        // A shipped folder of the same name is always a collision, never ours
+        // to update: both id shapes resolve to the schema `applet_<slug>`, so
+        // an authored "Calorie Tracker" would otherwise write into the tables
+        // of the one that ships.
+        if crate::applet_templates::shipped_root().join(slug).is_dir() {
+            return Some(false);
+        }
         let mf = root.join("user").join(slug).join("manifest.toml");
         let text = std::fs::read_to_string(&mf).ok()?;
         let existing_name = text
