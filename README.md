@@ -144,20 +144,21 @@ That:
 - Downloads the latest `virtues` binary into `/usr/local/bin/`
 - Installs Postgres 18 + pgvector, Avahi (mDNS), and the rest of the system deps via your package manager
 - Configures `/etc/avahi/services/virtues.service` so the box advertises itself on the LAN as `virtues.local`
-- Mints the box's WG identity (its SPKI fingerprint) and enables the `virtues.service` systemd unit
-- Prints a one-time URL — open it in Chromium on the box to land in a logged-in session
+- Enables the `virtues.service` systemd unit (the box mints and keeps its own iroh secret — that key *is* its identity, and nothing external issues it)
+- Prints a **6-digit pair code** to type into the app
 
 ```bash
-sudo systemctl enable --now virtues
-sudo -u virtues virtues link   # prints the one-time login URL for the box's browser
+sudo -u virtues virtues pair   # prints the code again, any time
 ```
 
-After that you're in the web UI on `http://localhost:8000` (run Chromium on the box). Connect a source, and optionally `sudo -u virtues virtues subscribe` to enable AI chat through the Virtues cloud (or set up a [BYO provider key](docs/auth-model.md) under Settings).
+Enter that code in the desktop or mobile app ([virtues.com/downloads](https://virtues.com/downloads)). **A browser cannot pair** — authentication is a held Ed25519 key and a browser tab has none, so `/pair` in a browser only explains itself. The one exception is a browser running *on the box*, which is trusted as the loopback console and lands straight in the UI at `http://localhost:8000`.
+
+Then connect a source, and optionally `sudo -u virtues virtues subscribe` to enable AI chat through the Virtues cloud (or set up a [BYO provider key](docs/auth-model.md) under Settings).
 
 | Command | What it does |
 |---|---|
-| `virtues link` | Print a one-time URL to log in to the web UI |
-| `virtues sudo` | Approve a pending sensitive action from a paired browser |
+| `virtues pair` | Print the 6-digit code to connect a device (`login`/`link` are aliases) |
+| `virtues sudo` | Approve a pending sensitive action — proves physical access to the box |
 | `virtues status` | Health dashboard (identity / inference / subscription / devices) |
 | `virtues status --json` | Machine-readable status snapshot for support tickets |
 | `virtues subscribe` | Connect this box to your Virtues subscription via Stripe |
