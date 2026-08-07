@@ -1334,18 +1334,53 @@ WantedBy=multi-user.target
 /// `virtues deprovision` left the marker, and it removes the marker once the
 /// key is written, so a second boot is a no-op.
 const FIRSTBOOT_SCRIPT: &str = r#"#!/bin/sh
-# Mint this unit's per-box encryption key. Installed by virtues-installer.
+# Per-unit first-boot provisioning. Installed by virtues-installer.
 #
-# Runs on EVERY boot and does nothing on almost all of them: the marker is
-# written only by `virtues deprovision`, which is the last thing run before a
-# box's disk is imaged. See install.rs::install_firstboot_unit for why minting
-# is gated on the marker rather than simply on "the key is missing".
+# Runs on EVERY boot and does nothing on almost all of them. Two independent
+# jobs with two independent guards, deliberately NOT sharing one:
+#
+#   1. claim a blank NVMe   — guarded on "the disk is blank"
+#   2. mint an encryption key — guarded on the deprovision marker
+#
+# They are separate because the risks are opposite. Formatting must never key
+# off "this is a fresh unit" (a marker can outlive the state it described, and
+# reformatting a disk with data on it is unrecoverable); minting must never key
+# off "the key is missing" (that would silently rotate a key a working box
+# still needs). Each guard is the narrowest true statement about its own job.
 set -eu
 
 DATA_DIR=__DATA_DIR__
 ENV_FILE="$DATA_DIR/virtues.env"
 MARKER="$DATA_DIR/.needs-firstboot"
 
+# ── 1. Claim a blank NVMe for the data directory ────────────────────────────
+# We image the eMMC, not the NVMe, so every unit boots with a fresh blank disk
+# and no UUID or LABEL that fstab could have been written against. The disk has
+# to be claimed here, on the unit, or Postgres and the lake land on the eMMC —
+# which is soldered, has modest write endurance, and is exactly what we're
+# trying to keep writes off.
+if ! mountpoint -q "$DATA_DIR" 2>/dev/null; then
+    for disk in /dev/nvme0n1 /dev/nvme1n1; do
+        [ -b "$disk" ] || continue
+        # Blank means: no partition table AND no filesystem anywhere on it.
+        # `lsblk` over the whole device catches both in one shot; any non-empty
+        # output means something is already there and we keep our hands off.
+        if [ -z "$(lsblk -no FSTYPE,PTTYPE "$disk" 2>/dev/null | tr -d ' \n')" ]; then
+            logger -t virtues-firstboot "claiming blank $disk for $DATA_DIR"
+            parted -s "$disk" mklabel gpt mkpart virtues 1MiB 100%
+            sleep 2; partprobe "$disk" 2>/dev/null || true; sleep 2
+            mkfs.ext4 -q -F -L virtues-data "${disk}p1"
+            mkdir -p "$DATA_DIR"
+            grep -q '^LABEL=virtues-data' /etc/fstab 2>/dev/null || \
+                echo "LABEL=virtues-data $DATA_DIR ext4 defaults,nofail,x-systemd.device-timeout=10s 0 2" >> /etc/fstab
+            systemctl daemon-reload
+            mount "$DATA_DIR" || logger -t virtues-firstboot "mount $DATA_DIR failed"
+            break
+        fi
+    done
+fi
+
+# ── 2. Mint this unit's encryption key ──────────────────────────────────────
 [ -e "$MARKER" ] || exit 0
 
 if grep -q '^VIRTUES_ENCRYPTION_KEY=' "$ENV_FILE" 2>/dev/null; then
@@ -1371,6 +1406,15 @@ Description=Virtues — your data, on your hardware
 Documentation=https://virtues.com/docs
 After=postgresql.service network-online.target
 Wants=postgresql.service network-online.target
+
+# The data directory is its own filesystem on the appliance (a blank NVMe
+# claimed at first boot). fstab carries `nofail` so a missing disk never blocks
+# boot — the box must still come up far enough to say so on the display — but
+# the app must NOT start without it. Otherwise Postgres cheerfully initdb's a
+# fresh empty cluster onto the eMMC and the box looks perfectly healthy while
+# being empty, which is the same silent-divergence class as a mis-numbered
+# migration. `nofail` for the boot, RequiresMountsFor for the app.
+RequiresMountsFor=__DATA_DIR__
 
 [Service]
 Type=simple
