@@ -19,9 +19,9 @@
 	<key>CFBundlePackageType</key>
 	<string>APPL</string>
 	<key>CFBundleShortVersionString</key>
-	<string>1.2.5</string>
+	<string>1.2.0</string>
 	<key>CFBundleVersion</key>
-	<string>1.2.5</string>
+	<string>1.2.0</string>
 	<key>LSRequiresIPhoneOS</key>
 	<true/>
 	<key>NSAppTransportSecurity</key>
@@ -34,17 +34,17 @@
 		<string>_http._tcp</string>
 	</array>
 	<key>NSCalendarsFullAccessUsageDescription</key>
-	<string>Virtues reads your calendar events to build your personal timeline — stored on your own box, not Virtues&apos; servers.</string>
+	<string>Virtues reads your calendar events to build your personal timeline — stored on your own box, not Virtues' servers.</string>
 	<key>NSCalendarsUsageDescription</key>
-	<string>Virtues reads your calendar events to build your personal timeline — stored on your own box, not Virtues&apos; servers.</string>
+	<string>Virtues reads your calendar events to build your personal timeline — stored on your own box, not Virtues' servers.</string>
 	<key>NSContactsUsageDescription</key>
-	<string>Virtues reads your contacts to build your personal timeline and understand who&apos;s in your life — stored on your own box, not Virtues&apos; servers.</string>
+	<string>Virtues reads your contacts to build your personal timeline and understand who's in your life — stored on your own box, not Virtues' servers.</string>
 	<key>NSFinanceUsageDescription</key>
-	<string>Virtues reads your Apple Card, Apple Cash, and connected account transactions to build your personal timeline — stored on your own box, not Virtues&apos; servers.</string>
+	<string>Virtues reads your Apple Card, Apple Cash, and connected account transactions to build your personal timeline — stored on your own box, not Virtues' servers.</string>
 	<key>NSFinancialDataUsageDescription</key>
-	<string>Virtues reads your Apple Card, Apple Cash, and connected account transactions to build your personal timeline — stored on your own box, not Virtues&apos; servers.</string>
+	<string>Virtues reads your Apple Card, Apple Cash, and connected account transactions to build your personal timeline — stored on your own box, not Virtues' servers.</string>
 	<key>NSHealthShareUsageDescription</key>
-	<string>Virtues reads your health data (heart rate, steps, sleep, and more) to build your personal timeline — stored on your own box, not Virtues&apos; servers.</string>
+	<string>Virtues reads your health data (heart rate, steps, sleep, and more) to build your personal timeline — stored on your own box, not Virtues' servers.</string>
 	<key>NSLocalNetworkUsageDescription</key>
 	<string>Virtues connects to your box on your local network to pair and sync your data.</string>
 	<key>NSLocationAlwaysAndWhenInUseUsageDescription</key>
@@ -54,7 +54,7 @@
 	<key>NSLocationWhenInUseUsageDescription</key>
 	<string>Virtues records your location to build your personal timeline.</string>
 	<key>NSMicrophoneUsageDescription</key>
-	<string>Virtues records ambient audio to build your personal timeline — the sounds and moments of your day. Recordings and transcripts are stored on your own box, not Virtues&apos; servers.</string>
+	<string>Virtues records ambient audio to build your personal timeline — the sounds and moments of your day. Recordings and transcripts are stored on your own box, not Virtues' servers.</string>
 	<key>UIBackgroundModes</key>
 	<array>
 		<string>location</string>
@@ -82,11 +82,5 @@
 		<string>UIInterfaceOrientationLandscapeLeft</string>
 		<string>UIInterfaceOrientationLandscapeRight</string>
 	</array>
-	<key>NSHealthUpdateUsageDescription</key>
-	<string>Virtues does not write anything to Health. It only reads your health data to build your personal timeline, stored on your own box.</string>
-	<key>NSCameraUsageDescription</key>
-	<string>Virtues uses the camera when you attach a photo or video in chat — sent to your own box, not Virtues&apos; servers.</string>
-	<key>NSPhotoLibraryUsageDescription</key>
-	<string>Virtues accesses photos you choose to attach in chat — sent to your own box, not Virtues&apos; servers.</string>
 </dict>
 </plist>
