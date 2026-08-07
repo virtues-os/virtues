@@ -1450,6 +1450,14 @@ polkit.addRule(function(action, subject) {
 /// so the unit starts only when a connector actually reports one. Checked in
 /// ExecStartPre rather than a `Condition`, because the answer lives in the
 /// *contents* of the sysfs file, not in its existence.
+///
+/// **`-s` is not optional.** Without it cage grabs the keyboard and swallows
+/// Ctrl+Alt+F<n>, so there is no way to reach a text console — and on an
+/// appliance the kiosk is running at exactly the moments you most need one. It
+/// cost us a box: while the setup AP was up (so no network) with the kiosk
+/// holding the keyboard (so no console), the only remaining recovery was
+/// pulling the power. A physically-present owner must always be able to get a
+/// login prompt.
 const DISPLAY_UNIT_TEMPLATE: &str = r#"[Unit]
 Description=Virtues display (cage + WebKit kiosk)
 Documentation=https://virtues.com/docs
@@ -1464,7 +1472,7 @@ Environment=WLR_BACKENDS=drm
 Environment=GDK_BACKEND=wayland
 EnvironmentFile=-__DATA_DIR__/virtues.env
 ExecStartPre=/bin/sh -c "mkdir -p /run/user/0; chmod 700 /run/user/0; grep -qx connected /sys/class/drm/*/status"
-ExecStart=/usr/bin/cage -- /usr/bin/python3 /usr/local/lib/virtues/display.py
+ExecStart=/usr/bin/cage -s -- /usr/bin/python3 /usr/local/lib/virtues/display.py
 # The box's own server may still be starting; the shim retries, and a crash
 # should put the display back rather than leave a black screen.
 Restart=always
