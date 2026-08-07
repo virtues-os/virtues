@@ -152,6 +152,13 @@ pub async fn run(client: Virtues, host: &str, port: u16) -> Result<()> {
     // a valid code to display. See `crate::maintenance::pair_rotator`.
     crate::maintenance::pair_rotator::spawn(client.database.pool().clone());
 
+    // Setup access point. An appliance arrives with no network and a display
+    // its owner cannot type on, so the box raises its own wifi and the phone
+    // does the typing. Up while unclaimed, down once a device pairs — NOT down
+    // when the box gets wifi, which would drop the network the phone is still
+    // sitting on mid-provision. No-op on a DIY box. See maintenance::setup_ap.
+    crate::maintenance::setup_ap::spawn(client.database.pool().clone());
+
     // Persistent review pair code, for App Store review boxes only. No-op
     // unless VIRTUES_REVIEW_PAIR_CODE is set, so customer boxes are untouched.
     // A failure here is loud but not fatal: a demo box that came up without
