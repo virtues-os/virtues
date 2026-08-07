@@ -18,7 +18,7 @@
 //!     `app_applets`. Manifest-managed fields (name, owner, agent, runtime,
 //!     command, triggers, condition, source) are overwritten
 //!     on every system reconcile. User-managed runtime state (enabled,
-//!     cron_schedule, config, memory) is preserved.
+//!     schedule, config, memory) is preserved.
 //!   - Per-credential manifests fan out one row per matching `credentials`
 //!     row, exactly as before.
 
@@ -111,7 +111,7 @@ struct Template {
     owner: String,
     #[serde(default)]
     triggers: Vec<String>,
-    /// Cron seed for the live `cron_schedule` value (SQL-owned after seeding).
+    /// Cron seed for the live `schedule` value (SQL-owned after seeding).
     /// Canonical manifest key is `schedule`; `default_cron` is still accepted
     /// so a folder written against the old spelling — an import, an older
     /// backup — keeps working.
@@ -1186,7 +1186,7 @@ async fn upsert_row(
     //   system: UPSERT with overwrite of template-managed fields (name, owner,
     //           agent, condition, triggers, credential_id, runtime, command).
     //           Preserves user-managed runtime state
-    //           (cron_schedule, enabled, config, memory).
+    //           (schedule, enabled, config, memory).
     //
     //   user:   ON CONFLICT DO NOTHING. Factory defaults are seeded the first time
     //           the template is added; after that the row is fully owned by
@@ -1203,7 +1203,7 @@ async fn upsert_row(
     let sql = if template.owner == "user" {
         r#"
         INSERT INTO app_applets (
-            id, name, owner, agent, cron_schedule, enabled, config, condition,
+            id, name, owner, agent, schedule, enabled, config, condition,
             triggers, credential_id, command, device_id, until, description
         )
         VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, $8, $9::jsonb, $10, $11, $12, $13, $14)
@@ -1214,14 +1214,14 @@ async fn upsert_row(
     } else if template.owner == "ai" {
         r#"
         INSERT INTO app_applets (
-            id, name, owner, agent, cron_schedule, enabled, config, condition,
+            id, name, owner, agent, schedule, enabled, config, condition,
             triggers, credential_id, command, device_id, until, description
         )
         VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, $8, $9::jsonb, $10, $11, $12, $13, $14)
         ON CONFLICT(id) DO UPDATE SET
             name           = EXCLUDED.name,
             agent          = EXCLUDED.agent,
-            cron_schedule  = EXCLUDED.cron_schedule,
+            schedule  = EXCLUDED.schedule,
             config         = app_applets.config || EXCLUDED.config,
             condition      = EXCLUDED.condition,
             triggers       = EXCLUDED.triggers,
@@ -1232,7 +1232,7 @@ async fn upsert_row(
     } else {
         r#"
         INSERT INTO app_applets (
-            id, name, owner, agent, cron_schedule, enabled, config, condition,
+            id, name, owner, agent, schedule, enabled, config, condition,
             triggers, credential_id, command, device_id, until, description
         )
         VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, $8, $9::jsonb, $10, $11, $12, $13, $14)

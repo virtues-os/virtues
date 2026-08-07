@@ -1088,7 +1088,7 @@ fn list_applets_tool() -> ToolConfig {
         id: "list_applets".to_string(),
         name: "List Applets".to_string(),
         description: "List scheduled actions".to_string(),
-        llm_description: r#"List the user's scheduled actions (both system and user-owned). Returns id, name, owner, enabled, cron_schedule, triggers, and last_run for each.
+        llm_description: r#"List the user's scheduled actions (both system and user-owned). Returns id, name, owner, enabled, schedule, triggers, and last_run for each.
 
 Use this when:
 - User asks "what automations do I have?"
@@ -1122,7 +1122,7 @@ fn get_applet_tool() -> ToolConfig {
         id: "get_applet".to_string(),
         name: "Get Applet".to_string(),
         description: "Fetch a single action".to_string(),
-        llm_description: r#"Fetch a single action by id, including its full configuration (agent, cron_schedule, triggers, condition, memory, config) and its last 10 runs with status + summary.
+        llm_description: r#"Fetch a single action by id, including its full configuration (agent, schedule, triggers, condition, memory, config) and its last 10 runs with status + summary.
 
 Use this when:
 - User asks "what does this action do?"
@@ -1155,14 +1155,14 @@ fn edit_applet_tool() -> ToolConfig {
 Editable fields:
 - name (user rows only)
 - agent (user rows only; the LLM prompt)
-- cron_schedule (nullable — set to null to remove)
+- schedule (nullable — set to null to remove)
 - enabled (bool)
 - config (object — full replace)
 - condition (nullable SQL expression; user rows only)
 - triggers (array of cron|manual|tool|api|webhook; user rows only)
 - memory (nullable markdown scratchpad)
 
-System-owned rows (built-in pipelines like day_summary_eod) only accept: enabled, cron_schedule, config, memory. Attempting to edit other fields on a system row will error with a clear message.
+System-owned rows (built-in pipelines like day_summary_eod) only accept: enabled, schedule, config, memory. Attempting to edit other fields on a system row will error with a clear message.
 
 Use this when the user asks to:
 - Change an action's prompt
@@ -1180,7 +1180,7 @@ Use this when the user asks to:
                     "properties": {
                         "name": { "type": "string" },
                         "agent": { "type": ["string", "null"] },
-                        "cron_schedule": { "type": ["string", "null"] },
+                        "schedule": { "type": ["string", "null"] },
                         "enabled": { "type": "boolean" },
                         "config": { "type": "object" },
                         "condition": { "type": ["string", "null"] },

@@ -42,7 +42,7 @@
     },
     "schedule": {
       "type": "string",
-      "description": "Cron expression (sec min hour dom month dow), box-local timezone \u2014 e.g. \"0 0 7 * * *\" for 7am daily. Seeds cron_schedule on first reconcile; user edits in the UI win after that. The legacy spelling `default_cron` is still accepted."
+      "description": "Cron expression (sec min hour dom month dow), box-local timezone \u2014 e.g. \"0 0 7 * * *\" for 7am daily. Seeds the live value on first reconcile; user edits in the UI win after that. The legacy spelling `default_cron` is still accepted."
     },
     "default_enabled": {
       "type": "boolean",

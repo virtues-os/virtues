@@ -86,11 +86,11 @@ impl Scheduler {
         // `runtime` taxonomy.
         let rows: Vec<(String, String, String, Option<chrono::DateTime<chrono::Utc>>)> =
             sqlx::query_as(
-                r#"SELECT id, name, cron_schedule, next_due_at
+                r#"SELECT id, name, schedule, next_due_at
                FROM app_applets
                WHERE enabled = TRUE
                  AND archived_at IS NULL
-                 AND cron_schedule IS NOT NULL
+                 AND schedule IS NOT NULL
                  AND triggers @> '["cron"]'::jsonb
                  AND (command IS NOT NULL OR (agent IS NOT NULL AND btrim(agent) <> ''))"#,
             )
@@ -336,7 +336,7 @@ impl Scheduler {
     /// Simple enumeration of cron-scheduled actions for display.
     pub async fn list_scheduled(&self) -> Result<Vec<ScheduledApplet>> {
         let rows = sqlx::query_as::<_, (String, String, String, Option<Timestamp>)>(
-            r#"SELECT a.id, a.name, a.cron_schedule, r.started_at
+            r#"SELECT a.id, a.name, a.schedule, r.started_at
                FROM app_applets a
                LEFT JOIN app_applet_runs r ON r.id = (
                    SELECT id FROM app_applet_runs
@@ -345,7 +345,7 @@ impl Scheduler {
                )
                WHERE a.enabled = TRUE
                  AND a.archived_at IS NULL
-                 AND a.cron_schedule IS NOT NULL
+                 AND a.schedule IS NOT NULL
                  AND a.triggers @> '["cron"]'::jsonb
                ORDER BY a.name"#,
         )
@@ -354,10 +354,10 @@ impl Scheduler {
 
         Ok(rows
             .into_iter()
-            .map(|(id, name, cron_schedule, last_success_at)| ScheduledApplet {
+            .map(|(id, name, schedule, last_success_at)| ScheduledApplet {
                 id,
                 name,
-                cron_schedule,
+                schedule,
                 last_success_at,
             })
             .collect())
@@ -368,7 +368,7 @@ impl Scheduler {
 pub struct ScheduledApplet {
     pub id: String,
     pub name: String,
-    pub cron_schedule: String,
+    pub schedule: String,
     pub last_success_at: Option<Timestamp>,
 }
 
@@ -439,7 +439,7 @@ mod tests {
 
     async fn insert_applet(pool: &PgPool, id: &str, cron: &str) {
         sqlx::query(
-            "INSERT INTO app_applets (id, name, owner, cron_schedule, command)
+            "INSERT INTO app_applets (id, name, owner, schedule, command)
              VALUES ($1, $1, 'system', $2, 'echo')",
         )
         .bind(id)
@@ -477,7 +477,7 @@ mod tests {
         insert_applet(&pool, "applet_a", "0 0 * * * *").await;
         assert_eq!(sched.sync_jobs().await.unwrap(), 1);
 
-        sqlx::query("UPDATE app_applets SET cron_schedule = '0 */5 * * * *' WHERE id = 'applet_a'")
+        sqlx::query("UPDATE app_applets SET schedule = '0 */5 * * * *' WHERE id = 'applet_a'")
             .execute(&pool)
             .await
             .unwrap();
@@ -585,7 +585,7 @@ mod tests {
         sched.sync_jobs().await.unwrap();
         let (_, before) = pointer(&pool, "applet_a").await;
 
-        sqlx::query("UPDATE app_applets SET cron_schedule = '0 0 22 * * *' WHERE id = 'applet_a'")
+        sqlx::query("UPDATE app_applets SET schedule = '0 0 22 * * *' WHERE id = 'applet_a'")
             .execute(&pool)
             .await
             .unwrap();

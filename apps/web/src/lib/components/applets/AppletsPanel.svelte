@@ -219,9 +219,9 @@
 			getValue: (a) => lifecycleLabel(a)
 		},
 		{
-			key: 'cron_schedule',
+			key: 'schedule',
 			label: 'Schedule',
-			getValue: (a) => describeSchedule(a.cron_schedule)
+			getValue: (a) => describeSchedule(a.schedule)
 		},
 		{
 			key: 'id',
@@ -298,7 +298,7 @@
 				{ value: 'manual', label: 'Manual', badgeColor: 'badge-muted' }
 			],
 			predicate: (a, v) => {
-				const t = a.cron_schedule ? 'cron' : 'manual';
+				const t = a.schedule ? 'cron' : 'manual';
 				return Array.isArray(v) && v.includes(t);
 			}
 		},
