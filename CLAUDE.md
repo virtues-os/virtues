@@ -160,7 +160,30 @@ Checks:
 ```sh
 cargo check --workspace     # Rust
 cd apps/web && pnpm check   # Svelte
+cargo test -p virtues --lib # the crate is `virtues`, not `virtues-core`
 ```
+
+**If the suite fails a different random test on every run, it is not your
+change.** `#[sqlx::test]` provisions a scratch database per test, and under
+parallelism Postgres.app's app-permission gate rejects passwordless (`trust`)
+connections from processes it does not recognise — `rejected "trust"
+authentication`. A red suite then tells you nothing, which is exactly when a
+real regression walks through.
+
+Fixed on this machine by requiring a password for the app role over TCP, which
+removes the condition the gate keys on rather than working around it. In
+`~/Library/Application Support/Postgres/var-18/pg_hba.conf`, *above* the
+general `trust` lines (first match wins):
+
+```
+host    all   virtues   127.0.0.1/32   scram-sha-256
+host    all   virtues   ::1/128        scram-sha-256
+```
+
+then `ALTER ROLE virtues WITH PASSWORD 'virtues';` to match `.env`, and
+`SELECT pg_reload_conf();`. Scoped to `virtues` deliberately: `adamjace` and
+`postgres` are login roles with no password, so a blanket rule locks them out
+of TCP.
 
 **One `make dev` serves every agent** — do not start a second one, and do not
 kill the running one. `cargo check` will *block* on the shared target-dir lock
