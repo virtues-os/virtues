@@ -158,10 +158,12 @@ real alternative. Never write a prompt that pretends a tool exists.**
 
 - **Catalog-check-first.** Before writing any SQL or any prompt that names a
   table, confirm it exists: `sql_query` over `information_schema.tables`
-  (`data_*`, `wiki_*`), then a `LIMIT 3` sample for the columns. The check
-  validates `condition`/`until`/`schema_sql` mechanically — **prose is not
-  machine-checked; you are the check.** An imaginary table in a prompt fails
-  softly, nightly, forever.
+  (`data_*`, `wiki_*`), then a `LIMIT 3` sample for the columns.
+  **`data_*` and `wiki_*` table names in your prompt ARE now checked** — a
+  name that is not on this box fails the check with a did-you-mean. Columns
+  are not, and neither is anything you claim in prose, so name columns from a
+  real sample rather than from memory. An imaginary column in a prompt still
+  fails softly, nightly, forever.
 - **Honest downgrades.** No data source → say so; offer to connect one, or a
   manual tracker (`schema_sql` + `message` so the user can log into it).
   Feed/URL watching → needs a fetch verb that doesn't exist yet: decline, or
