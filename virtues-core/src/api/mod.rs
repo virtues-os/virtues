@@ -19,6 +19,7 @@ pub mod settings_byo;
 pub mod setup;
 pub mod sudo;
 pub mod web_bundle;
+pub mod captive;
 pub mod chat;
 pub mod chat_permissions;
 pub mod chat_usage;

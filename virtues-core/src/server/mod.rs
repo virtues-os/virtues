@@ -972,10 +972,18 @@ pub async fn run(client: Virtues, host: &str, port: u16) -> Result<()> {
 
     // Merge public + protected, apply shared state and body limits, then
     // wrap in the security layers (response headers).
+    // Captive-portal probes, intercepted before routing. Apple's second probe
+    // host asks for `/`, which is also the SPA's route, so only the Host header
+    // tells them apart — hence middleware rather than routes. Makes /provision
+    // open by itself when a phone joins the setup AP, and — the half everyone
+    // forgets — stops claiming captivity once the box is actually online.
+    // See api/captive.rs.
     let app = public_routes
         .merge(protected_routes)
         .with_state(state.clone())
         .layer(middleware::from_fn(crate::middleware::security::headers_layer))
+        // Outermost, so an OS connectivity probe never reaches routing at all.
+        .layer(middleware::from_fn(crate::api::captive::intercept))
         .layer(DefaultBodyLimit::max(260 * 1024 * 1024)); // 260MB (slightly above 250MB file limit for multipart overhead)
 
     // API namespaces must NEVER fall through to the SPA fallback below: an
