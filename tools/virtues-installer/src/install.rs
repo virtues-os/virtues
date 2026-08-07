@@ -1270,6 +1270,178 @@ pub async fn install_systemd_unit(cfg: &InstallConfig) -> Result<()> {
     run_step("Enable first-boot unit", en).await
 }
 
+/// Turn a general-purpose Linux box into a Virtues appliance.
+///
+/// Everything here was found by provisioning a Dragon by hand and watching what
+/// a stock Radxa image does wrong when it is the *only* thing a person will
+/// ever see:
+///
+/// * **`NetworkManager-wait-online` must go.** It blocks boot until a
+///   connection comes up, then fails after 30–60s if none does. On a brand-new
+///   appliance there is no configured network — that is the entire premise of
+///   the onboarding we're about to run — so it is guaranteed to time out on
+///   every first boot, adding a minute and a red FAILED to the one screen the
+///   owner is watching hardest. A box whose first job is "help me get online"
+///   cannot block on being online. Measured: 11.6s → 9.9s and zero failed units.
+/// * **The desktop session must go.** GNOME owns the DRM device, so the kiosk
+///   cannot have it. Disabled rather than purged: reversible, and the packages
+///   cost disk we have plenty of.
+/// * **The display kiosk goes in.** `cage` + WebKit on bare DRM — no X, no
+///   session, no snap. See the module docs on `DISPLAY_UNIT_TEMPLATE` for why
+///   it is not Chromium.
+///
+/// Idempotent, like every other step: re-running the installer on a working
+/// appliance converges.
+pub async fn apply_appliance_profile(cfg: &InstallConfig) -> Result<()> {
+    // Kiosk runtime. `libwebkit2gtk-4.1-0` is already the Tauri webview on
+    // Linux, so this is the same engine the desktop app uses.
+    let mut deps = Command::new("apt-get");
+    deps.args([
+        "install",
+        "-y",
+        "-qq",
+        "cage",
+        "seatd",
+        "python3-gi",
+        "gir1.2-webkit2-4.1",
+        "gir1.2-gtk-3.0",
+    ]);
+    deps.env("DEBIAN_FRONTEND", "noninteractive");
+    run_step("Install display runtime (cage + WebKit)", deps).await?;
+
+    let mut seat = Command::new("systemctl");
+    seat.args(["enable", "--now", "seatd"]);
+    let _ = seat.output().await;
+
+    // Boot: no display manager, no waiting on a network we don't have.
+    for args in [
+        vec!["disable", "NetworkManager-wait-online.service"],
+        vec!["disable", "gdm"],
+        vec!["disable", "gdm3"],
+        vec!["disable", "sddm"],
+        vec!["disable", "lightdm"],
+        vec!["set-default", "multi-user.target"],
+    ] {
+        let mut c = Command::new("systemctl");
+        c.args(&args);
+        // Absent units are the normal case — most boxes have exactly one
+        // display manager, or none — so a failure here is not interesting.
+        let _ = c.output().await;
+    }
+    ui::ok("Boot trimmed (no desktop session, no wait-online)");
+
+    // The kiosk shim + unit.
+    fs::create_dir_all("/usr/local/lib/virtues").context("mkdir /usr/local/lib/virtues")?;
+    fs::write("/usr/local/lib/virtues/display.py", DISPLAY_SHIM)
+        .context("writing display.py")?;
+    fs::write(
+        "/etc/systemd/system/virtues-display.service",
+        DISPLAY_UNIT_TEMPLATE.replace("__DATA_DIR__", &cfg.data_dir.display().to_string()),
+    )
+    .context("writing virtues-display.service")?;
+
+    let mut reload = Command::new("systemctl");
+    reload.arg("daemon-reload");
+    let _ = reload.output().await;
+
+    let mut en = Command::new("systemctl");
+    en.args(["enable", "virtues-display"]);
+    run_step("Install display kiosk", en).await
+}
+
+/// The kiosk unit.
+///
+/// **Why WebKit and not Chromium.** On Ubuntu 24.04 arm64 `chromium-browser`
+/// resolves to a snap transition stub, which would drag snapd — a second,
+/// self-updating release channel — onto an appliance whose whole update story
+/// is ours. `cog`/WPE has no arm64 candidate. `libwebkit2gtk-4.1-0` is a
+/// first-class deb and is what Tauri already links against on Linux, so the
+/// display and the desktop app share an engine.
+///
+/// **The DRM guard.** The same image ships to boxes with and without a screen,
+/// so the unit starts only when a connector actually reports one. Checked in
+/// ExecStartPre rather than a `Condition`, because the answer lives in the
+/// *contents* of the sysfs file, not in its existence.
+const DISPLAY_UNIT_TEMPLATE: &str = r#"[Unit]
+Description=Virtues display (cage + WebKit kiosk)
+Documentation=https://virtues.com/docs
+After=systemd-user-sessions.service seatd.service
+Wants=seatd.service
+
+[Service]
+Type=simple
+Environment=XDG_RUNTIME_DIR=/run/user/0
+Environment=LIBSEAT_BACKEND=seatd
+Environment=WLR_BACKENDS=drm
+Environment=GDK_BACKEND=wayland
+EnvironmentFile=-__DATA_DIR__/virtues.env
+ExecStartPre=/bin/sh -c "mkdir -p /run/user/0; chmod 700 /run/user/0; grep -qx connected /sys/class/drm/*/status"
+ExecStart=/usr/bin/cage -- /usr/bin/python3 /usr/local/lib/virtues/display.py
+# The box's own server may still be starting; the shim retries, and a crash
+# should put the display back rather than leave a black screen.
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
+"#;
+
+/// The WebKit shim the kiosk runs.
+///
+/// **The zoom is not cosmetic and must not be "fixed" to 1.0.** The 7" panel
+/// reports itself as 53×30 cm in its EDID — a ~24" monitor — when it is
+/// physically 15.5×8.7 cm. Every DPI heuristic in the stack believes the EDID,
+/// so WebKit computes ~92 DPI against a real 315, sets devicePixelRatio to 1,
+/// and renders the whole UI 3.28× too small: body text lands at 1.4 mm tall,
+/// which is unreadable at any distance. Measured with a CSS `10cm` rule that
+/// came out 3 cm on glass. Never trust EDID-derived DPI on this hardware.
+///
+/// Python + GTK because it is what the apt-installable WebKit binding gives us
+/// and it is ~15 lines. The intended end state is the Tauri app in kiosk mode,
+/// which shares this engine.
+const DISPLAY_SHIM: &str = r#"#!/usr/bin/env python3
+"""Virtues display kiosk — fullscreen WebKit onto the box's own /display route."""
+import os
+import gi
+
+gi.require_version("Gtk", "3.0")
+gi.require_version("WebKit2", "4.1")
+from gi.repository import Gdk, GLib, Gtk, WebKit2  # noqa: E402
+
+URL = os.environ.get("VIRTUES_DISPLAY_URL", "http://localhost:8000/display")
+# See DISPLAY_SHIM's Rust-side doc comment: the panel's EDID lies about its
+# physical size, so the scale factor is pinned, never derived.
+ZOOM = float(os.environ.get("VIRTUES_DISPLAY_ZOOM", "3.28"))
+
+window = Gtk.Window()
+window.fullscreen()
+window.set_decorated(False)
+
+view = WebKit2.WebView()
+view.set_zoom_level(ZOOM)
+# Match the page background so the gap before first paint is the panel's own
+# black, not WebKit's default white — a white flash on a dark 7" screen in a
+# dim room is the most visible thing the box will ever do.
+view.set_background_color(Gdk.RGBA(0.043, 0.059, 0.078, 1.0))
+
+
+def _retry(*_args):
+    """The box's server may still be coming up on first boot. Retry rather than
+    parking on WebKit's error page, which an owner would rightly read as
+    broken. Returning False from the timeout makes it fire once per failure."""
+    GLib.timeout_add_seconds(3, lambda: (view.load_uri(URL), False)[1])
+    return True  # we handled it; suppress WebKit's own error page
+
+
+view.connect("load-failed", _retry)
+view.load_uri(URL)
+
+window.add(view)
+window.connect("destroy", Gtk.main_quit)
+window.show_all()
+Gtk.main()
+"#;
+
 /// The first-boot oneshot: mint this unit's own encryption key.
 ///
 /// Exists because `virtues deprovision` strips `VIRTUES_ENCRYPTION_KEY` before

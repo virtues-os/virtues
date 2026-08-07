@@ -28,6 +28,7 @@ pub struct Config {
     pub version: Option<String>,
     pub dry_run: bool,
     pub no_init: bool,
+    pub appliance: bool,
 }
 
 pub async fn run(cli: Config) -> Result<()> {
@@ -116,6 +117,14 @@ pub async fn run(cli: Config) -> Result<()> {
     install::write_env_file(&cfg, &inference, validation.as_ref()).await?;
     install::run_bringup(&cfg).await?;
     install::install_systemd_unit(&cfg).await?;
+
+    // Appliance profile. Implied on our own board: a Dragon exists only to be
+    // Virtues, so there is nothing to ask. `--appliance` is for building an
+    // image on hardware the detector doesn't know yet.
+    if cli.appliance || matches!(inference, InferenceMode::Dragon) {
+        ui::section("Appliance");
+        install::apply_appliance_profile(&cfg).await?;
+    }
 
     // Start the service so init's pair-token mint sees a running daemon.
     //
