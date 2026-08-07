@@ -234,6 +234,18 @@
 	const canMessage = $derived(
 		Boolean(action?.triggers?.includes('message')) && !action?.archived_at
 	);
+	// The composer is only usable if the applet is actually on. Messaging a
+	// disabled applet reaches `prepare_run`, which reports it as not-found —
+	// a confusing thing to be told about an applet whose page you are reading.
+	const canSend = $derived(canMessage && Boolean(action?.enabled));
+
+	// "Run now" fires `trigger = "manual"`, which the runner refuses unless the
+	// applet lists it. Six shipped applets do not — the two device ingests are
+	// webhook-only, three sweeps are cron-only — so the button was offered on
+	// their pages and answered 403. Offer it only where it can work.
+	const canRunNow = $derived(
+		Boolean(action?.triggers?.includes('manual')) && !action?.archived_at
+	);
 
 	async function send() {
 		const text = draft.trim();
@@ -366,9 +378,11 @@
 						<Button variant="secondary" onclick={toggleEnabled} disabled={saving}>
 							{action.enabled ? 'Disable' : 'Enable'}
 						</Button>
-						<Button variant="primary" onclick={runNow} disabled={saving}>
-							Run now
-						</Button>
+						{#if canRunNow}
+							<Button variant="primary" onclick={runNow} disabled={saving}>
+								Run now
+							</Button>
+						{/if}
 					{/if}
 				</div>
 			</div>
@@ -572,10 +586,14 @@
 						<input
 							type="text"
 							bind:value={draft}
-							disabled={sending}
-							placeholder="Tell it something…"
+							disabled={sending || !canSend}
+							placeholder={canSend ? 'Tell it something…' : 'Turn it on to send it anything'}
 						/>
-						<Button variant="primary" onclick={send} disabled={sending || !draft.trim()}>
+						<Button
+							variant="primary"
+							onclick={send}
+							disabled={sending || !canSend || !draft.trim()}
+						>
 							{sending ? 'Sending…' : 'Send'}
 						</Button>
 					</form>

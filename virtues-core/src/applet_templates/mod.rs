@@ -1079,6 +1079,20 @@ pub async fn reconcile_templates(db: &PgPool) -> Result<usize> {
                         versions = ran,
                         "applied applet schema versions from disk"
                     );
+                    // A table nobody may read is not a table. Boot grants run
+                    // BEFORE this pass (server::mod), so on a fresh box the
+                    // grant sweep saw no applet schemas at all and everything
+                    // created here came out unreadable by the face role and
+                    // unwritable by the applet role — until the next restart,
+                    // and never at all for the Reconcile button. Re-grant
+                    // whenever DDL actually ran.
+                    if let Err(e) = crate::server::faces::ensure_applet_db_grants(db).await {
+                        tracing::warn!(
+                            applet_id = id_prefix,
+                            error = %e,
+                            "applied applet schema but failed to re-grant access to it"
+                        );
+                    }
                 }
             }
 
@@ -1718,6 +1732,25 @@ auth = { kind = "via_proxy", start_path = "/google/start" }
         .await
         .unwrap();
         assert_eq!(after, 1, "a version must be applied exactly once");
+
+        // A table nobody may read is not a table. Boot grants the roles BEFORE
+        // reconcile runs, so everything created by the pass above arrives
+        // ungranted unless the pass re-grants — the face would see permission
+        // denied on its own applet's table, and sql_write could not log a meal.
+        for (role, priv_) in [
+            ("virtues_face_reader", "SELECT"),
+            ("virtues_applet_writer", "INSERT"),
+        ] {
+            let ok: bool = sqlx::query_scalar(
+                "SELECT has_table_privilege($1, 'applet_calorie_tracker.entries', $2)",
+            )
+            .bind(role)
+            .bind(priv_)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+            assert!(ok, "{role} cannot {priv_} the table reconcile just created");
+        }
     }
 
     #[sqlx::test]

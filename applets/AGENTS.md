@@ -81,8 +81,14 @@ This is the front door for anything the user feeds rather than schedules:
 - **Anything you would otherwise have declined** with "there is no way for the
   user to give it input." Check this list before declining.
 
-Two rules:
+Three rules:
 
+- **List `message` and nothing else** when a message is the only thing that
+  makes the applet do something. The defaults add `manual` and `tool`, and on
+  a tracker those wake it with the synthetic "Run your action instruction now"
+  — a model call that can only report it has nothing to do, which is the no-op
+  prompt this file tells you not to write. Same reasoning as a dashboard
+  having no agent.
 - **A `condition` does not gate a message.** Conditions gate polls. Someone who
   just pressed send is not a poll, and a clock gate would silently swallow what
   they wrote. Same reason manual "Run now" is exempt from rate caps.
