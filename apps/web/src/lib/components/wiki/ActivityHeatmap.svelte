@@ -207,6 +207,18 @@
 		min-width: 100%;
 	}
 
+	/* On touch the cells stop being controls. A day is a 10px square with 190
+	   neighbours: a finger cannot pick one, it can only pick *a* one — every
+	   tap is a lottery that opens the wrong day. Six months at a tappable size
+	   is not a heatmap any more, so the honest answer is that here it is a
+	   picture of the year, read but not operated. Days remain reachable from
+	   Home's stepper and from the wiki's own lists. */
+	@media (max-width: 768px), (pointer: coarse) {
+		.day-cell {
+			pointer-events: none;
+		}
+	}
+
 	.day-labels {
 		display: flex;
 		flex-direction: column;

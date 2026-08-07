@@ -510,6 +510,27 @@
 			opacity 0.15s ease;
 	}
 
+	/* The composer's buttons are 32px because the pill they sit in is tight, and
+	   growing them would push it open. So the hit area grows instead of the
+	   button: an invisible 44pt square centred on each, which is what a finger
+	   actually aims at. They sit at opposite ends of the pill, so the two
+	   expanded areas never meet. */
+	@media (max-width: 768px), (pointer: coarse) {
+		.pill-btn {
+			position: relative;
+		}
+
+		.pill-btn::after {
+			content: "";
+			position: absolute;
+			top: 50%;
+			left: 50%;
+			width: max(100%, 44px);
+			height: max(100%, 44px);
+			transform: translate(-50%, -50%);
+		}
+	}
+
 	.attach-button {
 		color: var(--color-foreground-muted);
 	}

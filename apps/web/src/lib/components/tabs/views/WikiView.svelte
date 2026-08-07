@@ -1404,4 +1404,18 @@
 		}
 	}
 
+	/* Touch sizing, last in the sheet so it wins on source order against the
+	   base rules it restates (same selectors, same specificity — a media query
+	   adds none).
+
+	   `.today-link` is deliberately not here: it is a link inside a sentence,
+	   and a 44pt box around it would reach into the lines above and below and
+	   swallow their taps. Inline prose links are the honest exception to the
+	   floor; a list row is not. */
+	@media (max-width: 768px), (pointer: coarse) {
+		.wc-row {
+			padding: 0.75rem 0;
+		}
+	}
+
 </style>

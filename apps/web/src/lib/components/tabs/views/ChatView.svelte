@@ -2143,6 +2143,25 @@
 		cursor: pointer;
 	}
 
+	/* 28px of visible chip, 44pt of reachable square — the chip is deliberately
+	   small and floats over the transcript, so the target grows around it
+	   rather than under it. */
+	@media (max-width: 768px), (pointer: coarse) {
+		.ghost-toggle {
+			position: relative;
+		}
+
+		.ghost-toggle::after {
+			content: "";
+			position: absolute;
+			top: 50%;
+			left: 50%;
+			width: 44px;
+			height: 44px;
+			transform: translate(-50%, -50%);
+		}
+	}
+
 	.ghost-toggle:hover:not(:disabled) {
 		color: var(--color-foreground);
 		background: var(--hover-bg);
