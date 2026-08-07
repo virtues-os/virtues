@@ -8,11 +8,18 @@
 	 * point: content passes under it and reads through it, so the screen belongs
 	 * to what you are looking at and the chrome is a slab hovering over it.
 	 *
-	 * Two states, and the difference is inset and opacity rather than content:
-	 * at rest it is nearly full width, a rounded rectangle, fairly solid, with
-	 * labels; scrolling down it draws in to a narrower capsule, shorter and more
-	 * transparent, icons only. Nothing leaves the row — the same five
-	 * destinations are in both, so the bar never has to be re-learned.
+	 * Two states, and the difference is *only* inset, height and opacity — never
+	 * content. At rest it is nearly full width, a rounded rectangle, fairly
+	 * solid; scrolling down it draws in to a narrower, shorter, more transparent
+	 * capsule. The same five icons are in both, at the same size, so the bar is
+	 * never re-learned and nothing pops in or out under your thumb.
+	 *
+	 * No labels. They cost three separate problems before they came out: the bar
+	 * read as a conventional tab bar wearing glass rather than as a glass object,
+	 * the icons had no room to breathe, and the selection highlight had to hug
+	 * the icon (leaving the label dangling below it) because it could not
+	 * sensibly wrap both. The names live on as `aria-label`, which is what a
+	 * screen reader was reading anyway.
 	 *
 	 * Selection is a capsule that SLIDES between tabs rather than appearing under
 	 * the new one. That movement is most of what makes a bar like this feel
@@ -168,15 +175,12 @@
 	// the glyphs are already findable from the container, so this needs no
 	// bookkeeping to go wrong.
 	/**
-	 * Measured off the whole tab, not the icon.
-	 *
-	 * Hugging the glyph left the label dangling below the highlight, which read
-	 * as a bubble stuck behind the icon rather than as a selected tab. The
-	 * reference gets away with a capsule around the icon because it has no
-	 * labels at all; with labels, the thing being selected is the pair.
+	 * Measured off the whole tab. With the labels gone the tab *is* the icon's
+	 * slot, so this lands where the reference puts it: a capsule filling most of
+	 * the bar's height and about the width of one fifth of it.
 	 */
 	const INSET_X = 5;
-	const INSET_Y = 5;
+	const INSET_Y = 4; // ~85% of the bar's height, which is where the reference sits
 
 	function measurePill(idx: number) {
 		const g = glassEl;
@@ -274,9 +278,8 @@
 				aria-current={active ? "page" : undefined}
 			>
 				<span class="glyph">
-					<Icon icon={active ? tab.iconActive : tab.icon} width={25} />
+					<Icon icon={active ? tab.iconActive : tab.icon} width={24} />
 				</span>
-				<span class="label">{tab.label}</span>
 			</button>
 		{/each}
 	</div>
@@ -316,12 +319,16 @@
 	.glass {
 		position: relative;
 		display: flex;
-		align-items: center;
+		/* Stretch, not centre: the tabs have to fill the bar's height for the
+		   pill — which is measured off a tab — to fill it too. Centred, each tab
+		   shrank to its icon and the highlight came out at 46% of the bar,
+		   hugging the glyph exactly like the version this replaced. */
+		align-items: stretch;
 		justify-content: space-around;
 		width: 100%;
 		max-width: calc(100% - 0px);
 		height: var(--tabbar-h);
-		border-radius: 20px;
+		border-radius: 18px;
 		/* Thin enough that the blur has something to say. At 76% the fill was
 		   doing all the work and the result was a flat panel that happened to
 		   sit at the bottom — you could not tell there was anything behind it,
@@ -347,9 +354,11 @@
 	   half the minimized height, so the radius lands on a true capsule instead
 	   of racing there via a large number. */
 	.glass.min {
-		max-width: calc(100% - 64px);
+		/* A harder draw-in than before: with no labels to shed, the inset is
+		   most of what says "minimized", so it has to be worth seeing. */
+		max-width: calc(100% - 84px);
 		height: var(--tabbar-h-min);
-		border-radius: 23px;
+		border-radius: 22px; /* exactly half the minimized height — a true capsule */
 		background-color: color-mix(in srgb, var(--color-surface) 44%, transparent);
 	}
 
@@ -361,7 +370,9 @@
 		position: absolute;
 		top: 0;
 		left: 0;
-		border-radius: 15px;
+		/* A capsule now that it is wrapping an icon rather than an icon stacked
+		   on a word. */
+		border-radius: 999px;
 		background: color-mix(in srgb, var(--color-foreground) 11%, transparent);
 		pointer-events: none;
 		transition:
@@ -407,30 +418,6 @@
 		transform: scale(0.88);
 	}
 
-	/* Labels are the one thing the two states disagree about: they are what the
-	   bar can afford at rest and what it gives up to get out of the way. */
-	.label {
-		font-size: 10px;
-		line-height: 1;
-		font-weight: 500;
-		letter-spacing: 0.01em;
-		max-height: 12px;
-		opacity: 1;
-		overflow: hidden;
-		transition:
-			max-height 0.3s cubic-bezier(0.32, 0.72, 0, 1),
-			opacity 0.2s ease;
-	}
-
-	.tab.active .label {
-		font-weight: 650;
-	}
-
-	.tabbar.min .label {
-		max-height: 0;
-		opacity: 0;
-	}
-
 	/* Reduce Motion asks for less movement, not for none — and `transition:
 	   none` here is why the bar snapped between its two states for anyone who
 	   had it switched on. Keep the change legible, take the travel out of it:
@@ -438,7 +425,6 @@
 	@media (prefers-reduced-motion: reduce) {
 		.tabbar,
 		.glass,
-		.label,
 		.tab {
 			transition-duration: 0.12s;
 			transition-timing-function: ease;
