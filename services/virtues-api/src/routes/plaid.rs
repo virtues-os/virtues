@@ -10,7 +10,7 @@
 //! link/exchange calls, and how the box already keeps per-user tokens for
 //! Gmail/Notion.
 //!
-//! Structure copies `routes/exa.rs`: `BearerAuth(ent)` → per-account auth,
+//! Structure copies `routes/parallel.rs`: `BearerAuth(ent)` → per-account auth,
 //! read-only `budget_gate`, verbatim `Json<Value>` body passthrough, fire the
 //! call, then `entitlement::settle()`.
 //!
@@ -169,7 +169,7 @@ fn with_credentials(body: &Value, client_id: &str, secret: &str) -> Value {
     Value::Object(obj)
 }
 
-/// Read-only pre-flight gate, mirroring `routes/exa.rs::budget_gate`.
+/// Read-only pre-flight gate, mirroring `routes/parallel.rs::budget_gate`.
 fn budget_gate(acct: &Account) -> Option<Response> {
     if acct.balance_micros <= 0 {
         return Some(err(

@@ -1635,16 +1635,15 @@ pub async fn billing_link_status_handler(State(pool): State<sqlx::PgPool>) -> Re
 // =============================================================================
 
 // =============================================================================
-// Exa Search API Handlers
+// Web Search API Handler
 // =============================================================================
 
-/// Perform a web search using Exa AI
-pub async fn exa_search_handler(
+/// Perform a web search.
+pub async fn web_search_handler(
     State(state): State<AppState>,
-    Json(request): Json<crate::api::ExaSearchRequest>,
+    Json(request): Json<WebSearchRequest>,
 ) -> Response {
-    // Check usage limit first
-    if let Err(e) = crate::api::check_limit(state.db.pool(), crate::api::Service::Exa).await {
+    if let Err(e) = crate::api::check_limit(state.db.pool(), crate::api::Service::Parallel).await {
         return (
             StatusCode::TOO_MANY_REQUESTS,
             Json(serde_json::json!({
@@ -1654,21 +1653,32 @@ pub async fn exa_search_handler(
                 "limit": e.limit,
                 "unit": e.unit,
                 "resets_at": e.resets_at,
-                "message": format!("Monthly Exa search limit reached. Resets at {}", e.resets_at)
+                "message": format!("Monthly web search limit reached. Resets at {}", e.resets_at)
             })),
         )
             .into_response();
     }
 
-    // Perform the search
-    match crate::api::exa_search(state.db.pool(), request).await {
+    let search = crate::api::parallel::SearchRequest {
+        objective: request.objective,
+        queries: vec![request.query],
+        mode: if request.deep.unwrap_or(false) {
+            crate::api::parallel::Mode::Advanced
+        } else {
+            crate::api::parallel::Mode::Basic
+        },
+        max_results: request.num_results,
+        max_age_seconds: request.max_age_hours.map(|h: u32| h.saturating_mul(3600)),
+    };
+
+    match crate::api::parallel::search(state.db.pool(), search).await {
         Ok(response) => {
-            // Record usage on success - warn but don't fail if recording fails
             if let Err(e) =
-                crate::api::record_service_usage(state.db.pool(), crate::api::Service::Exa, 1).await
+                crate::api::record_service_usage(state.db.pool(), crate::api::Service::Parallel, 1)
+                    .await
             {
                 tracing::warn!(
-                    service = "exa",
+                    service = "parallel",
                     error = %e,
                     "Usage recording failed - request succeeded but usage may be undercounted"
                 );
@@ -1677,6 +1687,20 @@ pub async fn exa_search_handler(
         }
         Err(e) => error_response(e),
     }
+}
+
+/// Body for `POST /api/search/web`.
+#[derive(Debug, serde::Deserialize)]
+pub struct WebSearchRequest {
+    pub query: String,
+    #[serde(default)]
+    pub objective: Option<String>,
+    #[serde(default)]
+    pub num_results: Option<u8>,
+    #[serde(default)]
+    pub deep: Option<bool>,
+    #[serde(default)]
+    pub max_age_hours: Option<u32>,
 }
 
 // =============================================================================
