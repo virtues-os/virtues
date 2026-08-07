@@ -516,6 +516,20 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     }
 
+    // ─── `virtues deprovision` ──────────────────────────────────────────────
+    // Prepares the box to be imaged. Wraps `reset` (for the DB + lake) and then
+    // strips the host-level identity, so like reset it runs against a bare pool
+    // before any app stack exists.
+    if let Some(Commands::Deprovision { yes, force }) = &cli.command {
+        match virtues::cli::deprovision::run(*yes, *force).await {
+            Ok(()) => return Ok(()),
+            Err(e) => {
+                eprintln!("error: deprovision failed: {e}");
+                std::process::exit(1);
+            }
+        }
+    }
+
     // ─── `virtues configure-inference` ──────────────────────────────────────
     // Recover after a manual endpoint's model changed. Runs BEFORE the app
     // builds the guarded embedder — which would itself fail on the very

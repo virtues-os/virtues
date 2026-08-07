@@ -257,6 +257,29 @@ pub enum Commands {
         force: bool,
     },
 
+    /// Strip every per-unit identity so this box's disk can be imaged and
+    /// cloned. The LAST command before a box ships or its eMMC is `dd`'d.
+    ///
+    /// Not a reset and not an uninstall — the software stays installed and
+    /// configured. It removes only what must be unique per unit: the database
+    /// (which holds the iroh secret that IS the box's network identity), the
+    /// lake, `VIRTUES_ENCRYPTION_KEY`, machine-id, SSH host keys, and saved
+    /// wifi. Each clone re-mints them on first boot.
+    ///
+    /// Cloning without this ships every unit as the same box: one EndpointId
+    /// across the fleet, and one data-at-rest key. Neither is visible on the
+    /// bench and neither is fixable in the field.
+    #[command(hide = true)]
+    Deprovision {
+        /// Skip the typed-hostname confirmation (scripts/CI).
+        #[arg(long)]
+        yes: bool,
+
+        /// Bypass the "service is running" check.
+        #[arg(long)]
+        force: bool,
+    },
+
     /// Self-update from the latest GitHub Release, via atomic release slots.
     ///
     /// Stages the whole release into `releases/<slot>/`, preflights it (the
