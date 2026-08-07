@@ -40,6 +40,16 @@ pub struct DisplayState {
     pub pair_code: Option<String>,
     /// SSID of the setup access point, when it is up.
     pub ap_ssid: Option<String>,
+    /// The AP's passphrase, shown as TEXT beside the QR.
+    ///
+    /// The QR already carries it, so this looks redundant — it is not. A QR is
+    /// only readable by a camera, and the device that needs this network is
+    /// often a laptop, which has none. It also covers a camera that will not
+    /// focus, a cracked screen, and the case that stranded the lab box: the
+    /// owner needing to reach the machine from something other than a phone.
+    /// Printing it costs nothing — anyone who can read this screen is already
+    /// standing in front of the box, which is the whole trust model.
+    pub ap_passphrase: Option<String>,
     /// True once at least one device has paired — the display stops showing
     /// setup and moves to the ambient screen.
     pub claimed: bool,
@@ -80,11 +90,15 @@ pub async fn display_state_handler(
     // `api::pair::paired_device_count`.
     let devices = crate::api::pair::paired_device_count(pool).await;
 
+    let ap_ssid = current_ap_ssid();
     (
         StatusCode::OK,
         Json(DisplayState {
             pair_code,
-            ap_ssid: current_ap_ssid(),
+            // Only when the AP is actually up: a passphrase for a network that
+            // is not broadcasting is noise on a screen with no room for it.
+            ap_passphrase: ap_ssid.as_ref().and_then(|_| ap_passphrase()),
+            ap_ssid,
             claimed: devices > 0,
             online: crate::cli::link::primary_ip().is_some(),
             devices,
@@ -115,7 +129,10 @@ pub async fn display_qr_handler(
     let Some(ssid) = current_ap_ssid() else {
         return (StatusCode::NOT_FOUND, "no setup network is up").into_response();
     };
-    let svg = crate::api::pair::render_qr_svg(&wifi_payload(&ssid));
+    let Some(psk) = ap_passphrase() else {
+        return (StatusCode::NOT_FOUND, "no AP passphrase available").into_response();
+    };
+    let svg = crate::api::pair::render_qr_svg(&wifi_payload(&ssid, &psk));
     (
         StatusCode::OK,
         [
@@ -129,9 +146,40 @@ pub async fn display_qr_handler(
         .into_response()
 }
 
+/// The AP's passphrase, read the same way `maintenance::setup_ap` derives it.
+///
+/// Loopback-only like everything else here, and by the same argument: it is a
+/// secret whose whole protection is that reading it requires being in the room.
+fn ap_passphrase() -> Option<String> {
+    if let Ok(s) = std::fs::read_to_string("/var/lib/virtues/ap-passphrase") {
+        let s = s.trim().to_string();
+        if s.len() >= 8 {
+            return Some(s);
+        }
+    }
+    let id = std::fs::read_to_string("/etc/machine-id").ok()?;
+    let derived: String = id.trim().chars().take(12).collect();
+    (derived.len() >= 8).then_some(derived)
+}
+
 /// The `WIFI:` URI both iOS and Android cameras join natively.
-fn wifi_payload(ssid: &str) -> String {
-    format!("WIFI:S:{ssid};T:WPA;;")
+///
+/// **`P:` is the whole point.** Without the passphrase field this encodes only
+/// a network name, so scanning it prompts for a password instead of joining —
+/// which defeats the one job the QR has. Shipped that way briefly and it
+/// stranded the lab box: the AP was up, the passphrase existed only inside a
+/// QR that did not contain it, and there was no other way to read it.
+fn wifi_payload(ssid: &str, passphrase: &str) -> String {
+    // `;` `:` `\\` and `"` are separators in this grammar and must be escaped,
+    // or a passphrase containing one silently truncates the payload.
+    let esc = |v: &str| {
+        v.replace('\\', "\\\\")
+            .replace(';', "\\;")
+            .replace(':', "\\:")
+            .replace('"', "\\\"")
+            .replace(',', "\\,")
+    };
+    format!("WIFI:S:{};T:WPA;P:{};;", esc(ssid), esc(passphrase))
 }
 
 /// Is this request from a process on the box itself?
@@ -190,6 +238,22 @@ mod tests {
 
     fn addr(s: &str) -> SocketAddr {
         s.parse().unwrap()
+    }
+
+    #[test]
+    fn wifi_payload_carries_the_passphrase() {
+        // The bug this pins: without P:, scanning prompts for a password
+        // instead of joining, and the passphrase becomes unreadable.
+        let p = wifi_payload("Virtues-E3C7", "abc123def456");
+        assert!(p.contains("P:abc123def456"), "no passphrase in payload: {p}");
+        assert!(p.starts_with("WIFI:S:Virtues-E3C7;"));
+    }
+
+    #[test]
+    fn wifi_payload_escapes_grammar_characters() {
+        let p = wifi_payload("My:Net", "pa;ss");
+        assert!(p.contains(r"S:My\:Net"), "unescaped ssid: {p}");
+        assert!(p.contains(r"P:pa\;ss"), "unescaped passphrase: {p}");
     }
 
     #[test]

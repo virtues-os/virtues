@@ -31,6 +31,7 @@
 	type DisplayState = {
 		pair_code: string | null;
 		ap_ssid: string | null;
+		ap_passphrase: string | null;
 		claimed: boolean;
 		online: boolean;
 		devices: number;
@@ -47,11 +48,6 @@
 	const grouped = $derived(
 		state_?.pair_code ? `${state_.pair_code.slice(0, 3)} ${state_.pair_code.slice(3)}` : null,
 	);
-
-	// The AP QR is what the phone camera consumes to join. `T:WPA` because the
-	// setup network is WPA2, not open: the customer's home wifi password crosses
-	// this link, and on an open AP that is cleartext to anyone in range.
-	const wifiPayload = $derived(state_?.ap_ssid ? `WIFI:S:${state_.ap_ssid};T:WPA;;` : null);
 
 	async function refresh() {
 		try {
@@ -96,8 +92,17 @@
 		     has been installed, so there is no state to move between. -->
 		<div class="split">
 			<div class="lite">
-				{#if wifiPayload}
+				{#if state_.ap_ssid}
 					<img class="qr" src="/api/display/qr" alt="" />
+					<!-- The passphrase in readable text, not only inside the QR. A QR
+					     needs a camera, and the device that needs this network is often
+					     a laptop. Shipping it QR-only stranded the lab box. -->
+					<div class="apcreds">
+						<div class="apssid">{state_.ap_ssid}</div>
+						{#if state_.ap_passphrase}
+							<div class="appass">{state_.ap_passphrase}</div>
+						{/if}
+					</div>
 				{:else}
 					<div class="qr-missing">no setup network</div>
 				{/if}
@@ -175,6 +180,22 @@
 	}
 
 	/* ── setup: full-bleed split ── */
+	.apcreds {
+		margin-top: 11px;
+		text-align: center;
+		font-family: ui-monospace, Menlo, monospace;
+		line-height: 1.45;
+	}
+	.apssid {
+		font-size: 0.62rem;
+		color: #8a8578;
+		letter-spacing: 0.04em;
+	}
+	.appass {
+		font-size: 0.78rem;
+		color: #1a1a1a;
+		letter-spacing: 0.06em;
+	}
 	.lite {
 		width: 41%;
 		flex: none;
