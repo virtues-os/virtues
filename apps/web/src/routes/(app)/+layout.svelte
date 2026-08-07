@@ -508,12 +508,19 @@
 	   This is also what lifts the composer: the chat input sits in normal flow
 	   at the bottom of its view, so shrinking main's content box moves it up
 	   with the keyboard. No component needs to know it happened. */
+	/* No reservation for the tab bar here, deliberately. The bar is glass, and
+	   glass with nothing behind it is just a grey rectangle — reserving the
+	   space meant the view stopped exactly where the bar began, so there was
+	   never any content underneath to blur, which is the entire effect. The
+	   view now runs to the bottom of the screen and its own scroller carries
+	   the bottom padding instead (see Page.svelte), so the last row is still
+	   reachable but everything above it passes behind the glass on its way up.
+
+	   The keyboard inset stays: that one is not decoration, it is the
+	   difference between seeing what you are typing and not. */
 	main.is-mobile {
 		padding-top: env(safe-area-inset-top);
-		padding-bottom: max(
-			calc(var(--tabbar-reserve) + env(safe-area-inset-bottom)),
-			var(--keyboard-inset, 0px)
-		);
+		padding-bottom: var(--keyboard-inset, 0px);
 	}
 
 	/* Pin the whole shell to the viewport on mobile. Without this, iOS lets the

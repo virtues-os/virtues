@@ -2369,6 +2369,11 @@
 		width: 100%;
 		max-width: 48rem;
 		padding: 0 2rem 2rem 2rem;
+		/* The composer is the one piece of bottom chrome that must stay ABOVE
+		   the floating bar rather than pass behind it — glass over the field you
+		   are typing into is not a nice effect, it is a covered input. The
+		   messages behind it still scroll under the bar. */
+		padding-bottom: calc(1rem + var(--tabbar-reserve) + env(safe-area-inset-bottom));
 		background-color: var(--color-surface);
 		background-image: var(--background-image);
 		background-blend-mode: multiply;
