@@ -1,5 +1,5 @@
 name = "iOS Ingest"
-description = "Receives everything your iPhone collects — health, location, calendar, contacts, audio, and finance."
+description = "Receives everything your iPhone collects — health, location, calendar, contacts, audio, finance, and what you share to it."
 owner = "system"
 command = ["ios_ingest"]
 triggers = ["webhook"]
@@ -7,4 +7,4 @@ per_credential = true
 source = { id = "ios" }
 
 # Ontologies this applet writes — drives "what would fill this stream".
-writes = ["calendar_event", "communication_transcription", "financial_account", "financial_transaction", "health_heart_rate", "health_hrv", "health_sleep", "health_steps", "health_workout", "location_point"]
+writes = ["calendar_event", "communication_transcription", "content_bookmark", "financial_account", "financial_transaction", "health_heart_rate", "health_hrv", "health_sleep", "health_steps", "health_workout", "location_point"]
