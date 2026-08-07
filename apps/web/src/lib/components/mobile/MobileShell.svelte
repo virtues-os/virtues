@@ -16,13 +16,18 @@
 	 * purpose; the gesture is the affordance, the way it is everywhere else on
 	 * the phone. WKWebView's own back gesture is not available to us (see the
 	 * swipe block below), so we grow our own.
+	 *
+	 * And no chrome above the view either. There was briefly a top action bar
+	 * carrying whatever the view published — the phone's stand-in for the
+	 * desktop's pane toolbar — but a toolbar is furniture that belongs to a
+	 * tab/pane structure, and this shell has neither. A view that wants a
+	 * control puts it in its own header, where Pages already keeps "New page";
+	 * the shell contributes nothing but the safe-area inset. So: status bar,
+	 * then the page.
 	 */
 	import { onMount } from "svelte";
-	import Icon from "$lib/components/Icon.svelte";
 	import TabContent from "$lib/components/tabs/TabContent.svelte";
 	import { windowShellStore } from "$lib/stores/window-shell.svelte";
-	import { paneActions } from "$lib/stores/paneActions.svelte";
-	import { contextMenu } from "$lib/stores/contextMenu.svelte";
 
 	// The store folds itself to one window at boot; this catches the other way
 	// in — a desktop browser dragged below the mobile breakpoint mid-session,
@@ -30,33 +35,6 @@
 	onMount(() => windowShellStore.collapseToSingleWindow());
 
 	const tab = $derived(windowShellStore.activeTab);
-
-	// The view's own published actions (item 5's slot). On desktop these ride in
-	// the pane toolbar; with no toolbar here, the action bar is where they land.
-	const viewActions = $derived(paneActions.for(tab?.id));
-	const INLINE_ACTION_LIMIT = 2;
-	const inlineActions = $derived(viewActions.slice(0, INLINE_ACTION_LIMIT));
-	const overflowActions = $derived(viewActions.slice(INLINE_ACTION_LIMIT));
-
-	// No bar at all unless a view has actually published something — an empty
-	// strip is 44px of nothing between the status bar and the view.
-	const showBar = $derived(viewActions.length > 0);
-
-	function showActionOverflow(e: MouseEvent) {
-		e.stopPropagation();
-		const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
-		contextMenu.show(
-			{ x: rect.right, y: rect.bottom },
-			overflowActions.map((a) => ({
-				id: a.id,
-				label: a.label,
-				icon: a.icon,
-				disabled: a.disabled,
-				checked: a.active,
-				action: a.run,
-			})),
-		);
-	}
 
 	// ── Edge-swipe back ──────────────────────────────────────────────────────
 	// Hand-rolled because neither layer below us offers it. SvelteKit has no
@@ -139,30 +117,6 @@
 	onpointerup={endDrag}
 	onpointercancel={endDrag}
 >
-	{#if showBar}
-		<div class="action-bar">
-			{#each inlineActions as action (action.id)}
-				<button
-					class="action"
-					class:primary={action.primary}
-					class:toggled={action.active}
-					aria-pressed={action.active !== undefined ? action.active : undefined}
-					disabled={action.disabled}
-					onclick={action.run}
-					aria-label={action.label}
-				>
-					<Icon icon={action.icon} width="20" />
-				</button>
-			{/each}
-
-			{#if overflowActions.length > 0}
-				<button class="action" onclick={showActionOverflow} aria-label="More actions">
-					<Icon icon="ri:more-line" width="20" />
-				</button>
-			{/if}
-		</div>
-	{/if}
-
 	<!-- One view. Not one of many with the rest hidden — one. -->
 	<div
 		class="viewport"
@@ -188,49 +142,10 @@
 		overflow: hidden;
 	}
 
-	/* Slim, quiet, right-aligned, and only present when a view has published
-	   something into it. */
-	.action-bar {
-		display: flex;
-		align-items: center;
-		justify-content: flex-end;
-		gap: 2px;
-		height: 44px;
-		flex-shrink: 0;
-		padding: 0 6px;
-		background: var(--color-surface);
-		border-bottom: 0.5px solid
-			color-mix(in srgb, var(--color-border) 90%, transparent);
-	}
 
-	.action {
-		display: flex;
-		align-items: center;
-		height: 34px;
-		padding: 0 8px;
-		border: 0;
-		border-radius: 8px;
-		background: transparent;
-		color: var(--color-foreground);
-		cursor: pointer;
-		-webkit-tap-highlight-color: transparent;
-		transition:
-			opacity 0.12s ease,
-			background-color 0.12s ease;
-	}
 
-	.action:active {
-		opacity: 0.5;
-	}
 
-	.action.toggled {
-		background: var(--hover-bg);
-	}
 
-	.action:disabled {
-		opacity: 0.35;
-		cursor: default;
-	}
 
 	.viewport {
 		position: relative;
