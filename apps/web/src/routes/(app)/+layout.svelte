@@ -511,7 +511,7 @@
 	main.is-mobile {
 		padding-top: env(safe-area-inset-top);
 		padding-bottom: max(
-			calc(50px + env(safe-area-inset-bottom)),
+			calc(var(--tabbar-reserve) + env(safe-area-inset-bottom)),
 			var(--keyboard-inset, 0px)
 		);
 	}

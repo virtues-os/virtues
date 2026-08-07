@@ -6,6 +6,20 @@
 /* Add Streamdown styles to Tailwind build */
 @source "../node_modules/svelte-streamdown/**/*";
 
+/* Phone-shell chrome metrics.
+   Three components have to agree about how tall the floating tab bar is and
+   how far it sits off the bottom: the bar itself, the shell's bottom
+   reservation in (app)/+layout, and the More sheet, which stops above it.
+   They were three magic numbers; they are one set of names now. Not in
+   themes.css — a theme picks colors, not geometry. */
+:root {
+	--tabbar-h: 58px; /* at rest, labels showing */
+	--tabbar-h-min: 46px; /* minimized, icons only */
+	--tabbar-gap: 10px; /* float above the home indicator */
+	/* What content must keep clear so its last row isn't parked under glass. */
+	--tabbar-reserve: calc(var(--tabbar-h) + var(--tabbar-gap));
+}
+
 /* Global text selection/highlight styling */
 ::selection {
 	background-color: var(--color-highlight);
