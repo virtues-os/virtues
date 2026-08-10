@@ -82,11 +82,38 @@
 		}
 	}
 
+	// Two cadences, because the screen has two jobs.
+	//
+	// SETUP is a conversation: someone is standing in front of the box acting on
+	// what it says, and every transition they cause — AP coming up, wifi joined,
+	// device paired — must land while they are still looking. At 30s the panel
+	// spent up to half a minute telling someone to scan a QR that was not on it
+	// yet, which reads as a fault rather than a wait. Seen on hardware.
+	//
+	// AMBIENT is furniture. Nothing there changes on a human timescale, it runs
+	// 24/7 in someone's home, and the standing code rotates every 15 min with a
+	// 5 min overlap — so 30s can never show an expired one.
+	const SETUP_POLL_MS = 2_000;
+	const AMBIENT_POLL_MS = 30_000;
+
+	function schedulePoll(ms: number) {
+		if (poll) clearInterval(poll);
+		pollMs = ms;
+		poll = setInterval(refresh, ms);
+	}
+
+	let pollMs = $state(SETUP_POLL_MS);
+
+	// Re-cadence when the box crosses between setup and ambient — in either
+	// direction, since `virtues reset` puts a claimed box back into setup.
+	$effect(() => {
+		const want = state_?.claimed ? AMBIENT_POLL_MS : SETUP_POLL_MS;
+		if (want !== pollMs) schedulePoll(want);
+	});
+
 	onMount(() => {
 		void refresh();
-		// The standing code rotates every 15 min with a 5 min overlap, so a
-		// 30s poll can never show an expired one.
-		poll = setInterval(refresh, 30_000);
+		schedulePoll(SETUP_POLL_MS);
 		clock = setInterval(() => (now = new Date()), 20_000);
 	});
 	onDestroy(() => {
@@ -127,15 +154,27 @@
 						{/if}
 					</div>
 				{:else}
-					<div class="qr-missing">no setup network</div>
+					<!-- The AP takes a few seconds to come up after the box notices it
+					     has no network. An empty panel is fine; a panel captioned "no
+					     setup network" next to a right-hand side saying "scan this QR"
+					     is not — it tells the owner to scan something that isn't there
+					     and reads as a fault. Seen on hardware 2026-08-10. The mark,
+					     matching the boot screen, says "working" without a spinner. -->
+					<div class="qr-pending"><span class="mark">∴</span></div>
 				{/if}
 			</div>
 			<div class="dark">
 				<div class="brand">∴ &nbsp;Virtues</div>
 				<div class="step">Step 1 of 2</div>
 				<div class="head">Put me on your Wi-Fi</div>
-				<div class="lead">Scan with your phone's camera to join this box's setup
-					network, then follow the page that opens.</div>
+				<!-- The instruction has to match what is actually on the left. -->
+				{#if state_.ap_ssid}
+					<div class="lead">Scan with your phone's camera to join this box's setup
+						network, then follow the page that opens.</div>
+				{:else}
+					<div class="lead">Starting my own Wi-Fi network so you can reach me —
+						this takes a few seconds.</div>
+				{/if}
 				<div class="foot">
 					Or plug in ethernet and this step disappears.
 				</div>
@@ -282,10 +321,19 @@
 		   badly rather than not at all, which is the worse failure. */
 		flex: none;
 	}
-	.qr-missing {
-		font-size: 0.7rem;
-		color: #8a8578;
-		font-family: ui-monospace, Menlo, monospace;
+	.qr-pending {
+		width: 150px;
+		height: 150px;
+		flex: none;
+		display: flex;
+		align-items: center;
+		justify-content: center;
+	}
+	/* Reserves the QR's exact footprint so the panel does not jump when the
+	   code arrives — the owner is looking straight at it when it lands. */
+	.qr-pending .mark {
+		font-size: 1.5rem;
+		color: #c3bdae;
 	}
 	.dark {
 		flex: 1;
