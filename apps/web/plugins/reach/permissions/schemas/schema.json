@@ -355,6 +355,42 @@
           "markdownDescription": "Denies the pair command without any pre-configured scope."
         },
         {
+          "description": "Enables the provision_join command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-provision-join",
+          "markdownDescription": "Enables the provision_join command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the provision_join command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-provision-join",
+          "markdownDescription": "Denies the provision_join command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the provision_networks command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-provision-networks",
+          "markdownDescription": "Enables the provision_networks command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the provision_networks command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-provision-networks",
+          "markdownDescription": "Denies the provision_networks command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the provision_open command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-provision-open",
+          "markdownDescription": "Enables the provision_open command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the provision_open command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-provision-open",
+          "markdownDescription": "Denies the provision_open command without any pre-configured scope."
+        },
+        {
           "description": "Enables the radio_stats command without any pre-configured scope.",
           "type": "string",
           "const": "allow-radio-stats",
@@ -379,10 +415,10 @@
           "markdownDescription": "Denies the reach_status command without any pre-configured scope."
         },
         {
-          "description": "Default permissions for the reach plugin\n#### This default permission set includes:\n\n- `allow-pair`\n- `allow-reach-status`\n- `allow-forget`\n- `allow-discover`\n- `allow-outbox-stats`\n- `allow-drain-now`\n- `allow-radio-stats`",
+          "description": "Default permissions for the reach plugin\n#### This default permission set includes:\n\n- `allow-pair`\n- `allow-reach-status`\n- `allow-forget`\n- `allow-discover`\n- `allow-provision-open`\n- `allow-provision-networks`\n- `allow-provision-join`\n- `allow-outbox-stats`\n- `allow-drain-now`\n- `allow-radio-stats`",
           "type": "string",
           "const": "default",
-          "markdownDescription": "Default permissions for the reach plugin\n#### This default permission set includes:\n\n- `allow-pair`\n- `allow-reach-status`\n- `allow-forget`\n- `allow-discover`\n- `allow-outbox-stats`\n- `allow-drain-now`\n- `allow-radio-stats`"
+          "markdownDescription": "Default permissions for the reach plugin\n#### This default permission set includes:\n\n- `allow-pair`\n- `allow-reach-status`\n- `allow-forget`\n- `allow-discover`\n- `allow-provision-open`\n- `allow-provision-networks`\n- `allow-provision-join`\n- `allow-outbox-stats`\n- `allow-drain-now`\n- `allow-radio-stats`"
         }
       ]
     }

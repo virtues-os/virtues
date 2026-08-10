@@ -29,18 +29,53 @@ self-updating release channel under ours; `cog`/WPE has no arm64 build.
 
 **Wifi comes from the phone over a setup AP, not from the panel.** The box hosts
 `Virtues-XXXX` (WPA2 — the owner's home password crosses that link), the display
-shows a join QR, and `/provision` collects the credentials. The AP lives until a
-device **pairs**, not until the box has wifi: dropping it on "got wifi" would
-tear down the network the phone is still sitting on. AP+STA concurrency does
+shows a join QR, and the phone collects the credentials. AP+STA concurrency does
 **not** work on the Q6A despite what `iw list` advertises, so the switchover is
 sequential.
+
+**The AP is up while the box is unclaimed AND offline** (revised 2026-08-10).
+The earlier rule — up until a device *pairs*, full stop — could not work on this
+radio. Pairing happens after provisioning (every `/api/provision/*` route 404s
+once a device pairs, so it cannot go the other way), which means the moment
+after a successful join the box is online, unclaimed, and its AP is down. The
+reconciler saw "unclaimed, no AP" and raised one onto the single radio holding
+the association it had just formed, dropping the box off the owner's wifi ~20s
+after joining it — before anyone could pair. The worry the old rule encoded
+(tearing the AP down while the phone is still on it) is covered by
+`PROVISIONING_LOCK`, and on hardware that cannot do AP+STA "box is online" and
+"phone is on our AP" are mutually exclusive anyway. Bonus: an ethernet box no
+longer raises a setup network it never needed.
+
+**The app is the wizard; the captive portal is the floor.** When the Virtues app
+is already installed, joining the setup AP is enough — the app's connect screen
+probes `/api/provision/*`, and a 200 means "unclaimed box, and I am on its setup
+network" (the box's own two gates, answered in one call). It then runs the wifi
+picker natively, waits out the switchover, re-finds the box on the owner's LAN,
+and moves to the pair code — one continuous session. The portal at `/provision`
+is unchanged and remains the path for laptops, Android, and anyone without the
+app. The win is not tap count: it is that the home wifi password gets a native
+field with a password manager instead of a captive webview, and that the app
+survives the network handoff.
+
+**The display shows one job at a time** (three states, not two): offline +
+unclaimed → *join me* (wifi QR + AP credentials, no pair code); online +
+unclaimed → *claim me* (app-download QR + the code); claimed → ambient. The two
+setup screens were one screen until 2026-08-10, and it carried two different
+secrets at once — the first person shown it read the pair code and typed it as
+the wifi password. Labelling helped and did not fix it: the fault was presenting
+a *sequence* as a *set*. It also offered `virtues.com/downloads` to a phone it
+had just told to join a network with no uplink, which is the one moment that
+link cannot be followed.
 
 Built and running on hardware: `/display`, `/api/display/state` (loopback-only —
 it carries the live pair code), `/provision`, `/api/provision/*` (AP-subnet +
 unclaimed, re-checked per request), the setup-AP lifecycle, captive-portal
 detection, `--appliance` install profile, `virtues deprovision`, and per-unit
-first-boot minting. Not yet built: the iOS `NEHotspotConfiguration` flow, and
-the app-side wifi picker.
+first-boot minting. Built but **not yet exercised on hardware**: the app-side
+wifi picker and the three-state display. Not yet built: the iOS
+`NEHotspotConfiguration` flow — note it is *not* Personal Hotspot and *not* the
+hard-to-get `NEHotspotHelper` entitlement, and that it prompts rather than
+joining silently, so it buys continuity rather than fewer taps.
 
 **Delivery is: flash a pre-baked image, then `virtues upgrade` on first
 connect.** Provisioning happens on our bench, never the customer's — their box
@@ -96,14 +131,21 @@ the box) assumed a browser could pair, which it cannot.
 ```
 power on
   → boot ~10s (no desktop session, no wait-online)
-  → display: setup screen — join QR (left) + the live 6-digit code (right)
+  → display SCREEN 1 "Put me on your Wi-Fi": join QR + SSID/passphrase
   → box hosts Virtues-XXXX; phone camera scans the QR and joins it
-  → the phone's OS auto-opens /provision (captive-portal detection)
+  →   with the app installed → its connect screen detects setup mode and
+  →     runs the wifi picker natively (password in a real field)
+  →   without it → the phone's OS auto-opens /provision (captive portal)
   → owner picks their network from the BOX's scan list, types one password
-  → sequential switchover: AP down, join, AP back up if it failed
-  → owner opens the app, types the code off the display → paired
-  → AP retires; display flips to the ambient screen
+  → sequential switchover: AP down, join, AP back up ONLY if it failed
+  → display SCREEN 2 "In the Virtues app, enter …": app QR + the 6-digit code
+  →   (the phone has internet again — the only moment that QR is followable)
+  → owner types the code → paired
+  → display flips to the ambient screen
 ```
+
+Ethernet skips straight to screen 2: the box is online from boot, so no setup
+network is ever raised and the whole middle disappears.
 
 The CLI is never seen. The **display is output-only** — the digitizer does not
 work through the cover glass, so nothing is ever typed on it.

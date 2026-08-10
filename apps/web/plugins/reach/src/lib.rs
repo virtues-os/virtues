@@ -628,7 +628,7 @@ impl ReachState {
 
 /// Normalize a user-typed box address to an `http://host:port` origin
 /// (default port 8000), mirroring the desktop connect UI.
-fn normalize_server(input: &str) -> String {
+pub(crate) fn normalize_server(input: &str) -> String {
   let s = input.trim().trim_end_matches('/');
   if s.starts_with("http://") || s.starts_with("https://") {
     return s.to_string();
@@ -658,6 +658,9 @@ pub fn init<R: Runtime>() -> TauriPlugin<R> {
       commands::reach_status,
       commands::forget,
       commands::discover,
+      commands::provision_open,
+      commands::provision_networks,
+      commands::provision_join,
       commands::outbox_stats,
       commands::drain_now,
       commands::radio_stats

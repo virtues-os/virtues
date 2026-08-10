@@ -23,7 +23,27 @@
     affordance that invites a tap.
   * It runs 24/7 in someone's home: dark, no spinners, no animation loops.
 
-  Two states, no wizard: setting up (code + QR) and ambient (once claimed).
+  THREE STATES, sequenced by facts the box already knows:
+
+    1. offline + unclaimed  → JOIN ME. The wifi QR and the AP's credentials.
+    2. online  + unclaimed  → CLAIM ME. Where to get the app, and the code.
+    3. claimed              → ambient.
+
+  Screens 1 and 2 were one screen until 2026-08-10, and it did not work. It
+  carried two different secrets at once — the AP passphrase and the pair code —
+  and the first person shown it read the big code on the right and typed it as
+  the wifi password. Labelling them helped and did not fix it, because the real
+  fault was not labelling: the screen presented a SEQUENCE as a SET. Nothing on
+  it said the right-hand side is for later.
+
+  Worse, it offered `virtues.com/downloads` to someone whose phone it had just
+  told to join a network with no internet. The app link is only followable after
+  the box is online, which is precisely when screen 2 appears.
+
+  The box cannot detect that the app has been installed, so there is still no
+  wizard here and no step it advances through on its own. What it CAN detect is
+  whether it has a network — and that single bit is enough to split the two
+  jobs, because it changes at exactly the moment the owner's job changes.
 -->
 <script lang="ts">
 	import { onMount, onDestroy } from "svelte";
@@ -87,9 +107,10 @@
 		<!-- Pre-first-response. Deliberately bare: the box is seconds from
 		     answering and a spinner would be the first thing it ever said. -->
 		<div class="boot"><span class="mark">∴</span></div>
-	{:else if !state_.claimed}
-		<!-- SETUP. One screen, no advance: the box cannot detect that the app
-		     has been installed, so there is no state to move between. -->
+	{:else if !state_.claimed && !state_.online}
+		<!-- 1 · JOIN ME. The box has no network. One job: get it one. The pair
+		     code is deliberately absent — it is unusable until the owner has the
+		     app, and they cannot install the app from a network with no uplink. -->
 		<div class="split">
 			<div class="lite">
 				{#if state_.ap_ssid}
@@ -97,12 +118,8 @@
 					<!-- The passphrase in readable text, not only inside the QR. A QR
 					     needs a camera, and the device that needs this network is often
 					     a laptop. Shipping it QR-only stranded the lab box. -->
-					<!-- LABELLED, because this screen carries two different secrets and
-					     a demo proved they get confused: someone read the big pair code
-					     on the right and typed it as the wifi password. One is for
-					     joining this network, the other is for the app. Say which. -->
 					<div class="apcreds">
-						<div class="aplabel">Wi-Fi network</div>
+						<div class="aplabel">Network</div>
 						<div class="apssid">{state_.ap_ssid}</div>
 						{#if state_.ap_passphrase}
 							<div class="aplabel">Password</div>
@@ -115,15 +132,46 @@
 			</div>
 			<div class="dark">
 				<div class="brand">∴ &nbsp;Virtues</div>
-				<div class="lead">Then, in the Virtues app, enter</div>
+				<div class="step">Step 1 of 2</div>
+				<div class="head">Put me on your Wi-Fi</div>
+				<div class="lead">Scan with your phone's camera to join this box's setup
+					network, then follow the page that opens.</div>
+				<div class="foot">
+					Or plug in ethernet and this step disappears.
+				</div>
+			</div>
+		</div>
+	{:else if !state_.claimed}
+		<!-- 2 · CLAIM ME. The box is online, so the owner's phone has internet
+		     again — which is the ONLY moment an app-download QR is followable.
+		     Now, and not before, the pair code is worth showing. -->
+		<div class="split">
+			<div class="lite">
+				<img class="qr" src="/api/display/app-qr" alt="" />
+				<div class="apcreds">
+					<div class="aplabel">Get the app</div>
+					<div class="apssid">virtues.com/downloads</div>
+				</div>
+			</div>
+			<div class="dark">
+				<div class="brand">∴ &nbsp;Virtues</div>
+				<div class="step">Step 2 of 2</div>
+				<div class="lead">In the Virtues app, enter</div>
 				{#if grouped}
 					<div class="code">{grouped}</div>
 				{:else}
 					<div class="code fault">— — —</div>
 				{/if}
 				<div class="foot">
-					No app yet? <b>virtues.com/downloads</b><br />
-					Or plug in ethernet and this finishes itself.
+					{#if state_.ap_ssid}
+						<!-- The setup network is somehow still up — a failed join, or an
+						     ethernet box that also raised one. Both secrets are in play at
+						     once, which is the exact confusion that split this screen in
+						     two, so name which is which. -->
+						This code, not the Wi-Fi password.
+					{:else}
+						Scan to install the app, then enter this code.
+					{/if}
 				</div>
 			</div>
 		</div>
@@ -215,12 +263,24 @@
 		flex: none;
 		background: var(--lite);
 		display: flex;
+		/* COLUMN, and it has to be. Without it the QR (150px) and the credentials
+		   (~99px) lay out side by side in a 240px panel: the QR hangs 5px off the
+		   left edge of the screen and the passphrase runs 4px into the dark half.
+		   Measured, not guessed — and invisible in review, because both children
+		   overflow their parent without the parent itself overflowing, so nothing
+		   scrolls and nothing reports a wrong size. */
+		flex-direction: column;
 		align-items: center;
 		justify-content: center;
+		padding: 0 12px;
 	}
 	.qr {
 		width: 150px;
 		height: 150px;
+		/* A flex item with an intrinsic size shrinks by default. This QR is
+		   pointed at by a phone camera; a silently squashed one still scans
+		   badly rather than not at all, which is the worse failure. */
+		flex: none;
 	}
 	.qr-missing {
 		font-size: 0.7rem;
@@ -243,10 +303,27 @@
 		font-size: 0.72rem;
 		color: #3f4b57;
 	}
+	.step {
+		font-family: ui-monospace, Menlo, monospace;
+		font-size: 0.6rem;
+		letter-spacing: 0.13em;
+		text-transform: uppercase;
+		color: #46525f;
+		margin-bottom: 9px;
+	}
+	.head {
+		font-size: 1.6rem;
+		line-height: 1.15;
+		letter-spacing: -0.01em;
+		color: #f7f5f0;
+		margin-bottom: 11px;
+	}
 	.lead {
 		font-size: 0.875rem;
 		color: #8894a1;
 		margin-bottom: 13px;
+		line-height: 1.45;
+		max-width: 290px;
 	}
 	.code {
 		font-size: 3.75rem;
@@ -265,10 +342,6 @@
 		font-size: 0.72rem;
 		line-height: 1.5;
 		color: #4c5764;
-	}
-	.foot b {
-		color: #75828f;
-		font-weight: 400;
 	}
 
 	/* ── ambient ── */

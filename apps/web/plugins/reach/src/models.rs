@@ -27,6 +27,21 @@ pub struct DiscoverResponse {
   pub debug: String,
 }
 
+/// Result of a provisioning join attempt.
+///
+/// `outcome` is `"joined" | "failed" | "unknown"`. Three values and not a
+/// boolean because the third is real and common — the box takes its AP down to
+/// perform the join, so the requesting phone routinely never sees the reply.
+/// Collapsing that into `false` would tell an owner their box failed to connect
+/// at the moment it succeeded.
+#[derive(Debug, Clone, Default, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ProvisionJoinResult {
+  pub outcome: String,
+  /// NetworkManager's own words on failure, passed through unreworded.
+  pub detail: Option<String>,
+}
+
 #[derive(Debug, Clone, Default, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ReachStatus {
