@@ -77,8 +77,6 @@ const RECONCILE_SECS: u64 = 20;
 /// failed. Without this guard the reconciler would notice "unclaimed and no AP"
 /// mid-join and raise the AP straight back onto the radio the join needs.
 ///
-/// Lives in `/run` so it can never survive a reboot, and carries a deadline so
-/// a process that dies mid-join cannot suppress the AP forever.
 /// In the state root, NOT `/run` — learned the hard way. `/run` is root-owned
 /// tmpfs and the server runs as `User=virtues`, so every write there failed
 /// with EACCES. The lock's write was `let _ =`-swallowed, so **the lock never
@@ -122,7 +120,7 @@ pub const AP_CON_NAME: &str = "virtues-setup-ap";
 /// server, reached over a network they already run; hijacking its radio to
 /// broadcast an open-ended setup network would be a rude surprise and a real
 /// security change on a machine we are a guest on.
-fn is_appliance() -> bool {
+pub(crate) fn is_appliance() -> bool {
     std::path::Path::new("/etc/systemd/system/virtues-display.service").exists()
 }
 

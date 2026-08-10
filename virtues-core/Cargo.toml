@@ -232,6 +232,12 @@ age = { version = "0.12.1", features = ["armor"] }
 # getifaddrs(3) for the BYO-transport auto-notice in net_check (already in the
 # tree transitively; zero new build cost).
 libc = "0.2"
+# BLE wifi provisioning (maintenance::ble_provision) — the Improv service the
+# appliance serves while unclaimed. bluer is the official BlueZ binding; it
+# pulls libdbus-sys, so building on Linux needs libdbus-1-dev (CI installs it;
+# a box needs only libdbus-1-3, which systemd/NM already require). Dev Macs
+# compile the module's no-op stub and skip this dep entirely.
+bluer = { version = "0.17", features = ["bluetoothd"] }
 
 [build-dependencies]
 chrono = "0.4"

@@ -128,7 +128,7 @@ jobs:
           # *working directory* does not exist, and that was the real cause —
           # see the create_dir_all in applet_git_import.rs. Read the apt log
           # before believing a package is missing.
-          sudo apt-get install -y postgresql-client-18 git
+          sudo apt-get install -y postgresql-client-18 git libdbus-1-dev pkg-config
           # Installing the package is not enough: the runner already ships an
           # older postgresql-client, and /usr/bin/pg_dump keeps resolving to it.
           # Put the versioned bindir ahead of it for every later step.
