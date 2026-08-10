@@ -84,10 +84,22 @@ pub async fn intercept(request: Request, next: Next) -> Response {
 
     // Not online yet: send them to the page that fixes that. A 302 is what the
     // OS's own portal detector follows; the body is for anything that doesn't.
+    //
+    // **`/portal`, not `/provision`.** `/provision` is a SvelteKit route, and
+    // the frontend is `adapter-static` with no server-side rendering — an empty
+    // document until ES modules load and a client router boots. The browser
+    // that receives this redirect is iOS's Captive Network Assistant, a
+    // stripped-down WebKit in a sheet, and on hardware 2026-08-10 it rendered
+    // that as a blank white page. Worse, because this middleware tells iOS the
+    // network IS captive, the OS kept forcing the blank sheet back open and
+    // would not let the owner reach Safari to work around it. Pointing a
+    // captive redirect at a JS-only page builds a trap and then locks it.
+    // `/portal` is plain server-rendered HTML with a real form. See
+    // `api::portal`.
     (
         StatusCode::FOUND,
-        [(header::LOCATION, "http://10.42.0.1:8000/provision")],
-        "Connect your Virtues box: http://10.42.0.1:8000/provision\n",
+        [(header::LOCATION, "http://10.42.0.1:8000/portal")],
+        "Connect your Virtues box: http://10.42.0.1:8000/portal\n",
     )
         .into_response()
 }

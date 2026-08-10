@@ -121,6 +121,62 @@ async fn refuse(
     None
 }
 
+/// The same two gates, for `api::portal`.
+///
+/// A separate name rather than making `refuse` public, so the HTML portal and
+/// the JSON API can never drift into different admission rules — they share the
+/// body, and the only thing this adds is the reminder that they must.
+pub(crate) async fn refuse_portal(
+    state: &AppState,
+    peer: &SocketAddr,
+    headers: &HeaderMap,
+) -> Option<axum::response::Response> {
+    refuse(state, peer, headers).await
+}
+
+/// The box's scan, for `api::portal`.
+pub(crate) async fn scan_networks() -> Result<Vec<Network>, String> {
+    scan().await
+}
+
+/// The switchover, factored out so the JSON route and the HTML portal perform
+/// exactly the same sequence. Returns `None` on success, or NetworkManager's
+/// own words on failure.
+///
+/// **Sequential, and it has to be.** Measured on the Q6A 2026-08-07: the radio
+/// scans happily while hosting the AP, but cannot hold an AP and a client
+/// association at once — a second virtual interface is created and adopted by
+/// NetworkManager, then the join fails with "object is in an unsuitable state".
+/// So the AP comes down first, and the caller loses its link to us partway
+/// through. The lock stops `maintenance::setup_ap` from putting the AP back on
+/// top of the association being formed.
+pub(crate) async fn perform_join(ssid: &str, psk: Option<&str>) -> Option<String> {
+    let _lock = ProvisioningLock::take();
+
+    let ap_was_up = ap_is_up().await;
+    if ap_was_up {
+        let _ = nmcli(&["connection", "down", crate::maintenance::setup_ap::AP_CON_NAME]).await;
+    }
+
+    match nmcli_join(ssid, psk).await {
+        Some(o) if o.status.success() => None,
+        Some(o) => {
+            let detail = String::from_utf8_lossy(&o.stderr).trim().to_string();
+            tracing::warn!(%ssid, %detail, "provision: join failed");
+            // Put the AP back immediately rather than waiting for the
+            // reconciler: the owner's phone is trying to get back to us right
+            // now, and every second it cannot is a second they spend believing
+            // they have bricked the thing.
+            if ap_was_up {
+                let _ =
+                    nmcli(&["connection", "up", crate::maintenance::setup_ap::AP_CON_NAME]).await;
+            }
+            Some(if detail.is_empty() { "couldn't join that network".into() } else { detail })
+        }
+        None => Some("nmcli unavailable".into()),
+    }
+}
+
 // ─── routes ─────────────────────────────────────────────────────────────────
 
 /// `GET /api/provision/networks` — what the BOX can see.
@@ -160,63 +216,17 @@ pub async fn join_handler(
             .into_response();
     }
 
-    // THE SWITCHOVER IS SEQUENTIAL, and it has to be.
-    //
-    // Measured on the Q6A 2026-08-07: the radio can scan happily while hosting
-    // the AP, but it cannot hold an AP and a client association at the same
-    // time. A second virtual interface is created and adopted by NetworkManager,
-    // and then the join fails with "object is in an unsuitable state". So the
-    // AP must come down for the join to have any chance.
-    //
-    // That means the phone issuing this request loses its link to us partway
-    // through, and there is no way to avoid it — which is why /provision warns
-    // the owner up front rather than letting it read as a crash. The lock stops
-    // maintenance::setup_ap from noticing "unclaimed and no AP" and putting the
-    // AP straight back on top of the association being formed.
-    let _lock = ProvisioningLock::take();
-
-    let ap_was_up = ap_is_up().await;
-    if ap_was_up {
-        let _ = nmcli(&["connection", "down", crate::maintenance::setup_ap::AP_CON_NAME]).await;
-    }
-
-    let out = nmcli_join(&req.ssid, req.psk.as_deref()).await;
-    match out {
-        Some(o) if o.status.success() => {
-            // Leave the AP down, and it STAYS down: the box is on the owner's
-            // network now, their phone rejoins its own wifi on its own, and both
-            // meet again on the LAN to finish with pairing.
-            //
-            // `setup_ap` used to re-raise it here on the next tick — reasoning
-            // that an unclaimed box should always be reachable via its own AP.
-            // On a radio that cannot do AP+STA that raise lands on top of the
-            // association just formed and knocks the box straight back off the
-            // owner's wifi, ~20s after joining it, before they can pair. Fixed
-            // 2026-08-10: the AP is now conditioned on the box being offline
-            // too, so this window belongs to pairing. If the new network turns
-            // out to be flaky, losing it makes the box offline-and-unclaimed
-            // again and the AP returns on its own.
-            (StatusCode::OK, Json(JoinResult { ok: true, detail: None })).into_response()
-        }
-        Some(o) => {
-            let detail = String::from_utf8_lossy(&o.stderr).trim().to_string();
-            tracing::warn!(ssid = %req.ssid, %detail, "provision: join failed");
-            // Put the AP back immediately rather than waiting for the
-            // reconciler: the owner's phone is trying to get back to us right
-            // now, and every second it cannot is a second they spend believing
-            // they have bricked the thing.
-            if ap_was_up {
-                let _ = nmcli(&["connection", "up", crate::maintenance::setup_ap::AP_CON_NAME]).await;
-            }
-            (
-                StatusCode::OK,
-                Json(JoinResult { ok: false, detail: Some(detail) }),
-            )
-                .into_response()
-        }
-        None => (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(JoinResult { ok: false, detail: Some("nmcli unavailable".into()) }),
+    // The switchover itself lives in `perform_join`, shared with the HTML
+    // portal. On success the AP stays down: the box is on the owner's network,
+    // their phone rejoins its own wifi, and both meet again on the LAN to
+    // finish with pairing. `setup_ap` used to re-raise it here on the next tick
+    // — which, on a radio that cannot do AP+STA, knocked the box straight back
+    // off the network it had just joined. Fixed 2026-08-10.
+    match perform_join(&req.ssid, req.psk.as_deref()).await {
+        None => (StatusCode::OK, Json(JoinResult { ok: true, detail: None })).into_response(),
+        Some(detail) => (
+            StatusCode::OK,
+            Json(JoinResult { ok: false, detail: Some(detail) }),
         )
             .into_response(),
     }
