@@ -415,10 +415,34 @@
           "markdownDescription": "Denies the reach_status command without any pre-configured scope."
         },
         {
-          "description": "Default permissions for the reach plugin\n#### This default permission set includes:\n\n- `allow-pair`\n- `allow-reach-status`\n- `allow-forget`\n- `allow-discover`\n- `allow-provision-open`\n- `allow-provision-networks`\n- `allow-provision-join`\n- `allow-outbox-stats`\n- `allow-drain-now`\n- `allow-radio-stats`",
+          "description": "Enables the wifi_forget command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-wifi-forget",
+          "markdownDescription": "Enables the wifi_forget command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the wifi_forget command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-wifi-forget",
+          "markdownDescription": "Denies the wifi_forget command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the wifi_join command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-wifi-join",
+          "markdownDescription": "Enables the wifi_join command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the wifi_join command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-wifi-join",
+          "markdownDescription": "Denies the wifi_join command without any pre-configured scope."
+        },
+        {
+          "description": "Default permissions for the reach plugin\n#### This default permission set includes:\n\n- `allow-pair`\n- `allow-reach-status`\n- `allow-forget`\n- `allow-discover`\n- `allow-provision-open`\n- `allow-provision-networks`\n- `allow-provision-join`\n- `allow-wifi-join`\n- `allow-wifi-forget`\n- `allow-outbox-stats`\n- `allow-drain-now`\n- `allow-radio-stats`",
           "type": "string",
           "const": "default",
-          "markdownDescription": "Default permissions for the reach plugin\n#### This default permission set includes:\n\n- `allow-pair`\n- `allow-reach-status`\n- `allow-forget`\n- `allow-discover`\n- `allow-provision-open`\n- `allow-provision-networks`\n- `allow-provision-join`\n- `allow-outbox-stats`\n- `allow-drain-now`\n- `allow-radio-stats`"
+          "markdownDescription": "Default permissions for the reach plugin\n#### This default permission set includes:\n\n- `allow-pair`\n- `allow-reach-status`\n- `allow-forget`\n- `allow-discover`\n- `allow-provision-open`\n- `allow-provision-networks`\n- `allow-provision-join`\n- `allow-wifi-join`\n- `allow-wifi-forget`\n- `allow-outbox-stats`\n- `allow-drain-now`\n- `allow-radio-stats`"
         }
       ]
     }

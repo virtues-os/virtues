@@ -286,6 +286,19 @@ pub async fn run(client: Virtues, host: &str, port: u16) -> Result<()> {
         // Same gates as /api/provision/* (shared, not reimplemented) — but the
         // gates are re-checked per request there, so these are as closed as
         // their JSON siblings.
+        // The old SPA captive target, retired server-side. Phones CACHE captive
+        // pages per-SSID (seen live: a CNA replayed a three-hour-old /provision
+        // across a box upgrade), so any device that ever met a box remembers
+        // this URL. A permanent redirect is the only way to un-teach them.
+        .route(
+            "/provision",
+            get(|| async {
+                (
+                    axum::http::StatusCode::MOVED_PERMANENTLY,
+                    [(axum::http::header::LOCATION, "/portal")],
+                )
+            }),
+        )
         .route("/portal", get(crate::api::portal::index_handler))
         .route("/portal/network", get(crate::api::portal::network_handler))
         .route("/portal/join", post(crate::api::portal::join_handler))

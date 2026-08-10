@@ -171,6 +171,88 @@
           <div class="wait"><span class="pip"></span><span>Scanning</span></div>`;
       }
 
+      // ── NEW BOX: join its setup network ourselves ─────────────────────────
+      //
+      // The app performs the join (`wifi_join` → NEHotspotConfiguration on
+      // iOS): a prefix join against `Virtues-`, so the owner types only the
+      // password off the box's screen — never an SSID, never a trip to
+      // Settings, never a captive sheet. One system dialog, then we are on the
+      // box's network and the normal setup flow takes over.
+      //
+      // On platforms without a programmatic join (Android for now), the invoke
+      // rejects and we fall back to instructing a manual join.
+
+      function renderNewBox(errorText) {
+        app.innerHTML = `
+          <button class="back" id="back">← Back</button>
+          <p class="kicker">Setting up a new box</p>
+          <h1>Connect to your box</h1>
+          <p class="sub">Your box is showing a Wi-Fi password on its screen —
+            under <b>Get the Virtues app</b>. Enter it here and your phone will
+            connect to the box directly.</p>
+          ${errorText ? `<p class="msg err">${esc(errorText)}</p>` : ''}
+          <label for="appwd">Password from the box's screen</label>
+          <input id="appwd" type="text" autocapitalize="off" autocorrect="off"
+                 autocomplete="off" spellcheck="false" enterkeyhint="go"
+                 style="font-family:ui-monospace,Menlo,monospace;letter-spacing:.06em">
+          <button class="primary" id="joinap" disabled>Connect to the box</button>
+          <p class="hint">Your phone will show a "Wants to Join" prompt — tap Join.
+            There's no internet on the box's network; that's normal and temporary.</p>`;
+        const pwd = document.getElementById('appwd');
+        const go = document.getElementById('joinap');
+        pwd.addEventListener('input', () => (go.disabled = pwd.value.length < 8));
+        pwd.addEventListener('keydown', (e) => {
+          if (e.key === 'Enter' && pwd.value.length >= 8) joinSetupNetwork(pwd.value);
+        });
+        go.addEventListener('click', () => joinSetupNetwork(pwd.value));
+        document.getElementById('back').addEventListener('click', start);
+        pwd.focus();
+      }
+
+      async function joinSetupNetwork(passphrase) {
+        app.innerHTML = `
+          <p class="kicker">Setting up a new box</p>
+          <h1>Connecting…</h1>
+          <div class="wait"><span class="pip"></span><span>Joining the box's network</span></div>
+          <p class="sub">If your phone asks to join a <b>Virtues</b> network, tap
+            <b>Join</b>.</p>`;
+        let res;
+        try {
+          res = await invoke('plugin:reach|wifi_join', {
+            ssidPrefix: 'Virtues-',
+            passphrase,
+          });
+        } catch (e) {
+          // No programmatic join on this platform — manual instructions.
+          return renderNewBox(
+            'This phone can\'t join automatically. Join the Virtues network from ' +
+            'your Wi-Fi settings with that same password, then come back here.');
+        }
+        if (!res || !res.joined) {
+          return renderNewBox(res && res.error
+            ? res.error
+            : 'Couldn\'t join. Check the password against the box\'s screen.');
+        }
+        // Joined. The box is at 10.42.0.1; give the association a beat, then
+        // confirm setup is open and hand over to the wifi picker.
+        const deadline = Date.now() + 20_000;
+        const probe = async () => {
+          try {
+            if (await invoke('plugin:reach|provision_open', { server: 'http://10.42.0.1:8000' })) {
+              state.origin = 'http://10.42.0.1:8000';
+              return loadNetworks();
+            }
+          } catch { /* association still settling */ }
+          if (Date.now() > deadline) {
+            return renderNewBox(
+              'Connected, but the box didn\'t answer. Make sure its screen shows ' +
+              '"Get the Virtues app", then try again.');
+          }
+          setTimeout(probe, 2000);
+        };
+        setTimeout(probe, 2500);
+      }
+
       // ── SETUP: the box has no network yet ─────────────────────────────────
 
       function bars(signal) {
@@ -304,6 +386,10 @@
           const lan = servers.find((s) => !onSetupSubnet(s.origin));
           if (lan) {
             state.origin = lan.origin;
+            // Drop the setup-network config we added: the phone should glide
+            // back to its own wifi, not linger on a network that is gone.
+            // Fire-and-forget — cleanup must never block the pair step.
+            invoke('plugin:reach|wifi_forget', { ssidPrefix: 'Virtues-' }).catch(() => {});
             return renderPair([lan], '', `Your box is on ${ssid}.`);
           }
           const setupBox = await findSetupBox(servers);
@@ -362,7 +448,11 @@
           </form>
           <div class="msg" id="msg"></div>
           <p class="hint">The code is on your box's screen. On a box with no screen, run
-            <b>virtues pair</b> on it. It rotates every few minutes — a fresh one always works.</p>`;
+            <b>virtues pair</b> on it. It rotates every few minutes — a fresh one always works.</p>
+          <button class="back" id="newbox">Setting up a brand-new box? Start here →</button>`;
+
+        const newbox = document.getElementById('newbox');
+        if (newbox) newbox.addEventListener('click', () => renderNewBox());
 
         const rescan = document.getElementById('rescan');
         if (rescan) rescan.addEventListener('click', (e) => { e.preventDefault(); start(); });

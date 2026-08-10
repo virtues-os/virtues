@@ -1,32 +1,35 @@
-//! Captive-portal detection — makes `/provision` open by itself.
+//! Connectivity-probe handling on the setup AP — and the story of a reversal.
 //!
 //! When a phone joins a wifi network, iOS, Android and Windows each fetch a
 //! known URL and check for an exact response. Get it, and the network is
 //! "connected". Get anything else, and the OS declares a captive portal and
-//! **opens the page for you**. That auto-open is the entire reason this module
-//! exists: without it, someone who has just scanned the QR and joined
-//! `Virtues-XXXX` is sitting on a network with no internet and no instructions,
-//! and the only way forward is to be told an IP address to type.
+//! opens its Captive Network Assistant over the page.
 //!
-//! So this is a small deception, on purpose, and only in the one window where
-//! it is true: the box really is a network that cannot reach the internet, and
-//! there really is something the owner must do before it can.
+//! **This module used to exploit that on purpose** — answer "captive" while
+//! setup was unfinished so the CNA would auto-open `/provision`. Hardware
+//! (2026-08-10) killed the idea in three separate ways: the CNA is a
+//! stripped-down WebKit that rendered our SPA as a blank sheet; the OS
+//! force-reopens the sheet and refuses to let the user leave it; and the CNA
+//! caches portal pages per-SSID *across box upgrades*, so a fixed box kept
+//! showing a broken page. Every failure was on an OS surface we cannot patch.
 //!
-//! **Two phases, and the second is the one everybody forgets.**
+//! The deeper realization that made the reversal easy: **the captive portal
+//! served a user who cannot exist.** Pairing requires an app holding an iroh
+//! key, so an app-less user who provisioned wifi via a portal still could not
+//! finish onboarding. The app drives setup now (it joins the AP itself via
+//! `NEHotspotConfiguration` and runs the wifi picker natively); `/portal`
+//! survives as an unadvertised manual hatch.
 //!
-//!   * Setup unfinished → answer the probe with something that is NOT the
-//!     expected token. The OS shows the portal.
-//!   * Box online → answer with EXACTLY what the OS wants. It clears the
-//!     captive flag and stops asking.
+//! So today the job is the opposite: **answer every probe with its vendor's
+//! exact success token so the CNA never opens.** The OS concludes the network
+//! is fine, keeps the association, and leaves our app alone. Consumer IoT
+//! setup (Echo, Sonos) converged on the same suppression.
 //!
-//! Skipping the second phase is what makes a captive portal feel broken: the
-//! network never "settles", the OS keeps re-probing, and iOS will eventually
-//! drop the association. Measured on the Dragon while testing a portal that had
-//! only the first phase — 22 probes in 90 seconds from two devices, forever.
-//!
-//! This runs as middleware rather than as routes because Apple's second probe
-//! host (`netcts.cdn-apple.com`) asks for `/`, which is the SPA's own route.
-//! Only the `Host` header distinguishes them.
+//! Still middleware rather than routes, because Apple's second probe host
+//! (`netcts.cdn-apple.com`) asks for `/`, which is the SPA's own route — only
+//! the `Host` header distinguishes them. The byte-exactness of the success
+//! bodies is what all of this rests on: get one wrong and every joined network
+//! looks captive forever.
 
 use axum::{
     body::Body,
@@ -69,39 +72,54 @@ fn probe_host(headers: &HeaderMap) -> Option<String> {
         .then_some(host)
 }
 
-/// Middleware: intercept OS connectivity probes, pass everything else through.
+/// Middleware: answer OS connectivity probes with SUCCESS, always.
+///
+/// **This used to answer "captive" during setup, and that was the mistake.**
+/// Telling iOS the network is captive summons the Captive Network Assistant —
+/// a stripped-down WebKit sheet the OS force-reopens and will not let the user
+/// leave. On hardware 2026-08-10 that sheet rendered our SPA as a blank white
+/// page, then a *cached* three-hour-old page after we fixed it (the CNA caches
+/// portal pages per-SSID, across box upgrades). Every failure was on an OS
+/// surface we do not control.
+///
+/// The deeper realization: the captive portal served a user who cannot exist.
+/// Pairing requires an app holding an iroh key, so an app-less user who
+/// provisioned wifi through a portal still could not finish onboarding. The
+/// app drives setup (`wifi_join` + the connect-screen flow); the portal at
+/// `/portal` remains as an unadvertised manual hatch.
+///
+/// So: probes get the exact success token their vendor expects, the OS
+/// concludes "this network is fine", and no sheet ever opens. The phone shows
+/// "No Internet" on the wifi row at worst, keeps the association, and our app
+/// works undisturbed. Suppressing the CNA this way is what consumer IoT setup
+/// (Echo, Sonos) has converged on.
 pub async fn intercept(request: Request, next: Next) -> Response {
-    let Some(host) = probe_host(request.headers()) else {
-        return next.run(request).await;
-    };
-
-    // "Is the box on a real network yet?" is the honest form of "is setup
-    // done". Once it is, the phone should stop being told it is captive — the
-    // box is about to stop being the phone's network at all.
-    if crate::cli::link::primary_ip().is_some() && !crate::maintenance::setup_ap::provisioning_in_flight() {
+    if let Some(host) = probe_host(request.headers()) {
         return success_for(&host);
     }
 
-    // Not online yet: send them to the page that fixes that. A 302 is what the
-    // OS's own portal detector follows; the body is for anything that doesn't.
-    //
-    // **`/portal`, not `/provision`.** `/provision` is a SvelteKit route, and
-    // the frontend is `adapter-static` with no server-side rendering — an empty
-    // document until ES modules load and a client router boots. The browser
-    // that receives this redirect is iOS's Captive Network Assistant, a
-    // stripped-down WebKit in a sheet, and on hardware 2026-08-10 it rendered
-    // that as a blank white page. Worse, because this middleware tells iOS the
-    // network IS captive, the OS kept forcing the blank sheet back open and
-    // would not let the owner reach Safari to work around it. Pointing a
-    // captive redirect at a JS-only page builds a trap and then locks it.
-    // `/portal` is plain server-rendered HTML with a real form. See
-    // `api::portal`.
-    (
-        StatusCode::FOUND,
-        [(header::LOCATION, "http://10.42.0.1:8000/portal")],
-        "Connect your Virtues box: http://10.42.0.1:8000/portal\n",
-    )
-        .into_response()
+    // The manual hatch: someone told to "open 10.42.0.1 in a browser" lands on
+    // the SPA fallback — a blank page in exactly the browsers that need the
+    // hatch. Send bare-IP roots to the portal instead. Scoped to the setup
+    // AP's own address so the box's real UI (via mDNS name, LAN IP, loopback)
+    // is untouched.
+    let is_hatch = request.uri().path() == "/"
+        && request
+            .headers()
+            .get(header::HOST)
+            .and_then(|h| h.to_str().ok())
+            .map(|h| h.split(':').next().unwrap_or(h) == "10.42.0.1")
+            .unwrap_or(false);
+    if is_hatch {
+        return (
+            StatusCode::FOUND,
+            [(header::LOCATION, "/portal")],
+            "",
+        )
+            .into_response();
+    }
+
+    next.run(request).await
 }
 
 /// The exact response each vendor treats as "this network is fine".

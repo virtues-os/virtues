@@ -11,6 +11,8 @@ Default permissions for the reach plugin
 - `allow-provision-open`
 - `allow-provision-networks`
 - `allow-provision-join`
+- `allow-wifi-join`
+- `allow-wifi-forget`
 - `allow-outbox-stats`
 - `allow-drain-now`
 - `allow-radio-stats`
@@ -280,6 +282,58 @@ Enables the reach_status command without any pre-configured scope.
 <td>
 
 Denies the reach_status command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`reach:allow-wifi-forget`
+
+</td>
+<td>
+
+Enables the wifi_forget command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`reach:deny-wifi-forget`
+
+</td>
+<td>
+
+Denies the wifi_forget command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`reach:allow-wifi-join`
+
+</td>
+<td>
+
+Enables the wifi_join command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`reach:deny-wifi-join`
+
+</td>
+<td>
+
+Denies the wifi_join command without any pre-configured scope.
 
 </td>
 </tr>

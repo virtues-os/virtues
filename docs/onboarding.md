@@ -46,22 +46,33 @@ after joining it — before anyone could pair. The worry the old rule encoded
 "phone is on our AP" are mutually exclusive anyway. Bonus: an ethernet box no
 longer raises a setup network it never needed.
 
-**The app is the wizard; the captive portal is the floor.** When the Virtues app
-is already installed, joining the setup AP is enough — the app's connect screen
-probes `/api/provision/*`, and a 200 means "unclaimed box, and I am on its setup
-network" (the box's own two gates, answered in one call). It then runs the wifi
-picker natively, waits out the switchover, re-finds the box on the owner's LAN,
-and moves to the pair code — one continuous session. The portal lives at `/portal`
-and is plain server-rendered HTML — iOS's Captive Network Assistant cannot run
-the SPA (`adapter-static`, no SSR: every page is blank until ES modules boot),
-and rendered the old `/provision` route as an inescapable white sheet. It
-remains the path for laptops, Android, and anyone without the app. The win is not tap count: it is that the home wifi password gets a native
-field with a password manager instead of a captive webview, and that the app
-survives the network handoff.
+**The app is the wizard, and there is no app-less onboarding — because there is
+no app-less pairing** (decided 2026-08-10, after a day on hardware). Pairing
+requires a held iroh key, so an app-less user who provisioned wifi through a
+captive portal still could not finish; the portal served a user who cannot
+exist. So the app drives everything: its connect screen offers *Set up a new
+box*, joins `Virtues-XXXX` itself (`wifi_join` → `NEHotspotConfiguration`,
+prefix-matched on `Virtues-` so the owner types only the passphrase off the
+display), runs the wifi picker natively, waits out the switchover, re-finds the
+box, and moves to the pair code — one continuous session.
 
-**The display shows one job at a time** (three states, not two): offline +
-unclaimed → *join me* (wifi QR + AP credentials, no pair code); online +
-unclaimed → *claim me* (app-download QR + the code); claimed → ambient. The two
+**The captive sheet is suppressed, not exploited.** The box now answers every
+OS connectivity probe with its vendor's exact success token, so the Captive
+Network Assistant never opens. The reversal is earned: on hardware the CNA
+rendered our SPA as a blank sheet, force-reopened it, refused to let the owner
+leave, and cached a stale portal page per-SSID across a box upgrade. Every
+failure was on an OS surface we cannot patch. `/portal` (plain server-rendered
+HTML, no JS) survives as the unadvertised manual hatch — join the AP by hand,
+open `10.42.0.1` — for Android (until `WifiNetworkSpecifier` lands) and
+laptops. The old `/provision` URL 301s to it server-side, because phones cache
+captive URLs per-SSID and only a redirect can un-teach them.
+
+**The display shows one job at a time** (three states): offline + unclaimed →
+*get the app* (app QR — shown while the phone still has internet, the only
+moment it can be followed — plus the AP passphrase the app will ask for);
+online + unclaimed → *claim me* (app QR + the pair code); claimed → ambient.
+The wifi join-QR was removed outright: its camera-banner presentation failed
+twice on hardware, and the app path never needs it. The two
 setup screens were one screen until 2026-08-10, and it carried two different
 secrets at once — the first person shown it read the pair code and typed it as
 the wifi password. Labelling helped and did not fix it: the fault was presenting
@@ -133,17 +144,19 @@ the box) assumed a browser could pair, which it cannot.
 ```
 power on
   → boot ~10s (no desktop session, no wait-online)
-  → display SCREEN 1 "Put me on your Wi-Fi": join QR + SSID/passphrase
-  → box hosts Virtues-XXXX; phone camera scans the QR and joins it
-  →   with the app installed → its connect screen detects setup mode and
-  →     runs the wifi picker natively (password in a real field)
-  →   without it → the phone's OS auto-opens /portal (captive, no-JS HTML)
-  → owner picks their network from the BOX's scan list, types one password
+  → display SCREEN 1 "Get the Virtues app": app QR + the AP passphrase
+  → owner installs the app (phone still online), taps "Set up a new box",
+    types the passphrase off the screen
+  → the APP joins Virtues-XXXX itself (one "Wants to Join" dialog)
+  → app shows the BOX's scan list (cached pre-AP), owner picks + types their
+    home wifi password in a native field
   → sequential switchover: AP down, join, AP back up ONLY if it failed
-  → display SCREEN 2 "In the Virtues app, enter …": app QR + the 6-digit code
-  →   (the phone has internet again — the only moment that QR is followable)
+  → phone glides back to home wifi; app re-finds the box on the LAN
+  → display SCREEN 2 "In the Virtues app, enter …": the 6-digit code
   → owner types the code → paired
   → display flips to the ambient screen
+  (manual hatch, unadvertised: join the AP from wifi settings, open 10.42.0.1
+   → /portal, plain HTML — Android + laptops)
 ```
 
 Ethernet skips straight to screen 2: the box is online from boot, so no setup
