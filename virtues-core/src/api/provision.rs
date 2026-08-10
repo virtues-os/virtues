@@ -46,7 +46,7 @@ use crate::server::AppState;
 /// AP. Anything else is somewhere we did not put it.
 const AP_SUBNET: [u8; 3] = [10, 42, 0];
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct Network {
     pub ssid: String,
     /// 0–100, as NetworkManager reports it.
@@ -134,9 +134,35 @@ pub(crate) async fn refuse_portal(
     refuse(state, peer, headers).await
 }
 
-/// The box's scan, for `api::portal`.
+/// The box's scan, for `api::portal` and `maintenance::setup_ap`'s cache.
 pub(crate) async fn scan_networks() -> Result<Vec<Network>, String> {
     scan().await
+}
+
+/// The scan the provisioning surfaces actually serve: live if it worked,
+/// cached-from-before-the-AP-rose if it did not.
+///
+/// The live scan fails in the exact situation the portal exists for: a phone
+/// associated to our AP pins the radio to its channel, so off-channel scanning
+/// returns nothing (empty on hardware 2026-08-10, with the portal rendering
+/// "No networks found" to the one person the page was built for). The cache is
+/// written by `setup_ap` while the radio is still free, immediately before
+/// every raise — see [`crate::maintenance::setup_ap::SCAN_CACHE`].
+///
+/// The live attempt still goes first: on a radio with no client attached it
+/// works and is fresher than any cache.
+pub(crate) async fn scan_or_cached() -> Result<Vec<Network>, String> {
+    let live = scan().await;
+    if matches!(&live, Ok(nets) if !nets.is_empty()) {
+        return live;
+    }
+    match std::fs::read(crate::maintenance::setup_ap::SCAN_CACHE) {
+        Ok(bytes) => match serde_json::from_slice::<Vec<Network>>(&bytes) {
+            Ok(nets) if !nets.is_empty() => Ok(nets),
+            _ => live,
+        },
+        Err(_) => live,
+    }
 }
 
 /// The switchover, factored out so the JSON route and the HTML portal perform
@@ -188,7 +214,7 @@ pub async fn networks_handler(
     if let Some(r) = refuse(&state, &peer, &headers).await {
         return r;
     }
-    match scan().await {
+    match scan_or_cached().await {
         Ok(nets) => (StatusCode::OK, Json(nets)).into_response(),
         Err(e) => (
             StatusCode::INTERNAL_SERVER_ERROR,

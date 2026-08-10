@@ -169,7 +169,7 @@ pub async fn index_handler(
         _ => String::new(),
     };
 
-    let body = match crate::api::provision::scan_networks().await {
+    let body = match crate::api::provision::scan_or_cached().await {
         Ok(nets) if !nets.is_empty() => {
             let rows: String = nets
                 .iter()
