@@ -224,12 +224,28 @@ fn holds_own_network(nmcli_active: &str) -> bool {
         })
 }
 
+/// Where the pre-AP wifi scan is cached for `api::provision` to fall back on.
+///
+/// In `/run`: stale-after-reboot is correct, because so is the scan.
+pub const SCAN_CACHE: &str = "/run/virtues-wifi-scan.json";
+
 /// Bring the AP up on the wifi device.
 ///
 /// WPA2, never open. The owner's home wifi password crosses this link during
 /// provisioning; on an open AP that is cleartext to anyone in range. It costs
 /// them no typing, because the passphrase rides in the QR the display shows.
+///
+/// **Scans first, then raises — the order is the fix for a live failure.** The
+/// portal's "networks the box can see" list came back empty on hardware
+/// (2026-08-10) with a phone joined to the AP, though the same scan works from
+/// a root shell with no client attached. An AP serving an associated station
+/// has to hold its channel, so off-channel scanning is exactly the thing it
+/// cannot reliably do. The one moment a clean scan is guaranteed — and the
+/// freshest the list can ever be — is right before the AP goes up, while the
+/// radio is still free. So every raise refreshes the cache, which also covers
+/// the failed-join path: the re-raise after a failure re-scans on the way.
 async fn raise(ssid: &str) -> Result<(), crate::Error> {
+    cache_scan().await;
     let psk = ap_passphrase()?;
     let Some(dev) = wifi_device().await else {
         return Err(crate::Error::Other("no wifi device to host the AP".into()));
@@ -246,6 +262,29 @@ async fn raise(ssid: &str) -> Result<(), crate::Error> {
             String::from_utf8_lossy(&o.stderr).trim()
         ))),
         None => Err(crate::Error::Other("nmcli not available".into())),
+    }
+}
+
+/// Scan while the radio is free and write the result where `api::provision`
+/// can find it. Best-effort on purpose: a failed cache write must never stop
+/// the AP from rising — a box with a stale network list is still provisionable,
+/// and a box with no AP is not reachable at all.
+async fn cache_scan() -> () {
+    match crate::api::provision::scan_networks().await {
+        Ok(nets) if !nets.is_empty() => {
+            match serde_json::to_vec(&nets) {
+                Ok(json) => {
+                    if let Err(e) = std::fs::write(SCAN_CACHE, json) {
+                        tracing::warn!("setup_ap: could not write scan cache: {e}");
+                    } else {
+                        tracing::info!(networks = nets.len(), "setup_ap: cached pre-AP wifi scan");
+                    }
+                }
+                Err(e) => tracing::warn!("setup_ap: could not serialize scan: {e}"),
+            }
+        }
+        Ok(_) => tracing::warn!("setup_ap: pre-AP scan saw no networks; leaving prior cache"),
+        Err(e) => tracing::warn!("setup_ap: pre-AP scan failed: {e}; leaving prior cache"),
     }
 }
 
