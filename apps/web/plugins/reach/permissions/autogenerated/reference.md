@@ -8,6 +8,9 @@ Default permissions for the reach plugin
 - `allow-reach-status`
 - `allow-forget`
 - `allow-discover`
+- `allow-provision-open`
+- `allow-provision-networks`
+- `allow-provision-join`
 - `allow-outbox-stats`
 - `allow-drain-now`
 - `allow-radio-stats`
@@ -147,6 +150,84 @@ Enables the pair command without any pre-configured scope.
 <td>
 
 Denies the pair command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`reach:allow-provision-join`
+
+</td>
+<td>
+
+Enables the provision_join command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`reach:deny-provision-join`
+
+</td>
+<td>
+
+Denies the provision_join command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`reach:allow-provision-networks`
+
+</td>
+<td>
+
+Enables the provision_networks command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`reach:deny-provision-networks`
+
+</td>
+<td>
+
+Denies the provision_networks command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`reach:allow-provision-open`
+
+</td>
+<td>
+
+Enables the provision_open command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`reach:deny-provision-open`
+
+</td>
+<td>
+
+Denies the provision_open command without any pre-configured scope.
 
 </td>
 </tr>

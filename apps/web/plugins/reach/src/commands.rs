@@ -1,6 +1,6 @@
 use tauri::{command, AppHandle, Runtime};
 
-use crate::models::{DiscoverResponse, FoundServer, PairRequest, ReachStatus};
+use crate::models::{DiscoverResponse, FoundServer, PairRequest, ProvisionJoinResult, ReachStatus};
 use crate::ReachExt;
 use crate::Result;
 use virtues_reach_client::outbox;
@@ -42,6 +42,76 @@ pub(crate) async fn discover<R: Runtime>(_app: AppHandle<R>) -> Result<DiscoverR
     format!("scanned from {}", ips.join(", "))
   };
   Ok(DiscoverResponse { servers, debug })
+}
+
+// ─── Wifi provisioning over the box's setup AP ───────────────────────────────
+//
+// These three drive an APPLIANCE through wifi setup from the app, while the
+// phone is joined to the box's own `Virtues-XXXX` network. See
+// `virtues_reach_client::provision` for why this runs in the app at all rather
+// than being left to the box's captive portal — short version: the owner's home
+// wifi password deserves a native field, and the app can hold the setup session
+// across the network handoff that follows.
+//
+// They go through Rust, not `fetch` in the webview, for the same reason `pair`
+// does: plain HTTP to `10.42.0.1` from a `tauri://` origin is what App
+// Transport Security exists to block.
+
+/// Is this box in setup mode and reachable from where we are standing?
+///
+/// The box's own gates answer it: `/api/provision/*` exists only for a caller
+/// on the AP subnet talking to an *unclaimed* box, so a 200 means both at once.
+/// Cheap enough to run against every candidate the subnet scan turned up.
+#[command]
+pub(crate) async fn provision_open<R: Runtime>(
+  _app: AppHandle<R>,
+  server: String,
+) -> Result<bool> {
+  Ok(virtues_reach_client::provision::is_open(&crate::normalize_server(&server)).await)
+}
+
+/// Networks the BOX can see — not the phone's list. Different antenna, possibly
+/// a different room; offering the phone's would let someone pick a network the
+/// box cannot hear and produce a failure with no explanation.
+#[command]
+pub(crate) async fn provision_networks<R: Runtime>(
+  _app: AppHandle<R>,
+  server: String,
+) -> Result<Vec<virtues_reach_client::provision::Network>> {
+  virtues_reach_client::provision::networks(&crate::normalize_server(&server))
+    .await
+    .map_err(crate::Error::from)
+}
+
+/// Put the box on the owner's network.
+///
+/// Returns one of `"joined" | "failed" | "unknown"`, and **`"unknown"` is the
+/// expected outcome, not an edge case**: the box drops its AP as the first step
+/// of the join, so the phone issuing this request usually loses its socket
+/// mid-flight — on the success path as often as the failure path. The caller
+/// must treat it as "go and look", never as an error.
+#[command]
+pub(crate) async fn provision_join<R: Runtime>(
+  _app: AppHandle<R>,
+  server: String,
+  ssid: String,
+  psk: Option<String>,
+) -> Result<ProvisionJoinResult> {
+  use virtues_reach_client::provision::JoinOutcome;
+  let outcome = virtues_reach_client::provision::join(
+    &crate::normalize_server(&server),
+    &ssid,
+    psk.as_deref(),
+  )
+  .await
+  .map_err(crate::Error::from)?;
+  Ok(match outcome {
+    JoinOutcome::Joined => ProvisionJoinResult { outcome: "joined".into(), detail: None },
+    JoinOutcome::Failed(d) => {
+      ProvisionJoinResult { outcome: "failed".into(), detail: Some(d) }
+    }
+    JoinOutcome::Unknown => ProvisionJoinResult { outcome: "unknown".into(), detail: None },
+  })
 }
 
 /// Sync-queue health for a stream (device screen's Sync section).

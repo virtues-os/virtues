@@ -146,6 +146,46 @@ pub async fn display_qr_handler(
         .into_response()
 }
 
+/// Where an owner gets the app. Public, so it is safe to put in a QR.
+///
+/// A plain landing page rather than a store deep link: the primary client is
+/// the desktop app, the box does not know what scanned it, and the page can
+/// route to the right store without the box shipping a guess that goes stale.
+const DOWNLOADS_URL: &str = "https://virtues.com/downloads";
+
+/// `GET /api/display/app-qr` — where to get the app, as an SVG.
+///
+/// Separate endpoint from `/api/display/qr` because the two are shown at
+/// different moments and mean different things, and merging them would put the
+/// screen back in the state this whole sequence exists to undo.
+///
+/// **This QR is only useful once the box is online**, which is exactly when the
+/// display shows it. Before that the owner's phone is joined to a setup network
+/// with no uplink, and a download link is an instruction they cannot follow —
+/// the ordering bug that shipped in the first version of this screen: it
+/// offered `virtues.com/downloads` to a phone it had just told to join an AP
+/// with no internet.
+pub async fn display_app_qr_handler(
+    ConnectInfo(peer): ConnectInfo<SocketAddr>,
+    headers: HeaderMap,
+) -> impl IntoResponse {
+    if !is_box_local(&peer, &headers) {
+        return (StatusCode::FORBIDDEN, "not available off-box").into_response();
+    }
+    let svg = crate::api::pair::render_qr_svg(DOWNLOADS_URL);
+    (
+        StatusCode::OK,
+        [
+            (axum::http::header::CONTENT_TYPE, "image/svg+xml"),
+            // Constant payload, but the panel is long-lived and a cached SVG
+            // buys nothing on a loopback request.
+            (axum::http::header::CACHE_CONTROL, "no-store"),
+        ],
+        svg,
+    )
+        .into_response()
+}
+
 /// The AP's passphrase, read the same way `maintenance::setup_ap` derives it.
 ///
 /// Loopback-only like everything else here, and by the same argument: it is a

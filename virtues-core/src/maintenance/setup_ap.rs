@@ -6,13 +6,29 @@
 //! own wifi network, the display shows a QR that joins it, and the owner's
 //! phone does the typing.
 //!
-//! **The rule is: the AP is up while the box is unclaimed, and comes down once
-//! a device pairs.** Not "up until the box has wifi" — that would tear the AP
-//! down at the exact moment the phone is still on it, mid-flow, having just
-//! handed over the home wifi credentials. Keeping it up until a device is
-//! actually paired means provisioning and pairing can both finish in the one
-//! visit, while the phone is still on the box's own network, where proximity
-//! already proves ownership.
+//! **The rule is: the AP is up while the box is unclaimed AND has no network of
+//! its own.** It comes down when a device pairs, or when the box gets a network
+//! — whichever happens first — and it is *raised* again if the box loses that
+//! network before anyone pairs.
+//!
+//! This rule replaced "up until a device pairs, full stop" on 2026-08-10, which
+//! could not work on this radio and quietly broke the flow it was written to
+//! protect. Pairing happens *after* provisioning (`/api/provision/*` 404s the
+//! moment a device pairs, so it cannot happen the other way round), which means
+//! the instant after a successful join the box is online, unclaimed, and its AP
+//! is down. The old rule saw "unclaimed, no AP" and raised one — onto the single
+//! radio now holding the association it had just formed. The box fell off the
+//! owner's wifi ~20s after joining it, every time, and the owner never got to
+//! the pairing step.
+//!
+//! The original worry behind that rule was tearing the AP down while the phone
+//! is still sitting on it mid-provision. Two things cover it. [`PROVISIONING_LOCK`]
+//! holds this reconciler off for the whole join window; and on hardware that
+//! cannot do AP+STA, "box is online" and "phone is on our AP" are mutually
+//! exclusive states — the situation the old rule guarded against cannot arise.
+//!
+//! It also stops the box raising a pointless setup network on the ethernet path,
+//! where it has been online since boot and no AP was ever wanted.
 //!
 //! **AP+STA concurrency does NOT work on this radio — measured, not assumed.**
 //! `iw list` advertises `#{managed} <= 1, #{AP} <= 1, total <= 4`, which reads
@@ -133,27 +149,79 @@ async fn reconcile(pool: &PgPool) -> Result<(), crate::Error> {
     // Excludes the always-present `local-console` row; see
     // `api::pair::paired_device_count`. Counting it made a fresh box look
     // claimed from first boot, so the AP never rose at all.
-    let claimed = crate::api::pair::paired_device_count(pool).await;
+    let claimed = crate::api::pair::paired_device_count(pool).await > 0;
     let up = ap_is_up().await;
+    // Only asked when it can change the answer — it shells out to nmcli, and
+    // for a claimed box the AP is coming down regardless.
+    let online = !claimed && has_own_network().await;
 
-    match (claimed > 0, up) {
-        // Claimed and the AP is still up: setup is over, take it down. This is
-        // the only thing that ends the AP's life — see the module docs on why
-        // it is not "the box got wifi".
-        (true, true) => {
+    match (claimed, online, up) {
+        // Setup is over. Delete, don't just down: the profile is per-setup and
+        // leaving it behind invites a later reconciler to resurrect it.
+        (true, _, true) => {
             tracing::info!("setup_ap: box is claimed, dropping the setup AP");
             let _ = nmcli(&["connection", "down", AP_CON_NAME]).await;
             let _ = nmcli(&["connection", "delete", AP_CON_NAME]).await;
         }
-        // Unclaimed with no AP: raise it.
-        (false, false) => {
+        // Unclaimed, no network of its own, no AP: this is what the AP is for.
+        (false, false, false) => {
             let ssid = ap_ssid();
-            tracing::info!("setup_ap: box is unclaimed, raising {ssid}");
+            tracing::info!("setup_ap: box is unclaimed and offline, raising {ssid}");
             raise(&ssid).await?;
         }
+        // Unclaimed, online, AP still up. Should be unreachable on a radio that
+        // cannot do AP+STA — but if this hardware ever can, the AP is now
+        // costing the owner's association nothing but risk, and the box no
+        // longer needs it. Down, not delete: still unclaimed, so losing the
+        // network must bring it back.
+        (false, true, true) => {
+            tracing::info!("setup_ap: box has its own network now, dropping the setup AP");
+            let _ = nmcli(&["connection", "down", AP_CON_NAME]).await;
+        }
+        // (false, true, false) — online, unclaimed, no AP. THE PAIRING WINDOW.
+        // Deliberately nothing: the owner has just provisioned wifi and is
+        // about to type the code. Raising an AP here is precisely the bug this
+        // match was rewritten to remove.
         _ => {}
     }
     Ok(())
+}
+
+/// Does the box have a network of its own — anything that is not our setup AP?
+///
+/// Asked of NetworkManager rather than derived from the route table. The
+/// obvious alternative, `cli::link::primary_ip()`, answers "is there a route
+/// out", which is a different question: it is also false on a network whose
+/// uplink is down, and the box's own AP subnet is exactly the kind of thing
+/// that makes route-based reasoning ambiguous. "NM holds an active wifi-station
+/// or ethernet profile that isn't ours" is the fact we actually want.
+///
+/// Ethernet counts. A box provisioned by cable is online from boot and must
+/// never raise a setup network.
+async fn has_own_network() -> bool {
+    let Some(out) = nmcli(&["-t", "-f", "NAME,TYPE", "connection", "show", "--active"]).await
+    else {
+        // Cannot tell. Say no: the cost of a wrong "no" is an unnecessary AP on
+        // a box the owner can still reach, and of a wrong "yes" is a box with
+        // no network and no AP — unreachable by any means, needing a trip to
+        // wherever it is mounted.
+        return false;
+    };
+    holds_own_network(&String::from_utf8_lossy(&out.stdout))
+}
+
+/// The parsing half of [`has_own_network`], split out so every branch is
+/// testable without a radio.
+fn holds_own_network(nmcli_active: &str) -> bool {
+    nmcli_active
+        .lines()
+        .map(crate::api::provision::split_terse)
+        .filter(|f| f.len() >= 2)
+        .any(|f| {
+            // `lo`/`loopback` and NM's `p2p-dev-*` shadow profiles are not a
+            // network anyone can reach the box on.
+            f[0] != AP_CON_NAME && (f[1] == "802-11-wireless" || f[1] == "802-3-ethernet")
+        })
 }
 
 /// Bring the AP up on the wifi device.
@@ -261,5 +329,45 @@ mod tests {
         assert!(s.starts_with("Virtues-"), "got {s}");
         // Must stay short enough to read off a screen and type into a phone.
         assert!(s.len() <= 16, "got {s}");
+    }
+
+    #[test]
+    fn our_own_ap_is_not_a_network_of_our_own() {
+        // THE REGRESSION THIS FILE EXISTS TO PREVENT. A box hosting only its
+        // setup AP is offline, so the reconciler must keep the AP up. If this
+        // ever returns true, the AP is never raised and an appliance with no
+        // network has no way to be reached at all.
+        assert!(!holds_own_network("virtues-setup-ap:802-11-wireless\nlo:loopback"));
+    }
+
+    #[test]
+    fn a_joined_wifi_network_counts() {
+        // And THIS is the other half: after a successful join the box is
+        // online and still unclaimed. Returning false here re-raises the AP on
+        // top of the association and drops the box off the owner's wifi before
+        // they can pair.
+        assert!(holds_own_network("weworkwifi:802-11-wireless\nlo:loopback"));
+    }
+
+    #[test]
+    fn ethernet_counts() {
+        // The "plug in ethernet and this finishes itself" path: online from
+        // boot, unclaimed for a while, and no setup network was ever wanted.
+        assert!(holds_own_network("Wired connection 1:802-3-ethernet"));
+    }
+
+    #[test]
+    fn an_ssid_containing_a_colon_still_counts() {
+        // nmcli escapes it as `\:`; naive splitting truncates the name to
+        // "my", which is not the AP's name either — so this happens to pass
+        // for the wrong reason unless the escaping is honoured. Pinned because
+        // the failure mode is silent.
+        assert!(holds_own_network(r"my\:net:802-11-wireless"));
+    }
+
+    #[test]
+    fn loopback_alone_is_not_a_network() {
+        assert!(!holds_own_network("lo:loopback"));
+        assert!(!holds_own_network(""));
     }
 }

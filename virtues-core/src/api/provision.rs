@@ -177,12 +177,19 @@ pub async fn join_handler(
     let out = nmcli_join(&req.ssid, req.psk.as_deref()).await;
     match out {
         Some(o) if o.status.success() => {
-            // Leave the AP down. The box is on the owner's network now, their
-            // phone rejoins its own wifi on its own, and both meet again on the
-            // LAN. setup_ap will not re-raise it while unclaimed... it will, in
-            // fact, on the next tick — deliberately, because the owner still has
-            // to pair, and until they do the AP is the only guaranteed route to
-            // a box whose new network might yet prove flaky.
+            // Leave the AP down, and it STAYS down: the box is on the owner's
+            // network now, their phone rejoins its own wifi on its own, and both
+            // meet again on the LAN to finish with pairing.
+            //
+            // `setup_ap` used to re-raise it here on the next tick — reasoning
+            // that an unclaimed box should always be reachable via its own AP.
+            // On a radio that cannot do AP+STA that raise lands on top of the
+            // association just formed and knocks the box straight back off the
+            // owner's wifi, ~20s after joining it, before they can pair. Fixed
+            // 2026-08-10: the AP is now conditioned on the box being offline
+            // too, so this window belongs to pairing. If the new network turns
+            // out to be flaky, losing it makes the box offline-and-unclaimed
+            // again and the AP returns on its own.
             (StatusCode::OK, Json(JoinResult { ok: true, detail: None })).into_response()
         }
         Some(o) => {
@@ -300,7 +307,11 @@ async fn scan() -> Result<Vec<Network>, String> {
 }
 
 /// Split one `nmcli -t` line, honouring its `\:` escaping.
-fn split_terse(line: &str) -> Vec<String> {
+///
+/// Shared with `maintenance::setup_ap`, which reads the same terse format to
+/// decide whether the box has a network of its own. A connection NAME is an
+/// SSID, and SSIDs contain colons.
+pub(crate) fn split_terse(line: &str) -> Vec<String> {
     let mut out = Vec::new();
     let mut cur = String::new();
     let mut escaped = false;

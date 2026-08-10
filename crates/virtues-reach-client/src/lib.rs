@@ -11,6 +11,7 @@ mod store;
 
 pub mod outbox;
 pub mod pair;
+pub mod provision;
 pub mod proxy;
 pub mod scan;
 pub mod session;
