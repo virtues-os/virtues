@@ -114,6 +114,110 @@ pub(crate) async fn provision_join<R: Runtime>(
   })
 }
 
+// ─── Improv BLE setup (iOS: CoreBluetooth, see ios/Sources/ImprovClient.swift) ─
+//
+// The PRIMARY setup path since 2026-08-10: the box serves the Improv Wi-Fi
+// GATT service while unclaimed (virtues-core maintenance::ble_provision), and
+// the app drives it from here. The phone never leaves its own network; the
+// join is watched live over BLE instead of inferred from a dead socket.
+//
+// On platforms without the client (Android for now, desktop), these return
+// empty/error and the connect screen falls back to LAN discovery + SoftAP.
+
+/// Scan for unclaimed boxes advertising Improv. Returns `{boxes: [...]}` with
+/// `id` (opaque, for the calls below), `name`, `improvState` (0x02 = needs
+/// wifi, 0x04 = already online), `rssi`.
+#[command]
+pub(crate) async fn improv_discover<R: Runtime>(
+  app: AppHandle<R>,
+  seconds: Option<f64>,
+) -> Result<serde_json::Value> {
+  #[cfg(target_os = "ios")]
+  {
+    use tauri::Manager;
+    let handle = app.state::<crate::IosPluginHandle<R>>();
+    return handle
+      .0
+      .run_mobile_plugin("improv_discover", serde_json::json!({ "seconds": seconds }))
+      .map_err(|e| crate::Error::Reach(e.to_string()));
+  }
+  #[cfg(not(target_os = "ios"))]
+  {
+    let _ = (app, seconds);
+    Ok(serde_json::json!({ "boxes": [] }))
+  }
+}
+
+/// Ask THAT BOX what wifi it can see, over BLE (Improv RPC 0x04).
+#[command]
+pub(crate) async fn improv_wifi_scan<R: Runtime>(
+  app: AppHandle<R>,
+  id: String,
+) -> Result<serde_json::Value> {
+  #[cfg(target_os = "ios")]
+  {
+    use tauri::Manager;
+    let handle = app.state::<crate::IosPluginHandle<R>>();
+    return handle
+      .0
+      .run_mobile_plugin("improv_wifi_scan", serde_json::json!({ "id": id }))
+      .map_err(|e| crate::Error::Reach(e.to_string()));
+  }
+  #[cfg(not(target_os = "ios"))]
+  {
+    let _ = (app, id);
+    Err(crate::Error::Reach("BLE setup is iOS-only for now".into()))
+  }
+}
+
+/// Send credentials and watch the join (Improv RPC 0x01). Progress arrives as
+/// `improv-progress` plugin events; the returned value is the outcome.
+#[command]
+pub(crate) async fn improv_provision<R: Runtime>(
+  app: AppHandle<R>,
+  id: String,
+  ssid: String,
+  password: String,
+) -> Result<serde_json::Value> {
+  #[cfg(target_os = "ios")]
+  {
+    use tauri::Manager;
+    let handle = app.state::<crate::IosPluginHandle<R>>();
+    return handle
+      .0
+      .run_mobile_plugin(
+        "improv_provision",
+        serde_json::json!({ "id": id, "ssid": ssid, "password": password }),
+      )
+      .map_err(|e| crate::Error::Reach(e.to_string()));
+  }
+  #[cfg(not(target_os = "ios"))]
+  {
+    let _ = (app, id, ssid, password);
+    Err(crate::Error::Reach("BLE setup is iOS-only for now".into()))
+  }
+}
+
+/// Drop the BLE connection. Safe to always call on leaving the setup flow.
+#[command]
+pub(crate) async fn improv_disconnect<R: Runtime>(app: AppHandle<R>) -> Result<()> {
+  #[cfg(target_os = "ios")]
+  {
+    use tauri::Manager;
+    let handle = app.state::<crate::IosPluginHandle<R>>();
+    handle
+      .0
+      .run_mobile_plugin::<serde_json::Value>("improv_disconnect", serde_json::json!({}))
+      .map_err(|e| crate::Error::Reach(e.to_string()))?;
+    return Ok(());
+  }
+  #[cfg(not(target_os = "ios"))]
+  {
+    let _ = app;
+    Ok(())
+  }
+}
+
 /// Join a wifi network whose SSID starts with `ssid_prefix`, natively.
 ///
 /// iOS only — `NEHotspotConfiguration` (NOT Personal Hotspot, NOT the

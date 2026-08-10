@@ -39,7 +39,62 @@ class WifiForgetArgs: Decodable {
   let ssidPrefix: String
 }
 
+class ImprovDiscoverArgs: Decodable {
+  let seconds: Double?
+}
+
+class ImprovTargetArgs: Decodable {
+  let id: String
+}
+
+class ImprovProvisionArgs: Decodable {
+  let id: String
+  let ssid: String
+  let password: String
+}
+
 class ReachPlugin: Plugin {
+  // ─── Improv BLE setup (see ImprovClient.swift) ─────────────────────────────
+
+  @objc public func improv_discover(_ invoke: Invoke) throws {
+    let args = try invoke.parseArgs(ImprovDiscoverArgs.self)
+    ImprovClient.shared.discover(seconds: args.seconds ?? 4.0) { boxes in
+      invoke.resolve(["boxes": boxes])
+    }
+  }
+
+  @objc public func improv_wifi_scan(_ invoke: Invoke) throws {
+    let args = try invoke.parseArgs(ImprovTargetArgs.self)
+    ImprovClient.shared.wifiScan(id: args.id) { networks, err in
+      if let err {
+        invoke.resolve(["networks": [] as [[String: Any]], "error": err])
+      } else {
+        invoke.resolve(["networks": networks ?? []])
+      }
+    }
+  }
+
+  @objc public func improv_provision(_ invoke: Invoke) throws {
+    let args = try invoke.parseArgs(ImprovProvisionArgs.self)
+    ImprovClient.shared.provision(
+      id: args.id, ssid: args.ssid, password: args.password,
+      onProgress: { [weak self] stage in
+        self?.trigger("improv-progress", data: ["stage": stage])
+      },
+      completion: { url, err in
+        if let err {
+          invoke.resolve(["ok": false, "error": err])
+        } else {
+          invoke.resolve(["ok": true, "url": url ?? ""])
+        }
+      })
+  }
+
+  @objc public func improv_disconnect(_ invoke: Invoke) throws {
+    ImprovClient.shared.disconnect()
+    invoke.resolve()
+  }
+
   @objc public func wifi_join(_ invoke: Invoke) throws {
     let args = try invoke.parseArgs(WifiJoinArgs.self)
     let config = NEHotspotConfiguration(
