@@ -651,6 +651,17 @@ impl<R: Runtime, T: Manager<R>> ReachExt<R> for T {
   }
 }
 
+// The Swift half (`ios/Sources/ReachPlugin.swift`): programmatic wifi join via
+// NEHotspotConfiguration, for driving an appliance's setup-AP flow from inside
+// the app instead of sending the user to Settings and a captive sheet.
+#[cfg(target_os = "ios")]
+tauri::ios_plugin_binding!(init_plugin_reach);
+
+/// Handle to the registered iOS plugin, for `run_mobile_plugin` calls.
+/// Managed state so commands can reach it; iOS-only by construction.
+#[cfg(target_os = "ios")]
+pub(crate) struct IosPluginHandle<R: Runtime>(pub tauri::plugin::PluginHandle<R>);
+
 pub fn init<R: Runtime>() -> TauriPlugin<R> {
   Builder::new("reach")
     .invoke_handler(tauri::generate_handler![
@@ -661,11 +672,22 @@ pub fn init<R: Runtime>() -> TauriPlugin<R> {
       commands::provision_open,
       commands::provision_networks,
       commands::provision_join,
+      commands::wifi_join,
+      commands::wifi_forget,
       commands::outbox_stats,
       commands::drain_now,
       commands::radio_stats
     ])
     .setup(|app, _api| {
+      #[cfg(target_os = "ios")]
+      {
+        match _api.register_ios_plugin(init_plugin_reach) {
+          Ok(handle) => {
+            app.manage(IosPluginHandle(handle));
+          }
+          Err(e) => tracing::error!(error = %e, "reach: iOS plugin registration failed — wifi join unavailable"),
+        }
+      }
       // Android: pin the storage base to the app-private sandbox BEFORE anything
       // resolves virtues_dir() — both ReachState::new() (box.json) and
       // init_outbox() (outbox.sqlite) read it below. See BASE_DIR.

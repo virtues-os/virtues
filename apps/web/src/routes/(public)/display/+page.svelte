@@ -135,45 +135,45 @@
 		     answering and a spinner would be the first thing it ever said. -->
 		<div class="boot"><span class="mark">∴</span></div>
 	{:else if !state_.claimed && !state_.online}
-		<!-- 1 · JOIN ME. The box has no network. One job: get it one. The pair
-		     code is deliberately absent — it is unusable until the owner has the
-		     app, and they cannot install the app from a network with no uplink. -->
+		<!-- 1 · SET ME UP. The box has no network, and THE APP is the wizard —
+		     it joins this box's setup network itself and drives the wifi setup
+		     natively (see the reach plugin's wifi_join). So the screen's job is
+		     exactly two facts: get the app (the phone still has internet at
+		     this moment — the only moment that's true), and the one password
+		     the app will ask for.
+
+		     The wifi join-QR that used to be the hero is GONE. Its camera-app
+		     banner was flaky on hardware (twice), and the app path never needs
+		     it. The SSID + passphrase stay as text — the manual hatch for
+		     Android and laptops (join by hand, browse to 10.42.0.1). -->
 		<div class="split">
 			<div class="lite">
-				{#if state_.ap_ssid}
-					<img class="qr" src="/api/display/qr" alt="" />
-					<!-- The passphrase in readable text, not only inside the QR. A QR
-					     needs a camera, and the device that needs this network is often
-					     a laptop. Shipping it QR-only stranded the lab box. -->
-					<div class="apcreds">
-						<div class="aplabel">Network</div>
-						<div class="apssid">{state_.ap_ssid}</div>
-						{#if state_.ap_passphrase}
-							<div class="aplabel">Password</div>
-							<div class="appass">{state_.ap_passphrase}</div>
-						{/if}
-					</div>
-				{:else}
-					<!-- The AP takes a few seconds to come up after the box notices it
-					     has no network. An empty panel is fine; a panel captioned "no
-					     setup network" next to a right-hand side saying "scan this QR"
-					     is not — it tells the owner to scan something that isn't there
-					     and reads as a fault. Seen on hardware 2026-08-10. The mark,
-					     matching the boot screen, says "working" without a spinner. -->
-					<div class="qr-pending"><span class="mark">∴</span></div>
-				{/if}
+				<img class="qr" src="/api/display/app-qr" alt="" />
+				<div class="apcreds">
+					<div class="aplabel">Get the app</div>
+					<div class="apssid">virtues.com/downloads</div>
+				</div>
 			</div>
 			<div class="dark">
 				<div class="brand">∴ &nbsp;Virtues</div>
 				<div class="step">Step 1 of 2</div>
-				<div class="head">Put me on your Wi-Fi</div>
-				<!-- The instruction has to match what is actually on the left. -->
+				<div class="head">Get the Virtues app</div>
 				{#if state_.ap_ssid}
-					<div class="lead">Scan with your phone's camera to join this box's setup
-						network, then follow the page that opens.</div>
+					<div class="lead">
+						Open it and choose <b>Set up a new box</b> — it connects to me
+						and asks for this password:
+					</div>
+					<div class="apline">
+						<span class="apname">{state_.ap_ssid}</span>
+						{#if state_.ap_passphrase}
+							<span class="appwd">{state_.ap_passphrase}</span>
+						{/if}
+					</div>
 				{:else}
-					<div class="lead">Starting my own Wi-Fi network so you can reach me —
-						this takes a few seconds.</div>
+					<!-- AP still coming up (~seconds). Honest copy beats a screen
+					     telling someone to use a network that isn't broadcasting yet. -->
+					<div class="lead">Starting my own Wi-Fi network so the app can reach
+						me — this takes a few seconds.</div>
 				{/if}
 				<div class="foot">
 					Or plug in ethernet and this step disappears.
@@ -292,11 +292,6 @@
 		color: #3a3833;
 		letter-spacing: 0.04em;
 	}
-	.appass {
-		font-size: 0.78rem;
-		color: #1a1a1a;
-		letter-spacing: 0.06em;
-	}
 	.lite {
 		width: 41%;
 		flex: none;
@@ -321,19 +316,23 @@
 		   badly rather than not at all, which is the worse failure. */
 		flex: none;
 	}
-	.qr-pending {
-		width: 150px;
-		height: 150px;
-		flex: none;
+	/* The one password the app asks for, big enough to read from a chair.
+	   Monospace: it gets typed character by character off this screen. */
+	.apline {
 		display: flex;
-		align-items: center;
-		justify-content: center;
+		align-items: baseline;
+		gap: 14px;
+		font-family: ui-monospace, Menlo, monospace;
+		margin-bottom: 4px;
 	}
-	/* Reserves the QR's exact footprint so the panel does not jump when the
-	   code arrives — the owner is looking straight at it when it lands. */
-	.qr-pending .mark {
-		font-size: 1.5rem;
-		color: #c3bdae;
+	.apname {
+		font-size: 0.72rem;
+		color: #75828f;
+	}
+	.appwd {
+		font-size: 1.15rem;
+		letter-spacing: 0.08em;
+		color: #f7f5f0;
 	}
 	.dark {
 		flex: 1;
