@@ -79,7 +79,14 @@ const RECONCILE_SECS: u64 = 20;
 ///
 /// Lives in `/run` so it can never survive a reboot, and carries a deadline so
 /// a process that dies mid-join cannot suppress the AP forever.
-pub const PROVISIONING_LOCK: &str = "/run/virtues-provisioning";
+/// In the state root, NOT `/run` — learned the hard way. `/run` is root-owned
+/// tmpfs and the server runs as `User=virtues`, so every write there failed
+/// with EACCES. The lock's write was `let _ =`-swallowed, so **the lock never
+/// existed on any real box** — and the scan cache hit the same wall loudly on
+/// 2026-08-10 ("could not write scan cache: Permission denied"), which is how
+/// both were found. `/run`'s never-survives-reboot property was the appeal;
+/// the TTL provides the same guarantee here (a stale lock dies in 120s).
+pub const PROVISIONING_LOCK: &str = "/var/lib/virtues/provisioning.lock";
 
 /// How long a provisioning lock is honoured before it is treated as abandoned.
 /// Generous relative to a join (seconds) and short relative to a person's
@@ -226,8 +233,10 @@ fn holds_own_network(nmcli_active: &str) -> bool {
 
 /// Where the pre-AP wifi scan is cached for `api::provision` to fall back on.
 ///
-/// In `/run`: stale-after-reboot is correct, because so is the scan.
-pub const SCAN_CACHE: &str = "/run/virtues-wifi-scan.json";
+/// State root, not `/run`, for the same EACCES reason as [`PROVISIONING_LOCK`].
+/// Surviving a reboot is fine here: the cache refreshes on every AP raise, and
+/// a reboot's first raise overwrites it before anyone can read it.
+pub const SCAN_CACHE: &str = "/var/lib/virtues/wifi-scan.json";
 
 /// Bring the AP up on the wifi device.
 ///
