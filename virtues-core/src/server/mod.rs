@@ -1027,7 +1027,21 @@ pub async fn run(client: Virtues, host: &str, port: u16) -> Result<()> {
         };
 
         tracing::info!("Static file serving enabled from: {}", static_dir);
-        app.fallback_service(serve_dir)
+        // HTML DOCUMENTS ARE NEVER CACHED. `ServeDir` sends `last-modified` and
+        // no `cache-control`, which licenses a browser to cache heuristically —
+        // and on 2026-08-10 that made the appliance's panel keep rendering a
+        // three-day-old UI after an upgrade, through a service restart and a
+        // power cycle. The shell names content-hashed JS chunks, so a stale
+        // shell resurrects the entire stale page while the box serves the new
+        // one, and the only symptom is a screen that quietly lies about its own
+        // version.
+        //
+        // Scoped to documents on purpose: `/_app/immutable/*` is content-hashed
+        // and *should* be cached hard. It is the shell that must always be
+        // re-fetched, because it is the thing that names the rest.
+        app.fallback_service(tower::ServiceBuilder::new()
+            .layer(axum::middleware::from_fn(no_store_for_documents))
+            .service(serve_dir))
     } else {
         tracing::info!(
             "No static directory found at: {} - static serving disabled",
@@ -1135,6 +1149,40 @@ fn validate_environment() -> Result<()> {
 
 /// Honest 404 for unknown /api and /auth paths — see the comment where this
 /// is routed. `no-store` so a transient miss can never poison an HTTP cache.
+/// Stamp `Cache-Control: no-store` on every HTML document the static server
+/// hands out, leaving hashed assets alone.
+///
+/// See the call site for the incident. Short version: `ServeDir` sends
+/// `last-modified` and no `cache-control`, a browser may then cache
+/// heuristically, and the appliance's kiosk did — pinning the panel to a
+/// three-day-old UI across an upgrade, a service restart, and a power cycle.
+///
+/// Keyed on the response's own content type rather than the request path, so it
+/// covers the SPA fallback (`200.html`, served for arbitrary routes) without
+/// having to enumerate which paths are documents.
+async fn no_store_for_documents(
+    req: axum::extract::Request,
+    next: axum::middleware::Next,
+) -> axum::response::Response {
+    let mut res = next.run(req).await;
+    let is_document = res
+        .headers()
+        .get(axum::http::header::CONTENT_TYPE)
+        .and_then(|v| v.to_str().ok())
+        .is_some_and(|ct| ct.starts_with("text/html"));
+    if is_document {
+        res.headers_mut().insert(
+            axum::http::header::CACHE_CONTROL,
+            axum::http::HeaderValue::from_static("no-store"),
+        );
+        // A validator left beside `no-store` is a mixed message, and some
+        // caches honour the weaker half.
+        res.headers_mut().remove(axum::http::header::LAST_MODIFIED);
+        res.headers_mut().remove(axum::http::header::ETAG);
+    }
+    res
+}
+
 async fn api_not_found_handler(uri: axum::http::Uri) -> impl IntoResponse {
     (
         axum::http::StatusCode::NOT_FOUND,
