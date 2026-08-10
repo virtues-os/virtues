@@ -159,6 +159,13 @@ pub async fn run(client: Virtues, host: &str, port: u16) -> Result<()> {
     // sitting on mid-provision. No-op on a DIY box. See maintenance::setup_ap.
     crate::maintenance::setup_ap::spawn(client.database.pool().clone());
 
+    // BLE wifi provisioning — the Improv service, and the PRIMARY setup path
+    // (the AP above is the frozen fallback). Advertised while unclaimed, gone
+    // once a device pairs. No-op on a DIY box and on non-Linux dev hosts. See
+    // maintenance::ble_provision for the week of hardware findings that led
+    // here.
+    crate::maintenance::ble_provision::spawn(client.database.pool().clone());
+
     // Persistent review pair code, for App Store review boxes only. No-op
     // unless VIRTUES_REVIEW_PAIR_CODE is set, so customer boxes are untouched.
     // A failure here is loud but not fatal: a demo box that came up without

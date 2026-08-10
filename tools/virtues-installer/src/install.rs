@@ -1305,9 +1305,19 @@ pub async fn apply_appliance_profile(cfg: &InstallConfig) -> Result<()> {
         "python3-gi",
         "gir1.2-webkit2-4.1",
         "gir1.2-gtk-3.0",
+        // BLE provisioning (maintenance::ble_provision): the Improv service
+        // needs bluetoothd running. Radxa's image ships it, but the appliance
+        // profile must not depend on that staying true.
+        "bluez",
     ]);
     deps.env("DEBIAN_FRONTEND", "noninteractive");
     run_step("Install display runtime (cage + WebKit)", deps).await?;
+
+    // BLE provisioning needs bluetoothd up from boot; installing bluez does
+    // not reliably enable it on a server image.
+    let mut bt = Command::new("systemctl");
+    bt.args(["enable", "--now", "bluetooth"]);
+    run_step("Enable bluetooth service", bt).await?;
 
     let mut seat = Command::new("systemctl");
     seat.args(["enable", "--now", "seatd"]);
