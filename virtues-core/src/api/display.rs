@@ -230,7 +230,12 @@ fn wifi_payload(ssid: &str, passphrase: &str) -> String {
 fn is_box_local(peer: &SocketAddr, headers: &HeaderMap) -> bool {
     let proxied =
         headers.contains_key("x-forwarded-for") || headers.contains_key("forwarded");
-    peer.ip().is_loopback() && !proxied
+    // Canonicalized, or an IPv4 loopback caller is refused: on the dual-stack
+    // `*:8000` socket `127.0.0.1` arrives as `::ffff:127.0.0.1`, which
+    // `is_loopback()` does not match. The kiosk happens to resolve `localhost`
+    // to `::1` and so was unaffected, which is why this hid. See
+    // `crate::peer_addr`.
+    crate::peer_addr::canonical_peer(peer).is_loopback() && !proxied
 }
 
 /// SSID of the setup AP, if one is up right now.
@@ -300,6 +305,19 @@ mod tests {
     fn loopback_is_box_local() {
         assert!(is_box_local(&addr("127.0.0.1:5000"), &HeaderMap::new()));
         assert!(is_box_local(&addr("[::1]:5000"), &HeaderMap::new()));
+    }
+
+    #[test]
+    fn v4_mapped_loopback_is_box_local() {
+        // On the dual-stack `*:8000` socket, `curl http://127.0.0.1:8000`
+        // arrives as this and was refused with a 403 the display could not
+        // explain. Measured on hardware 2026-08-10.
+        assert!(is_box_local(&addr("[::ffff:127.0.0.1]:5000"), &HeaderMap::new()));
+    }
+
+    #[test]
+    fn v4_mapped_lan_peer_is_still_not_box_local() {
+        assert!(!is_box_local(&addr("[::ffff:192.168.1.44]:5000"), &HeaderMap::new()));
     }
 
     #[test]
