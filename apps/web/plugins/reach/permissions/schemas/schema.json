@@ -331,6 +331,54 @@
           "markdownDescription": "Denies the forget command without any pre-configured scope."
         },
         {
+          "description": "Enables the improv_disconnect command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-improv-disconnect",
+          "markdownDescription": "Enables the improv_disconnect command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the improv_disconnect command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-improv-disconnect",
+          "markdownDescription": "Denies the improv_disconnect command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the improv_discover command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-improv-discover",
+          "markdownDescription": "Enables the improv_discover command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the improv_discover command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-improv-discover",
+          "markdownDescription": "Denies the improv_discover command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the improv_provision command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-improv-provision",
+          "markdownDescription": "Enables the improv_provision command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the improv_provision command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-improv-provision",
+          "markdownDescription": "Denies the improv_provision command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the improv_wifi_scan command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-improv-wifi-scan",
+          "markdownDescription": "Enables the improv_wifi_scan command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the improv_wifi_scan command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-improv-wifi-scan",
+          "markdownDescription": "Denies the improv_wifi_scan command without any pre-configured scope."
+        },
+        {
           "description": "Enables the outbox_stats command without any pre-configured scope.",
           "type": "string",
           "const": "allow-outbox-stats",
@@ -439,10 +487,10 @@
           "markdownDescription": "Denies the wifi_join command without any pre-configured scope."
         },
         {
-          "description": "Default permissions for the reach plugin\n#### This default permission set includes:\n\n- `allow-pair`\n- `allow-reach-status`\n- `allow-forget`\n- `allow-discover`\n- `allow-provision-open`\n- `allow-provision-networks`\n- `allow-provision-join`\n- `allow-wifi-join`\n- `allow-wifi-forget`\n- `allow-outbox-stats`\n- `allow-drain-now`\n- `allow-radio-stats`",
+          "description": "Default permissions for the reach plugin\n#### This default permission set includes:\n\n- `allow-pair`\n- `allow-reach-status`\n- `allow-forget`\n- `allow-discover`\n- `allow-provision-open`\n- `allow-provision-networks`\n- `allow-provision-join`\n- `allow-wifi-join`\n- `allow-wifi-forget`\n- `allow-improv-discover`\n- `allow-improv-wifi-scan`\n- `allow-improv-provision`\n- `allow-improv-disconnect`\n- `allow-outbox-stats`\n- `allow-drain-now`\n- `allow-radio-stats`",
           "type": "string",
           "const": "default",
-          "markdownDescription": "Default permissions for the reach plugin\n#### This default permission set includes:\n\n- `allow-pair`\n- `allow-reach-status`\n- `allow-forget`\n- `allow-discover`\n- `allow-provision-open`\n- `allow-provision-networks`\n- `allow-provision-join`\n- `allow-wifi-join`\n- `allow-wifi-forget`\n- `allow-outbox-stats`\n- `allow-drain-now`\n- `allow-radio-stats`"
+          "markdownDescription": "Default permissions for the reach plugin\n#### This default permission set includes:\n\n- `allow-pair`\n- `allow-reach-status`\n- `allow-forget`\n- `allow-discover`\n- `allow-provision-open`\n- `allow-provision-networks`\n- `allow-provision-join`\n- `allow-wifi-join`\n- `allow-wifi-forget`\n- `allow-improv-discover`\n- `allow-improv-wifi-scan`\n- `allow-improv-provision`\n- `allow-improv-disconnect`\n- `allow-outbox-stats`\n- `allow-drain-now`\n- `allow-radio-stats`"
         }
       ]
     }

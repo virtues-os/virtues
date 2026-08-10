@@ -110,3 +110,50 @@ export async function wifiJoin(ssidPrefix: string, passphrase: string): Promise<
 export async function wifiForget(ssidPrefix: string): Promise<void> {
   await invoke('plugin:reach|wifi_forget', { ssidPrefix })
 }
+
+// ─── Improv BLE setup (the primary path) ─────────────────────────────────────
+
+export interface ImprovBox {
+  /** Opaque handle for the calls below. Valid until the next discover. */
+  id: string
+  name: string
+  /** 0x02 = needs wifi, 0x04 = already online (advertisement's state byte). */
+  improvState: number
+  rssi: number
+}
+
+/** Scan for unclaimed boxes advertising the Improv service. */
+export async function improvDiscover(seconds = 4): Promise<ImprovBox[]> {
+  const r = await invoke<{ boxes: ImprovBox[] }>('plugin:reach|improv_discover', { seconds })
+  return r.boxes
+}
+
+export interface ImprovNetwork {
+  ssid: string
+  signal: number
+  secured: boolean
+}
+
+/** Ask THAT BOX what wifi it can see, over BLE. */
+export async function improvWifiScan(
+  id: string,
+): Promise<{ networks: ImprovNetwork[]; error?: string }> {
+  return await invoke('plugin:reach|improv_wifi_scan', { id })
+}
+
+/**
+ * Send credentials and watch the join live. Resolves with the box's URL on
+ * success. Progress events arrive as `improv-progress` on the plugin channel.
+ */
+export async function improvProvision(
+  id: string,
+  ssid: string,
+  password: string,
+): Promise<{ ok: boolean; url?: string; error?: string }> {
+  return await invoke('plugin:reach|improv_provision', { id, ssid, password })
+}
+
+/** Drop the BLE connection when leaving setup. Always safe. */
+export async function improvDisconnect(): Promise<void> {
+  await invoke('plugin:reach|improv_disconnect')
+}

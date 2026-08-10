@@ -13,6 +13,10 @@ Default permissions for the reach plugin
 - `allow-provision-join`
 - `allow-wifi-join`
 - `allow-wifi-forget`
+- `allow-improv-discover`
+- `allow-improv-wifi-scan`
+- `allow-improv-provision`
+- `allow-improv-disconnect`
 - `allow-outbox-stats`
 - `allow-drain-now`
 - `allow-radio-stats`
@@ -100,6 +104,110 @@ Enables the forget command without any pre-configured scope.
 <td>
 
 Denies the forget command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`reach:allow-improv-disconnect`
+
+</td>
+<td>
+
+Enables the improv_disconnect command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`reach:deny-improv-disconnect`
+
+</td>
+<td>
+
+Denies the improv_disconnect command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`reach:allow-improv-discover`
+
+</td>
+<td>
+
+Enables the improv_discover command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`reach:deny-improv-discover`
+
+</td>
+<td>
+
+Denies the improv_discover command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`reach:allow-improv-provision`
+
+</td>
+<td>
+
+Enables the improv_provision command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`reach:deny-improv-provision`
+
+</td>
+<td>
+
+Denies the improv_provision command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`reach:allow-improv-wifi-scan`
+
+</td>
+<td>
+
+Enables the improv_wifi_scan command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`reach:deny-improv-wifi-scan`
+
+</td>
+<td>
+
+Denies the improv_wifi_scan command without any pre-configured scope.
 
 </td>
 </tr>

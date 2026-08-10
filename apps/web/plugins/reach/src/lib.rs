@@ -674,6 +674,10 @@ pub fn init<R: Runtime>() -> TauriPlugin<R> {
       commands::provision_join,
       commands::wifi_join,
       commands::wifi_forget,
+      commands::improv_discover,
+      commands::improv_wifi_scan,
+      commands::improv_provision,
+      commands::improv_disconnect,
       commands::outbox_stats,
       commands::drain_now,
       commands::radio_stats
