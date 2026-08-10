@@ -1518,6 +1518,21 @@ window = Gtk.Window()
 window.fullscreen()
 window.set_decorated(False)
 
+# NO CACHE. Not a tuning knob — the panel showed a THREE-DAY-OLD UI after an
+# upgrade, on 2026-08-10, and survived both a service restart and a power cycle.
+# The box serves /display with `last-modified` and no `cache-control`, so WebKit
+# is free to cache the shell heuristically; it kept the stale shell, and that
+# shell names content-hashed JS chunks, so the whole old page came back from
+# disk while the box served the new one. Diagnosing it from a photo of the
+# screen cost an hour.
+#
+# DOCUMENT_VIEWER is WebKit's "disable the cache completely" model. A kiosk
+# loading one page from localhost has nothing to gain from a cache and
+# everything to lose: an appliance whose screen can lie about its own version
+# is worse than one that re-fetches 40KB over loopback on every boot.
+context = WebKit2.WebContext.get_default()
+context.set_cache_model(WebKit2.CacheModel.DOCUMENT_VIEWER)
+
 view = WebKit2.WebView()
 view.set_zoom_level(ZOOM)
 # Match the page background so the gap before first paint is the panel's own
