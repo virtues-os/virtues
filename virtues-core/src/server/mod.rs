@@ -274,6 +274,23 @@ pub async fn run(client: Virtues, host: &str, port: u16) -> Result<()> {
             "/api/provision/status",
             get(crate::api::provision::status_handler),
         )
+        // The captive portal, in plain server-rendered HTML.
+        //
+        // NOT the SvelteKit `/provision` route, which it replaces as the
+        // captive redirect target. The frontend is `adapter-static` with no SSR
+        // at all, so every page is an empty document until ES modules load —
+        // and iOS's Captive Network Assistant, the browser that actually has to
+        // show this, rendered exactly that: a blank white sheet it would not
+        // let the owner escape from. See api/portal.rs.
+        //
+        // Same gates as /api/provision/* (shared, not reimplemented) — but the
+        // gates are re-checked per request there, so these are as closed as
+        // their JSON siblings.
+        .route("/portal", get(crate::api::portal::index_handler))
+        .route("/portal/network", get(crate::api::portal::network_handler))
+        .route("/portal/join", post(crate::api::portal::join_handler))
+        .route("/portal/status", get(crate::api::portal::status_handler))
+        .route("/portal/health", get(crate::api::portal::health_handler))
         // Auth — pair-only model. Public consume + session probe (returns the
         // AuthUser resolved from the request's proven iroh key, if any).
         // /api/pair/{mint,confirm,deny,status} are auth'd and live under the

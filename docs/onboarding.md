@@ -51,9 +51,11 @@ is already installed, joining the setup AP is enough — the app's connect scree
 probes `/api/provision/*`, and a 200 means "unclaimed box, and I am on its setup
 network" (the box's own two gates, answered in one call). It then runs the wifi
 picker natively, waits out the switchover, re-finds the box on the owner's LAN,
-and moves to the pair code — one continuous session. The portal at `/provision`
-is unchanged and remains the path for laptops, Android, and anyone without the
-app. The win is not tap count: it is that the home wifi password gets a native
+and moves to the pair code — one continuous session. The portal lives at `/portal`
+and is plain server-rendered HTML — iOS's Captive Network Assistant cannot run
+the SPA (`adapter-static`, no SSR: every page is blank until ES modules boot),
+and rendered the old `/provision` route as an inescapable white sheet. It
+remains the path for laptops, Android, and anyone without the app. The win is not tap count: it is that the home wifi password gets a native
 field with a password manager instead of a captive webview, and that the app
 survives the network handoff.
 
@@ -135,7 +137,7 @@ power on
   → box hosts Virtues-XXXX; phone camera scans the QR and joins it
   →   with the app installed → its connect screen detects setup mode and
   →     runs the wifi picker natively (password in a real field)
-  →   without it → the phone's OS auto-opens /provision (captive portal)
+  →   without it → the phone's OS auto-opens /portal (captive, no-JS HTML)
   → owner picks their network from the BOX's scan list, types one password
   → sequential switchover: AP down, join, AP back up ONLY if it failed
   → display SCREEN 2 "In the Virtues app, enter …": app QR + the 6-digit code
