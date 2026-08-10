@@ -84,7 +84,13 @@ fn is_setup_peer(peer: &SocketAddr, headers: &HeaderMap) -> bool {
     if headers.contains_key("x-forwarded-for") || headers.contains_key("forwarded") {
         return false;
     }
-    match peer.ip() {
+    // CANONICALIZE FIRST. The server binds `*:8000` (dual-stack), so an IPv4
+    // caller arrives as `::ffff:10.42.0.169` and matches the `V6` arm below,
+    // never reaching the subnet test. That closed this door on every phone that
+    // ever joined the setup AP — and since a closed door here is a 404, which is
+    // also what correct operation looks like, it read as a bad venue for days.
+    // Found on hardware 2026-08-10. See `crate::peer_addr`.
+    match crate::peer_addr::canonical_peer(peer) {
         IpAddr::V4(v4) => {
             let o = v4.octets();
             v4.is_loopback() || (o[0] == AP_SUBNET[0] && o[1] == AP_SUBNET[1] && o[2] == AP_SUBNET[2])
@@ -382,6 +388,34 @@ mod tests {
         assert!(is_setup_peer(&addr("10.42.0.169:41000"), &h));
         assert!(is_setup_peer(&addr("127.0.0.1:41000"), &h));
         assert!(is_setup_peer(&addr("[::1]:41000"), &h));
+    }
+
+    #[test]
+    fn v4_mapped_ap_peers_are_setup_peers() {
+        // THE BUG THAT CLOSED THIS DOOR ON EVERYONE. The server binds `*:8000`,
+        // so a phone on the setup AP arrives as `::ffff:10.42.0.169`, matched
+        // the V6 arm, and was refused — a 404 indistinguishable from the gate
+        // working correctly. Verified on hardware 2026-08-10.
+        let h = HeaderMap::new();
+        assert!(is_setup_peer(&addr("[::ffff:10.42.0.169]:41000"), &h));
+        assert!(is_setup_peer(&addr("[::ffff:127.0.0.1]:41000"), &h));
+    }
+
+    #[test]
+    fn v4_mapped_lan_peers_are_still_refused() {
+        // Canonicalizing must not widen the gate — only make it reachable.
+        let h = HeaderMap::new();
+        assert!(!is_setup_peer(&addr("[::ffff:192.168.1.44]:41000"), &h));
+        assert!(!is_setup_peer(&addr("[::ffff:10.42.1.5]:41000"), &h));
+    }
+
+    #[test]
+    fn v4_compatible_addresses_cannot_forge_the_subnet() {
+        // `::10.42.0.169` is IPv4-COMPATIBLE, not IPv4-mapped — a deprecated
+        // format no real client uses. Unwrapping it would let a caller wear an
+        // AP-subnet address without being on the AP.
+        let h = HeaderMap::new();
+        assert!(!is_setup_peer(&addr("[::10.42.0.169]:41000"), &h));
     }
 
     #[test]

@@ -29,6 +29,7 @@ pub mod middleware;
 pub mod bookmark_enrichment;
 pub mod box_secrets;
 pub mod net_check;
+pub mod peer_addr;
 pub mod relay;
 pub mod scheduler;
 pub mod search;
