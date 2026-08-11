@@ -1659,19 +1659,14 @@ pub async fn web_search_handler(
             .into_response();
     }
 
-    let search = crate::api::parallel::SearchRequest {
+    let search = crate::api::web_search::SearchRequest {
         objective: request.objective,
-        queries: vec![request.query],
-        mode: if request.deep.unwrap_or(false) {
-            crate::api::parallel::Mode::Advanced
-        } else {
-            crate::api::parallel::Mode::Basic
-        },
+        query: request.query,
         max_results: request.num_results,
         max_age_seconds: request.max_age_hours.map(|h: u32| h.saturating_mul(3600)),
     };
 
-    match crate::api::parallel::search(state.db.pool(), search).await {
+    match crate::api::web_search::search(state.db.pool(), search).await {
         Ok(response) => {
             if let Err(e) =
                 crate::api::record_service_usage(state.db.pool(), crate::api::Service::Parallel, 1)
@@ -1697,8 +1692,6 @@ pub struct WebSearchRequest {
     pub objective: Option<String>,
     #[serde(default)]
     pub num_results: Option<u8>,
-    #[serde(default)]
-    pub deep: Option<bool>,
     #[serde(default)]
     pub max_age_hours: Option<u32>,
 }

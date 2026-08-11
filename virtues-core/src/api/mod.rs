@@ -32,7 +32,7 @@ pub mod day_summary;
 pub mod developer;
 pub mod drive;
 pub mod entities;
-pub mod parallel;
+pub mod web_search;
 pub mod home;
 pub mod internal;
 pub mod lake;

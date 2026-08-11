@@ -367,11 +367,7 @@ Do NOT use when:
 - User is asking about their personal data (use sql_query instead)
 - The question is purely conversational or opinion-based
 
-You synthesize the results yourself — the search returns evidence, not answers. Two tiers:
-- Default search: fast, for most lookups.
-- deep=true: comprehensive multi-step search for hard, multi-faceted, or
-  thin-result questions (e.g. cross-referenced standings, multi-entity research).
-  Costs more and is slower — escalate to it, don't default to it.
+You synthesize the results yourself — the search returns evidence, not answers.
 
 For time-sensitive topics (news, sports scores, odds, prices, live data) set
 max_age_hours=1 so results are fresh rather than cached.
@@ -398,11 +394,6 @@ Returns: Relevant web pages with titles, URLs, and the passages judged relevant.
                 "objective": {
                     "type": "string",
                     "description": "What you are trying to learn, in a sentence. Optional, but it disambiguates a short or broad query."
-                },
-                "deep": {
-                    "type": "boolean",
-                    "description": "Escalate to comprehensive multi-step research for hard or thin-result queries. Slower and costlier — off by default.",
-                    "default": false
                 },
                 "max_age_hours": {
                     "type": "integer",
