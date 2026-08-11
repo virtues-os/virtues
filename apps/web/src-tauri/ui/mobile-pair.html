@@ -214,12 +214,22 @@
         } catch { /* not available on this platform */ }
         const candidates = boxes.filter((b) => b.improvState === 2);
         if (candidates.length === 0) {
-          // No BLE box. Fall back to the SoftAP password flow, with honesty
-          // about why we're here.
-          return renderNewBox(
-            boxes.length
-              ? 'Found a box, but it\'s already online — it should appear on the pair screen.'
-              : 'No box found over Bluetooth. If yours is plugged in, you can join its setup network manually instead.');
+          if (boxes.length) {
+            // Online-but-unclaimed: it's on a network already — pair it.
+            return start();
+          }
+          app.innerHTML = `
+            <button class="back" id="back">← Back</button>
+            <h1>No box found</h1>
+            <p class="sub">Make sure the box is plugged in and showing
+              <b>Get the Virtues app</b> on its screen, keep Bluetooth on, and stand
+              near it.</p>
+            <button class="primary" id="again">Scan again</button>
+            <p class="hint">Ethernet always works too — plug the box into your router and
+              it appears on the pair screen by itself.</p>`;
+          document.getElementById('again').addEventListener('click', startBleSetup);
+          document.getElementById('back').addEventListener('click', start);
+          return;
         }
         // More than one unclaimed box is a real case (two-box household, an
         // office). Let proximity break the tie visibly.
@@ -258,7 +268,7 @@
           r = { networks: [], error: String(e) };
         }
         const rows = (r.networks || []).map((n, i) => `
-          <button class="net" data-i="${i}" ${n.enterprise ? 'disabled style="opacity:.45"' : ''}>
+          <button class="net" data-i="${i}">
             <span class="bars">${bars(n.signal)}</span>
             <span class="name">${esc(n.ssid)}</span>
             <span class="lock">${n.enterprise ? 'work network' : n.secured ? 'locked' : 'open'}</span>
@@ -281,27 +291,42 @@
 
       function bleAskPassword(net) {
         if (!net.secured) return bleJoin(net.ssid, '');
+        // 802.1X rides our 0x81 Improv extension — username + password over
+        // the same BLE channel. See ble_provision's EnterpriseSettings.
+        const ent = !!net.enterprise;
         app.innerHTML = `
           <button class="back" id="back">← Networks</button>
           <h2>${esc(net.ssid)}</h2>
-          <label for="psk">Wi-Fi password</label>
+          ${ent ? `
+          <p class="sub">This network uses per-person sign-in. Enter the account its
+            operator gave you.</p>
+          <label for="identity">Username</label>
+          <input id="identity" type="text" autocomplete="username"
+                 autocapitalize="off" autocorrect="off" />` : ''}
+          <label for="psk">${ent ? 'Password' : 'Wi-Fi password'}</label>
           <input id="psk" type="password" autocomplete="current-password"
                  autocapitalize="off" autocorrect="off" enterkeyhint="go" />
           <button class="primary" id="join" disabled>Join network</button>
           <p class="hint">Your phone stays on its own Wi-Fi the whole time — the box
             joins on its own, and you'll watch it happen right here.</p>`;
         const psk = document.getElementById('psk');
+        const idf = document.getElementById('identity');
         const go = document.getElementById('join');
-        psk.addEventListener('input', () => (go.disabled = psk.value.length < 8));
+        const ok = () => (go.disabled = ent
+          ? !(idf.value.trim() && psk.value)
+          : psk.value.length < 8);
+        psk.addEventListener('input', ok);
+        if (idf) idf.addEventListener('input', ok);
+        const submit = () => bleJoin(net.ssid, psk.value, idf ? idf.value.trim() : null);
         psk.addEventListener('keydown', (e) => {
-          if (e.key === 'Enter' && psk.value.length >= 8) bleJoin(net.ssid, psk.value);
+          if (e.key === 'Enter' && !go.disabled) submit();
         });
-        go.addEventListener('click', () => bleJoin(net.ssid, psk.value));
+        go.addEventListener('click', submit);
         document.getElementById('back').addEventListener('click', () => bleWifiPicker(state.bleBox));
-        psk.focus();
+        (idf || psk).focus();
       }
 
-      async function bleJoin(ssid, password) {
+      async function bleJoin(ssid, password, identity) {
         const stages = { sent: 'Sending to your box', joining: 'Box is joining', joined: 'Connected — finishing up' };
         app.innerHTML = `
           <p class="kicker">Setting up ${esc(state.bleBox.name)}</p>
@@ -323,7 +348,7 @@
         let res;
         try {
           res = await invoke('plugin:reach|improv_provision', {
-            id: state.bleBox.id, ssid, password,
+            id: state.bleBox.id, ssid, password, identity: identity || null,
           });
         } catch (e) {
           res = { ok: false, error: String(e) };

@@ -151,8 +151,10 @@ export async function improvProvision(
   id: string,
   ssid: string,
   password: string,
+  /** 802.1X username; present routes the join over the 0x81 enterprise extension. */
+  identity?: string,
 ): Promise<{ ok: boolean; url?: string; error?: string }> {
-  return await invoke('plugin:reach|improv_provision', { id, ssid, password })
+  return await invoke('plugin:reach|improv_provision', { id, ssid, password, identity })
 }
 
 /** Drop the BLE connection when leaving setup. Always safe. */

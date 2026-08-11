@@ -194,7 +194,7 @@ final class ImprovClient: NSObject {
   /// progress is the entire reason the BLE path exists — contrast the SoftAP
   /// flow's "the socket died, go and look".
   func provision(
-    id: String, ssid: String, password: String,
+    id: String, ssid: String, password: String, identity: String?,
     onProgress: @escaping (String) -> Void,
     completion: @escaping (String?, String?) -> Void
   ) {
@@ -224,19 +224,24 @@ final class ImprovClient: NSObject {
           }
           finish(nil, msg)
         }
+        // 0x81 = our enterprise extension (ssid, identity, password); 0x01 =
+        // stock Improv (ssid, password). The result echoes whichever we sent.
+        let command: UInt8 = identity == nil ? 0x01 : 0x81
         self.onResult = { data in
-          if let strings = Self.parseResult(data, command: 0x01) {
+          if let strings = Self.parseResult(data, command: command) {
             finish(strings.first ?? "", nil)
           }
         }
         var payload: [UInt8] = []
-        let ssidBytes = Array(ssid.utf8).prefix(255)
-        let pskBytes = Array(password.utf8).prefix(255)
-        payload.append(UInt8(ssidBytes.count))
-        payload.append(contentsOf: ssidBytes)
-        payload.append(UInt8(pskBytes.count))
-        payload.append(contentsOf: pskBytes)
-        self.write(rpc: Self.buildRPC(command: 0x01, data: payload))
+        func pushString(_ v: String) {
+          let bytes = Array(v.utf8).prefix(255)
+          payload.append(UInt8(bytes.count))
+          payload.append(contentsOf: bytes)
+        }
+        pushString(ssid)
+        if let identity { pushString(identity) }
+        pushString(password)
+        self.write(rpc: Self.buildRPC(command: command, data: payload))
         onProgress("sent")
         // A join is bounded by nmcli's own timeout on the box; add slack.
         self.queue.asyncAfter(deadline: .now() + 45) {

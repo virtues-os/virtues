@@ -124,11 +124,43 @@ pub(crate) fn is_appliance() -> bool {
     std::path::Path::new("/etc/systemd/system/virtues-display.service").exists()
 }
 
+/// Breakglass: the SoftAP path is RETIRED as of 2026-08-11 — BLE (Improv, incl.
+/// the 0x81 enterprise extension) and ethernet are the onboarding transports.
+/// Touch this file into existence to resurrect the AP on a box whose Bluetooth
+/// hardware is dead in the field; nothing else re-enables it.
+///
+/// Retired rather than deleted: every line downstream of this gate spent two
+/// hard days being made to actually work on hardware, and the marginal cost of
+/// keeping it dormant is zero. But the AP was also the root of every onboarding
+/// failure those days produced — captive sheets, per-SSID caches, scans dying
+/// under an associated client, the blind switchover — all consequences of
+/// provisioning riding the radio it configures. Off is the feature.
+const AP_BREAKGLASS: &str = "/var/lib/virtues/enable-setup-ap";
+
 pub fn spawn(pool: PgPool) {
     if !is_appliance() {
         tracing::debug!("setup_ap: not an appliance, not managing a setup AP");
         return;
     }
+    if !std::path::Path::new(AP_BREAKGLASS).exists() {
+        // Still spawn — with the reconciler in teardown-only mode, so a box
+        // upgraded from an AP-era build (or one whose breakglass was removed)
+        // gets its leftover setup network cleaned up rather than orphaned.
+        tokio::spawn(async move {
+            let mut tick = interval(Duration::from_secs(RECONCILE_SECS));
+            tick.set_missed_tick_behavior(MissedTickBehavior::Skip);
+            loop {
+                tick.tick().await;
+                if ap_is_up().await {
+                    tracing::info!("setup_ap: retiring a leftover setup AP (SoftAP path is retired)");
+                    let _ = nmcli(&["connection", "down", AP_CON_NAME]).await;
+                    let _ = nmcli(&["connection", "delete", AP_CON_NAME]).await;
+                }
+            }
+        });
+        return;
+    }
+    tracing::warn!("setup_ap: breakglass present — the retired SoftAP path is ACTIVE");
     tokio::spawn(async move {
         let mut tick = interval(Duration::from_secs(RECONCILE_SECS));
         tick.set_missed_tick_behavior(MissedTickBehavior::Skip);
