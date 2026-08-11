@@ -274,7 +274,7 @@
 		--dim: #93a0ad;
 		--faint: #54606c;
 		--bg: #0b0f14;
-		--lite: #f2efe8;
+		--lite: #ffffff;
 		--ok: #5fb07e;
 		--warn: #c9a227;
 		position: fixed;
@@ -313,12 +313,12 @@
 		font-size: 0.5rem;
 		text-transform: uppercase;
 		letter-spacing: 0.13em;
-		color: #a8a294;
+		color: #8f8f8f;
 		margin-top: 6px;
 	}
 	.apssid {
 		font-size: 0.7rem;
-		color: #3a3833;
+		color: #1c1c1c;
 		letter-spacing: 0.04em;
 	}
 	.lite {
@@ -402,7 +402,7 @@
 		align-items: center;
 		justify-content: center;
 		font-size: 1.5rem;
-		color: #c3bdae;
+		color: #bdbdbd;
 		flex: none;
 	}
 	.code.fault {
