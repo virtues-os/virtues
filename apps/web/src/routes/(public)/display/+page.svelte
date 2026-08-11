@@ -335,7 +335,7 @@
 		flex-direction: column;
 		align-items: center;
 		justify-content: center;
-		padding: 0 12px;
+		padding: 0 20px;
 	}
 	.qr {
 		width: 150px;
@@ -351,13 +351,13 @@
 		display: flex;
 		flex-direction: column;
 		justify-content: center;
-		padding: 0 34px;
+		padding: 0 42px;
 		position: relative;
 	}
 	.brand {
 		position: absolute;
 		top: 19px;
-		right: 28px;
+		right: 36px;
 		font-size: 0.72rem;
 		color: #3f4b57;
 	}
@@ -419,7 +419,7 @@
 	/* ── ambient ── */
 	.amb {
 		flex-direction: column;
-		padding: 17px 26px 13px;
+		padding: 17px 34px 13px;
 	}
 	.top {
 		display: flex;
