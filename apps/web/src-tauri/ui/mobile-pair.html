@@ -138,11 +138,33 @@
           <div class="wait"><span class="pip"></span><span>Connecting</span></div>`;
         invoke('plugin:reach|reach_status')
           .then((s) => {
+            // 'rejected' = the box ANSWERED and refused this phone's key —
+            // it was reset, or this device was revoked. Loading the SPA on a
+            // dead session renders a fully blank app with no way out (seen
+            // live 2026-08-11: a phone holding a stale Keychain pairing for a
+            // reset box sailed past every setup screen into an empty shell).
+            // 'unknown' is NOT this: an unreachable box must never cost the
+            // user their pairing — it may just be off or far away.
+            if (s && s.paired && s.session === 'rejected') { renderBoxForgotUs(); return; }
             if (s && s.paired) { location.replace('/'); return; }
             start();
           })
           .catch(() => { start(); });
         // Fall through only via the callbacks above.
+      }
+
+      function renderBoxForgotUs() {
+        app.innerHTML = `
+          <h1>Your box doesn't recognize this phone</h1>
+          <p class="sub">It answered, but refused this phone's key — usually because the box
+            was reset, or this phone was removed from its devices. Pairing again fixes it.</p>
+          <button class="primary" id="repair">Pair again</button>
+          <p class="hint">This forgets the old connection on this phone only — nothing on the
+            box is touched.</p>`;
+        document.getElementById('repair').addEventListener('click', async () => {
+          try { await invoke('plugin:reach|forget'); } catch { /* already gone */ }
+          start();
+        });
       }
 
       // ── discovery ─────────────────────────────────────────────────────────
