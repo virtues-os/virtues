@@ -401,7 +401,8 @@
           <h1>Set up your box</h1>
           <p class="sub">${note ? esc(note) + ' ' : ''}Plug it in and stand nearby — it appears
             here by itself.</p>
-          <div class="wait"><span class="pip"></span><span>Looking over Bluetooth</span></div>
+          <div class="wait"><span class="pip"></span><span id="searchstate">Looking over Bluetooth</span></div>
+          <p class="hint err" id="bterr"></p>
           <p class="hint" style="margin-top:18px">Already running somewhere?
             <a href="#" id="rescan" style="color:#7fa8ff">Search this network</a> or
             <a href="#" id="manual" style="color:#7fa8ff">connect by address</a>.</p>`;
@@ -416,7 +417,17 @@
           try {
             const r = await invoke('plugin:reach|improv_discover', { seconds: 4 });
             boxes = (r && r.boxes) || [];
-          } catch { /* no BLE on this platform — the links above are the path */ }
+            // A radio that CANNOT look and a radio that looked and saw nothing
+            // are the same animation. Say which — an unfixable wait that never
+            // explains itself is the worst screen in the product.
+            const el = document.getElementById('bterr');
+            if (el) el.textContent = (r && r.error)
+              ? "Bluetooth isn't available on this device: " + r.error
+              : '';
+          } catch (e) {
+            const el = document.getElementById('bterr');
+            if (el) el.textContent = 'Bluetooth setup is unavailable here (' + e + ').';
+          }
           if (gen !== searchGen) return;
           const needsWifi = boxes.find((b) => b.improvState === 2);
           if (needsWifi) return bleWifiPicker(needsWifi);

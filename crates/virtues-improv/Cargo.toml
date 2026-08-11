@@ -17,3 +17,13 @@ futures = { version = "0.3", optional = true }
 uuid = { version = "1", optional = true }
 tracing = { version = "0.1", optional = true }
 anyhow = { version = "1", optional = true }
+
+# `required-features` keeps `cargo test -p virtues-improv` (protocol only)
+# from trying to build the example.
+[[example]]
+name = "scan"
+required-features = ["client"]
+
+[dev-dependencies]
+tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
+anyhow = "1"
