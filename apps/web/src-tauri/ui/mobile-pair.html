@@ -309,12 +309,45 @@
           ${errorText ? `<p class="msg err">${esc(errorText)}</p>` : ''}
           ${r.error && !rows ? `<p class="msg err">${esc(r.error)}</p>` : ''}
           ${rows || '<p class="sub">Your box couldn\'t see any networks. Move it closer to your router, or plug in ethernet — that skips this step entirely.</p>'}
-          <button class="back" id="rescan">Search again</button>`;
+          <button class="back" id="rescan">Search again</button><br>
+          <button class="back" id="byname">Join a network by name</button>`;
         state.bleNetworks = r.networks || [];
         app.querySelectorAll('.net').forEach((el) => {
           el.addEventListener('click', () => bleAskPassword(state.bleNetworks[+el.dataset.i]));
         });
         document.getElementById('rescan').addEventListener('click', () => bleWifiPicker(box));
+        document.getElementById('byname').addEventListener('click', () => bleManualNetwork());
+      }
+
+      // Typed SSID, for networks the box's scan can't or won't show: hidden
+      // networks, and — the case that forced this into existence (2026-08-11) —
+      // an iPhone hotspot beaconing too rarely for a scan to catch while a
+      // stale cache masked the misses. The join itself doesn't need the scan:
+      // the box probes for the name directly.
+      function bleManualNetwork() {
+        app.innerHTML = `
+          <button class="back" id="back">← Networks</button>
+          <h1>Join by name</h1>
+          <p class="sub">Type the network's name exactly as it appears on other devices —
+            including spaces and capitals.</p>
+          <label for="mssid">Network name</label>
+          <input id="mssid" type="text" autocapitalize="off" autocorrect="off"
+                 spellcheck="false" />
+          <label for="mpsk">Password</label>
+          <input id="mpsk" type="password" autocomplete="current-password"
+                 autocapitalize="off" autocorrect="off" enterkeyhint="go" />
+          <button class="primary" id="join" disabled>Join network</button>
+          <p class="hint">Leave the password empty for an open network.</p>`;
+        const ssid = document.getElementById('mssid');
+        const psk = document.getElementById('mpsk');
+        const go = document.getElementById('join');
+        const ok = () => (go.disabled = !ssid.value.trim());
+        ssid.addEventListener('input', ok);
+        const submit = () => bleJoin(ssid.value.trim(), psk.value);
+        psk.addEventListener('keydown', (e) => { if (e.key === 'Enter' && !go.disabled) submit(); });
+        go.addEventListener('click', submit);
+        document.getElementById('back').addEventListener('click', () => bleWifiPicker(state.bleBox));
+        ssid.focus();
       }
 
       function bleAskPassword(net) {
