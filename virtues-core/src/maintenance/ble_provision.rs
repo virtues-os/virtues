@@ -594,7 +594,17 @@ mod server {
                     let nets = crate::api::provision::scan_or_cached().await.unwrap_or_default();
                     for n in &nets {
                         let rssi = n.signal.to_string();
-                        let auth = if n.secured { "YES" } else { "NO" };
+                        // "ENT" extends Improv's YES/NO — 802.1X networks need
+                        // a username the base protocol cannot carry, so the
+                        // client must know to route them elsewhere. Foreign
+                        // Improv clients render the string harmlessly.
+                        let auth = if n.enterprise {
+                            "ENT"
+                        } else if n.secured {
+                            "YES"
+                        } else {
+                            "NO"
+                        };
                         let packet = build_result(0x04, &[&n.ssid, &rssi, auth]);
                         improv.lock().await.send_result(packet).await;
                     }

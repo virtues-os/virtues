@@ -48,6 +48,9 @@ pub struct Network {
     pub signal: u8,
     /// False for an open network — the UI skips the password field.
     pub secured: bool,
+    /// 802.1X: the UI must collect a username too. See the box-side twin.
+    #[serde(default)]
+    pub enterprise: bool,
 }
 
 /// Where the box's radio ended up.
@@ -127,11 +130,24 @@ pub async fn is_open(origin: &str) -> bool {
 /// Never returns `Err` for a dead socket; that is [`JoinOutcome::Unknown`].
 /// `Err` is reserved for "we could not even form the request."
 pub async fn join(origin: &str, ssid: &str, psk: Option<&str>) -> Result<JoinOutcome> {
+    join_full(origin, ssid, psk, None).await
+}
+
+/// The full join, including 802.1X (`identity` = account username, `psk` then
+/// the account password).
+pub async fn join_full(
+    origin: &str,
+    ssid: &str,
+    psk: Option<&str>,
+    identity: Option<&str>,
+) -> Result<JoinOutcome> {
     #[derive(Serialize)]
     struct Body<'a> {
         ssid: &'a str,
         #[serde(skip_serializing_if = "Option::is_none")]
         psk: Option<&'a str>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        identity: Option<&'a str>,
     }
     #[derive(Deserialize)]
     struct Reply {
@@ -146,6 +162,7 @@ pub async fn join(origin: &str, ssid: &str, psk: Option<&str>) -> Result<JoinOut
         // An empty string is not a passphrase; sending one makes an open
         // network look secured to nmcli and the join fails obscurely.
         psk: psk.filter(|p| !p.is_empty()),
+        identity: identity.filter(|i| !i.is_empty()),
     };
 
     // No retry, unlike `pair::consume`. A join is not idempotent from the

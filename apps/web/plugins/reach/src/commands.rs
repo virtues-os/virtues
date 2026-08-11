@@ -97,12 +97,14 @@ pub(crate) async fn provision_join<R: Runtime>(
   server: String,
   ssid: String,
   psk: Option<String>,
+  identity: Option<String>,
 ) -> Result<ProvisionJoinResult> {
   use virtues_reach_client::provision::JoinOutcome;
-  let outcome = virtues_reach_client::provision::join(
+  let outcome = virtues_reach_client::provision::join_full(
     &crate::normalize_server(&server),
     &ssid,
     psk.as_deref(),
+    identity.as_deref(),
   )
   .await
   .map_err(crate::Error::from)?;

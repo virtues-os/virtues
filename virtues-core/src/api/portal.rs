@@ -175,11 +175,12 @@ pub async fn index_handler(
                 .iter()
                 .map(|n| {
                     format!(
-                        r#"<a class="net" href="/portal/network?ssid={}"><span class="bars">{}</span><span class="name">{}</span><span class="lock">{}</span></a>"#,
+                        r#"<a class="net" href="/portal/network?ssid={}{}"><span class="bars">{}</span><span class="name">{}</span><span class="lock">{}</span></a>"#,
                         urlencoding::encode(&n.ssid),
+                        if n.enterprise { "&e=1" } else { "" },
                         bars(n.signal),
                         esc(&n.ssid),
-                        if n.secured { "locked" } else { "open" }
+                        if n.enterprise { "work" } else if n.secured { "locked" } else { "open" }
                     )
                 })
                 .collect();
@@ -207,6 +208,9 @@ pub async fn index_handler(
 #[derive(Deserialize)]
 pub struct NetworkQuery {
     ssid: String,
+    /// `e=1`: 802.1X — render username + password, not password alone.
+    #[serde(default)]
+    e: Option<String>,
 }
 
 /// `GET /portal/network?ssid=…` — the password form.
@@ -223,16 +227,34 @@ pub async fn network_handler(
     // one of them escapes quotes. See `esc_attr`.
     let ssid = esc(&q.ssid);
     let ssid_attr = esc_attr(&q.ssid);
+    let enterprise = q.e.as_deref() == Some("1");
+    // 802.1X: credential-per-user. Two fields, and the copy says whose
+    // credentials — the network's operator issued them, not us.
+    let identity_field = if enterprise {
+        r#"<label for="identity">Username</label>
+  <input type="text" name="identity" autocapitalize="off" autocorrect="off"
+         autocomplete="username" placeholder="Your account for this network">
+  <label for="psk">Password</label>"#
+    } else {
+        ""
+    };
     // `autocomplete="current-password"` so iOS offers the saved password for
     // this very network — the one real advantage a captive sheet can still
     // offer, and free.
+    let intro = if enterprise {
+        "This network uses per-person sign-in. Enter the username and password its operator gave you - not the code on the box's screen."
+    } else {
+        "Enter the password for this network - your own Wi-Fi password, not the code on the box's screen."
+    };
+    let pwd_placeholder = if enterprise { "Account password" } else { "Wi-Fi password" };
     let body = format!(
         r#"<h1>{ssid}</h1>
-<p class="tight">Enter the password for this network — your own Wi-Fi password, not the code on the box's screen.</p>
+<p class="tight">{intro}</p>
 <form method="post" action="/portal/join">
   <input type="hidden" name="ssid" value="{ssid_attr}">
+  {identity_field}
   <input type="password" name="psk" autocomplete="current-password"
-         autocapitalize="off" autocorrect="off" placeholder="Wi-Fi password">
+         autocapitalize="off" autocorrect="off" placeholder="{pwd_placeholder}">
   <button class="go" type="submit">Join network</button>
 </form>
 <ul class="steps">

@@ -258,10 +258,10 @@
           r = { networks: [], error: String(e) };
         }
         const rows = (r.networks || []).map((n, i) => `
-          <button class="net" data-i="${i}">
+          <button class="net" data-i="${i}" ${n.enterprise ? 'disabled style="opacity:.45"' : ''}>
             <span class="bars">${bars(n.signal)}</span>
             <span class="name">${esc(n.ssid)}</span>
-            ${n.secured ? '<span class="lock">locked</span>' : '<span class="lock">open</span>'}
+            <span class="lock">${n.enterprise ? 'work network' : n.secured ? 'locked' : 'open'}</span>
           </button>`).join('');
         app.innerHTML = `
           <p class="kicker">Setting up ${esc(box.name)}</p>
@@ -482,38 +482,56 @@
       function choose(n) {
         state.chosen = n;
         if (!n.secured) return join(null);
+        // 802.1X: credential-per-user wifi (offices, WeWork). Two fields, and
+        // the copy names whose credentials these are — the network operator's
+        // account, not anything Virtues issued.
+        const ent = !!n.enterprise;
         app.innerHTML = `
           <button class="back" id="back">← Networks</button>
           <h2>${esc(n.ssid)}</h2>
-          <label for="psk">Wi-Fi password</label>
+          ${ent ? `
+          <p class="sub">This network uses per-person sign-in. Enter the account its
+            operator gave you.</p>
+          <label for="identity">Username</label>
+          <input id="identity" type="text" autocomplete="username"
+                 autocapitalize="off" autocorrect="off" />` : ''}
+          <label for="psk">${ent ? 'Password' : 'Wi-Fi password'}</label>
           <!-- type=password + autocomplete: this is the ONE input that made the
                captive-portal flow worth replacing. iOS offers the saved network
                password here; in a captive webview it does not. -->
           <input id="psk" type="password" autocomplete="current-password"
                  autocapitalize="off" autocorrect="off" enterkeyhint="go" />
           <button class="primary" id="join" disabled>Join network</button>
-          <p class="hint">This is the password for your own Wi-Fi — the one your phone is
-            normally on. Not the code on your box's screen.</p>`;
+          <p class="hint">${ent
+            ? 'Your sign-in for this network — not the code on your box\'s screen.'
+            : 'This is the password for your own Wi-Fi — the one your phone is normally on. Not the code on your box\'s screen.'}</p>`;
         const psk = document.getElementById('psk');
+        const idf = document.getElementById('identity');
         const go = document.getElementById('join');
-        // WPA2's own floor. Catching it here beats a 20-second round trip that
-        // ends in "Secrets were required, but not provided".
-        const ok = () => (go.disabled = psk.value.length < 8);
+        // WPA2's floor is 8; enterprise account passwords have no floor we can
+        // assume, so require anything non-empty (plus a username).
+        const ok = () => (go.disabled = ent
+          ? !(idf.value.trim() && psk.value)
+          : psk.value.length < 8);
         psk.addEventListener('input', ok);
+        if (idf) idf.addEventListener('input', ok);
+        const submit = () => join(psk.value, idf ? idf.value.trim() : null);
         psk.addEventListener('keydown', (e) => {
-          if (e.key === 'Enter' && psk.value.length >= 8) join(psk.value);
+          if (e.key === 'Enter' && !go.disabled) submit();
         });
-        go.addEventListener('click', () => join(psk.value));
+        go.addEventListener('click', submit);
         document.getElementById('back').addEventListener('click', () => renderNetworks());
-        psk.focus();
+        (idf || psk).focus();
       }
 
-      async function join(psk) {
+      async function join(psk, identity) {
         const ssid = state.chosen.ssid;
         renderSwitching(ssid);
         let res = { outcome: 'unknown', detail: null };
         try {
-          res = await invoke('plugin:reach|provision_join', { server: state.origin, ssid, psk });
+          res = await invoke('plugin:reach|provision_join', {
+            server: state.origin, ssid, psk, identity: identity || null,
+          });
         } catch {
           // A dead socket IS the switchover. Fall through to `unknown`.
         }
