@@ -159,23 +159,15 @@
 				<div class="brand">∴ &nbsp;{state_.box_name}</div>
 				<div class="step">Step 1 of 2</div>
 				<div class="head">Get the Virtues app</div>
-				{#if state_.ap_ssid}
-					<div class="lead">
-						Open it and choose <b>Set up a new box</b> — it connects to me
-						and asks for this password:
-					</div>
-					<div class="apline">
-						<span class="apname">{state_.ap_ssid}</span>
-						{#if state_.ap_passphrase}
-							<span class="appwd">{state_.ap_passphrase}</span>
-						{/if}
-					</div>
-				{:else}
-					<!-- AP still coming up (~seconds). Honest copy beats a screen
-					     telling someone to use a network that isn't broadcasting yet. -->
-					<div class="lead">Starting my own Wi-Fi network so the app can reach
-						me — this takes a few seconds.</div>
-				{/if}
+				<!-- BLE is the transport (the box is advertising right now), so the
+				     instruction is two lines and contains NO network names, NO
+				     passwords, NO QR-to-join — the app finds the box itself. The
+				     retired SoftAP-era screen carried an SSID + passphrase here;
+				     see maintenance::setup_ap's breakglass note. -->
+				<div class="lead">
+					Open it and choose <b>Set up a new box</b> — it finds me over
+					Bluetooth and walks you through Wi-Fi.
+				</div>
 				<div class="foot">
 					Or plug in ethernet and this step disappears.
 				</div>
@@ -316,24 +308,6 @@
 		   pointed at by a phone camera; a silently squashed one still scans
 		   badly rather than not at all, which is the worse failure. */
 		flex: none;
-	}
-	/* The one password the app asks for, big enough to read from a chair.
-	   Monospace: it gets typed character by character off this screen. */
-	.apline {
-		display: flex;
-		align-items: baseline;
-		gap: 14px;
-		font-family: ui-monospace, Menlo, monospace;
-		margin-bottom: 4px;
-	}
-	.apname {
-		font-size: 0.72rem;
-		color: #75828f;
-	}
-	.appwd {
-		font-size: 1.15rem;
-		letter-spacing: 0.08em;
-		color: #f7f5f0;
 	}
 	.dark {
 		flex: 1;

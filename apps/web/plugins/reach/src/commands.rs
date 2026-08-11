@@ -181,6 +181,7 @@ pub(crate) async fn improv_provision<R: Runtime>(
   id: String,
   ssid: String,
   password: String,
+  identity: Option<String>,
 ) -> Result<serde_json::Value> {
   #[cfg(target_os = "ios")]
   {
@@ -190,13 +191,13 @@ pub(crate) async fn improv_provision<R: Runtime>(
       .0
       .run_mobile_plugin(
         "improv_provision",
-        serde_json::json!({ "id": id, "ssid": ssid, "password": password }),
+        serde_json::json!({ "id": id, "ssid": ssid, "password": password, "identity": identity }),
       )
       .map_err(|e| crate::Error::Reach(e.to_string()));
   }
   #[cfg(not(target_os = "ios"))]
   {
-    let _ = (app, id, ssid, password);
+    let _ = (app, id, ssid, password, identity);
     Err(crate::Error::Reach("BLE setup is iOS-only for now".into()))
   }
 }

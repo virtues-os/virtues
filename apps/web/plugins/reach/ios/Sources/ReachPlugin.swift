@@ -51,6 +51,8 @@ class ImprovProvisionArgs: Decodable {
   let id: String
   let ssid: String
   let password: String
+  /// Present = 802.1X; `password` is then the account password.
+  let identity: String?
 }
 
 class ReachPlugin: Plugin {
@@ -77,7 +79,7 @@ class ReachPlugin: Plugin {
   @objc public func improv_provision(_ invoke: Invoke) throws {
     let args = try invoke.parseArgs(ImprovProvisionArgs.self)
     ImprovClient.shared.provision(
-      id: args.id, ssid: args.ssid, password: args.password,
+      id: args.id, ssid: args.ssid, password: args.password, identity: args.identity,
       onProgress: { [weak self] stage in
         self?.trigger("improv-progress", data: ["stage": stage])
       },

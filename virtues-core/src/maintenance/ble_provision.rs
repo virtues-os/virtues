@@ -83,6 +83,15 @@ pub enum Command {
     DeviceInfo,
     /// `0x04` — the box's own wifi scan, streamed back one network per result.
     ScanWifi,
+    /// `0x81` — OUR extension: 802.1X join. `[ssid, identity, password]`.
+    ///
+    /// Vendor command space, chosen because base Improv's wifi-settings RPC
+    /// (0x01) carries exactly ssid+password and enterprise networks
+    /// authenticate a USER. Without this, killing the SoftAP path would have
+    /// orphaned enterprise wifi entirely — BLE is the only provisioning
+    /// transport left. Foreign Improv clients never send 0x81; ours only
+    /// sends it to boxes whose scan marked the network "ENT".
+    EnterpriseSettings { ssid: String, identity: String, password: String },
 }
 
 // ─── Improv protocol: framing ───────────────────────────────────────────────
@@ -124,6 +133,15 @@ pub fn parse_rpc(packet: &[u8]) -> Result<Command, ImprovError> {
         0x02 => Ok(Command::Identify),
         0x03 => Ok(Command::DeviceInfo),
         0x04 => Ok(Command::ScanWifi),
+        0x81 => {
+            let (ssid, rest) = take_string(data).ok_or(ImprovError::InvalidPacket)?;
+            let (identity, rest) = take_string(rest).ok_or(ImprovError::InvalidPacket)?;
+            let (password, rest) = take_string(rest).ok_or(ImprovError::InvalidPacket)?;
+            if !rest.is_empty() {
+                return Err(ImprovError::InvalidPacket);
+            }
+            Ok(Command::EnterpriseSettings { ssid, identity, password })
+        }
         _ => Err(ImprovError::UnknownCommand),
     }
 }
@@ -218,6 +236,27 @@ mod tests {
         let mut data = vec![200u8];
         data.extend_from_slice(b"x");
         assert_eq!(parse_rpc(&frame(0x01, &data)), Err(ImprovError::InvalidPacket));
+    }
+
+    #[test]
+    fn enterprise_settings_round_trip() {
+        // The 0x81 vendor extension: ssid + identity + password. Without it,
+        // retiring SoftAP orphans every credential-per-user network.
+        let mut data = vec![4u8];
+        data.extend_from_slice(b"work");
+        data.push(4);
+        data.extend_from_slice(b"adam");
+        data.push(6);
+        data.extend_from_slice(b"hunter");
+        let cmd = parse_rpc(&frame(0x81, &data)).unwrap();
+        assert_eq!(
+            cmd,
+            Command::EnterpriseSettings {
+                ssid: "work".into(),
+                identity: "adam".into(),
+                password: "hunter".into()
+            }
+        );
     }
 
     #[test]
@@ -571,6 +610,37 @@ mod server {
                             g.set_error(ImprovError::UnableToConnect).await;
                             g.set_state(State::Authorized).await;
                             tracing::warn!(%ssid, %detail, "ble_provision: join failed");
+                        }
+                    }
+                });
+            }
+            Command::EnterpriseSettings { ssid, identity, password } => {
+                {
+                    improv.lock().await.set_state(State::Provisioning).await;
+                }
+                let improv = improv.clone();
+                tokio::spawn(async move {
+                    match crate::api::provision::perform_join_full(
+                        &ssid,
+                        (!password.is_empty()).then_some(password.as_str()),
+                        Some(&identity),
+                    )
+                    .await
+                    {
+                        None => {
+                            let url = crate::cli::link::primary_ip()
+                                .map(|ip| format!("http://{ip}:8000"))
+                                .unwrap_or_default();
+                            let mut g = improv.lock().await;
+                            g.send_result(build_result(0x81, &[&url])).await;
+                            g.set_state(State::Provisioned).await;
+                            tracing::info!(%ssid, "ble_provision: enterprise join via Improv-ext");
+                        }
+                        Some(detail) => {
+                            let mut g = improv.lock().await;
+                            g.set_error(ImprovError::UnableToConnect).await;
+                            g.set_state(State::Authorized).await;
+                            tracing::warn!(%ssid, %detail, "ble_provision: enterprise join failed");
                         }
                     }
                 });
