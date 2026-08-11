@@ -210,7 +210,11 @@
 					<img class="qr" src="/api/display/link-qr" alt="" />
 					<div class="apcreds">
 						<div class="aplabel">Or visit</div>
-						<div class="apssid">virtues.com/link</div>
+						<!-- The URL that ANSWERS. `virtues.com/link` reads better and is
+						     still an open decision in docs/linking-plan.md — it 404s
+						     today, and a 404 printed on a physical panel is the worst
+						     kind of wrong: unfixable from where the reader is standing. -->
+						<div class="apssid">atlas.virtues.com/init</div>
 					</div>
 				{:else}
 					<div class="qr-pending-mark">∴</div>
