@@ -8,7 +8,7 @@ use serde::{Deserialize, Serialize};
 use sqlx::PgPool;
 
 use super::executor::{ToolError, ToolResult};
-use crate::api::parallel;
+use crate::api::web_search as search_api;
 
 /// Web search tool arguments (from LLM)
 #[derive(Debug, Deserialize)]
@@ -22,10 +22,6 @@ pub struct WebSearchArgs {
     /// Number of results (1-10, default 5)
     #[serde(default)]
     pub num_results: Option<u8>,
-    /// Escalate to a comprehensive multi-step search for hard or thin-result
-    /// queries. Higher cost/latency — off by default.
-    #[serde(default)]
-    pub deep: Option<bool>,
     /// Freshness: max age (hours) of a cached result before re-fetching live.
     /// Use `1` for news/sports/odds/live data; omit for stable information.
     #[serde(default)]
@@ -65,21 +61,16 @@ impl WebSearchTool {
             ));
         }
 
-        let request = parallel::SearchRequest {
+        let request = search_api::SearchRequest {
             objective: args.objective,
-            queries: vec![args.query.clone()],
-            mode: if args.deep.unwrap_or(false) {
-                parallel::Mode::Advanced
-            } else {
-                parallel::Mode::Basic
-            },
+            query: args.query.clone(),
             max_results: args.num_results,
             // The tool speaks hours because that is the unit a model reasons
             // in; the API wants seconds.
             max_age_seconds: args.max_age_hours.map(|h| h.saturating_mul(3600)),
         };
 
-        let response = parallel::search(&self.pool, request)
+        let response = search_api::search(&self.pool, request)
             .await
             .map_err(|e| ToolError::ExecutionFailed(e.to_string()))?;
 

@@ -158,7 +158,7 @@ async fn main() -> Result<()> {
         // AI (`/v1/ai/*`) covers both streaming and non-streaming chat; the
         // charge fires from a callback once the upstream usage is known.
         .merge(routes::places::router())
-        .merge(routes::parallel::router())
+        .merge(routes::search::router())
         .merge(routes::unsplash::router())
         // Plaid bank-data proxy (/v1/services/plaid/*): keeps the master Plaid
         // secret server-side; the box sends only per-user access_tokens.
