@@ -10,9 +10,9 @@
 ## Where it sits
 
 ```
-1. BREATHE   wifi over BLE          the box gets a network      (built, proven)
-2. BELONG    link to an account     the box gets reach + money   (this doc)
-3. TRUST     pair with the code     the owner gets the key       (built, proven)
+1. WIFI    over BLE               the box gets a network       (built, proven)
+2. LINK    to an account          the box gets reach + billing  (this doc)
+3. PAIR    with the on-screen code the owner's device gets access (built, proven)
 ```
 
 Linking comes **before** pairing, and the ordering is a discovery, not a
@@ -24,7 +24,8 @@ time anything needs it, and the local network's goodwill stops mattering.
 
 ## Core narrative
 
-Step 2 is where generic hardware becomes *someone's* box. The account is
+Plain words on every surface: **get online → link your account → pair your
+phone.** Step 2 is where generic hardware becomes *someone's* box. The account is
 **billing + reach, never data custody** — that sentence is doctrine, UI copy,
 and security invariant all at once, and it appears verbatim on the link page:
 
