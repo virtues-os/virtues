@@ -361,7 +361,26 @@ mod link_session {
                     // (`crate::relay::request_rebind`) — no restart involved.
                     return None;
                 }
-                Ok(_) => {}
+                // Expired/denied, or no in-flight link at all: `link::poll`
+                // has ALREADY deleted the stored device_code in both cases, so
+                // the cached session is now a code nobody can redeem. Drop it
+                // so the next heartbeat mints a fresh one.
+                //
+                // Swallowing these (as `Ok(_) => {}` did) put a GHOST CODE on
+                // the glass: the panel kept showing a dead `user_code` for the
+                // rest of its 15-minute TTL, atlas correctly refused it, and
+                // the owner got "that code didn't work" with no way to
+                // discover why. Seen live 2026-08-11 with the box holding one
+                // row — `iroh_secret_key` — and a code still on screen.
+                Ok(crate::virtues_api::link::LinkStatus::Expired)
+                | Ok(crate::virtues_api::link::LinkStatus::None) => {
+                    tracing::info!("display: link session expired — minting a fresh code");
+                    if let Ok(mut g) = SESSION.lock() {
+                        *g = None;
+                    }
+                    return None;
+                }
+                Ok(crate::virtues_api::link::LinkStatus::Pending) => {}
                 Err(e) => {
                     tracing::debug!(error = %format!("{e:#}"), "display: link poll failed");
                 }
