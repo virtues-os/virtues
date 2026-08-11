@@ -133,11 +133,25 @@
       // navigates to the loopback directly.
       const BOX_URL = window.__VIRTUES_BOX_URL__ || 'http://localhost:7117';
       const THIS_DEVICE = IS_MOBILE ? 'this phone' : 'this computer';
-      // The printed, memorable entry point for step 2; it redirects to atlas.
+
+      // A box's BLE/AP name is its SSID form — `Virtues-Honest-Kestrel` —
+      // because that is what has to survive a wifi list. On screen it should
+      // read the way the box's own display says it: "Honest Kestrel". The
+      // codename is the whole two-boxes-in-one-house story, so it must match
+      // across surfaces exactly.
+      const prettyBoxName = (n) =>
+        String(n || 'Your box').replace(/^Virtues[-_ ]?/i, '').replace(/[-_]+/g, ' ').trim()
+        || 'Your box';
+      // Where step 2 actually happens. Atlas directly, NOT the memorable
+      // `virtues.com/link` this once said: that redirect is still an open
+      // decision in docs/linking-plan.md and 404s today, which is exactly what
+      // it did to the first person who followed this button. Ship the URL that
+      // answers; swap it the day the pretty one exists.
+      //
       // A URL and not a deep link on purpose: checkout belongs in a real
       // browser with a real password manager, and the box completes the link
       // over its own outbound connection regardless of which browser it was.
-      const LINK_URL = 'https://virtues.com/link';
+      const LINK_URL = 'https://atlas.virtues.com/init';
 
       // ── launch ────────────────────────────────────────────────────────────
       //
@@ -379,7 +393,7 @@
         // Online-but-unclaimed over BLE with nothing on the LAN: a network
         // that isolates clients. Pairing rides BLE (0x83) — go enter the code.
         if (lan.servers.length === 0 && ble.length) {
-          return routeToBox({ name: ble[0].name || 'Your box', bleId: ble[0].id });
+          return routeToBox({ name: prettyBoxName(ble[0].name), bleId: ble[0].id });
         }
         // Nothing anywhere: setup IS the default state, and it keeps looking.
         if (lan.servers.length === 0) return bleSearchLoop();
@@ -432,7 +446,7 @@
           const needsWifi = boxes.find((b) => b.improvState === 2);
           if (needsWifi) return bleWifiPicker(needsWifi);
           if (boxes.length) {
-            return routeToBox({ name: boxes[0].name || 'Your box', bleId: boxes[0].id });
+            return routeToBox({ name: prettyBoxName(boxes[0].name), bleId: boxes[0].id });
           }
           // Peek at the LAN each round too — an already-claimed box never
           // advertises, and it should still surface without a manual rescan.
@@ -474,7 +488,7 @@
             // advertisement lied; the wifi picker is the honest destination,
             // and provisioning an actually-online box is harmless anyway.
             const { servers } = await discoverBoxes();
-            const who = boxes[0].name || 'Your box';
+            const who = prettyBoxName(boxes[0].name);
             if (servers.length) {
               return startWithBanner(`${who} is already online — tap it below and enter its code.`);
             }
@@ -681,7 +695,7 @@
             <p class="sub">${ssid ? `It's on ${esc(ssid)}. ` : ''}Your data stays on the box —
               the subscription pays for what connects it: reaching it from anywhere,
               the AI wallet, integrations.</p>
-            <button class="primary" id="openlink">Open virtues.com/link</button>
+            <button class="primary" id="openlink">Open the link page</button>
             <p class="hint">Your box is showing a short code on its screen — enter that on
               the page, and it links itself. ${statusHtml}</p>
             <button class="back" id="skip" style="margin-top:18px">Skip for now →</button>`;
