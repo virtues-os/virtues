@@ -95,9 +95,12 @@ enum ToolResultBody {
         results: Vec<RawResult>,
     },
     /// The gateway reports tool failures inside the result rather than as an
-    /// HTTP error — a model that cannot drive the tool returns `{error,
-    /// message}` and a 200. Silently treating that as "no results" would make a
-    /// broken search look like an unlucky one.
+    /// HTTP error: a failed search returns `{error, message}` and a 200.
+    ///
+    /// Observed in the wild: a model may issue SEVERAL searches in one turn and
+    /// have only some of them fail. So a failure is only fatal when nothing
+    /// else succeeded — otherwise the partial results are the answer, and
+    /// throwing them away over a sibling's failure would lose a good search.
     Err {
         error: serde_json::Value,
         #[serde(default)]
@@ -138,10 +141,13 @@ pub async fn search(pool: &PgPool, request: SearchRequest) -> Result<SearchRespo
 
     let body = json!({
         // The proxy lifts this into the gateway's header and forwards the rest.
-        // Chat slot rather than Lite on purpose: Lite could not drive the tool
-        // (it returns an error result), and the Chat slot's provider is one that
-        // reports cost, which is what keeps settlement measured.
-        "model": default_model_for_slot(ModelSlot::Chat),
+        //
+        // Lite, not Chat. The model here only has to compose a query and let
+        // the gateway search — its prose is discarded — so paying Chat-slot
+        // rates for it is waste: measured, the model side is $0.0006 on Lite
+        // against $0.018 on Chat, which is the difference between a search
+        // costing half a cent and costing two.
+        "model": default_model_for_slot(ModelSlot::Lite),
         "prompt": [{
             "role": "user",
             "content": [{ "type": "text", "text": prompt_text }]
@@ -174,10 +180,14 @@ pub async fn search(pool: &PgPool, request: SearchRequest) -> Result<SearchRespo
 
 fn parse_results(parsed: GatewayResponse) -> Result<SearchResponse> {
     let mut results = Vec::new();
+    let mut failure: Option<String> = None;
+    let mut saw_tool_result = false;
+
     for block in parsed.content {
         let ContentBlock::ToolResult { result } = block else {
             continue;
         };
+        saw_tool_result = true;
         match result {
             ToolResultBody::Ok { results: raw } => {
                 results.extend(raw.into_iter().map(|r| SearchResult {
@@ -193,11 +203,15 @@ fn parse_results(parsed: GatewayResponse) -> Result<SearchResponse> {
                 }));
             }
             ToolResultBody::Err { error, message } => {
-                return Err(Error::ExternalApi(format!(
-                    "search tool failed: {}",
-                    message.unwrap_or_else(|| error.to_string())
-                )))
+                failure.get_or_insert_with(|| message.unwrap_or_else(|| error.to_string()));
             }
+        }
+    }
+
+    // Only fatal if every search failed. A partial failure still has an answer.
+    if results.is_empty() && saw_tool_result {
+        if let Some(why) = failure {
+            return Err(Error::ExternalApi(format!("search tool failed: {why}")));
         }
     }
     Ok(SearchResponse { results })
@@ -236,15 +250,31 @@ mod tests {
     }
 
     #[test]
-    fn a_tool_error_is_an_error_not_an_empty_result_set() {
+    fn a_total_tool_failure_is_an_error_not_an_empty_result_set() {
         // The gateway returns 200 with {error, message} inside the tool result
-        // when the model cannot drive the tool. Reporting that as "found
-        // nothing" would hide a broken integration behind a plausible answer.
+        // when a search fails. Reporting that as "found nothing" would hide a
+        // broken integration behind a plausible answer.
         let e = parse_results(blocks(json!({"content": [
-            {"type": "tool-result", "result": {"error": "unsupported", "message": "model cannot use this tool"}}
+            {"type": "tool-result", "result": {"error": "unsupported", "message": "search failed"}}
         ]})))
         .unwrap_err();
-        assert!(e.to_string().contains("model cannot use this tool"), "got: {e}");
+        assert!(e.to_string().contains("search failed"), "got: {e}");
+    }
+
+    #[test]
+    fn a_partial_failure_keeps_the_results_that_worked() {
+        // Observed live: a model issues several searches in one turn and only
+        // some fail. Discarding the successful ones because a sibling errored
+        // would throw away the answer we already have.
+        let r = parse_results(blocks(json!({"content": [
+            {"type": "tool-result", "result": {"error": "rate_limited", "message": "slow down"}},
+            {"type": "tool-result", "result": {"results": [
+                {"url": "https://a.example", "title": "A", "excerpts": ["text"]}
+            ]}}
+        ]})))
+        .unwrap();
+        assert_eq!(r.results.len(), 1);
+        assert_eq!(r.results[0].url, "https://a.example");
     }
 
     #[test]
