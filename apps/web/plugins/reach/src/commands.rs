@@ -202,6 +202,55 @@ pub(crate) async fn improv_provision<R: Runtime>(
   }
 }
 
+/// Pair THROUGH the box's Bluetooth (our Improv RPC 0x83): the box redeems
+/// the pair code against its own consume endpoint and streams the response
+/// back; this command then persists the pairing exactly as the LAN path
+/// does. Exists because the LAN leg dies on client-isolated networks (an
+/// office blocked phone→box HTTP on the same wifi, live, 2026-08-11).
+/// Returns `{ok: true, status}` (a `ReachStatus`) or `{ok: false, error}`.
+#[command]
+pub(crate) async fn improv_pair<R: Runtime>(
+  app: AppHandle<R>,
+  id: String,
+  code: String,
+) -> Result<serde_json::Value> {
+  #[cfg(target_os = "ios")]
+  {
+    use crate::ReachExt;
+    use tauri::Manager;
+    // Mint the device identity HERE (Rust owns key custody, as in the HTTP
+    // path); only the public EndpointId crosses the plugin boundary.
+    let identity = virtues_reach_client::pair::mint_identity();
+    let resp: serde_json::Value = {
+      let handle = app.state::<crate::IosPluginHandle<R>>();
+      handle
+        .0
+        .run_mobile_plugin(
+          "improv_pair",
+          serde_json::json!({
+            "id": id,
+            "code": code,
+            "label": "Virtues Mobile",
+            "endpointId": identity.node_id,
+          }),
+        )
+        .map_err(|e| crate::Error::Reach(e.to_string()))?
+    };
+    if resp.get("ok").and_then(|v| v.as_bool()) != Some(true) {
+      // The Swift layer's error is already user-facing words — pass through.
+      return Ok(resp);
+    }
+    let body = resp.get("response").and_then(|v| v.as_str()).unwrap_or("");
+    let status = app.reach().pair_finish_ble(body, identity).await?;
+    return Ok(serde_json::json!({ "ok": true, "status": status }));
+  }
+  #[cfg(not(target_os = "ios"))]
+  {
+    let _ = (app, id, code);
+    Err(crate::Error::Reach("BLE setup is iOS-only for now".into()))
+  }
+}
+
 /// Drop the BLE connection. Safe to always call on leaving the setup flow.
 #[command]
 pub(crate) async fn improv_disconnect<R: Runtime>(app: AppHandle<R>) -> Result<()> {
