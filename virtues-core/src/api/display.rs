@@ -103,7 +103,7 @@ pub async fn display_state_handler(
             ap_passphrase: ap_ssid.as_ref().and_then(|_| ap_passphrase()),
             ap_ssid,
             claimed: devices > 0,
-            online: crate::cli::link::primary_ip().is_some(),
+            online: crate::cli::link::has_internet(),
             devices,
             box_name: crate::codename::pretty(&crate::codename::box_codename()),
         }),

@@ -365,7 +365,7 @@ mod server {
                 // Connectivity changed since the service came up? Re-serve, so
                 // the advertisement and state characteristic tell the truth.
                 if let Some(h) = &serving {
-                    if !claimed && h.online_at_serve != crate::cli::link::primary_ip().is_some() {
+                    if !claimed && h.online_at_serve != crate::cli::link::has_internet() {
                         tracing::info!("ble_provision: connectivity changed, re-serving with fresh state");
                         serving = None;
                     }
@@ -419,7 +419,10 @@ mod server {
 
         // Online now? Then we are already provisioned and the advertisement
         // says so — the app uses that to skip straight to discovery.
-        let initial = if crate::cli::link::primary_ip().is_some() {
+        // has_internet, not primary_ip: a captive guest network hands out
+        // IPs while blocking traffic, and advertising Provisioned on one
+        // routes the app away from the wifi picker the owner still needs.
+        let initial = if crate::cli::link::has_internet() {
             State::Provisioned
         } else {
             State::Authorized
