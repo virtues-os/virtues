@@ -676,6 +676,14 @@ tauri::ios_plugin_binding!(init_plugin_reach);
 pub(crate) struct IosPluginHandle<R: Runtime>(pub tauri::plugin::PluginHandle<R>);
 
 pub fn init<R: Runtime>() -> TauriPlugin<R> {
+  // FIRST, synchronously, before anything spawns: the process-default rustls
+  // CryptoProvider. reqwest here is built `rustls-no-provider`, and building
+  // a client without a provider installed is a PANIC — one that aborts the
+  // app when it fires on a no-unwind thread. Launch used to race this
+  // plugin's HTTP users against `build_endpoint` (which also installs it),
+  // and losing that race looked exactly like a broken build (iOS,
+  // 2026-08-11, three crash reports deep).
+  virtues_reach_client::install_crypto_provider();
   Builder::new("reach")
     .invoke_handler(tauri::generate_handler![
       commands::pair,

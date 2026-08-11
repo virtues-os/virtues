@@ -17,6 +17,7 @@ pub mod scan;
 pub mod session;
 
 pub use model::PairedBox;
+pub use virtues_iroh::install_crypto_provider;
 pub use proxy::{build_client, resolve_box_lan, serve_loopback, serve_on, serve_on_provider};
 pub use scan::{local_private_ipv4s, scan_subnet, DiscoveredBox};
 pub use session::{probe_session, SessionState};
