@@ -52,6 +52,44 @@ fn is_ai_path(path: &str) -> bool {
     path.starts_with("/v1/ai/")
 }
 
+/// How many times a chat completion may come back empty before we give up.
+///
+/// A reasoning model can spend its entire output budget thinking and return a
+/// message with no content at all. Measured on the box 2026-08-11, segmenting
+/// 2026-08-09 on `xai/grok-4.5`: `completion_tokens = 1009`, of which
+/// `reasoning_tokens = 1009` — zero content tokens, billed in full. The caller
+/// saw "LLM returned empty summary" and that day's autobiography was lost with
+/// no retry; 2026-08-03 died the same way on a different model. Raising
+/// `max_tokens` does not fix it (the same run recorded 7214 completion tokens
+/// against a 4000 cap, so reasoning is not bounded by it), and
+/// `reasoning_effort` is a no-op on this model — a resend is the only lever.
+///
+/// 3 attempts: empty output is sporadic rather than deterministic, so a couple
+/// of resends is the difference between losing a day and not, while still
+/// bounding the spend on a model that has genuinely stopped answering.
+const EMPTY_COMPLETION_ATTEMPTS: u32 = 3;
+
+/// A successful chat completion carrying no assistant text.
+///
+/// Gated on `choices` being present so it only judges chat-shaped responses,
+/// and on success so a real error status falls through to the caller's own
+/// handling untouched.
+fn is_empty_completion(resp: &ApiResponse) -> bool {
+    if !resp.is_success() {
+        return false;
+    }
+    let Some(choices) = resp.body["choices"].as_array() else {
+        return false;
+    };
+    // An empty `choices` array is the same failure wearing a different shape.
+    choices.iter().all(|c| {
+        c["message"]["content"]
+            .as_str()
+            .map(|s| s.trim().is_empty())
+            .unwrap_or(true)
+    })
+}
+
 /// Turn an upstream's "HTTP 200, but actually an error" into a real error.
 ///
 /// Some gateways answer a failed call with a 2xx whose body carries `error`
@@ -428,11 +466,26 @@ impl BearerClient {
             }
         }
         let bearer = self.ensure_bearer().await?;
-        let resp = self.send(path, body, &bearer).await?;
-        let resp = self.handle_402_and_retry_post(path, body, resp).await?;
-        self.record_ai_usage(path, body, &resp, crate::api::ai_calls::Route::Wallet)
-            .await;
-        Ok(resp)
+        let mut attempt = 0;
+        loop {
+            attempt += 1;
+            let resp = self.send(path, body, &bearer).await?;
+            let resp = self.handle_402_and_retry_post(path, body, resp).await?;
+            // Every attempt is billed, so every attempt is recorded — a retry
+            // that vanished from `app_ai_calls` would make the wallet lie.
+            self.record_ai_usage(path, body, &resp, crate::api::ai_calls::Route::Wallet)
+                .await;
+            if attempt < EMPTY_COMPLETION_ATTEMPTS && is_empty_completion(&resp) {
+                tracing::warn!(
+                    path,
+                    attempt,
+                    "completion came back with no content (all output spent on \
+                     reasoning) — retrying"
+                );
+                continue;
+            }
+            return Ok(resp);
+        }
     }
 
     /// BYO path for non-streaming AI calls — the `post_json` twin of
@@ -783,6 +836,52 @@ mod byo_fork_tests {
         for path in ["/v1/places/autocomplete", "/v1/parallel/search", "/v1/unsplash/search", "/v1/usage"] {
             assert!(!is_ai_path(path), "{path} must not divert to BYO");
         }
+    }
+
+    fn completion(status: u16, body: Value) -> ApiResponse {
+        ApiResponse { status, body }
+    }
+
+    #[test]
+    fn a_reasoning_only_completion_reads_as_empty() {
+        // The shape measured on the box: content present but blank, every
+        // output token spent on reasoning.
+        assert!(is_empty_completion(&completion(
+            200,
+            json!({"choices": [{"message": {"content": ""}}],
+                   "usage": {"completion_tokens": 1009, "reasoning_tokens": 1009}}),
+        )));
+        // Whitespace-only is the same nothing.
+        assert!(is_empty_completion(&completion(
+            200,
+            json!({"choices": [{"message": {"content": "  \n "}}]}),
+        )));
+        // No content key at all.
+        assert!(is_empty_completion(&completion(
+            200,
+            json!({"choices": [{"message": {}}]}),
+        )));
+        // No choices to speak of.
+        assert!(is_empty_completion(&completion(200, json!({"choices": []}))));
+    }
+
+    #[test]
+    fn real_answers_and_real_errors_are_not_retried_as_empty() {
+        assert!(!is_empty_completion(&completion(
+            200,
+            json!({"choices": [{"message": {"content": "the day began early"}}]}),
+        )));
+        // A non-2xx keeps its own error handling — retrying it here would
+        // resend a call the caller is about to be told failed.
+        assert!(!is_empty_completion(&completion(
+            429,
+            json!({"choices": [{"message": {"content": ""}}]}),
+        )));
+        // Non-chat AI responses have no `choices`; never judged empty.
+        assert!(!is_empty_completion(&completion(
+            200,
+            json!({"data": [{"embedding": [0.1, 0.2]}]}),
+        )));
     }
 
     fn byo(default_model: Option<&str>) -> crate::api::settings_byo::ByoCredential {
