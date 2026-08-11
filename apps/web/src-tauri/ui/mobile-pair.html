@@ -126,31 +126,62 @@
       // Also the only way to exercise setup on a dev phone without unpairing.
       const pinnedOpen = location.hash === '#setup';
       if (window.__VIRTUES_PAIRED__ && !pinnedOpen) {
-        // A paired phone gets a "opening your box" screen IMMEDIATELY — not the
-        // connect UI. reach_status runs a live probe that can take 10-15s when
-        // the direct path is blocked (office networks) and the tailnet/relay
-        // route has to be found; rendering the connect screen during that
-        // window reads as "your pairing is gone" (it did, live, 2026-08-11,
-        // minutes after the first successful office pairing). Only a probe
-        // that DEFINITIVELY says unpaired falls through to the connect screen.
+        bootPaired();
+      }
+
+      // A paired phone gets a "opening your box" screen IMMEDIATELY — not the
+      // connect UI. reach_status runs a live probe that can take 10-15s when
+      // the direct path is blocked (office networks) and the tailnet/relay
+      // route has to be found; rendering the connect screen during that
+      // window reads as "your pairing is gone" (it did, live, 2026-08-11,
+      // minutes after the first successful office pairing).
+      //
+      // The probe's three answers get three DIFFERENT screens, and only
+      // 'authed' opens the SPA. Loading the SPA on anything less lands on its
+      // legacy connect page — the "old path" that must never appear on a
+      // phone (seen live 2026-08-11, twice, two different ways).
+      function bootPaired() {
         app.innerHTML = `
           <h1>Opening your box…</h1>
           <div class="wait"><span class="pip"></span><span>Connecting</span></div>`;
         invoke('plugin:reach|reach_status')
           .then((s) => {
-            // 'rejected' = the box ANSWERED and refused this phone's key —
-            // it was reset, or this device was revoked. Loading the SPA on a
-            // dead session renders a fully blank app with no way out (seen
-            // live 2026-08-11: a phone holding a stale Keychain pairing for a
-            // reset box sailed past every setup screen into an empty shell).
-            // 'unknown' is NOT this: an unreachable box must never cost the
-            // user their pairing — it may just be off or far away.
-            if (s && s.paired && s.session === 'rejected') { renderBoxForgotUs(); return; }
-            if (s && s.paired) { location.replace('/'); return; }
-            start();
+            if (!s || !s.paired) { start(); return; }
+            // The box answered and accepted us — the only ticket into the SPA.
+            if (s.session === 'authed') { location.replace('/'); return; }
+            // Answered and REFUSED our key: box was reset or we were revoked.
+            if (s.session === 'rejected') { renderBoxForgotUs(); return; }
+            // Didn't answer: off, or on a network we can't reach. An offline
+            // box must never silently cost the user their pairing — but it
+            // must not dead-end them either.
+            renderBoxUnreachable();
           })
           .catch(() => { start(); });
-        // Fall through only via the callbacks above.
+      }
+
+      function renderBoxUnreachable() {
+        app.innerHTML = `
+          <h1>Can't reach your box</h1>
+          <p class="sub">This phone is paired, but its box isn't answering — it may be
+            off, still starting up, or somewhere this phone can't reach right now.</p>
+          <button class="primary" id="retry">Try again</button><br>
+          <button class="back" id="openanyway" style="margin-top:14px">Open the app anyway</button><br>
+          <button class="back" id="setupnew" style="margin-top:6px">Forget this box and set up another</button>`;
+        document.getElementById('retry').addEventListener('click', bootPaired);
+        document.getElementById('openanyway').addEventListener('click', () => location.replace('/'));
+        // Two taps, inline — window.confirm() is not reliably wired in the
+        // iOS webview, and a silent false would make this button a no-op.
+        let armed = false;
+        const setupnew = document.getElementById('setupnew');
+        setupnew.addEventListener('click', async () => {
+          if (!armed) {
+            armed = true;
+            setupnew.textContent = "Tap again to forget — the box itself isn't touched";
+            return;
+          }
+          try { await invoke('plugin:reach|forget'); } catch { /* already gone */ }
+          start();
+        });
       }
 
       function renderBoxForgotUs() {
