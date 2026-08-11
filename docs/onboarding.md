@@ -97,6 +97,41 @@ already installed. `deprovision` strips per-unit identity before imaging,
 because the iroh secret *is* the box's identity and clones of an
 un-deprovisioned master are literally the same box.
 
+## As built — the desktop-first pass (2026-08-11)
+
+The section above still holds where it describes the box. What changed is
+*who sets it up* and *how many programs think they know how*.
+
+**One airlock: `apps/web/src-tauri/ui/connect.html`.** There were two connect
+screens (`pair.html` for desktop, `mobile-pair.html` for iOS) plus a third
+inside the SPA. They had drifted, every fix had to land twice, and a phone
+that slipped past the airlock on a dead session landed on the SPA's copy —
+which is what a user saw, and reasonably called "the old path". Now one file
+serves both platforms, and the only branch is what "open the app" means at the
+end (`finishPairing`).
+
+**Desktop is a first-class FIRST device.** `crates/virtues-improv` holds the
+Improv wire format once (the box re-exports it; a round-trip test builds every
+command as a client and parses it as the box) plus a `btleplug` client behind
+a feature flag. So a Mac now does the Bluetooth wifi step itself — which is
+the right default anyway: 802.1X credentials and a checkout page both want a
+keyboard, and the dev loop is a build rather than a device deploy.
+
+**macOS will not do Bluetooth from `tauri dev`.** TCC attributes permission to
+an app *bundle*, so a bare dev binary aborts with SIGABRT, no dialog, and
+nothing on stdout. Embedding an `Info.plist` in the executable does not
+satisfy it (tried; the crash still named the embedded key). BLE work needs
+`pnpm tauri build --debug` and then `open` on the bundle — launching the inner
+binary directly fails the same way, because LaunchServices is what confers
+bundle identity.
+
+**The airlock is served from the BINARY**, before the OTA overlay and before
+the baked assets. `tauri.ios.conf.json` sets `frontendDist` to `../build` and
+only refreshed the shell in `beforeBuildCommand`, which `tauri ios dev` never
+runs — so for one full day every dev build on the phone served a four-day-old
+connect screen and no change reached the device. An airlock must not depend on
+packaging, and must not be *overridable* by it either.
+
 ## Doctrine
 
 Four rules everything else follows from:
