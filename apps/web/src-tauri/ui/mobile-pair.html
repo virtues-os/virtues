@@ -212,6 +212,7 @@
       }
 
       async function start() {
+        searchGen++; // retire any live search loop before re-entering
         renderSearching();
         // LAN and BLE discovery in parallel. BLE is the PRIMARY setup path —
         // an unclaimed box advertises the Improv service (state 0x02 = needs
@@ -239,9 +240,59 @@
         if (needsWifi && lan.servers.length === 0) {
           return bleWifiPicker(needsWifi);
         }
-        // A BLE box that is online-but-unclaimed will also be on the LAN, so
-        // the pair screen covers it; the CTA below covers the rest.
+        // Online-but-unclaimed over BLE with nothing on the LAN: a network
+        // that isolates clients. Pairing rides BLE (0x83) — go enter the code.
+        if (lan.servers.length === 0 && ble.length) {
+          return renderCodeEntry({ name: ble[0].name || 'Your box', bleId: ble[0].id });
+        }
+        // Nothing anywhere: setup IS the default state, and it keeps looking.
+        if (lan.servers.length === 0) return bleSearchLoop();
         renderPair(lan.servers, lan.debug);
+      }
+
+      // The unpaired app's DEFAULT screen: Bluetooth-first setup, and it
+      // KEEPS looking. A box that was just plugged in (or reset) takes ~30s
+      // to boot far enough to advertise, and the old one-shot 4s scan at
+      // app-open reliably missed it — dumping the user on the LAN "connect
+      // to your box" screen, which reads as the wrong app entirely (live
+      // complaint, 2026-08-11). Connecting to an already-running box demotes
+      // to the two links at the bottom.
+      let searchGen = 0;
+      async function bleSearchLoop(note) {
+        const gen = ++searchGen;
+        app.innerHTML = `
+          <p class="kicker">Virtues</p>
+          <h1>Set up your box</h1>
+          <p class="sub">${note ? esc(note) + ' ' : ''}Plug it in and stand nearby — it appears
+            here by itself.</p>
+          <div class="wait"><span class="pip"></span><span>Looking over Bluetooth</span></div>
+          <p class="hint" style="margin-top:18px">Already running somewhere?
+            <a href="#" id="rescan" style="color:#7fa8ff">Search this network</a> or
+            <a href="#" id="manual" style="color:#7fa8ff">connect by address</a>.</p>`;
+        document.getElementById('rescan').addEventListener('click', (e) => {
+          e.preventDefault(); start();
+        });
+        document.getElementById('manual').addEventListener('click', (e) => {
+          e.preventDefault(); searchGen++; renderManualPair();
+        });
+        while (gen === searchGen) {
+          let boxes = [];
+          try {
+            const r = await invoke('plugin:reach|improv_discover', { seconds: 4 });
+            boxes = (r && r.boxes) || [];
+          } catch { /* no BLE on this platform — the links above are the path */ }
+          if (gen !== searchGen) return;
+          const needsWifi = boxes.find((b) => b.improvState === 2);
+          if (needsWifi) return bleWifiPicker(needsWifi);
+          if (boxes.length) {
+            return renderCodeEntry({ name: boxes[0].name || 'Your box', bleId: boxes[0].id });
+          }
+          // Peek at the LAN each round too — an already-claimed box never
+          // advertises, and it should still surface without a manual rescan.
+          const { servers } = await discoverBoxes();
+          if (gen !== searchGen) return;
+          if (servers.length) return renderPair(servers, '', note);
+        }
       }
 
       // ── BLE SETUP: the primary path ───────────────────────────────────────
@@ -287,18 +338,9 @@
             // "Set up its Wi-Fi instead" button is the honest way back.
             return renderCodeEntry({ name: who, bleId: boxes[0].id });
           }
-          app.innerHTML = `
-            <button class="back" id="back">← Back</button>
-            <h1>No box found</h1>
-            <p class="sub">Make sure the box is plugged in and showing
-              <b>Get the Virtues app</b> on its screen, keep Bluetooth on, and stand
-              near it.</p>
-            <button class="primary" id="again">Scan again</button>
-            <p class="hint">Ethernet always works too — plug the box into your router and
-              it appears on the pair screen by itself.</p>`;
-          document.getElementById('again').addEventListener('click', startBleSetup);
-          document.getElementById('back').addEventListener('click', start);
-          return;
+          // Nothing yet — hand over to the persistent search screen, which
+          // keeps scanning until the box boots far enough to advertise.
+          return bleSearchLoop();
         }
         // More than one unclaimed box is a real case (two-box household, an
         // office). Let proximity break the tie visibly.
@@ -759,27 +801,16 @@
             </span>
             <span class="addr">${esc(s.origin.replace('http://', ''))}</span>
           </button>`).join('');
-        // Two different screens, honestly: boxes found → a list to tap;
-        // nothing found → setting up a new box IS the primary action, not a
-        // footnote under an apology.
-        if (!servers.length) {
-          app.innerHTML = `
-            <h1>Connect your box</h1>
-            <p class="sub">${banner ? esc(banner) : 'No box on this network yet.'}</p>
-            <button class="primary" id="newbox">Set up a new box</button>
-            <p class="hint" style="margin-top:14px">Already set one up? Make sure this phone is on
-              the same Wi-Fi as the box, then
-              <a href="#" id="rescan" style="color:#7fa8ff">search again</a>.</p>
-            <button class="back" id="manual" style="margin-top:18px">Connect by address instead</button>
-            ${debug ? `<div class="scan" style="opacity:.6">${esc(debug)}</div>` : ''}`;
-        } else {
-          app.innerHTML = `
-            <h1>Connect to your box</h1>
-            <p class="sub">${banner ? esc(banner) + ' ' : ''}Tap your box to pair it.</p>
-            <div id="found">${chips}</div>
-            <button class="back" id="newbox">Setting up a brand-new box? Start here →</button><br>
-            <button class="back" id="manual">Enter an address manually</button>`;
-        }
+        // Nothing found → the Bluetooth-first setup screen IS the empty
+        // state; it keeps looking and routes itself. This branch only ever
+        // renders a real list.
+        if (!servers.length) return bleSearchLoop(banner);
+        app.innerHTML = `
+          <h1>Connect to your box</h1>
+          <p class="sub">${banner ? esc(banner) + ' ' : ''}Tap your box to pair it.</p>
+          <div id="found">${chips}</div>
+          <button class="back" id="newbox">Setting up a brand-new box? Start here →</button><br>
+          <button class="back" id="manual">Enter an address manually</button>`;
 
         document.getElementById('newbox').addEventListener('click', () => startBleSetup());
         document.getElementById('manual').addEventListener('click', () => renderManualPair());
