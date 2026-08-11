@@ -134,18 +134,35 @@ gate (api key presence) in display state; screen-2 QR + code; the display's
 session (rate-limited to atlas's requested interval; session rotates on
 expiry; stops at linked/claimed).
 
-**P1 — this week, box-side:**
-- **Relay live-bind on link.** Registration currently happens at boot, so a
-  screen-2 link only gains relay reach after a restart. Either rebind
-  in-process on `Ready` or schedule a clean supervised self-restart (a ~10s
-  display blip between screens 2→3 is acceptable). Until then: linked-but-
-  LAN-only boxes explain themselves in the log only — not good enough.
-- **Box identity in `/init/start`** (codename, model, EndpointId) so the page
-  can name the box.
-- **Captive-network hint on screen 1.** With honest connectivity, a captive
-  join reads as still-offline; the screen must say *why*: "joined
-  `weworkguest`, but that network wants a browser sign-in — pick another."
-  Otherwise the commonest office failure is a silent one.
+**P1 — box-side (BUILT 2026-08-11, all three):**
+- **Relay live-bind on link.** `relay.rs` is now a bind→serve→rebind
+  supervision loop; `link::poll` requests a rebind after storing relay
+  config, so a screen-2 link activates relay reach in seconds, in-process.
+  Same EndpointId, same pinned port — only the homing changes.
+- **Box identity in `/init/start`** — the box now POSTs `{name, label,
+  model, endpoint_id, version}`; atlas-side rendering is P2.
+- **Captive-network hint on screen 1** — display state carries the nmcli
+  `connectivity` verdict + `wifi_ssid`, and screen 1 names portal/limited
+  joins ("wants a browser sign-in") instead of silently reading as offline.
+
+**P1.5 — the claim grant over BLE (box-side BUILT 2026-08-11):**
+The keystone that merges wifi + link into one tap. Vendor RPC `0x82
+ClaimGrant [grant]`: the signed-in app asks atlas for a pre-approved
+`device_code` and hands it to the box over the same BLE session as the wifi
+credentials (either order). The box stores it as its in-flight link
+(`link::inject_grant`) and a redeem task polls it to `Ready` the moment the
+box gets online — reusing the whole QR-path chain (api key → relay config →
+endpoint rebind). The display loop *adopts* an existing in-flight link
+instead of minting a new session over it (`link::inflight`), so the two
+drivers can never orphan each other's device_code. Box stays outbound-only;
+the grant inherits BLE's proximity argument.
+
+Still owed for the grant to fire end-to-end (P2, app + atlas):
+- atlas: app-authed `POST /init/grant` minting a pre-approved device_code
+  (requires app sign-in / account sessions — the same work as the `/init`
+  page personas).
+- app: reach-plugin `improv_grant` command + ImprovClient 0x82 write, sent
+  automatically after join when the app holds a session.
 
 **P2 — atlas-side:**
 - The `/init` page: personas, box naming, implicit account creation, the
