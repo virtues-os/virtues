@@ -50,6 +50,8 @@
 
 	type DisplayState = {
 		box_name: string;
+		linked: boolean;
+		link_code: string | null | undefined;
 		pair_code: string | null;
 		ap_ssid: string | null;
 		ap_passphrase: string | null;
@@ -157,7 +159,7 @@
 			</div>
 			<div class="dark">
 				<div class="brand">∴ &nbsp;{state_.box_name}</div>
-				<div class="step">Step 1 of 2</div>
+				<div class="step">Step 1 of 3</div>
 				<div class="head">Get the Virtues app</div>
 				<!-- BLE is the transport (the box is advertising right now), so the
 				     instruction is two lines and contains NO network names, NO
@@ -173,10 +175,44 @@
 				</div>
 			</div>
 		</div>
+	{:else if !state_.claimed && !state_.linked}
+		<!-- 2 · LINK ME. Online but no account. This step exists because the
+		     account is what buys RELAY reach: an unlinked box works only on a
+		     friendly LAN, which a dorm or office never is — discovered live
+		     2026-08-11, box paired and unreachable in the same minute. It comes
+		     BEFORE pairing on purpose: linking needs only box-outbound internet
+		     plus the owner's phone on ANY network, so it is immune to hostile
+		     LANs, and once the relay is up, later steps stop depending on the
+		     local network's goodwill. -->
+		<div class="split">
+			<div class="lite">
+				{#if state_.link_code}
+					<img class="qr" src="/api/display/link-qr" alt="" />
+					<div class="apcreds">
+						<div class="aplabel">Or visit</div>
+						<div class="apssid">virtues.com/link</div>
+					</div>
+				{:else}
+					<div class="qr-pending-mark">∴</div>
+				{/if}
+			</div>
+			<div class="dark">
+				<div class="brand">∴ &nbsp;{state_.box_name}</div>
+				<div class="step">Step 2 of 3</div>
+				<div class="head">Link your box</div>
+				{#if state_.link_code}
+					<div class="lead">Scan with your phone and sign in to Virtues. Your
+						code:</div>
+					<div class="code linkcode">{state_.link_code}</div>
+				{:else}
+					<div class="lead">Reaching Virtues to start the link — a moment.</div>
+				{/if}
+			</div>
+		</div>
 	{:else if !state_.claimed}
-		<!-- 2 · CLAIM ME. The box is online, so the owner's phone has internet
-		     again — which is the ONLY moment an app-download QR is followable.
-		     Now, and not before, the pair code is worth showing. -->
+		<!-- 3 · CLAIM ME. The box is online AND linked; the owner's phone has
+		     internet — the ONLY moment an app-download QR is followable. Now,
+		     and not before, the pair code is worth showing. -->
 		<div class="split">
 			<div class="lite">
 				<img class="qr" src="/api/display/app-qr" alt="" />
@@ -187,7 +223,7 @@
 			</div>
 			<div class="dark">
 				<div class="brand">∴ &nbsp;{state_.box_name}</div>
-				<div class="step">Step 2 of 2</div>
+				<div class="step">Step 3 of 3</div>
 				<div class="lead">In the Virtues app, enter</div>
 				{#if grouped}
 					<div class="code">{grouped}</div>
@@ -354,6 +390,20 @@
 		letter-spacing: 0.055em;
 		font-variant-numeric: tabular-nums;
 		color: #f7f5f0;
+	}
+	.code.linkcode {
+		font-size: 2.6rem;
+		letter-spacing: 0.09em;
+	}
+	.qr-pending-mark {
+		width: 150px;
+		height: 150px;
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		font-size: 1.5rem;
+		color: #c3bdae;
+		flex: none;
 	}
 	.code.fault {
 		color: var(--warn);
