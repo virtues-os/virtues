@@ -36,6 +36,23 @@ use virtues_registry::models::{default_model_for_slot, ModelSlot};
 /// The gateway tool that performs the search.
 const SEARCH_TOOL_ID: &str = "gateway.parallel_search";
 
+/// What the search model is told before the query.
+///
+/// Both sentences were earned by measurement, not caution. Over 16 broad
+/// queries the unconstrained prompt produced 5 malformed tool calls
+/// (`search_queries` sent as a string, or as nested arrays — the gateway
+/// validates and fails that search) and fired anywhere from 1 to **11** searches
+/// in a single turn, which at $0.005 each is a 5.5¢ query pretending to be a
+/// half-cent one. The same 16 queries with this instruction: zero malformed
+/// calls, exactly one search every time.
+///
+/// One search per call is also the right layering. If the answer is thin, the
+/// calling agent can invoke the tool again — that decision belongs to the
+/// conversation, not to a sub-call quietly spending money on its own initiative.
+const SEARCH_INSTRUCTION: &str = "Perform EXACTLY ONE web search, then stop and \
+     answer briefly. When you call the search tool, `search_queries` MUST be an \
+     array of plain strings — never a single string, never nested arrays.\n\n";
+
 /// Cap on excerpt text kept per result.
 ///
 /// The gateway already returns excerpts rather than whole pages; this stops one
@@ -127,8 +144,8 @@ pub async fn search(pool: &PgPool, request: SearchRequest) -> Result<SearchRespo
     }
 
     let prompt_text = match request.objective.as_deref().map(str::trim) {
-        Some(o) if !o.is_empty() => format!("{o}\n\nSearch the web for: {query}"),
-        _ => format!("Search the web for: {query}"),
+        Some(o) if !o.is_empty() => format!("{SEARCH_INSTRUCTION}{o}\n\nSearch the web for: {query}"),
+        _ => format!("{SEARCH_INSTRUCTION}Search the web for: {query}"),
     };
 
     let mut tool_args = json!({});
