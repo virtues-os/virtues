@@ -60,6 +60,16 @@ pub struct DisplayState {
     /// The box's codename ("Quaint Tern") — shown on every screen so a human
     /// can match THIS box to its chip in the app when two share a house.
     pub box_name: String,
+    /// Whether the box holds an account key. THE gate between setup screens 2
+    /// and 3: an unlinked box has no relay, and a box without relay reach is a
+    /// LAN-hostage — fine at home, broken in a dorm or office. Discovered as
+    /// a wall on 2026-08-11: a freshly-onboarded office box was paired but
+    /// unreachable by the app, because linking had been treated as optional.
+    pub linked: bool,
+    /// Present only on setup screen 2 (online + unclaimed + !linked): the
+    /// device-authorization code for linking, shown as text beside the QR.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub link_code: Option<String>,
 }
 
 pub async fn display_state_handler(
@@ -93,6 +103,23 @@ pub async fn display_state_handler(
     // `api::pair::paired_device_count`.
     let devices = crate::api::pair::paired_device_count(pool).await;
 
+    let linked = crate::virtues_api::renew::read_api_key(pool)
+        .await
+        .ok()
+        .flatten()
+        .is_some();
+    let online = crate::cli::link::has_internet();
+
+    // Screen 2's device-auth session: started lazily the first time the
+    // display needs it, cached and re-polled here. The display's own 2s state
+    // poll is the heartbeat that drives the whole link to completion — no
+    // extra task, and it stops the moment the box is linked or claimed.
+    let link_code = if !linked && online && devices == 0 {
+        link_session::code_and_poll(pool).await
+    } else {
+        None
+    };
+
     let ap_ssid = current_ap_ssid();
     (
         StatusCode::OK,
@@ -103,9 +130,11 @@ pub async fn display_state_handler(
             ap_passphrase: ap_ssid.as_ref().and_then(|_| ap_passphrase()),
             ap_ssid,
             claimed: devices > 0,
-            online: crate::cli::link::has_internet(),
+            online,
             devices,
             box_name: crate::codename::pretty(&crate::codename::box_codename()),
+            linked,
+            link_code,
         }),
     )
         .into_response()
@@ -188,6 +217,139 @@ pub async fn display_app_qr_handler(
         svg,
     )
         .into_response()
+}
+
+/// `GET /api/display/link-qr` — the account-linking URL, as an SVG.
+///
+/// Box-local like everything here. Renders the verification URL of the
+/// CURRENT cached device-auth session (the one whose code the state endpoint
+/// is showing) — the two must agree or the owner scans a QR for one session
+/// while reading the code of another.
+pub async fn display_link_qr_handler(
+    State(state): State<AppState>,
+    ConnectInfo(peer): ConnectInfo<SocketAddr>,
+    headers: HeaderMap,
+) -> impl IntoResponse {
+    if !is_box_local(&peer, &headers) {
+        return (StatusCode::FORBIDDEN, "not available off-box").into_response();
+    }
+    let Some(url) = link_session::verification_url(state.db.pool()).await else {
+        return (StatusCode::NOT_FOUND, "no link session").into_response();
+    };
+    let svg = crate::api::pair::render_qr_svg(&url);
+    (
+        StatusCode::OK,
+        [
+            (axum::http::header::CONTENT_TYPE, "image/svg+xml"),
+            (axum::http::header::CACHE_CONTROL, "no-store"),
+        ],
+        svg,
+    )
+        .into_response()
+}
+
+/// The display's device-authorization session: lazily started, cached until it
+/// expires, opportunistically polled.
+///
+/// The design constraint is that the DISPLAY is the driver: it polls state
+/// every 2s during setup, and that heartbeat both keeps the session fresh and
+/// redeems it when the owner completes sign-in on their phone. Success stores
+/// the api key (`link::poll` does that internally), after which the state
+/// endpoint reports `linked: true` and this cache is never consulted again.
+///
+/// Atlas polling is rate-limited to the interval the device-auth response
+/// asked for — the display's 2s heartbeat must not become a 2s hammer.
+mod link_session {
+    use sqlx::PgPool;
+    use std::sync::Mutex;
+    use std::time::{Duration, Instant};
+
+    struct Session {
+        start: crate::virtues_api::link::LinkStart,
+        born: Instant,
+        last_poll: Instant,
+    }
+
+    static SESSION: Mutex<Option<Session>> = Mutex::new(None);
+
+    fn take_valid() -> Option<crate::virtues_api::link::LinkStart> {
+        let g = SESSION.lock().ok()?;
+        let s = g.as_ref()?;
+        let ttl = Duration::from_secs(s.start.expires_in.max(0) as u64);
+        (s.born.elapsed() < ttl).then(|| s.start.clone())
+    }
+
+    /// The code to display — starting or refreshing the session as needed,
+    /// and polling atlas (rate-limited) so completion is noticed.
+    pub async fn code_and_poll(db: &PgPool) -> Option<String> {
+        if take_valid().is_none() {
+            let http = crate::http_client::virtues_api_client();
+            let atlas = crate::virtues_api::atlas_url();
+            match crate::virtues_api::link::start(db, &http, &atlas).await {
+                Ok(start) => {
+                    if let Ok(mut g) = SESSION.lock() {
+                        *g = Some(Session {
+                            start,
+                            born: Instant::now(),
+                            last_poll: Instant::now(),
+                        });
+                    }
+                }
+                Err(e) => {
+                    // Atlas unreachable: no code to show. The display renders
+                    // the waiting state; the next heartbeat retries.
+                    tracing::debug!(error = %format!("{e:#}"), "display: link start failed");
+                    return None;
+                }
+            }
+        }
+
+        // Poll at most every `interval` seconds, driven by the state heartbeat.
+        let due = {
+            let g = SESSION.lock().ok()?;
+            let s = g.as_ref()?;
+            s.last_poll.elapsed() >= Duration::from_secs(s.start.interval.max(2))
+        };
+        if due {
+            if let Ok(mut g) = SESSION.lock() {
+                if let Some(s) = g.as_mut() {
+                    s.last_poll = Instant::now();
+                }
+            }
+            let http = crate::http_client::virtues_api_client();
+            let atlas = crate::virtues_api::atlas_url();
+            match crate::virtues_api::link::poll(db, &http, &atlas).await {
+                Ok(crate::virtues_api::link::LinkStatus::Ready) => {
+                    tracing::info!("display: box linked via screen-2 device auth");
+                    if let Ok(mut g) = SESSION.lock() {
+                        *g = None;
+                    }
+                    // The relay could not register at boot (no key). It can
+                    // now — but registration happens at endpoint bind, so the
+                    // honest path to relay reach is a service restart, which
+                    // the owner gets on the next upgrade or reboot. Logged so
+                    // a box that is linked-but-LAN-only explains itself.
+                    if !crate::relay::is_relay_registered() {
+                        tracing::info!(
+                            "display: relay reach activates on next service restart"
+                        );
+                    }
+                    return None;
+                }
+                Ok(_) => {}
+                Err(e) => {
+                    tracing::debug!(error = %format!("{e:#}"), "display: link poll failed");
+                }
+            }
+        }
+        take_valid().map(|s| s.user_code)
+    }
+
+    /// The QR payload for the current session — never a fresh session (the QR
+    /// must match the code on screen).
+    pub async fn verification_url(_db: &PgPool) -> Option<String> {
+        take_valid().map(|s| s.verification_uri_complete)
+    }
 }
 
 /// The AP's passphrase, read the same way `maintenance::setup_ap` derives it.

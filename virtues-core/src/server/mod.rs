@@ -269,6 +269,12 @@ pub async fn run(client: Virtues, host: &str, port: u16) -> Result<()> {
             "/api/display/app-qr",
             get(crate::api::display::display_app_qr_handler),
         )
+        // Setup screen 2's account-link QR (device authorization). Box-local;
+        // must render the SAME session whose code the state endpoint shows.
+        .route(
+            "/api/display/link-qr",
+            get(crate::api::display::display_link_qr_handler),
+        )
         // Wifi provisioning over the setup AP. The one unauthenticated WRITE
         // surface on the box, and unauthenticated by necessity: the phone that
         // just joined the AP has no credential yet, because obtaining one is
