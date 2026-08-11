@@ -168,7 +168,11 @@ final class ImprovClient: NSObject {
             networks.append([
               "ssid": strings[0],
               "signal": Int(strings[1]) ?? 0,
-              "secured": strings[2] == "YES",
+              // "ENT" is our 802.1X extension to Improv's YES/NO — those
+              // networks need a username the BLE protocol can't carry, so the
+              // UI routes them to a different path.
+              "secured": strings[2] == "YES" || strings[2] == "ENT",
+              "enterprise": strings[2] == "ENT",
             ])
           }
         }

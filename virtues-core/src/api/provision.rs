@@ -53,6 +53,13 @@ pub struct Network {
     pub signal: u8,
     /// False for an open network — the app skips the password field.
     pub secured: bool,
+    /// 802.1X (WPA-Enterprise): credential-per-user networks — offices,
+    /// campuses, WeWork. The UI must collect a USERNAME too, and the join
+    /// takes the EAP branch. A PSK join against one of these fails after a
+    /// long timeout with an error no one can act on, which is how this field
+    /// earned its place.
+    #[serde(default)]
+    pub enterprise: bool,
 }
 
 #[derive(Debug, Deserialize)]
@@ -61,6 +68,10 @@ pub struct JoinRequest {
     /// Absent for an open network.
     #[serde(default)]
     pub psk: Option<String>,
+    /// Present = 802.1X: `psk` is then the account password, and this is the
+    /// account username.
+    #[serde(default)]
+    pub identity: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -177,6 +188,16 @@ pub(crate) async fn scan_or_cached() -> Result<Vec<Network>, String> {
 /// through. The lock stops `maintenance::setup_ap` from putting the AP back on
 /// top of the association being formed.
 pub(crate) async fn perform_join(ssid: &str, psk: Option<&str>) -> Option<String> {
+    perform_join_full(ssid, psk, None).await
+}
+
+/// The full join, including the 802.1X branch. `identity.is_some()` selects
+/// EAP; `psk` is then the account password rather than a pre-shared key.
+pub(crate) async fn perform_join_full(
+    ssid: &str,
+    psk: Option<&str>,
+    identity: Option<&str>,
+) -> Option<String> {
     let _lock = ProvisioningLock::take();
 
     let ap_was_up = ap_is_up().await;
@@ -184,7 +205,11 @@ pub(crate) async fn perform_join(ssid: &str, psk: Option<&str>) -> Option<String
         let _ = nmcli(&["connection", "down", crate::maintenance::setup_ap::AP_CON_NAME]).await;
     }
 
-    match nmcli_join(ssid, psk).await {
+    let joined = match identity {
+        Some(user) => nmcli_join_enterprise(ssid, user, psk.unwrap_or_default()).await,
+        None => nmcli_join(ssid, psk).await,
+    };
+    match joined {
         Some(o) if o.status.success() => None,
         Some(o) => {
             let detail = String::from_utf8_lossy(&o.stderr).trim().to_string();
@@ -242,13 +267,13 @@ pub async fn join_handler(
             .into_response();
     }
 
-    // The switchover itself lives in `perform_join`, shared with the HTML
+    // The switchover itself lives in `perform_join_full`, shared with the HTML
     // portal. On success the AP stays down: the box is on the owner's network,
     // their phone rejoins its own wifi, and both meet again on the LAN to
     // finish with pairing. `setup_ap` used to re-raise it here on the next tick
     // — which, on a radio that cannot do AP+STA, knocked the box straight back
     // off the network it had just joined. Fixed 2026-08-10.
-    match perform_join(&req.ssid, req.psk.as_deref()).await {
+    match perform_join_full(&req.ssid, req.psk.as_deref(), req.identity.as_deref()).await {
         None => (StatusCode::OK, Json(JoinResult { ok: true, detail: None })).into_response(),
         Some(detail) => (
             StatusCode::OK,
@@ -336,12 +361,14 @@ async fn scan() -> Result<Vec<Network>, String> {
             continue;
         }
         let signal = fields[1].trim().parse::<u8>().unwrap_or(0);
-        let secured = !fields[2].trim().is_empty();
+        let security = fields[2].trim();
+        let secured = !security.is_empty();
+        let enterprise = security.contains("802.1X");
         // Strongest wins when an SSID appears on several bands/APs.
         match nets.iter_mut().find(|n| n.ssid == ssid) {
             Some(existing) if existing.signal < signal => existing.signal = signal,
             Some(_) => {}
-            None => nets.push(Network { ssid, signal, secured }),
+            None => nets.push(Network { ssid, signal, secured, enterprise }),
         }
     }
     nets.sort_by(|a, b| b.signal.cmp(&a.signal));
@@ -382,6 +409,50 @@ async fn nmcli_join(ssid: &str, psk: Option<&str>) -> Option<std::process::Outpu
         }
     }
     nmcli(&args).await
+}
+
+/// Join an 802.1X (WPA-Enterprise) network: PEAP + MSCHAPv2, the scheme
+/// credential-per-user office wifi (WeWork et al) actually runs.
+///
+/// Unlike the PSK path there is no one-shot `device wifi connect` for EAP, so
+/// this writes a connection profile and activates it, deleting the profile on
+/// failure so retries start clean.
+///
+/// **Certificate validation is disabled (`802-1x.system-ca-certs no`), and
+/// that is a real tradeoff, made with eyes open.** Requiring CA validation
+/// makes NM refuse RADIUS servers with private-CA certs — which is most
+/// offices — and turns every join into a certificate-provisioning
+/// conversation the setup flow cannot host. Every consumer OS offers exactly
+/// this "don't validate" mode for the same reason. The exposure is an
+/// evil-twin AP harvesting the MSCHAPv2 exchange during the join window;
+/// the box's own credentials never ride this link. Cert pinning can come
+/// later as a settings-level option.
+async fn nmcli_join_enterprise(ssid: &str, identity: &str, password: &str) -> Option<std::process::Output> {
+    // One profile per attempt, replaced wholesale — stale credentials in a
+    // half-configured profile produce the least explicable failures NM has.
+    let con_name = "virtues-enterprise";
+    let _ = nmcli(&["connection", "delete", con_name]).await;
+    let add = nmcli(&[
+        "connection", "add", "type", "wifi", "con-name", con_name, "ssid", ssid,
+        "wifi-sec.key-mgmt", "wpa-eap",
+        "802-1x.eap", "peap",
+        "802-1x.phase2-auth", "mschapv2",
+        "802-1x.identity", identity,
+        "802-1x.password", password,
+        "802-1x.system-ca-certs", "no",
+    ])
+    .await;
+    match add {
+        Some(o) if o.status.success() => {}
+        other => return other,
+    }
+    let up = nmcli(&["connection", "up", con_name]).await;
+    if !matches!(&up, Some(o) if o.status.success()) {
+        // Leave nothing behind: a failed profile would auto-retry with bad
+        // credentials forever and lock the account out of the RADIUS server.
+        let _ = nmcli(&["connection", "delete", con_name]).await;
+    }
+    up
 }
 
 /// SSID of the active client connection, ignoring our own AP.
