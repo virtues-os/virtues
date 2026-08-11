@@ -17,8 +17,9 @@
 
 Linking comes **before** pairing, and the ordering is a discovery, not a
 preference. Linking needs only box-outbound internet plus the owner's phone on
-*any* network — it is immune to hostile LANs by construction. Pairing today
-needs a shared LAN. Do them in the other order and a dorm/office box ends up
+*any* network — it is immune to hostile LANs by construction. Pairing rides a
+shared LAN, the relay (post-link), or BLE (RPC 0x83, the first device — built
+2026-08-11). Do them in the other order and a dorm/office box ends up
 paired-but-unreachable (observed live); in this order, the relay exists by the
 time anything needs it, and the local network's goodwill stops mattering.
 
@@ -157,12 +158,27 @@ instead of minting a new session over it (`link::inflight`), so the two
 drivers can never orphan each other's device_code. Box stays outbound-only;
 the grant inherits BLE's proximity argument.
 
-Still owed for the grant to fire end-to-end (P2, app + atlas):
+**P1.5b — pair over BLE (box-side BUILT 2026-08-11):** vendor RPC `0x83
+PairConsume [code, kind, source, label, endpoint_id]`. The box redeems the
+pair code against its OWN `POST /api/pair/consume` over loopback — one
+enrollment implementation, BLE is just the wire — and streams the consume
+JSON back as chunked results (ScanWifi's stream shape; the Improv frame's
+1-byte length caps a packet at 255 data bytes). Kills the shared-LAN
+requirement for the first device: client isolation at an office blocked the
+LAN consume POST live on 2026-08-11 while BLE sat there working. Security
+unchanged — the code still proves the person reads the box's glass; and
+because loopback is exempt from the consume handler's per-IP limiter, the
+BLE leg carries its own 10-per-30-min attempt budget so radio range never
+becomes a free brute-force lane. First device only by construction: a
+successful pair claims the box and the reconciler stops the BLE service.
+
+Still owed for grant + BLE-pair to fire end-to-end (P2, app + atlas):
 - atlas: app-authed `POST /init/grant` minting a pre-approved device_code
   (requires app sign-in / account sessions — the same work as the `/init`
   page personas).
-- app: reach-plugin `improv_grant` command + ImprovClient 0x82 write, sent
-  automatically after join when the app holds a session.
+- app: reach-plugin `improv_grant` + `improv_pair` commands + ImprovClient
+  0x82/0x83 writes — grant sent automatically after join when the app holds
+  a session; 0x83 offered when LAN discovery can't reach a BLE-found box.
 
 **P2 — atlas-side:**
 - The `/init` page: personas, box naming, implicit account creation, the
