@@ -172,6 +172,14 @@ BLE leg carries its own 10-per-30-min attempt budget so radio range never
 becomes a free brute-force lane. First device only by construction: a
 successful pair claims the box and the reconciler stops the BLE service.
 
+**App-side status (2026-08-11):** the connect shell now HAS step 2 — it shows
+the link step after wifi, opens `virtues.com/link`, and watches the box for
+completion via `GET /api/box/identity`, which grew `linked` and `online` for
+exactly this (one bit each, never the key). Every discovery exit routes
+through `routeToBox`, so the app mirrors whichever step the box is actually
+on instead of guessing. Unreachable box (a LAN that isolates clients) falls to
+the link step, which is the one that matters there and can always be skipped.
+
 Still owed for grant + BLE-pair to fire end-to-end (P2, app + atlas):
 - atlas: app-authed `POST /init/grant` minting a pre-approved device_code
   (requires app sign-in / account sessions — the same work as the `/init`
