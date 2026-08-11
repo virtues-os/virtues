@@ -355,6 +355,18 @@
           "markdownDescription": "Denies the improv_discover command without any pre-configured scope."
         },
         {
+          "description": "Enables the improv_pair command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-improv-pair",
+          "markdownDescription": "Enables the improv_pair command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the improv_pair command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-improv-pair",
+          "markdownDescription": "Denies the improv_pair command without any pre-configured scope."
+        },
+        {
           "description": "Enables the improv_provision command without any pre-configured scope.",
           "type": "string",
           "const": "allow-improv-provision",

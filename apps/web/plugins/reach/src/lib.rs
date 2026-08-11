@@ -608,6 +608,19 @@ impl ReachState {
     Ok(self.status().await)
   }
 
+  /// Persist a pairing whose consume exchange rode the box's Bluetooth (RPC
+  /// 0x83 — for LANs that block peer-to-peer) and light up reach, exactly as
+  /// [`Self::pair`] does for the HTTP path.
+  pub async fn pair_finish_ble(
+    &self,
+    response_json: &str,
+    identity: virtues_reach_client::pair::MintedIdentity,
+  ) -> Result<ReachStatus> {
+    virtues_reach_client::pair::finish_consume(self.store.as_ref(), response_json, identity)?;
+    self.ensure_serving().await?;
+    Ok(self.status().await)
+  }
+
   pub fn forget(&self) -> Result<()> {
     // Full teardown so a re-pair (even to a different box) serves fresh WITHOUT an
     // app restart: abort the loopback + drain tasks (frees the loopback port),
@@ -677,6 +690,7 @@ pub fn init<R: Runtime>() -> TauriPlugin<R> {
       commands::improv_discover,
       commands::improv_wifi_scan,
       commands::improv_provision,
+      commands::improv_pair,
       commands::improv_disconnect,
       commands::outbox_stats,
       commands::drain_now,

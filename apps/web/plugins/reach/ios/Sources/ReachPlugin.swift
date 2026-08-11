@@ -55,6 +55,14 @@ class ImprovProvisionArgs: Decodable {
   let identity: String?
 }
 
+class ImprovPairArgs: Decodable {
+  let id: String
+  let code: String
+  let label: String?
+  /// This device's iroh EndpointId — the box allowlists it at enrollment.
+  let endpointId: String?
+}
+
 class ReachPlugin: Plugin {
   // ─── Improv BLE setup (see ImprovClient.swift) ─────────────────────────────
 
@@ -90,6 +98,21 @@ class ReachPlugin: Plugin {
           invoke.resolve(["ok": true, "url": url ?? ""])
         }
       })
+  }
+
+  @objc public func improv_pair(_ invoke: Invoke) throws {
+    let args = try invoke.parseArgs(ImprovPairArgs.self)
+    ImprovClient.shared.pair(
+      id: args.id, code: args.code, label: args.label ?? "", endpointId: args.endpointId ?? ""
+    ) { json, err in
+      if let err {
+        invoke.resolve(["ok": false, "error": err])
+      } else {
+        // The consume response verbatim, as a string — the JS parses it with
+        // the same code the LAN path uses.
+        invoke.resolve(["ok": true, "response": json ?? ""])
+      }
+    }
   }
 
   @objc public func improv_disconnect(_ invoke: Invoke) throws {

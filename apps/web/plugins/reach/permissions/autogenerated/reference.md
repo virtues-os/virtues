@@ -163,6 +163,32 @@ Denies the improv_discover command without any pre-configured scope.
 <tr>
 <td>
 
+`reach:allow-improv-pair`
+
+</td>
+<td>
+
+Enables the improv_pair command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`reach:deny-improv-pair`
+
+</td>
+<td>
+
+Denies the improv_pair command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
 `reach:allow-improv-provision`
 
 </td>

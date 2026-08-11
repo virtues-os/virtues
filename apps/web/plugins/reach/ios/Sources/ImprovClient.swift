@@ -251,6 +251,69 @@ final class ImprovClient: NSObject {
     }
   }
 
+  /// RPC 0x83 (our extension): pair THROUGH the box's Bluetooth, for LANs
+  /// that block peer-to-peer (office client isolation — the box redeems the
+  /// code against its own consume endpoint and streams the response back).
+  /// The response is chunked (Improv frames cap at 255 data bytes): JSON
+  /// chunks until an empty terminator; a body starting `error:` is a refusal.
+  func pair(
+    id: String, code: String, label: String, endpointId: String,
+    completion: @escaping (String?, String?) -> Void
+  ) {
+    queue.async {
+      self.ensureConnected(id: id) { err in
+        if let err { completion(nil, err); return }
+        var body = ""
+        var done = false
+        let finish: (String?, String?) -> Void = { json, err in
+          guard !done else { return }
+          done = true
+          self.onResult = nil
+          completion(json, err)
+        }
+        self.onResult = { data in
+          guard let strings = Self.parseResult(data, command: 0x83) else { return }
+          if strings.isEmpty {
+            // Terminator: the body is complete.
+            if body.hasPrefix("error:") {
+              let code = String(body.dropFirst("error:".count))
+              let msg: String
+              switch code {
+              case "invalid_or_expired_token":
+                msg = "That code didn't match — check the box's screen and try again."
+              case "too_many_attempts":
+                msg = "Too many tries — wait a bit and use the code on the box's screen."
+              default:
+                msg = "The box couldn't complete pairing (\(code))."
+              }
+              finish(nil, msg)
+            } else {
+              finish(body, nil)
+            }
+            return
+          }
+          body += strings.joined()
+        }
+        var payload: [UInt8] = []
+        func pushString(_ v: String) {
+          let bytes = Array(v.utf8).prefix(255)
+          payload.append(UInt8(bytes.count))
+          payload.append(contentsOf: bytes)
+        }
+        pushString(code)
+        pushString("mobile_app")
+        pushString("ios")
+        pushString(label)
+        pushString(endpointId)
+        self.write(rpc: Self.buildRPC(command: 0x83, data: payload))
+        // The box does a local HTTP round-trip (15s timeout) plus BLE frames.
+        self.queue.asyncAfter(deadline: .now() + 25) {
+          finish(nil, "Timed out pairing over Bluetooth — check the box's screen.")
+        }
+      }
+    }
+  }
+
   private func write(rpc: Data) {
     guard let t = target, let c = rpcChar else { return }
     t.writeValue(rpc, for: c, type: .withResponse)

@@ -126,9 +126,23 @@
       // Also the only way to exercise setup on a dev phone without unpairing.
       const pinnedOpen = location.hash === '#setup';
       if (window.__VIRTUES_PAIRED__ && !pinnedOpen) {
+        // A paired phone gets a "opening your box" screen IMMEDIATELY — not the
+        // connect UI. reach_status runs a live probe that can take 10-15s when
+        // the direct path is blocked (office networks) and the tailnet/relay
+        // route has to be found; rendering the connect screen during that
+        // window reads as "your pairing is gone" (it did, live, 2026-08-11,
+        // minutes after the first successful office pairing). Only a probe
+        // that DEFINITIVELY says unpaired falls through to the connect screen.
+        app.innerHTML = `
+          <h1>Opening your box…</h1>
+          <div class="wait"><span class="pip"></span><span>Connecting</span></div>`;
         invoke('plugin:reach|reach_status')
-          .then((s) => { if (s && s.paired) location.replace('/'); })
-          .catch(() => {});
+          .then((s) => {
+            if (s && s.paired) { location.replace('/'); return; }
+            start();
+          })
+          .catch(() => { start(); });
+        // Fall through only via the callbacks above.
       }
 
       // ── discovery ─────────────────────────────────────────────────────────
@@ -244,7 +258,12 @@
             if (servers.length) {
               return startWithBanner(`${who} is already online — tap it below and enter its code.`);
             }
-            return bleWifiPicker(boxes[0]);
+            // Online by its own account but invisible on this LAN: a network
+            // that isolates clients (offices). Bluetooth carries the pairing
+            // itself (0x83), so the LAN stops mattering — and if the ad was
+            // stale and the box is actually offline, the code-entry screen's
+            // "Set up its Wi-Fi instead" button is the honest way back.
+            return renderCodeEntry({ name: who, bleId: boxes[0].id });
           }
           app.innerHTML = `
             <button class="back" id="back">← Back</button>
@@ -420,11 +439,14 @@
           return bleWifiPicker(state.bleBox, res.error || 'The box couldn\'t join that network.');
         }
         // The box handed us its own address over BLE — no rediscovery scan.
+        // Keep the BLE id on the chip: office networks that isolate clients
+        // make the LAN origin unreachable, and pairing then rides Bluetooth
+        // (RPC 0x83) instead — same code, different wire.
         const origin = (res.url || '').replace(/\/$/, '');
         renderPair(
-          origin ? [{ name: state.bleBox.name, origin }] : [],
+          [{ name: state.bleBox.name, origin, bleId: state.bleBox.id }],
           '',
-          `Your box is on ${ssid}.`,
+          `Your box is on ${ssid}. Follow its screen — when a 6-digit code appears, tap the box below.`,
         );
       }
 
@@ -761,11 +783,20 @@
           </form>
           <div class="msg" id="msg"></div>
           <p class="hint">It rotates every few minutes — a fresh one always works. No screen?
-            Run <b>virtues pair</b> on the box.</p>`;
+            Run <b>virtues pair</b> on the box.</p>
+          ${server.bleId ? '<button class="back" id="blewifi">Set up its Wi-Fi instead</button>' : ''}`;
         document.getElementById('back').addEventListener('click', start);
+        // The escape hatch for a stale "already online" advertisement: if the
+        // user is here but the box actually needs wifi, the picker is a tap
+        // away instead of a dead end.
+        const blewifi = document.getElementById('blewifi');
+        if (blewifi) blewifi.addEventListener('click', () =>
+          bleWifiPicker({ id: server.bleId, name: server.name }));
         document.getElementById('form').addEventListener('submit', (e) => {
           e.preventDefault();
-          submitPair(server.origin);
+          // A chip carrying a BLE id pairs over Bluetooth — immune to LANs
+          // that isolate clients; the box relays the code to itself (0x83).
+          if (server.bleId) submitPairBle(server); else submitPair(server.origin);
         });
         document.getElementById('code').focus();
       }
@@ -820,7 +851,39 @@
         }
       }
 
-      start();
+      // Pair over the box's Bluetooth (RPC 0x83). The Rust side mints the
+      // device identity, the box redeems the code against its own consume
+      // endpoint, and the pairing persists exactly as the LAN path's would —
+      // so from here on the app can't tell which wire it paired over.
+      async function submitPairBle(server) {
+        const msg = document.getElementById('msg');
+        const go = document.getElementById('go');
+        const say = (t, cls) => { msg.className = 'msg ' + (cls || ''); msg.textContent = t; };
+        const code = document.getElementById('code').value.replace(/\s+/g, '');
+        if (code.length < 6) {
+          return say('Enter the 6-digit code from the box\'s screen.', 'err');
+        }
+        go.disabled = true;
+        say('Pairing over Bluetooth…');
+        try {
+          const res = await invoke('plugin:reach|improv_pair', { id: server.bleId, code });
+          if (res && res.ok) {
+            say('Paired — opening your box…', 'ok');
+            invoke('plugin:reach|improv_disconnect').catch(() => {});
+            setTimeout(() => window.location.replace('/'), 400);
+          } else {
+            say((res && res.error) || 'Pairing did not complete. Check the code and try again.', 'err');
+            go.disabled = false;
+          }
+        } catch (err) {
+          say(String(err), 'err');
+          go.disabled = false;
+        }
+      }
+
+      if (!window.__VIRTUES_PAIRED__ || pinnedOpen) {
+        start();
+      }
     </script>
   </body>
 </html>
