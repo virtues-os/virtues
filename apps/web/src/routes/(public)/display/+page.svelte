@@ -57,6 +57,8 @@
 		ap_passphrase: string | null;
 		claimed: boolean;
 		online: boolean;
+		connectivity: string;
+		wifi_ssid: string | null | undefined;
 		devices: number;
 	};
 
@@ -170,9 +172,27 @@
 					Open it and choose <b>Set up a new box</b> — it finds me over
 					Bluetooth and walks you through Wi-Fi.
 				</div>
-				<div class="foot">
-					Or plug in ethernet and this step disappears.
-				</div>
+				{#if state_.connectivity === "portal"}
+					<!-- Captive network. With honest online-detection ("full" only),
+					     a portal join lands back on THIS screen — an IP but no
+					     internet — and without this line the screen reads as if the
+					     join silently failed. The commonest office/dorm failure, seen
+					     live at WeWork 2026-08-11: name the network, say why it
+					     doesn't count, point at the fix. -->
+					<div class="foot warn">
+						Joined {state_.wifi_ssid ?? "a network"}, but it wants a browser
+						sign-in, which I can't do — pick a different network in the app.
+					</div>
+				{:else if state_.connectivity === "limited"}
+					<div class="foot warn">
+						Joined {state_.wifi_ssid ?? "a network"}, but no internet is
+						getting through — pick a different network in the app.
+					</div>
+				{:else}
+					<div class="foot">
+						Or plug in ethernet and this step disappears.
+					</div>
+				{/if}
 			</div>
 		</div>
 	{:else if !state_.claimed && !state_.linked}
@@ -414,6 +434,9 @@
 		font-size: 0.72rem;
 		line-height: 1.5;
 		color: #4c5764;
+	}
+	.foot.warn {
+		color: var(--warn);
 	}
 
 	/* ── ambient ── */
