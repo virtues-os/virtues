@@ -304,24 +304,35 @@ mod link_session {
     /// and polling atlas (rate-limited) so completion is noticed.
     pub async fn code_and_poll(db: &PgPool) -> Option<String> {
         if take_valid().is_none() {
-            let http = crate::http_client::virtues_api_client();
-            let atlas = crate::virtues_api::atlas_url();
-            match crate::virtues_api::link::start(db, &http, &atlas).await {
-                Ok(start) => {
-                    if let Ok(mut g) = SESSION.lock() {
-                        *g = Some(Session {
-                            start,
-                            born: Instant::now(),
-                            last_poll: Instant::now(),
-                        });
+            // Before minting a session, adopt any link already in flight in
+            // the DB — a session surviving a service restart, or a claim
+            // grant the app injected over BLE (RPC 0x82). `start` OVERWRITES
+            // the stored device_code, so starting here would orphan a code
+            // someone may be mid-redeeming on their phone.
+            let adopted = crate::virtues_api::link::inflight(db).await.ok().flatten();
+            let start = match adopted {
+                Some(s) => s,
+                None => {
+                    let http = crate::http_client::virtues_api_client();
+                    let atlas = crate::virtues_api::atlas_url();
+                    match crate::virtues_api::link::start(db, &http, &atlas).await {
+                        Ok(s) => s,
+                        Err(e) => {
+                            // Atlas unreachable: no code to show. The display
+                            // renders the waiting state; the next heartbeat
+                            // retries.
+                            tracing::debug!(error = %format!("{e:#}"), "display: link start failed");
+                            return None;
+                        }
                     }
                 }
-                Err(e) => {
-                    // Atlas unreachable: no code to show. The display renders
-                    // the waiting state; the next heartbeat retries.
-                    tracing::debug!(error = %format!("{e:#}"), "display: link start failed");
-                    return None;
-                }
+            };
+            if let Ok(mut g) = SESSION.lock() {
+                *g = Some(Session {
+                    start,
+                    born: Instant::now(),
+                    last_poll: Instant::now(),
+                });
             }
         }
 
@@ -356,13 +367,17 @@ mod link_session {
                 }
             }
         }
-        take_valid().map(|s| s.user_code)
+        // Empty = an adopted app grant (no screen code ever existed): the
+        // display shows its pending state for the seconds the redeem takes.
+        take_valid().map(|s| s.user_code).filter(|c| !c.is_empty())
     }
 
     /// The QR payload for the current session — never a fresh session (the QR
     /// must match the code on screen).
     pub async fn verification_url(_db: &PgPool) -> Option<String> {
-        take_valid().map(|s| s.verification_uri_complete)
+        take_valid()
+            .map(|s| s.verification_uri_complete)
+            .filter(|u| !u.is_empty())
     }
 }
 

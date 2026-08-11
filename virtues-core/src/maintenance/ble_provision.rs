@@ -92,6 +92,19 @@ pub enum Command {
     /// transport left. Foreign Improv clients never send 0x81; ours only
     /// sends it to boxes whose scan marked the network "ENT".
     EnterpriseSettings { ssid: String, identity: String, password: String },
+    /// `0x82` — OUR extension: account claim grant. `[grant]`.
+    ///
+    /// The keystone that merges the wifi and link steps into one tap: the
+    /// signed-in app asks atlas for a pre-approved `device_code` and hands it
+    /// to the box over this same BLE session. The box stores it as its
+    /// in-flight link and redeems it OUTBOUND the moment it can reach atlas —
+    /// the box stays outbound-only, atlas never gains a path in, and the
+    /// app's session was only ever the vouching authority, never a shared
+    /// secret. The grant is single-use, short-lived, and worthless without
+    /// this box's poll; carrying it over BLE also inherits the proximity
+    /// argument (you were standing at the box). The display's QR/code flow
+    /// remains the fallback for no-phone and fresh-account paths.
+    ClaimGrant { grant: String },
 }
 
 // ─── Improv protocol: framing ───────────────────────────────────────────────
@@ -141,6 +154,13 @@ pub fn parse_rpc(packet: &[u8]) -> Result<Command, ImprovError> {
                 return Err(ImprovError::InvalidPacket);
             }
             Ok(Command::EnterpriseSettings { ssid, identity, password })
+        }
+        0x82 => {
+            let (grant, rest) = take_string(data).ok_or(ImprovError::InvalidPacket)?;
+            if grant.is_empty() || !rest.is_empty() {
+                return Err(ImprovError::InvalidPacket);
+            }
+            Ok(Command::ClaimGrant { grant })
         }
         _ => Err(ImprovError::UnknownCommand),
     }
@@ -260,6 +280,28 @@ mod tests {
     }
 
     #[test]
+    fn claim_grant_round_trip() {
+        // The 0x82 vendor extension: the app-supplied claim grant that merges
+        // the wifi and link steps into one tap.
+        let mut data = vec![12u8];
+        data.extend_from_slice(b"dc_a1b2c3d4e5");
+        // 12 bytes declared, 13 provided — framing must catch it before it
+        // ever becomes a device_code.
+        assert_eq!(parse_rpc(&frame(0x82, &data)), Err(ImprovError::InvalidPacket));
+        data[0] = 13;
+        let cmd = parse_rpc(&frame(0x82, &data)).unwrap();
+        assert_eq!(cmd, Command::ClaimGrant { grant: "dc_a1b2c3d4e5".into() });
+    }
+
+    #[test]
+    fn claim_grant_refuses_an_empty_grant() {
+        // An empty grant would store an empty in-flight device_code and poll
+        // atlas with it forever.
+        let data = vec![0u8];
+        assert_eq!(parse_rpc(&frame(0x82, &data)), Err(ImprovError::InvalidPacket));
+    }
+
+    #[test]
     fn unknown_commands_are_distinguished_from_garbage() {
         // A well-formed packet with a command we don't know must say so —
         // clients treat InvalidPacket as "retry" and UnknownCommand as "don't".
@@ -375,7 +417,7 @@ mod server {
                         tracing::info!("ble_provision: box is claimed, stopping Improv service");
                         serving = None; // handles drop → unregister + stop advertising
                     }
-                    (false, false) => match serve().await {
+                    (false, false) => match serve(pool.clone()).await {
                         Ok(h) => {
                             tracing::info!("ble_provision: Improv service up, advertising");
                             serving = Some(h);
@@ -407,7 +449,7 @@ mod server {
         online_at_serve: bool,
     }
 
-    async fn serve() -> bluer::Result<ServeHandles> {
+    async fn serve(pool: PgPool) -> bluer::Result<ServeHandles> {
         use bluer::gatt::local::{
             Application, Characteristic, CharacteristicNotify, CharacteristicNotifyMethod,
             CharacteristicRead, CharacteristicWrite, CharacteristicWriteMethod, Service,
@@ -534,10 +576,12 @@ mod server {
                             write_without_response: true,
                             method: CharacteristicWriteMethod::Fun({
                                 let improv = improv.clone();
+                                let pool = pool.clone();
                                 Box::new(move |value, _req| {
                                     let improv = improv.clone();
+                                    let pool = pool.clone();
                                     async move {
-                                        handle_rpc(improv, value).await;
+                                        handle_rpc(improv, pool, value).await;
                                         Ok(())
                                     }
                                     .boxed()
@@ -595,7 +639,7 @@ mod server {
 
     /// Execute one RPC. Runs inside the BLE write callback; the join itself is
     /// spawned so a slow `nmcli` cannot stall the GATT event loop.
-    async fn handle_rpc(improv: Arc<Mutex<Improv>>, packet: Vec<u8>) {
+    async fn handle_rpc(improv: Arc<Mutex<Improv>>, pool: PgPool, packet: Vec<u8>) {
         let cmd = match parse_rpc(&packet) {
             Ok(c) => c,
             Err(e) => {
@@ -667,6 +711,29 @@ mod server {
                     }
                 });
             }
+            Command::ClaimGrant { grant } => {
+                let improv = improv.clone();
+                tokio::spawn(async move {
+                    match crate::virtues_api::link::inject_grant(&pool, &grant).await {
+                        Ok(()) => {
+                            // ACK the store immediately — the redeem may outlive
+                            // this BLE session (the box may not even have wifi
+                            // yet; grant-then-join and join-then-grant are both
+                            // legal orders).
+                            {
+                                let mut g = improv.lock().await;
+                                g.send_result(build_result(0x82, &["accepted"])).await;
+                            }
+                            tracing::info!("ble_provision: claim grant accepted, awaiting redeem");
+                            redeem_grant(pool, improv).await;
+                        }
+                        Err(e) => {
+                            tracing::warn!(error = %format!("{e:#}"), "ble_provision: claim grant rejected");
+                            improv.lock().await.set_error(ImprovError::Unknown).await;
+                        }
+                    }
+                });
+            }
             Command::Identify => {
                 // No LED, no sound. Acknowledged silently; the display is the
                 // box's face and belongs to its own subsystem.
@@ -703,6 +770,59 @@ mod server {
                     improv.lock().await.send_result(build_result(0x04, &[])).await;
                 });
             }
+        }
+    }
+
+    /// Redeem an injected claim grant: wait for internet (the grant usually
+    /// arrives before or seconds after the wifi credentials), then drive the
+    /// normal link poll to a terminal state. On `Ready` the poll machinery
+    /// stores the api key, fetches relay config, and requests the endpoint
+    /// rebind — this task adds nothing to that path, it only supplies the
+    /// heartbeat that the display's screen-2 loop would otherwise be.
+    ///
+    /// Results are best-effort notified over BLE (0x82 "linked") for the app
+    /// that is still connected; the authoritative signal is the box's own
+    /// state (`linked`, and the advertisement flipping at claim).
+    async fn redeem_grant(pool: PgPool, improv: Arc<Mutex<Improv>>) {
+        // Generous ceiling: the owner may be slow picking wifi after the app
+        // sent the grant. Atlas's own grant expiry is the real limit; this one
+        // only stops a box that never gets online from polling forever.
+        let deadline = tokio::time::Instant::now() + Duration::from_secs(1800);
+        while !crate::cli::link::has_internet() {
+            if tokio::time::Instant::now() >= deadline {
+                tracing::warn!("ble_provision: claim grant never got online — giving up (grant stays in-flight for the display loop)");
+                return;
+            }
+            tokio::time::sleep(Duration::from_secs(2)).await;
+        }
+        let http = crate::http_client::virtues_api_client();
+        let atlas = crate::virtues_api::atlas_url();
+        loop {
+            if tokio::time::Instant::now() >= deadline {
+                tracing::warn!("ble_provision: claim grant redeem timed out");
+                return;
+            }
+            match crate::virtues_api::link::poll(&pool, &http, &atlas).await {
+                Ok(crate::virtues_api::link::LinkStatus::Ready) => {
+                    tracing::info!("ble_provision: box linked via app claim grant");
+                    let mut g = improv.lock().await;
+                    g.send_result(build_result(0x82, &["linked"])).await;
+                    return;
+                }
+                Ok(crate::virtues_api::link::LinkStatus::Expired) => {
+                    tracing::warn!("ble_provision: claim grant expired or was denied");
+                    improv.lock().await.set_error(ImprovError::NotAuthorized).await;
+                    return;
+                }
+                // Cleared by someone else (a display-loop redeem finishing
+                // first lands here) — nothing left to drive.
+                Ok(crate::virtues_api::link::LinkStatus::None) => return,
+                Ok(crate::virtues_api::link::LinkStatus::Pending) => {}
+                Err(e) => {
+                    tracing::debug!(error = %format!("{e:#}"), "ble_provision: grant poll failed; retrying");
+                }
+            }
+            tokio::time::sleep(Duration::from_secs(3)).await;
         }
     }
 }
