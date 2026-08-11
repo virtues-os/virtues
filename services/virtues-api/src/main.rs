@@ -95,8 +95,9 @@ async fn main() -> Result<()> {
     // Log external services configuration. (Plaid/OAuth providers read their
     // own env in routes/oauth.rs, so they're not surfaced here.)
     tracing::info!(
-        "External services: Parallel={}, GooglePlaces={}",
-        config.parallel_api_key.is_some(),
+        // Web search runs on the AI Gateway key, not a search vendor key —
+        // there is no separate search credential to report any more.
+        "External services: GooglePlaces={}",
         config.google_api_key.is_some(),
     );
 
