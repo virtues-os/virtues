@@ -917,6 +917,14 @@ pub async fn run(client: Virtues, host: &str, port: u16) -> Result<()> {
             "/api/pages/versions/:version_id",
             get(api::get_page_version_handler),
         )
+        // Box network management (Settings → Box → Network) — the authed
+        // successors to the setup-phase /api/provision/* surface, which
+        // correctly evaporates at claim time. Born of a box marooned on a
+        // captive guest network with no way to leave (2026-08-11). See
+        // api/network.rs.
+        .route("/api/network/status", get(crate::api::network::status_handler))
+        .route("/api/network/scan",   get(crate::api::network::scan_handler))
+        .route("/api/network/join",   post(crate::api::network::join_handler))
         // Box updates (Settings → Box)
         .route("/api/system/update", get(api::update_status_handler))
         .route(
