@@ -362,6 +362,14 @@ mod server {
             loop {
                 tick.tick().await;
                 let claimed = crate::api::pair::paired_device_count(&pool).await > 0;
+                // Connectivity changed since the service came up? Re-serve, so
+                // the advertisement and state characteristic tell the truth.
+                if let Some(h) = &serving {
+                    if !claimed && h.online_at_serve != crate::cli::link::primary_ip().is_some() {
+                        tracing::info!("ble_provision: connectivity changed, re-serving with fresh state");
+                        serving = None;
+                    }
+                }
                 match (claimed, serving.is_some()) {
                     (true, true) => {
                         tracing::info!("ble_provision: box is claimed, stopping Improv service");
@@ -391,6 +399,12 @@ mod server {
         _adv: bluer::adv::AdvertisementHandle,
         _app: bluer::gatt::local::ApplicationHandle,
         _session: bluer::Session,
+        /// Connectivity at serve time. The advertisement's state byte is baked
+        /// in at creation, so when this stops matching reality the whole
+        /// service is re-served. Without it the box kept advertising "already
+        /// online" for hours after losing its network — the app told the user
+        /// to tap a chip that could not exist (seen live 2026-08-11).
+        online_at_serve: bool,
     }
 
     async fn serve() -> bluer::Result<ServeHandles> {
@@ -568,7 +582,12 @@ mod server {
         };
         let app_handle = adapter.serve_gatt_application(app).await?;
 
-        Ok(ServeHandles { _adv: adv_handle, _app: app_handle, _session: session })
+        Ok(ServeHandles {
+            _adv: adv_handle,
+            _app: app_handle,
+            _session: session,
+            online_at_serve: initial == State::Provisioned,
+        })
     }
 
     /// Execute one RPC. Runs inside the BLE write callback; the join itself is
