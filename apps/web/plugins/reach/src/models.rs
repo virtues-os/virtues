@@ -16,6 +16,8 @@ pub struct PairRequest {
 pub struct FoundServer {
   pub name: String,
   pub origin: String,
+  /// None = box too old to say. See DiscoveredBox::claimed.
+  pub claimed: Option<bool>,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]

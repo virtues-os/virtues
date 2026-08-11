@@ -34,6 +34,7 @@ pub(crate) async fn discover<R: Runtime>(_app: AppHandle<R>) -> Result<DiscoverR
     .map(|b| FoundServer {
       name: b.name,
       origin: b.origin,
+      claimed: b.claimed,
     })
     .collect::<Vec<_>>();
   let debug = if ips.is_empty() {

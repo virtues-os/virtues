@@ -145,3 +145,40 @@ mod tests {
         let _ = codename("not-a-sha");
     }
 }
+
+/// The BOX's own codename — `adj-animal` seeded by machine-id, the same way
+/// build codenames are seeded by the git sha.
+///
+/// This is the box's public identity on every setup surface: the setup AP's
+/// SSID (`Virtues-Quaint-Tern`), the BLE advertisement, the discovery chips in
+/// the app, and the display. It exists because two boxes on one LAN rendered
+/// as two identical "Virtues box" chips (seen live 2026-08-10: a prod and a
+/// test box in one house), and a hex suffix disambiguates worse than a name a
+/// human can say out loud. Machine-id is re-minted per unit at first boot
+/// (`deprovision` truncates it), so clones of one image never share a name.
+///
+/// It is a LABEL, not authorization — the pair code only works on the box
+/// that displayed it, so a mistaken chip tap fails closed.
+pub fn box_codename() -> String {
+    let id = std::fs::read_to_string("/etc/machine-id").unwrap_or_default();
+    let hex: String = id.trim().chars().filter(|c| c.is_ascii_hexdigit()).take(12).collect();
+    if hex.len() < 12 {
+        // No machine-id (dev Mac, container): stable but honest.
+        return "virtues-box".into();
+    }
+    codename(&hex)
+}
+
+/// `quaint-tern` → `Quaint Tern`, for humans.
+pub fn pretty(name: &str) -> String {
+    name.split('-')
+        .map(|w| {
+            let mut c = w.chars();
+            match c.next() {
+                Some(f) => f.to_uppercase().collect::<String>() + c.as_str(),
+                None => String::new(),
+            }
+        })
+        .collect::<Vec<_>>()
+        .join(" ")
+}

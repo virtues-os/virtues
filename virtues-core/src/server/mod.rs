@@ -237,6 +237,13 @@ pub async fn run(client: Virtues, host: &str, port: u16) -> Result<()> {
         // Setup/onboarding state machine (docs/onboarding.md) — public-on-LAN
         // for the same reason as /api/box/health: the wizard + panel render it
         // pre-auth, and it carries only booleans + step copy.
+        // Who is this box — name + claimed, for discovery chips. Public like
+        // its neighbours; the name is already broadcast over the air (AP SSID,
+        // BLE advertisement), so the LAN learns nothing new. See api/identity.
+        .route(
+            "/api/box/identity",
+            get(crate::api::identity::identity_handler),
+        )
         .route(
             "/api/setup/state",
             get(crate::api::box_status::setup_state_handler),

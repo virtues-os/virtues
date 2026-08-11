@@ -267,10 +267,32 @@ pub fn run() {
           .header("Content-Type", asset.mime_type)
           .body(asset.bytes)
           .unwrap(),
-        (None, None) => tauri::http::Response::builder()
-          .status(404)
-          .body(Vec::new())
-          .unwrap(),
+        // Compile-time fallback for the shell pages. `tauri dev` does not
+        // embed frontendDist assets (release does), so every dev build served
+        // 404 here and the app opened to a white screen — found by beacon on
+        // hardware 2026-08-10, after three builds and zero readable device
+        // logs. include_bytes! makes the connect surface unconditionally
+        // present in BOTH modes: these three files are the app's airlock, and
+        // an airlock must not depend on packaging.
+        (None, None) => {
+          let shell: Option<&'static [u8]> = match resolved.as_str() {
+            "mobile-pair.html" => Some(include_bytes!("../ui/mobile-pair.html")),
+            "pair.html" => Some(include_bytes!("../ui/pair.html")),
+            "probe.html" => Some(include_bytes!("../ui/probe.html")),
+            _ => None,
+          };
+          match shell {
+            Some(bytes) => tauri::http::Response::builder()
+              .status(200)
+              .header("Content-Type", "text/html")
+              .body(bytes.to_vec())
+              .unwrap(),
+            None => tauri::http::Response::builder()
+              .status(404)
+              .body(Vec::new())
+              .unwrap(),
+          }
+        },
       }
     });
 

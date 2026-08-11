@@ -24,6 +24,8 @@ export async function forget(): Promise<void> {
 export interface FoundServer {
   name: string
   origin: string
+  /** false = ready to set up, true = already claimed, null/undefined = box too old to say. */
+  claimed?: boolean | null
 }
 
 /** Browse the LAN (Bonjour) for Virtues boxes to auto-fill the address. */

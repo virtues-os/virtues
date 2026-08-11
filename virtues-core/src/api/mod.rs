@@ -50,6 +50,7 @@ pub mod pins;
 pub mod search_local;
 pub mod places;
 pub mod profile;
+pub mod identity;
 pub mod portal;
 pub mod provision;
 pub mod notebooks;

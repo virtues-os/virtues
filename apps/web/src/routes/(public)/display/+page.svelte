@@ -49,6 +49,7 @@
 	import { onMount, onDestroy } from "svelte";
 
 	type DisplayState = {
+		box_name: string;
 		pair_code: string | null;
 		ap_ssid: string | null;
 		ap_passphrase: string | null;
@@ -155,7 +156,7 @@
 				</div>
 			</div>
 			<div class="dark">
-				<div class="brand">∴ &nbsp;Virtues</div>
+				<div class="brand">∴ &nbsp;{state_.box_name}</div>
 				<div class="step">Step 1 of 2</div>
 				<div class="head">Get the Virtues app</div>
 				{#if state_.ap_ssid}
@@ -193,7 +194,7 @@
 				</div>
 			</div>
 			<div class="dark">
-				<div class="brand">∴ &nbsp;Virtues</div>
+				<div class="brand">∴ &nbsp;{state_.box_name}</div>
 				<div class="step">Step 2 of 2</div>
 				<div class="lead">In the Virtues app, enter</div>
 				{#if grouped}
@@ -219,7 +220,7 @@
 		     the record rather than the machine — a ship's log, not htop. -->
 		<div class="amb">
 			<div class="top">
-				<div class="brand">∴ &nbsp;virtues.local</div>
+				<div class="brand">∴ &nbsp;{state_.box_name}</div>
 				<div class="status" class:offline={!state_.online || unreachable}>
 					{unreachable ? "NO SERVER" : state_.online ? "REACHABLE" : "OFFLINE"}
 				</div>
