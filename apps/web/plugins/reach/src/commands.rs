@@ -147,12 +147,6 @@ mod desktop {
     virtues_improv::ImprovClient::shared()
   }
 
-  /// Every BLE failure reaches the user as words, not a Debug string: these
-  /// surface in the connect shell verbatim.
-  pub(super) fn err(e: anyhow::Error) -> crate::Error {
-    crate::Error::Reach(format!("{e:#}"))
-  }
-
   /// Mirror the Swift plugin's `trigger("improv-progress", …)`. Tauri's
   /// `addPluginListener('reach', 'improv-progress', …)` listens on this exact
   /// event name, so one JS listener serves both platforms.
@@ -182,14 +176,18 @@ pub(crate) async fn improv_discover<R: Runtime>(
   #[cfg(not(any(target_os = "ios", target_os = "android")))]
   {
     let _ = &app;
-    // A scan that fails (no adapter, Bluetooth off, permission refused) is
-    // reported as "no boxes" — the shell's other paths stay usable, and its
-    // own copy explains what to check. The reason is logged, not thrown.
-    let boxes = match desktop::client().discover(seconds.unwrap_or(4.0)).await {
-      Ok(b) => b,
+    // A scan that FAILS (no adapter, Bluetooth off, permission refused) must
+    // not look like a scan that found nothing. They are the same picture on a
+    // screen that keeps searching, and that ambiguity is precisely what makes
+    // Bluetooth setup unfalsifiable in the field — you cannot tell "no box
+    // here" from "this machine cannot see any box, ever". The reason rides
+    // back in the payload so the shell can say which.
+    let (boxes, error) = match desktop::client().discover(seconds.unwrap_or(4.0)).await {
+      Ok(b) => (b, None),
       Err(e) => {
-        tracing::info!(error = %format!("{e:#}"), "improv: bluetooth discovery unavailable");
-        Vec::new()
+        let msg = format!("{e:#}");
+        tracing::info!(error = %msg, "improv: bluetooth discovery unavailable");
+        (Vec::new(), Some(msg))
       }
     };
     return Ok(serde_json::json!({
@@ -198,7 +196,8 @@ pub(crate) async fn improv_discover<R: Runtime>(
         "name": b.name,
         "improvState": b.improv_state,
         "rssi": b.rssi,
-      })).collect::<Vec<_>>()
+      })).collect::<Vec<_>>(),
+      "error": error,
     }));
   }
   #[cfg(target_os = "android")]

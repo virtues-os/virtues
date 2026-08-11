@@ -1464,7 +1464,16 @@ fn main() {
             // it through the `virtues://` scheme). Desktop can decide the
             // landing state before the window exists, so it passes the verdict
             // in the hash instead of making the page probe for it.
-            let url = if !is_paired() {
+            let url = if std::env::var("VIRTUES_FORCE_CONNECT").is_ok() {
+                // Dev pin, mirroring mobile's `#setup`: open the airlock on an
+                // ALREADY-PAIRED machine without unpairing it. Setup is the
+                // hardest flow to exercise and the easiest to break, and the
+                // only other way in is to forget a real pairing — which on a
+                // single-box client means destroying it. The wifi and link
+                // steps are safe here; completing a PAIR would still replace
+                // the existing box, exactly as it does on the phone.
+                WebviewUrl::App("connect.html#setup".into())
+            } else if !is_paired() {
                 WebviewUrl::App("connect.html".into())
             } else {
                 match probe_box_session_blocking(1) {
