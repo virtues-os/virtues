@@ -105,6 +105,24 @@ pub enum Command {
     /// argument (you were standing at the box). The display's QR/code flow
     /// remains the fallback for no-phone and fresh-account paths.
     ClaimGrant { grant: String },
+    /// `0x83` — OUR extension: pair over BLE. `[code, kind, source, label,
+    /// endpoint_id]` (`source`/`label`/`endpoint_id` may be empty).
+    ///
+    /// Exists because pairing's LAN leg dies on hostile networks: client
+    /// isolation at an office blocked `POST /api/pair/consume` between phone
+    /// and box on the same wifi (WeWork, live, 2026-08-11) while BLE sat
+    /// there working. The box redeems the code against its OWN consume
+    /// endpoint over loopback — the same transaction, rate-limit story aside
+    /// (see the handler), and device row as every other pairing — and streams
+    /// the consume response back as chunked results. Security is unchanged:
+    /// the code still proves the person can read the box's screen; BLE is
+    /// just the wire. Cleartext like the LAN leg it replaces (and like the
+    /// wifi passphrase in 0x01) — same accepted setup-window risk.
+    ///
+    /// Only the FIRST device can use this: a successful pair claims the box
+    /// and the reconciler stops the whole BLE service. Later devices pair
+    /// over LAN or relay, which exist by then.
+    PairConsume { code: String, kind: String, source: String, label: String, endpoint_id: String },
 }
 
 // ─── Improv protocol: framing ───────────────────────────────────────────────
@@ -162,8 +180,42 @@ pub fn parse_rpc(packet: &[u8]) -> Result<Command, ImprovError> {
             }
             Ok(Command::ClaimGrant { grant })
         }
+        0x83 => {
+            let (code, rest) = take_string(data).ok_or(ImprovError::InvalidPacket)?;
+            let (kind, rest) = take_string(rest).ok_or(ImprovError::InvalidPacket)?;
+            let (source, rest) = take_string(rest).ok_or(ImprovError::InvalidPacket)?;
+            let (label, rest) = take_string(rest).ok_or(ImprovError::InvalidPacket)?;
+            let (endpoint_id, rest) = take_string(rest).ok_or(ImprovError::InvalidPacket)?;
+            if code.is_empty() || kind.is_empty() || !rest.is_empty() {
+                return Err(ImprovError::InvalidPacket);
+            }
+            Ok(Command::PairConsume { code, kind, source, label, endpoint_id })
+        }
         _ => Err(ImprovError::UnknownCommand),
     }
+}
+
+/// Chunk a pair-consume response for the Improv frame's 1-byte length budget:
+/// the WHOLE result packet's data is ≤255 bytes, so a JSON body streams as one
+/// ~200-byte string per packet, terminated by an empty result — the same shape
+/// [`Command::ScanWifi`] already streams. The client concatenates chunks; a
+/// single chunk starting `error:` is a failure code, not JSON.
+pub fn chunk_for_results(body: &str) -> Vec<String> {
+    // 200 leaves headroom for the frame (command, length, string prefix,
+    // checksum) under the 255 cap. Cuts back off multi-byte seams: a device
+    // label like "Adam's iPhone" with a curly quote reaches this JSON, and a
+    // chunk boundary through it would corrupt the reassembled body.
+    let mut out = Vec::new();
+    let mut rest = body;
+    while !rest.is_empty() {
+        let mut cut = rest.len().min(200);
+        while !rest.is_char_boundary(cut) {
+            cut -= 1;
+        }
+        out.push(rest[..cut].to_string());
+        rest = &rest[cut..];
+    }
+    out
 }
 
 fn take_string(data: &[u8]) -> Option<(String, &[u8])> {
@@ -299,6 +351,63 @@ mod tests {
         // atlas with it forever.
         let data = vec![0u8];
         assert_eq!(parse_rpc(&frame(0x82, &data)), Err(ImprovError::InvalidPacket));
+    }
+
+    #[test]
+    fn pair_consume_round_trip() {
+        // The 0x83 vendor extension: pairing over BLE, for LANs that block
+        // peer-to-peer (the WeWork wall). Optional fields ride as empties.
+        let mut data = vec![6u8];
+        data.extend_from_slice(b"123456");
+        data.push(10);
+        data.extend_from_slice(b"mobile_app");
+        data.push(3);
+        data.extend_from_slice(b"ios");
+        data.push(0); // label: auto-generate
+        data.push(4);
+        data.extend_from_slice(b"beef");
+        let cmd = parse_rpc(&frame(0x83, &data)).unwrap();
+        assert_eq!(
+            cmd,
+            Command::PairConsume {
+                code: "123456".into(),
+                kind: "mobile_app".into(),
+                source: "ios".into(),
+                label: "".into(),
+                endpoint_id: "beef".into(),
+            }
+        );
+    }
+
+    #[test]
+    fn pair_consume_refuses_empty_code_or_kind() {
+        // [code="", kind="mobile_app", "", "", ""]
+        let mut data = vec![0u8, 10];
+        data.extend_from_slice(b"mobile_app");
+        data.extend_from_slice(&[0, 0, 0]);
+        assert_eq!(parse_rpc(&frame(0x83, &data)), Err(ImprovError::InvalidPacket));
+    }
+
+    #[test]
+    fn result_chunks_fit_the_frame_and_reassemble() {
+        // A realistic consume response overflows one Improv frame (1-byte
+        // length ⇒ ≤255 data bytes); it must stream and rejoin losslessly —
+        // including a multi-byte char sitting on the cut.
+        let body = format!(
+            "{{\"device_id\":\"dev_x\",\"label\":\"Adam’s iPhone\",\"box_node_id\":\"{}\",\"pad\":\"{}\"}}",
+            "ab".repeat(32),
+            "x".repeat(300),
+        );
+        let chunks = chunk_for_results(&body);
+        assert!(chunks.len() > 1);
+        for c in &chunks {
+            // Every chunk must survive build_result's 255-per-string cap AND
+            // the packet's own 255-data-byte cap with framing overhead.
+            assert!(c.len() <= 200, "chunk too big: {}", c.len());
+            let p = build_result(0x83, &[c]);
+            assert!(p.len() <= 255 + 3);
+        }
+        assert_eq!(chunks.concat(), body);
     }
 
     #[test]
@@ -734,6 +843,18 @@ mod server {
                     }
                 });
             }
+            Command::PairConsume { code, kind, source, label, endpoint_id } => {
+                let improv = improv.clone();
+                tokio::spawn(async move {
+                    let body = pair_over_ble(code, kind, source, label, endpoint_id).await;
+                    let mut g = improv.lock().await;
+                    for chunk in chunk_for_results(&body) {
+                        g.send_result(build_result(0x83, &[&chunk])).await;
+                    }
+                    // Empty terminator — same stream shape as ScanWifi.
+                    g.send_result(build_result(0x83, &[])).await;
+                });
+            }
             Command::Identify => {
                 // No LED, no sound. Acknowledged silently; the display is the
                 // box's face and belongs to its own subsystem.
@@ -769,6 +890,85 @@ mod server {
                     }
                     improv.lock().await.send_result(build_result(0x04, &[])).await;
                 });
+            }
+        }
+    }
+
+    /// Redeem a pair code arriving over BLE against the box's own consume
+    /// endpoint. Loopback on purpose: `POST /api/pair/consume` is the ONE
+    /// implementation of enrollment (token claim, device row, allowlist,
+    /// collector fan-out, reach ticket), and this leg must not fork it — BLE
+    /// is just the wire for LANs that block peer-to-peer.
+    ///
+    /// Returns the response body to stream back: the consume JSON on success,
+    /// or `error:<code>` on failure.
+    ///
+    /// The consume handler's per-IP rate limiter EXEMPTS loopback (a header-
+    /// less local caller isn't remotely reachable), which this path would
+    /// otherwise turn into a free brute-force budget for anyone in radio
+    /// range — so BLE brings its own: same 10-per-30-minutes the LAN leg
+    /// enforces, process-wide.
+    async fn pair_over_ble(
+        code: String,
+        kind: String,
+        source: String,
+        label: String,
+        endpoint_id: String,
+    ) -> String {
+        use std::time::Instant;
+        static ATTEMPTS: std::sync::Mutex<Vec<Instant>> = std::sync::Mutex::new(Vec::new());
+        {
+            let mut a = ATTEMPTS.lock().expect("ble pair limiter");
+            a.retain(|t| t.elapsed() < Duration::from_secs(1800));
+            if a.len() >= 10 {
+                tracing::warn!("ble_provision: pair attempts rate-limited");
+                return "error:too_many_attempts".into();
+            }
+            a.push(Instant::now());
+        }
+
+        let opt = |s: String| (!s.is_empty()).then_some(s);
+        let body = serde_json::json!({
+            "token": code,
+            "kind": kind,
+            "source": opt(source),
+            "label": opt(label),
+            "device_node_id": opt(endpoint_id),
+        });
+        let client = match reqwest::Client::builder()
+            .timeout(Duration::from_secs(15))
+            .build()
+        {
+            Ok(c) => c,
+            Err(_) => return "error:internal".into(),
+        };
+        // The box's own listener; the same literal the 0x01 result URL uses.
+        let resp = client
+            .post("http://127.0.0.1:8000/api/pair/consume")
+            .json(&body)
+            .send()
+            .await;
+        match resp {
+            Ok(r) if r.status().is_success() => match r.text().await {
+                Ok(t) => {
+                    tracing::info!("ble_provision: device paired over BLE");
+                    t
+                }
+                Err(_) => "error:internal".into(),
+            },
+            Ok(r) => {
+                let code = r
+                    .json::<serde_json::Value>()
+                    .await
+                    .ok()
+                    .and_then(|v| v["error"].as_str().map(str::to_string))
+                    .unwrap_or_else(|| "internal".into());
+                tracing::warn!(%code, "ble_provision: pair consume refused");
+                format!("error:{code}")
+            }
+            Err(e) => {
+                tracing::warn!(error = %e, "ble_provision: pair consume unreachable");
+                "error:internal".into()
             }
         }
     }
