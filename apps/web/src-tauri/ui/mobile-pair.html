@@ -159,6 +159,22 @@
         return null;
       }
 
+      // start(), but the pair screen leads with an explanation of why the user
+      // was brought here. For handoffs out of flows that decided there is
+      // nothing for them to do.
+      async function startWithBanner(text) {
+        renderSearching();
+        const [lan, ble] = await Promise.all([
+          discoverBoxes(),
+          invoke('plugin:reach|improv_discover', { seconds: 4 }).then(
+            (r) => (r && r.boxes) || [],
+            () => [],
+          ),
+        ]);
+        state.bleBoxes = ble;
+        renderPair(lan.servers, lan.debug, text);
+      }
+
       async function start() {
         renderSearching();
         // LAN and BLE discovery in parallel. BLE is the PRIMARY setup path —
@@ -215,8 +231,20 @@
         const candidates = boxes.filter((b) => b.improvState === 2);
         if (candidates.length === 0) {
           if (boxes.length) {
-            // Online-but-unclaimed: it's on a network already — pair it.
-            return start();
+            // The advertisement claims "already online" — VERIFY before
+            // believing it: the state byte is baked in when the box's BLE
+            // service starts and can go stale (seen live 2026-08-11: a box
+            // that lost its network kept advertising online for hours, and
+            // this screen told the user to tap a chip that could not exist).
+            // The LAN is the ground truth. Box on it → pair. Not on it → the
+            // advertisement lied; the wifi picker is the honest destination,
+            // and provisioning an actually-online box is harmless anyway.
+            const { servers } = await discoverBoxes();
+            const who = boxes[0].name || 'Your box';
+            if (servers.length) {
+              return startWithBanner(`${who} is already online — tap it below and enter its code.`);
+            }
+            return bleWifiPicker(boxes[0]);
           }
           app.innerHTML = `
             <button class="back" id="back">← Back</button>
@@ -654,16 +682,27 @@
             </span>
             <span class="addr">${esc(s.origin.replace('http://', ''))}</span>
           </button>`).join('');
-        const none = `
-          <div class="scan">No box found automatically.
-            <a href="#" id="rescan" style="color:#7fa8ff">Search again</a></div>
-          ${debug ? `<div class="scan" style="opacity:.6">${esc(debug)}</div>` : ''}`;
-        app.innerHTML = `
-          <h1>Connect to your box</h1>
-          <p class="sub">${banner ? esc(banner) + ' ' : ''}${servers.length ? 'Tap your box to pair it.' : ''}</p>
-          <div id="found">${servers.length ? chips : none}</div>
-          <button class="back" id="newbox">Setting up a brand-new box? Start here →</button><br>
-          <button class="back" id="manual">Enter an address manually</button>`;
+        // Two different screens, honestly: boxes found → a list to tap;
+        // nothing found → setting up a new box IS the primary action, not a
+        // footnote under an apology.
+        if (!servers.length) {
+          app.innerHTML = `
+            <h1>Connect your box</h1>
+            <p class="sub">${banner ? esc(banner) : 'No box on this network yet.'}</p>
+            <button class="primary" id="newbox">Set up a new box</button>
+            <p class="hint" style="margin-top:14px">Already set one up? Make sure this phone is on
+              the same Wi-Fi as the box, then
+              <a href="#" id="rescan" style="color:#7fa8ff">search again</a>.</p>
+            <button class="back" id="manual" style="margin-top:18px">Connect by address instead</button>
+            ${debug ? `<div class="scan" style="opacity:.6">${esc(debug)}</div>` : ''}`;
+        } else {
+          app.innerHTML = `
+            <h1>Connect to your box</h1>
+            <p class="sub">${banner ? esc(banner) + ' ' : ''}Tap your box to pair it.</p>
+            <div id="found">${chips}</div>
+            <button class="back" id="newbox">Setting up a brand-new box? Start here →</button><br>
+            <button class="back" id="manual">Enter an address manually</button>`;
+        }
 
         document.getElementById('newbox').addEventListener('click', () => startBleSetup());
         document.getElementById('manual').addEventListener('click', () => renderManualPair());
