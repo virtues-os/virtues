@@ -16,6 +16,7 @@ Default permissions for the reach plugin
 - `allow-improv-discover`
 - `allow-improv-wifi-scan`
 - `allow-improv-provision`
+- `allow-improv-pair`
 - `allow-improv-disconnect`
 - `allow-outbox-stats`
 - `allow-drain-now`

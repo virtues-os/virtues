@@ -117,15 +117,50 @@ pub(crate) async fn provision_join<R: Runtime>(
   })
 }
 
-// ─── Improv BLE setup (iOS: CoreBluetooth, see ios/Sources/ImprovClient.swift) ─
+// ─── Improv BLE setup — the primary path on EVERY platform ──────────────────
 //
-// The PRIMARY setup path since 2026-08-10: the box serves the Improv Wi-Fi
-// GATT service while unclaimed (virtues-core maintenance::ble_provision), and
-// the app drives it from here. The phone never leaves its own network; the
-// join is watched live over BLE instead of inferred from a dead socket.
+// The box serves the Improv Wi-Fi GATT service while unclaimed (virtues-core
+// `maintenance::ble_provision`); this drives it. The client never leaves its
+// own network, and the join is watched live over BLE instead of inferred from
+// a dead socket.
 //
-// On platforms without the client (Android for now, desktop), these return
-// empty/error and the connect screen falls back to LAN discovery + SoftAP.
+// TWO implementations, ONE command surface:
+//   * iOS      → Swift CoreBluetooth (`ios/Sources/ImprovClient.swift`)
+//   * desktop  → `virtues_improv::client` (btleplug: CoreBluetooth, WinRT, BlueZ)
+// Both speak the wire format in `virtues-improv::protocol`, and both answer to
+// the same command names with the same JSON — which is what lets the connect
+// shell be one file rather than one per platform. Android has neither yet and
+// says so.
+//
+// Desktop is not a fallback here. A Mac is expected to be the FIRST device an
+// appliance ever meets: it has the keyboard that 802.1X credentials and an
+// email address want, and its dev loop is `tauri dev` rather than a device
+// deploy — which is most of why this exists.
+
+/// The desktop client, and the small amount of glue that makes its results
+/// look exactly like the Swift plugin's.
+#[cfg(not(any(target_os = "ios", target_os = "android")))]
+mod desktop {
+  use super::*;
+
+  pub(super) fn client() -> &'static virtues_improv::ImprovClient {
+    virtues_improv::ImprovClient::shared()
+  }
+
+  /// Every BLE failure reaches the user as words, not a Debug string: these
+  /// surface in the connect shell verbatim.
+  pub(super) fn err(e: anyhow::Error) -> crate::Error {
+    crate::Error::Reach(format!("{e:#}"))
+  }
+
+  /// Mirror the Swift plugin's `trigger("improv-progress", …)`. Tauri's
+  /// `addPluginListener('reach', 'improv-progress', …)` listens on this exact
+  /// event name, so one JS listener serves both platforms.
+  pub(super) fn progress<R: Runtime>(app: &AppHandle<R>, stage: &str) {
+    use tauri::Emitter;
+    let _ = app.emit("plugin:reach|improv-progress", serde_json::json!({ "stage": stage }));
+  }
+}
 
 /// Scan for unclaimed boxes advertising Improv. Returns `{boxes: [...]}` with
 /// `id` (opaque, for the calls below), `name`, `improvState` (0x02 = needs
@@ -144,7 +179,29 @@ pub(crate) async fn improv_discover<R: Runtime>(
       .run_mobile_plugin("improv_discover", serde_json::json!({ "seconds": seconds }))
       .map_err(|e| crate::Error::Reach(e.to_string()));
   }
-  #[cfg(not(target_os = "ios"))]
+  #[cfg(not(any(target_os = "ios", target_os = "android")))]
+  {
+    let _ = &app;
+    // A scan that fails (no adapter, Bluetooth off, permission refused) is
+    // reported as "no boxes" — the shell's other paths stay usable, and its
+    // own copy explains what to check. The reason is logged, not thrown.
+    let boxes = match desktop::client().discover(seconds.unwrap_or(4.0)).await {
+      Ok(b) => b,
+      Err(e) => {
+        tracing::info!(error = %format!("{e:#}"), "improv: bluetooth discovery unavailable");
+        Vec::new()
+      }
+    };
+    return Ok(serde_json::json!({
+      "boxes": boxes.into_iter().map(|b| serde_json::json!({
+        "id": b.id,
+        "name": b.name,
+        "improvState": b.improv_state,
+        "rssi": b.rssi,
+      })).collect::<Vec<_>>()
+    }));
+  }
+  #[cfg(target_os = "android")]
   {
     let _ = (app, seconds);
     Ok(serde_json::json!({ "boxes": [] }))
@@ -166,15 +223,33 @@ pub(crate) async fn improv_wifi_scan<R: Runtime>(
       .run_mobile_plugin("improv_wifi_scan", serde_json::json!({ "id": id }))
       .map_err(|e| crate::Error::Reach(e.to_string()));
   }
-  #[cfg(not(target_os = "ios"))]
+  #[cfg(not(any(target_os = "ios", target_os = "android")))]
+  {
+    let _ = &app;
+    // Same shape the Swift side returns: an error rides IN the payload, so
+    // the shell renders the list-with-a-reason rather than a thrown promise.
+    return Ok(match desktop::client().wifi_scan(&id).await {
+      Ok(nets) => serde_json::json!({
+        "networks": nets.into_iter().map(|n| serde_json::json!({
+          "ssid": n.ssid,
+          "signal": n.signal,
+          "secured": n.secured,
+          "enterprise": n.enterprise,
+        })).collect::<Vec<_>>()
+      }),
+      Err(e) => serde_json::json!({ "networks": [], "error": format!("{e:#}") }),
+    });
+  }
+  #[cfg(target_os = "android")]
   {
     let _ = (app, id);
-    Err(crate::Error::Reach("BLE setup is iOS-only for now".into()))
+    Err(crate::Error::Reach("Bluetooth setup isn't available on Android yet".into()))
   }
 }
 
-/// Send credentials and watch the join (Improv RPC 0x01). Progress arrives as
-/// `improv-progress` plugin events; the returned value is the outcome.
+/// Send credentials and watch the join (Improv RPC 0x01, or 0x81 when
+/// `identity` is present — 802.1X). Progress arrives as `improv-progress`
+/// plugin events; the returned value is the outcome.
 #[command]
 pub(crate) async fn improv_provision<R: Runtime>(
   app: AppHandle<R>,
@@ -195,10 +270,26 @@ pub(crate) async fn improv_provision<R: Runtime>(
       )
       .map_err(|e| crate::Error::Reach(e.to_string()));
   }
-  #[cfg(not(target_os = "ios"))]
+  #[cfg(not(any(target_os = "ios", target_os = "android")))]
+  {
+    let handle = app.clone();
+    let identity = identity.filter(|i| !i.is_empty());
+    return Ok(
+      match desktop::client()
+        .provision(&id, &ssid, &password, identity.as_deref(), move |stage| {
+          desktop::progress(&handle, stage)
+        })
+        .await
+      {
+        Ok(url) => serde_json::json!({ "ok": true, "url": url }),
+        Err(e) => serde_json::json!({ "ok": false, "error": format!("{e:#}") }),
+      },
+    );
+  }
+  #[cfg(target_os = "android")]
   {
     let _ = (app, id, ssid, password, identity);
-    Err(crate::Error::Reach("BLE setup is iOS-only for now".into()))
+    Err(crate::Error::Reach("Bluetooth setup isn't available on Android yet".into()))
   }
 }
 
@@ -214,40 +305,60 @@ pub(crate) async fn improv_pair<R: Runtime>(
   id: String,
   code: String,
 ) -> Result<serde_json::Value> {
+  // Key custody stays in Rust on BOTH platforms: mint here, hand only the
+  // public EndpointId to the radio layer, persist the box's relayed consume
+  // response through the same code the LAN path uses.
+  let identity = virtues_reach_client::pair::mint_identity();
+  let (kind, label) = if cfg!(mobile) {
+    ("mobile_app", "Virtues Mobile")
+  } else {
+    ("desktop_app", "Virtues Desktop")
+  };
+
   #[cfg(target_os = "ios")]
-  {
-    use crate::ReachExt;
+  let body: String = {
     use tauri::Manager;
-    // Mint the device identity HERE (Rust owns key custody, as in the HTTP
-    // path); only the public EndpointId crosses the plugin boundary.
-    let identity = virtues_reach_client::pair::mint_identity();
-    let resp: serde_json::Value = {
-      let handle = app.state::<crate::IosPluginHandle<R>>();
-      handle
-        .0
-        .run_mobile_plugin(
-          "improv_pair",
-          serde_json::json!({
-            "id": id,
-            "code": code,
-            "label": "Virtues Mobile",
-            "endpointId": identity.node_id,
-          }),
-        )
-        .map_err(|e| crate::Error::Reach(e.to_string()))?
-    };
+    let handle = app.state::<crate::IosPluginHandle<R>>();
+    let resp: serde_json::Value = handle
+      .0
+      .run_mobile_plugin(
+        "improv_pair",
+        serde_json::json!({
+          "id": id,
+          "code": code,
+          "label": label,
+          "endpointId": identity.node_id,
+        }),
+      )
+      .map_err(|e| crate::Error::Reach(e.to_string()))?;
     if resp.get("ok").and_then(|v| v.as_bool()) != Some(true) {
       // The Swift layer's error is already user-facing words — pass through.
       return Ok(resp);
     }
-    let body = resp.get("response").and_then(|v| v.as_str()).unwrap_or("");
-    let status = app.reach().pair_finish_ble(body, identity).await?;
-    return Ok(serde_json::json!({ "ok": true, "status": status }));
-  }
-  #[cfg(not(target_os = "ios"))]
+    resp.get("response").and_then(|v| v.as_str()).unwrap_or("").to_string()
+  };
+
+  #[cfg(not(any(target_os = "ios", target_os = "android")))]
+  let body: String = {
+    // `source` distinguishes a collector from a plain device on the box: a
+    // Mac collects, so it declares "mac" and earns its ingest fan-out.
+    match desktop::client().pair(&id, &code, kind, "mac", label, &identity.node_id).await {
+      Ok(b) => b,
+      Err(e) => return Ok(serde_json::json!({ "ok": false, "error": format!("{e:#}") })),
+    }
+  };
+
+  #[cfg(target_os = "android")]
   {
-    let _ = (app, id, code);
-    Err(crate::Error::Reach("BLE setup is iOS-only for now".into()))
+    let _ = (&app, &id, &code, kind, label, &identity);
+    return Err(crate::Error::Reach("Bluetooth setup isn't available on Android yet".into()));
+  }
+
+  #[cfg(not(target_os = "android"))]
+  {
+    use crate::ReachExt;
+    let status = app.reach().pair_finish_ble(&body, identity).await?;
+    Ok(serde_json::json!({ "ok": true, "status": status }))
   }
 }
 
@@ -264,7 +375,13 @@ pub(crate) async fn improv_disconnect<R: Runtime>(app: AppHandle<R>) -> Result<(
       .map_err(|e| crate::Error::Reach(e.to_string()))?;
     return Ok(());
   }
-  #[cfg(not(target_os = "ios"))]
+  #[cfg(not(any(target_os = "ios", target_os = "android")))]
+  {
+    let _ = &app;
+    desktop::client().disconnect().await;
+    return Ok(());
+  }
+  #[cfg(target_os = "android")]
   {
     let _ = app;
     Ok(())
