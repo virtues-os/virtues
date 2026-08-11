@@ -57,6 +57,9 @@ pub struct DisplayState {
     pub online: bool,
     /// Paired, unrevoked devices — the ambient screen's headline number.
     pub devices: i64,
+    /// The box's codename ("Quaint Tern") — shown on every screen so a human
+    /// can match THIS box to its chip in the app when two share a house.
+    pub box_name: String,
 }
 
 pub async fn display_state_handler(
@@ -102,6 +105,7 @@ pub async fn display_state_handler(
             claimed: devices > 0,
             online: crate::cli::link::primary_ip().is_some(),
             devices,
+            box_name: crate::codename::pretty(&crate::codename::box_codename()),
         }),
     )
         .into_response()

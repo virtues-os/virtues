@@ -66,6 +66,7 @@
       .box b { color: #eafff0; }
       .box .dot { width: 8px; height: 8px; border-radius: 50%; background: #58e08a; flex: none; }
       .box .addr { margin-left: auto; color: #7fae90; font-size: 12px; }
+      .box .boxstate { display: block; font-size: 12px; font-weight: 400; color: #7fae90; }
       .scan { font-size: 12px; color: #6a6a70; margin-bottom: 14px; }
 
       /* ── setup mode ── */
@@ -119,7 +120,12 @@
       // then confirmed against the plugin, which reads the real record. If the
       // check fails we stay here — showing the connect screen to someone paired
       // is a recoverable annoyance; dropping someone unpaired into the app is not.
-      if (window.__VIRTUES_PAIRED__) {
+      // `#setup` pins the connect screen open even on a paired phone — for
+      // setting up a SECOND box (the store is single-box, so completing a PAIR
+      // here would overwrite the existing one; the wifi-setup flow is safe).
+      // Also the only way to exercise setup on a dev phone without unpairing.
+      const pinnedOpen = location.hash === '#setup';
+      if (window.__VIRTUES_PAIRED__ && !pinnedOpen) {
         invoke('plugin:reach|reach_status')
           .then((s) => { if (s && s.paired) location.replace('/'); })
           .catch(() => {});
@@ -592,62 +598,94 @@
 
       // ── PAIR: the box is on a network; claim it ───────────────────────────
 
+      // The box list. Chips ARE the action: tap a box → code entry for THAT
+      // box. Nobody types an IP unless discovery failed them (the manual link).
       function renderPair(servers, debug, banner) {
+        state.servers = servers;
         const chips = servers.map((s, i) => `
-          <button class="box" data-origin="${esc(s.origin)}">
-            <span class="dot"></span><b>${esc(s.name)}</b>
+          <button class="box" data-i="${i}">
+            <span class="dot"></span>
+            <span>
+              <b>${esc(s.name)}</b>
+              <span class="boxstate">${s.claimed === false ? 'ready to set up' : s.claimed === true ? 'already set up' : ''}</span>
+            </span>
             <span class="addr">${esc(s.origin.replace('http://', ''))}</span>
           </button>`).join('');
         const none = `
           <div class="scan">No box found automatically.
-            <a href="#" id="rescan" style="color:#7fa8ff">Search again</a> —
-            or enter its address below (e.g. <b>192.168.1.233</b>).</div>
+            <a href="#" id="rescan" style="color:#7fa8ff">Search again</a></div>
           ${debug ? `<div class="scan" style="opacity:.6">${esc(debug)}</div>` : ''}`;
         app.innerHTML = `
           <h1>Connect to your box</h1>
-          <p class="sub">${banner ? esc(banner) + ' ' : ''}Enter the 6-digit code shown on its
-            screen.</p>
-          ${banner ? '' : ''}
+          <p class="sub">${banner ? esc(banner) + ' ' : ''}${servers.length ? 'Tap your box to pair it.' : ''}</p>
           <div id="found">${servers.length ? chips : none}</div>
+          <button class="back" id="newbox">Setting up a brand-new box? Start here →</button><br>
+          <button class="back" id="manual">Enter an address manually</button>`;
+
+        document.getElementById('newbox').addEventListener('click', () => startBleSetup());
+        document.getElementById('manual').addEventListener('click', () => renderManualPair());
+        const rescan = document.getElementById('rescan');
+        if (rescan) rescan.addEventListener('click', (e) => { e.preventDefault(); start(); });
+        app.querySelectorAll('.box').forEach((el) => {
+          el.addEventListener('click', () => renderCodeEntry(state.servers[+el.dataset.i]));
+        });
+      }
+
+      // Code entry for ONE chosen box. The code is the only thing left to
+      // type, and mistyping the box is fail-closed anyway: a code only works
+      // on the box that displayed it.
+      function renderCodeEntry(server) {
+        app.innerHTML = `
+          <button class="back" id="back">← Boxes</button>
+          <p class="kicker">${esc(server.name)}${server.claimed === false ? ' · ready to set up' : ''}</p>
+          <h1>Enter its code</h1>
+          <p class="sub">The 6 digits on ${esc(server.name)}'s screen right now.</p>
+          <form id="form">
+            <input id="code" inputmode="numeric" maxlength="7" placeholder="123 456" autofocus />
+            <button class="primary" id="go" type="submit">Pair</button>
+          </form>
+          <div class="msg" id="msg"></div>
+          <p class="hint">It rotates every few minutes — a fresh one always works. No screen?
+            Run <b>virtues pair</b> on the box.</p>`;
+        document.getElementById('back').addEventListener('click', start);
+        document.getElementById('form').addEventListener('submit', (e) => {
+          e.preventDefault();
+          submitPair(server.origin);
+        });
+        document.getElementById('code').focus();
+      }
+
+      // The old combined form, demoted to the escape hatch for mDNS-hostile
+      // networks and boxes discovery can't see.
+      function renderManualPair() {
+        app.innerHTML = `
+          <button class="back" id="back">← Boxes</button>
+          <h1>Connect by address</h1>
           <form id="form">
             <label for="server">Box address</label>
             <input id="server" inputmode="url" autocapitalize="off" autocorrect="off"
-                   placeholder="virtues.local   or   192.168.1.x"
-                   value="${esc(state.origin || (servers[0] && servers[0].origin) || '')}" />
+                   placeholder="virtues.local   or   192.168.1.x" />
             <label for="code">Pairing code</label>
             <input id="code" inputmode="numeric" maxlength="7" placeholder="123 456" />
             <button class="primary" id="go" type="submit">Pair</button>
           </form>
-          <div class="msg" id="msg"></div>
-          <p class="hint">The code is on your box's screen. On a box with no screen, run
-            <b>virtues pair</b> on it. It rotates every few minutes — a fresh one always works.</p>
-          <button class="back" id="newbox">Setting up a brand-new box? Start here →</button>`;
-
-        const newbox = document.getElementById('newbox');
-        if (newbox) newbox.addEventListener('click', () => startBleSetup());
-
-        const rescan = document.getElementById('rescan');
-        if (rescan) rescan.addEventListener('click', (e) => { e.preventDefault(); start(); });
-        app.querySelectorAll('.box').forEach((el) => {
-          el.addEventListener('click', () => {
-            document.getElementById('server').value = el.dataset.origin;
-            document.getElementById('code').focus();
-            app.querySelectorAll('.box').forEach((x) => (x.style.opacity = 0.5));
-            el.style.opacity = 1;
-          });
+          <div class="msg" id="msg"></div>`;
+        document.getElementById('back').addEventListener('click', start);
+        document.getElementById('form').addEventListener('submit', (e) => {
+          e.preventDefault();
+          submitPair(document.getElementById('server').value.trim());
         });
-        document.getElementById('form').addEventListener('submit', submitPair);
       }
 
-      async function submitPair(e) {
-        e.preventDefault();
+      // `server` is the chosen box's origin (chip flow) or whatever the manual
+      // form holds — the caller decides, this just pairs against it.
+      async function submitPair(server) {
         const msg = document.getElementById('msg');
         const go = document.getElementById('go');
         const say = (t, cls) => { msg.className = 'msg ' + (cls || ''); msg.textContent = t; };
-        const server = document.getElementById('server').value.trim();
         const code = document.getElementById('code').value.replace(/\s+/g, '');
         if (!server || code.length < 6) {
-          return say('Enter the box address and the 6-digit code.', 'err');
+          return say('Enter the 6-digit code from the box\'s screen.', 'err');
         }
         go.disabled = true;
         say('Pairing…');

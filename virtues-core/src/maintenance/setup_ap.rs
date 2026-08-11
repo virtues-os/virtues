@@ -321,13 +321,15 @@ async fn wifi_device() -> Option<String> {
 /// no migration — and because machine-id is itself re-minted per unit at first
 /// boot, two clones of one image never collide.
 pub fn ap_ssid() -> String {
-    let id = std::fs::read_to_string("/etc/machine-id").unwrap_or_default();
-    let suffix: String = id.trim().chars().take(4).collect::<String>().to_uppercase();
-    if suffix.len() == 4 {
-        format!("Virtues-{suffix}")
-    } else {
-        "Virtues-Setup".to_string()
-    }
+    // `Virtues-Quaint-Tern`: the box's codename (machine-id-seeded, see
+    // `codename::box_codename`) behind the `Virtues-` prefix the app's BLE
+    // and wifi discovery both filter on. Replaced a 4-hex-char suffix
+    // (`Virtues-5AF2`) on 2026-08-10: two boxes on one LAN showed as
+    // indistinguishable chips, and a sayable name beats hex for "which box is
+    // the one in front of me". Worst-case length 27 chars — inside both the
+    // 32-byte SSID limit and a BLE advertisement's local-name budget.
+    let name = crate::codename::box_codename();
+    format!("Virtues-{}", crate::codename::pretty(&name).replace(' ', "-"))
 }
 
 /// The AP passphrase.
@@ -373,8 +375,13 @@ mod tests {
     fn ssid_is_prefixed_and_bounded() {
         let s = ap_ssid();
         assert!(s.starts_with("Virtues-"), "got {s}");
-        // Must stay short enough to read off a screen and type into a phone.
-        assert!(s.len() <= 16, "got {s}");
+        // 802.11 caps an SSID at 32 bytes; prove the WORST codename fits, not
+        // just this machine's.
+        let max_adj = crate::codename::ADJECTIVES.iter().map(|a| a.len()).max().unwrap();
+        let max_animal = crate::codename::ANIMALS.iter().map(|a| a.len()).max().unwrap();
+        assert!("Virtues-".len() + max_adj + 1 + max_animal <= 32,
+            "worst-case codename SSID exceeds 32 bytes");
+        assert!(s.len() <= 32, "got {s}");
     }
 
     #[test]
