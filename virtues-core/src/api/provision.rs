@@ -456,7 +456,7 @@ async fn nmcli_join_enterprise(ssid: &str, identity: &str, password: &str) -> Op
 }
 
 /// SSID of the active client connection, ignoring our own AP.
-async fn active_client_ssid() -> Option<String> {
+pub(crate) async fn active_client_ssid() -> Option<String> {
     let out = nmcli(&["-t", "-f", "NAME,TYPE", "connection", "show", "--active"]).await?;
     String::from_utf8_lossy(&out.stdout)
         .lines()

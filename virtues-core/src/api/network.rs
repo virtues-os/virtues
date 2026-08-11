@@ -1,0 +1,100 @@
+//! Authenticated network management — Settings → Box → Network.
+//!
+//! The feature a claimed box was missing, discovered the hard way on
+//! 2026-08-11: an office box was onboarded onto a captive guest network, and
+//! the moment a device paired, every setup surface correctly closed (the BLE
+//! service stops, `/api/provision/*` 404s — setup is a phase, not a feature).
+//! Which left NO way to move the box to a better network. It was marooned by
+//! its own security posture, one network-quality tier below usable, with the
+//! owner standing right there holding a paired phone.
+//!
+//! So: the same three verbs as provisioning — status, scan, join — behind the
+//! normal auth middleware instead of the AP-subnet gate. A paired device is a
+//! strictly stronger credential than "joined the setup network", so nothing
+//! about the trust model shifts; the surface just stops evaporating at claim
+//! time. The join plumbing IS `provision::perform_join_full` — one
+//! implementation of the switchover, everywhere.
+//!
+//! **A successful join can still sever the connection it was requested over**
+//! (single radio; and the new network may not even reach the old one's LAN).
+//! Clients treat a dead socket exactly like the BLE flow does: not an error,
+//! an instruction to go and look. Over the relay this doesn't apply — the box
+//! re-registers and the same reach ticket keeps working — which is precisely
+//! why post-pair wifi management composes with the reach architecture instead
+//! of fighting it.
+
+use axum::{extract::State, response::IntoResponse, Json};
+use serde::Deserialize;
+
+use crate::server::AppState;
+
+/// `GET /api/network/status` — where the box stands, honestly.
+///
+/// `connectivity` is NetworkManager's word (`full` | `portal` | `limited` |
+/// `none` | `unknown`), not an IP-presence guess — `portal` is exactly the
+/// captive-network state that started all this, and the UI names it.
+pub async fn status_handler(State(_state): State<AppState>) -> impl IntoResponse {
+    let connectivity = std::process::Command::new("nmcli")
+        .args(["-t", "networking", "connectivity"])
+        .output()
+        .ok()
+        .filter(|o| o.status.success())
+        .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
+        .unwrap_or_else(|| "unknown".into());
+
+    Json(serde_json::json!({
+        "connectivity": connectivity,
+        "ssid": crate::api::provision::active_client_ssid().await,
+        "ip": crate::cli::link::primary_ip().map(|i| i.to_string()),
+    }))
+}
+
+/// `GET /api/network/scan` — what the box can see, same shape as setup's.
+pub async fn scan_handler(State(_state): State<AppState>) -> impl IntoResponse {
+    match crate::api::provision::scan_or_cached().await {
+        Ok(nets) => Json(serde_json::json!({ "networks": nets })).into_response(),
+        Err(e) => (
+            axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({ "error": e })),
+        )
+            .into_response(),
+    }
+}
+
+#[derive(Debug, Deserialize)]
+pub struct JoinBody {
+    pub ssid: String,
+    #[serde(default)]
+    pub psk: Option<String>,
+    /// Present = 802.1X; `psk` is then the account password.
+    #[serde(default)]
+    pub identity: Option<String>,
+}
+
+/// `POST /api/network/join` — move the box to another network.
+pub async fn join_handler(
+    State(_state): State<AppState>,
+    Json(body): Json<JoinBody>,
+) -> impl IntoResponse {
+    if body.ssid.trim().is_empty() {
+        return (
+            axum::http::StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({ "ok": false, "detail": "ssid is required" })),
+        )
+            .into_response();
+    }
+    match crate::api::provision::perform_join_full(
+        &body.ssid,
+        body.psk.as_deref().filter(|p| !p.is_empty()),
+        body.identity.as_deref().filter(|i| !i.is_empty()),
+    )
+    .await
+    {
+        None => Json(serde_json::json!({ "ok": true })).into_response(),
+        Some(detail) => {
+            // 200 with ok:false — same contract as provisioning: the failure
+            // detail is NetworkManager's own words, and the HTTP layer worked.
+            Json(serde_json::json!({ "ok": false, "detail": detail })).into_response()
+        }
+    }
+}
