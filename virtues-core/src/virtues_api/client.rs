@@ -356,6 +356,13 @@ impl Purpose {
 #[derive(Clone, Debug)]
 pub struct BearerClient {
     http: reqwest::Client,
+    /// For non-streaming `/v1/ai/*` POSTs. Nothing arrives until the model
+    /// finishes the whole generation, so these get the completion timeout
+    /// rather than the 60s request timeout — the nightly day-summary
+    /// segmentation died at exactly 60s for three days straight (2026-08-09..11)
+    /// before this split existed. Keyed on [`is_ai_path`], like the BYO fork
+    /// and cost capture.
+    completion_http: reqwest::Client,
     stream_http: reqwest::Client,
     pool: PgPool,
     api_url: String,
@@ -375,6 +382,7 @@ impl BearerClient {
         let atlas_url = super::atlas_url();
         Self {
             http: crate::http_client::virtues_api_client(),
+            completion_http: crate::http_client::virtues_api_completion_client(),
             stream_http: crate::http_client::virtues_api_streaming_client(),
             pool,
             api_url,
@@ -445,8 +453,10 @@ impl BearerClient {
         byo: &crate::api::settings_byo::ByoCredential,
     ) -> Result<ApiResponse> {
         let body = apply_byo_model(body, byo);
+        // Always an AI completion (only `is_ai_path` routes divert here), so
+        // it gets the completion timeout like the wallet path in `send`.
         let resp = self
-            .http
+            .completion_http
             .post(&byo.endpoint_url)
             .header("Authorization", format!("Bearer {}", byo.api_key))
             .header("Content-Type", "application/json")
@@ -730,8 +740,10 @@ impl BearerClient {
     }
 
     async fn send(&self, path: &str, body: &Value, bearer: &str) -> Result<ApiResponse> {
-        let resp = self
-            .http
+        // AI completions block until the model finishes generating; everything
+        // else answers in request time. See `completion_http` on the struct.
+        let http = if is_ai_path(path) { &self.completion_http } else { &self.http };
+        let resp = http
             .post(format!("{}{}", self.api_url.trim_end_matches('/'), path))
             .header("Authorization", format!("Bearer {}", bearer))
             .header("X-Virtues-Purpose", self.purpose.as_str())
