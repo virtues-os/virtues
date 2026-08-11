@@ -78,6 +78,18 @@ pub const REQUEST_TIMEOUT_SECS: u64 = 60;
 /// Request timeout for streaming requests in seconds (longer for SSE)
 pub const STREAMING_TIMEOUT_SECS: u64 = 300;
 
+/// Request timeout for non-streaming AI completions in seconds.
+///
+/// A non-streaming completion delivers nothing until the whole generation
+/// finishes, so its wall time is the model's full thinking-plus-writing time
+/// — a 4000-token structured extraction routinely runs 45–90s, and reasoning
+/// models (Grok reasons on every turn, untunably) push past that. At 60s the
+/// nightly day-summary segmentation died at exactly the timeout three days
+/// running (2026-08-09..11), after months of 46–60s near-misses. Matches
+/// STREAMING_TIMEOUT_SECS: the same generation over SSE is already allowed
+/// this long.
+pub const AI_COMPLETION_TIMEOUT_SECS: u64 = 300;
+
 /// Shared rooted builder: installs the rustls crypto provider and loads the OS
 /// native CA store, with an IPv4-only resolver. `reqwest` is built with
 /// `rustls-tls-no-provider` (no bundled provider/roots), so a bare
@@ -107,6 +119,18 @@ pub fn virtues_api_client() -> reqwest::Client {
         .expect("Failed to build HTTP client")
 }
 
+/// Create an HTTP client for non-streaming AI completions (`/v1/ai/*`).
+///
+/// Same connect timeout as the regular client, but the request timeout covers
+/// a full unstreamed generation — see [`AI_COMPLETION_TIMEOUT_SECS`].
+pub fn virtues_api_completion_client() -> reqwest::Client {
+    base_builder()
+        .connect_timeout(Duration::from_secs(CONNECT_TIMEOUT_SECS))
+        .timeout(Duration::from_secs(AI_COMPLETION_TIMEOUT_SECS))
+        .build()
+        .expect("Failed to build completion HTTP client")
+}
+
 /// Create an HTTP client for streaming virtues-api requests (SSE)
 ///
 /// Uses longer timeouts to accommodate streaming responses that
@@ -126,6 +150,12 @@ mod tests {
     #[test]
     fn test_virtues_api_client_creation() {
         let client = virtues_api_client();
+        drop(client);
+    }
+
+    #[test]
+    fn test_completion_client_creation() {
+        let client = virtues_api_completion_client();
         drop(client);
     }
 
