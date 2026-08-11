@@ -324,7 +324,7 @@ pub async fn status_handler(
     (
         StatusCode::OK,
         Json(serde_json::json!({
-            "online": crate::cli::link::primary_ip().is_some(),
+            "online": crate::cli::link::has_internet(),
             "ssid": active_client_ssid().await,
         })),
     )

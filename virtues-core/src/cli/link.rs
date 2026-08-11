@@ -54,6 +54,30 @@ pub fn primary_ip() -> Option<IpAddr> {
     socket.local_addr().ok().map(|a| a.ip())
 }
 
+/// Does the box have REAL internet — not just an IP address?
+///
+/// `primary_ip()` answers "do I have an address", and on a captive guest
+/// network (WeWork's, live, 2026-08-11) that is a lie with a UI: the box got
+/// an IP, declared itself online, showed "Step 2 of 2" — and could not reach
+/// anything, because the network gates traffic behind a portal. Every surface
+/// that means "setup can proceed" must ask THIS question instead.
+///
+/// NetworkManager already runs connectivity checks; `full` is the only answer
+/// that counts. `portal` and `limited` are precisely the lie this exists to
+/// catch. Falls back to `primary_ip()` where nmcli is absent (dev hosts, DIY
+/// boxes without NM) — the old behavior, no worse than before.
+pub fn has_internet() -> bool {
+    match std::process::Command::new("nmcli")
+        .args(["-t", "networking", "connectivity", "check"])
+        .output()
+    {
+        Ok(o) if o.status.success() => {
+            String::from_utf8_lossy(&o.stdout).trim() == "full"
+        }
+        _ => primary_ip().is_some(),
+    }
+}
+
 /// The box's mDNS name (`<hostname>.local`). The installer registers the box
 /// with Avahi, so this resolves on the LAN — it's the name we lead with in
 /// every cross-device handoff (onboarding doctrine: `virtues.local`, never
