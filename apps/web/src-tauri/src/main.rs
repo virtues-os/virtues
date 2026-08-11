@@ -43,7 +43,7 @@ pub struct CollectorStatus {
 }
 
 /// A Virtues server discovered on the local network. Shape mirrors what the
-/// connect screen (`pair.html`) reads: `name` + `origin`.
+/// connect screen (`connect.html`) reads: `name` + `origin`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FoundServer {
     pub name: String,
@@ -76,7 +76,7 @@ fn is_paired() -> bool {
 /// that a bundle exists on disk — but after a box reinstall/revoke that bundle's
 /// bearer is dead, and loading the box web with it dead-ends the user on the
 /// box's `/pair` page with no way back. This lets the launch path send a
-/// definitively-rejected device to the app's own `pair.html` instead.
+/// definitively-rejected device to the app's own `connect.html` instead.
 ///
 /// `Some(true)` = authenticated; `Some(false)` = box rejected us (re-pair);
 /// `None` = proxy unreachable (can't tell — it may still be starting up, so the
@@ -1438,7 +1438,7 @@ fn main() {
             // Decide where to land. A valid pairing reconnects SILENTLY (the
             // 90% reinstall case); we only ever interrupt when something's
             // actually wrong, and the connect screen is the single recovery
-            // surface. The verdict is passed to pair.html via the URL hash so it
+            // surface. The verdict is passed to connect.html via the URL hash so it
             // can show the right one-line banner:
             //   not paired        → fresh connect screen
             //   box accepts us    → load the box (the in-process :7117 loopback)
@@ -1460,13 +1460,17 @@ fn main() {
             // silent-reconnect doctrine), and an unreachable box bounds the
             // pre-window delay. The connect screen polls asynchronously off the
             // UI thread, so recovery doesn't cost main-thread time.
+            // `connect.html` is THE airlock, shared with mobile (which reaches
+            // it through the `virtues://` scheme). Desktop can decide the
+            // landing state before the window exists, so it passes the verdict
+            // in the hash instead of making the page probe for it.
             let url = if !is_paired() {
-                WebviewUrl::App("pair.html".into())
+                WebviewUrl::App("connect.html".into())
             } else {
                 match probe_box_session_blocking(1) {
                     Some(true) => WebviewUrl::External("http://localhost:7117".parse().unwrap()),
-                    Some(false) => WebviewUrl::App("pair.html#reset".into()),
-                    None => WebviewUrl::App("pair.html#unreachable".into()),
+                    Some(false) => WebviewUrl::App("connect.html#reset".into()),
+                    None => WebviewUrl::App("connect.html#unreachable".into()),
                 }
             };
 

@@ -49,6 +49,9 @@ virtues-registry = { path = "../crates/virtues-registry" }
 virtues-helpers = { path = "../crates/virtues-helpers" }
 # iroh reach layer: the box is an iroh Endpoint that serves this axum app over
 # iroh (LAN-direct → hole-punch → our relay). Replaces the hand-rolled relay.
+# Improv wire format, shared with the desktop client that drives it. Protocol
+# only — the `client` feature (btleplug) must never be enabled for the box.
+virtues-improv = { path = "../crates/virtues-improv" }
 virtues-iroh = { path = "../crates/virtues-iroh" }
 # Wire-protocol types shared with every paired-device daemon (iOS, desktop
 # client, etc.). Pure data + serde; no I/O.

@@ -1,0 +1,19 @@
+[package]
+name = "virtues-improv"
+version = "0.1.0"
+edition = "2021"
+description = "Improv Wi-Fi (improv-wifi.com) protocol + BLE client — the box speaks it, the desktop app drives it"
+
+[features]
+# Protocol only by default: the BOX depends on this crate, and the box must
+# never carry a BLE *client* stack (btleplug pulls CoreBluetooth/BlueZ/WinRT).
+default = []
+client = ["dep:btleplug", "dep:tokio", "dep:futures", "dep:uuid", "dep:tracing", "dep:anyhow"]
+
+[dependencies]
+btleplug = { version = "0.11", optional = true }
+tokio = { version = "1", features = ["time", "sync", "rt"], optional = true }
+futures = { version = "0.3", optional = true }
+uuid = { version = "1", optional = true }
+tracing = { version = "0.1", optional = true }
+anyhow = { version = "1", optional = true }

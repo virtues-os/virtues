@@ -499,10 +499,10 @@
           "markdownDescription": "Denies the wifi_join command without any pre-configured scope."
         },
         {
-          "description": "Default permissions for the reach plugin\n#### This default permission set includes:\n\n- `allow-pair`\n- `allow-reach-status`\n- `allow-forget`\n- `allow-discover`\n- `allow-provision-open`\n- `allow-provision-networks`\n- `allow-provision-join`\n- `allow-wifi-join`\n- `allow-wifi-forget`\n- `allow-improv-discover`\n- `allow-improv-wifi-scan`\n- `allow-improv-provision`\n- `allow-improv-disconnect`\n- `allow-outbox-stats`\n- `allow-drain-now`\n- `allow-radio-stats`",
+          "description": "Default permissions for the reach plugin\n#### This default permission set includes:\n\n- `allow-pair`\n- `allow-reach-status`\n- `allow-forget`\n- `allow-discover`\n- `allow-provision-open`\n- `allow-provision-networks`\n- `allow-provision-join`\n- `allow-wifi-join`\n- `allow-wifi-forget`\n- `allow-improv-discover`\n- `allow-improv-wifi-scan`\n- `allow-improv-provision`\n- `allow-improv-pair`\n- `allow-improv-disconnect`\n- `allow-outbox-stats`\n- `allow-drain-now`\n- `allow-radio-stats`",
           "type": "string",
           "const": "default",
-          "markdownDescription": "Default permissions for the reach plugin\n#### This default permission set includes:\n\n- `allow-pair`\n- `allow-reach-status`\n- `allow-forget`\n- `allow-discover`\n- `allow-provision-open`\n- `allow-provision-networks`\n- `allow-provision-join`\n- `allow-wifi-join`\n- `allow-wifi-forget`\n- `allow-improv-discover`\n- `allow-improv-wifi-scan`\n- `allow-improv-provision`\n- `allow-improv-disconnect`\n- `allow-outbox-stats`\n- `allow-drain-now`\n- `allow-radio-stats`"
+          "markdownDescription": "Default permissions for the reach plugin\n#### This default permission set includes:\n\n- `allow-pair`\n- `allow-reach-status`\n- `allow-forget`\n- `allow-discover`\n- `allow-provision-open`\n- `allow-provision-networks`\n- `allow-provision-join`\n- `allow-wifi-join`\n- `allow-wifi-forget`\n- `allow-improv-discover`\n- `allow-improv-wifi-scan`\n- `allow-improv-provision`\n- `allow-improv-pair`\n- `allow-improv-disconnect`\n- `allow-outbox-stats`\n- `allow-drain-now`\n- `allow-radio-stats`"
         }
       ]
     }

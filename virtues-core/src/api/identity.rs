@@ -12,6 +12,14 @@
 //! already say. `claimed` is already public via `/api/setup/state`. Version
 //! and everything else stay off this surface; discovery needs a name and a
 //! state, not a fingerprint.
+//!
+//! `linked` is the same kind of fact and earns its place the same way: the
+//! app's setup flow has to know whether the box still needs step 2, and the
+//! alternative is asking the person to read their own hardware and report
+//! back. It is one bit — "does an account key exist" — never the key, never
+//! the account, never the code. A stranger learns that a box they can already
+//! see is or isn't paying for relay reach, which changes nothing they could
+//! do about it.
 
 use axum::{extract::State, response::IntoResponse, Json};
 
@@ -19,10 +27,18 @@ use crate::server::AppState;
 
 pub async fn identity_handler(State(state): State<AppState>) -> impl IntoResponse {
     let name = crate::codename::box_codename();
+    let pool = state.db.pool();
     Json(serde_json::json!({
         // Kebab for machines ("quaint-tern"), label for humans ("Quaint Tern").
         "name": name,
         "label": crate::codename::pretty(&name),
-        "claimed": crate::api::pair::paired_device_count(state.db.pool()).await > 0,
+        "claimed": crate::api::pair::paired_device_count(pool).await > 0,
+        // Setup's step 2, as one bit — see the module docs.
+        "linked": crate::virtues_api::renew::read_api_key(pool)
+            .await
+            .ok()
+            .flatten()
+            .is_some(),
+        "online": crate::cli::link::has_internet(),
     }))
 }

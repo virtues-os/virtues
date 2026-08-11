@@ -3,7 +3,7 @@
   "identifier": "com.virtues.app",
   "version": "1.2.6",
   "build": {
-    "beforeBuildCommand": "pnpm build && cp build/200.html build/index.html && cp src-tauri/ui/mobile-pair.html build/",
+    "beforeBuildCommand": "pnpm build && cp build/200.html build/index.html",
     "frontendDist": "../build"
   },
   "bundle": {

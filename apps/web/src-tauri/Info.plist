@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  macOS Info.plist additions. Tauri merges this into the generated bundle.
+
+  Bluetooth is here because the Mac is a FIRST-CLASS FIRST DEVICE: it finds an
+  unclaimed box over Improv/BLE and sets up its wifi, the same as the phone
+  does (see `virtues_improv::client`). Without this key CoreBluetooth refuses
+  the very first scan, and macOS surfaces nothing to the user — the app simply
+  finds no boxes, forever, which is indistinguishable from a box that isn't
+  advertising. The iOS side has carried the same key since BLE setup shipped;
+  this is its desktop twin.
+
+  Local networking covers the other half of setup: discovering an
+  already-online box on the LAN (mDNS + a subnet probe) and pairing to it.
+-->
+<plist version="1.0">
+<dict>
+    <key>NSBluetoothAlwaysUsageDescription</key>
+    <string>Virtues uses Bluetooth to find your box during setup and put it on your Wi-Fi.</string>
+    <key>NSLocalNetworkUsageDescription</key>
+    <string>Virtues finds your box on this network so it can connect to it directly.</string>
+    <key>NSBonjourServices</key>
+    <array>
+        <string>_virtues._tcp</string>
+        <string>_http._tcp</string>
+    </array>
+</dict>
+</plist>
