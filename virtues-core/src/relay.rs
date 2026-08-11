@@ -23,6 +23,7 @@ use sqlx::PgPool;
 use std::str::FromStr;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, OnceLock, RwLock};
+use tokio::sync::Notify;
 use virtues_iroh::{
     build_endpoint, iroh_port, serve, AllowPolicy, Endpoint, EndpointId, RelayUrl, SecretKey,
     StaticAllow,
@@ -55,6 +56,22 @@ static BOX_RELAY_URL: OnceLock<RwLock<Option<String>>> = OnceLock::new();
 /// devices at pairing so they can dial LAN-direct — no relay, no discovery, no
 /// third party — when on the same network. Refreshed on the reconcile tick.
 static BOX_DIRECT_ADDRS: OnceLock<RwLock<Vec<String>>> = OnceLock::new();
+/// Wakes the reach loop to tear down and rebind its endpoint. Fired when relay
+/// config lands on a box that is already up — the screen-2 account link — so
+/// relay reach activates in-process instead of on the next service restart.
+static REBIND: OnceLock<Arc<Notify>> = OnceLock::new();
+
+fn rebind_notify() -> Arc<Notify> {
+    REBIND.get_or_init(|| Arc::new(Notify::new())).clone()
+}
+
+/// Ask the reach loop to rebind its endpoint with freshly-resolved relay
+/// config. Safe to call from anywhere, any number of times: a `Notify` permit
+/// is stored if the loop is busy (the request is never lost), and the loop
+/// drops requests whose resolved relay matches the one it is already on.
+pub fn request_rebind() {
+    rebind_notify().notify_one();
+}
 
 fn endpoint_up_flag() -> Arc<AtomicBool> {
     ENDPOINT_UP.get_or_init(|| Arc::new(AtomicBool::new(false))).clone()
@@ -170,6 +187,15 @@ const RECONCILE_INTERVAL_SECS: u64 = 900;
 /// Spawn the iroh reach subsystem: bind the endpoint and serve `app` over it.
 /// `app` is the box's fully-built axum `Router` (cloned from the one served on
 /// `:8000`). No-op-safe: logs and exits on fatal setup errors (box stays LAN-only).
+///
+/// Runs as a bind → serve → (maybe rebind) supervision loop. The rebind leg
+/// exists for exactly one event: relay config landing on a box that is already
+/// up — the screen-2 account link. The endpoint keeps whatever relay it bound
+/// with, so without this, a box linked mid-life stayed LAN-only until its next
+/// restart (observed live 2026-08-11: linked at an office, still unreachable).
+/// [`request_rebind`] wakes the loop; it tears the endpoint down and rebinds on
+/// the same pinned port with the new relay. The `EndpointId` never changes —
+/// only the homing does — so pairs and allowlists survive untouched.
 pub fn maybe_spawn(db: PgPool, app: axum::Router) {
     tokio::spawn(async move {
         let secret = match load_or_create_secret(&db).await {
@@ -183,69 +209,97 @@ pub fn maybe_spawn(db: PgPool, app: axum::Router) {
                 return;
             }
         };
-        let relay_url = resolve_relay_url(&db).await;
-        if let Some(u) = &relay_url {
-            BOX_RELAY_URL.get_or_init(|| RwLock::new(None));
-            if let Some(cell) = BOX_RELAY_URL.get() {
-                if let Ok(mut g) = cell.write() {
-                    *g = Some(u.to_string());
+        loop {
+            let relay_url = resolve_relay_url(&db).await;
+            set_box_relay_url(relay_url.as_ref().map(|u| u.to_string()));
+            // The box pins its UDP port so its `IP:port` stays stable across restarts
+            // — LAN peers resolve the IP (mDNS) and dial by NodeId, nothing frozen.
+            let endpoint =
+                match build_endpoint(secret.clone(), relay_url.clone(), Some(iroh_port())).await {
+                    Ok(e) => e,
+                    Err(e) => {
+                        let msg = format!("{e:#}");
+                        tracing::error!(error = %msg, "iroh: failed to bind endpoint — reach disabled");
+                        set_endpoint_error(
+                            "Couldn't start reach networking on this box. See the box logs; a restart is needed.",
+                        );
+                        return;
+                    }
+                };
+            let eid = endpoint.id().to_string();
+            set_box_endpoint_id(&eid);
+            endpoint_up_flag().store(true, Ordering::Relaxed);
+            match &relay_url {
+                Some(u) => tracing::info!(endpoint_id = %eid, relay = %u, port = iroh_port(), "iroh endpoint bound; box reachable by EndpointId via our relay (+ LAN-direct)"),
+                None => tracing::info!(endpoint_id = %eid, port = iroh_port(), "iroh endpoint bound; box reachable by EndpointId LAN-direct (no relay)"),
+            }
+
+            // Capture direct addresses for zero-third-party LAN reach (dial the box
+            // by its EndpointId at these LAN/VPN sockets — no relay, no discovery).
+            // Time-boxed so slow address discovery never blocks bringup; the
+            // reconcile loop refreshes them (e.g. after a DHCP lease change).
+            let _ = tokio::time::timeout(std::time::Duration::from_secs(5), endpoint.online()).await;
+            refresh_direct_addrs(&endpoint);
+            let ep_handle = endpoint.clone();
+
+            let allow = load_allowlist(&db).await;
+            // Register this box + its paired devices with atlas BEFORE homing on the
+            // relay, so the relay's active-sub gate already recognises the box when it
+            // connects (best-effort; the periodic reconcile below retries).
+            report_endpoints(&db).await;
+            // Serve the existing axum app over iroh. Hold the router handle until a
+            // rebind (dropping it aborts the accept loop).
+            let router = serve(endpoint, app.clone(), allow);
+            // Periodic reconcile catches drift the event-driven path (after_pairing_change)
+            // can't: atlas restarting and losing our registration, a device that paired
+            // while atlas was unreachable, or relay config that only became available
+            // after we bound. Idempotent + best-effort.
+            let mut tick =
+                tokio::time::interval(std::time::Duration::from_secs(RECONCILE_INTERVAL_SECS));
+            tick.tick().await; // consume the immediate first tick — startup already reconciled above
+            let rebind = rebind_notify();
+            loop {
+                tokio::select! {
+                    _ = tick.tick() => {
+                        refresh_direct_addrs(&ep_handle);
+                        reconcile(&db).await;
+                    }
+                    _ = rebind.notified() => {
+                        // Only a CHANGED relay justifies dropping live connections;
+                        // a stale or duplicate request resolves to what we already
+                        // have and is dropped here.
+                        if resolve_relay_url(&db).await == relay_url {
+                            tracing::debug!("iroh: rebind requested but relay config unchanged — ignoring");
+                            continue;
+                        }
+                        break;
+                    }
                 }
             }
-        }
-        // The box pins its UDP port so its `IP:port` stays stable across restarts
-        // — LAN peers resolve the IP (mDNS) and dial by NodeId, nothing frozen.
-        let endpoint = match build_endpoint(secret, relay_url.clone(), Some(iroh_port())).await {
-            Ok(e) => e,
-            Err(e) => {
-                let msg = format!("{e:#}");
-                tracing::error!(error = %msg, "iroh: failed to bind endpoint — reach disabled");
-                set_endpoint_error(
-                    "Couldn't start reach networking on this box. See the box logs; a restart is needed.",
-                );
-                return;
-            }
-        };
-        let eid = endpoint.id().to_string();
-        BOX_ENDPOINT_ID.get_or_init(|| RwLock::new(None));
-        if let Some(cell) = BOX_ENDPOINT_ID.get() {
-            if let Ok(mut g) = cell.write() {
-                *g = Some(eid.clone());
-            }
-        }
-        endpoint_up_flag().store(true, Ordering::Relaxed);
-        match &relay_url {
-            Some(u) => tracing::info!(endpoint_id = %eid, relay = %u, port = iroh_port(), "iroh endpoint bound; box reachable by EndpointId via our relay (+ LAN-direct)"),
-            None => tracing::info!(endpoint_id = %eid, port = iroh_port(), "iroh endpoint bound; box reachable by EndpointId LAN-direct (no relay)"),
-        }
 
-        // Capture direct addresses for zero-third-party LAN reach (dial the box
-        // by its EndpointId at these LAN/VPN sockets — no relay, no discovery).
-        // Time-boxed so slow address discovery never blocks bringup; the
-        // reconcile loop refreshes them (e.g. after a DHCP lease change).
-        let _ = tokio::time::timeout(std::time::Duration::from_secs(5), endpoint.online()).await;
-        refresh_direct_addrs(&endpoint);
-        let ep_refresh = endpoint.clone();
-
-        let allow = load_allowlist(&db).await;
-        // Register this box + its paired devices with atlas BEFORE homing on the
-        // relay, so the relay's active-sub gate already recognises the box when it
-        // connects (best-effort; the periodic reconcile below retries).
-        report_endpoints(&db).await;
-        // Serve the existing axum app over iroh. Hold the router handle for the
-        // life of the process (dropping it aborts the accept loop).
-        let _router = serve(endpoint, app, allow);
-        // Periodic reconcile catches drift the event-driven path (after_pairing_change)
-        // can't: atlas restarting and losing our registration, a device that paired
-        // while atlas was unreachable, or relay config that only became available
-        // after we bound. Idempotent + best-effort.
-        let mut tick = tokio::time::interval(std::time::Duration::from_secs(RECONCILE_INTERVAL_SECS));
-        tick.tick().await; // consume the immediate first tick — startup already reconciled above
-        loop {
-            tick.tick().await;
-            refresh_direct_addrs(&ep_refresh);
-            reconcile(&db).await;
+            // Tear down for rebind. The next bind reuses the same pinned UDP port,
+            // so the endpoint must be closed (not just dropped) to release it.
+            endpoint_up_flag().store(false, Ordering::Relaxed);
+            tracing::info!("iroh: relay config changed — rebinding endpoint");
+            router.shutdown().await.ok();
+            ep_handle.close().await;
+            tokio::time::sleep(std::time::Duration::from_millis(250)).await;
         }
     });
+}
+
+fn set_box_relay_url(url: Option<String>) {
+    let cell = BOX_RELAY_URL.get_or_init(|| RwLock::new(None));
+    if let Ok(mut g) = cell.write() {
+        *g = url;
+    }
+}
+
+fn set_box_endpoint_id(eid: &str) {
+    let cell = BOX_ENDPOINT_ID.get_or_init(|| RwLock::new(None));
+    if let Ok(mut g) = cell.write() {
+        *g = Some(eid.to_string());
+    }
 }
 
 /// Resolve our relay URL: the atlas-provisioned config (stored at claim/link)
@@ -273,8 +327,9 @@ async fn resolve_relay_url(db: &PgPool) -> Option<RelayUrl> {
 /// Fetch + store this box's relay config from atlas if it isn't stored yet.
 /// Best-effort and idempotent (no-op once homed). A freshly-fetched relay only
 /// takes effect on the next endpoint bind — the running endpoint keeps the relay
-/// it bound with; this exists so a box that came up LAN-only self-heals on the
-/// next restart (or the next `resolve_relay_url`) instead of needing a re-claim.
+/// it bound with. The link path calls [`request_rebind`] to trigger that bind
+/// immediately; this reconcile-time fetch is the slower self-heal for a box
+/// that came up LAN-only (atlas down at boot, claim-time fetch that 503'd).
 async fn ensure_relay_config(db: &PgPool) {
     if matches!(crate::virtues_api::relay::load(db).await, Ok(Some(_))) {
         return;

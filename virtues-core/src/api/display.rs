@@ -55,6 +55,17 @@ pub struct DisplayState {
     pub claimed: bool,
     /// Whether the box has a usable network yet.
     pub online: bool,
+    /// NetworkManager's connectivity verdict (`full` | `portal` | `limited` |
+    /// `none` | `unknown`). `online` is derived from it, but the display needs
+    /// the raw word for one job: with honest online-detection, a captive-portal
+    /// join reads as still-offline, and screen 1 must say WHY ("joined, but
+    /// that network wants a browser sign-in") or the commonest office failure
+    /// is a silent one.
+    pub connectivity: String,
+    /// SSID the box's wifi is associated with, when there is one and the box
+    /// is still in setup — the captive hint names the network it is stuck on.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub wifi_ssid: Option<String>,
     /// Paired, unrevoked devices — the ambient screen's headline number.
     pub devices: i64,
     /// The box's codename ("Quaint Tern") — shown on every screen so a human
@@ -108,7 +119,15 @@ pub async fn display_state_handler(
         .ok()
         .flatten()
         .is_some();
-    let online = crate::cli::link::has_internet();
+    let connectivity = crate::cli::link::connectivity();
+    let online = crate::cli::link::verdict_means_online(&connectivity);
+    // Only during setup, and only when the verdict needs explaining: the
+    // ambient screen doesn't render it, and `nmcli` ssid lookups aren't free.
+    let wifi_ssid = if devices == 0 && !online && connectivity != "none" {
+        crate::api::provision::active_client_ssid().await
+    } else {
+        None
+    };
 
     // Screen 2's device-auth session: started lazily the first time the
     // display needs it, cached and re-polled here. The display's own 2s state
@@ -131,6 +150,8 @@ pub async fn display_state_handler(
             ap_ssid,
             claimed: devices > 0,
             online,
+            connectivity,
+            wifi_ssid,
             devices,
             box_name: crate::codename::pretty(&crate::codename::box_codename()),
             linked,
@@ -324,16 +345,9 @@ mod link_session {
                     if let Ok(mut g) = SESSION.lock() {
                         *g = None;
                     }
-                    // The relay could not register at boot (no key). It can
-                    // now — but registration happens at endpoint bind, so the
-                    // honest path to relay reach is a service restart, which
-                    // the owner gets on the next upgrade or reboot. Logged so
-                    // a box that is linked-but-LAN-only explains itself.
-                    if !crate::relay::is_relay_registered() {
-                        tracing::info!(
-                            "display: relay reach activates on next service restart"
-                        );
-                    }
+                    // Relay reach comes up in-process: `link::poll` fetched
+                    // the relay config and asked the reach loop to rebind
+                    // (`crate::relay::request_rebind`) — no restart involved.
                     return None;
                 }
                 Ok(_) => {}

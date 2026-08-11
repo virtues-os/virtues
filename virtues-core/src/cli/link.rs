@@ -67,14 +67,35 @@ pub fn primary_ip() -> Option<IpAddr> {
 /// catch. Falls back to `primary_ip()` where nmcli is absent (dev hosts, DIY
 /// boxes without NM) — the old behavior, no worse than before.
 pub fn has_internet() -> bool {
+    verdict_means_online(&connectivity())
+}
+
+/// NetworkManager's connectivity verdict, verbatim: `full` | `portal` |
+/// `limited` | `none`, or `unknown` where nmcli is absent (dev hosts, DIY
+/// boxes without NM). `portal` is the state the display's screen 1 must NAME
+/// — "joined, but that network wants a browser sign-in" — because with honest
+/// online-detection a captive join otherwise reads as still-offline with no
+/// explanation, and that silent wait was the commonest office failure.
+pub fn connectivity() -> String {
     match std::process::Command::new("nmcli")
         .args(["-t", "networking", "connectivity", "check"])
         .output()
     {
-        Ok(o) if o.status.success() => {
-            String::from_utf8_lossy(&o.stdout).trim() == "full"
-        }
-        _ => primary_ip().is_some(),
+        Ok(o) if o.status.success() => String::from_utf8_lossy(&o.stdout).trim().to_string(),
+        _ => "unknown".into(),
+    }
+}
+
+/// Interpret a [`connectivity`] verdict. Split out so callers that already
+/// hold the verdict — the display heartbeat both shows it and gates on it —
+/// don't run nmcli twice per tick.
+pub fn verdict_means_online(verdict: &str) -> bool {
+    match verdict {
+        "full" => true,
+        // nmcli absent: fall back to "do I have an address" — the old
+        // behavior, no worse than before.
+        "unknown" => primary_ip().is_some(),
+        _ => false,
     }
 }
 

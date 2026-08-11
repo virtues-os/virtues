@@ -75,9 +75,29 @@ where
 }
 
 pub async fn start(db: &PgPool, http: &reqwest::Client, atlas_url: &str) -> Result<LinkStart> {
-    let resp = send_with_retry(|| http.post(format!("{}/init/start", atlas_url.trim_end_matches('/'))))
-        .await
-        .context("POST /init/start")?;
+    // Who is asking. Atlas puts this on the verification page — "Link Honest
+    // Kestrel · Dragon Q6A" — so the person signing in can check the name
+    // against the one on the box's own screen. That check is the mitigation
+    // for code-phishing (an attacker showing THEIR code to a victim), so the
+    // identity must come from the box, not be typed by the person. Every
+    // field is advisory: atlas tolerates its absence (older boxes send no
+    // body), and `endpoint_id` is None in the rare pre-bind race.
+    let name = crate::codename::box_codename();
+    let identity = serde_json::json!({
+        "box": {
+            "name": name,
+            "label": crate::codename::pretty(&name),
+            "model": crate::maintenance::setup_ap::is_appliance().then_some("Dragon Q6A"),
+            "endpoint_id": crate::relay::box_endpoint_id(),
+            "version": crate::VERSION,
+        }
+    });
+    let resp = send_with_retry(|| {
+        http.post(format!("{}/init/start", atlas_url.trim_end_matches('/')))
+            .json(&identity)
+    })
+    .await
+    .context("POST /init/start")?;
     if !resp.status().is_success() {
         let s = resp.status();
         let b = resp.text().await.unwrap_or_default();
@@ -147,8 +167,15 @@ pub async fn poll(
             // Provision relay reachability (best-effort): atlas mints this box's
             // per-SNI token; the box stores it for the relay subsystem. A failure
             // (e.g. relay disabled → 503) just leaves the box reachable on LAN.
-            if let Err(e) = super::relay::fetch_and_store(db, http, atlas_url, api_key).await {
-                tracing::warn!(error = %e, "relay config provisioning skipped (LAN-only reach)");
+            match super::relay::fetch_and_store(db, http, atlas_url, api_key).await {
+                // The running endpoint keeps whatever relay it bound with (none,
+                // pre-link), so ask the reach loop to rebind with the new config
+                // now — the display advances to the pair code within seconds and
+                // the relay must be real by then, not after the next restart.
+                Ok(()) => crate::relay::request_rebind(),
+                Err(e) => {
+                    tracing::warn!(error = %e, "relay config provisioning skipped (LAN-only reach)")
+                }
             }
             clear_inflight(db).await;
             Ok(LinkStatus::Ready)

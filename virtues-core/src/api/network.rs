@@ -34,13 +34,10 @@ use crate::server::AppState;
 /// `none` | `unknown`), not an IP-presence guess — `portal` is exactly the
 /// captive-network state that started all this, and the UI names it.
 pub async fn status_handler(State(_state): State<AppState>) -> impl IntoResponse {
-    let connectivity = std::process::Command::new("nmcli")
-        .args(["-t", "networking", "connectivity"])
-        .output()
-        .ok()
-        .filter(|o| o.status.success())
-        .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
-        .unwrap_or_else(|| "unknown".into());
+    // The shared active check ("check", not the passive read): someone is on
+    // this screen precisely because they doubt the network, so a cached
+    // verdict is the wrong one to show them.
+    let connectivity = crate::cli::link::connectivity();
 
     Json(serde_json::json!({
         "connectivity": connectivity,
