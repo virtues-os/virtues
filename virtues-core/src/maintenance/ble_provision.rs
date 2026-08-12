@@ -78,7 +78,21 @@ mod server {
         state_tx: Option<bluer::gatt::local::CharacteristicNotifier>,
         error_tx: Option<bluer::gatt::local::CharacteristicNotifier>,
         result_tx: Option<bluer::gatt::local::CharacteristicNotifier>,
+        /// The one live setup session: which peer proved the phrase, and when it
+        /// last did something. Every configuring command is gated on this.
+        ///
+        /// Keyed by BLE address and expired by inactivity rather than tied to a
+        /// connection object, because BlueZ gives us no disconnect signal here.
+        /// The approximation is sound: a dropped connection sends no more
+        /// commands, so the session ages out. The address is not the security —
+        /// the phrase is; this only decides *which* proven peer is mid-setup.
+        session: Option<(String, std::time::Instant)>,
     }
+
+    /// How long a claimed setup session survives without a command. Long enough
+    /// to type a wifi password and wait out a join, short enough that a box left
+    /// alone returns to refusing everything.
+    const SESSION_IDLE_TIMEOUT_SECS: u64 = 600;
 
     impl Improv {
         fn new(initial: State) -> Self {
@@ -89,6 +103,7 @@ mod server {
                 state_tx: None,
                 error_tx: None,
                 result_tx: None,
+                session: None,
             }
         }
 
@@ -104,6 +119,31 @@ mod server {
             if let Some(tx) = &mut self.error_tx {
                 let _ = tx.notify(vec![e as u8]).await;
             }
+        }
+
+        /// Is `peer` the live setup session? Refreshes its idle clock, so an
+        /// active setup never times out mid-flow.
+        fn session_is(&mut self, peer: &str) -> bool {
+            let timeout = Duration::from_secs(SESSION_IDLE_TIMEOUT_SECS);
+            match &self.session {
+                Some((addr, last)) if addr == peer && last.elapsed() < timeout => {
+                    self.session = Some((peer.to_string(), std::time::Instant::now()));
+                    true
+                }
+                _ => false,
+            }
+        }
+
+        /// Open the session for `peer`, replacing any stale one.
+        fn claim_session(&mut self, peer: &str) {
+            self.session = Some((peer.to_string(), std::time::Instant::now()));
+        }
+
+        /// Whether some OTHER peer currently holds the session — used only to
+        /// log, never to leak who.
+        fn session_held_elsewhere(&self, peer: &str) -> bool {
+            let timeout = Duration::from_secs(SESSION_IDLE_TIMEOUT_SECS);
+            matches!(&self.session, Some((addr, last)) if addr != peer && last.elapsed() < timeout)
         }
 
         async fn send_result(&mut self, packet: Vec<u8>) {
@@ -302,11 +342,12 @@ mod server {
                             method: CharacteristicWriteMethod::Fun({
                                 let improv = improv.clone();
                                 let pool = pool.clone();
-                                Box::new(move |value, _req| {
+                                Box::new(move |value, req| {
                                     let improv = improv.clone();
                                     let pool = pool.clone();
+                                    let peer = req.device_address.to_string();
                                     async move {
-                                        handle_rpc(improv, pool, value).await;
+                                        handle_rpc(improv, pool, value, peer).await;
                                         Ok(())
                                     }
                                     .boxed()
@@ -364,7 +405,12 @@ mod server {
 
     /// Execute one RPC. Runs inside the BLE write callback; the join itself is
     /// spawned so a slow `nmcli` cannot stall the GATT event loop.
-    async fn handle_rpc(improv: Arc<Mutex<Improv>>, pool: PgPool, packet: Vec<u8>) {
+    async fn handle_rpc(
+        improv: Arc<Mutex<Improv>>,
+        pool: PgPool,
+        packet: Vec<u8>,
+        peer: String,
+    ) {
         let cmd = match parse_rpc(&packet) {
             Ok(c) => c,
             Err(e) => {
@@ -374,6 +420,37 @@ mod server {
         };
         // A new command clears the previous error — the client is acting again.
         improv.lock().await.set_error(ImprovError::None).await;
+
+        // ── the gate ──
+        //
+        // Everything that CONFIGURES the box requires a claimed setup session,
+        // and a session is only opened by proving the four-word phrase printed
+        // on the box's own panel (`api::setup_phrase`). Without this, a box
+        // advertising Improv while unclaimed would take orders from anyone in
+        // radio range — and radio range passes through walls, which is the whole
+        // reason the phrase exists.
+        //
+        // DeviceInfo, Identify and ScanWifi stay open: they are what a client
+        // needs to show a useful picker BEFORE the person has typed anything,
+        // and none of them change the box. The scan does leak which networks the
+        // box can see, which is a small, deliberate cost for a picker that works
+        // before authorization.
+        let needs_session = matches!(
+            cmd,
+            Command::WifiSettings { .. }
+                | Command::EnterpriseSettings { .. }
+                | Command::ClaimGrant { .. }
+                | Command::PairConsume { .. }
+        );
+        if needs_session && !improv.lock().await.session_is(&peer) {
+            let held = improv.lock().await.session_held_elsewhere(&peer);
+            tracing::warn!(
+                held_by_another = held,
+                "ble_provision: refusing a configuring command — no setup session"
+            );
+            improv.lock().await.set_error(ImprovError::NotAuthorized).await;
+            return;
+        }
 
         match cmd {
             Command::WifiSettings { ssid, password } => {
@@ -487,6 +564,23 @@ mod server {
                     }
                     // Empty terminator — same stream shape as ScanWifi.
                     g.send_result(build_result(0x83, &[])).await;
+                });
+            }
+            Command::ClaimSetup { phrase } => {
+                let improv = improv.clone();
+                tokio::spawn(async move {
+                    if crate::api::setup_phrase::verify(&pool, &phrase).await {
+                        let mut g = improv.lock().await;
+                        g.claim_session(&peer);
+                        g.send_result(build_result(0x86, &["ok"])).await;
+                        tracing::info!("ble_provision: setup session claimed");
+                    } else {
+                        // Deliberately says nothing about WHY: wrong words and a
+                        // spent attempt budget look identical from outside, so a
+                        // guesser learns nothing from the shape of the refusal.
+                        tracing::warn!("ble_provision: setup phrase rejected");
+                        improv.lock().await.set_error(ImprovError::NotAuthorized).await;
+                    }
                 });
             }
             Command::Identify => {

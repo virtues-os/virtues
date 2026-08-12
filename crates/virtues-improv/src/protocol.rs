@@ -122,6 +122,19 @@ pub enum Command {
     /// and the reconciler stops the whole BLE service. Later devices pair
     /// over LAN or relay, which exist by then.
     PairConsume { code: String, kind: String, source: String, label: String, endpoint_id: String },
+    /// `0x86` — OUR extension: claim the setup session. `[phrase]`.
+    ///
+    /// The gate in front of everything else. A box advertises Improv while
+    /// unclaimed, so without this any client in radio range could configure it —
+    /// and radio range passes through walls. The four-word phrase is printed on
+    /// the box's own panel while it is empty, so possessing it proves *line of
+    /// sight*, which is the bar we actually want.
+    ///
+    /// A successful claim opens a session bound to THIS connection; only that
+    /// session may then join wifi, take an account grant, or pair. Drop the
+    /// link and the session dies with it. See
+    /// `docs/onboarding-paradigm.md` §1 and §5.
+    ClaimSetup { phrase: String },
 }
 
 impl Command {
@@ -135,6 +148,7 @@ impl Command {
             Command::EnterpriseSettings { .. } => 0x81,
             Command::ClaimGrant { .. } => 0x82,
             Command::PairConsume { .. } => 0x83,
+            Command::ClaimSetup { .. } => 0x86,
         }
     }
 }
@@ -200,6 +214,13 @@ pub fn parse_rpc(packet: &[u8]) -> Result<Command, ImprovError> {
             }
             Ok(Command::PairConsume { code, kind, source, label, endpoint_id })
         }
+        0x86 => {
+            let (phrase, rest) = take_string(data).ok_or(ImprovError::InvalidPacket)?;
+            if phrase.is_empty() || !rest.is_empty() {
+                return Err(ImprovError::InvalidPacket);
+            }
+            Ok(Command::ClaimSetup { phrase })
+        }
         _ => Err(ImprovError::UnknownCommand),
     }
 }
@@ -256,6 +277,7 @@ pub fn build_rpc(cmd: &Command) -> Vec<u8> {
         Command::PairConsume { code, kind, source, label, endpoint_id } => {
             pack_strings(&[code, kind, source, label, endpoint_id])
         }
+        Command::ClaimSetup { phrase } => pack_strings(&[phrase]),
     };
     frame(cmd.id(), data)
 }
@@ -448,6 +470,13 @@ mod tests {
     }
 
     #[test]
+    fn claim_setup_refuses_an_empty_phrase() {
+        // An empty phrase must never reach the verifier — it would spend an
+        // attempt from the box's global budget for nothing.
+        assert_eq!(parse_rpc(&raw(0x86, &[0u8])), Err(ImprovError::InvalidPacket));
+    }
+
+    #[test]
     fn unknown_commands_are_distinguished_from_garbage() {
         // A well-formed packet with a command we don't know must say so —
         // clients treat InvalidPacket as "retry" and UnknownCommand as "don't".
@@ -485,6 +514,7 @@ mod tests {
                 label: "Adam's Mac".into(),
                 endpoint_id: "beef".into(),
             },
+            Command::ClaimSetup { phrase: "mango-burly-skull-dough".into() },
         ] {
             let wire = build_rpc(&cmd);
             assert_eq!(parse_rpc(&wire), Ok(cmd.clone()), "round trip failed for {cmd:?}");
