@@ -119,14 +119,19 @@ never anything from inside a box.**
 Not a recovery system. One secret, generated at first boot, that gates every
 claim after the first ([paradigm §1–3](onboarding-paradigm.md)).
 
-**3.1 The phrase.** Four words from a wordlist, minted on first boot, stored
-**hashed** on the box (verified, never recovered). Shown on the panel *only while
-the box is unclaimed and empty*; never again after the first claim, including
-after a reset — that asymmetry is the entire security argument.
+**3.1 The phrase.** Four words from a wordlist, stored **hashed** on the box
+(verified, never recovered). Shown on the panel *only while the box is unclaimed*
+and **rotating there** on the standing-pair-code cadence (15 min, 5 min overlap),
+so a box left unclaimed for a week is not a permanent key on display. It
+**freezes on first claim** and leaves the screen forever — including after a
+reset. What the owner saves is exactly what they typed; there is no second
+secret.
 
 **3.2 Setup requires it.** The BLE setup session is claimed with the phrase; only
-that live connection may link and pair. Rate-limited, because four words over a
-radio is guessable if you let someone guess forever.
+that live connection may link and pair. Guessing is budgeted **globally on the
+box** with exponential backoff — a BLE central can change its address between
+attempts, so per-device throttling is theatre — plus a tighter per-connection cap
+so one session cannot burn the budget at once.
 
 **3.3 Reset setup, on the button.** `HandlePowerKey=ignore` + a udev rule on
 `KEY_POWER` → forget paired devices, unlink the account, forget the network.
@@ -139,7 +144,10 @@ life record is a vandalism vector.
 
 **3.5 The app's save ceremony.** Straight after the phrase is entered and
 *before* setup runs: "Save this — it's how you get back in", with copy and
-save-to-password-manager as the primary action.
+save-to-password-manager as the primary action, print as a third. The app must
+**not persist it** (a stolen laptop would then hold the thing that survives every
+reset) and must **not email it** (the permanent key, routed through the
+most-attacked channel a person owns).
 
 **Why this gates shipping:** without it, anyone who can open the case owns the
 box. With it, they can only inconvenience you.
