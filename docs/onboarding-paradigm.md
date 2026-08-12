@@ -76,25 +76,42 @@ All owner-held. Listed in order of everyday use:
    a paired phone. No physical act required; the vouching device is already
    inside, and this is what makes "I got a new phone" work from anywhere.
 2. **A code emailed to the account**, for someone with no devices left.
-3. **A recovery code**, generated at first pair and shown once — the offline
-   fallback, for a box that never linked an account (DIY has no email on file)
-   or for a world where atlas no longer exists.
+3. **A recovery code**, generated at first pair and shown once — the **offline**
+   proof. Verified by the box locally and submitted over BLE or the LAN, so it
+   needs neither atlas nor internet. It covers a box that never linked an
+   account (DIY has no email on file), a box that has lost its network, and a
+   world where atlas no longer exists. Because that is its job, it must be a
+   secret the **box** holds — never anything atlas could derive.
 
 **Presence scales inversely with proof strength.** Proofs 2 and 3 are remote
 secrets, so they additionally require physical presence at the box; proof 1 does
 not, because it already is presence-by-proxy.
 
-### The panel never shows a secret during recovery
+### Ownership first, then presence
 
-Presence is the **trigger**, not the proof. Power-cycling opens the window; the
-panel then says only *"Recovery started — check the email on your account."*
-The code goes to the owner's inbox, not to the screen.
+The order matters, and getting it right removed a whole mechanism.
 
-This matters because the panel is readable by anyone standing in the room, which
-is the exact population presence does *not* filter — a houseguest, a cleaner, a
-guest at a party. Put the ownership factor on the presence surface and the two
-collapse into one. Under this shape a houseguest who power-cycles the box learns
-only that an email was sent to someone else.
+1. From a fresh app: *"I've lost my devices."*
+2. Enter the account email; atlas sends a code; the owner clicks it.
+3. Atlas marks a recovery pending. **The box learns by polling** — outbound, as
+   always.
+4. Only then does the panel begin showing a join code, for a few minutes.
+5. Read it, type it, joined.
+
+Email proves ownership; reading the panel proves presence. Atlas still cannot
+authorize on its own — its signal only makes the box *display* something, and an
+attacker inside atlas must still be standing in the owner's living room.
+
+**An earlier draft had this backwards** — a physical trigger (three power cycles
+in thirty seconds) opening a window, with the code delivered by email. It works,
+but it is worse in two ways: a houseguest can perform the physical trigger
+themselves, and recovery cannot be *started* from anywhere but the box. Putting
+ownership first fixes both, and deletes the trigger entirely: no boot-timestamp
+detection, no accidental-activation analysis, no appliance convention to teach.
+
+**What this costs: the box must be online** to hear that a recovery was
+authorized. A box that moved house, lost its network, or sits behind a dead ISP
+cannot be recovered this way — which is precisely the job of proof 3.
 
 ### Why atlas relaying the code is safe, and granting it would not be
 
@@ -119,12 +136,6 @@ available. One mechanism, three names.
 This is the collapse that makes the design tractable. There is no recovery mode
 to build, no lockout special case, no support tool. There is one join flow that
 accepts three proofs.
-
-**Physical presence, with no input hardware.** The panel is output-only and
-there is no button. Power-cycling three times within thirty seconds opens a
-two-minute window and BLE re-advertises. It is an established appliance
-convention, needs no BOM change, and is essentially impossible to do by
-accident. The window is a trigger only — see above; no secret appears on glass.
 
 **The recovery code's ceremony.** It is shown in the **app**, once, straight
 after the first pair — never on the panel, for the reason above. Frame the
