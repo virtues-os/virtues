@@ -209,6 +209,22 @@ pub fn maybe_spawn(db: PgPool, app: axum::Router) {
                 return;
             }
         };
+        // Tell atlas our EndpointId BEFORE binding. The relay authorizes by
+        // endpoint id (atlas `relay_authorize` joins `iroh_endpoints` against an
+        // active subscription), and iroh's relay actor starts connecting the
+        // instant the endpoint binds — so registering afterwards loses a race it
+        // cannot win. Measured on hardware 2026-08-12, on the very first link:
+        // bind at :50.598, six "the relay denied our authentication" at
+        // :53.8–:55.6, and our registration only at :55.6 — by which time iroh
+        // had exhausted its initial retries and the box sat relay-less until a
+        // restart. It bit exactly once per box, on the first link, which is the
+        // moment the whole account step exists to make work.
+        //
+        // The id is derivable without binding (it is the secret's public half),
+        // so there is no chicken-and-egg here — only an ordering mistake.
+        set_box_endpoint_id(&secret.public().to_string());
+        report_endpoints(&db).await;
+
         let mut bind_backoff: u64 = 1;
         loop {
             let relay_url = resolve_relay_url(&db).await;
