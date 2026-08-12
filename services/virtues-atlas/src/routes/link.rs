@@ -563,6 +563,12 @@ async fn login_verify(
     if let Err(e) = state
         .virtues_api
         .register_device(&crate::virtues_api_client::RegisterDevice {
+            // TODO(per-box keys): atlas does not yet know which box is
+            // registering here — the box's EndpointId reaches atlas via
+            // `/iroh/register`, which is a separate call. Until they are
+            // joined up this stays None and rotation keeps its historical
+            // whole-account behaviour. The virtues-api side is ready.
+            box_id: None,
             api_key_hash: hex::encode(&api_key_hash),
             account_id,
         })
