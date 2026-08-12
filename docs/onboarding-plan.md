@@ -254,6 +254,44 @@ session. An owner who gets stuck produces nothing we can ask for. A local setup
 log, readable in the app, would change every support conversation — and is the
 difference between a bug report and a shrug.
 
+## Known defects
+
+Verified by the review pass of 2026-08-12 (five reviewers, each findings set
+handed to a skeptic told to refute it). Nothing here has users; none of it is
+urgent. Listed so it is not rediscovered.
+
+**Fixed same day.** The Bluetooth-only pair path threw a TypeError and froze the
+airlock — the client-isolated-office path `0x83` exists for, dead since it was
+written. A failed rebind `return`ed out of the reach supervision task, leaving a
+linked box with reach dead until a restart. `ClaimGrant` was accepted on an
+already-linked box, so anyone in radio range could rebind it to their own
+account. The account gate applied to DIY boxes.
+
+**Phase 3 is further away than "largely exists" implied.**
+- The Add-device modal already holds the six-digit token and renders only a QR
+  and URL; the receiving field is a numeric input with no camera. The only
+  working path is reading the digits out of the URL — which violates the
+  paradigm's own rule about never asking someone to fetch what we already have.
+- `format_pair_url` builds a LAN address, so "works from anywhere" does not.
+- The reconciler drops the BLE service ~15s after first pair and has **no
+  re-advertise entry point**, and it never runs on DIY boxes at all
+  (`is_appliance()` guard). So the paradigm's "opens a window and re-advertises
+  BLE" has nothing behind it, and proof 3 is LAN-only on DIY.
+
+**Box / panel.**
+- No retry state at screen 2: an atlas outage leaves "Reaching Virtues to start
+  the link — a moment" on the glass indefinitely while the 2s heartbeat retries
+  with no backoff.
+- Abandoned setup polls ~17k times/day, not the ~96 mints the failure table
+  implies. Back off the poll, not the mint.
+- Auto-select takes the first box in setup state with no count check — the plan's
+  own "never auto-select two unclaimed boxes" row is already violated.
+- Screen 1 computes and serializes `ap_ssid`/`ap_passphrase` that nothing
+  renders, while `setup_ap::spawn` still runs: a network whose credentials
+  appear nowhere. Dead SoftAP residue.
+- `subscription.rs` derives `is_active` from api-key *presence*, so the box
+  reports "active" through lapse, rotation, deletion, and hijack.
+
 ## Open decisions
 
 1. **Recovery code printed on a card in the box?** The router convention. Good
