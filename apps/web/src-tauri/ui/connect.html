@@ -1047,7 +1047,7 @@
               <b>${esc(s.name)}</b>
               <span class="boxstate">${s.claimed === false ? 'ready to set up' : s.claimed === true ? 'already set up' : ''}</span>
             </span>
-            <span class="addr">${esc(s.origin.replace('http://', ''))}</span>
+            <span class="addr">${s.origin ? esc(s.origin.replace('http://', '')) : 'over Bluetooth'}</span>
           </button>`).join('');
         // Nothing found → the Bluetooth-first setup screen IS the empty
         // state; it keeps looking and routes itself. This branch only ever

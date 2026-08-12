@@ -439,6 +439,24 @@ mod server {
             Command::ClaimGrant { grant } => {
                 let improv = improv.clone();
                 tokio::spawn(async move {
+                    // REFUSE once this box already holds an account key. BLE is
+                    // unauthenticated and reaches through walls, so without this
+                    // anyone in radio range could bind a stranger's box to their
+                    // own atlas account — or replace the link its owner just paid
+                    // for — with a single write. `store_api_key` UPDATEs rather
+                    // than refusing, so the overwrite would succeed silently.
+                    // Unlinking is a deliberate act, never a side effect of a
+                    // packet.
+                    if crate::virtues_api::renew::read_api_key(&pool)
+                        .await
+                        .ok()
+                        .flatten()
+                        .is_some()
+                    {
+                        tracing::warn!("ble_provision: refusing claim grant — box is already linked");
+                        improv.lock().await.set_error(ImprovError::NotAuthorized).await;
+                        return;
+                    }
                     match crate::virtues_api::link::inject_grant(&pool, &grant).await {
                         Ok(()) => {
                             // ACK the store immediately — the redeem may outlive

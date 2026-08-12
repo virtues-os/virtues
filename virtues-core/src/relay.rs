@@ -209,23 +209,35 @@ pub fn maybe_spawn(db: PgPool, app: axum::Router) {
                 return;
             }
         };
+        let mut bind_backoff: u64 = 1;
         loop {
             let relay_url = resolve_relay_url(&db).await;
             set_box_relay_url(relay_url.as_ref().map(|u| u.to_string()));
             // The box pins its UDP port so its `IP:port` stays stable across restarts
             // — LAN peers resolve the IP (mDNS) and dial by NodeId, nothing frozen.
-            let endpoint =
-                match build_endpoint(secret.clone(), relay_url.clone(), Some(iroh_port())).await {
-                    Ok(e) => e,
-                    Err(e) => {
-                        let msg = format!("{e:#}");
-                        tracing::error!(error = %msg, "iroh: failed to bind endpoint — reach disabled");
-                        set_endpoint_error(
-                            "Couldn't start reach networking on this box. See the box logs; a restart is needed.",
-                        );
-                        return;
-                    }
-                };
+            // A bind failure must NOT end the supervision task. It used to
+            // `return`, which meant a rebind that lost its race with the OS
+            // releasing the pinned UDP port left the box linked, its endpoint
+            // closed, and reach dead until someone restarted the service —
+            // strictly worse than the LAN-only state the rebind was meant to
+            // improve on. Retry with backoff instead; the previous endpoint is
+            // already gone, so there is nothing to preserve by giving up.
+            let endpoint = match build_endpoint(secret.clone(), relay_url.clone(), Some(iroh_port()))
+                .await
+            {
+                Ok(e) => e,
+                Err(e) => {
+                    let msg = format!("{e:#}");
+                    tracing::error!(error = %msg, backoff_secs = bind_backoff, "iroh: failed to bind endpoint — retrying");
+                    set_endpoint_error(
+                        "Couldn't start reach networking on this box. Retrying; see the box logs.",
+                    );
+                    tokio::time::sleep(std::time::Duration::from_secs(bind_backoff)).await;
+                    bind_backoff = (bind_backoff * 2).min(60);
+                    continue;
+                }
+            };
+            bind_backoff = 1;
             let eid = endpoint.id().to_string();
             set_box_endpoint_id(&eid);
             endpoint_up_flag().store(true, Ordering::Relaxed);
