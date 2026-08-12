@@ -101,20 +101,21 @@ recovery mode — the same join flow with different evidence.
 it the named primary path, and let it work remotely: the vouching device is
 already inside.
 
-**3.2 Power-cycle trigger.** Three cycles within thirty seconds opens a
-two-minute window and re-advertises BLE. Detection is a ring of boot timestamps
-in the state root. **No secret on the panel** — it says only "Recovery started,
-check the email on your account."
+**3.2 Email, then panel** (proof 2). From a fresh app: enter the account email →
+atlas sends a code → clicking it marks a recovery pending → the box learns by
+polling → the panel shows a join code for a few minutes → type it. Ownership
+first, presence second. **No physical trigger** — an earlier draft used three
+power cycles to open the window, which a houseguest could perform themselves and
+which forced recovery to *begin* at the box. This ordering is strictly better
+and deletes the mechanism.
 
-**3.3 Emailed join code** (proof 2). The box mints it, asks atlas to deliver it
-to the account email, and verifies it itself. Atlas carries; atlas never
-authorizes. Presence is still required, which is what makes carrying acceptable.
-
-**3.4 Recovery code** (proof 3). Generated at first pair, shown **in the app**,
-once. Consequence-framed copy, *Save to password manager* as the primary action,
-confirm by the last group. Regenerable from any trusted device. Stored hashed.
-The only proof an unlinked DIY box has, and the only one that survives atlas not
-existing.
+**3.3 Recovery code** (proof 3) — the **offline** proof, and the reason 3.2 can
+depend on the network. Verified locally, submitted over BLE, needing neither
+atlas nor internet: it covers a box that moved house, one that never linked, and
+a world without atlas. Generated at first pair, shown **in the app**, once.
+Consequence-framed copy, *Save to password manager* as the primary action,
+confirm by the last group. Regenerable from any trusted device. Stored hashed,
+and never derivable by atlas.
 
 **Why this gates shipping:** lockout is the single failure nobody can fix
 remotely, for anyone, ever.
