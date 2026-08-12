@@ -114,43 +114,39 @@ table — no new personal data, since atlas already holds the email for Stripe.
 The invariant is unchanged: **atlas knows who pays and which boxes are theirs,
 never anything from inside a box.**
 
-## Phase 3 — join a claimed box · **ship gate**
+## Phase 3 — the phrase · **ship gate**
 
-One mechanism, three proofs ([paradigm §4–5](onboarding-paradigm.md)). Not a
-recovery mode — the same join flow with different evidence.
+Not a recovery system. One secret, generated at first boot, that gates every
+claim after the first ([paradigm §1–3](onboarding-paradigm.md)).
 
-**3.1 Trusted device vouches** (proof 1). Largely exists as Devices → Add. Make
-it the named primary path, and let it work remotely: the vouching device is
-already inside.
+**3.1 The phrase.** Four words from a wordlist, minted on first boot, stored
+**hashed** on the box (verified, never recovered). Shown on the panel *only while
+the box is unclaimed and empty*; never again after the first claim, including
+after a reset — that asymmetry is the entire security argument.
 
-**3.2 Power-button trigger.** The Dragon's board has a power button (#6).
-`HandlePowerKey=ignore` in `logind.conf` plus a udev rule on `KEY_POWER` hands
-the event to a recovery script — a ~15 minute spike to confirm. Long-press must
-remain a real shutdown, and the button has to be reachable once the board is in
-its enclosure.
+**3.2 Setup requires it.** The BLE setup session is claimed with the phrase; only
+that live connection may link and pair. Rate-limited, because four words over a
+radio is guessable if you let someone guess forever.
 
-The button is the **trigger**, never the proof: presence alone would let a
-houseguest into a box holding someone's life. What it buys is that the box
-stops polling — one outbound call when pressed, instead of a standing query
-against our servers forever. That was the real weakness of the polling design
-and the reason to prefer this.
+**3.3 Reset setup, on the button.** `HandlePowerKey=ignore` + a udev rule on
+`KEY_POWER` → forget paired devices, unlink the account, forget the network.
+**Data and phrase survive.** So a resetter gets a box they cannot claim, and the
+owner gets their box back by typing what they saved.
 
-**3.3 Emailed code** (proof 2). Press → one outbound call → atlas emails the
-code to the **account address** → type it into the app → the box verifies.
-Whoever pressed the button is irrelevant; the code goes to the owner's inbox, so
-a houseguest achieves nothing but sending mail. The panel shows only "Recovery
-started — check your email": no secret on glass.
+**3.4 Erase, not on the button.** Wiping the record for resale is an
+authenticated action in the app (CLI for DIY). A physical gesture that destroys a
+life record is a vandalism vector.
 
-**3.4 Recovery code** (proof 3) — the **offline** proof, used when the box has
-no network or never linked. Same button, same window, but the code is one the
-owner already holds and the box verifies locally: **atlas is not involved at
-all**. Generated at first pair, shown **in the app**, once. Consequence-framed
-copy, *Save to password manager* as the primary action, confirm by the last
-group. Regenerable from any trusted device. Stored hashed, and never derivable
-by atlas.
+**3.5 The app's save ceremony.** Straight after the phrase is entered and
+*before* setup runs: "Save this — it's how you get back in", with copy and
+save-to-password-manager as the primary action.
 
-**Why this gates shipping:** lockout is the single failure nobody can fix
-remotely, for anyone, ever.
+**Why this gates shipping:** without it, anyone who can open the case owns the
+box. With it, they can only inconvenience you.
+
+**Deleted by this phase**, and left here so it is not rediscovered: the
+three-proof model, the emailed recovery code, the power-cycle trigger, and the
+separate recovery code. One mechanism replaced four.
 
 ## Phase 4 — the rest
 
