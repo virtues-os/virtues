@@ -1,160 +1,165 @@
 # Onboarding — the build plan
 
-> How we get from what is built today to
-> [the paradigm](onboarding-paradigm.md). Written 2026-08-12.
-> The paradigm says *what and why* and is meant to be stable; this says *in what
-> order and how much*, and is meant to be crossed off.
-> [linking-plan.md](linking-plan.md) remains the deep dive on step 2.
+> How we get from what exists today to [the paradigm](onboarding-paradigm.md).
+> The paradigm says *what and why*, and is meant to be stable. This says *in what
+> order*, and is meant to be crossed off.
+> [linking-plan.md](linking-plan.md) is the deep dive on step 2.
+> Written 2026-08-12.
 
-## Where we actually are
+## Where we are
 
-Honest inventory. "Proven" means it ran on hardware, not that it compiles.
+"Proven" means it ran on hardware.
 
-**Proven on hardware**
-- BLE Improv service on the box; wifi scan + join, incl. 802.1X (`0x81`).
-- Desktop Improv client (`virtues-improv`, btleplug). A Mac drove a box onto
-  enterprise wifi end to end on 2026-08-12 — no phone, no QR, no portal.
-- One airlock (`connect.html`) for desktop and mobile.
-- Three-step display; captive-network honesty; codename identity.
-- Device-authorization link flow, box side: start / poll / adopt-in-flight.
+**Proven.** BLE Improv on the box: wifi scan, join, 802.1X. A desktop Improv
+client (`virtues-improv`, btleplug) — a Mac drove a box onto enterprise wifi end
+to end, no phone, no QR. One airlock (`connect.html`) for both platforms. The
+three-step display. Device-authorization link flow, box side.
 
-**Built, not yet observed working**
-- Relay **in-process rebind** on link (`relay.rs` supervision loop). The claim
-  is that a screen-2 link activates reach in seconds with no restart. Nobody
-  has watched it happen; it needs one completed checkout.
-- `0x83` PairConsume — pairing over BLE, box and app both written. Load-bearing
-  at any office: a Mac and a box on the same WeWork wifi cannot reach each other
-  (measured 2026-08-12), so LAN pairing is simply unavailable there.
-- `0x82` ClaimGrant — box side only; the app and atlas legs do not exist.
+**Built, never observed.** The relay's **in-process rebind** on link — the claim
+that reach activates in seconds without a restart, waiting on one completed
+checkout. **`0x83`** pairing over BLE, which is not a nicety: a Mac and a box on
+the same WeWork wifi cannot reach each other, so LAN pairing is unavailable in
+any office. **`0x82`** claim grant, box side only.
 
-**Missing**
-- Atlas `/init`: no identity fork (goes straight to Stripe, so an existing
-  subscriber pays twice), does not render the box identity the box now sends,
-  and expires codes in ~2 minutes.
-- The app holds no account session, so it cannot vouch for anyone.
-- The setup device still types a pair code it has already earned the right to
-  skip.
-- **The entire "join a claimed box" story**: no recovery code, no power-cycle
-  trigger, no emailed join code. A claimed box shows no code ever again, so an
-  owner who loses their only device is locked out of data they possess.
-- Replacing an existing pairing is silent and destructive.
-- `virtues.com/link` 404s; the app and panel point at atlas directly as a
-  stopgap.
+**Missing.** Atlas `/init` has no identity fork, so an existing subscriber pays
+twice; it ignores the box identity the box now sends, and expires codes in ~2
+minutes. The app holds no account session, so it can vouch for nobody. The whole
+*join a claimed box* story — no recovery code, no trigger, no emailed code —
+which means an owner who loses their only device is locked out of data they
+physically possess. Replacing a pairing is silent. There is no consumer factory
+reset. `virtues.com/link` 404s.
 
-## Phase 1 — collapse the flow with what we already have
+## Phase 1 — collapse the flow
 
-No atlas changes, no account work. Gets the appliance + Mac path from nine steps
-to about four, this week.
+No atlas work, no account work. Nine steps to roughly four, this week.
 
-**1.1 `0x85 GetLinkUrl` — the box hands the app its verification URL.**
-The link step's whole friction is that it spans three surfaces: the app says
-"open the link page", the browser wants a code, the code is on the panel, and it
-expires in two minutes. The box already *has*
-`https://atlas.virtues.com/init?code=…` in `billing_link_inflight`. Hand it
-across the BLE session the app is already holding and the app opens the browser
-prefilled. Nothing is read, nothing is typed, no expiry window.
-*Cheapest large win in the plan.*
+**1.1 `0x85 GetLinkUrl`.** The link step's friction is that it spans three
+surfaces: the app says "open the link page", the browser wants a code, the code
+is on the panel, and it expires in two minutes. The box already holds
+`…/init?code=…`. Hand it over the BLE session the app is already using and the
+browser opens prefilled. Nothing read, nothing typed, no expiry race. *Cheapest
+large win in the plan.*
 
-**1.2 `0x84 PairDirect` — the setup device pairs with no code.**
-Unclaimed boxes only, no code field: BLE range **is** the proximity proof, and
-proximity alone is the correct bar to claim an empty box
-([paradigm §3](onboarding-paradigm.md)). Kills the read-6-digits-and-type-them
-round trip for the first device. A claimed box keeps requiring `0x83` + a code,
-which is the tier-2 bar and stays untouched.
+**1.2 Consumer factory reset.** Today the only reset is `virtues reset` over
+SSH, which an appliance owner does not have. This blocks resale, hand-me-downs,
+and every recovery-from-mistake path — including `0x84` below. Small, and it
+unblocks more than its size suggests.
 
-**1.3 App: stop asking questions it can answer.**
-Auto-select when exactly one box needs setup; prefill the network this machine
-is already on (keep the password field); neutral headline until discovery
-decides ("Looking for your box", not "Set up your box" — the latter alarms
-someone who has owned a box for months and is only installing the Mac app).
+**1.3 The app stops asking what it can answer.** Auto-select when exactly one
+box needs setup. Prefill the network this machine is on; keep the password
+field. Neutral headline until discovery decides — "Looking for your box", not
+"Set up your box", which alarms someone who has owned one for months and is only
+installing the Mac app.
 
-**1.4 Confirm before replacing a pairing.**
-The store is single-box by design, and that is fine — but switching is currently
-silent. "This Mac is connected to *Dragon*. Connecting to *Honest Kestrel* will
-replace it." Two pairings have already been lost this way.
+**1.4 Confirm before replacing a pairing.** Single-box is a sound design; silent
+replacement is not. Two pairings have already been lost this way.
 
-**1.5 Watch the relay rebind.** One completed checkout, then read the journal
-for the rebind line. Until then it is an untested claim.
+**1.5 Watch the relay rebind.** One checkout, then read the journal. Until then
+it is an untested claim.
 
-## Phase 2 — identity, so the account step stops being a browser trip
+### Deferred, with conditions: `0x84 PairDirect`
 
-The strategic phase, and the one with real weeks in it.
+Pairing the setup device with no code at all, on the grounds that BLE range is
+the proximity proof. **Held back**, because BLE range is not "in the room" — it
+passes through walls at 10–30 m. A neighbour running our app could claim a box
+in the window between plugging in and setup, and once linked they hold *relay*
+access to a box sitting in someone's home. Ships only when (a) consumer reset
+exists and (b) the panel announces claims loudly enough to notice
+("Claimed by Adam's Mac"). `0x85` carries most of the win at none of this risk.
 
-**2.1 Atlas `/init` earns its fork.** One email field; render the box identity
-the box already sends (`{name, label, model, endpoint_id}`) so the page can say
-*"Link **Honest Kestrel** · Dragon Q6A"* — which is the anti-phishing property,
-not decoration. Then branch: active subscription → one tap, **no payment screen
-ever**; account without a sub, or no account → checkout with the email
-prefilled.
+## Phase 2 — identity
 
-**2.2 Raise the code TTL to ~15 minutes.** RFC 8628's normal window. The current
-~2 minutes is shorter than the walk from the box to a laptop, and it killed
-every attempt over two days.
+The strategic phase, and the only one measured in weeks.
 
-**2.3 Account sessions in the app.** Sign in once, in the app. This is the
-keystone for everything after it: the app becomes the authenticator.
+**2.1 Atlas `/init` earns its fork.** One email field. Render the box identity
+the box already sends, so the page says *"Link **Honest Kestrel** · Dragon
+Q6A"* — the anti-phishing property, not decoration. Then branch: active
+subscription → one tap and **no payment screen ever**; otherwise checkout with
+the email prefilled.
 
-**2.4 `0x82` ClaimGrant end to end.** With a session, the app asks atlas for a
-pre-approved `device_code` and hands it to the box over BLE. The box redeems it
-outbound; the browser disappears from the flow entirely for signed-in owners.
-Box side is already built and tested.
+**2.2 Code TTL to ~15 minutes.** RFC 8628's normal window. Two minutes is
+shorter than the walk from the box to a laptop, and it killed every attempt over
+two days.
 
-**At the end of Phase 2 the intended flow is real:** install, sign in, one screen
-with a Wi-Fi password, done.
+**2.3 Account sessions in the app.** Sign in once. This is the keystone: the app
+becomes the authenticator.
 
-## Phase 3 — join a claimed box
+**2.4 `0x82` end to end.** With a session, the app gets a pre-approved
+`device_code` from atlas and hands it to the box over BLE; the box redeems it
+outbound. The browser leaves the flow entirely for signed-in owners. Box side is
+already built.
 
-One mechanism, three proofs ([paradigm §4–5](onboarding-paradigm.md)). Nothing
-here is a "recovery mode"; it is the same join flow with different evidence.
+*After Phase 2 the intended flow is real: install, sign in, one screen with a
+Wi-Fi password, done.*
 
-**3.1 Trusted device vouches** (proof 1). Mostly exists as Devices → Add; make
-it the named, primary path and let it work remotely, since the vouching device
-is already inside.
+## Phase 3 — join a claimed box · **ship gate**
 
-**3.2 Power-cycle trigger.** Three power cycles within thirty seconds opens a
-two-minute window; BLE re-advertises. Detection is a small ring of boot
-timestamps in the state root. **No secret appears on the panel** — it says only
-"Recovery started, check the email on your account".
+One mechanism, three proofs ([paradigm §4–5](onboarding-paradigm.md)). Not a
+recovery mode — the same join flow with different evidence.
 
-**3.3 Emailed join code** (proof 2). The box mints the code, asks atlas to
-deliver it to the account email (outbound, as always), and verifies it itself.
-Atlas carries; atlas never authorizes. Presence is still required, which is
-exactly what makes atlas-carries acceptable.
+**3.1 Trusted device vouches** (proof 1). Largely exists as Devices → Add. Make
+it the named primary path, and let it work remotely: the vouching device is
+already inside.
+
+**3.2 Power-cycle trigger.** Three cycles within thirty seconds opens a
+two-minute window and re-advertises BLE. Detection is a ring of boot timestamps
+in the state root. **No secret on the panel** — it says only "Recovery started,
+check the email on your account."
+
+**3.3 Emailed join code** (proof 2). The box mints it, asks atlas to deliver it
+to the account email, and verifies it itself. Atlas carries; atlas never
+authorizes. Presence is still required, which is what makes carrying acceptable.
 
 **3.4 Recovery code** (proof 3). Generated at first pair, shown **in the app**,
-once — never on the panel. Consequence-framed copy, *Save to password manager*
-as the primary action, confirm by the last group. Regenerable from any trusted
-device. Stored hashed. The only proof an unlinked DIY box has, and the only one
-that survives atlas not existing.
+once. Consequence-framed copy, *Save to password manager* as the primary action,
+confirm by the last group. Regenerable from any trusted device. Stored hashed.
+The only proof an unlinked DIY box has, and the only one that survives atlas not
+existing.
 
-**Ship gate:** Phase 3 is not optional before real customers own boxes. Lockout
-is the one failure that cannot be fixed remotely, for anyone, ever.
+**Why this gates shipping:** lockout is the single failure nobody can fix
+remotely, for anyone, ever.
 
 ## Phase 4 — the rest
 
-- Defer the collectors screen; ask for a permission when a feature needs it, not
-  six times before the product has shown anything.
-- `virtues.com/link` → redirect to atlas `/init`.
-- Store entitlement pre-provisioning, so a store buyer never sees a payment
-  screen (persona 1 in [linking-plan.md](linking-plan.md)).
+Defer the collectors screen; ask for a permission when a feature needs it, not
+six times before the product has shown anything. `virtues.com/link` → redirect
+to atlas. Store entitlement pre-provisioning, so a store buyer never sees a
+payment screen.
+
+## Failure modes and degradation
+
+The plan is BLE-centric; these are the paths it does not describe, and each one
+is currently discovered in the field rather than designed.
+
+| Condition | What should happen |
+|---|---|
+| Bluetooth off or blocked by policy | fall to panel codes — the documented floor |
+| Android | no Improv client exists; panel codes only |
+| Ethernet | step 1 disappears; box is online at first boot |
+| Two unclaimed boxes in range | never auto-select; show both by codename |
+| Subscription lapses | LAN keeps working. "Prescribe, never enforce" says so; nothing implements or tests it |
+| Setup abandoned after wifi | the box currently mints a device-auth session every 15 min against atlas, forever. Needs backoff |
+| Fresh box, no NTP | wrong clock breaks TLS to atlas and every expiry check. Guard explicitly |
+
+**Observability.** Everything diagnosed in two days came from a live SSH
+session. An owner who gets stuck produces nothing we can ask for. A local setup
+log, readable in the app, would change every support conversation — and is the
+difference between a bug report and a shrug.
 
 ## Open decisions
 
-1. **Recovery code on a printed card in the box?** The router convention. Good
-   for the majority who never open Settings; bad when the box is stolen with the
-   card in the same drawer. *Leaning no for this data.*
+1. **Recovery code printed on a card in the box?** The router convention. Good
+   for people who never open Settings; bad when the box is stolen with the card
+   in the same drawer. *Leaning no for this data.*
 2. **Second box in a household — joinable by a trusted device with no physical
    act?** Makes multi-box trivial; widens what a stolen phone reaches.
 3. **Does the ambient panel ever offer "add a device"?** Trusted-device vouching
-   may cover it entirely, in which case the answer is no and the panel stays
-   furniture.
+   may cover it, in which case the panel stays furniture.
 
-## What done looks like
+## Done looks like
 
 - A Mac, out of the box: install, sign in, one screen, box open. No codes.
-- A phone joining that box later: one tap from the Mac. No physical act.
-- The same owner, phone lost and Mac wiped: power-cycle, email code, back in.
-- A DIY box that never linked: recovery code still works, with atlas switched
-  off entirely.
-- Every one of these exercised on hardware, on a hostile network, not just in a
-  test.
+- A phone joining later: one tap from the Mac, no physical act.
+- Same owner, phone lost and Mac wiped: power-cycle, emailed code, back in.
+- A DIY box that never linked: recovery code works with atlas switched off.
+- Each exercised on hardware, on a hostile network.
