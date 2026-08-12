@@ -8,7 +8,8 @@
 >
 > Intended to be stable. If a change contradicts something here, the change is
 > probably wrong — or this document needs a deliberate revision, not a quiet
-> exception.
+> exception. The build order that follows from it is
+> [onboarding-plan.md](onboarding-plan.md).
 
 ## 1. Three relationships, hence three steps
 
