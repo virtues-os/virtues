@@ -23,27 +23,23 @@
     affordance that invites a tap.
   * It runs 24/7 in someone's home: dark, no spinners, no animation loops.
 
-  THREE STATES, sequenced by facts the box already knows:
+  TWO STATES, and that is the whole design:
 
-    1. offline + unclaimed  → JOIN ME. The wifi QR and the AP's credentials.
-    2. online  + unclaimed  → CLAIM ME. Where to get the app, and the code.
-    3. claimed              → ambient.
+    1. unclaimed → GET THE APP, and the four words that let it in.
+    2. claimed   → ambient.
 
-  Screens 1 and 2 were one screen until 2026-08-10, and it did not work. It
-  carried two different secrets at once — the AP passphrase and the pair code —
-  and the first person shown it read the big code on the right and typed it as
-  the wifi password. Labelling them helped and did not fix it, because the real
-  fault was not labelling: the screen presented a SEQUENCE as a SET. Nothing on
-  it said the right-hand side is for later.
+  There used to be three numbered setup screens (join a network, link an
+  account, then a pair code). They are gone. The app carries all three over one
+  Bluetooth conversation, so the panel's only job is to start it — point at the
+  app, and show the phrase that proves whoever is typing can SEE this box.
 
-  Worse, it offered `virtues.com/downloads` to someone whose phone it had just
-  told to join a network with no internet. The app link is only followable after
-  the box is online, which is precisely when screen 2 appears.
+  What that replaced is worth remembering, because the failure was instructive:
+  screens 1 and 2 were once a single screen carrying two different secrets at
+  once, and the first person shown it read the big code on the right and typed
+  it as the wifi password. Splitting them helped; deleting them helped more.
+  Every code on this glass existed because two machines could not talk, and now
+  they can.
 
-  The box cannot detect that the app has been installed, so there is still no
-  wizard here and no step it advances through on its own. What it CAN detect is
-  whether it has a network — and that single bit is enough to split the two
-  jobs, because it changes at exactly the moment the owner's job changes.
 -->
 <script lang="ts">
 	import { onMount, onDestroy } from "svelte";
@@ -52,6 +48,7 @@
 		box_name: string;
 		linked: boolean;
 		link_code: string | null | undefined;
+		setup_phrase: string | null | undefined;
 		pair_code: string | null;
 		ap_ssid: string | null;
 		ap_passphrase: string | null;
@@ -139,18 +136,22 @@
 		<!-- Pre-first-response. Deliberately bare: the box is seconds from
 		     answering and a spinner would be the first thing it ever said. -->
 		<div class="boot"><span class="mark">∴</span></div>
-	{:else if !state_.claimed && !state_.online}
-		<!-- 1 · SET ME UP. The box has no network, and THE APP is the wizard —
-		     it joins this box's setup network itself and drives the wifi setup
-		     natively (see the reach plugin's wifi_join). So the screen's job is
-		     exactly two facts: get the app (the phone still has internet at
-		     this moment — the only moment that's true), and the one password
-		     the app will ask for.
+	{:else if !state_.claimed}
+		<!-- ONE SETUP SCREEN. Not step 1 of 3 — there is no sequence any more.
+		     The app is the wizard, so this screen has exactly two jobs: point at
+		     the app, and show the four words that let the app configure this box.
 
-		     The wifi join-QR that used to be the hero is GONE. Its camera-app
-		     banner was flaky on hardware (twice), and the app path never needs
-		     it. The SSID + passphrase stay as text — the manual hatch for
-		     Android and laptops (join by hand, browse to 10.42.0.1). -->
+		     THE PHRASE. An unclaimed box advertises over Bluetooth to anything in
+		     radio range, and radio range passes through walls. Four words printed
+		     here prove LINE OF SIGHT, which is the bar we actually want — and they
+		     are the same words that get the owner back in after a reset. They
+		     rotate every 15 minutes while the box is empty (so a photograph taken
+		     last week is worthless) and vanish forever the moment it is claimed.
+		     See docs/onboarding-paradigm.md §1.
+
+		     The link QR and the pair code that used to live on screens 2 and 3 are
+		     GONE from the panel: the app carries the account grant and the pairing
+		     over the same Bluetooth session that starts here. -->
 		<div class="split">
 			<div class="lite">
 				<img class="qr" src="/api/display/app-qr" alt="" />
@@ -161,110 +162,28 @@
 			</div>
 			<div class="dark">
 				<div class="brand">∴ &nbsp;{state_.box_name}</div>
-				<div class="step">Step 1 of 3</div>
 				<div class="head">Get the Virtues app</div>
-				<!-- BLE is the transport (the box is advertising right now), so the
-				     instruction is two lines and contains NO network names, NO
-				     passwords, NO QR-to-join — the app finds the box itself. The
-				     retired SoftAP-era screen carried an SSID + passphrase here;
-				     see maintenance::setup_ap's breakglass note. -->
-				<div class="lead">
-					Open it and choose <b>Set up a new box</b> — it finds me over
-					Bluetooth and walks you through Wi-Fi.
-				</div>
+				<div class="lead">Open it and type these words — it finds me over Bluetooth
+					and does the rest.</div>
+				{#if state_.setup_phrase}
+					<div class="phrase">{state_.setup_phrase}</div>
+				{:else}
+					<div class="phrase fault">— — —</div>
+				{/if}
 				{#if state_.connectivity === "portal"}
-					<!-- Captive network. With honest online-detection ("full" only),
-					     a portal join lands back on THIS screen — an IP but no
-					     internet — and without this line the screen reads as if the
-					     join silently failed. The commonest office/dorm failure, seen
-					     live at WeWork 2026-08-11: name the network, say why it
-					     doesn't count, point at the fix. -->
+					<!-- Captive network. With honest online-detection a portal join
+					     reads as still-offline, and without this the screen looks like
+					     the join silently failed. Seen live at WeWork 2026-08-11. -->
 					<div class="foot warn">
 						Joined {state_.wifi_ssid ?? "a network"}, but it wants a browser
 						sign-in, which I can't do — pick a different network in the app.
 					</div>
 				{:else if state_.connectivity === "limited"}
 					<div class="foot warn">
-						Joined {state_.wifi_ssid ?? "a network"}, but no internet is
-						getting through — pick a different network in the app.
-					</div>
-				{:else}
-					<div class="foot">
-						Or plug in ethernet and this step disappears.
+						Joined {state_.wifi_ssid ?? "a network"}, but no internet is getting
+						through — pick a different network in the app.
 					</div>
 				{/if}
-			</div>
-		</div>
-	{:else if !state_.claimed && !state_.linked}
-		<!-- 2 · LINK ME. Online but no account. This step exists because the
-		     account is what buys RELAY reach: an unlinked box works only on a
-		     friendly LAN, which a dorm or office never is — discovered live
-		     2026-08-11, box paired and unreachable in the same minute. It comes
-		     BEFORE pairing on purpose: linking needs only box-outbound internet
-		     plus the owner's phone on ANY network, so it is immune to hostile
-		     LANs, and once the relay is up, later steps stop depending on the
-		     local network's goodwill. -->
-		<div class="split">
-			<div class="lite">
-				{#if state_.link_code}
-					<img class="qr" src="/api/display/link-qr" alt="" />
-					<div class="apcreds">
-						<div class="aplabel">Or visit</div>
-						<!-- The URL that ANSWERS. `virtues.com/link` reads better and is
-						     still an open decision in docs/linking-plan.md — it 404s
-						     today, and a 404 printed on a physical panel is the worst
-						     kind of wrong: unfixable from where the reader is standing. -->
-						<div class="apssid">atlas.virtues.com/init</div>
-					</div>
-				{:else}
-					<div class="qr-pending-mark">∴</div>
-				{/if}
-			</div>
-			<div class="dark">
-				<div class="brand">∴ &nbsp;{state_.box_name}</div>
-				<div class="step">Step 2 of 3</div>
-				<div class="head">Link your box</div>
-				{#if state_.link_code}
-					<div class="lead">Scan with your phone and sign in to Virtues. Your
-						code:</div>
-					<div class="code linkcode">{state_.link_code}</div>
-				{:else}
-					<div class="lead">Reaching Virtues to start the link — a moment.</div>
-				{/if}
-			</div>
-		</div>
-	{:else if !state_.claimed}
-		<!-- 3 · CLAIM ME. The box is online AND linked; the owner's phone has
-		     internet — the ONLY moment an app-download QR is followable. Now,
-		     and not before, the pair code is worth showing. -->
-		<div class="split">
-			<div class="lite">
-				<img class="qr" src="/api/display/app-qr" alt="" />
-				<div class="apcreds">
-					<div class="aplabel">Get the app</div>
-					<div class="apssid">virtues.com/downloads</div>
-				</div>
-			</div>
-			<div class="dark">
-				<div class="brand">∴ &nbsp;{state_.box_name}</div>
-				<div class="step">Step 3 of 3</div>
-				<div class="lead">In the Virtues app, enter</div>
-				{#if grouped}
-					<div class="code">{grouped}</div>
-				{:else}
-					<div class="code fault">— — —</div>
-				{/if}
-				<div class="foot">
-					{#if state_.ap_ssid}
-						<!-- The setup network is somehow still up — a failed join, or an
-						     ethernet box that also raised one. Both secrets are in play at
-						     once, which is the exact confusion that split this screen in
-						     two, so name which is which. -->
-						This code, not the Wi-Fi password.
-					{:else}
-						Scan to install the app, then enter this code.
-					{/if}
-				</div>
 			</div>
 		</div>
 	{:else}
@@ -418,6 +337,21 @@
 	.code.linkcode {
 		font-size: 2.6rem;
 		letter-spacing: 0.09em;
+	}
+	/* Four words, read off glass and typed on another machine. Sized to be
+	   legible across a room, wrapping rather than shrinking — a phrase that
+	   truncates is worse than one that takes two lines. */
+	.phrase {
+		font-family: ui-monospace, Menlo, monospace;
+		font-size: 1.55rem;
+		line-height: 1.3;
+		letter-spacing: 0.01em;
+		color: #f7f5f0;
+		word-break: break-word;
+		max-width: 300px;
+	}
+	.phrase.fault {
+		color: var(--warn);
 	}
 	.qr-pending-mark {
 		width: 150px;
