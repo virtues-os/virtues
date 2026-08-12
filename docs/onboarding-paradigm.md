@@ -24,11 +24,19 @@ steal, so displaying it costs nothing — and reading it requires *seeing* the b
 which is exactly the bar we want. Radio range passes through walls; line of sight
 does not.
 
-**The moment the box is claimed, the phrase leaves the screen forever.** It now
-holds a life. From then on it exists only where the owner saved it.
+**And while it is on the screen it rotates**, on the same cadence as the standing
+pair code (15 minutes, 5 minutes of overlap, so a rotation mid-setup cannot
+strand anyone). Without this, a box plugged in and left unclaimed for a week is a
+permanent key on display: any houseguest photographs the words and can reset and
+claim it months later. Rotation makes last week's photograph worthless.
 
-That single rule is what makes the rest safe, and it is the sentence to defend if
-any of this is revisited.
+**The moment the box is claimed, the phrase freezes and leaves the screen
+forever.** It now holds a life. From then on it exists only where the owner saved
+it — and what they saved is exactly what they typed, so there is no second secret
+to explain.
+
+That pair of rules is what makes the rest safe, and they are the sentences to
+defend if any of this is revisited.
 
 ## 2. The flow, which is now one screen
 
@@ -132,6 +140,12 @@ The phrase authorizes; the **session** carries the work.
 - **It is a connection, not a device.** Not "whoever knows the phrase, forever" —
   the one currently configuring this box. Drop the link and it dies; the next
   attempt starts over.
+- **Guessing is budgeted by the BOX, not by the caller.** A BLE central can
+  change its address between attempts, so per-device throttling is theatre. Only
+  one legitimate setup ever happens at a time, so a global budget with
+  exponential backoff costs a real owner nothing and stops a patient attacker in
+  range. A tighter per-connection cap sits on top, so a single session cannot
+  burn the global budget in one breath.
 - **It survives the network change.** Bluetooth is a separate radio from Wi-Fi,
   which is precisely why provisioning rides it. The conversation continues
   through the switchover that used to end it.
@@ -180,7 +194,7 @@ second door to the same data.
 | Surface | Job | Never |
 |---|---|---|
 | **Box display** | one setup screen (app + phrase) while virgin; narrate the live session; then ambient | show the phrase once claimed, or count steps |
-| **App** | the wizard *and* the authenticator: holds the account session, couriers grants, keeps the phrase safe | send the user elsewhere to read something |
+| **App** | the wizard *and* the authenticator: holds the account session, couriers grants, offers copy / save-to-password-manager / print for the phrase | persist the phrase itself, or email it |
 | **Browser** | deliver the app; account and card management | appear during setup |
 
 The box drives its own state and the app mirrors it — never the reverse.
@@ -194,6 +208,10 @@ Stated so the next person does not have to re-derive them:
 - **No atlas-initiated anything.** No callback, no remote unlock, no remote wipe.
   The box speaks outbound only.
 - **No escrowed phrase.** It would make the sovereignty claim false.
+- **The app never persists the phrase**, and never emails it. Storing it would
+  mean a stolen laptop holds not just a revocable pairing but the thing that
+  survives every reset; emailing it would route the permanent key through the
+  most-attacked channel a person owns. Copy, save to a password manager, print.
 - **No second setup path.** One good flow, not two.
 - **No phrase on the panel after claim**, and none on a sticker inside the case —
   the button is in there too, and a secret readable by whoever can press it is
