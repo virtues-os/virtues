@@ -158,27 +158,37 @@ final class ImprovClient: NSObject {
   ///
   /// `label` is this device's name. Not security — the box shows it on its
   /// panel in place of the phrase, so the owner can see their words landed here.
-  func claimSetup(id: String, phrase: String, label: String, completion: @escaping (String?) -> Void)
-  {
+  ///
+  /// Completes with `(gated, error)`. `gated == false` means the box's firmware
+  /// predates 0x86 and asked for nothing — every released box is in that state,
+  /// so treating it as a failure would make the app unable to set one up.
+  func claimSetup(
+    id: String, phrase: String, label: String, completion: @escaping (Bool, String?) -> Void
+  ) {
     queue.async {
       self.ensureConnected(id: id) { err in
-        if let err { completion(err); return }
+        if let err { completion(true, err); return }
         var done = false
-        let finish: (String?) -> Void = { e in
+        let finish: (Bool, String?) -> Void = { gated, e in
           guard !done else { return }
           done = true
           self.onResult = nil
           self.onImprovError = nil
-          completion(e)
+          completion(gated, e)
         }
-        self.onImprovError = { _ in
+        self.onImprovError = { code in
+          // 0x02 UnknownCommand: older firmware, no gate. Not a refusal.
+          if code == 0x02 {
+            finish(false, nil)
+            return
+          }
           // One message for wrong words AND a spent attempt budget: the box
           // refuses to distinguish them, and neither do we, so a guesser
           // learns nothing from the shape of the refusal.
-          finish("That phrase didn't match. Check the words on your box's screen.")
+          finish(true, "That phrase didn't match. Check the words on your box's screen.")
         }
         self.onResult = { data in
-          if Self.parseResult(data, command: 0x86) != nil { finish(nil) }
+          if Self.parseResult(data, command: 0x86) != nil { finish(true, nil) }
         }
         var payload: [UInt8] = []
         for s in [phrase, label.isEmpty ? UIDevice.current.name : label] {
@@ -188,7 +198,7 @@ final class ImprovClient: NSObject {
         }
         self.write(rpc: Self.buildRPC(command: 0x86, data: payload))
         self.queue.asyncAfter(deadline: .now() + 20) {
-          finish("The box didn't answer — try again.")
+          finish(true, "The box didn't answer — try again.")
         }
       }
     }

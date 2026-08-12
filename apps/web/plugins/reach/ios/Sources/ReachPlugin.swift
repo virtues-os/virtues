@@ -83,11 +83,11 @@ class ReachPlugin: Plugin {
   @objc public func improv_claim(_ invoke: Invoke) throws {
     let args = try invoke.parseArgs(ImprovClaimArgs.self)
     ImprovClient.shared.claimSetup(id: args.id, phrase: args.phrase, label: args.label ?? "") {
-      err in
+      gated, err in
       if let err {
         invoke.resolve(["ok": false, "error": err])
       } else {
-        invoke.resolve(["ok": true])
+        invoke.resolve(["ok": true, "gated": gated])
       }
     }
   }

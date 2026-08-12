@@ -32,7 +32,7 @@ use futures::StreamExt;
 use tokio::sync::Mutex;
 use uuid::Uuid;
 
-use crate::protocol::{self, Command, State};
+use crate::protocol::{self, Command, ImprovError, State};
 
 /// A box heard over the air. `id` is opaque and platform-shaped — the caller
 /// passes it back, never parses it.
@@ -232,7 +232,14 @@ impl ImprovClient {
     /// `label` is this machine's name. It is not security — the box puts it on
     /// its panel in place of the phrase, so the owner sees on the box itself
     /// that their words landed here and not somewhere else.
-    pub async fn claim_setup(&self, id: &str, phrase: &str, label: &str) -> Result<()> {
+    ///
+    /// Returns whether the box actually HAS a gate. A box whose firmware
+    /// predates `0x86` answers `UnknownCommand`, and that is not a failure to
+    /// report — every released box (v0.3.0 and earlier) is in that state, and
+    /// an app that treats it as one cannot set up a single shipped appliance.
+    /// Proceeding there gives up nothing: the gate is enforced on the box, so a
+    /// client cannot conjure protection a box does not implement.
+    pub async fn claim_setup(&self, id: &str, phrase: &str, label: &str) -> Result<bool> {
         let mut inner = self.inner.lock().await;
         let session = Self::ensure_connected(&mut inner, id).await?;
         let mut notifications = session.peripheral.notifications().await.context("notifications")?;
@@ -254,18 +261,25 @@ impl ImprovClient {
         let watch = async {
             while let Some(n) = notifications.next().await {
                 if n.uuid == error_uuid {
-                    if n.value.first().copied().filter(|c| *c != 0).is_some() {
-                        // The box will not say WHETHER the words were wrong or
-                        // the attempt budget is spent, and neither will we —
-                        // one message for both, so a guesser learns nothing.
-                        return Err(anyhow!(
-                            "That phrase didn't match. Check the words on your box's screen."
-                        ));
+                    match n.value.first().copied() {
+                        None | Some(0) => continue,
+                        Some(c) if c == ImprovError::UnknownCommand as u8 => {
+                            // Firmware older than the gate. Not an error.
+                            return Ok(false);
+                        }
+                        Some(_) => {
+                            // The box will not say WHETHER the words were wrong
+                            // or the attempt budget is spent, and neither will
+                            // we — one message for both, so a guesser learns
+                            // nothing.
+                            return Err(anyhow!(
+                                "That phrase didn't match. Check the words on your box's screen."
+                            ));
+                        }
                     }
-                    continue;
                 }
                 if protocol::parse_result(&n.value, 0x86).is_some() {
-                    return Ok(());
+                    return Ok(true);
                 }
             }
             Err(anyhow!("the box stopped answering"))

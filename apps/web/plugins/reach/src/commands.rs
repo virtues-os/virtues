@@ -268,8 +268,11 @@ pub(crate) async fn improv_claim<R: Runtime>(
   #[cfg(not(any(target_os = "ios", target_os = "android")))]
   {
     let _ = &app;
+    // `gated: false` — the box is older than the phrase gate and asked for
+    // nothing. The UI skips the "save these words" step, because on that box
+    // there are no words to save.
     return Ok(match desktop::client().claim_setup(&id, &phrase, &label).await {
-      Ok(()) => serde_json::json!({ "ok": true }),
+      Ok(gated) => serde_json::json!({ "ok": true, "gated": gated }),
       Err(e) => serde_json::json!({ "ok": false, "error": format!("{e:#}") }),
     });
   }
