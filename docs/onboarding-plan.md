@@ -104,7 +104,9 @@ already inside.
 **3.2 Email, then panel** (proof 2). From a fresh app: enter the account email →
 atlas sends a code → clicking it marks a recovery pending → the box learns by
 polling → the panel shows a join code for a few minutes → type it. Ownership
-first, presence second. **No physical trigger** — an earlier draft used three
+first, presence second. **Ride the existing atlas heartbeat** (key renewal,
+relay reconcile) rather than adding a poll: recovery-pending is a field in a
+response the box already fetches. **No physical trigger** — an earlier draft used three
 power cycles to open the window, which a houseguest could perform themselves and
 which forced recovery to *begin* at the box. This ordering is strictly better
 and deletes the mechanism.
@@ -126,6 +128,27 @@ Defer the collectors screen; ask for a permission when a feature needs it, not
 six times before the product has shown anything. `virtues.com/link` → redirect
 to atlas. Store entitlement pre-provisioning, so a store buyer never sees a
 payment screen.
+
+## Ship-blockers outside the flow
+
+None of this is onboarding design; all of it stops a real owner cold.
+
+**The published apps predate everything here.** The App Store build and the
+`mac-latest` DMG are from before the unified airlock, the desktop BLE client,
+and the three-step display. Step 1 of the flow — "get the app" — currently hands
+someone software that cannot perform steps 2 and 3. The ~95-commit `wave` →
+`staging` backlog is the actual blocker, and it grows daily.
+
+**The downloads page offers four Mac DMGs** (`mac-latest`, `1.0.17`, `1.0.20`,
+`v0.1.0`). One link, current, or people install a random one.
+
+**Atlas has no reviewable source of truth.** The deployed `/init` is ahead of
+the repo checkout, which contains no `/init` at all — so its identity fork, its
+2-minute TTL, and its error copy cannot be read, reviewed, or fixed from git.
+Every atlas item in Phase 2 is blocked on this.
+
+**The ambient display is a placeholder.** "Your box is keeping the record" is
+the screen an owner sees ten thousand times.
 
 ## Failure modes and degradation
 
