@@ -40,14 +40,24 @@ historically had no way to speak to the thing being set up.
 It does now. BLE (Improv, incl. our vendor RPCs) is a proven, proximate,
 box-to-client channel.
 
-> **The app is the courier. Codes are the fallback.**
+> **The app is the courier. For setup there are no codes at all.**
 
-- App present, Bluetooth available → **zero codes**. The app carries the
-  account grant to the box (`0x82`), carries the pairing back (`0x83`), and
-  opens the browser at a URL the box handed it — nothing is ever retyped.
-- No app, no Bluetooth, a desktop-only household, or recovery → **the panel
-  shows codes**, exactly as it does today. This path is not deprecated; it is
-  the floor, and it must keep working.
+Setup happens in one Bluetooth conversation (§2b), so nothing is ever read off
+the panel and retyped. **The app is therefore mandatory for setting a box up**,
+and that is a deliberate trade, not an oversight:
+
+- Android has no Improv client, so an Android-only household cannot set up an
+  appliance until one exists.
+- A machine with Bluetooth disabled by policy has no path either.
+- DIY boxes are unaffected — they have a terminal, which is a better interface
+  than any of this.
+
+The alternative was keeping a parallel code path on the panel forever: a second
+flow to build, test, and explain, taken by almost nobody, and rotting quietly
+because nobody uses it. One good path beats two, one of which is a fiction.
+
+Codes still exist for **joining an already-claimed box** (§3–§5) — a different
+tier, with different stakes, where the panel's job is real.
 
 A corollary that settles a recurring argument: **the app must never instruct
 someone to go read something it could have fetched itself.** If a screen says
@@ -63,8 +73,8 @@ An app that has just walked a box onto a network is not merely *nearby*. It
 **configured** the box, over a connection that is still open. That is a fact the
 box can check, and it is much harder to forge than radio range.
 
-> **The first session to complete a wifi join becomes THE SETUP SESSION.**
-> Only that live connection may link and pair without codes.
+> **A setup session is claimed explicitly, and only one may be live.**
+> Only that connection may link and pair without codes.
 
 Three properties make it work:
 
@@ -74,9 +84,15 @@ Three properties make it work:
 - **It survives the network change.** Bluetooth is a separate radio from wifi,
   which is precisely why provisioning rides it. The conversation continues
   through the switchover that used to end it.
-- **Beating it is loud.** An attacker cannot simply be in range; they must win
-  the wifi step, and then the owner's own setup visibly fails in front of them.
-  Contrast a stolen code, which fails silently and later.
+- **A wifi join strengthens it, and beating that is loud.** Where the app also
+  puts the box on a network, an attacker cannot merely be in range — they must
+  win the wifi step, and the owner's own setup then visibly fails in front of
+  them. Contrast a stolen code, which fails silently and later.
+
+**Ethernet gets the weaker version, honestly.** A box that is already online has
+no join to complete, so its anchor is only "first live connection wins". What
+carries it there is the panel narrating the session and factory reset existing —
+not a cryptographic claim. Say so rather than pretending the two cases are equal.
 
 **So all three steps become one conversation** — wifi, account grant (`0x82`),
 pairing — and therefore one screen:
@@ -213,7 +229,7 @@ quietly add an escrow that would make the promise untrue.
 
 | Surface | Job | Never |
 |---|---|---|
-| **Box display** | instruct when the owner has nothing else; confirm progress otherwise; show codes during a presence window | be the source of a fact the app could fetch |
+| **Box display** | ONE setup screen ("Get the Virtues app"), then narrate the live session, then ambient; show a join code only during a recovery window | carry a setup code, or count steps |
 | **App** | the wizard *and* the authenticator: holds the account session, couriers grants | send the user to another surface to read something |
 | **Browser** | money and identity, one email field | anything else |
 | **Email** | prove account control when no payment does | routine steps |
@@ -236,8 +252,13 @@ The flow is not designed separately; it is a consequence of the above.
 One Bluetooth session carries the wifi credentials, the account grant, and the
 pairing (§2b). Nothing is read off a screen or typed anywhere.
 
-**Without the app, or without Bluetooth:** the panel's three screens, exactly as
-built today — get the app, link (code + QR), pair (code). The floor.
+**Ethernet does not skip a step.** A wired box is online at first boot, but the
+app is still how it is linked and paired — the wifi picker simply offers
+"already on ethernet" instead of a network. Wiring the box removes a password,
+not a stage.
+
+**Without the app, or without Bluetooth:** there is no setup path. See §2 —
+this is a deliberate trade, and Android is the case it costs.
 
 **DIY / headless:** `virtues init` at a terminal, which asks the same identity
 question the web does ([1] log in / [2] create new). A different person on a

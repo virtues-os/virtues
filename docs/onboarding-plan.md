@@ -62,7 +62,8 @@ before the box is ever touched, and only for people who owe it.
 **1.6 `0x84 PairDirect`, bound to the setup session.** See below.
 
 **1.7 The app: one screen.** Sign-in, then the single setup screen with three
-ticks as they land (joined / linked / paired). Auto-select when exactly one box
+ticks as they land (joined / linked / paired). The Wi-Fi picker offers "already
+on ethernet" as an option — wiring the box removes a password, not a stage. Auto-select when exactly one box
 needs setup; prefill the network this machine is on; neutral headline until
 discovery decides — "Looking for your box", not "Set up your box", which alarms
 someone who has owned a box for months and is only installing the Mac app.
@@ -73,20 +74,25 @@ lost race is visible while it happens rather than discovered later.
 **1.9 Confirm before replacing a pairing.** Single-box clients are a sound
 design; silent replacement is not. Two pairings have already been lost this way.
 
-### `0x85 GetLinkUrl` — probably unnecessary now
+### `0x85 GetLinkUrl` — cut
 
 Handing the app the box's `…/init?code=…` so a browser opens prefilled. It was
-the cheap way to fix a three-surface link step. With sign-in and the grant
-(1.4), **no link URL is ever opened**, so this only earns its place if the
-browser path outlives sign-in — for instance an ethernet box whose owner has no
-Bluetooth. Decide after 1.4, not before.
+the cheap fix for a three-surface link step that no longer exists: with sign-in
+and the grant (1.4), no link URL is ever opened during setup. Dropped.
 
-## Phase 2 — the fallback path, kept good
+### The display loses its step counter
 
-Phase 1 removes the browser for anyone with the app and Bluetooth. Everyone else
-— an ethernet box, a machine with Bluetooth disabled by policy, Android, someone
-completing setup on a desktop across the room — still walks the code path, and
-it must not rot.
+One setup screen — "Get the Virtues app" — then the live session narration, then
+ambient. No 1/2/3, no link code, no pair code. The panel shows a code again only
+for a *recovery* window (Phase 3), which is a different tier with different
+stakes.
+
+## Phase 2 — the account path, for people not setting up a box
+
+Phase 1 removes the browser from setup entirely. What remains on the web is the
+account itself: someone who bought hardware and a subscription together, someone
+changing a card, someone who wants to sign in from a desktop. The `/init` page
+survives for that, not as a setup fallback.
 
 **2.1 Atlas `/init` earns its fork.** One email field. Render the box identity
 the box already sends, so the page says *"Link **Honest Kestrel** · Dragon
