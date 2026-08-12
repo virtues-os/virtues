@@ -81,6 +81,16 @@ pub struct DisplayState {
     /// device-authorization code for linking, shown as text beside the QR.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub link_code: Option<String>,
+    /// The box's setup phrase — four words, the one secret that proves
+    /// ownership (`api::setup_phrase`). Shown on the panel ONLY while the box
+    /// is unclaimed, where it rotates; `None` forever once frozen at first
+    /// claim. That asymmetry is the whole security argument, so this field
+    /// going quiet is the feature, not a fault.
+    ///
+    /// Loopback-only like everything else here, and for the same reason: a
+    /// stranger on the wifi who cannot see the screen must not learn it.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub setup_phrase: Option<String>,
 }
 
 pub async fn display_state_handler(
@@ -139,6 +149,21 @@ pub async fn display_state_handler(
         None
     };
 
+    // Unclaimed only — `display_phrase` returns None once frozen, but skipping
+    // the query entirely on a claimed box keeps the ambient screen off the
+    // encryptor and the DB.
+    let setup_phrase = if devices == 0 {
+        match crate::api::setup_phrase::display_phrase(pool).await {
+            Ok(p) => p,
+            Err(e) => {
+                tracing::warn!(error = %e, "display: could not read the setup phrase");
+                None
+            }
+        }
+    } else {
+        None
+    };
+
     let ap_ssid = current_ap_ssid();
     (
         StatusCode::OK,
@@ -156,6 +181,7 @@ pub async fn display_state_handler(
             box_name: crate::codename::pretty(&crate::codename::box_codename()),
             linked,
             link_code,
+            setup_phrase,
         }),
     )
         .into_response()

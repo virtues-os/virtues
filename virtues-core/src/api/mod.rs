@@ -51,6 +51,7 @@ pub mod search_local;
 pub mod places;
 pub mod profile;
 pub mod identity;
+pub mod setup_phrase;
 pub mod network;
 pub mod portal;
 pub mod provision;
