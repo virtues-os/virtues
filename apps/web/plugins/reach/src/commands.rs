@@ -207,6 +207,41 @@ pub(crate) async fn improv_discover<R: Runtime>(
   }
 }
 
+/// Claim the setup session with the box's four-word phrase (Improv RPC 0x86).
+///
+/// Must succeed before wifi, the account grant, or pairing: an unclaimed box
+/// advertises to everyone in radio range, and radio range passes through walls.
+/// The phrase is on the box's own panel, so having it proves line of sight.
+#[command]
+pub(crate) async fn improv_claim<R: Runtime>(
+  app: AppHandle<R>,
+  id: String,
+  phrase: String,
+) -> Result<serde_json::Value> {
+  #[cfg(target_os = "ios")]
+  {
+    use tauri::Manager;
+    let handle = app.state::<crate::IosPluginHandle<R>>();
+    return handle
+      .0
+      .run_mobile_plugin("improv_claim", serde_json::json!({ "id": id, "phrase": phrase }))
+      .map_err(|e| crate::Error::Reach(e.to_string()));
+  }
+  #[cfg(not(any(target_os = "ios", target_os = "android")))]
+  {
+    let _ = &app;
+    return Ok(match desktop::client().claim_setup(&id, &phrase).await {
+      Ok(()) => serde_json::json!({ "ok": true }),
+      Err(e) => serde_json::json!({ "ok": false, "error": format!("{e:#}") }),
+    });
+  }
+  #[cfg(target_os = "android")]
+  {
+    let _ = (app, id, phrase);
+    Err(crate::Error::Reach("Bluetooth setup isn't available on Android yet".into()))
+  }
+}
+
 /// Ask THAT BOX what wifi it can see, over BLE (Improv RPC 0x04).
 #[command]
 pub(crate) async fn improv_wifi_scan<R: Runtime>(
