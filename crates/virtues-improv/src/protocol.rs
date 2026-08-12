@@ -288,6 +288,11 @@ pub fn build_rpc(cmd: &Command) -> Vec<u8> {
         Command::PairConsume { code, kind, source, label, endpoint_id } => {
             pack_strings(&[code, kind, source, label, endpoint_id])
         }
+        // An EMPTY label sends one string, not two. A box built before the
+        // label existed parses 0x86 strictly — trailing bytes are a malformed
+        // packet — so the one-string form is the shape every version accepts,
+        // and it is what the client falls back to.
+        Command::ClaimSetup { phrase, label } if label.is_empty() => pack_strings(&[phrase]),
         Command::ClaimSetup { phrase, label } => pack_strings(&[phrase, label]),
     };
     frame(cmd.id(), data)
@@ -485,6 +490,21 @@ mod tests {
         // An empty phrase must never reach the verifier — it would spend an
         // attempt from the box's global budget for nothing.
         assert_eq!(parse_rpc(&raw(0x86, &[0u8])), Err(ImprovError::InvalidPacket));
+    }
+
+    #[test]
+    fn an_empty_label_builds_the_one_string_form() {
+        // THE regression this cost us a hardware session for. A box built
+        // before the label existed rejects trailing bytes as a malformed
+        // packet, so an empty label must send ONE string — that is the shape
+        // the client retries with, and if this ever sends two again, every
+        // older box becomes unsetuppable while reporting "wrong phrase".
+        let wire = build_rpc(&Command::ClaimSetup { phrase: "word".into(), label: String::new() });
+        assert_eq!(wire[1] as usize, 5, "data section should be just [len, w,o,r,d]");
+        assert_eq!(
+            parse_rpc(&wire),
+            Ok(Command::ClaimSetup { phrase: "word".into(), label: String::new() })
+        );
     }
 
     #[test]
