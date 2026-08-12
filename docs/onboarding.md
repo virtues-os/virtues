@@ -1,5 +1,10 @@
 # Onboarding & Setup
 
+> **The settled model is [onboarding-paradigm.md](onboarding-paradigm.md)** —
+> three relationships, codes as a fallback for a missing channel, two tiers of
+> device trust, and recovery as an ordinary join. Read it first; this document
+> is what is *built*, and where the two disagree the paradigm is the intent.
+
 > Canonical spec for how a human goes from "box in hand" to "Virtues running
 > and earning its keep" — across both hardware tiers, with and without a
 > screen. Decided 2026-06-12; supersedes the TTY-wizard model of `virtues init`.
