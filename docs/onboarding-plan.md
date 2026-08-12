@@ -129,26 +129,26 @@ six times before the product has shown anything. `virtues.com/link` → redirect
 to atlas. Store entitlement pre-provisioning, so a store buyer never sees a
 payment screen.
 
-## Ship-blockers outside the flow
+## Distribution
 
-None of this is onboarding design; all of it stops a real owner cold.
+No users yet, so nothing here is about breakage or migration — only about what a
+new owner is handed.
 
-**The published apps predate everything here.** The App Store build and the
-`mac-latest` DMG are from before the unified airlock, the desktop BLE client,
-and the three-step display. Step 1 of the flow — "get the app" — currently hands
-someone software that cannot perform steps 2 and 3. The ~95-commit `wave` →
-`staging` backlog is the actual blocker, and it grows daily.
-
-**The downloads page offers four Mac DMGs** (`mac-latest`, `1.0.17`, `1.0.20`,
-`v0.1.0`). One link, current, or people install a random one.
+**`virtues.com/downloads` needs one link per platform.** It listed four Mac DMGs
+(`mac-latest`, `1.0.17`, `1.0.20`, `v0.1.0`), which is how someone installs a
+build from before any of this existed. One current Mac link, one App Store link.
+The stale point releases and old staging prereleases were deleted on 2026-08-12;
+what remains is the rolling channels (`mac-edge`, `mac-latest`, `win-edge`,
+`linux-desktop-edge`, `edge`), the stable box tags, and `models-1`.
 
 **Atlas has no reviewable source of truth.** The deployed `/init` is ahead of
 the repo checkout, which contains no `/init` at all — so its identity fork, its
 2-minute TTL, and its error copy cannot be read, reviewed, or fixed from git.
 Every atlas item in Phase 2 is blocked on this.
 
-**The ambient display is a placeholder.** "Your box is keeping the record" is
-the screen an owner sees ten thousand times.
+**Ship the backlog.** ~95 commits sit on `wave`; the published apps predate the
+unified airlock, the desktop BLE client, and the three-step display. Not urgent
+without users, but the gap only grows.
 
 ## Failure modes and degradation
 
