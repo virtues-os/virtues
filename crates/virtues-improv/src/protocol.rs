@@ -122,7 +122,7 @@ pub enum Command {
     /// and the reconciler stops the whole BLE service. Later devices pair
     /// over LAN or relay, which exist by then.
     PairConsume { code: String, kind: String, source: String, label: String, endpoint_id: String },
-    /// `0x86` — OUR extension: claim the setup session. `[phrase]`.
+    /// `0x86` — OUR extension: claim the setup session. `[phrase, label]`.
     ///
     /// The gate in front of everything else. A box advertises Improv while
     /// unclaimed, so without this any client in radio range could configure it —
@@ -134,7 +134,14 @@ pub enum Command {
     /// session may then join wifi, take an account grant, or pair. Drop the
     /// link and the session dies with it. See
     /// `docs/onboarding-paradigm.md` §1 and §5.
-    ClaimSetup { phrase: String },
+    ///
+    /// `label` is the claiming device's own name ("Adam's Mac"), and it is not
+    /// security — it is what the box's panel says while setup is running. The
+    /// phrase leaves the glass the moment it is accepted, and this replaces it,
+    /// so the owner gets confirmation *on the box* that what they typed landed,
+    /// and a race they did not start reads as a name they do not recognise.
+    /// May be empty; the panel then says only that a device is setting up.
+    ClaimSetup { phrase: String, label: String },
 }
 
 impl Command {
@@ -216,10 +223,14 @@ pub fn parse_rpc(packet: &[u8]) -> Result<Command, ImprovError> {
         }
         0x86 => {
             let (phrase, rest) = take_string(data).ok_or(ImprovError::InvalidPacket)?;
+            // The label is optional on the wire: it is cosmetic, and a client
+            // that omits it should still be able to claim rather than be told
+            // its packet is malformed.
+            let (label, rest) = take_string(rest).unwrap_or((String::new(), rest));
             if phrase.is_empty() || !rest.is_empty() {
                 return Err(ImprovError::InvalidPacket);
             }
-            Ok(Command::ClaimSetup { phrase })
+            Ok(Command::ClaimSetup { phrase, label })
         }
         _ => Err(ImprovError::UnknownCommand),
     }
@@ -277,7 +288,7 @@ pub fn build_rpc(cmd: &Command) -> Vec<u8> {
         Command::PairConsume { code, kind, source, label, endpoint_id } => {
             pack_strings(&[code, kind, source, label, endpoint_id])
         }
-        Command::ClaimSetup { phrase } => pack_strings(&[phrase]),
+        Command::ClaimSetup { phrase, label } => pack_strings(&[phrase, label]),
     };
     frame(cmd.id(), data)
 }
@@ -477,6 +488,18 @@ mod tests {
     }
 
     #[test]
+    fn claim_setup_accepts_a_phrase_with_no_label() {
+        // The label only feeds the panel's "setting up with…" line. A client
+        // that sends none must still get in.
+        let mut data = vec![4u8];
+        data.extend_from_slice(b"word");
+        assert_eq!(
+            parse_rpc(&raw(0x86, &data)),
+            Ok(Command::ClaimSetup { phrase: "word".into(), label: String::new() })
+        );
+    }
+
+    #[test]
     fn unknown_commands_are_distinguished_from_garbage() {
         // A well-formed packet with a command we don't know must say so —
         // clients treat InvalidPacket as "retry" and UnknownCommand as "don't".
@@ -514,7 +537,10 @@ mod tests {
                 label: "Adam's Mac".into(),
                 endpoint_id: "beef".into(),
             },
-            Command::ClaimSetup { phrase: "mango-burly-skull-dough".into() },
+            Command::ClaimSetup {
+                phrase: "mango-burly-skull-dough".into(),
+                label: "Adam's Mac".into(),
+            },
         ] {
             let wire = build_rpc(&cmd);
             assert_eq!(parse_rpc(&wire), Ok(cmd.clone()), "round trip failed for {cmd:?}");

@@ -262,13 +262,6 @@ pub async fn run(client: Virtues, host: &str, port: u16) -> Result<()> {
             "/api/display/qr",
             get(crate::api::display::display_qr_handler),
         )
-        // Where to get the app. Shown only on the display's second setup
-        // screen, once the box is online — before that the owner's phone is on
-        // a setup network with no uplink and cannot follow a download link.
-        .route(
-            "/api/display/app-qr",
-            get(crate::api::display::display_app_qr_handler),
-        )
         // Setup screen 2's account-link QR (device authorization). Box-local;
         // must render the SAME session whose code the state endpoint shows.
         .route(

@@ -451,6 +451,12 @@ mod server {
             improv.lock().await.set_error(ImprovError::NotAuthorized).await;
             return;
         }
+        if needs_session {
+            // Authorized work is happening: keep the panel's "setting up with…"
+            // line alive. Empty label — the name came with the claim and is
+            // held there; see `setup_phrase::note_session`.
+            crate::api::setup_phrase::note_session("");
+        }
 
         match cmd {
             Command::WifiSettings { ssid, password } => {
@@ -566,14 +572,19 @@ mod server {
                     g.send_result(build_result(0x83, &[])).await;
                 });
             }
-            Command::ClaimSetup { phrase } => {
+            Command::ClaimSetup { phrase, label } => {
                 let improv = improv.clone();
                 tokio::spawn(async move {
                     if crate::api::setup_phrase::verify(&pool, &phrase).await {
                         let mut g = improv.lock().await;
                         g.claim_session(&peer);
+                        // The words are spent, so they leave the panel and this
+                        // name takes their place — confirmation ON THE BOX that
+                        // what the owner typed landed here, and a race they did
+                        // not start showing up as a name they don't know.
+                        crate::api::setup_phrase::note_session(&label);
                         g.send_result(build_result(0x86, &["ok"])).await;
-                        tracing::info!("ble_provision: setup session claimed");
+                        tracing::info!(device = %label, "ble_provision: setup session claimed");
                     } else {
                         // Deliberately says nothing about WHY: wrong words and a
                         // spent attempt budget look identical from outside, so a

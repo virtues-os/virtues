@@ -207,6 +207,40 @@ pub(crate) async fn improv_discover<R: Runtime>(
   }
 }
 
+/// This machine's name, for the box's panel — "Adam's Mac", not a hostname if
+/// we can help it.
+///
+/// It travels with the setup claim and REPLACES the phrase on the box's screen,
+/// so it is read by someone standing at the box deciding whether the session
+/// that just started is theirs. That makes a recognisable name worth a
+/// subprocess; `scutil` gives the name the owner chose in System Settings,
+/// while `hostname` gives its mangled DNS form.
+fn this_device_label() -> String {
+  // Mobile sandboxes forbid spawning anything, and setup is a desktop job now
+  // — the phone joins later as a second device, by which point the box has a
+  // name for it from pairing.
+  if cfg!(mobile) {
+    return String::new();
+  }
+  #[cfg(target_os = "macos")]
+  {
+    if let Ok(out) = std::process::Command::new("scutil").args(["--get", "ComputerName"]).output() {
+      let name = String::from_utf8_lossy(&out.stdout).trim().to_string();
+      if !name.is_empty() {
+        return name;
+      }
+    }
+  }
+  if let Ok(out) = std::process::Command::new("hostname").output() {
+    let name = String::from_utf8_lossy(&out.stdout).trim().trim_end_matches(".local").to_string();
+    if !name.is_empty() {
+      return name;
+    }
+  }
+  // The panel copes with an empty label — it just says a device is setting up.
+  String::new()
+}
+
 /// Claim the setup session with the box's four-word phrase (Improv RPC 0x86).
 ///
 /// Must succeed before wifi, the account grant, or pairing: an unclaimed box
@@ -218,26 +252,30 @@ pub(crate) async fn improv_claim<R: Runtime>(
   id: String,
   phrase: String,
 ) -> Result<serde_json::Value> {
+  let label = this_device_label();
   #[cfg(target_os = "ios")]
   {
     use tauri::Manager;
     let handle = app.state::<crate::IosPluginHandle<R>>();
     return handle
       .0
-      .run_mobile_plugin("improv_claim", serde_json::json!({ "id": id, "phrase": phrase }))
+      .run_mobile_plugin(
+        "improv_claim",
+        serde_json::json!({ "id": id, "phrase": phrase, "label": label }),
+      )
       .map_err(|e| crate::Error::Reach(e.to_string()));
   }
   #[cfg(not(any(target_os = "ios", target_os = "android")))]
   {
     let _ = &app;
-    return Ok(match desktop::client().claim_setup(&id, &phrase).await {
+    return Ok(match desktop::client().claim_setup(&id, &phrase, &label).await {
       Ok(()) => serde_json::json!({ "ok": true }),
       Err(e) => serde_json::json!({ "ok": false, "error": format!("{e:#}") }),
     });
   }
   #[cfg(target_os = "android")]
   {
-    let _ = (app, id, phrase);
+    let _ = (app, id, phrase, label);
     Err(crate::Error::Reach("Bluetooth setup isn't available on Android yet".into()))
   }
 }
