@@ -49,15 +49,36 @@ const ATTEMPT_WINDOW_MIN: i64 = 15;
 
 // ─── phrase generation + normalization ──────────────────────────────────────
 
+/// Longest word a phrase may use.
+///
+/// This is a TYPOGRAPHIC constraint with a real cost behind it. The panel is
+/// 585 CSS px wide and the phrase is read across a room while typing on another
+/// machine; at the size that makes it legible, about 36 characters fit on one
+/// line. A phrase that wraps loses its shape and you lose your place mid-word.
+/// Four 7-character words plus hyphens is 31 — worst case, always one line.
+///
+/// It costs 50 of 400 words, taking the space from 2^34.6 to 2^33.8. Against
+/// the only attack that exists here — a *throttled* online guess at 10 tries
+/// per 15 minutes, on a secret that is never transmitted and never stored in
+/// the clear — that difference is not measurable.
+const MAX_WORD_LEN: usize = 7;
+
 /// The wordlist: the codename adjectives and animals, reused deliberately.
-/// They are already chosen to be short, common, and unambiguous when read aloud
-/// off a screen — which is exactly this job.
+/// They are already chosen to be common and unambiguous when read aloud off a
+/// screen — which is exactly this job. Filtered to what fits the panel.
+///
+/// Generation only. Verification hashes whatever it is given, so narrowing this
+/// never invalidates a phrase somebody already saved.
 fn wordlist() -> impl Iterator<Item = &'static str> {
-    ADJECTIVES.iter().copied().chain(ANIMALS.iter().copied())
+    ADJECTIVES
+        .iter()
+        .copied()
+        .chain(ANIMALS.iter().copied())
+        .filter(|w| w.len() <= MAX_WORD_LEN)
 }
 
 fn word_count() -> usize {
-    ADJECTIVES.len() + ANIMALS.len()
+    wordlist().count()
 }
 
 /// Generate a fresh phrase, e.g. `mango-burly-skull-dough`.
@@ -127,6 +148,53 @@ fn clear_attempts() {
     if let Ok(mut a) = ATTEMPTS.lock() {
         a.clear();
     }
+}
+
+// ─── the live session, for the panel ────────────────────────────────────────
+
+/// How long after the last command from a claimed setup session the panel keeps
+/// saying "setting up".
+///
+/// **Much shorter than the BLE session's own 10-minute idle timeout, on
+/// purpose.** These answer different questions. The BLE timeout asks "may this
+/// peer still configure the box?", and being generous there costs nothing —
+/// it is bound to one authorized connection. This one asks "is someone at the
+/// keyboard right now?", and being generous *does* cost: while it holds, the
+/// phrase is off the glass, so an owner whose app crashed mid-setup would stand
+/// in front of a box that will not tell them how to start again. Ninety seconds
+/// of quiet and the panel goes back to the words.
+const PANEL_SESSION_SECS: u64 = 90;
+
+/// `(device label, last command)`. In memory: it describes *now*, and a restart
+/// has already dropped the BLE link it mirrors.
+static PANEL_SESSION: std::sync::Mutex<Option<(String, std::time::Instant)>> =
+    std::sync::Mutex::new(None);
+
+/// Note that an authorized setup command just arrived, and from whom.
+///
+/// A MIRROR of the BLE layer's session, not a second source of truth: the
+/// authorization decision stays in `ble_provision`, which owns the peer address
+/// this is nowhere near. All this does is drive one line of pixels.
+pub fn note_session(label: &str) {
+    if let Ok(mut g) = PANEL_SESSION.lock() {
+        let label = label.trim();
+        let keep = match g.take() {
+            // An empty label refreshing an existing session keeps the name we
+            // already have — only the claim carries one, and every command
+            // after it would otherwise blank the panel mid-setup.
+            Some((prev, _)) if label.is_empty() => prev,
+            _ => label.to_string(),
+        };
+        *g = Some((keep, std::time::Instant::now()));
+    }
+}
+
+/// The live setup session for the panel, if there is one: `Some(label)`, where
+/// the label may be empty when the client did not send one.
+pub fn session() -> Option<String> {
+    let g = PANEL_SESSION.lock().ok()?;
+    let (label, at) = g.as_ref()?;
+    (at.elapsed() < std::time::Duration::from_secs(PANEL_SESSION_SECS)).then(|| label.clone())
 }
 
 // ─── storage ────────────────────────────────────────────────────────────────
@@ -340,6 +408,24 @@ mod tests {
         let n = word_count() as f64;
         let bits = (n.powi(WORDS as i32)).log2();
         assert!(bits > 30.0, "phrase entropy too low: {bits:.1} bits from {n} words");
+    }
+
+    #[test]
+    fn every_phrase_fits_the_panel_on_one_line() {
+        // The panel is 585 CSS px and the phrase is read across a room while
+        // being typed on another machine; at the size that makes it legible,
+        // about 36 characters fit. A phrase that wraps loses its shape. The
+        // display sets `white-space: nowrap` on the strength of this test —
+        // see the panel's comment on `.phrase`.
+        const LIMIT: usize = 36;
+        let worst = WORDS * MAX_WORD_LEN + (WORDS - 1);
+        assert!(worst <= LIMIT, "the longest possible phrase is {worst} chars, over {LIMIT}");
+        for w in wordlist() {
+            assert!(w.len() <= MAX_WORD_LEN, "{w} is longer than the panel allows");
+        }
+        for _ in 0..500 {
+            assert!(generate().len() <= worst);
+        }
     }
 
     #[test]

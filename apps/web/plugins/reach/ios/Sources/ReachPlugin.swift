@@ -50,6 +50,8 @@ class ImprovTargetArgs: Decodable {
 class ImprovClaimArgs: Decodable {
   let id: String
   let phrase: String
+  /// This device's name, for the box's panel. Cosmetic, and optional.
+  let label: String?
 }
 
 class ImprovProvisionArgs: Decodable {
@@ -80,7 +82,8 @@ class ReachPlugin: Plugin {
 
   @objc public func improv_claim(_ invoke: Invoke) throws {
     let args = try invoke.parseArgs(ImprovClaimArgs.self)
-    ImprovClient.shared.claimSetup(id: args.id, phrase: args.phrase) { err in
+    ImprovClient.shared.claimSetup(id: args.id, phrase: args.phrase, label: args.label ?? "") {
+      err in
       if let err {
         invoke.resolve(["ok": false, "error": err])
       } else {

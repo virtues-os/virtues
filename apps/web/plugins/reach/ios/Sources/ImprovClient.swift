@@ -22,6 +22,7 @@
 
 import CoreBluetooth
 import Foundation
+import UIKit
 
 final class ImprovClient: NSObject {
   static let shared = ImprovClient()
@@ -154,7 +155,11 @@ final class ImprovClient: NSObject {
   /// advertises to everyone in radio range, and radio range passes through
   /// walls. The phrase is printed on the box's own panel, so having it proves
   /// line of sight, which is the bar we actually want.
-  func claimSetup(id: String, phrase: String, completion: @escaping (String?) -> Void) {
+  ///
+  /// `label` is this device's name. Not security — the box shows it on its
+  /// panel in place of the phrase, so the owner can see their words landed here.
+  func claimSetup(id: String, phrase: String, label: String, completion: @escaping (String?) -> Void)
+  {
     queue.async {
       self.ensureConnected(id: id) { err in
         if let err { completion(err); return }
@@ -176,9 +181,11 @@ final class ImprovClient: NSObject {
           if Self.parseResult(data, command: 0x86) != nil { finish(nil) }
         }
         var payload: [UInt8] = []
-        let bytes = Array(phrase.utf8).prefix(255)
-        payload.append(UInt8(bytes.count))
-        payload.append(contentsOf: bytes)
+        for s in [phrase, label.isEmpty ? UIDevice.current.name : label] {
+          let bytes = Array(s.utf8).prefix(255)
+          payload.append(UInt8(bytes.count))
+          payload.append(contentsOf: bytes)
+        }
         self.write(rpc: Self.buildRPC(command: 0x86, data: payload))
         self.queue.asyncAfter(deadline: .now() + 20) {
           finish("The box didn't answer — try again.")

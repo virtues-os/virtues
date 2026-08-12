@@ -43,11 +43,41 @@ defend if any of this is revisited.
 **Panel — one screen, no steps, no counter:**
 
 ```
-    Get the Virtues app
-    virtues.com/downloads
+    ∴ Honest Kestrel
+
+    Get Virtues for Mac
+    virtues.com/downloads — then type these words.
 
     mango-burly-skull-dough
 ```
+
+The name is a lockup in the corner, not the heading: a box announcing itself is
+odd, and the heading's job is what the *person* does. Its real job is the
+identity you check against the app before typing a secret into it.
+
+**Mac, not "the app".** Setup is a desktop job — it wants the keyboard that
+802.1X credentials and a four-word phrase want. A phone joins later as a second
+device. There is no QR: it pointed a phone at the download page, so scanning it
+would hand setup to the wrong machine.
+
+The phrase must fit **one line**. It is read across a room while being typed on
+another machine, and a phrase that wraps loses its shape. That is why the
+wordlist is capped at seven-letter words (`setup_phrase::MAX_WORD_LEN`) — 50 of
+400 words, 2^34.6 → 2^33.8, unmeasurable against a throttled online guess.
+
+Two more panel states follow from the same rules:
+
+- **Session live** — the moment the phrase is accepted it leaves the glass, and
+  `Setting up · with Adam's Mac` takes its place. The words are spent, so nobody
+  who wanders past can read them; and the owner sees on the box itself that what
+  they typed landed *here*. It reverts to the phrase after 90 seconds of quiet,
+  so a setup that dies halfway does not strand someone in front of a box that
+  will not say how to start over.
+- **Reset, not virgin** — a reset box still holds a life, so its phrase stays
+  frozen and off the screen. The panel asks for *the words you saved*, and says
+  **"your record is still here"** — the sentence that stops someone assuming the
+  reset wiped them. Without this state the virgin layout renders with a blank
+  where the words go, which reads as a fault at the worst possible moment.
 
 **Then, in the app:**
 

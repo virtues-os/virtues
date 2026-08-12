@@ -6,7 +6,7 @@
   the only interface a Dragon owner has before any device is paired.
 
   It lives in (public) because it draws before a session exists. The secret it
-  shows — the standing pair code — is protected at the API, not here:
+  shows — the setup phrase — is protected at the API, not here:
   /api/display/state refuses anything that isn't loopback, and this page only
   ever runs on the box itself.
 
@@ -16,22 +16,25 @@
     53x30cm (~24") when it is physically 15.5x8.7cm, so the kiosk pins
     devicePixelRatio to 3.28 and the usable layout is roughly a phone in
     landscape. One idea per screen; there is no room for a second.
-  * It is a LANDSCAPE STRIP. Vertically stacked, centred content leaves most of
-    the frame dead — the full-bleed split is what fills it.
   * Display-only. The digitizer doesn't work through the cover glass, so
-    nothing here is interactive, and the pair code in particular must carry no
+    nothing here is interactive, and the phrase in particular must carry no
     affordance that invites a tap.
-  * It runs 24/7 in someone's home: dark, no spinners, no animation loops.
+  * It runs 24/7 in someone's home: dark, no spinners, no animation loops. The
+    one exception is the breathing pip on a live setup session, which is the
+    smallest thing that reads as "now" without becoming a spinner.
 
-  TWO STATES, and that is the whole design:
+  FOUR STATES:
 
-    1. unclaimed → GET THE APP, and the four words that let it in.
-    2. claimed   → ambient.
+    1. unclaimed, virgin  → get the Mac app, and the four words that let it in
+    2. unclaimed, frozen  → reset box: the words are the ones you saved
+    3. session live       → the words are spent; who is setting up, instead
+    4. claimed            → ambient
 
   There used to be three numbered setup screens (join a network, link an
-  account, then a pair code). They are gone. The app carries all three over one
-  Bluetooth conversation, so the panel's only job is to start it — point at the
-  app, and show the phrase that proves whoever is typing can SEE this box.
+  account, then a pair code) on a full-bleed light/dark split with a QR. They
+  are gone. The app carries all three over one Bluetooth conversation, so the
+  panel's only job is to start it — point at the app, and show the phrase that
+  proves whoever is typing can SEE this box.
 
   What that replaced is worth remembering, because the failure was instructive:
   screens 1 and 2 were once a single screen carrying two different secrets at
@@ -40,6 +43,10 @@
   Every code on this glass existed because two machines could not talk, and now
   they can.
 
+  The QR went with them. It pointed a phone at the download page, and setup is
+  a desktop job now — scanning it hands the page to the wrong device. Dropping
+  it also let the phrase go to one line, which is what makes it readable from
+  across a room while you type it on another machine.
 -->
 <script lang="ts">
 	import { onMount, onDestroy } from "svelte";
@@ -49,6 +56,8 @@
 		linked: boolean;
 		link_code: string | null | undefined;
 		setup_phrase: string | null | undefined;
+		phrase_frozen: boolean;
+		setup_session: string | null | undefined;
 		pair_code: string | null;
 		ap_ssid: string | null;
 		ap_passphrase: string | null;
@@ -65,11 +74,9 @@
 	let poll: ReturnType<typeof setInterval> | null = null;
 	let clock: ReturnType<typeof setInterval> | null = null;
 
-	// Grouped "123 456" — the code is read aloud off a screen and typed on a
-	// numeric pad, and the gap is what stops people losing their place.
-	const grouped = $derived(
-		state_?.pair_code ? `${state_.pair_code.slice(0, 3)} ${state_.pair_code.slice(3)}` : null,
-	);
+	// A live BLE setup session, if there is one. `""` is a real value from the
+	// server — a session whose client sent no name — so test for null, not truth.
+	const session = $derived(state_?.setup_session ?? null);
 
 	async function refresh() {
 		try {
@@ -79,7 +86,7 @@
 			unreachable = false;
 		} catch {
 			// Keep the last good state on screen. A box whose server blipped
-			// should not blank the panel — the code on it is still valid.
+			// should not blank the panel — the phrase on it is still valid.
 			unreachable = true;
 		}
 	}
@@ -87,14 +94,14 @@
 	// Two cadences, because the screen has two jobs.
 	//
 	// SETUP is a conversation: someone is standing in front of the box acting on
-	// what it says, and every transition they cause — AP coming up, wifi joined,
-	// device paired — must land while they are still looking. At 30s the panel
-	// spent up to half a minute telling someone to scan a QR that was not on it
-	// yet, which reads as a fault rather than a wait. Seen on hardware.
+	// what it says, and every transition they cause — wifi joined, phrase
+	// accepted, device paired — must land while they are still looking. At 30s
+	// the panel spent up to half a minute showing words that had already been
+	// used, which reads as a fault rather than a wait. Seen on hardware.
 	//
 	// AMBIENT is furniture. Nothing there changes on a human timescale, it runs
-	// 24/7 in someone's home, and the standing code rotates every 15 min with a
-	// 5 min overlap — so 30s can never show an expired one.
+	// 24/7 in someone's home, and the phrase rotates every 15 min with a 5 min
+	// overlap — so 30s can never show an expired one.
 	const SETUP_POLL_MS = 2_000;
 	const AMBIENT_POLL_MS = 30_000;
 
@@ -135,7 +142,7 @@
 	{#if !state_}
 		<!-- Pre-first-response. Deliberately bare: the box is seconds from
 		     answering and a spinner would be the first thing it ever said. -->
-		<div class="boot"><span class="mark">∴</span></div>
+		<div class="boot"><span class="bootmark">∴</span></div>
 	{:else if !state_.claimed}
 		<!-- ONE SETUP SCREEN. Not step 1 of 3 — there is no sequence any more.
 		     The app is the wizard, so this screen has exactly two jobs: point at
@@ -146,52 +153,66 @@
 		     here prove LINE OF SIGHT, which is the bar we actually want — and they
 		     are the same words that get the owner back in after a reset. They
 		     rotate every 15 minutes while the box is empty (so a photograph taken
-		     last week is worthless) and vanish forever the moment it is claimed.
-		     See docs/onboarding-paradigm.md §1.
-
-		     The link QR and the pair code that used to live on screens 2 and 3 are
-		     GONE from the panel: the app carries the account grant and the pairing
-		     over the same Bluetooth session that starts here. -->
-		<div class="split">
-			<div class="lite">
-				<img class="qr" src="/api/display/app-qr" alt="" />
-				<div class="apcreds">
-					<div class="aplabel">Get the app</div>
-					<div class="apssid">virtues.com/downloads</div>
+		     last week is worthless) and freeze forever the moment it is claimed.
+		     See docs/onboarding-paradigm.md §1. -->
+		<span class="lockup"><span class="mk">∴</span>{state_.box_name}</span>
+		<div class="body">
+			{#if session !== null}
+				<!-- The words have been accepted, so they leave the glass — two
+				     jobs at once. They are spent, so nobody who wanders past can
+				     read them; and the owner gets confirmation ON THE BOX that
+				     what they typed landed here. It also makes a race they did
+				     not start visible while it is happening: a name they do not
+				     recognise, on their own hardware. -->
+				<p class="doing">Setting up</p>
+				<div class="live">
+					<span class="pip"></span>{session ? `with ${session}` : "with a nearby device"}
 				</div>
-			</div>
-			<div class="dark">
-				<div class="brand">∴ &nbsp;{state_.box_name}</div>
-				<div class="head">Get the Virtues app</div>
-				<div class="lead">Open it and type these words — it finds me over Bluetooth
-					and does the rest.</div>
-				{#if state_.setup_phrase}
+			{:else}
+				<p class="doing">Get Virtues for Mac</p>
+				{#if state_.phrase_frozen}
+					<!-- RESET, NOT VIRGIN. This box still holds a life, so its
+					     phrase stays frozen and off the screen. Rendering the
+					     virgin layout here would leave a blank where the words go
+					     and read as a fault at the worst possible moment — the
+					     second line is what stops someone assuming the reset wiped
+					     them. -->
+					<p class="instruct">
+						virtues.com/downloads — then type the words you saved when you first set
+						this box up.
+					</p>
+					<div class="recall">I can't show them again — your record is still here.</div>
+				{:else if state_.setup_phrase}
+					<p class="instruct">virtues.com/downloads — then type these words.</p>
 					<div class="phrase">{state_.setup_phrase}</div>
 				{:else}
-					<div class="phrase fault">— — —</div>
+					<!-- Neither frozen nor minted: the box could not produce a
+					     phrase at all. Say so, rather than show a gap. -->
+					<p class="instruct">virtues.com/downloads</p>
+					<div class="recall fault">I can't show setup words right now.</div>
 				{/if}
-				{#if state_.connectivity === "portal"}
-					<!-- Captive network. With honest online-detection a portal join
-					     reads as still-offline, and without this the screen looks like
-					     the join silently failed. Seen live at WeWork 2026-08-11. -->
-					<div class="foot warn">
-						Joined {state_.wifi_ssid ?? "a network"}, but it wants a browser
-						sign-in, which I can't do — pick a different network in the app.
-					</div>
-				{:else if state_.connectivity === "limited"}
-					<div class="foot warn">
-						Joined {state_.wifi_ssid ?? "a network"}, but no internet is getting
-						through — pick a different network in the app.
-					</div>
-				{/if}
-			</div>
+			{/if}
+			{#if state_.connectivity === "portal"}
+				<!-- Captive network. With honest online-detection a portal join
+				     reads as still-offline, and without this the screen looks like
+				     the join silently failed. Seen live at WeWork 2026-08-11. -->
+				<div class="foot warn">
+					Joined {state_.wifi_ssid ?? "a network"}, but it wants a browser sign-in I
+					can't do — pick another network in the app.
+				</div>
+			{:else if state_.connectivity === "limited"}
+				<div class="foot warn">
+					Joined {state_.wifi_ssid ?? "a network"}, but no internet is getting through —
+					pick another network in the app.
+				</div>
+			{/if}
 		</div>
 	{:else}
 		<!-- AMBIENT. The screen someone sees ten thousand times, so it reports
 		     the record rather than the machine — a ship's log, not htop. -->
 		<div class="amb">
 			<div class="top">
-				<div class="brand">∴ &nbsp;{state_.box_name}</div>
+				<div class="ambname"><span class="ambmark">∴</span> {state_.box_name}</div>
 				<div class="status" class:offline={!state_.online || unreachable}>
 					{unreachable ? "NO SERVER" : state_.online ? "REACHABLE" : "OFFLINE"}
 				</div>
@@ -213,11 +234,10 @@
 	/* Self-contained: this page never shares a shell with the app, and the
 	   kiosk has no user to change theme, so the tokens are literal. */
 	.screen {
-		--ink: #f4f1ea;
-		--dim: #93a0ad;
-		--faint: #54606c;
+		--ink: #f5f2ec;
+		--dim: #7d8b99;
+		--faint: #4a5663;
 		--bg: #0b0f14;
-		--lite: #ffffff;
 		--ok: #5fb07e;
 		--warn: #c9a227;
 		position: fixed;
@@ -226,10 +246,16 @@
 		color: var(--ink);
 		font-family: system-ui, -apple-system, sans-serif;
 		overflow: hidden;
+		/* ONE GROUND. The old light/dark split filled the strip but cost the
+		   phrase most of its width, and a screen that is half white at 3am in
+		   a bedroom is its own argument. */
+		display: flex;
+		align-items: center;
+		padding: 0 44px;
+		box-sizing: border-box;
 	}
 
 	.boot,
-	.split,
 	.amb {
 		display: flex;
 		width: 100%;
@@ -239,139 +265,119 @@
 		align-items: center;
 		justify-content: center;
 	}
-	.mark {
+	.bootmark {
 		font-size: 2rem;
 		color: var(--faint);
 	}
 
-	/* ── setup: full-bleed split ── */
-	.apcreds {
-		margin-top: 11px;
-		text-align: center;
-		font-family: ui-monospace, Menlo, monospace;
-		line-height: 1.45;
-	}
-	.aplabel {
-		font-family: system-ui, sans-serif;
-		font-size: 0.5rem;
-		text-transform: uppercase;
-		letter-spacing: 0.13em;
-		color: #8f8f8f;
-		margin-top: 6px;
-	}
-	.apssid {
-		font-size: 0.7rem;
-		color: #1c1c1c;
-		letter-spacing: 0.04em;
-	}
-	.lite {
-		width: 41%;
-		flex: none;
-		background: var(--lite);
-		display: flex;
-		/* COLUMN, and it has to be. Without it the QR (150px) and the credentials
-		   (~99px) lay out side by side in a 240px panel: the QR hangs 5px off the
-		   left edge of the screen and the passphrase runs 4px into the dark half.
-		   Measured, not guessed — and invisible in review, because both children
-		   overflow their parent without the parent itself overflowing, so nothing
-		   scrolls and nothing reports a wrong size. */
-		flex-direction: column;
-		align-items: center;
-		justify-content: center;
-		padding: 0 20px;
-	}
-	.qr {
-		width: 150px;
-		height: 150px;
-		/* A flex item with an intrinsic size shrinks by default. This QR is
-		   pointed at by a phone camera; a silently squashed one still scans
-		   badly rather than not at all, which is the worse failure. */
-		flex: none;
-	}
-	.dark {
+	/* ── setup ── */
+	.body {
 		flex: 1;
 		min-width: 0;
 		display: flex;
 		flex-direction: column;
-		justify-content: center;
-		padding: 0 42px;
-		position: relative;
 	}
-	.brand {
+	/* Mark and name as one quiet lockup, top-left. The name is NOT the heading:
+	   a box announcing itself is odd, and the heading's job is what the person
+	   should do. This is identity — the thing you check against the app before
+	   typing a secret into it, which matters when two boxes share a house. */
+	.lockup {
 		position: absolute;
-		top: 19px;
-		right: 36px;
+		top: 20px;
+		left: 40px;
+		display: flex;
+		align-items: baseline;
+		gap: 10px;
 		font-size: 0.72rem;
-		color: #3f4b57;
+		color: #55636f;
+		letter-spacing: 0.04em;
 	}
-	.step {
-		font-family: ui-monospace, Menlo, monospace;
-		font-size: 0.6rem;
-		letter-spacing: 0.13em;
-		text-transform: uppercase;
-		color: #46525f;
-		margin-bottom: 9px;
+	.lockup .mk {
+		font-size: 0.82rem;
+		color: #46545f;
 	}
-	.head {
-		font-size: 1.6rem;
-		line-height: 1.15;
-		letter-spacing: -0.01em;
-		color: #f7f5f0;
-		margin-bottom: 11px;
+	/* Serif, because it is the one voiced line on an otherwise instrumental
+	   screen. Georgia is not on Ubuntu — the fallbacks are what actually ship. */
+	.doing {
+		font-family: Georgia, "Liberation Serif", "DejaVu Serif", serif;
+		font-size: 1.3rem;
+		font-weight: 400;
+		letter-spacing: -0.005em;
+		color: var(--ink);
+		margin: 0 0 4px;
 	}
-	.lead {
-		font-size: 0.875rem;
-		color: #8894a1;
-		margin-bottom: 13px;
+	.instruct {
+		font-size: 0.76rem;
+		color: var(--dim);
 		line-height: 1.45;
-		max-width: 290px;
+		margin: 0 0 22px;
+		max-width: 420px;
 	}
-	.code {
-		font-size: 3.75rem;
-		font-weight: 600;
-		line-height: 1;
-		letter-spacing: 0.055em;
-		font-variant-numeric: tabular-nums;
-		color: #f7f5f0;
-	}
-	.code.linkcode {
-		font-size: 2.6rem;
-		letter-spacing: 0.09em;
-	}
-	/* Four words, read off glass and typed on another machine. Sized to be
-	   legible across a room, wrapping rather than shrinking — a phrase that
-	   truncates is worse than one that takes two lines. */
+	/* ONE LINE. It is read across a room while typing on another machine, and a
+	   phrase that wraps loses its shape — you lose your place mid-word. The
+	   wordlist is capped at 7-letter words for exactly this reason
+	   (`setup_phrase::MAX_WORD_LEN`), so `nowrap` here is a tripwire: if a
+	   longer word ever gets in, it clips visibly instead of wrapping quietly. */
 	.phrase {
-		font-family: ui-monospace, Menlo, monospace;
-		font-size: 1.55rem;
-		line-height: 1.3;
+		font-family: ui-monospace, "SF Mono", Menlo, "DejaVu Sans Mono", monospace;
+		font-size: 1.45rem;
+		line-height: 1.25;
 		letter-spacing: 0.01em;
-		color: #f7f5f0;
-		word-break: break-word;
-		max-width: 300px;
+		color: var(--ink);
+		white-space: nowrap;
 	}
-	.phrase.fault {
+	/* The reset state's stand-in for the phrase: same slot, quieter, and it
+	   points at the owner's password manager instead of at this screen.
+	   Deliberately NOT mono — mono on this screen means "these are the
+	   characters, type them", and this is a sentence. Setting it in the phrase's
+	   typeface would tell an owner to type "I can't show them again". */
+	.recall {
+		font-size: 0.95rem;
+		line-height: 1.4;
+		color: var(--ink);
+		max-width: 460px;
+	}
+	.recall.fault {
 		color: var(--warn);
 	}
-	.qr-pending-mark {
-		width: 150px;
-		height: 150px;
+	/* Session narration. One live line, no spinner — the panel is furniture and
+	   runs 24/7; a breathing dot is the smallest thing that reads as "now". */
+	.live {
 		display: flex;
 		align-items: center;
-		justify-content: center;
-		font-size: 1.5rem;
-		color: #bdbdbd;
-		flex: none;
+		gap: 11px;
+		font-size: 1.02rem;
+		color: var(--ink);
 	}
-	.code.fault {
-		color: var(--warn);
-		font-size: 2.5rem;
+	.live .pip {
+		width: 7px;
+		height: 7px;
+		border-radius: 50%;
+		background: var(--ok);
+		flex: none;
+		animation: breathe 2.4s ease-in-out infinite;
+	}
+	@keyframes breathe {
+		0%,
+		100% {
+			opacity: 0.3;
+		}
+		50% {
+			opacity: 1;
+		}
+	}
+	@media (prefers-reduced-motion: reduce) {
+		.live .pip {
+			animation: none;
+			opacity: 0.85;
+		}
 	}
 	.foot {
-		margin-top: 19px;
-		font-size: 0.72rem;
+		margin-top: 20px;
+		font-size: 0.68rem;
 		line-height: 1.5;
-		color: #4c5764;
+		color: var(--faint);
+		max-width: 460px;
 	}
 	.foot.warn {
 		color: var(--warn);
@@ -381,17 +387,30 @@
 	.amb {
 		flex-direction: column;
 		padding: 17px 34px 13px;
+		/* The setup layout centres its child; ambient owns the whole strip. */
+		position: absolute;
+		inset: 0;
+		box-sizing: border-box;
 	}
 	.top {
 		display: flex;
 		justify-content: space-between;
-		align-items: center;
+		align-items: baseline;
 		flex: none;
 	}
-	.amb .brand {
-		position: static;
-		font-size: 0.75rem;
+	/* The name carries through from setup, in the same serif. */
+	.ambname {
+		font-family: Georgia, "Liberation Serif", "DejaVu Serif", serif;
+		font-size: 0.95rem;
 		color: var(--dim);
+		display: flex;
+		align-items: baseline;
+		gap: 9px;
+	}
+	.ambmark {
+		font-family: system-ui, sans-serif;
+		font-size: 0.8rem;
+		color: #46545f;
 	}
 	.status {
 		font-family: ui-monospace, Menlo, monospace;

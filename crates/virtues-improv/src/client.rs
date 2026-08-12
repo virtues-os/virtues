@@ -228,7 +228,11 @@ impl ImprovClient {
     /// every configuring command without a session. The phrase is printed on the
     /// box's own panel while it is unclaimed, so having it proves line of sight,
     /// which radio range does not.
-    pub async fn claim_setup(&self, id: &str, phrase: &str) -> Result<()> {
+    ///
+    /// `label` is this machine's name. It is not security — the box puts it on
+    /// its panel in place of the phrase, so the owner sees on the box itself
+    /// that their words landed here and not somewhere else.
+    pub async fn claim_setup(&self, id: &str, phrase: &str, label: &str) -> Result<()> {
         let mut inner = self.inner.lock().await;
         let session = Self::ensure_connected(&mut inner, id).await?;
         let mut notifications = session.peripheral.notifications().await.context("notifications")?;
@@ -237,7 +241,10 @@ impl ImprovClient {
             .peripheral
             .write(
                 &session.rpc,
-                &protocol::build_rpc(&Command::ClaimSetup { phrase: phrase.into() }),
+                &protocol::build_rpc(&Command::ClaimSetup {
+                    phrase: phrase.into(),
+                    label: label.into(),
+                }),
                 WriteType::WithResponse,
             )
             .await

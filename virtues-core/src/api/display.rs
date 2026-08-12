@@ -91,6 +91,28 @@ pub struct DisplayState {
     /// stranger on the wifi who cannot see the screen must not learn it.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub setup_phrase: Option<String>,
+    /// True when this box has been claimed before and its phrase is frozen —
+    /// i.e. it was RESET, not unboxed.
+    ///
+    /// Without this the panel cannot tell the two apart, because both are
+    /// `claimed: false` with no phrase to print, and it would render the virgin
+    /// screen with a blank where the words go — which reads as a fault at
+    /// exactly the moment an owner is most worried. What they need to be told
+    /// instead is that the words they saved still work and their record is
+    /// still here.
+    pub phrase_frozen: bool,
+    /// The device currently configuring this box over Bluetooth, if any, as it
+    /// named itself ("Adam's Mac"). `Some("")` means a session is live but the
+    /// client sent no name.
+    ///
+    /// The panel shows this INSTEAD of the phrase: the words are spent the
+    /// moment they are accepted, so they stop being readable by anyone who
+    /// wanders past. Goes quiet 90s after the last command
+    /// (`setup_phrase::PANEL_SESSION_SECS`) so a setup that dies halfway puts
+    /// the words back rather than stranding the owner in front of a box that
+    /// will not say how to start over.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub setup_session: Option<String>,
 }
 
 pub async fn display_state_handler(
@@ -152,17 +174,30 @@ pub async fn display_state_handler(
     // Unclaimed only — `display_phrase` returns None once frozen, but skipping
     // the query entirely on a claimed box keeps the ambient screen off the
     // encryptor and the DB.
-    let setup_phrase = if devices == 0 {
-        match crate::api::setup_phrase::display_phrase(pool).await {
-            Ok(p) => p,
-            Err(e) => {
-                tracing::warn!(error = %e, "display: could not read the setup phrase");
-                None
+    let (setup_phrase, phrase_frozen) = if devices == 0 {
+        let frozen = crate::api::setup_phrase::is_frozen(pool).await;
+        // A frozen box has nothing to print and `display_phrase` would only
+        // confirm that; don't ask.
+        let phrase = if frozen {
+            None
+        } else {
+            match crate::api::setup_phrase::display_phrase(pool).await {
+                Ok(p) => p,
+                Err(e) => {
+                    tracing::warn!(error = %e, "display: could not read the setup phrase");
+                    None
+                }
             }
-        }
+        };
+        (phrase, frozen)
     } else {
-        None
+        (None, false)
     };
+
+    // Only while the panel is on a setup screen: `session()` is a live mirror
+    // of the BLE layer, and the ambient screen has no line for it.
+    let setup_session =
+        (devices == 0).then(crate::api::setup_phrase::session).flatten();
 
     let ap_ssid = current_ap_ssid();
     (
@@ -182,6 +217,8 @@ pub async fn display_state_handler(
             linked,
             link_code,
             setup_phrase,
+            phrase_frozen,
+            setup_session,
         }),
     )
         .into_response()
@@ -226,45 +263,13 @@ pub async fn display_qr_handler(
         .into_response()
 }
 
-/// Where an owner gets the app. Public, so it is safe to put in a QR.
-///
-/// A plain landing page rather than a store deep link: the primary client is
-/// the desktop app, the box does not know what scanned it, and the page can
-/// route to the right store without the box shipping a guess that goes stale.
-const DOWNLOADS_URL: &str = "https://virtues.com/downloads";
-
-/// `GET /api/display/app-qr` — where to get the app, as an SVG.
-///
-/// Separate endpoint from `/api/display/qr` because the two are shown at
-/// different moments and mean different things, and merging them would put the
-/// screen back in the state this whole sequence exists to undo.
-///
-/// **This QR is only useful once the box is online**, which is exactly when the
-/// display shows it. Before that the owner's phone is joined to a setup network
-/// with no uplink, and a download link is an instruction they cannot follow —
-/// the ordering bug that shipped in the first version of this screen: it
-/// offered `virtues.com/downloads` to a phone it had just told to join an AP
-/// with no internet.
-pub async fn display_app_qr_handler(
-    ConnectInfo(peer): ConnectInfo<SocketAddr>,
-    headers: HeaderMap,
-) -> impl IntoResponse {
-    if !is_box_local(&peer, &headers) {
-        return (StatusCode::FORBIDDEN, "not available off-box").into_response();
-    }
-    let svg = crate::api::pair::render_qr_svg(DOWNLOADS_URL);
-    (
-        StatusCode::OK,
-        [
-            (axum::http::header::CONTENT_TYPE, "image/svg+xml"),
-            // Constant payload, but the panel is long-lived and a cached SVG
-            // buys nothing on a loopback request.
-            (axum::http::header::CACHE_CONTROL, "no-store"),
-        ],
-        svg,
-    )
-        .into_response()
-}
+// The app QR is gone. It existed for a phone-first flow — scan it, land on the
+// download page — and setup is a desktop job now: the keyboard that 802.1X
+// credentials and a four-word phrase want. Scanning a code on the box would
+// hand the download to the wrong device. Removing it also settles the panel's
+// white-square problem (an inverted QR fails on a lot of scanners, so there was
+// no good answer while it stayed) and gives the phrase the width to sit on one
+// line, which is the whole reason it is legible across a room.
 
 /// `GET /api/display/link-qr` — the account-linking URL, as an SVG.
 ///
