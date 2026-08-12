@@ -77,9 +77,10 @@ Q6A"* — the anti-phishing property, not decoration. Then branch: active
 subscription → one tap and **no payment screen ever**; otherwise checkout with
 the email prefilled.
 
-**2.2 Code TTL to ~15 minutes.** RFC 8628's normal window. Two minutes is
-shorter than the walk from the box to a laptop, and it killed every attempt over
-two days.
+**2.2 ~~Code TTL~~ — already correct.** `LINK_TTL_MINUTES = 15` in
+`routes/link.rs`, returned as `expires_in`. The two days of failed links were
+the box-side ghost-code bug (`api/display.rs`), not atlas expiry. Left here as a
+correction: the diagnosis was wrong, so re-open anything that rested on it.
 
 **2.3 Atlas grows a minimal account API.** Deliberately deferred until now;
 it is the gate for everything below.
@@ -189,10 +190,11 @@ The stale point releases and old staging prereleases were deleted on 2026-08-12;
 what remains is the rolling channels (`mac-edge`, `mac-latest`, `win-edge`,
 `linux-desktop-edge`, `edge`), the stable box tags, and `models-1`.
 
-**Atlas has no reviewable source of truth.** The deployed `/init` is ahead of
-the repo checkout, which contains no `/init` at all — so its identity fork, its
-2-minute TTL, and its error copy cannot be read, reviewed, or fixed from git.
-Every atlas item in Phase 2 is blocked on this.
+**Atlas deploy provenance.** Atlas *is* in source — `services/virtues-atlas/`,
+with `/init/start|poll|done|login` in `routes/link.rs`. (An earlier draft of
+this plan claimed otherwise; it was looking at a different repo, and nothing in
+Phase 2 was ever blocked.) The real gap is that `make` builds `:latest` from the
+working tree with no tag, sha, or CI — nobody can tell which build is running.
 
 **Ship the backlog.** ~95 commits sit on `wave`; the published apps predate the
 unified airlock, the desktop BLE client, and the three-step display. Not urgent
