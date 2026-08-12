@@ -57,15 +57,24 @@ replacement is not. Two pairings have already been lost this way.
 **1.5 Watch the relay rebind.** One checkout, then read the journal. Until then
 it is an untested claim.
 
-### Deferred, with conditions: `0x84 PairDirect`
+### `0x84 PairDirect` — bound to the setup session
 
-Pairing the setup device with no code at all, on the grounds that BLE range is
-the proximity proof. **Held back**, because BLE range is not "in the room" — it
-passes through walls at 10–30 m. A neighbour running our app could claim a box
-in the window between plugging in and setup, and once linked they hold *relay*
-access to a box sitting in someone's home. Ships only when (a) consumer reset
-exists and (b) the panel announces claims loudly enough to notice
-("Claimed by Adam's Mac"). `0x85` carries most of the win at none of this risk.
+Pairing the setup device with no code. An earlier draft justified this by BLE
+proximity alone and deferred it, correctly: radio range is not "in the room", so
+a neighbour could claim a box in the window between plug-in and setup.
+
+**Bind it to the setup session instead** ([paradigm §2b](onboarding-paradigm.md)):
+only the live connection that just completed the wifi join may pair. An attacker
+must then win the wifi step, not merely be nearby — and doing so breaks the
+owner's setup visibly, in front of them, rather than silently.
+
+Ships when **1.2 consumer reset** exists, which is the escape hatch for a lost
+race. The panel should also narrate the session while it runs ("Setting up with
+Adam's Mac…"), so the race is visible as it happens.
+
+With this, `0x85` becomes unnecessary for anyone signed in: the grant rides the
+same session (2.5) and no link URL is ever opened. Keep `0x85` only if the
+browser path outlives sign-in.
 
 ## Phase 2 — identity
 

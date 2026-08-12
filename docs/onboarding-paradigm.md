@@ -53,6 +53,62 @@ A corollary that settles a recurring argument: **the app must never instruct
 someone to go read something it could have fetched itself.** If a screen says
 "type the code from your box", ask first whether the app could have obtained it.
 
+## 2b. The setup session is the trust anchor
+
+The corollary above asks whether the app could have fetched a code itself. The
+answer, for a box being set up, is that it should not need one at all — and the
+reason is stronger than proximity.
+
+An app that has just walked a box onto a network is not merely *nearby*. It
+**configured** the box, over a connection that is still open. That is a fact the
+box can check, and it is much harder to forge than radio range.
+
+> **The first session to complete a wifi join becomes THE SETUP SESSION.**
+> Only that live connection may link and pair without codes.
+
+Three properties make it work:
+
+- **It is a connection, not a device.** Not "the first client that ever talked"
+  — the one currently configuring this box. Drop the link and the privilege dies
+  with it; the next attempt starts over.
+- **It survives the network change.** Bluetooth is a separate radio from wifi,
+  which is precisely why provisioning rides it. The conversation continues
+  through the switchover that used to end it.
+- **Beating it is loud.** An attacker cannot simply be in range; they must win
+  the wifi step, and then the owner's own setup visibly fails in front of them.
+  Contrast a stolen code, which fails silently and later.
+
+**So all three steps become one conversation** — wifi, account grant (`0x82`),
+pairing — and therefore one screen:
+
+```
+    Setting up Honest Kestrel
+      ✓ Joined your-wifi
+      ✓ Linked to your account
+      ✓ Paired
+    → opens
+```
+
+The three relationships of §1 still happen and are still distinct. They stop
+being three *screens*.
+
+**The panel narrates the session live** — *"Setting up with Adam's Mac…"* — so a
+lost race is visible while it happens, on the owner's own hardware, rather than
+discovered afterwards. This replaces the weaker "announce the claim after the
+fact" idea.
+
+**What it depends on.** Sign-in happens in the app *before* the box is touched,
+so the grant is ready to hand over in the same breath — which is why account
+sessions come first in the build order. And a consumer factory reset must exist,
+because if a race is ever lost the owner needs to take their box back without a
+shell.
+
+**What still uses codes**, unchanged: an ethernet box (no wifi join, so no setup
+session — it is online at first boot and the panel shows a code), any client
+without Bluetooth, DIY boxes (which never advertise, and whose owner has a
+terminal), and every *join* of an already-claimed box, which is a different tier
+entirely (§3).
+
 ## 3. Two tiers of device trust
 
 Proximity is sufficient to claim an **empty** box and insufficient to enter a
@@ -173,10 +229,12 @@ The flow is not designed separately; it is a consequence of the above.
 **Appliance owner, with the app (the intended majority):**
 
 1. Install the app, sign in. *(Store buyers arrive signed in and paid.)*
-2. Open it: "Set up **Honest Kestrel** on **your-wifi**?" — password, one button.
+2. Open it. One screen: "Set up **Honest Kestrel** on **your-wifi**?" — password,
+   one button.
 3. Done — the box opens.
 
-The account grant and the pairing both ride BLE; no code is read or typed.
+One Bluetooth session carries the wifi credentials, the account grant, and the
+pairing (§2b). Nothing is read off a screen or typed anywhere.
 
 **Without the app, or without Bluetooth:** the panel's three screens, exactly as
 built today — get the app, link (code + QR), pair (code). The floor.
