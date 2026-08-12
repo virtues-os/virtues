@@ -542,6 +542,27 @@
       // box will accept credentials at all.
       async function blePhrase(box, errorText) {
         state.bleBox = box;
+        // ASK THE BOX FIRST. Firmware older than the gate has no phrase — its
+        // panel shows a pair code — and it will configure without a session.
+        // Showing such an owner a screen demanding four words that do not
+        // exist anywhere strands them, and no wording fixes that; only the box
+        // knows the answer, so ask it before drawing anything.
+        //
+        // "-" is the probe, not the empty string: the wire format rejects an
+        // empty phrase outright, while a gated box normalizes "-" to nothing
+        // and refuses it BEFORE spending any of its ten attempts per 15
+        // minutes. So this costs a modern box nothing, and it runs once —
+        // never on the retry after a wrong phrase.
+        if (!errorText) {
+          app.innerHTML = `
+            <p class="kicker">Setting up ${esc(box.name)}</p>
+            <h1>Waking your box</h1>
+            <p class="sub">One moment.</p>`;
+          try {
+            const probe = await invoke('plugin:reach|improv_claim', { id: box.id, phrase: '-' });
+            if (probe && probe.ok && probe.gated === false) return bleWifiPicker(box);
+          } catch { /* fall through to the phrase screen and let it report */ }
+        }
         app.innerHTML = `
           <p class="kicker">Setting up ${esc(box.name)}</p>
           <h1>Type the words on your box</h1>
@@ -553,26 +574,12 @@
                    autocapitalize="off" autocorrect="off" spellcheck="false" autofocus />
             <button class="primary" id="go" type="submit">Continue</button>
           </form>
-          <button class="back" id="nowords" style="margin-top:18px">My box doesn't show any words</button>
           <div class="msg" id="msg"></div>`;
         document.getElementById('phrase').focus();
-        // Older firmware has no phrase at all — its panel shows a pair code
-        // instead, and it accepts configuration without a session. Asking such
-        // a box for words it never minted strands the owner, so give them a
-        // door: a box that predates the gate answers UnknownCommand and we go
-        // on without a session.
-        //
-        // "-" is the probe, not the empty string. The wire format rejects an
-        // empty phrase outright, and a box WITH a gate normalizes "-" to
-        // nothing and refuses it before spending any of its ten attempts per
-        // 15 minutes — so pressing this on a modern box costs the owner
-        // nothing but a "didn't match".
-        document.getElementById('nowords').addEventListener('click', () => submitPhrase('-'));
         async function submitPhrase(phrase) {
           const go = document.getElementById('go');
           const msg = document.getElementById('msg');
           go.disabled = true;
-          document.getElementById('nowords').disabled = true;
           msg.className = 'msg';
           msg.textContent = 'Checking…';
           let res;

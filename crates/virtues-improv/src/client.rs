@@ -243,50 +243,68 @@ impl ImprovClient {
         let mut inner = self.inner.lock().await;
         let session = Self::ensure_connected(&mut inner, id).await?;
         let mut notifications = session.peripheral.notifications().await.context("notifications")?;
-
-        session
-            .peripheral
-            .write(
-                &session.rpc,
-                &protocol::build_rpc(&Command::ClaimSetup {
-                    phrase: phrase.into(),
-                    label: label.into(),
-                }),
-                WriteType::WithResponse,
-            )
-            .await
-            .context("send setup phrase")?;
-
         let error_uuid = uuid(protocol::CHAR_ERROR_STATE);
-        let watch = async {
-            while let Some(n) = notifications.next().await {
-                if n.uuid == error_uuid {
-                    match n.value.first().copied() {
-                        None | Some(0) => continue,
-                        Some(c) if c == ImprovError::UnknownCommand as u8 => {
-                            // Firmware older than the gate. Not an error.
-                            return Ok(false);
-                        }
-                        Some(_) => {
-                            // The box will not say WHETHER the words were wrong
-                            // or the attempt budget is spent, and neither will
-                            // we — one message for both, so a guesser learns
-                            // nothing.
-                            return Err(anyhow!(
-                                "That phrase didn't match. Check the words on your box's screen."
-                            ));
+
+        // At most two attempts: with the label, then without it. A box built
+        // before the label existed parses 0x86 strictly — `!rest.is_empty()` is
+        // a malformed packet — so it rejects the extra string, and the client
+        // reads that as "wrong words". Cost us a hardware session: the correct
+        // phrase could not have worked either. The label is cosmetic, so
+        // dropping it is always the right trade against not getting in at all.
+        let attempts: &[&str] = if label.is_empty() { &[""] } else { &[label, ""] };
+        let last = attempts.len() - 1;
+        for (i, lbl) in attempts.iter().enumerate() {
+            session
+                .peripheral
+                .write(
+                    &session.rpc,
+                    &protocol::build_rpc(&Command::ClaimSetup {
+                        phrase: phrase.into(),
+                        label: (*lbl).into(),
+                    }),
+                    WriteType::WithResponse,
+                )
+                .await
+                .context("send setup phrase")?;
+
+            // `Ok(None)` = retry without the label; anything else is final.
+            let watch = async {
+                while let Some(n) = notifications.next().await {
+                    if n.uuid == error_uuid {
+                        match n.value.first().copied() {
+                            None | Some(0) => continue,
+                            Some(c) if c == ImprovError::UnknownCommand as u8 => {
+                                // Firmware older than the gate. Not an error.
+                                return Ok(Some(false));
+                            }
+                            Some(c) if c == ImprovError::InvalidPacket as u8 && i < last => {
+                                return Ok(None);
+                            }
+                            Some(_) => {
+                                // The box will not say WHETHER the words were
+                                // wrong or the attempt budget is spent, and
+                                // neither will we — one message for both, so a
+                                // guesser learns nothing.
+                                return Err(anyhow!(
+                                    "That phrase didn't match. Check the words on your box's screen."
+                                ));
+                            }
                         }
                     }
+                    if protocol::parse_result(&n.value, 0x86).is_some() {
+                        return Ok(Some(true));
+                    }
                 }
-                if protocol::parse_result(&n.value, 0x86).is_some() {
-                    return Ok(true);
-                }
+                Err(anyhow!("the box stopped answering"))
+            };
+            let outcome = tokio::time::timeout(REPLY_TIMEOUT, watch)
+                .await
+                .map_err(|_| anyhow!("the box didn't answer — try again"))??;
+            if let Some(gated) = outcome {
+                return Ok(gated);
             }
-            Err(anyhow!("the box stopped answering"))
-        };
-        tokio::time::timeout(REPLY_TIMEOUT, watch)
-            .await
-            .map_err(|_| anyhow!("the box didn't answer — try again"))?
+        }
+        Err(anyhow!("the box didn't answer — try again"))
     }
 
     /// RPC 0x04: ask the BOX what networks it can see. Streams one packet per
