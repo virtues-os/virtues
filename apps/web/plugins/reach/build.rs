@@ -14,6 +14,7 @@ const COMMANDS: &[&str] = &[
   "wifi_join",
   "wifi_forget",
   "improv_discover",
+  "improv_claim",
   "improv_wifi_scan",
   "improv_provision",
   "improv_pair",

@@ -16,17 +16,17 @@
       this screen on a dead session landed on a fourth-generation copy of it.
       One file, one flow, platform differences named where they are real.
 
-      THREE STEPS, and the box's own state picks which one you are on:
+      ONE CONVERSATION, not three steps. The box's four-word phrase is on its
+      panel while it is unclaimed; typing it here claims the setup session, and
+      that one Bluetooth connection then carries everything: the wifi
+      credentials, the account grant, and the pairing. Nothing else is read off
+      a screen and retyped. See docs/onboarding-paradigm.md.
 
-        1 WIFI   the box has no network. Found over Bluetooth (Improv), asked
-                 for its own scan, given credentials — including 802.1X, which
-                 wants a keyboard. Skipped entirely on ethernet.
-        2 LINK   the box has a network but no account. The account buys relay
-                 reach and the AI wallet; without it the box is a LAN hostage,
-                 which a dorm or office never forgives.
-        3 PAIR   the box is online and linked. The code on its screen, typed
-                 here, over the LAN or — when the network isolates clients —
-                 over the same Bluetooth session that did step 1.
+      The phrase is the gate because an unclaimed box advertises to anything in
+      radio range, and radio range passes through walls. Four words printed on
+      the box's own screen prove LINE OF SIGHT, which is the bar we want — and
+      the same words are what gets the owner back in after a reset, which is why
+      the app makes them save it before setup runs rather than after.
 
       DESKTOP IS A FIRST-CLASS FIRST DEVICE, not a fallback. A Mac has the
       keyboard those credentials want and the browser that checkout wants, and
@@ -100,6 +100,10 @@
       .steps li { font-size: 13px; color: #6a6a70; line-height: 1.5; padding-left: 18px;
                   position: relative; margin-bottom: 6px; }
       .steps li::before { content: "·"; position: absolute; left: 6px; color: #4a4a52; }
+      .code.phrase { font-size: 1.15rem; line-height: 1.5; letter-spacing: .02em;
+             font-family: ui-monospace, Menlo, monospace; color: #eafff0;
+             background: #12261a; border: 1px solid #1f4a30; border-radius: 12px;
+             padding: 16px; margin: 0 0 18px; word-break: break-word; }
       .hidden { display: none; }
     </style>
   </head>
@@ -388,7 +392,7 @@
         // screen exists to fall back from.
         const needsWifi = ble.find((b) => b.improvState === 2);
         if (needsWifi && lan.servers.length === 0) {
-          return bleWifiPicker(needsWifi);
+          return blePhrase(needsWifi);
         }
         // Online-but-unclaimed over BLE with nothing on the LAN: a network
         // that isolates clients. Pairing rides BLE (0x83) — go enter the code.
@@ -444,7 +448,7 @@
           }
           if (gen !== searchGen) return;
           const needsWifi = boxes.find((b) => b.improvState === 2);
-          if (needsWifi) return bleWifiPicker(needsWifi);
+          if (needsWifi) return blePhrase(needsWifi);
           if (boxes.length) {
             return routeToBox({ name: prettyBoxName(boxes[0].name), bleId: boxes[0].id });
           }
@@ -506,7 +510,7 @@
         // More than one unclaimed box is a real case (two-box household, an
         // office). Let proximity break the tie visibly.
         if (candidates.length > 1) return bleBoxChooser(candidates);
-        bleWifiPicker(candidates[0]);
+        blePhrase(candidates[0]);
       }
 
       function bleBoxChooser(candidates) {
@@ -522,8 +526,78 @@
             usually yours.</p>
           ${rows}`;
         app.querySelectorAll('.net').forEach((el) => {
-          el.addEventListener('click', () => bleWifiPicker(candidates[+el.dataset.i]));
+          el.addEventListener('click', () => blePhrase(candidates[+el.dataset.i]));
         });
+      }
+
+      // ── THE PHRASE ────────────────────────────────────────────────────────
+      //
+      // The box's one secret, and the gate in front of every configuring
+      // command. An unclaimed box advertises to anything in radio range, and
+      // radio range passes through walls — the four words are printed on the
+      // box's own panel, so having them proves LINE OF SIGHT, which is the bar
+      // we actually want. See docs/onboarding-paradigm.md §1.
+      //
+      // Comes before the wifi picker because a session must exist before the
+      // box will accept credentials at all.
+      async function blePhrase(box, errorText) {
+        state.bleBox = box;
+        app.innerHTML = `
+          <p class="kicker">Setting up ${esc(box.name)}</p>
+          <h1>Type the words on your box</h1>
+          <p class="sub">Four words are on its screen right now. They prove you're
+            standing in front of it — and they're how you get back in later.</p>
+          ${errorText ? `<p class="msg err">${esc(errorText)}</p>` : ''}
+          <form id="form">
+            <input id="phrase" type="text" placeholder="mango-burly-skull-dough"
+                   autocapitalize="off" autocorrect="off" spellcheck="false" autofocus />
+            <button class="primary" id="go" type="submit">Continue</button>
+          </form>
+          <div class="msg" id="msg"></div>`;
+        document.getElementById('phrase').focus();
+        document.getElementById('form').addEventListener('submit', async (e) => {
+          e.preventDefault();
+          const phrase = document.getElementById('phrase').value.trim();
+          if (!phrase) return;
+          const go = document.getElementById('go');
+          const msg = document.getElementById('msg');
+          go.disabled = true;
+          msg.className = 'msg';
+          msg.textContent = 'Checking…';
+          let res;
+          try {
+            res = await invoke('plugin:reach|improv_claim', { id: box.id, phrase });
+          } catch (err) {
+            res = { ok: false, error: String(err) };
+          }
+          if (!res || !res.ok) {
+            // The box says nothing about WHY — wrong words and a spent attempt
+            // budget look identical — so neither do we.
+            return blePhrase(box, (res && res.error) || "That phrase didn't match.");
+          }
+          // Saving comes BEFORE the work. Someone holding a phrase they just
+          // typed will save it; the same person after "your box is ready"
+          // dismisses whatever is in front of them.
+          blePhraseSaved(box, phrase);
+        });
+      }
+
+      function blePhraseSaved(box, phrase) {
+        app.innerHTML = `
+          <p class="kicker">Setting up ${esc(box.name)}</p>
+          <h1>Save this</h1>
+          <p class="sub">It's how you get back in if you lose this computer — and the
+            only way. Your box will never show it again.</p>
+          <div class="code phrase">${esc(phrase)}</div>
+          <button class="primary" id="copy">Copy</button>
+          <button class="back" id="next" style="margin-top:18px">I've saved it →</button>`;
+        document.getElementById('copy').addEventListener('click', async () => {
+          try {
+            await navigator.clipboard.writeText(phrase);
+            document.getElementById('copy').textContent = 'Copied';
+          } catch { /* a webview without clipboard permission — it is on screen */ }
+        });
+        document.getElementById('next').addEventListener('click', () => bleWifiPicker(box));
       }
 
       async function bleWifiPicker(box, errorText) {

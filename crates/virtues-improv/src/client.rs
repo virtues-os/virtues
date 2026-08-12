@@ -222,6 +222,52 @@ impl ImprovClient {
         Ok(session)
     }
 
+    /// RPC 0x86: claim the setup session with the box's four-word phrase.
+    ///
+    /// Must succeed before wifi, the account grant, or pairing — a box refuses
+    /// every configuring command without a session. The phrase is printed on the
+    /// box's own panel while it is unclaimed, so having it proves line of sight,
+    /// which radio range does not.
+    pub async fn claim_setup(&self, id: &str, phrase: &str) -> Result<()> {
+        let mut inner = self.inner.lock().await;
+        let session = Self::ensure_connected(&mut inner, id).await?;
+        let mut notifications = session.peripheral.notifications().await.context("notifications")?;
+
+        session
+            .peripheral
+            .write(
+                &session.rpc,
+                &protocol::build_rpc(&Command::ClaimSetup { phrase: phrase.into() }),
+                WriteType::WithResponse,
+            )
+            .await
+            .context("send setup phrase")?;
+
+        let error_uuid = uuid(protocol::CHAR_ERROR_STATE);
+        let watch = async {
+            while let Some(n) = notifications.next().await {
+                if n.uuid == error_uuid {
+                    if n.value.first().copied().filter(|c| *c != 0).is_some() {
+                        // The box will not say WHETHER the words were wrong or
+                        // the attempt budget is spent, and neither will we —
+                        // one message for both, so a guesser learns nothing.
+                        return Err(anyhow!(
+                            "That phrase didn't match. Check the words on your box's screen."
+                        ));
+                    }
+                    continue;
+                }
+                if protocol::parse_result(&n.value, 0x86).is_some() {
+                    return Ok(());
+                }
+            }
+            Err(anyhow!("the box stopped answering"))
+        };
+        tokio::time::timeout(REPLY_TIMEOUT, watch)
+            .await
+            .map_err(|_| anyhow!("the box didn't answer — try again"))?
+    }
+
     /// RPC 0x04: ask the BOX what networks it can see. Streams one packet per
     /// network; an empty packet ends the list.
     pub async fn wifi_scan(&self, id: &str) -> Result<Vec<Network>> {

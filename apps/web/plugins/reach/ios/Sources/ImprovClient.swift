@@ -148,6 +148,45 @@ final class ImprovClient: NSObject {
 
   // ─── the two RPCs the connect screen uses ─────────────────────────────────
 
+  /// RPC 0x86: claim the setup session with the box's four-word phrase.
+  ///
+  /// Must succeed before wifi, the account grant, or pairing — an unclaimed box
+  /// advertises to everyone in radio range, and radio range passes through
+  /// walls. The phrase is printed on the box's own panel, so having it proves
+  /// line of sight, which is the bar we actually want.
+  func claimSetup(id: String, phrase: String, completion: @escaping (String?) -> Void) {
+    queue.async {
+      self.ensureConnected(id: id) { err in
+        if let err { completion(err); return }
+        var done = false
+        let finish: (String?) -> Void = { e in
+          guard !done else { return }
+          done = true
+          self.onResult = nil
+          self.onImprovError = nil
+          completion(e)
+        }
+        self.onImprovError = { _ in
+          // One message for wrong words AND a spent attempt budget: the box
+          // refuses to distinguish them, and neither do we, so a guesser
+          // learns nothing from the shape of the refusal.
+          finish("That phrase didn't match. Check the words on your box's screen.")
+        }
+        self.onResult = { data in
+          if Self.parseResult(data, command: 0x86) != nil { finish(nil) }
+        }
+        var payload: [UInt8] = []
+        let bytes = Array(phrase.utf8).prefix(255)
+        payload.append(UInt8(bytes.count))
+        payload.append(contentsOf: bytes)
+        self.write(rpc: Self.buildRPC(command: 0x86, data: payload))
+        self.queue.asyncAfter(deadline: .now() + 20) {
+          finish("The box didn't answer — try again.")
+        }
+      }
+    }
+  }
+
   /// RPC 0x04: ask the BOX what networks it can see. Streams one packet per
   /// network; an empty packet ends the list.
   func wifiScan(id: String, completion: @escaping ([[String: Any]]?, String?) -> Void) {

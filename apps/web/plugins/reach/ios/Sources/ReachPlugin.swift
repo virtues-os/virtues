@@ -47,6 +47,11 @@ class ImprovTargetArgs: Decodable {
   let id: String
 }
 
+class ImprovClaimArgs: Decodable {
+  let id: String
+  let phrase: String
+}
+
 class ImprovProvisionArgs: Decodable {
   let id: String
   let ssid: String
@@ -70,6 +75,17 @@ class ReachPlugin: Plugin {
     let args = try invoke.parseArgs(ImprovDiscoverArgs.self)
     ImprovClient.shared.discover(seconds: args.seconds ?? 4.0) { boxes in
       invoke.resolve(["boxes": boxes])
+    }
+  }
+
+  @objc public func improv_claim(_ invoke: Invoke) throws {
+    let args = try invoke.parseArgs(ImprovClaimArgs.self)
+    ImprovClient.shared.claimSetup(id: args.id, phrase: args.phrase) { err in
+      if let err {
+        invoke.resolve(["ok": false, "error": err])
+      } else {
+        invoke.resolve(["ok": true])
+      }
     }
   }
 

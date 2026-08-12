@@ -14,6 +14,7 @@ Default permissions for the reach plugin
 - `allow-wifi-join`
 - `allow-wifi-forget`
 - `allow-improv-discover`
+- `allow-improv-claim`
 - `allow-improv-wifi-scan`
 - `allow-improv-provision`
 - `allow-improv-pair`
@@ -105,6 +106,32 @@ Enables the forget command without any pre-configured scope.
 <td>
 
 Denies the forget command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`reach:allow-improv-claim`
+
+</td>
+<td>
+
+Enables the improv_claim command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`reach:deny-improv-claim`
+
+</td>
+<td>
+
+Denies the improv_claim command without any pre-configured scope.
 
 </td>
 </tr>
