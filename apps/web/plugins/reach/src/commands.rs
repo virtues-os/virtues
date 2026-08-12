@@ -283,6 +283,46 @@ pub(crate) async fn improv_claim<R: Runtime>(
   }
 }
 
+/// Ask the box for its account-link code (Improv RPC 0x84).
+///
+/// Replaces printing that code on the box's own panel. The app has already
+/// proved line of sight with the phrase and holds the setup session, so handing
+/// it over that session is both tighter — the glass proves only that you are in
+/// the room — and better: the app opens the link page with the code already in
+/// the URL, so the owner types nothing.
+///
+/// `{ ok: true, code: null }` when the box has no link in flight: already
+/// linked, or no internet yet to start one.
+#[command]
+pub(crate) async fn improv_link_code<R: Runtime>(
+  app: AppHandle<R>,
+  id: String,
+) -> Result<serde_json::Value> {
+  #[cfg(target_os = "ios")]
+  {
+    use tauri::Manager;
+    let handle = app.state::<crate::IosPluginHandle<R>>();
+    return handle
+      .0
+      .run_mobile_plugin("improv_link_code", serde_json::json!({ "id": id }))
+      .map_err(|e| crate::Error::Reach(e.to_string()));
+  }
+  #[cfg(not(any(target_os = "ios", target_os = "android")))]
+  {
+    let _ = &app;
+    return Ok(match desktop::client().link_code(&id).await {
+      Ok(Some((code, url))) => serde_json::json!({ "ok": true, "code": code, "url": url }),
+      Ok(None) => serde_json::json!({ "ok": true, "code": null }),
+      Err(e) => serde_json::json!({ "ok": false, "error": format!("{e:#}") }),
+    });
+  }
+  #[cfg(target_os = "android")]
+  {
+    let _ = (app, id);
+    Err(crate::Error::Reach("Bluetooth setup isn't available on Android yet".into()))
+  }
+}
+
 /// Ask THAT BOX what wifi it can see, over BLE (Improv RPC 0x04).
 #[command]
 pub(crate) async fn improv_wifi_scan<R: Runtime>(

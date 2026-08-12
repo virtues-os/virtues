@@ -142,6 +142,25 @@ pub enum Command {
     /// and a race they did not start reads as a name they do not recognise.
     /// May be empty; the panel then says only that a device is setting up.
     ClaimSetup { phrase: String, label: String },
+    /// `0x84` — OUR extension: ask the box for its account-link code.
+    /// No arguments; replies `[user_code, verification_uri]`.
+    ///
+    /// The box drives its own account link (RFC 8628 shape) and holds the
+    /// short code a human types into a browser. That code used to be printed
+    /// on the panel, which meant anyone in the room could read it and the
+    /// owner had to retype it by eye. Handing it to the app over the setup
+    /// session instead is both better UX — the app opens the page with the
+    /// code already in the URL — and tighter: this session already proved
+    /// line of sight with the phrase, where the glass proves only that you
+    /// are in the room.
+    ///
+    /// Session-gated like every other configuring command. It reveals a
+    /// capability (anyone holding it can attach this box to THEIR account),
+    /// so it must never be answerable to an unproven peer.
+    ///
+    /// Empty reply when the box has no link in flight — it is already linked,
+    /// or it has no internet yet and could not start one.
+    LinkCode,
 }
 
 impl Command {
@@ -156,6 +175,7 @@ impl Command {
             Command::ClaimGrant { .. } => 0x82,
             Command::PairConsume { .. } => 0x83,
             Command::ClaimSetup { .. } => 0x86,
+            Command::LinkCode => 0x84,
         }
     }
 }
@@ -220,6 +240,12 @@ pub fn parse_rpc(packet: &[u8]) -> Result<Command, ImprovError> {
                 return Err(ImprovError::InvalidPacket);
             }
             Ok(Command::PairConsume { code, kind, source, label, endpoint_id })
+        }
+        0x84 => {
+            if !data.is_empty() {
+                return Err(ImprovError::InvalidPacket);
+            }
+            Ok(Command::LinkCode)
         }
         0x86 => {
             let (phrase, rest) = take_string(data).ok_or(ImprovError::InvalidPacket)?;
@@ -292,6 +318,7 @@ pub fn build_rpc(cmd: &Command) -> Vec<u8> {
         // label existed parses 0x86 strictly — trailing bytes are a malformed
         // packet — so the one-string form is the shape every version accepts,
         // and it is what the client falls back to.
+        Command::LinkCode => Vec::new(),
         Command::ClaimSetup { phrase, label } if label.is_empty() => pack_strings(&[phrase]),
         Command::ClaimSetup { phrase, label } => pack_strings(&[phrase, label]),
     };
@@ -561,6 +588,7 @@ mod tests {
                 phrase: "mango-burly-skull-dough".into(),
                 label: "Adam's Mac".into(),
             },
+            Command::LinkCode,
         ] {
             let wire = build_rpc(&cmd);
             assert_eq!(parse_rpc(&wire), Ok(cmd.clone()), "round trip failed for {cmd:?}");
