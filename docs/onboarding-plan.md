@@ -81,16 +81,56 @@ the email prefilled.
 shorter than the walk from the box to a laptop, and it killed every attempt over
 two days.
 
-**2.3 Account sessions in the app.** Sign in once. This is the keystone: the app
-becomes the authenticator.
+**2.3 Atlas grows a minimal account API.** Deliberately deferred until now;
+it is the gate for everything below.
 
-**2.4 `0x82` end to end.** With a session, the app gets a pre-approved
-`device_code` from atlas and hands it to the box over BLE; the box redeems it
-outbound. The browser leaves the flow entirely for signed-in owners. Box side is
-already built.
+*Less is needed than it looks.* The box is **already** an authenticated client
+of atlas, so anything the app wants — billing, usage, wallet, subscription
+management — it asks the box, and the box asks atlas with its own key. No user
+session involved. Recovery does not need one either: atlas already knows the
+customer's email from Stripe and can simply mail them.
 
-*After Phase 2 the intended flow is real: install, sign in, one screen with a
-Wi-Fi password, done.*
+What genuinely requires a session is the window *before* a box is linked:
+paying in-app, and vouching for a link without a browser.
+
+- **Email + a 6-digit code. Not a magic link** — links bounce you into a
+  browser, which is the exact hop this phase exists to delete. A code typed
+  into the app keeps everything in one place. No passwords, and no "sign in
+  with Apple/Google": for a sovereignty product, handing identity to a third
+  party is off-brand, and email is the one identifier everyone has that nobody
+  holds on their behalf.
+- **Opaque session tokens, not JWT.** 256-bit random, stored hashed, with
+  expiry and revocation. JWT buys statelessness we do not need at this scale
+  and costs instant revocation, which we do. Atlas has a database already.
+- **Codes** hashed at rest, 5–10 minute TTL, single use, rate-limited per
+  email. They are the front door.
+- **Sessions** long-lived on mobile, revocable from the account page, never in
+  a URL.
+- Half of this exists: `/init/login` already does email → magic link.
+
+*Data minimization holds.* This adds a session table and a code table — no new
+personal data. Atlas already holds the email, the Stripe customer, the linked
+box keys, and the wallet. The invariant is unchanged: **atlas knows who pays and
+which boxes are theirs, never anything from inside a box.**
+
+**Decide now: what "delete my account" means.** Proposed — atlas forgets you and
+your box keeps working on the LAN forever. It is the sovereignty claim in its
+most testable form.
+
+**2.4 In-app payment.** Apple Pay / Stripe sheet inside the app rather than a
+browser redirect.
+
+**2.5 Grant over Bluetooth.** With a session, the app asks atlas for a
+pre-approved `device_code` and hands it to the box over the Bluetooth session it
+already holds; the box redeems it outbound. Box side is built and tested — it
+has been waiting for an app with an account to vouch with.
+
+**What Phase 2 buys, holistically: the browser appears once, to deliver the
+app, and never again.** Today attention goes display → browser → app → browser →
+app → display → app: seven hops across four surfaces, most of them errands to
+fetch a string. After this it is display → browser → app → done. The display
+says one thing, the browser does one thing, the app does everything else, and
+every remaining handoff is a real change of purpose.
 
 ## Phase 3 — join a claimed box · **ship gate**
 
