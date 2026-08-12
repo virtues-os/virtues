@@ -29,118 +29,84 @@ which means an owner who loses their only device is locked out of data they
 physically possess. Replacing a pairing is silent. There is no consumer factory
 reset. `virtues.com/link` 404s.
 
-## Phase 1 — collapse the flow
+## Phase 1 — one screen, one password
 
-No atlas work, no account work. Nine steps to roughly four, this week.
+**The deliverable, stated as the thing a person does:** install the app, sign in
+once, and then a single screen — *"Set up Honest Kestrel on your-wifi?"* — with
+one password field and one button. No codes, no browser, no step counter. The
+box opens.
 
-**1.1 `0x85 GetLinkUrl`.** The link step's friction is that it spans three
-surfaces: the app says "open the link page", the browser wants a code, the code
-is on the panel, and it expires in two minutes. The box already holds
-`…/init?code=…`. Hand it over the BLE session the app is already using and the
-browser opens prefilled. Nothing read, nothing typed, no expiry race. *Cheapest
-large win in the plan.*
+Everything below exists to make that screen possible; nothing else is Phase 1.
 
-**1.2 Consumer factory reset.** Today the only reset is `virtues reset` over
-SSH, which an appliance owner does not have. This blocks resale, hand-me-downs,
-and every recovery-from-mistake path — including `0x84` below. Small, and it
-unblocks more than its size suggests.
+**1.1 Consumer factory reset.** The gate for all of it. Today the only reset is
+`virtues reset` over SSH, which an appliance owner does not have — so a lost
+setup race, a resale, a hand-me-down, or any mistake has no way back. Small, and
+it unblocks more than its size.
 
-**1.3 The app stops asking what it can answer.** Auto-select when exactly one
-box needs setup. Prefill the network this machine is on; keep the password
-field. Neutral headline until discovery decides — "Looking for your box", not
-"Set up your box", which alarms someone who has owned one for months and is only
-installing the Mac app.
+**1.2 Atlas: sessions.** *(done — `routes/account.rs`)* Email, six digits,
+opaque revocable token. A session may exist before payment.
 
-**1.4 Confirm before replacing a pairing.** Single-box is a sound design; silent
-replacement is not. Two pairings have already been lost this way.
+**1.3 Per-box keys.** *(virtues-api done — `device_keys.box_id`)* Atlas still
+passes `box_id: None` because it learns a box's EndpointId through
+`/iroh/register`, a different call than the one that mints the key. Join those
+two and the grant can be scoped to a box, which is what stops a second box
+evicting the first.
 
-**1.5 Watch the relay rebind.** One checkout, then read the journal. Until then
-it is an untested claim.
+**1.4 `POST /init/grant`.** Session-authed, mints a pre-approved `device_code`
+for a named box. Blocked on 1.3 — deliberately, since making a second link one
+tap while it still destroys the first box would be worse than not building it.
 
-### `0x84 PairDirect` — bound to the setup session
+**1.5 In-app payment.** Apple Pay / Stripe sheet in the app. Money appears once,
+before the box is ever touched, and only for people who owe it.
 
-Pairing the setup device with no code. An earlier draft justified this by BLE
-proximity alone and deferred it, correctly: radio range is not "in the room", so
-a neighbour could claim a box in the window between plug-in and setup.
+**1.6 `0x84 PairDirect`, bound to the setup session.** See below.
 
-**Bind it to the setup session instead** ([paradigm §2b](onboarding-paradigm.md)):
-only the live connection that just completed the wifi join may pair. An attacker
-must then win the wifi step, not merely be nearby — and doing so breaks the
-owner's setup visibly, in front of them, rather than silently.
+**1.7 The app: one screen.** Sign-in, then the single setup screen with three
+ticks as they land (joined / linked / paired). Auto-select when exactly one box
+needs setup; prefill the network this machine is on; neutral headline until
+discovery decides — "Looking for your box", not "Set up your box", which alarms
+someone who has owned a box for months and is only installing the Mac app.
 
-Ships when **1.2 consumer reset** exists, which is the escape hatch for a lost
-race. The panel should also narrate the session while it runs ("Setting up with
-Adam's Mac…"), so the race is visible as it happens.
+**1.8 The panel narrates the session** — "Setting up with Adam's Mac…" — so a
+lost race is visible while it happens rather than discovered later.
 
-With this, `0x85` becomes unnecessary for anyone signed in: the grant rides the
-same session (2.5) and no link URL is ever opened. Keep `0x85` only if the
-browser path outlives sign-in.
+**1.9 Confirm before replacing a pairing.** Single-box clients are a sound
+design; silent replacement is not. Two pairings have already been lost this way.
 
-## Phase 2 — identity
+### `0x85 GetLinkUrl` — probably unnecessary now
 
-The strategic phase, and the only one measured in weeks.
+Handing the app the box's `…/init?code=…` so a browser opens prefilled. It was
+the cheap way to fix a three-surface link step. With sign-in and the grant
+(1.4), **no link URL is ever opened**, so this only earns its place if the
+browser path outlives sign-in — for instance an ethernet box whose owner has no
+Bluetooth. Decide after 1.4, not before.
+
+## Phase 2 — the fallback path, kept good
+
+Phase 1 removes the browser for anyone with the app and Bluetooth. Everyone else
+— an ethernet box, a machine with Bluetooth disabled by policy, Android, someone
+completing setup on a desktop across the room — still walks the code path, and
+it must not rot.
 
 **2.1 Atlas `/init` earns its fork.** One email field. Render the box identity
 the box already sends, so the page says *"Link **Honest Kestrel** · Dragon
 Q6A"* — the anti-phishing property, not decoration. Then branch: active
 subscription → one tap and **no payment screen ever**; otherwise checkout with
-the email prefilled.
+the email prefilled. Without this an existing subscriber pays twice.
 
 **2.2 ~~Code TTL~~ — already correct.** `LINK_TTL_MINUTES = 15` in
 `routes/link.rs`, returned as `expires_in`. The two days of failed links were
 the box-side ghost-code bug (`api/display.rs`), not atlas expiry. Left here as a
 correction: the diagnosis was wrong, so re-open anything that rested on it.
 
-**2.3 Atlas grows a minimal account API.** Deliberately deferred until now;
-it is the gate for everything below.
-
-*Less is needed than it looks.* The box is **already** an authenticated client
-of atlas, so anything the app wants — billing, usage, wallet, subscription
-management — it asks the box, and the box asks atlas with its own key. No user
-session involved. Recovery does not need one either: atlas already knows the
-customer's email from Stripe and can simply mail them.
-
-What genuinely requires a session is the window *before* a box is linked:
-paying in-app, and vouching for a link without a browser.
-
-- **Email + a 6-digit code. Not a magic link** — links bounce you into a
-  browser, which is the exact hop this phase exists to delete. A code typed
-  into the app keeps everything in one place. No passwords, and no "sign in
-  with Apple/Google": for a sovereignty product, handing identity to a third
-  party is off-brand, and email is the one identifier everyone has that nobody
-  holds on their behalf.
-- **Opaque session tokens, not JWT.** 256-bit random, stored hashed, with
-  expiry and revocation. JWT buys statelessness we do not need at this scale
-  and costs instant revocation, which we do. Atlas has a database already.
-- **Codes** hashed at rest, 5–10 minute TTL, single use, rate-limited per
-  email. They are the front door.
-- **Sessions** long-lived on mobile, revocable from the account page, never in
-  a URL.
-- Half of this exists: `/init/login` already does email → magic link.
-
-*Data minimization holds.* This adds a session table and a code table — no new
-personal data. Atlas already holds the email, the Stripe customer, the linked
-box keys, and the wallet. The invariant is unchanged: **atlas knows who pays and
-which boxes are theirs, never anything from inside a box.**
-
-**Decide now: what "delete my account" means.** Proposed — atlas forgets you and
+**2.3 Decide what "delete my account" means.** Proposed — atlas forgets you and
 your box keeps working on the LAN forever. It is the sovereignty claim in its
-most testable form.
+most testable form, and it is cheap to settle now and expensive later.
 
-**2.4 In-app payment.** Apple Pay / Stripe sheet inside the app rather than a
-browser redirect.
-
-**2.5 Grant over Bluetooth.** With a session, the app asks atlas for a
-pre-approved `device_code` and hands it to the box over the Bluetooth session it
-already holds; the box redeems it outbound. Box side is built and tested — it
-has been waiting for an app with an account to vouch with.
-
-**What Phase 2 buys, holistically: the browser appears once, to deliver the
-app, and never again.** Today attention goes display → browser → app → browser →
-app → display → app: seven hops across four surfaces, most of them errands to
-fetch a string. After this it is display → browser → app → done. The display
-says one thing, the browser does one thing, the app does everything else, and
-every remaining handoff is a real change of purpose.
+*Data minimization holds throughout.* Sessions added a session table and a code
+table — no new personal data, since atlas already holds the email for Stripe.
+The invariant is unchanged: **atlas knows who pays and which boxes are theirs,
+never anything from inside a box.**
 
 ## Phase 3 — join a claimed box · **ship gate**
 
