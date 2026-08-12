@@ -168,6 +168,24 @@
 				<div class="live">
 					<span class="pip"></span>{session ? `with ${session}` : "with a nearby device"}
 				</div>
+				{#if state_.link_code}
+					<!-- The account step needs a code typed into a browser, and this
+					     is the only surface that can carry it: the box's link code
+					     is loopback-only, so the app cannot read it over the LAN,
+					     and the grant that would remove the browser entirely
+					     (0x82 + atlas POST /init/grant) is blocked on per-box keys.
+
+					     It goes HERE and not on the virgin screen on purpose. The
+					     phrase has already left the glass by now, so only one code
+					     is ever shown at a time — the failure that started this
+					     whole redesign was two secrets sharing a screen, and the
+					     first person shown it typed the wrong one as a wifi
+					     password. -->
+					<div class="linkline">
+						<span class="linklabel">Account code</span>
+						<span class="linkcode">{state_.link_code}</span>
+					</div>
+				{/if}
 			{:else}
 				<p class="doing">Get Virtues for Mac</p>
 				{#if state_.phrase_frozen}
@@ -372,6 +390,29 @@
 			opacity: 0.85;
 		}
 	}
+	/* The account code, shown only during a live setup session. Smaller than
+	   the phrase: it is read once, into a browser on the machine already in
+	   the owner's hands, not typed from across a room. */
+	.linkline {
+		margin-top: 18px;
+		display: flex;
+		align-items: baseline;
+		gap: 12px;
+	}
+	.linklabel {
+		font-size: 0.6rem;
+		text-transform: uppercase;
+		letter-spacing: 0.13em;
+		color: var(--faint);
+	}
+	.linkcode {
+		font-family: ui-monospace, "SF Mono", Menlo, "DejaVu Sans Mono", monospace;
+		font-size: 1.05rem;
+		letter-spacing: 0.06em;
+		color: var(--ink);
+		white-space: nowrap;
+	}
+
 	.foot {
 		margin-top: 20px;
 		font-size: 0.68rem;
