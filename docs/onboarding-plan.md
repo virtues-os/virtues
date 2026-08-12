@@ -101,23 +101,31 @@ recovery mode — the same join flow with different evidence.
 it the named primary path, and let it work remotely: the vouching device is
 already inside.
 
-**3.2 Email, then panel** (proof 2). From a fresh app: enter the account email →
-atlas sends a code → clicking it marks a recovery pending → the box learns by
-polling → the panel shows a join code for a few minutes → type it. Ownership
-first, presence second. **Ride the existing atlas heartbeat** (key renewal,
-relay reconcile) rather than adding a poll: recovery-pending is a field in a
-response the box already fetches. **No physical trigger** — an earlier draft used three
-power cycles to open the window, which a houseguest could perform themselves and
-which forced recovery to *begin* at the box. This ordering is strictly better
-and deletes the mechanism.
+**3.2 Power-button trigger.** The Dragon's board has a power button (#6).
+`HandlePowerKey=ignore` in `logind.conf` plus a udev rule on `KEY_POWER` hands
+the event to a recovery script — a ~15 minute spike to confirm. Long-press must
+remain a real shutdown, and the button has to be reachable once the board is in
+its enclosure.
 
-**3.3 Recovery code** (proof 3) — the **offline** proof, and the reason 3.2 can
-depend on the network. Verified locally, submitted over BLE, needing neither
-atlas nor internet: it covers a box that moved house, one that never linked, and
-a world without atlas. Generated at first pair, shown **in the app**, once.
-Consequence-framed copy, *Save to password manager* as the primary action,
-confirm by the last group. Regenerable from any trusted device. Stored hashed,
-and never derivable by atlas.
+The button is the **trigger**, never the proof: presence alone would let a
+houseguest into a box holding someone's life. What it buys is that the box
+stops polling — one outbound call when pressed, instead of a standing query
+against our servers forever. That was the real weakness of the polling design
+and the reason to prefer this.
+
+**3.3 Emailed code** (proof 2). Press → one outbound call → atlas emails the
+code to the **account address** → type it into the app → the box verifies.
+Whoever pressed the button is irrelevant; the code goes to the owner's inbox, so
+a houseguest achieves nothing but sending mail. The panel shows only "Recovery
+started — check your email": no secret on glass.
+
+**3.4 Recovery code** (proof 3) — the **offline** proof, used when the box has
+no network or never linked. Same button, same window, but the code is one the
+owner already holds and the box verifies locally: **atlas is not involved at
+all**. Generated at first pair, shown **in the app**, once. Consequence-framed
+copy, *Save to password manager* as the primary action, confirm by the last
+group. Regenerable from any trusted device. Stored hashed, and never derivable
+by atlas.
 
 **Why this gates shipping:** lockout is the single failure nobody can fix
 remotely, for anyone, ever.

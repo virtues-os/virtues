@@ -87,31 +87,30 @@ All owner-held. Listed in order of everyday use:
 secrets, so they additionally require physical presence at the box; proof 1 does
 not, because it already is presence-by-proxy.
 
-### Ownership first, then presence
+### The button triggers; something else authorizes
 
-The order matters, and getting it right removed a whole mechanism.
+The board has a power button, so a physical press is the trigger
+(`HandlePowerKey=ignore` + a udev rule on `KEY_POWER`). It opens a short window
+and re-advertises BLE.
 
-1. From a fresh app: *"I've lost my devices."*
-2. Enter the account email; atlas sends a code; the owner clicks it.
-3. Atlas marks a recovery pending. **The box learns by polling** — outbound, as
-   always.
-4. Only then does the panel begin showing a join code, for a few minutes.
-5. Read it, type it, joined.
+1. Press the button.
+2. The box makes **one** outbound call — no standing poll.
+3. Atlas emails a code to the **account address**.
+4. Type it into the app; the box verifies.
 
-Email proves ownership; reading the panel proves presence. Atlas still cannot
-authorize on its own — its signal only makes the box *display* something, and an
-attacker inside atlas must still be standing in the owner's living room.
+The panel shows only *"Recovery started — check your email."* No secret ever
+appears on glass, and it does not matter who pressed the button: the code goes
+to the owner's inbox, so a houseguest achieves nothing but sending mail.
 
-**An earlier draft had this backwards** — a physical trigger (three power cycles
-in thirty seconds) opening a window, with the code delivered by email. It works,
-but it is worse in two ways: a houseguest can perform the physical trigger
-themselves, and recovery cannot be *started* from anywhere but the box. Putting
-ownership first fixes both, and deletes the trigger entirely: no boot-timestamp
-detection, no accidental-activation analysis, no appliance convention to teach.
+**Why a trigger and not a proof.** Presence alone would let anyone who can reach
+the box into a machine holding someone's life. The button's job is to remove the
+*polling*, not the second factor — a box that continuously asks our servers
+whether someone would like to pair is both wasteful and a standing lever we
+should not hold.
 
-**What this costs: the box must be online** to hear that a recovery was
-authorized. A box that moved house, lost its network, or sits behind a dead ISP
-cannot be recovered this way — which is precisely the job of proof 3.
+**Offline, the same press does proof 3 instead**, with atlas never involved: the
+window opens, the owner submits the recovery code they already hold, and the box
+verifies it locally.
 
 ### Why atlas relaying the code is safe, and granting it would not be
 
