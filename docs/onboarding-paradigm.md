@@ -73,20 +73,41 @@ All owner-held. Listed in order of everyday use:
 
 1. **An already-trusted device vouches.** The common case — adding an iPad from
    a paired phone. No physical act required; the vouching device is already
-   inside.
-2. **The account.** A magic link to the account email, for someone with no
-   devices left.
-3. **A recovery code**, generated at first pair and shown once. The one that
-   still works if atlas ceases to exist — which is the promise the whole
-   product rests on.
+   inside, and this is what makes "I got a new phone" work from anywhere.
+2. **A code emailed to the account**, for someone with no devices left.
+3. **A recovery code**, generated at first pair and shown once — the offline
+   fallback, for a box that never linked an account (DIY has no email on file)
+   or for a world where atlas no longer exists.
 
 **Presence scales inversely with proof strength.** Proofs 2 and 3 are remote
-secrets, so they additionally require physical presence at the box; proof 1
-does not, because it already is presence-by-proxy.
+secrets, so they additionally require physical presence at the box; proof 1 does
+not, because it already is presence-by-proxy.
 
-**Atlas can never authorize alone.** An atlas compromise yields billing and
-relay disruption, never record data — the same invariant that keeps the api key
-out of the data path.
+### The panel never shows a secret during recovery
+
+Presence is the **trigger**, not the proof. Power-cycling opens the window; the
+panel then says only *"Recovery started — check the email on your account."*
+The code goes to the owner's inbox, not to the screen.
+
+This matters because the panel is readable by anyone standing in the room, which
+is the exact population presence does *not* filter — a houseguest, a cleaner, a
+guest at a party. Put the ownership factor on the presence surface and the two
+collapse into one. Under this shape a houseguest who power-cycles the box learns
+only that an email was sent to someone else.
+
+### Why atlas relaying the code is safe, and granting it would not be
+
+Atlas **carries** the email, so it can read the code in transit. That is
+tolerable *only* because presence is also required: an attacker inside atlas
+still has to be standing in your living room.
+
+What must never be built is atlas **authorizing** a pairing on its own. If our
+cloud can grant access to your box, then we functionally hold your keys — a
+breach, a subpoena, or one rogue employee becomes your life record, and the
+product's central claim quietly stops being true. Atlas's blast radius stays
+billing and reach; never data. This is the same invariant that keeps the api key
+out of the data path, and it is the line to defend hardest, because every
+convenience argument pushes against it.
 
 ## 5. Recovery is not a feature
 
@@ -100,9 +121,19 @@ accepts three proofs.
 
 **Physical presence, with no input hardware.** The panel is output-only and
 there is no button. Power-cycling three times within thirty seconds opens a
-two-minute window: the panel shows a join code and BLE re-advertises. It is an
-established appliance convention, needs no BOM change, and is essentially
-impossible to do by accident.
+two-minute window and BLE re-advertises. It is an established appliance
+convention, needs no BOM change, and is essentially impossible to do by
+accident. The window is a trigger only — see above; no secret appears on glass.
+
+**The recovery code's ceremony.** It is shown in the **app**, once, straight
+after the first pair — never on the panel, for the reason above. Frame the
+consequence rather than the chore ("if you lose this Mac and your phone, this is
+the way back in"), make *Save to password manager* the primary action rather
+than a suggestion, and confirm with the last group instead of a full retype. It
+is **regenerable from any trusted device**, which removes the one-shot anxiety
+at no cost — regenerating already requires proof 1. Stored **hashed** on the
+box: it is verified, never recovered, so a stolen disk must not yield it. Format
+for hand transcription, since the true fallback is a piece of paper.
 
 **The honest consequence, which setup must state plainly:** someone who loses
 every trusted device, their account, and their recovery code is locked out of
