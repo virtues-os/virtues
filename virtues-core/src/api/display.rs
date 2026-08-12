@@ -311,7 +311,7 @@ pub async fn display_link_qr_handler(
 ///
 /// Atlas polling is rate-limited to the interval the device-auth response
 /// asked for — the display's 2s heartbeat must not become a 2s hammer.
-mod link_session {
+pub(crate) mod link_session {
     use sqlx::PgPool;
     use std::sync::Mutex;
     use std::time::{Duration, Instant};

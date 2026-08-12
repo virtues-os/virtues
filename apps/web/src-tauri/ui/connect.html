@@ -800,13 +800,36 @@
               the subscription pays for what connects it: reaching it from anywhere,
               the AI wallet, integrations.</p>
             <button class="primary" id="openlink">Open the link page</button>
-            <p class="hint">Your box is showing a short code on its screen — enter that on
-              the page, and it links itself. ${statusHtml}</p>
+            <p class="hint" id="codehint">${statusHtml}</p>
             <button class="back" id="skip" style="margin-top:18px">Skip for now →</button>`;
-          document.getElementById('openlink').addEventListener('click', () => openUrl(LINK_URL));
+          document.getElementById('openlink').addEventListener('click', () =>
+            openUrl(state.linkCode ? `${LINK_URL}?code=${encodeURIComponent(state.linkCode)}` : LINK_URL));
           document.getElementById('skip').addEventListener('click', () => goToPairing(server, ssid));
         };
         draw('<span id="linkstate"></span>');
+
+        // ASK THE BOX FOR ITS CODE, over the setup session we already hold.
+        //
+        // It used to be printed on the box's panel for the owner to retype. The
+        // session is a better carrier in both directions: it already proved
+        // LINE OF SIGHT via the phrase, where the glass proves only that you are
+        // in the room — and the code lands in the URL, so nobody types anything.
+        // The panel keeps it off the screen entirely, which also preserves the
+        // one-code-at-a-time rule the whole redesign came from.
+        if (server.bleId && !state.linkCode) {
+          try {
+            const r = await invoke('plugin:reach|improv_link_code', { id: server.bleId });
+            if (r && r.ok && r.code) state.linkCode = r.code;
+          } catch { /* older box, or the session lapsed — the hint copes below */ }
+        }
+        const hint = document.getElementById('codehint');
+        if (hint) {
+          hint.innerHTML = state.linkCode
+            ? `We'll fill in your box's code (<b>${esc(state.linkCode)}</b>) automatically.
+               <span id="linkstate"></span>`
+            : `Your box is showing a short code — enter that on the page.
+               <span id="linkstate"></span>`;
+        }
 
         // Watch the box, if this device can reach it. When it can't (an office
         // LAN that isolates clients — the case this whole flow exists for) the

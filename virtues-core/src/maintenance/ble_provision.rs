@@ -441,6 +441,9 @@ mod server {
                 | Command::EnterpriseSettings { .. }
                 | Command::ClaimGrant { .. }
                 | Command::PairConsume { .. }
+                // Not configuring, but it hands out a capability: whoever holds
+                // the link code can attach this box to their own account.
+                | Command::LinkCode
         );
         if needs_session && !improv.lock().await.session_is(&peer) {
             let held = improv.lock().await.session_held_elsewhere(&peer);
@@ -591,6 +594,27 @@ mod server {
                         // guesser learns nothing from the shape of the refusal.
                         tracing::warn!("ble_provision: setup phrase rejected");
                         improv.lock().await.set_error(ImprovError::NotAuthorized).await;
+                    }
+                });
+            }
+            Command::LinkCode => {
+                let improv = improv.clone();
+                tokio::spawn(async move {
+                    // Starts the device-authorization session if none is live,
+                    // and re-polls it — the same call the panel's heartbeat
+                    // makes, so the app and the box can never be looking at two
+                    // different codes.
+                    let code = crate::api::display::link_session::code_and_poll(&pool).await;
+                    let url = crate::api::display::link_session::verification_url(&pool)
+                        .await
+                        .unwrap_or_default();
+                    let mut g = improv.lock().await;
+                    match code {
+                        // Empty reply = nothing in flight: already linked, or no
+                        // internet yet to start one. The app reads the absence
+                        // and says so rather than showing a blank code.
+                        None => g.send_result(build_result(0x84, &[])).await,
+                        Some(code) => g.send_result(build_result(0x84, &[&code, &url])).await,
                     }
                 });
             }
