@@ -120,7 +120,7 @@ pub const AP_CON_NAME: &str = "virtues-setup-ap";
 /// server, reached over a network they already run; hijacking its radio to
 /// broadcast an open-ended setup network would be a rude surprise and a real
 /// security change on a machine we are a guest on.
-pub(crate) fn is_appliance() -> bool {
+pub fn is_appliance() -> bool {
     std::path::Path::new("/etc/systemd/system/virtues-display.service").exists()
 }
 

@@ -195,8 +195,13 @@ Stated so the next person does not have to re-derive them:
   owner-driven.)
 - **No escrowed recovery key.** It would make the sovereignty claim false.
 - **No "physical access = root".** The NAS convention, wrong for this data.
-- **No forced subscription.** Prescribe, never enforce: the display sequences,
-  but the app can always pair. An owner who refuses the subscription owns
-  slower, LAN-only hardware — not a brick.
+- **No forced subscription on DIY.** Prescribe, never enforce — but the line is
+  between *products*, not screens. An **appliance** is a guided thing: its panel
+  sequences the three steps and its owner bought hardware that assumes a
+  subscription, so requiring the link there is intended. A **DIY** box is
+  somebody's own server and must run with no account at all, forever.
+  `box_status.rs` enforces exactly that split (`is_appliance()`); until
+  2026-08-12 it required an account on both, and `/setup` offered no exit, which
+  made this promise false for precisely the people it was written for.
 - **No confirmation or success screens.** Each reads as progress and costs a
   step. The box's own screen advancing *is* the confirmation.

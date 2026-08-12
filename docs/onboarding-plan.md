@@ -200,6 +200,40 @@ working tree with no tag, sha, or CI — nobody can tell which build is running.
 unified airlock, the desktop BLE client, and the three-step display. Not urgent
 without users, but the gap only grows.
 
+## Billing correctness
+
+Found by review, 2026-08-12; none of it is onboarding, all of it is the money
+path onboarding sells.
+
+**Refunds are scoped to the customer, not the subscription.** `charge.refunded`
+and `charge.dispute.created` both land in `set_status(..., "refunded")`, which is
+`UPDATE subscriptions … WHERE stripe_customer_id = $1`. Top-ups are off-session
+charges against that same customer, so refunding a $10 goodwill top-up marks the
+$20/mo subscription refunded — 402ing the portal and top-ups, and dropping the
+box off the relay. We do not choose to have refunds; disputes and support
+gestures arrive regardless. Separate the objects: a refund against a **top-up**
+debits the wallet, a refund or dispute against a **subscription invoice** changes
+subscription status.
+
+**Credits roll over** indefinitely while the subscription is active. Prepaid
+money that expires is unfriendly, and in several US states legally fraught for
+anything gift-card-shaped.
+
+**Auto-top-up's off switch is unwired on the streaming path** — the main AI path
+— so "off" still charges the card. `client.rs`'s `stream()` calls
+`renew::auto_topup` with no `auto_topup_allowed()` guard, unlike the post/get
+paths.
+
+**Every recovery path for a lapsed subscription is gated on the subscription
+being active**, including the billing portal — so the way to fix your payment
+sits behind your payment. Add a grace window on `past_due` and un-gate the
+portal.
+
+**A second link destroys the first box.** `/init/login` resolving an existing
+email deletes that account's device keys and rotates the api key, so box #1 goes
+dark; a fresh link instead mints a *new* Stripe customer, which silently
+double-charges. Multi-box is not an open question — it is a destructive default.
+
 ## Failure modes and degradation
 
 The plan is BLE-centric; these are the paths it does not describe, and each one
