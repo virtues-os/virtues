@@ -12,6 +12,12 @@ settingGroups:
     base:
       PRODUCT_NAME: Virtues
       PRODUCT_BUNDLE_IDENTIFIER: com.virtues.app
+      # The generated project carries this but this spec did not, so
+      # regenerating with xcodegen SILENTLY DROPPED IT and broke signing —
+      # verified 2026-08-13 by generating into a scratch dir and diffing
+      # against the committed pbxproj. Anything the pbxproj has and this file
+      # lacks is lost on the next `tauri ios init`; keep them in step.
+      DEVELOPMENT_TEAM: 4YV9K677RY
 targetTemplates:
   app:
     type: application
@@ -30,6 +36,18 @@ targets:
     sources:
       - path: Sources
       - path: Assets.xcassets
+      # Icon Composer bundle — the layered icon (light / dark / clear / tinted).
+      # Xcode 26 hands a `.icon` to actool directly; iOS needs no equivalent of
+      # the macOS precompile, because unlike `tauri build` the Xcode build IS
+      # the actool invocation.
+      #
+      # NOT YET IN THE GENERATED PROJECT. Adding it here only takes effect when
+      # the pbxproj is regenerated, and regenerating was not safe to do blind —
+      # see DEVELOPMENT_TEAM above. Until then iOS ships the flat
+      # AppIcon.appiconset, which is correct, just not layered. To finish:
+      # regenerate, confirm AppIcon.icon lands in the Resources build phase and
+      # DEVELOPMENT_TEAM survived, then archive once to verify.
+      - path: ../../icons/AppIcon.icon
       - path: virtues_iOS
       - path: assets
         buildPhase: resources

@@ -6,5 +6,5 @@
   pair. Only useful if you want depth; otherwise import mark.svg as one layer.
 -->
 <svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
-	<circle cx="512" cy="288" r="94" fill="#17171A"/>
+	<circle cx="512" cy="338" r="73" fill="#17171A"/>
 </svg>

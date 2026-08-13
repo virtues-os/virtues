@@ -411,6 +411,15 @@ iroh-ffi-mac: ## Build VirtuesIrohMac.xcframework for the Mac collector
 ios-release: ## Build a signed iOS IPA for TestFlight (VERSION=1.2.6 to bump first)
 	tools/ios-release.sh $(VERSION)
 
+# ── icons ───────────────────────────────────────────────────────────────────
+# Everything derives from apps/web/src-tauri/icons/AppIcon.icon. The outputs
+# are committed because release CI runs `pnpm tauri build` directly and cannot
+# compile them, and because handing tauri a `.icon` breaks the bundle step
+# outright. Run this after any change to the mark, then commit what it wrote.
+
+icons: ## Rebuild every icon artifact from AppIcon.icon (needs Xcode 26)
+	tools/build-icons.sh
+
 # ── macOS desktop app (one signed DMG: app + both helper sidecars) ───────────
 
 # Auto-launch the freshly-built app after `make mac-app` (OPEN=0 to skip). We
