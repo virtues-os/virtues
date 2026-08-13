@@ -204,7 +204,19 @@
 	{#if status}
 		<dl class="facts">
 			<dt>Running</dt>
-			<dd>{status.current}</dd>
+			<dd class="running">
+				<!-- RELEASE IDENTITY, not the build counter. This row used to
+				     print `current` (the crate version), which is the same
+				     string on every prerelease build — so a box on `edge` was
+				     told it was running "0.3.0", the number of a release it is
+				     ahead of. `codename::version()` exists precisely so every
+				     surface says the same word; this one wasn't asking. -->
+				<span class="ver">{status.running_version}</span>
+				{#if status.running_channel && status.running_channel !== 'stable'}
+					<span class="track">{status.running_channel}</span>
+				{/if}
+				<span class="counter">build {status.current}</span>
+			</dd>
 			<dt>Channel</dt>
 			<dd>
 				<div class="channel-picker">
@@ -235,6 +247,19 @@
 			<p class="state error">
 				<Icon icon="ri:error-warning-line" width="14" />
 				Couldn't check for updates — {status.check_error}
+			</p>
+		{:else if status.running_ahead}
+			<!-- Neither "up to date" nor "update available" is true here, and
+			     both were lies: this box came off a later track than the channel
+			     it follows, so the newest tag on that channel is probably behind
+			     it. Say what is running, say what the channel holds, and let the
+			     owner decide. -->
+			<p class="state ahead">
+				<Icon icon="ri:git-branch-line" width="14" />
+				This box runs <strong>{status.running_version}</strong>, from the
+				{status.running_channel} track — ahead of
+				{status.latest ?? 'the latest release'} on Main. Nothing to install;
+				Main will catch up.
 			</p>
 		{:else if status.update_available}
 			<div class="state available">
@@ -352,6 +377,37 @@
 
 	dd {
 		margin: 0;
+	}
+
+	.running {
+		display: flex;
+		align-items: baseline;
+		flex-wrap: wrap;
+		gap: 8px;
+	}
+
+	.ver {
+		font-variant-numeric: tabular-nums;
+	}
+
+	/* The track is the fact people misread; give it a shape, not just a word. */
+	.track {
+		font-size: 11px;
+		text-transform: uppercase;
+		letter-spacing: 0.06em;
+		padding: 1px 6px;
+		border-radius: 999px;
+		border: 1px solid var(--color-border);
+		color: var(--color-foreground-muted);
+	}
+
+	.counter {
+		font-size: 12px;
+		color: var(--color-foreground-subtle);
+	}
+
+	.ahead {
+		color: var(--color-foreground-muted);
 	}
 
 	.channel-picker {
