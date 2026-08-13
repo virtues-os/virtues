@@ -176,7 +176,15 @@
 				     job — proving line of sight to open a session — is done by
 				     the time either condition here is true, and ONE CODE AT A
 				     TIME is the rule the whole redesign came from: two codes on
-				     one screen and nobody knows which one is being asked for. -->
+				     one screen and nobody knows which one is being asked for.
+
+				     NOW A FALLBACK. RPC 0x85 hands the same code to an
+				     authorized Bluetooth session, so the primary path never
+				     asks anyone to read this. It still earns its place: a box
+				     older than 0x85, a LAN-only chip, and the case that pays
+				     for it — an advertisement claiming "already online" that
+				     has gone stale, where this glass is the only honest source
+				     left. -->
 				<p class="doing">Pair your app</p>
 				<p class="instruct">Type these six digits into the app.</p>
 				<div class="phrase code6">{state_.pair_code}</div>
