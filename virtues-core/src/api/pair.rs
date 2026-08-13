@@ -397,6 +397,84 @@ pub struct MintResponse {
 /// device. The token is minted `authorized` (the caller is the authenticated
 /// owner), so the QR is immediately redeemable; closing the modal cancels it
 /// via `/api/pair/deny/:id`.
+/// `POST /api/pair/reopen-onboarding` — revoke every paired device, keep
+/// everything else. The `virtues reset --keep-data` path, reachable from the
+/// app.
+///
+/// Deliberately NOT the full reset, which drops every table and belongs behind
+/// the CLI's typed-hostname confirmation — a settings screen is the wrong place
+/// for a screwdriver.
+///
+/// Two reasons it earns a button. Re-pairing was otherwise a shell on the box,
+/// which an appliance owner does not have. And it is the ONLY way to reach a
+/// box that is unclaimed with its phrase already frozen — the "your saved words
+/// still work" panel state, which had no way to be produced and so had never
+/// run on hardware (2026-08-13).
+///
+/// Requires an authenticated device: whoever is revoking every device has to
+/// already be one of them.
+pub async fn reopen_onboarding_handler(
+    State(pool): State<PgPool>,
+    user: AuthUser,
+) -> impl IntoResponse {
+    let mut tx = match pool.begin().await {
+        Ok(t) => t,
+        Err(e) => {
+            tracing::warn!("reopen onboarding: begin failed: {e:#}");
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(json!({"error": "internal"})),
+            );
+        }
+    };
+    let devices = match sqlx::query("UPDATE app_device SET revoked_at = now() WHERE revoked_at IS NULL")
+        .execute(&mut *tx)
+        .await
+    {
+        Ok(r) => r.rows_affected(),
+        Err(e) => {
+            tracing::warn!("reopen onboarding: revoke devices failed: {e:#}");
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(json!({"error": "internal"})),
+            );
+        }
+    };
+    // Device credentials go with the devices. Leaving them active would let a
+    // revoked device keep talking, which is the whole thing being undone.
+    let creds = match sqlx::query(
+        "UPDATE credentials SET status = 'revoked', updated_at = now() \
+         WHERE device_id IS NOT NULL AND status = 'active'",
+    )
+    .execute(&mut *tx)
+    .await
+    {
+        Ok(r) => r.rows_affected(),
+        Err(e) => {
+            tracing::warn!("reopen onboarding: revoke credentials failed: {e:#}");
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(json!({"error": "internal"})),
+            );
+        }
+    };
+    if let Err(e) = tx.commit().await {
+        tracing::warn!("reopen onboarding: commit failed: {e:#}");
+        return (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({"error": "internal"})),
+        );
+    }
+    tracing::info!(
+        by_device = %user.device_id,
+        devices, creds,
+        "onboarding re-opened from the app — every device revoked"
+    );
+    // The box is unclaimed again, so the Improv service should come back and the
+    // panel should return to a setup screen. Both reconcile on their own timers.
+    (StatusCode::OK, Json(json!({ "devices": devices, "credentials": creds })))
+}
+
 pub async fn mint_handler(
     State(pool): State<PgPool>,
     user: AuthUser,

@@ -33,6 +33,7 @@
 	import { isMacOS } from '$lib/utils/platform';
 	import NetworkSection from '$lib/components/settings/NetworkSection.svelte';
 import UpdateSection from '$lib/components/settings/UpdateSection.svelte';
+	import ReopenSection from '$lib/components/settings/ReopenSection.svelte';
 
 	import ProfileView from '$lib/components/tabs/views/ProfileView.svelte';
 	import AssistantView from '$lib/components/tabs/views/AssistantView.svelte';
@@ -157,6 +158,7 @@ import UpdateSection from '$lib/components/settings/UpdateSection.svelte';
 			<NetworkSection />
 			<UpdateSection />
 			<SystemInfoView {tab} {active} />
+			<ReopenSection />
 		{:else if section === 'devices'}
 			<DevicesView {tab} {active} />
 		{:else if section === 'this-mac' && isMacOS}

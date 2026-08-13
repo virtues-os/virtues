@@ -934,6 +934,13 @@ pub async fn run(client: Virtues, host: &str, port: u16) -> Result<()> {
             "/api/system/update/apply",
             post(api::apply_update_handler),
         )
+        // Re-open onboarding: revoke every device, keep the data. Sits beside
+        // the update routes because it is the same kind of thing — a box-wide
+        // action a paired device may take, guarded by being paired.
+        .route(
+            "/api/pair/reopen-onboarding",
+            post(crate::api::pair::reopen_onboarding_handler),
+        )
         // Bookmarks API (saved web content — the manual capture door)
         .route(
             "/api/bookmarks",

@@ -41,10 +41,30 @@ use crate::error::{Error, Result};
 
 #[derive(Debug, Serialize)]
 pub struct UpdateStatus {
-    /// This binary's version.
+    /// This binary's version. The BUILD COUNTER (`CARGO_PKG_VERSION`), which is
+    /// not what the box is running — see `running_version`. Kept because the
+    /// number is still the migration/compat coordinate everything else speaks.
     pub current: String,
-    /// `stable` | `prerelease`.
+    /// The stored update PREFERENCE: `stable` | `prerelease`. What the box will
+    /// be offered next, not what it is on now.
     pub channel: String,
+    /// RELEASE IDENTITY — what this box is actually running, from the baked
+    /// build tag (`git describe`). `edge`, `staging.4`, `v0.3.0`, `dev`.
+    ///
+    /// Separate from `current` on purpose, and the distinction this endpoint
+    /// used to lose: every prerelease build reports the same bare crate version,
+    /// so a screen showing `current` told an owner on `edge` they were running
+    /// "0.3.0" — the number of a release their build is AHEAD of.
+    pub running_version: String,
+    /// The channel of the RUNNING BUILD, derived from that same tag:
+    /// `stable` | `staging` | `edge` | `dev`. Compare with `channel` to see a
+    /// box whose build came from a different track than its preference — the
+    /// state that made this screen offer a downgrade as an upgrade.
+    pub running_channel: String,
+    /// The running build came off a different, later track than the channel
+    /// being followed — so the newest tag on that channel is probably BEHIND
+    /// this box, and offering it would be a downgrade.
+    pub running_ahead: bool,
     /// Newest tag on the followed channel, or `None` if the lookup failed.
     pub latest: Option<String>,
     /// Whether `latest` is something other than what's running.
@@ -96,18 +116,37 @@ pub async fn status() -> UpdateStatus {
                 _ => None,
             };
 
+            // OFF-CHANNEL BUILD. A box running `edge`/`staging` while its
+            // preference says stable is normally AHEAD of the newest stable
+            // tag, so "v0.3.0 is available" offered a downgrade as an upgrade —
+            // seen live on a box running an edge build newer than the tag it
+            // was being offered (2026-08-13).
+            //
+            // We cannot prove ancestry without asking about every commit
+            // between, so this does not claim the box is newer; it declines to
+            // claim it is OLDER. The UI says which build is running and what
+            // the channel holds, and lets the owner decide — the same
+            // human-is-the-halt-mechanism argument the rest of this module
+            // rests on.
+            let running_ahead = channel == Channel::Stable
+                && matches!(crate::codename::channel(), "edge" | "staging" | "dev");
+
             // A staged release IS an available update, whatever the comparison
             // concluded — we already downloaded and preflighted it, which is a
             // far stronger statement than any version string.
             let update_available = staged.is_some()
-                || by_commit.unwrap_or(match channel {
-                    Channel::Stable => target != current,
-                    Channel::Prerelease => true,
-                });
+                || (!running_ahead
+                    && by_commit.unwrap_or(match channel {
+                        Channel::Stable => target != current,
+                        Channel::Prerelease => true,
+                    }));
 
             UpdateStatus {
                 current,
                 channel: channel.as_str().to_string(),
+                running_version: crate::codename::version().to_string(),
+                running_channel: crate::codename::channel().to_string(),
+                running_ahead,
                 latest: Some(tag),
                 update_available,
                 staged,
@@ -117,6 +156,9 @@ pub async fn status() -> UpdateStatus {
         Err(e) => UpdateStatus {
             current,
             channel: channel.as_str().to_string(),
+            running_version: crate::codename::version().to_string(),
+            running_channel: crate::codename::channel().to_string(),
+            running_ahead: false,
             latest: None,
             // A release we already hold is still installable with the network
             // down — that is rather the point of having fetched it early.

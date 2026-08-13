@@ -276,8 +276,19 @@ export interface StagedRelease {
 }
 
 export interface UpdateStatus {
+	/** The BUILD COUNTER (crate version). Not what the box is running — see
+	 *  `running_version`. Kept because it is the compat coordinate. */
 	current: string;
+	/** The stored update PREFERENCE: what the box will be offered next. */
 	channel: string;
+	/** RELEASE IDENTITY — what this box is actually running, from the baked
+	 *  build tag: `edge`, `staging.4`, `v0.3.0`, `dev`. */
+	running_version: string;
+	/** Channel of the running BUILD: `stable` | `staging` | `edge` | `dev`. */
+	running_channel: string;
+	/** The running build is off a later track than the channel being followed,
+	 *  so that channel's newest tag is probably behind this box. */
+	running_ahead: boolean;
 	latest: string | null;
 	update_available: boolean;
 	/**
@@ -302,6 +313,33 @@ export async function setUpdateChannel(channel: 'stable' | 'prerelease'): Promis
 		body: JSON.stringify({ channel }),
 	});
 	if (!res.ok) throw new Error(`Failed to set channel: ${res.statusText}`);
+}
+
+export interface ReopenOnboardingResponse {
+	devices: number;
+	credentials: number;
+}
+
+/**
+ * Revoke every paired device, keeping data, sources, subscription and box
+ * identity. The box becomes unclaimed: it advertises over Bluetooth again and
+ * the panel returns to a setup screen.
+ *
+ * This device is revoked too — the caller loses its own session, by design.
+ */
+export async function reopenOnboarding(): Promise<ReopenOnboardingResponse> {
+	const res = await fetch(`${API_BASE}/pair/reopen-onboarding`, { method: 'POST' });
+	if (!res.ok) {
+		let detail = res.statusText;
+		try {
+			const body = await res.json();
+			if (body?.error) detail = body.error;
+		} catch {
+			/* non-JSON body — the status text is all we have */
+		}
+		throw new Error(detail);
+	}
+	return res.json();
 }
 
 export interface ApplyUpdateResponse {
