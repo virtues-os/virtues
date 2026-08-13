@@ -1055,8 +1055,16 @@ its devices apart — type its address.",
         const el = () => document.getElementById('linkstate');
         while (gen === searchGen) {
           const had = state.linkCode;
+          const hadErr = codeErr;
           const got = await fetchLinkCode();
           if (gen !== searchGen) return;
+          // REPAINT ON A CHANGED ERROR TOO, not only a changed code. Painting
+          // only when the code changed meant a link step that started failing
+          // kept showing "we'll fill in your box's code" forever while the
+          // reason sat in a variable nobody rendered — the same invisible
+          // failure this screen was rebuilt to remove, reintroduced hours later
+          // by an optimisation that repainted less (2026-08-13).
+          if (codeErr !== hadErr) paintCode();
           // LINKED, heard over Bluetooth. The watcher below asks the box over
           // the LAN, but `origin` is undefined on the Bluetooth path — so on
           // the very flow this screen exists for it could never see the answer,
