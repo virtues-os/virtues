@@ -922,13 +922,19 @@ its devices apart — type its address.",
         // screen left open a few minutes opened a URL atlas had already killed:
         // "Link expired. Start again from your box." (2026-08-13). A blip must
         // not wipe a good code, so only a non-empty answer overwrites.
+        // Reports which of three things happened, because they mean different
+        // things and used to be one silent shrug: a code, a deliberate EMPTY
+        // answer, or a failure.
         const fetchLinkCode = async () => {
-          if (!server.bleId) return;
+          if (!server.bleId) return 'error';
           try {
             const r = await invoke('plugin:reach|improv_link_code', { id: server.bleId });
-            if (r && r.ok && r.code) { state.linkCode = r.code; codeErr = ''; return; }
-            if (r && r.ok === false && r.error) codeErr = String(r.error);
-          } catch (e) { codeErr = String(e); }
+            if (r && r.ok && r.code) { state.linkCode = r.code; codeErr = ''; return 'code'; }
+            if (r && r.ok === false && r.error) { codeErr = String(r.error); return 'error'; }
+            // ok, no code. The box sends this when nothing is in flight —
+            // which, once it HAS handed us one, means the link landed.
+            return 'none';
+          } catch (e) { codeErr = String(e); return 'error'; }
         };
         // Until we have it there is nowhere useful to send the browser, so the
         // button says so instead of opening a page that can only fail.
@@ -961,11 +967,31 @@ its devices apart — type its address.",
         // screen still works; it just can't congratulate you, and the box's
         // own display advances to the pair code either way.
         const gen = ++searchGen;
+        let noneStreak = 0;
         const el = () => document.getElementById('linkstate');
         while (gen === searchGen) {
           const had = state.linkCode;
-          await fetchLinkCode();
+          const got = await fetchLinkCode();
           if (gen !== searchGen) return;
+          // LINKED, heard over Bluetooth. The watcher below asks the box over
+          // the LAN, but `origin` is undefined on the Bluetooth path — so on
+          // the very flow this screen exists for it could never see the answer,
+          // and an owner who had just paid sat on a finished step with no way
+          // on but "Skip" (2026-08-13). A box that gave us a code and now
+          // reports nothing in flight has linked.
+          // `had` catches the link landing while we watch. The streak catches
+          // the other entry: an app opened fresh against a box that linked
+          // earlier, where there is no transition to see — it has simply never
+          // had a code. Either way a box with nothing in flight has no link
+          // step left to do, and pairing (0x83) rides Bluetooth regardless of
+          // whether the box ever reached the internet.
+          if (got === 'none') noneStreak++; else noneStreak = 0;
+          if (had ? got === 'none' : noneStreak >= 3) {
+            if (el()) el().textContent = 'Nothing left to link — opening the last step…';
+            await new Promise((r) => setTimeout(r, 900));
+            if (gen !== searchGen) return;
+            return goToPairing(server, ssid);
+          }
           if (state.linkCode !== had) paintCode();
           const id = await boxIdentity(server.origin);
           if (gen !== searchGen) return;
