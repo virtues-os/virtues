@@ -238,9 +238,18 @@
 		);
 	}
 
-	// Only on the Mac this is running on. The button opens THIS machine's
-	// System Settings, so offering it against another device in the list would
-	// send someone to the wrong computer's preferences.
+	// Shown whenever we ARE a Mac app, not only on the `is_current` row.
+	//
+	// One Mac appears as TWO devices — the app ("Virtues Desktop", is_current)
+	// and the collector (the .local hostname, is_current false) — and it is the
+	// COLLECTOR that reports permissions. Gating on is_current therefore hid the
+	// button behind a row that never carries a denial, so the fix shipped inert
+	// (caught on live data 2026-08-13).
+	//
+	// The cost of relaxing it: someone with two Macs sees the button on the
+	// other Mac's row too, where it opens the wrong machine's settings. Rare,
+	// recoverable, and better than a control that cannot appear at all — but it
+	// is why the label names this Mac rather than the device in the row.
 	const canFix = $derived(isTauri);
 
 	function kindLabel(k: Device["kind"]) {
@@ -353,10 +362,10 @@
 										Turn on <span class="text-foreground">Virtues</span> in the list,
 										then leave it — this Mac notices within a few minutes.
 									</div>
-									{#if canFix && device.is_current && perm.open}
+									{#if canFix && perm.open}
 										<button class="fix-btn mt-2" onclick={() => perm.open?.()}>
 											<Icon icon="ri:external-link-line" width="13" />
-											Open {perm.label} settings
+											Open {perm.label} on this Mac
 										</button>
 									{/if}
 								</div>
