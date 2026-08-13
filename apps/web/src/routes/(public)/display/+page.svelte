@@ -165,7 +165,7 @@
 		     See docs/onboarding-paradigm.md §1. -->
 		<span class="lockup"><span class="mk">∴</span>{state_.box_name}</span>
 		<div class="body">
-			{#if state_.pair_code && (state_.linked || session !== null)}
+			{#if state_.pair_code && state_.linked && session === null}
 				<!-- PAIRING. The step this panel had no screen for at all until
 				     2026-08-13: the redesign built every state around the setup
 				     phrase and dropped the six digits, so the app said "the 6
@@ -178,21 +178,25 @@
 				     TIME is the rule the whole redesign came from: two codes on
 				     one screen and nobody knows which one is being asked for.
 
-				     NOW A FALLBACK. RPC 0x85 hands the same code to an
-				     authorized Bluetooth session, so the primary path never
-				     asks anyone to read this. It still earns its place: a box
-				     older than 0x85, a LAN-only chip, and the case that pays
-				     for it — an advertisement claiming "already online" that
-				     has gone stale, where this glass is the only honest source
-				     left. -->
+				     ONLY WHEN NO SESSION IS LIVE. Any box new enough to have
+				     this state also has RPC 0x85, so a connected app can always
+				     fetch the code itself — printing it during a live session
+				     was showing an owner a number nobody was going to ask them
+				     for, in the one place this redesign exists to keep clear.
+
+				     What remains is the case that earns the state: pairing a
+				     first device with no Bluetooth in play at all — box on
+				     ethernet, or a Mac with the radio off — where the glass is
+				     the only source of the code. Also covers a session that
+				     lapsed mid-flow.
+
+				     `linked` is the guard against the other direction: an
+				     unclaimed box that has not linked yet is still waiting for
+				     someone to START, and that owner needs the phrase, not a
+				     pair code. -->
 				<p class="doing">Pair your app</p>
 				<p class="instruct">Type these six digits into the app.</p>
 				<div class="phrase code6">{state_.pair_code}</div>
-				{#if session !== null}
-					<div class="live">
-						<span class="pip"></span>{session ? `with ${session}` : "with a nearby device"}
-					</div>
-				{/if}
 			{:else if session !== null}
 				<!-- The words have been accepted, so they leave the glass — two
 				     jobs at once. They are spent, so nobody who wanders past can
