@@ -1413,8 +1413,17 @@ fn main() {
             // (a stale collector after an app update is the only reconcile case
             // left now that the proxy runs in-process). macOS-only: the collector
             // is a macOS daemon, and Windows/Linux are views-only here.
+            //
+            // Gated on being paired. Reconciling kickstarts the LaunchAgent, and
+            // a freshly-started collector asks macOS for Full Disk Access and
+            // Accessibility — so an UNPAIRED app threw two TCC prompts over its
+            // own connect screen, asking for the machine before it had shown
+            // what it was for (2026-08-13). No pairing means this Mac hasn't
+            // been onboarded, so there is nothing to keep in sync yet; the
+            // "Turn on this Mac" flow installs the collector and this reconcile
+            // takes over from the next launch on.
             #[cfg(target_os = "macos")]
-            if reconcile_helpers() {
+            if app.reach().is_paired() && reconcile_helpers() {
                 std::thread::sleep(std::time::Duration::from_millis(300));
             }
 
