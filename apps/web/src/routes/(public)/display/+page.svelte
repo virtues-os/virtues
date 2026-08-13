@@ -23,20 +23,25 @@
     one exception is the breathing pip on a live setup session, which is the
     smallest thing that reads as "now" without becoming a spinner.
 
-  FIVE STATES:
+  FOUR STATES:
 
     1. unclaimed, virgin  → get the Mac app, and the four words that let it in
     2. unclaimed, frozen  → reset box: the words are the ones you saved
     3. session live       → the words are spent; who is setting up, instead
-    4. pairing            → the six digits the app is asking for
-    5. claimed            → ambient
+    4. claimed            → ambient
 
-  State 4 was missing until 2026-08-13, and the omission was invisible from
-  here: every state above is about the PHRASE, so a redesign that got the
-  phrase right looked complete. The app meanwhile said "the 6 digits on its
-  screen right now" about a screen with no way to show them. This panel's
-  states are not its own — they are the app's steps, and the two have to be
-  read together or a whole step can go missing.
+  A fifth — the six-digit pair code — was added and then removed the same day
+  (2026-08-13), and the round trip is the lesson. It went in because the app
+  asked for digits this screen could not show. But RPC 0x85 hands the code to
+  an authorized session, so the only box that ever needed it printed here was
+  one with no session at all — and a box with no session is a box waiting for
+  someone to START, which needs the PHRASE. The two secrets wanted the same
+  slot at the same moment, and showing the wrong one stopped a live run dead:
+  the app asked for four words while the glass showed six digits.
+
+  There is no state where the pair code is the right thing to print. If a
+  first device ever has to pair with no Bluetooth at all, `virtues pair` on the
+  box is the documented door, and it does not cost this screen a fifth mode.
 
   There used to be three numbered setup screens (join a network, link an
   account, then a pair code) on a full-bleed light/dark split with a QR. They
@@ -165,39 +170,7 @@
 		     See docs/onboarding-paradigm.md §1. -->
 		<span class="lockup"><span class="mk">∴</span>{state_.box_name}</span>
 		<div class="body">
-			{#if state_.pair_code && state_.linked && session === null}
-				<!-- PAIRING. The step this panel had no screen for at all until
-				     2026-08-13: the redesign built every state around the setup
-				     phrase and dropped the six digits, so the app said "the 6
-				     digits on its screen right now" about a screen that showed
-				     none. A live owner hit the wall mid-run.
-
-				     It replaces the phrase rather than joining it. The phrase's
-				     job — proving line of sight to open a session — is done by
-				     the time either condition here is true, and ONE CODE AT A
-				     TIME is the rule the whole redesign came from: two codes on
-				     one screen and nobody knows which one is being asked for.
-
-				     ONLY WHEN NO SESSION IS LIVE. Any box new enough to have
-				     this state also has RPC 0x85, so a connected app can always
-				     fetch the code itself — printing it during a live session
-				     was showing an owner a number nobody was going to ask them
-				     for, in the one place this redesign exists to keep clear.
-
-				     What remains is the case that earns the state: pairing a
-				     first device with no Bluetooth in play at all — box on
-				     ethernet, or a Mac with the radio off — where the glass is
-				     the only source of the code. Also covers a session that
-				     lapsed mid-flow.
-
-				     `linked` is the guard against the other direction: an
-				     unclaimed box that has not linked yet is still waiting for
-				     someone to START, and that owner needs the phrase, not a
-				     pair code. -->
-				<p class="doing">Pair your app</p>
-				<p class="instruct">Type these six digits into the app.</p>
-				<div class="phrase code6">{state_.pair_code}</div>
-			{:else if session !== null}
+			{#if session !== null}
 				<!-- The words have been accepted, so they leave the glass — two
 				     jobs at once. They are spent, so nobody who wanders past can
 				     read them; and the owner gets confirmation ON THE BOX that
@@ -365,16 +338,6 @@
 		letter-spacing: 0.01em;
 		color: var(--ink);
 		white-space: nowrap;
-	}
-	/* Six digits, unlike four words, are TRANSCRIBED character by character —
-	   so they get the room the phrase cannot afford and the spacing that keeps
-	   a glance from losing its place. Tabular figures so the width never
-	   shifts as the code rotates. */
-	.code6 {
-		font-size: 2.6rem;
-		letter-spacing: 0.16em;
-		font-variant-numeric: tabular-nums;
-		margin-top: 0.1rem;
 	}
 	/* The reset state's stand-in for the phrase: same slot, quieter, and it
 	   points at the owner's password manager instead of at this screen.
