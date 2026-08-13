@@ -1476,13 +1476,32 @@ its devices apart — type its address.",
             <p class="kicker">${esc(server.name)}</p>
             <h1>Pairing</h1>
             <div class="wait"><span class="pip"></span><span>Asking your box to let this ${esc(THIS_DEVICE.replace(/^this /, ''))} in</span></div>
-            <div class="msg" id="msg"></div>`;
+            <div class="msg" id="msg"></div>
+            <button class="back" id="autocancel" style="margin-top:18px">Enter the code myself →</button>`;
+          // A WAY OUT, always. This screen waits on the box and had no escape:
+          // a Bluetooth call that hangs left an owner staring at a pip with no
+          // button on the page (live, 2026-08-13).
+          let cancelled = false;
+          document.getElementById('autocancel').addEventListener('click', () => {
+            cancelled = true;
+          });
+          // AND A DEADLINE, because a cancel button only helps someone who is
+          // still watching. ensure_connected wraps `connect` in a timeout but
+          // not `discover_services` or `subscribe`, so a stale peripheral can
+          // hang past every timeout the Rust side has. 20s is longer than a
+          // healthy fetch and shorter than anyone's patience.
+          const withDeadline = (p, ms) =>
+            Promise.race([p, new Promise((r) => setTimeout(() => r(null), ms))]);
           let auto = null;
           try {
-            const r = await invoke('plugin:reach|improv_pair_code', { id: server.bleId });
+            const r = await withDeadline(
+              invoke('plugin:reach|improv_pair_code', { id: server.bleId }),
+              20000,
+            );
             if (r && r.ok && r.code) auto = r.code;
           } catch { /* fall through to the form */ }
-          if (auto) {
+          if (cancelled) auto = null;
+          if (auto && !cancelled) {
             const done = await submitPairBle(server, auto);
             if (done.ok) return;
             // Fell through. Carry the reason onto the form: silence here reads
