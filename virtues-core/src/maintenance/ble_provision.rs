@@ -444,6 +444,12 @@ mod server {
                 // Not configuring, but it hands out a capability: whoever holds
                 // the link code can attach this box to their own account.
                 | Command::LinkCode
+                // Same shape, and the stronger capability of the two: the pair
+                // code lets a device INTO this box. Safe to hand over only
+                // because reaching here already required the phrase off the
+                // panel — which is the exact proof the six digits were asking
+                // for a second time.
+                | Command::PairCode
         );
         if needs_session && !improv.lock().await.session_is(&peer) {
             let held = improv.lock().await.session_held_elsewhere(&peer);
@@ -594,6 +600,30 @@ mod server {
                         // guesser learns nothing from the shape of the refusal.
                         tracing::warn!("ble_provision: setup phrase rejected");
                         improv.lock().await.set_error(ImprovError::NotAuthorized).await;
+                    }
+                });
+            }
+            Command::PairCode => {
+                let improv = improv.clone();
+                let pool = pool.clone();
+                tokio::spawn(async move {
+                    // The SAME standing code the panel would print, not a
+                    // fresh one — `ensure_standing` mints only when none is
+                    // live. Two codes valid at once is how someone ends up
+                    // typing the one that just stopped working.
+                    let code = crate::api::pair::ensure_standing(&pool)
+                        .await
+                        .map(|m| m.token)
+                        .map_err(|e| {
+                            tracing::warn!(error = %format!("{e:#}"), "ble_provision: no standing pair code");
+                        })
+                        .ok();
+                    let mut g = improv.lock().await;
+                    match code {
+                        // Empty rather than an error: the caller's fallback is
+                        // the panel, which is where the code was all along.
+                        None => g.send_result(build_result(0x85, &[])).await,
+                        Some(code) => g.send_result(build_result(0x85, &[&code])).await,
                     }
                 });
             }

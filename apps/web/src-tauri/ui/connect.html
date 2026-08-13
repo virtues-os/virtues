@@ -1379,7 +1379,37 @@ its devices apart — type its address.",
       // Code entry for ONE chosen box. The code is the only thing left to
       // type, and mistyping the box is fail-closed anyway: a code only works
       // on the box that displayed it.
-      function renderCodeEntry(server) {
+      async function renderCodeEntry(server) {
+        let autoErr = '';
+        // NOBODY TYPES THIS ON THE BLUETOOTH PATH. The six digits prove the
+        // person can read the box's screen — a proof already made here, since
+        // 0x83 requires a session and a session is opened only by the four
+        // words printed on that same screen. Asking again was the last thing
+        // in the whole flow anyone had to transcribe (2026-08-13).
+        //
+        // The form below stays for every other route: a LAN chip, a box older
+        // than 0x85, and the case that pays for keeping it — an advertisement
+        // claiming "already online" that is stale, where the panel is the only
+        // honest source left.
+        if (server.bleId) {
+          app.innerHTML = `
+            <p class="kicker">${esc(server.name)}</p>
+            <h1>Pairing</h1>
+            <div class="wait"><span class="pip"></span><span>Asking your box to let this ${esc(THIS_DEVICE.replace(/^this /, ''))} in</span></div>
+            <div class="msg" id="msg"></div>`;
+          let auto = null;
+          try {
+            const r = await invoke('plugin:reach|improv_pair_code', { id: server.bleId });
+            if (r && r.ok && r.code) auto = r.code;
+          } catch { /* fall through to the form */ }
+          if (auto) {
+            const done = await submitPairBle(server, auto);
+            if (done.ok) return;
+            // Fell through. Carry the reason onto the form: silence here reads
+            // as the app having ignored the tap.
+            autoErr = done.error;
+          }
+        }
         app.innerHTML = `
           <button class="back" id="back">← Boxes</button>
           <p class="kicker">${esc(server.name)}${server.claimed === false ? ' · ready to set up' : ''}</p>
@@ -1389,7 +1419,7 @@ its devices apart — type its address.",
             <input id="code" inputmode="numeric" maxlength="7" placeholder="123 456" autofocus />
             <button class="primary" id="go" type="submit">Pair</button>
           </form>
-          <div class="msg" id="msg"></div>
+          <div class="msg err" id="msg">${autoErr ? esc(autoErr) : ''}</div>
           <p class="hint">It rotates every few minutes — a fresh one always works. No screen?
             Run <b>virtues pair</b> on the box.</p>
           ${server.bleId ? '<button class="back" id="blewifi">Set up its Wi-Fi instead</button>' : ''}`;
@@ -1463,15 +1493,25 @@ its devices apart — type its address.",
       // device identity, the box redeems the code against its own consume
       // endpoint, and the pairing persists exactly as the LAN path's would —
       // so from here on the app can't tell which wire it paired over.
-      async function submitPairBle(server) {
+      /// `preset` is the code fetched over 0x85; without one this reads the
+      /// form. Returns `{ ok, error }` rather than nothing, because the
+      /// automatic path has no form to leave a message on and a failure there
+      /// must survive long enough to be shown on the one that follows.
+      async function submitPairBle(server, preset) {
         const msg = document.getElementById('msg');
         const go = document.getElementById('go');
-        const say = (t, cls) => { msg.className = 'msg ' + (cls || ''); msg.textContent = t; };
-        const code = document.getElementById('code').value.replace(/\s+/g, '');
+        const say = (t, cls) => {
+          if (!msg) return;
+          msg.className = 'msg ' + (cls || '');
+          msg.textContent = t;
+        };
+        const typed = document.getElementById('code');
+        const code = (preset || (typed ? typed.value : '')).replace(/\s+/g, '');
         if (code.length < 6) {
-          return say('Enter the 6-digit code from the box\'s screen.', 'err');
+          say('Enter the 6-digit code from the box\'s screen.', 'err');
+          return { ok: false, error: '' };
         }
-        go.disabled = true;
+        if (go) go.disabled = true;
         say('Pairing over Bluetooth…');
         try {
           const res = await invoke('plugin:reach|improv_pair', { id: server.bleId, code });
@@ -1479,13 +1519,16 @@ its devices apart — type its address.",
             say('Paired — opening your box…', 'ok');
             invoke('plugin:reach|improv_disconnect').catch(() => {});
             await finishPairing(say);
-          } else {
-            say((res && res.error) || 'Pairing did not complete. Check the code and try again.', 'err');
-            go.disabled = false;
+            return { ok: true };
           }
+          const why = (res && res.error) || 'Pairing did not complete. Check the code and try again.';
+          say(why, 'err');
+          if (go) go.disabled = false;
+          return { ok: false, error: why };
         } catch (err) {
           say(String(err), 'err');
-          go.disabled = false;
+          if (go) go.disabled = false;
+          return { ok: false, error: String(err) };
         }
       }
 

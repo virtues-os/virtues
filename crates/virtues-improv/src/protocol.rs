@@ -122,6 +122,19 @@ pub enum Command {
     /// and the reconciler stops the whole BLE service. Later devices pair
     /// over LAN or relay, which exist by then.
     PairConsume { code: String, kind: String, source: String, label: String, endpoint_id: String },
+    /// `0x85` — OUR extension: the box hands over its standing pair code.
+    ///
+    /// The six digits exist to prove the person can read the box's screen. On
+    /// this wire that proof has ALREADY been made: `PairConsume` sits behind
+    /// `needs_session`, and a session is only opened by the four-word phrase
+    /// printed on that same screen. Making the owner transcribe a second
+    /// secret proving the same fact is ceremony, and it was the last thing in
+    /// the flow anyone had to type (2026-08-13).
+    ///
+    /// FIRST DEVICE ONLY, for the same reason as `PairConsume`: a successful
+    /// pair claims the box and the reconciler stops the whole Improv service.
+    /// Later devices have no BLE to ask over and still read the panel.
+    PairCode,
     /// `0x86` — OUR extension: claim the setup session. `[phrase, label]`.
     ///
     /// The gate in front of everything else. A box advertises Improv while
@@ -176,6 +189,7 @@ impl Command {
             Command::PairConsume { .. } => 0x83,
             Command::ClaimSetup { .. } => 0x86,
             Command::LinkCode => 0x84,
+            Command::PairCode => 0x85,
         }
     }
 }
@@ -246,6 +260,12 @@ pub fn parse_rpc(packet: &[u8]) -> Result<Command, ImprovError> {
                 return Err(ImprovError::InvalidPacket);
             }
             Ok(Command::LinkCode)
+        }
+        0x85 => {
+            if !data.is_empty() {
+                return Err(ImprovError::InvalidPacket);
+            }
+            Ok(Command::PairCode)
         }
         0x86 => {
             let (phrase, rest) = take_string(data).ok_or(ImprovError::InvalidPacket)?;
@@ -319,6 +339,7 @@ pub fn build_rpc(cmd: &Command) -> Vec<u8> {
         // packet — so the one-string form is the shape every version accepts,
         // and it is what the client falls back to.
         Command::LinkCode => Vec::new(),
+        Command::PairCode => Vec::new(),
         Command::ClaimSetup { phrase, label } if label.is_empty() => pack_strings(&[phrase]),
         Command::ClaimSetup { phrase, label } => pack_strings(&[phrase, label]),
     };
@@ -589,10 +610,20 @@ mod tests {
                 label: "Adam's Mac".into(),
             },
             Command::LinkCode,
+            Command::PairCode,
         ] {
             let wire = build_rpc(&cmd);
             assert_eq!(parse_rpc(&wire), Ok(cmd.clone()), "round trip failed for {cmd:?}");
         }
+    }
+
+    #[test]
+    fn pair_code_carries_no_data() {
+        // The ask is the whole message. A box that accepted trailing bytes here
+        // would be accepting a malformed packet, and 0x84 already sets the
+        // precedent — keep the two asks identical on the wire.
+        assert_eq!(parse_rpc(&frame(0x85, Vec::new())), Ok(Command::PairCode));
+        assert_eq!(parse_rpc(&frame(0x85, vec![1])), Err(ImprovError::InvalidPacket));
     }
 
     #[test]

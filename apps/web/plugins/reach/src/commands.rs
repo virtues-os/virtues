@@ -323,6 +323,40 @@ pub(crate) async fn improv_link_code<R: Runtime>(
   }
 }
 
+/// Ask the box for its standing pair code, over BLE (Improv RPC 0x85).
+///
+/// `code: null` = the box has none to give, or predates the RPC. Both mean the
+/// same thing to the caller: fall back to the six digits on the panel.
+#[command]
+pub(crate) async fn improv_pair_code<R: Runtime>(
+  app: AppHandle<R>,
+  id: String,
+) -> Result<serde_json::Value> {
+  #[cfg(target_os = "ios")]
+  {
+    use tauri::Manager;
+    let handle = app.state::<crate::IosPluginHandle<R>>();
+    return handle
+      .0
+      .run_mobile_plugin("improv_pair_code", serde_json::json!({ "id": id }))
+      .map_err(|e| crate::Error::Reach(e.to_string()));
+  }
+  #[cfg(not(any(target_os = "ios", target_os = "android")))]
+  {
+    let _ = &app;
+    return Ok(match desktop::client().pair_code(&id).await {
+      Ok(Some(code)) => serde_json::json!({ "ok": true, "code": code }),
+      Ok(None) => serde_json::json!({ "ok": true, "code": null }),
+      Err(e) => serde_json::json!({ "ok": false, "error": format!("{e:#}") }),
+    });
+  }
+  #[cfg(target_os = "android")]
+  {
+    let _ = (app, id);
+    Err(crate::Error::Reach("Bluetooth setup isn't available on Android yet".into()))
+  }
+}
+
 /// Ask THAT BOX what wifi it can see, over BLE (Improv RPC 0x04).
 #[command]
 pub(crate) async fn improv_wifi_scan<R: Runtime>(

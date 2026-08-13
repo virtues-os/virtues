@@ -312,6 +312,42 @@ impl ImprovClient {
     /// `Ok(None)` when nothing is in flight — the box is already linked, or has
     /// no internet yet to start a link. Requires the setup session: whoever
     /// holds this code can attach the box to their own account.
+    /// RPC 0x85: ask the box for its standing pair code.
+    ///
+    /// `Ok(None)` means the box has no code to give OR predates this RPC —
+    /// both land the caller on the same fallback (read the six digits off the
+    /// panel), so they need not be told apart.
+    pub async fn pair_code(&self, id: &str) -> Result<Option<String>> {
+        let mut inner = self.inner.lock().await;
+        let session = Self::ensure_connected(&mut inner, id).await?;
+        let mut notifications = session.peripheral.notifications().await.context("notifications")?;
+        session
+            .peripheral
+            .write(&session.rpc, &protocol::build_rpc(&Command::PairCode), WriteType::WithResponse)
+            .await
+            .context("ask for the pair code")?;
+
+        let error_uuid = uuid(protocol::CHAR_ERROR_STATE);
+        let watch = async {
+            while let Some(n) = notifications.next().await {
+                if n.uuid == error_uuid {
+                    match n.value.first().copied() {
+                        None | Some(0) => continue,
+                        Some(c) if c == ImprovError::UnknownCommand as u8 => return Ok(None),
+                        Some(c) => return Err(anyhow!("{}", ImprovError::describe(c))),
+                    }
+                }
+                if let Some(strings) = protocol::parse_result(&n.value, 0x85) {
+                    return Ok(strings.into_iter().next().filter(|c| !c.is_empty()));
+                }
+            }
+            Err(anyhow!("the box stopped answering"))
+        };
+        tokio::time::timeout(REPLY_TIMEOUT, watch)
+            .await
+            .map_err(|_| anyhow!("the box didn't answer — try again"))?
+    }
+
     pub async fn link_code(&self, id: &str) -> Result<Option<(String, String)>> {
         let mut inner = self.inner.lock().await;
         let session = Self::ensure_connected(&mut inner, id).await?;
