@@ -66,10 +66,31 @@ export const load: LayoutLoad = async ({ fetch, url }) => {
 		//
 		// /onboarding lives in the (onboarding) route group with its own layout,
 		// so neither redirect can loop.
+		// RETRY, because "couldn't ask" is not "nothing to do".
+		//
+		// This runs the instant the desktop app hands over after pairing, when
+		// the box has just finished writing a device row and the loopback proxy
+		// is seconds old. A 502 or a thrown fetch used to fall straight through
+		// to the shell — the same silent pass as a satisfied gate — so a
+		// freshly-paired owner landed in an empty chat instead of onboarding,
+		// and only a manual reload revealed it (seen live 2026-08-13).
+		//
+		// Three quick tries, then give up and continue. Onboarding is worth a
+		// second of patience; it is never worth locking someone out of their
+		// own app over a box that blipped.
 		try {
-			const setupRes = await fetch('/api/setup/state');
-			if (setupRes.ok) {
-				const setup = await setupRes.json();
+			let setup: { setup_complete?: boolean; onboarding_complete?: boolean; onboarding_skipped?: boolean } | null =
+				null;
+			for (let i = 0; i < 3 && !setup; i++) {
+				if (i > 0) await new Promise((r) => setTimeout(r, 400));
+				try {
+					const setupRes = await fetch('/api/setup/state');
+					if (setupRes.ok) setup = await setupRes.json();
+				} catch {
+					// keep trying
+				}
+			}
+			if (setup) {
 				if (setup.setup_complete === false) {
 					throw redirect(303, '/onboarding');
 				}
