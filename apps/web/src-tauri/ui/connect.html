@@ -885,8 +885,15 @@ its devices apart — type its address.",
           // "new or existing?" in the browser meant the app sent you somewhere
           // to answer a question it could have asked itself. Each door now has
           // its own destination and the code rides in the URL either way.
-          const go = (path) =>
+          // Re-ask at the moment of the click too: the poll refreshes every few
+          // seconds, but the click is what puts the code in a URL, and that is
+          // the value that has to be live.
+          const go = async (path) => {
+            await fetchLinkCode();
+            paintCode();
+            if (!state.linkCode) return;
             openUrl(`${LINK_URL}${path}?code=${encodeURIComponent(state.linkCode)}`);
+          };
           document.getElementById('openlink').addEventListener('click', () => go('/signin'));
           document.getElementById('newacct').addEventListener('click', () => go('/checkout'));
           document.getElementById('skip').addEventListener('click', () => goToPairing(server, ssid));
@@ -910,8 +917,13 @@ its devices apart — type its address.",
         // was REFUSING looked exactly like one still thinking — which is how a
         // missing setup session hid behind a spinner. Keep the reason.
         let codeErr = '';
+        // ALWAYS re-ask. The box rotates this code — atlas expires a link 15
+        // minutes after it starts — and caching the first one seen meant a
+        // screen left open a few minutes opened a URL atlas had already killed:
+        // "Link expired. Start again from your box." (2026-08-13). A blip must
+        // not wipe a good code, so only a non-empty answer overwrites.
         const fetchLinkCode = async () => {
-          if (state.linkCode || !server.bleId) return;
+          if (!server.bleId) return;
           try {
             const r = await invoke('plugin:reach|improv_link_code', { id: server.bleId });
             if (r && r.ok && r.code) { state.linkCode = r.code; codeErr = ''; return; }
@@ -951,11 +963,10 @@ its devices apart — type its address.",
         const gen = ++searchGen;
         const el = () => document.getElementById('linkstate');
         while (gen === searchGen) {
-          if (!state.linkCode) {
-            await fetchLinkCode();
-            if (gen !== searchGen) return;
-            paintCode();
-          }
+          const had = state.linkCode;
+          await fetchLinkCode();
+          if (gen !== searchGen) return;
+          if (state.linkCode !== had) paintCode();
           const id = await boxIdentity(server.origin);
           if (gen !== searchGen) return;
           if (id && id.linked) {
