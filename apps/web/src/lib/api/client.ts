@@ -2249,8 +2249,28 @@ export interface SetupStep {
 
 export interface SetupState {
 	setup: SetupStep[];
+	/** The box is up: claimed, and linked to an account on an appliance. */
 	setup_complete: boolean;
 	onboarding: SetupStep[];
+	/** The box has something to keep a record of — at least one source. */
+	onboarding_complete: boolean;
+	/** The owner declined, and we remember rather than asking every launch. */
+	onboarding_skipped: boolean;
+}
+
+/**
+ * Remember that onboarding was declined — or offer it again with `false`.
+ *
+ * The app routes on this, so a skip that wasn't persisted would put the same
+ * page back in front of someone on every launch.
+ */
+export async function skipOnboarding(skipped = true): Promise<void> {
+	const res = await fetch(`${API_BASE}/setup/skip-onboarding`, {
+		method: 'POST',
+		headers: { 'Content-Type': 'application/json' },
+		body: JSON.stringify({ skipped }),
+	});
+	if (!res.ok) throw new Error(`Failed to record onboarding choice: ${res.statusText}`);
 }
 
 export async function getSetupState(): Promise<SetupState> {

@@ -248,6 +248,12 @@ pub async fn run(client: Virtues, host: &str, port: u16) -> Result<()> {
             "/api/setup/state",
             get(crate::api::box_status::setup_state_handler),
         )
+        // The READ above is public (the wizard runs before any session); this
+        // WRITE is not — it changes where every future launch lands.
+        .route(
+            "/api/setup/skip-onboarding",
+            post(crate::api::box_status::skip_onboarding_handler),
+        )
         // What the attached 7" display renders. Registered here because the
         // kiosk draws before any device is paired, but UNLIKE its neighbours
         // above it carries the live pair code — so the handler itself refuses
