@@ -23,12 +23,20 @@
     one exception is the breathing pip on a live setup session, which is the
     smallest thing that reads as "now" without becoming a spinner.
 
-  FOUR STATES:
+  FIVE STATES:
 
     1. unclaimed, virgin  → get the Mac app, and the four words that let it in
     2. unclaimed, frozen  → reset box: the words are the ones you saved
     3. session live       → the words are spent; who is setting up, instead
-    4. claimed            → ambient
+    4. pairing            → the six digits the app is asking for
+    5. claimed            → ambient
+
+  State 4 was missing until 2026-08-13, and the omission was invisible from
+  here: every state above is about the PHRASE, so a redesign that got the
+  phrase right looked complete. The app meanwhile said "the 6 digits on its
+  screen right now" about a screen with no way to show them. This panel's
+  states are not its own — they are the app's steps, and the two have to be
+  read together or a whole step can go missing.
 
   There used to be three numbered setup screens (join a network, link an
   account, then a pair code) on a full-bleed light/dark split with a QR. They
@@ -157,7 +165,27 @@
 		     See docs/onboarding-paradigm.md §1. -->
 		<span class="lockup"><span class="mk">∴</span>{state_.box_name}</span>
 		<div class="body">
-			{#if session !== null}
+			{#if state_.pair_code && (state_.linked || session !== null)}
+				<!-- PAIRING. The step this panel had no screen for at all until
+				     2026-08-13: the redesign built every state around the setup
+				     phrase and dropped the six digits, so the app said "the 6
+				     digits on its screen right now" about a screen that showed
+				     none. A live owner hit the wall mid-run.
+
+				     It replaces the phrase rather than joining it. The phrase's
+				     job — proving line of sight to open a session — is done by
+				     the time either condition here is true, and ONE CODE AT A
+				     TIME is the rule the whole redesign came from: two codes on
+				     one screen and nobody knows which one is being asked for. -->
+				<p class="doing">Pair your app</p>
+				<p class="instruct">Type these six digits into the app.</p>
+				<div class="phrase code6">{state_.pair_code}</div>
+				{#if session !== null}
+					<div class="live">
+						<span class="pip"></span>{session ? `with ${session}` : "with a nearby device"}
+					</div>
+				{/if}
+			{:else if session !== null}
 				<!-- The words have been accepted, so they leave the glass — two
 				     jobs at once. They are spent, so nobody who wanders past can
 				     read them; and the owner gets confirmation ON THE BOX that
@@ -325,6 +353,16 @@
 		letter-spacing: 0.01em;
 		color: var(--ink);
 		white-space: nowrap;
+	}
+	/* Six digits, unlike four words, are TRANSCRIBED character by character —
+	   so they get the room the phrase cannot afford and the spacing that keeps
+	   a glance from losing its place. Tabular figures so the width never
+	   shifts as the code rotates. */
+	.code6 {
+		font-size: 2.6rem;
+		letter-spacing: 0.16em;
+		font-variant-numeric: tabular-nums;
+		margin-top: 0.1rem;
 	}
 	/* The reset state's stand-in for the phrase: same slot, quieter, and it
 	   points at the owner's password manager instead of at this screen.
