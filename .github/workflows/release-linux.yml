@@ -122,17 +122,37 @@ jobs:
 
       # Sqlx queries are checked at compile-time against a recorded schema
       # under .sqlx/ — offline mode avoids needing a live DB in CI.
-      - name: Build virtues binary
+      # ONE INVOCATION, THREE PACKAGES. cargo parallelises across the whole
+      # build graph it is given, but two invocations cannot overlap: the first
+      # one's link phase — where parallelism collapses to roughly one core —
+      # runs while the second waits its turn. Split across four steps this left
+      # an 8-vCPU runner idle through every tail.
+      #
+      # Measured on the aarch64 leg (2026-08-13): virtues 515s + applets 391s +
+      # installer 29s = 935s, 65% of a 24-minute build, on a machine that was
+      # not busy for much of it. The packages are independent, so merging costs
+      # nothing in correctness and lets the scheduler fill the box.
+      #
+      # The action binaries matter as much as the box: the function-runtime
+      # actions (ios_*, day_summary_eod, google_*_sync, plaid_*, …) are separate
+      # executables the box forks via `command = ["<name>"]`. They are NOT
+      # compiled into `virtues`, so without them (and the packaging below) the
+      # box has manifest rows it can never run — resolve_program finds nothing
+      # on PATH and every webhook 5xxs. `--bins` builds every [[bin]] in
+      # applets/Cargo.toml from one source of truth.
+      #
+      # `virtues-client` stays OUT of this on purpose — it is a preview whose
+      # compile is allowed to fail (`continue-on-error` below), and folding it
+      # in here would make its breakage gate the box and the installer, which
+      # is the exact thing that step's separation exists to prevent.
+      - name: Build box, installer + action binaries
         env:
           SQLX_OFFLINE: 'true'
         run: |
-          cargo build --profile ${{ env.CARGO_PROFILE }} -p virtues --bin virtues --target ${{ matrix.target }}
-
-      - name: Build virtues-installer binary
-        env:
-          SQLX_OFFLINE: 'true'
-        run: |
-          cargo build --profile ${{ env.CARGO_PROFILE }} -p virtues-installer --bin virtues-installer --target ${{ matrix.target }}
+          cargo build --profile ${{ env.CARGO_PROFILE }} --target ${{ matrix.target }} \
+            -p virtues --bin virtues \
+            -p virtues-installer --bin virtues-installer \
+            -p virtues-applets --bins
 
       # Desktop daemon (v0.2). Linux-only today — macOS / Windows daemons land
       # in v0.2.1+. A PREVIEW whose tunnel isn't finished (see PR #18) — its
@@ -143,19 +163,6 @@ jobs:
         continue-on-error: true
         run: |
           cargo build --profile ${{ env.CARGO_PROFILE }} -p virtues-client --bin virtues-client --target ${{ matrix.target }}
-
-      # Action binaries — the function-runtime actions (ios_*, day_summary_eod,
-      # google_*_sync, plaid_*, …) are separate executables the box forks via
-      # `command = ["<name>"]`. They are NOT compiled into `virtues`, so without
-      # this step + the packaging below the box has manifest rows it can never
-      # run (resolve_program finds nothing on PATH and every webhook 5xxs).
-      # `--bins` builds every [[bin]] in applets/Cargo.toml from one source of
-      # truth; the package is pure server-side Rust and cross-compiles like core.
-      - name: Build action binaries
-        env:
-          SQLX_OFFLINE: 'true'
-        run: |
-          cargo build --profile ${{ env.CARGO_PROFILE }} -p virtues-applets --bins --target ${{ matrix.target }}
 
       # llama-server — the engine behind the virtues-embed/-rerank sidecars
       # (one CPU binary per arch — the universal floor for Manual mode and the
