@@ -153,9 +153,19 @@
       // read the way the box's own display says it: "Honest Kestrel". The
       // codename is the whole two-boxes-in-one-house story, so it must match
       // across surfaces exactly.
+      // The box advertises `Virtues-Honest-Kestrel`. What arrives can be wrapped
+      // — macOS showed `[Virtues Honest Kestrel]` on the link screen — and the
+      // wrapper defeated the prefix strip, so the name kept a `Virtues` the
+      // screen had already said. Strip the edges FIRST, then the prefix.
       const prettyBoxName = (n) =>
-        String(n || 'Your box').replace(/^Virtues[-_ ]?/i, '').replace(/[-_]+/g, ' ').trim()
-        || 'Your box';
+        String(n || 'Your box')
+          .replace(/^[^A-Za-z0-9]+|[^A-Za-z0-9]+$/g, '')
+          .replace(/^Virtues[-_ ]?/i, '')
+          .replace(/[-_]+/g, ' ')
+          // The client's own fallback is the literal "Virtues box", which the
+          // prefix strip turns into "box" — "Setting up box" reads as a bug.
+          .replace(/^box$/i, '')
+          .trim() || 'Your box';
       // Where step 2 actually happens. Atlas directly, NOT the memorable
       // `virtues.com/link` this once said: that redirect is still an open
       // decision in docs/linking-plan.md and 404s today, which is exactly what
@@ -591,7 +601,12 @@ its devices apart — type its address.",
       //
       // Comes before the wifi picker because a session must exist before the
       // box will accept credentials at all.
-      async function blePhrase(box, errorText) {
+      // `next` is where a CLAIMED session should go. It defaults to the wifi
+      // picker because that is the unboxing path, but a box that is already
+      // online still has to come through here: the link code is session-gated
+      // too, and it has no wifi step to be claimed by.
+      async function blePhrase(box, errorText, next) {
+        const proceed = next || ((b) => bleWifiPicker(b));
         state.bleBox = box;
         // ASK THE BOX FIRST. Firmware older than the gate has no phrase — its
         // panel shows a pair code — and it will configure without a session.
@@ -611,7 +626,7 @@ its devices apart — type its address.",
             <p class="sub">One moment.</p>`;
           try {
             const probe = await invoke('plugin:reach|improv_claim', { id: box.id, phrase: '-' });
-            if (probe && probe.ok && probe.gated === false) return bleWifiPicker(box);
+            if (probe && probe.ok && probe.gated === false) return proceed(box);
           } catch { /* fall through to the phrase screen and let it report */ }
         }
         app.innerHTML = `
@@ -642,19 +657,19 @@ its devices apart — type its address.",
           if (!res || !res.ok) {
             // The box says nothing about WHY — wrong words and a spent attempt
             // budget look identical — so neither do we.
-            return blePhrase(box, (res && res.error) || "That phrase didn't match.");
+            return blePhrase(box, (res && res.error) || "That phrase didn't match.", next);
           }
           if (res.gated === false) {
             // Firmware older than the gate: it asked for nothing, so there is
             // nothing to save. Skipping straight to wifi is the honest move —
             // showing a "save these words" screen for words that do not exist
             // would be worse than not showing one.
-            return bleWifiPicker(box);
+            return proceed(box);
           }
           // Saving comes BEFORE the work. Someone holding a phrase they just
           // typed will save it; the same person after "your box is ready"
           // dismisses whatever is in front of them.
-          blePhraseSaved(box, phrase);
+          blePhraseSaved(box, phrase, proceed);
         }
         document.getElementById('form').addEventListener('submit', (e) => {
           e.preventDefault();
@@ -663,7 +678,7 @@ its devices apart — type its address.",
         });
       }
 
-      function blePhraseSaved(box, phrase) {
+      function blePhraseSaved(box, phrase, proceed) {
         app.innerHTML = `
           <p class="kicker">Setting up ${esc(box.name)}</p>
           <h1>Save this</h1>
@@ -678,7 +693,8 @@ its devices apart — type its address.",
             document.getElementById('copy').textContent = 'Copied';
           } catch { /* a webview without clipboard permission — it is on screen */ }
         });
-        document.getElementById('next').addEventListener('click', () => bleWifiPicker(box));
+        document.getElementById('next').addEventListener('click', () =>
+          (proceed || bleWifiPicker)(box));
       }
 
       async function bleWifiPicker(box, errorText) {
@@ -890,12 +906,17 @@ its devices apart — type its address.",
         // after the join reliably comes back empty — which used to leave the
         // button opening a bare /init and demanding the very code we had just
         // taken off the glass (2026-08-13). Keep asking until it arrives.
+        // A refusal and "not minted yet" both come back empty, so a box that
+        // was REFUSING looked exactly like one still thinking — which is how a
+        // missing setup session hid behind a spinner. Keep the reason.
+        let codeErr = '';
         const fetchLinkCode = async () => {
           if (state.linkCode || !server.bleId) return;
           try {
             const r = await invoke('plugin:reach|improv_link_code', { id: server.bleId });
-            if (r && r.ok && r.code) state.linkCode = r.code;
-          } catch { /* older box, or the session lapsed — the hint copes below */ }
+            if (r && r.ok && r.code) { state.linkCode = r.code; codeErr = ''; return; }
+            if (r && r.ok === false && r.error) codeErr = String(r.error);
+          } catch (e) { codeErr = String(e); }
         };
         // Until we have it there is nowhere useful to send the browser, so the
         // button says so instead of opening a page that can only fail.
@@ -914,8 +935,11 @@ its devices apart — type its address.",
           hint.innerHTML = state.linkCode
             ? `We'll fill in your box's code (<b>${esc(state.linkCode)}</b>) automatically.
                <span id="linkstate"></span>`
-            : `Your box is asking for one — it needs a moment on the network first.
-               <span id="linkstate"></span>`;
+            : codeErr
+              ? `Your box turned the request down: ${esc(codeErr)}
+                 <span id="linkstate"></span>`
+              : `Your box is asking for one — it needs a moment on the network first.
+                 <span id="linkstate"></span>`;
         };
         await fetchLinkCode();
         paintCode();
@@ -953,6 +977,19 @@ its devices apart — type its address.",
         const id = await boxIdentity(server.origin);
         if (id && id.name) server = { ...server, name: id.label || server.name };
         if (id && id.linked) return goToPairing(server, ssid);
+        // CLAIM BEFORE ASKING. RPC 0x84 is in the box's `needs_session` list, so
+        // the link code needs the same proof of line-of-sight the wifi step
+        // does. Only the wifi path ever claimed one, which meant a box that was
+        // ALREADY online (ethernet, or a Wi-Fi join from an earlier attempt)
+        // reached this step with no session and sat forever on "Getting your
+        // box's code…" while the box refused every ask — the refusal being
+        // invisible, because it is the same empty answer as "no code yet"
+        // (2026-08-13). The "-" probe inside blePhrase makes this free on
+        // firmware with no gate.
+        if (server.bleId) {
+          return blePhrase({ name: server.name, id: server.bleId }, null, () =>
+            renderLinkStep(server, ssid));
+        }
         return renderLinkStep(server, ssid);
       }
 
