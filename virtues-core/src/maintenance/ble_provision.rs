@@ -241,6 +241,25 @@ mod server {
         // per box across every setup surface.
         let name = crate::maintenance::setup_ap::ap_ssid();
 
+        // SET THE ADAPTER ALIAS TOO, not just the advertisement's local name.
+        //
+        // macOS reads back "virtues" — the BlueZ adapter alias — rather than
+        // the name below, so every box in range presents as the same word and
+        // the codename never reaches the client (measured 2026-08-13 by logging
+        // what CoreBluetooth actually hands the app). That is the exact failure
+        // the codename was introduced to fix: two boxes in one house showing as
+        // identical chips.
+        //
+        // The cause is packet budget. A legacy LE advertisement is 31 bytes and
+        // this one already carries flags, a 128-bit service UUID (18 bytes) and
+        // service data; a 22-character name cannot also fit, so it is dropped
+        // and the client falls back to the adapter's name. Setting the alias
+        // makes that fallback correct instead of anonymous — cheaper and more
+        // reliable than fighting for room in the packet.
+        if let Err(e) = adapter.set_alias(name.clone()).await {
+            tracing::warn!(error = %e, "ble_provision: could not set adapter alias — the box may advertise as its hostname");
+        }
+
         let adv = bluer::adv::Advertisement {
             advertisement_type: bluer::adv::Type::Peripheral,
             service_uuids: [service_uuid].into_iter().collect(),

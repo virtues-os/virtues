@@ -190,6 +190,12 @@ pub(crate) async fn improv_discover<R: Runtime>(
         (Vec::new(), Some(msg))
       }
     };
+    // TEMPORARY (2026-08-13): the app has been rendering "[Virtues Honest
+    // Kestrel" while the box advertises "Virtues-Honest-Kestrel", and two
+    // rounds of guessing at the JS end fixed nothing. Print the exact bytes
+    // CoreBluetooth handed us, so the next change is based on the value rather
+    // than a theory about it. Debug-formatted: a stray control character or a
+    // real bracket look identical in a plain print.
     return Ok(serde_json::json!({
       "boxes": boxes.into_iter().map(|b| serde_json::json!({
         "id": b.id,
