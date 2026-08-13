@@ -65,6 +65,16 @@
       button.primary { appearance: none; border: 0; border-radius: 12px; background: #2b6cff;
                color: #fff; font-size: 16px; font-weight: 600; padding: 15px; width: 100%; }
       button.primary:disabled { opacity: .4; }
+      button.secondary { appearance: none; border: 1px solid #2a2a30; border-radius: 12px;
+               background: #161619; color: #e7e7ea; font-size: 16px; font-weight: 600;
+               padding: 15px; width: 100%; margin-top: 10px; }
+      button.secondary:disabled { opacity: .4; }
+      /* The way out, kept available and kept quiet. Skipping the link leaves an
+         owner with LAN-only hardware, so it must never read as a peer of the
+         two real doors — PRESCRIBE, NEVER ENFORCE. */
+      .escape { margin: 34px 0 0; }
+      .escape button { appearance: none; background: none; border: 0; color: #4a4a52;
+               font-size: 12px; padding: 0; text-decoration: underline; }
       .msg { margin-top: 16px; font-size: 14px; min-height: 20px; }
       .err { color: #ff8080; }
       .ok { color: #58e08a; }
@@ -201,7 +211,7 @@
           <div class="wait"><span class="pip"></span><span>Connecting</span></div>`;
         invoke('plugin:reach|reach_status')
           .then((s) => {
-            if (!s || !s.paired) { start(); return; }
+            if (!s || !s.paired) { renderEntry(); return; }
             // The box answered and accepted us — the only ticket into the SPA.
             if (s.session === 'authed') { openBox(); return; }
             // Answered and REFUSED our key: box was reset or we were revoked.
@@ -211,7 +221,7 @@
             // must not dead-end them either.
             renderBoxUnreachable();
           })
-          .catch(() => { start(); });
+          .catch(() => { renderEntry(); });
       }
 
       function renderBoxUnreachable() {
@@ -365,6 +375,44 @@
         renderPair(lan.servers, lan.debug, text);
       }
 
+      // THE FORK, asked before anything scans.
+      //
+      // Setup used to be the assumed intent, because the first box any owner
+      // meets is an unclaimed one. But "set up your box" is the wrong sentence
+      // for a SECOND Mac, and flatly wrong for a box built at the CLI in DIY
+      // mode: both arrive at an appliance that is already running, and both
+      // were shown a Bluetooth search with the way out demoted to two 12px
+      // links. Asking costs one tap and removes a whole class of "this is the
+      // wrong app" (2026-08-13).
+      function renderEntry(note) {
+        searchGen++; // nothing should be scanning while we ask
+        app.innerHTML = `
+          <p class="kicker">Virtues</p>
+          <h1>Connect ${esc(THIS_DEVICE)}</h1>
+          <p class="sub">${note ? esc(note) + ' ' : ''}Is this a box you're setting up for the
+            first time, or one that's already running?</p>
+          <button class="primary" id="fresh">Set up a new box</button>
+          <button class="secondary" id="existing">Connect to a box that's running</button>
+          <p class="hint" style="margin-top:22px">A box set up from the terminal, or one already
+            running for another device, is the second one — it needs no Bluetooth.</p>`;
+        document.getElementById('fresh').addEventListener('click', () => start());
+        document.getElementById('existing').addEventListener('click', () => startExisting());
+      }
+
+      // The "already running" half: look on the LAN, and fall to typing an
+      // address. Never Bluetooth — an already-claimed box stops advertising,
+      // so a radio search here can only ever come up empty.
+      async function startExisting() {
+        searchGen++;
+        renderSearching();
+        const { servers, debug } = await discoverBoxes();
+        if (servers.length) return renderPair(servers, debug);
+        return renderManualPair(
+          "Nothing answered on this network. If the box is elsewhere — or this network keeps \
+its devices apart — type its address.",
+        );
+      }
+
       async function start() {
         searchGen++; // retire any live search loop before re-entering
         renderSearching();
@@ -424,8 +472,11 @@
           <p class="hint" style="margin-top:18px">Already running somewhere?
             <a href="#" id="rescan" style="color:#7fa8ff">Search this network</a> or
             <a href="#" id="manual" style="color:#7fa8ff">connect by address</a>.</p>`;
+        // "Search this network" used to re-enter start(), which searches over
+        // Bluetooth too — so the escape from a Bluetooth wait was another
+        // Bluetooth wait. Send it to the LAN-only half instead.
         document.getElementById('rescan').addEventListener('click', (e) => {
-          e.preventDefault(); start();
+          e.preventDefault(); startExisting();
         });
         document.getElementById('manual').addEventListener('click', (e) => {
           e.preventDefault(); searchGen++; renderManualPair();
@@ -643,6 +694,10 @@
         } catch (e) {
           r = { networks: [], error: String(e) };
         }
+        // A scan that FAILED and a scan that legitimately saw nothing are
+        // different diagnoses, and only the second one is about where the box
+        // is sitting. Conflating them told a user with a wrong Wi-Fi password
+        // to move the box closer to their router (2026-08-13).
         const rows = (r.networks || []).map((n, i) => `
           <button class="net" data-i="${i}">
             <span class="bars">${bars(n.signal)}</span>
@@ -655,8 +710,8 @@
           <p class="sub">These are the networks <b>your box</b> can see from where it is
             plugged in — not the ones your phone can see.</p>
           ${errorText ? `<p class="msg err">${esc(errorText)}</p>` : ''}
-          ${r.error && !rows ? `<p class="msg err">${esc(r.error)}</p>` : ''}
-          ${rows || '<p class="sub">Your box couldn\'t see any networks. Move it closer to your router, or plug in ethernet — that skips this step entirely.</p>'}
+          ${r.error ? `<p class="msg err">${esc(r.error)}</p>` : ''}
+          ${rows || (r.error ? '' : '<p class="sub">Your box couldn\'t see any networks. Move it closer to your router, or plug in ethernet — that skips this step entirely.</p>')}
           <button class="back" id="rescan">Search again</button><br>
           <button class="back" id="byname">Join a network by name</button>`;
         state.bleNetworks = r.networks || [];
@@ -763,7 +818,14 @@
           res = { ok: false, error: String(e) };
         }
         if (unlisten) { try { unlisten.unregister(); } catch { /* done */ } }
-        invoke('plugin:reach|improv_disconnect').catch(() => {});
+        // Do NOT disconnect here. This used to tear the link down on every
+        // outcome, and both branches below need it moments later: a failed join
+        // returns to the picker (which rescans), and a successful one goes on to
+        // fetch the link code over RPC 0x84. Redialing that fast loses the race
+        // against CoreBluetooth and the box's own radio, so `ensure_connected`
+        // times out — and the user is told "couldn't connect to the box over
+        // Bluetooth" when what actually happened was a wrong Wi-Fi password
+        // (2026-08-13). BLE closes once, after pairing lands, in submitPairBle.
         if (!res.ok) {
           return bleWifiPicker(state.bleBox, res.error || 'The box couldn\'t join that network.');
         }
@@ -799,11 +861,18 @@
             <p class="sub">${ssid ? `It's on ${esc(ssid)}. ` : ''}Your data stays on the box —
               the subscription pays for what connects it: reaching it from anywhere,
               the AI wallet, integrations.</p>
-            <button class="primary" id="openlink">Open the link page</button>
+            <button class="primary" id="openlink">I already have an account</button>
+            <button class="secondary" id="newacct">Create an account</button>
             <p class="hint" id="codehint">${statusHtml}</p>
-            <button class="back" id="skip" style="margin-top:18px">Skip for now →</button>`;
-          document.getElementById('openlink').addEventListener('click', () =>
-            openUrl(state.linkCode ? `${LINK_URL}?code=${encodeURIComponent(state.linkCode)}` : LINK_URL));
+            <p class="escape"><button id="skip">Skip linking for now</button></p>`;
+          // The choice belongs HERE, not on a web page the app opens: asking
+          // "new or existing?" in the browser meant the app sent you somewhere
+          // to answer a question it could have asked itself. Each door now has
+          // its own destination and the code rides in the URL either way.
+          const go = (path) =>
+            openUrl(`${LINK_URL}${path}?code=${encodeURIComponent(state.linkCode)}`);
+          document.getElementById('openlink').addEventListener('click', () => go('/signin'));
+          document.getElementById('newacct').addEventListener('click', () => go('/checkout'));
           document.getElementById('skip').addEventListener('click', () => goToPairing(server, ssid));
         };
         draw('<span id="linkstate"></span>');
@@ -816,20 +885,40 @@
         // in the room — and the code lands in the URL, so nobody types anything.
         // The panel keeps it off the screen entirely, which also preserves the
         // one-code-at-a-time rule the whole redesign came from.
-        if (server.bleId && !state.linkCode) {
+        // The code does not exist the instant Wi-Fi lands. The box has to reach
+        // atlas and start the device authorization first, so a single ask right
+        // after the join reliably comes back empty — which used to leave the
+        // button opening a bare /init and demanding the very code we had just
+        // taken off the glass (2026-08-13). Keep asking until it arrives.
+        const fetchLinkCode = async () => {
+          if (state.linkCode || !server.bleId) return;
           try {
             const r = await invoke('plugin:reach|improv_link_code', { id: server.bleId });
             if (r && r.ok && r.code) state.linkCode = r.code;
           } catch { /* older box, or the session lapsed — the hint copes below */ }
-        }
-        const hint = document.getElementById('codehint');
-        if (hint) {
+        };
+        // Until we have it there is nowhere useful to send the browser, so the
+        // button says so instead of opening a page that can only fail.
+        const paintCode = () => {
+          const hint = document.getElementById('codehint');
+          const signin = document.getElementById('openlink');
+          const fresh = document.getElementById('newacct');
+          if (signin) {
+            signin.disabled = !state.linkCode;
+            signin.textContent = state.linkCode
+              ? 'I already have an account'
+              : 'Getting your box\'s code…';
+          }
+          if (fresh) fresh.disabled = !state.linkCode;
+          if (!hint) return;
           hint.innerHTML = state.linkCode
             ? `We'll fill in your box's code (<b>${esc(state.linkCode)}</b>) automatically.
                <span id="linkstate"></span>`
-            : `Your box is showing a short code — enter that on the page.
+            : `Your box is asking for one — it needs a moment on the network first.
                <span id="linkstate"></span>`;
-        }
+        };
+        await fetchLinkCode();
+        paintCode();
 
         // Watch the box, if this device can reach it. When it can't (an office
         // LAN that isolates clients — the case this whole flow exists for) the
@@ -838,6 +927,11 @@
         const gen = ++searchGen;
         const el = () => document.getElementById('linkstate');
         while (gen === searchGen) {
+          if (!state.linkCode) {
+            await fetchLinkCode();
+            if (gen !== searchGen) return;
+            paintCode();
+          }
           const id = await boxIdentity(server.origin);
           if (gen !== searchGen) return;
           if (id && id.linked) {
@@ -1231,10 +1325,11 @@
 
       // The old combined form, demoted to the escape hatch for mDNS-hostile
       // networks and boxes discovery can't see.
-      function renderManualPair() {
+      function renderManualPair(note) {
         app.innerHTML = `
           <button class="back" id="back">← Boxes</button>
           <h1>Connect by address</h1>
+          ${note ? `<p class="sub">${esc(note)}</p>` : ''}
           <form id="form">
             <label for="server">Box address</label>
             <input id="server" inputmode="url" autocapitalize="off" autocorrect="off"
@@ -1244,7 +1339,7 @@
             <button class="primary" id="go" type="submit">Pair</button>
           </form>
           <div class="msg" id="msg"></div>`;
-        document.getElementById('back').addEventListener('click', start);
+        document.getElementById('back').addEventListener('click', () => renderEntry());
         document.getElementById('form').addEventListener('submit', (e) => {
           e.preventDefault();
           submitPair(document.getElementById('server').value.trim());
@@ -1309,7 +1404,7 @@
       }
 
       if (!window.__VIRTUES_PAIRED__ || pinnedOpen) {
-        start();
+        renderEntry();
       }
     </script>
   </body>
