@@ -5,7 +5,6 @@
 	import { apiGet } from "$lib/api/client";
 	import { formatDate } from "$lib/utils/dateUtils";
 	import { onMount, onDestroy } from "svelte";
-	import { paneActions } from "$lib/stores/paneActions.svelte";
 	import { getBackupStatus } from "$lib/api/client";
 
 	import { BUILD, buildLabel } from "$lib/build";
@@ -32,22 +31,16 @@
 		shell = await shellIdentity();
 	});
 
-	// A toggle, not an event — `active` renders it held down, so the toolbar can
-	// show what mode the view is in rather than just what you can do to it.
-	$effect(() =>
-		paneActions.set(tab.id, [
-			{
-				id: "system.detail",
-				label: "Detail",
-				icon: "ri:terminal-line",
-				active: detail,
-				run: () => {
-					detail = !detail;
-					loadTelemetry();
-				},
-			},
-		]),
-	);
+	// Detail lives ON the page, not in the pane toolbar. The toolbar is shared
+	// chrome — the same strip whatever tab you are in — so a control that only
+	// means something on this one screen reads there as an app-wide mode. It
+	// also sat far from the thing it changes: the extra rows appear inside the
+	// sections below, and the switch for them was in a different region of the
+	// window entirely (2026-08-13).
+	function toggleDetail() {
+		detail = !detail;
+		loadTelemetry();
+	}
 
 	let loading = $state(true);
 	let detail = $state(false); // dev-mode "Detail" layer
@@ -259,13 +252,22 @@
 {/snippet}
 
 <Page title="System" description="The machine, examined." maxWidth="wide">
-	<!-- The Detail toggle moved to the pane toolbar; the live pill stayed. It
-	     reports state rather than doing anything, and the action slot is for
-	     things you can press. Putting a status light in a row of buttons would
-	     invite people to click it. -->
+	<!-- Two different kinds of thing, kept visibly different. The pill REPORTS
+	     (no border, no hover, nothing to press); Detail ACTS. A status light
+	     styled like a button invites clicks that do nothing, which is why the
+	     pill keeps its own shape rather than joining the row. -->
 	{#snippet actions()}
 		<div class="head-actions">
 			<span class="live" class:on={live}><span class="dot"></span>{live ? "live" : "—"}</span>
+			<button
+				class="detail-btn"
+				class:on={detail}
+				onclick={toggleDetail}
+				aria-pressed={detail}
+			>
+				<Icon icon="ri:terminal-line" width="14" />
+				<span>Detail</span>
+			</button>
 		</div>
 	{/snippet}
 
@@ -590,6 +592,31 @@
 		align-items: center;
 		gap: 14px;
 	}
+	.detail-btn {
+		display: inline-flex;
+		align-items: center;
+		gap: 5px;
+		padding: 3px 9px;
+		border: 1px solid var(--color-border);
+		border-radius: 6px;
+		background: none;
+		cursor: pointer;
+		font-size: 12px;
+		color: var(--color-foreground-muted);
+	}
+
+	.detail-btn:hover {
+		background: color-mix(in srgb, var(--color-foreground) 6%, transparent);
+		color: var(--color-foreground);
+	}
+
+	/* Held down, not merely hovered — this is a mode you are in. */
+	.detail-btn.on {
+		border-color: var(--color-primary);
+		background: var(--primary-subtle);
+		color: var(--color-foreground);
+	}
+
 	.live {
 		display: inline-flex;
 		align-items: center;
