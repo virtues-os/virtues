@@ -21,6 +21,7 @@
 	import { formatTimeAgo } from "$lib/utils/dateUtils";
 	import { toast } from "svelte-sonner";
 	import { isTauri } from "$lib/utils/platform";
+	import { openFullDiskAccess, openAccessibilitySettings } from "$lib/tauri/bridge";
 
 	// Where to land after revoking THIS device — the one true "return to pairing"
 	// flow. In the browser, pairing is the SPA's cookie-redeem `/pair` page. In
@@ -210,14 +211,24 @@
 	/// A denied macOS permission, in the owner's terms: what it costs and how to
 	/// fix it. The collector reports raw capability names; a name alone ("
 	/// accessibility") tells you nothing about what stopped working.
-	const PERMISSION_COPY: Record<string, { label: string; costs: string }> = {
+	// `open` takes the person straight to the pane. macOS buries these two four
+	// levels down and the pane cannot be reached by description alone — the
+	// previous copy asked someone to navigate there themselves, then to "restart
+	// the collector", which names a background daemon they have never heard of
+	// and cannot see (2026-08-13).
+	const PERMISSION_COPY: Record<
+		string,
+		{ label: string; costs: string; open?: () => Promise<boolean> }
+	> = {
 		full_disk_access: {
 			label: "Full Disk Access",
-			costs: "iMessages and Safari history can't be read"
+			costs: "iMessages and Safari history can't be read",
+			open: openFullDiskAccess
 		},
 		accessibility: {
 			label: "Accessibility",
-			costs: "app events are recorded without window titles"
+			costs: "app events are recorded without window titles",
+			open: openAccessibilitySettings
 		}
 	};
 
@@ -226,6 +237,11 @@
 			(name) => PERMISSION_COPY[name] ?? { label: name, costs: "some data can't be read" }
 		);
 	}
+
+	// Only on the Mac this is running on. The button opens THIS machine's
+	// System Settings, so offering it against another device in the list would
+	// send someone to the wrong computer's preferences.
+	const canFix = $derived(isTauri);
 
 	function kindLabel(k: Device["kind"]) {
 		switch (k) {
@@ -331,9 +347,18 @@
 									<span class="text-foreground font-medium">{perm.label} is off</span>
 									<span class="text-foreground-muted"> — {perm.costs}.</span>
 									<div class="text-foreground-muted mt-0.5">
-										Grant it in System Settings → Privacy &amp; Security → {perm.label}, then
-										restart the collector.
+										<!-- No "restart the collector". It re-checks on its own every
+										     few minutes, so that instruction was jargon AND untrue —
+										     it asked for work that was never needed. -->
+										Turn on <span class="text-foreground">Virtues</span> in the list,
+										then leave it — this Mac notices within a few minutes.
 									</div>
+									{#if canFix && device.is_current && perm.open}
+										<button class="fix-btn mt-2" onclick={() => perm.open?.()}>
+											<Icon icon="ri:external-link-line" width="13" />
+											Open {perm.label} settings
+										</button>
+									{/if}
 								</div>
 							</div>
 						{/each}
@@ -445,3 +470,23 @@
 		</div>
 	</div>
 {/if}
+
+<style>
+	.fix-btn {
+		display: inline-flex;
+		align-items: center;
+		gap: 5px;
+		padding: 3px 9px;
+		border: 1px solid var(--color-border);
+		border-radius: 6px;
+		background: none;
+		cursor: pointer;
+		font-size: 12px;
+		color: var(--color-foreground-muted);
+	}
+
+	.fix-btn:hover {
+		background: color-mix(in srgb, var(--color-foreground) 8%, transparent);
+		color: var(--color-foreground);
+	}
+</style>
