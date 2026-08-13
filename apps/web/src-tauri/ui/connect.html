@@ -319,7 +319,79 @@
         } else if (say) {
           say('Connected — the local link is taking a moment to start…', '');
         }
+        if (ready) await offerUpgrade();
         window.location.href = BOX_URL;
+      }
+
+      // ── STEP 4 · THE BOX MAY HAVE SHIPPED MONTHS AGO ──────────────────────
+      //
+      // A box is flashed at manufacture and then sits in a warehouse, so an
+      // owner's first minute is often spent on code older than everything they
+      // just read about. Onboarding itself moves fastest of all — every fix
+      // today was in this flow — so the build that set the box up is the build
+      // least likely to be current.
+      //
+      // ASKED, NOT AUTOMATIC, and that is not timidity. `api::updates` argues
+      // that a vendor may auto-ship only because it watches its fleet and can
+      // halt a bad rollout; virtues has no telemetry and therefore no halt, so
+      // the human pressing the button IS the halt mechanism. This screen keeps
+      // that intact while removing its cost: it arrives at the one moment the
+      // owner is already here, already waiting, with nothing yet to lose.
+      //
+      // It is also the moment with the most slack. The box has usually already
+      // FETCHED the release (a scheduled prefetch), so installing is a restart
+      // rather than a download — and if it goes wrong there is a paired app on
+      // screen to say so, which is exactly what a box upgrading itself right
+      // after wifi would not have had.
+      async function offerUpgrade() {
+        let st = null;
+        try {
+          const res = await fetch(BOX_URL + '/api/system/update', { cache: 'no-store' });
+          if (res.ok) st = await res.json();
+        } catch { /* offline or old box — setup is done either way */ }
+        // Nothing to offer, or the box couldn't check: say nothing. A screen
+        // that appears only to report "you're current" is a screen that taught
+        // the owner this flow has one more step than it does.
+        if (!st || !st.update_available || st.check_error) return;
+
+        const staged = !!st.staged;
+        const target = st.latest || 'a newer release';
+        return new Promise((resolve) => {
+          app.innerHTML = `
+            <p class="kicker">One last thing</p>
+            <h1>Your box can update itself</h1>
+            <p class="sub">It's running <b>${esc(st.running_version || st.current || 'an older build')}</b>,
+              and <b>${esc(target)}</b> is ${staged ? 'already downloaded and ready' : 'available'}.
+              Boxes ship months before they're opened, so this is normal.</p>
+            <button class="primary" id="up">${staged ? 'Install now — about a minute' : 'Download and install'}</button>
+            <button class="secondary" id="later">Not now</button>
+            <p class="hint">You can always do this later in Settings &rarr; Box. Installing
+              restarts the box, so it drops off for a minute.</p>
+            <div class="msg" id="msg"></div>`;
+          const say = (t, cls) => {
+            const m = document.getElementById('msg');
+            if (m) { m.className = 'msg ' + (cls || ''); m.textContent = t; }
+          };
+          document.getElementById('later').addEventListener('click', () => resolve());
+          document.getElementById('up').addEventListener('click', async () => {
+            document.getElementById('up').disabled = true;
+            document.getElementById('later').disabled = true;
+            say('Installing. Your box restarts and will be back in a minute…');
+            try {
+              const res = await fetch(BOX_URL + '/api/system/update/apply', { method: 'POST' });
+              if (!res.ok) throw new Error(await res.text());
+            } catch (e) {
+              // Never strand anyone here: setup SUCCEEDED, and the box is
+              // usable on the build it has. Report and carry on.
+              say('Couldn\'t start the update — you can do it from Settings → Box. ' + e, 'err');
+              await new Promise((r) => setTimeout(r, 2500));
+              return resolve();
+            }
+            say('Waiting for your box to come back…');
+            await waitForBoxUrl(180000);
+            resolve();
+          });
+        });
       }
 
       /** Open the box's UI for an ALREADY-paired device (no setup beats). */

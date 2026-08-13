@@ -219,23 +219,29 @@
 			</dd>
 			<dt>Channel</dt>
 			<dd>
+				<!-- A SELECT, NOT A TOGGLE. Two buttons side by side read as a
+				     preference with two equally good answers; one of these ships
+				     unreviewed builds to the machine holding someone's record.
+				     A select has a default and makes the other option a
+				     deliberate reach, which is the honest shape of this
+				     decision. -->
 				<div class="channel-picker">
-					<button
-						class="channel"
-						class:selected={status.channel === 'stable'}
+					<select
+						id="channel"
 						disabled={switching}
-						onclick={() => switchChannel('stable')}
+						value={status.channel}
+						onchange={(e) =>
+							switchChannel(e.currentTarget.value as 'stable' | 'prerelease')}
 					>
-						Main <span class="hint">recommended</span>
-					</button>
-					<button
-						class="channel"
-						class:selected={status.channel === 'prerelease'}
-						disabled={switching}
-						onclick={() => switchChannel('prerelease')}
-					>
-						Nightly
-					</button>
+						<option value="stable">Main — released builds</option>
+						<option value="prerelease">Nightly — unreleased, may break</option>
+					</select>
+					{#if status.channel === 'prerelease'}
+						<span class="risk">
+							<Icon icon="ri:alert-line" width="13" />
+							Unreviewed builds install on this box
+						</span>
+					{/if}
 				</div>
 			</dd>
 		</dl>
@@ -412,31 +418,27 @@
 
 	.channel-picker {
 		display: inline-flex;
-		gap: 4px;
+		align-items: center;
+		gap: 10px;
+		flex-wrap: wrap;
 	}
 
-	.channel {
-		display: inline-flex;
-		align-items: baseline;
-		gap: 5px;
-		padding: 4px 10px;
-		border: 1px solid var(--color-border);
+	.channel-picker select {
+		font: inherit;
+		font-size: 13px;
+		padding: 4px 8px;
 		border-radius: 6px;
-		background: none;
-		cursor: pointer;
-		font-size: 12px;
-		color: var(--color-foreground-muted);
-	}
-
-	.channel.selected {
-		border-color: var(--color-primary);
+		border: 1px solid var(--color-border);
+		background: var(--color-background);
 		color: var(--color-foreground);
-		background: var(--primary-subtle);
 	}
 
-	.hint {
-		font-size: 10px;
-		color: var(--color-foreground-subtle);
+	.risk {
+		display: inline-flex;
+		align-items: center;
+		gap: 4px;
+		font-size: 12px;
+		color: #d9a441;
 	}
 
 	.state {
