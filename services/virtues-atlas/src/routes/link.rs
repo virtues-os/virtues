@@ -54,6 +54,10 @@ pub fn router() -> Router<AppState> {
         // flow at all and was pushed into a second subscription.
         .route("/init/login-web", post(login_web))
         .route("/init/checkout", get(checkout))
+        // The existing-account door, addressable on its own. The app asks
+        // "new or existing?" itself now, so sending an owner who already
+        // answered to a page that asks again is a wasted step.
+        .route("/init/signin", get(signin))
 }
 
 // ─── POST /init/start ───────────────────────────────────────────────────────
@@ -386,6 +390,71 @@ fn connect_page() -> axum::response::Response {
          </body></html>"
             .to_string(),
     )
+    .into_response()
+}
+
+/// `GET /init/signin?code=…` — the "existing account" door, on its own URL.
+///
+/// The chooser at `/init` still exists for anyone who arrives cold. But the app
+/// asks which door you want BEFORE it opens a browser, so an owner who already
+/// said "I have an account" was being asked the same question twice. Validates
+/// the code the same way `checkout` does, and for the same reason: this is a URL
+/// someone can bookmark or come back to.
+async fn signin(State(state): State<AppState>, Query(q): Query<VerifyQuery>) -> axum::response::Response {
+    let Some(code) = q.code.map(|c| c.trim().to_uppercase()).filter(|c| !c.is_empty()) else {
+        return connect_page();
+    };
+    let row: Option<(chrono::DateTime<Utc>,)> = sqlx::query_as(
+        "SELECT expires_at FROM device_link WHERE user_code = $1 AND status = 'pending'",
+    )
+    .bind(&code)
+    .fetch_optional(&state.pool)
+    .await
+    .unwrap_or(None);
+    let Some((expires_at,)) = row else {
+        return page("Link not found", "That code is invalid or already used. Start again from your box.");
+    };
+    if Utc::now() > expires_at {
+        return page("Link expired", "This code expired. Start again from your box.");
+    }
+    signin_page(&code)
+}
+
+/// The existing-account card alone. Keeps a way over to checkout: picking the
+/// wrong door in the app must not be a dead end.
+fn signin_page(code: &str) -> axum::response::Response {
+    Html(format!(
+        "<!doctype html><html><head><meta charset=utf-8>\
+         <meta name=viewport content='width=device-width,initial-scale=1'>\
+         <title>Sign in to link your box</title>\
+         <style>body{{font-family:system-ui,sans-serif;max-width:32rem;margin:4rem auto;padding:0 1rem;line-height:1.5}}\
+         h1{{font-size:1.4rem}}\
+         .code{{font-family:ui-monospace,Menlo,monospace;letter-spacing:.08em}}\
+         .card{{border:1px solid #ddd;border-radius:12px;padding:1.1rem 1.2rem;margin-top:1.1rem}}\
+         p.sub{{margin:0 0 .8rem;color:#555;font-size:.92rem}}\
+         form{{display:flex;gap:.5rem}}\
+         input{{flex:1;font:inherit;padding:.55rem .7rem;border:1px solid #ccc;border-radius:8px}}\
+         button{{font:inherit;padding:.55rem 1.05rem;border:0;border-radius:8px;background:#111;color:#fff;\
+         cursor:pointer}}\
+         p.alt{{margin-top:1.6rem;font-size:.85rem;color:#666}}\
+         </style></head>\
+         <body>\
+         <h1>Sign in to link your box</h1>\
+         <p>Code <span class=code>{code}</span> &mdash; this box is waiting to be linked.</p>\
+         <div class=card>\
+         <p class=sub>We'll email you a link. Clicking it attaches this box to your \
+         subscription &mdash; no new charge.</p>\
+         <form method=post action=/init/login-web>\
+         <input type=hidden name=code value='{code}'>\
+         <input name=email type=email placeholder='you@example.com' autocomplete=email required \
+         autofocus aria-label='Email address'>\
+         <button type=submit>Email me a link</button>\
+         </form>\
+         </div>\
+         <p class=alt>Don't have an account yet? \
+         <a href='/init/checkout?code={code}'>Start a subscription</a>.</p>\
+         </body></html>"
+    ))
     .into_response()
 }
 
