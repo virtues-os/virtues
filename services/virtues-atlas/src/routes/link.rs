@@ -526,7 +526,14 @@ async fn login_web(
     let code = body.code.trim().to_uppercase();
     let email = body.email.trim().to_lowercase();
     if email.is_empty() || !email.contains('@') {
-        return page("Check the address", "That doesn't look like an email address. Go back and try again.");
+        return page(
+            "Check the address",
+            &format!(
+                "That doesn't look like an email address. \
+                 <a href='/init/signin?code={}'>Try again</a>.",
+                html_escape(&code)
+            ),
+        );
     }
 
     let row: Option<(Vec<u8>,)> = sqlx::query_as(
@@ -541,23 +548,42 @@ async fn login_web(
         return page("Link not found", "That code is invalid, used, or expired. Start again from your box.");
     };
 
+    // EVERY outcome carries a way onward. These used to be flat statements —
+    // "go back and choose I'm new" named a choice on a page the reader had
+    // already left, with no link on the one they were looking at. A browser
+    // that autofills the wrong saved address (the common case: the address
+    // that pays is not always the address that signs in) put an owner in a
+    // dead end they could only leave by restarting from the box (2026-08-13).
+    // The address is echoed for the same reason: autofill is silent, so the
+    // one fact needed to understand the failure was the one not shown.
+    let who = html_escape(&email);
+    let back = format!("<a href='/init/signin?code={code}'>try another address</a>");
+    let buy = format!("<a href='/init/checkout?code={code}'>start a subscription</a>");
     match begin_login(&state, &device_code_hash, &email).await {
         LoginOutcome::Sent => page(
             "Check your email",
-            "We sent you a link. Open it on any device &mdash; your box links itself within a few seconds.",
+            &format!(
+                "We sent a link to <b>{who}</b>. Open it on any device &mdash; your box links \
+                 itself within a few seconds.<br><br>Wrong address? You can {back}."
+            ),
         ),
         LoginOutcome::NoAccount => page(
             "No account with that address",
-            "We couldn't find a Virtues subscription for that email. Go back and choose \
-             &ldquo;I'm new&rdquo; to start one.",
+            &format!(
+                "We couldn't find a Virtues subscription for <b>{who}</b>. If you pay for \
+                 Virtues under a different address, {back} &mdash; otherwise {buy}."
+            ),
         ),
         LoginOutcome::RateLimited => page(
             "Too many attempts",
-            "Too many login emails for that address. Try again in an hour.",
+            &format!(
+                "Too many login emails for <b>{who}</b> in the last hour. Wait an hour, or \
+                 {back}."
+            ),
         ),
         LoginOutcome::Failed => page(
             "Something went wrong",
-            "We couldn't send that email. Try again in a moment.",
+            &format!("We couldn't send that email. You can {back}."),
         ),
     }
 }
