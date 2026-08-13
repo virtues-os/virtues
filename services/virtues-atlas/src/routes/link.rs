@@ -173,10 +173,18 @@ async fn verify(State(state): State<AppState>, Query(q): Query<VerifyQuery>) -> 
     .await
     .unwrap_or(None);
     let Some((expires_at,)) = row else {
-        return page("Link not found", "That code is invalid or already used. Start again from your box.");
+        return page(
+            "Link not found",
+            "That code is invalid, already used, or has been replaced by a newer one. \
+             Open the Virtues app and start the link again.",
+        );
     };
     if Utc::now() > expires_at {
-        return page("Link expired", "This code expired. Start again from your box.");
+        return page(
+            "Link expired",
+            "Your box has already replaced this code with a fresh one &mdash; nothing is wrong \
+             with it. Open the Virtues app and start the link again.",
+        );
     }
 
     // TWO DOORS. This used to 302 straight to Stripe, which meant an owner who
@@ -205,10 +213,18 @@ async fn checkout(State(state): State<AppState>, Query(q): Query<VerifyQuery>) -
     .await
     .unwrap_or(None);
     let Some((expires_at,)) = row else {
-        return page("Link not found", "That code is invalid or already used. Start again from your box.");
+        return page(
+            "Link not found",
+            "That code is invalid, already used, or has been replaced by a newer one. \
+             Open the Virtues app and start the link again.",
+        );
     };
     if Utc::now() > expires_at {
-        return page("Link expired", "This code expired. Start again from your box.");
+        return page(
+            "Link expired",
+            "Your box has already replaced this code with a fresh one &mdash; nothing is wrong \
+             with it. Open the Virtues app and start the link again.",
+        );
     }
 
     if !state.stripe.is_configured() || state.stripe_price_id.is_empty() {
@@ -412,10 +428,18 @@ async fn signin(State(state): State<AppState>, Query(q): Query<VerifyQuery>) -> 
     .await
     .unwrap_or(None);
     let Some((expires_at,)) = row else {
-        return page("Link not found", "That code is invalid or already used. Start again from your box.");
+        return page(
+            "Link not found",
+            "That code is invalid, already used, or has been replaced by a newer one. \
+             Open the Virtues app and start the link again.",
+        );
     };
     if Utc::now() > expires_at {
-        return page("Link expired", "This code expired. Start again from your box.");
+        return page(
+            "Link expired",
+            "Your box has already replaced this code with a fresh one &mdash; nothing is wrong \
+             with it. Open the Virtues app and start the link again.",
+        );
     }
     signin_page(&code)
 }
@@ -545,7 +569,11 @@ async fn login_web(
     .await
     .unwrap_or(None);
     let Some((device_code_hash,)) = row else {
-        return page("Link not found", "That code is invalid, used, or expired. Start again from your box.");
+        return page(
+            "Link not found",
+            "That code is invalid, used, or has been replaced by a newer one. Open the \
+             Virtues app and start the link again.",
+        );
     };
 
     // EVERY outcome carries a way onward. These used to be flat statements —
@@ -781,7 +809,9 @@ async fn login_verify(
     let Some((_email, device_code_hash, _exp, customer_id)) = row else {
         return page(
             "Link expired or already used",
-            "This login link is no longer valid. Restart the flow from your box's terminal to get a fresh link.",
+            "This login link is no longer valid. Open the Virtues app and start the link again \
+             &mdash; it fetches a fresh code from your box. (Set the box up from a terminal? \
+             Re-run the link command there.)",
         );
     };
 
@@ -854,9 +884,16 @@ async fn login_verify(
 
     // Flip the bound device_link to ready with the api_key so the box's
     // existing poll handler picks it up on the next /init/poll.
+    // `expires_at > now()` is load-bearing, not belt-and-braces. Once its own
+    // link lapses the box STARTS A NEW ONE with a new device_code, abandoning
+    // this row while it sits pending forever. Without the check, a magic link
+    // clicked an hour later flipped the abandoned row and rendered "Box
+    // attached" at someone whose box would never hear a thing — the box is
+    // polling a different device_code entirely. An honest failure beats a
+    // false success (2026-08-13).
     let flip = sqlx::query(
         "UPDATE device_link SET status = 'ready', api_key = $2 \
-         WHERE device_code_hash = $1 AND status = 'pending'",
+         WHERE device_code_hash = $1 AND status = 'pending' AND expires_at > now()",
     )
     .bind(&device_code_hash[..])
     .bind(&api_key)
@@ -865,11 +902,12 @@ async fn login_verify(
     match flip {
         Ok(r) if r.rows_affected() == 1 => page(
             "✓ Box attached",
-            "Your Virtues box is now attached to your subscription. Return to your terminal — the install will continue automatically.",
+            "Your Virtues box is now attached to your subscription. Go back to the Virtues app — it continues on its own within a few seconds.",
         ),
         Ok(_) => page(
             "Link expired",
-            "The device_link this email was bound to is no longer pending. Restart from your terminal to get a fresh link.",
+            "This link took too long, and your box has already moved on to a fresh code. \
+             Nothing is wrong with it. Open the Virtues app and start the link again.",
         ),
         Err(e) => {
             tracing::warn!("device_link flip failed: {e:#}");
