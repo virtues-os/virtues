@@ -11,8 +11,17 @@
           },
           "glass" : true,
           "hidden" : false,
-          "image-name" : "mark.svg",
-          "name" : "mark"
+          "image-name" : "mark-base.svg",
+          "name" : "mark-base"
+        },
+        {
+          "fill" : {
+            "solid" : "display-p3:0.85255,0.88000,0.85035,1.00000"
+          },
+          "glass" : true,
+          "hidden" : false,
+          "image-name" : "mark-apex.svg",
+          "name" : "mark-apex"
         }
       ],
       "shadow" : {

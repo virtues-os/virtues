@@ -1,12 +1,24 @@
 <!--
   Virtues ∴ — app-icon master, 1024×1024, full-bleed canvas.
 
-  Geometry is the `virtues:logo` mark from apps/web/src/lib/icons.ts scaled up:
-  24-unit viewBox → 1024, r=3 → r=94, base dots 15 units apart → 472px.
+  Proportions are calibrated against Tailscale's icon, which is the reference
+  for how much tile a dot mark should take. Theirs (from tailscale.com
+  favicon.svg): r 3, pitch 9 on a 48 tile — so the dot grid is a 24-unit bbox,
+  exactly 50% of the tile. Ours matches that 50%: bbox is 512 wide, x 256→768.
 
-  Mark bbox is 660×596 (64% of canvas width), sat 20px above true center —
-  a ∴ is bottom-heavy (two dots below, one above), so a bbox-centered
-  triangle reads as sitting low. That 20px is the optical correction.
+  The dot-to-gap ratio is deliberately NOT theirs. Tailscale runs Ø/pitch 0.667,
+  which is right for nine dots but turns three into a clover. We keep the ∴'s
+  own 0.40 (146/366) and only bring the footprint down — the mark was at 64.5%
+  of the tile and read oversized next to every other icon in the Dock.
+
+  Geometry: equilateral, side 366, r 73.
+    apex (512, 338)   base (329, 655) (695, 655)
+  Vertical drop 317 = 366·√3/2, so the triangle is equilateral to 0.1%.
+
+  Mark bbox is 512×463, sat 15.5px above true center — a ∴ is bottom-heavy
+  (two dots below, one above), so a bbox-centered triangle reads as sitting
+  low. That 15.5px is the optical correction, held at the same 3.35% of bbox
+  height the 1024-canvas mark has always used.
 
   Transparent ground on purpose: Icon Composer owns the background layer.
 
@@ -22,8 +34,8 @@
 -->
 <svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
 	<g fill="#17171A">
-		<circle cx="512" cy="288" r="94"/>
-		<circle cx="276" cy="696" r="94"/>
-		<circle cx="748" cy="696" r="94"/>
+		<circle cx="512" cy="338" r="73"/>
+		<circle cx="329" cy="655" r="73"/>
+		<circle cx="695" cy="655" r="73"/>
 	</g>
 </svg>
