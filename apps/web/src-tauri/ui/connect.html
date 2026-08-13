@@ -343,6 +343,24 @@
 
       // ── discovery ─────────────────────────────────────────────────────────
 
+      // EVERY box enters the app through here, so the name is cleaned ONCE.
+      // It used to be cleaned at call sites, and the sites that forgot were the
+      // unboxing path: startBleSetup ends at blePhrase(candidates[0]) with the
+      // raw advertisement, bleJoin then carries state.bleBox.name into the link
+      // step, and it reached the pair chip and the code screen as
+      // "[Virtues Honest Kestrel" — prefix and all (2026-08-13). Normalizing at
+      // the edge means a new screen cannot reintroduce this by forgetting.
+      async function discoverBle(seconds) {
+        let r;
+        try {
+          r = await invoke('plugin:reach|improv_discover', { seconds });
+        } catch (e) {
+          return { boxes: [], error: String(e) };
+        }
+        const boxes = ((r && r.boxes) || []).map((b) => ({ ...b, name: prettyBoxName(b.name) }));
+        return { boxes, error: (r && r.error) || '' };
+      }
+
       async function discoverBoxes() {
         try {
           const resp = await invoke('plugin:reach|discover');
@@ -376,10 +394,7 @@
         renderSearching();
         const [lan, ble] = await Promise.all([
           discoverBoxes(),
-          invoke('plugin:reach|improv_discover', { seconds: 4 }).then(
-            (r) => (r && r.boxes) || [],
-            () => [],
-          ),
+          discoverBle(4).then((r) => r.boxes, () => []),
         ]);
         state.bleBoxes = ble;
         renderPair(lan.servers, lan.debug, text);
@@ -433,10 +448,7 @@ its devices apart — type its address.",
         // invoke returns [] there, so this degrades silently).
         const [lan, ble] = await Promise.all([
           discoverBoxes(),
-          invoke('plugin:reach|improv_discover', { seconds: 4 }).then(
-            (r) => (r && r.boxes) || [],
-            () => [],
-          ),
+          discoverBle(4).then((r) => r.boxes, () => []),
         ]);
         state.bleBoxes = ble;
         // Phone already on the box's SoftAP (manual join): old flow still works.
@@ -455,7 +467,7 @@ its devices apart — type its address.",
         // Online-but-unclaimed over BLE with nothing on the LAN: a network
         // that isolates clients. Pairing rides BLE (0x83) — go enter the code.
         if (lan.servers.length === 0 && ble.length) {
-          return routeToBox({ name: prettyBoxName(ble[0].name), bleId: ble[0].id });
+          return routeToBox({ name: ble[0].name, bleId: ble[0].id });
         }
         // Nothing anywhere: setup IS the default state, and it keeps looking.
         if (lan.servers.length === 0) return bleSearchLoop();
@@ -494,8 +506,8 @@ its devices apart — type its address.",
         while (gen === searchGen) {
           let boxes = [];
           try {
-            const r = await invoke('plugin:reach|improv_discover', { seconds: 4 });
-            boxes = (r && r.boxes) || [];
+            const r = await discoverBle(4);
+            boxes = r.boxes;
             // A radio that CANNOT look and a radio that looked and saw nothing
             // are the same animation. Say which — an unfixable wait that never
             // explains itself is the worst screen in the product.
@@ -511,7 +523,7 @@ its devices apart — type its address.",
           const needsWifi = boxes.find((b) => b.improvState === 2);
           if (needsWifi) return blePhrase(needsWifi);
           if (boxes.length) {
-            return routeToBox({ name: prettyBoxName(boxes[0].name), bleId: boxes[0].id });
+            return routeToBox({ name: boxes[0].name, bleId: boxes[0].id });
           }
           // Peek at the LAN each round too — an already-claimed box never
           // advertises, and it should still surface without a manual rescan.
@@ -538,8 +550,8 @@ its devices apart — type its address.",
             it waits to be found.</p>`;
         let boxes = [];
         try {
-          const r = await invoke('plugin:reach|improv_discover', { seconds: 5 });
-          boxes = (r && r.boxes) || [];
+          const r = await discoverBle(5);
+          boxes = r.boxes;
         } catch { /* not available on this platform */ }
         const candidates = boxes.filter((b) => b.improvState === 2);
         if (candidates.length === 0) {
@@ -553,7 +565,7 @@ its devices apart — type its address.",
             // advertisement lied; the wifi picker is the honest destination,
             // and provisioning an actually-online box is harmless anyway.
             const { servers } = await discoverBoxes();
-            const who = prettyBoxName(boxes[0].name);
+            const who = boxes[0].name;
             if (servers.length) {
               return startWithBanner(`${who} is already online — tap it below and enter its code.`);
             }
