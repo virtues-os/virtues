@@ -649,6 +649,25 @@ mod server {
             Command::LinkCode => {
                 let improv = improv.clone();
                 tokio::spawn(async move {
+                    // ALREADY LINKED → nothing in flight, and say so.
+                    //
+                    // `code_and_poll` STARTS a device authorization when none is
+                    // live. The display guards it with `!linked` (display.rs);
+                    // this handler did not — so a linked box answered every ask
+                    // by opening a NEW link and returning a fresh code. The app
+                    // waits for the empty answer to know linking landed, so it
+                    // waited forever on a finished step, while the box minted a
+                    // throwaway atlas session every three seconds (2026-08-13).
+                    let linked = crate::virtues_api::renew::read_api_key(&pool)
+                        .await
+                        .ok()
+                        .flatten()
+                        .is_some();
+                    if linked {
+                        let mut g = improv.lock().await;
+                        g.send_result(build_result(0x84, &[])).await;
+                        return;
+                    }
                     // Starts the device-authorization session if none is live,
                     // and re-polls it — the same call the panel's heartbeat
                     // makes, so the app and the box can never be looking at two
