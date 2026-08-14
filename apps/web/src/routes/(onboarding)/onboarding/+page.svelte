@@ -32,6 +32,7 @@
 	import Marginalia from "$lib/components/onboarding/document/Marginalia.svelte";
 	import TypesetLines from "$lib/components/onboarding/document/TypesetLines.svelte";
 	import AccountGate from "$lib/components/onboarding/document/AccountGate.svelte";
+	import FoundersLetter from "$lib/components/onboarding/document/FoundersLetter.svelte";
 	import ConnectWorld from "$lib/components/onboarding/document/ConnectWorld.svelte";
 	import RevealSection from "$lib/components/onboarding/document/RevealSection.svelte";
 	import Modal from "$lib/components/Modal.svelte";
@@ -48,6 +49,12 @@
 	let state_ = $state<SetupState | null>(null);
 	let loading = $state(true);
 	let mode = $state<"document" | "manual">("document");
+	// THE LETTER IS A SURFACE, NOT A CHAPTER. It reads; everything after it
+	// works. Keeping them on one scroll meant the reading grammar had to carry a
+	// working session, and neither did its job. Held in memory only: re-reading
+	// it on a revisit costs one click to pass and is a better failure than
+	// skipping the one screen that explains why any of this is safe.
+	let letterRead = $state(false);
 	let advancedOpen = $state(false);
 	let scrollEl = $state<HTMLElement | null>(null);
 	let reduced = $state(false);
@@ -180,6 +187,8 @@
 			Couldn't reach the box. Make sure you're on the same network, then refresh.
 		</div>
 	</div>
+{:else if !letterRead}
+	<FoundersLetter onbegin={() => (letterRead = true)} {reduced} />
 {:else if mode === "manual"}
 	<!-- The advanced door: just the account gate, then into the app. -->
 	<div class="flex min-h-screen items-center justify-center px-6 py-16">
@@ -205,18 +214,17 @@
 			</div>
 
 			<div class="doc-column">
-				<!-- ① Welcome -->
-				<OnboardingSection id="welcome" kicker="Virtues" title="An honest record of your life" {reduced}>
+				<!-- ① Welcome — now one line, because the LETTER made the argument
+				     on its own screen. Two versions of the same claim, the second
+				     weaker than the first, is worse than one; what remains here is
+				     the sentence that says what to do next. -->
+				<OnboardingSection id="welcome" kicker="Virtues" title="Let's fill it" {reduced}>
 					<TypesetLines
 						lines={[
-							"Virtues runs on the box in your home. Connect your accounts and devices, and it builds a private record of your life — your messages, calendar, places, health — that you can search, read, and reflect on.",
-							"Nothing leaves the box. Not to a government, not to a tech company, not to us. We can't see what you connect or what it learns, because it's built so we can't.",
+							"Your box is yours and it is empty. What follows is the part that makes it worth having: connect the things that already hold your life, and it starts keeping the record.",
 						]}
 						{reduced}
 					/>
-					<p class="mt-10 flex items-center gap-1.5 text-sm text-foreground-subtle">
-						<Icon icon="ri:arrow-down-line" width="15" /> Begin
-					</p>
 				</OnboardingSection>
 
 				<!-- ② Account -->
