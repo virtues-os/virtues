@@ -83,6 +83,37 @@
 			</div>
 
 			<p class="mission">Personal intelligence, privately.</p>
+		</div>
+
+		<!-- THE TWO PATHS, compressed from the manifesto.
+		     Deliberately NOT a second boxed diagram — the double blind below
+		     already owns that form, and two side-by-side card pairs on one page
+		     would read as a comparison table rather than an argument. Here the
+		     asymmetry does the work: what exists is dimmed and struck through by
+		     its own rule, what is being built is in full ink. The eye reaches the
+		     verdict before the sentences are read, which is what a visual is
+		     for. -->
+		<div class="paths">
+			<div class="path now">
+				<p class="path-head">Technology as it is</p>
+				<p>
+					Built to be watched, rather than to watch with you. Your attention sold, your
+					habits shaped by people you will never meet, and the record of your life held on
+					machines you cannot see, audit, or leave.
+				</p>
+			</div>
+
+			<div class="path ideal">
+				<p class="path-head">Technology as it ought to be</p>
+				<p>
+					The whole of it in your house and open to your inspection — every process, every
+					log, every byte. Intelligence that serves who you are trying to become, and lets
+					you look honestly at your own life without the looking being sold.
+				</p>
+			</div>
+		</div>
+
+		<div class="body">
 
 			<!-- SHOWN, NOT ASSERTED. Every other beat on this page is a negation —
 			     what we cannot do, do not see, cannot join — and a page of pure
@@ -156,7 +187,7 @@
 		     honest that the last one takes a while is what stops it feeling like
 		     a trick halfway through. -->
 		<div class="next">
-			<p class="next-head">What happens now</p>
+			<p class="next-head">What happens next</p>
 			<ol>
 				<li>
 					<span>Connect this Mac.</span> It already holds years of your messages, and it
@@ -303,6 +334,57 @@
 		font-size: 1.25rem;
 		color: var(--color-foreground);
 		margin: 0.4rem 0 !important;
+	}
+
+	.paths {
+		margin: 2.25rem 0 0;
+		display: grid;
+		grid-template-columns: 1fr 1fr;
+		gap: 2rem;
+	}
+
+	@media (max-width: 640px) {
+		.paths {
+			grid-template-columns: 1fr;
+			gap: 1.5rem;
+		}
+	}
+
+	.path p {
+		margin: 0;
+		font-size: 14.5px;
+		line-height: 1.6;
+	}
+
+	.path-head {
+		font-family: var(--font-mono, ui-monospace, monospace);
+		font-size: 10.5px;
+		letter-spacing: 0.14em;
+		text-transform: uppercase;
+		margin: 0 0 0.7rem !important;
+		padding-bottom: 0.6rem;
+		border-bottom: 1px solid var(--color-border);
+	}
+
+	/* Dimmed, and the rule above it dimmer still: the column is being described,
+	   not offered. */
+	.now {
+		color: var(--color-foreground-subtle);
+	}
+
+	.now .path-head {
+		opacity: 0.7;
+	}
+
+	/* Full ink, and the rule carries the accent — the only place on this page
+	   that uses it, so it lands. */
+	.ideal {
+		color: var(--color-foreground);
+	}
+
+	.ideal .path-head {
+		color: var(--color-foreground);
+		border-bottom-color: color-mix(in srgb, var(--color-primary) 55%, transparent);
 	}
 
 	.blind {
