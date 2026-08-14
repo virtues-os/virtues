@@ -1,5 +1,8 @@
 <script lang="ts">
 	import "../../app.css";
+	// The shared grammar for all six onboarding screens — see the file header for
+	// why it is global rather than per-component.
+	import "$lib/components/onboarding/onboarding.css";
 	import { onMount } from "svelte";
 	import { Toaster } from "svelte-sonner";
 	import { initTheme } from "$lib/utils/theme";

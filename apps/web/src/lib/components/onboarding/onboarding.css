@@ -1,0 +1,232 @@
+/**
+ * The onboarding grammar — one set of rules for all six screens.
+ *
+ * WHY IT IS GLOBAL. Every surface had grown its own copy: four different
+ * max-widths (34, 40, 40, 34/44rem), three h1 scales, two button styles, and a
+ * lede that was serif on one screen and sans on the next. Nobody decided any of
+ * that — each screen was written on its own day and drifted. Svelte's scoped
+ * styles are exactly what let it drift silently, so the shared half lives here
+ * instead, loaded once from the (onboarding) layout.
+ *
+ * Components keep their own <style> for what is genuinely theirs: the letter's
+ * axis figure, the interview's meter, the draft's document box.
+ *
+ * WHAT IS SHARED
+ *   .ob-wrap    the centered screen
+ *   .ob-sheet   the measure — one width, everywhere
+ *   .ob-h1      the display serif
+ *   .ob-lede    the standfirst under it
+ *   .ob-body    running prose
+ *   .ob-label   the mono, uppercase register for anything that is not prose
+ *   .ob-btn     the one filled control per screen: the way forward
+ *   .ob-ghost   the way past something optional
+ */
+
+.ob-wrap {
+	min-height: 100vh;
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	padding: 4rem 1.5rem;
+}
+
+/* ONE MEASURE. 38rem is the letter's reading column, and every other screen now
+   shares it — screens that change width between steps read as different pages
+   of different products, which is the single loudest way a flow feels
+   unfinished. */
+.ob-sheet {
+	width: 100%;
+	max-width: 38rem;
+}
+
+/* The only exception, and it earns it: a list of sources is a set of choices
+   with controls on the right, not a passage of prose, and at the reading
+   measure the rows crush. */
+.ob-sheet.ob-wide {
+	max-width: 46rem;
+}
+
+/* ── the page turn ──────────────────────────────────────────────────────
+   Sideways, not up. Onboarding is a sequence of leaves in one document, and
+   vertical motion says "more of this screen is arriving" — which is what a
+   scroll does, and precisely the wrong promise here. Horizontal says the last
+   screen is finished and a new one has taken its place.
+
+   Short (24px) and eased out: a full slide would be a carousel, and a carousel
+   invites someone to look for the way back to the previous slide. */
+.ob-sheet {
+	animation: ob-turn 0.44s cubic-bezier(0.22, 0.68, 0.24, 1) both;
+}
+
+@keyframes ob-turn {
+	from {
+		opacity: 0;
+		transform: translateX(24px);
+	}
+	to {
+		opacity: 1;
+		transform: none;
+	}
+}
+
+/* Going BACK through the strip turns the other way, so the direction always
+   says which way you moved through the document. */
+.ob-back .ob-sheet {
+	animation-name: ob-turn-back;
+}
+
+@keyframes ob-turn-back {
+	from {
+		opacity: 0;
+		transform: translateX(-24px);
+	}
+	to {
+		opacity: 1;
+		transform: none;
+	}
+}
+
+.ob-still .ob-sheet {
+	animation: none;
+}
+
+@media (prefers-reduced-motion: reduce) {
+	.ob-sheet {
+		animation: none;
+	}
+}
+
+/* ── type ───────────────────────────────────────────────────────────── */
+
+.ob-h1 {
+	margin: 0;
+	font-family: var(--font-serif, Georgia, serif);
+	font-size: clamp(1.9rem, 3.5vw, 2.4rem);
+	line-height: 1.08;
+	letter-spacing: -0.015em;
+	text-wrap: balance;
+	color: var(--color-foreground);
+}
+
+/* Serif, at the body size, because these screens are a letter and its
+   appendices — a sans standfirst under a serif headline was the tell that the
+   page had been assembled rather than set. */
+.ob-lede,
+.ob-body {
+	font-family: var(--font-serif, Georgia, serif);
+	font-size: 1.0625rem;
+	line-height: 1.7;
+	color: var(--color-foreground-muted);
+}
+
+.ob-lede {
+	margin: 1.1rem 0 0;
+}
+
+.ob-body {
+	margin: 1.1rem 0 0;
+	color: var(--color-foreground);
+}
+
+.ob-label {
+	font-family: var(--font-mono, ui-monospace, monospace);
+	font-size: 11px;
+	letter-spacing: 0.16em;
+	text-transform: uppercase;
+	color: var(--color-foreground-subtle);
+}
+
+.ob-note {
+	margin: 0.9rem 0 0;
+	font-size: 13px;
+	line-height: 1.6;
+	color: var(--color-foreground-subtle);
+}
+
+/* ── controls ───────────────────────────────────────────────────────── */
+
+/* ONE FILLED THING PER SCREEN, and it is always the way forward. Before this,
+   the forward control was an outlined pill — the same chrome as the contact
+   links directly above it on the letter, so the one control that mattered read
+   as a fourth chip. */
+.ob-btn {
+	margin-top: 2.25rem;
+	display: inline-flex;
+	align-items: center;
+	gap: 0.55rem;
+	font: inherit;
+	font-size: 15px;
+	padding: 0.8rem 1.7rem;
+	border: none;
+	border-radius: 999px;
+	background: var(--color-foreground);
+	color: var(--color-background);
+	cursor: pointer;
+	transition:
+		opacity 0.15s ease,
+		transform 0.15s ease;
+}
+
+.ob-btn:hover:not(:disabled) {
+	opacity: 0.86;
+}
+
+.ob-btn:active:not(:disabled) {
+	transform: translateY(1px);
+}
+
+.ob-btn:disabled {
+	opacity: 0.45;
+	cursor: default;
+}
+
+/* The way past something genuinely optional — quiet, but never hidden. A skip
+   you have to hunt for is a dark pattern with good manners. */
+.ob-ghost {
+	font-family: var(--font-mono, ui-monospace, monospace);
+	font-size: 12px;
+	color: var(--color-foreground-subtle);
+	background: none;
+	border: none;
+	cursor: pointer;
+	transition: color 0.15s ease;
+}
+
+.ob-ghost:hover:not(:disabled) {
+	color: var(--color-foreground);
+}
+
+.ob-ghost:disabled {
+	opacity: 0.4;
+	cursor: default;
+}
+
+/* ── fields ─────────────────────────────────────────────────────────── */
+
+.ob-input {
+	width: 100%;
+	font: inherit;
+	font-size: 1rem;
+	padding: 0.7rem 0.9rem;
+	border-radius: 10px;
+	border: 1px solid var(--color-border);
+	background: color-mix(in srgb, var(--color-foreground) 3%, transparent);
+	color: var(--color-foreground);
+}
+
+.ob-input:focus {
+	outline: none;
+	border-color: color-mix(in srgb, var(--color-primary) 60%, transparent);
+}
+
+/* Errors use the theme's own error token rather than the hardcoded #ff9ea1 that
+   three of these screens carried — a pink that was legible on exactly the dark
+   themes it was written against. */
+.ob-err {
+	margin-top: 1rem;
+	display: flex;
+	align-items: center;
+	gap: 0.4rem;
+	font-size: 13px;
+	color: var(--color-error);
+}

@@ -18,10 +18,25 @@
 -->
 <script lang="ts">
 	import Icon from "$lib/components/Icon.svelte";
+	import OnboardingHeader from "$lib/components/onboarding/OnboardingHeader.svelte";
+	import type { StepId } from "$lib/components/onboarding/steps";
 	import { draftNarrative, saveNarrativeRules, type NarrativeDraft } from "$lib/api/client";
 	import { onMount } from "svelte";
 
-	let { ondone, reduced = false }: { ondone: () => void; reduced?: boolean } = $props();
+	let {
+		ondone,
+		passed = [],
+		onjump,
+		back = false,
+		reduced = false,
+	}: {
+		ondone: () => void;
+		passed?: StepId[];
+		onjump?: (id: StepId) => void;
+		/** Arrived by going backward through the strip. */
+		back?: boolean;
+		reduced?: boolean;
+	} = $props();
 
 	let draft = $state<NarrativeDraft | null>(null);
 	let error = $state<string | null>(null);
@@ -59,24 +74,25 @@
 	}
 </script>
 
-<div class="wrap" class:still={reduced}>
-	<div class="sheet">
+<div class="ob-wrap" class:ob-still={reduced} class:ob-back={back}>
+	<div class="ob-sheet">
+		<OnboardingHeader step="words" done={passed} {onjump} />
+
 		{#if busy}
 			<p class="quiet">
 				<Icon icon="ri:quill-pen-line" width="15" /> Reading what you wrote…
 			</p>
 		{:else if error && !draft}
-			<h1>That didn't come together</h1>
+			<h1 class="ob-h1">That didn't come together</h1>
 			<p class="quiet">{error}</p>
 			<p class="quiet">
 				Nothing is lost — every answer is saved, and this can be tried again from your
 				document.
 			</p>
-			<button class="next" onclick={ondone}>Carry on</button>
+			<button class="ob-btn" onclick={ondone}>Carry on</button>
 		{:else if draft}
-			<p class="kicker">In your own words</p>
-			<h1>Here's what you said</h1>
-			<p class="lede">
+			<h1 class="ob-h1">Here's what you said</h1>
+			<p class="ob-lede">
 				Arranged from your answers, in your words. It will be wrong in places — it is a
 				draft of you, written by a machine that only knows what you just told it. Correct
 				it whenever you like; nothing here is fixed.
@@ -96,17 +112,17 @@
 					{#each draft.proposed_rules as _, i}
 						<label class="rule">
 							<input type="checkbox" bind:checked={chosen[i]} />
-							<input class="rule-text" type="text" bind:value={edited[i]} />
+							<input class="ob-input rule-text" type="text" bind:value={edited[i]} />
 						</label>
 					{/each}
 				</section>
 			{/if}
 
 			{#if error}
-				<p class="err"><Icon icon="ri:error-warning-line" width="14" /> {error}</p>
+				<p class="ob-err"><Icon icon="ri:error-warning-line" width="14" /> {error}</p>
 			{/if}
 
-			<button class="next" onclick={finish} disabled={saving}>
+			<button class="ob-btn" onclick={finish} disabled={saving}>
 				{saving ? "Saving…" : "Done"}
 				<Icon icon="ri:arrow-right-line" width="15" />
 			</button>
@@ -115,58 +131,8 @@
 </div>
 
 <style>
-	.wrap {
-		min-height: 100vh;
-		display: flex;
-		align-items: flex-start;
-		justify-content: center;
-		padding: 4rem 1.5rem;
-	}
-
-	.sheet {
-		width: 100%;
-		max-width: 40rem;
-		animation: rise 0.5s ease both;
-	}
-
-	.still .sheet {
-		animation: none;
-	}
-
-	@keyframes rise {
-		from {
-			opacity: 0;
-			transform: translateY(8px);
-		}
-		to {
-			opacity: 1;
-			transform: none;
-		}
-	}
-
-	.kicker {
-		font-family: var(--font-mono, ui-monospace, monospace);
-		font-size: 11px;
-		letter-spacing: 0.16em;
-		text-transform: uppercase;
-		color: var(--color-foreground-subtle);
-		margin: 0 0 0.6rem;
-	}
-
-	h1 {
-		font-family: var(--font-serif, Georgia, serif);
-		font-size: clamp(1.6rem, 3vw, 2.1rem);
-		margin: 0;
-		line-height: 1.15;
-	}
-
-	.lede {
-		margin: 1rem 0 0;
-		font-size: 14px;
-		line-height: 1.65;
-		color: var(--color-foreground-muted);
-		max-width: 34rem;
-	}
+	/* The shell, type scale, buttons, inputs and error style come from
+	   onboarding.css. What follows is only this screen's. */
 
 	/* Reads as a document, not a result. `pre-wrap` keeps the model's paragraph
 	   breaks without pulling a markdown renderer into this screen. */
@@ -177,8 +143,10 @@
 		border-radius: 12px;
 		background: color-mix(in srgb, var(--color-foreground) 3%, transparent);
 		white-space: pre-wrap;
-		font-size: 1rem;
+		font-family: var(--font-serif, Georgia, serif);
+		font-size: 1.0625rem;
 		line-height: 1.7;
+		color: var(--color-foreground);
 	}
 
 	.rules {
@@ -186,9 +154,11 @@
 	}
 
 	h2 {
-		font-size: 15px;
-		font-weight: 600;
+		font-family: var(--font-serif, Georgia, serif);
+		font-size: 1.15rem;
+		font-weight: 400;
 		margin: 0 0 0.5rem;
+		color: var(--color-foreground);
 	}
 
 	.rule {
@@ -200,52 +170,15 @@
 
 	.rule-text {
 		flex: 1;
-		font: inherit;
 		font-size: 14px;
 		padding: 0.5rem 0.7rem;
 		border-radius: 8px;
-		border: 1px solid var(--color-border);
-		background: none;
-		color: var(--color-foreground);
 	}
 
 	.quiet {
+		margin-top: 0.9rem;
 		font-size: 13.5px;
 		line-height: 1.6;
 		color: var(--color-foreground-subtle);
-		max-width: 34rem;
-	}
-
-	.err {
-		margin-top: 1rem;
-		font-size: 13px;
-		color: #ff9ea1;
-		display: flex;
-		align-items: center;
-		gap: 0.4rem;
-	}
-
-	.next {
-		margin-top: 2.25rem;
-		display: inline-flex;
-		align-items: center;
-		gap: 0.45rem;
-		font: inherit;
-		font-size: 15px;
-		padding: 0.65rem 1.3rem;
-		border-radius: 10px;
-		border: 1px solid var(--color-border);
-		background: none;
-		color: var(--color-foreground);
-		cursor: pointer;
-	}
-
-	.next:hover:not(:disabled) {
-		background: color-mix(in srgb, var(--color-foreground) 7%, transparent);
-	}
-
-	.next:disabled {
-		opacity: 0.5;
-		cursor: default;
 	}
 </style>
