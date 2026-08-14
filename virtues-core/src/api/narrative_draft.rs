@@ -49,12 +49,18 @@ Rules for the document:
 
 SECOND, after the ---CORE--- line: 80-120 words, plain text, no heading. This is what an assistant carries into every conversation, so it holds only what would change how to speak to them: what they are working toward, what they are up against, what they believe, and anything they are sensitive about. Not biography. Not their history. What a thoughtful friend keeps in mind, not what they could recite.
 
-Output the document, then ---CORE---, then the core. Nothing else."#;
+THIRD, after a line containing only ---RULES---: any instruction they gave about what NOT to raise, one per line, as a short imperative in their own terms ("never suggest bars", "do not mention my father unless I do"). These are drawn ONLY from what they explicitly asked for — usually the last answer. Never invent one, never infer one from a sad story, never turn an observation into a rule. If they asked for nothing, write nothing after this line. Being told about a loss is not the same as being asked never to mention it.
+
+Output the document, then ---CORE---, then the core, then ---RULES---, then the rules. Nothing else."#;
 
 #[derive(Debug, Serialize)]
 pub struct Draft {
     pub document: String,
     pub core: String,
+    /// PROPOSED, not saved. Nothing here binds the assistant until the person
+    /// confirms it — a rule the box invented and then obeyed would be worse
+    /// than no rules at all, because it would be invisible and permanent.
+    pub proposed_rules: Vec<String>,
 }
 
 /// Read the answers, write the document.
@@ -84,7 +90,7 @@ pub async fn draft_from_interview(pool: &PgPool) -> Result<Draft> {
     }
 
     let raw = call_model(pool, &prompt).await?;
-    let (document, core) = split_draft(&raw);
+    let (document, core, proposed_rules) = split_draft(&raw);
 
     if document.trim().is_empty() {
         return Err(Error::ExternalApi("draft came back empty".into()));
@@ -115,17 +121,32 @@ pub async fn draft_from_interview(pool: &PgPool) -> Result<Draft> {
         "narrative draft written from the interview"
     );
 
-    Ok(Draft { document, core })
+    Ok(Draft {
+        document,
+        core,
+        proposed_rules,
+    })
 }
 
 /// Split on the sentinel. A model that forgets it gives us a document and no
 /// core, which is recoverable; treating the whole reply as a core would inject
 /// three thousand words into every prompt, which is not.
-fn split_draft(raw: &str) -> (String, String) {
-    match raw.split_once("---CORE---") {
-        Some((doc, core)) => (doc.trim().to_string(), core.trim().to_string()),
-        None => (raw.trim().to_string(), String::new()),
-    }
+fn split_draft(raw: &str) -> (String, String, Vec<String>) {
+    let (doc, rest) = match raw.split_once("---CORE---") {
+        Some((d, r)) => (d, r),
+        None => (raw, ""),
+    };
+    let (core, rules_block) = match rest.split_once("---RULES---") {
+        Some((c, r)) => (c, r),
+        None => (rest, ""),
+    };
+    let rules = rules_block
+        .lines()
+        .map(|l| l.trim().trim_start_matches(['-', '*', '•']).trim())
+        .filter(|l| !l.is_empty())
+        .map(str::to_string)
+        .collect();
+    (doc.trim().to_string(), core.trim().to_string(), rules)
 }
 
 async fn call_model(pool: &PgPool, user_prompt: &str) -> Result<String> {
@@ -193,23 +214,153 @@ pub async fn draft_handler(
     }
 }
 
+// ─── rules ──────────────────────────────────────────────────────────────────
+
+#[derive(Debug, Serialize, sqlx::FromRow)]
+pub struct Rule {
+    pub id: String,
+    pub rule: String,
+    pub kind: String,
+    pub active: bool,
+}
+
+#[derive(Debug, serde::Deserialize)]
+pub struct SaveRules {
+    /// Exactly what the person confirmed, in the wording they left it in. The
+    /// proposals are thrown away; only this is stored.
+    pub rules: Vec<String>,
+}
+
+pub async fn list_rules(pool: &PgPool) -> Result<Vec<Rule>> {
+    sqlx::query_as::<_, Rule>(
+        "SELECT id, rule, kind, active FROM wiki_rules WHERE active ORDER BY created_at",
+    )
+    .fetch_all(pool)
+    .await
+    .map_err(|e| Error::Database(format!("list rules: {e}")))
+}
+
+pub async fn rules_handler(
+    axum::extract::State(state): axum::extract::State<crate::server::AppState>,
+    _user: crate::middleware::auth::AuthUser,
+) -> impl axum::response::IntoResponse {
+    use axum::{response::IntoResponse as _, Json};
+    match list_rules(state.db.pool()).await {
+        Ok(rules) => (
+            axum::http::StatusCode::OK,
+            Json(serde_json::json!({ "rules": rules })),
+        )
+            .into_response(),
+        Err(e) => (
+            axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({ "error": e.to_string() })),
+        )
+            .into_response(),
+    }
+}
+
+/// Replace the rule set with exactly what was confirmed.
+///
+/// A replace rather than an append: this is the screen where someone reviews
+/// every rule their box obeys, so leaving it must mean the list now says what
+/// they saw. An append would let a rule they unticked survive invisibly, which
+/// is the one failure this table exists to prevent.
+pub async fn save_rules_handler(
+    axum::extract::State(state): axum::extract::State<crate::server::AppState>,
+    _user: crate::middleware::auth::AuthUser,
+    axum::Json(req): axum::Json<SaveRules>,
+) -> impl axum::response::IntoResponse {
+    use axum::{response::IntoResponse as _, Json};
+    let pool = state.db.pool();
+
+    let mut tx = match pool.begin().await {
+        Ok(t) => t,
+        Err(e) => {
+            return (
+                axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+                Json(serde_json::json!({ "error": e.to_string() })),
+            )
+                .into_response()
+        }
+    };
+
+    if let Err(e) = sqlx::query("DELETE FROM wiki_rules").execute(&mut *tx).await {
+        tracing::error!(error = %e, "rules: clear failed");
+        return (
+            axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({ "error": e.to_string() })),
+        )
+            .into_response();
+    }
+
+    for (i, r) in req.rules.iter().enumerate() {
+        let r = r.trim();
+        if r.is_empty() {
+            continue;
+        }
+        if let Err(e) = sqlx::query("INSERT INTO wiki_rules (id, rule) VALUES ($1, $2)")
+            .bind(format!("rule_{i:03}"))
+            .bind(r)
+            .execute(&mut *tx)
+            .await
+        {
+            tracing::error!(error = %e, "rules: insert failed");
+            return (
+                axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+                Json(serde_json::json!({ "error": e.to_string() })),
+            )
+                .into_response();
+        }
+    }
+
+    if let Err(e) = tx.commit().await {
+        tracing::error!(error = %e, "rules: commit failed");
+        return (
+            axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({ "error": e.to_string() })),
+        )
+            .into_response();
+    }
+
+    tracing::info!(count = req.rules.len(), "rules saved");
+    (
+        axum::http::StatusCode::OK,
+        Json(serde_json::json!({ "saved": req.rules.len() })),
+    )
+        .into_response()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
     #[test]
-    fn splits_on_the_sentinel() {
-        let (doc, core) = split_draft("## Where you have been\nBoston.\n---CORE---\nShort version.");
+    fn splits_document_core_and_rules() {
+        let (doc, core, rules) = split_draft(
+            "## Where you have been\nBoston.\n---CORE---\nShort version.\n---RULES---\n- never suggest bars\n- do not mention my father",
+        );
         assert_eq!(doc, "## Where you have been\nBoston.");
         assert_eq!(core, "Short version.");
+        assert_eq!(rules, vec!["never suggest bars", "do not mention my father"]);
     }
 
     #[test]
     fn a_missing_sentinel_keeps_the_document_and_drops_the_core() {
         // The alternative — treating the whole reply as the core — would inject
         // the entire document into every prompt the person ever sends.
-        let (doc, core) = split_draft("## Where you have been\nBoston.");
+        let (doc, core, rules) = split_draft("## Where you have been\nBoston.");
         assert_eq!(doc, "## Where you have been\nBoston.");
         assert!(core.is_empty());
+        assert!(rules.is_empty());
+    }
+
+    #[test]
+    fn no_rules_asked_for_means_no_rules_proposed() {
+        // Silence here must stay silence. Someone who wrote about a loss and
+        // asked for nothing has not asked for a rule, and manufacturing one
+        // would put words in their mouth that then govern the assistant.
+        let (_, core, rules) = split_draft("Doc.\n---CORE---\nCore.\n---RULES---\n");
+        assert_eq!(core, "Core.");
+        assert!(rules.is_empty());
     }
 }
