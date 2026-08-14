@@ -1,24 +1,34 @@
 <!--
-  /setup — onboarding as ONE editorial document.
+  /onboarding — six screens, one at a time.
 
-  Not a wizard of card-screens: a single page you read top to bottom, where
-  each completed action streams the next chapter in. Progress is a left-margin
-  table of contents (Welcome · Account · Your world · You), not a dot-stepper.
-  The form is the argument — Virtues writes a document from your life, and this
-  makes you watch one write itself.
+  WAS A DOCUMENT, IS NOW A SEQUENCE. The first build was a single editorial
+  scroll with a table of contents in the left margin: you read top to bottom and
+  each finished action streamed the next chapter in. The idea was that the form
+  should be the argument — Virtues writes a document from your life, so watch
+  one write itself.
 
-  Two doors: the guided document (default) and a quiet "Set up manually →" that
-  satisfies only the account gate (the one thing that blocks the app) and drops
-  you into the app shell.
+  It did not survive contact with the flow. Two of the chapters (the letter, the
+  interview) had already been pulled out onto surfaces of their own, because
+  reading and writing are not the same grammar as working; what was left was a
+  scroll of three sections wearing the costume of a document. Meanwhile the
+  chapters that WERE on their own screens had no way to say where they sat in
+  the whole, so someone four screens in could not tell whether they were near
+  the start or the end. That is the commonest reason people abandon a flow they
+  have already paid for.
 
-  Chapters:
-    ① Welcome  — the threshold + the privacy pact          (always)
-    ② Account  — link the wallet (the one required gate)
-    ③ Your world — connect sources (M2)                     (after account)
-    ④ You      — the narrative-identity reveal (M3)         (after first connect)
+  So: every step is a screen, every screen wears OnboardingHeader, and the strip
+  in that header is the only progress indicator. It replaced the left rail,
+  which could only ever appear on the one surface long enough to scroll.
 
-  All step state is read from the derived /api/setup/state so the flow survives
-  refreshes and the OAuth round-trip.
+    ① letter    the founder's letter                     (in-memory, once a session)
+    ② names     two names, thirty seconds
+    ③ account   the one required gate
+    ④ sources   connect what already holds your life     (skippable)
+    ⑤ words     the interview — its own surface, and the draft after it
+    ⑥ you       the reveal
+
+  Server state still drives where someone LANDS, so the flow survives refreshes
+  and the OAuth round-trip; `screen` only drives where they go next.
 -->
 <script lang="ts">
 	import { goto } from "$app/navigation";
@@ -33,12 +43,11 @@
 		skipOnboarding,
 		getInterviewAnswers,
 	} from "$lib/api/client";
-	import OnboardingToc from "$lib/components/onboarding/document/OnboardingToc.svelte";
-	import OnboardingSection from "$lib/components/onboarding/document/OnboardingSection.svelte";
-	import Marginalia from "$lib/components/onboarding/document/Marginalia.svelte";
-	import TypesetLines from "$lib/components/onboarding/document/TypesetLines.svelte";
+	import OnboardingHeader from "$lib/components/onboarding/OnboardingHeader.svelte";
+	import type { StepId } from "$lib/components/onboarding/steps";
 	import AccountGate from "$lib/components/onboarding/document/AccountGate.svelte";
 	import FoundersLetter from "$lib/components/onboarding/document/FoundersLetter.svelte";
+	import Introductions from "$lib/components/onboarding/document/Introductions.svelte";
 	import Interview from "$lib/components/onboarding/interview/Interview.svelte";
 	import DraftReview from "$lib/components/onboarding/interview/DraftReview.svelte";
 	import ConnectWorld from "$lib/components/onboarding/document/ConnectWorld.svelte";
@@ -51,35 +60,46 @@
 		setup_complete: boolean;
 		onboarding: Step[];
 		onboarding_complete: boolean;
-		onboarding_skipped: boolean;
+		onboarding_status: string;
 	};
 
 	let state_ = $state<SetupState | null>(null);
 	let loading = $state(true);
 	let mode = $state<"document" | "manual">("document");
-	// THE LETTER IS A SURFACE, NOT A CHAPTER. It reads; everything after it
-	// works. Keeping them on one scroll meant the reading grammar had to carry a
-	// working session, and neither did its job. Held in memory only: re-reading
-	// it on a revisit costs one click to pass and is a better failure than
-	// skipping the one screen that explains why any of this is safe.
-	let letterRead = $state(false);
-	// The interview is its OWN surface for the same reason the letter is: it is
-	// an hour of writing, and a scroll that also holds a source checklist cannot
-	// hold that too. Entered from the document, returns to it.
-	let interviewOpen = $state(false);
-	// Finishing the interview goes to the draft, not back to the document: the
-	// point of answering fourteen questions is being shown what they became.
-	let draftOpen = $state(false);
 	let advancedOpen = $state(false);
-	let scrollEl = $state<HTMLElement | null>(null);
 	let reduced = $state(false);
 
+	// THE LETTER IS A SURFACE, NOT A STEP YOU FINISH. Held in memory only:
+	// re-reading it on a revisit costs one click to pass, which is a better
+	// failure than silently skipping the one screen that explains why any of
+	// this is safe.
+	let letterRead = $state(false);
+	let introDone = $state(false);
+	// Where the sequence is after those two. Seeded from server state on the
+	// first load so a refresh mid-flow does not start over.
+	let screen = $state<StepId>("account");
+	let seeded = false;
+	// Which way the last move went, so the page turns the matching way. Forward
+	// is the default because every control except the strip goes forward.
+	let back = $state(false);
+
+	/** Every forward move goes through here, so the turn direction cannot drift. */
+	function advance(to: StepId) {
+		back = false;
+		screen = to;
+	}
+	// The interview and its draft are surfaces of their own, entered from the
+	// words screen and returning to it.
+	let interviewOpen = $state(false);
+	let draftOpen = $state(false);
+
 	// Optimistic local flags — flip a step the instant the local signal fires,
-	// before the next server poll confirms it (used by the world chapter).
+	// before the next server poll confirms it.
 	let deviceReady = $state(false);
-	let phonePaired = $state(false);
-	// The user chose to move on to the reveal without (or before) connecting.
-	let proceeded = $state(false);
+	// Whether they have written anything yet, so the button can say "keep"
+	// rather than "start" — returning to a page that has forgotten you wrote
+	// eight answers is its own small insult.
+	let interviewStarted = $state(false);
 
 	function setupDone(id: string): boolean {
 		return state_?.setup.find((s) => s.id === id)?.done ?? false;
@@ -100,34 +120,28 @@
 	const narrativeGenerating = $derived(
 		state_?.onboarding.find((s) => s.id === "narrative_identity_ready")?.kind === "generating",
 	);
-	// The reveal is reachable once you've connected something, or chosen to move on.
-	const showReveal = $derived(worldEnough || proceeded);
 
-	// The TOC mirrors the document: chapters appear as they become reachable, so
-	// nothing in the rail points at a section that isn't there yet.
-	const chapters = $derived([
-		{ id: "welcome", label: "Welcome" },
-		{ id: "account", label: "Account" },
-		...(accountDone ? [{ id: "world", label: "Your world" }] : []),
-		...(accountDone ? [{ id: "words", label: "In your own words" }] : []),
-		...(showReveal ? [{ id: "reveal", label: "You" }] : []),
-	]);
-	// Whether they have written anything yet, so the button can say "keep"
-	// rather than "start" — returning to a page that has forgotten you wrote
-	// eight answers is its own small insult.
-	let interviewStarted = $state(false);
-	const completedIds = $derived(
+	// What the strip shows as behind you. Deliberately generous: `sources` counts
+	// as passed once anything is connected, never as "complete", because more can
+	// always be added and a tick would claim otherwise.
+	const passed = $derived(
 		[
-			accountDone && "welcome",
+			letterRead && "letter",
+			introDone && "names",
 			accountDone && "account",
-			worldEnough && "world",
-			narrativeReady && "reveal",
-		].filter(Boolean) as string[],
+			worldEnough && "sources",
+			interviewStarted && "words",
+		].filter(Boolean) as StepId[],
 	);
 
 	async function refreshState() {
 		try {
 			state_ = await getSetupState();
+			// Land where they left off, once.
+			if (!seeded) {
+				seeded = true;
+				screen = !accountDone ? "account" : !worldEnough ? "sources" : "words";
+			}
 		} catch {
 			/* box briefly unreachable — keep last state */
 		} finally {
@@ -170,13 +184,13 @@
 	});
 
 	async function enterApp() {
-		// RECORD THE CHOICE FIRST. The app shell now redirects back here while
+		// RECORD THE CHOICE FIRST. The app shell redirects back here while
 		// onboarding is unfinished, so leaving without saying "I'm leaving on
 		// purpose" would bounce straight back and read as the button being
 		// broken (2026-08-13).
 		//
-		// Only when it is genuinely unfinished — a completed onboarding is not
-		// a skipped one, and marking it skipped would lose that distinction.
+		// Only when it is genuinely unfinished — a completed onboarding is not a
+		// skipped one, and marking it skipped would lose that distinction.
 		if (state_ && state_.onboarding_complete === false) {
 			try {
 				await skipOnboarding(true);
@@ -187,14 +201,35 @@
 		}
 		void goto("/");
 	}
-	function proceedToReveal() {
-		proceeded = true;
-		setTimeout(() => {
-			scrollEl
-				?.querySelector("#reveal")
-				?.scrollIntoView({ behavior: reduced ? "auto" : "smooth", block: "start" });
-		}, 60);
+
+	/**
+	 * Go back to a step already behind you, from the strip.
+	 *
+	 * BACKWARD ONLY — the header refuses to offer anything not in `passed`, and
+	 * this trusts that rather than re-deriving it, because the two disagreeing
+	 * is how someone ends up on the reveal with an empty box.
+	 *
+	 * Leaving the interview or the draft is the same motion as leaving any other
+	 * screen: both save as they go, so there is nothing to confirm and nothing
+	 * to lose.
+	 */
+	function jump(id: StepId) {
+		back = true;
+		interviewOpen = false;
+		draftOpen = false;
+		if (id === "letter") {
+			letterRead = false;
+			return;
+		}
+		if (id === "names") {
+			introDone = false;
+			return;
+		}
+		letterRead = true;
+		introDone = true;
+		screen = id;
 	}
+
 	function confirmAdvanced() {
 		advancedOpen = false;
 		mode = "manual";
@@ -212,25 +247,6 @@
 			Couldn't reach the box. Make sure you're on the same network, then refresh.
 		</div>
 	</div>
-{:else if !letterRead}
-	<FoundersLetter onbegin={() => (letterRead = true)} {reduced} />
-{:else if interviewOpen}
-	<Interview
-		onfinish={() => {
-			interviewOpen = false;
-			draftOpen = true;
-		}}
-		{reduced}
-	/>
-{:else if draftOpen}
-	<DraftReview
-		ondone={() => {
-			draftOpen = false;
-			interviewStarted = true;
-			void refreshState();
-		}}
-		{reduced}
-	/>
 {:else if mode === "manual"}
 	<!-- The advanced door: just the account gate, then into the app. -->
 	<div class="flex min-h-screen items-center justify-center px-6 py-16">
@@ -248,95 +264,118 @@
 			</button>
 		</div>
 	</div>
+{:else if !letterRead}
+	<FoundersLetter onbegin={() => (letterRead = true)} {passed} onjump={jump} {back} {reduced} />
+{:else if !introDone}
+	<Introductions onnext={() => { back = false; introDone = true; }} {passed} onjump={jump} {back} {reduced} />
+{:else if interviewOpen}
+	<Interview
+		{passed}
+		onjump={jump}
+		{back}
+		onfinish={() => {
+			interviewOpen = false;
+			draftOpen = true;
+		}}
+		{reduced}
+	/>
+{:else if draftOpen}
+	<DraftReview
+		{passed}
+		onjump={jump}
+		{back}
+		ondone={() => {
+			draftOpen = false;
+			interviewStarted = true;
+			advance("you");
+			void refreshState();
+		}}
+		{reduced}
+	/>
 {:else}
-	<div class="doc-scroll" bind:this={scrollEl}>
-		<div class="doc-inner">
-			<div class="doc-toc">
-				<OnboardingToc {chapters} {completedIds} scrollContainer={scrollEl} {reduced} />
-			</div>
+	<div class="ob-wrap" class:ob-still={reduced} class:ob-back={back}>
+		<div class="ob-sheet" class:ob-wide={screen === "sources"}>
+			<OnboardingHeader step={screen} done={passed} onjump={jump} />
 
-			<div class="doc-column">
-				<!-- ① Welcome — now one line, because the LETTER made the argument
-				     on its own screen. Two versions of the same claim, the second
-				     weaker than the first, is worse than one; what remains here is
-				     the sentence that says what to do next. -->
-				<OnboardingSection id="welcome" kicker="Virtues" title="Let's fill it" {reduced}>
-					<TypesetLines
-						lines={[
-							"Your box is yours and it is empty. What follows is the part that makes it worth having: connect the things that already hold your life, and it starts keeping the record.",
-						]}
-						{reduced}
-					/>
-				</OnboardingSection>
+			{#if screen === "account"}
+				<!-- ③ The one gate. Everything else in onboarding can be skipped,
+				     put off, or half-done; this is the only screen that has to end
+				     in a yes, so it is the only one with no way past. -->
+				<h1 class="ob-h1">Sign in to Virtues</h1>
+				<p class="ob-lede">
+					Your subscription is the only part of Virtues that touches our servers — it handles
+					sign-in and pays for the models your box calls on. It is built in two halves: one
+					knows you pay us, the other runs your requests. They share no identifier, so
+					joining them returns an empty table. Everything else stays on the box.
+				</p>
 
-				<!-- ② Account -->
-				<OnboardingSection id="account" kicker="The one thing that needs a server" title="Sign in to Virtues" {reduced}>
-					<p class="mb-6">
-						Your subscription is the only part of Virtues that uses our servers — it handles sign-in and pays for the AI
-						your box calls on. It's built in two separate halves: one knows you pay us, the other runs your AI requests.
-						The two can't be connected, so we can't link who you are to anything you do. Everything else stays on the box.
-					</p>
+				<div class="work">
 					<AccountGate done={accountDone} onLinked={refreshState} />
-					<Marginalia tone="receipt">sign-in and billing use our servers · your data never does</Marginalia>
-				</OnboardingSection>
+				</div>
 
-				<!-- ③ Your world -->
 				{#if accountDone}
-					<OnboardingSection id="world" kicker="Your world" title="Where the record comes from" {reduced}>
-						<ConnectWorld onConnected={refreshState} onDeviceReady={() => (deviceReady = true)} />
-						{#if !showReveal}
-							<div class="world-foot">
-								<button class="continue" onclick={proceedToReveal}>
-									{worldEnough ? "Continue →" : "Skip for now →"}
-								</button>
-								<span class="continue-note">Connecting is optional — you can add sources anytime, from the app.</span>
-							</div>
-						{/if}
-					</OnboardingSection>
-				{/if}
-
-				<!-- ④ In your own words — the interview.
-				     Sits between connecting things and being shown yourself,
-				     because it is the half the box can never observe: everything
-				     above this is derived from the record, and this is authored.
-				     Opening it leaves the document for a surface of its own. -->
-				{#if accountDone}
-					<OnboardingSection
-						id="words"
-						kicker="In your own words"
-						title="The part it can't observe"
-						{reduced}
-					>
-						<TypesetLines
-							lines={[
-								"Everything else here is something your box works out by watching. This is the half it cannot: where you have been, what you are up against, who you mean to become. Fourteen questions, and nothing writes it but you.",
-							]}
-							{reduced}
-						/>
-						<button class="words-btn" onclick={() => (interviewOpen = true)}>
-							{interviewStarted ? "Keep writing" : "Start writing"}
-							<Icon icon="ri:arrow-right-line" width="15" />
+					<div in:fade>
+						<button class="ob-btn" onclick={() => advance("sources")}>
+							Continue
+							<Icon icon="ri:arrow-right-line" width="16" />
 						</button>
-						<p class="words-note">
-							It takes a while, and it saves as you go — you can stop anywhere and come
-							back.
-						</p>
-					</OnboardingSection>
+					</div>
 				{/if}
+			{:else if screen === "sources"}
+				<!-- ④ Sources. The only screen that wants width, because it is a set
+				     of choices rather than a passage of prose. -->
+				<h1 class="ob-h1">Where the record comes from</h1>
+				<p class="ob-lede">
+					Connect what already holds your life. Each source is read onto the box and stays
+					there — nothing is sent to us. Start with one; add the rest whenever.
+				</p>
 
-				<!-- ⑤ You — the reveal -->
-				{#if showReveal}
-					<OnboardingSection id="reveal" kicker="You" title="Meet yourself" {reduced}>
-						<RevealSection ready={narrativeReady} generating={narrativeGenerating} {reduced} onEnter={enterApp} />
-					</OnboardingSection>
-				{/if}
-			</div>
+				<div class="work">
+					<ConnectWorld onConnected={refreshState} onDeviceReady={() => (deviceReady = true)} />
+				</div>
 
-			<div class="doc-gutter"></div>
+				<button class="ob-btn" onclick={() => advance("words")}>
+					{worldEnough ? "Continue" : "Skip for now"}
+					<Icon icon="ri:arrow-right-line" width="16" />
+				</button>
+				<p class="ob-note">
+					Connecting is optional, and never finished — finances, notes, fitness and the rest
+					are waiting in the app.
+				</p>
+			{:else if screen === "words"}
+				<!-- ⑤ The doorway to the interview, which is its own surface. -->
+				<h1 class="ob-h1">The part it can't observe</h1>
+				<p class="ob-lede">
+					Everything else here your box works out by watching. This is the half it cannot:
+					where you have been, what you are up against, who you mean to become. Fourteen
+					questions, and nothing writes it but you.
+				</p>
+
+				<button class="ob-btn" onclick={() => { back = false; interviewOpen = true; }}>
+					{interviewStarted ? "Keep writing" : "Start writing"}
+					<Icon icon="ri:arrow-right-line" width="16" />
+				</button>
+				<p class="ob-note">
+					It takes a while, and it saves as you go — stop anywhere and come back.
+				</p>
+
+				<button class="ob-ghost quiet-go" onclick={() => advance("you")}>Not now →</button>
+			{:else}
+				<!-- ⑥ You. -->
+				<h1 class="ob-h1">Meet yourself</h1>
+				<div class="work">
+					<RevealSection
+						ready={narrativeReady}
+						generating={narrativeGenerating}
+						{reduced}
+						onEnter={enterApp}
+					/>
+				</div>
+			{/if}
 		</div>
-
-		<button class="manual-link" onclick={() => (advancedOpen = true)}>Skip setup →</button>
 	</div>
+
+	<button class="manual-link" onclick={() => (advancedOpen = true)}>Skip setup →</button>
 {/if}
 
 <!-- The advanced door's confirm — the safe choice (Stay guided) is the loud one. -->
@@ -361,90 +400,16 @@
 <style>
 	@reference "../../../app.css";
 
-	.doc-scroll {
-		position: relative;
-		height: 100vh;
-		overflow-y: auto;
+	/* The shell, type scale and controls come from onboarding.css — see that
+	   file for why they are not here. What follows is only this route's. */
+
+	.work {
+		margin-top: 2.25rem;
 	}
 
-	.doc-inner {
-		display: grid;
-		grid-template-columns: 9rem minmax(0, 34rem) 1fr;
-		gap: 2.5rem;
-		max-width: 72rem;
-		margin-inline: auto;
-		padding: 8vh 2rem 16vh;
-	}
-
-	.doc-toc {
-		grid-column: 1;
-	}
-	.doc-column {
-		grid-column: 2;
-	}
-	.doc-gutter {
-		grid-column: 3;
-	}
-
-	/* Below the gutter width, collapse to a single centered reading column. */
-	@media (max-width: 1200px) {
-		.doc-inner {
-			grid-template-columns: minmax(0, 1fr);
-			max-width: 38rem;
-		}
-		.doc-toc,
-		.doc-column,
-		.doc-gutter {
-			grid-column: 1;
-		}
-	}
-
-	.world-foot {
-		margin-top: 2.5rem;
-		display: flex;
-		flex-wrap: wrap;
-		align-items: baseline;
-		gap: 0.25rem 1rem;
-		border-top: 1px solid var(--color-border-subtle);
-		padding-top: 1.5rem;
-	}
-	.continue {
-		font-size: 0.95rem;
-		font-weight: 500;
-		color: var(--color-foreground);
-		transition: color 0.15s ease;
-	}
-	.continue:hover {
-		color: var(--color-primary);
-	}
-	.continue-note {
-		font-size: 0.8rem;
-		color: var(--color-foreground-subtle);
-	}
-
-	.words-btn {
+	.quiet-go {
 		margin-top: 1.75rem;
-		display: inline-flex;
-		align-items: center;
-		gap: 0.45rem;
-		font: inherit;
-		font-size: 15px;
-		padding: 0.65rem 1.25rem;
-		border-radius: 10px;
-		border: 1px solid var(--color-border);
-		background: none;
-		color: var(--color-foreground);
-		cursor: pointer;
-	}
-
-	.words-btn:hover {
-		background: color-mix(in srgb, var(--color-foreground) 7%, transparent);
-	}
-
-	.words-note {
-		margin: 0.85rem 0 0;
-		font-size: 13px;
-		color: var(--color-foreground-subtle);
+		display: block;
 	}
 
 	.manual-link {

@@ -1,37 +1,49 @@
 <!--
   The letter — the first screen anyone sees after their box is theirs.
 
-  ITS OWN SURFACE. Onboarding used to open with this as the first chapter of a
-  long scroll, and a scroll is a reading grammar being used for a working
-  session. The reading gets a screen so it can be read.
+  ONE JOB. Make someone believe the box is theirs, and tell them what happens
+  next. An earlier version had nine movements, a two-panel figure, a second
+  figure, and six body sizes; every piece was individually defensible and the
+  whole was a brochure. What survived is what does that one job.
 
-  WRITTEN FOR SOMEONE WHO HAS ALREADY DECIDED. An earlier version reused the
-  /about letter, which is good writing aimed at a different reader — one who is
-  choosing. This one has chosen, paid, and plugged in a box that knows nothing
-  about them. Two jobs: confirm they chose well, and set the frame for the fact
-  that in four minutes it will ask for their iMessages.
+  THE FOUR FEELINGS, one beat each:
 
-  THE ORDER IS THE ARGUMENT:
+    understood     a person wrote this, and names the thing you actually fear
+    excited        tomorrow morning, one concrete object at a concrete time
+    knowledgeable  the figure — where the record is, where the models are
+    safe           the same figure, read the other way
 
-    who I am        a person, reachable, before any claim is made
-    the mission     five words
-    tomorrow        one concrete object at a concrete time — the beauty, shown
-    home vs cloud   the distinction, in prose
-    the figures     the same distinction, at a glance
-    the limit       what we cannot do yet, and why you are paying
-    the rest        what stays yours regardless
-    the double blind  why that holds even if we are not good people
-    what happens next  three steps, so the button is not a cliff
+  THE FIGURE REPLACED AN ARGUMENT. The old page drew "as it is" against "as it
+  ought to be", then admitted four paragraphs later that the box borrows hosted
+  models — which read as a claim followed by its own retraction. The two-rail
+  figure has no such seam: it says where each half of the system lives TODAY,
+  which makes the subscription a legible consequence rather than a compromise
+  to defend, and makes its ending a plotted point rather than a promise.
 
-  The figures sit AFTER the paragraph that names the distinction, not before it.
-  A diagram that arrives cold has to be decoded; one that arrives after the idea
-  is simply recognised, which is the difference between studying a picture and
-  seeing it.
+  THREE SIZES, TWO FAMILIES. Serif for the headline and the whole body, mono
+  for labels and states, one small size for captions. Nothing else. The old
+  page ran six body sizes and the mixture was the reason it felt unresolved
+  before anyone could say why.
 -->
 <script lang="ts">
 	import Icon from "$lib/components/Icon.svelte";
+	import OnboardingHeader from "$lib/components/onboarding/OnboardingHeader.svelte";
+	import type { StepId } from "$lib/components/onboarding/steps";
 
-	let { onbegin, reduced = false }: { onbegin: () => void; reduced?: boolean } = $props();
+	let {
+		onbegin,
+		passed = [],
+		onjump,
+		back = false,
+		reduced = false,
+	}: {
+		onbegin: () => void;
+		passed?: StepId[];
+		onjump?: (id: StepId) => void;
+		/** Arrived by going backward through the strip. */
+		back?: boolean;
+		reduced?: boolean;
+	} = $props();
 
 	// Up here because they are the likeliest thing on this page to rot, and a
 	// reachable founder is the claim the page rests on — a dead link here costs
@@ -39,14 +51,14 @@
 	const EMAIL = "adam@virtues.com";
 	const X_URL = "https://x.com/adamjaces";
 	const INSTAGRAM_URL = "https://www.instagram.com/aajaces/";
-	// The long version of the argument the figures make in a glance.
+	// The long version, for anyone the figure just convinced.
 	const MANIFESTO_URL = "https://virtues.com/library/manifesto";
 </script>
 
-<div class="letter" class:still={reduced}>
-	<div class="sheet">
-		<p class="kicker">Virtues Onboarding</p>
-		<h1>A small correction, to technology.</h1>
+<div class="letter ob-wrap" class:ob-still={reduced} class:ob-back={back}>
+	<div class="ob-sheet">
+		<OnboardingHeader step="letter" done={passed} {onjump} />
+		<h1 class="ob-h1 hero">A small correction to technology.</h1>
 
 		<!-- A face carries an argument about trust in a way a paragraph cannot,
 		     which is exactly the job of this screen. -->
@@ -58,37 +70,113 @@
 		</div>
 
 		<div class="body">
-			<!-- A BELIEF, THEN A QUESTION. The first version opened by naming
-			     the founder and pointing at three social accounts, which told a
-			     new owner who was speaking and nothing about why. The reason came
-			     four paragraphs later, buried under architecture.
-
-			     The list is deliberately categories and one allusion rather than
-			     names. Categories cannot be argued with; a name invites an
-			     argument about that name, which is the one thing this paragraph
-			     cannot afford. The last item does the work of the name and lets
-			     the reader supply it, which lands harder and will still read the
-			     same in ten years.
+			<!-- A BELIEF, THEN A QUESTION, in one breath. The list is categories
+			     and one allusion rather than names: categories cannot be argued
+			     with, and a name invites an argument about that name, which is the
+			     one thing this paragraph cannot afford. The last item does the
+			     work of the name and lets the reader supply it — which lands
+			     harder and will still read the same in ten years.
 
 			     "and … and …" rather than commas inside that item, or the list
-			     reads as six answers instead of four — money, an island and a
-			     disordered life would each look like their own candidate. The
-			     repeated conjunction binds them into one man, and "disordered" is
-			     the older, better word for it: a life whose loves are out of
-			     order, which is precisely the objection. -->
+			     reads as six answers instead of four. The repeated conjunction
+			     binds them into one man, and "disordered" is the older, better
+			     word for it: a life whose loves are out of order. -->
 			<p>
-				I'm Adam Jace, and I started Virtues because I believe in subsidiarity: the old idea
-				that a thing belongs at the most local level capable of holding it. Nothing is more
-				local than your own life.
+				I'm Adam Jace, and I started Virtues because I believe in subsidiarity — the old
+				idea that a thing belongs at the most local level able to hold it. Nothing is more
+				local than your own life. So ask it plainly. Who would you rather have holding the
+				whole account of yours: a government, a political party, an advertising company, a
+				man with money and an island and a disordered life? Or you.
 			</p>
 
-			<p class="challenge">
-				So ask it plainly. Who would you rather have holding the whole account of yours — a
-				government, a political party, an advertising company, a man with money and an
-				island and a disordered life? Or you.
+			<!-- The turn from the question to the product, and the only place the
+			     name gets explained. "Vice is repetitive and profitable" is the
+			     load-bearing line: it says why an entire industry is arranged the
+			     way it is without accusing anyone of malice, and it makes the name
+			     an argument rather than a mood. -->
+			<p>
+				That is why I built Virtues: to put the record of your life somewhere it cannot be
+				turned into advertising, or a feed, or a habit you did not choose. Vice is
+				repetitive and profitable, which is why so much is arranged to produce it. Virtue
+				asks for harder things — attention, memory, an honest account of what you have
+				actually been doing. A record of your own life can give you all three, but only if
+				it is genuinely yours.
 			</p>
 
-			<p class="reachable">You can reach me directly. I answer these myself.</p>
+			<!-- SHOWN, NOT ASSERTED. Everything above is an argument, and a page of
+			     pure argument is cold. One concrete object at a concrete time is a
+			     thing you can picture — and tomorrow rather than some eventual
+			     capability, because a promise you can check within a day is not an
+			     IOU. -->
+			<p>
+				Tomorrow morning a page will be waiting for you: yesterday, written down — where you
+				went, who you spoke with, what you were working on. Thin at first, having only just
+				met you. Give it a month and it will know your weeks better than you do.
+			</p>
+		</div>
+
+		<!-- ── where it lives ────────────────────────────────────────────────
+		     ONE AXIS, TWO MARKERS. There are exactly two things in this system
+		     worth locating, and the whole argument is that they are at different
+		     points — so they belong on the SAME line, where the distance between
+		     them can be seen rather than described.
+
+		     An earlier attempt gave each its own rail, which put a filled track
+		     and a round handle side by side twice and read unmistakably as two
+		     range sliders: a control, inviting a drag, saying nothing. One line
+		     with marks on it is a scale, and nobody tries to drag a scale. -->
+		<figure class="where">
+			<figcaption class="where-head">What is yours, and what is borrowed</figcaption>
+
+			<div class="axis-fig">
+				<!-- Ordered far marker first so the near one's label paints over it
+				     rather than under, on the narrow widths where they meet. -->
+				<div class="mark here" style="--at: 100%; --h: 5.9rem">
+					<p class="mark-label">The record of your life</p>
+					<p class="mark-state">arrived</p>
+					<span class="tick"></span>
+					<span class="dot"></span>
+				</div>
+
+				<div class="mark transit" style="--at: 34%; --h: 2.2rem">
+					<p class="mark-label">The intelligence that reads it</p>
+					<p class="mark-state">still on the way</p>
+					<span class="tick"></span>
+					<span class="dot"></span>
+				</div>
+
+				<div class="line"></div>
+				<div class="ends">
+					<span>elsewhere</span>
+					<span>your house</span>
+				</div>
+			</div>
+
+			<p class="note">
+				Your record sits on the box in your home and does not leave it. The models are still
+				borrowed, because no intelligence you can run in your own house is yet good enough
+				to be trusted with your life. They are shown only what a question requires, under
+				terms that keep nothing: not stored, not trained on, not logged. That borrowing is
+				the one thing the subscription buys, and it ends when the hardware in your home is
+				equal to the work.
+			</p>
+
+			<p class="further">
+				<a href={MANIFESTO_URL} target="_blank" rel="noreferrer">
+					Our case for subsidiarity in technology
+					<Icon icon="ri:external-link-line" width="13" />
+				</a>
+			</p>
+		</figure>
+
+		<div class="sign">
+			<!-- MASKED, NOT INVERTED. An earlier version inverted black ink assuming
+			     a dark ground, which would have painted white on white for the eight
+			     LIGHT themes — starting with pemberley, the one a new box actually
+			     opens on. Masking paints the ink in whatever the theme's foreground
+			     is, correct on all sixteen with no list to maintain. -->
+			<div class="sig" role="img" aria-label="Adam Jace"></div>
+			<p class="role">Founder, Virtues</p>
 
 			<div class="contacts">
 				<!-- BUNDLED MARKS, NOT FAVICONS. Fetching icons from x.com and
@@ -109,257 +197,46 @@
 					aajaces
 				</a>
 			</div>
-
-			<p class="mission">Personal intelligence, privately.</p>
-
-			<!-- SHOWN, NOT ASSERTED. Nearly every other beat here is a negation,
-			     and a page of pure defence is cold. One concrete object at a
-			     concrete time is a thing you can picture. Tomorrow rather than
-			     some eventual capability, because a promise you can check within a
-			     day is not an IOU. -->
-			<p>
-				Tomorrow morning a page will be waiting for you: yesterday, written down — where you
-				went, who you spoke with, what you were working on. It will be thin at first, having
-				only just met you. Give it a month and it will know your weeks better than you do;
-				give it three years and you will be able to ask about an ordinary Tuesday and
-				receive an answer.
-			</p>
-
-			<p>
-				That is only possible if the record of your life sits somewhere you control. Almost
-				everything else you use keeps it in the other place — on machines you cannot enter,
-				belonging to companies whose interest in you is not the same as your interest in
-				yourself. The difference is not how carefully the data is guarded. It is whose house
-				it is kept in.
-			</p>
 		</div>
 
-		<div class="paths">
-			<div class="path now">
-				<!-- THE SAME HOUSE IN BOTH FIGURES. That is the device: not two
-				     worlds, but one home and two fates for what is inside it. An
-				     earlier version drew five grey slabs and a fan of lines, which
-				     nobody could read as "the cloud" — so the cloud is a cloud,
-				     both things are labelled, and the moving parts drop to three.
-
-				     Here everything leaves. The dots rise, cross the roof, and fade
-				     into something with no inside to see. The house is left empty,
-				     which is the argument. -->
-				<svg
-					class="fig"
-					viewBox="0 0 240 158"
-					role="img"
-					aria-label="Your life leaving your home for servers you cannot see"
-				>
-					<path
-						class="cloud solid"
-						d="M74 56c0-11 9-20 20-20 4-11 15-18 27-16 9 1 17 7 21 15 12-2 23 7 23 19 0 11-9 20-20 20H92c-10 0-18-8-18-18z"
-					/>
-					<text class="tag" x="120" y="14">their servers</text>
-
-					<g class="leaving">
-						<circle cx="120" cy="112" r="3.5" />
-						<circle cx="110" cy="112" r="3" />
-						<circle cx="130" cy="112" r="3" />
-					</g>
-
-					<path class="home" d="M84 120 L120 96 L156 120 L156 142 L84 142 Z" />
-					<text class="tag home-tag" x="120" y="154">your home</text>
-				</svg>
-
-				<p class="path-head">As it is</p>
-				<p>
-					Built to be watched, rather than to watch with you. Your attention sold, your
-					habits shaped by people you will never meet, and the record of your life held on
-					machines you cannot see, audit, or leave.
-				</p>
-			</div>
-
-			<div class="path ideal">
-				<!-- SEALED. Same house, same cloud, and nothing between them.
-				     An earlier version drew a thread carrying a question up and
-				     back, on the reasoning that the box borrows models it cannot
-				     host. But this figure is about where your LIFE is kept, not
-				     about every packet — the record does not leave, and drawing a
-				     line out of the house says the opposite of the only thing this
-				     picture exists to say. The borrowing is stated in words two
-				     paragraphs down, where it can be explained rather than
-				     misread. The cloud stays, faint and unattached: the same two
-				     objects as the left, with the connection simply absent. -->
-				<svg
-					class="fig"
-					viewBox="0 0 240 158"
-					role="img"
-					aria-label="Your life staying home; only questions leave"
-				>
-					<path
-						class="cloud hollow"
-						d="M74 56c0-11 9-20 20-20 4-11 15-18 27-16 9 1 17 7 21 15 12-2 23 7 23 19 0 11-9 20-20 20H92c-10 0-18-8-18-18z"
-					/>
-					<text class="tag" x="120" y="14">their servers</text>
-
-					<path class="home held" d="M84 120 L120 96 L156 120 L156 142 L84 142 Z" />
-					<g class="kept">
-						<circle cx="120" cy="130" r="3.5" />
-						<circle cx="103" cy="134" r="2.5" />
-						<circle cx="137" cy="134" r="2.5" />
-					</g>
-					<text class="tag home-tag" x="120" y="154">your home</text>
-				</svg>
-
-				<p class="path-head">As it ought to be</p>
-				<p>
-					The whole of it in your house and open to your inspection — every process, every
-					log, every byte. Intelligence that serves who you are trying to become, and lets
-					you look honestly at your own life without the looking being sold.
-				</p>
-			</div>
+		<div class="exit">
+			<button class="ob-btn" onclick={onbegin}>
+				Begin
+				<Icon icon="ri:arrow-right-line" width="16" />
+			</button>
 		</div>
-
-		<!-- The door out for anyone the figures just convinced, placed where the
-		     appetite is rather than at the end. -->
-		<p class="further">
-			<a href={MANIFESTO_URL} target="_blank" rel="noreferrer">
-				Our case for subsidiarity in technology
-				<Icon icon="ri:external-link-line" width="13" />
-			</a>
-		</p>
-
-		<div class="body">
-			<!-- THE LIMITATION, and it is the most credible thing on the page.
-			     Saying what Virtues cannot do on the day someone paid is what no
-			     competitor will do, and it disarms the subscription: it stops being
-			     a compromise to defend and becomes the consequence of a fact stated
-			     first. -->
-			<p>
-				There is one thing worth saying plainly on the day you have paid for this, and it is
-				what Virtues cannot yet do.
-				<strong
-					>No intelligence you can run in your own house is good enough to be trusted with
-					your life</strong
-				>
-				— not honestly, not yet — and anyone who tells you otherwise is either selling something
-				or has not tried it. So your box borrows better models than it can host, and that is
-				what the subscription buys. When the hardware in your home is equal to the work, the
-				subscription ends. It is the only part of Virtues that is not already yours.
-			</p>
-
-			<p>
-				The rest already is. Your record lives on the box in your home and does not leave
-				it. The models are shown only what a question requires, under terms that keep
-				nothing: not stored, not trained on, not logged.
-			</p>
-
-			<p>And on our side, we have built it so that we cannot put you back together.</p>
-		</div>
-
-		<!-- Two columns, nothing between them. The gap IS the argument, which is
-		     why it is drawn rather than described. -->
-		<figure class="blind">
-			<svg viewBox="0 0 520 142" role="img" aria-label="Billing and the app share no identifier">
-				<g class="col">
-					<rect x="1" y="1" width="228" height="108" rx="10" />
-					<text class="col-title" x="20" y="30">Billing</text>
-					<text class="col-item" x="20" y="54">your name</text>
-					<text class="col-item" x="20" y="74">your card</text>
-					<text class="col-item" x="20" y="94">what you pay</text>
-				</g>
-
-				<g class="col">
-					<rect x="291" y="1" width="228" height="108" rx="10" />
-					<text class="col-title" x="310" y="30">The app</text>
-					<text class="col-item" x="310" y="54">an account key</text>
-					<text class="col-item" x="310" y="74">nothing else</text>
-					<text class="col-item" x="310" y="94">no name, no card</text>
-				</g>
-
-				<line class="cut" x1="260" y1="16" x2="260" y2="94" />
-				<text class="gap" x="260" y="132">no shared identifier</text>
-			</svg>
-			<figcaption>
-				Joining the two returns an empty table. That holds whether we are honest, careless,
-				breached, subpoenaed, acquired, or dead.
-			</figcaption>
-		</figure>
-
-		<!-- Three steps, so the button is a path rather than a cliff — including
-		     the honest admission that the last one takes a while. -->
-		<div class="next">
-			<p class="next-head">What happens next</p>
-			<ol>
-				<li>
-					<span>Connect this Mac.</span> It already holds years of your messages, and it
-					needs nothing but your permission.
-				</li>
-				<li>
-					<span>Add whatever else you want it to know.</span> Your phone, your calendar, your
-					mail. Any of it, in any order, whenever.
-				</li>
-				<li>
-					<span>Tell it who you are.</span> Fourteen questions that nothing else can answer
-					for you. It takes a while, and it saves as you go.
-				</li>
-			</ol>
-		</div>
-
-		<div class="sign">
-			<div class="sig" role="img" aria-label="Adam Jace"></div>
-			<div class="role">Founder, Virtues</div>
-		</div>
-
-		<button class="begin" onclick={onbegin}>
-			Begin
-			<Icon icon="ri:arrow-right-line" width="16" />
-		</button>
 	</div>
 </div>
 
 <style>
+	/* THE WHOLE TYPE SYSTEM. Three sizes, and every rule below refers to these
+	   rather than inventing its own — which is the specific failure the previous
+	   version accumulated one defensible exception at a time. */
 	.letter {
-		min-height: 100vh;
-		display: flex;
-		align-items: center;
-		justify-content: center;
-		padding: 4rem 1.5rem;
+		--t-body: 1.0625rem;
+		--t-small: 13px;
+		--t-label: 11px;
 	}
 
-	.sheet {
-		width: 100%;
-		max-width: 42rem;
-		animation: rise 0.7s cubic-bezier(0.2, 0.7, 0.2, 1) both;
-	}
-
-	.still .sheet {
-		animation: none;
-	}
-
-	@keyframes rise {
-		from {
-			opacity: 0;
-			transform: translateY(10px);
-		}
-		to {
-			opacity: 1;
-			transform: none;
-		}
-	}
-
-	.kicker {
+	/* Mono, uppercase, --t-label: the one treatment every label on the page
+	   shares — the axis ends, the marker states, the figure's head. (The eyebrow
+	   moved into OnboardingHeader, which carries the same treatment.) */
+	.ends,
+	.mark-state,
+	.where-head {
 		font-family: var(--font-mono, ui-monospace, monospace);
-		font-size: 11px;
-		letter-spacing: 0.18em;
+		font-size: var(--t-label);
+		letter-spacing: 0.16em;
 		text-transform: uppercase;
 		color: var(--color-foreground-subtle);
-		margin: 0 0 0.75rem;
 	}
 
-	h1 {
-		font-family: var(--font-serif, Georgia, serif);
+	/* The one screen allowed to be louder than the others: it is the cover, and
+	   everything after it is an interior page. */
+	.hero {
 		font-size: clamp(2rem, 4vw, 2.75rem);
 		line-height: 1.05;
 		letter-spacing: -0.02em;
-		margin: 0;
-		text-wrap: balance;
 	}
 
 	.film {
@@ -378,239 +255,190 @@
 		align-items: center;
 		gap: 0.5rem;
 		color: var(--color-foreground-subtle);
-		font-size: 13px;
+		font-size: var(--t-small);
 	}
 
+	/* A LETTER, SO IT IS SET LIKE ONE. Serif throughout at a single size — the
+	   old page reserved the serif for two "important" paragraphs, which made the
+	   rest look like interface chrome someone had to get past. */
 	.body {
-		margin-top: 2rem;
+		margin-top: 2.25rem;
 		display: flex;
 		flex-direction: column;
-		gap: 1.1rem;
-		font-size: 1.0625rem;
-		line-height: 1.65;
-		color: var(--color-foreground-muted);
+		gap: 1.15rem;
+		font-family: var(--font-serif, Georgia, serif);
+		font-size: var(--t-body);
+		line-height: 1.7;
+		color: var(--color-foreground);
 	}
 
 	.body p {
 		margin: 0;
 	}
 
-	.body strong {
-		color: var(--color-foreground);
-		font-weight: 600;
+	/* ── where it lives ────────────────────────────────────────────────── */
+
+	.where {
+		margin: 3rem 0 0;
+		padding-top: 1.75rem;
+		border-top: 1px solid var(--color-border);
 	}
 
-	/* The question is the turn the paragraph above sets up, so it gets the
-	   serif and the room to be read as one. */
-	.challenge {
-		font-family: var(--font-serif, Georgia, serif);
-		font-size: 1.15rem !important;
-		line-height: 1.45;
-		color: var(--color-foreground);
-		margin: 0.3rem 0 !important;
+	.where-head {
+		margin: 0 0 1rem;
 	}
 
-	.reachable {
-		font-size: 14px !important;
-		color: var(--color-foreground-subtle);
-		margin: 0.4rem 0 -0.4rem !important;
+	/* One line, measured from `elsewhere` to `your house`, with both markers on
+	   it. Marker labels stack at different heights (--h) so they never collide,
+	   and the taller stalk lands on the marker that has arrived. */
+	.axis-fig {
+		position: relative;
+		height: 9.5rem;
 	}
 
-	.mission {
-		font-family: var(--font-serif, Georgia, serif);
-		font-size: 1.25rem;
-		color: var(--color-foreground);
-		margin: 0.4rem 0 !important;
+	.line {
+		position: absolute;
+		left: 0;
+		right: 0;
+		bottom: 1.75rem;
+		height: 1px;
+		background: var(--color-border);
 	}
 
-	.contacts {
+	.ends {
+		position: absolute;
+		left: 0;
+		right: 0;
+		bottom: 0;
 		display: flex;
-		flex-wrap: wrap;
-		gap: 0.5rem;
+		justify-content: space-between;
+		letter-spacing: 0.14em;
 	}
 
-	.pill {
-		display: inline-flex;
-		align-items: center;
-		gap: 0.4rem;
-		padding: 0.35rem 0.7rem;
-		border: 1px solid var(--color-border);
-		border-radius: 999px;
-		font-size: 13px;
-		color: var(--color-foreground-muted);
-		text-decoration: none;
-		transition:
-			background 0.15s ease,
-			color 0.15s ease;
+	.mark {
+		position: absolute;
+		bottom: 1.75rem;
+		left: var(--at);
 	}
 
-	.pill:hover {
-		background: color-mix(in srgb, var(--color-foreground) 7%, transparent);
-		color: var(--color-foreground);
+	.dot {
+		position: absolute;
+		bottom: -4.5px;
+		left: -4.5px;
+		width: 9px;
+		height: 9px;
+		border-radius: 50%;
+		background: currentColor;
 	}
 
-	/* ── the two paths ─────────────────────────────────────────────────── */
-
-	.paths {
-		margin: 2.5rem 0 0;
-		display: grid;
-		grid-template-columns: 1fr 1fr;
-		gap: 2.5rem;
+	/* The stalk, not a ruler: it exists only to tie a label to a position, so it
+	   stays fainter than either. */
+	.tick {
+		position: absolute;
+		bottom: 0;
+		left: -0.5px;
+		width: 1px;
+		height: var(--h);
+		background: currentColor;
+		opacity: 0.3;
 	}
 
-	@media (max-width: 640px) {
-		.paths {
-			grid-template-columns: 1fr;
-			gap: 2rem;
-		}
-	}
-
-	.path p {
+	.mark-label,
+	.mark-state {
+		position: absolute;
+		bottom: var(--h);
 		margin: 0;
-		font-size: 14.5px;
-		line-height: 1.6;
+		white-space: nowrap;
+		line-height: 1.35;
 	}
 
-	/* BOTH HEADINGS IN FULL INK. Dimming the left one alongside its body read as
-	   a rendering fault rather than a judgement — a pale serif looks like
-	   something that failed to load. The contrast lives in the figures and the
-	   body copy, where it is legible as intent. */
-	.path-head {
+	.mark-label {
 		font-family: var(--font-serif, Georgia, serif);
-		font-size: 1.35rem !important;
-		line-height: 1.15;
+		font-size: var(--t-body);
 		color: var(--color-foreground);
-		margin: 1.1rem 0 0.7rem !important;
-		padding-bottom: 0.7rem;
-		border-bottom: 1px solid var(--color-border);
+		padding-bottom: 1.35rem;
 	}
 
-	.ideal .path-head {
-		border-bottom-color: color-mix(in srgb, var(--color-primary) 55%, transparent);
+	.mark-state {
+		padding-bottom: 0.5rem;
+		letter-spacing: 0.14em;
 	}
 
-	.now p:not(.path-head) {
+	/* Arrived: the accent, and its label hangs back from the right edge so the
+	   line's end is not crowded. */
+	.here {
+		color: var(--color-primary);
+	}
+
+	.here .mark-label,
+	.here .mark-state {
+		right: 0;
+		text-align: right;
+	}
+
+	.here .mark-state {
+		color: var(--color-primary);
+	}
+
+	/* Hollow, because it has not got there. */
+	.transit {
 		color: var(--color-foreground-subtle);
 	}
 
-	.fig {
-		width: 100%;
-		height: auto;
-		overflow: visible;
+	.transit .dot {
+		background: var(--color-background);
+		border: 1.5px solid currentColor;
 	}
 
-	.tag {
-		font-family: var(--font-mono, ui-monospace, monospace);
-		font-size: 8px;
-		letter-spacing: 0.12em;
-		text-transform: uppercase;
-		text-anchor: middle;
-		fill: var(--color-foreground-subtle);
+	.transit .mark-label,
+	.transit .mark-state {
+		left: 0;
 	}
 
-	/* Solid where your life ends up; hollow where only a question goes. The fill
-	   is the difference between a place that holds you and one that does not. */
-	.cloud {
-		stroke: var(--color-foreground-subtle);
-		stroke-width: 1;
+	/* One movement on load: both markers rise into place along their own stalks,
+	   which is the only motion on the page and says the thing the figure says. */
+	.mark {
+		animation: place 0.8s 0.3s cubic-bezier(0.2, 0.7, 0.2, 1) both;
 	}
 
-	.solid {
-		fill: color-mix(in srgb, var(--color-foreground) 14%, transparent);
-	}
-
-	.hollow {
-		fill: none;
-		stroke-dasharray: 3 4;
-		opacity: 0.55;
-	}
-
-	.home {
-		fill: none;
-		stroke: var(--color-foreground-subtle);
-		stroke-width: 1.25;
-		stroke-linejoin: round;
-	}
-
-	/* The kept house is the only filled shape here, and it carries the page's
-	   single accent. */
-	.held {
-		fill: color-mix(in srgb, var(--color-primary) 10%, transparent);
-		stroke: var(--color-foreground);
-	}
-
-	.leaving circle {
-		fill: var(--color-foreground-subtle);
-		animation: leave 3.4s ease-in infinite;
-	}
-
-	.leaving circle:nth-child(2) {
-		animation-delay: -1.1s;
-	}
-
-	.leaving circle:nth-child(3) {
-		animation-delay: -2.2s;
-	}
-
-	/* Up, out, gone. It never returns and never arrives anywhere visible. */
-	@keyframes leave {
-		0% {
-			transform: translateY(0);
+	@keyframes place {
+		from {
 			opacity: 0;
+			transform: translateY(6px);
 		}
-		15% {
-			opacity: 0.9;
-		}
-		70% {
-			opacity: 0.45;
-		}
-		100% {
-			transform: translateY(-66px);
-			opacity: 0;
+		to {
+			opacity: 1;
+			transform: none;
 		}
 	}
 
-	.kept circle {
-		fill: var(--color-foreground);
-		animation: settle 7s ease-in-out infinite;
-	}
-
-	.kept circle:nth-child(2) {
-		animation-duration: 9s;
-	}
-
-	.kept circle:nth-child(3) {
-		animation-duration: 8s;
-		animation-direction: reverse;
-	}
-
-	/* It stirs; it does not travel. */
-	@keyframes settle {
-		0%,
-		100% {
-			transform: translate(0, 0);
-		}
-		50% {
-			transform: translate(0, -5px);
-		}
-	}
-
-	/* An argument made by animation must still be legible standing still. */
-	.still .leaving circle,
-	.still .kept circle {
+	.ob-still .mark {
 		animation: none;
 	}
 
 	@media (prefers-reduced-motion: reduce) {
-		.leaving circle,
-		.kept circle {
+		.mark {
 			animation: none;
 		}
 	}
 
+	/* SAME TYPE AS THE LETTER. These sat in the UI sans at 13px, which made the
+	   most important admission on the page read as a footnote in a different
+	   document. Muted rather than smaller is how a caption stays a caption. */
+	.note,
 	.further {
-		margin: 1.4rem 0 0;
-		font-size: 13.5px;
+		font-family: var(--font-serif, Georgia, serif);
+		font-size: var(--t-body);
+		line-height: 1.7;
+		color: var(--color-foreground-muted);
+	}
+
+	.note {
+		margin: 2rem 0 0;
+	}
+
+	.further {
+		margin: 1.15rem 0 0;
 	}
 
 	.further a {
@@ -628,102 +456,34 @@
 		border-bottom-color: var(--color-foreground-subtle);
 	}
 
-	/* ── the double blind ──────────────────────────────────────────────── */
+	/* Narrow: the labels are wider than the gap between the markers, so they
+	   wrap out of `nowrap` and the figure grows a little taller to hold them. */
+	@media (max-width: 620px) {
+		.axis-fig {
+			height: 11rem;
+		}
 
-	.blind {
-		margin: 2.25rem 0 0;
+		.mark-label,
+		.mark-state {
+			white-space: normal;
+			max-width: 11rem;
+		}
+
+		.here .mark-label,
+		.here .mark-state {
+			right: 0;
+		}
 	}
 
-	.blind svg {
-		width: 100%;
-		height: auto;
-		overflow: visible;
-	}
-
-	.col rect {
-		fill: color-mix(in srgb, var(--color-foreground) 4%, transparent);
-		stroke: var(--color-border);
-		stroke-width: 1;
-	}
-
-	.col-title {
-		fill: var(--color-foreground);
-		font-size: 14px;
-		font-weight: 600;
-	}
-
-	.col-item {
-		fill: var(--color-foreground-subtle);
-		font-size: 12px;
-	}
-
-	/* Dashed and short of both boxes: a join that was never made, rather than a
-	   wall between two things that would otherwise touch. */
-	.cut {
-		stroke: var(--color-foreground-subtle);
-		stroke-width: 1;
-		stroke-dasharray: 3 5;
-		opacity: 0.5;
-	}
-
-	.gap {
-		fill: var(--color-foreground-subtle);
-		font-size: 11px;
-		letter-spacing: 0.06em;
-		text-anchor: middle;
-	}
-
-	figcaption {
-		margin-top: 1rem;
-		font-size: 13.5px;
-		line-height: 1.6;
-		color: var(--color-foreground-muted);
-	}
-
-	/* ── what happens next ─────────────────────────────────────────────── */
-
-	.next {
-		margin-top: 2.5rem;
-		padding-top: 1.5rem;
-		border-top: 1px solid var(--color-border);
-	}
-
-	.next-head {
-		margin: 0 0 0.9rem;
-		font-family: var(--font-mono, ui-monospace, monospace);
-		font-size: 11px;
-		letter-spacing: 0.16em;
-		text-transform: uppercase;
-		color: var(--color-foreground-subtle);
-	}
-
-	.next ol {
-		margin: 0;
-		padding: 0 0 0 1.2rem;
-		display: flex;
-		flex-direction: column;
-		gap: 0.7rem;
-		font-size: 15px;
-		line-height: 1.6;
-		color: var(--color-foreground-muted);
-	}
-
-	.next li span {
-		color: var(--color-foreground);
-	}
+	/* ── sign-off ──────────────────────────────────────────────────────── */
 
 	.sign {
-		margin-top: 2.25rem;
+		margin-top: 2.75rem;
 	}
 
-	/* MASKED, NOT INVERTED. An earlier version inverted black ink assuming a dark
-	   ground, which would have painted white on white for the eight LIGHT themes
-	   — starting with pemberley, the one a new box actually opens on. Masking
-	   paints the ink in whatever the theme's foreground is, correct on all
-	   sixteen with no list to maintain. */
 	.sig {
-		height: 3rem;
-		width: 11rem;
+		height: 4.6rem;
+		width: 16.9rem;
 		background-color: var(--color-foreground);
 		opacity: 0.85;
 		-webkit-mask: url("/images/adam_signature.png") no-repeat left center / contain;
@@ -731,28 +491,51 @@
 	}
 
 	.role {
-		margin-top: 0.35rem;
-		font-size: 12.5px;
+		margin: 0.45rem 0 0;
+		font-size: var(--t-small);
+		line-height: 1.6;
 		color: var(--color-foreground-subtle);
 	}
 
-	.begin {
-		margin-top: 2.5rem;
-		display: inline-flex;
-		align-items: center;
+	.contacts {
+		margin-top: 0.9rem;
+		display: flex;
+		flex-wrap: wrap;
 		gap: 0.5rem;
-		font: inherit;
-		font-size: 15px;
-		padding: 0.7rem 1.4rem;
-		border-radius: 10px;
-		border: 1px solid var(--color-border);
-		background: none;
-		color: var(--color-foreground);
-		cursor: pointer;
-		transition: background 0.15s ease;
 	}
 
-	.begin:hover {
-		background: color-mix(in srgb, var(--color-foreground) 7%, transparent);
+	.pill {
+		display: inline-flex;
+		align-items: center;
+		gap: 0.4rem;
+		padding: 0.35rem 0.7rem;
+		border: 1px solid var(--color-border);
+		border-radius: 999px;
+		font-size: var(--t-small);
+		color: var(--color-foreground-muted);
+		text-decoration: none;
+		transition:
+			background 0.15s ease,
+			color 0.15s ease;
 	}
+
+	.pill:hover {
+		background: color-mix(in srgb, var(--color-foreground) 7%, transparent);
+		color: var(--color-foreground);
+	}
+
+	/* The signature ends the letter; the button is the way out of it, not the
+	   last line of the sign-off. A rule separates the two. */
+	.exit {
+		margin-top: 3rem;
+		padding-top: 2.25rem;
+		border-top: 1px solid var(--color-border);
+	}
+
+	/* The button itself is .ob-btn; it sits directly under the rule, so it drops
+	   the shared top margin. */
+	.exit .ob-btn {
+		margin-top: 0;
+	}
+
 </style>

@@ -20,11 +20,26 @@
 -->
 <script lang="ts">
 	import Icon from "$lib/components/Icon.svelte";
+	import OnboardingHeader from "$lib/components/onboarding/OnboardingHeader.svelte";
+	import type { StepId } from "$lib/components/onboarding/steps";
 	import { QUESTIONS, wordCount, type Question } from "./questions";
 	import { getInterviewAnswers, saveInterviewAnswer } from "$lib/api/client";
 	import { onMount, onDestroy } from "svelte";
 
-	let { onfinish, reduced = false }: { onfinish: () => void; reduced?: boolean } = $props();
+	let {
+		onfinish,
+		passed = [],
+		onjump,
+		back = false,
+		reduced = false,
+	}: {
+		onfinish: () => void;
+		passed?: StepId[];
+		onjump?: (id: StepId) => void;
+		/** Arrived by going backward through the strip. */
+		back?: boolean;
+		reduced?: boolean;
+	} = $props();
 
 	let idx = $state(0);
 	let answers = $state<Record<string, string>>({});
@@ -92,16 +107,18 @@
 </script>
 
 {#if loading}
-	<div class="wrap"><p class="quiet">Finding what you've written…</p></div>
+	<div class="ob-wrap"><p class="quiet">Finding what you've written…</p></div>
 {:else}
-	<div class="wrap" class:still={reduced}>
-		<div class="sheet">
+	<div class="ob-wrap" class:ob-still={reduced} class:ob-back={back}>
+		<div class="ob-sheet">
+			<OnboardingHeader step="words" done={passed} {onjump} />
+
 			<header>
 				<span class="facet">{q.facet}</span>
 				<span class="count">{idx + 1} of {QUESTIONS.length}</span>
 			</header>
 
-			<h1>{q.prompt}</h1>
+			<h1 class="ob-h1">{q.prompt}</h1>
 			<p class="purpose">{q.purpose}</p>
 
 			<!-- Collapsed by default, and worth the room when opened. These
@@ -146,17 +163,17 @@
 			</div>
 
 			<nav>
-				<button class="quiet-btn" onclick={() => go(idx - 1)} disabled={idx === 0}>
+				<button class="ob-ghost" onclick={() => go(idx - 1)} disabled={idx === 0}>
 					<Icon icon="ri:arrow-left-line" width="15" /> Back
 				</button>
 
 				{#if idx < QUESTIONS.length - 1}
-					<button class="next" onclick={() => go(idx + 1)}>
+					<button class="ob-btn" onclick={() => go(idx + 1)}>
 						{words > 0 ? "Next" : "Skip for now"}
 						<Icon icon="ri:arrow-right-line" width="15" />
 					</button>
 				{:else}
-					<button class="next" onclick={async () => { await go(idx); onfinish(); }}>
+					<button class="ob-btn" onclick={async () => { await go(idx); onfinish(); }}>
 						Done — write it up
 						<Icon icon="ri:quill-pen-line" width="15" />
 					</button>
@@ -174,35 +191,9 @@
 {/if}
 
 <style>
-	.wrap {
-		min-height: 100vh;
-		display: flex;
-		align-items: center;
-		justify-content: center;
-		padding: 3rem 1.5rem;
-	}
-
-	.sheet {
-		width: 100%;
-		max-width: 40rem;
-		animation: rise 0.4s ease both;
-	}
-
-	.still .sheet {
-		animation: none;
-	}
-
-	@keyframes rise {
-		from {
-			opacity: 0;
-			transform: translateY(6px);
-		}
-		to {
-			opacity: 1;
-			transform: none;
-		}
-	}
-
+	/* The shell, type scale and buttons come from onboarding.css. What follows
+	   is only this screen's: the question header, the disclosure, the writing
+	   surface and the meter. */
 	header {
 		display: flex;
 		justify-content: space-between;
@@ -213,12 +204,12 @@
 		color: var(--color-foreground-subtle);
 	}
 
+	/* A question is a whole sentence, often a long one, so it is set a step
+	   below the shared display size — the same face and colour, less shout. */
 	h1 {
-		font-family: var(--font-serif, Georgia, serif);
 		font-size: clamp(1.5rem, 3vw, 2rem);
 		line-height: 1.15;
 		margin: 0.9rem 0 0;
-		text-wrap: balance;
 	}
 
 	.purpose {
@@ -350,37 +341,11 @@
 		justify-content: space-between;
 	}
 
-	button {
-		font: inherit;
-		font-size: 14px;
-		display: inline-flex;
-		align-items: center;
-		gap: 0.4rem;
-		border-radius: 8px;
-		cursor: pointer;
-	}
-
-	.quiet-btn {
-		background: none;
-		border: 0;
-		color: var(--color-foreground-subtle);
-		padding: 0.5rem 0;
-	}
-
-	.quiet-btn:disabled {
-		opacity: 0.35;
-		cursor: default;
-	}
-
-	.next {
-		border: 1px solid var(--color-border);
-		background: none;
-		color: var(--color-foreground);
-		padding: 0.6rem 1.1rem;
-	}
-
-	.next:hover {
-		background: color-mix(in srgb, var(--color-foreground) 7%, transparent);
+	/* Both controls come from onboarding.css; the only local adjustment is that
+	   the forward button sits in a nav bar rather than under a paragraph, so it
+	   does not carry the shared top margin. */
+	nav .ob-btn {
+		margin-top: 0;
 	}
 
 	.later {
