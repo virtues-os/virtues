@@ -58,10 +58,30 @@
 		</div>
 
 		<div class="body">
+			<!-- A BELIEF, THEN A QUESTION. The first version opened by naming
+			     the founder and pointing at three social accounts, which told a
+			     new owner who was speaking and nothing about why. The reason came
+			     four paragraphs later, buried under architecture.
+
+			     The list is deliberately categories and one allusion rather than
+			     names. Categories cannot be argued with; a name invites an
+			     argument about that name, which is the one thing this paragraph
+			     cannot afford. "A man with a client list" is doing the work of
+			     the name, and the reader supplies it themselves — which lands
+			     harder and will still read the same in ten years. -->
 			<p>
-				I am Adam Jace; I started Virtues. The accounts below are mine, and I answer them
-				myself.
+				I'm Adam Jace, and I started Virtues because I believe in subsidiarity: the old idea
+				that a thing belongs at the most local level capable of holding it. Nothing is more
+				local than your own life.
 			</p>
+
+			<p class="challenge">
+				So ask it plainly. Who would you rather have holding the whole account of yours — a
+				government, a political party, an advertising company, a man with a client list? Or
+				you.
+			</p>
+
+			<p class="reachable">You can reach me directly. I answer these myself.</p>
 
 			<div class="contacts">
 				<!-- BUNDLED MARKS, NOT FAVICONS. Fetching icons from x.com and
@@ -149,11 +169,16 @@
 			</div>
 
 			<div class="path ideal">
-				<!-- Same house, same cloud, and the record never crosses the roof.
-				     One thin line goes up and comes back carrying a question, which
-				     is the honest picture: the box borrows models it cannot host.
-				     Drawing total isolation would have been a prettier lie, and the
-				     letter admits the borrowing two paragraphs later anyway. -->
+				<!-- SEALED. Same house, same cloud, and nothing between them.
+				     An earlier version drew a thread carrying a question up and
+				     back, on the reasoning that the box borrows models it cannot
+				     host. But this figure is about where your LIFE is kept, not
+				     about every packet — the record does not leave, and drawing a
+				     line out of the house says the opposite of the only thing this
+				     picture exists to say. The borrowing is stated in words two
+				     paragraphs down, where it can be explained rather than
+				     misread. The cloud stays, faint and unattached: the same two
+				     objects as the left, with the connection simply absent. -->
 				<svg
 					class="fig"
 					viewBox="0 0 240 158"
@@ -165,10 +190,6 @@
 						d="M74 56c0-11 9-20 20-20 4-11 15-18 27-16 9 1 17 7 21 15 12-2 23 7 23 19 0 11-9 20-20 20H92c-10 0-18-8-18-18z"
 					/>
 					<text class="tag" x="120" y="14">their servers</text>
-
-					<line class="ask" x1="120" y1="76" x2="120" y2="94" />
-					<circle class="asker" cx="120" cy="92" r="2.5" />
-					<text class="tag ask-tag" x="150" y="88">questions only</text>
 
 					<path class="home held" d="M84 120 L120 96 L156 120 L156 142 L84 142 Z" />
 					<g class="kept">
@@ -372,6 +393,22 @@
 		font-weight: 600;
 	}
 
+	/* The question is the turn the paragraph above sets up, so it gets the
+	   serif and the room to be read as one. */
+	.challenge {
+		font-family: var(--font-serif, Georgia, serif);
+		font-size: 1.15rem !important;
+		line-height: 1.45;
+		color: var(--color-foreground);
+		margin: 0.3rem 0 !important;
+	}
+
+	.reachable {
+		font-size: 14px !important;
+		color: var(--color-foreground-subtle);
+		margin: 0.4rem 0 -0.4rem !important;
+	}
+
 	.mission {
 		font-family: var(--font-serif, Georgia, serif);
 		font-size: 1.25rem;
@@ -464,10 +501,6 @@
 		fill: var(--color-foreground-subtle);
 	}
 
-	.ask-tag {
-		text-anchor: start;
-	}
-
 	/* Solid where your life ends up; hollow where only a question goes. The fill
 	   is the difference between a place that holds you and one that does not. */
 	.cloud {
@@ -530,29 +563,6 @@
 		}
 	}
 
-	.ask {
-		stroke: var(--color-foreground-subtle);
-		stroke-width: 1;
-		stroke-dasharray: 2 4;
-		opacity: 0.7;
-	}
-
-	.asker {
-		fill: var(--color-primary);
-		animation: ask 4s ease-in-out infinite;
-	}
-
-	/* Up and back: a question leaves, an answer returns, nothing else moves. */
-	@keyframes ask {
-		0%,
-		100% {
-			transform: translateY(0);
-		}
-		50% {
-			transform: translateY(-24px);
-		}
-	}
-
 	.kept circle {
 		fill: var(--color-foreground);
 		animation: settle 7s ease-in-out infinite;
@@ -580,14 +590,12 @@
 
 	/* An argument made by animation must still be legible standing still. */
 	.still .leaving circle,
-	.still .asker,
 	.still .kept circle {
 		animation: none;
 	}
 
 	@media (prefers-reduced-motion: reduce) {
 		.leaving circle,
-		.asker,
 		.kept circle {
 			animation: none;
 		}
