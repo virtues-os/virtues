@@ -66,9 +66,16 @@
 			     The list is deliberately categories and one allusion rather than
 			     names. Categories cannot be argued with; a name invites an
 			     argument about that name, which is the one thing this paragraph
-			     cannot afford. "A man with a client list" is doing the work of
-			     the name, and the reader supplies it themselves — which lands
-			     harder and will still read the same in ten years. -->
+			     cannot afford. The last item does the work of the name and lets
+			     the reader supply it, which lands harder and will still read the
+			     same in ten years.
+
+			     "and … and …" rather than commas inside that item, or the list
+			     reads as six answers instead of four — money, an island and a
+			     disordered life would each look like their own candidate. The
+			     repeated conjunction binds them into one man, and "disordered" is
+			     the older, better word for it: a life whose loves are out of
+			     order, which is precisely the objection. -->
 			<p>
 				I'm Adam Jace, and I started Virtues because I believe in subsidiarity: the old idea
 				that a thing belongs at the most local level capable of holding it. Nothing is more
@@ -77,8 +84,8 @@
 
 			<p class="challenge">
 				So ask it plainly. Who would you rather have holding the whole account of yours — a
-				government, a political party, an advertising company, a man with a client list? Or
-				you.
+				government, a political party, an advertising company, a man with money and an
+				island and a disordered life? Or you.
 			</p>
 
 			<p class="reachable">You can reach me directly. I answer these myself.</p>
