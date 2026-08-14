@@ -253,6 +253,12 @@ pub async fn run(client: Virtues, host: &str, port: u16) -> Result<()> {
         // "In your own words" — the interview behind the narrative identity.
         // Authenticated both ways: unlike /api/setup/state, nothing here is
         // public. It is the most personal writing on the box.
+        // Draft the document from the answers. POST because it spends money and
+        // rewrites the document — not something a refresh should trigger.
+        .route(
+            "/api/narrative/draft",
+            post(crate::api::narrative_draft::draft_handler),
+        )
         .route(
             "/api/narrative/interview",
             get(crate::api::narrative_interview::list_handler)
