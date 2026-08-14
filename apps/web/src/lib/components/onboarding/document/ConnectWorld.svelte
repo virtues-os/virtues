@@ -19,7 +19,7 @@
 	import { connectIntent, reloadOnReturn } from "$lib/components/sources/connectDispatch";
 	import { listSourceCatalog, listCredentials, type SourceCatalogItem } from "$lib/api/client";
 	import { isTauri, isMacOS, isWindows, isLinux, thisComputerLabel } from "$lib/utils/platform";
-	import { copyFor, type Prominence } from "./sources-copy";
+	import { copyFor, PROMINENCE_ORDER, type Prominence } from "./sources-copy";
 	import Marginalia from "./Marginalia.svelte";
 	import SourceRow from "./SourceRow.svelte";
 
@@ -57,7 +57,13 @@
 			.filter((s) => !s.id.startsWith("__"))
 			.map((s) => ({ source: s, copy: copyFor(s.id, s.description ?? "") }))
 			.filter((x) => want.includes(x.copy.prominence))
-			.sort((a, b) => (a.copy.prominence === "anchor" ? -1 : b.copy.prominence === "anchor" ? 1 : 0));
+			.sort((a, b) => {
+				// Group first, then rank within it. Sorting on prominence alone
+				// left ties to catalog order, which put the phone above the Mac —
+				// and the Mac is the one that pays off before the person stands up.
+				const g = PROMINENCE_ORDER.indexOf(a.copy.prominence) - PROMINENCE_ORDER.indexOf(b.copy.prominence);
+				return g !== 0 ? g : (a.copy.rank ?? 99) - (b.copy.rank ?? 99);
+			});
 	});
 
 	// ── connect dispatch + modals ──

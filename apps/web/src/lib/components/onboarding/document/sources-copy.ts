@@ -16,6 +16,16 @@ export interface SourceCopy {
 	/** The honest privacy line, mono receipt. */
 	receipt: string;
 	prominence: Prominence;
+	/**
+	 * Order WITHIN a prominence group, low first.
+	 *
+	 * Prominence alone was not enough: the Mac and the iPhone are both anchors,
+	 * and with nothing to separate them the list fell back to catalog order and
+	 * put the phone first. The Mac has to lead — it is the machine the person is
+	 * sitting at, it needs no OAuth, and it is the only source that can produce
+	 * something to look at before they get up.
+	 */
+	rank?: number;
 }
 
 export const PROMINENCE_ORDER: Prominence[] = ['anchor', 'prominent', 'quiet'];
@@ -40,11 +50,13 @@ export const PROMINENCE_HEADING: Record<Prominence, string> = {
 export const SOURCE_COPY: Record<string, SourceCopy> = {
 	mac: {
 		prominence: 'anchor',
+		rank: 0,
 		why: 'This Mac — your iMessages, the apps you use, the sites you visit. Nothing to sign into, and years of history already on the disk.',
 		receipt: 'read locally on your Mac · never sent to Virtues'
 	},
 	ios: {
 		prominence: 'anchor',
+		rank: 1,
 		why: 'Your iPhone — where you go, who you call, your health, your photos. The half of your life that never touches a computer.',
 		receipt: 'read on your device · stays on your box'
 	},
