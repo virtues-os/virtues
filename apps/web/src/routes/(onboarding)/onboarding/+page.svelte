@@ -40,6 +40,7 @@
 	import AccountGate from "$lib/components/onboarding/document/AccountGate.svelte";
 	import FoundersLetter from "$lib/components/onboarding/document/FoundersLetter.svelte";
 	import Interview from "$lib/components/onboarding/interview/Interview.svelte";
+	import DraftReview from "$lib/components/onboarding/interview/DraftReview.svelte";
 	import ConnectWorld from "$lib/components/onboarding/document/ConnectWorld.svelte";
 	import RevealSection from "$lib/components/onboarding/document/RevealSection.svelte";
 	import Modal from "$lib/components/Modal.svelte";
@@ -66,6 +67,9 @@
 	// an hour of writing, and a scroll that also holds a source checklist cannot
 	// hold that too. Entered from the document, returns to it.
 	let interviewOpen = $state(false);
+	// Finishing the interview goes to the draft, not back to the document: the
+	// point of answering fourteen questions is being shown what they became.
+	let draftOpen = $state(false);
 	let advancedOpen = $state(false);
 	let scrollEl = $state<HTMLElement | null>(null);
 	let reduced = $state(false);
@@ -211,7 +215,22 @@
 {:else if !letterRead}
 	<FoundersLetter onbegin={() => (letterRead = true)} {reduced} />
 {:else if interviewOpen}
-	<Interview onfinish={() => (interviewOpen = false)} {reduced} />
+	<Interview
+		onfinish={() => {
+			interviewOpen = false;
+			draftOpen = true;
+		}}
+		{reduced}
+	/>
+{:else if draftOpen}
+	<DraftReview
+		ondone={() => {
+			draftOpen = false;
+			interviewStarted = true;
+			void refreshState();
+		}}
+		{reduced}
+	/>
 {:else if mode === "manual"}
 	<!-- The advanced door: just the account gate, then into the app. -->
 	<div class="flex min-h-screen items-center justify-center px-6 py-16">

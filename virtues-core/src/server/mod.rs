@@ -259,6 +259,13 @@ pub async fn run(client: Virtues, host: &str, port: u16) -> Result<()> {
             "/api/narrative/draft",
             post(crate::api::narrative_draft::draft_handler),
         )
+        // The rules the assistant must obey. Read to review them, POST to
+        // replace the set with what was confirmed.
+        .route(
+            "/api/narrative/rules",
+            get(crate::api::narrative_draft::rules_handler)
+                .post(crate::api::narrative_draft::save_rules_handler),
+        )
         .route(
             "/api/narrative/interview",
             get(crate::api::narrative_interview::list_handler)

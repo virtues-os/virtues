@@ -315,6 +315,44 @@ export async function setUpdateChannel(channel: 'stable' | 'prerelease'): Promis
 	if (!res.ok) throw new Error(`Failed to set channel: ${res.statusText}`);
 }
 
+export interface NarrativeDraft {
+	document: string;
+	core: string;
+	/** Proposed only. Nothing binds the assistant until it is confirmed. */
+	proposed_rules: string[];
+}
+
+/** Draft the document from the answers. Spends money; POST, never on load. */
+export async function draftNarrative(): Promise<NarrativeDraft> {
+	const res = await fetch(`${API_BASE}/narrative/draft`, { method: 'POST' });
+	if (!res.ok) {
+		let detail = res.statusText;
+		try {
+			const b = await res.json();
+			if (b?.error) detail = b.error;
+		} catch {
+			/* status text is all we have */
+		}
+		throw new Error(detail);
+	}
+	return res.json();
+}
+
+/**
+ * Replace the rule set with exactly what was confirmed.
+ *
+ * A replace, not an append: this is the screen where someone sees every rule
+ * their box obeys, so leaving it has to mean the list says what they saw.
+ */
+export async function saveNarrativeRules(rules: string[]): Promise<void> {
+	const res = await fetch(`${API_BASE}/narrative/rules`, {
+		method: 'POST',
+		headers: { 'Content-Type': 'application/json' },
+		body: JSON.stringify({ rules }),
+	});
+	if (!res.ok) throw new Error(`Couldn't save your rules: ${res.statusText}`);
+}
+
 export interface InterviewAnswer {
 	question_id: string;
 	answer: string;
