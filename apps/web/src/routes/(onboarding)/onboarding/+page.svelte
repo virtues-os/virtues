@@ -26,13 +26,20 @@
 	import { fade } from "svelte/transition";
 	import { Button } from "$lib";
 	import Icon from "$lib/components/Icon.svelte";
-	import { getProfile, updateProfile, getSetupState, skipOnboarding } from "$lib/api/client";
+	import {
+		getProfile,
+		updateProfile,
+		getSetupState,
+		skipOnboarding,
+		getInterviewAnswers,
+	} from "$lib/api/client";
 	import OnboardingToc from "$lib/components/onboarding/document/OnboardingToc.svelte";
 	import OnboardingSection from "$lib/components/onboarding/document/OnboardingSection.svelte";
 	import Marginalia from "$lib/components/onboarding/document/Marginalia.svelte";
 	import TypesetLines from "$lib/components/onboarding/document/TypesetLines.svelte";
 	import AccountGate from "$lib/components/onboarding/document/AccountGate.svelte";
 	import FoundersLetter from "$lib/components/onboarding/document/FoundersLetter.svelte";
+	import Interview from "$lib/components/onboarding/interview/Interview.svelte";
 	import ConnectWorld from "$lib/components/onboarding/document/ConnectWorld.svelte";
 	import RevealSection from "$lib/components/onboarding/document/RevealSection.svelte";
 	import Modal from "$lib/components/Modal.svelte";
@@ -55,6 +62,10 @@
 	// it on a revisit costs one click to pass and is a better failure than
 	// skipping the one screen that explains why any of this is safe.
 	let letterRead = $state(false);
+	// The interview is its OWN surface for the same reason the letter is: it is
+	// an hour of writing, and a scroll that also holds a source checklist cannot
+	// hold that too. Entered from the document, returns to it.
+	let interviewOpen = $state(false);
 	let advancedOpen = $state(false);
 	let scrollEl = $state<HTMLElement | null>(null);
 	let reduced = $state(false);
@@ -94,8 +105,13 @@
 		{ id: "welcome", label: "Welcome" },
 		{ id: "account", label: "Account" },
 		...(accountDone ? [{ id: "world", label: "Your world" }] : []),
+		...(accountDone ? [{ id: "words", label: "In your own words" }] : []),
 		...(showReveal ? [{ id: "reveal", label: "You" }] : []),
 	]);
+	// Whether they have written anything yet, so the button can say "keep"
+	// rather than "start" — returning to a page that has forgotten you wrote
+	// eight answers is its own small insult.
+	let interviewStarted = $state(false);
 	const completedIds = $derived(
 		[
 			accountDone && "welcome",
@@ -137,6 +153,11 @@
 	onMount(() => {
 		reduced = window.matchMedia?.("(prefers-reduced-motion: reduce)").matches ?? false;
 		void refreshState();
+		// Best-effort: this only changes a verb on a button, and failing to read
+		// it must never keep someone off the page.
+		void getInterviewAnswers()
+			.then((rows) => (interviewStarted = rows.some((r) => r.answer.trim().length > 0)))
+			.catch(() => {});
 		void captureTimezone();
 		// Light poll so steps completed elsewhere (OAuth round-trip, the collector
 		// daemon, the CLI) tick over here too.
@@ -189,6 +210,8 @@
 	</div>
 {:else if !letterRead}
 	<FoundersLetter onbegin={() => (letterRead = true)} {reduced} />
+{:else if interviewOpen}
+	<Interview onfinish={() => (interviewOpen = false)} {reduced} />
 {:else if mode === "manual"}
 	<!-- The advanced door: just the account gate, then into the app. -->
 	<div class="flex min-h-screen items-center justify-center px-6 py-16">
@@ -253,7 +276,36 @@
 					</OnboardingSection>
 				{/if}
 
-				<!-- ④ You — the reveal -->
+				<!-- ④ In your own words — the interview.
+				     Sits between connecting things and being shown yourself,
+				     because it is the half the box can never observe: everything
+				     above this is derived from the record, and this is authored.
+				     Opening it leaves the document for a surface of its own. -->
+				{#if accountDone}
+					<OnboardingSection
+						id="words"
+						kicker="In your own words"
+						title="The part it can't observe"
+						{reduced}
+					>
+						<TypesetLines
+							lines={[
+								"Everything else here is something your box works out by watching. This is the half it cannot: where you have been, what you are up against, who you mean to become. Fourteen questions, and nothing writes it but you.",
+							]}
+							{reduced}
+						/>
+						<button class="words-btn" onclick={() => (interviewOpen = true)}>
+							{interviewStarted ? "Keep writing" : "Start writing"}
+							<Icon icon="ri:arrow-right-line" width="15" />
+						</button>
+						<p class="words-note">
+							It takes a while, and it saves as you go — you can stop anywhere and come
+							back.
+						</p>
+					</OnboardingSection>
+				{/if}
+
+				<!-- ⑤ You — the reveal -->
 				{#if showReveal}
 					<OnboardingSection id="reveal" kicker="You" title="Meet yourself" {reduced}>
 						<RevealSection ready={narrativeReady} generating={narrativeGenerating} {reduced} onEnter={enterApp} />
@@ -348,6 +400,31 @@
 	}
 	.continue-note {
 		font-size: 0.8rem;
+		color: var(--color-foreground-subtle);
+	}
+
+	.words-btn {
+		margin-top: 1.75rem;
+		display: inline-flex;
+		align-items: center;
+		gap: 0.45rem;
+		font: inherit;
+		font-size: 15px;
+		padding: 0.65rem 1.25rem;
+		border-radius: 10px;
+		border: 1px solid var(--color-border);
+		background: none;
+		color: var(--color-foreground);
+		cursor: pointer;
+	}
+
+	.words-btn:hover {
+		background: color-mix(in srgb, var(--color-foreground) 7%, transparent);
+	}
+
+	.words-note {
+		margin: 0.85rem 0 0;
+		font-size: 13px;
 		color: var(--color-foreground-subtle);
 	}
 
