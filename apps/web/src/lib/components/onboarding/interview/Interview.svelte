@@ -104,6 +104,17 @@
 			<h1>{q.prompt}</h1>
 			<p class="purpose">{q.purpose}</p>
 
+			<!-- Collapsed by default, and worth the room when opened. These
+			     questions ask for grief, vice and faith; whether someone answers
+			     properly or skips usually turns on believing the asking is
+			     principled. Explaining the MECHANISM earns more than reassurance
+			     does — and hiding it keeps the page from lecturing anyone who
+			     already wants to write. -->
+			<details class="why">
+				<summary>Why this question</summary>
+				<p>{q.why}</p>
+			</details>
+
 			<textarea
 				bind:value={answers[q.id]}
 				oninput={onInput}
@@ -214,6 +225,48 @@
 		margin: 0.85rem 0 0;
 		font-size: 14px;
 		line-height: 1.6;
+		color: var(--color-foreground-muted);
+		max-width: 34rem;
+	}
+
+	.why {
+		margin-top: 1rem;
+		font-size: 13px;
+	}
+
+	.why summary {
+		cursor: pointer;
+		color: var(--color-foreground-subtle);
+		list-style: none;
+		display: inline-flex;
+		align-items: center;
+		gap: 0.35rem;
+		user-select: none;
+	}
+
+	.why summary::-webkit-details-marker {
+		display: none;
+	}
+
+	.why summary::before {
+		content: '＋';
+		font-size: 11px;
+		opacity: 0.7;
+	}
+
+	.why[open] summary::before {
+		content: '－';
+	}
+
+	.why summary:hover {
+		color: var(--color-foreground-muted);
+	}
+
+	.why p {
+		margin: 0.7rem 0 0;
+		padding-left: 0.9rem;
+		border-left: 1px solid var(--color-border);
+		line-height: 1.65;
 		color: var(--color-foreground-muted);
 		max-width: 34rem;
 	}
