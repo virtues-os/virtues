@@ -250,6 +250,14 @@ pub async fn run(client: Virtues, host: &str, port: u16) -> Result<()> {
         )
         // The READ above is public (the wizard runs before any session); this
         // WRITE is not — it changes where every future launch lands.
+        // "In your own words" — the interview behind the narrative identity.
+        // Authenticated both ways: unlike /api/setup/state, nothing here is
+        // public. It is the most personal writing on the box.
+        .route(
+            "/api/narrative/interview",
+            get(crate::api::narrative_interview::list_handler)
+                .post(crate::api::narrative_interview::save_handler),
+        )
         .route(
             "/api/setup/skip-onboarding",
             post(crate::api::box_status::skip_onboarding_handler),
