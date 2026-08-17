@@ -12,7 +12,7 @@
 --   4. data_health_sleep         (4 sleep records with phase-level stages)
 --   5. data_calendar_event       (5 calendar events)
 --   6. data_communication_message (9 Slack + text messages)
---   7. data_activity_app_usage   (9 app sessions)
+--   7. data_activity_app_session   (9 app sessions)
 --   8. data_health_steps         (14 step readings)
 --   9. data_health_heart_rate    (12 HR readings during run)
 --  10. data_health_workout       (1 run)
@@ -819,55 +819,55 @@ INSERT INTO data_communication_message (
 -- (Evening messages omitted — partial day)
 
 -- ─────────────────────────────────────────────────────────────────────────────
--- 6d. APP USAGE (data_activity_app_usage)
+-- 6d. APP USAGE (data_activity_app_session)
 -- ─────────────────────────────────────────────────────────────────────────────
 
 -- Morning: Instagram scroll (06:35-06:50 CST = 12:35-12:50 UTC)
-INSERT INTO data_activity_app_usage (
+INSERT INTO data_activity_app_session (
     id, app_name, app_bundle_id, app_category,
     start_time, end_time, window_title,
     source_stream_id, source_table, source_provider
 ) VALUES (
     'app_demo_01', 'Instagram', 'com.burbn.instagram', 'Social',
     '2026-02-13T12:35:00Z', '2026-02-13T12:50:00Z', NULL,
-    'demo_app_001', 'data_activity_app_usage', 'demo'
+    'demo_app_001', 'data_activity_app_session', 'demo'
 ) ON CONFLICT DO NOTHING;
 
 -- Morning: Apple News (06:50-07:05 CST = 12:50-13:05 UTC)
-INSERT INTO data_activity_app_usage (
+INSERT INTO data_activity_app_session (
     id, app_name, app_bundle_id, app_category,
     start_time, end_time, window_title,
     source_stream_id, source_table, source_provider
 ) VALUES (
     'app_demo_02', 'Apple News', 'com.apple.news', 'News',
     '2026-02-13T12:50:00Z', '2026-02-13T13:05:00Z', NULL,
-    'demo_app_002', 'data_activity_app_usage', 'demo'
+    'demo_app_002', 'data_activity_app_session', 'demo'
 ) ON CONFLICT DO NOTHING;
 
 -- Pre-standup: Slack desktop (07:45-08:15 CST = 13:45-14:15 UTC)
-INSERT INTO data_activity_app_usage (
+INSERT INTO data_activity_app_session (
     id, app_name, app_bundle_id, app_category,
     start_time, end_time, window_title,
     source_stream_id, source_table, source_provider
 ) VALUES (
     'app_demo_03', 'Slack', 'com.tinyspeck.slackmacgap', 'Productivity',
     '2026-02-13T13:45:00Z', '2026-02-13T14:15:00Z', '#design-team',
-    'demo_app_003', 'data_activity_app_usage', 'demo'
+    'demo_app_003', 'data_activity_app_session', 'demo'
 ) ON CONFLICT DO NOTHING;
 
 -- Deep work: Figma (09:05-11:25 CST = 15:05-17:25 UTC)
-INSERT INTO data_activity_app_usage (
+INSERT INTO data_activity_app_session (
     id, app_name, app_bundle_id, app_category,
     start_time, end_time, window_title,
     source_stream_id, source_table, source_provider
 ) VALUES (
     'app_demo_04', 'Figma', 'com.figma.desktop', 'Design',
     '2026-02-13T15:05:00Z', '2026-02-13T17:25:00Z', 'Navigation Redesign v3 — Figma',
-    'demo_app_004', 'data_activity_app_usage', 'demo'
+    'demo_app_004', 'data_activity_app_session', 'demo'
 ) ON CONFLICT DO NOTHING;
 
 -- Post-standup: Notion docs (09:00-09:05 CST = 15:00-15:05 UTC)
-INSERT INTO data_activity_app_usage (
+INSERT INTO data_activity_app_session (
     id, app_name, app_bundle_id, app_category,
     start_time, end_time, window_title, url,
     source_stream_id, source_table, source_provider
@@ -875,31 +875,31 @@ INSERT INTO data_activity_app_usage (
     'app_demo_05', 'Notion', 'notion.id', 'Productivity',
     '2026-02-13T15:00:00Z', '2026-02-13T15:05:00Z',
     'Standup Notes — Feb 13', 'https://notion.so/standup-feb-13',
-    'demo_app_005', 'data_activity_app_usage', 'demo'
+    'demo_app_005', 'data_activity_app_session', 'demo'
 ) ON CONFLICT DO NOTHING;
 
 -- (Evening app usage omitted — partial day)
 
 -- Feb 12: Figma (adjacent day)
-INSERT INTO data_activity_app_usage (
+INSERT INTO data_activity_app_session (
     id, app_name, app_bundle_id, app_category,
     start_time, end_time, window_title,
     source_stream_id, source_table, source_provider
 ) VALUES (
     'app_demo_08', 'Figma', 'com.figma.desktop', 'Design',
     '2026-02-12T15:00:00Z', '2026-02-12T17:30:00Z', 'Settings Page v2 — Figma',
-    'demo_app_008', 'data_activity_app_usage', 'demo'
+    'demo_app_008', 'data_activity_app_session', 'demo'
 ) ON CONFLICT DO NOTHING;
 
 -- Feb 12: Slack (adjacent day)
-INSERT INTO data_activity_app_usage (
+INSERT INTO data_activity_app_session (
     id, app_name, app_bundle_id, app_category,
     start_time, end_time, window_title,
     source_stream_id, source_table, source_provider
 ) VALUES (
     'app_demo_09', 'Slack', 'com.tinyspeck.slackmacgap', 'Productivity',
     '2026-02-12T18:00:00Z', '2026-02-12T22:30:00Z', '#design-team',
-    'demo_app_009', 'data_activity_app_usage', 'demo'
+    'demo_app_009', 'data_activity_app_session', 'demo'
 ) ON CONFLICT DO NOTHING;
 
 -- ─────────────────────────────────────────────────────────────────────────────
