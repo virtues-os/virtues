@@ -702,6 +702,73 @@ async fn build_user_context(pool: &PgPool, user_name: &str) -> Option<String> {
     }
 }
 
+/// The rules block — `wiki_rules`, grouped by kind.
+///
+/// THIS TABLE WAS WRITTEN AND NEVER READ. From 0101 until now, `wiki_rules` (and
+/// `wiki_standing_order` before it) was populated by the interview's last
+/// question and consumed by nothing: the box obeyed no rule anyone had written,
+/// while the interview told them in as many words that "what you write here
+/// stops being context and becomes a rule." This function is what makes that
+/// sentence true.
+///
+/// Grouped rather than listed flat because `avoid` and `defend` need opposite
+/// handling, and the prompt can only give them opposite handling if it can tell
+/// them apart.
+///
+/// Empty string when there are no rules, so the caller can omit the section.
+/// Errors are swallowed to an empty string on purpose — a database blip must
+/// degrade to "no rules injected" rather than taking down chat. That is the
+/// safe direction only because the alternative is worse; it does mean a failed
+/// read silently un-enforces, which is why it is logged.
+async fn build_rules(pool: &PgPool) -> String {
+    let rows = match sqlx::query_as::<_, (String, String)>(
+        "SELECT kind, rule FROM wiki_rules WHERE active ORDER BY created_at",
+    )
+    .fetch_all(pool)
+    .await
+    {
+        Ok(r) => r,
+        Err(e) => {
+            tracing::warn!(error = %e, "rules: read failed — none will be enforced this turn");
+            return String::new();
+        }
+    };
+
+    let mut avoid: Vec<&str> = Vec::new();
+    let mut defend: Vec<&str> = Vec::new();
+    for (kind, rule) in &rows {
+        let rule = rule.trim();
+        if rule.is_empty() {
+            continue;
+        }
+        match kind.as_str() {
+            "defend" => defend.push(rule),
+            // Anything unrecognised is treated as `avoid`. The CHECK constraint
+            // makes that unreachable today, and if a third kind is ever added,
+            // the conservative reading is the one that cannot cause harm.
+            _ => avoid.push(rule),
+        }
+    }
+
+    let mut out = String::new();
+    if !avoid.is_empty() {
+        out.push_str("Never raise these unless they do:\n");
+        for r in avoid {
+            out.push_str(&format!("- {r}\n"));
+        }
+    }
+    if !defend.is_empty() {
+        if !out.is_empty() {
+            out.push('\n');
+        }
+        out.push_str("Help them hold to these:\n");
+        for r in defend {
+            out.push_str(&format!("- {r}\n"));
+        }
+    }
+    out
+}
+
 /// Build system prompt with dynamic context and personalization.
 ///
 /// Assembles: identity → persona → narrative_identity → tools → datetime → user_context → active_page.
@@ -733,6 +800,18 @@ async fn build_system_prompt(
 
     // Build personalized base prompt (identity → persona → narrative_identity → tools)
     let mut prompt = build_personalized_prompt(&assistant_name, &user_name, persona_id, persona_content.as_deref(), agent_mode, &narrative_identity);
+
+    // The enforceable half, right after the prose it governs. Skipped entirely
+    // when there are no rules: an empty <rules> block would teach the model that
+    // the section is usually noise.
+    let rules = build_rules(pool).await;
+    if !rules.is_empty() {
+        prompt.push_str(
+            &crate::agent::prompt::RULES_PROMPT
+                .replace("{user_name}", &user_name)
+                .replace("{rules}", &rules),
+        );
+    }
 
     // Inject onboarding prompt for new users (first conversation)
     if is_new_user {
@@ -1811,6 +1890,80 @@ pub async fn cancel_chat_handler(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The rules block is the one place where a silent failure means the box
+    /// raises a subject someone asked it never to raise. These tests exist
+    /// because that failure is invisible from the outside: the prompt still
+    /// builds, chat still answers, and nothing looks wrong.
+    #[sqlx::test]
+    async fn rules_are_grouped_by_kind(pool: PgPool) {
+        sqlx::query(
+            "INSERT INTO wiki_rules (id, rule, kind) VALUES
+                ('r1', 'my father', 'avoid'),
+                ('r2', 'the morning pages', 'defend'),
+                ('r3', 'drinking', 'avoid')",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        let out = build_rules(&pool).await;
+
+        // Each kind under its own heading, or the prompt cannot give them the
+        // opposite handling they need.
+        let avoid_at = out.find("Never raise").expect("avoid heading");
+        let defend_at = out.find("Help them hold").expect("defend heading");
+        assert!(avoid_at < defend_at, "avoid group comes first:\n{out}");
+        assert!(out.contains("- my father"));
+        assert!(out.contains("- drinking"));
+        assert!(out.contains("- the morning pages"));
+
+        // The defend rule must not be filed under avoid.
+        let defend_block = &out[defend_at..];
+        assert!(!defend_block.contains("my father"), "kinds bled:\n{out}");
+    }
+
+    /// No rules must render NOTHING, not an empty heading — a `<rules>` block
+    /// that is usually empty teaches a model to skim past it.
+    #[sqlx::test]
+    async fn no_rules_renders_nothing(pool: PgPool) {
+        assert_eq!(build_rules(&pool).await, "");
+    }
+
+    /// Inactive rules are withdrawn, not merely hidden from the review screen.
+    #[sqlx::test]
+    async fn inactive_rules_are_not_enforced(pool: PgPool) {
+        sqlx::query("INSERT INTO wiki_rules (id, rule, kind, active) VALUES ('r1', 'my father', 'avoid', false)")
+            .execute(&pool)
+            .await
+            .unwrap();
+        assert_eq!(build_rules(&pool).await, "");
+    }
+
+    /// THE TEST THAT WOULD HAVE CAUGHT THIS.
+    ///
+    /// `build_rules` passing proves the grouping; only assembling the whole
+    /// prompt proves the block is actually wired in. From 0101 until 2026-08-17
+    /// every unit around this was fine and the rule still never reached a model,
+    /// because nothing asserted on the finished prompt.
+    #[sqlx::test]
+    async fn rules_reach_the_assembled_prompt(pool: PgPool) {
+        sqlx::query("INSERT INTO wiki_rules (id, rule, kind) VALUES ('r1', 'my brother Tom', 'avoid')")
+            .execute(&pool)
+            .await
+            .unwrap();
+
+        let prompt = build_system_prompt_for_audit(&pool).await;
+        assert!(prompt.contains("<rules>"), "rules block never reached the prompt");
+        assert!(prompt.contains("my brother Tom"), "the rule text is missing:\n{prompt}");
+    }
+
+    /// And the block is absent when there is nothing to say.
+    #[sqlx::test]
+    async fn empty_rules_leave_no_block(pool: PgPool) {
+        let prompt = build_system_prompt_for_audit(&pool).await;
+        assert!(!prompt.contains("<rules>"), "empty rules block was rendered");
+    }
 
     #[test]
     fn test_generate_id() {
