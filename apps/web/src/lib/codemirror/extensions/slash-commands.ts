@@ -17,9 +17,8 @@ export interface SlashCommandCallbacks {
 
 export interface SlashCommand {
 	label: string;
-	description: string;
+	/** Extra terms the label alone would not match ("h1", "todo", "hr"). */
 	keywords?: string[];
-	group: string;
 	icon: string;
 	execute: (view: EditorView, from: number) => void;
 }
@@ -31,86 +30,66 @@ interface SlashState {
 }
 
 /**
- * Built-in slash commands that insert markdown syntax
+ * The insert menu, in the order it is shown.
+ *
+ * Deliberately ONE flat list, ordered by how often a writer reaches for each
+ * thing — headings, then lists, then the occasional block. It was previously
+ * split into six labelled groups (AI / Basic / Lists / Blocks / Advanced /
+ * Media), which cost six header rows to organize twelve items: the menu was
+ * taller than the choice was hard. A list this short is scanned, not
+ * navigated.
+ *
+ * "Ask AI" sits LAST. It is the one entry that opens a conversation instead of
+ * inserting a block, and at the top it caught every writer who typed `/` and
+ * hit Enter for a heading.
  */
 export function getDefaultSlashCommands(): SlashCommand[] {
 	return [
 		{
-			label: 'Ask AI',
-			description: 'Write or continue with AI',
-			keywords: ['ai', 'write', 'continue', 'generate', 'virtues'],
-			group: 'AI',
-			icon: 'ri:sparkling-2-line',
-			execute: (view, from) => {
-				// Strip the slash, then let the host open the AI prompt popover.
-				const to = view.state.selection.main.head;
-				view.dispatch({ changes: { from, to, insert: '' } });
-				view.dom.dispatchEvent(
-					new CustomEvent('slash-command-ai', { bubbles: true, detail: { pos: from } }),
-				);
-			},
-		},
-		{
 			label: 'Heading 1',
-			description: 'Large section heading',
 			keywords: ['h1', 'title'],
-			group: 'Basic',
 			icon: 'ri:h-1',
 			execute: (view, from) => replaceSlash(view, from, '# '),
 		},
 		{
 			label: 'Heading 2',
-			description: 'Medium section heading',
 			keywords: ['h2', 'subtitle'],
-			group: 'Basic',
 			icon: 'ri:h-2',
 			execute: (view, from) => replaceSlash(view, from, '## '),
 		},
 		{
 			label: 'Heading 3',
-			description: 'Small section heading',
 			keywords: ['h3'],
-			group: 'Basic',
 			icon: 'ri:h-3',
 			execute: (view, from) => replaceSlash(view, from, '### '),
 		},
 		{
-			label: 'Bullet List',
-			description: 'Unordered list',
-			keywords: ['ul', 'unordered'],
-			group: 'Lists',
+			label: 'Bulleted list',
+			keywords: ['ul', 'unordered', 'bullet'],
 			icon: 'ri:list-unordered',
 			execute: (view, from) => replaceSlash(view, from, '- '),
 		},
 		{
-			label: 'Numbered List',
-			description: 'Ordered list',
-			keywords: ['ol', 'ordered'],
-			group: 'Lists',
+			label: 'Numbered list',
+			keywords: ['ol', 'ordered', 'number'],
 			icon: 'ri:list-ordered',
 			execute: (view, from) => replaceSlash(view, from, '1. '),
 		},
 		{
-			label: 'Task List',
-			description: 'Checklist with toggles',
-			keywords: ['todo', 'checkbox'],
-			group: 'Lists',
+			label: 'To-do list',
+			keywords: ['todo', 'task', 'checkbox', 'check'],
 			icon: 'ri:checkbox-line',
 			execute: (view, from) => replaceSlash(view, from, '- [ ] '),
 		},
 		{
 			label: 'Quote',
-			description: 'Block quotation',
 			keywords: ['blockquote'],
-			group: 'Blocks',
 			icon: 'ri:double-quotes-l',
 			execute: (view, from) => replaceSlash(view, from, '> '),
 		},
 		{
-			label: 'Code Block',
-			description: 'Fenced code with syntax highlighting',
+			label: 'Code block',
 			keywords: ['fence', 'pre'],
-			group: 'Blocks',
 			icon: 'ri:code-box-line',
 			execute: (view, from) => {
 				const to = view.state.selection.main.head;
@@ -121,10 +100,8 @@ export function getDefaultSlashCommands(): SlashCommand[] {
 			},
 		},
 		{
-			label: 'Horizontal Rule',
-			description: 'Visual separator',
-			keywords: ['hr', 'divider', 'separator'],
-			group: 'Blocks',
+			label: 'Divider',
+			keywords: ['hr', 'rule', 'separator', 'horizontal'],
 			icon: 'ri:separator',
 			execute: (view, from) => {
 				const to = view.state.selection.main.head;
@@ -136,9 +113,7 @@ export function getDefaultSlashCommands(): SlashCommand[] {
 		},
 		{
 			label: 'Table',
-			description: 'Insert a markdown table',
 			keywords: ['grid'],
-			group: 'Advanced',
 			icon: 'ri:table-line',
 			execute: (view, from) => {
 				const to = view.state.selection.main.head;
@@ -151,9 +126,7 @@ export function getDefaultSlashCommands(): SlashCommand[] {
 		},
 		{
 			label: 'Image',
-			description: 'Upload or embed an image',
 			keywords: ['photo', 'picture'],
-			group: 'Media',
 			icon: 'ri:image-line',
 			execute: (view, from) => {
 				const to = view.state.selection.main.head;
@@ -165,15 +138,26 @@ export function getDefaultSlashCommands(): SlashCommand[] {
 		},
 		{
 			label: 'File',
-			description: 'Upload any file (PDF, doc, zip, etc.)',
 			keywords: ['upload', 'attachment', 'pdf', 'document'],
-			group: 'Media',
 			icon: 'ri:attachment-line',
 			execute: (view, from) => {
 				const to = view.state.selection.main.head;
 				view.dispatch({ changes: { from, to, insert: '' } });
 				view.dom.dispatchEvent(
 					new CustomEvent('slash-command-image', { bubbles: true, detail: { pos: from } })
+				);
+			},
+		},
+		{
+			label: 'Ask AI',
+			keywords: ['ai', 'write', 'continue', 'generate', 'virtues'],
+			icon: 'ri:sparkling-2-line',
+			execute: (view, from) => {
+				// Strip the slash, then let the host open the AI prompt popover.
+				const to = view.state.selection.main.head;
+				view.dispatch({ changes: { from, to, insert: '' } });
+				view.dom.dispatchEvent(
+					new CustomEvent('slash-command-ai', { bubbles: true, detail: { pos: from } }),
 				);
 			},
 		},
