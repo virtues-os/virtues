@@ -51,7 +51,21 @@ resolver = "2"
 noq-udp = { path = "vendor/noq-udp" }
 
 [workspace.package]
-version = "0.3.0"
+# THE box version. Single source of truth — `virtues-core` and the installer
+# inherit it with `version.workspace = true`, so there is one number to bump.
+#
+# Reset from 0.3.0 to 0.1.0 on 2026-08-17, before the first unit ships. Nothing
+# has ever shipped to anyone, so the history is ours to define, and starting the
+# product at 0.1.0 says that honestly. It also repairs the prerelease line:
+# `v0.1.0-staging.N` tags sort BELOW `v0.1.0` exactly as semver intends, where
+# against 0.3.0 they read as ancient.
+#
+# Internal crates (reach-client, registry, improv, the Tauri plugins) keep their
+# own 0.1.0 and are not part of this — they are unpublished libraries whose
+# numbers nobody reads. The Mac app is deliberately separate too: it is on its
+# own 1.0.x line under `mac-v*` tags, and an app version must never move
+# backwards or updaters stop seeing later builds as newer.
+version = "0.1.0"
 edition = "2021"
 authors = ["Virtues Team <team@virtues.com>"]
 license = "MIT"
