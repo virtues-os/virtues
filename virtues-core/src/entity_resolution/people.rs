@@ -135,7 +135,7 @@ async fn resolve_message_senders(db: &Database) -> Result<usize> {
                    o.canonical_name AS "canonical_name!"
             FROM data_communication_message m
             JOIN handle_owner o ON o.handle = m.from_handle
-            LEFT JOIN wiki_entity_refs r
+            LEFT JOIN wiki_refs r
                    ON r.source_table = 'data_communication_message'
                   AND r.source_id = m.id
                   AND r.role = 'sender'
@@ -165,7 +165,7 @@ async fn resolve_message_senders(db: &Database) -> Result<usize> {
         // everything else about the person who sent it.
         sqlx::query!(
             r#"
-            INSERT INTO wiki_entity_refs (id, entity_type, entity_id, source_table, source_id, role, timestamp)
+            INSERT INTO wiki_refs (id, entity_type, entity_id, source_table, source_id, role, timestamp)
             SELECT u.ref_id, 'person', u.person_id, 'data_communication_message', u.msg_id, 'sender', m.timestamp
             FROM UNNEST($1::text[], $2::text[], $3::text[]) AS u(ref_id, person_id, msg_id)
             JOIN data_communication_message m ON m.id = u.msg_id
@@ -273,7 +273,7 @@ async fn resolve_message_recipients(db: &Database) -> Result<usize> {
                    tp.canonical_name AS "canonical_name!"
             FROM data_communication_message m
             JOIN thread_party tp ON tp.thread_id = m.thread_id
-            LEFT JOIN wiki_entity_refs r
+            LEFT JOIN wiki_refs r
                    ON r.source_table = 'data_communication_message'
                   AND r.source_id = m.id
                   AND r.role = 'recipient'
@@ -300,7 +300,7 @@ async fn resolve_message_recipients(db: &Database) -> Result<usize> {
 
         sqlx::query!(
             r#"
-            INSERT INTO wiki_entity_refs (id, entity_type, entity_id, source_table, source_id, role, timestamp)
+            INSERT INTO wiki_refs (id, entity_type, entity_id, source_table, source_id, role, timestamp)
             SELECT u.ref_id, 'person', u.person_id, 'data_communication_message', u.msg_id, 'recipient', m.timestamp
             FROM UNNEST($1::text[], $2::text[], $3::text[]) AS u(ref_id, person_id, msg_id)
             JOIN data_communication_message m ON m.id = u.msg_id
@@ -438,7 +438,7 @@ async fn resolve_calendar_attendees(db: &Database, window: TimeWindow) -> Result
 
 /// Resolve people from email senders in time window
 ///
-/// Links from_email to person entity via wiki_entity_refs.
+/// Links from_email to person entity via wiki_refs.
 async fn resolve_email_senders(db: &Database, window: TimeWindow) -> Result<usize> {
     // Fetch emails without resolved from_person_id
     let emails = fetch_unresolved_emails(db, window).await?;
@@ -499,7 +499,7 @@ async fn fetch_unresolved_emails(db: &Database, window: TimeWindow) -> Result<Ve
           AND e.from_email IS NOT NULL
           AND e.from_email != ''
           AND NOT EXISTS (
-              SELECT 1 FROM wiki_entity_refs er
+              SELECT 1 FROM wiki_refs er
               WHERE er.source_table = 'data_communication_email'
                 AND er.source_id = e.id
                 AND er.role = 'sender'
@@ -527,7 +527,7 @@ async fn fetch_unresolved_emails(db: &Database, window: TimeWindow) -> Result<Ve
     Ok(emails)
 }
 
-/// Resolve email sender and link to person entity via wiki_entity_refs
+/// Resolve email sender and link to person entity via wiki_refs
 ///
 /// Returns true if a new person was created or linked.
 async fn resolve_and_link_email_sender(db: &Database, email_record: &EmailRecord) -> Result<bool> {
@@ -541,11 +541,11 @@ async fn resolve_and_link_email_sender(db: &Database, email_record: &EmailRecord
     )
     .await?;
 
-    // Link via wiki_entity_refs
+    // Link via wiki_refs
     let ref_id = ids::generate_id("eref", &[&email_record.id, &person_id, "sender"]);
     sqlx::query!(
         r#"
-        INSERT INTO wiki_entity_refs (id, entity_type, entity_id, source_table, source_id, role, timestamp)
+        INSERT INTO wiki_refs (id, entity_type, entity_id, source_table, source_id, role, timestamp)
         SELECT $1, 'person', $2, 'data_communication_email', $3, 'sender', timestamp
         FROM data_communication_email WHERE id = $3
         ON CONFLICT (entity_id, source_table, source_id, role) DO NOTHING
@@ -561,7 +561,7 @@ async fn resolve_and_link_email_sender(db: &Database, email_record: &EmailRecord
         email_id = %email_record.id,
         from_email = %email_record.from_email,
         person_id = %person_id,
-        "Linked email sender to person via wiki_entity_refs"
+        "Linked email sender to person via wiki_refs"
     );
 
     Ok(true)
@@ -703,7 +703,7 @@ async fn fetch_calendar_events(db: &Database, window: TimeWindow) -> Result<Vec<
     Ok(events)
 }
 
-/// Resolve all attendees for an event and link via wiki_entity_refs
+/// Resolve all attendees for an event and link via wiki_refs
 ///
 /// Returns the number of unique people resolved.
 async fn resolve_and_link_event_attendees(db: &Database, event: &CalendarEvent) -> Result<usize> {
@@ -714,7 +714,7 @@ async fn resolve_and_link_event_attendees(db: &Database, event: &CalendarEvent) 
     let mut unique_people = std::collections::HashSet::new();
     let event_id_str = event.id.to_string();
 
-    // Fetch event start_time for the wiki_entity_refs timestamp
+    // Fetch event start_time for the wiki_refs timestamp
     let timestamp: Option<chrono::DateTime<chrono::Utc>> = sqlx::query_scalar(
         "SELECT start_time FROM data_calendar_event WHERE id = $1",
     )
@@ -733,7 +733,7 @@ async fn resolve_and_link_event_attendees(db: &Database, event: &CalendarEvent) 
                     let ref_id = ids::generate_id("eref", &[&event_id_str, &person_id, "attendee"]);
                     sqlx::query!(
                         r#"
-                        INSERT INTO wiki_entity_refs (id, entity_type, entity_id, source_table, source_id, role, timestamp)
+                        INSERT INTO wiki_refs (id, entity_type, entity_id, source_table, source_id, role, timestamp)
                         VALUES ($1, 'person', $2, 'data_calendar_event', $3, 'attendee', $4)
                         ON CONFLICT (entity_id, source_table, source_id, role) DO NOTHING
                         "#,
@@ -761,7 +761,7 @@ async fn resolve_and_link_event_attendees(db: &Database, event: &CalendarEvent) 
         tracing::debug!(
             event_id = %event.id,
             people_count = unique_people.len(),
-            "Linked attendees to calendar event via wiki_entity_refs"
+            "Linked attendees to calendar event via wiki_refs"
         );
     }
 
@@ -906,7 +906,7 @@ mod tests {
 
         async fn cleanup(db: &Database, person_id: &str, thread: &str) {
             let _ = sqlx::query(
-                "DELETE FROM wiki_entity_refs r
+                "DELETE FROM wiki_refs r
                  USING data_communication_message m
                  WHERE r.source_table='data_communication_message'
                    AND r.source_id=m.id AND m.thread_id=$1",
@@ -978,7 +978,7 @@ mod tests {
 
         // 1. Each outbound message now points at the contact via a recipient ref.
         let recipient_refs: i64 = sqlx::query_scalar(
-            "SELECT count(*) FROM wiki_entity_refs r
+            "SELECT count(*) FROM wiki_refs r
              JOIN data_communication_message m ON m.id = r.source_id
              WHERE m.thread_id=$1 AND r.role='recipient' AND r.entity_id=$2
                AND (m.metadata->>'is_from_me')::bool",
@@ -994,7 +994,7 @@ mod tests {
         let both_sides: i64 = sqlx::query_scalar(
             "SELECT count(DISTINCT m.id)
              FROM data_communication_message m
-             JOIN wiki_entity_refs r
+             JOIN wiki_refs r
                ON r.source_table='data_communication_message' AND r.source_id=m.id
               AND r.entity_type='person' AND r.role IN ('sender','recipient')
              WHERE r.entity_id=$1",

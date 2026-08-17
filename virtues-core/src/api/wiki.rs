@@ -186,10 +186,8 @@ pub struct WikiDay {
     pub id: String,
     pub date: NaiveDate,
     pub start_timezone: Option<String>,
-    pub autobiography: Option<String>,
-    pub autobiography_sections: Option<serde_json::Value>,
-    /// The day's prose, from `wiki_day_prose` (0087): the article page first,
-    /// the legacy `autobiography` column as fallback until its drop.
+    /// The day's prose, from `wiki_day_prose`. The article page is its only
+    /// home — the legacy `autobiography` column was dropped in 0106.
     pub article: Option<String>,
     pub epigraph: Option<String>,
     pub last_edited_by: Option<String>,
@@ -328,8 +326,6 @@ pub struct UpdateWikiOrganizationRequest {
 /// Request to update a day wiki page
 #[derive(Debug, Deserialize)]
 pub struct UpdateWikiDayRequest {
-    pub autobiography: Option<String>,
-    pub autobiography_sections: Option<serde_json::Value>,
     pub epigraph: Option<String>,
     pub last_edited_by: Option<String>,
     pub cover_image: Option<String>,
@@ -446,7 +442,7 @@ fn normalize_aliases(input: Option<&Vec<String>>) -> Option<serde_json::Value> {
 /// book of 573 contacts arrived alphabetically, with `no-reply@slack.com` sitting
 /// level with the people you actually talk to.
 ///
-/// The signal was always there: `wiki_entity_refs` holds 130k message refs
+/// The signal was always there: `wiki_refs` holds 130k message refs
 /// across 314 people. Counting them sorts the wall on its own — people you
 /// message rise, contacts with no traffic sink, transactional senders land at
 /// the bottom with two email refs each. No classifier, no model, no deletion:
@@ -471,7 +467,7 @@ pub async fn list_people(pool: &PgPool) -> Result<Vec<WikiPersonListItem>> {
         FROM wiki_people p
         LEFT JOIN (
             SELECT entity_id, count(*) AS n
-            FROM wiki_entity_refs WHERE entity_type = 'person' GROUP BY entity_id
+            FROM wiki_refs WHERE entity_type = 'person' GROUP BY entity_id
         ) r ON r.entity_id = p.id
         ORDER BY COALESCE(r.n, 0) DESC, p.canonical_name ASC
         "#
@@ -603,7 +599,7 @@ pub async fn list_wiki_places(pool: &PgPool) -> Result<Vec<WikiPlaceListItem>> {
         FROM wiki_places p
         LEFT JOIN (
             SELECT entity_id, count(*) AS n
-            FROM wiki_entity_refs WHERE entity_type = 'place' GROUP BY entity_id
+            FROM wiki_refs WHERE entity_type = 'place' GROUP BY entity_id
         ) r ON r.entity_id = p.id
         ORDER BY COALESCE(r.n, 0) DESC, p.name ASC
         "#
@@ -716,7 +712,7 @@ pub async fn list_organizations(pool: &PgPool) -> Result<Vec<WikiOrganizationLis
         FROM wiki_orgs o
         LEFT JOIN (
             SELECT entity_id, count(*) AS n
-            FROM wiki_entity_refs WHERE entity_type = 'organization' GROUP BY entity_id
+            FROM wiki_refs WHERE entity_type = 'organization' GROUP BY entity_id
         ) r ON r.entity_id = o.id
         ORDER BY COALESCE(r.n, 0) DESC, o.canonical_name ASC
         "#
@@ -1145,7 +1141,7 @@ pub async fn get_or_create_day(pool: &PgPool, date: NaiveDate) -> Result<WikiDay
     let existing: Option<sqlx::postgres::PgRow> = sqlx::query(
         r#"
         SELECT
-            id, date, start_timezone, autobiography, autobiography_sections,
+            id, date, start_timezone,
             (SELECT dp.prose FROM wiki_day_prose dp WHERE dp.day_id = wiki_days.id) AS article,
             epigraph,
             last_edited_by, cover_image, act_id, chapter_id, morning_baseline, battery_curve,
@@ -1173,7 +1169,7 @@ pub async fn get_or_create_day(pool: &PgPool, date: NaiveDate) -> Result<WikiDay
         INSERT INTO wiki_days (id, date)
         VALUES ($1, $2)
         RETURNING
-            id, date, start_timezone, autobiography, autobiography_sections,
+            id, date, start_timezone,
             epigraph,
             last_edited_by, cover_image, act_id, chapter_id, morning_baseline, battery_curve,
             data_quality, snapshot, readiness_score, readiness_details, created_at, updated_at
@@ -1203,8 +1199,6 @@ fn wiki_day_from_row_with_counts(row: &sqlx::postgres::PgRow, date: NaiveDate, n
         id,
         date,
         start_timezone: row.try_get("start_timezone").ok().flatten(),
-        autobiography: row.try_get("autobiography").ok().flatten(),
-        autobiography_sections: row.try_get("autobiography_sections").ok().flatten(),
         // Absent from the INSERT..RETURNING path (a just-created day has no
         // prose anyway) — `.ok()` makes that read as None rather than an error.
         article: row.try_get("article").ok().flatten(),
@@ -1380,7 +1374,7 @@ async fn compute_sleep_cycles(pool: &PgPool, date: NaiveDate) -> Vec<ScoredSleep
 }
 
 /// Count new entities and new topics for a date.
-/// "New entity" = an entity whose earliest wiki_entity_refs.timestamp falls on this date.
+/// "New entity" = an entity whose earliest wiki_refs.timestamp falls on this date.
 /// "New topic" = a topic in search_topic_cache whose created_at falls on this date.
 async fn get_day_novelty_counts(pool: &PgPool, date_str: &str) -> Result<(i64, i64)> {
     // New entities: count distinct entity_ids where their earliest ref timestamp is on this date
@@ -1389,11 +1383,11 @@ async fn get_day_novelty_counts(pool: &PgPool, date_str: &str) -> Result<(i64, i
         .unwrap_or_default();
     let new_entities: i64 = sqlx::query_scalar(
         r#"SELECT COUNT(DISTINCT r.entity_id)
-           FROM wiki_entity_refs r
+           FROM wiki_refs r
            WHERE r.timestamp >= ($1 || 'T00:00:00Z')::timestamptz
              AND r.timestamp < ($2 || 'T00:00:00Z')::timestamptz
              AND NOT EXISTS (
-               SELECT 1 FROM wiki_entity_refs r2
+               SELECT 1 FROM wiki_refs r2
                WHERE r2.entity_id = r.entity_id
                  AND r2.timestamp < ($1 || 'T00:00:00Z')::timestamptz
              )"#,
@@ -1439,25 +1433,17 @@ pub async fn update_day(
         r#"
         UPDATE wiki_days
         SET
-            autobiography = COALESCE($2, autobiography),
-            -- $3 is jsonb (bound as a Value). It was previously serialized to a
-            -- String and bound as TEXT, so Postgres rejected COALESCE(text, jsonb)
-            -- at plan time — even when NULL — which meant narration could NEVER
-            -- write a day (the box had 0 autobiographies as a direct result).
-            autobiography_sections = COALESCE($3, autobiography_sections),
-            epigraph = COALESCE($4, epigraph),
-            last_edited_by = COALESCE($5, last_edited_by),
-            cover_image = COALESCE($6, cover_image),
-            start_timezone = COALESCE($7, start_timezone),
-            data_quality = COALESCE($8, data_quality),
-            snapshot = COALESCE($9, snapshot),
+            epigraph = COALESCE($2, epigraph),
+            last_edited_by = COALESCE($3, last_edited_by),
+            cover_image = COALESCE($4, cover_image),
+            start_timezone = COALESCE($5, start_timezone),
+            data_quality = COALESCE($6, data_quality),
+            snapshot = COALESCE($7, snapshot),
             updated_at = now()
         WHERE id = $1
         "#,
     )
     .bind(&day_id_str)
-    .bind(&req.autobiography)
-    .bind(&req.autobiography_sections)
     .bind(&req.epigraph)
     .bind(&req.last_edited_by)
     .bind(&req.cover_image)
@@ -1482,7 +1468,7 @@ pub async fn list_days(
     let rows: Vec<sqlx::postgres::PgRow> = sqlx::query(
         r#"
         SELECT
-            id, date, start_timezone, autobiography, autobiography_sections,
+            id, date, start_timezone,
             (SELECT dp.prose FROM wiki_day_prose dp WHERE dp.day_id = wiki_days.id) AS article,
             epigraph,
             last_edited_by, cover_image, act_id, chapter_id, morning_baseline, battery_curve,
@@ -1536,11 +1522,11 @@ pub async fn day_activity(
         SELECT
             d.date,
             COUNT(e.id) FILTER (WHERE e.user_hidden = false) AS event_count,
-            (d.autobiography IS NOT NULL) AS narrated
+            (d.narrated_at IS NOT NULL) AS narrated
         FROM wiki_days d
         LEFT JOIN wiki_events e ON e.day_id = d.id
         WHERE d.date >= $1 AND d.date <= $2
-        GROUP BY d.id, d.date, d.autobiography
+        GROUP BY d.id, d.date, d.narrated_at
         ORDER BY d.date
         "#,
     )
@@ -1587,14 +1573,14 @@ pub async fn on_this_day(pool: &PgPool, date: NaiveDate) -> Result<Vec<OnThisDay
         SELECT
             d.date,
             d.epigraph,
-            (d.autobiography IS NOT NULL) AS narrated,
+            (d.narrated_at IS NOT NULL) AS narrated,
             COUNT(e.id) FILTER (WHERE e.user_hidden = false) AS event_count
         FROM wiki_days d
         LEFT JOIN wiki_events e ON e.day_id = d.id
         WHERE EXTRACT(MONTH FROM d.date) = $1
           AND EXTRACT(DAY FROM d.date) = $2
           AND d.date < $3
-        GROUP BY d.id, d.date, d.epigraph, d.autobiography
+        GROUP BY d.id, d.date, d.epigraph, d.narrated_at
         ORDER BY d.date DESC
         "#,
     )
@@ -1705,7 +1691,7 @@ pub struct TemporalEvent {
     pub topic_novelty: Option<serde_json::Value>,
     pub entity_novelty: Option<serde_json::Value>,
     /// Map of entity_id → ISO8601 timestamp of earliest ref within event window.
-    /// Sourced from wiki_entity_refs. Used to position entity dots at their actual
+    /// Sourced from wiki_refs. Used to position entity dots at their actual
     /// moment (not event center).
     pub entity_timestamps: Option<serde_json::Value>,
     pub created_at: DateTime<Utc>,
@@ -1776,7 +1762,7 @@ pub async fn get_day_events(pool: &PgPool, day_id: String) -> Result<Vec<Tempora
     .map_err(|e| Error::Database(format!("Failed to get day events: {}", e)))?;
 
     // Fetch entity timestamps for the day: for each event's window, the earliest
-    // timestamp each entity appears in wiki_entity_refs.
+    // timestamp each entity appears in wiki_refs.
     let event_windows: Vec<(String, DateTime<Utc>, DateTime<Utc>)> = rows
         .iter()
         .filter_map(|row| {
@@ -1792,7 +1778,7 @@ pub async fn get_day_events(pool: &PgPool, day_id: String) -> Result<Vec<Tempora
         let ref_rows: Vec<(String, DateTime<Utc>)> = sqlx::query_as(
             r#"
             SELECT entity_id, MIN(timestamp) as earliest
-            FROM wiki_entity_refs
+            FROM wiki_refs
             WHERE timestamp IS NOT NULL
               AND timestamp >= $1
               AND timestamp < $2
@@ -2072,14 +2058,30 @@ pub async fn delete_temporal_event(pool: &PgPool, id: String) -> Result<()> {
     Ok(())
 }
 
-/// Delete all auto-generated events for a day (for regeneration)
+/// Delete all auto-generated events for a day (for regeneration).
+///
+/// "Auto-generated" means UNTOUCHED BY THE USER, and that is three flags, not
+/// one. `is_user_added` alone was the guard, and it is only set by
+/// `create_temporal_event` — relabelling an event the machine cut sets
+/// `is_user_edited` (see `update_temporal_event`) and leaves `is_user_added`
+/// false, so every re-cut silently deleted the user's own label. That fires
+/// whenever late audio or a backfilled message changes the day's
+/// `sources_fingerprint`, which is exactly when a day gets re-cut in practice.
+/// `user_hidden` is the same class: a hide the re-cut eats comes back visible.
+///
+/// Preserved events can now overlap the fresh cut — but that was already true
+/// of `is_user_added` events, so this widens an accepted condition rather than
+/// introducing one. A user's judgement outranks a gapless timeline.
 pub async fn delete_auto_events_for_day(pool: &PgPool, day_id: String) -> Result<u64> {
     let day_id_str = day_id;
 
     let result = sqlx::query!(
         r#"
         DELETE FROM wiki_events
-        WHERE day_id = $1 AND is_user_added = false
+        WHERE day_id = $1
+          AND is_user_added = false
+          AND is_user_edited = false
+          AND user_hidden = false
         "#,
         day_id_str
     )
@@ -2318,7 +2320,7 @@ pub async fn get_day_sources(
     Ok(sources)
 }
 
-/// One raw record linked to an entity via `wiki_entity_refs` — the entity
+/// One raw record linked to an entity via `wiki_refs` — the entity
 /// page's CRM-style evidence feed. Same shape as `DaySource` plus the ref's
 /// `role` (sender, attendee, merchant, location, …).
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -2364,7 +2366,7 @@ async fn entity_records_union(pool: &PgPool, entity_id: &str) -> Result<Option<S
     use virtues_registry::ontologies::registered_ontologies;
 
     let tables: Vec<String> = sqlx::query_scalar(
-        "SELECT DISTINCT source_table FROM wiki_entity_refs WHERE entity_id = $1",
+        "SELECT DISTINCT source_table FROM wiki_refs WHERE entity_id = $1",
     )
     .bind(entity_id)
     .fetch_all(pool)
@@ -2413,7 +2415,7 @@ async fn entity_records_union(pool: &PgPool, entity_id: &str) -> Result<Option<S
                     string_agg(DISTINCT er.role, ', ') as src_role, \
                     {cont} as src_cont \
              FROM {table} t \
-             JOIN wiki_entity_refs er \
+             JOIN wiki_refs er \
                ON er.source_table = '{table}' AND er.source_id = {id} AND er.entity_id = $1 \
              WHERE true \
              {extra} \
@@ -2548,7 +2550,7 @@ pub async fn get_entity_record_facets(
 /// A location chunk for the timeline day view.
 ///
 /// One chunk per `data_location_visit` row, joined to its canonical place
-/// (via `wiki_entity_refs` → `wiki_places`) when one exists. Visits with no
+/// (via `wiki_refs` → `wiki_places`) when one exists. Visits with no
 /// place link have `place_id`/`place_name` set to None and the frontend
 /// renders them as "Unknown".
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -2594,7 +2596,7 @@ pub async fn get_timeline_day(pool: &PgPool, date: NaiveDate) -> Result<Timeline
         .unwrap()
         .and_utc();
 
-    // JOIN visits → wiki_entity_refs → wiki_places.
+    // JOIN visits → wiki_refs → wiki_places.
     // er.source_id is the visit's UUID; both sides are stored as TEXT UUIDs,
     // so the join is a straight text match.
     let rows: Vec<sqlx::postgres::PgRow> = sqlx::query(
@@ -2611,7 +2613,7 @@ pub async fn get_timeline_day(pool: &PgPool, date: NaiveDate) -> Result<Timeline
             p.longitude              AS place_lon,
             p.category               AS place_category
         FROM data_location_visit v
-        LEFT JOIN wiki_entity_refs er
+        LEFT JOIN wiki_refs er
             ON er.source_table = 'data_location_visit'
            AND er.source_id    = v.id
            AND er.entity_type  = 'place'
@@ -2828,7 +2830,7 @@ pub async fn get_today_streams(
             p.name             AS place_name,
             p.category         AS place_category
         FROM data_location_visit v
-        LEFT JOIN wiki_entity_refs er
+        LEFT JOIN wiki_refs er
             ON er.source_table = 'data_location_visit'
            AND er.source_id    = v.id
            AND er.entity_type  = 'place'

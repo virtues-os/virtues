@@ -442,7 +442,7 @@ impl SemanticSearchEngine {
         let entity_filter = !filters.entities.is_empty();
         if entity_filter {
             filter_sql.push_str(&format!(
-                " AND EXISTS (SELECT 1 FROM wiki_entity_refs er \
+                " AND EXISTS (SELECT 1 FROM wiki_refs er \
                   WHERE er.source_table = se.source_table AND er.source_id = se.record_id \
                   AND er.entity_id = ANY(${next}))",
             ));
@@ -473,7 +473,7 @@ impl SemanticSearchEngine {
         // order, so using them inside filter_sql is safe.
         if notebook_boost && filters.scope_mode == ScopeMode::Exclusive {
             filter_sql.push_str(&format!(
-                " AND (se.record_id = ANY(${r}) OR EXISTS (SELECT 1 FROM wiki_entity_refs er2 \
+                " AND (se.record_id = ANY(${r}) OR EXISTS (SELECT 1 FROM wiki_refs er2 \
                   WHERE er2.source_table = se.source_table AND er2.source_id = se.record_id \
                   AND er2.entity_id = ANY(${e})))",
                 r = p_nb_rec,
@@ -482,7 +482,7 @@ impl SemanticSearchEngine {
         }
         let boost_sql = if notebook_boost && filters.scope_mode == ScopeMode::Weighted {
             format!(
-                " + CASE WHEN se.record_id = ANY(${r}) OR EXISTS (SELECT 1 FROM wiki_entity_refs er2 \
+                " + CASE WHEN se.record_id = ANY(${r}) OR EXISTS (SELECT 1 FROM wiki_refs er2 \
                   WHERE er2.source_table = se.source_table AND er2.source_id = se.record_id \
                   AND er2.entity_id = ANY(${e})) THEN {boost} ELSE 0 END",
                 r = p_nb_rec,
@@ -648,7 +648,7 @@ impl SemanticSearchEngine {
     /// scope understands: direct record_ids (page/day/source/chat, plus the
     /// document CHUNKS of `/drive/file_` members — the uploaded_document
     /// ontology indexes per-chunk) and entity_ids (person/place/org —
-    /// matched via `wiki_entity_refs`). Filters to `role='library'` (= grounds
+    /// matched via `wiki_refs`). Filters to `role='library'` (= grounds
     /// chat; nav-only 'pin' rows are ignored, and 'manuscript' rows are the
     /// user's own draft — retrieving them would cite their unfinished prose
     /// back at them as a source). External URLs and nested notebooks aren't

@@ -194,7 +194,7 @@ async fn fetch_unresolved_transactions(
           AND t.merchant_name IS NOT NULL
           AND t.merchant_name != ''
           AND NOT EXISTS (
-              SELECT 1 FROM wiki_entity_refs er
+              SELECT 1 FROM wiki_refs er
               WHERE er.source_table = 'data_financial_transaction'
                 AND er.source_id = t.id
                 AND er.role = 'merchant'
@@ -222,7 +222,7 @@ async fn fetch_unresolved_transactions(
     Ok(transactions)
 }
 
-/// Resolve merchant to wiki_orgs and link to transaction via wiki_entity_refs
+/// Resolve merchant to wiki_orgs and link to transaction via wiki_refs
 async fn resolve_and_link_merchant(db: &Database, txn: &TransactionRecord) -> Result<bool> {
     let merchant_name = txn.merchant_name.trim();
     if merchant_name.is_empty() {
@@ -242,11 +242,11 @@ async fn resolve_and_link_merchant(db: &Database, txn: &TransactionRecord) -> Re
     .await?
     .flatten();
 
-    // Link via wiki_entity_refs
+    // Link via wiki_refs
     let ref_id = ids::generate_id("eref", &[&txn.id, &org_id, "merchant"]);
     sqlx::query!(
         r#"
-        INSERT INTO wiki_entity_refs (id, entity_type, entity_id, source_table, source_id, role, timestamp)
+        INSERT INTO wiki_refs (id, entity_type, entity_id, source_table, source_id, role, timestamp)
         VALUES ($1, 'organization', $2, 'data_financial_transaction', $3, 'merchant', $4)
         ON CONFLICT (entity_id, source_table, source_id, role) DO NOTHING
         "#,
@@ -262,7 +262,7 @@ async fn resolve_and_link_merchant(db: &Database, txn: &TransactionRecord) -> Re
         transaction_id = %txn.id,
         merchant_name = %merchant_name,
         org_id = %org_id,
-        "Linked transaction to merchant organization via wiki_entity_refs"
+        "Linked transaction to merchant organization via wiki_refs"
     );
 
     Ok(true)
@@ -636,14 +636,14 @@ async fn write_visit_and_link_place(db: &Database, visit: &Visit) -> Result<()> 
     });
 
     // Existing visits at THIS place whose span overlaps (or nearly touches) the
-    // candidate's. `resolve_or_create_place` is the spatial key; wiki_entity_refs
+    // candidate's. `resolve_or_create_place` is the spatial key; wiki_refs
     // is how a visit is linked to it. The ± gap merges re-clusters that a tiny
     // backgrounding gap would otherwise leave adjacent rather than overlapping.
     let overlapping: Vec<(String, chrono::DateTime<Utc>, chrono::DateTime<Utc>)> = sqlx::query_as(
         r#"
         SELECT v.id, v.arrival_time, v.departure_time
         FROM data_location_visit v
-        JOIN wiki_entity_refs r
+        JOIN wiki_refs r
           ON r.source_table = 'data_location_visit' AND r.source_id = v.id
              AND r.entity_type = 'place' AND r.entity_id = $1
         WHERE v.arrival_time   <= $3 + ($4 || ' minutes')::interval
@@ -695,7 +695,7 @@ async fn write_visit_and_link_place(db: &Database, visit: &Visit) -> Result<()> 
         let absorbed: Vec<String> = overlapping.iter().skip(1).map(|(id, _, _)| id.clone()).collect();
         if !absorbed.is_empty() {
             sqlx::query(
-                "DELETE FROM wiki_entity_refs \
+                "DELETE FROM wiki_refs \
                  WHERE source_table = 'data_location_visit' AND source_id = ANY($1)",
             )
             .bind(&absorbed)
@@ -759,7 +759,7 @@ async fn write_visit_and_link_place(db: &Database, visit: &Visit) -> Result<()> 
     // by ref), which is what let the collision recur every pass.
     let ref_id = ids::generate_id("eref", &[&visit_id, &place_id, "location"]);
     sqlx::query(
-        "INSERT INTO wiki_entity_refs (id, entity_type, entity_id, source_table, source_id, role, timestamp) \
+        "INSERT INTO wiki_refs (id, entity_type, entity_id, source_table, source_id, role, timestamp) \
          VALUES ($1, 'place', $2, 'data_location_visit', $3, 'location', $4) \
          ON CONFLICT (entity_id, source_table, source_id, role) DO NOTHING",
     )
