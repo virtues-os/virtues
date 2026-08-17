@@ -30,7 +30,10 @@
 		filterSlashCommands,
 		type SlashCommand,
 	} from "$lib/codemirror/extensions/slash-commands";
-	import { createSelectionToolbar } from "$lib/codemirror/extensions/selection-toolbar";
+	import {
+		createSelectionToolbar,
+		dismissSelectionToolbar,
+	} from "$lib/codemirror/extensions/selection-toolbar";
 	import { createMediaPaste } from "$lib/codemirror/extensions/media-paste";
 	import RefPicker from "$lib/components/RefPicker.svelte";
 	import { toast } from "svelte-sonner";
@@ -258,6 +261,10 @@
 
 	function handleSelToolbarClose() {
 		selToolbarOpen = false;
+		// Tell the plugin too, or it re-opens the toolbar on the next update —
+		// closing the component only hides the symptom. The selection is left
+		// alone deliberately: Escape dismisses the bar, not the user's place.
+		if (view) dismissSelectionToolbar(view);
 	}
 
 	// --- Media upload ---
