@@ -22,6 +22,7 @@ import { EditorSelection, EditorState, type Extension, type Range, StateField } 
 import { Decoration, type DecorationSet, EditorView, WidgetType } from '@codemirror/view';
 import { contextMenu } from '$lib/stores/contextMenu.svelte';
 
+import { disconnectRemeasure, remeasureOnResize } from '../widget-height';
 import { onContextGesture } from './long-press';
 
 type Alignment = 'left' | 'center' | 'right';
@@ -753,7 +754,17 @@ class TableWidget extends WidgetType {
 			requestAnimationFrame(() => positionControls());
 		}
 
+		// The table itself is synchronous (parsed strings, no media, and the
+		// hover strips and drag handles are absolutely positioned so they add
+		// no height), and `.cm-table-wrapper` already carries its spacing as
+		// padding rather than margin. This observer is the guard against that
+		// staying true by accident — see widget-height.ts.
+		remeasureOnResize(view, wrapper);
 		return wrapper;
+	}
+
+	destroy(dom: HTMLElement) {
+		disconnectRemeasure(dom);
 	}
 
 	eq(other: TableWidget) {
