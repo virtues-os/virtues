@@ -22,9 +22,16 @@
 -- feels like progress and produces a schema that lies about what the product
 -- does.
 --
--- `wiki_stories` is deliberately KEPT despite being equally empty. It is the one
--- of the five with a live intent behind it, and `wiki_articles.subject_type`
--- still admits 'story'.
+-- `wiki_stories` and `wiki_years` are deliberately KEPT despite being equally
+-- empty. Both have live intent behind them — a year page is a thing this product
+-- should have — and `wiki_articles.subject_type` still admits 'story'.
+--
+-- Keeping them is in tension with the lesson above, and the tension is resolved
+-- one way: they stay in the SCHEMA and out of the SQL agent's catalog. The harm
+-- was never the empty table, it was `tools/sql_query.rs` advertising it with
+-- join hints, so the agent would query it, find nothing, and report nothing as
+-- though it had looked. A table nothing points at is a plan; a table the agent
+-- is told to trust is a lie.
 --
 -- No data is lost, because there has never been any. Every statement is guarded
 -- so a box that somehow lacks one of these converges silently rather than
@@ -40,6 +47,3 @@ ALTER TABLE IF EXISTS wiki_days DROP COLUMN IF EXISTS chapter_id;
 DROP TABLE IF EXISTS wiki_chapters;
 DROP TABLE IF EXISTS wiki_acts;
 DROP TABLE IF EXISTS wiki_telos;
-
--- Unrelated to the hierarchy, same condition: read path, no writer.
-DROP TABLE IF EXISTS wiki_years;
