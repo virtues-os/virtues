@@ -72,6 +72,17 @@ jobs:
         with:
           shared-key: ci
 
+      # BEFORE the build, which is the whole point of it being its own step.
+      # These were installed further down, inside the step that sets up
+      # postgresql-client — so they arrived long after `cargo build` had
+      # already failed on them. `bluer` (the Improv/BLE service the appliance
+      # serves while unclaimed) pulls libdbus-sys, which is a pkg-config build
+      # script, so this is a hard prerequisite of compiling the box at all on
+      # Linux. Nothing caught it for weeks because BLE landed on `wave` and
+      # `wave` does not run CI.
+      - name: Install libdbus headers (bluer/BLE provisioning)
+        run: sudo apt-get update && sudo apt-get install -y libdbus-1-dev pkg-config
+
       - name: Build (debug — exercises the Linux cfg paths)
         run: cargo build -p virtues -p virtues-installer -p virtues-client -p virtues-iroh
 
@@ -128,7 +139,7 @@ jobs:
           # *working directory* does not exist, and that was the real cause —
           # see the create_dir_all in applet_git_import.rs. Read the apt log
           # before believing a package is missing.
-          sudo apt-get install -y postgresql-client-18 git libdbus-1-dev pkg-config
+          sudo apt-get install -y postgresql-client-18 git
           # Installing the package is not enough: the runner already ships an
           # older postgresql-client, and /usr/bin/pg_dump keeps resolving to it.
           # Put the versioned bindir ahead of it for every later step.

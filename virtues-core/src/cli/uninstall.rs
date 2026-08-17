@@ -71,6 +71,10 @@ const LEGACY_EXTRA_FILES: &[&str] = &[
     // Leaving it behind bricks the distro's Postgres on a machine we no longer
     // occupy — the single rudest thing an uninstall could do to a shared box.
     "/etc/systemd/system/postgresql@.service.d/10-virtues-data-mount.conf",
+    // Give the power key back to logind. Leaving this behind means the button
+    // on a machine we no longer occupy does nothing at all — neither our reset
+    // nor the power-off the hardware label implies.
+    "/etc/systemd/logind.conf.d/10-virtues-power-key.conf",
 ];
 
 const BINARIES: &[&str] = &[

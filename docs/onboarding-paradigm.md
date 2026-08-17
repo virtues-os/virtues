@@ -96,9 +96,34 @@ on ethernet". Wiring removes a password, not a step.
 
 ## 3. Reset is the only recovery, and the phrase is what makes it safe
 
-The board has a power button, behind the case. Pressing it **resets setup**:
-paired devices forgotten, account unlinked, network forgotten. **The data stays.
-The phrase stays.**
+The board has a power button, behind the case. **Held for three seconds** it
+forgets this box's **paired devices**. Nothing else: the data stays, the phrase
+stays, the network stays, the account stays.
+
+> **Revised 2026-08-17, and the revision is a narrowing.** This used to also
+> unlink the account and forget the network. Both were wrong. Neither adds any
+> security — the phrase is the entire gate, and a stranger with a screwdriver
+> still cannot claim the box without four words that are frozen and shown
+> nowhere — while forgetting the network actively harms the case the button
+> exists for. The owner who has lost their laptop presses it and now has a box
+> that is *also* offline and unlinked, able to reach neither the relay nor
+> atlas: recovery got harder in exchange for nothing.
+>
+> So the button and the app's "start over" are now literally the same action
+> (`api::pair::revoke_all_devices`). A physical control that did something
+> subtly different from the software one is its own bug.
+
+**Three seconds, not a press.** It is the power button, and on a board with no
+other control a short press is also what a cable, a shelf or a cat produces.
+Unpairing every device in a household by accident is not recoverable in any
+useful sense — the owner has to redo setup on all of them. The panel counts the
+hold down while it happens, so a deliberate hold knows it is working and an
+accidental one is visible while there is still time to stop it.
+
+`logind` owns the power key by default, so the installer sets
+`HandlePowerKey=ignore` — without it the first press powers the box off, which
+is the worst possible response to someone who opened the case because they
+could not reach their box.
 
 The box returns to unclaimed — but *not* to virgin. It holds a life, so its
 screen does **not** show the phrase again. Setting it up again requires the words
