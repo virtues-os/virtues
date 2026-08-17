@@ -46,12 +46,15 @@ pub async fn run() -> i32 {
 /// a false alarm — a state root that is a plain directory is correct there, and
 /// there is no panel and no button to report on.
 fn print_appliance(issues: &mut ui::Issues) {
+    // `install_manifest::appliance()`, not the raw field: a box installed before
+    // that field existed has `None`, which means "no opinion", not "DIY". See
+    // that function for why the difference matters after an upgrade.
+    if !crate::install_manifest::appliance() {
+        return;
+    }
     let Some(m) = crate::install_manifest::get().as_ref() else {
         return;
     };
-    if !m.appliance {
-        return;
-    }
     ui::subsection("Appliance");
     ui::kv("profile", &m.profile);
 
