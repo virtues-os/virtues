@@ -154,6 +154,39 @@ mod server {
         }
     }
 
+    /// Start fetching the newest release, right now, because the box has just
+    /// come online during setup.
+    ///
+    /// ## Why here and not on the ordinary timer
+    ///
+    /// `api::updates` fetches on a 6-hour loop that waits
+    /// `PREPARE_FIRST_DELAY` (5 minutes) after boot, so a box would not begin
+    /// downloading until well after the owner had finished. That is the right
+    /// default — a box coming up has migrations to finish and collectors
+    /// reconnecting, and a 120 MB transfer into the middle of that makes an
+    /// update the reason a restart felt slow — and it is exactly wrong for this
+    /// one moment.
+    ///
+    /// A box is flashed at manufacture and then sits in a warehouse, so the
+    /// build an owner unboxes is usually months old, and the app offers an
+    /// update at the end of setup (`offerUpgrade` in `connect.html`). Without
+    /// this the release is never staged in time, so that offer reads "Download
+    /// and install" and the owner waits out a full transfer at the very end.
+    /// With it, the download overlaps the account link and the pairing — the
+    /// two steps that are pure human latency — and the offer becomes the
+    /// restart it should be.
+    ///
+    /// Nothing waits on this and nothing is activated by it. `spawn_prepare`
+    /// declines on its own for a dev checkout or a prerelease box, and a failure
+    /// only means the owner sees the slower version of a screen that still works.
+    fn prepare_release_now() {
+        tokio::task::spawn_blocking(|| match crate::api::updates::spawn_prepare() {
+            Ok(true) => tracing::info!("update: prepare started after the setup join"),
+            Ok(false) => {}
+            Err(e) => tracing::debug!("update: prepare did not start after the join: {e}"),
+        });
+    }
+
     /// One tokio task, mirroring `setup_ap::spawn`. Appliance-only for the
     /// same reason the AP is: a DIY box is someone's own server, and quietly
     /// standing up a radio service on it would be a rude surprise.
@@ -506,6 +539,8 @@ mod server {
                             g.send_result(build_result(0x01, &[&url])).await;
                             g.set_state(State::Provisioned).await;
                             tracing::info!(%ssid, "ble_provision: joined via Improv");
+                            drop(g);
+                            prepare_release_now();
                         }
                         Some(detail) => {
                             let mut g = improv.lock().await;
@@ -537,6 +572,8 @@ mod server {
                             g.send_result(build_result(0x81, &[&url])).await;
                             g.set_state(State::Provisioned).await;
                             tracing::info!(%ssid, "ble_provision: enterprise join via Improv-ext");
+                            drop(g);
+                            prepare_release_now();
                         }
                         Some(detail) => {
                             let mut g = improv.lock().await;
