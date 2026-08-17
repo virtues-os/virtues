@@ -750,6 +750,26 @@ pub async fn create_user(cfg: &InstallConfig) -> Result<()> {
     // gpu_access_groups + the sidecar units). Runs on both the fresh and
     // already-exists paths so upgrades of older boxes pick it up; `usermod -aG`
     // is additive and idempotent. No-op on a CPU-only host (no such groups).
+    // And to `input`, so `maintenance::reset_button` can read the power key.
+    //
+    // `/dev/input/event0` is `root:input` mode 660 and the service runs as
+    // `virtues`, which is in `video` and `render` and was in nothing else — so
+    // the watcher opened the device, failed, and returned. The button would
+    // have shipped built, wired, and dead, announcing nothing worse than a
+    // warning every sixty seconds. Caught on hardware; it is not reproducible
+    // anywhere without a real input node.
+    //
+    // Unconditional, unlike the GPU groups: `input` exists on every systemd
+    // host, and a box with no power key simply never finds one to watch.
+    // Supplementary groups are fixed at process start, so this only takes
+    // effect on the service restart at the end of this install — which is why
+    // it sits here rather than beside the appliance profile.
+    {
+        let mut cmd = Command::new("usermod");
+        cmd.args(["-aG", "input", "virtues"]);
+        run_step("Grant 'virtues' input access (the case button)", cmd).await?;
+    }
+
     let gpu_groups = gpu_access_groups().await;
     if !gpu_groups.is_empty() {
         let mut cmd = Command::new("usermod");
