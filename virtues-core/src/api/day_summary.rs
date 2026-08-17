@@ -400,6 +400,31 @@ pub async fn narrate_day(pool: &PgPool, date: NaiveDate) -> Result<Option<WikiDa
     .fetch_all(pool)
     .await?;
 
+    // ALREADY WRITTEN, AND NOTHING ASKED FOR A REWRITE.
+    //
+    // `segment_day_events` returns early on an unchanged source fingerprint;
+    // narration had no equivalent guard at all, so every caller — the catch-up
+    // queue, the API, the CLI — paid for a fresh best-model call and wrote back
+    // prose that was usually identical. `narrated_at` is the marker the queue
+    // itself keys on, so honouring it here makes a repeat call free rather than
+    // merely redundant.
+    //
+    // Deliberately NOT a content fingerprint: re-narrating a day whose events
+    // genuinely changed is the right behaviour, and the caller that knows they
+    // changed clears `narrated_at`. Guarding on prose alone would make a re-cut
+    // day permanently unwritable.
+    // `WikiDay` does not carry `narrated_at`, so read it directly rather than
+    // widening a struct that a dozen surfaces deserialize.
+    let already: Option<Option<chrono::DateTime<chrono::Utc>>> =
+        sqlx::query_scalar("SELECT narrated_at FROM wiki_days WHERE date = $1")
+            .bind(date)
+            .fetch_optional(pool)
+            .await?;
+    if already.flatten().is_some() {
+        tracing::debug!(date = %date, "already narrated — nothing asked for a rewrite");
+        return Ok(None);
+    }
+
     if events.len() < MIN_EVENTS_TO_NARRATE {
         tracing::info!(
             date = %date,
