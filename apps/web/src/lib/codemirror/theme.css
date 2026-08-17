@@ -1029,6 +1029,18 @@
 	transition: none;
 }
 
+/* Widget-owned editable regions get the NATIVE caret back.
+   `.cm-content` sets `caret-color: transparent` because the rendered caret
+   replaces it — but a table cell is a `contenteditable` inside the widget, and
+   its selection is a native DOM selection, not a position in the CodeMirror
+   document. The rendered caret therefore cannot follow it, and the transparent
+   rule was leaving those cells with no visible caret at all. Same color, so it
+   reads as one caret; it cannot glide or scale, because it is genuinely a
+   different editing surface. */
+.cm-editor .cm-content [contenteditable='true'] {
+	caret-color: var(--color-primary);
+}
+
 /* Blinking is opt-IN, applied by the plugin after 500ms of stillness, so the
    caret never blinks under the writer's own typing. */
 .cm-editor .cm-cursorLayer.cm-caret-blinking .cm-cursor {
