@@ -19,7 +19,9 @@
 //!   key for the whole fleet.
 //! * **A shared machine-id** collides in DHCP and journald; **shared SSH host
 //!   keys** make every unit trivially impersonable.
-//! * **Saved wifi** ships the workshop's network password to customers.
+//! * **Saved wifi** ships the workshop's network password to customers — and
+//!   on Ubuntu it is stored by netplan, not by NetworkManager, which is where
+//!   this check used to look and find nothing.
 //!
 //! ## Read-only, on purpose
 //!
@@ -109,6 +111,25 @@ pub async fn run() -> i32 {
                 fix: "sudo virtues deprovision",
             });
         }
+    }
+
+    // …and the place the credentials actually are, on Ubuntu. NetworkManager
+    // renders netplan here rather than owning the profile, so the directory
+    // checked above is empty on a box that is very much joined to a network,
+    // and this check passed a card holding a corporate 802.1X password in plain
+    // text. Same helper as `deprovision`, deliberately — a checker that looks
+    // somewhere its own remedy does not is worse than no checker, because it
+    // signs off.
+    let wifi_yaml = super::deprovision::netplan_wifi_files();
+    if !wifi_yaml.is_empty() {
+        findings.push(Finding {
+            what: "wifi credentials in netplan",
+            detail: format!(
+                "{} file(s) under /etc/netplan carry an SSID and its password (and 802.1X identity, on an enterprise network) — readable in plain text on every unit imaged from this card",
+                wifi_yaml.len()
+            ),
+            fix: "sudo virtues deprovision",
+        });
     }
 
     // ── A leftover pre-move copy of the cluster ─────────────────────────────
