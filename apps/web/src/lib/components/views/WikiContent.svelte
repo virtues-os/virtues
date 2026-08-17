@@ -6,30 +6,22 @@
 		getPlaceById,
 		getOrganizationById,
 		getDayByDate,
-		getActById,
-		getChapterById,
-		getTelosById,
 	} from "$lib/wiki/api";
 	import {
 		apiToPersonPage,
 		apiToPlacePage,
 		apiToOrganizationPage,
 		apiToDayPage,
-		apiToActPage,
-		apiToChapterPage,
-		apiToTelosPage,
 	} from "$lib/wiki/converters";
 	import {
 		WikiPage,
 		DayPage,
-		YearPage,
 		PersonPage,
 		PlacePage,
 		OrganizationPage,
 	} from "$lib/components/wiki";
 	import {
 		isDayPage,
-		isYearPage,
 		isPersonPage,
 		isPlacePage,
 		isOrganizationPage,
@@ -153,38 +145,8 @@
 				}
 
 
-				case "act": {
-					const act = await getActById(entityId);
-					if (act) {
-						wikiPage = apiToActPage(act);
-						updateLabel(act.title);
-					} else {
-						error = `Act "${entityId}" not found`;
-					}
-					break;
-				}
 
-				case "chapter": {
-					const chapter = await getChapterById(entityId);
-					if (chapter) {
-						wikiPage = apiToChapterPage(chapter);
-						updateLabel(chapter.title);
-					} else {
-						error = `Chapter "${entityId}" not found`;
-					}
-					break;
-				}
 
-				case "telos": {
-					const telos = await getTelosById(entityId);
-					if (telos) {
-						wikiPage = apiToTelosPage(telos);
-						updateLabel(telos.title);
-					} else {
-						error = `Telos "${entityId}" not found`;
-					}
-					break;
-				}
 
 				default:
 					error = `Unknown entity type: "${type}"`;
@@ -239,8 +201,6 @@
 	{:else if wikiPage}
 		{#if isDayPage(wikiPage)}
 			<DayPage page={wikiPage} />
-		{:else if isYearPage(wikiPage)}
-			<YearPage page={wikiPage} />
 		{:else if isPersonPage(wikiPage)}
 			<PersonPage page={wikiPage} />
 		{:else if isPlacePage(wikiPage)}

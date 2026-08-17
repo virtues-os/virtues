@@ -558,7 +558,6 @@ ENTITIES (resolved nouns in user's life)
 
 TEMPORAL (daily/yearly context)
   wiki_days         Day summaries with autobiography, context vector
-  wiki_years        Year summaries with highlights, themes
   wiki_events       Timeline events within a day
 
 REFERENCES
@@ -567,9 +566,6 @@ REFERENCES
 ================================================================================
 NARRATIVE TABLES (life story structure — wiki_* prefix)
 ================================================================================
-  wiki_telos     User's life purpose/direction
-  wiki_acts      Major life periods (multi-year)
-  wiki_chapters  Chapters within acts (months/seasons)
 
 ================================================================================
 QUERY TIPS (PostgreSQL dialect)

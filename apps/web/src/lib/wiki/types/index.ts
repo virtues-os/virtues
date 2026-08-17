@@ -22,15 +22,9 @@ export type {
 	WikiPageBase,
 } from "./base";
 
-export { PAGE_TYPE_META, NARRATIVE_PAGE_TYPES, TEMPORAL_PAGE_TYPES, ENTITY_PAGE_TYPES } from "./base";
-
-// Narrative pages (story structure)
-export type { TelosPage } from "./telos";
-export type { ActPage } from "./act";
-export type { ChapterPage, NarrativeArc } from "./chapter";
+export { PAGE_TYPE_META, TEMPORAL_PAGE_TYPES, ENTITY_PAGE_TYPES } from "./base";
 
 // Temporal pages (calendar-based)
-export type { YearPage, MonthSummary } from "./year";
 export type {
 	DayPage,
 	DayEvent,
@@ -57,10 +51,6 @@ export type { OrganizationPage, OrganizationType } from "./organization";
 // UNION TYPE
 // =============================================================================
 
-import type { TelosPage } from "./telos";
-import type { ActPage } from "./act";
-import type { ChapterPage } from "./chapter";
-import type { YearPage } from "./year";
 import type { DayPage } from "./day";
 import type { PersonPage } from "./person";
 import type { PlacePage } from "./place";
@@ -71,10 +61,6 @@ import type { OrganizationPage } from "./organization";
  * Use type guards to narrow to specific page types.
  */
 export type WikiPage =
-	| TelosPage
-	| ActPage
-	| ChapterPage
-	| YearPage
 	| DayPage
 	| PersonPage
 	| PlacePage
@@ -84,21 +70,9 @@ export type WikiPage =
 // TYPE GUARDS
 // =============================================================================
 
-export function isTelosPage(page: WikiPage): page is TelosPage {
-	return page.type === "telos";
-}
 
-export function isActPage(page: WikiPage): page is ActPage {
-	return page.type === "act";
-}
 
-export function isChapterPage(page: WikiPage): page is ChapterPage {
-	return page.type === "chapter";
-}
 
-export function isYearPage(page: WikiPage): page is YearPage {
-	return page.type === "year";
-}
 
 export function isDayPage(page: WikiPage): page is DayPage {
 	return page.type === "day";
@@ -120,21 +94,18 @@ export function isOrganizationPage(page: WikiPage): page is OrganizationPage {
 // PAGE CATEGORY TYPES
 // =============================================================================
 
-// Narrative pages - story structure (subjective meaning)
-export type NarrativePage = TelosPage | ActPage | ChapterPage;
-
 // Temporal pages - calendar-based (objective time)
-export type TemporalPage = YearPage | DayPage;
+//
+// `NarrativePage` (telos | act | chapter) went with migration 0107: four tables
+// with a read path, a render branch and no writer, in a schema that claimed the
+// product had a life-story hierarchy it had never built.
+export type TemporalPage = DayPage;
 
 // Entity pages - reference pages (people, places, orgs)
 export type EntityPage = PersonPage | PlacePage | OrganizationPage;
 
-export function isNarrativePage(page: WikiPage): page is NarrativePage {
-	return ["telos", "act", "chapter"].includes(page.type);
-}
-
 export function isTemporalPage(page: WikiPage): page is TemporalPage {
-	return ["year", "day"].includes(page.type);
+	return page.type === "day";
 }
 
 export function isEntityPage(page: WikiPage): page is EntityPage {
