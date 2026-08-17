@@ -148,7 +148,7 @@ async fn window_avg_hr(
 
 /// The entities already resolved to records inside this window.
 ///
-/// No LLM. `wiki_entity_refs` is populated by the deterministic resolvers
+/// No LLM. `wiki_refs` is populated by the deterministic resolvers
 /// (`entity_resolution::people` / `::places`) and by the mention resolver, and
 /// it is the authoritative edge — `wiki_events.entities` is a derived, rebuilt
 /// cache over it, never hand-edited. Events get re-cut; the refs don't move.
@@ -160,7 +160,7 @@ async fn window_entities(
     let rows = sqlx::query(
         r#"
         SELECT DISTINCT entity_id
-        FROM wiki_entity_refs
+        FROM wiki_refs
         WHERE timestamp >= $1 AND timestamp < $2
         "#,
     )

@@ -16,7 +16,7 @@
 //! prompt.
 //!
 //! **The writer never touches the graph.** Notes are the machine's only channel
-//! into the record. It may not write `wiki_entity_refs`, not at any confidence,
+//! into the record. It may not write `wiki_refs`, not at any confidence,
 //! not flagged. Promotion is a human accepting, or an editor pass gated on
 //! `auto_update`.
 //!

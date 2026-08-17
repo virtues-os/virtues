@@ -224,11 +224,42 @@ pub struct Rule {
     pub active: bool,
 }
 
+/// One confirmed rule.
+///
+/// `kind` arrives from the client because only the person knows which it is:
+/// "never mention my father" and "help me hold my fast" are both rules and they
+/// are opposites. It defaults to `avoid` — the reading that cannot cause harm if
+/// a client omits it.
+#[derive(Debug, serde::Deserialize)]
+#[serde(untagged)]
+pub enum RuleInput {
+    /// The wire shape every client used before `kind` existed.
+    Bare(String),
+    Kinded {
+        rule: String,
+        #[serde(default = "default_kind")]
+        kind: String,
+    },
+}
+
+fn default_kind() -> String {
+    "avoid".to_string()
+}
+
+impl RuleInput {
+    fn parts(&self) -> (&str, &str) {
+        match self {
+            RuleInput::Bare(r) => (r.as_str(), "avoid"),
+            RuleInput::Kinded { rule, kind } => (rule.as_str(), kind.as_str()),
+        }
+    }
+}
+
 #[derive(Debug, serde::Deserialize)]
 pub struct SaveRules {
     /// Exactly what the person confirmed, in the wording they left it in. The
     /// proposals are thrown away; only this is stored.
-    pub rules: Vec<String>,
+    pub rules: Vec<RuleInput>,
 }
 
 pub async fn list_rules(pool: &PgPool) -> Result<Vec<Rule>> {
@@ -293,14 +324,19 @@ pub async fn save_rules_handler(
             .into_response();
     }
 
-    for (i, r) in req.rules.iter().enumerate() {
-        let r = r.trim();
-        if r.is_empty() {
+    for (i, input) in req.rules.iter().enumerate() {
+        let (rule, kind) = input.parts();
+        let rule = rule.trim();
+        if rule.is_empty() {
             continue;
         }
-        if let Err(e) = sqlx::query("INSERT INTO wiki_rules (id, rule) VALUES ($1, $2)")
+        // The column has a CHECK; sending anything else would fail the whole
+        // transaction and lose the rules that were fine.
+        let kind = if kind == "defend" { "defend" } else { "avoid" };
+        if let Err(e) = sqlx::query("INSERT INTO wiki_rules (id, rule, kind) VALUES ($1, $2, $3)")
             .bind(format!("rule_{i:03}"))
-            .bind(r)
+            .bind(rule)
+            .bind(kind)
             .execute(&mut *tx)
             .await
         {

@@ -6,7 +6,7 @@
 
 .DEFAULT_GOAL := help
 .PHONY: help init commit migration dev seed dev-info dev-core dev-api dev-web dev-embed _embed-ensure _embed-run \
-        dev-link dev-reset dev-wipe-mac dev-clean dev-pull dev-real db db-stop deploy-atlas deploy-virtues-api _ecr-push mac-app \
+        dev-link dev-reset dev-wipe-mac dev-clean dev-pull dev-real db db-stop deploy-atlas deploy-virtues-api _ecr-push mac-app web-test \
         iroh-ffi-ios iroh-ffi-mac ios-release
 
 AWS_REGION ?= us-east-1
@@ -399,6 +399,10 @@ dev-clean: dev-wipe-mac dev-reset ## Full local reset: unpair this Mac + drop/re
 # a build artifact). Regenerate it before building a client. `make mac-app` runs
 # the macOS one automatically; iOS devs run `make iroh-ffi-ios` before opening
 # Xcode. Both are idempotent.
+
+web-test: ## Run the frontend checks CI runs (airlock router tests + svelte-check)
+	@node --test "apps/web/src-tauri/ui/*.test.mjs"
+	@cd apps/web && pnpm check
 
 iroh-ffi-ios: ## Build VirtuesIroh.xcframework for the iOS app (run before Xcode)
 	crates/virtues-iroh-ffi/build-ios.sh

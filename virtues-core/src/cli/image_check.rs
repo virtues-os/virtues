@@ -137,6 +137,17 @@ pub async fn run() -> i32 {
         ClusterState::Absent => {
             ui::ok("no Postgres cluster on this disk — nothing to leak");
         }
+        ClusterState::Present => match applet_schemas_present().await {
+            Some(n) if n > 0 => findings.push(Finding {
+                what: "applet schemas",
+                detail: format!("{n} `applet_*` schema(s) still in the database — an authored applet's DATA, which a wipe scoped to `public` does not touch"),
+                fix: "sudo virtues deprovision",
+            }),
+            _ => {}
+        },
+    }
+    match cluster_state() {
+        ClusterState::Absent => {}
         ClusterState::Present => match database_is_present().await {
             Some(true) => findings.push(Finding {
                 what: "database still exists",
@@ -153,6 +164,29 @@ pub async fn run() -> i32 {
                 fix: "start postgresql, then re-run",
             }),
         },
+    }
+
+    // ── Chat-authored applets ───────────────────────────────────────────────
+    // The owner's own writing, and the finding that prompted this check to
+    // exist at all: `reset` wiped only the `public` schema, so applet DATA
+    // survived a deprovision, and nothing ever removed their CODE from the
+    // state root. Three of them were sitting on the box that would have been
+    // the first master — a calorie diary, a weekly planner, a readings log.
+    //
+    // Checked here as well as fixed there, because a cleaner nobody audits is
+    // how it silently stops working: someone adds a fourth place applets can
+    // live, and only this notices.
+    if let Some(n) = count_prefixed(
+        &crate::cli::deprovision::authored_applets_dir().display().to_string(),
+        "",
+    ) {
+        if n > 0 {
+            findings.push(Finding {
+                what: "authored applets",
+                detail: format!("{n} chat-authored applet(s) still in the state root — this is the owner's own writing, and it would be cloned onto every unit"),
+                fix: "sudo virtues deprovision",
+            });
+        }
     }
 
     // ── The lake ────────────────────────────────────────────────────────────
@@ -235,6 +269,30 @@ fn cluster_state_of(root: &Path) -> ClusterState {
         }
     }
     ClusterState::Absent
+}
+
+/// How many `applet_*` schemas are left?
+///
+/// `None` when Postgres cannot be asked, which the caller already treats as its
+/// own finding via the database check — no need to double-report it.
+async fn applet_schemas_present() -> Option<i64> {
+    let out = std::process::Command::new("sudo")
+        .args([
+            "-u",
+            "postgres",
+            "psql",
+            "-d",
+            "virtues",
+            "-tAc",
+            // Underscore escaped: unescaped it is a single-character wildcard.
+            r"SELECT count(*) FROM pg_namespace WHERE nspname LIKE 'applet\_%'",
+        ])
+        .output()
+        .ok()?;
+    if !out.status.success() {
+        return None;
+    }
+    String::from_utf8_lossy(&out.stdout).trim().parse().ok()
 }
 
 /// Does the `virtues` database exist?

@@ -568,9 +568,10 @@ pub async fn run(cli: Cli, virtues: Virtues) -> Result<(), Box<dyn std::error::E
                 println!("Epigraph:");
                 println!("  {epigraph}");
             }
-            // The prose lives in the day's article page now (0087 view);
-            // `article` falls back to the legacy column for pre-0083 days.
-            if let Some(prose) = day.article.as_ref().or(day.autobiography.as_ref()) {
+            // The prose lives on the day's article page, and only there — the
+            // legacy `autobiography` column and the view's fallback arm were
+            // dropped in 0106.
+            if let Some(prose) = day.article.as_ref() {
                 println!();
                 println!("Article:");
                 for line in prose.lines() {

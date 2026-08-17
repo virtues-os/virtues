@@ -53,7 +53,7 @@ fn get_table_metadata() -> HashMap<&'static str, TableMetadata> {
         description: "Exercise and workout sessions",
         category: "health",
         key_columns: &["workout_type", "start_time", "end_time", "duration_minutes", "calories_burned", "distance_km", "avg_heart_rate", "max_heart_rate"],
-        join_hint: Some("JOIN wiki_entity_refs er ON er.source_table = 'data_health_workout' AND er.source_id = data_health_workout.id JOIN wiki_places ON er.entity_id = wiki_places.id AND er.entity_type = 'place'"),
+        join_hint: Some("JOIN wiki_refs er ON er.source_table = 'data_health_workout' AND er.source_id = data_health_workout.id JOIN wiki_places ON er.entity_id = wiki_places.id AND er.entity_type = 'place'"),
     });
 
     // ============================================================================
@@ -69,7 +69,7 @@ fn get_table_metadata() -> HashMap<&'static str, TableMetadata> {
         description: "Place visits with arrival/departure times",
         category: "location",
         key_columns: &["place_name", "latitude", "longitude", "arrival_time", "departure_time", "duration_minutes"],
-        join_hint: Some("JOIN wiki_entity_refs er ON er.source_table = 'data_location_visit' AND er.source_id = data_location_visit.id JOIN wiki_places ON er.entity_id = wiki_places.id AND er.entity_type = 'place'"),
+        join_hint: Some("JOIN wiki_refs er ON er.source_table = 'data_location_visit' AND er.source_id = data_location_visit.id JOIN wiki_places ON er.entity_id = wiki_places.id AND er.entity_type = 'place'"),
     });
 
     // ============================================================================
@@ -79,17 +79,17 @@ fn get_table_metadata() -> HashMap<&'static str, TableMetadata> {
         description: "Email messages from Gmail, etc.",
         category: "communication",
         key_columns: &["subject", "body", "body_preview", "from_email", "from_name", "to_emails", "direction", "is_read", "is_starred", "has_attachments", "labels", "thread_id", "timestamp"],
-        join_hint: Some("JOIN wiki_entity_refs er ON er.source_table = 'data_communication_email' AND er.source_id = data_communication_email.id JOIN wiki_people ON er.entity_id = wiki_people.id AND er.entity_type = 'person'"),
+        join_hint: Some("JOIN wiki_refs er ON er.source_table = 'data_communication_email' AND er.source_id = data_communication_email.id JOIN wiki_people ON er.entity_id = wiki_people.id AND er.entity_type = 'person'"),
     });
     m.insert("data_communication_message", TableMetadata {
         description: "Chat messages (iMessage, SMS, etc.)",
         category: "communication",
         key_columns: &["body", "channel", "from_identifier", "from_name", "to_identifiers", "is_read", "is_group_message", "has_attachments", "thread_id", "timestamp"],
-        // A message links to the person on the other end via wiki_entity_refs:
+        // A message links to the person on the other end via wiki_refs:
         // role='sender' for messages you received, role='recipient' for messages you
         // sent. Filter both to get a full thread with someone; the message's own
         // direction is in metadata->>'is_from_me'.
-        join_hint: Some("JOIN wiki_entity_refs er ON er.source_table = 'data_communication_message' AND er.source_id = data_communication_message.id AND er.entity_type = 'person' AND er.role IN ('sender','recipient') JOIN wiki_people ON er.entity_id = wiki_people.id"),
+        join_hint: Some("JOIN wiki_refs er ON er.source_table = 'data_communication_message' AND er.source_id = data_communication_message.id AND er.entity_type = 'person' AND er.role IN ('sender','recipient') JOIN wiki_people ON er.entity_id = wiki_people.id"),
     });
 
     // ============================================================================
@@ -99,7 +99,7 @@ fn get_table_metadata() -> HashMap<&'static str, TableMetadata> {
         description: "Calendar events with attendees and location",
         category: "calendar",
         key_columns: &["title", "description", "calendar_name", "event_type", "status", "response_status", "organizer_identifier", "attendee_identifiers", "location_name", "conference_url", "start_time", "end_time", "is_all_day", "timezone"],
-        join_hint: Some("JOIN wiki_entity_refs er ON er.source_table = 'data_calendar_event' AND er.source_id = data_calendar_event.id"),
+        join_hint: Some("JOIN wiki_refs er ON er.source_table = 'data_calendar_event' AND er.source_id = data_calendar_event.id"),
     });
 
     // ============================================================================
@@ -224,7 +224,7 @@ fn get_table_metadata() -> HashMap<&'static str, TableMetadata> {
     // ============================================================================
     // WIKI TABLES - References
     // ============================================================================
-    m.insert("wiki_entity_refs", TableMetadata {
+    m.insert("wiki_refs", TableMetadata {
         description: "Junction table linking entities (people, places, orgs) to ontology records. Use for 'everything about entity X' queries.",
         category: "wiki_reference",
         key_columns: &["entity_type", "entity_id", "source_table", "source_id", "role", "confidence", "resolved_by", "timestamp"],

@@ -29,6 +29,9 @@
 //!     unit is trivially impersonable
 //!   * saved NetworkManager connections — otherwise the master's wifi
 //!     credentials ship to every customer
+//!   * chat-authored applets, code (state root) and data (`applet_*` schemas)
+//!     alike — the owner's own writing, which would otherwise be cloned onto
+//!     every unit built from this master
 //!   * the journal
 //!
 //! **What it keeps:** the installed binary, the systemd units, the env file's
@@ -63,6 +66,7 @@ pub async fn run(yes: bool, force: bool) -> Result<(), crate::Error> {
     println!("     • the data lake");
     println!("     • VIRTUES_ENCRYPTION_KEY (re-minted on first boot)");
     println!("     • machine-id, SSH host keys, saved wifi networks");
+    println!("     • chat-authored applets (their code AND their data)");
     println!("   KEEPS: the binary, systemd units, models, QAIRT libs.");
     println!();
     println!("   This box will lose network access the moment its saved wifi is");
@@ -117,6 +121,18 @@ pub async fn run(yes: bool, force: bool) -> Result<(), crate::Error> {
         "saved network connections",
     )?;
 
+    // ── 3a. Authored applets ────────────────────────────────────────────────
+    // Chat-authored applets are per-box runtime state and live in the STATE
+    // ROOT, never in the shipped `applets/` tree (see CLAUDE.md). Which means
+    // nothing above touched them: `reset` wipes the database, and these are
+    // source files on disk.
+    //
+    // They are the owner's own writing — three of them on this machine, one a
+    // weekly planner with another person's name in the slug — and they would
+    // have been cloned onto every unit built from this master. The applet
+    // schemas that hold their DATA are handled in `reset`; this is their CODE.
+    remove_authored_applets();
+
     // ── 3b. The relocated Postgres cluster ──────────────────────────────────
     // On an appliance the cluster lives on the data disk and `/var/lib/postgresql`
     // is a symlink to it. That whole tree is per-unit state — it is where the
@@ -157,6 +173,48 @@ pub async fn run(yes: bool, force: bool) -> Result<(), crate::Error> {
     println!("  On first boot each unit mints its own encryption key, identity,");
     println!("  and host keys via the first-boot unit.");
     Ok(())
+}
+
+/// Where chat-authored applets live: the state root, never the shipped tree.
+///
+/// Public so `image_check` can ask the same question — a check that looks
+/// somewhere else than the thing that cleans is a check that agrees with itself
+/// and nothing else.
+pub fn authored_applets_dir() -> std::path::PathBuf {
+    // `var` returns Result, so the fallback closure takes the error.
+    std::env::var("VIRTUES_APPLET_STATE_DIR")
+        .map(std::path::PathBuf::from)
+        .unwrap_or_else(|_| {
+            env_file_path()
+                .parent()
+                .unwrap_or(Path::new("/var/lib/virtues"))
+                .join("applets")
+        })
+        .join("user")
+}
+
+/// Delete every authored applet. Best-effort; absent on a box where nobody
+/// wrote one.
+fn remove_authored_applets() {
+    let dir = authored_applets_dir();
+    let Ok(entries) = std::fs::read_dir(&dir) else {
+        return;
+    };
+    let mut n = 0usize;
+    for e in entries.flatten() {
+        let p = e.path();
+        let ok = if p.is_dir() {
+            std::fs::remove_dir_all(&p).is_ok()
+        } else {
+            std::fs::remove_file(&p).is_ok()
+        };
+        if ok {
+            n += 1;
+        }
+    }
+    if n > 0 {
+        println!("  ✓ removed {n} authored applet(s) from {}", dir.display());
+    }
 }
 
 /// `/var/lib/postgresql`, which on a relocated appliance is a symlink into the

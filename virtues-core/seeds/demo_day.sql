@@ -1446,7 +1446,7 @@ INSERT INTO wiki_orgs (
 -- ─────────────────────────────────────────────────────────────────────────────
 
 -- Location visits → places
-INSERT INTO wiki_entity_refs (id, entity_type, entity_id, source_table, source_id, role, timestamp) VALUES
+INSERT INTO wiki_refs (id, entity_type, entity_id, source_table, source_id, role, timestamp) VALUES
 ('eref_lv_home_morning', 'place', 'place_demo_home', 'data_location_visit', 'lv_demo_home_morning', 'location', '2026-02-13T04:00:00Z'),
 ('eref_lv_office_am', 'place', 'place_demo_office', 'data_location_visit', 'lv_demo_office_am', 'location', '2026-02-13T13:45:00Z'),
 ('eref_lv_office_pm', 'place', 'place_demo_office', 'data_location_visit', 'lv_demo_office_pm', 'location', '2026-02-13T18:30:00Z'),

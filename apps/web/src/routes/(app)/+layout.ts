@@ -79,8 +79,11 @@ export const load: LayoutLoad = async ({ fetch, url }) => {
 		// second of patience; it is never worth locking someone out of their
 		// own app over a box that blipped.
 		try {
-			let setup: { setup_complete?: boolean; onboarding_complete?: boolean; onboarding_skipped?: boolean } | null =
-				null;
+			let setup: {
+				setup_complete?: boolean;
+				onboarding_complete?: boolean;
+				onboarding_status?: string;
+			} | null = null;
 			for (let i = 0; i < 3 && !setup; i++) {
 				if (i > 0) await new Promise((r) => setTimeout(r, 400));
 				try {
@@ -94,7 +97,9 @@ export const load: LayoutLoad = async ({ fetch, url }) => {
 				if (setup.setup_complete === false) {
 					throw redirect(303, '/onboarding');
 				}
-				if (setup.onboarding_complete === false && setup.onboarding_skipped !== true) {
+				// `active` covers both finished and dismissed, which is the whole
+				// reason it replaced a separate skipped flag.
+				if (setup.onboarding_complete === false && setup.onboarding_status !== 'active') {
 					throw redirect(303, '/onboarding');
 				}
 			}

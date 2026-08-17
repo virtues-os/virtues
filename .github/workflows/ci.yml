@@ -35,6 +35,48 @@ on:
       - LICENSE
 
 jobs:
+  # The frontend had NO CI at all until 2026-08-17. `pnpm check` and the airlock's
+  # router tests ran only on whichever laptop happened to run them, which meant
+  # the tests written for the most load-bearing file in the product could rot
+  # without anything noticing. Its own job rather than steps on `rust`: it shares
+  # nothing with that job, needs no Postgres, and finishes in a fraction of the
+  # time, so a type error in a Svelte file should not wait on a Rust build.
+  web:
+    runs-on: blacksmith-4vcpu-ubuntu-2204
+    steps:
+      - uses: actions/checkout@v4
+
+      # Versions pinned to match release-linux.yml — CI that passes on a
+      # different toolchain than the one that ships is CI about a different
+      # program.
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'pnpm'
+          cache-dependency-path: apps/web/pnpm-lock.yaml
+
+      - name: Install web dependencies
+        working-directory: apps/web
+        run: pnpm install --frozen-lockfile
+
+      # The airlock's routing rules (apps/web/src-tauri/ui/). No dependencies —
+      # node's own test runner, reading `connect.html` and evaluating the marked
+      # region. Run BEFORE svelte-check: these are the rules that decide whether
+      # a box can be set up at all, and they take under a second.
+      - name: Airlock router tests
+        run: node --test "apps/web/src-tauri/ui/*.test.mjs"
+
+      # Errors fail; warnings do not. There are ~113 warnings today (mostly
+      # `@reference` at-rules and a11y advisories) and gating on them would mean
+      # this job is red on arrival and therefore ignored. Errors are the signal.
+      - name: svelte-check
+        working-directory: apps/web
+        run: pnpm check
+
   rust:
     runs-on: blacksmith-8vcpu-ubuntu-2204
     # A real Postgres for the #[sqlx::test] tests (action_templates,

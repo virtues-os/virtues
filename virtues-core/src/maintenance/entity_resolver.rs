@@ -3,7 +3,7 @@
 //! Raw ingest writes primitives to the `data_*` lake (location points,
 //! financial transactions, calendar events). Turning those into ontology
 //! surfaces — `data_location_visit` + `wiki_places`, merchant `wiki_orgs`,
-//! attendee `wiki_people`, all linked via `wiki_entity_refs` — is the job of
+//! attendee `wiki_people`, all linked via `wiki_refs` — is the job of
 //! `entity_resolution::resolve_entities`. Historically that only ran from the
 //! `virtues resolve-entities` CLI, so on a normal box it NEVER ran: location
 //! never clustered into visits, merchants/people never resolved, and the day

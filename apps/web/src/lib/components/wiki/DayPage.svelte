@@ -16,7 +16,6 @@
 		getDayEvents,
 		getDayTimeline,
 		getDayChats,
-		updateDay,
 		getArticle,
 		type DaySourceApi,
 		type DayChatApi,
@@ -423,43 +422,28 @@
 	// ─────────────────────────────────────────────────────────────────────────
 	// Autobiography (read-only display + inline edit)
 	// ─────────────────────────────────────────────────────────────────────────
+	// READ-ONLY here. The day's prose lives on its article page, and `Edit`
+	// (openDayArticle, below) opens that page in the real editor.
+	//
+	// There used to be an inline contenteditable that saved through
+	// `updateDay({ autobiography })` — into the LEGACY column. Since 0083 moved
+	// day prose onto article pages and `wiki_day_prose` began preferring the
+	// page, that write went somewhere nothing reads: the article shadowed it, so
+	// a user's edit vanished the instant they saved it, while
+	// `last_edited_by: "user"` still claimed the day and stopped narration. The
+	// worst of both.
+	//
+	// Porting the inline editor to write the page instead was the obvious fix
+	// and is wrong: an article page may carry a live Yjs document, and a plain
+	// content write under one is silently clobbered — the hazard
+	// `save_day_article` already guards against by refusing when
+	// `yjs_state IS NOT NULL`. The page editor is CRDT-aware; this was never
+	// going to be. One editor, and it is that one.
 	let summaryText = $state(page.autobiography || "");
-	let editingAutobiography = $state(false);
 
 	$effect(() => {
 		summaryText = page.autobiography || "";
-		editingAutobiography = false;
 	});
-
-	async function saveAutobiography(newText: string) {
-		const trimmed = newText.trim();
-		if (trimmed === summaryText) {
-			editingAutobiography = false;
-			return;
-		}
-		try {
-			await updateDay(currentDateSlug, {
-				autobiography: trimmed,
-				last_edited_by: "user",
-			});
-			summaryText = trimmed;
-		} catch (e) {
-			console.error("Failed to save autobiography:", e);
-		} finally {
-			editingAutobiography = false;
-		}
-	}
-
-	function handleAutobiographyBlur(e: FocusEvent) {
-		const target = e.currentTarget as HTMLElement;
-		saveAutobiography(target.textContent || "");
-	}
-
-	function handleAutobiographyKeydown(e: KeyboardEvent) {
-		if (e.key === "Escape") {
-			editingAutobiography = false;
-		}
-	}
 
 	// The day article IS a page — Edit opens the page editor. The first real
 	// edit claims it (the server flips auto_update off) and the nightly
@@ -587,23 +571,9 @@
 								Edit
 							</button>
 						</h2>
-						{#if editingAutobiography}
-							<!-- svelte-ignore a11y_no_static_element_interactions -->
-							<div
-								class="lead-text lead-editable"
-								contenteditable="true"
-								onblur={handleAutobiographyBlur}
-								onkeydown={handleAutobiographyKeydown}
-								role="textbox"
-								aria-label="Edit autobiography"
-							>
-								{summaryText}
-							</div>
-						{:else}
-							<div class="lead-content">
-								<Markdown content={summaryText} refVariant="quiet" />
-							</div>
-						{/if}
+						<div class="lead-content">
+							<Markdown content={summaryText} refVariant="quiet" />
+						</div>
 					</section>
 				{/if}
 
@@ -924,26 +894,6 @@
 		line-height: 1.7;
 		color: var(--color-foreground);
 		margin: 0;
-	}
-
-	.lead-editable {
-		outline: none;
-		border-radius: 4px;
-		padding: 0.375rem 0.5rem;
-		margin: -0.375rem -0.5rem;
-		background: color-mix(
-			in srgb,
-			var(--color-foreground) 3%,
-			transparent
-		);
-		cursor: text;
-	}
-	.lead-editable:focus {
-		background: color-mix(
-			in srgb,
-			var(--color-foreground) 5%,
-			transparent
-		);
 	}
 
 	:global(.spin-icon) {

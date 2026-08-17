@@ -50,6 +50,18 @@ pub struct SemanticSearchEngine {
 /// 200; the fused top-`recall_limit` feed the reranker.
 const CANDIDATE_POOL: i64 = 200;
 
+/// pgvector's HNSW beam width, and the reason `CANDIDATE_POOL` was a lie.
+///
+/// `hnsw.ef_search` defaults to **40** and nothing in this repo ever set it, so
+/// the dense arm's `LIMIT 200` returned 40 rows while the lexical arm returned
+/// 200 — a 5x asymmetry the fusion never accounted for, and invisible because
+/// the query succeeds and simply has less in it. Measured on a live index:
+/// `LIMIT 200` → 40 rows; `SET hnsw.ef_search = 250` → 200 rows.
+///
+/// Must exceed the LIMIT it serves. At exactly `CANDIDATE_POOL` the index still
+/// prunes below the target, so this carries a margin.
+const HNSW_EF_SEARCH: i64 = CANDIDATE_POOL + CANDIDATE_POOL / 4;
+
 /// Notebook-scoped retrieval (lean v1): additive bonus, in z-score space, for a
 /// candidate chunk that belongs to the active notebook's members. z-scores can be
 /// negative, so we ADD a bonus (≈ one std-dev) rather than multiply — a boost, not
@@ -442,7 +454,7 @@ impl SemanticSearchEngine {
         let entity_filter = !filters.entities.is_empty();
         if entity_filter {
             filter_sql.push_str(&format!(
-                " AND EXISTS (SELECT 1 FROM wiki_entity_refs er \
+                " AND EXISTS (SELECT 1 FROM wiki_refs er \
                   WHERE er.source_table = se.source_table AND er.source_id = se.record_id \
                   AND er.entity_id = ANY(${next}))",
             ));
@@ -473,7 +485,7 @@ impl SemanticSearchEngine {
         // order, so using them inside filter_sql is safe.
         if notebook_boost && filters.scope_mode == ScopeMode::Exclusive {
             filter_sql.push_str(&format!(
-                " AND (se.record_id = ANY(${r}) OR EXISTS (SELECT 1 FROM wiki_entity_refs er2 \
+                " AND (se.record_id = ANY(${r}) OR EXISTS (SELECT 1 FROM wiki_refs er2 \
                   WHERE er2.source_table = se.source_table AND er2.source_id = se.record_id \
                   AND er2.entity_id = ANY(${e})))",
                 r = p_nb_rec,
@@ -482,7 +494,7 @@ impl SemanticSearchEngine {
         }
         let boost_sql = if notebook_boost && filters.scope_mode == ScopeMode::Weighted {
             format!(
-                " + CASE WHEN se.record_id = ANY(${r}) OR EXISTS (SELECT 1 FROM wiki_entity_refs er2 \
+                " + CASE WHEN se.record_id = ANY(${r}) OR EXISTS (SELECT 1 FROM wiki_refs er2 \
                   WHERE er2.source_table = se.source_table AND er2.source_id = se.record_id \
                   AND er2.entity_id = ANY(${e})) THEN {boost} ELSE 0 END",
                 r = p_nb_rec,
@@ -595,7 +607,15 @@ impl SemanticSearchEngine {
         }
         db_query = db_query.bind(recall_limit);
 
-        let rows = db_query.fetch_all(self.pool.as_ref()).await?;
+        // SET LOCAL, so it needs a transaction and reverts on commit — a bare
+        // `SET` would leave the beam width on whatever pooled connection this
+        // happened to borrow, silently changing every later query that reused it.
+        let mut tx = self.pool.begin().await?;
+        sqlx::query(&format!("SET LOCAL hnsw.ef_search = {HNSW_EF_SEARCH}"))
+            .execute(&mut *tx)
+            .await?;
+        let rows = db_query.fetch_all(&mut *tx).await?;
+        tx.commit().await?;
 
         Ok(rows
             .into_iter()
@@ -648,7 +668,7 @@ impl SemanticSearchEngine {
     /// scope understands: direct record_ids (page/day/source/chat, plus the
     /// document CHUNKS of `/drive/file_` members — the uploaded_document
     /// ontology indexes per-chunk) and entity_ids (person/place/org —
-    /// matched via `wiki_entity_refs`). Filters to `role='library'` (= grounds
+    /// matched via `wiki_refs`). Filters to `role='library'` (= grounds
     /// chat; nav-only 'pin' rows are ignored, and 'manuscript' rows are the
     /// user's own draft — retrieving them would cite their unfinished prose
     /// back at them as a source). External URLs and nested notebooks aren't

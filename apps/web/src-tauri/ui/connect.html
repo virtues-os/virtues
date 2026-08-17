@@ -115,10 +115,56 @@
              background: #12261a; border: 1px solid #1f4a30; border-radius: 12px;
              padding: 16px; margin: 0 0 18px; word-break: break-word; }
       .hidden { display: none; }
+
+      /* ── the save ceremony ──
+         Two ways to record the phrase side by side, then an attestation. See
+         `blePhraseSaved` for why the continue is gated. */
+      .row2 { display: flex; gap: 10px; }
+      .row2 > button { margin-top: 0; }
+      /* The attestation. A real checkbox rather than a styled div: it is the
+         one control on this screen that must be unmistakably a choice the
+         owner made, and the platform's own affordance says that better than
+         anything drawn here. */
+      .attest { display: flex; align-items: flex-start; gap: 11px; margin: 22px 0 16px;
+                font-size: 14px; line-height: 1.45; color: #b6b6bd; cursor: pointer;
+                /* Overrides the global `label` rule, which is written for field
+                   captions — uppercase and letter-spaced. This is a SENTENCE the
+                   owner is agreeing to, and shouting it makes it scan as a
+                   caption and go unread, which is the one thing it cannot do. */
+                text-transform: none; letter-spacing: normal; }
+      .attest input { width: 18px; height: 18px; margin: 1px 0 0; flex: none;
+                      accent-color: #2b6cff; }
+
+      /* ── print ──
+         The printed page is the only vessel that survives the computer this is
+         being typed on, which is the exact failure the phrase insures against.
+         Everything on screen is hidden and one sheet is drawn instead, in ink
+         on white — the app's dark ground would empty a cartridge for nothing.
+         `#printable` is off-screen the rest of the time; `display:none` would
+         keep it out of the print box too. */
+      #printable { position: absolute; left: -10000px; top: 0; }
+      @media print {
+        body { background: #fff; color: #000; padding: 0; }
+        #app, .escape { display: none !important; }
+        #printable { position: static; left: auto; padding: 28mm 24mm; font-size: 12pt;
+                     font-family: Georgia, "Times New Roman", serif; }
+        #printable .pmark { font-size: 10pt; letter-spacing: .18em; text-transform: uppercase;
+                            color: #555; margin: 0 0 26mm; }
+        #printable h2 { font-size: 17pt; margin: 0 0 5mm; font-weight: 600; }
+        #printable .pwhy { margin: 0 0 14mm; line-height: 1.5; max-width: 120mm; }
+        #printable .pphrase { font-family: ui-monospace, "Courier New", monospace;
+                              font-size: 19pt; letter-spacing: .04em; padding: 8mm 0;
+                              border-top: 1pt solid #000; border-bottom: 1pt solid #000;
+                              margin: 0 0 12mm; }
+        #printable .pfoot { font-size: 10pt; color: #444; line-height: 1.6; max-width: 120mm; }
+      }
     </style>
   </head>
   <body>
     <div id="app"></div>
+    <!-- Filled in by `blePhraseSaved` only. Lives outside #app so a re-render
+         of the flow cannot destroy a sheet mid-print. -->
+    <div id="printable"></div>
 
     <script>
       const invoke = window.__TAURI__.core.invoke;
@@ -177,6 +223,198 @@
       // over its own outbound connection regardless of which browser it was.
       const LINK_URL = 'https://atlas.virtues.com/init';
 
+      // ── ROUTER:BEGIN ──────────────────────────────────────────────────────
+      //
+      // Every "which screen next?" decision in this file, as pure functions.
+      //
+      // ## Why this exists
+      //
+      // The rules below were not designed; they were discovered, one hardware
+      // failure at a time — a stale advertisement that claimed a box was online
+      // for hours, an office LAN that isolates clients, a phone that landed on
+      // the SPA's own connect page. Each fix went in as another branch inside
+      // another async function, and the result was six concurrent loops
+      // coordinated by a generation counter, with the actual decisions spread
+      // across them and reachable only by having the hardware in the state that
+      // produced them.
+      //
+      // Pulling them out costs nothing at runtime and makes every rule testable
+      // without a box, a radio, or a network.
+      //
+      // ## Why it is in this file rather than beside it
+      //
+      // This page is THE airlock, compiled into the binary and served before
+      // any bundle, precisely so it cannot be shadowed or fail to load. A second
+      // file would be a second fetch through the custom protocol and a second
+      // way for the one screen that must always work to come up blank. The test
+      // (`connect-router.test.mjs`) slices this region out by these markers and
+      // evaluates it, which buys the testability without buying the risk.
+      //
+      // ## The rules
+      //
+      // Nothing here touches the DOM, `invoke`, or any module-level state. Give
+      // it an observation, get back a destination. If a function in here needs
+      // to await something, it belongs outside.
+      const Router = (() => {
+        /** Improv state byte: the box has no network and wants credentials. */
+        const NEEDS_WIFI = 2;
+
+        return {
+        /**
+         * Where does the window land, before anything is discovered?
+         *
+         * ONE destination, which is the point. This used to be two independent
+         * `if` chains — one at the top of the script, one at the bottom — and
+         * they could both fire: `#reset` on a device that is not locally paired
+         * rendered the "box forgot us" screen and then had it overwritten by the
+         * entry screen a few hundred lines later. Nobody would have found that
+         * by reading, because the two halves are not on the same page.
+         */
+        bootDestination({ hash, injectedPaired }) {
+          // Desktop decides this before the window exists and passes its verdict
+          // in the hash; those verdicts win outright.
+          if (hash === '#reset') return 'forgot-us';
+          if (hash === '#unreachable') return 'unreachable';
+          // `#setup` pins the connect screen open on an already-paired device,
+          // for setting up a SECOND box.
+          if (hash === '#setup') return 'entry';
+          // The injected flag is a FAST PATH, never the truth: it is evaluated
+          // once when the window is built, so after an in-session unpair it
+          // still says true. Confirmed against the plugin by `pairedProbe`.
+          return injectedPaired ? 'probe-paired' : 'entry';
+        },
+
+        /**
+         * The paired-probe's three answers get three different screens, and only
+         * one opens the SPA. Loading it on anything less lands on the SPA's own
+         * legacy connect page — the "old path" that must never appear.
+         */
+        pairedProbe(status) {
+          if (!status || !status.paired) return 'entry';
+          if (status.session === 'authed') return 'open';
+          // Answered and REFUSED our key: box was reset, or we were revoked.
+          if (status.session === 'rejected') return 'forgot-us';
+          // Did not answer: off, or on a network we cannot reach. An offline box
+          // must never silently cost someone their pairing, nor dead-end them.
+          return 'unreachable';
+        },
+
+        /**
+         * The default entry after "set up a new box": what did one round of
+         * discovery find?
+         *
+         * `provisionOpenServer` is the breakglass — a box hosting its own setup
+         * network, which only happens when someone has resurrected the AP.
+         */
+        afterDiscovery({ bleBoxes, lanServers, provisionOpenServer }) {
+          const ble = bleBoxes || [];
+          const lan = lanServers || [];
+          if (provisionOpenServer) {
+            return { screen: 'lan-provision', server: provisionOpenServer };
+          }
+          const needsWifi = ble.find((b) => b.improvState === NEEDS_WIFI);
+          // An unboxing: something in radio range wants wifi, and nothing on the
+          // LAN is a better answer.
+          if (needsWifi && lan.length === 0) return { screen: 'phrase', box: needsWifi };
+          // Online-but-unclaimed over BLE with nothing on the LAN: a network that
+          // isolates its clients. Pairing rides Bluetooth, so the LAN stops
+          // mattering.
+          if (lan.length === 0 && ble.length) return { screen: 'route', box: ble[0] };
+          // Nothing anywhere. Setup IS the default state, and it keeps looking.
+          if (lan.length === 0) return { screen: 'keep-looking' };
+          return { screen: 'pair', servers: lan };
+        },
+
+        /**
+         * `startBleSetup`: a deliberate "set up a new box", where a box that
+         * claims to be ONLINE has to be checked rather than believed.
+         *
+         * The advertisement's state byte is baked in when the box's BLE service
+         * starts and goes stale — seen live, a box that lost its network kept
+         * advertising "online" for hours, and the screen told the owner to tap a
+         * chip that could not exist. The LAN is the ground truth.
+         */
+        bleSetup({ bleBoxes, lanServers }) {
+          const ble = bleBoxes || [];
+          const candidates = ble.filter((b) => b.improvState === NEEDS_WIFI);
+          if (candidates.length === 0) {
+            if (ble.length === 0) return { screen: 'keep-looking' };
+            // It says it is online. Is it?
+            if ((lanServers || []).length) {
+              return { screen: 'already-online', box: ble[0] };
+            }
+            // Online by its own account and invisible on this LAN: either an
+            // isolating network or a stale byte. Both end up in the same place,
+            // and provisioning an actually-online box is harmless.
+            return { screen: 'route', box: ble[0] };
+          }
+          // More than one unclaimed box is real (a two-box house, an office).
+          // Let proximity break the tie visibly rather than guessing.
+          if (candidates.length > 1) return { screen: 'choose', boxes: candidates };
+          return { screen: 'phrase', box: candidates[0] };
+        },
+
+        /**
+         * One round of the persistent search: a box that was just plugged in
+         * takes ~30s to boot far enough to advertise, so this runs until
+         * something appears.
+         */
+        searchRound({ bleBoxes, lanServers }) {
+          const ble = bleBoxes || [];
+          const needsWifi = ble.find((b) => b.improvState === NEEDS_WIFI);
+          if (needsWifi) return { screen: 'phrase', box: needsWifi };
+          if (ble.length) return { screen: 'route', box: ble[0] };
+          // A claimed box never advertises, so it can only ever appear here.
+          if ((lanServers || []).length) return { screen: 'pair', servers: lanServers };
+          return { screen: 'keep-looking' };
+        },
+
+        /**
+         * Which step is a KNOWN box on? The box is the authority, so this takes
+         * what it said about itself.
+         *
+         * `identity` is null when it could not be reached — an isolating office
+         * LAN, which is the case this whole flow exists for. Falling to the link
+         * step is right there: linking needs only the box's own outbound
+         * internet, so it is immune to a hostile LAN, and it can always be
+         * skipped.
+         */
+        boxStep({ identity, hasBle }) {
+          if (identity && identity.linked) return 'pair';
+          // RPC 0x84 is session-gated, so the link code needs the same proof of
+          // line-of-sight the wifi step does. A box that was ALREADY online
+          // reached this step with no session and sat forever on "getting your
+          // box's code…" while every ask was refused — invisibly, because a
+          // refusal and "no code yet" are the same empty answer.
+          if (hasBle) return 'phrase-then-link';
+          return 'link';
+        },
+
+        /**
+         * Is a LAN lookup worth doing before `bleSetup` decides?
+         *
+         * Only when something is advertising and NONE of it wants wifi — i.e.
+         * every candidate claims to be online already, which is the one claim
+         * that has to be verified. A normal unboxing skips the round trip.
+         *
+         * Here rather than at the call site so the Improv state byte is known in
+         * exactly one place; it leaked out once and immediately became a second
+         * copy of the rule.
+         */
+        needsLanCheck(bleBoxes) {
+          const ble = bleBoxes || [];
+          return ble.length > 0 && !ble.some((b) => b.improvState === NEEDS_WIFI);
+        },
+
+        /** The display name a box should be given, from what it reported. */
+        boxLabel({ identity, fallback }) {
+          if (identity && identity.name) return identity.label || fallback;
+          return fallback;
+        },
+        };
+      })();
+      // ── ROUTER:END ────────────────────────────────────────────────────────
+
       // ── launch ────────────────────────────────────────────────────────────
       //
       // `__VIRTUES_PAIRED__` is injected once when the window is built and never
@@ -196,13 +434,6 @@
       // reachable box never renders this page at all) and passes its verdict
       // in the hash. Mobile can't: its window is built before reach is up, so
       // it probes from here. Same three destinations either way.
-      if (location.hash === '#reset') {
-        renderBoxForgotUs();
-      } else if (location.hash === '#unreachable') {
-        renderBoxUnreachable();
-      } else if (window.__VIRTUES_PAIRED__ && !pinnedOpen) {
-        bootPaired();
-      }
 
       // A paired phone gets a "opening your box" screen IMMEDIATELY — not the
       // connect UI. reach_status runs a live probe that can take 10-15s when
@@ -221,15 +452,12 @@
           <div class="wait"><span class="pip"></span><span>Connecting</span></div>`;
         invoke('plugin:reach|reach_status')
           .then((s) => {
-            if (!s || !s.paired) { renderEntry(); return; }
-            // The box answered and accepted us — the only ticket into the SPA.
-            if (s.session === 'authed') { openBox(); return; }
-            // Answered and REFUSED our key: box was reset or we were revoked.
-            if (s.session === 'rejected') { renderBoxForgotUs(); return; }
-            // Didn't answer: off, or on a network we can't reach. An offline
-            // box must never silently cost the user their pairing — but it
-            // must not dead-end them either.
-            renderBoxUnreachable();
+            switch (Router.pairedProbe(s)) {
+              case 'open':        openBox(); break;
+              case 'forgot-us':   renderBoxForgotUs(); break;
+              case 'unreachable': renderBoxUnreachable(); break;
+              default:            renderEntry(); break;
+            }
           })
           .catch(() => { renderEntry(); });
       }
@@ -564,27 +792,22 @@ its devices apart — type its address.",
           discoverBle(4).then((r) => r.boxes, () => []),
         ]);
         state.bleBoxes = ble;
-        // Phone already on the box's SoftAP (manual join): old flow still works.
+        // The breakglass: a box hosting its own setup network. Asked of every
+        // discovered box rather than only the 10.42.0.x one — the subnet is a
+        // hint about where we are standing; the box is the authority.
         const setupBox = await findSetupBox(lan.servers);
-        if (setupBox) {
-          state.origin = setupBox.origin;
-          return loadNetworks();
+        const next = Router.afterDiscovery({
+          bleBoxes: ble, lanServers: lan.servers, provisionOpenServer: setupBox,
+        });
+        switch (next.screen) {
+          case 'lan-provision':
+            state.origin = next.server.origin;
+            return loadNetworks();
+          case 'phrase':        return blePhrase(next.box);
+          case 'route':         return routeToBox({ name: next.box.name, bleId: next.box.id });
+          case 'keep-looking':  return bleSearchLoop();
+          default:              return renderPair(next.servers, lan.debug);
         }
-        // A box in radio range that needs wifi, and no box on the LAN: this is
-        // an unboxing. Go straight to its wifi picker — the flow every other
-        // screen exists to fall back from.
-        const needsWifi = ble.find((b) => b.improvState === 2);
-        if (needsWifi && lan.servers.length === 0) {
-          return blePhrase(needsWifi);
-        }
-        // Online-but-unclaimed over BLE with nothing on the LAN: a network
-        // that isolates clients. Pairing rides BLE (0x83) — go enter the code.
-        if (lan.servers.length === 0 && ble.length) {
-          return routeToBox({ name: ble[0].name, bleId: ble[0].id });
-        }
-        // Nothing anywhere: setup IS the default state, and it keeps looking.
-        if (lan.servers.length === 0) return bleSearchLoop();
-        renderPair(lan.servers, lan.debug);
       }
 
       // The unpaired app's DEFAULT screen: Bluetooth-first setup, and it
@@ -595,6 +818,8 @@ its devices apart — type its address.",
       // complaint, 2026-08-11). Connecting to an already-running box demotes
       // to the two links at the bottom.
       let searchGen = 0;
+      /** Minimum wall-clock per search round — see the floor inside the loop. */
+      const ROUND_MS = 4000;
       async function bleSearchLoop(note) {
         const gen = ++searchGen;
         app.innerHTML = `
@@ -617,6 +842,19 @@ its devices apart — type its address.",
           e.preventDefault(); searchGen++; renderManualPair();
         });
         while (gen === searchGen) {
+          // FLOOR THE ROUND. The only thing pacing this loop is `discoverBle`
+          // taking its four seconds — and it does not, when it fails: the
+          // invoke rejects, the catch returns immediately, and the loop spins
+          // at whatever rate the event loop allows, hammering two plugin calls
+          // per iteration. Every state where that happens is documented
+          // elsewhere in this file: no adapter, Bluetooth off, TCC denied, a
+          // `tauri dev` binary that has no bundle identity. The screen even
+          // says "Bluetooth isn't available on this device" while doing it.
+          //
+          // A pegged core on the setup screen is not a cosmetic problem: it is
+          // a hot laptop and a dead battery at the exact moment someone is
+          // waiting for a box to appear.
+          const roundStarted = Date.now();
           let boxes = [];
           try {
             const r = await discoverBle(4);
@@ -633,16 +871,23 @@ its devices apart — type its address.",
             if (el) el.textContent = 'Bluetooth setup is unavailable here (' + e + ').';
           }
           if (gen !== searchGen) return;
-          const needsWifi = boxes.find((b) => b.improvState === 2);
-          if (needsWifi) return blePhrase(needsWifi);
-          if (boxes.length) {
-            return routeToBox({ name: boxes[0].name, bleId: boxes[0].id });
-          }
           // Peek at the LAN each round too — an already-claimed box never
           // advertises, and it should still surface without a manual rescan.
-          const { servers } = await discoverBoxes();
+          // Skipped when Bluetooth already found something, since nothing the
+          // LAN could say would change the answer.
+          const lanServers = boxes.length ? [] : (await discoverBoxes()).servers;
           if (gen !== searchGen) return;
-          if (servers.length) return renderPair(servers, '', note);
+          const next = Router.searchRound({ bleBoxes: boxes, lanServers });
+          switch (next.screen) {
+            case 'phrase':  return blePhrase(next.box);
+            case 'route':   return routeToBox({ name: next.box.name, bleId: next.box.id });
+            case 'pair':    return renderPair(next.servers, '', note);
+            // 'keep-looking' — fall through and scan again.
+          }
+          const spent = Date.now() - roundStarted;
+          if (spent < ROUND_MS) {
+            await new Promise((r) => setTimeout(r, ROUND_MS - spent));
+          }
         }
       }
 
@@ -666,37 +911,20 @@ its devices apart — type its address.",
           const r = await discoverBle(5);
           boxes = r.boxes;
         } catch { /* not available on this platform */ }
-        const candidates = boxes.filter((b) => b.improvState === 2);
-        if (candidates.length === 0) {
-          if (boxes.length) {
-            // The advertisement claims "already online" — VERIFY before
-            // believing it: the state byte is baked in when the box's BLE
-            // service starts and can go stale (seen live 2026-08-11: a box
-            // that lost its network kept advertising online for hours, and
-            // this screen told the user to tap a chip that could not exist).
-            // The LAN is the ground truth. Box on it → pair. Not on it → the
-            // advertisement lied; the wifi picker is the honest destination,
-            // and provisioning an actually-online box is harmless anyway.
-            const { servers } = await discoverBoxes();
-            const who = boxes[0].name;
-            if (servers.length) {
-              return startWithBanner(`${who} is already online — tap it below and enter its code.`);
-            }
-            // Online by its own account but invisible on this LAN: a network
-            // that isolates clients (offices). Bluetooth carries the pairing
-            // itself (0x83), so the LAN stops mattering — and if the ad was
-            // stale and the box is actually offline, the code-entry screen's
-            // "Set up its Wi-Fi instead" button is the honest way back.
-            return routeToBox({ name: who, bleId: boxes[0].id });
-          }
-          // Nothing yet — hand over to the persistent search screen, which
-          // keeps scanning until the box boots far enough to advertise.
-          return bleSearchLoop();
+        // A box claiming to be online has to be CHECKED, not believed — the
+        // LAN is the ground truth. Only asked when it matters, so the common
+        // unboxing still costs one scan. See `Router.bleSetup`.
+        const lanServers = Router.needsLanCheck(boxes) ? (await discoverBoxes()).servers : [];
+        const next = Router.bleSetup({ bleBoxes: boxes, lanServers });
+        switch (next.screen) {
+          case 'already-online':
+            return startWithBanner(
+              `${next.box.name} is already online — tap it below and enter its code.`);
+          case 'route':        return routeToBox({ name: next.box.name, bleId: next.box.id });
+          case 'keep-looking': return bleSearchLoop();
+          case 'choose':       return bleBoxChooser(next.boxes);
+          default:             return blePhrase(next.box);
         }
-        // More than one unclaimed box is a real case (two-box household, an
-        // office). Let proximity break the tie visibly.
-        if (candidates.length > 1) return bleBoxChooser(candidates);
-        blePhrase(candidates[0]);
       }
 
       function bleBoxChooser(candidates) {
@@ -803,23 +1031,102 @@ its devices apart — type its address.",
         });
       }
 
+      // ── THE SAVE CEREMONY ─────────────────────────────────────────────────
+      //
+      // The one unrecoverable failure in the product sits behind this screen.
+      // Lose the phrase AND every paired device and there is no way back in —
+      // by design, because the alternative is an escrow that would make the
+      // sovereignty claim false. Every other failure here is recoverable; this
+      // one is not, so it is the one screen that earns friction.
+      //
+      // It used to be a Copy button and an unconditional "I've saved it →". A
+      // person sixty seconds into a box they just paid for, wanting to see it
+      // work, clicks the second button. Nothing distinguished "it is in my
+      // password manager" from "I clicked past this", and the clipboard is the
+      // weakest vessel available anyway — volatile, overwritten by the next
+      // copy, and on macOS possibly synced to other devices.
+      //
+      // So: two real ways to record it, and a continue that will not light up
+      // until the owner says they have. The attestation is deliberately an
+      // ATTESTATION and not a verification — asking them to type the words back
+      // proves nothing while the words are still on screen, and hiding them
+      // first buys real assurance at the cost of the heaviest friction in the
+      // flow, for a scenario that may never arrive. Someone who wrote the words
+      // on paper has done the BEST thing available and must not be made to
+      // clear a hurdle designed for someone who did less.
       function blePhraseSaved(box, phrase, proceed) {
+        // The sheet is built whether or not it is used: `window.print()` in a
+        // webview gives no callback, so there is nothing to wait for.
+        document.getElementById('printable').innerHTML = `
+          <p class="pmark">∴ Virtues</p>
+          <h2>The words that open ${esc(box.name)}</h2>
+          <p class="pwhy">These four words are the only way back into this box if you
+            lose every device that can reach it. They were shown once, during setup,
+            and the box will never show them again.</p>
+          <p class="pphrase">${esc(phrase)}</p>
+          <p class="pfoot">Keep this where you keep things that matter — they are as
+            good as the box itself. Anyone holding these words and standing at your
+            box can claim it.<br><br>Printed ${esc(new Date().toLocaleDateString())}.</p>`;
+
         app.innerHTML = `
           <p class="kicker">Setting up ${esc(box.name)}</p>
           <h1>Save this</h1>
           <p class="sub">It's how you get back in if you lose this computer — and the
             only way. Your box will never show it again.</p>
           <div class="code phrase">${esc(phrase)}</div>
-          <button class="primary" id="copy">Copy</button>
-          <button class="back" id="next" style="margin-top:18px">I've saved it →</button>`;
+          <div class="row2">
+            <button class="secondary" id="copy">Copy</button>
+            <button class="secondary" id="print">Print</button>
+          </div>
+          <label class="attest" for="attest">
+            <input type="checkbox" id="attest">
+            <span>I've saved these words somewhere I'll still have if this computer dies.</span>
+          </label>
+          <button class="primary" id="next" disabled>Continue</button>
+          <div class="msg" id="msg"></div>`;
+
+        const attest = document.getElementById('attest');
+        const next = document.getElementById('next');
+        const msg = document.getElementById('msg');
+        const say = (t, cls) => { msg.className = 'msg ' + (cls || ''); msg.textContent = t; };
+        // The checkbox is the single gate. Copy and Print tick it because doing
+        // either IS the thing being attested to; ticking it by hand is equally
+        // valid, and is what someone with a pen does.
+        attest.addEventListener('change', () => (next.disabled = !attest.checked));
+        const recorded = (what) => {
+          attest.checked = true;
+          next.disabled = false;
+          say(what, 'ok');
+        };
+
         document.getElementById('copy').addEventListener('click', async () => {
           try {
             await navigator.clipboard.writeText(phrase);
             document.getElementById('copy').textContent = 'Copied';
-          } catch { /* a webview without clipboard permission — it is on screen */ }
+            recorded('Copied. Paste it somewhere that will outlive this computer.');
+          } catch (e) {
+            // This used to fail SILENTLY — a webview without clipboard
+            // permission did nothing at all, and the only signal was a button
+            // that failed to say "Copied", which nobody notices. On the one
+            // screen where losing the value is unrecoverable, a dead control
+            // has to say it is dead.
+            say('Couldn\'t reach the clipboard. Write the words down or print them.', 'err');
+          }
         });
-        document.getElementById('next').addEventListener('click', () =>
-          (proceed || bleWifiPicker)(box));
+
+        document.getElementById('print').addEventListener('click', () => {
+          // No callback and no way to detect a webview that ignores this, so
+          // the click counts as intent. If nothing happens the owner still has
+          // the words in front of them and the other two routes.
+          try {
+            window.print();
+            recorded('If no print dialog appeared, use Copy or write them down.');
+          } catch {
+            say('Printing isn\'t available here. Use Copy or write the words down.', 'err');
+          }
+        });
+
+        next.addEventListener('click', () => (proceed || bleWifiPicker)(box));
       }
 
       async function bleWifiPicker(box, errorText) {
@@ -1145,22 +1452,16 @@ its devices apart — type its address.",
       // matters in exactly those environments, and it can always be skipped.
       async function routeToBox(server, ssid) {
         const id = await boxIdentity(server.origin);
-        if (id && id.name) server = { ...server, name: id.label || server.name };
-        if (id && id.linked) return goToPairing(server, ssid);
-        // CLAIM BEFORE ASKING. RPC 0x84 is in the box's `needs_session` list, so
-        // the link code needs the same proof of line-of-sight the wifi step
-        // does. Only the wifi path ever claimed one, which meant a box that was
-        // ALREADY online (ethernet, or a Wi-Fi join from an earlier attempt)
-        // reached this step with no session and sat forever on "Getting your
-        // box's code…" while the box refused every ask — the refusal being
-        // invisible, because it is the same empty answer as "no code yet"
-        // (2026-08-13). The "-" probe inside blePhrase makes this free on
-        // firmware with no gate.
-        if (server.bleId) {
-          return blePhrase({ name: server.name, id: server.bleId }, null, () =>
-            renderLinkStep(server, ssid));
+        server = { ...server, name: Router.boxLabel({ identity: id, fallback: server.name }) };
+        switch (Router.boxStep({ identity: id, hasBle: !!server.bleId })) {
+          case 'pair': return goToPairing(server, ssid);
+          case 'phrase-then-link':
+            // CLAIM BEFORE ASKING — the `-` probe inside blePhrase makes this
+            // free on firmware with no gate. See `Router.boxStep`.
+            return blePhrase({ name: server.name, id: server.bleId }, null, () =>
+              renderLinkStep(server, ssid));
+          default: return renderLinkStep(server, ssid);
         }
-        return renderLinkStep(server, ssid);
       }
 
       function goToPairing(server, ssid) {
@@ -1609,8 +1910,27 @@ its devices apart — type its address.",
         }
       }
 
-      if (!window.__VIRTUES_PAIRED__ || pinnedOpen) {
-        renderEntry();
+      // ── launch ────────────────────────────────────────────────────────────
+      //
+      // ONE destination, decided once. This replaced two independent `if`
+      // chains — one near the top of the script, one right here — which could
+      // both fire: `#reset` on a device that is not locally paired drew the
+      // forgot-us screen and then had the entry screen painted over it.
+      //
+      // AT THE BOTTOM, deliberately. Every screen function is a hoisted
+      // declaration and would be reachable from anywhere, but `renderEntry`
+      // touches `searchGen`, which is a `let` — dispatching before that binding
+      // is initialized throws `Cannot access 'searchGen' before initialization`
+      // and the airlock comes up blank. Found by running it; nothing about the
+      // code says so.
+      switch (Router.bootDestination({
+        hash: location.hash,
+        injectedPaired: !!window.__VIRTUES_PAIRED__,
+      })) {
+        case 'forgot-us':    renderBoxForgotUs(); break;
+        case 'unreachable':  renderBoxUnreachable(); break;
+        case 'probe-paired': bootPaired(); break;
+        default:             renderEntry(); break;
       }
     </script>
   </body>

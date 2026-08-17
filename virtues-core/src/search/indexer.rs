@@ -384,7 +384,54 @@ async fn embed_one_batch(
         let text = match embed_text {
             Some(t) if !t.trim().is_empty() => t.as_str(),
             _ => {
-                // A placeholder, so the backlog stops reconsidering this record.
+                // EMPTIED IS NOT THE SAME AS NEVER-INDEXED, and this branch used to
+                // treat them alike: it wrote the placeholder and `continue`d, so the
+                // record never reached the stale-chunk deletion below. Chunk 0 kept
+                // its old `content` and its `search_vectors` row; chunks 1..N were
+                // not touched at all. Deleting the body of a message left every word
+                // of it searchable, retrievable and CITABLE — a privacy failure, and
+                // the one kind this product cannot afford.
+                //
+                // So drop the whole record's chunks first, correcting the corpus
+                // stats by what we drop, exactly as the shortened-document path does.
+                let mut tx = pool.begin().await?;
+
+                let stale: Vec<(String, Option<i64>)> = sqlx::query_as(
+                    "SELECT id, bm25_len FROM search_embeddings \
+                     WHERE ontology = $1 AND record_id = $2",
+                )
+                .bind(ont_name)
+                .bind(record_id)
+                .fetch_all(&mut *tx)
+                .await?;
+
+                if !stale.is_empty() {
+                    let dropped_docs =
+                        stale.iter().filter(|(_, l)| l.is_some()).count() as i64;
+                    let dropped_len: i64 = stale.iter().filter_map(|(_, l)| *l).sum();
+                    let ids: Vec<String> = stale.iter().map(|(id, _)| id.clone()).collect();
+                    // CASCADE takes search_vectors and search_bm25_postings with it.
+                    sqlx::query("DELETE FROM search_embeddings WHERE id = ANY($1)")
+                        .bind(&ids)
+                        .execute(&mut *tx)
+                        .await?;
+                    // Only rows that COUNTED toward the corpus may be subtracted
+                    // from it: a previous placeholder has `bm25_len IS NULL` and was
+                    // never added to `n_docs`, so counting it here would drive the
+                    // IDF's N below the truth.
+                    sqlx::query(
+                        "UPDATE search_index_meta \
+                         SET n_docs = GREATEST(n_docs - $1, 0), sum_len = GREATEST(sum_len - $2, 0) \
+                         WHERE singleton",
+                    )
+                    .bind(dropped_docs)
+                    .bind(dropped_len)
+                    .execute(&mut *tx)
+                    .await?;
+                }
+
+                // Then the placeholder, so the backlog stops reconsidering this
+                // record.
                 //
                 // `doc_hash` MUST be set here, not left NULL: the freshness check is
                 // `doc_hash IS DISTINCT FROM md5(text)`, and NULL is distinct from
@@ -401,8 +448,10 @@ async fn embed_one_batch(
                 .bind(ont_name)
                 .bind(record_id)
                 .bind(doc_hash)
-                .execute(pool)
+                .execute(&mut *tx)
                 .await?;
+
+                tx.commit().await?;
                 continue;
             }
         };
@@ -534,7 +583,7 @@ async fn embed_one_batch(
             .bind(ts_parsed)
             .bind(chunk.as_str()) // content — the same text we embed, for lexical/BM25
             .bind(ci as i32)
-            .bind(table) // source_table — for the wiki_entity_refs join (entity filtering)
+            .bind(table) // source_table — for the wiki_refs join (entity filtering)
             .bind(bm_len)
             // The model that ACTUALLY produced this vector, not a literal. Two
             // models of the same width put their vectors in different geometries,
