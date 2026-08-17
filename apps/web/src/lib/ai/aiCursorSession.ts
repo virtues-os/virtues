@@ -34,6 +34,10 @@ import type { EditorView } from "@codemirror/view";
 import type { YjsDocument } from "$lib/yjs";
 import { streamCompletion, type AiIntent } from "./inlineComplete";
 import { createOutputSanitizer } from "./sanitize";
+import {
+	createReviewEscaper,
+	escapeReviewBody,
+} from "$lib/codemirror/extensions/review-marks";
 import { aiSession } from "./aiSession.svelte";
 import { aiCaret, aiTrail, aiTelegraph, aiPresenceClear } from "./aiPresence";
 import {
@@ -104,13 +108,11 @@ class AiCursorSession {
 	private buffer = "";
 	private flushScheduled = false;
 
-	// Rewrite does nothing to the document until the first token arrives. Either
-	// the selection gets wrapped as a proposal (the normal path) or — when the
-	// passage itself contains the closing delimiter, and wrapping it would
-	// produce markup that terminates in the wrong place — it is replaced
-	// outright, the old destructive behavior, kept as the honest fallback.
-	private pendingWrap: { from: number; to: number } | null = null;
-	private pendingDeleteLen = 0;
+	// Rewrite does nothing to the document until the first token arrives; this
+	// holds the selection's LENGTH until then. Its start comes from the moving
+	// anchor rather than a captured offset, so a peer editing above the passage
+	// while the model thinks cannot make the wrap land in the wrong place.
+	private pendingWrapLen = 0;
 	/** A `{++` is open in the document and still owes its `++}`. */
 	private proposalOpen = false;
 	/** The selection was wrapped as a proposal rather than replaced. */
@@ -119,6 +121,7 @@ class AiCursorSession {
 	private didMutate = false;
 	private insertedChars = 0;
 	private sanitizer = createOutputSanitizer();
+	private escaper = createReviewEscaper();
 
 	constructor(opts: StartAiOptions) {
 		this.view = opts.view;
@@ -148,8 +151,7 @@ class AiCursorSession {
 	private insertAt(text: string) {
 		if (!text || !this.anchor) return;
 
-		const wrap = this.pendingWrap;
-		const wasPending = wrap !== null || this.pendingDeleteLen > 0;
+		const wrapLen = this.pendingWrapLen;
 		let at = 0;
 
 		// Everything the first token triggers happens in ONE transaction with the
@@ -157,25 +159,36 @@ class AiCursorSession {
 		// well-formed proposal. A pre-stream error or abort therefore cannot
 		// leave the writer with a half-open span or a deleted-and-empty passage.
 		this.ydoc.transact(() => {
-			if (wrap) {
-				this.ytext.insert(wrap.from, PROPOSE_OPEN);
-				this.ytext.insert(wrap.to + PROPOSE_OPEN.length, PROPOSE_PIVOT);
-				this.pendingWrap = null;
+			const from = this.resolve(this.anchor as Y.RelativePosition);
+
+			if (wrapLen > 0) {
+				// The passage may itself contain `--}`, which would close the
+				// deletion span inside itself. Escaping is exact and reversed on
+				// accept/reject, so the writer gets their original back character
+				// for character whichever way they decide.
+				const original = this.ytext.toString().slice(from, from + wrapLen);
+				const escaped = escapeReviewBody(original);
+				if (escaped !== original) {
+					this.ytext.delete(from, wrapLen);
+					this.ytext.insert(from, escaped);
+				}
+
+				this.ytext.insert(from, PROPOSE_OPEN);
+				this.ytext.insert(from + PROPOSE_OPEN.length + escaped.length, PROPOSE_PIVOT);
+
+				this.pendingWrapLen = 0;
 				this.proposalOpen = true;
 				this.didWrap = true;
 				// The stream lands just inside the `{++`, after the original.
-				at = wrap.to + PROPOSE_OPEN.length + PROPOSE_PIVOT.length;
+				at = from + PROPOSE_OPEN.length + escaped.length + PROPOSE_PIVOT.length;
 			} else {
-				at = this.resolve(this.anchor as Y.RelativePosition);
-				if (this.pendingDeleteLen > 0) {
-					this.ytext.delete(at, this.pendingDeleteLen);
-					this.pendingDeleteLen = 0;
-				}
+				at = from;
 			}
+
 			this.ytext.insert(at, text);
 		}, "ai");
 
-		if (wasPending) {
+		if (wrapLen > 0) {
 			aiTelegraph(this.view, null);
 		}
 		this.didMutate = true;
@@ -188,12 +201,23 @@ class AiCursorSession {
 		if (this.insertedChars >= MAX_OUTPUT_CHARS) this.abort();
 	}
 
+	/**
+	 * Model output is going INSIDE a `{++ ++}`, so it has to be escaped on the
+	 * way in — and escaped statefully, because `++` can end one chunk and `}`
+	 * begin the next, which would close the suggestion early. A continuation
+	 * writes into open prose and needs none of this.
+	 */
+	private escapeOutput(text: string, final = false): string {
+		if (!this.isRewrite) return text;
+		return final ? this.escaper.push(text) + this.escaper.flush() : this.escaper.push(text);
+	}
+
 	private flush() {
 		this.flushScheduled = false;
 		if (this.aborted || !this.buffer) return;
 		const text = this.buffer;
 		this.buffer = "";
-		this.insertAt(text);
+		this.insertAt(this.escapeOutput(text));
 	}
 
 	private scheduleFlush() {
@@ -242,17 +266,9 @@ class AiCursorSession {
 			await sleep(TELEGRAPH_MS);
 			if (this.aborted) return this.cleanup();
 
-			// Wrapping is only safe while the passage cannot terminate the markup
-			// early. A selection already containing `--}` (or an open `{++`) would
-			// close the deletion span in the middle of itself, and the result would
-			// be markup that parses somewhere the writer never chose. Rather than
-			// silently mangle it, that case falls back to replacing outright.
-			const wrappable = !selection.includes("--}") && !selection.includes("{++");
-			if (wrappable) {
-				this.pendingWrap = { from: sel.from, to: sel.to };
-			} else {
-				this.pendingDeleteLen = sel.to - sel.from;
-			}
+			// Wrap on the first token (see insertAt), never before: until the model
+			// produces something, the passage is left exactly as the writer left it.
+			this.pendingWrapLen = sel.to - sel.from;
 			insertIndex = sel.from;
 		} else {
 			insertIndex = sel.head;
@@ -336,11 +352,14 @@ class AiCursorSession {
 	 * no `++}`. A no-op when nothing was ever written.
 	 */
 	private finalize() {
-		if (this.buffer) {
-			const text = this.buffer;
-			this.buffer = "";
-			this.insertAt(text);
-		}
+		const text = this.buffer;
+		this.buffer = "";
+		// `final` releases the escaper's held tail even when the buffer is empty —
+		// a stream ending on `++` must not leave those two characters stranded
+		// outside the suggestion.
+		const pending = this.escapeOutput(text, true);
+		if (pending) this.insertAt(pending);
+
 		if (!this.proposalOpen || !this.anchor) return;
 
 		const at = this.resolve(this.anchor);
