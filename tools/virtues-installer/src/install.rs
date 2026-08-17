@@ -1486,6 +1486,45 @@ async fn retire_captive_artifacts() {
     }
 }
 
+/// The drop-in itself. A raw string like `DISPLAY_UNIT_TEMPLATE` and
+/// `SYSTEMD_UNIT_TEMPLATE`, rather than a `format!` with `\n\` continuations —
+/// those carry the source's indentation into the generated file, and a systemd
+/// drop-in whose `[Unit]` header is indented four spaces reads as broken even
+/// though systemd strips it.
+const PG_MOUNT_GUARD_TEMPLATE: &str = r#"# Installed by virtues-installer.
+#
+# The Virtues state root is its own filesystem on an appliance (a blank NVMe
+# claimed at first boot). fstab carries `nofail` so a missing disk never blocks
+# boot — the box must still come up far enough to say so on its display — but
+# Postgres must NOT start without it, or it initdb's a fresh empty cluster onto
+# the boot card and every check reports healthy while the owner's record sits
+# unmounted on a disk nobody asked for.
+#
+# The template's own `RequiresMountsFor=/var/lib/postgresql/%I` does not cover
+# this: that path is a SYMLINK into the data dir here, and the dependency is
+# taken on the path as written, not on what it resolves to.
+#
+# After= the first-boot unit, which is what CREATES the cluster on a freshly
+# claimed disk. Without it Postgres races ahead on a virgin unit, finds nothing,
+# and fails — recoverably, but with a red unit on the one screen the owner is
+# watching hardest.
+#
+# ExecStartPre is NOT redundant with RequiresMountsFor, and the gap it closes is
+# the likelier failure. RequiresMountsFor only binds us to a mount unit that
+# EXISTS — i.e. a disk fstab knows about. A unit whose first-boot claim never ran
+# at all (no NVMe fitted, or the blank check declined) has no fstab entry, so the
+# dependency resolves to the root mount, is trivially satisfied, and Postgres
+# initdb's onto the boot card: working, healthy-looking, and wearing out the one
+# medium this whole layout exists to protect. `mountpoint -q` asks the question
+# we actually mean.
+[Unit]
+RequiresMountsFor=__DATA_DIR__
+After=virtues-firstboot.service
+
+[Service]
+ExecStartPre=/usr/bin/mountpoint -q __DATA_DIR__
+"#;
+
 /// Stops logind consuming the power key, so `maintenance::reset_button` can
 /// read it. Without this the first press of the only button on the product
 /// powers the box off.
@@ -1863,36 +1902,14 @@ async fn pg_is_ready() -> bool {
 /// distro-owned and an apt upgrade would overwrite anything written into it.
 ///
 /// **DIY boxes get nothing.** There is one disk on a self-hosted server by
-/// definition, `data_dir` is a plain directory on it, and `RequiresMountsFor`
-/// on such a path resolves to the root mount — harmless, but it would put a
-/// Virtues drop-in into somebody else's Postgres for no reason. We are a guest
-/// there.
+/// definition, `data_dir` is a plain directory on it, and both checks here
+/// would be wrong there — `mountpoint` would fail on a perfectly good install.
+/// We are a guest on that machine and its Postgres is not ours to constrain.
 fn install_postgres_mount_guard(cfg: &InstallConfig) -> Result<()> {
     let dir = "/etc/systemd/system/postgresql@.service.d";
     fs::create_dir_all(dir).with_context(|| format!("mkdir {dir}"))?;
-    let body = format!(
-        "# Installed by virtues-installer.\n\
-         #\n\
-         # The Virtues state root is its own filesystem on an appliance (a blank\n\
-         # NVMe claimed at first boot). fstab carries `nofail` so a missing disk\n\
-         # never blocks boot — the box must still come up far enough to say so on\n\
-         # its display — but Postgres must NOT start without it, or it initdb's a\n\
-         # fresh empty cluster onto the boot card and every check reports healthy while\n\
-         # the owner's record sits unmounted on a disk nobody asked for.\n\
-         #\n\
-         # The template's own `RequiresMountsFor=/var/lib/postgresql/%I` does not\n\
-         # cover this: that path is a SYMLINK into the data dir here, and the\n\
-         # dependency is taken on the path as written, not on what it resolves to.\n\
-         #\n\
-         # After= the first-boot unit, which is what CREATES the cluster on a\n\
-         # freshly claimed disk. Without it Postgres races ahead on a virgin unit,\n\
-         # finds nothing, and fails — recoverably, but with a red unit on the one\n\
-         # screen the owner is watching hardest.\n\
-         [Unit]\n\
-         RequiresMountsFor={}\n\
-         After=virtues-firstboot.service\n",
-        cfg.data_dir.display()
-    );
+    let body = PG_MOUNT_GUARD_TEMPLATE
+        .replace("__DATA_DIR__", &cfg.data_dir.display().to_string());
     fs::write(format!("{dir}/10-virtues-data-mount.conf"), body)
         .context("writing postgres mount guard drop-in")?;
     ui::ok("Postgres will not start without the data disk");

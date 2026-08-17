@@ -75,6 +75,30 @@ apt-get update
 apt-get -y upgrade
 apt-get -y autoremove
 
+# If that pulled a kernel, STOP. Everything after this point verifies the box —
+# `doctor`, and a human walking the setup flow — and verifying a box running the
+# old kernel while the card now holds a new one tests something that will never
+# be shipped. It is also precisely when the loader entries were just regenerated,
+# which is the failure this whole ordering exists to surface early.
+#
+# Exit rather than reboot-and-resume: re-running this script is safe (apt is a
+# no-op the second time, and the installer is idempotent), and a script that
+# reboots the machine it is running on has to persist state to come back, which
+# is more machinery than one `reboot` is worth.
+if [ -e /var/run/reboot-required ] || [ -e /run/reboot-required ]; then
+    cat <<'REBOOT'
+
+  The upgrade needs a reboot before anything can be verified — most likely a new
+  kernel, which also means the boot loader entries were just regenerated.
+
+      sudo reboot
+
+  Then run this script again. It will pick up from here.
+
+REBOOT
+    exit 0
+fi
+
 # ── 2. Virtues ──────────────────────────────────────────────────────────────
 # The same installer a DIY self-hoster runs. The Dragon is detected from its
 # device tree, which implies the appliance profile — kiosk, BLE provisioning,
@@ -132,6 +156,15 @@ say "Checking"
 virtues image-check || die "image-check found per-unit identity — DO NOT image this card"
 
 # ── 6. Off, without booting again ───────────────────────────────────────────
+# Work out which device to image rather than naming one. The card enumerates as
+# mmcblk1 on the lab board and mmcblk0 on plenty of others, and a `dd` line in a
+# closing message is exactly the kind of thing that gets copied without being
+# read. Ask the running system where its ESP is and strip the partition suffix —
+# `mmcblk1p2` -> `mmcblk1`, `sda2` -> `sda`.
+ESP_PART="$(findmnt -no SOURCE /boot/efi 2>/dev/null || true)"
+BOOT_DEV="$(printf '%s' "$ESP_PART" | sed -E 's|p?[0-9]+$||')"
+[ -n "$BOOT_DEV" ] && [ -b "$BOOT_DEV" ] || BOOT_DEV="<your boot device — check lsblk>"
+
 # A boot re-mints machine-id and SSH host keys, which then travel into every
 # clone — and `image-check` would have passed before that boot, so nothing
 # downstream would ever notice. Powering off from inside this script is what
@@ -145,7 +178,7 @@ cat <<EOF
 
   Then, from another machine:
 
-      sudo dd if=/dev/mmcblk1 of=virtues-$VIRTUES_VERSION.img bs=4M status=progress
+      sudo dd if=$BOOT_DEV of=virtues-$VIRTUES_VERSION.img bs=4M status=progress
       sha256sum virtues-$VIRTUES_VERSION.img > virtues-$VIRTUES_VERSION.img.sha256
 
   Every unit gets that card image and a BLANK NVMe. First boot claims the

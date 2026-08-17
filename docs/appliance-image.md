@@ -163,6 +163,16 @@ the owner is watching hardest. And that same drop-in carries
 `RequiresMountsFor=/var/lib/postgresql/%I` does **not** cover: the dependency is
 taken on the path as written, not on what the symlink resolves to.
 
+**What the guards do and do not cover.** `RequiresMountsFor` only binds Postgres
+to a mount unit that *exists* — a disk fstab already knows about — so it catches
+"the data disk is configured and absent" and not "the claim never ran at all".
+The second is the likelier failure on a virgin unit (no NVMe fitted, or the
+blank-disk check declining), and there the dependency resolves to the root mount
+and is trivially satisfied. That is why the drop-in also carries
+`ExecStartPre=/usr/bin/mountpoint -q <data dir>`, which asks the question we
+actually mean. The panel's "Storage disconnected" state checks mount-ness
+directly and so covers both from the start.
+
 **Deprovision removes the cluster,** because it is per-unit state — it is where
 the record lived. It has to: on the master the data dir is a plain directory on
 the card (the master never had a claimed NVMe), so a surviving cluster would
