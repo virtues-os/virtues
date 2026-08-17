@@ -1,8 +1,8 @@
 //! `virtues deprovision` — strip this box of every per-unit identity so its
 //! disk can be imaged and cloned onto other boards.
 //!
-//! This is the LAST command run before a box ships (or before its eMMC is
-//! `dd`'d to a master image). It is not a reset and not an uninstall: the
+//! This is the LAST command run before a box ships (or before its boot medium
+//! is `dd`'d to a master image). It is not a reset and not an uninstall: the
 //! software stays installed and configured, only the things that must be
 //! unique per unit are removed.
 //!
@@ -123,9 +123,9 @@ pub async fn run(yes: bool, force: bool) -> Result<(), crate::Error> {
     // record lived — so it goes, and `virtues-firstboot` builds a fresh one on
     // each unit's own disk.
     //
-    // Removed rather than left because of where the image comes from: the eMMC
+    // Removed rather than left because of where the image comes from: the card
     // is imaged, and on the master the data dir is a plain directory ON the
-    // eMMC (the NVMe is claimed at first boot, which the master never had). So
+    // card (the NVMe is claimed at first boot, which the master never had). So
     // a surviving cluster would ship inside every image — the master's
     // `postgres` superuser, its catalogs, its size — under a path each unit
     // then hides with a mount and never reads.

@@ -2,7 +2,15 @@
 
 > How a Radxa Dragon Q6A goes from a board in a box to a unit a customer can
 > plug in. Written 2026-08-17, after reading the boot chain off a live board
-> rather than off the docs — which described the opposite layout.
+> rather than off the docs — which described a different layout.
+>
+> **Corrected the same day:** the first draft of this document said "eMMC"
+> throughout. The lab board has no eMMC populated at all — `mmc0`, the eMMC
+> controller, has no device on it — and boots from a **microSD card**. Every
+> conclusion below survived the correction; several got stronger. The mistake
+> is recorded rather than quietly fixed because it is the kind that repeats:
+> `mmcblk1` looks like an eMMC device name and is not one, and the only way to
+> know is to ask (`/sys/block/mmcblk1/device/type` → `SD`).
 >
 > Companion to [onboarding.md](onboarding.md) (what the owner does),
 > [deployment.md](deployment.md) (how the software ships), and
@@ -11,66 +19,84 @@
 ## The one thing to know first
 
 **The Q6A does not boot from the NVMe.** It boots systemd-boot from an ESP on
-the **eMMC**, and that ESP holds the kernel, the initrd and the device tree.
-The NVMe only supplies the root filesystem, named by UUID in a loader entry
-that also lives on the eMMC.
+the **microSD card**, and that ESP holds the kernel, the initrd and the device
+tree. The NVMe only supplies the root filesystem, named by UUID in a loader
+entry that also lives on the card.
 
 Measured on the lab board:
 
 ```
-mmcblk1 (eMMC, 29 GiB)                nvme0n1 (119 GiB)
+mmcblk1 (microSD, 29 GiB, on mmc1)    nvme0n1 (119 GiB)
 ├─p1   16M vfat  /config          ← Qualcomm boot config (vendor; never touch)
 ├─p2    1G vfat  /boot/efi        ← ESP: systemd-boot + kernel + initrd + DTB
-└─p3  28.1G ext4                  ← the stock Ubuntu root (unused today)
-                                      └─p1  119.2G ext4  /   ← our root today
+└─p3  28.1G ext4                  ← the stock Ubuntu root
+                                      └─p1  119.2G ext4  /  ← root, moved here
+                                                             by hand on this box
 ```
 
 `efibootmgr` reports exactly one entry — `\EFI\systemd\systemd-bootaa64.efi` on
-eMMC p2 — and the NVMe carries a single partition with no ESP.
+card p2 — and the NVMe carries a single partition with no ESP. `mmc0` (the eMMC
+controller) enumerates no device: this board has **no eMMC**.
 
-Two consequences fall out of this, and every decision below is downstream of
-them:
+Two consequences fall out, and every decision below is downstream of them:
 
 1. **Flashing only the NVMe cannot boot a virgin board.** The kernel is not on
-   the disk you flashed. Each board's eMMC must be prepared regardless.
+   the disk you flashed. The card is the boot medium and must be prepared.
 2. **The kernel and its modules can drift apart silently.** `/lib/modules/<ver>`
-   travels with the NVMe root; the matching kernel travels with the eMMC. Image
-   them at different times and you get a box that boots into a rootfs with no
-   modules for its kernel.
+   travels with the root filesystem; the matching kernel travels with the card.
+   Put root on the NVMe, image the two at different times, and you get a box
+   that boots into a rootfs with no modules for its kernel.
 
-There is a third, subtler one. The lab board's `RadxaOS-nvme.conf` is
-hand-edited — it declares `version 6.18.2-99-qcom` while pointing at the
-`6.18.2-3-qcom` kernel, a sort-key hack to win the default. `kernel-install`
-regenerates loader entries on every apt kernel upgrade and will not preserve
-it. That is a landmine on the master, not just on clones.
+Consequence 2 is the argument for keeping root **on the card**, where the stock
+Radxa image puts it. Someone moved it to the NVMe on the lab board by hand and
+added `RadxaOS-nvme.conf` to do it — a loader entry that declares
+`version 6.18.2-99-qcom` while pointing at the `6.18.2-3-qcom` kernel, a
+sort-key hack to win the default. `kernel-install` regenerates loader entries on
+every apt kernel upgrade and will not preserve it. Flashing the stock image and
+leaving root where it lands avoids all of this.
 
 ## The layout we ship
 
-**Split by write rate, not by size.** The eMMC is soldered — if it wears out,
-the board is scrap — and its endurance is a function of writes. The NVMe is
-replaceable and has real endurance. So:
+**Split by write rate, not by size.** The card is the weakest storage on the
+board — microSD endurance under database load is the classic appliance killer,
+and the installer's own `storage.rs` already warns about it in exactly those
+words. The NVMe is fast, replaceable, and has real endurance. So:
 
 | Medium | Holds | Write rate |
 |---|---|---|
-| **eMMC** | `/config`, the ESP, and the **root filesystem**: OS, `virtues` binary, web assets, models | once per release |
+| **microSD** | `/config`, the ESP, and the **root filesystem**: OS, `virtues` binary, web assets, models | once per release |
 | **NVMe** | `/var/lib/virtues` — Postgres, the lake, the journal, backups, applet state | continuous |
 
 This inverts what the lab board does today, and the inversion is the point.
 
 **Why not NVMe-only root** (what the lab board runs): a box whose NVMe is dead,
-unseated, or never fitted becomes a black screen with no way to tell anyone
-what is wrong. That is exactly the "dead and unrecoverable for support" case.
-With the OS on the eMMC the same box boots, the panel comes up, and it says
-*"I can't find my storage disk. Your record is on it, not lost."*
-(`data_disk.rs`) — a mail-out instead of an RMA.
+unseated, or never fitted becomes a black screen with no way to tell anyone what
+is wrong. That is exactly the "dead and unrecoverable for support" case. With
+the OS on the card the same box boots, the panel comes up, and it says *"I can't
+find my storage disk. Your record is on it, not lost."* (`data_disk.rs`) — a
+mail-out instead of an RMA.
 
-**Why not eMMC-only:** 29 GiB total, and the database plus the lake would fill
-it and then wear it out.
+**Why not card-only:** 29 GiB total, and the database plus the lake would fill
+it and then wear it out. Getting every continuous write off the card is the
+whole point of the split, and it matters *more* on SD than it would have on
+eMMC, not less.
 
 **Why this is also the simplest manufacturing story:** the ship image is the
-eMMC — small, identical across units, one `dd` target. The NVMe ships blank and
-is claimed on first boot (`virtues-firstboot.sh`), so there is no shared root
-UUID to coordinate and no kernel/module skew possible.
+card — small, identical across units, one `dd` target, and writable in bulk with
+a card duplicator. No EDL, no USB-C flashing, no per-board firmware step. The
+NVMe ships blank and is claimed on first boot (`virtues-firstboot.sh`), so there
+is no shared root UUID to coordinate and no kernel/module skew possible.
+
+**A removable boot medium is also a better support story than a soldered one.**
+A dead card is a mail-out and a screwdriver; a dead eMMC is an RMA. Since almost
+nothing writes to it after install, the endurance objection that would normally
+argue for eMMC mostly evaporates.
+
+> **Open BOM question.** Do shipping units have eMMC populated, or are they
+> microSD + NVMe like the lab board? Nothing in the software changes either way
+> — everything below is written against "the boot medium" — but it changes the
+> failure story above, and it decides whether manufacturing is a card duplicator
+> or a per-board USB-C flash.
 
 ### Moving the writes
 
@@ -86,7 +112,7 @@ explicitly. Two are done; one is not.
 ### The Postgres move, in detail
 
 It is the largest and busiest of the three — a WAL flush per transaction,
-forever — so it is the one the eMMC most needs to be rid of.
+forever — so it is the one the card most needs to be rid of.
 
 **A symlink, not `data_directory`.** Debian's `postgresql.conf` has a
 `data_directory` setting and pointing it at the data disk is the obvious move.
@@ -112,7 +138,7 @@ after installing Postgres and before `provision_db`, so the cluster being
 copied is a fresh `initdb` with nothing in it. Run later and it would be
 relocating the owner's record.
 
-**On a fresh unit the cluster is built, not inherited.** The image is the eMMC,
+**On a fresh unit the cluster is built, not inherited.** The image is the card,
 so it carries the symlink but not the disk it points at — every unit's NVMe is
 blank. `virtues-firstboot.sh` therefore claims the disk and then
 `pg_dropcluster` + `pg_createcluster`s a vanilla cluster on it, creates the
@@ -139,21 +165,37 @@ taken on the path as written, not on what the symlink resolves to.
 
 **Deprovision removes the cluster,** because it is per-unit state — it is where
 the record lived. It has to: on the master the data dir is a plain directory on
-the eMMC (the master never had a claimed NVMe), so a surviving cluster would
+the card (the master never had a claimed NVMe), so a surviving cluster would
 ship inside every image under a path each unit then hides with a mount and
 never reads.
 
 ## Building the image
 
+The whole of it is `tools/build-master.sh`, which exists so the tail cannot be
+skipped and the version cannot be left to chance:
+
+```sh
+sudo VIRTUES_VERSION=v0.3.1 sh tools/build-master.sh
 ```
- 1. Flash a stock Radxa image to the eMMC              (per board, once)
+
+What it does, and what you would otherwise be doing by hand:
+
+```
+ 1. Flash a stock Radxa image to the microSD           (per master, once)
  2. Boot it, install Virtues                            curl virtues.com/sh | sudo sh
  3. Verify the box works                                virtues doctor
  4. Strip per-unit identity                             sudo virtues deprovision
  5. Prove it is stripped                                sudo virtues image-check
  6. Power off WITHOUT booting again                     sudo poweroff
- 7. Image the eMMC                                      dd
+ 7. Image the microSD                                   dd
 ```
+
+Steps 1-2 are yours; the script starts at the `apt` and does the rest, stopping
+twice for a human: once to confirm it is about to destroy this board's identity,
+and once to make you actually walk the setup flow before the card is sealed.
+Nothing it runs tests onboarding, and onboarding is the entire product — a
+master that installs cleanly and cannot be set up is the most expensive thing
+to discover after pressing a hundred cards.
 
 Step 5 is new and is the one that was missing. `deprovision` prints
 "safe to image" and nothing ever re-read the disk — so an operator who booted
@@ -207,11 +249,12 @@ per-unit coordination of a shared root filesystem UUID.
 
 Three things cannot be settled by reading code, in the order they gate the plan.
 
-**1. Does a `dd`'d eMMC boot on a board it was not imaged on?**
+**1. Does a `dd`'d microSD boot on a board it was not imaged on?**
 Twenty minutes with two boards, and it de-risks the entire manufacturing plan.
 The firmware in `/config` and the ESP have to travel correctly. If they do not,
-step 7 above needs a per-board firmware flash over USB-C (`rsetup` / EDL)
-before the `dd`.
+step 7 above needs a per-board firmware flash over USB-C (`rsetup` / EDL) before
+the card goes in — which would change manufacturing from "duplicate cards" to
+"touch every board", so it is worth knowing early.
 
 **2. Can the NVMe be made self-contained?**
 Partition it `p1 = ESP` (with `\EFI\BOOT\BOOTAA64.EFI` and its own loader

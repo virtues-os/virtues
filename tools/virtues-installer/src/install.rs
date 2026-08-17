@@ -1719,8 +1719,9 @@ const PG_PRE_MOVE: &str = "/var/lib/postgresql.pre-move";
 /// The lab box carried 3.0 GB of Postgres and 8.9 GB of lake. The lake was
 /// already on the data disk; Postgres was not — so the busiest writer on the
 /// box, the one doing a WAL flush per transaction forever, was landing on the
-/// eMMC. The eMMC is soldered: when its endurance is gone the board is scrap,
-/// and there is no way to move the wear back off it afterwards.
+/// the boot medium — a microSD card on the Q6A, which is the weakest storage on
+/// the board and the one that wears out under database load. `storage.rs` warns
+/// about exactly this; getting the writes off it is acting on that warning.
 ///
 /// ## Why a symlink rather than `data_directory`
 ///
@@ -1876,7 +1877,7 @@ fn install_postgres_mount_guard(cfg: &InstallConfig) -> Result<()> {
          # NVMe claimed at first boot). fstab carries `nofail` so a missing disk\n\
          # never blocks boot — the box must still come up far enough to say so on\n\
          # its display — but Postgres must NOT start without it, or it initdb's a\n\
-         # fresh empty cluster onto the eMMC and every check reports healthy while\n\
+         # fresh empty cluster onto the boot card and every check reports healthy while\n\
          # the owner's record sits unmounted on a disk nobody asked for.\n\
          #\n\
          # The template's own `RequiresMountsFor=/var/lib/postgresql/%I` does not\n\
@@ -1941,11 +1942,11 @@ ENV_FILE="$DATA_DIR/virtues.env"
 MARKER="$DATA_DIR/.needs-firstboot"
 
 # ── 1. Claim a blank NVMe for the data directory ────────────────────────────
-# We image the eMMC, not the NVMe, so every unit boots with a fresh blank disk
-# and no UUID or LABEL that fstab could have been written against. The disk has
-# to be claimed here, on the unit, or Postgres and the lake land on the eMMC —
-# which is soldered, has modest write endurance, and is exactly what we're
-# trying to keep writes off.
+# We image the BOOT MEDIUM (a microSD card on the Q6A), not the NVMe, so every
+# unit boots with a fresh blank disk and no UUID or LABEL that fstab could have
+# been written against. The disk has to be claimed here, on the unit, or Postgres
+# and the lake land on the card — which has modest write endurance and is exactly
+# what we're trying to keep writes off. See docs/appliance-image.md.
 if ! mountpoint -q "$DATA_DIR" 2>/dev/null; then
     for disk in /dev/nvme0n1 /dev/nvme1n1; do
         [ -b "$disk" ] || continue
@@ -1971,7 +1972,8 @@ fi
 # journald writes continuously and forever, which makes it the third-largest
 # write source on the box after Postgres and the lake — and the only one that
 # keeps going when nothing is happening. Left alone it lands in
-# /var/log/journal on the eMMC: soldered, modest endurance, unreplaceable.
+# /var/log/journal on the boot card: modest endurance, and the one medium we
+# cannot let a continuous writer sit on.
 #
 # A symlink rather than `Storage=` in journald.conf, because the config only
 # chooses persistent-vs-volatile, never where. Only when the data dir is really
@@ -1997,7 +1999,7 @@ fi
 # ── 1c. Recreate the Postgres cluster on the claimed disk ───────────────────
 # /var/lib/postgresql is a SYMLINK into the data dir on an appliance — the
 # installer moved the cluster there so the busiest writer on the box lands on
-# the replaceable NVMe rather than the soldered eMMC. The image carries the
+# the replaceable NVMe rather than the boot card. The image carries the
 # symlink; the disk it points at is blank on every unit. So the cluster has to
 # be made here, once, on the unit.
 #
