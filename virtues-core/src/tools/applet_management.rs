@@ -72,7 +72,7 @@ pub async fn list_applets(
             "name": a.name,
             "owner": a.owner,
             "enabled": a.enabled,
-            "cron_schedule": a.cron_schedule,
+            "schedule": a.schedule,
             "triggers": a.triggers,
             "last_run": last.map(|r| serde_json::json!({
                 "status": r.status,
@@ -112,7 +112,7 @@ pub async fn get_applet(
 }
 
 /// `edit_applet` — partial update. System rows accept only `enabled`,
-/// `cron_schedule`, `config`, `memory`; user rows accept all fields.
+/// `schedule`, `config`, `memory`; user rows accept all fields.
 pub async fn edit_applet(
     pool: &PgPool,
     arguments: serde_json::Value,
@@ -136,7 +136,7 @@ pub async fn edit_applet(
     if let Some(obj) = patch.as_object() {
         let sets_enabled_true = obj.get("enabled").and_then(|v| v.as_bool()) == Some(true);
         let adds_schedule = obj
-            .get("cron_schedule")
+            .get("schedule")
             .is_some_and(|v| v.as_str().is_some_and(|s| !s.trim().is_empty()));
         let adds_remote_trigger = obj
             .get("triggers")

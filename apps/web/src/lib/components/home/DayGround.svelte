@@ -1,16 +1,21 @@
 <!--
-	DayGround.svelte — the day's ground track.
+	DayGround.svelte — the day's ground track, on the map it was walked over.
 
 	The same GPS fixes the deck's `move` lane measures, drawn in space instead
 	of time. It exists to be scrubbed: pointing at an hour on the deck puts a
 	dot here, so "where was I at 2pm" is answered by moving the mouse rather
 	than by reading two charts and doing the join in your head.
 
-	Equirectangular, cosine-corrected at the track's own latitude. Over a day's
-	worth of movement that is exact enough that a projection library would only
-	add weight.
+	Tiles come from the box's own atlas (`/api/map/tiles`, see
+	docs/map-atlas-plan.md): cached on the box after first fetch, so the
+	browser never hands the day's coordinates to a third-party tile server and
+	areas you actually live in keep working offline. The panel is display-only
+	— no drag, no zoom — because it answers the deck's scrub, not the mouse.
 -->
 <script lang="ts">
+	import { onDestroy, onMount } from "svelte";
+	import "leaflet/dist/leaflet.css";
+	import { backendUrl } from "$lib/config/backend";
 	import type { TimelineDayPoint } from "$lib/wiki/api";
 
 	interface Props {
@@ -21,24 +26,14 @@
 	}
 	let { points, scrubMs = null, nowMs }: Props = $props();
 
-	const reduce =
-		typeof window !== "undefined" &&
-		window.matchMedia &&
-		window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+	let container = $state<HTMLDivElement | undefined>(undefined);
+	let map: any = null;
+	let L: any = null;
+	let trackLayer: any = null;
+	let markDot: any = null;
+	let tiles: any = null;
 
-	let canvas = $state<HTMLCanvasElement | undefined>(undefined);
-
-	function cssvar(n: string): string {
-		return getComputedStyle(document.documentElement).getPropertyValue(n).trim() || "#1a2030";
-	}
-	function rgba(hex: string, a: number): string {
-		let h = hex.replace("#", "");
-		if (h.length === 3) h = h.split("").map((c) => c + c).join("");
-		const n = parseInt(h, 16);
-		return `rgba(${(n >> 16) & 255},${(n >> 8) & 255},${n & 255},${a})`;
-	}
-
-	/** The fix nearest an instant — what the scrub dot marks. */
+	/** The fix nearest an instant — what the dot marks. */
 	const marked = $derived.by(() => {
 		if (!points.length) return null;
 		const t = scrubMs ?? nowMs;
@@ -55,98 +50,127 @@
 		return gap > 30 * 60_000 ? null : best;
 	});
 
-	// The loop depends on the canvas and the track, and deliberately not on the
-	// mark: reading `marked` here would make every pointer move tear down the
-	// loop and replay the draw-in, which is precisely what scrubbing does. The
-	// mark is read inside `frame`, outside the tracking context.
-	$effect(() => {
-		const cv = canvas,
-			pts = points;
-		if (!cv || pts.length < 2) return;
-		let raf = 0,
-			start = 0;
+	/** The atlas caches both Carto styles; follow the app's own scheme. */
+	function tileStyle(): "light" | "dark" {
+		const flag = getComputedStyle(document.documentElement).getPropertyValue("--identity-dark").trim();
+		return flag === "1" ? "dark" : "light";
+	}
 
-		function frame(ts: number) {
-			const mk = marked;
-			if (!start) start = ts;
-			const grow = reduce ? 1 : Math.min(1, (ts - start) / 1200);
-			const W = cv!.clientWidth,
-				H = cv!.clientHeight,
-				pad = 14;
-			if (W < 8 || H < 8) {
-				raf = requestAnimationFrame(frame);
-				return;
-			}
-			const d = Math.min(window.devicePixelRatio || 1, 2);
-			if (cv!.width !== Math.round(W * d)) {
-				cv!.width = Math.round(W * d);
-				cv!.height = Math.round(H * d);
-			}
-			const c = cv!.getContext("2d");
-			if (!c) return;
-			c.setTransform(d, 0, 0, d, 0, 0);
-			c.clearRect(0, 0, W, H);
+	// `backendUrl`, not a bare path: tiles load from <img src>, which the
+	// mobile shell's fetch proxy never sees.
+	function setTiles() {
+		if (!map || !L) return;
+		tiles?.remove();
+		tiles = L.tileLayer(backendUrl(`/api/map/tiles/${tileStyle()}/{z}/{x}/{y}`), {
+			maxZoom: 19,
+			// Blank tile when the box is offline / upstream fails — grey gaps,
+			// not broken images.
+			errorTileUrl: "data:image/gif;base64,R0lGODlhAQABAAAAACwAAAAAAQABAAA=",
+		}).addTo(map);
+	}
 
-			let mnLa = Infinity, mxLa = -Infinity, mnLo = Infinity, mxLo = -Infinity;
-			for (const q of pts) {
-				mnLa = Math.min(mnLa, q.latitude); mxLa = Math.max(mxLa, q.latitude);
-				mnLo = Math.min(mnLo, q.longitude); mxLo = Math.max(mxLo, q.longitude);
-			}
-			const k = Math.cos((((mnLa + mxLa) / 2) * Math.PI) / 180) || 1;
-			const spanX = Math.max((mxLo - mnLo) * k, 1e-4),
-				spanY = Math.max(mxLa - mnLa, 1e-4);
-			const sc = Math.min((W - 2 * pad) / spanX, (H - 2 * pad) / spanY);
-			const offX = (W - spanX * sc) / 2,
-				offY = (H - spanY * sc) / 2;
-			const X = (lo: number) => offX + (lo - mnLo) * k * sc;
-			const Y = (la: number) => offY + (mxLa - la) * sc;
-
-			const step = Math.max(1, Math.floor(pts.length / 420));
-			const drawn = pts.filter((_, i) => i % step === 0 || i === pts.length - 1);
-			const n = Math.max(2, Math.floor(drawn.length * grow));
-			const fg = cssvar("--color-foreground"),
-				accent = cssvar("--color-primary");
-
-			c.beginPath();
-			for (let i = 0; i < n; i++) {
-				const q = drawn[i];
-				i ? c.lineTo(X(q.longitude), Y(q.latitude)) : c.moveTo(X(q.longitude), Y(q.latitude));
-			}
-			c.strokeStyle = rgba(fg, 0.42);
-			c.lineWidth = 1.2;
-			c.lineJoin = "round";
-			c.lineCap = "round";
-			c.stroke();
-
-			if (mk && grow >= 1) {
-				const hx = X(mk.longitude),
-					hy = Y(mk.latitude);
-				// The live head breathes; a scrubbed instant sits still, because
-				// it is a fact about the past rather than something in progress.
-				const pu = scrubMs == null && !reduce ? 0.5 + 0.5 * Math.sin(ts / 760) : 0.5;
-				const g = c.createRadialGradient(hx, hy, 0, hx, hy, 7 + pu * 3);
-				g.addColorStop(0, rgba(accent, 0.28));
-				g.addColorStop(1, rgba(accent, 0));
-				c.fillStyle = g;
-				c.beginPath();
-				c.arc(hx, hy, 7 + pu * 3, 0, 6.29);
-				c.fill();
-				c.fillStyle = accent;
-				c.beginPath();
-				c.arc(hx, hy, 2.5, 0, 6.29);
-				c.fill();
-			}
-			raf = requestAnimationFrame(frame);
+	function renderTrack() {
+		if (!map || !L || points.length < 2) return;
+		trackLayer?.remove();
+		trackLayer = L.polyline(
+			points.map((p) => [p.latitude, p.longitude]),
+			{ color: "var(--color-foreground)", opacity: 0.45, weight: 1.5, interactive: false }
+		).addTo(map);
+		try {
+			// Capped: a day spent at home is a tiny bbox, and fitBounds would
+			// otherwise dive to rooftop zoom.
+			map.fitBounds(trackLayer.getBounds(), { padding: [10, 10], maxZoom: 16 });
+		} catch {
+			// ignore
 		}
-		raf = requestAnimationFrame(frame);
-		return () => {
-			if (raf) cancelAnimationFrame(raf);
-		};
+	}
+
+	function renderMark() {
+		if (!map || !L) return;
+		const mk = marked;
+		if (!mk) {
+			markDot?.remove();
+			markDot = null;
+			return;
+		}
+		const pos: [number, number] = [mk.latitude, mk.longitude];
+		if (!markDot) {
+			markDot = L.circleMarker(pos, {
+				radius: 4,
+				weight: 2,
+				color: "var(--color-background)",
+				fillColor: "var(--color-primary)",
+				fillOpacity: 1,
+				interactive: false,
+			}).addTo(map);
+		} else {
+			markDot.setLatLng(pos);
+		}
+	}
+
+	function onTheme() {
+		setTiles();
+	}
+
+	onMount(async () => {
+		if (!container) return;
+		const leaflet = await import("leaflet");
+		L = (leaflet as any).default ?? leaflet;
+		map = L.map(container, {
+			zoomControl: false,
+			attributionControl: false,
+			scrollWheelZoom: false,
+			dragging: false,
+			doubleClickZoom: false,
+			boxZoom: false,
+			keyboard: false,
+			touchZoom: false,
+			tap: false,
+		});
+		setTiles();
+		renderTrack();
+		renderMark();
+		window.addEventListener("themechange", onTheme);
+	});
+
+	$effect(() => {
+		points;
+		renderTrack();
+	});
+
+	$effect(() => {
+		marked;
+		renderMark();
+	});
+
+	onDestroy(() => {
+		window.removeEventListener("themechange", onTheme);
+		markDot?.remove();
+		trackLayer?.remove();
+		try {
+			map?.remove();
+		} catch {
+			// ignore
+		}
+		map = null;
+		L = null;
 	});
 </script>
 
-<canvas bind:this={canvas} aria-hidden="true"></canvas>
+<div class="map" bind:this={container} aria-hidden="true"></div>
 
 <style>
-	canvas { display: block; width: 100%; height: 100%; }
+	.map {
+		width: 100%;
+		height: 100%;
+		border: 1px solid var(--color-border);
+		border-radius: 8px;
+		overflow: hidden;
+		background: var(--color-surface);
+	}
+	.map :global(.leaflet-container) {
+		background: var(--color-surface);
+		font-family: var(--font-sans);
+		cursor: default;
+	}
 </style>

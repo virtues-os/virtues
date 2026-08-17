@@ -42,7 +42,7 @@
     },
     "schedule": {
       "type": "string",
-      "description": "Cron expression (sec min hour dom month dow), box-local timezone \u2014 e.g. \"0 0 7 * * *\" for 7am daily. Seeds cron_schedule on first reconcile; user edits in the UI win after that. The legacy spelling `default_cron` is still accepted."
+      "description": "Cron expression (sec min hour dom month dow), box-local timezone \u2014 e.g. \"0 0 7 * * *\" for 7am daily. Seeds the live value on first reconcile; user edits in the UI win after that. The legacy spelling `default_cron` is still accepted."
     },
     "default_enabled": {
       "type": "boolean",
@@ -66,11 +66,7 @@
       "items": {
         "type": "string"
       },
-      "description": "Argv to spawn (function = subprocess, service = supervised daemon). A bare command[0] resolves to a Cargo-built applet binary under target/{debug,release}; anything else runs via PATH. Examples: [\"ios_healthkit\"], [\"python3\", \"main.py\"], [\"node\", \"server.js\"], [\"./build/handler\"]."
-    },
-    "supervise": {
-      "type": "boolean",
-      "description": "Command applets: run as a long-lived supervised service instead of fork-per-trigger (replaces runtime='service')."
+      "description": "Argv to spawn as a subprocess, forked per trigger, speaking stdin/stdout JSON. A bare command[0] resolves to a Cargo-built applet binary under target/{debug,release}; anything else runs via PATH. Examples: [\"weather_sync\"], [\"python3\", \"main.py\"], [\"./build/handler\"]."
     },
     "per_credential": {
       "type": "boolean",
@@ -96,22 +92,8 @@
     },
     "config": {
       "type": "object",
-      "description": "Free-form config that flows into app_applets.config JSON. Notable: [config.limits] max_llm_cost / max_llm_cost_per_day / max_runs_per_day / max_runs_per_hour / timeout_s; [config.service] health_path / mem_mb for supervised services.",
+      "description": "Free-form config that flows into app_applets.config JSON. Read by the box: [config.limits] max_llm_cost / max_llm_cost_per_day / max_runs_per_day / max_runs_per_hour / timeout_s, and `model` for a slot override. Anything else is carried but never read.",
       "properties": {
-        "service": {
-          "type": "object",
-          "properties": {
-            "health_path": {
-              "type": "string",
-              "default": "/__health",
-              "description": "Path the supervisor GETs to confirm service readiness."
-            },
-            "mem_mb": {
-              "type": "integer",
-              "description": "Soft RSS cap (macOS-only watchdog). Absent on Linux for v1."
-            }
-          }
-        },
         "image_url": {
           "type": "string",
           "description": "Optional path/URL for the TemplateCard hero illustration (e.g. /templates/morning-examen.png)."

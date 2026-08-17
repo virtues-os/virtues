@@ -903,11 +903,26 @@
 	   block instead (what this used to do) lands the text ~48px further in
 	   than every neighbouring room, so the columns don't line up when you move
 	   between tabs even though both claim 72rem. */
+	/* This room hand-rolls the Page shell, so it hand-rolls the shell's phone
+	   gutter too — 3rem a side leaves 279px of a 375px screen, and the room's
+	   own grids then push the page sideways. Mobile-first at the same 768px
+	   step `Page.svelte` uses, so the two shells change measure on exactly the
+	   same pixel. */
 	.content {
 		flex: 1;
 		overflow-y: auto;
 		min-height: 0;
-		padding: 3rem;
+		/* The bottom value is the floating tab bar's room. The shell does not
+		   reserve it — the view runs under the bar so content passes behind the
+		   glass — so this scroller is what ends above it. Same reasoning, and
+		   same measure, as `Page.svelte`. */
+		padding: 2rem 1.25rem calc(1.5rem + var(--tabbar-reserve) + env(safe-area-inset-bottom));
+	}
+
+	@media (min-width: 768px) {
+		.content {
+			padding: 3rem;
+		}
 	}
 
 	/* Two measures, not five — the same rule the Page shell states, applied to
@@ -1390,6 +1405,20 @@
 		.stat-stack {
 			flex-direction: row;
 			gap: 1.25rem;
+		}
+	}
+
+	/* Touch sizing, last in the sheet so it wins on source order against the
+	   base rules it restates (same selectors, same specificity — a media query
+	   adds none).
+
+	   `.today-link` is deliberately not here: it is a link inside a sentence,
+	   and a 44pt box around it would reach into the lines above and below and
+	   swallow their taps. Inline prose links are the honest exception to the
+	   floor; a list row is not. */
+	@media (max-width: 768px), (pointer: coarse) {
+		.wc-row {
+			padding: 0.75rem 0;
 		}
 	}
 

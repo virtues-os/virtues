@@ -5,6 +5,7 @@
 	import { windowShellStore } from "$lib/stores/window-shell.svelte";
 	import Icon from "$lib/components/Icon.svelte";
 	import { sidebarState } from "$lib/stores/sidebarState.svelte";
+	import { search } from "$lib/stores/search.svelte";
 	import WorkspaceHeader from "./WorkspaceHeader.svelte";
 	import SidebarFooter from "./SidebarFooter.svelte";
 	import SystemSection from "./SystemSection.svelte";
@@ -12,7 +13,6 @@
 	import ZoneHeader from "./ZoneHeader.svelte";
 	import { sidebarZones } from "$lib/stores/sidebarZones.svelte";
 	import { SECTION_GROUPS } from "$lib/sidebar/sections";
-	import SearchModal from "./SearchModal.svelte";
 	import SidebarModePanel from "./SidebarModePanel.svelte";
 	import { sidebarMode } from "$lib/stores/sidebarMode.svelte";
 	import { shortcuts } from "$lib/shortcuts/registry.svelte";
@@ -21,8 +21,8 @@
 	// Collapsed state from shared store (also consumed by WindowTabBar)
 	const isCollapsed = $derived(sidebarState.collapsed);
 
-	// Search modal state
-	let isSearchOpen = $state(false);
+	// The palette's open state lives in a store so the phone shell can reach it
+	// too; the modal itself mounts once at the app layout. See stores/search.
 
 	// Track if store is ready
 	let storeReady = $state(false);
@@ -50,7 +50,7 @@
 		let unlistenSummon: (() => void) | null = null;
 		let disposed = false;
 		void onSummon(() => {
-			isSearchOpen = true;
+			search.show();
 		}).then((un) => {
 			// onMount's cleanup may already have run — this resolves a tick late.
 			if (disposed) un();
@@ -120,15 +120,11 @@
 	});
 
 	function handleSearch() {
-		isSearchOpen = true;
+		search.show();
 	}
 
 	function toggleSearch() {
-		isSearchOpen = !isSearchOpen;
-	}
-
-	function closeSearch() {
-		isSearchOpen = false;
+		search.toggle();
 	}
 
 	function handleWikiOverview() {
@@ -315,8 +311,6 @@
 		/>
 	</div>
 </aside>
-
-<SearchModal open={isSearchOpen} onClose={closeSearch} />
 
 <style>
 	@reference "../../../app.css";

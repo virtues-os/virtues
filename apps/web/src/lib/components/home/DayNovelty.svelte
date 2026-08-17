@@ -16,8 +16,9 @@
 	  · only complete, elapsed hours are compared, for today and for every past
 	    day alike. Comparing a half-finished day against whole ones would call
 	    every morning chaotic.
-	  · with too few days behind it, it says so rather than scoring noise. A box
-	    in its first week has no "usual" to be unlike.
+	  · with too few days behind it, it renders nothing rather than scoring
+	    noise. A box in its first week has no "usual" to be unlike, and this is
+	    the page's opening line — it only speaks when it has a claim to make.
 
 	Source is the day-clock raster, which counts activation — app sessions,
 	visits, outbound messages, transcription, browsing, listening, workouts. It
@@ -34,9 +35,9 @@
 	}
 	let { dayStartMs, nowMs, tz }: Props = $props();
 
-	/** Days of history to judge against. Enough for a rhythm; short enough that
-	 *  a life that changed two months ago is not still the baseline. */
-	const WINDOW = 30;
+	/** Days of history to judge against: trailing twelve weeks, the same
+	 *  window the rest of the record judges "usual" against. */
+	const WINDOW = 84;
 	/** Below this many usable past days there is no "usual" worth naming. */
 	const MIN_DAYS = 7;
 	/** Before this many hours have elapsed, a day has not shown its shape. */
@@ -152,12 +153,8 @@
 
 	const caption = $derived.by(() => {
 		const a = analysis;
-		if (!a) return null;
-		if (!a.ready) {
-			if (!a.hasToday) return "Too little recorded yet today to compare.";
-			return `${a.days} day${a.days === 1 ? "" : "s"} of history — not enough yet to know what usual looks like.`;
-		}
-		if (!a.ticks) return "Your last 30 days are near-identical in rhythm — today is no exception.";
+		if (!a || !a.ready) return null;
+		if (!a.ticks) return "Your last twelve weeks are near-identical in rhythm — today is no exception.";
 		const share = a.beaten / a.days;
 		const tail = `unlike ${a.beaten} of your last ${a.days} days`;
 		if (share >= 0.8) return `Today has gone off your usual rhythm — ${tail}.`;
@@ -166,9 +163,12 @@
 	});
 </script>
 
-{#if hoursElapsed >= MIN_HOURS && !failed && analysis}
+{#if hoursElapsed >= MIN_HOURS && !failed && analysis?.ready && caption}
+	<!-- The sentence leads and the strip is its evidence: this block opens the
+	     page, in the counted voice the remark used to hold. -->
 	<figure class="nov">
-		{#if analysis.ready && analysis.ticks}
+		<figcaption>{caption}</figcaption>
+		{#if analysis.ticks}
 			<div class="strip">
 				<span class="end mono">ordinary</span>
 				<!-- Measured, not stretched: a viewBox scaled to the column width
@@ -185,15 +185,14 @@
 				<span class="end mono">unusual</span>
 			</div>
 		{/if}
-		<figcaption>{caption}</figcaption>
 	</figure>
 {/if}
 
 <style>
-	.nov { margin: 20px 0 0; }
+	.nov { margin: 0 0 26px; padding-top: 14px; border-top: 1px solid var(--color-border); max-width: 58ch; }
 	.mono { font-family: var(--font-mono); }
 
-	.strip { display: flex; align-items: center; gap: 12px; }
+	.strip { display: flex; align-items: center; gap: 12px; margin-top: 12px; }
 	.track { flex: 1; min-width: 0; }
 	.track svg { display: block; overflow: visible; }
 	.end { font-size: 9.5px; letter-spacing: 0.04em; color: var(--color-foreground-subtle); flex: none; }
@@ -203,7 +202,8 @@
 	.me { fill: var(--color-primary); }
 
 	figcaption {
-		font-family: var(--font-sans); font-size: 12.5px; line-height: 1.5;
-		color: var(--color-foreground-muted); margin-top: 9px;
+		font-family: var(--font-sans); font-size: 15px; line-height: 1.5;
+		font-variant-numeric: tabular-nums;
+		color: var(--color-foreground); margin: 0;
 	}
 </style>

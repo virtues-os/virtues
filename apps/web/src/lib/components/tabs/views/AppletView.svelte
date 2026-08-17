@@ -6,12 +6,12 @@
 	// The id comes from the route `/applet/<id>/view`.
 	let { tab }: { tab: Tab; active: boolean } = $props();
 
-	const actionId = $derived(tab.route.match(/\/(applet_[^/]+)\/view/)?.[1] ?? null);
+	const appletId = $derived(tab.route.match(/\/(applet_[^/]+)\/view/)?.[1] ?? null);
 </script>
 
 <div class="applet-view">
-	{#if actionId}
-		<FaceFrame {actionId} height="100%" />
+	{#if appletId}
+		<FaceFrame {appletId} height="100%" />
 	{:else}
 		<div class="state"><p class="muted">Applet not found.</p></div>
 	{/if}

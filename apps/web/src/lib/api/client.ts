@@ -101,7 +101,7 @@ export function apiSend<T>(method: string, path: string, jsonBody?: unknown): Pr
 // Actions — new schema (post cutover + PR 2 endpoints)
 // ============================================================================
 
-export type ActionTrigger = 'cron' | 'manual' | 'tool' | 'api' | 'webhook' | 'message';
+export type AppletTrigger = 'cron' | 'manual' | 'tool' | 'api' | 'webhook' | 'message';
 
 export interface AppletRun {
 	id: string;
@@ -114,7 +114,7 @@ export interface AppletRun {
 	completed_at: string | null;
 	records_processed: number;
 	error: string | null;
-	trigger: ActionTrigger;
+	trigger: AppletTrigger;
 	parent_run_id: string | null;
 	transform_stage: string | null;
 	result_summary: string | null;
@@ -128,7 +128,7 @@ export interface AppletRun {
 	created_at: string;
 }
 
-export interface ActionLastRun {
+export interface AppletLastRun {
 	status: string;
 	started_at: string | null;
 	completed_at?: string | null;
@@ -136,16 +136,6 @@ export interface ActionLastRun {
 	error: string | null;
 	summary?: string | null;
 }
-
-/**
- * Two-runtime model — see ARCHITECTURE.md.
- *
- * - `function`: fork-per-trigger CLI; the default. Server forks the binary
- *   on every trigger, pipes ActionInput/Output JSON.
- * - `view`: pure Svelte component, never invoked server-side. Lives at
- *   `apps/web/src/lib/applets/<name>/`.
- */
-export type ActionRuntime = 'function' | 'view';
 
 /**
  * Which of the four things made this applet — the facet lists and filters use.
@@ -166,19 +156,17 @@ export interface Applet {
 	 *  headline. Null only for a row whose manifest omits it. */
 	description: string | null;
 	agent: string | null;
-	cron_schedule: string | null;
+	schedule: string | null;
 	enabled: boolean;
 	config: Record<string, unknown>;
 	condition: string | null;
-	triggers: ActionTrigger[];
+	triggers: AppletTrigger[];
 	memory: string | null;
-	function_name: string | null;
 	/** Set when the applet is one source connection's fan-out (OAuth/API-key). */
 	credential_id: string | null;
 	/** Set when the applet is one paired device's ingest webhook (iOS/Mac). */
 	device_id: string | null;
 	origin: AppletOrigin;
-	runtime: ActionRuntime;
 	/** Polyglot escape: explicit argv to spawn instead of resolving a Cargo
 	 *  binary by `function_name`. Null when the action uses the function_name
 	 *  shortcut. */
@@ -198,7 +186,6 @@ export interface Applet {
 	last_slot_at: string | null;
 	/** True when the applet folder ships a face/ (sandboxed-iframe HTML UI). */
 	has_face: boolean;
-	is_system: boolean;
 	/** The last 10 run statuses, newest first — the card's pulse. Comes with
 	 *  the row so the list does not fetch it per applet. */
 	pulse: AppletRun['status'][];
@@ -206,17 +193,17 @@ export interface Applet {
 	last_success_summary: string | null;
 	created_at: string;
 	updated_at: string;
-	last_run: ActionLastRun | null;
+	last_run: AppletLastRun | null;
 }
 
-export interface ActionDetail extends Applet {
+export interface AppletDetail extends Applet {
 	recent_runs?: AppletRun[];
 }
 
 export async function mintFaceToken(
-	actionId: string
+	appletId: string
 ): Promise<{ token: string; expires_in_seconds: number }> {
-	return request(`/applets/${encodeURIComponent(actionId)}/face-token`);
+	return request(`/applets/${encodeURIComponent(appletId)}/face-token`);
 }
 
 export async function listApplets(): Promise<Applet[]> {
@@ -289,8 +276,19 @@ export interface StagedRelease {
 }
 
 export interface UpdateStatus {
+	/** The BUILD COUNTER (crate version). Not what the box is running — see
+	 *  `running_version`. Kept because it is the compat coordinate. */
 	current: string;
+	/** The stored update PREFERENCE: what the box will be offered next. */
 	channel: string;
+	/** RELEASE IDENTITY — what this box is actually running, from the baked
+	 *  build tag: `edge`, `staging.4`, `v0.3.0`, `dev`. */
+	running_version: string;
+	/** Channel of the running BUILD: `stable` | `staging` | `edge` | `dev`. */
+	running_channel: string;
+	/** The running build is off a later track than the channel being followed,
+	 *  so that channel's newest tag is probably behind this box. */
+	running_ahead: boolean;
 	latest: string | null;
 	update_available: boolean;
 	/**
@@ -315,6 +313,105 @@ export async function setUpdateChannel(channel: 'stable' | 'prerelease'): Promis
 		body: JSON.stringify({ channel }),
 	});
 	if (!res.ok) throw new Error(`Failed to set channel: ${res.statusText}`);
+}
+
+export interface NarrativeDraft {
+	document: string;
+	core: string;
+	/** Proposed only. Nothing binds the assistant until it is confirmed. */
+	proposed_rules: string[];
+}
+
+/** Draft the document from the answers. Spends money; POST, never on load. */
+export async function draftNarrative(): Promise<NarrativeDraft> {
+	const res = await fetch(`${API_BASE}/narrative/draft`, { method: 'POST' });
+	if (!res.ok) {
+		let detail = res.statusText;
+		try {
+			const b = await res.json();
+			if (b?.error) detail = b.error;
+		} catch {
+			/* status text is all we have */
+		}
+		throw new Error(detail);
+	}
+	return res.json();
+}
+
+/**
+ * Replace the rule set with exactly what was confirmed.
+ *
+ * A replace, not an append: this is the screen where someone sees every rule
+ * their box obeys, so leaving it has to mean the list says what they saw.
+ */
+export async function saveNarrativeRules(rules: string[]): Promise<void> {
+	const res = await fetch(`${API_BASE}/narrative/rules`, {
+		method: 'POST',
+		headers: { 'Content-Type': 'application/json' },
+		body: JSON.stringify({ rules }),
+	});
+	if (!res.ok) throw new Error(`Couldn't save your rules: ${res.statusText}`);
+}
+
+export interface InterviewAnswer {
+	question_id: string;
+	answer: string;
+	word_count: number;
+	completed_at: string | null;
+}
+
+export async function getInterviewAnswers(): Promise<InterviewAnswer[]> {
+	const res = await fetch(`${API_BASE}/narrative/interview`);
+	if (!res.ok) throw new Error(`Failed to load your answers: ${res.statusText}`);
+	return (await res.json()).answers ?? [];
+}
+
+/**
+ * Save one answer. Called while the person is still typing, because this is an
+ * hour of writing about grief, vice and family and losing it to a reload is a
+ * betrayal rather than an inconvenience.
+ *
+ * Throws on failure so the caller can SAY so — a save that fails quietly is the
+ * worst outcome available here.
+ */
+export async function saveInterviewAnswer(
+	question_id: string,
+	answer: string,
+	completed = false,
+): Promise<void> {
+	const res = await fetch(`${API_BASE}/narrative/interview`, {
+		method: 'POST',
+		headers: { 'Content-Type': 'application/json' },
+		body: JSON.stringify({ question_id, answer, completed }),
+	});
+	if (!res.ok) throw new Error(`Couldn't save: ${res.statusText}`);
+}
+
+export interface ReopenOnboardingResponse {
+	devices: number;
+	credentials: number;
+}
+
+/**
+ * Revoke every paired device, keeping data, sources, subscription and box
+ * identity. The box becomes unclaimed: it advertises over Bluetooth again and
+ * the panel returns to a setup screen.
+ *
+ * This device is revoked too — the caller loses its own session, by design.
+ */
+export async function reopenOnboarding(): Promise<ReopenOnboardingResponse> {
+	const res = await fetch(`${API_BASE}/pair/reopen-onboarding`, { method: 'POST' });
+	if (!res.ok) {
+		let detail = res.statusText;
+		try {
+			const body = await res.json();
+			if (body?.error) detail = body.error;
+		} catch {
+			/* non-JSON body — the status text is all we have */
+		}
+		throw new Error(detail);
+	}
+	return res.json();
 }
 
 export interface ApplyUpdateResponse {
@@ -456,8 +553,8 @@ export async function importActionsFromGit(body: {
 export interface CreateAppletRequest {
 	name: string;
 	agent?: string;
-	cron_schedule?: string;
-	triggers?: ActionTrigger[];
+	schedule?: string;
+	triggers?: AppletTrigger[];
 	config?: Record<string, unknown>;
 }
 
@@ -477,11 +574,11 @@ export async function createApplet(body: CreateAppletRequest): Promise<Applet> {
 export interface PatchAppletBody {
 	name?: string;
 	agent?: string | null;
-	cron_schedule?: string | null;
+	schedule?: string | null;
 	enabled?: boolean;
 	config?: Record<string, unknown>;
 	condition?: string | null;
-	triggers?: ActionTrigger[];
+	triggers?: AppletTrigger[];
 	memory?: string | null;
 }
 
@@ -498,7 +595,7 @@ export async function patchApplet(id: string, patch: PatchAppletBody): Promise<A
 	return res.json();
 }
 
-export async function deleteAction(id: string, dropData = false): Promise<void> {
+export async function deleteApplet(id: string, dropData = false): Promise<void> {
 	const q = dropData ? '?drop_data=true' : '';
 	const res = await fetch(`${API_BASE}/applets/${encodeURIComponent(id)}${q}`, {
 		method: 'DELETE'
@@ -516,7 +613,7 @@ export async function deleteAction(id: string, dropData = false): Promise<void> 
 export interface AppletLogEntry {
 	run_id: string | null;
 	status: AppletRun['status'];
-	trigger: ActionTrigger | null;
+	trigger: AppletTrigger | null;
 	summary: string | null;
 	/** What the user said, for `message` runs. */
 	message: string | null;
@@ -569,7 +666,7 @@ export interface TriggerActionResponse {
 	error: string | null;
 }
 
-export async function runAction(
+export async function runApplet(
 	id: string,
 	payload?: Record<string, unknown>
 ): Promise<TriggerActionResponse> {
@@ -628,7 +725,7 @@ export async function getAppletSourceFile(
 	);
 }
 
-export async function listActionRuns(
+export async function listAppletRuns(
 	id: string,
 	opts?: { limit?: number; status?: string }
 ): Promise<AppletRun[]> {
@@ -2224,8 +2321,28 @@ export interface SetupStep {
 
 export interface SetupState {
 	setup: SetupStep[];
+	/** The box is up: claimed, and linked to an account on an appliance. */
 	setup_complete: boolean;
 	onboarding: SetupStep[];
+	/** The box has something to keep a record of — at least one source. */
+	onboarding_complete: boolean;
+	/** The owner declined, and we remember rather than asking every launch. */
+	onboarding_skipped: boolean;
+}
+
+/**
+ * Remember that onboarding was declined — or offer it again with `false`.
+ *
+ * The app routes on this, so a skip that wasn't persisted would put the same
+ * page back in front of someone on every launch.
+ */
+export async function skipOnboarding(skipped = true): Promise<void> {
+	const res = await fetch(`${API_BASE}/setup/skip-onboarding`, {
+		method: 'POST',
+		headers: { 'Content-Type': 'application/json' },
+		body: JSON.stringify({ skipped }),
+	});
+	if (!res.ok) throw new Error(`Failed to record onboarding choice: ${res.statusText}`);
 }
 
 export async function getSetupState(): Promise<SetupState> {

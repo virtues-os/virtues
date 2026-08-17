@@ -42,6 +42,14 @@
 	<key>NSLocalNetworkUsageDescription</key>
 	<string>Virtues connects to your box on your local network to pair and sync your data.</string>
 	<!--
+	  BLE setup (Improv): the connect screen finds an unclaimed box over
+	  Bluetooth and sends it your wifi details, so your phone never has to leave
+	  its own network. CoreBluetooth CRASHES the app at first use if this string
+	  is absent — same class of instant kill as the camera key below.
+	-->
+	<key>NSBluetoothAlwaysUsageDescription</key>
+	<string>Virtues uses Bluetooth to find your box and set up its Wi-Fi during onboarding.</string>
+	<!--
 	  Chat attachments: the webview's file input offers "Take Photo or Video".
 	  iOS TERMINATES the app (not a permission denial — an instant kill) if the
 	  camera sheet opens without NSCameraUsageDescription. Photo-library string

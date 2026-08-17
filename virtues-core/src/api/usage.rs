@@ -19,7 +19,9 @@ use crate::types::Timestamp;
 pub enum Service {
     AiGateway,
     GooglePlaces,
-    Exa,
+    /// Web search. Replaced Exa 2026-08-07 — rows written under the old name
+    /// stay in the table, they simply stop being surfaced.
+    Parallel,
     Unsplash,
 }
 
@@ -28,13 +30,18 @@ impl Service {
         match self {
             Service::AiGateway => "ai_gateway",
             Service::GooglePlaces => "google_places",
-            Service::Exa => "exa",
+            Service::Parallel => "parallel",
             Service::Unsplash => "unsplash",
         }
     }
 
     pub fn all() -> &'static [Service] {
-        &[Service::AiGateway, Service::GooglePlaces, Service::Exa, Service::Unsplash]
+        &[
+            Service::AiGateway,
+            Service::GooglePlaces,
+            Service::Parallel,
+            Service::Unsplash,
+        ]
     }
 }
 
@@ -130,12 +137,12 @@ impl Tier {
             // Starter tier
             (Tier::Standard, Service::AiGateway) => 1_000_000,
             (Tier::Standard, Service::GooglePlaces) => 1_000,
-            (Tier::Standard, Service::Exa) => 1_000,
+            (Tier::Standard, Service::Parallel) => 1_000,
             (Tier::Standard, Service::Unsplash) => 1_000,
             // Pro tier
             (Tier::Pro, Service::AiGateway) => 5_000_000,
             (Tier::Pro, Service::GooglePlaces) => 5_000,
-            (Tier::Pro, Service::Exa) => 5_000,
+            (Tier::Pro, Service::Parallel) => 5_000,
             (Tier::Pro, Service::Unsplash) => 5_000,
         }
     }
@@ -430,15 +437,15 @@ mod tests {
     fn test_tier_limits() {
         assert_eq!(Tier::Standard.limit_for(Service::AiGateway), 1_000_000);
         assert_eq!(Tier::Pro.limit_for(Service::AiGateway), 5_000_000);
-        assert_eq!(Tier::Standard.limit_for(Service::Exa), 1_000);
-        assert_eq!(Tier::Pro.limit_for(Service::Exa), 5_000);
+        assert_eq!(Tier::Standard.limit_for(Service::Parallel), 1_000);
+        assert_eq!(Tier::Pro.limit_for(Service::Parallel), 5_000);
     }
 
     #[test]
     fn test_service_as_str() {
         assert_eq!(Service::AiGateway.as_str(), "ai_gateway");
         assert_eq!(Service::GooglePlaces.as_str(), "google_places");
-        assert_eq!(Service::Exa.as_str(), "exa");
+        assert_eq!(Service::Parallel.as_str(), "parallel");
     }
 
     #[test]

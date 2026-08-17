@@ -113,10 +113,16 @@ where
         //    model. Refused when a forwarding header is present, because a
         //    reverse proxy in front of the box also connects from loopback
         //    while forwarding a REMOTE client (see CONSOLE_DEVICE_ID docs).
+        //    Canonicalized first: the server binds `*:8000` (dual-stack), so an
+        //    on-box client dialling `127.0.0.1` arrives as `::ffff:127.0.0.1`
+        //    and `is_loopback()` does not match it. Fails closed, so this only
+        //    ever cost an unexplained 401 for a v4 loopback caller — but the
+        //    same oversight in `api::provision` locked every phone out of the
+        //    setup AP. See `crate::peer_addr`.
         let is_loopback = parts
             .extensions
             .get::<ConnectInfo<SocketAddr>>()
-            .map(|ci| ci.0.ip().is_loopback())
+            .map(|ci| crate::peer_addr::canonical_peer(&ci.0).is_loopback())
             .unwrap_or(false);
         let is_proxied = parts.headers.contains_key("x-forwarded-for")
             || parts.headers.contains_key("forwarded");

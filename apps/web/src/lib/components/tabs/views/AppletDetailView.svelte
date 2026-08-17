@@ -12,9 +12,9 @@
 		getApplet,
 		getAppletLog,
 		patchApplet,
-		deleteAction,
+		deleteApplet,
 		getAppletData,
-		runAction,
+		runApplet,
 		messageApplet,
 		type Applet,
 		type AppletLogEntry,
@@ -25,7 +25,7 @@
 
 	let { tab }: { tab: Tab; active: boolean } = $props();
 
-	const actionId = $derived(routeToEntityId(tab.route));
+	const appletId = $derived(routeToEntityId(tab.route));
 
 	let action = $state<Applet | null>(null);
 	let log = $state<AppletLogEntry[]>([]);
@@ -33,16 +33,16 @@
 	let saving = $state(false);
 	let err = $state<string | null>(null);
 
-	let edit = $state<{ name: string; agent: string; cron_schedule: string; memory: string }>({
+	let edit = $state<{ name: string; agent: string; schedule: string; memory: string }>({
 		name: '',
 		agent: '',
-		cron_schedule: '',
+		schedule: '',
 		memory: ''
 	});
 	let isDirty = $state(false);
 
 	$effect(() => {
-		if (actionId) void load(actionId);
+		if (appletId) void load(appletId);
 	});
 
 	async function load(id: string) {
@@ -60,7 +60,7 @@
 			edit = {
 				name: a.name,
 				agent: a.agent ?? '',
-				cron_schedule: a.cron_schedule ?? '',
+				schedule: a.schedule ?? '',
 				memory: a.memory ?? ''
 			};
 			isDirty = false;
@@ -146,6 +146,54 @@
 			: 0
 	);
 
+	// A run is detached: the POST returns as soon as the row exists and the
+	// agent keeps going. The server's own comment said "the UI polls for the
+	// final status" and the UI never did — it read the log once, while the run
+	// was still `running`, and nothing updated it again. So pressing Run now
+	// showed you a spinner that never resolved until you reloaded the page.
+	//
+	// Poll while anything is running, and stop the moment nothing is. Bounded
+	// so a wedged run cannot leave a timer chain going forever.
+	const POLL_MS = 1500;
+	const POLL_MAX = 40; // ~60s, past which a run is not "just finishing"
+	let pollTimer: ReturnType<typeof setTimeout> | null = null;
+	let pollsLeft = 0;
+
+	function stopPolling() {
+		if (pollTimer) clearTimeout(pollTimer);
+		pollTimer = null;
+		pollsLeft = 0;
+	}
+
+	function pollSoon() {
+		if (pollTimer) clearTimeout(pollTimer);
+		if (pollsLeft <= 0) return;
+		pollTimer = setTimeout(async () => {
+			pollsLeft -= 1;
+			const id = action?.id;
+			if (!id) return;
+			log = await getAppletLog(id).catch(() => log);
+			if (log.some((e) => e.status === 'running')) {
+				pollSoon();
+			} else {
+				stopPolling();
+				// The run may have archived it, or spent something worth showing.
+				action = await getApplet(id).catch(() => action);
+			}
+		}, POLL_MS);
+	}
+
+	function watchForResult() {
+		pollsLeft = POLL_MAX;
+		pollSoon();
+	}
+
+	// Leaving the page, or switching applets, must not leave a chain running.
+	$effect(() => {
+		void appletId;
+		return stopPolling;
+	});
+
 	function markDirty() {
 		isDirty = true;
 	}
@@ -160,8 +208,8 @@
 			if (!isSystem && edit.agent !== (action.agent ?? '')) {
 				patch.agent = edit.agent.trim() ? edit.agent : null;
 			}
-			if (edit.cron_schedule !== (action.cron_schedule ?? '')) {
-				patch.cron_schedule = edit.cron_schedule.trim() ? edit.cron_schedule : null;
+			if (edit.schedule !== (action.schedule ?? '')) {
+				patch.schedule = edit.schedule.trim() ? edit.schedule : null;
 			}
 			if (edit.memory !== (action.memory ?? '')) {
 				patch.memory = edit.memory.trim() ? edit.memory : null;
@@ -175,7 +223,7 @@
 			edit = {
 				name: updated.name,
 				agent: updated.agent ?? '',
-				cron_schedule: updated.cron_schedule ?? '',
+				schedule: updated.schedule ?? '',
 				memory: updated.memory ?? ''
 			};
 			isDirty = false;
@@ -214,8 +262,9 @@
 		err = null;
 		try {
 			action = await patchApplet(action.id, { enabled: true });
-			await runAction(action.id);
+			await runApplet(action.id);
 			log = await getAppletLog(action.id).catch(() => log);
+			watchForResult();
 			action = await getApplet(action.id);
 		} catch (e) {
 			err = e instanceof Error ? e.message : String(e);
@@ -234,6 +283,18 @@
 	const canMessage = $derived(
 		Boolean(action?.triggers?.includes('message')) && !action?.archived_at
 	);
+	// The composer is only usable if the applet is actually on. Messaging a
+	// disabled applet reaches `prepare_run`, which reports it as not-found —
+	// a confusing thing to be told about an applet whose page you are reading.
+	const canSend = $derived(canMessage && Boolean(action?.enabled));
+
+	// "Run now" fires `trigger = "manual"`, which the runner refuses unless the
+	// applet lists it. Six shipped applets do not — the two device ingests are
+	// webhook-only, three sweeps are cron-only — so the button was offered on
+	// their pages and answered 403. Offer it only where it can work.
+	const canRunNow = $derived(
+		Boolean(action?.triggers?.includes('manual')) && !action?.archived_at
+	);
 
 	async function send() {
 		const text = draft.trim();
@@ -243,14 +304,10 @@
 		try {
 			await messageApplet(action.id, text);
 			draft = '';
-			// The run row exists before the POST returns; the agent turn keeps
-			// going. Re-read shortly so the reply lands without a manual refresh.
+			// The row exists before the POST returns; the agent turn keeps going.
+			// Show the question immediately, then watch for the answer.
 			log = await getAppletLog(action.id).catch(() => log);
-			// The run row exists before the POST returns; the agent turn keeps
-			// going. Re-read shortly so the reply lands without a manual refresh.
-			setTimeout(() => {
-				if (action) void getAppletLog(action.id).then((l) => (log = l)).catch(() => {});
-			}, 2500);
+			watchForResult();
 		} catch (e) {
 			err = e instanceof Error ? e.message : String(e);
 		} finally {
@@ -263,8 +320,9 @@
 		saving = true;
 		err = null;
 		try {
-			await runAction(action.id);
+			await runApplet(action.id);
 			log = await getAppletLog(action.id).catch(() => log);
+			watchForResult();
 		} catch (e) {
 			err = e instanceof Error ? e.message : String(e);
 		} finally {
@@ -292,7 +350,7 @@
 		deleting = true;
 		err = null;
 		try {
-			await deleteAction(action.id, dropData);
+			await deleteApplet(action.id, dropData);
 			deleteOpen = false;
 			windowShellStore.closeTab(tab.id);
 		} catch (e) {
@@ -324,7 +382,7 @@
 						<p class="intent">{action.description}</p>
 					{/if}
 					<div class="meta">
-						<span>{describeSchedule(action.cron_schedule ?? null)}</span>
+						<span>{describeSchedule(action.schedule ?? null)}</span>
 						{#if action.next_due_at && action.enabled && !action.archived_at}
 							<span class="dot-sep">·</span>
 							<!-- The scheduler's own pointer, not a re-derivation from the
@@ -366,9 +424,11 @@
 						<Button variant="secondary" onclick={toggleEnabled} disabled={saving}>
 							{action.enabled ? 'Disable' : 'Enable'}
 						</Button>
-						<Button variant="primary" onclick={runNow} disabled={saving}>
-							Run now
-						</Button>
+						{#if canRunNow}
+							<Button variant="primary" onclick={runNow} disabled={saving}>
+								Run now
+							</Button>
+						{/if}
 					{/if}
 				</div>
 			</div>
@@ -389,7 +449,7 @@
 						<Icon icon="ri:external-link-line" width="12" /> Open full page
 					</button>
 				</div>
-				<FaceFrame actionId={action.id} height="460px" />
+				<FaceFrame appletId={action.id} height="460px" />
 			</section>
 		{/if}
 
@@ -447,7 +507,7 @@
 								<Icon icon="ri:terminal-line" width="14" />
 								<span>
 									Compiled program, run fresh each time it fires —
-									<code>{action.command?.join(' ') ?? action.function_name ?? 'built in'}</code>.
+									<code>{action.command?.join(' ') ?? 'built in'}</code>.
 									No model is involved.
 								</span>
 							</div>
@@ -464,11 +524,11 @@
 					<span class="label">Schedule</span>
 					<input
 						type="text"
-						bind:value={edit.cron_schedule}
+						bind:value={edit.schedule}
 						placeholder="0 0 * * * *  (6-field cron, empty = on-demand)"
 						oninput={markDirty}
 					/>
-					<span class="hint">{describeSchedule(edit.cron_schedule || null)}</span>
+					<span class="hint">{describeSchedule(edit.schedule || null)}</span>
 				</label>
 
 				<!-- Three facts the page never showed, and the reason a person
@@ -572,10 +632,14 @@
 						<input
 							type="text"
 							bind:value={draft}
-							disabled={sending}
-							placeholder="Tell it something…"
+							disabled={sending || !canSend}
+							placeholder={canSend ? 'Tell it something…' : 'Turn it on to send it anything'}
 						/>
-						<Button variant="primary" onclick={send} disabled={sending || !draft.trim()}>
+						<Button
+							variant="primary"
+							onclick={send}
+							disabled={sending || !canSend || !draft.trim()}
+						>
 							{sending ? 'Sending…' : 'Send'}
 						</Button>
 					</form>

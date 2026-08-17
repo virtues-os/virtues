@@ -242,6 +242,30 @@ pub fn run() {
           .unwrap();
       };
 
+      // The AIRLOCK pages are served from the binary, unconditionally, and
+      // checked BEFORE the overlay/baked chain — not just as its fallback.
+      // These pages gate pairing and setup; they must version with the binary
+      // that runs them, never with a web bundle. Lived the alternative on
+      // 2026-08-11: a stale mobile-pair.html inside the SPA build output (an
+      // Aug 7 fossil in apps/web/build/) shadowed the compiled-in copy, and
+      // every connect-screen fix that day silently never reached the phone —
+      // five rebuilds of whack-a-mole against a file nobody was serving on
+      // purpose. Same doctrine as the include_bytes fallback below ("an
+      // airlock must not depend on packaging"), completed: it must not be
+      // OVERRIDABLE by packaging either.
+      let airlock: Option<&'static [u8]> = match resolved.as_str() {
+        "connect.html" => Some(include_bytes!("../ui/connect.html")),
+        "probe.html" => Some(include_bytes!("../ui/probe.html")),
+        _ => None,
+      };
+      if let Some(bytes) = airlock {
+        return tauri::http::Response::builder()
+          .status(200)
+          .header("Content-Type", "text/html")
+          .body(bytes.to_vec())
+          .unwrap();
+      }
+
       // Overlay first, baked second. `mime_guess` is not a dependency here, so
       // the baked asset's own mime type is reused when the overlay serves the
       // same path — which it does for every file, both being the same build
@@ -267,6 +291,8 @@ pub fn run() {
           .header("Content-Type", asset.mime_type)
           .body(asset.bytes)
           .unwrap(),
+        // The airlock pages are answered before this match ever runs (see
+        // above), so a miss here is a genuine 404.
         (None, None) => tauri::http::Response::builder()
           .status(404)
           .body(Vec::new())
@@ -389,7 +415,7 @@ pub fn run() {
       // requests. The URL is otherwise identical to what `WebviewUrl::App`
       // produced, and the handler falls back to the baked asset, so with no
       // overlay present this behaves exactly as before.
-      let start = "virtues://localhost/mobile-pair.html"
+      let start = "virtues://localhost/connect.html"
         .parse()
         .expect("static url");
       WebviewWindowBuilder::new(app, "main", WebviewUrl::CustomProtocol(start))

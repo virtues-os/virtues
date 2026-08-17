@@ -61,10 +61,10 @@ listed below.
 |---|---|---|
 | [recovery.md](recovery.md) | Current | Operator runbook: reaching the UI, lost-session recovery, backup/restore, upgrade rollback, diagnostic beacons. **Start here when something breaks.** |
 | [backup-plan.md](backup-plan.md) | Partly built | Surviving the loss of the box. Pillars 1–5 and the volume path landed; Phase A is the gate, and both ends of the pipeline are still missing. |
-| [update-model.md](update-model.md) | Current | The north star for fleet updates: a thin native shell shipped rarely plus a fast web payload pushed freely, with a version contract between them. Read this before the two specs below. |
-| [update-paradigm.md](update-paradigm.md) | Current | How one box moves between builds, designed after three real failures in a single `virtues upgrade`. |
+| [update-model.md](update-model.md) | Current | The north star for fleet updates: a thin native shell shipped rarely plus a fast web payload pushed freely, with a version contract between them. **Start here** — the three below are history and horizon. |
+| [update-paradigm.md](update-paradigm.md) | Built | How one box moves between builds. Fully shipped; kept as the design record for the three real `virtues upgrade` failures that shaped it. Current behavior lives in `cli/upgrade.rs` + `api/updates.rs`. |
 | [update-manifold-plan.md](update-manifold-plan.md) | Planned | Generalizes the box paradigm to the whole fleet, and adds the cross-component version negotiation the box doc never needed. |
-| [update-identity-spine.md](update-identity-spine.md) | Partly built | Phase 1 of the manifold: make every artifact state its `{version, sha, channel}` and show the fleet on the Devices page. |
+| [update-identity-spine.md](update-identity-spine.md) | Built | Phase 1 of the manifold: every artifact states its `{version, sha, channel}` and the fleet shows on the Devices page. |
 | [model-migration.md](model-migration.md) | Current | Runbook for changing the local embedding/rerank GGUFs. **Three places must agree** or the box serves one model while the runtime expects another. |
 | [review-access-plan.md](review-access-plan.md) | Current | How an Apple reviewer who owns no box exercises the iOS app. Live coordinates and the pair code are deliberately **not** in this repo. |
 
@@ -74,6 +74,7 @@ listed below.
 |---|---|---|
 | [the-day.md](the-day.md) | Partly built | Design spec for the Day Page — the life-mirror you read at night. The Four Questions, each with a different implementation maturity. |
 | [event-timeline.md](event-timeline.md) | Current | How a day becomes a clean, gapless sequence of events out of incomplete, out-of-order, mutually contradictory evidence. The spine the day page renders. |
+| [attention-plan.md](attention-plan.md) | Partly built | How the wiki learns which parts of a day mattered. A record has no tense — only calendar knows what time it is *about* — so aftermath is invisible by construction. Attention's four phases, what may be linked vs noted vs asserted, and the refuted list. |
 | [timezone-model.md](timezone-model.md) | Current | Two timezones: the box's stable `home_timezone` plus a per-day user-location timezone. Implemented 2026-06-25. |
 | [ir-notes.md](ir-notes.md) | Reference | Grounded map of the retrieval stack as it actually is, the non-obvious truths a full read exposed, and a ranked set of improvements with spikes. |
 | [npu-hardware-findings.md](npu-hardware-findings.md) | Reference | Measured field report from running the embed/rerank stack on two edge NPUs. Every number from real silicon. Settles the board question. |
@@ -90,6 +91,7 @@ listed below.
 | [chat-ux-roadmap.md](chat-ux-roadmap.md) | Planned | The chat surface overhaul, in independently shippable tracks A–L, each ending in a verification gate. |
 | [ui-overhaul-plan.md](ui-overhaul-plan.md) | Planned | Nineteen layout/settings/design items triaged against the codebase, each marked ship / spike / defer / drop. |
 | [onboarding.md](onboarding.md) | Current | Canonical spec for "box in hand" → "Virtues earning its keep," across both hardware tiers, with and without a screen. The channel picks the path; no one is asked. |
+| [appliance-image.md](appliance-image.md) | Partly built | How a Dragon becomes a shippable unit: the card-boots/NVMe-roots truth read off real hardware, the OS-on-card/data-on-NVMe split and why, `tools/build-master.sh`, the deprovision → `image-check` → `dd` gate, and the three questions that need the bench. |
 | [plaid-plan.md](plaid-plan.md) | Partly built | Plaid as the *general* finance collector — FinanceKit reaches only Apple's own products, so Plaid is the path that has to work for everyone else. |
 
 ## Clients & collection

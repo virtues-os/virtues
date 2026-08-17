@@ -204,26 +204,44 @@
 	{#if status}
 		<dl class="facts">
 			<dt>Running</dt>
-			<dd>{status.current}</dd>
+			<dd class="running">
+				<!-- RELEASE IDENTITY, not the build counter. This row used to
+				     print `current` (the crate version), which is the same
+				     string on every prerelease build — so a box on `edge` was
+				     told it was running "0.3.0", the number of a release it is
+				     ahead of. `codename::version()` exists precisely so every
+				     surface says the same word; this one wasn't asking. -->
+				<span class="ver">{status.running_version}</span>
+				{#if status.running_channel && status.running_channel !== 'stable'}
+					<span class="track">{status.running_channel}</span>
+				{/if}
+				<span class="counter">build {status.current}</span>
+			</dd>
 			<dt>Channel</dt>
 			<dd>
+				<!-- A SELECT, NOT A TOGGLE. Two buttons side by side read as a
+				     preference with two equally good answers; one of these ships
+				     unreviewed builds to the machine holding someone's record.
+				     A select has a default and makes the other option a
+				     deliberate reach, which is the honest shape of this
+				     decision. -->
 				<div class="channel-picker">
-					<button
-						class="channel"
-						class:selected={status.channel === 'stable'}
+					<select
+						id="channel"
 						disabled={switching}
-						onclick={() => switchChannel('stable')}
+						value={status.channel}
+						onchange={(e) =>
+							switchChannel(e.currentTarget.value as 'stable' | 'prerelease')}
 					>
-						Main <span class="hint">recommended</span>
-					</button>
-					<button
-						class="channel"
-						class:selected={status.channel === 'prerelease'}
-						disabled={switching}
-						onclick={() => switchChannel('prerelease')}
-					>
-						Nightly
-					</button>
+						<option value="stable">Main — released builds</option>
+						<option value="prerelease">Nightly — unreleased, may break</option>
+					</select>
+					{#if status.channel === 'prerelease'}
+						<span class="risk">
+							<Icon icon="ri:alert-line" width="13" />
+							Unreviewed builds install on this box
+						</span>
+					{/if}
 				</div>
 			</dd>
 		</dl>
@@ -235,6 +253,19 @@
 			<p class="state error">
 				<Icon icon="ri:error-warning-line" width="14" />
 				Couldn't check for updates — {status.check_error}
+			</p>
+		{:else if status.running_ahead}
+			<!-- Neither "up to date" nor "update available" is true here, and
+			     both were lies: this box came off a later track than the channel
+			     it follows, so the newest tag on that channel is probably behind
+			     it. Say what is running, say what the channel holds, and let the
+			     owner decide. -->
+			<p class="state ahead">
+				<Icon icon="ri:git-branch-line" width="14" />
+				This box runs <strong>{status.running_version}</strong>, from the
+				{status.running_channel} track — ahead of
+				{status.latest ?? 'the latest release'} on Main. Nothing to install;
+				Main will catch up.
 			</p>
 		{:else if status.update_available}
 			<div class="state available">
@@ -289,11 +320,22 @@
 </section>
 
 <style>
+	/* Carries its own gutter, matching the Page shell's, because Settings
+	   renders this section as a bare sibling of a Page-shelled view (`box` =
+	   UpdateSection + SystemInfoView). With no horizontal padding it sat flush
+	   to the window edge while the System page below it was inset — legible as
+	   a mistake at any width, glaring at 375px. */
 	.updates {
 		display: flex;
 		flex-direction: column;
 		gap: 12px;
-		padding: 16px 0;
+		padding: 16px 1.25rem;
+	}
+
+	@media (min-width: 768px) {
+		.updates {
+			padding: 16px 3rem;
+		}
 	}
 
 	header {
@@ -343,33 +385,60 @@
 		margin: 0;
 	}
 
-	.channel-picker {
-		display: inline-flex;
-		gap: 4px;
+	.running {
+		display: flex;
+		align-items: baseline;
+		flex-wrap: wrap;
+		gap: 8px;
 	}
 
-	.channel {
-		display: inline-flex;
-		align-items: baseline;
-		gap: 5px;
-		padding: 4px 10px;
+	.ver {
+		font-variant-numeric: tabular-nums;
+	}
+
+	/* The track is the fact people misread; give it a shape, not just a word. */
+	.track {
+		font-size: 11px;
+		text-transform: uppercase;
+		letter-spacing: 0.06em;
+		padding: 1px 6px;
+		border-radius: 999px;
 		border: 1px solid var(--color-border);
-		border-radius: 6px;
-		background: none;
-		cursor: pointer;
-		font-size: 12px;
 		color: var(--color-foreground-muted);
 	}
 
-	.channel.selected {
-		border-color: var(--color-primary);
-		color: var(--color-foreground);
-		background: var(--primary-subtle);
+	.counter {
+		font-size: 12px;
+		color: var(--color-foreground-subtle);
 	}
 
-	.hint {
-		font-size: 10px;
-		color: var(--color-foreground-subtle);
+	.ahead {
+		color: var(--color-foreground-muted);
+	}
+
+	.channel-picker {
+		display: inline-flex;
+		align-items: center;
+		gap: 10px;
+		flex-wrap: wrap;
+	}
+
+	.channel-picker select {
+		font: inherit;
+		font-size: 13px;
+		padding: 4px 8px;
+		border-radius: 6px;
+		border: 1px solid var(--color-border);
+		background: var(--color-background);
+		color: var(--color-foreground);
+	}
+
+	.risk {
+		display: inline-flex;
+		align-items: center;
+		gap: 4px;
+		font-size: 12px;
+		color: #d9a441;
 	}
 
 	.state {

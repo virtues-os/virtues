@@ -201,7 +201,7 @@ pub async fn list_applets_handler(State(state): State<AppState>) -> Response {
 
     let rows = sqlx::query(
         r#"SELECT
-            t.id, t.owner, t.name, t.description, t.agent, t.cron_schedule,
+            t.id, t.owner, t.name, t.description, t.agent, t.schedule,
             t.enabled, t.config, t.condition, t.triggers,
             t.memory, t.credential_id, t.device_id,
             t.command,
@@ -253,7 +253,7 @@ pub async fn list_applets_handler(State(state): State<AppState>) -> Response {
                     let name: String = r.try_get("name").unwrap_or_default();
                     let description: Option<String> = r.try_get("description").unwrap_or(None);
                     let agent: Option<String> = r.try_get("agent").unwrap_or(None);
-                    let cron: Option<String> = r.try_get("cron_schedule").unwrap_or(None);
+                    let cron: Option<String> = r.try_get("schedule").unwrap_or(None);
                     let enabled: bool = r.try_get("enabled").unwrap_or(false);
                     // `config`/`triggers` are JSONB — decode straight to a Value
                     // (decoding to String fails and the `unwrap_or` swallowed it,
@@ -284,14 +284,6 @@ pub async fn list_applets_handler(State(state): State<AppState>) -> Response {
                         &owner,
                         credential_id.is_some() || device_id.is_some(),
                     );
-                    // Derived display shape (the old runtime taxonomy).
-                    let runtime = if command.as_ref().is_none_or(|c| c.is_empty())
-                        && agent.as_deref().is_none_or(|s| s.trim().is_empty())
-                    {
-                        "view"
-                    } else {
-                        "function"
-                    };
                     // TIMESTAMPTZ columns decode to DateTime<Utc>; serde emits
                     // RFC3339 in the JSON. Reading them as String failed (empty).
                     let created: chrono::DateTime<chrono::Utc> =
@@ -328,7 +320,7 @@ pub async fn list_applets_handler(State(state): State<AppState>) -> Response {
                         "name": name,
                         "description": description,
                         "agent": agent,
-                        "cron_schedule": cron,
+                        "schedule": cron,
                         "enabled": enabled,
                         "config": config,
                         "condition": condition,
@@ -337,7 +329,6 @@ pub async fn list_applets_handler(State(state): State<AppState>) -> Response {
                         "credential_id": credential_id,
                         "device_id": device_id,
                         "origin": origin,
-                        "runtime": runtime,
                         "command": command,
                         "until": until,
                         "archived_at": archived_at,
@@ -348,7 +339,6 @@ pub async fn list_applets_handler(State(state): State<AppState>) -> Response {
                         "last_success_summary": last_success_summary,
                         "created_at": created,
                         "updated_at": updated,
-                        "is_system": owner == "system",
                         "last_run": last_run,
                     })
                 })
@@ -487,7 +477,7 @@ pub async fn get_applet_handler(
                     "name": action.name,
                     "description": action.description,
                     "agent": action.agent,
-                    "cron_schedule": action.cron_schedule,
+                    "schedule": action.schedule,
                     "enabled": action.enabled,
                     "config": action.config,
                     "condition": action.condition,
@@ -497,7 +487,6 @@ pub async fn get_applet_handler(
                     "credential_id": action.credential_id,
                     "device_id": action.device_id,
                     "origin": crate::scheduler::applets::derived_origin(&action),
-                    "runtime": crate::scheduler::applets::derived_runtime(&action),
                     "until": action.until,
                     "archived_at": action.archived_at,
                     "next_due_at": action.next_due_at,
@@ -505,7 +494,6 @@ pub async fn get_applet_handler(
                     "has_face": crate::server::faces::face_dir_for(&action.id).is_some(),
                     "created_at": action.created_at,
                     "updated_at": action.updated_at,
-                    "is_system": action.owner == "system",
                     "last_run": last_run,
                 })),
             )
@@ -524,7 +512,7 @@ pub async fn get_applet_handler(
 pub struct CreateAppletBody {
     pub name: String,
     pub agent: Option<String>,
-    pub cron_schedule: Option<String>,
+    pub schedule: Option<String>,
     #[serde(default)]
     pub triggers: Option<Vec<String>>,
     pub config: Option<serde_json::Value>,
@@ -535,7 +523,7 @@ pub async fn create_applet_handler(
     Json(body): Json<CreateAppletBody>,
 ) -> Response {
     let triggers = body.triggers.unwrap_or_else(|| {
-        if body.cron_schedule.is_some() {
+        if body.schedule.is_some() {
             vec!["cron".into(), "manual".into(), "tool".into()]
         } else {
             vec!["manual".into(), "tool".into()]
@@ -547,7 +535,7 @@ pub async fn create_applet_handler(
         None,
         &body.name,
         body.agent.as_deref(),
-        body.cron_schedule.as_deref(),
+        body.schedule.as_deref(),
         &triggers,
         body.config.as_ref(),
     )
@@ -933,7 +921,7 @@ pub async fn admin_reconcile_handler(State(state): State<AppState>) -> Response 
 
     // 2. Reconcile `app_applets` SQL rows against the fresh catalog. Manifest
     //    fields overwrite for system actions; user-managed runtime state
-    //    (enabled, cron_schedule, config) is preserved per the field-ownership
+    //    (enabled, schedule, config) is preserved per the field-ownership
     //    rule documented in applet_templates/mod.rs.
     let upserted = match crate::applet_templates::reconcile_templates(state.db.pool()).await {
         Ok(n) => n,
@@ -1647,16 +1635,15 @@ pub async fn billing_link_status_handler(State(pool): State<sqlx::PgPool>) -> Re
 // =============================================================================
 
 // =============================================================================
-// Exa Search API Handlers
+// Web Search API Handler
 // =============================================================================
 
-/// Perform a web search using Exa AI
-pub async fn exa_search_handler(
+/// Perform a web search.
+pub async fn web_search_handler(
     State(state): State<AppState>,
-    Json(request): Json<crate::api::ExaSearchRequest>,
+    Json(request): Json<WebSearchRequest>,
 ) -> Response {
-    // Check usage limit first
-    if let Err(e) = crate::api::check_limit(state.db.pool(), crate::api::Service::Exa).await {
+    if let Err(e) = crate::api::check_limit(state.db.pool(), crate::api::Service::Parallel).await {
         return (
             StatusCode::TOO_MANY_REQUESTS,
             Json(serde_json::json!({
@@ -1666,21 +1653,27 @@ pub async fn exa_search_handler(
                 "limit": e.limit,
                 "unit": e.unit,
                 "resets_at": e.resets_at,
-                "message": format!("Monthly Exa search limit reached. Resets at {}", e.resets_at)
+                "message": format!("Monthly web search limit reached. Resets at {}", e.resets_at)
             })),
         )
             .into_response();
     }
 
-    // Perform the search
-    match crate::api::exa_search(state.db.pool(), request).await {
+    let search = crate::api::web_search::SearchRequest {
+        objective: request.objective,
+        query: request.query,
+        max_results: request.num_results,
+        max_age_seconds: request.max_age_hours.map(|h: u32| h.saturating_mul(3600)),
+    };
+
+    match crate::api::web_search::search(state.db.pool(), search).await {
         Ok(response) => {
-            // Record usage on success - warn but don't fail if recording fails
             if let Err(e) =
-                crate::api::record_service_usage(state.db.pool(), crate::api::Service::Exa, 1).await
+                crate::api::record_service_usage(state.db.pool(), crate::api::Service::Parallel, 1)
+                    .await
             {
                 tracing::warn!(
-                    service = "exa",
+                    service = "parallel",
                     error = %e,
                     "Usage recording failed - request succeeded but usage may be undercounted"
                 );
@@ -1689,6 +1682,18 @@ pub async fn exa_search_handler(
         }
         Err(e) => error_response(e),
     }
+}
+
+/// Body for `POST /api/search/web`.
+#[derive(Debug, serde::Deserialize)]
+pub struct WebSearchRequest {
+    pub query: String,
+    #[serde(default)]
+    pub objective: Option<String>,
+    #[serde(default)]
+    pub num_results: Option<u8>,
+    #[serde(default)]
+    pub max_age_hours: Option<u32>,
 }
 
 // =============================================================================
@@ -4016,6 +4021,23 @@ pub async fn apply_update_handler() -> Response {
 // ============================================================================
 
 /// GET /api/bookmarks — one page of saved bookmarks, newest first.
+/// GET /api/bookmarks/:id — one bookmark, for its detail view.
+pub async fn get_bookmark_handler(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> Response {
+    api_response(crate::api::get_bookmark(state.db.pool(), &id).await)
+}
+
+/// PATCH /api/bookmarks/:id/note — write the user's marginalia.
+pub async fn update_bookmark_note_handler(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    Json(req): Json<crate::api::UpdateNoteRequest>,
+) -> Response {
+    api_response(crate::api::update_note(state.db.pool(), &id, req).await)
+}
+
 pub async fn list_bookmarks_handler(
     State(state): State<AppState>,
     Query(query): Query<crate::api::ListBookmarksQuery>,

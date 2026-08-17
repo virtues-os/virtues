@@ -17,6 +17,7 @@
 //! Per-stream enable/disable lives on the device, so there is deliberately no
 //! server-side per-stream gating here — an unconfigured stream simply isn't sent.
 
+mod bookmark;
 mod contacts;
 mod eventkit;
 mod financekit;
@@ -100,6 +101,25 @@ async fn main() -> Result<()> {
             let (written, failed) = microphone::ingest_all(&db, &recs).await?;
             format!("audio recordings: {} written, {} failed", written, failed)
         }
+        // The share sheet's landing point. Named `bookmark` (singular) to match
+        // the payload's `stream` field; it fans into data_content_bookmark the
+        // same way every other arm fans into its ontology.
+        "bookmark" => {
+            let recs = archive(
+                &db,
+                &storage,
+                "bookmark",
+                payload,
+                records(payload, "bookmark")?,
+            )
+            .await?;
+            let (written, skipped) = bookmark::write_bookmarks(&db, &recs).await?;
+            if skipped > 0 {
+                format!("bookmarks: {written} written, {skipped} with nothing to point at")
+            } else {
+                format!("bookmarks: {written} written")
+            }
+        }
         "financekit" => {
             let recs = archive(
                 &db,
@@ -116,7 +136,8 @@ async fn main() -> Result<()> {
         other => {
             return Err(anyhow!(
                 "ios_ingest: unknown stream '{other}' \
-                 (expected one of healthkit, location, eventkit, contacts, microphone, financekit)"
+                 (expected one of healthkit, location, eventkit, contacts, microphone, \
+                 financekit, bookmark)"
             ))
         }
     };

@@ -405,6 +405,7 @@ async fn activate(
         for unit in &sidecars {
             let _ = service_start(unit);
         }
+        restart_display();
         // The flip restored the binary. If the failure was the migration, the
         // schema is still forward of it — say where the undo lives rather than
         // leaving the operator to discover that rollback does not cover data.
@@ -478,6 +479,9 @@ async fn activate(
             ));
         }
     }
+
+    // The panel has been staring at a dead server for the length of the swap.
+    restart_display();
 
     // A release that is running is no longer a release that is pending. Clear
     // the pointer before pruning, or `prune` would exempt the same slot twice
@@ -866,6 +870,7 @@ pub async fn rollback() -> Result<(), crate::Error> {
             for unit in &sidecars {
                 let _ = service_start(unit);
             }
+            restart_display();
             return Err(crate::Error::Other(
                 "previous release would not start — flipped forward again".to_string(),
             ));
@@ -874,6 +879,7 @@ pub async fn rollback() -> Result<(), crate::Error> {
     for unit in &sidecars {
         let _ = service_start(unit);
     }
+    restart_display();
 
     println!();
     ui::ok("rolled back — the previous release is active");
@@ -1065,29 +1071,38 @@ fn refresh_named(label: &str, src: &Path, dst: &Path) {
 /// set is wrong for the other — assuming llama.cpp made a healthy Q6A box print
 /// "Unit virtues-embed.service not loaded" and a false "search/embeddings degraded"
 /// on every upgrade. So ask the filesystem instead of guessing.
+/// Inference sidecars to cycle around the swap — the installer's DECLARED
+/// topology, with a filesystem probe as the fallback for boxes older than the
+/// manifest. See `crate::install_manifest`.
 fn installed_inference_units() -> Vec<String> {
-    // Prefer the installer's topology manifest — DECLARED shape, not a guess.
-    if let Ok(bytes) = fs::read("/usr/local/share/virtues/install.json") {
-        if let Ok(v) = serde_json::from_slice::<serde_json::Value>(&bytes) {
-            if let Some(units) = v.get("sidecars").and_then(|s| s.as_array()) {
-                return units
-                    .iter()
-                    .filter_map(|u| u.as_str().map(str::to_string))
-                    .collect();
-            }
-        }
-    }
-    // Fallback for boxes installed before the manifest existed: ask the
-    // filesystem which unit files are present.
-    ["virtues-embed", "virtues-rerank", "virtues-qnnd"]
-        .into_iter()
-        .filter(|u| Path::new(&format!("/etc/systemd/system/{u}.service")).exists())
-        .map(str::to_string)
-        .collect()
+    crate::install_manifest::sidecar_units()
 }
 
 fn service_stop(unit: &str) {
     let _ = Command::new("systemctl").arg("stop").arg(unit).status();
+}
+
+/// Put the panel back on a live server.
+///
+/// The kiosk is a WebKit page pointed at `localhost:8000/display`; an upgrade
+/// takes that server away for the length of a stop → flip → migrate → start.
+/// `Restart=always` on `virtues-display.service` does not help, because the
+/// *process* never exits — cage and WebKit are perfectly happy, it is only the
+/// page underneath them that has died. So the panel sat on a stale render
+/// while the box moved between releases, and on the far side it was showing an
+/// old page against a new server.
+///
+/// Best-effort and silent on a box with no display: `systemctl restart` on an
+/// absent unit is a non-zero exit and nothing more. Deliberately fire-and-
+/// forget — a kiosk that fails to come back must never fail an upgrade that
+/// otherwise succeeded.
+fn restart_display() {
+    if !Path::new("/etc/systemd/system/virtues-display.service").exists() {
+        return;
+    }
+    let _ = Command::new("systemctl")
+        .args(["restart", "virtues-display"])
+        .status();
 }
 
 /// Relay migration: retire a leftover `virtues-wireguard.service` from a

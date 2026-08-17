@@ -1,8 +1,187 @@
 # Onboarding & Setup
 
+> **The settled model is [onboarding-paradigm.md](onboarding-paradigm.md)** —
+> three relationships, codes as a fallback for a missing channel, two tiers of
+> device trust, and recovery as an ordinary join. Read it first; this document
+> is what is *built*, and where the two disagree the paradigm is the intent.
+
 > Canonical spec for how a human goes from "box in hand" to "Virtues running
 > and earning its keep" — across both hardware tiers, with and without a
 > screen. Decided 2026-06-12; supersedes the TTY-wizard model of `virtues init`.
+
+## Read this first (2026-08-17)
+
+This document has three generations of doctrine stacked in it, newest first,
+and the two "As built" sections below are now themselves partly historical.
+**Where anything disagrees, the order of authority is:**
+
+1. [onboarding-paradigm.md](onboarding-paradigm.md) — the settled model.
+2. The code: `maintenance/ble_provision.rs`, `api/setup_phrase.rs`,
+   `apps/web/src-tauri/ui/connect.html`, `routes/(public)/display`.
+3. This file.
+
+What the sections below still describe that **no longer exists** (deleted
+2026-08-17):
+
+- **The captive portal.** `api/portal.rs`, `api/captive.rs`, the SPA
+  `/provision` route, the `/portal*` routes, the probe-interception
+  middleware, and the installer's wildcard-DNS drop-in and `:80` redirect
+  unit are all gone. The browser flow they served could provision wifi and
+  then strand the owner, because pairing needs a held iroh key that a browser
+  tab does not have — it served a user who cannot exist.
+- **The app joining the setup AP itself.** The `NEHotspotConfiguration`
+  screens were unreachable for days before being removed; BLE carries the
+  whole conversation.
+- **The app QR and the wifi join-QR on the panel.** The panel is one screen:
+  the app, and the four words.
+- **The panel's link code and pair code.** The app fetches both over BLE
+  (RPC 0x84/0x85). Nothing is read off the glass and retyped except the
+  phrase, whose whole purpose is that the app *cannot* fetch it.
+
+What survives from the AP era, deliberately: the LAN provisioning path
+(`/api/provision/*` + `loadNetworks` in the airlock) as the documented
+breakglass for a box whose Bluetooth is dead in the field, gated behind
+`setup_ap::AP_BREAKGLASS`.
+
+Imaging and manufacturing moved out to
+[appliance-image.md](appliance-image.md), which is written against the boot
+chain as measured on hardware rather than as assumed here.
+
+## As built — the AP era (2026-08-07, largely superseded)
+
+Most of the doctrine below survived contact with hardware. Four specifics did
+not, and the document still argues for them further down. Where they conflict,
+this section is right.
+
+**A browser cannot pair.** The iroh pivot landed after this spec was written and
+made a held Ed25519 key the credential. A browser tab has none, so `/pair` is
+purely informational and every "open the URL on your phone and pair" flow below
+is counterfactual. The app pairs; the browser cannot. The one exception is a
+browser running *on the box*, which authenticates as the loopback console.
+
+**The panel is called the `display`**, it is **not touch**, and the canvas is
+**585 × 329 CSS px**. The digitizer does not work through the cover glass, so
+the display is output-only — the pair code is *shown* there and typed elsewhere.
+The 7" panel's EDID claims 53 × 30 cm (~24"), so every DPI heuristic renders the
+UI 3.28× too small; the kiosk pins `devicePixelRatio`. Never trust EDID here.
+
+**The kiosk is `cage` + WebKit, not Chromium.** On Ubuntu 24.04 arm64
+`chromium-browser` is a snap transition stub, which would put a second
+self-updating release channel under ours; `cog`/WPE has no arm64 build.
+`libwebkit2gtk-4.1` is a first-class deb and is already Tauri's Linux webview.
+
+**Wifi comes from the phone over a setup AP, not from the panel.** The box hosts
+`Virtues-XXXX` (WPA2 — the owner's home password crosses that link), the display
+shows a join QR, and the phone collects the credentials. AP+STA concurrency does
+**not** work on the Q6A despite what `iw list` advertises, so the switchover is
+sequential.
+
+**The AP is up while the box is unclaimed AND offline** (revised 2026-08-10).
+The earlier rule — up until a device *pairs*, full stop — could not work on this
+radio. Pairing happens after provisioning (every `/api/provision/*` route 404s
+once a device pairs, so it cannot go the other way), which means the moment
+after a successful join the box is online, unclaimed, and its AP is down. The
+reconciler saw "unclaimed, no AP" and raised one onto the single radio holding
+the association it had just formed, dropping the box off the owner's wifi ~20s
+after joining it — before anyone could pair. The worry the old rule encoded
+(tearing the AP down while the phone is still on it) is covered by
+`PROVISIONING_LOCK`, and on hardware that cannot do AP+STA "box is online" and
+"phone is on our AP" are mutually exclusive anyway. Bonus: an ethernet box no
+longer raises a setup network it never needed.
+
+**The app is the wizard, and there is no app-less onboarding — because there is
+no app-less pairing** (decided 2026-08-10, after a day on hardware). Pairing
+requires a held iroh key, so an app-less user who provisioned wifi through a
+captive portal still could not finish; the portal served a user who cannot
+exist. So the app drives everything: its connect screen offers *Set up a new
+box*, joins `Virtues-XXXX` itself (`wifi_join` → `NEHotspotConfiguration`,
+prefix-matched on `Virtues-` so the owner types only the passphrase off the
+display), runs the wifi picker natively, waits out the switchover, re-finds the
+box, and moves to the pair code — one continuous session.
+
+**The captive sheet is suppressed, not exploited.** The box now answers every
+OS connectivity probe with its vendor's exact success token, so the Captive
+Network Assistant never opens. The reversal is earned: on hardware the CNA
+rendered our SPA as a blank sheet, force-reopened it, refused to let the owner
+leave, and cached a stale portal page per-SSID across a box upgrade. Every
+failure was on an OS surface we cannot patch. `/portal` (plain server-rendered
+HTML, no JS) survives as the unadvertised manual hatch — join the AP by hand,
+open `10.42.0.1` — for Android (until `WifiNetworkSpecifier` lands) and
+laptops. The old `/provision` URL 301s to it server-side, because phones cache
+captive URLs per-SSID and only a redirect can un-teach them.
+
+**The display shows one job at a time** (three states): offline + unclaimed →
+*get the app* (app QR — shown while the phone still has internet, the only
+moment it can be followed — plus the AP passphrase the app will ask for);
+online + unclaimed → *claim me* (app QR + the pair code); claimed → ambient.
+The wifi join-QR was removed outright: its camera-banner presentation failed
+twice on hardware, and the app path never needs it. The two
+setup screens were one screen until 2026-08-10, and it carried two different
+secrets at once — the first person shown it read the pair code and typed it as
+the wifi password. Labelling helped and did not fix it: the fault was presenting
+a *sequence* as a *set*. It also offered `virtues.com/downloads` to a phone it
+had just told to join a network with no uplink, which is the one moment that
+link cannot be followed.
+
+Built and running on hardware: `/display`, `/api/display/state` (loopback-only —
+it carries the live pair code), `/provision`, `/api/provision/*` (AP-subnet +
+unclaimed, re-checked per request), the setup-AP lifecycle, captive-portal
+detection, `--appliance` install profile, `virtues deprovision`, and per-unit
+first-boot minting. Built but **not yet exercised on hardware**: the app-side
+wifi picker and the three-state display. Not yet built: the iOS
+`NEHotspotConfiguration` flow — note it is *not* Personal Hotspot and *not* the
+hard-to-get `NEHotspotHelper` entitlement, and that it prompts rather than
+joining silently, so it buys continuity rather than fewer taps.
+
+**Delivery is: flash a pre-baked image, then update on first connect.**
+Provisioning happens on our bench, never the customer's — their box has no
+network until onboarding finishes, and onboarding needs the software already
+installed. `deprovision` strips per-unit identity before imaging, because the
+iroh secret *is* the box's identity and clones of an un-deprovisioned master
+are literally the same box; `virtues image-check` then proves it, because
+deprovision cannot be its own witness.
+
+The update on first connect is real and offered by the app at the end of
+setup (`offerUpgrade` in `connect.html`) — a box is flashed at manufacture and
+then sits in a warehouse, so an owner's first minute is often spent on code
+older than everything they just read about. See
+[appliance-image.md](appliance-image.md) for the imaging procedure and the
+storage layout it assumes.
+
+## As built — the desktop-first pass (2026-08-11)
+
+The section above still holds where it describes the box. What changed is
+*who sets it up* and *how many programs think they know how*.
+
+**One airlock: `apps/web/src-tauri/ui/connect.html`.** There were two connect
+screens (`pair.html` for desktop, `mobile-pair.html` for iOS) plus a third
+inside the SPA. They had drifted, every fix had to land twice, and a phone
+that slipped past the airlock on a dead session landed on the SPA's copy —
+which is what a user saw, and reasonably called "the old path". Now one file
+serves both platforms, and the only branch is what "open the app" means at the
+end (`finishPairing`).
+
+**Desktop is a first-class FIRST device.** `crates/virtues-improv` holds the
+Improv wire format once (the box re-exports it; a round-trip test builds every
+command as a client and parses it as the box) plus a `btleplug` client behind
+a feature flag. So a Mac now does the Bluetooth wifi step itself — which is
+the right default anyway: 802.1X credentials and a checkout page both want a
+keyboard, and the dev loop is a build rather than a device deploy.
+
+**macOS will not do Bluetooth from `tauri dev`.** TCC attributes permission to
+an app *bundle*, so a bare dev binary aborts with SIGABRT, no dialog, and
+nothing on stdout. Embedding an `Info.plist` in the executable does not
+satisfy it (tried; the crash still named the embedded key). BLE work needs
+`pnpm tauri build --debug` and then `open` on the bundle — launching the inner
+binary directly fails the same way, because LaunchServices is what confers
+bundle identity.
+
+**The airlock is served from the BINARY**, before the OTA overlay and before
+the baked assets. `tauri.ios.conf.json` sets `frontendDist` to `../build` and
+only refreshed the shell in `beforeBuildCommand`, which `tauri ios dev` never
+runs — so for one full day every dev build on the phone served a four-day-old
+connect screen and no change reached the device. An airlock must not depend on
+packaging, and must not be *overridable* by it either.
 
 ## Doctrine
 
@@ -42,24 +221,39 @@ Four rules everything else follows from:
 
 ## The two journeys
 
-### Appliance (flashed Virtues hardware, 8" non-touch screen)
+### Appliance (flashed Virtues hardware, 7" non-touch display)
+
+As built. The flow below is what runs on hardware today; the version this
+document originally described (open a URL on the LAN, pair in a browser, name
+the box) assumed a browser could pair, which it cannot.
 
 ```
 power on
-  → splash (static image; covers Chromium warm-up)
-  → panel: a 6-digit code (rotating) + "open my-box.local from any device"
-  → on the phone/desktop: open the URL → setup wizard → type the code to pair
-  → wizard: account → subscribe → name the box → done
-  → panel ticks each step live, then flips to the ambient dashboard
+  → boot ~10s (no desktop session, no wait-online)
+  → display SCREEN 1 "Get the Virtues app": app QR + the AP passphrase
+  → owner installs the app (phone still online), taps "Set up a new box",
+    types the passphrase off the screen
+  → the APP joins Virtues-XXXX itself (one "Wants to Join" dialog)
+  → app shows the BOX's scan list (cached pre-AP), owner picks + types their
+    home wifi password in a native field
+  → sequential switchover: AP down, join, AP back up ONLY if it failed
+  → phone glides back to home wifi; app re-finds the box on the LAN
+  → display SCREEN 2 "In the Virtues app, enter …": the 6-digit code
+  → owner types the code → paired
+  → display flips to the ambient screen
+  (manual hatch, unadvertised: join the AP from wifi settings, open 10.42.0.1
+   → /portal, plain HTML — Android + laptops)
 ```
 
-The CLI is never seen. The screen is never *required* — it displays the same
-URL + code any browser on the LAN can reach.
+Ethernet skips straight to screen 2: the box is online from boot, so no setup
+network is ever raised and the whole middle disappears.
 
-> **Pairing is a typed 6-digit code, not a QR.** The primary client is the
-> desktop app, which has no camera to scan — so the universal mechanism is a
-> short code a human reads off the panel (or the box's terminal) and types. See
-> "The universal rotating code" below.
+The CLI is never seen. The **display is output-only** — the digitizer does not
+work through the cover glass, so nothing is ever typed on it.
+
+> **The pair code is typed, never scanned.** The primary client is the desktop
+> app, which has no camera. QR is used for public payloads only — the app
+> download link and the `WIFI:` join string — never for the code.
 
 ### DIY / headless (`curl virtues.com/sh | sudo sh`)
 
@@ -67,7 +261,8 @@ URL + code any browser on the LAN can reach.
 installer: deps → db → user → env → binary → systemd → health check
   → execs `sudo -u virtues virtues init` (plumbing: migrations + handoff)
   → ONE handoff block: mDNS URL · IP fallback · loopback · expiry · verdict line
-  → user opens the URL from any browser on the LAN → same wizard
+  → user enters the code in the desktop/mobile app (NOT a browser — a
+    browser holds no iroh key and cannot pair)
 ```
 
 The SSH session the installer ran in is itself the fallback transport on
@@ -93,13 +288,15 @@ off a screen and typing it, so digits beat a letter alphabet on a numeric pad.
   several devices over its life (unlike the single-use "+ Add Device" token).
 - **Stored encrypted, shown only on physical surfaces.** Only `SHA-256(code)` is
   used for matching; the raw code is kept encrypted (vault key) so box-local
-  surfaces — the `/panel` render and `virtues pair` in the box's terminal — can
+  surfaces — the `/display` render and `virtues pair` in the box's terminal — can
   *display* it. It is **never served over the LAN**. Proximity = authority,
   consistent with the `virtues sudo` physical-presence doctrine: a LAN stranger
   who cannot see the screen cannot claim the box.
-- **No QR.** The desktop app has no camera; the typed code is the one mechanism.
-  The displayed name still leads with mDNS for humans; the URL is for opening
-  the wizard in a browser, not for carrying the secret.
+- **No QR *for the code*.** The desktop app has no camera, so the typed code is
+  the one mechanism for pairing. QR is used elsewhere on the display and that is
+  not a contradiction: a QR is fine for a **public** value (the app download
+  link, the `WIFI:` join payload for the setup AP) and never for a secret. The
+  distinction is what the payload is worth to a stranger, not the encoding.
 
 ## Setup vs onboarding (they are different things)
 
@@ -213,9 +410,14 @@ survives re-installs, restores, and out-of-band changes.
   naming move out of the TTY).
 - **P2 — CLI parity:** `login` verb rename; terminal ANSI QR;
   client-isolation hint; installer handoff final polish.
-- **P3 — kiosk:** `/panel` route; cage+Chromium unit; splash; DRM guard.
-- **P4 — appliance image:** flash with kiosk enabled; AP-mode wifi
-  onboarding; naming step end-to-end.
+- **P3 — kiosk:** ✅ shipped as the **display**, not `/panel`: `/display`
+  route, `cage` + **WebKit** unit (not Chromium — see "As built"), DRM-connector
+  guard so the same image boots headless. Splash still outstanding.
+- **P4 — appliance image:** partially shipped. `--appliance` install profile,
+  setup AP, `/provision`, captive-portal detection and `virtues deprovision`
+  are built and running on hardware. The image itself (flash → deprovision →
+  `dd` → clone) is specified but not yet cut. The naming step was cut entirely
+  — reach is by EndpointId, so the box keeps its default name.
 - **P5 — reachability surface:** `[Fix remote access]` tiered flow. Note the
   doctrine moved after this was written: reach is the blind relay, not
   IPv6-direct, and BYO transport is the power-user escape rather than a tier —

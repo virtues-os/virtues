@@ -16,7 +16,10 @@ use axum::{
 use std::env;
 use std::sync::Arc;
 
-use self::webhook::AppState;
+// Re-exported: `AppState` is the handler state for the whole crate, and
+// modules outside `server` (api::display, …) legitimately name it. Importing it
+// privately here made `crate::server::AppState` fail to resolve for them.
+pub use self::webhook::AppState;
 use self::yjs::yjs_websocket_handler;
 use crate::error::Result;
 use crate::mcp::{http::add_mcp_routes, VirtuesMcpServer};
@@ -149,6 +152,27 @@ pub async fn run(client: Virtues, host: &str, port: u16) -> Result<()> {
     // a valid code to display. See `crate::maintenance::pair_rotator`.
     crate::maintenance::pair_rotator::spawn(client.database.pool().clone());
 
+    // Setup access point. An appliance arrives with no network and a display
+    // its owner cannot type on, so the box raises its own wifi and the phone
+    // does the typing. Up while unclaimed, down once a device pairs — NOT down
+    // when the box gets wifi, which would drop the network the phone is still
+    // sitting on mid-provision. No-op on a DIY box. See maintenance::setup_ap.
+    crate::maintenance::setup_ap::spawn(client.database.pool().clone());
+
+    // BLE wifi provisioning — the Improv service, and the PRIMARY setup path
+    // (the AP above is the frozen fallback). Advertised while unclaimed, gone
+    // once a device pairs. No-op on a DIY box and on non-Linux dev hosts. See
+    // maintenance::ble_provision for the week of hardware findings that led
+    // here.
+    crate::maintenance::ble_provision::spawn(client.database.pool().clone());
+
+    // The button behind the case. Held for three seconds, it forgets every
+    // paired device — and nothing else: not the network, not the account, not
+    // the data, and not the phrase. Anyone who can open the case can make that
+    // nuisance; only someone holding the four words can then claim the box.
+    // No-op off an appliance. See maintenance::reset_button.
+    crate::maintenance::reset_button::spawn(client.database.pool().clone());
+
     // Persistent review pair code, for App Store review boxes only. No-op
     // unless VIRTUES_REVIEW_PAIR_CODE is set, so customer boxes are untouched.
     // A failure here is loud but not fatal: a demo box that came up without
@@ -220,10 +244,98 @@ pub async fn run(client: Virtues, host: &str, port: u16) -> Result<()> {
         // Setup/onboarding state machine (docs/onboarding.md) — public-on-LAN
         // for the same reason as /api/box/health: the wizard + panel render it
         // pre-auth, and it carries only booleans + step copy.
+        // Who is this box — name + claimed, for discovery chips. Public like
+        // its neighbours; the name is already broadcast over the air (AP SSID,
+        // BLE advertisement), so the LAN learns nothing new. See api/identity.
+        .route(
+            "/api/box/identity",
+            get(crate::api::identity::identity_handler),
+        )
         .route(
             "/api/setup/state",
             get(crate::api::box_status::setup_state_handler),
         )
+        // Draft the document from the answers. POST because it spends money and
+        // rewrites the document — not something a refresh should trigger.
+        .route(
+            "/api/narrative/draft",
+            post(crate::api::narrative_draft::draft_handler),
+        )
+        // The rules the assistant must obey. Read to review them, POST to
+        // replace the set with what was confirmed.
+        .route(
+            "/api/narrative/rules",
+            get(crate::api::narrative_draft::rules_handler)
+                .post(crate::api::narrative_draft::save_rules_handler),
+        )
+        .route(
+            "/api/narrative/interview",
+            get(crate::api::narrative_interview::list_handler)
+                .post(crate::api::narrative_interview::save_handler),
+        )
+        .route(
+            "/api/setup/skip-onboarding",
+            post(crate::api::box_status::skip_onboarding_handler),
+        )
+        // What the attached 7" display renders. Registered here because the
+        // kiosk draws before any device is paired, but UNLIKE its neighbours
+        // above it carries the live pair code — so the handler itself refuses
+        // anything that isn't loopback. Proximity is the authority: a stranger
+        // on the wifi who cannot see the screen must not be able to claim the
+        // box. See api/display.rs.
+        .route(
+            "/api/display/state",
+            get(crate::api::display::display_state_handler),
+        )
+        // Lets the panel latch "an upgrade is running" while this server is
+        // still up to say so — after it stops, the kiosk's page is gone with
+        // it. See api/display.rs.
+        .route(
+            "/api/display/updating",
+            get(crate::api::display::display_updating_handler),
+        )
+        // `/api/display/qr` and `/api/display/link-qr` are gone — the panel is
+        // one screen now and renders no QR at all. See api/display.rs.
+        //
+        // Wifi provisioning over the setup AP. The one unauthenticated WRITE
+        // surface on the box, and unauthenticated by necessity: the phone that
+        // just joined the AP has no credential yet, because obtaining one is
+        // what the rest of onboarding is for. Each handler re-checks both gates
+        // itself — caller is on the AP subnet (or loopback), and the box is
+        // still unclaimed — rather than trusting placement in this router.
+        // See api/provision.rs.
+        .route(
+            "/api/provision/networks",
+            get(crate::api::provision::networks_handler),
+        )
+        .route(
+            "/api/provision/join",
+            post(crate::api::provision::join_handler),
+        )
+        .route(
+            "/api/provision/status",
+            get(crate::api::provision::status_handler),
+        )
+        // `/portal` and `/provision` are GONE (2026-08-17), and the deletion is
+        // the point rather than a cleanup.
+        //
+        // They were the browser half of onboarding: a phone joins the setup AP,
+        // a captive sheet opens, the owner hands over their home wifi. Every
+        // part of that is now impossible or unwanted. Pairing needs a held iroh
+        // key, so the browser could provision wifi and then strand the owner one
+        // step from the end — it served a user who cannot exist. The captive
+        // sheet itself was suppressed rather than exploited (iOS renders it in a
+        // stripped WebKit, force-reopens it, and caches it per-SSID across
+        // upgrades). And BLE carries the whole conversation now, on a radio that
+        // survives the switchover the AP path died on.
+        //
+        // What replaced them: `maintenance::ble_provision` (Improv), and
+        // `/api/network/*` for a claimed box that needs to move networks.
+        //
+        // The `/provision` → `/portal` redirect is gone with them. It existed to
+        // un-teach phones that had cached the old SPA URL, and every such phone
+        // met a box during the two weeks that flow was live — none of which are
+        // customer boxes.
         // Auth — pair-only model. Public consume + session probe (returns the
         // AuthUser resolved from the request's proven iroh key, if any).
         // /api/pair/{mint,confirm,deny,status} are auth'd and live under the
@@ -571,7 +683,7 @@ pub async fn run(client: Virtues, host: &str, port: u16) -> Result<()> {
             get(api::billing_link_status_handler),
         )
         // Search API (Exa) — reaches outside the box
-        .route("/api/search/web", post(api::exa_search_handler))
+        .route("/api/search/web", post(api::web_search_handler))
         // Local content search — the ⌘K palette. Never leaves the box.
         .route("/api/search/local", post(api::search_local_handler))
         // Unsplash API (cover image search)
@@ -823,6 +935,14 @@ pub async fn run(client: Virtues, host: &str, port: u16) -> Result<()> {
             "/api/pages/versions/:version_id",
             get(api::get_page_version_handler),
         )
+        // Box network management (Settings → Box → Network) — the authed
+        // successors to the setup-phase /api/provision/* surface, which
+        // correctly evaporates at claim time. Born of a box marooned on a
+        // captive guest network with no way to leave (2026-08-11). See
+        // api/network.rs.
+        .route("/api/network/status", get(crate::api::network::status_handler))
+        .route("/api/network/scan",   get(crate::api::network::scan_handler))
+        .route("/api/network/join",   post(crate::api::network::join_handler))
         // Box updates (Settings → Box)
         .route("/api/system/update", get(api::update_status_handler))
         .route(
@@ -833,10 +953,25 @@ pub async fn run(client: Virtues, host: &str, port: u16) -> Result<()> {
             "/api/system/update/apply",
             post(api::apply_update_handler),
         )
+        // Re-open onboarding: revoke every device, keep the data. Sits beside
+        // the update routes because it is the same kind of thing — a box-wide
+        // action a paired device may take, guarded by being paired.
+        .route(
+            "/api/pair/reopen-onboarding",
+            post(crate::api::pair::reopen_onboarding_handler),
+        )
         // Bookmarks API (saved web content — the manual capture door)
         .route(
             "/api/bookmarks",
             get(api::list_bookmarks_handler).post(api::save_bookmark_handler),
+        )
+        .route("/api/bookmarks/{id}", get(api::get_bookmark_handler))
+        // The note has its own route rather than a general PATCH: every other
+        // column here belongs to a source or to the enrichment pass, and an
+        // endpoint that could write them would eventually be used to.
+        .route(
+            "/api/bookmarks/{id}/note",
+            axum::routing::patch(api::update_bookmark_note_handler),
         )
         // Sidebar pins API
         .route(
@@ -921,6 +1056,14 @@ pub async fn run(client: Virtues, host: &str, port: u16) -> Result<()> {
 
     // Merge public + protected, apply shared state and body limits, then
     // wrap in the security layers (response headers).
+    //
+    // The connectivity-probe interceptor that used to sit outermost here is
+    // gone with `/portal`. It answered iOS/Android/Windows probes with their
+    // vendor's success token so the captive sheet would never open — a real
+    // fix, but for a condition that only arises on the setup AP's own subnet,
+    // and its other half redirected `10.42.0.1/` to a portal that no longer
+    // exists. It also ran a Host-header comparison on every request to every
+    // box forever, to serve a network that a customer box never raises.
     let app = public_routes
         .merge(protected_routes)
         .with_state(state.clone())
@@ -961,7 +1104,21 @@ pub async fn run(client: Virtues, host: &str, port: u16) -> Result<()> {
         };
 
         tracing::info!("Static file serving enabled from: {}", static_dir);
-        app.fallback_service(serve_dir)
+        // HTML DOCUMENTS ARE NEVER CACHED. `ServeDir` sends `last-modified` and
+        // no `cache-control`, which licenses a browser to cache heuristically —
+        // and on 2026-08-10 that made the appliance's panel keep rendering a
+        // three-day-old UI after an upgrade, through a service restart and a
+        // power cycle. The shell names content-hashed JS chunks, so a stale
+        // shell resurrects the entire stale page while the box serves the new
+        // one, and the only symptom is a screen that quietly lies about its own
+        // version.
+        //
+        // Scoped to documents on purpose: `/_app/immutable/*` is content-hashed
+        // and *should* be cached hard. It is the shell that must always be
+        // re-fetched, because it is the thing that names the rest.
+        app.fallback_service(tower::ServiceBuilder::new()
+            .layer(axum::middleware::from_fn(no_store_for_documents))
+            .service(serve_dir))
     } else {
         tracing::info!(
             "No static directory found at: {} - static serving disabled",
@@ -1069,6 +1226,40 @@ fn validate_environment() -> Result<()> {
 
 /// Honest 404 for unknown /api and /auth paths — see the comment where this
 /// is routed. `no-store` so a transient miss can never poison an HTTP cache.
+/// Stamp `Cache-Control: no-store` on every HTML document the static server
+/// hands out, leaving hashed assets alone.
+///
+/// See the call site for the incident. Short version: `ServeDir` sends
+/// `last-modified` and no `cache-control`, a browser may then cache
+/// heuristically, and the appliance's kiosk did — pinning the panel to a
+/// three-day-old UI across an upgrade, a service restart, and a power cycle.
+///
+/// Keyed on the response's own content type rather than the request path, so it
+/// covers the SPA fallback (`200.html`, served for arbitrary routes) without
+/// having to enumerate which paths are documents.
+async fn no_store_for_documents(
+    req: axum::extract::Request,
+    next: axum::middleware::Next,
+) -> axum::response::Response {
+    let mut res = next.run(req).await;
+    let is_document = res
+        .headers()
+        .get(axum::http::header::CONTENT_TYPE)
+        .and_then(|v| v.to_str().ok())
+        .is_some_and(|ct| ct.starts_with("text/html"));
+    if is_document {
+        res.headers_mut().insert(
+            axum::http::header::CACHE_CONTROL,
+            axum::http::HeaderValue::from_static("no-store"),
+        );
+        // A validator left beside `no-store` is a mixed message, and some
+        // caches honour the weaker half.
+        res.headers_mut().remove(axum::http::header::LAST_MODIFIED);
+        res.headers_mut().remove(axum::http::header::ETAG);
+    }
+    res
+}
+
 async fn api_not_found_handler(uri: axum::http::Uri) -> impl IntoResponse {
     (
         axum::http::StatusCode::NOT_FOUND,

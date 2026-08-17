@@ -6,6 +6,8 @@ pub mod backup_volume;
 pub mod volumes;
 pub mod commands;
 pub mod configure_inference;
+pub mod deprovision;
+pub mod image_check;
 pub mod diag;
 pub mod doctor;
 pub mod lake_adopt;
@@ -43,6 +45,12 @@ pub async fn run(cli: Cli, virtues: Virtues) -> Result<(), Box<dyn std::error::E
         Commands::Sudo { .. } => {
             // Same — handled in main.rs against a bare DB pool.
             unreachable!("Sudo command should be handled in main.rs");
+        }
+
+        Commands::ImageCheck => {
+            // Handled in main.rs: it runs on a DEPROVISIONED box, which by
+            // definition has no database for the app stack to open.
+            unreachable!("ImageCheck command should be handled in main.rs");
         }
 
         Commands::Device { .. } => {
@@ -113,6 +121,12 @@ pub async fn run(cli: Cli, virtues: Virtues) -> Result<(), Box<dyn std::error::E
             // Same — destructive schema management against a bare pool,
             // like Restore/Uninstall.
             unreachable!("Reset command should be handled in main.rs");
+        }
+
+        Commands::Deprovision { .. } => {
+            // Same — it wraps Reset and then edits files under /etc, so it
+            // must not need a healthy app stack.
+            unreachable!("Deprovision command should be handled in main.rs");
         }
 
         Commands::ConfigureInference { .. } => {

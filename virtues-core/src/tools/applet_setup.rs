@@ -62,7 +62,7 @@ pub async fn execute(
     let agent = opt_str(&arguments, "agent")
         .or_else(|| opt_str(&arguments, "instruction"));
     let schedule = opt_str(&arguments, "schedule")
-        .or_else(|| opt_str(&arguments, "cron_schedule"));
+        .or_else(|| opt_str(&arguments, "schedule"));
     let condition = opt_str(&arguments, "condition");
     let until = opt_str(&arguments, "until");
     let schema_sql = opt_str(&arguments, "schema_sql");
@@ -163,6 +163,18 @@ pub async fn execute(
         }
     }
 
+    // The soft failure the whole authoring contract warns about: a prompt that
+    // names a table which does not exist fails quietly, nightly, forever. It
+    // was documented as unmachine-checkable — "you are the check" — and then I
+    // wrote a shipped prompt naming three columns that were not there. Prose
+    // is not fully checkable, but a table name is a token, and a typo in one
+    // is the common case.
+    if let Some(prompt) = agent.as_deref() {
+        for f in check_prompt_tables(pool, prompt).await {
+            findings.push(f);
+        }
+    }
+
     // A limit nobody enforces is worse than no limit: it reads as protection
     // on the gate and does nothing. So an unknown key is a finding, not a
     // silently-ignored field. (This is how `timeout` came to be advertised
@@ -204,7 +216,7 @@ pub async fn execute(
     let (was_boundary, was_enabled) = if existed {
         match applets::get_applet(pool, &applet_id).await {
             Ok(a) => (
-                a.cron_schedule.is_some()
+                a.schedule.is_some()
                     || a.triggers.iter().any(|t| t == "api" || t == "webhook"),
                 a.enabled,
             ),
@@ -431,6 +443,60 @@ const LIMIT_KEYS: &[(&str, &str)] = &[
     ("timeout_s", "seconds of wall clock for the subprocess phase"),
 ];
 
+/// Check every `data_*` / `wiki_*` table a prompt names against the live
+/// catalog, with a did-you-mean for near misses.
+///
+/// Deliberately narrow. It checks TABLE NAMES, which are tokens, and nothing
+/// about the prose around them — a prompt can still ask for something
+/// impossible in fluent English. But a typo in a table name is the common
+/// case and the one that produces a run that looks fine and does nothing.
+async fn check_prompt_tables(pool: &PgPool, prompt: &str) -> Vec<serde_json::Value> {
+    let mut named: Vec<String> = Vec::new();
+    for token in prompt.split(|c: char| !(c.is_ascii_alphanumeric() || c == '_')) {
+        if (token.starts_with("data_") || token.starts_with("wiki_"))
+            && token.len() > 5
+            && !named.iter().any(|n| n == token)
+        {
+            named.push(token.to_string());
+        }
+    }
+    if named.is_empty() {
+        return Vec::new();
+    }
+
+    let known: Vec<String> = match sqlx::query_scalar(
+        "SELECT table_name FROM information_schema.tables \
+          WHERE table_schema = 'public' \
+            AND (table_name LIKE 'data\\_%' OR table_name LIKE 'wiki\\_%')",
+    )
+    .fetch_all(pool)
+    .await
+    {
+        Ok(k) => k,
+        // If the catalog cannot be read, say nothing rather than invent
+        // findings — a check that fires on its own failure is worse than none.
+        Err(_) => return Vec::new(),
+    };
+
+    named
+        .into_iter()
+        .filter(|t| !known.contains(t))
+        .map(|missing| {
+            let suggestion = known
+                .iter()
+                .map(|k| (levenshtein(&missing, k), k))
+                .min_by_key(|(d, _)| *d)
+                .filter(|(d, _)| *d <= 3)
+                .map(|(_, k)| format!("did you mean `{k}`?"));
+            finding(
+                "agent",
+                &format!("the prompt names `{missing}`, which is not a table on this box"),
+                suggestion.as_deref(),
+            )
+        })
+        .collect()
+}
+
 /// Validate the `limits` object: known keys, right types, sane values.
 fn check_limits(limits: Option<&serde_json::Value>) -> Vec<serde_json::Value> {
     let mut out = Vec::new();
@@ -490,6 +556,14 @@ fn disambiguate_slug(root: &std::path::Path, base: &str, name: &str) -> String {
         // Some(true) = folder exists and its manifest name matches (ours to update)
         // Some(false) = folder exists, different name (collision)
         // None = free
+        //
+        // A shipped folder of the same name is always a collision, never ours
+        // to update: both id shapes resolve to the schema `applet_<slug>`, so
+        // an authored "Calorie Tracker" would otherwise write into the tables
+        // of the one that ships.
+        if crate::applet_templates::shipped_root().join(slug).is_dir() {
+            return Some(false);
+        }
         let mf = root.join("user").join(slug).join("manifest.toml");
         let text = std::fs::read_to_string(&mf).ok()?;
         let existing_name = text
@@ -616,4 +690,41 @@ fn estimate_runs_per_day(cron: &str) -> f64 {
 
 fn toml_from_json(v: &serde_json::Value) -> Result<toml::Value, String> {
     toml::Value::try_from(v).map_err(|e| e.to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A typo in a table name is the failure the authoring contract calls out
+    /// as unmachine-checkable, and it is a token, so it is checkable after
+    /// all. This is the exact example the plan gives.
+    #[sqlx::test]
+    async fn a_prompt_naming_a_table_that_does_not_exist_is_a_finding(pool: PgPool) {
+        let out = check_prompt_tables(
+            &pool,
+            "Read yesterday from data_helth_sleep and summarise it.",
+        )
+        .await;
+        assert_eq!(out.len(), 1, "the typo must be caught");
+        let f = &out[0];
+        assert!(f["error"].as_str().unwrap().contains("data_helth_sleep"));
+        assert!(
+            f["suggestion"].as_str().unwrap().contains("data_health_sleep"),
+            "and it must say what was meant: {f:?}"
+        );
+    }
+
+    /// Real tables, and prose that merely rhymes with one, must stay silent —
+    /// a check that cries wolf gets ignored, which is worse than no check.
+    #[sqlx::test]
+    async fn real_tables_and_ordinary_prose_produce_nothing(pool: PgPool) {
+        let out = check_prompt_tables(
+            &pool,
+            "Look at data_health_heart_rate and data_calendar_event. \
+             Mention the data pipeline and wiki pages if useful.",
+        )
+        .await;
+        assert!(out.is_empty(), "unexpected findings: {out:?}");
+    }
 }

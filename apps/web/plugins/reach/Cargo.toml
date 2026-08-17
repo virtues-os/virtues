@@ -23,6 +23,14 @@ rusqlite = { version = "0.32", features = ["bundled"] }
 # The shared reach core (pair/consume, iroh loopback, session probe).
 virtues-reach-client = { path = "../../../../crates/virtues-reach-client" }
 
+# Improv BLE client — DESKTOP ONLY. This is what makes a Mac the first device:
+# it drives the same wire the box serves and the iOS client speaks, so the
+# connect shell has one code path for both. iOS is excluded deliberately —
+# there the Swift CoreBluetooth client owns the radio, and btleplug's own
+# CoreBluetooth backend would be a second, competing central in one process.
+[target.'cfg(not(any(target_os = "ios", target_os = "android")))'.dependencies]
+virtues-improv = { path = "../../../../crates/virtues-improv", features = ["client"] }
+
 [build-dependencies]
 tauri-plugin = { version = "2.6.3", features = ["build"] }
 

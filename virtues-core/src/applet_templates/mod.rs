@@ -18,7 +18,7 @@
 //!     `app_applets`. Manifest-managed fields (name, owner, agent, runtime,
 //!     command, triggers, condition, source) are overwritten
 //!     on every system reconcile. User-managed runtime state (enabled,
-//!     cron_schedule, config, memory) is preserved.
+//!     schedule, config, memory) is preserved.
 //!   - Per-credential manifests fan out one row per matching `credentials`
 //!     row, exactly as before.
 
@@ -111,7 +111,7 @@ struct Template {
     owner: String,
     #[serde(default)]
     triggers: Vec<String>,
-    /// Cron seed for the live `cron_schedule` value (SQL-owned after seeding).
+    /// Cron seed for the live `schedule` value (SQL-owned after seeding).
     /// Canonical manifest key is `schedule`; `default_cron` is still accepted
     /// so a folder written against the old spelling — an import, an older
     /// backup — keeps working.
@@ -1079,6 +1079,20 @@ pub async fn reconcile_templates(db: &PgPool) -> Result<usize> {
                         versions = ran,
                         "applied applet schema versions from disk"
                     );
+                    // A table nobody may read is not a table. Boot grants run
+                    // BEFORE this pass (server::mod), so on a fresh box the
+                    // grant sweep saw no applet schemas at all and everything
+                    // created here came out unreadable by the face role and
+                    // unwritable by the applet role — until the next restart,
+                    // and never at all for the Reconcile button. Re-grant
+                    // whenever DDL actually ran.
+                    if let Err(e) = crate::server::faces::ensure_applet_db_grants(db).await {
+                        tracing::warn!(
+                            applet_id = id_prefix,
+                            error = %e,
+                            "applied applet schema but failed to re-grant access to it"
+                        );
+                    }
                 }
             }
 
@@ -1172,7 +1186,7 @@ async fn upsert_row(
     //   system: UPSERT with overwrite of template-managed fields (name, owner,
     //           agent, condition, triggers, credential_id, runtime, command).
     //           Preserves user-managed runtime state
-    //           (cron_schedule, enabled, config, memory).
+    //           (schedule, enabled, config, memory).
     //
     //   user:   ON CONFLICT DO NOTHING. Factory defaults are seeded the first time
     //           the template is added; after that the row is fully owned by
@@ -1189,7 +1203,7 @@ async fn upsert_row(
     let sql = if template.owner == "user" {
         r#"
         INSERT INTO app_applets (
-            id, name, owner, agent, cron_schedule, enabled, config, condition,
+            id, name, owner, agent, schedule, enabled, config, condition,
             triggers, credential_id, command, device_id, until, description
         )
         VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, $8, $9::jsonb, $10, $11, $12, $13, $14)
@@ -1200,14 +1214,14 @@ async fn upsert_row(
     } else if template.owner == "ai" {
         r#"
         INSERT INTO app_applets (
-            id, name, owner, agent, cron_schedule, enabled, config, condition,
+            id, name, owner, agent, schedule, enabled, config, condition,
             triggers, credential_id, command, device_id, until, description
         )
         VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, $8, $9::jsonb, $10, $11, $12, $13, $14)
         ON CONFLICT(id) DO UPDATE SET
             name           = EXCLUDED.name,
             agent          = EXCLUDED.agent,
-            cron_schedule  = EXCLUDED.cron_schedule,
+            schedule  = EXCLUDED.schedule,
             config         = app_applets.config || EXCLUDED.config,
             condition      = EXCLUDED.condition,
             triggers       = EXCLUDED.triggers,
@@ -1218,7 +1232,7 @@ async fn upsert_row(
     } else {
         r#"
         INSERT INTO app_applets (
-            id, name, owner, agent, cron_schedule, enabled, config, condition,
+            id, name, owner, agent, schedule, enabled, config, condition,
             triggers, credential_id, command, device_id, until, description
         )
         VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, $8, $9::jsonb, $10, $11, $12, $13, $14)
@@ -1675,6 +1689,68 @@ auth = { kind = "via_proxy", start_path = "/google/start" }
         .await
         .unwrap();
         assert_eq!(stale, 0, "reconcile must restore the manifest sentence");
+    }
+
+    /// End-to-end for the schema-replay path: a folder on disk carrying
+    /// `schema/NNNN_*.sql` must reach real tables through reconcile alone.
+    /// Nothing had ever exercised this — the versioned-migration work shipped
+    /// with unit tests over the collapse logic and no applet that used it.
+    #[sqlx::test]
+    async fn a_shipped_applet_gets_its_tables_from_disk(pool: sqlx::PgPool) {
+        reconcile_templates(&pool).await.expect("reconcile");
+
+        let table: Option<String> = sqlx::query_scalar(
+            "SELECT table_name FROM information_schema.tables \
+              WHERE table_schema = 'applet_calorie_tracker' AND table_name = 'entries'",
+        )
+        .fetch_optional(&pool)
+        .await
+        .unwrap();
+        assert_eq!(
+            table.as_deref(),
+            Some("entries"),
+            "the tracker's schema/0001 did not reach the database"
+        );
+
+        // Recorded, so a second reconcile does not run it again.
+        let applied: Vec<(i32, String)> = sqlx::query_as(
+            "SELECT version, name FROM app_applet_schema_migrations \
+              WHERE applet_id = 'applet_calorie_tracker' ORDER BY version",
+        )
+        .fetch_all(&pool)
+        .await
+        .unwrap();
+        assert_eq!(applied.len(), 1);
+        assert_eq!(applied[0].0, 1);
+
+        reconcile_templates(&pool).await.expect("second reconcile");
+        let after: i64 = sqlx::query_scalar(
+            "SELECT count(*) FROM app_applet_schema_migrations \
+              WHERE applet_id = 'applet_calorie_tracker'",
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(after, 1, "a version must be applied exactly once");
+
+        // A table nobody may read is not a table. Boot grants the roles BEFORE
+        // reconcile runs, so everything created by the pass above arrives
+        // ungranted unless the pass re-grants — the face would see permission
+        // denied on its own applet's table, and sql_write could not log a meal.
+        for (role, priv_) in [
+            ("virtues_face_reader", "SELECT"),
+            ("virtues_applet_writer", "INSERT"),
+        ] {
+            let ok: bool = sqlx::query_scalar(
+                "SELECT has_table_privilege($1, 'applet_calorie_tracker.entries', $2)",
+            )
+            .bind(role)
+            .bind(priv_)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+            assert!(ok, "{role} cannot {priv_} the table reconcile just created");
+        }
     }
 
     #[sqlx::test]

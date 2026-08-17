@@ -181,14 +181,18 @@
 		{#snippet card(page: PageSummary)}
 			{@const tags = parseTags(page.tags)}
 			<div class="card-content">
-				<div
-					class="card-cover"
-					style={page.cover_url ? `background-image: url(${page.cover_url})` : ""}
-				>
-					{#if !page.cover_url}
-						<Icon icon={getPageIcon(page)} width="32" />
-					{/if}
-				</div>
+				<!-- Only pages that have a cover get a cover. The empty state used
+				     to reserve the same 16:9 block and fill it with the page's
+				     icon — the icon that is already on the title line right below
+				     it — so most of a card was a placeholder for something that
+				     wasn't there. On a phone that was ~90px of the 142px card,
+				     and a five-page list scrolled like fifty. -->
+				{#if page.cover_url}
+					<div
+						class="card-cover"
+						style={`background-image: url(${page.cover_url})`}
+					></div>
+				{/if}
 				<div class="card-body">
 					<div class="card-title-row">
 						<Icon icon={getPageIcon(page)} width="16" />
@@ -282,16 +286,14 @@
 		text-align: left;
 		width: 100%;
 	}
+	/* Rendered only when there is an image to show, so the centering that used
+	   to hold the placeholder icon is gone with it. */
 	.card-cover {
 		aspect-ratio: 16 / 9;
 		background-size: cover;
 		background-position: center;
 		background-color: var(--color-surface-elevated);
 		border-radius: 6px;
-		display: flex;
-		align-items: center;
-		justify-content: center;
-		color: var(--color-foreground-subtle);
 	}
 	.card-body {
 		display: flex;

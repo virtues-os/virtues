@@ -78,6 +78,7 @@
 	// Props
 	let { tab, active }: { tab: Tab; active: boolean } = $props();
 
+
 	// Extract conversationId from tab route (format: /chat/chat_abc123 or / for new chat)
 	// Returns the full chat ID including 'chat_' prefix, or undefined for new chat
 	// Strips query params like ?view=context
@@ -2143,6 +2144,25 @@
 		cursor: pointer;
 	}
 
+	/* 28px of visible chip, 44pt of reachable square — the chip is deliberately
+	   small and floats over the transcript, so the target grows around it
+	   rather than under it. */
+	@media (max-width: 768px), (pointer: coarse) {
+		.ghost-toggle {
+			position: relative;
+		}
+
+		.ghost-toggle::after {
+			content: "";
+			position: absolute;
+			top: 50%;
+			left: 50%;
+			width: 44px;
+			height: 44px;
+			transform: translate(-50%, -50%);
+		}
+	}
+
 	.ghost-toggle:hover:not(:disabled) {
 		color: var(--color-foreground);
 		background: var(--hover-bg);
@@ -2324,6 +2344,11 @@
 		width: 100%;
 		max-width: 48rem;
 		padding: 0 2rem 2rem 2rem;
+		/* The composer is the one piece of bottom chrome that must stay ABOVE
+		   the floating bar rather than pass behind it — glass over the field you
+		   are typing into is not a nice effect, it is a covered input. The
+		   messages behind it still scroll under the bar. */
+		padding-bottom: calc(1rem + var(--tabbar-reserve) + env(safe-area-inset-bottom));
 		background-color: var(--color-surface);
 		background-image: var(--background-image);
 		background-blend-mode: multiply;
