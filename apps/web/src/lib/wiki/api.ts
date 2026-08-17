@@ -133,49 +133,8 @@ export interface WikiStoryApi {
 	updated_at: string;
 }
 
-export interface WikiActApi {
-	id: string;
-	title: string;
-	subtitle: string | null;
-	description: string | null;
-	content: string | null;
-	cover_image: string | null;
-	location: string | null;
-	start_date: string;
-	end_date: string | null;
-	sort_order: number;
-	telos_id: string | null;
-	themes: string[] | null;
-	created_at: string;
-	updated_at: string;
-}
 
-export interface WikiChapterApi {
-	id: string;
-	title: string;
-	subtitle: string | null;
-	description: string | null;
-	content: string | null;
-	cover_image: string | null;
-	start_date: string;
-	end_date: string | null;
-	sort_order: number;
-	act_id: string | null;
-	themes: string[] | null;
-	created_at: string;
-	updated_at: string;
-}
 
-export interface WikiTelosApi {
-	id: string;
-	title: string;
-	description: string | null;
-	content: string | null;
-	cover_image: string | null;
-	is_active: boolean | null;
-	created_at: string;
-	updated_at: string;
-}
 
 export interface IdResolution {
 	entity_type: string;
@@ -795,37 +754,11 @@ export async function updateOrganization(
 
 // --- Telos ---
 
-export async function getActiveTelos(fetchFn: FetchFn = fetch): Promise<WikiTelosApi | null> {
-	const res = await fetchFn("/api/wiki/telos/active");
-	if (!res.ok) return null;
-	return res.json();
-}
 
-export async function getTelosById(
-	id: string,
-	fetchFn: FetchFn = fetch
-): Promise<WikiTelosApi | null> {
-	const res = await fetchFn(`/api/wiki/telos/${encodeURIComponent(id)}`);
-	if (!res.ok) return null;
-	return res.json();
-}
 
 // --- Act ---
 
-export async function getActById(
-	id: string,
-	fetchFn: FetchFn = fetch
-): Promise<WikiActApi | null> {
-	const res = await fetchFn(`/api/wiki/act/${encodeURIComponent(id)}`);
-	if (!res.ok) return null;
-	return res.json();
-}
 
-export async function listActs(fetchFn: FetchFn = fetch): Promise<WikiActApi[]> {
-	const res = await fetchFn("/api/wiki/acts");
-	if (!res.ok) return [];
-	return res.json();
-}
 
 // --- Story ---
 
@@ -846,23 +779,7 @@ export async function listStories(fetchFn: FetchFn = fetch): Promise<WikiStoryAp
 
 // --- Chapter ---
 
-export async function getChapterById(
-	id: string,
-	fetchFn: FetchFn = fetch
-): Promise<WikiChapterApi | null> {
-	const res = await fetchFn(`/api/wiki/chapter/${encodeURIComponent(id)}`);
-	if (!res.ok) return null;
-	return res.json();
-}
 
-export async function listChaptersForAct(
-	actId: string,
-	fetchFn: FetchFn = fetch
-): Promise<WikiChapterApi[]> {
-	const res = await fetchFn(`/api/wiki/act/${actId}/chapters`);
-	if (!res.ok) return [];
-	return res.json();
-}
 
 // --- Day ---
 

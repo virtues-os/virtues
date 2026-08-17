@@ -803,22 +803,10 @@ pub async fn run(client: Virtues, host: &str, port: u16) -> Result<()> {
                 .put(api::wiki_update_narrative_identity_handler),
         )
         // Wiki - Telos
-        .route(
-            "/api/wiki/telos/active",
-            get(api::wiki_get_active_telos_handler),
-        )
-        .route("/api/wiki/telos/:id", get(api::wiki_get_telos_handler))
         // Wiki - Act
-        .route("/api/wiki/acts", get(api::wiki_list_acts_handler))
-        .route("/api/wiki/act/:id", get(api::wiki_get_act_handler))
         .route("/api/wiki/stories", get(api::wiki_list_stories_handler))
         .route("/api/wiki/story/:id", get(api::wiki_get_story_handler))
         // Wiki - Chapter
-        .route("/api/wiki/chapter/:id", get(api::wiki_get_chapter_handler))
-        .route(
-            "/api/wiki/act/:act_id/chapters",
-            get(api::wiki_list_chapters_handler),
-        )
         // Wiki - Day
         .route("/api/wiki/days", get(api::wiki_list_days_handler))
         .route("/api/wiki/activity", get(api::wiki_day_activity_handler))

@@ -208,12 +208,6 @@ fn get_table_metadata() -> HashMap<&'static str, TableMetadata> {
         key_columns: &["date", "start_timezone", "last_edited_by"],
         join_hint: Some("JOIN wiki_day_prose ON wiki_day_prose.day_id = wiki_days.id"),
     });
-    m.insert("wiki_years", TableMetadata {
-        description: "Year summaries with highlights and themes",
-        category: "wiki_temporal",
-        key_columns: &["year", "summary", "highlights", "themes", "content"],
-        join_hint: None,
-    });
     m.insert("wiki_events", TableMetadata {
         description: "Timeline events within a day",
         category: "wiki_temporal",
@@ -227,30 +221,8 @@ fn get_table_metadata() -> HashMap<&'static str, TableMetadata> {
     m.insert("wiki_refs", TableMetadata {
         description: "Junction table linking entities (people, places, orgs) to ontology records. Use for 'everything about entity X' queries.",
         category: "wiki_reference",
-        key_columns: &["entity_type", "entity_id", "source_table", "source_id", "role", "confidence", "resolved_by", "timestamp"],
+        key_columns: &["entity_type", "entity_id", "source_table", "source_id", "role", "timestamp"],
         join_hint: None,
-    });
-
-    // ============================================================================
-    // WIKI TABLES - Narrative (life story structure)
-    // ============================================================================
-    m.insert("wiki_telos", TableMetadata {
-        description: "User's life purpose/direction",
-        category: "wiki_narrative",
-        key_columns: &["title", "description", "is_active", "content"],
-        join_hint: None,
-    });
-    m.insert("wiki_acts", TableMetadata {
-        description: "Major life periods (multi-year)",
-        category: "wiki_narrative",
-        key_columns: &["title", "subtitle", "description", "start_date", "end_date", "sort_order", "themes", "location", "content"],
-        join_hint: Some("JOIN wiki_telos ON telos_id = wiki_telos.id"),
-    });
-    m.insert("wiki_chapters", TableMetadata {
-        description: "Chapters within acts (months/seasons)",
-        category: "wiki_narrative",
-        key_columns: &["act_id", "title", "subtitle", "description", "start_date", "end_date", "sort_order", "themes", "content"],
-        join_hint: Some("JOIN wiki_acts ON act_id = wiki_acts.id"),
     });
 
     m

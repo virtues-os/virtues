@@ -22,7 +22,6 @@ export { default as EntityArticleSection } from './EntityArticleSection.svelte';
 export { default as EntityRecordsSection } from './EntityRecordsSection.svelte';
 
 // Year page
-export { default as YearPage } from './YearPage.svelte';
 
 // Entity pages
 export { default as PersonPage } from './PersonPage.svelte';
