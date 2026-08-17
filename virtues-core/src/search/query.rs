@@ -614,6 +614,23 @@ impl SemanticSearchEngine {
         sqlx::query(&format!("SET LOCAL hnsw.ef_search = {HNSW_EF_SEARCH}"))
             .execute(&mut *tx)
             .await?;
+        // Keep scanning the graph when the WHERE clause throws candidates away.
+        //
+        // The dense arm post-filters: HNSW returns `ef_search` nearest rows,
+        // and only then does `AND se.ontology IN (…)` / `AND se.timestamp >= $n`
+        // discard whatever does not match. So a narrow filter — "what did I do
+        // last March?" — could leave the dense arm returning a handful of rows
+        // instead of a full pool, and the hybrid would quietly degrade to
+        // lexical-only. No error, just worse answers on exactly the questions
+        // people ask most specifically.
+        //
+        // Iterative scan makes pgvector resume the graph walk until it has
+        // enough rows that survive the filter. `relaxed_order` rather than
+        // `strict_order` because the results are re-ranked downstream anyway,
+        // and relaxed is markedly faster.
+        sqlx::query("SET LOCAL hnsw.iterative_scan = relaxed_order")
+            .execute(&mut *tx)
+            .await?;
         let rows = db_query.fetch_all(&mut *tx).await?;
         tx.commit().await?;
 
