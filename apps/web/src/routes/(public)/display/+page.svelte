@@ -87,6 +87,8 @@
 		connectivity: string;
 		wifi_ssid: string | null | undefined;
 		devices: number;
+		record: Array<{ label: string; count: number }> | undefined;
+		record_since: string | null | undefined;
 	};
 
 	let state_ = $state<DisplayState | null>(null);
@@ -127,7 +129,11 @@
 		try {
 			const res = await fetch("/api/display/state");
 			if (!res.ok) throw new Error(String(res.status));
-			state_ = await res.json();
+			const next = await res.json();
+			// Advance the log line once per poll, only when the box is claimed
+			// and there is more than one thing to say.
+			if (state_?.claimed && (next.record?.length ?? 0) > 1) logIndex += 1;
+			state_ = next;
 			// Answered, so any latched update is over — whatever happened, the
 			// box is serving again and the ordinary screens are true.
 			unreachable = false;
@@ -233,6 +239,42 @@
 		if (poll) clearInterval(poll);
 		if (clock) clearInterval(clock);
 		if (updateWatch) clearInterval(updateWatch);
+	});
+
+	// ── the record ────────────────────────────────────────────────────────
+	//
+	// One line at a time, advancing once per ambient poll — every 30s, which is
+	// the slowest thing on the screen and deliberately so. This panel runs 24/7
+	// in someone's home and the design forbids animation loops; a line that
+	// changes twice a minute is furniture, one that changes every second is a
+	// slot machine.
+	//
+	// Server-supplied and already filtered: `record` omits anything with a zero
+	// count, so this never prints "0 emails".
+	let logIndex = $state(0);
+	$effect(() => {
+		// Advance on each new poll, not on a timer of its own — one clock.
+		const n = state_?.record?.length ?? 0;
+		if (n > 0) logIndex = logIndex % n;
+	});
+
+	const logLine = $derived.by(() => {
+		const rec = state_?.record ?? [];
+		if (!rec.length) return null;
+		const l = rec[logIndex % rec.length];
+		// Grouped thousands: "41,000 messages" is a number someone reads, and
+		// "41000 messages" is one they have to count.
+		return `${l.count.toLocaleString()} ${l.label}`;
+	});
+
+	// The oldest trace, as a month and year. Does more work than any count —
+	// most people have no idea their Mac has kept messages for a decade.
+	const sinceLabel = $derived.by(() => {
+		const iso = state_?.record_since;
+		if (!iso) return null;
+		const d = new Date(iso);
+		if (Number.isNaN(d.getTime())) return null;
+		return `since ${d.toLocaleDateString([], { month: "long", year: "numeric" })}`;
 	});
 
 	const timeLabel = $derived(
@@ -361,12 +403,30 @@
 				</div>
 			</div>
 			<div class="log">
-				<div class="kicker">TODAY SO FAR</div>
-				<div class="line">Your box is keeping the record.</div>
-				<div class="meta">
-					{state_.devices}
-					{state_.devices === 1 ? "device" : "devices"} syncing
-				</div>
+				{#if logLine}
+					<!-- THE RECORD, counted. One line, rotating on the ambient poll.
+					     What was here before was a kicker reading "TODAY SO FAR" over
+					     the string literal "Your box is keeping the record." — a
+					     promise of live content over something that could never
+					     change. The only true line on the screen was the device
+					     count. -->
+					<div class="kicker">THE RECORD</div>
+					<div class="line">{logLine}</div>
+					<div class="meta">
+						{sinceLabel ? `${sinceLabel} · ` : ""}{state_.devices}
+						{state_.devices === 1 ? "device" : "devices"} syncing
+					</div>
+				{:else}
+					<!-- A box holding nothing says so plainly. A census of absences
+					     is a list of reproaches, and someone who has just set up a
+					     box has not failed at anything yet. -->
+					<div class="kicker">THE RECORD</div>
+					<div class="line">Nothing has arrived yet.</div>
+					<div class="meta">
+						{state_.devices}
+						{state_.devices === 1 ? "device" : "devices"} syncing
+					</div>
+				{/if}
 			</div>
 			<div class="ambfoot">{dateLabel} &middot; {timeLabel}</div>
 		</div>
