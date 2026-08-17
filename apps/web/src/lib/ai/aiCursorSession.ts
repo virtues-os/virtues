@@ -11,8 +11,21 @@
  *    per token (keeps the whole edit inside one undo group).
  *  - The caret/trail/telegraph are driven via the ai-cursor StateEffects.
  *
- * Trust-by-undo: there is no accept/reject. The user reverts with Cmd+Z, or
- * interrupts mid-stream (Esc / start typing → abort()).
+ * A REWRITE PROPOSES; it does not overwrite. Rather than deleting the selected
+ * passage and streaming a replacement over it, the session wraps the original
+ * and streams into a suggestion beside it:
+ *
+ *     {--the original passage--}{++the streamed rewrite++}
+ *
+ * which review-marks.ts renders as a before/after pair the writer accepts or
+ * rejects (see that module for why the markers live in the text). The original
+ * is never sent back through the model to be reproduced — it is wrapped in
+ * place, so a model that paraphrases what it was asked to quote cannot quietly
+ * corrupt the text it was rewriting.
+ *
+ * A CONTINUATION still inserts plainly. It adds prose where none existed, so
+ * there is no before to compare against and nothing to reject but the whole
+ * insertion, which is what undo already is.
  */
 
 import * as Y from "yjs";
@@ -36,6 +49,12 @@ const DONE_DISSOLVE_MS = 650;
 // Client-side backstop on top of the server's max_tokens, so a runaway
 // completion can never fill the document.
 const MAX_OUTPUT_CHARS = 8000;
+
+// The proposal wrapper, split at the pivot: everything before the pivot closes
+// around the original, everything after opens the suggestion.
+const PROPOSE_OPEN = "{--";
+const PROPOSE_PIVOT = "--}{++";
+const PROPOSE_CLOSE = "++}";
 
 export interface StartAiOptions {
 	view: EditorView;
@@ -85,9 +104,17 @@ class AiCursorSession {
 	private buffer = "";
 	private flushScheduled = false;
 
-	// Rewrite is non-destructive until the first token: we hold the selection's
-	// length here and only delete it as part of the first insert transaction.
+	// Rewrite does nothing to the document until the first token arrives. Either
+	// the selection gets wrapped as a proposal (the normal path) or — when the
+	// passage itself contains the closing delimiter, and wrapping it would
+	// produce markup that terminates in the wrong place — it is replaced
+	// outright, the old destructive behavior, kept as the honest fallback.
+	private pendingWrap: { from: number; to: number } | null = null;
 	private pendingDeleteLen = 0;
+	/** A `{++` is open in the document and still owes its `++}`. */
+	private proposalOpen = false;
+	/** The selection was wrapped as a proposal rather than replaced. */
+	private didWrap = false;
 	private isRewrite = false;
 	private didMutate = false;
 	private insertedChars = 0;
@@ -120,19 +147,35 @@ class AiCursorSession {
 	/** Insert text at the moving anchor, tagging origin 'ai' + adding a trail. */
 	private insertAt(text: string) {
 		if (!text || !this.anchor) return;
-		const at = this.resolve(this.anchor);
-		const hadPendingDelete = this.pendingDeleteLen > 0;
-		// Delete-on-first-token: for a rewrite, the selection is only removed
-		// once we actually have replacement text — and atomically with it — so a
-		// pre-stream error/abort can never leave the user with deleted-and-empty.
+
+		const wrap = this.pendingWrap;
+		const wasPending = wrap !== null || this.pendingDeleteLen > 0;
+		let at = 0;
+
+		// Everything the first token triggers happens in ONE transaction with the
+		// token itself: the document goes straight from untouched to a complete,
+		// well-formed proposal. A pre-stream error or abort therefore cannot
+		// leave the writer with a half-open span or a deleted-and-empty passage.
 		this.ydoc.transact(() => {
-			if (this.pendingDeleteLen > 0) {
-				this.ytext.delete(at, this.pendingDeleteLen);
-				this.pendingDeleteLen = 0;
+			if (wrap) {
+				this.ytext.insert(wrap.from, PROPOSE_OPEN);
+				this.ytext.insert(wrap.to + PROPOSE_OPEN.length, PROPOSE_PIVOT);
+				this.pendingWrap = null;
+				this.proposalOpen = true;
+				this.didWrap = true;
+				// The stream lands just inside the `{++`, after the original.
+				at = wrap.to + PROPOSE_OPEN.length + PROPOSE_PIVOT.length;
+			} else {
+				at = this.resolve(this.anchor as Y.RelativePosition);
+				if (this.pendingDeleteLen > 0) {
+					this.ytext.delete(at, this.pendingDeleteLen);
+					this.pendingDeleteLen = 0;
+				}
 			}
 			this.ytext.insert(at, text);
 		}, "ai");
-		if (hadPendingDelete) {
+
+		if (wasPending) {
 			aiTelegraph(this.view, null);
 		}
 		this.didMutate = true;
@@ -199,10 +242,17 @@ class AiCursorSession {
 			await sleep(TELEGRAPH_MS);
 			if (this.aborted) return this.cleanup();
 
-			// Defer the delete to the first token (see insertAt): the selection is
-			// removed atomically with the first replacement insert, so an error or
-			// abort before any token arrives leaves the user's text untouched.
-			this.pendingDeleteLen = sel.to - sel.from;
+			// Wrapping is only safe while the passage cannot terminate the markup
+			// early. A selection already containing `--}` (or an open `{++`) would
+			// close the deletion span in the middle of itself, and the result would
+			// be markup that parses somewhere the writer never chose. Rather than
+			// silently mangle it, that case falls back to replacing outright.
+			const wrappable = !selection.includes("--}") && !selection.includes("{++");
+			if (wrappable) {
+				this.pendingWrap = { from: sel.from, to: sel.to };
+			} else {
+				this.pendingDeleteLen = sel.to - sel.from;
+			}
 			insertIndex = sel.from;
 		} else {
 			insertIndex = sel.head;
@@ -239,6 +289,10 @@ class AiCursorSession {
 			}
 
 			if (this.aborted) {
+				// Land whatever arrived and close the span. An interrupted rewrite
+				// leaves a real, if partial, suggestion the writer can reject in one
+				// click — which is a better resting place than half-open markup.
+				this.finalize();
 				this.notifyInterrupted();
 				this.cleanup();
 				return;
@@ -247,7 +301,7 @@ class AiCursorSession {
 			// Drain the sanitizer's held tail (e.g. a stripped closing fence), flush.
 			const tail = this.sanitizer.flush();
 			if (tail) this.buffer += tail;
-			this.flush();
+			this.finalize();
 
 			// Hand-off: pulse the caret at its final spot, then dissolve.
 			const finalPos = this.anchor ? this.resolve(this.anchor) : insertIndex;
@@ -256,6 +310,10 @@ class AiCursorSession {
 			await sleep(DONE_DISSOLVE_MS);
 			this.cleanup();
 		} catch (err) {
+			// Either way the span must be closed before anything else happens —
+			// unterminated `{++` is not a suggestion, it is literal braces in the
+			// middle of the writer's prose.
+			this.finalize();
 			if (this.aborted || (err instanceof DOMException && err.name === "AbortError")) {
 				this.notifyInterrupted();
 				this.cleanup();
@@ -263,17 +321,47 @@ class AiCursorSession {
 				console.error("AI cursor session failed:", err);
 				aiSession.set("error", err instanceof Error ? err.message : "AI error");
 				if (this.isRewrite && this.didMutate) {
-					toast.error("AI edit failed", { description: "Press ⌘Z to undo." });
+					toast.error("AI edit failed", { description: this.recoveryHint() });
 				}
 				this.cleanup(false);
 			}
 		}
 	}
 
-	/** A rewrite that began replacing text was interrupted — tell the user how to recover. */
+	/**
+	 * Land any buffered text, then close an open proposal.
+	 *
+	 * Every exit from `run` goes through here — success, abort, and error alike
+	 * — because the one state the document must never be left in is a `{++` with
+	 * no `++}`. A no-op when nothing was ever written.
+	 */
+	private finalize() {
+		if (this.buffer) {
+			const text = this.buffer;
+			this.buffer = "";
+			this.insertAt(text);
+		}
+		if (!this.proposalOpen || !this.anchor) return;
+
+		const at = this.resolve(this.anchor);
+		this.ydoc.transact(() => {
+			this.ytext.insert(at, PROPOSE_CLOSE);
+		}, "ai");
+		this.proposalOpen = false;
+		this.anchor = Y.createRelativePositionFromTypeIndex(this.ytext, at + PROPOSE_CLOSE.length);
+	}
+
+	/** How to get rid of what the AI just did, phrased for what it actually did. */
+	private recoveryHint(): string {
+		return this.didWrap
+			? "The suggestion is marked in the page — reject it to restore your text."
+			: "Press ⌘Z to undo.";
+	}
+
+	/** A rewrite that began writing was interrupted — tell the user how to recover. */
 	private notifyInterrupted() {
 		if (this.isRewrite && this.didMutate) {
-			toast("AI edit interrupted", { description: "Press ⌘Z to undo." });
+			toast("AI edit interrupted", { description: this.recoveryHint() });
 		}
 	}
 
