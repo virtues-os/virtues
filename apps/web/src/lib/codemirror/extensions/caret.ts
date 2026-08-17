@@ -7,10 +7,12 @@
  * give it the three properties that make a caret feel like a place rather than
  * a marker:
  *
- *  1. PRESENCE. The bar is 1.5x line-height, centered on the line, and its
- *     width scales with the text it sits in — visibly thicker inside an H1
- *     than in body copy. A caret the same weight at every size reads as
- *     system chrome; one that grows with the type reads as part of the page.
+ *  1. PRESENCE. The bar is sized off the FONT SIZE at the caret, not off the
+ *     line box — so it grows with the type (visibly taller and thicker inside
+ *     an H1) without inheriting our generous 1.7 prose line-height, which
+ *     would make it tower over body copy. A caret the same weight at every
+ *     size reads as system chrome; one that tracks the type reads as part of
+ *     the page.
  *
  *  2. CONTINUITY. It glides between positions (105ms) instead of teleporting,
  *     so arrow-key motion is legible as motion. The easing is front-loaded —
@@ -43,8 +45,21 @@ import { drawSelection, EditorView, ViewPlugin, type ViewUpdate } from '@codemir
 /** How long the caret stays solid after the last keystroke or move. */
 const BLINK_DELAY_MS = 500;
 
-/** Bar height as a multiple of line height (centered, so it over/underhangs). */
-const CARET_SCALE = 1.5;
+/**
+ * Bar height as a multiple of the FONT SIZE at the caret — roughly ascender to
+ * descender plus a little. Deliberately not a multiple of the line box: this
+ * editor runs a 1.7 line-height for prose, and a caret scaled to that reads as
+ * a cursor from a different, larger document.
+ */
+const CARET_HEIGHT_RATIO = 1.25;
+
+/**
+ * Width also follows the caret's own height, so the bar keeps its proportions
+ * from body copy up to an H1 instead of staying a hairline at display sizes.
+ */
+function caretWidthFor(caretHeight: number): number {
+	return caretHeight * 0.055 + 1.1;
+}
 
 /**
  * Records what moved the caret, so the CSS can suppress the glide for pointer
@@ -113,29 +128,51 @@ const caretBehavior = ViewPlugin.fromClass(
 		}
 
 		private refresh() {
-			this.measureWidth();
+			this.measureCaret();
 			this.restartBlink();
 		}
 
 		/**
-		 * Width tracks the line the caret is on. Read in a measure phase — the
-		 * cursor element is positioned by drawSelection during the same update,
-		 * and reading layout inline would force a synchronous reflow.
+		 * Size the bar against the type at the caret.
 		 *
-		 * `offsetHeight` is the UNSCALED line height (the 1.5x is a transform,
-		 * which offset metrics ignore), so the scale is applied here to match
-		 * what is actually painted.
+		 * CodeMirror sets the cursor's `height` inline, to the LINE BOX — which
+		 * carries our 1.7 prose leading and is far taller than the glyphs. We
+		 * leave that inline height alone (overriding it would fight the
+		 * measured geometry) and correct it with a scaleY computed from the
+		 * font size, so the painted bar hugs the text while the element the
+		 * browser positions stays exactly what CodeMirror measured.
+		 *
+		 * `transform-origin: center` then keeps the bar centered on the line
+		 * box, which is where the text sits.
+		 *
+		 * Read in a measure phase: the cursor is positioned by drawSelection in
+		 * this same update, and reading layout inline forces a reflow.
 		 */
-		private measureWidth() {
+		private measureCaret() {
 			this.view.requestMeasure({
 				read: (view) => {
 					const cursor = view.dom.querySelector<HTMLElement>('.cm-cursor-primary');
-					return cursor ? cursor.offsetHeight : 0;
+					if (!cursor) return null;
+
+					// The element at the caret, so headings and code spans each
+					// report their own size rather than the editor's base.
+					const { node } = view.domAtPos(view.state.selection.main.head);
+					const element = node.nodeType === Node.TEXT_NODE ? node.parentElement : (node as HTMLElement);
+					const fontSize = element ? parseFloat(getComputedStyle(element).fontSize) : 0;
+
+					return { lineBox: cursor.offsetHeight, fontSize };
 				},
-				write: (lineHeight, view) => {
-					if (!lineHeight) return;
-					const width = lineHeight * CARET_SCALE * 0.02 + 2;
-					view.dom.style.setProperty('--cm-caret-width', `${width.toFixed(2)}px`);
+				write: (measurement, view) => {
+					if (!measurement) return;
+					const { lineBox, fontSize } = measurement;
+					if (!lineBox || !fontSize) return;
+
+					const height = fontSize * CARET_HEIGHT_RATIO;
+					view.dom.style.setProperty('--cm-caret-scale-y', (height / lineBox).toFixed(3));
+					view.dom.style.setProperty(
+						'--cm-caret-width',
+						`${caretWidthFor(height).toFixed(2)}px`
+					);
 				},
 			});
 		}
