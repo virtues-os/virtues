@@ -1,20 +1,21 @@
 //! Is the box's data disk actually there?
 //!
 //! On an appliance the state root is its own filesystem — a blank NVMe claimed
-//! at first boot (`virtues-firstboot.sh`) — while the OS lives on the eMMC.
-//! That split is deliberate: the eMMC is soldered and has modest write
-//! endurance, so the database, the lake and the journal (everything that
-//! actually writes) belong on the replaceable part, and the part that cannot be
-//! replaced carries only a rootfs that changes once per release.
+//! at first boot (`virtues-firstboot.sh`) — while the OS lives on the boot
+//! medium (a microSD card on the Q6A; see docs/appliance-image.md). That split
+//! is deliberate: the card is the weakest storage on the board and wears out
+//! under database load, so the database, the lake and the journal — everything
+//! that writes continuously — belong on the NVMe, and the card carries only a
+//! rootfs that changes once per release.
 //!
 //! The split's other half is the reason this module exists. Keeping a bootable
-//! OS on the eMMC means a box whose NVMe is dead, unseated, or was never
+//! OS on the card means a box whose NVMe is dead, unseated, or was never
 //! fitted still comes up — and a box that comes up can SAY SO. `fstab` carries
 //! `nofail` for exactly that, so a missing disk must never block boot.
 //!
 //! But "must not block boot" and "may be ignored" are different claims, and
 //! conflating them is how you get the worst outcome available here: Postgres
-//! cheerfully `initdb`s a fresh empty cluster onto the eMMC, every service
+//! cheerfully `initdb`s a fresh empty cluster onto the card, every service
 //! reports healthy, and the owner's box looks perfectly fine while being
 //! empty. Their record is not lost — it is sitting on a disk nobody mounted —
 //! but nothing on any screen would tell them that, and the longer it runs the

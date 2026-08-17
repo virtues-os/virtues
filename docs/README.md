@@ -91,7 +91,7 @@ listed below.
 | [chat-ux-roadmap.md](chat-ux-roadmap.md) | Planned | The chat surface overhaul, in independently shippable tracks A–L, each ending in a verification gate. |
 | [ui-overhaul-plan.md](ui-overhaul-plan.md) | Planned | Nineteen layout/settings/design items triaged against the codebase, each marked ship / spike / defer / drop. |
 | [onboarding.md](onboarding.md) | Current | Canonical spec for "box in hand" → "Virtues earning its keep," across both hardware tiers, with and without a screen. The channel picks the path; no one is asked. |
-| [appliance-image.md](appliance-image.md) | Partly built | How a Dragon becomes a shippable unit: the eMMC-boots-NVMe-roots truth read off real hardware, the OS-on-eMMC/data-on-NVMe split and why, the deprovision → `image-check` → `dd` gate, and the three questions that need the bench. |
+| [appliance-image.md](appliance-image.md) | Partly built | How a Dragon becomes a shippable unit: the card-boots/NVMe-roots truth read off real hardware, the OS-on-card/data-on-NVMe split and why, `tools/build-master.sh`, the deprovision → `image-check` → `dd` gate, and the three questions that need the bench. |
 | [plaid-plan.md](plaid-plan.md) | Partly built | Plaid as the *general* finance collector — FinanceKit reaches only Apple's own products, so Plaid is the path that has to work for everyone else. |
 
 ## Clients & collection
