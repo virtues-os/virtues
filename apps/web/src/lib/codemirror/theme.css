@@ -982,3 +982,72 @@
 		box-shadow: 0 0 0 transparent;
 	}
 }
+
+/* =============================================================================
+   THE CARET (see extensions/caret.ts for the behavior it pairs with)
+   =============================================================================
+   CodeMirror draws `.cm-cursor` as a left BORDER on a zero-width div, with
+   `left`/`top`/`height` set inline. Only the inline three are off-limits here;
+   everything below is ours. The border becomes a real bar so it can carry a
+   radius and a width that answers to the type size around it. */
+
+/* Scoped through `.cm-editor` so it outranks CodeMirror's own injected
+   `.cm-cursor` rule on specificity rather than on stylesheet order. */
+.cm-editor .cm-cursorLayer .cm-cursor {
+	border-left: none;
+	width: var(--cm-caret-width, 2px);
+	/* Straddle the character boundary rather than sitting to its right. */
+	margin-left: calc(var(--cm-caret-width, 2px) / -2);
+	background: var(--color-primary);
+	border-radius: 2px;
+
+	/* 1.5x line height, centered — the over/underhang is what reads as
+	   deliberate. Height itself stays CodeMirror's (it is measured), so the
+	   scale has to be a transform. */
+	transform: scaleY(1.5);
+	transform-origin: center;
+
+	/* Front-loaded curve: leaves fast, settles slow. A symmetric ease at
+	   105ms reads as lag; this reads as travel. */
+	transition:
+		left 105ms cubic-bezier(0.22, 0.61, 0.36, 1),
+		top 105ms cubic-bezier(0.22, 0.61, 0.36, 1),
+		height 105ms cubic-bezier(0.22, 0.61, 0.36, 1);
+}
+
+/* A click is a teleport. Gliding toward the spot someone just pointed at is
+   the fastest way to make an editor feel slow. */
+.cm-editor[data-caret-input='pointer'] .cm-cursorLayer .cm-cursor {
+	transition: none;
+}
+
+/* Blinking is opt-IN, applied by the plugin after 500ms of stillness, so the
+   caret never blinks under the writer's own typing. */
+.cm-editor .cm-cursorLayer.cm-caret-blinking .cm-cursor {
+	animation: cm-caret-blink 1s infinite;
+}
+
+/* Long on, quick dip, back — a fade the eye reads as breathing. The stock
+   `steps(1)` square wave is what makes a native caret feel mechanical. */
+@keyframes cm-caret-blink {
+	0%,
+	40% {
+		opacity: 1;
+	}
+	80% {
+		opacity: 0;
+	}
+	100% {
+		opacity: 1;
+	}
+}
+
+@media (prefers-reduced-motion: reduce) {
+	.cm-editor .cm-cursorLayer .cm-cursor {
+		transition: none;
+	}
+
+	.cm-editor .cm-cursorLayer.cm-caret-blinking .cm-cursor {
+		animation: none;
+	}
+}
