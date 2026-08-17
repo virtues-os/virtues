@@ -109,7 +109,7 @@ pub async fn run(yes: bool, force: bool) -> Result<(), crate::Error> {
     // `root`, which does not exist, and deprovision died at its first step.
     //
     // Which means the documented way to build a master — `sudo sh
-    // tools/build-master.sh` — could not complete, and had never been run on
+    // tools/build-dragon.sh` — could not complete, and had never been run on
     // hardware to discover that. `maybe_reexec_as_service_user` in main.rs
     // handles this for `reset` and friends by becoming the service user for
     // the whole command; that is the wrong shape here, because the root half
