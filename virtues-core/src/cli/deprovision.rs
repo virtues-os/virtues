@@ -179,10 +179,25 @@ pub async fn run(yes: bool, force: bool) -> Result<(), crate::Error> {
     remove_relocated_cluster();
 
     // ── 4. Logs ─────────────────────────────────────────────────────────────
+    // On the lab board this was 403 MB reaching back to 2025-11-25 across 22
+    // boots — the master's entire operational history, shipped inside every
+    // image, and 403 MB of it. The phrase is not in there (it is logged as
+    // "setup phrase rejected", never with the words) but the networks, the
+    // addresses, the hostnames and the stack traces all are.
     let _ = Command::new("journalctl")
         .args(["--rotate", "--vacuum-time=1s"])
         .output();
     println!("  ✓ journal vacuumed");
+
+    // Login records and shell history — the operator's own traces. `wtmp` and
+    // `lastlog` are truncated rather than removed: the files are expected to
+    // exist and login(1) writes to them either way.
+    for f in ["/var/log/wtmp", "/var/log/btmp", "/var/log/lastlog"] {
+        if Path::new(f).exists() {
+            let _ = std::fs::write(f, b"");
+        }
+    }
+    remove_shell_history();
 
     // ── 5. Arm first boot ───────────────────────────────────────────────────
     // The marker is what licenses `virtues-firstboot` to mint a NEW encryption
@@ -383,6 +398,27 @@ fn netplan_wifi_files_in(dir: &str) -> Vec<std::path::PathBuf> {
     }
     out.sort();
     out
+}
+
+/// Shell history for root and every real user. Whoever built the master typed
+/// their way through it, and a command line is where secrets get typed by
+/// accident — a password passed as an argument, a token pasted into a curl.
+fn remove_shell_history() {
+    let mut homes = vec![std::path::PathBuf::from("/root")];
+    if let Ok(entries) = std::fs::read_dir("/home") {
+        homes.extend(entries.flatten().map(|e| e.path()));
+    }
+    let mut n = 0usize;
+    for home in homes {
+        for name in [".bash_history", ".zsh_history", ".python_history", ".psql_history"] {
+            if std::fs::remove_file(home.join(name)).is_ok() {
+                n += 1;
+            }
+        }
+    }
+    if n > 0 {
+        println!("  ✓ removed {n} shell history file(s)");
+    }
 }
 
 fn remove_netplan_wifi() -> Result<(), crate::Error> {
