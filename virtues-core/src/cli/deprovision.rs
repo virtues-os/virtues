@@ -47,7 +47,7 @@ const PER_UNIT_ENV_KEYS: &[&str] = &["VIRTUES_ENCRYPTION_KEY"];
 /// The box's env file — the same path `main.rs` loads at startup and the
 /// installer writes. `VIRTUES_ENV_FILE` overrides it so the tests (and a dev
 /// box with a different layout) don't have to touch `/var/lib`.
-fn env_file_path() -> std::path::PathBuf {
+pub fn env_file_path() -> std::path::PathBuf {
     std::env::var("VIRTUES_ENV_FILE")
         .map(std::path::PathBuf::from)
         .unwrap_or_else(|_| std::path::PathBuf::from("/var/lib/virtues/virtues.env"))

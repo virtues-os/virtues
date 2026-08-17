@@ -41,10 +41,18 @@ pub enum DeviceCommands {
 
 #[derive(Subcommand)]
 pub enum Commands {
-    /// Interactive setup wizard. Mostly historical — fresh hardware boots use
-    /// `install.sh` which writes `.env` non-interactively. Kept for niche manual
-    /// setups. Safe by default: backs up an existing `.env` to `.env.bak.<ts>`
-    /// before overwriting.
+    /// Finish a fresh install: run migrations, mint a pair code, print the
+    /// handoff. Idempotent — safe to re-run at any time.
+    ///
+    /// PLUMBING, not a wizard. The account/subscribe/naming conversation this
+    /// used to host has moved to the app, because a TTY is the worst available
+    /// medium for billing and OAuth. `virtues-installer` execs this as the last
+    /// step of `curl virtues.com/sh | sudo sh`; it writes no config of its own
+    /// and touches no `.env`.
+    ///
+    /// (Its help used to describe an interactive wizard that backed up `.env`
+    /// before overwriting it, and pointed at an `install.sh` that no longer
+    /// exists. It did none of those things.)
     #[command(hide = true)]
     Init,
 
@@ -280,6 +288,21 @@ pub enum Commands {
         force: bool,
     },
 
+    /// Is this disk safe to image and clone? Read-only; changes nothing.
+    ///
+    /// The gate between `virtues deprovision` and `dd`. Deprovision reports
+    /// success and tells you to power off, and until now that was the whole
+    /// assurance — nothing ever re-checked the result. A per-unit secret that
+    /// survived into a master image is invisible on the bench and catastrophic
+    /// in the field: the iroh secret IS the box's identity, so clones of an
+    /// un-deprovisioned master are literally the same box, and one leaked
+    /// encryption key decrypts every unit ever shipped.
+    ///
+    /// Exits non-zero on any finding, so it can be the last line of a
+    /// manufacturing script. See docs/appliance-image.md.
+    #[command(name = "image-check")]
+    ImageCheck,
+
     /// Self-update from the latest GitHub Release, via atomic release slots.
     ///
     /// Stages the whole release into `releases/<slot>/`, preflights it (the
@@ -420,19 +443,25 @@ pub enum Commands {
     /// flow). Prints a QR + URL and waits for you to complete checkout on a
     /// phone or browser; the box never holds a Stripe key.
     ///
-    /// Most users want `virtues init` instead (full first-run wizard: config
-    /// + subscribe + migrate). `subscribe` is the lower-level subscribe-only
-    /// command for re-subscribing or dev iteration.
+    /// A power-user hatch for re-subscribing or dev iteration. In the normal
+    /// flow the app carries the account grant to the box over Bluetooth and
+    /// nobody runs this. (It used to point at `virtues init` as the "full
+    /// first-run wizard: config + subscribe + migrate" — init has been
+    /// plumbing-only since the account conversation left the TTY.)
     #[command(alias = "claim", hide = true)]
     Subscribe,
 
     /// Attach this box to an existing Virtues subscription via the
-    /// magic-link login flow. Pairs with `virtues init`'s [1] Log in
-    /// branch — same code path, just standalone for retries.
+    /// magic-link login flow. Standalone, for retries.
     ///
-    /// Hidden power-user command: `virtues pair` is the device-pairing verb
-    /// (the pair code/URL); this is the *account* attach, which the web wizard
-    /// owns in the normal flow (docs/onboarding.md).
+    /// Hidden power-user command, and the distinction it turns on is worth
+    /// keeping straight: `virtues pair` attaches a DEVICE to this box, this
+    /// attaches this box to an ACCOUNT. In the normal flow the app carries the
+    /// account grant over Bluetooth (docs/onboarding-paradigm.md §7) and
+    /// neither is typed.
+    ///
+    /// (It used to describe itself as pairing with `virtues init`'s "[1] Log
+    /// in" branch — a menu that no longer exists.)
     #[command(name = "account-login", hide = true)]
     AccountLogin,
 

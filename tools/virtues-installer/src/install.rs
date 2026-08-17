@@ -57,6 +57,16 @@ async fn install_deps_apt(target: &Target) -> Result<()> {
 }
 
 async fn install_deps_dnf() -> Result<()> {
+    // UNVERSIONED, unlike the apt path's pinned `postgresql-18`, so a Fedora
+    // box gets whatever its release ships — 16 or 17 today. That asymmetry is
+    // known and tolerated rather than accidental: Fedora is a DIY-only target,
+    // its Postgres is recent enough for everything we use, and there is no PGDG
+    // equivalent worth carrying for it.
+    //
+    // The cost lands in ONE place, so it is worth naming: `pg_dump` output from
+    // a newer server cannot be read by an older `pg_restore`. A backup taken on
+    // an appliance (18) will not restore onto a Fedora DIY box on 16. If that
+    // ever needs to work, this is the line to change.
     dnf_install("Postgres + pgvector", &["postgresql-server", "postgresql-contrib", "pgvector"]).await?;
     dnf_install("Avahi (mDNS)", &["avahi", "nss-mdns"]).await?;
     dnf_install("ca-certificates + curl", &["ca-certificates", "curl"]).await?;
@@ -1340,6 +1350,9 @@ pub async fn apply_appliance_profile(cfg: &InstallConfig) -> Result<()> {
         .context("writing polkit network rule")?;
     ui::ok("NetworkManager control granted to the virtues user");
 
+    // The data disk is real on an appliance, so Postgres must wait for it.
+    install_postgres_mount_guard(cfg)?;
+
     // Retire the captive-portal plumbing, on every run.
     //
     // Two artifacts used to go in here so a phone joining the setup AP would
@@ -1357,9 +1370,22 @@ pub async fn apply_appliance_profile(cfg: &InstallConfig) -> Result<()> {
     // network happens to reuse 10.42.0.0/24.
     retire_captive_artifacts().await;
 
-    // Boot: no display manager, no waiting on a network we don't have.
+    // Boot: no display manager, no waiting on a network we don't have, and no
+    // second update channel.
+    //
+    // `systemd-sysupdate` is the vendor image's own OS auto-updater. It was
+    // found ENABLED AND FAILING on the lab board — harmless there only because
+    // it has no config to act on. Masked rather than disabled: a distro package
+    // update can re-enable a disabled unit, and the entire argument for WebKit
+    // over Chromium was refusing to put a self-updating release channel
+    // underneath ours. It applies at least as strongly to one that updates the
+    // whole operating system.
     for args in [
         vec!["disable", "NetworkManager-wait-online.service"],
+        vec!["mask", "systemd-sysupdate.timer"],
+        vec!["mask", "systemd-sysupdate.service"],
+        vec!["mask", "systemd-sysupdate-reboot.timer"],
+        vec!["mask", "systemd-sysupdate-reboot.service"],
         vec!["disable", "gdm"],
         vec!["disable", "gdm3"],
         vec!["disable", "sddm"],
@@ -1372,7 +1398,7 @@ pub async fn apply_appliance_profile(cfg: &InstallConfig) -> Result<()> {
         // display manager, or none — so a failure here is not interesting.
         let _ = c.output().await;
     }
-    ui::ok("Boot trimmed (no desktop session, no wait-online)");
+    ui::ok("Boot trimmed (no desktop session, no wait-online, no vendor auto-update)");
 
     // The kiosk shim + unit.
     fs::create_dir_all("/usr/local/lib/virtues").context("mkdir /usr/local/lib/virtues")?;
@@ -1619,6 +1645,46 @@ fn install_firstboot_unit(cfg: &InstallConfig) -> Result<()> {
     Ok(())
 }
 
+/// Refuse to start Postgres when the data disk is absent.
+///
+/// `virtues.service` already carries `RequiresMountsFor=<data dir>`, and its
+/// comment explains why: without the data disk, Postgres `initdb`s a fresh
+/// empty cluster and the box looks perfectly healthy while being empty. But
+/// the guard was on the wrong unit. `virtues.service` waits for Postgres
+/// (`ExecStartPre` polls `pg_isready`), so Postgres starts FIRST — and by the
+/// time our guard declined to run, the empty cluster it was protecting against
+/// had already been created.
+///
+/// A drop-in rather than an edit to the vendor unit: `postgresql@.service` is
+/// distro-owned and an apt upgrade would overwrite anything written into it.
+///
+/// **DIY boxes get nothing.** There is one disk on a self-hosted server by
+/// definition, `data_dir` is a plain directory on it, and `RequiresMountsFor`
+/// on such a path resolves to the root mount — harmless, but it would put a
+/// Virtues drop-in into somebody else's Postgres for no reason. We are a guest
+/// there.
+fn install_postgres_mount_guard(cfg: &InstallConfig) -> Result<()> {
+    let dir = "/etc/systemd/system/postgresql@.service.d";
+    fs::create_dir_all(dir).with_context(|| format!("mkdir {dir}"))?;
+    let body = format!(
+        "# Installed by virtues-installer.\n\
+         #\n\
+         # The Virtues state root is its own filesystem on an appliance (a blank\n\
+         # NVMe claimed at first boot). fstab carries `nofail` so a missing disk\n\
+         # never blocks boot — the box must still come up far enough to say so on\n\
+         # its display — but Postgres must NOT start without it, or it initdb's a\n\
+         # fresh empty cluster onto the eMMC and every check reports healthy while\n\
+         # the owner's record sits unmounted on a disk nobody asked for.\n\
+         [Unit]\n\
+         RequiresMountsFor={}\n",
+        cfg.data_dir.display()
+    );
+    fs::write(format!("{dir}/10-virtues-data-mount.conf"), body)
+        .context("writing postgres mount guard drop-in")?;
+    ui::ok("Postgres will not start without the data disk");
+    Ok(())
+}
+
 const FIRSTBOOT_UNIT_TEMPLATE: &str = r#"[Unit]
 Description=Virtues first boot — mint this unit's per-box secrets
 Documentation=https://virtues.com/docs
@@ -1684,6 +1750,33 @@ if ! mountpoint -q "$DATA_DIR" 2>/dev/null; then
             break
         fi
     done
+fi
+
+# ── 1b. Send the journal to the data disk ───────────────────────────────────
+# journald writes continuously and forever, which makes it the third-largest
+# write source on the box after Postgres and the lake — and the only one that
+# keeps going when nothing is happening. Left alone it lands in
+# /var/log/journal on the eMMC: soldered, modest endurance, unreplaceable.
+#
+# A symlink rather than `Storage=` in journald.conf, because the config only
+# chooses persistent-vs-volatile, never where. Only when the data dir is really
+# mounted — a symlink into an unmounted directory would put the journal on the
+# eMMC anyway, under a path that claims otherwise, which is worse than not
+# trying. And only when /var/log/journal is not already a symlink, so a
+# reboot is a no-op.
+if mountpoint -q "$DATA_DIR" 2>/dev/null && [ ! -L /var/log/journal ]; then
+    mkdir -p "$DATA_DIR/journal"
+    # Move what is already there rather than orphaning it: this runs on the
+    # first boot AFTER the disk is claimed, and the boot that claimed the disk
+    # logged the claim itself.
+    if [ -d /var/log/journal ]; then
+        cp -a /var/log/journal/. "$DATA_DIR/journal/" 2>/dev/null || true
+        rm -rf /var/log/journal
+    fi
+    ln -s "$DATA_DIR/journal" /var/log/journal
+    systemd-tmpfiles --create --prefix /var/log/journal >/dev/null 2>&1 || true
+    systemctl kill --kill-who=main --signal=SIGUSR2 systemd-journald 2>/dev/null || true
+    logger -t virtues-firstboot "journal relocated to $DATA_DIR/journal"
 fi
 
 # ── 2. Mint this unit's encryption key ──────────────────────────────────────
@@ -1935,6 +2028,9 @@ pub fn write_install_manifest(
     if appliance {
         extra_files.push("/usr/local/lib/virtues/display.py".to_string());
         extra_files.push("/etc/polkit-1/rules.d/50-virtues-network.rules".to_string());
+        extra_files.push(
+            "/etc/systemd/system/postgresql@.service.d/10-virtues-data-mount.conf".to_string(),
+        );
     }
 
     let manifest = serde_json::json!({

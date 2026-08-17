@@ -92,8 +92,15 @@ RERANK_GGUF := gte-reranker-modernbert-base-Q8_0.gguf
 EMBED_GGUF_URL  := https://huggingface.co/ggml-org/embeddinggemma-300m-qat-q8_0-GGUF/resolve/main/$(EMBED_GGUF)
 RERANK_GGUF_URL := https://huggingface.co/keisuke-miyako/gte-reranker-modernbert-base-gguf-q8_0/resolve/main/$(RERANK_GGUF)
 
-# Brew Postgres binaries (formula installs to opt/postgresql@17/bin).
-PG_BIN ?= $(shell brew --prefix postgresql@17 2>/dev/null)/bin
+# Brew Postgres binaries (formula installs to opt/postgresql@$(PG_MAJOR)/bin).
+# Postgres major version. PINNED, and pinned to match what the installer puts
+# on a box (`install.rs`: postgresql-18 + postgresql-18-pgvector). Dev ran 17
+# against a fleet on 18 for a while, which is invisible until it isn't:
+# pg_dump/pg_restore refuse to read a newer server's output, so `virtues backup`
+# taken on a box could not be restored on a laptop for diagnosis — exactly when
+# you want it. Bump both together or neither.
+PG_MAJOR ?= 18
+PG_BIN ?= $(shell brew --prefix postgresql@$(PG_MAJOR) 2>/dev/null)/bin
 
 help: ## Show this help
 	@grep -hE '^[a-zA-Z_-]+:.*?## ' $(MAKEFILE_LIST) \
@@ -180,11 +187,11 @@ init: ## Create .env with a freshly-generated encryption key (idempotent)
 # (Ctrl-C stops both). Use `make dev-info` if you'd rather run them in separate
 # tabs for split logs. `make dev-link` prints a login URL when you need one.
 
-db: ## Ensure brew postgres@17 is installed + running, db exists with pgvector
+db: ## Ensure brew postgres@$(PG_MAJOR) is installed + running, db exists with pgvector
 	@command -v brew >/dev/null || { echo "error: brew not installed — https://brew.sh"; exit 1; }
-	@brew list postgresql@17 >/dev/null 2>&1 || { echo "→ installing postgresql@17"; brew install postgresql@17; }
+	@brew list postgresql@$(PG_MAJOR) >/dev/null 2>&1 || { echo "→ installing postgresql@$(PG_MAJOR)"; brew install postgresql@$(PG_MAJOR); }
 	@brew list pgvector     >/dev/null 2>&1 || { echo "→ installing pgvector";     brew install pgvector;     }
-	@brew services list | grep -q "postgresql@17.*started" || { echo "→ starting postgresql@17"; brew services start postgresql@17 >/dev/null; sleep 2; }
+	@brew services list | grep -q "postgresql@$(PG_MAJOR).*started" || { echo "→ starting postgresql@$(PG_MAJOR)"; brew services start postgresql@$(PG_MAJOR) >/dev/null; sleep 2; }
 	@$(PG_BIN)/psql -d postgres -tAc "SELECT 1 FROM pg_database WHERE datname='virtues'" | grep -q 1 || { echo "→ creating db 'virtues'"; $(PG_BIN)/createdb virtues; }
 	@$(PG_BIN)/psql -d virtues -c "CREATE EXTENSION IF NOT EXISTS vector" >/dev/null
 	@$(PG_BIN)/psql -d postgres -tAc "SELECT 1 FROM pg_database WHERE datname='virtues_api'" | grep -q 1 || { echo "→ creating db 'virtues_api' (local virtues-api entitlements)"; $(PG_BIN)/createdb virtues_api; }
@@ -192,7 +199,7 @@ db: ## Ensure brew postgres@17 is installed + running, db exists with pgvector
 	@echo "✓ postgres ready on :5432, dbs 'virtues' (pgvector) + 'virtues_api', role 'virtues'"
 
 db-stop: ## Stop the brew postgres service (preserves data)
-	@brew services stop postgresql@17
+	@brew services stop postgresql@$(PG_MAJOR)
 
 # Run a local virtues-api as part of `make dev` whenever core points at a
 # localhost api (the default). Empty when VIRTUES_API_URL is overridden to prod.

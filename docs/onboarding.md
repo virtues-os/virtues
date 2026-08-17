@@ -9,7 +9,45 @@
 > and earning its keep" — across both hardware tiers, with and without a
 > screen. Decided 2026-06-12; supersedes the TTY-wizard model of `virtues init`.
 
-## As built — read this before the rest (2026-08-07)
+## Read this first (2026-08-17)
+
+This document has three generations of doctrine stacked in it, newest first,
+and the two "As built" sections below are now themselves partly historical.
+**Where anything disagrees, the order of authority is:**
+
+1. [onboarding-paradigm.md](onboarding-paradigm.md) — the settled model.
+2. The code: `maintenance/ble_provision.rs`, `api/setup_phrase.rs`,
+   `apps/web/src-tauri/ui/connect.html`, `routes/(public)/display`.
+3. This file.
+
+What the sections below still describe that **no longer exists** (deleted
+2026-08-17):
+
+- **The captive portal.** `api/portal.rs`, `api/captive.rs`, the SPA
+  `/provision` route, the `/portal*` routes, the probe-interception
+  middleware, and the installer's wildcard-DNS drop-in and `:80` redirect
+  unit are all gone. The browser flow they served could provision wifi and
+  then strand the owner, because pairing needs a held iroh key that a browser
+  tab does not have — it served a user who cannot exist.
+- **The app joining the setup AP itself.** The `NEHotspotConfiguration`
+  screens were unreachable for days before being removed; BLE carries the
+  whole conversation.
+- **The app QR and the wifi join-QR on the panel.** The panel is one screen:
+  the app, and the four words.
+- **The panel's link code and pair code.** The app fetches both over BLE
+  (RPC 0x84/0x85). Nothing is read off the glass and retyped except the
+  phrase, whose whole purpose is that the app *cannot* fetch it.
+
+What survives from the AP era, deliberately: the LAN provisioning path
+(`/api/provision/*` + `loadNetworks` in the airlock) as the documented
+breakglass for a box whose Bluetooth is dead in the field, gated behind
+`setup_ap::AP_BREAKGLASS`.
+
+Imaging and manufacturing moved out to
+[appliance-image.md](appliance-image.md), which is written against the boot
+chain as measured on hardware rather than as assumed here.
+
+## As built — the AP era (2026-08-07, largely superseded)
 
 Most of the doctrine below survived contact with hardware. Four specifics did
 not, and the document still argues for them further down. Where they conflict,
@@ -95,12 +133,20 @@ wifi picker and the three-state display. Not yet built: the iOS
 hard-to-get `NEHotspotHelper` entitlement, and that it prompts rather than
 joining silently, so it buys continuity rather than fewer taps.
 
-**Delivery is: flash a pre-baked image, then `virtues upgrade` on first
-connect.** Provisioning happens on our bench, never the customer's — their box
-has no network until onboarding finishes, and onboarding needs the software
-already installed. `deprovision` strips per-unit identity before imaging,
-because the iroh secret *is* the box's identity and clones of an
-un-deprovisioned master are literally the same box.
+**Delivery is: flash a pre-baked image, then update on first connect.**
+Provisioning happens on our bench, never the customer's — their box has no
+network until onboarding finishes, and onboarding needs the software already
+installed. `deprovision` strips per-unit identity before imaging, because the
+iroh secret *is* the box's identity and clones of an un-deprovisioned master
+are literally the same box; `virtues image-check` then proves it, because
+deprovision cannot be its own witness.
+
+The update on first connect is real and offered by the app at the end of
+setup (`offerUpgrade` in `connect.html`) — a box is flashed at manufacture and
+then sits in a warehouse, so an owner's first minute is often spent on code
+older than everything they just read about. See
+[appliance-image.md](appliance-image.md) for the imaging procedure and the
+storage layout it assumes.
 
 ## As built — the desktop-first pass (2026-08-11)
 
