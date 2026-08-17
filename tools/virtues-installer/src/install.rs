@@ -771,14 +771,39 @@ pub async fn create_user(cfg: &InstallConfig) -> Result<()> {
             .with_context(|| format!("creating {}/{sub}", cfg.data_dir.display()))?;
     }
     migrate_applets_out_of_shipped_tree(cfg)?;
-    // chown -R virtues:virtues + 0700 on secrets
-    let mut cmd = Command::new("chown");
+    // chown -R virtues:virtues, EXCEPT the Postgres cluster.
+    //
+    // The cluster lives at `<data dir>/postgresql` on a relocated appliance, and
+    // it belongs to `postgres` — a recursive chown over the whole data dir takes
+    // it too, and Postgres then cannot read its own files:
+    //
+    //     FATAL: could not open file "global/pg_filenode.map": Permission denied
+    //
+    // Which is exactly what happened on the test box the first time this ran
+    // after the relocation landed: the move succeeded, Postgres served, and then
+    // this line four steps later broke it. The failure surfaces as `createuser`
+    // failing, which reads like a Postgres problem and is really an ownership
+    // one — worth the paragraph, because the next person will meet it as a
+    // confusing error about a role.
+    //
+    // `-prune` rather than a chown of each sibling: subdirectories here are not
+    // a fixed list (lake, models, secrets, applets, journal, backups, upgrade
+    // staging, and whatever comes next), and enumerating them means the next
+    // one added is silently left with root ownership.
+    let mut cmd = Command::new("find");
     cmd.args([
-        "-R",
-        "virtues:virtues",
         cfg.data_dir.to_str().unwrap(),
+        "-path",
+        &cfg.data_dir.join("postgresql").display().to_string(),
+        "-prune",
+        "-o",
+        "-exec",
+        "chown",
+        "virtues:virtues",
+        "{}",
+        "+",
     ]);
-    run_step("chown data dir", cmd).await?;
+    run_step("chown data dir (not the Postgres cluster)", cmd).await?;
 
     let secrets = cfg.data_dir.join("secrets");
     fs::set_permissions(&secrets, fs::Permissions::from_mode(0o700))
