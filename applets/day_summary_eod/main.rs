@@ -250,7 +250,8 @@ async fn oldest_unnarrated_day(pool: &sqlx::PgPool, yesterday: NaiveDate) -> Opt
          FROM wiki_days w \
          WHERE w.date BETWEEN $1 AND $2 \
            AND w.narrated_at IS NULL \
-           AND (SELECT count(*) FROM wiki_events e WHERE e.day_id = w.id) >= $3 \
+           AND (SELECT count(*) FROM wiki_events e \
+                WHERE e.day_id = w.id AND NOT e.is_unknown AND NOT e.user_hidden) >= $3 \
          ORDER BY w.date ASC LIMIT 1",
     )
     .bind(start)
