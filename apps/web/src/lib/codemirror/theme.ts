@@ -16,7 +16,10 @@ export const virtuesTheme = EditorView.theme({
 	},
 	'& .cm-content': {
 		fontFamily: 'var(--editor-font-family, var(--font-sans, ui-sans-serif, system-ui, -apple-system, sans-serif))',
-		caretColor: 'var(--color-primary)',
+		// The native caret is suppressed in favor of the rendered one that
+		// `extensions/caret.ts` draws and animates. Nothing else may turn this
+		// back on: two carets on one line is worse than either alone.
+		caretColor: 'transparent',
 		padding: '8px 0',
 	},
 	'& .cm-line': {
@@ -27,7 +30,9 @@ export const virtuesTheme = EditorView.theme({
 	'&.cm-focused': {
 		outline: 'none',
 	},
-	'.cm-cursor, .cm-dropCursor': {
+	// `.cm-cursor` gets its shape and color from theme.css (the caret is a bar,
+	// not a border); the drop cursor stays a plain rule.
+	'.cm-dropCursor': {
 		borderLeftColor: 'var(--color-primary)',
 	},
 	'.cm-selectionBackground': {
