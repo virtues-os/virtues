@@ -1330,6 +1330,62 @@ fn copy_executable(src: &std::path::Path, dst: &std::path::Path) -> std::io::Res
 // App Setup
 // ============================================================================
 
+/// ⌘+/⌘-/⌘0 page zoom — hand-rolled because Tauri's `zoom_hotkeys_enabled`
+/// polyfill also binds `ctrl+wheel`, and on a Mac trackpad **a pinch IS a
+/// ctrl+wheel**: macOS synthesises exactly that event stream for the magnify
+/// gesture. So a two-finger pinch — the gesture you make to nudge a photo, or by
+/// accident while scrolling a list — walked the whole app's page zoom in 20%
+/// steps. Page zoom is not magnification: it changes what a CSS pixel is worth,
+/// so every breakpoint, every rem, and the entire chrome re-laid out. The app
+/// looked broken and the way back (⌘0) is invisible.
+///
+/// Deliberately NOT translated into visual magnification instead. WKWebView can
+/// do that (`allowsMagnification`), but it scales the window's content and
+/// expects a page you can scroll around afterwards; this app is a fixed
+/// `100vh` shell with its own inner scrollers, so magnifying would push the
+/// sidebar and tab bar off-screen with nothing to scroll them back. Pinch is a
+/// no-op here, and zoom stays an explicit ⌘ gesture.
+///
+/// The keydown half is Tauri's, unchanged: same 20% steps, same 0.2–10 clamp,
+/// same `webview|set_webview_zoom` command (permissioned in
+/// capabilities/default.json — without it this is a silent no-op).
+const ZOOM_HOTKEYS_JS: &str = r#"
+;(function () {
+  var zoomLevel = 1
+  var MAX = 10
+  var MIN = 0.2
+
+  function apply() {
+    zoomLevel = Math.min(Math.max(zoomLevel, MIN), MAX)
+    window.__TAURI_INTERNALS__.invoke('plugin:webview|set_webview_zoom', {
+      value: zoomLevel
+    })
+  }
+
+  window.addEventListener('keydown', function (event) {
+    // ⌘ on macOS, Ctrl on Windows/Linux. Accepting either rather than branching
+    // on `navigator.platform` (deprecated, and the one script serves all three);
+    // the cost is that Ctrl+- also zooms on a Mac, which nothing else claims.
+    if (!event.metaKey && !event.ctrlKey) return
+    if (event.key === '-') zoomLevel -= 0.2
+    else if (event.key === '=' || event.key === '+') zoomLevel += 0.2
+    else if (event.key === '0') zoomLevel = 1
+    else return
+    event.preventDefault()
+    apply()
+  })
+
+  // Swallow the pinch rather than leave it to the webview: a ctrl+wheel that
+  // reaches WebKit unclaimed is its own zoom trigger, so ignoring it here is
+  // not the same as stopping it.
+  function swallowPinch(event) {
+    if (event.ctrlKey) event.preventDefault()
+  }
+  window.addEventListener('wheel', swallowPinch, { passive: false })
+  window.addEventListener('mousewheel', swallowPinch, { passive: false })
+})()
+"#;
+
 fn main() {
     let builder = tauri::Builder::default();
 
@@ -1501,17 +1557,41 @@ fn main() {
                 // WKWebView binds no zoom hotkeys of its own (unlike WebView2),
                 // and the app ships only a tray menu — no menu bar to hang a
                 // View → Zoom accelerator on. So ⌘+/⌘-/⌘0 land nowhere here
-                // while they work fine against the same UI in a browser. This
-                // injects Tauri's hotkey polyfill, which invokes
+                // while they work fine against the same UI in a browser.
+                //
+                // This is OUR polyfill rather than Tauri's `zoom_hotkeys_enabled`
+                // (see ZOOM_HOTKEYS_JS for why). Both invoke
                 // `webview|set_webview_zoom`; that command is permissioned
                 // separately in capabilities/default.json and is a silent
                 // no-op without it, so the two must move together.
-                .zoom_hotkeys_enabled(true)
+                .initialization_script(ZOOM_HOTKEYS_JS)
                 // Tauri's native OS drag-drop handler is on by default and swallows
                 // file drops before they reach the webview, so the chat composer's
                 // HTML5 ondrop/dataTransfer.files never fires. Disable it to let
                 // drops fall through to the web layer (works in-browser already).
                 .disable_drag_drop_handler()
+                // The last line of defence for a misaimed file drop. With the OS
+                // handler disabled (above), a file dropped anywhere the web layer
+                // does not claim reaches the webview as a plain navigation, and
+                // the webview happily REPLACES the app with WebKit's own
+                // PDF/image viewer. This window has no back button, no menu bar
+                // and no address bar, so that is a one-way trip: the app is gone
+                // until relaunch (2026-08-17). `(app)/+layout.svelte` swallows
+                // stray drops in the web layer, but that only covers pages the
+                // SPA has booted — connect.html and the pre-mount window are
+                // not, and a guard against losing the entire app belongs below
+                // the web layer anyway.
+                //
+                // Denying the `file:` scheme specifically, not allow-listing our
+                // own origins: the app's own URL differs per platform (`tauri://
+                // localhost` on macOS/Linux, `http://tauri.localhost` on
+                // Windows) plus `http://localhost:7117` for the box, so an
+                // allow-list is the fragile spelling. Tauri never serves the
+                // frontend over `file:` on any platform, so nothing legitimate
+                // is caught. A denied navigation is simply inert — the drop
+                // does nothing, which is what dropping a PDF on the sidebar
+                // should do.
+                .on_navigation(|url| url.scheme() != "file")
                 .build()?;
 
             // Only used in debug; silence the release-build unused warning.
