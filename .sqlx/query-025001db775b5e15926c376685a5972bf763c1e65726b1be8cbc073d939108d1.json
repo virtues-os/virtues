@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "\n        SELECT\n            p.id, p.canonical_name, p.picture, p.relationship_category, p.last_interaction,\n            COALESCE(r.n, 0) AS \"ref_count!\"\n        FROM wiki_people p\n        LEFT JOIN (\n            SELECT entity_id, count(*) AS n\n            FROM wiki_entity_refs WHERE entity_type = 'person' GROUP BY entity_id\n        ) r ON r.entity_id = p.id\n        ORDER BY COALESCE(r.n, 0) DESC, p.canonical_name ASC\n        ",
+  "query": "\n        SELECT\n            p.id, p.canonical_name, p.picture, p.relationship_category, p.last_interaction,\n            COALESCE(r.n, 0) AS \"ref_count!\"\n        FROM wiki_people p\n        LEFT JOIN (\n            SELECT entity_id, count(*) AS n\n            FROM wiki_refs WHERE entity_type = 'person' GROUP BY entity_id\n        ) r ON r.entity_id = p.id\n        ORDER BY COALESCE(r.n, 0) DESC, p.canonical_name ASC\n        ",
   "describe": {
     "columns": [
       {
@@ -46,5 +46,5 @@
       null
     ]
   },
-  "hash": "1ced137c5c8326327ad37d2df5b37f7266737e67b946cda77c1de62f01887e37"
+  "hash": "025001db775b5e15926c376685a5972bf763c1e65726b1be8cbc073d939108d1"
 }

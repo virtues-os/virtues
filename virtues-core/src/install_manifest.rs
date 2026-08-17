@@ -49,8 +49,12 @@ pub struct InstallManifest {
     /// Our hardware or `--appliance`: a guided product rather than someone's
     /// own server. Gates self-administration of the network and the account
     /// requirement.
+    ///
+    /// `Option`, and the difference between `None` and `Some(false)` is
+    /// load-bearing — see [`appliance()`]. A manifest written before this field
+    /// existed has no OPINION; it does not say "DIY".
     #[serde(default)]
-    pub appliance: bool,
+    pub appliance: Option<bool>,
     /// Inference sidecar units, without the `.service` suffix.
     #[serde(default)]
     pub sidecars: Vec<String>,
@@ -99,10 +103,33 @@ pub fn load_from(path: &Path) -> Option<InstallManifest> {
 
 /// Is this a guided appliance rather than somebody's own Linux server?
 ///
-/// False when there is no manifest, which is the answer that keeps us a polite
-/// guest on a machine we do not own.
+/// ## Three cases, and the middle one is why this is not a one-liner
+///
+/// * The manifest says so → believe it. The answer we want, and the only one
+///   that is right for a HEADLESS appliance.
+/// * The manifest exists but has no opinion → **fall back to the old signal**,
+///   the presence of `virtues-display.service`. Every appliance already in the
+///   field is in exactly this state, and `virtues upgrade` does NOT re-run the
+///   installer — it swaps the binary inside a release slot and leaves
+///   `install.json` untouched. Without this fallback, every one of those boxes
+///   silently stops being an appliance the moment it takes an update: no
+///   Improv, no setup AP, no account requirement, and no way for the owner to
+///   tell why Bluetooth setup stopped working. Verified against the live box,
+///   whose manifest carries `profile: dragon` and no `appliance` key at all.
+/// * No manifest → false, which keeps us a polite guest on a machine we do not
+///   own.
+///
+/// The fallback is deliberately the exact check this field replaced,
+/// imperfections and all: it is wrong only for a headless appliance, and a
+/// headless appliance predating this field does not exist.
 pub fn appliance() -> bool {
-    get().as_ref().map(|m| m.appliance).unwrap_or(false)
+    match get().as_ref() {
+        None => false,
+        Some(m) => match m.appliance {
+            Some(v) => v,
+            None => std::path::Path::new("/etc/systemd/system/virtues-display.service").exists(),
+        },
+    }
 }
 
 /// Inference sidecar units, for stop/start around an upgrade.
@@ -149,7 +176,7 @@ mod tests {
                 "extra_files":["/usr/local/lib/virtues/display.py"]}"#,
         );
         let m = load_from(&p).expect("parses");
-        assert!(m.appliance);
+        assert_eq!(m.appliance, Some(true));
         assert_eq!(m.sidecars, vec!["virtues-qnnd"]);
         assert!(m.units.contains(&"virtues-display".to_string()));
         let _ = std::fs::remove_dir_all(&d);
@@ -161,19 +188,31 @@ mod tests {
     }
 
     #[test]
-    fn an_old_manifest_without_the_appliance_key_reads_as_diy() {
-        // Boxes installed before this field existed. `#[serde(default)]` is
-        // what keeps them parsing at all; the assertion is that the missing
-        // key means DIY rather than a parse failure that would ALSO mean DIY
-        // but for the wrong reason — and would take `sidecars` down with it.
+    fn an_old_manifest_has_no_opinion_rather_than_saying_diy() {
+        // THE upgrade hazard, and the reason `appliance` is an Option. Every
+        // appliance in the field was installed before this field existed, and
+        // `virtues upgrade` swaps the binary WITHOUT re-running the installer —
+        // so `install.json` keeps its old shape forever. If a missing key read
+        // as `false`, every one of those boxes would stop serving Improv the
+        // moment it updated, silently. `None` is what lets `appliance()` fall
+        // back to the old signal instead. Shape copied from the live box.
         let d = tmp("legacy");
         let p = write(
             &d,
-            r#"{"profile":"bundled","sidecars":["virtues-embed","virtues-rerank"]}"#,
+            r#"{"profile":"dragon","sidecars":["virtues-qnnd"],
+                "models_dir":"/var/lib/virtues/models","written_by":"0.1.0"}"#,
         );
         let m = load_from(&p).expect("parses");
-        assert!(!m.appliance);
-        assert_eq!(m.sidecars.len(), 2, "sidecars must survive the missing key");
+        assert_eq!(m.appliance, None, "a missing key must not read as an explicit no");
+        assert_eq!(m.sidecars.len(), 1, "sidecars must survive the missing key");
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
+    #[test]
+    fn an_explicit_false_is_not_the_same_as_silence() {
+        let d = tmp("explicit");
+        let p = write(&d, r#"{"profile":"manual","appliance":false}"#);
+        assert_eq!(load_from(&p).unwrap().appliance, Some(false));
         let _ = std::fs::remove_dir_all(&d);
     }
 

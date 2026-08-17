@@ -1,0 +1,15 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n        UPDATE wiki_refs SET entity_id = $1, entity_type = 'organization'\n        WHERE entity_id = $2 AND entity_type = 'person'\n        ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Text",
+        "Text"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "9d9a90e06b2197363b4b77d053906d03b973c0cd003968e2a0587fd3ff316ef4"
+}
