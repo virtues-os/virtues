@@ -66,6 +66,11 @@ const LEGACY_EXTRA_FILES: &[&str] = &[
     "/usr/local/sbin/virtues-firstboot.sh",
     "/etc/polkit-1/rules.d/50-virtues-network.rules",
     "/etc/NetworkManager/dnsmasq-shared.d/00-virtues-captive.conf",
+    // Must go, and must go BEFORE the data dir does: it makes Postgres refuse
+    // to start without a mount that a full uninstall is about to remove.
+    // Leaving it behind bricks the distro's Postgres on a machine we no longer
+    // occupy — the single rudest thing an uninstall could do to a shared box.
+    "/etc/systemd/system/postgresql@.service.d/10-virtues-data-mount.conf",
 ];
 
 const BINARIES: &[&str] = &[
@@ -153,6 +158,14 @@ pub async fn run(keep_data: bool, purge_models: bool, force: bool) -> Result<()>
     // the next reload.
     if m.extra_files.iter().any(|f| f.contains("NetworkManager")) {
         run_quiet("sh", &["-c", "systemctl reload NetworkManager 2>/dev/null || true"]);
+    }
+    // A systemd drop-in is only gone once systemd has been told. Without this,
+    // the Postgres mount guard stays live in the loaded unit for the rest of
+    // this boot — and the data dir it requires is about to be deleted, which
+    // would leave the machine's Postgres refusing to start until someone
+    // reloaded by hand.
+    if m.extra_files.iter().any(|f| f.starts_with("/etc/systemd/")) {
+        run_quiet("systemctl", &["daemon-reload"]);
     }
 
     // ── Binaries + web UI + mDNS advertisement ──────────────────────────

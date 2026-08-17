@@ -530,6 +530,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     }
 
+    // ─── `virtues image-check` ──────────────────────────────────────────────
+    // The gate between deprovision and `dd`. Read-only, and handled here with
+    // the other bare-pool commands because a deprovisioned box has no app
+    // stack left to build — which is the state it is meant to be run in.
+    if matches!(cli.command, Some(Commands::ImageCheck)) {
+        std::process::exit(virtues::cli::image_check::run().await);
+    }
+
     // ─── `virtues configure-inference` ──────────────────────────────────────
     // Recover after a manual endpoint's model changed. Runs BEFORE the app
     // builds the guarded embedder — which would itself fail on the very

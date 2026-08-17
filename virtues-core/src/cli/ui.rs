@@ -46,6 +46,13 @@ pub fn warn(msg: &str) {
     println!("  {}  {}", style("⚠").yellow(), style(msg).yellow());
 }
 
+/// A hard failure. `✖` is the fourth and last glyph in the CLI's status set
+/// (see this module's header) — anything printed with it should also be a
+/// non-zero exit.
+pub fn err(msg: &str) {
+    println!("  {}  {}", style("✖").red().bold(), style(msg).red());
+}
+
 /// An in-progress step announcement, printed before a long operation.
 pub fn step(msg: &str) {
     println!("  {}  {}", style("→").dim(), msg);

@@ -1,10 +1,22 @@
 # Box update paradigm
 
+> **BUILT. This is now the design record, not the plan** (reviewed 2026-08-17).
+> Every pillar below shipped: release slots with an atomic symlink flip,
+> migration lineage preflight under the staged binary, `prepare`/`activate`
+> split so installing is a restart rather than a download, `rollback`, and a
+> commit-based comparison that made edge-to-edge work. The code is
+> `cli/upgrade.rs` and `api/updates.rs`, and both carry the reasoning inline —
+> **read those for current behavior.** The sentence this document used to open
+> with ("today's `virtues upgrade` implements a naïve subset") was true when
+> written and had been false for weeks.
+>
+> Kept for the three grounded failures below, which are the reason the design
+> looks the way it does and are the first thing to re-read before changing it.
+
 How a Virtues box moves between builds — designed after three real failures in one
 `virtues upgrade` (2026-07-09): edge-to-edge was impossible, a mainline `--pre` bricked the box
 mid-swap over a migration mismatch, and the upgrade managed sidecars the box doesn't have while
-ignoring the one it does. This doc is the target model; today's `virtues upgrade` (cli/upgrade.rs)
-implements a naïve subset.
+ignoring the one it does.
 
 ## The three failures (grounded)
 
