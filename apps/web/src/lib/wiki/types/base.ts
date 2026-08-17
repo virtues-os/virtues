@@ -10,6 +10,7 @@
 
 export type WikiPageType =
 	// Temporal (calendar-based - objective time)
+	| "year"
 	| "day"
 	// Entity (reference pages - people, places, orgs)
 	| "person"
@@ -17,6 +18,7 @@ export type WikiPageType =
 	| "organization";
 
 export const PAGE_TYPE_META: Record<WikiPageType, { label: string; icon: string }> = {
+	year: { label: "Year", icon: "ri:calendar-2-line" },
 	day: { label: "Day", icon: "ri:calendar-line" },
 	person: { label: "Person", icon: "ri:user-line" },
 	place: { label: "Place", icon: "ri:map-pin-line" },
@@ -24,7 +26,7 @@ export const PAGE_TYPE_META: Record<WikiPageType, { label: string; icon: string 
 };
 
 // Temporal page types (calendar-based)
-export const TEMPORAL_PAGE_TYPES: WikiPageType[] = ["day"];
+export const TEMPORAL_PAGE_TYPES: WikiPageType[] = ["year", "day"];
 
 // Entity page types (reference pages)
 export const ENTITY_PAGE_TYPES: WikiPageType[] = ["person", "place", "organization"];

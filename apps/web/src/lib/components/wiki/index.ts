@@ -1,4 +1,5 @@
 export { default as WikiPage } from './WikiPage.svelte';
+export { default as YearPage } from './YearPage.svelte';
 export { default as WikiCitations } from './WikiCitations.svelte';
 export { default as WikiLinkedPages } from './WikiLinkedPages.svelte';
 export { default as WikiRelatedPages } from './WikiRelatedPages.svelte';

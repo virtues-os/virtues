@@ -15,6 +15,7 @@
 	} from "$lib/wiki/converters";
 	import {
 		WikiPage,
+		YearPage,
 		DayPage,
 		PersonPage,
 		PlacePage,
@@ -25,6 +26,7 @@
 		isPersonPage,
 		isPlacePage,
 		isOrganizationPage,
+		isYearPage,
 	} from "$lib/wiki/types";
 	import type { WikiPage as WikiPageType } from "$lib/wiki/types";
 
@@ -207,6 +209,8 @@
 			<PlacePage page={wikiPage} />
 		{:else if isOrganizationPage(wikiPage)}
 			<OrganizationPage page={wikiPage} />
+		{:else if isYearPage(wikiPage)}
+			<YearPage page={wikiPage} />
 		{:else}
 			<WikiPage page={wikiPage} />
 		{/if}
