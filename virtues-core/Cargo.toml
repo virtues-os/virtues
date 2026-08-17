@@ -1,6 +1,10 @@
 [package]
 name = "virtues"
-version = "0.3.0"
+# Inherited, not restated. This used to carry its own copy of the number and
+# the workspace carried another, so bumping one and forgetting the other was a
+# matter of time — and `release-mac.yml` reads THIS file when its tag carries no
+# version, so a drift here reached the Mac app too.
+version.workspace = true
 edition = "2021"
 authors = ["Virtues Team <team@virtues.com>"]
 description = "Open source personal data ecosystem - High-performance Rust core"

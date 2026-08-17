@@ -47,8 +47,16 @@ pub async fn run(
         }
         None => fetch_latest_tag().await?,
     };
-    let following_pre = pre || channel == super::channel::Channel::Prerelease;
-    let current = env!("CARGO_PKG_VERSION");
+    // The BAKED tag, not the crate semver. `codename::version()` documents
+    // itself as the single source of truth for the version everywhere, and this
+    // was the one place that reached past it to `CARGO_PKG_VERSION` — which
+    // every prerelease build shares, whatever tag it was cut from. So a box on
+    // `v0.1.0-staging.58` reported plain `0.1.0`, indistinguishable from
+    // staging.12 or from stable, and the downgrade guard below had to be
+    // switched off for the whole prerelease channel because nothing could be
+    // ordered. With the real tag, `0.1.0-staging.58 < 0.1.0-staging.59 < 0.1.0`
+    // orders exactly as semver says it should, and the guard works everywhere.
+    let current = super::super::codename::version().trim_start_matches('v');
     let target = target_tag.trim_start_matches('v');
 
     ui::section("Upgrade");
@@ -74,13 +82,19 @@ pub async fn run(
 
     // Downgrade guard. A stale or tampered "latest", or an explicit older
     // `--version`, could otherwise roll the box back to a known-vulnerable
-    // build. Skip when:
-    //  · `--pre` — the prerelease channel is an explicit opt-in, and staging
-    //    builds report the bare `CARGO_PKG_VERSION` (no `-staging.N` suffix),
-    //    so semver would read every prerelease as "older" than stable.
-    //  · `--force` — operator override.
-    // Unparseable versions (dev builds) skip the check rather than block.
-    if !following_pre && !force {
+    // build.
+    //
+    // This used to skip the whole prerelease channel, because `current` was the
+    // crate version and every staging build reported the same one — there was
+    // nothing to compare. That is fixed above, so the guard now covers `--pre`
+    // too: a prerelease box is exactly the box most likely to be handed a bad
+    // "latest", and it was the one running without the check.
+    //
+    // `--force` is still the operator override, and unparseable versions (dev
+    // builds, the rolling `edge` tag) skip rather than block — refusing to
+    // upgrade a box because its own version string is odd would be worse than
+    // the risk being guarded against.
+    if !force {
         if let (Ok(cur), Ok(tgt)) = (Version::parse(current), Version::parse(target)) {
             if tgt < cur {
                 return Err(crate::Error::Other(format!(
@@ -613,11 +627,17 @@ pub async fn prepare(force: bool) -> Result<Prepared, crate::Error> {
 
     // Refuse to prepare a downgrade for the same reason `run` refuses to apply
     // one: a stale or tampered "latest" must not be able to walk a box back to
-    // a known-vulnerable build. Prereleases report the bare crate version, so
-    // semver can't order them — that channel is an explicit opt-in and skips it.
-    let current = env!("CARGO_PKG_VERSION");
+    // a known-vulnerable build.
+    //
+    // This matters more here than in `run`, not less: `prepare` is the
+    // unattended path — it runs on the scheduler, with nobody reading the
+    // output — and it was the one restricted to the stable channel, so the
+    // automatic downloads on prerelease boxes were the unguarded ones.
+    // `codename::version()` gives the real tag, so both channels can be
+    // ordered now.
+    let current = super::super::codename::version().trim_start_matches('v');
     let target = target_tag.trim_start_matches('v');
-    if channel == super::channel::Channel::Stable && !force {
+    if !force {
         if let (Ok(cur), Ok(tgt)) = (Version::parse(current), Version::parse(target)) {
             if tgt < cur {
                 return Ok(Prepared::UpToDate);
