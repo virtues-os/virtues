@@ -37,19 +37,26 @@ pub struct DisplayState {
     /// The live standing pair code, digits only (rendered "123 456"). `None`
     /// when the box could not mint one — the display shows an honest fault
     /// rather than a blank space.
-    pub pair_code: Option<String>,
-    /// SSID of the setup access point, when it is up.
-    pub ap_ssid: Option<String>,
-    /// The AP's passphrase, shown as TEXT beside the QR.
     ///
-    /// The QR already carries it, so this looks redundant — it is not. A QR is
-    /// only readable by a camera, and the device that needs this network is
-    /// often a laptop, which has none. It also covers a camera that will not
-    /// focus, a cracked screen, and the case that stranded the lab box: the
-    /// owner needing to reach the machine from something other than a phone.
-    /// Printing it costs nothing — anyone who can read this screen is already
-    /// standing in front of the box, which is the whole trust model.
-    pub ap_passphrase: Option<String>,
+    /// The PANEL does not render this and must not start: RPC 0x85 hands the
+    /// code to an authorized BLE session, and the only box that would need it
+    /// printed here is one with no session — which is a box waiting for
+    /// someone to START, and that needs the phrase. The two secrets want the
+    /// same slot, and showing the wrong one stopped a live run dead
+    /// (2026-08-13). Kept in the payload for `virtues pair` on the box's own
+    /// terminal, which is the documented door when there is no Bluetooth.
+    pub pair_code: Option<String>,
+    /// The box cannot find the disk its record lives on.
+    ///
+    /// `None` on every healthy box, and on every DIY box unconditionally — a
+    /// self-hosted state root is a directory on the root filesystem by design.
+    /// When set, this is the ONLY thing the ambient screen says: an appliance
+    /// with no data disk still boots (fstab carries `nofail`, deliberately, so
+    /// that it can come up far enough to tell someone), and the whole value of
+    /// that is spent if the screen then reports business as usual.
+    /// See `crate::data_disk`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub data_disk_fault: Option<&'static str>,
     /// True once at least one device has paired — the display stops showing
     /// setup and moves to the ambient screen.
     pub claimed: bool,
@@ -77,10 +84,6 @@ pub struct DisplayState {
     /// a wall on 2026-08-11: a freshly-onboarded office box was paired but
     /// unreachable by the app, because linking had been treated as optional.
     pub linked: bool,
-    /// Present only on setup screen 2 (online + unclaimed + !linked): the
-    /// device-authorization code for linking, shown as text beside the QR.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub link_code: Option<String>,
     /// The box's setup phrase — four words, the one secret that proves
     /// ownership (`api::setup_phrase`). Shown on the panel ONLY while the box
     /// is unclaimed, where it rotates; `None` forever once frozen at first
@@ -161,15 +164,16 @@ pub async fn display_state_handler(
         None
     };
 
-    // Screen 2's device-auth session: started lazily the first time the
-    // display needs it, cached and re-polled here. The display's own 2s state
-    // poll is the heartbeat that drives the whole link to completion — no
-    // extra task, and it stops the moment the box is linked or claimed.
-    let link_code = if !linked && online && devices == 0 {
-        link_session::code_and_poll(pool).await
-    } else {
-        None
-    };
+    // The panel's device-auth session is GONE, and with it the last reason
+    // this endpoint reached out to atlas.
+    //
+    // It existed for a screen that printed a link code for the owner to type
+    // on their phone. The app carries the account grant over BLE now (RPC
+    // 0x82/0x84), so nothing rendered the code — but the session was still
+    // being minted and polled on the display's 2s heartbeat, which meant an
+    // unclaimed box quietly held a live device-authorization with atlas that
+    // no surface would ever complete. See `virtues_api::link` for the path
+    // that replaced it.
 
     // Unclaimed only — `display_phrase` returns None once frozen, but skipping
     // the query entirely on a claimed box keeps the ambient screen off the
@@ -199,15 +203,11 @@ pub async fn display_state_handler(
     let setup_session =
         (devices == 0).then(crate::api::setup_phrase::session).flatten();
 
-    let ap_ssid = current_ap_ssid();
     (
         StatusCode::OK,
         Json(DisplayState {
             pair_code,
-            // Only when the AP is actually up: a passphrase for a network that
-            // is not broadcasting is noise on a screen with no room for it.
-            ap_passphrase: ap_ssid.as_ref().and_then(|_| ap_passphrase()),
-            ap_ssid,
+            data_disk_fault: crate::data_disk::status().message(),
             claimed: devices > 0,
             online,
             connectivity,
@@ -215,7 +215,6 @@ pub async fn display_state_handler(
             devices,
             box_name: crate::codename::pretty(&crate::codename::box_codename()),
             linked,
-            link_code,
             setup_phrase,
             phrase_frozen,
             setup_session,
@@ -224,254 +223,68 @@ pub async fn display_state_handler(
         .into_response()
 }
 
-/// `GET /api/display/qr` — the setup AP's join code, as an SVG.
+// The QR endpoints are gone (2026-08-17), and nothing was rendering them.
+//
+// `/api/display/qr` encoded the setup AP's `WIFI:` join string and
+// `/api/display/link-qr` the account-link URL. Both belonged to a panel that
+// showed numbered setup screens; that panel is one screen now (the app, and
+// the four words), and the app carries wifi and the account grant over BLE.
+// They stayed routed for days after their last caller went away, which is the
+// specific way a trusted surface accumulates endpoints nobody can account for.
+//
+// `link_session` went with them. It lazily minted a device-authorization
+// session with atlas and polled it on the display's 2s heartbeat — so an
+// unclaimed box held a live link nothing on any screen could complete.
+//
+// If a QR is ever wanted here again, note what the deleted handlers got right
+// and rebuild it the same way: they took NO parameters and rendered only
+// payloads the box itself produced. An endpoint that turns caller-supplied
+// text into a scannable code on the owner's own panel is a small but real
+// oracle.
+
+/// `GET /api/display/updating` — is an upgrade running right now?
 ///
-/// Takes **no parameters**: the server renders the payload for the AP it is
-/// actually running, rather than encoding whatever a caller hands it. An
-/// endpoint that turns arbitrary text into a scannable QR on the owner's own
-/// screen is a small but real oracle — the panel is a trusted surface, and
-/// anything it displays should originate on the box.
+/// Exists so the panel can latch that fact **while the box is still able to
+/// say it**. `virtues upgrade` stops this very server for the length of a flip,
+/// a migration and a start; the kiosk is a page served by it, so after that
+/// moment there is nothing left to ask. The panel polls this on a slow timer,
+/// remembers a `true`, and renders "Updating — back in a minute" through the
+/// outage instead of its ambient screen with a NO SERVER badge.
 ///
-/// `T:WPA` and not an open network: the customer's home wifi password crosses
-/// this link during provisioning, and on an open AP that is cleartext to anyone
-/// in range. The QR carries the passphrase, so a WPA2 network costs the user
-/// nothing — the phone camera joins either way, with no typing.
-pub async fn display_qr_handler(
+/// Box-local like the rest of this module. It carries no secret, but it is a
+/// panel endpoint and the panel runs on the box; there is no reason for the
+/// LAN to be able to ask, and every reason to keep this module's rule
+/// uniform — a single exception is how the next one gets argued for.
+pub async fn display_updating_handler(
     ConnectInfo(peer): ConnectInfo<SocketAddr>,
     headers: HeaderMap,
 ) -> impl IntoResponse {
     if !is_box_local(&peer, &headers) {
         return (StatusCode::FORBIDDEN, "not available off-box").into_response();
     }
-    let Some(ssid) = current_ap_ssid() else {
-        return (StatusCode::NOT_FOUND, "no setup network is up").into_response();
-    };
-    let Some(psk) = ap_passphrase() else {
-        return (StatusCode::NOT_FOUND, "no AP passphrase available").into_response();
-    };
-    let svg = crate::api::pair::render_qr_svg(&wifi_payload(&ssid, &psk));
     (
         StatusCode::OK,
-        [
-            (axum::http::header::CONTENT_TYPE, "image/svg+xml"),
-            // The AP can be raised or dropped at any moment, so this must never
-            // be cached — a stale QR points a camera at a network that is gone.
-            (axum::http::header::CACHE_CONTROL, "no-store"),
-        ],
-        svg,
+        [(axum::http::header::CACHE_CONTROL, "no-store")],
+        Json(serde_json::json!({ "active": upgrade_unit_active() })),
     )
         .into_response()
 }
 
-// The app QR is gone. It existed for a phone-first flow — scan it, land on the
-// download page — and setup is a desktop job now: the keyboard that 802.1X
-// credentials and a four-word phrase want. Scanning a code on the box would
-// hand the download to the wrong device. Removing it also settles the panel's
-// white-square problem (an inverted QR fails on a lot of scanners, so there was
-// no good answer while it stayed) and gives the phrase the width to sit on one
-// line, which is the whole reason it is legible across a room.
-
-/// `GET /api/display/link-qr` — the account-linking URL, as an SVG.
+/// Is the transient upgrade unit running?
 ///
-/// Box-local like everything here. Renders the verification URL of the
-/// CURRENT cached device-auth session (the one whose code the state endpoint
-/// is showing) — the two must agree or the owner scans a QR for one session
-/// while reading the code of another.
-pub async fn display_link_qr_handler(
-    State(state): State<AppState>,
-    ConnectInfo(peer): ConnectInfo<SocketAddr>,
-    headers: HeaderMap,
-) -> impl IntoResponse {
-    if !is_box_local(&peer, &headers) {
-        return (StatusCode::FORBIDDEN, "not available off-box").into_response();
-    }
-    let Some(url) = link_session::verification_url(state.db.pool()).await else {
-        return (StatusCode::NOT_FOUND, "no link session").into_response();
-    };
-    let svg = crate::api::pair::render_qr_svg(&url);
-    (
-        StatusCode::OK,
-        [
-            (axum::http::header::CONTENT_TYPE, "image/svg+xml"),
-            (axum::http::header::CACHE_CONTROL, "no-store"),
-        ],
-        svg,
-    )
-        .into_response()
+/// `systemctl is-active` on the unit `api::updates` starts the upgrade under.
+/// Only the upgrade unit, deliberately — not `virtues-prepare`: a prepare is a
+/// background download that changes nothing the owner would notice, and a
+/// panel announcing "Updating" for six hours of scheduled fetching would teach
+/// them to ignore the word by the time it mattered.
+fn upgrade_unit_active() -> bool {
+    std::process::Command::new("systemctl")
+        .args(["is-active", "--quiet", "virtues-upgrade.service"])
+        .status()
+        .map(|s| s.success())
+        .unwrap_or(false)
 }
 
-/// The display's device-authorization session: lazily started, cached until it
-/// expires, opportunistically polled.
-///
-/// The design constraint is that the DISPLAY is the driver: it polls state
-/// every 2s during setup, and that heartbeat both keeps the session fresh and
-/// redeems it when the owner completes sign-in on their phone. Success stores
-/// the api key (`link::poll` does that internally), after which the state
-/// endpoint reports `linked: true` and this cache is never consulted again.
-///
-/// Atlas polling is rate-limited to the interval the device-auth response
-/// asked for — the display's 2s heartbeat must not become a 2s hammer.
-pub(crate) mod link_session {
-    use sqlx::PgPool;
-    use std::sync::Mutex;
-    use std::time::{Duration, Instant};
-
-    struct Session {
-        start: crate::virtues_api::link::LinkStart,
-        born: Instant,
-        last_poll: Instant,
-    }
-
-    static SESSION: Mutex<Option<Session>> = Mutex::new(None);
-
-    fn take_valid() -> Option<crate::virtues_api::link::LinkStart> {
-        let g = SESSION.lock().ok()?;
-        let s = g.as_ref()?;
-        let ttl = Duration::from_secs(s.start.expires_in.max(0) as u64);
-        (s.born.elapsed() < ttl).then(|| s.start.clone())
-    }
-
-    /// The code to display — starting or refreshing the session as needed,
-    /// and polling atlas (rate-limited) so completion is noticed.
-    pub async fn code_and_poll(db: &PgPool) -> Option<String> {
-        if take_valid().is_none() {
-            // Before minting a session, adopt any link already in flight in
-            // the DB — a session surviving a service restart, or a claim
-            // grant the app injected over BLE (RPC 0x82). `start` OVERWRITES
-            // the stored device_code, so starting here would orphan a code
-            // someone may be mid-redeeming on their phone.
-            let adopted = crate::virtues_api::link::inflight(db).await.ok().flatten();
-            let start = match adopted {
-                Some(s) => s,
-                None => {
-                    let http = crate::http_client::virtues_api_client();
-                    let atlas = crate::virtues_api::atlas_url();
-                    match crate::virtues_api::link::start(db, &http, &atlas).await {
-                        Ok(s) => s,
-                        Err(e) => {
-                            // Atlas unreachable: no code to show. The display
-                            // renders the waiting state; the next heartbeat
-                            // retries.
-                            tracing::debug!(error = %format!("{e:#}"), "display: link start failed");
-                            return None;
-                        }
-                    }
-                }
-            };
-            if let Ok(mut g) = SESSION.lock() {
-                *g = Some(Session {
-                    start,
-                    born: Instant::now(),
-                    last_poll: Instant::now(),
-                });
-            }
-        }
-
-        // Poll at most every `interval` seconds, driven by the state heartbeat.
-        let due = {
-            let g = SESSION.lock().ok()?;
-            let s = g.as_ref()?;
-            s.last_poll.elapsed() >= Duration::from_secs(s.start.interval.max(2))
-        };
-        if due {
-            if let Ok(mut g) = SESSION.lock() {
-                if let Some(s) = g.as_mut() {
-                    s.last_poll = Instant::now();
-                }
-            }
-            let http = crate::http_client::virtues_api_client();
-            let atlas = crate::virtues_api::atlas_url();
-            match crate::virtues_api::link::poll(db, &http, &atlas).await {
-                Ok(crate::virtues_api::link::LinkStatus::Ready) => {
-                    tracing::info!("display: box linked via screen-2 device auth");
-                    if let Ok(mut g) = SESSION.lock() {
-                        *g = None;
-                    }
-                    // Relay reach comes up in-process: `link::poll` fetched
-                    // the relay config and asked the reach loop to rebind
-                    // (`crate::relay::request_rebind`) — no restart involved.
-                    return None;
-                }
-                // Expired/denied, or no in-flight link at all: `link::poll`
-                // has ALREADY deleted the stored device_code in both cases, so
-                // the cached session is now a code nobody can redeem. Drop it
-                // so the next heartbeat mints a fresh one.
-                //
-                // Swallowing these (as `Ok(_) => {}` did) put a GHOST CODE on
-                // the glass: the panel kept showing a dead `user_code` for the
-                // rest of its 15-minute TTL, atlas correctly refused it, and
-                // the owner got "that code didn't work" with no way to
-                // discover why. Seen live 2026-08-11 with the box holding one
-                // row — `iroh_secret_key` — and a code still on screen.
-                Ok(crate::virtues_api::link::LinkStatus::Expired)
-                | Ok(crate::virtues_api::link::LinkStatus::None) => {
-                    tracing::info!("display: link session expired — minting a fresh code");
-                    if let Ok(mut g) = SESSION.lock() {
-                        *g = None;
-                    }
-                    return None;
-                }
-                Ok(crate::virtues_api::link::LinkStatus::Pending) => {}
-                Err(e) => {
-                    tracing::debug!(error = %format!("{e:#}"), "display: link poll failed");
-                }
-            }
-        }
-        // Empty = an adopted app grant (no screen code ever existed): the
-        // display shows its pending state for the seconds the redeem takes.
-        take_valid().map(|s| s.user_code).filter(|c| !c.is_empty())
-    }
-
-    /// The QR payload for the current session — never a fresh session (the QR
-    /// must match the code on screen).
-    pub async fn verification_url(_db: &PgPool) -> Option<String> {
-        take_valid()
-            .map(|s| s.verification_uri_complete)
-            .filter(|u| !u.is_empty())
-    }
-}
-
-/// The AP's passphrase, read the same way `maintenance::setup_ap` derives it.
-///
-/// Loopback-only like everything else here, and by the same argument: it is a
-/// secret whose whole protection is that reading it requires being in the room.
-fn ap_passphrase() -> Option<String> {
-    if let Ok(s) = std::fs::read_to_string("/var/lib/virtues/ap-passphrase") {
-        let s = s.trim().to_string();
-        if s.len() >= 8 {
-            return Some(s);
-        }
-    }
-    let id = std::fs::read_to_string("/etc/machine-id").ok()?;
-    let derived: String = id.trim().chars().take(12).collect();
-    (derived.len() >= 8).then_some(derived)
-}
-
-/// The `WIFI:` URI both iOS and Android cameras join natively.
-///
-/// **`P:` is the whole point.** Without the passphrase field this encodes only
-/// a network name, so scanning it prompts for a password instead of joining —
-/// which defeats the one job the QR has. Shipped that way briefly and it
-/// stranded the lab box: the AP was up, the passphrase existed only inside a
-/// QR that did not contain it, and there was no other way to read it.
-fn wifi_payload(ssid: &str, passphrase: &str) -> String {
-    // `;` `:` `\\` and `"` are separators in this grammar and must be escaped,
-    // or a passphrase containing one silently truncates the payload.
-    let esc = |v: &str| {
-        v.replace('\\', "\\\\")
-            .replace(';', "\\;")
-            .replace(':', "\\:")
-            .replace('"', "\\\"")
-            .replace(',', "\\,")
-    };
-    format!("WIFI:S:{};T:WPA;P:{};;", esc(ssid), esc(passphrase))
-}
-
-/// Is this request from a process on the box itself?
-///
-/// Pure so the proxy case is testable without a socket. Mirrors
-/// `middleware::auth`'s rule exactly — if these two ever disagree, the looser
-/// one is a hole.
 fn is_box_local(peer: &SocketAddr, headers: &HeaderMap) -> bool {
     let proxied =
         headers.contains_key("x-forwarded-for") || headers.contains_key("forwarded");
@@ -483,43 +296,6 @@ fn is_box_local(peer: &SocketAddr, headers: &HeaderMap) -> bool {
     crate::peer_addr::canonical_peer(peer).is_loopback() && !proxied
 }
 
-/// SSID of the setup AP, if one is up right now.
-///
-/// Read from NetworkManager rather than stored: the AP is raised and dropped by
-/// the provisioning flow, and a cached value would leave the display advertising
-/// a network that no longer exists — which is worse than showing nothing, since
-/// the owner would sit there scanning for it.
-fn current_ap_ssid() -> Option<String> {
-    // Ask for the AP connection BY NAME, then read its SSID out of the profile.
-    // These are two different strings and conflating them is easy: the
-    // connection is named `virtues-setup-ap` while the SSID it broadcasts is
-    // `Virtues-XXXX`. Matching the connection list for a `Virtues-` prefix — as
-    // this did originally — never matches anything, so the display silently
-    // rendered "no setup network" while the AP was up and broadcasting.
-    let active = std::process::Command::new("nmcli")
-        .args(["-t", "-f", "NAME", "connection", "show", "--active"])
-        .output()
-        .ok()?;
-    let is_up = String::from_utf8_lossy(&active.stdout)
-        .lines()
-        .any(|l| l.trim() == crate::maintenance::setup_ap::AP_CON_NAME);
-    if !is_up {
-        return None;
-    }
-
-    let out = std::process::Command::new("nmcli")
-        .args([
-            "-g",
-            "802-11-wireless.ssid",
-            "connection",
-            "show",
-            crate::maintenance::setup_ap::AP_CON_NAME,
-        ])
-        .output()
-        .ok()?;
-    let ssid = String::from_utf8_lossy(&out.stdout).trim().to_string();
-    (!ssid.is_empty()).then_some(ssid)
-}
 
 #[cfg(test)]
 mod tests {
@@ -530,21 +306,7 @@ mod tests {
         s.parse().unwrap()
     }
 
-    #[test]
-    fn wifi_payload_carries_the_passphrase() {
-        // The bug this pins: without P:, scanning prompts for a password
-        // instead of joining, and the passphrase becomes unreadable.
-        let p = wifi_payload("Virtues-E3C7", "abc123def456");
-        assert!(p.contains("P:abc123def456"), "no passphrase in payload: {p}");
-        assert!(p.starts_with("WIFI:S:Virtues-E3C7;"));
-    }
 
-    #[test]
-    fn wifi_payload_escapes_grammar_characters() {
-        let p = wifi_payload("My:Net", "pa;ss");
-        assert!(p.contains(r"S:My\:Net"), "unescaped ssid: {p}");
-        assert!(p.contains(r"P:pa\;ss"), "unescaped passphrase: {p}");
-    }
 
     #[test]
     fn loopback_is_box_local() {

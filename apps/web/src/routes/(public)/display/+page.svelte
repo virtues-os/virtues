@@ -67,13 +67,11 @@
 	type DisplayState = {
 		box_name: string;
 		linked: boolean;
-		link_code: string | null | undefined;
 		setup_phrase: string | null | undefined;
 		phrase_frozen: boolean;
 		setup_session: string | null | undefined;
 		pair_code: string | null;
-		ap_ssid: string | null;
-		ap_passphrase: string | null;
+		data_disk_fault: string | null | undefined;
 		claimed: boolean;
 		online: boolean;
 		connectivity: string;
@@ -87,6 +85,30 @@
 	let poll: ReturnType<typeof setInterval> | null = null;
 	let clock: ReturnType<typeof setInterval> | null = null;
 
+	// THE SERVER IS EXPECTED TO GO AWAY, and only this page can know it.
+	//
+	// An upgrade stops virtues.service for the length of a flip, a migration
+	// and a start. This kiosk is a WebKit page served BY that server, so it
+	// dies with it — but the process does not exit (cage and WebKit are fine;
+	// it is the page underneath that went), so nothing restarts us and nothing
+	// tells us. The panel just kept its last good render and flipped the badge
+	// to NO SERVER: at the one moment the box is deliberately down, its own
+	// screen said it was broken.
+	//
+	// The state has to be LATCHED BEFORE the restart, because after it there is
+	// no server left to ask. So the update endpoint is polled while the box is
+	// still answering, and when it reports an upgrade running we remember that
+	// across the outage. The latch expires on its own — a box that never comes
+	// back must not claim to be updating forever.
+	let updating = $state(false);
+	let updatingSince = 0;
+	// Generous, and deliberately so: this bounds a LIE, not a wait. Under it we
+	// say "back in a minute" while the box is down; over it we go back to
+	// saying nothing, which is the honest thing once an update has plainly
+	// failed. A staged activation is ~15s and a full download-and-install on a
+	// Q6A can run several minutes.
+	const UPDATE_LATCH_MS = 10 * 60 * 1000;
+
 	// A live BLE setup session, if there is one. `""` is a real value from the
 	// server — a session whose client sent no name — so test for null, not truth.
 	const session = $derived(state_?.setup_session ?? null);
@@ -96,13 +118,49 @@
 			const res = await fetch("/api/display/state");
 			if (!res.ok) throw new Error(String(res.status));
 			state_ = await res.json();
+			// Answered, so any latched update is over — whatever happened, the
+			// box is serving again and the ordinary screens are true.
 			unreachable = false;
+			updating = false;
 		} catch {
 			// Keep the last good state on screen. A box whose server blipped
 			// should not blank the panel — the phrase on it is still valid.
 			unreachable = true;
 		}
 	}
+
+	/// Arm the latch while the box can still be asked.
+	///
+	/// `/api/system/update` is authed, so this reads the box-local unit state
+	/// instead: `virtues upgrade` and `virtues prepare` each run under a named
+	/// transient unit (`api::updates::UPGRADE_UNIT`), and the box exposes
+	/// whether one is active. Failures are silent by design — this is a
+	/// nicety, and a panel that can't reach the update endpoint has bigger news
+	/// to render.
+	async function pollUpdating() {
+		try {
+			const res = await fetch("/api/display/updating", { cache: "no-store" });
+			if (!res.ok) return;
+			const { active } = await res.json();
+			if (active) {
+				updating = true;
+				updatingSince = Date.now();
+			}
+		} catch {
+			/* the outage itself is the signal; the latch is already set */
+		}
+	}
+
+	// Has the latch gone stale? An update that never finished must stop
+	// claiming it is about to.
+	//
+	// Reads `now` — the 20s clock — rather than calling `Date.now()` directly,
+	// or the expiry would never be re-evaluated: nothing else changes while the
+	// server is down, so a `$derived` over `Date.now()` would compute once and
+	// hold "updating" on the glass forever.
+	const updatingNow = $derived(
+		updating && unreachable && now.getTime() - updatingSince < UPDATE_LATCH_MS,
+	);
 
 	// Two cadences, because the screen has two jobs.
 	//
@@ -133,14 +191,25 @@
 		if (want !== pollMs) schedulePoll(want);
 	});
 
+	// The update watch runs on its own slow timer rather than inside `refresh`:
+	// it must keep firing while the state poll is failing (that is the whole
+	// point), and it is the only thing here that needs to run on the ambient
+	// screen, which polls state every 30s.
+	let updateWatch: ReturnType<typeof setInterval> | null = null;
+	const UPDATE_POLL_MS = 5_000;
+
 	onMount(() => {
 		void refresh();
+		void pollUpdating();
 		schedulePoll(SETUP_POLL_MS);
+		updateWatch = setInterval(pollUpdating, UPDATE_POLL_MS);
+		// Re-evaluate the latch's expiry even when nothing else ticks.
 		clock = setInterval(() => (now = new Date()), 20_000);
 	});
 	onDestroy(() => {
 		if (poll) clearInterval(poll);
 		if (clock) clearInterval(clock);
+		if (updateWatch) clearInterval(updateWatch);
 	});
 
 	const timeLabel = $derived(
@@ -152,7 +221,29 @@
 </script>
 
 <div class="screen">
-	{#if !state_}
+	{#if updatingNow}
+		<!-- UPDATING. Outranks every other screen, including the boot mark: the
+		     server is gone on purpose, and this is the one state where the
+		     panel knows something the box cannot currently tell it. Says what
+		     is happening, that it is deliberate, and not to intervene — the
+		     owner's instinct at a dark appliance is to pull the power, which
+		     during a migration is the one thing that could actually hurt. -->
+		<div class="fault">
+			<span class="lockup"><span class="mk">∴</span>{state_?.box_name ?? ""}</span>
+			<p class="doing">Updating</p>
+			<div class="recall">Back in a minute. Don't unplug me.</div>
+		</div>
+	{:else if state_?.data_disk_fault}
+		<!-- NO DATA DISK. Also outranks everything: this box booted precisely
+		     so it could say this (fstab carries `nofail`), and an ambient screen
+		     reporting "REACHABLE · 3 devices syncing" over a missing disk would
+		     spend the entire value of having booted. -->
+		<div class="fault">
+			<span class="lockup"><span class="mk">∴</span>{state_.box_name}</span>
+			<p class="doing">Storage disconnected</p>
+			<div class="recall">{state_.data_disk_fault}</div>
+		</div>
+	{:else if !state_}
 		<!-- Pre-first-response. Deliberately bare: the box is seconds from
 		     answering and a spinner would be the first thing it ever said. -->
 		<div class="boot"><span class="bootmark">∴</span></div>
@@ -277,6 +368,15 @@
 	.boot {
 		align-items: center;
 		justify-content: center;
+	}
+	/* Updating / storage-disconnected. Borrows the setup screen's column so a
+	   box that drops into one of these does not also change shape — the
+	   sentence changes, the furniture does not. */
+	.fault {
+		flex: 1;
+		min-width: 0;
+		display: flex;
+		flex-direction: column;
 	}
 	.bootmark {
 		font-size: 2rem;

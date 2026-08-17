@@ -285,16 +285,16 @@ pub async fn run(client: Virtues, host: &str, port: u16) -> Result<()> {
             "/api/display/state",
             get(crate::api::display::display_state_handler),
         )
+        // Lets the panel latch "an upgrade is running" while this server is
+        // still up to say so — after it stops, the kiosk's page is gone with
+        // it. See api/display.rs.
         .route(
-            "/api/display/qr",
-            get(crate::api::display::display_qr_handler),
+            "/api/display/updating",
+            get(crate::api::display::display_updating_handler),
         )
-        // Setup screen 2's account-link QR (device authorization). Box-local;
-        // must render the SAME session whose code the state endpoint shows.
-        .route(
-            "/api/display/link-qr",
-            get(crate::api::display::display_link_qr_handler),
-        )
+        // `/api/display/qr` and `/api/display/link-qr` are gone — the panel is
+        // one screen now and renders no QR at all. See api/display.rs.
+        //
         // Wifi provisioning over the setup AP. The one unauthenticated WRITE
         // surface on the box, and unauthenticated by necessity: the phone that
         // just joined the AP has no credential yet, because obtaining one is
