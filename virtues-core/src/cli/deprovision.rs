@@ -27,8 +27,9 @@
 //!     collides in DHCP and journald
 //!   * SSH host keys — sshd regenerates them; a shared host key means every
 //!     unit is trivially impersonable
-//!   * saved NetworkManager connections — otherwise the master's wifi
-//!     credentials ship to every customer
+//!   * saved wifi — otherwise the master's credentials ship to every customer.
+//!     In BOTH places they live: NetworkManager's own profiles, and the netplan
+//!     YAML that Ubuntu actually stores them in (see `remove_netplan_wifi`)
 //!   * chat-authored applets, code (state root) and data (`applet_*` schemas)
 //!     alike — the owner's own writing, which would otherwise be cloned onto
 //!     every unit built from this master
@@ -120,6 +121,36 @@ pub async fn run(yes: bool, force: bool) -> Result<(), crate::Error> {
         "",
         "saved network connections",
     )?;
+
+    // …and the same credentials in the OTHER place they live, which this
+    // command did not know about until a box was inspected rather than
+    // reasoned about.
+    //
+    // On Ubuntu — which is what the Dragon runs — NetworkManager is a netplan
+    // *renderer*, not the system of record. Join a network from the desktop and
+    // netplan writes `/etc/netplan/90-NM-<uuid>.yaml` holding the SSID, the
+    // password, and for an enterprise network the 802.1X `identity` too; NM's
+    // own copy under `/etc/NetworkManager/system-connections` is never created,
+    // and the one it runs from lives in `/run`, which is tmpfs.
+    //
+    // So the wipe above found an empty directory and reported success, and the
+    // workshop's wifi password — a corporate 802.1X account, in our case —
+    // would have been readable in the plain text of every unit shipped.
+    // `image-check` cleared the box too, for the same reason: it looked in the
+    // same empty place.
+    //
+    // Files carrying `access-points:` only. A netplan YAML may also describe
+    // ethernet, which is generic and must survive; wifi stanzas are the ones
+    // that carry secrets. (NM writes one connection per file, so in practice
+    // the distinction is clean.) Nothing is re-applied afterwards: the live
+    // connection in /run is deliberately left up so a remote operator keeps
+    // their session, and tmpfs means it never reaches the image anyway.
+    remove_netplan_wifi()?;
+
+    // Network *history* rather than secrets: DHCP leases and seen-BSSID lists
+    // name every network this master ever touched, with MACs. Not a credential
+    // leak, but it is the workshop's map, and it ships with the card.
+    remove_glob("/var/lib/NetworkManager", "", "network state files")?;
 
     // ── 3a. Authored applets ────────────────────────────────────────────────
     // Chat-authored applets are per-box runtime state and live in the STATE
@@ -316,6 +347,61 @@ fn strip_env_keys(env_path: &Path) -> Result<(), crate::Error> {
     Ok(())
 }
 
+/// Netplan YAMLs that describe a wifi network, and therefore carry its
+/// password. Shared with `image-check`, which must look exactly where this
+/// looks — the two disagreeing is how the credentials survived in the first
+/// place.
+///
+/// Detection is `access-points:`, the netplan key under which every wifi
+/// stanza (and only a wifi stanza) hangs. Returned rather than deleted so the
+/// read-only checker can use the same function.
+pub fn netplan_wifi_files() -> Vec<std::path::PathBuf> {
+    netplan_wifi_files_in("/etc/netplan")
+}
+
+fn netplan_wifi_files_in(dir: &str) -> Vec<std::path::PathBuf> {
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return Vec::new();
+    };
+    let mut out = Vec::new();
+    for entry in entries.flatten() {
+        let path = entry.path();
+        let is_yaml = path
+            .extension()
+            .and_then(|e| e.to_str())
+            .is_some_and(|e| e == "yaml" || e == "yml");
+        if !is_yaml {
+            continue;
+        }
+        // Read failures are skipped, not fatal: a YAML this process cannot read
+        // is one it also cannot delete, and image-check reports what remains.
+        if let Ok(text) = std::fs::read_to_string(&path) {
+            if text.contains("access-points:") {
+                out.push(path);
+            }
+        }
+    }
+    out.sort();
+    out
+}
+
+fn remove_netplan_wifi() -> Result<(), crate::Error> {
+    let files = netplan_wifi_files();
+    if files.is_empty() {
+        return Ok(());
+    }
+    let mut n = 0usize;
+    for path in &files {
+        if std::fs::remove_file(path).is_ok() {
+            n += 1;
+        }
+    }
+    if n > 0 {
+        println!("  ✓ removed {n} netplan wifi config(s) (SSID + password)");
+    }
+    Ok(())
+}
+
 /// Remove every entry in `dir` whose file name starts with `prefix` (empty
 /// prefix = everything). Missing directory is fine — not every box has sshd or
 /// NetworkManager.
@@ -377,6 +463,46 @@ mod tests {
         assert!(out.contains("DATABASE_URL=postgres:///virtues"));
         assert!(out.contains("ENVIRONMENT=production"));
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// The wifi YAML is found and the ethernet one is not — the whole point of
+    /// matching on `access-points:` rather than deleting `/etc/netplan/*`. A
+    /// unit whose ethernet config was removed with the wifi would ship unable
+    /// to come up on a wired network, which is the one network the first-boot
+    /// path is allowed to assume.
+    ///
+    /// The wifi fixture is shaped like what netplan actually wrote on the lab
+    /// board: an 802.1X stanza, because the workshop network is corporate and
+    /// that is the case where the leak costs an account rather than a PSK.
+    #[test]
+    fn finds_wifi_yaml_and_spares_ethernet() {
+        let dir = std::env::temp_dir().join(format!("netplan-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(
+            dir.join("90-NM-wifi.yaml"),
+            "network:\n  wifis:\n    wlan0:\n      access-points:\n        \"workshop\":\n          auth:\n            key-management: eap\n            identity: \"someone@example.com\"\n            password: \"hunter2\"\n",
+        )
+        .unwrap();
+        std::fs::write(
+            dir.join("01-ethernet.yaml"),
+            "network:\n  ethernets:\n    eth0:\n      dhcp4: true\n",
+        )
+        .unwrap();
+        // A non-YAML neighbour must be ignored rather than read as config.
+        std::fs::write(dir.join("README"), "access-points: not a netplan file\n").unwrap();
+
+        let found = netplan_wifi_files_in(dir.to_str().unwrap());
+
+        assert_eq!(found.len(), 1, "expected only the wifi YAML, got {found:?}");
+        assert!(found[0].ends_with("90-NM-wifi.yaml"));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// A box with no netplan directory at all (DIY on a distro that does not
+    /// use it) is not a finding. `image-check` calls this on every box.
+    #[test]
+    fn missing_netplan_dir_is_not_a_finding() {
+        assert!(netplan_wifi_files_in("/nonexistent/netplan").is_empty());
     }
 
     #[test]
