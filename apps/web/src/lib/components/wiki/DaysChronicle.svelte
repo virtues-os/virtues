@@ -78,7 +78,7 @@
 					};
 					grouped.set(key, group);
 				}
-				const narrated = day.autobiography != null && day.autobiography !== '';
+				const narrated = day.article != null && day.article !== '';
 				if (narrated) group.narratedCount += 1;
 				group.days.push({
 					slug: day.date,
