@@ -6,7 +6,7 @@
 # proves the strip worked, and powers off — leaving a microSD card that is the
 # product. See docs/appliance-image.md.
 #
-#     sudo VIRTUES_VERSION=v0.3.1 sh tools/build-master.sh
+#     sudo VIRTUES_VERSION=v0.3.1 sh tools/build-dragon.sh
 #
 # ## Why this exists rather than a list of commands in a doc
 #
@@ -32,7 +32,7 @@ set -eu
 say() { printf '\n\033[1m∴  %s\033[0m\n' "$*"; }
 die() { printf '\n\033[1;31m✖  %s\033[0m\n\n' "$*" >&2; exit 1; }
 
-[ "$(id -u)" -eq 0 ] || die "run me as root: sudo sh tools/build-master.sh"
+[ "$(id -u)" -eq 0 ] || die "run me as root: sudo sh tools/build-dragon.sh"
 
 # ── The version is mandatory ────────────────────────────────────────────────
 # No default, deliberately. A default would be either `latest` (wrong: stable
@@ -40,7 +40,7 @@ die() { printf '\n\033[1;31m✖  %s\033[0m\n\n' "$*" >&2; exit 1; }
 # argument makes the operator state, once, which build they are pressing.
 : "${VIRTUES_VERSION:=}"
 [ -n "$VIRTUES_VERSION" ] || die "set VIRTUES_VERSION to the release tag you are pressing,
-   e.g.  sudo VIRTUES_VERSION=v0.3.1 sh tools/build-master.sh
+   e.g.  sudo VIRTUES_VERSION=v0.3.1 sh tools/build-dragon.sh
    Stable tags look like v0.3.1; prereleases like v0.1.0-staging.59 or edge.
    'virtues.com/sh' would give you the newest STABLE, which is usually not what
    you want for a master. Check: gh release list --limit 5"

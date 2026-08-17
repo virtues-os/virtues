@@ -11,9 +11,6 @@ import type {
 	WikiPlaceApi,
 	WikiOrganizationApi,
 	WikiDayApi,
-	WikiActApi,
-	WikiChapterApi,
-	WikiTelosApi,
 	TemporalEventApi,
 } from "./api";
 
@@ -21,9 +18,6 @@ import type { PersonPage } from "./types/person";
 import type { PlacePage, PlaceType } from "./types/place";
 import type { OrganizationPage, OrganizationType } from "./types/organization";
 import type { DayPage, DayEvent, LinkedEntities, LinkedTemporal } from "./types/day";
-import type { ActPage } from "./types/act";
-import type { ChapterPage } from "./types/chapter";
-import type { TelosPage } from "./types/telos";
 import { parseDateSlug, formatLongDate } from "$lib/utils/dateUtils";
 
 // ============================================================================
@@ -287,109 +281,13 @@ export function apiToDayEvent(api: TemporalEventApi): DayEvent {
 // Act Converter
 // ============================================================================
 
-export function apiToActPage(api: WikiActApi): ActPage {
-	return {
-		type: "act",
-		id: api.id,
-				title: api.title,
-		subtitle: api.subtitle ?? undefined,
-		cover: api.cover_image ?? undefined,
-
-		// Act-specific fields
-		period: {
-			start: new Date(api.start_date),
-			end: api.end_date ? new Date(api.end_date) : undefined,
-		},
-		location: api.location ?? undefined,
-		themes: api.themes ?? [],
-
-		// Content
-		content: api.content ?? api.description ?? "",
-
-		// Connections (populated from queries later)
-		telos: undefined,
-		chapters: [],
-		keyPeople: [],
-		keyPlaces: [],
-
-		// Metadata
-		citations: [],
-		linkedPages: [],
-		tags: [],
-		createdAt: new Date(api.created_at),
-		updatedAt: new Date(api.updated_at),
-		lastEditedBy: "ai",
-	};
-}
 
 // ============================================================================
 // Chapter Converter
 // ============================================================================
 
-export function apiToChapterPage(api: WikiChapterApi): ChapterPage {
-	return {
-		type: "chapter",
-		id: api.id,
-				title: api.title,
-		subtitle: api.subtitle ?? undefined,
-		cover: api.cover_image ?? undefined,
-
-		// Chapter-specific fields
-		period: {
-			start: new Date(api.start_date),
-			end: api.end_date ? new Date(api.end_date) : undefined,
-		},
-		arc: "stable", // Default arc, could be stored in metadata
-
-		// Content
-		content: api.content ?? api.description ?? "",
-
-		// Connections (populated from queries later)
-		act: undefined,
-		keyPeople: [],
-		keyPlaces: [],
-		notableDays: [],
-		lessons: [],
-
-		// Metadata
-		citations: [],
-		linkedPages: [],
-		tags: [],
-		createdAt: new Date(api.created_at),
-		updatedAt: new Date(api.updated_at),
-		lastEditedBy: "ai",
-	};
-}
 
 // ============================================================================
 // Telos Converter
 // ============================================================================
 
-export function apiToTelosPage(api: WikiTelosApi): TelosPage {
-	return {
-		type: "telos",
-		id: api.id,
-				title: api.title,
-		cover: api.cover_image ?? undefined,
-
-		// Telos-specific fields
-		coreValues: [], // Could be parsed from content or stored in metadata
-		visionStatement: api.description ?? "",
-
-		// Content
-		content: api.content ?? api.description ?? "",
-
-		// Connections (populated from queries later)
-		acts: [],
-		guidingIdeas: [],
-		influentialPeople: [],
-
-		// Metadata
-		citations: [],
-		linkedPages: [],
-		tags: [],
-		createdAt: new Date(api.created_at),
-		updatedAt: new Date(api.updated_at),
-		lastEditedBy: "ai",
-	};
-}

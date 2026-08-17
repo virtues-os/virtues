@@ -109,37 +109,7 @@ pub struct WikiOrganization {
 // Wiki Page Types - Narrative Views
 // ============================================================================
 
-/// A telos wiki page (life purpose/mission)
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct WikiTelos {
-    pub id: String,
-    pub title: String,
-    pub description: Option<String>,
-    pub content: Option<String>,
-    pub cover_image: Option<String>,
-    pub is_active: Option<bool>,
-    pub created_at: DateTime<Utc>,
-    pub updated_at: DateTime<Utc>,
-}
 
-/// A narrative act wiki page
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct WikiAct {
-    pub id: String,
-    pub title: String,
-    pub subtitle: Option<String>,
-    pub description: Option<String>,
-    pub content: Option<String>,
-    pub cover_image: Option<String>,
-    pub location: Option<String>,
-    pub start_date: NaiveDate,
-    pub end_date: Option<NaiveDate>,
-    pub sort_order: i32,
-    pub telos_id: Option<String>,
-    pub themes: Option<Vec<String>>,
-    pub created_at: DateTime<Utc>,
-    pub updated_at: DateTime<Utc>,
-}
 
 /// A story: a themed article that spans time.
 ///
@@ -162,23 +132,6 @@ pub struct WikiStory {
     pub updated_at: DateTime<Utc>,
 }
 
-/// A narrative chapter wiki page
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct WikiChapter {
-    pub id: String,
-    pub title: String,
-    pub subtitle: Option<String>,
-    pub description: Option<String>,
-    pub content: Option<String>,
-    pub cover_image: Option<String>,
-    pub start_date: NaiveDate,
-    pub end_date: Option<NaiveDate>,
-    pub sort_order: i32,
-    pub act_id: Option<String>,
-    pub themes: Option<Vec<String>>,
-    pub created_at: DateTime<Utc>,
-    pub updated_at: DateTime<Utc>,
-}
 
 /// A day wiki page
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -845,61 +798,7 @@ pub async fn update_narrative_identity(
 // Telos CRUD Operations
 // ============================================================================
 
-/// Get active telos
-pub async fn get_active_telos(pool: &PgPool) -> Result<Option<WikiTelos>> {
-    let row = sqlx::query!(
-        r#"
-        SELECT
-            id, title, description, content, cover_image, is_active,
-            created_at, updated_at
-        FROM wiki_telos
-        WHERE is_active = true
-        "#
-    )
-    .fetch_optional(pool)
-    .await
-    .map_err(|e| Error::Database(format!("Failed to get active telos: {}", e)))?;
 
-    Ok(row.map(|r| WikiTelos {
-        id: r.id,
-        title: r.title,
-        description: r.description,
-        content: r.content,
-        cover_image: r.cover_image,
-        is_active: Some(r.is_active),
-        created_at: r.created_at,
-        updated_at: r.updated_at,
-    }))
-}
-
-/// Get a telos by ID
-pub async fn get_telos(pool: &PgPool, id: &str) -> Result<WikiTelos> {
-    let row = sqlx::query!(
-        r#"
-        SELECT
-            id, title, description, content, cover_image, is_active,
-            created_at, updated_at
-        FROM wiki_telos
-        WHERE id = $1
-        "#,
-        id
-    )
-    .fetch_optional(pool)
-    .await
-    .map_err(|e| Error::Database(format!("Failed to get telos: {}", e)))?
-    .ok_or_else(|| Error::NotFound(format!("Telos not found: {}", id)))?;
-
-    Ok(WikiTelos {
-        id: row.id,
-        title: row.title,
-        description: row.description,
-        content: row.content,
-        cover_image: row.cover_image,
-        is_active: Some(row.is_active),
-        created_at: row.created_at,
-        updated_at: row.updated_at,
-    })
-}
 
 // ============================================================================
 // Story Operations
@@ -979,155 +878,13 @@ pub async fn list_stories(pool: &PgPool) -> Result<Vec<WikiStory>> {
 // Act CRUD Operations
 // ============================================================================
 
-/// Get an act by ID
-pub async fn get_act(pool: &PgPool, id: String) -> Result<WikiAct> {
-    let row = sqlx::query!(
-        r#"
-        SELECT
-            id, title, subtitle, description, content, cover_image, location,
-            start_date, end_date, sort_order, telos_id, themes,
-            created_at, updated_at
-        FROM wiki_acts
-        WHERE id = $1
-        "#,
-        id
-    )
-    .fetch_optional(pool)
-    .await
-    .map_err(|e| Error::Database(format!("Failed to get act: {}", e)))?
-    .ok_or_else(|| Error::NotFound(format!("Act not found: {}", id)))?;
 
-    Ok(WikiAct {
-        id: row.id,
-        title: row.title,
-        subtitle: row.subtitle,
-        description: row.description,
-        content: row.content,
-        cover_image: row.cover_image,
-        location: row.location,
-        start_date: row.start_date,
-        end_date: row.end_date,
-        sort_order: row.sort_order as i32,
-        telos_id: row.telos_id,
-        themes: serde_json::from_value(row.themes).ok(),
-        created_at: row.created_at,
-        updated_at: row.updated_at,
-    })
-}
-
-/// List all acts
-pub async fn list_acts(pool: &PgPool) -> Result<Vec<WikiAct>> {
-    let rows = sqlx::query!(
-        r#"
-        SELECT
-            id, title, subtitle, description, content, cover_image, location,
-            start_date, end_date, sort_order, telos_id, themes,
-            created_at, updated_at
-        FROM wiki_acts
-        ORDER BY sort_order ASC, start_date ASC
-        "#
-    )
-    .fetch_all(pool)
-    .await
-    .map_err(|e| Error::Database(format!("Failed to list acts: {}", e)))?;
-
-    Ok(rows
-        .into_iter()
-        .map(|row| WikiAct {
-            id: row.id,
-            title: row.title,
-            subtitle: row.subtitle,
-            description: row.description,
-            content: row.content,
-            cover_image: row.cover_image,
-            location: row.location,
-            start_date: row.start_date,
-            end_date: row.end_date,
-            sort_order: row.sort_order as i32,
-            telos_id: row.telos_id,
-            themes: serde_json::from_value(row.themes).ok(),
-            created_at: row.created_at,
-            updated_at: row.updated_at,
-        })
-        .collect())
-}
 
 // ============================================================================
 // Chapter CRUD Operations
 // ============================================================================
 
-/// Get a chapter by ID
-pub async fn get_chapter(pool: &PgPool, id: String) -> Result<WikiChapter> {
-    let row = sqlx::query!(
-        r#"
-        SELECT
-            id, title, subtitle, description, content, cover_image,
-            start_date, end_date, sort_order, act_id, themes,
-            created_at, updated_at
-        FROM wiki_chapters
-        WHERE id = $1
-        "#,
-        id
-    )
-    .fetch_optional(pool)
-    .await
-    .map_err(|e| Error::Database(format!("Failed to get chapter: {}", e)))?
-    .ok_or_else(|| Error::NotFound(format!("Chapter not found: {}", id)))?;
 
-    Ok(WikiChapter {
-        id: row.id,
-        title: row.title,
-        subtitle: row.subtitle,
-        description: row.description,
-        content: row.content,
-        cover_image: row.cover_image,
-        start_date: row.start_date,
-        end_date: row.end_date,
-        sort_order: row.sort_order as i32,
-        act_id: row.act_id,
-        themes: serde_json::from_value(row.themes).ok(),
-        created_at: row.created_at,
-        updated_at: row.updated_at,
-    })
-}
-
-/// List chapters for an act
-pub async fn list_chapters_for_act(pool: &PgPool, act_id: String) -> Result<Vec<WikiChapter>> {
-    let rows = sqlx::query!(
-        r#"
-        SELECT
-            id, title, subtitle, description, content, cover_image,
-            start_date, end_date, sort_order, act_id, themes,
-            created_at, updated_at
-        FROM wiki_chapters
-        WHERE act_id = $1
-        ORDER BY sort_order ASC, start_date ASC
-        "#,
-        act_id
-    )
-    .fetch_all(pool)
-    .await
-    .map_err(|e| Error::Database(format!("Failed to list chapters: {}", e)))?;
-
-    Ok(rows
-        .into_iter()
-        .map(|row| WikiChapter {
-            id: row.id,
-            title: row.title,
-            subtitle: row.subtitle,
-            description: row.description,
-            content: row.content,
-            cover_image: row.cover_image,
-            start_date: row.start_date,
-            end_date: row.end_date,
-            sort_order: row.sort_order as i32,
-            act_id: row.act_id,
-            themes: serde_json::from_value(row.themes).ok(),
-            created_at: row.created_at,
-            updated_at: row.updated_at,
-        })
-        .collect())
-}
 
 // ============================================================================
 // Day CRUD Operations

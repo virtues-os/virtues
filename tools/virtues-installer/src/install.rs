@@ -750,6 +750,26 @@ pub async fn create_user(cfg: &InstallConfig) -> Result<()> {
     // gpu_access_groups + the sidecar units). Runs on both the fresh and
     // already-exists paths so upgrades of older boxes pick it up; `usermod -aG`
     // is additive and idempotent. No-op on a CPU-only host (no such groups).
+    // And to `input`, so `maintenance::reset_button` can read the power key.
+    //
+    // `/dev/input/event0` is `root:input` mode 660 and the service runs as
+    // `virtues`, which is in `video` and `render` and was in nothing else — so
+    // the watcher opened the device, failed, and returned. The button would
+    // have shipped built, wired, and dead, announcing nothing worse than a
+    // warning every sixty seconds. Caught on hardware; it is not reproducible
+    // anywhere without a real input node.
+    //
+    // Unconditional, unlike the GPU groups: `input` exists on every systemd
+    // host, and a box with no power key simply never finds one to watch.
+    // Supplementary groups are fixed at process start, so this only takes
+    // effect on the service restart at the end of this install — which is why
+    // it sits here rather than beside the appliance profile.
+    {
+        let mut cmd = Command::new("usermod");
+        cmd.args(["-aG", "input", "virtues"]);
+        run_step("Grant 'virtues' input access (the case button)", cmd).await?;
+    }
+
     let gpu_groups = gpu_access_groups().await;
     if !gpu_groups.is_empty() {
         let mut cmd = Command::new("usermod");
@@ -771,14 +791,39 @@ pub async fn create_user(cfg: &InstallConfig) -> Result<()> {
             .with_context(|| format!("creating {}/{sub}", cfg.data_dir.display()))?;
     }
     migrate_applets_out_of_shipped_tree(cfg)?;
-    // chown -R virtues:virtues + 0700 on secrets
-    let mut cmd = Command::new("chown");
+    // chown -R virtues:virtues, EXCEPT the Postgres cluster.
+    //
+    // The cluster lives at `<data dir>/postgresql` on a relocated appliance, and
+    // it belongs to `postgres` — a recursive chown over the whole data dir takes
+    // it too, and Postgres then cannot read its own files:
+    //
+    //     FATAL: could not open file "global/pg_filenode.map": Permission denied
+    //
+    // Which is exactly what happened on the test box the first time this ran
+    // after the relocation landed: the move succeeded, Postgres served, and then
+    // this line four steps later broke it. The failure surfaces as `createuser`
+    // failing, which reads like a Postgres problem and is really an ownership
+    // one — worth the paragraph, because the next person will meet it as a
+    // confusing error about a role.
+    //
+    // `-prune` rather than a chown of each sibling: subdirectories here are not
+    // a fixed list (lake, models, secrets, applets, journal, backups, upgrade
+    // staging, and whatever comes next), and enumerating them means the next
+    // one added is silently left with root ownership.
+    let mut cmd = Command::new("find");
     cmd.args([
-        "-R",
-        "virtues:virtues",
         cfg.data_dir.to_str().unwrap(),
+        "-path",
+        &cfg.data_dir.join("postgresql").display().to_string(),
+        "-prune",
+        "-o",
+        "-exec",
+        "chown",
+        "virtues:virtues",
+        "{}",
+        "+",
     ]);
-    run_step("chown data dir", cmd).await?;
+    run_step("chown data dir (not the Postgres cluster)", cmd).await?;
 
     let secrets = cfg.data_dir.join("secrets");
     fs::set_permissions(&secrets, fs::Permissions::from_mode(0o700))
@@ -1509,20 +1554,31 @@ const PG_MOUNT_GUARD_TEMPLATE: &str = r#"# Installed by virtues-installer.
 # and fails — recoverably, but with a red unit on the one screen the owner is
 # watching hardest.
 #
-# ExecStartPre is NOT redundant with RequiresMountsFor, and the gap it closes is
-# the likelier failure. RequiresMountsFor only binds us to a mount unit that
-# EXISTS — i.e. a disk fstab knows about. A unit whose first-boot claim never ran
-# at all (no NVMe fitted, or the blank check declined) has no fstab entry, so the
-# dependency resolves to the root mount, is trivially satisfied, and Postgres
-# initdb's onto the boot card: working, healthy-looking, and wearing out the one
-# medium this whole layout exists to protect. `mountpoint -q` asks the question
-# we actually mean.
+# ExecStartPre fires ONLY when fstab declares a data disk, and that condition is
+# the whole correction. The first version of this asked `mountpoint -q` flatly —
+# which bricks a board whose ROOT is already the NVMe and whose state root is a
+# directory on it. That is not a hypothetical layout; it is what the lab board
+# is, and running the installer on it would have left Postgres refusing to start
+# with no way for the owner to find out why. Verified before shipping it.
+#
+# So: fstab entry means "this box was given a data disk", and then the mount is
+# required. No entry means the data lives on the root filesystem by design, and
+# there is nothing to wait for.
+#
+# WHAT THIS DELIBERATELY DOES NOT DO is refuse when a disk that SHOULD be here
+# is absent, and that is a trade rather than an oversight. virtues.service waits
+# on pg_isready, and the panel is served by virtues.service — so a Postgres that
+# refuses takes the display with it, and the owner gets a black screen instead
+# of the "Storage disconnected" message written for exactly this moment. A box
+# running on the wrong disk is recoverable and says so on the glass; a box that
+# will not boot says nothing at all. See `crate::data_disk` for the half that
+# reports it.
 [Unit]
 RequiresMountsFor=__DATA_DIR__
 After=virtues-firstboot.service
 
 [Service]
-ExecStartPre=/usr/bin/mountpoint -q __DATA_DIR__
+ExecStartPre=/bin/sh -c '! grep -qE "[[:space:]]__DATA_DIR__[[:space:]]" /etc/fstab || mountpoint -q __DATA_DIR__'
 "#;
 
 /// Stops logind consuming the power key, so `maintenance::reset_button` can

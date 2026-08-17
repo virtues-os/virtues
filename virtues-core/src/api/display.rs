@@ -120,6 +120,25 @@ pub struct DisplayState {
     /// instead is that the words they saved still work and their record is
     /// still here.
     pub phrase_frozen: bool,
+    /// The record, counted — what the ambient screen actually reports.
+    ///
+    /// Empty on an unclaimed box and on a box holding nothing, and the panel
+    /// treats both the same way: it says nothing rather than saying "0".
+    ///
+    /// The screen someone sees ten thousand times used to print a kicker that
+    /// promised "TODAY SO FAR" over a string literal — `Your box is keeping the
+    /// record.` — which never changed and never could. The comment above it
+    /// claimed it reported "the record rather than the machine, a ship's log not
+    /// htop"; it reported neither, and the only true line on the screen was the
+    /// device count.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub record: Vec<RecordLine>,
+    /// The oldest trace on the box. Does more work than any count — most people
+    /// have no idea their Mac has kept messages for a decade, and a specific
+    /// date is the moment an appliance stops being an abstraction
+    /// (`api::census`).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub record_since: Option<chrono::DateTime<chrono::Utc>>,
     /// The device currently configuring this box over Bluetooth, if any, as it
     /// named itself ("Adam's Mac"). `Some("")` means a session is live but the
     /// client sent no name.
@@ -132,6 +151,101 @@ pub struct DisplayState {
     /// will not say how to start over.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub setup_session: Option<String>,
+}
+
+/// One line of the ambient screen's log: a thing the box holds, and how many.
+#[derive(Debug, Clone, Serialize)]
+pub struct RecordLine {
+    /// Plural, lowercase, in the words a person would use — never a table name.
+    pub label: String,
+    pub count: i64,
+}
+
+/// The census, cached, because the panel asks every thirty seconds and the
+/// census is a `COUNT(*)` per table.
+///
+/// Measured on a real box: ~0.11s per count across a dozen tables, so computing
+/// it inline would put a couple of seconds of full table scans on every ambient
+/// poll, forever, on the machine's own display. That is a lot of work to tell
+/// someone something that changes on the timescale of a day.
+///
+/// **The panel is never blocked.** A stale cache serves what it has and spawns a
+/// refresh; the first call after boot returns nothing and the screen simply has
+/// no log line for one poll. Blocking a display request on a table scan would
+/// mean the one screen an owner can see freezing whenever the cache expired.
+mod record_cache {
+    use super::RecordLine;
+    use std::sync::Mutex;
+    use std::time::{Duration, Instant};
+
+    /// Long, deliberately. These numbers move on the timescale of a day, the
+    /// screen is furniture, and a shorter window would buy nothing but load.
+    const TTL: Duration = Duration::from_secs(600);
+
+    pub(super) struct Snapshot {
+        pub lines: Vec<RecordLine>,
+        pub since: Option<chrono::DateTime<chrono::Utc>>,
+        taken: Instant,
+    }
+
+    static CACHE: Mutex<Option<Snapshot>> = Mutex::new(None);
+    /// Set while a refresh is in flight, so a burst of polls spawns one job.
+    static REFRESHING: Mutex<bool> = Mutex::new(false);
+
+    /// What we have right now, and whether it needs replacing.
+    pub(super) fn peek() -> (Vec<RecordLine>, Option<chrono::DateTime<chrono::Utc>>, bool) {
+        match CACHE.lock() {
+            Ok(g) => match g.as_ref() {
+                Some(s) => (s.lines.clone(), s.since, s.taken.elapsed() > TTL),
+                None => (Vec::new(), None, true),
+            },
+            Err(_) => (Vec::new(), None, false),
+        }
+    }
+
+    pub(super) fn store(lines: Vec<RecordLine>, since: Option<chrono::DateTime<chrono::Utc>>) {
+        if let Ok(mut g) = CACHE.lock() {
+            *g = Some(Snapshot { lines, since, taken: Instant::now() });
+        }
+    }
+
+    /// Claim the right to refresh. `false` means someone else already has it.
+    pub(super) fn claim() -> bool {
+        match REFRESHING.lock() {
+            Ok(mut g) if !*g => { *g = true; true }
+            _ => false,
+        }
+    }
+
+    pub(super) fn release() {
+        if let Ok(mut g) = REFRESHING.lock() {
+            *g = false;
+        }
+    }
+}
+
+/// Serve the cached record, refreshing behind the request when it is stale.
+fn record_lines(
+    pool: &sqlx::PgPool,
+) -> (Vec<RecordLine>, Option<chrono::DateTime<chrono::Utc>>) {
+    let (lines, since, stale) = record_cache::peek();
+    if stale && record_cache::claim() {
+        let pool = pool.clone();
+        tokio::spawn(async move {
+            match crate::api::census::census(&pool).await {
+                Ok(c) => record_cache::store(
+                    c.lines
+                        .into_iter()
+                        .map(|l| RecordLine { label: l.label, count: l.count })
+                        .collect(),
+                    c.earliest,
+                ),
+                Err(e) => tracing::debug!(error = %e, "display: census refresh failed"),
+            }
+            record_cache::release();
+        });
+    }
+    (lines, since)
 }
 
 pub async fn display_state_handler(
@@ -219,10 +333,20 @@ pub async fn display_state_handler(
     let setup_session =
         (devices == 0).then(crate::api::setup_phrase::session).flatten();
 
+    let (record, record_since) = if devices > 0 {
+        record_lines(pool)
+    } else {
+        (Vec::new(), None)
+    };
+
     (
         StatusCode::OK,
         Json(DisplayState {
             pair_code,
+            // Claimed only: an unclaimed box holds nothing, and the setup
+            // screens have no line for it.
+            record,
+            record_since,
             data_disk_fault: crate::data_disk::status().message(),
             button_held_secs: crate::maintenance::reset_button::hold_secs(),
             button_hold_target: crate::maintenance::reset_button::HOLD_SECS,

@@ -19,8 +19,6 @@
 	import type { VirtualAnchor } from '$lib/floating';
 
 	interface Props {
-		/** Current query (text after /) */
-		query: string;
 		/** Available commands (pre-filtered by plugin) */
 		commands: SlashCommand[];
 		/** Position for absolute positioning */
@@ -31,7 +29,7 @@
 		onClose: () => void;
 	}
 
-	let { query, commands, position, onSelect, onClose }: Props = $props();
+	let { commands, position, onSelect, onClose }: Props = $props();
 
 	let selectedIndex = $state(0);
 	let menuEl: HTMLDivElement | null = $state(null);
@@ -57,18 +55,7 @@
 		selectedIndex = 0;
 	});
 
-	// Group commands by group
-	const groupedCommands = $derived.by(() => {
-		const groups: Record<string, SlashCommand[]> = {};
-		for (const cmd of commands) {
-			const group = cmd.group;
-			if (!groups[group]) groups[group] = [];
-			groups[group].push(cmd);
-		}
-		return groups;
-	});
-
-	// Flat list for keyboard navigation
+	// One flat list — the order in slash-commands.ts is the order shown.
 	const flatCommands = $derived(commands);
 
 	function handleKeydown(e: KeyboardEvent) {
@@ -121,46 +108,23 @@
 	class="slash-menu-container"
 >
 	<div bind:this={menuEl} class="slash-menu" transition:fade={{ duration: 100 }}>
-	<!-- Header -->
-	{#if query}
-		<div class="menu-header">
-			<span class="query-label">/{query}</span>
-		</div>
-	{/if}
-
-	<!-- Commands -->
-	<div class="commands">
-		{#if flatCommands.length === 0}
-			<div class="empty">No matching commands</div>
-		{:else}
-			{#each Object.entries(groupedCommands) as [group, cmds]}
-				<div class="command-group">
-					<div class="group-header">{group}</div>
-					{#each cmds as cmd}
-						{@const globalIndex = flatCommands.indexOf(cmd)}
-						<button
-							class="command-item"
-							class:selected={globalIndex === selectedIndex}
-							onclick={() => handleItemClick(cmd)}
-							onmouseenter={() => (selectedIndex = globalIndex)}
-							type="button"
-						>
-							<div class="command-icon">
-								<Icon icon={cmd.icon} width="16" />
-							</div>
-							<span class="command-label">{cmd.label}</span>
-						</button>
-					{/each}
-				</div>
-			{/each}
-		{/if}
-	</div>
-
-		<!-- Footer -->
-		<div class="footer">
-			<span class="hint"><kbd>↑↓</kbd> navigate</span>
-			<span class="hint"><kbd>↵</kbd> select</span>
-			<span class="hint"><kbd>esc</kbd> close</span>
+		<div class="commands">
+			{#if flatCommands.length === 0}
+				<div class="empty">No matching commands</div>
+			{:else}
+				{#each flatCommands as cmd, index}
+					<button
+						class="command-item"
+						class:selected={index === selectedIndex}
+						onclick={() => handleItemClick(cmd)}
+						onmouseenter={() => (selectedIndex = index)}
+						type="button"
+					>
+						<Icon icon={cmd.icon} width="17" />
+						<span class="command-label">{cmd.label}</span>
+					</button>
+				{/each}
+			{/if}
 		</div>
 	</div>
 </FloatingContent>
@@ -175,120 +139,60 @@
 		box-shadow: none;
 	}
 
+	/* A short list of obvious choices needs no chrome around it: no query
+	   echo (it is already on the line behind the menu), no group headers, no
+	   keyboard-hint footer. What is left is the list. */
 	.slash-menu {
-		width: 280px;
+		width: 232px;
 		background: var(--color-surface);
 		border: 1px solid var(--color-border-subtle, var(--color-border));
-		border-radius: 10px;
-		box-shadow: 0 8px 30px rgba(0, 0, 0, 0.12);
+		border-radius: 12px;
+		box-shadow: 0 10px 32px rgba(0, 0, 0, 0.1);
 		z-index: var(--z-overlay);
 		overflow: hidden;
 	}
 
-	.menu-header {
-		padding: 8px 12px;
-		border-bottom: 1px solid var(--color-border-subtle, var(--color-border));
-	}
-
-	.query-label {
-		font-size: 12px;
-		font-family: var(--font-mono);
-		color: var(--color-foreground-muted);
-	}
-
 	.commands {
-		max-height: 320px;
+		max-height: 340px;
 		overflow-y: auto;
-		padding: 4px;
+		padding: 6px;
 	}
 
 	.empty {
-		padding: 20px;
+		padding: 14px 10px;
 		text-align: center;
 		color: var(--color-foreground-muted);
 		font-size: 13px;
 	}
 
-	.command-group {
-		padding-top: 2px;
-	}
-
-	.group-header {
-		padding: 6px 8px 4px;
-		font-size: 11px;
-		font-weight: 500;
-		color: var(--color-foreground-subtle);
-		letter-spacing: 0.5px;
-	}
-
 	.command-item {
 		display: flex;
 		align-items: center;
-		gap: 8px;
+		gap: 11px;
 		width: 100%;
-		padding: 6px 8px;
+		padding: 7px 10px;
 		border: none;
 		background: none;
 		text-align: left;
 		cursor: pointer;
-		color: var(--color-foreground);
-		border-radius: 6px;
+		/* The icon inherits this, so the whole row lifts together on select. */
+		color: var(--color-foreground-muted);
+		border-radius: 8px;
 		transition:
 			color 0.12s ease,
 			background-color 0.12s ease;
 	}
 
-	.command-item:hover {
-		background: var(--hover-bg);
-	}
-
+	/* One highlight, driven by keyboard AND hover (mouseenter moves the
+	   selection), so the menu never shows two candidate rows at once. */
 	.command-item.selected {
 		background: var(--color-primary-subtle);
-	}
-
-	.command-icon {
-		display: flex;
-		align-items: center;
-		justify-content: center;
-		width: 24px;
-		height: 24px;
-		background: var(--color-surface-elevated);
-		border: 1px solid var(--color-border);
-		border-radius: 5px;
-		color: var(--color-foreground-muted);
-		flex-shrink: 0;
-	}
-
-	.command-item.selected .command-icon {
-		border-color: var(--color-primary);
-		color: var(--color-primary);
+		color: var(--color-foreground);
 	}
 
 	.command-label {
-		font-size: 13px;
-		font-weight: 500;
-	}
-
-	.footer {
-		display: flex;
-		align-items: center;
-		gap: 12px;
-		padding: 8px 12px;
-		border-top: 1px solid var(--color-border-subtle, var(--color-border));
-	}
-
-	.hint {
-		font-size: 11px;
-		color: var(--color-foreground-subtle);
-	}
-
-	.hint kbd {
-		display: inline-block;
-		padding: 1px 4px;
-		background: var(--color-surface);
-		border: 1px solid var(--color-border);
-		border-radius: 3px;
-		font-family: inherit;
-		font-size: 10px;
+		font-size: 13.5px;
+		font-weight: 450;
+		color: var(--color-foreground);
 	}
 </style>

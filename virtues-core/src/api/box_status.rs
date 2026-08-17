@@ -58,12 +58,13 @@ pub async fn compute_status(pool: &PgPool) -> Result<BoxStatus> {
     let linked = crate::virtues_api::renew::has_api_key(pool)
         .await
         .unwrap_or(false);
-    let paired_wg: i64 = sqlx::query_scalar(
-        "SELECT count(*) FROM credentials WHERE device_id IS NOT NULL AND status = 'active'",
-    )
-    .fetch_one(pool)
-    .await
-    .unwrap_or(0);
+    // `app_device`, not `credentials`. This counted rows in a table by a column
+    // that does not exist, and `.unwrap_or(0)` swallowed the error — so the
+    // paired-device count in the box's own health snapshot has been reporting
+    // ZERO on every box, forever, however many devices were paired. A wrong
+    // query that returns an error is loud; a wrong query behind `unwrap_or` is
+    // a lie with a default value.
+    let paired_wg: i64 = crate::api::pair::paired_device_count(pool).await;
 
     Ok(BoxStatus {
         ready: true,
@@ -293,13 +294,11 @@ pub async fn compute_setup_state(pool: &PgPool) -> Result<SetupState> {
     .await
     .unwrap_or(0);
 
-    // First device = a paired collector (phone/Mac) with its own credential.
-    let first_device: i64 = sqlx::query_scalar(
-        "SELECT count(*) FROM credentials WHERE device_id IS NOT NULL AND status = 'active'",
-    )
-    .fetch_one(pool)
-    .await
-    .unwrap_or(0);
+    // First device = a paired collector (phone/Mac). Same correction as
+    // `paired_wg` above: it asked `credentials` for a `device_id` it has never
+    // had, swallowed the error, and reported zero — which means the onboarding
+    // step this gates could never have completed on its own.
+    let first_device: i64 = crate::api::pair::paired_device_count(pool).await;
 
     // A paired phone, specifically (kind = 'mobile_app'). Distinct from
     // `first_device`, which counts ANY paired collector (incl. the Mac) — the
