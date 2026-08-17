@@ -650,19 +650,11 @@ async fn embed_one_batch(
     }
 
     if batch_count > 0 {
-        sqlx::query(
-            "INSERT INTO search_embedding_progress \
-               (ontology, last_processed_id, total_embedded, last_run_at) \
-             VALUES ($1, '', $2, now()) \
-             ON CONFLICT(ontology) DO UPDATE SET \
-               total_embedded = search_embedding_progress.total_embedded + EXCLUDED.total_embedded, \
-               last_run_at = now()",
-        )
-        .bind(ont_name)
-        .bind(batch_count as i64)
-        .execute(pool)
-        .await?;
-
+        // No progress row is written. `search_embedding_progress` existed for
+        // resumable indexing and never got it — `last_processed_id` was bound
+        // to `''` on every write, so there was nothing to resume from, and the
+        // counter beside it had no reader. The log line below is what anyone
+        // actually used to follow a reindex.
         tracing::info!("Embedded {} records from {}", batch_count, ont_name);
     }
 

@@ -177,6 +177,72 @@ fn get_table_metadata() -> HashMap<&'static str, TableMetadata> {
         key_columns: &["text", "language", "duration_seconds", "start_time", "end_time", "speaker_count"],
         join_hint: None,
     });
+
+    // Tables that hold real data and were never described, so the agent could
+    // see them only because the old catalog listed everything matching
+    // `data_%`/`wiki_%`. Now that an undescribed table is a hidden table, the
+    // omission would have silently taken the owner's own recordings, weather and
+    // notes out of reach — so they are described here deliberately.
+    m.insert("data_audio_recording", TableMetadata {
+        description: "Microphone recordings captured by the phone — one row per chunk. Join to transcriptions on source_stream_id for the words.",
+        category: "communication",
+        key_columns: &["started_at", "ended_at", "duration_seconds", "is_silent", "average_db_level"],
+        join_hint: Some("JOIN data_communication_transcription t ON t.source_stream_id = data_audio_recording.source_stream_id"),
+    });
+    m.insert("data_audio_session", TableMetadata {
+        description: "Conversations, derived by grouping adjacent transcription chunks into one sitting",
+        category: "communication",
+        key_columns: &["start_time", "end_time", "speaker_mode", "chunk_count", "content"],
+        join_hint: None,
+    });
+    m.insert("data_environment_weather", TableMetadata {
+        description: "Weather where the owner was. Holds BOTH observations and forecasts — filter is_forecast = false for what actually happened.",
+        category: "environment",
+        key_columns: &["valid_time", "is_forecast", "temperature_c", "apparent_c", "latitude", "longitude"],
+        join_hint: None,
+    });
+    m.insert("data_health_active_energy", TableMetadata {
+        description: "Active energy burned, in kilocalories",
+        category: "health",
+        key_columns: &["kcal", "timestamp"],
+        join_hint: None,
+    });
+    m.insert("data_health_distance", TableMetadata {
+        description: "Distance moved, in meters",
+        category: "health",
+        key_columns: &["meters", "timestamp"],
+        join_hint: None,
+    });
+    m.insert("wiki_articles", TableMetadata {
+        description: "Links a wiki subject (person/place/organization/day) to the page holding its written article",
+        category: "wiki",
+        key_columns: &["subject_type", "subject_id", "page_id"],
+        join_hint: Some("JOIN app_pages p ON p.id = wiki_articles.page_id"),
+    });
+    m.insert("wiki_notes", TableMetadata {
+        description: "Notes and open questions attached to a wiki subject, written by the owner or by the assistant",
+        category: "wiki",
+        key_columns: &["subject_type", "subject_id", "kind", "body", "author", "resolved_at"],
+        join_hint: None,
+    });
+    m.insert("wiki_narrative_identity", TableMetadata {
+        description: "The owner's own account of who they are, drafted from the narrative interview",
+        category: "wiki",
+        key_columns: &["content", "active", "drafted_at"],
+        join_hint: None,
+    });
+    m.insert("wiki_rules", TableMetadata {
+        description: "Standing instructions the owner has given about how their record is written — 'avoid' subjects to leave alone, 'defend' ones to state carefully",
+        category: "wiki",
+        key_columns: &["rule", "kind", "active"],
+        join_hint: None,
+    });
+    m.insert("wiki_narrative_interview", TableMetadata {
+        description: "The owner's answers to the narrative interview questions",
+        category: "wiki",
+        key_columns: &["question_id", "answer", "word_count", "completed_at"],
+        join_hint: None,
+    });
     // ============================================================================
     // WIKI TABLES - Entities (resolved nouns)
     // ============================================================================
@@ -317,10 +383,32 @@ impl SqlQueryTool {
 
         let metadata = get_table_metadata();
         let mut tables = Vec::new();
-        
+
         for row in rows {
             let table_name: String = row.get("name");
-            
+
+            // A table the catalog has no description for is NOT advertised.
+            //
+            // This is the fence that 0107 said already existed. It did not.
+            // That migration kept `wiki_stories` and `wiki_years` in the schema
+            // on the promise that they would stay "out of the SQL agent's
+            // catalog" — but the catalog is this query, a `LIKE 'wiki_%'` over
+            // `pg_tables`, so every empty table was advertised anyway, and
+            // `get_schema` would happily describe it.
+            //
+            // The harm is the one 0107 named: an empty answer from a table that
+            // is supposed to hold something is indistinguishable from an empty
+            // life. The agent queries `wiki_stories`, finds nothing, and reports
+            // nothing — as though it had looked and there was nothing there.
+            //
+            // Keying on the description makes the fence self-maintaining. A new
+            // table is invisible until someone writes a line describing it, and
+            // that is exactly the moment to decide whether the agent should see
+            // it at all. No allowlist to forget to update.
+            let Some(meta) = metadata.get(table_name.as_str()) else {
+                continue;
+            };
+
             // Get row count
             let count_query = format!("SELECT COUNT(*) as cnt FROM \"{}\"", table_name);
             let count_row = sqlx::query(&count_query)
@@ -333,11 +421,7 @@ impl SqlQueryTool {
                 .map(|r| r.get::<i64, _>("cnt"))
                 .unwrap_or(0);
 
-            // Get description from metadata
-            let description = metadata
-                .get(table_name.as_str())
-                .map(|m| m.description)
-                .unwrap_or("");
+            let description = meta.description;
 
             tables.push(serde_json::json!({
                 "name": table_name,
@@ -368,6 +452,17 @@ impl SqlQueryTool {
                 return Err(ToolError::InvalidParameters(format!(
                     "Can only get schema for data_* or wiki_* tables. Got: '{}'",
                     table
+                )));
+            }
+
+            // Same fence as `list_tables`. Without this the prefix check above
+            // is the only gate, so a table deliberately withheld from the
+            // catalog could still be described in full — and a described table
+            // is one the agent will then query.
+            if !metadata.contains_key(table.as_str()) {
+                return Err(ToolError::InvalidParameters(format!(
+                    "'{table}' is not in the queryable catalog. Call list_tables \
+                     to see what is available."
                 )));
             }
 
