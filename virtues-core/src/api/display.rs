@@ -57,6 +57,22 @@ pub struct DisplayState {
     /// See `crate::data_disk`.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub data_disk_fault: Option<&'static str>,
+    /// Seconds the case button has been held, when it is down right now.
+    ///
+    /// The button forgets every paired device after three seconds, and without
+    /// this the owner holds an unlabelled button on a silent box and lets go —
+    /// the failure mode of every long-press control that does not narrate
+    /// itself. Showing the count also makes an *unintended* hold visible while
+    /// there is still time to stop: a cable resting on the button announces
+    /// itself instead of quietly unpairing the house.
+    ///
+    /// `None` between presses, and always on a DIY box — the watcher does not
+    /// run there. See `maintenance::reset_button`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub button_held_secs: Option<u64>,
+    /// How long the hold has to last. Sent rather than hardcoded in the panel
+    /// so the two cannot disagree about what the owner is waiting for.
+    pub button_hold_target: u64,
     /// True once at least one device has paired — the display stops showing
     /// setup and moves to the ambient screen.
     pub claimed: bool,
@@ -208,6 +224,8 @@ pub async fn display_state_handler(
         Json(DisplayState {
             pair_code,
             data_disk_fault: crate::data_disk::status().message(),
+            button_held_secs: crate::maintenance::reset_button::hold_secs(),
+            button_hold_target: crate::maintenance::reset_button::HOLD_SECS,
             claimed: devices > 0,
             online,
             connectivity,

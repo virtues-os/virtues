@@ -133,10 +133,16 @@ box** with exponential backoff — a BLE central can change its address between
 attempts, so per-device throttling is theatre — plus a tighter per-connection cap
 so one session cannot burn the budget at once.
 
-**3.3 Reset setup, on the button.** `HandlePowerKey=ignore` + a udev rule on
-`KEY_POWER` → forget paired devices, unlink the account, forget the network.
-**Data and phrase survive.** So a resetter gets a box they cannot claim, and the
-owner gets their box back by typing what they saved.
+**3.3 Reset setup, on the button.** ✅ **BUILT 2026-08-17** —
+`HandlePowerKey=ignore` (a logind drop-in, not a udev rule: logind consumes the
+key before udev is any use) plus `maintenance::reset_button`, which reads the
+evdev node and acts on a **three-second hold**. **Data and phrase survive.** So
+a resetter gets a box they cannot claim, and the owner gets their box back by
+typing what they saved.
+
+Narrowed while building it: it forgets **paired devices only**, not the account
+and not the network — see [onboarding-paradigm.md](onboarding-paradigm.md) §3
+for why those two made recovery harder while adding no security.
 
 **3.4 Erase, not on the button.** Wiping the record for resale is an
 authenticated action in the app (CLI for DIY). A physical gesture that destroys a

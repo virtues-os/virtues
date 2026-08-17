@@ -23,12 +23,20 @@
     one exception is the breathing pip on a live setup session, which is the
     smallest thing that reads as "now" without becoming a spinner.
 
-  FOUR STATES:
+  STATES, in the order they outrank each other:
 
-    1. unclaimed, virgin  → get the Mac app, and the four words that let it in
+    0. button held        → a countdown, because something is about to happen
+    0. updating           → the server is going away on purpose
+    0. no data disk       → the box booted so that it could say exactly this
+    1. unclaimed, factory → get the Mac app, and the four words that let it in
     2. unclaimed, frozen  → reset box: the words are the ones you saved
     3. session live       → the words are spent; who is setting up, instead
     4. claimed            → ambient
+
+  The three at the top are interruptions, not steps. Each is a thing happening
+  to the box right now that the ordinary screens would paper over — most
+  sharply the last one, where an ambient "REACHABLE · 3 devices syncing" over a
+  missing disk would spend the entire reason the OS lives on the eMMC.
 
   A fifth — the six-digit pair code — was added and then removed the same day
   (2026-08-13), and the round trip is the lesson. It went in because the app
@@ -72,6 +80,8 @@
 		setup_session: string | null | undefined;
 		pair_code: string | null;
 		data_disk_fault: string | null | undefined;
+		button_held_secs: number | null | undefined;
+		button_hold_target: number;
 		claimed: boolean;
 		online: boolean;
 		connectivity: string;
@@ -151,6 +161,16 @@
 		}
 	}
 
+	// Seconds the case button has been held, or null between presses. Read
+	// straight off the state poll — the panel is output-only, so this is the
+	// only way it can know, and the 2s setup cadence is what makes a 3s hold
+	// legible at all. (The ambient poll is 30s, so a hold on a CLAIMED box is
+	// re-cadenced below.)
+	const held = $derived(state_?.button_held_secs ?? null);
+	const remaining = $derived(
+		Math.max(0, (state_?.button_hold_target ?? 3) - (held ?? 0)),
+	);
+
 	// Has the latch gone stale? An update that never finished must stop
 	// claiming it is about to.
 	//
@@ -187,7 +207,10 @@
 	// Re-cadence when the box crosses between setup and ambient — in either
 	// direction, since `virtues reset` puts a claimed box back into setup.
 	$effect(() => {
-		const want = state_?.claimed ? AMBIENT_POLL_MS : SETUP_POLL_MS;
+		// A claimed box is on the 30s ambient cadence, which cannot see a 3s
+		// hold at all — so the ONE screen the button matters on would never
+		// draw. Once a hold is seen, drop to the setup cadence until it ends.
+		const want = state_?.claimed && held === null ? AMBIENT_POLL_MS : SETUP_POLL_MS;
 		if (want !== pollMs) schedulePoll(want);
 	});
 
@@ -221,7 +244,23 @@
 </script>
 
 <div class="screen">
-	{#if updatingNow}
+	{#if held !== null}
+		<!-- THE CASE BUTTON, being held right now. Outranks everything, including
+		     the update and disk states: something is happening to this box in
+		     the next second or two and the person doing it — or the cable
+		     resting on it — needs to see that before it lands, not after.
+
+		     Counts DOWN, not up: "2" is a deadline, "1s held" is trivia. And it
+		     names what will happen in the owner's words, because the one thing
+		     they must not conclude is that they are wiping their record. -->
+		<div class="fault">
+			<span class="lockup"><span class="mk">∴</span>{state_?.box_name ?? ""}</span>
+			<p class="doing">Keep holding to forget your devices</p>
+			<div class="phrase">{remaining}</div>
+			<div class="foot">Your record and your words are kept. You'll set your
+				devices up again with the four words you saved.</div>
+		</div>
+	{:else if updatingNow}
 		<!-- UPDATING. Outranks every other screen, including the boot mark: the
 		     server is gone on purpose, and this is the one state where the
 		     panel knows something the box cannot currently tell it. Says what

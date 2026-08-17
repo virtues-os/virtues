@@ -1353,6 +1353,30 @@ pub async fn apply_appliance_profile(cfg: &InstallConfig) -> Result<()> {
     // The data disk is real on an appliance, so Postgres must wait for it.
     install_postgres_mount_guard(cfg)?;
 
+    // Hand the power key to us.
+    //
+    // The button behind the case is the appliance's only physical control, and
+    // logind owns it by default — so the first press powers the box off, which
+    // is both the wrong action and an unrecoverable one for an owner who has
+    // opened the case precisely because they cannot reach their box.
+    //
+    // `ignore` rather than a different logind action, because none of logind's
+    // options is what we want: it can power off, reboot, suspend, hibernate or
+    // lock, and cannot run this. `maintenance::reset_button` reads the evdev
+    // node itself once logind stops consuming the key.
+    //
+    // A drop-in, so an apt upgrade of systemd does not overwrite it, and so the
+    // reason is legible next to the setting rather than buried in a vendor file.
+    fs::create_dir_all("/etc/systemd/logind.conf.d").context("mkdir logind.conf.d")?;
+    fs::write("/etc/systemd/logind.conf.d/10-virtues-power-key.conf", LOGIND_POWER_KEY)
+        .context("writing the logind power-key drop-in")?;
+    // reload-or-restart rather than restart: restarting logind on a box with an
+    // active session kills it.
+    let mut reload = Command::new("systemctl");
+    reload.args(["reload-or-restart", "systemd-logind"]);
+    let _ = reload.output().await;
+    ui::ok("Power key handed to Virtues (hold 3s to forget devices)");
+
     // Retire the captive-portal plumbing, on every run.
     //
     // Two artifacts used to go in here so a phone joining the setup AP would
@@ -1461,6 +1485,23 @@ async fn retire_captive_artifacts() {
         ui::ok("Removed the retired captive-portal DNS + :80 redirect");
     }
 }
+
+/// Stops logind consuming the power key, so `maintenance::reset_button` can
+/// read it. Without this the first press of the only button on the product
+/// powers the box off.
+const LOGIND_POWER_KEY: &str = r#"# Installed by virtues-installer (appliance profile).
+#
+# The button behind the case forgets this box's paired devices when it is held
+# for three seconds. It does NOT power the box off, and it does not erase
+# anything: the record, the network, the account and the four-word phrase all
+# survive. See maintenance::reset_button and docs/onboarding-paradigm.md.
+#
+# HandlePowerKeyLongPress is set too, or logind claims the long press even
+# while ignoring the short one - which is exactly the gesture we need.
+[Login]
+HandlePowerKey=ignore
+HandlePowerKeyLongPress=ignore
+"#;
 
 /// Lets `User=virtues` raise the setup AP and join a network. See
 /// `apply_appliance_profile` for why an appliance needs this and a DIY box
@@ -2256,6 +2297,7 @@ pub fn write_install_manifest(
         extra_files.push(
             "/etc/systemd/system/postgresql@.service.d/10-virtues-data-mount.conf".to_string(),
         );
+        extra_files.push("/etc/systemd/logind.conf.d/10-virtues-power-key.conf".to_string());
     }
 
     let manifest = serde_json::json!({

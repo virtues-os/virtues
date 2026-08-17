@@ -166,6 +166,13 @@ pub async fn run(client: Virtues, host: &str, port: u16) -> Result<()> {
     // here.
     crate::maintenance::ble_provision::spawn(client.database.pool().clone());
 
+    // The button behind the case. Held for three seconds, it forgets every
+    // paired device — and nothing else: not the network, not the account, not
+    // the data, and not the phrase. Anyone who can open the case can make that
+    // nuisance; only someone holding the four words can then claim the box.
+    // No-op off an appliance. See maintenance::reset_button.
+    crate::maintenance::reset_button::spawn(client.database.pool().clone());
+
     // Persistent review pair code, for App Store review boxes only. No-op
     // unless VIRTUES_REVIEW_PAIR_CODE is set, so customer boxes are untouched.
     // A failure here is loud but not fatal: a demo box that came up without
@@ -253,6 +260,10 @@ pub async fn run(client: Virtues, host: &str, port: u16) -> Result<()> {
         // "In your own words" — the interview behind the narrative identity.
         // Authenticated both ways: unlike /api/setup/state, nothing here is
         // public. It is the most personal writing on the box.
+        // What the box actually holds, counted — the reveal's first movement.
+        // Read-only and derived entirely from tables the caller could already
+        // read, so it adds no reach, only arithmetic.
+        .route("/api/census", get(crate::api::census::census_handler))
         // Draft the document from the answers. POST because it spends money and
         // rewrites the document — not something a refresh should trigger.
         .route(
