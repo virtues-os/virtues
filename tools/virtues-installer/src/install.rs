@@ -1509,20 +1509,31 @@ const PG_MOUNT_GUARD_TEMPLATE: &str = r#"# Installed by virtues-installer.
 # and fails — recoverably, but with a red unit on the one screen the owner is
 # watching hardest.
 #
-# ExecStartPre is NOT redundant with RequiresMountsFor, and the gap it closes is
-# the likelier failure. RequiresMountsFor only binds us to a mount unit that
-# EXISTS — i.e. a disk fstab knows about. A unit whose first-boot claim never ran
-# at all (no NVMe fitted, or the blank check declined) has no fstab entry, so the
-# dependency resolves to the root mount, is trivially satisfied, and Postgres
-# initdb's onto the boot card: working, healthy-looking, and wearing out the one
-# medium this whole layout exists to protect. `mountpoint -q` asks the question
-# we actually mean.
+# ExecStartPre fires ONLY when fstab declares a data disk, and that condition is
+# the whole correction. The first version of this asked `mountpoint -q` flatly —
+# which bricks a board whose ROOT is already the NVMe and whose state root is a
+# directory on it. That is not a hypothetical layout; it is what the lab board
+# is, and running the installer on it would have left Postgres refusing to start
+# with no way for the owner to find out why. Verified before shipping it.
+#
+# So: fstab entry means "this box was given a data disk", and then the mount is
+# required. No entry means the data lives on the root filesystem by design, and
+# there is nothing to wait for.
+#
+# WHAT THIS DELIBERATELY DOES NOT DO is refuse when a disk that SHOULD be here
+# is absent, and that is a trade rather than an oversight. virtues.service waits
+# on pg_isready, and the panel is served by virtues.service — so a Postgres that
+# refuses takes the display with it, and the owner gets a black screen instead
+# of the "Storage disconnected" message written for exactly this moment. A box
+# running on the wrong disk is recoverable and says so on the glass; a box that
+# will not boot says nothing at all. See `crate::data_disk` for the half that
+# reports it.
 [Unit]
 RequiresMountsFor=__DATA_DIR__
 After=virtues-firstboot.service
 
 [Service]
-ExecStartPre=/usr/bin/mountpoint -q __DATA_DIR__
+ExecStartPre=/bin/sh -c '! grep -qE "[[:space:]]__DATA_DIR__[[:space:]]" /etc/fstab || mountpoint -q __DATA_DIR__'
 "#;
 
 /// Stops logind consuming the power key, so `maintenance::reset_button` can

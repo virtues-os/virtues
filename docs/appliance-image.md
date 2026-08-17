@@ -163,14 +163,26 @@ the owner is watching hardest. And that same drop-in carries
 `RequiresMountsFor=/var/lib/postgresql/%I` does **not** cover: the dependency is
 taken on the path as written, not on what the symlink resolves to.
 
+**A box that has lost its disk still boots, and that is deliberate.** The guards
+below refuse to start Postgres when a disk that fstab declares is absent — but
+they do NOT refuse when no disk was ever configured, and neither does anything
+else. The reason is a dependency chain worth knowing: `virtues.service` waits on
+`pg_isready`, and the panel is served by `virtues.service`. So a Postgres that
+refuses takes the display down with it, and the owner gets a black screen
+instead of the "Storage disconnected" message written for exactly that moment.
+A box running on the wrong disk is recoverable and says so on the glass; a box
+that will not boot says nothing at all.
+
 **What the guards do and do not cover.** `RequiresMountsFor` only binds Postgres
 to a mount unit that *exists* — a disk fstab already knows about — so it catches
 "the data disk is configured and absent" and not "the claim never ran at all".
 The second is the likelier failure on a virgin unit (no NVMe fitted, or the
 blank-disk check declining), and there the dependency resolves to the root mount
-and is trivially satisfied. That is why the drop-in also carries
-`ExecStartPre=/usr/bin/mountpoint -q <data dir>`, which asks the question we
-actually mean. The panel's "Storage disconnected" state checks mount-ness
+and is trivially satisfied. That is why the drop-in also carries an `ExecStartPre` — but one CONDITIONED on
+fstab declaring a data disk. Asking `mountpoint -q` flatly bricks a board whose
+root is already the NVMe and whose state root is a directory on it, which is
+exactly what the lab board is; running the installer on it would have left
+Postgres refusing to start with nothing saying why. The panel's "Storage disconnected" state checks mount-ness
 directly and so covers both from the start.
 
 **Deprovision removes the cluster,** because it is per-unit state — it is where
