@@ -346,47 +346,89 @@ async fn resolve_or_create_merchant_org(
     Ok(org_id)
 }
 
-/// Normalize merchant name for matching
+/// Normalize a merchant descriptor down to the business it names.
 ///
-/// Removes common suffixes, special characters, and normalizes capitalization.
+/// THIS FUNCTION USED TO MERGE UNRELATED BUSINESSES. It walked a list it called
+/// "suffixes" and truncated at the FIRST occurrence of each — `find`, not
+/// `ends_with` — and the list contained `"*"` and `" CO"`. So:
+///
+///   "SQ *BLUE BOTTLE"     → truncate at `*` → "Sq"
+///   "TST* PIZZERIA"       → truncate at `*` → "Tst"
+///   "BLUE BOTTLE COFFEE"  → `" CO"` matches inside " COFFEE" → "Blue Bottle"
+///
+/// Every Square, Toast and PayPal charge on the box therefore resolved to ONE
+/// shared `wiki_orgs` row, which then accumulated refs from unrelated
+/// transactions. Silent graph corruption, from a deterministic writer, on the
+/// one path the doctrine trusts precisely because it does not guess.
+///
+/// Two fixes, in order:
+///
+///   1. A processor tag is a PREFIX and the merchant is what follows it. Take
+///      the text after the marker, never before.
+///   2. A corporate suffix only counts as a suffix — matched on whole trailing
+///      words, so "COFFEE" is never mistaken for "CO".
 fn normalize_merchant_name(name: &str) -> String {
-    let mut normalized = name.to_string();
-
-    // Remove common suffixes
-    let suffixes = [
-        " INC",
-        " LLC",
-        " LTD",
-        " CORP",
-        " CO",
-        " #",
-        "*",
-        " - ",
-        "  ",
+    /// Trailing words that name a legal form rather than a business.
+    const CORP_SUFFIXES: &[&str] = &[
+        "INC", "INC.", "LLC", "L.L.C.", "LTD", "LTD.", "CORP", "CORP.", "CO", "CO.", "PLC",
     ];
-    for suffix in &suffixes {
-        if let Some(pos) = normalized.to_uppercase().find(suffix) {
-            normalized.truncate(pos);
+
+    let original = name.trim();
+
+    // 1. Payment-processor tags: "SQ *", "TST*", "PAYPAL *", "SP ". The marker
+    //    introduces the merchant, so everything BEFORE it is the processor and
+    //    everything after is the name we want. Split on the LAST marker, since
+    //    some descriptors carry two ("PP*SQ *SHOP").
+    let mut s = match original.rfind('*') {
+        Some(pos) => original[pos + 1..].trim().to_string(),
+        None => original.to_string(),
+    };
+
+    // 2. Store and reference numbers: "STARBUCKS #1234", "SHELL - 4471".
+    for sep in [" #", "#", " - "] {
+        if let Some(pos) = s.find(sep) {
+            s.truncate(pos);
         }
     }
 
-    // Title case
-    normalized
+    // 3. Trailing legal-form words, repeatedly — "ACME CO LTD" loses both.
+    //    Compared whole-word against the last token, which is the difference
+    //    between this and the bug above.
+    loop {
+        let trimmed = s.trim_end();
+        let Some((head, last)) = trimmed.rsplit_once(char::is_whitespace) else {
+            break;
+        };
+        if CORP_SUFFIXES.contains(&last.to_uppercase().as_str()) {
+            s = head.to_string();
+        } else {
+            s = trimmed.to_string();
+            break;
+        }
+    }
+
+    let titled = s
         .split_whitespace()
         .map(|word| {
             let mut chars = word.chars();
             match chars.next() {
                 None => String::new(),
                 Some(first) => {
-                    first.to_uppercase().collect::<String>()
-                        + &chars.as_str().to_lowercase()
+                    first.to_uppercase().collect::<String>() + &chars.as_str().to_lowercase()
                 }
             }
         })
         .collect::<Vec<_>>()
-        .join(" ")
-        .trim()
-        .to_string()
+        .join(" ");
+
+    // Never return nothing. A descriptor that is entirely processor tag and
+    // punctuation would otherwise mint an org with an empty name, and empty
+    // names collide with each other — the very failure this rewrite exists to
+    // end.
+    if titled.trim().is_empty() {
+        return original.to_string();
+    }
+    titled
 }
 
 /// Categorize merchant based on Plaid category
@@ -907,6 +949,43 @@ fn calculate_visit_radius(visit: &Visit) -> f64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The exact descriptors that used to collapse into one org.
+    #[test]
+    fn processor_tags_do_not_eat_the_merchant() {
+        // Was "Sq" — and so was every other Square charge on the box.
+        assert_eq!(normalize_merchant_name("SQ *BLUE BOTTLE"), "Blue Bottle");
+        assert_eq!(normalize_merchant_name("TST* PIZZERIA DELFINA"), "Pizzeria Delfina");
+        assert_eq!(normalize_merchant_name("PAYPAL *STEAM GAMES"), "Steam Games");
+        // Two tags, innermost wins.
+        assert_eq!(normalize_merchant_name("PP*SQ *CORNER SHOP"), "Corner Shop");
+    }
+
+    /// " CO" used to match inside " COFFEE".
+    #[test]
+    fn a_suffix_must_actually_be_a_suffix() {
+        assert_eq!(normalize_merchant_name("BLUE BOTTLE COFFEE"), "Blue Bottle Coffee");
+        assert_eq!(normalize_merchant_name("COSTCO WHOLESALE"), "Costco Wholesale");
+        assert_eq!(normalize_merchant_name("CORNER STORE"), "Corner Store");
+        // But a real trailing legal form still goes, including stacked ones.
+        assert_eq!(normalize_merchant_name("ACME CO"), "Acme");
+        assert_eq!(normalize_merchant_name("ACME CO LTD"), "Acme");
+        assert_eq!(normalize_merchant_name("INITECH INC."), "Initech");
+    }
+
+    #[test]
+    fn store_numbers_are_dropped() {
+        assert_eq!(normalize_merchant_name("STARBUCKS #1234"), "Starbucks");
+        assert_eq!(normalize_merchant_name("SHELL - 4471"), "Shell");
+    }
+
+    /// An empty name would collide with every other empty name — the failure
+    /// this rewrite exists to end, reintroduced by the fix itself.
+    #[test]
+    fn never_normalizes_to_nothing() {
+        assert_eq!(normalize_merchant_name("SQ *"), "SQ *");
+        assert_eq!(normalize_merchant_name("   "), "");
+    }
 
     #[test]
     fn test_haversine_distance() {
