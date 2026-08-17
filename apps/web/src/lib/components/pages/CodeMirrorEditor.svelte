@@ -535,7 +535,6 @@
 
 	{#if slashMenuOpen}
 		<SlashMenu
-			query={slashMenuQuery}
 			commands={filteredCommands}
 			position={slashMenuPos}
 			onSelect={handleSlashSelect}
