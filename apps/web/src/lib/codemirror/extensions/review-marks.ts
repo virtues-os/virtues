@@ -256,6 +256,28 @@ const CONTENT_CLASS: Record<ReviewKind, string> = {
 	comment: 'cm-review-note',
 };
 
+/**
+ * Offsets, within a body, of the backslashes that are ESCAPE MARKERS rather
+ * than content — the ones `unescapeReviewBody` would consume.
+ *
+ * The escaped character is skipped after each hit, so in `\\` only the first
+ * backslash is syntax; the second is a real backslash the writer will get back.
+ * A backslash before anything else (`\n`, `\d`) is ordinary text and is left
+ * alone, matching what unescaping actually does.
+ */
+function escapeOffsets(body: string): number[] {
+	const offsets: number[] = [];
+	for (let i = 0; i < body.length; i++) {
+		if (body[i] !== '\\') continue;
+		const next = body[i + 1];
+		if (next === '\\' || next === '{' || next === '}') {
+			offsets.push(i);
+			i++;
+		}
+	}
+	return offsets;
+}
+
 function buildReviewDecorations(state: EditorState): DecorationSet {
 	const ranges: Range<Decoration>[] = [];
 
@@ -271,9 +293,21 @@ function buildReviewDecorations(state: EditorState): DecorationSet {
 			: Decoration.replace({});
 
 		ranges.push(delimiter.range(span.from, openTo));
+
 		if (closeFrom > openTo) {
 			ranges.push(Decoration.mark({ class: CONTENT_CLASS[span.kind] }).range(openTo, closeFrom));
+
+			// Escape backslashes are syntax, so they take the same quieting the
+			// delimiters get — DIMMED, never hidden. Replacing them would put a
+			// caret position behind a character that is not on screen, which is
+			// the exact dishonesty reveal-on-touch exists to prevent, and here it
+			// would be permanent rather than momentary.
+			for (const offset of escapeOffsets(span.body)) {
+				const at = openTo + offset;
+				ranges.push(Decoration.mark({ class: 'cm-formatting-mark' }).range(at, at + 1));
+			}
 		}
+
 		ranges.push(delimiter.range(closeFrom, span.to));
 	}
 
