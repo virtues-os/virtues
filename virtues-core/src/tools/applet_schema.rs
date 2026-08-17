@@ -298,6 +298,72 @@ pub fn declared_tables(ddl: &str) -> Vec<DeclaredTable> {
     out
 }
 
+/// Split DDL into statements on semicolons that actually terminate one.
+///
+/// `ddl.split(';')` was wrong in a way that only bites real input: a semicolon
+/// inside a `-- comment` or a string literal cut the statement in half and fed
+/// the database a fragment. Applet DDL is written by a model and commented in
+/// prose, and prose has semicolons in it — this was going to happen to the
+/// first tracker anyone wrote, and did.
+fn split_statements(ddl: &str) -> Vec<String> {
+    let mut out = Vec::new();
+    let mut cur = String::new();
+    let mut chars = ddl.chars().peekable();
+    let (mut in_line, mut in_block, mut in_str) = (false, false, false);
+
+    while let Some(c) = chars.next() {
+        if in_line {
+            cur.push(c);
+            if c == '\n' {
+                in_line = false;
+            }
+            continue;
+        }
+        if in_block {
+            cur.push(c);
+            if c == '*' && chars.peek() == Some(&'/') {
+                cur.push(chars.next().unwrap());
+                in_block = false;
+            }
+            continue;
+        }
+        if in_str {
+            cur.push(c);
+            if c == '\'' {
+                // '' is an escaped quote, not the end of the literal.
+                if chars.peek() == Some(&'\'') {
+                    cur.push(chars.next().unwrap());
+                } else {
+                    in_str = false;
+                }
+            }
+            continue;
+        }
+        match c {
+            '-' if chars.peek() == Some(&'-') => {
+                cur.push(c);
+                cur.push(chars.next().unwrap());
+                in_line = true;
+            }
+            '/' if chars.peek() == Some(&'*') => {
+                cur.push(c);
+                cur.push(chars.next().unwrap());
+                in_block = true;
+            }
+            '\'' => {
+                cur.push(c);
+                in_str = true;
+            }
+            ';' => out.push(std::mem::take(&mut cur)),
+            _ => cur.push(c),
+        }
+    }
+    if !cur.trim().is_empty() {
+        out.push(cur);
+    }
+    out
+}
+
 /// Split a column list on commas that are not inside parentheses or quotes.
 fn split_top_level(body: &str) -> Vec<String> {
     let mut out = Vec::new();
@@ -485,14 +551,18 @@ async fn run_schema_statements(pool: &PgPool, ddl: &str, commit: bool) -> Result
         .execute(&mut *tx)
         .await
         .map_err(|e| e.to_string())?;
-    for stmt in ddl.split(';') {
+    for stmt in split_statements(ddl) {
         let stmt = stmt.trim();
         if stmt.is_empty() {
             continue;
         }
         if let Err(e) = sqlx::query(stmt).execute(&mut *tx).await {
             tx.rollback().await.ok();
-            return Err(format!("in statement '{}…': {e}", &stmt[..stmt.len().min(60)]));
+            // Truncate on a CHAR boundary. `&stmt[..60]` panics the moment a
+            // multibyte character straddles the cut, and DDL comments are
+            // prose — em-dashes and quotes land there constantly.
+            let head: String = stmt.chars().take(60).collect();
+            return Err(format!("in statement '{head}…': {e}"));
         }
     }
     if commit {
@@ -695,6 +765,31 @@ mod tests {
             detect_drift(&pool, ddl).await.is_empty(),
             "unchanged resubmit declares nothing new"
         );
+    }
+
+    #[test]
+    fn a_semicolon_in_a_comment_does_not_split_a_statement() {
+        let ddl = "-- it is honest; a made-up number is not\n\
+                   CREATE TABLE applet_x.t (id TEXT);\n\
+                   -- and another; here\n\
+                   CREATE TABLE applet_x.u (id TEXT);";
+        let stmts: Vec<String> = split_statements(ddl)
+            .into_iter()
+            .filter(|s| !s.trim().is_empty())
+            .collect();
+        assert_eq!(stmts.len(), 2, "comments must not terminate statements");
+        assert!(stmts[0].contains("applet_x.t"));
+        assert!(stmts[1].contains("applet_x.u"));
+    }
+
+    #[test]
+    fn a_semicolon_in_a_string_literal_does_not_split_either() {
+        let ddl = "CREATE TABLE applet_x.t (k TEXT DEFAULT 'a;b', j TEXT DEFAULT \'it\'\'s\');";
+        let stmts: Vec<String> = split_statements(ddl)
+            .into_iter()
+            .filter(|s| !s.trim().is_empty())
+            .collect();
+        assert_eq!(stmts.len(), 1);
     }
 
     #[test]

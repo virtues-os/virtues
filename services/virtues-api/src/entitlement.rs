@@ -281,14 +281,26 @@ pub async fn refund(pool: &PgPool, account_id: &str, billed_micros: i64) -> Resu
 }
 
 /// Register (or rotate) a device api key for an account. Ensures the account
-/// exists (creating an empty, cohort-expiry wallet if new), then makes the
-/// given key hash the account's single active credential — replacing any
-/// prior key. This is the recovery/rotation primitive: the balance is never
-/// touched, so re-linking re-points access without moving money.
+/// exists (creating an empty, cohort-expiry wallet if new), then installs the
+/// given key. The balance is never touched, so re-linking re-points access
+/// without moving money.
+///
+/// **Scoped to a BOX when `box_id` is given.** Rotation replaces that box's own
+/// key and leaves every sibling alone, so one account can hold several boxes —
+/// a home and an office, a replacement mid-migration, a box bought for family.
+/// Passing `None` keeps the historical behaviour (replace every key on the
+/// account), which is what pre-2026-08-12 keys and any caller that does not
+/// know its box get.
+///
+/// Until now this always replaced every key on the account, which made a second
+/// box silently kill the first. Nobody hit it because linking a second box was
+/// laborious; it becomes one tap as soon as the app can vouch for a link, so
+/// the destruction had to go first.
 pub async fn register_device(
     pool: &PgPool,
     api_key_hash: &[u8],
     account_id: &str,
+    box_id: Option<&str>,
 ) -> Result<()> {
     let now = Utc::now();
     let mut tx = pool.begin().await?;
@@ -306,18 +318,34 @@ pub async fn register_device(
     .await
     .context("ensure account on device register")?;
 
-    // Single active key per account: drop any prior key, install this one.
-    sqlx::query("DELETE FROM device_keys WHERE account_id = $1")
-        .bind(account_id)
-        .execute(&mut *tx)
-        .await
-        .context("clear prior device keys")?;
-    sqlx::query("INSERT INTO device_keys (api_key_hash, account_id) VALUES ($1, $2)")
-        .bind(api_key_hash)
-        .bind(account_id)
-        .execute(&mut *tx)
-        .await
-        .context("insert device key")?;
+    // Drop only what this registration replaces: this BOX's previous key when we
+    // know which box it is, otherwise the whole account (the legacy path).
+    match box_id {
+        Some(id) => {
+            sqlx::query("DELETE FROM device_keys WHERE account_id = $1 AND box_id = $2")
+                .bind(account_id)
+                .bind(id)
+                .execute(&mut *tx)
+                .await
+                .context("clear this box's prior key")?;
+        }
+        None => {
+            sqlx::query("DELETE FROM device_keys WHERE account_id = $1")
+                .bind(account_id)
+                .execute(&mut *tx)
+                .await
+                .context("clear prior device keys")?;
+        }
+    }
+    sqlx::query(
+        "INSERT INTO device_keys (api_key_hash, account_id, box_id) VALUES ($1, $2, $3)",
+    )
+    .bind(api_key_hash)
+    .bind(account_id)
+    .bind(box_id)
+    .execute(&mut *tx)
+    .await
+    .context("insert device key")?;
 
     tx.commit().await?;
     Ok(())
@@ -566,14 +594,14 @@ mod tests {
         credit(&pool, "acct-r", 50_000_000, CreditMode::Set, None)
             .await
             .unwrap();
-        register_device(&pool, b"keyhash-old-0000000000000000", "acct-r")
+        register_device(&pool, b"keyhash-old-0000000000000000", "acct-r", None)
             .await
             .unwrap();
         charge(&pool, "acct-r", 1_000_000).await.expect("charge under old key path");
 
         let before = get_by_account_id(&pool, "acct-r").await.unwrap().unwrap().balance_micros;
         // Rotate to a new key for the SAME account.
-        register_device(&pool, b"keyhash-new-0000000000000000", "acct-r")
+        register_device(&pool, b"keyhash-new-0000000000000000", "acct-r", None)
             .await
             .unwrap();
         let resolved = resolve_account_by_key(&pool, b"keyhash-new-0000000000000000")

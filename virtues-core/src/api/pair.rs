@@ -81,6 +81,33 @@ fn random_pair_code() -> String {
     code
 }
 
+/// How many devices the owner has actually paired.
+///
+/// **Excludes `local-console`.** Every box mints that row at first boot —
+/// `middleware::auth::ensure_console_device` creates it so a browser running on
+/// the box itself is authenticated — so a bare `count(*) FROM app_device` is
+/// `1` on a box nobody has ever touched. Anything asking "has someone claimed
+/// this box" and counting rows naively gets `true` from the moment it powers
+/// on. Found on a fresh Dragon 2026-08-07, where it silently disabled the whole
+/// appliance onboarding path: the setup AP never rose, `/api/provision/*` 404'd,
+/// and the display skipped to its ambient screen.
+///
+/// `api::box_status::compute_setup_state` deliberately still counts the console
+/// row. Its `claimed` step is in `REQUIRED_SETUP_STEPS`, so making it honest
+/// would push a box whose only session is the on-box browser permanently back
+/// into `/setup` — that surface's console user has no device to pair *with*.
+/// The two answers differ because the questions do: "is there any session here"
+/// versus "did a human bring a device to this box".
+pub async fn paired_device_count(pool: &PgPool) -> i64 {
+    sqlx::query_scalar(
+        "SELECT count(*) FROM app_device WHERE revoked_at IS NULL AND id <> $1",
+    )
+    .bind(crate::middleware::auth::CONSOLE_DEVICE_ID)
+    .fetch_one(pool)
+    .await
+    .unwrap_or(0)
+}
+
 pub(crate) fn hash_token(token: &str) -> String {
     let mut h = Sha256::new();
     h.update(token.as_bytes());
@@ -370,6 +397,87 @@ pub struct MintResponse {
 /// device. The token is minted `authorized` (the caller is the authenticated
 /// owner), so the QR is immediately redeemable; closing the modal cancels it
 /// via `/api/pair/deny/:id`.
+/// `POST /api/pair/reopen-onboarding` — revoke every paired device, keep
+/// everything else. The `virtues reset --keep-data` path, reachable from the
+/// app.
+///
+/// Deliberately NOT the full reset, which drops every table and belongs behind
+/// the CLI's typed-hostname confirmation — a settings screen is the wrong place
+/// for a screwdriver.
+///
+/// Two reasons it earns a button. Re-pairing was otherwise a shell on the box,
+/// which an appliance owner does not have. And it is the ONLY way to reach a
+/// box that is unclaimed with its phrase already frozen — the "your saved words
+/// still work" panel state, which had no way to be produced and so had never
+/// run on hardware (2026-08-13).
+///
+/// Requires an authenticated device: whoever is revoking every device has to
+/// already be one of them.
+pub async fn reopen_onboarding_handler(
+    State(pool): State<PgPool>,
+    user: AuthUser,
+) -> impl IntoResponse {
+    match revoke_all_devices(&pool).await {
+        Ok((devices, creds)) => {
+            tracing::info!(
+                by_device = %user.device_id,
+                devices, creds,
+                "onboarding re-opened from the app — every device revoked"
+            );
+            (StatusCode::OK, Json(json!({ "devices": devices, "credentials": creds })))
+        }
+        Err(e) => {
+            tracing::warn!("reopen onboarding: {e:#}");
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(json!({"error": "internal"})),
+            )
+        }
+    }
+}
+
+/// Revoke every paired device and its credentials, in one transaction.
+///
+/// Returns `(devices, credentials)` revoked.
+///
+/// **This is the whole of "reset".** Shared by the app's
+/// `/api/pair/reopen-onboarding` and the appliance's physical button
+/// (`maintenance::reset_button`) so the two cannot drift — a physical control
+/// and a software one that do subtly different things is how an owner ends up
+/// unable to predict what their own hardware will do.
+///
+/// ## What it deliberately does NOT touch
+///
+/// The network, the account link, the data, and the phrase. `onboarding-paradigm.md`
+/// originally had the button forget the network and unlink the account too; that
+/// is worse on every axis. It adds no security — the phrase is the entire gate,
+/// and a stranger with a screwdriver still cannot claim the box without four
+/// words that are frozen and shown nowhere — while it actively harms the case
+/// the button exists for. The owner who has lost their laptop presses it and now
+/// has a box that is also offline and unlinked, so it can reach neither the
+/// relay nor atlas: recovery got harder, in exchange for nothing.
+///
+/// Credentials go with the devices deliberately. Leaving them active would let a
+/// revoked device keep talking, which is the whole thing being undone.
+pub async fn revoke_all_devices(pool: &PgPool) -> Result<(u64, u64), sqlx::Error> {
+    let mut tx = pool.begin().await?;
+    let devices = sqlx::query("UPDATE app_device SET revoked_at = now() WHERE revoked_at IS NULL")
+        .execute(&mut *tx)
+        .await?
+        .rows_affected();
+    let creds = sqlx::query(
+        "UPDATE credentials SET status = 'revoked', updated_at = now() \
+         WHERE device_id IS NOT NULL AND status = 'active'",
+    )
+    .execute(&mut *tx)
+    .await?
+    .rows_affected();
+    tx.commit().await?;
+    // The box is unclaimed again, so the Improv service should come back and the
+    // panel should return to a setup screen. Both reconcile on their own timers.
+    Ok((devices, creds))
+}
+
 pub async fn mint_handler(
     State(pool): State<PgPool>,
     user: AuthUser,
@@ -876,6 +984,19 @@ pub async fn consume_handler(
     // the fan-out, so its ingest action is created against an allowlisted device.
     crate::relay::after_pairing_change(pool.clone());
 
+    // FIRST claim freezes the setup phrase: it stops rotating, leaves the panel
+    // forever, and becomes this box's permanent credential — the one thing that
+    // will let its owner back in after a reset. Doing it here, at the moment the
+    // box stops being empty, is what makes the reset button safe: from now on a
+    // screwdriver can clear the claim but cannot re-make it.
+    //
+    // Best-effort and idempotent. A failure leaves the phrase rotating, which is
+    // a live-secret-on-glass problem worth shouting about — but never a reason to
+    // undo a pairing the device already believes in.
+    if let Err(e) = crate::api::setup_phrase::freeze_current(&pool).await {
+        tracing::error!(error = %e, "pair: could not freeze the setup phrase — it is still on the panel");
+    }
+
     // Assemble the per-device action fan-out so the device knows which
     // `app_applets.id` to POST each stream flush to. Post-commit best-effort: a
     // failure here doesn't undo the pairing — the device shows up paired but with
@@ -1006,7 +1127,7 @@ pub(crate) async fn insert_device_row(
     Ok(row.0)
 }
 
-fn render_qr_svg(data: &str) -> String {
+pub(crate) fn render_qr_svg(data: &str) -> String {
     use qrcode::{render::svg, QrCode};
     match QrCode::new(data.as_bytes()) {
         Ok(code) => code

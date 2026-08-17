@@ -20,6 +20,21 @@ pub fn iroh_port() -> u16 {
         .unwrap_or(DEFAULT_IROH_PORT)
 }
 
+/// Install ring as the process-default rustls `CryptoProvider`. Idempotent
+/// (Err = someone already installed one, which is exactly as good).
+///
+/// [`build_endpoint`] does this for anything that builds an endpoint — but a
+/// process whose FIRST TLS user is a plain `reqwest` client (built with
+/// `rustls-no-provider`) panics before any endpoint exists, and the panic
+/// aborts if it happens on a thread that cannot unwind. Lived exactly that way
+/// on iOS (2026-08-11): app launch raced the reach plugin's HTTP client
+/// against the endpoint build, and lost often enough to look like a broken
+/// build. Call this synchronously at process/plugin startup, before anything
+/// spawns.
+pub fn install_crypto_provider() {
+    let _ = rustls::crypto::ring::default_provider().install_default();
+}
+
 /// Build the node's iroh `Endpoint` on the `Minimal` preset (ring crypto, no n0
 /// discovery, no n0 relay) — one transport, no third parties.
 ///

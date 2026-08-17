@@ -75,9 +75,29 @@ where
 }
 
 pub async fn start(db: &PgPool, http: &reqwest::Client, atlas_url: &str) -> Result<LinkStart> {
-    let resp = send_with_retry(|| http.post(format!("{}/init/start", atlas_url.trim_end_matches('/'))))
-        .await
-        .context("POST /init/start")?;
+    // Who is asking. Atlas puts this on the verification page — "Link Honest
+    // Kestrel · Dragon Q6A" — so the person signing in can check the name
+    // against the one on the box's own screen. That check is the mitigation
+    // for code-phishing (an attacker showing THEIR code to a victim), so the
+    // identity must come from the box, not be typed by the person. Every
+    // field is advisory: atlas tolerates its absence (older boxes send no
+    // body), and `endpoint_id` is None in the rare pre-bind race.
+    let name = crate::codename::box_codename();
+    let identity = serde_json::json!({
+        "box": {
+            "name": name,
+            "label": crate::codename::pretty(&name),
+            "model": crate::maintenance::setup_ap::is_appliance().then_some("Dragon Q6A"),
+            "endpoint_id": crate::relay::box_endpoint_id(),
+            "version": crate::VERSION,
+        }
+    });
+    let resp = send_with_retry(|| {
+        http.post(format!("{}/init/start", atlas_url.trim_end_matches('/')))
+            .json(&identity)
+    })
+    .await
+    .context("POST /init/start")?;
     if !resp.status().is_success() {
         let s = resp.status();
         let b = resp.text().await.unwrap_or_default();
@@ -110,6 +130,54 @@ pub async fn start(db: &PgPool, http: &reqwest::Client, atlas_url: &str) -> Resu
         interval,
         expires_in,
     })
+}
+
+/// Inject an app-supplied claim grant — a pre-approved `device_code` carried
+/// over BLE (RPC 0x82) — as this box's in-flight link. The normal poll loop
+/// redeems it the moment the box can reach atlas; nothing else about the flow
+/// changes, which is the point: the grant path reuses every line of the
+/// QR-path machinery below it (poll → api key → relay config → rebind).
+///
+/// The stored `user_code`/`verification_uri_complete` are empty on purpose:
+/// this link never had a code meant for a screen, and the display renders its
+/// pending state for the seconds it takes the redeem to land.
+pub async fn inject_grant(db: &PgPool, device_code: &str) -> Result<()> {
+    if device_code.is_empty() {
+        return Err(anyhow!("empty claim grant"));
+    }
+    let meta = serde_json::json!({
+        "user_code": "",
+        "verification_uri_complete": "",
+        "interval": 3,
+        "source": "app_grant",
+    });
+    box_secrets::put(db, INFLIGHT_KEY, device_code, &meta).await
+}
+
+/// The public bits of the in-flight link, if one exists. `user_code` is empty
+/// for app-injected grants (they never had a screen code).
+///
+/// This exists so the display can RESUME a link across a service restart —
+/// or notice a grant the app injected over BLE — instead of minting a fresh
+/// session on top of it: `start` overwrites the stored `device_code`, which
+/// would orphan a code someone may be mid-redeeming on their phone. The
+/// remaining TTL is not stored, so `expires_in` is a fixed optimistic guess;
+/// if the link actually expired, the next poll hears `expired` from atlas and
+/// clears it, which self-corrects within one interval.
+pub async fn inflight(db: &PgPool) -> Result<Option<LinkStart>> {
+    let Some((_device_code, meta)) = box_secrets::get(db, INFLIGHT_KEY).await? else {
+        return Ok(None);
+    };
+    Ok(Some(LinkStart {
+        user_code: meta["user_code"].as_str().unwrap_or("").to_string(),
+        verification_uri: String::new(),
+        verification_uri_complete: meta["verification_uri_complete"]
+            .as_str()
+            .unwrap_or("")
+            .to_string(),
+        interval: meta["interval"].as_u64().unwrap_or(5),
+        expires_in: 900,
+    }))
 }
 
 /// Poll the in-flight link. On `ready`, store the api_key (atlas already
@@ -147,8 +215,15 @@ pub async fn poll(
             // Provision relay reachability (best-effort): atlas mints this box's
             // per-SNI token; the box stores it for the relay subsystem. A failure
             // (e.g. relay disabled → 503) just leaves the box reachable on LAN.
-            if let Err(e) = super::relay::fetch_and_store(db, http, atlas_url, api_key).await {
-                tracing::warn!(error = %e, "relay config provisioning skipped (LAN-only reach)");
+            match super::relay::fetch_and_store(db, http, atlas_url, api_key).await {
+                // The running endpoint keeps whatever relay it bound with (none,
+                // pre-link), so ask the reach loop to rebind with the new config
+                // now — the display advances to the pair code within seconds and
+                // the relay must be real by then, not after the next restart.
+                Ok(()) => crate::relay::request_rebind(),
+                Err(e) => {
+                    tracing::warn!(error = %e, "relay config provisioning skipped (LAN-only reach)")
+                }
             }
             clear_inflight(db).await;
             Ok(LinkStatus::Ready)

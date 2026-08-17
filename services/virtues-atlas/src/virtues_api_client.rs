@@ -20,6 +20,10 @@ pub struct VirtuesApiClient {
 
 #[derive(Debug, Serialize)]
 pub struct RegisterDevice {
+    /// The box's iroh EndpointId, when known. Scopes key rotation to THIS box
+    /// so a second box on the same account does not evict the first.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub box_id: Option<String>,
     /// Lowercase hex of SHA-256(api_key).
     pub api_key_hash: String,
     /// Opaque per-customer account id.

@@ -9,13 +9,13 @@
 	 * parent access; its only data door is the token-scoped, read-only
 	 * /api/face/query bridge injected via virtues.js.
 	 */
-	let { actionId, height = '420px' }: { actionId: string; height?: string } = $props();
+	let { appletId, height = '420px' }: { appletId: string; height?: string } = $props();
 
 	let src = $state<string | null>(null);
 	let err = $state<string | null>(null);
 
 	$effect(() => {
-		const id = actionId;
+		const id = appletId;
 		src = null;
 		err = null;
 		void (async () => {

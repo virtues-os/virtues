@@ -4,11 +4,14 @@
 	import "$lib/icons"; // Pre-load all icons
 	import { UnifiedSidebar } from "$lib/components/sidebar";
 	import { SplitContainer } from "$lib/components/tabs";
+	import MobileShell from "$lib/components/mobile/MobileShell.svelte";
 	import MobileTabBar from "$lib/components/mobile/MobileTabBar.svelte";
 	import MobileSettingsView from "$lib/components/mobile/MobileSettingsView.svelte";
 	import MobileOnboarding from "$lib/components/mobile/MobileOnboarding.svelte";
 	import { mobileLayout } from "$lib/stores/mobileLayout.svelte";
 	import { ContextMenuProvider } from "$lib/components/contextMenu";
+	import SearchModal from "$lib/components/sidebar/SearchModal.svelte";
+	import { search } from "$lib/stores/search.svelte";
 	import DialogHost from "$lib/components/DialogHost.svelte";
 	import ServerProvisioning from "$lib/components/ServerProvisioning.svelte";
 	import { FloatingContent } from "$lib/floating";
@@ -94,7 +97,11 @@
 		document.addEventListener("visibilitychange", checkForNewUi);
 
 		// Global dragover handler: Allow drops on document by preventing default
-		// This is a fallback to ensure drops are never blocked by missing handlers
+		// This is a fallback to ensure drops are never blocked by missing handlers.
+		// The matching `drop` guard is in the ROOT layout — cancelling dragover
+		// here is what makes the whole document a drop target, and an unclaimed
+		// drop on that target navigates the window to the file. See
+		// `routes/+layout.svelte`; the two belong together.
 		document.addEventListener("dragover", (e) => {
 			e.preventDefault();
 			if (e.dataTransfer) {
@@ -357,6 +364,11 @@
 <!-- Global confirm/prompt dialogs (replaces window.confirm/prompt) -->
 <DialogHost />
 
+<!-- Ask/search palette. Mounted here rather than inside UnifiedSidebar, which
+     is where it used to live: the sidebar doesn't render on the phone shell,
+     so the app's only way to find anything didn't exist there. -->
+<SearchModal open={search.open} onClose={() => search.hide()} />
+
 <div
 	class="app-shell flex h-screen w-full bg-surface-elevated"
 	class:mobile-shell={mobileLayout.isMobile}
@@ -382,8 +394,14 @@
 		style="background-image: {windowShellStore.isSplit ? 'none' : 'var(--background-image)'}; background-blend-mode: multiply;"
 	>
 		{#if initialized}
-			<!-- SplitContainer handles both split and mono modes -->
-			<SplitContainer />
+			{#if mobileLayout.isMobile}
+				<!-- One window, no panes, no tabs — and only the visible view
+				     is mounted. -->
+				<MobileShell />
+			{:else}
+				<!-- SplitContainer handles both split and mono modes -->
+				<SplitContainer />
+			{/if}
 		{/if}
 	</main>
 </div>
@@ -484,9 +502,29 @@
 	   height so scrollable content ends above it (the bar is position:fixed).
 	   The padded zones show the themed shell background instead of the bare
 	   native window. */
+	/* The bottom reservation is whichever is taller: the tab bar (plus the home
+	   indicator), or the keyboard. They are never both owed — the bar hides
+	   while the keyboard is up, and the home indicator is behind the keyboard
+	   anyway — so `max()` is the whole rule. `--keyboard-inset` is 0 until
+	   `stores/keyboard.svelte.ts` measures otherwise, which makes this
+	   identical to what it was on every surface without a keyboard.
+
+	   This is also what lifts the composer: the chat input sits in normal flow
+	   at the bottom of its view, so shrinking main's content box moves it up
+	   with the keyboard. No component needs to know it happened. */
+	/* No reservation for the tab bar here, deliberately. The bar is glass, and
+	   glass with nothing behind it is just a grey rectangle — reserving the
+	   space meant the view stopped exactly where the bar began, so there was
+	   never any content underneath to blur, which is the entire effect. The
+	   view now runs to the bottom of the screen and its own scroller carries
+	   the bottom padding instead (see Page.svelte), so the last row is still
+	   reachable but everything above it passes behind the glass on its way up.
+
+	   The keyboard inset stays: that one is not decoration, it is the
+	   difference between seeing what you are typing and not. */
 	main.is-mobile {
 		padding-top: env(safe-area-inset-top);
-		padding-bottom: calc(50px + env(safe-area-inset-bottom));
+		padding-bottom: var(--keyboard-inset, 0px);
 	}
 
 	/* Pin the whole shell to the viewport on mobile. Without this, iOS lets the

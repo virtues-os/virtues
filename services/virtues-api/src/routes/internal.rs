@@ -45,6 +45,11 @@ struct RegisterDeviceBody {
     api_key_hash: String,
     /// Opaque per-customer account id (assigned by atlas).
     account_id: String,
+    /// The box's iroh EndpointId, when the caller knows it. Scopes rotation to
+    /// this box so a sibling box on the same account keeps its key. Absent =
+    /// legacy whole-account replacement.
+    #[serde(default)]
+    box_id: Option<String>,
 }
 
 async fn register_device(
@@ -59,7 +64,8 @@ async fn register_device(
             "api_key_hash must be lowercase hex",
         );
     };
-    match entitlement::register_device(&state.db, &hash, &body.account_id).await {
+    match entitlement::register_device(&state.db, &hash, &body.account_id, body.box_id.as_deref())
+        .await {
         Ok(()) => (StatusCode::CREATED, Json(json!({ "ok": true }))).into_response(),
         Err(e) => {
             tracing::warn!("register device failed: {e:#}");

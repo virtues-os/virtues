@@ -49,6 +49,9 @@ virtues-registry = { path = "../crates/virtues-registry" }
 virtues-helpers = { path = "../crates/virtues-helpers" }
 # iroh reach layer: the box is an iroh Endpoint that serves this axum app over
 # iroh (LAN-direct → hole-punch → our relay). Replaces the hand-rolled relay.
+# Improv wire format, shared with the desktop client that drives it. Protocol
+# only — the `client` feature (btleplug) must never be enabled for the box.
+virtues-improv = { path = "../crates/virtues-improv" }
 virtues-iroh = { path = "../crates/virtues-iroh" }
 # Wire-protocol types shared with every paired-device daemon (iOS, desktop
 # client, etc.). Pure data + serde; no I/O.
@@ -232,6 +235,12 @@ age = { version = "0.12.1", features = ["armor"] }
 # getifaddrs(3) for the BYO-transport auto-notice in net_check (already in the
 # tree transitively; zero new build cost).
 libc = "0.2"
+# BLE wifi provisioning (maintenance::ble_provision) — the Improv service the
+# appliance serves while unclaimed. bluer is the official BlueZ binding; it
+# pulls libdbus-sys, so building on Linux needs libdbus-1-dev (CI installs it;
+# a box needs only libdbus-1-3, which systemd/NM already require). Dev Macs
+# compile the module's no-op stub and skip this dep entirely.
+bluer = { version = "0.17", features = ["bluetoothd"] }
 
 [build-dependencies]
 chrono = "0.4"

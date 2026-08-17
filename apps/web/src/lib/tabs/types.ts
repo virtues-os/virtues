@@ -21,6 +21,7 @@ export type TabType =
 	| 'org' // Wiki organizations: /org, /org/org_{id}
 	| 'notebook' // Notebooks (rooms a chat lives in): /notebooks, /notebook/{id}
 	| 'bookmarks' // Saved web content (browser bookmarks, stars, saved links): /bookmarks
+	| 'bookmark' // One saved thing, and the note on it: /bookmark/{id}
 	| 'day' // Wiki days: /day, /day/day_{date}
 	| 'year' // Wiki years: /year, /year/{year}
 	| 'narrative-identity' // Wiki narrative identity: /narrative-identity

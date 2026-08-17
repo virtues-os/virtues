@@ -13,7 +13,6 @@ An applet's shape is **derived from which fields you set**, never declared. Ther
 | You set | What it is |
 |---|---|
 | `command` | a subprocess: forked per trigger, stdin/stdout JSON |
-| `command` + `supervise = true` | a long-lived supervised service |
 | `agent` | an LLM agent loop (runs after the subprocess phase, if both are set) |
 | a `face/index.html` and neither of the above | a face-only applet — never invoked server-side, so `triggers = []` |
 
@@ -169,7 +168,7 @@ Manifest is **declarative** — what the applet *is*. SQL (`app_applets`) holds 
 | Field | Lives in | Wins on conflict |
 |---|---|---|
 | `name`, `description`, `command`, `triggers`, `schedule`, `default_enabled`, `per_credential`, `source`, `condition`, `until`, `agent`, `config` | manifest.toml | manifest (system + ai applets) / first-seed-only (user applets) |
-| current `enabled`, current `cron_schedule`, `memory`, `last_slot_at` / `next_due_at`, last_run, runs[], `credential_id` (if fanned out) | SQL | always SQL |
+| current `enabled`, current `schedule`, `memory`, `last_slot_at` / `next_due_at`, last_run, runs[], `credential_id` (if fanned out) | SQL | always SQL |
 
 User toggles via the UI (enable/disable, change cron) write SQL only — your manifest is unchanged. User edits to manifest.toml propagate via reconcile but don't blow away user-managed runtime state.
 

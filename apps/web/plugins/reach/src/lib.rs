@@ -608,6 +608,19 @@ impl ReachState {
     Ok(self.status().await)
   }
 
+  /// Persist a pairing whose consume exchange rode the box's Bluetooth (RPC
+  /// 0x83 — for LANs that block peer-to-peer) and light up reach, exactly as
+  /// [`Self::pair`] does for the HTTP path.
+  pub async fn pair_finish_ble(
+    &self,
+    response_json: &str,
+    identity: virtues_reach_client::pair::MintedIdentity,
+  ) -> Result<ReachStatus> {
+    virtues_reach_client::pair::finish_consume(self.store.as_ref(), response_json, identity)?;
+    self.ensure_serving().await?;
+    Ok(self.status().await)
+  }
+
   pub fn forget(&self) -> Result<()> {
     // Full teardown so a re-pair (even to a different box) serves fresh WITHOUT an
     // app restart: abort the loopback + drain tasks (frees the loopback port),
@@ -628,7 +641,7 @@ impl ReachState {
 
 /// Normalize a user-typed box address to an `http://host:port` origin
 /// (default port 8000), mirroring the desktop connect UI.
-fn normalize_server(input: &str) -> String {
+pub(crate) fn normalize_server(input: &str) -> String {
   let s = input.trim().trim_end_matches('/');
   if s.starts_with("http://") || s.starts_with("https://") {
     return s.to_string();
@@ -651,18 +664,59 @@ impl<R: Runtime, T: Manager<R>> ReachExt<R> for T {
   }
 }
 
+// The Swift half (`ios/Sources/ReachPlugin.swift`): programmatic wifi join via
+// NEHotspotConfiguration, for driving an appliance's setup-AP flow from inside
+// the app instead of sending the user to Settings and a captive sheet.
+#[cfg(target_os = "ios")]
+tauri::ios_plugin_binding!(init_plugin_reach);
+
+/// Handle to the registered iOS plugin, for `run_mobile_plugin` calls.
+/// Managed state so commands can reach it; iOS-only by construction.
+#[cfg(target_os = "ios")]
+pub(crate) struct IosPluginHandle<R: Runtime>(pub tauri::plugin::PluginHandle<R>);
+
 pub fn init<R: Runtime>() -> TauriPlugin<R> {
+  // FIRST, synchronously, before anything spawns: the process-default rustls
+  // CryptoProvider. reqwest here is built `rustls-no-provider`, and building
+  // a client without a provider installed is a PANIC — one that aborts the
+  // app when it fires on a no-unwind thread. Launch used to race this
+  // plugin's HTTP users against `build_endpoint` (which also installs it),
+  // and losing that race looked exactly like a broken build (iOS,
+  // 2026-08-11, three crash reports deep).
+  virtues_reach_client::install_crypto_provider();
   Builder::new("reach")
     .invoke_handler(tauri::generate_handler![
       commands::pair,
       commands::reach_status,
       commands::forget,
       commands::discover,
+      commands::provision_open,
+      commands::provision_networks,
+      commands::provision_join,
+      commands::wifi_join,
+      commands::wifi_forget,
+      commands::improv_discover,
+      commands::improv_claim,
+      commands::improv_link_code,
+      commands::improv_pair_code,
+      commands::improv_wifi_scan,
+      commands::improv_provision,
+      commands::improv_pair,
+      commands::improv_disconnect,
       commands::outbox_stats,
       commands::drain_now,
       commands::radio_stats
     ])
     .setup(|app, _api| {
+      #[cfg(target_os = "ios")]
+      {
+        match _api.register_ios_plugin(init_plugin_reach) {
+          Ok(handle) => {
+            app.manage(IosPluginHandle(handle));
+          }
+          Err(e) => tracing::error!(error = %e, "reach: iOS plugin registration failed — wifi join unavailable"),
+        }
+      }
       // Android: pin the storage base to the app-private sandbox BEFORE anything
       // resolves virtues_dir() — both ReachState::new() (box.json) and
       // init_outbox() (outbox.sqlite) read it below. See BASE_DIR.

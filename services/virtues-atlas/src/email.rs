@@ -136,3 +136,55 @@ const THANKS_HTML: &str = r#"<div style="font-family: Georgia, 'Times New Roman'
   <p style="margin: 0; color:#57534e; font-size:14px;">Adam · Founder, Virtues</p>
   <p style="margin: 22px 0 0; color:#78716c; font-size:13px; font-style:italic; line-height:1.5;">P.S. Yes — this note was automated. But reply to it and I promise it's me on the other end. I read every one.</p>
 </div>"#;
+
+/// The app's sign-in code.
+///
+/// A code and not a link, deliberately: a magic link opens a browser, and the
+/// browser hop is precisely what in-app sign-in exists to delete. The person is
+/// already looking at the app — give them six digits to type and let them stay
+/// there.
+pub async fn send_login_code(
+    api_key: &str,
+    from: &str,
+    to: &str,
+    code: &str,
+    ttl_minutes: i64,
+) -> Result<()> {
+    if api_key.is_empty() {
+        return Err(anyhow!("RESEND_API_KEY not set"));
+    }
+    let client = reqwest::Client::new();
+    let text = format!(
+        "Your Virtues sign-in code is {code}\n\n\
+         Enter it in the app. It expires in {ttl_minutes} minutes and can only be used once.\n\
+         If you didn't ask to sign in, ignore this email — nothing changes."
+    );
+    let html = format!(
+        r#"<div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; max-width: 480px; margin: 0 auto; padding: 32px 24px; color: #14283d; line-height: 1.5; font-size: 15px;">
+  <p style="font-size: 18px; margin: 0 0 16px;">Your sign-in code</p>
+  <p style="font-size: 34px; letter-spacing: 0.18em; font-weight: 600; margin: 0 0 24px; font-variant-numeric: tabular-nums;">{code}</p>
+  <p style="margin: 0 0 24px; color: #57534e;">Enter this in the Virtues app.</p>
+  <hr style="border: none; border-top: 1px solid #e5e5e5; margin: 24px 0;" />
+  <p style="margin: 0; font-size: 13px; color: #78716c;">Expires in {ttl_minutes} minutes, single use. If you didn't ask to sign in, ignore this email — nothing changes.</p>
+</div>"#
+    );
+    let resp = client
+        .post(RESEND_API)
+        .header("Authorization", format!("Bearer {api_key}"))
+        .json(&serde_json::json!({
+            "from": from,
+            "to": to,
+            "subject": format!("{code} is your Virtues code"),
+            "text": text,
+            "html": html,
+        }))
+        .send()
+        .await
+        .context("POST resend login code")?;
+    if !resp.status().is_success() {
+        let status = resp.status();
+        let body = resp.text().await.unwrap_or_default();
+        return Err(anyhow!("resend api error: {status} — {body}"));
+    }
+    Ok(())
+}

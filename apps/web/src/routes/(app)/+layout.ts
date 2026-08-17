@@ -48,18 +48,54 @@ export const load: LayoutLoad = async ({ fetch, url }) => {
 			return { session: sessionData };
 		}
 
-		// Setup gate: an authenticated device on a box whose REQUIRED core
-		// (account → name; the rest of onboarding is optional, network is
-		// informational) isn't finished belongs in the unified /setup flow, not
-		// the app shell. /setup lives in the (onboarding) route group with its
-		// own layout, so this can't loop. Without this, a freshly-reinstalled
-		// box drops the user straight into chat with account/naming undone.
+		// TWO GATES, because there are two different kinds of "not ready".
+		//
+		// SETUP is the box coming up — claimed, and (on an appliance) linked to
+		// an account. A box that hasn't done that can't run the app at all.
+		//
+		// ONBOARDING is the box becoming worth having — something connected, so
+		// it has a life to keep a record of. It used to gate nothing: the state
+		// endpoint has modelled these steps all along, but `setup_complete`
+		// flips true the instant you pair and link, so the shell swallowed
+		// everyone the moment setup finished and the chapters after it were
+		// written, reachable only by typing the URL, and never seen (2026-08-13).
+		//
+		// Skipping is honoured and remembered. "Prescribe, never enforce" means
+		// the second gate must be a door, not a wall — and a door that asks
+		// again every launch is a wall with extra steps.
+		//
+		// /onboarding lives in the (onboarding) route group with its own layout,
+		// so neither redirect can loop.
+		// RETRY, because "couldn't ask" is not "nothing to do".
+		//
+		// This runs the instant the desktop app hands over after pairing, when
+		// the box has just finished writing a device row and the loopback proxy
+		// is seconds old. A 502 or a thrown fetch used to fall straight through
+		// to the shell — the same silent pass as a satisfied gate — so a
+		// freshly-paired owner landed in an empty chat instead of onboarding,
+		// and only a manual reload revealed it (seen live 2026-08-13).
+		//
+		// Three quick tries, then give up and continue. Onboarding is worth a
+		// second of patience; it is never worth locking someone out of their
+		// own app over a box that blipped.
 		try {
-			const setupRes = await fetch('/api/setup/state');
-			if (setupRes.ok) {
-				const setup = await setupRes.json();
+			let setup: { setup_complete?: boolean; onboarding_complete?: boolean; onboarding_skipped?: boolean } | null =
+				null;
+			for (let i = 0; i < 3 && !setup; i++) {
+				if (i > 0) await new Promise((r) => setTimeout(r, 400));
+				try {
+					const setupRes = await fetch('/api/setup/state');
+					if (setupRes.ok) setup = await setupRes.json();
+				} catch {
+					// keep trying
+				}
+			}
+			if (setup) {
 				if (setup.setup_complete === false) {
-					throw redirect(303, '/setup');
+					throw redirect(303, '/onboarding');
+				}
+				if (setup.onboarding_complete === false && setup.onboarding_skipped !== true) {
+					throw redirect(303, '/onboarding');
 				}
 			}
 		} catch (e) {

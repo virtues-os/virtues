@@ -7,7 +7,7 @@
 //!
 //! Currently invoked every ~60s via a hand-rolled tokio interval task in
 //! `core/src/server/mod.rs` — that's lunch-day duct tape. Post-lunch this
-//! moves to the proper scheduler with `cron_schedule = '*/1 * * * *'` on the
+//! moves to the proper scheduler with `schedule = '*/1 * * * *'` on the
 //! action row, and the scheduler dispatches via `applet_runner` instead of
 //! match-dispatch.
 //!

@@ -2,6 +2,7 @@
 members = [
     "virtues-core",
     "crates/virtues-helpers",
+    "crates/virtues-improv",
     "crates/virtues-iroh",
     "crates/virtues-iroh-ffi",
     "crates/virtues-reach-client",

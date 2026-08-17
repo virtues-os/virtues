@@ -54,7 +54,7 @@ fn truncate_utf8_bytes(s: &str, max: usize) -> String {
 /// `command` is the argv to spawn (JSON array in SQL). A bare `command[0]`
 /// (no path separator) resolves to a Cargo-built action binary under
 /// `target/{debug,release}`; anything else (`./x`, `python3`, `node`) runs via
-/// PATH. Same field for both the `function` runner and the `service` supervisor.
+/// PATH.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct Applet {
     pub id: String,
@@ -64,7 +64,7 @@ pub struct Applet {
     /// in the user's terms. Reconcile's to own, like `name`.
     pub description: Option<String>,
     pub agent: Option<String>,
-    pub cron_schedule: Option<String>,
+    pub schedule: Option<String>,
     pub enabled: bool,
     pub config: serde_json::Value,
     pub condition: Option<String>,
@@ -277,7 +277,27 @@ pub(crate) fn applet_schema_name(applet_id: &str) -> Option<String> {
 /// stripping the prefix back off, which is how the two spellings drifted
 /// apart the last time.
 pub(crate) fn applet_slug(applet_id: &str) -> Option<String> {
-    let slug = applet_id.strip_prefix(USER_APPLET_PREFIX)?;
+    // An applet owns the schema named after it. That is the whole rule — not
+    // "authored applets own schemas and shipped ones do not", which forced a
+    // shipped folder wanting tables to declare
+    // `id_prefix = "applet_user__<slug>"` and know an internal convention to
+    // do an ordinary thing.
+    //
+    // The one shape that must NOT resolve is `applet_user_foo`: one underscore
+    // short, the malformed id that once silently cost an applet its private
+    // schema. It is indistinguishable by string from a shipped folder called
+    // `user_foo`, so `user_` is simply reserved — `applets/user/` is where
+    // authored applets live, and no shipped folder may be named for it.
+    let slug = match applet_id.strip_prefix(USER_APPLET_PREFIX) {
+        Some(authored) => authored,
+        None => {
+            let shipped = applet_id.strip_prefix("applet_")?;
+            if shipped.starts_with("user_") {
+                return None;
+            }
+            shipped
+        }
+    };
     if slug.is_empty()
         || !slug
             .bytes()
@@ -310,7 +330,7 @@ pub async fn applet_data_tables(db: &PgPool, applet_id: &str) -> Result<Vec<Stri
 /// set of fields that template reconcile preserves (see
 /// `applet_templates::upsert_row`) — otherwise the next reconcile would
 /// silently clobber what the user just changed.
-pub const SYSTEM_EDITABLE_FIELDS: &[&str] = &["enabled", "cron_schedule", "config", "memory"];
+pub const SYSTEM_EDITABLE_FIELDS: &[&str] = &["enabled", "schedule", "config", "memory"];
 
 /// Create a new user-owned action. Used by chat tools + the HTTP POST
 /// endpoint. `id` is generated from the name if not provided.
@@ -320,7 +340,7 @@ pub async fn create_user_applet(
     id: Option<&str>,
     name: &str,
     agent: Option<&str>,
-    cron_schedule: Option<&str>,
+    schedule: Option<&str>,
     triggers: &[String],
     config: Option<&serde_json::Value>,
 ) -> Result<Applet> {
@@ -361,13 +381,13 @@ pub async fn create_user_applet(
     let mut applet_id = base_id.clone();
     for attempt in 1u32..=MAX_ATTEMPTS {
         let result = sqlx::query(
-            r#"INSERT INTO app_applets (id, name, owner, agent, cron_schedule, enabled, config, triggers)
+            r#"INSERT INTO app_applets (id, name, owner, agent, schedule, enabled, config, triggers)
                VALUES ($1, $2, 'user', $3, $4, TRUE, $5::jsonb, $6::jsonb)"#,
         )
         .bind(&applet_id)
         .bind(name)
         .bind(agent)
-        .bind(cron_schedule)
+        .bind(schedule)
         .bind(&config_json)
         .bind(&triggers_json)
         .execute(db)
@@ -406,7 +426,7 @@ fn is_unique_violation(dbe: &dyn sqlx::error::DatabaseError) -> bool {
 /// system-owner guard: `system` rows accept only `SYSTEM_EDITABLE_FIELDS`.
 ///
 /// Unknown field names are rejected (400). Null values are allowed for
-/// nullable columns (`agent`, `cron_schedule`, `condition`, `memory`).
+/// nullable columns (`agent`, `schedule`, `condition`, `memory`).
 pub async fn update_applet(
     db: &PgPool,
     applet_id: &str,
@@ -427,7 +447,7 @@ pub async fn update_applet(
     const ALLOWED: &[&str] = &[
         "name",
         "agent",
-        "cron_schedule",
+        "schedule",
         "enabled",
         "config",
         "condition",
@@ -484,8 +504,8 @@ pub async fn update_applet(
     if obj.contains_key("agent") {
         sets.push(format!("agent = ${}", next()));
     }
-    if obj.contains_key("cron_schedule") {
-        sets.push(format!("cron_schedule = ${}", next()));
+    if obj.contains_key("schedule") {
+        sets.push(format!("schedule = ${}", next()));
     }
     if obj.contains_key("enabled") {
         sets.push(format!("enabled = ${}", next()));
@@ -538,12 +558,12 @@ pub async fn update_applet(
             q = q.bind(Some(s.to_string()));
         }
     }
-    if let Some(v) = obj.get("cron_schedule") {
+    if let Some(v) = obj.get("schedule") {
         if v.is_null() {
             q = q.bind(Option::<String>::None);
         } else {
             let s = v.as_str().ok_or_else(|| {
-                Error::InvalidInput("cron_schedule must be a string or null".into())
+                Error::InvalidInput("schedule must be a string or null".into())
             })?;
             validate_cron(s)?;
             q = q.bind(Some(s.to_string()));
@@ -989,7 +1009,7 @@ pub fn applet_from_row(row: &sqlx::postgres::PgRow) -> Result<Applet> {
         name: row.try_get("name")?,
         description: row.try_get("description").ok().flatten(),
         agent: row.try_get("agent")?,
-        cron_schedule: row.try_get("cron_schedule")?,
+        schedule: row.try_get("schedule")?,
         enabled: row.try_get::<bool, _>("enabled")?,
         config,
         condition: row.try_get("condition")?,
@@ -1005,19 +1025,6 @@ pub fn applet_from_row(row: &sqlx::postgres::PgRow) -> Result<Applet> {
         created_at: row.try_get("created_at")?,
         updated_at: row.try_get("updated_at")?,
     })
-}
-
-/// Derived display shape — the old `runtime` taxonomy, computed from fields:
-/// no command and no agent ⇒ view (face-only); otherwise function.
-/// Presentation only; nothing executes off this.
-pub fn derived_runtime(a: &Applet) -> &'static str {
-    if a.command.as_ref().is_none_or(|c| c.is_empty())
-        && a.agent.as_deref().is_none_or(|s| s.trim().is_empty())
-    {
-        "view"
-    } else {
-        "function"
-    }
 }
 
 /// Derived provenance for the UI: which of the four things made this applet.
@@ -1238,18 +1245,33 @@ mod tests {
         );
     }
 
-    /// The shape the bug produced: one underscore short, silently unowned.
+    /// The shape the bug produced: one underscore short. It must stay unowned
+    /// now that a bare `applet_` resolves, or it would quietly get a schema
+    /// again — just the wrong one, named for the prefix instead of the applet.
+    /// `user_` is reserved for exactly this reason.
     #[test]
     fn a_single_underscore_id_owns_no_schema() {
         assert_eq!(applet_schema_name("applet_user_heart_rate_explorer"), None);
+        assert_eq!(applet_schema_name("applet_user_anything"), None);
     }
 
-    /// Shipped applets are not user applets and own nothing.
+    /// An applet owns the schema named after it, however it got here. Both id
+    /// shapes land on the same name, which is what lets a shipped folder carry
+    /// tables without declaring an internal prefix to be allowed to.
     #[test]
-    fn shipped_applets_own_no_schema() {
-        assert_eq!(applet_schema_name("applet_credential_refresh"), None);
+    fn an_applet_owns_the_schema_named_after_it() {
+        assert_eq!(
+            applet_schema_name("applet_calorie_tracker").as_deref(),
+            Some("applet_calorie_tracker"),
+        );
+        assert_eq!(
+            applet_schema_name(&format!("{USER_APPLET_PREFIX}calorie_tracker")).as_deref(),
+            Some("applet_calorie_tracker"),
+            "authored and shipped must agree, or the same applet would own two schemas",
+        );
         assert_eq!(applet_schema_name(""), None);
         assert_eq!(applet_schema_name(USER_APPLET_PREFIX), None);
+        assert_eq!(applet_schema_name("applet_"), None);
     }
 
     /// Slugs are interpolated unquoted into SQL, so anything outside

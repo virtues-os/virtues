@@ -6,7 +6,7 @@
 //! (which charges the card + credits the wallet) and retries; other 402s
 //! (wallet_expired) and 401 (unknown_key → re-link) surface to the caller.
 //!
-//! Use this for the proxy routes (`/v1/ai/*`, `/v1/places/*`, `/v1/exa/*`,
+//! Use this for the proxy routes (`/v1/ai/*`, `/v1/places/*`, `/v1/parallel/*`,
 //! `/v1/unsplash/*`).
 //!
 //! ## The BYO fork
@@ -23,7 +23,7 @@
 //! new AI caller cannot forget to opt in. That mattered: until 2026-08-05
 //! only `stream()` honored the key, and compaction, day summaries, image
 //! generation and transcription quietly billed the wallet while the UI said
-//! "BYO active". Non-AI routes (`/v1/places/*`, `/v1/exa/*`, `/v1/unsplash/*`)
+//! "BYO active". Non-AI routes (`/v1/places/*`, `/v1/parallel/*`, `/v1/unsplash/*`)
 //! are per-user vendor bills that BYO says nothing about, so they keep going
 //! through the wallet. Plan of record: `docs/byo-ai-plan.md`.
 //!
@@ -42,7 +42,7 @@ use sqlx::PgPool;
 use super::renew;
 
 /// Is this one of the metered *inference* routes, as opposed to the fixed-cost
-/// vendor proxies (`/v1/places/*`, `/v1/exa/*`, `/v1/unsplash/*`)?
+/// vendor proxies (`/v1/places/*`, `/v1/parallel/*`, `/v1/unsplash/*`)?
 ///
 /// Two things key on this and must not drift apart: whether a call may divert
 /// to the user's BYO endpoint, and whether its `usage` block is captured into
@@ -50,6 +50,44 @@ use super::renew;
 /// BYO call to the wallet or record a wallet call as free.
 fn is_ai_path(path: &str) -> bool {
     path.starts_with("/v1/ai/")
+}
+
+/// How many times a chat completion may come back empty before we give up.
+///
+/// A reasoning model can spend its entire output budget thinking and return a
+/// message with no content at all. Measured on the box 2026-08-11, segmenting
+/// 2026-08-09 on `xai/grok-4.5`: `completion_tokens = 1009`, of which
+/// `reasoning_tokens = 1009` — zero content tokens, billed in full. The caller
+/// saw "LLM returned empty summary" and that day's autobiography was lost with
+/// no retry; 2026-08-03 died the same way on a different model. Raising
+/// `max_tokens` does not fix it (the same run recorded 7214 completion tokens
+/// against a 4000 cap, so reasoning is not bounded by it), and
+/// `reasoning_effort` is a no-op on this model — a resend is the only lever.
+///
+/// 3 attempts: empty output is sporadic rather than deterministic, so a couple
+/// of resends is the difference between losing a day and not, while still
+/// bounding the spend on a model that has genuinely stopped answering.
+const EMPTY_COMPLETION_ATTEMPTS: u32 = 3;
+
+/// A successful chat completion carrying no assistant text.
+///
+/// Gated on `choices` being present so it only judges chat-shaped responses,
+/// and on success so a real error status falls through to the caller's own
+/// handling untouched.
+fn is_empty_completion(resp: &ApiResponse) -> bool {
+    if !resp.is_success() {
+        return false;
+    }
+    let Some(choices) = resp.body["choices"].as_array() else {
+        return false;
+    };
+    // An empty `choices` array is the same failure wearing a different shape.
+    choices.iter().all(|c| {
+        c["message"]["content"]
+            .as_str()
+            .map(|s| s.trim().is_empty())
+            .unwrap_or(true)
+    })
 }
 
 /// Turn an upstream's "HTTP 200, but actually an error" into a real error.
@@ -356,6 +394,13 @@ impl Purpose {
 #[derive(Clone, Debug)]
 pub struct BearerClient {
     http: reqwest::Client,
+    /// For non-streaming `/v1/ai/*` POSTs. Nothing arrives until the model
+    /// finishes the whole generation, so these get the completion timeout
+    /// rather than the 60s request timeout — the nightly day-summary
+    /// segmentation died at exactly 60s for three days straight (2026-08-09..11)
+    /// before this split existed. Keyed on [`is_ai_path`], like the BYO fork
+    /// and cost capture.
+    completion_http: reqwest::Client,
     stream_http: reqwest::Client,
     pool: PgPool,
     api_url: String,
@@ -375,6 +420,7 @@ impl BearerClient {
         let atlas_url = super::atlas_url();
         Self {
             http: crate::http_client::virtues_api_client(),
+            completion_http: crate::http_client::virtues_api_completion_client(),
             stream_http: crate::http_client::virtues_api_streaming_client(),
             pool,
             api_url,
@@ -420,11 +466,26 @@ impl BearerClient {
             }
         }
         let bearer = self.ensure_bearer().await?;
-        let resp = self.send(path, body, &bearer).await?;
-        let resp = self.handle_402_and_retry_post(path, body, resp).await?;
-        self.record_ai_usage(path, body, &resp, crate::api::ai_calls::Route::Wallet)
-            .await;
-        Ok(resp)
+        let mut attempt = 0;
+        loop {
+            attempt += 1;
+            let resp = self.send(path, body, &bearer).await?;
+            let resp = self.handle_402_and_retry_post(path, body, resp).await?;
+            // Every attempt is billed, so every attempt is recorded — a retry
+            // that vanished from `app_ai_calls` would make the wallet lie.
+            self.record_ai_usage(path, body, &resp, crate::api::ai_calls::Route::Wallet)
+                .await;
+            if attempt < EMPTY_COMPLETION_ATTEMPTS && is_empty_completion(&resp) {
+                tracing::warn!(
+                    path,
+                    attempt,
+                    "completion came back with no content (all output spent on \
+                     reasoning) — retrying"
+                );
+                continue;
+            }
+            return Ok(resp);
+        }
     }
 
     /// BYO path for non-streaming AI calls — the `post_json` twin of
@@ -445,8 +506,10 @@ impl BearerClient {
         byo: &crate::api::settings_byo::ByoCredential,
     ) -> Result<ApiResponse> {
         let body = apply_byo_model(body, byo);
+        // Always an AI completion (only `is_ai_path` routes divert here), so
+        // it gets the completion timeout like the wallet path in `send`.
         let resp = self
-            .http
+            .completion_http
             .post(&byo.endpoint_url)
             .header("Authorization", format!("Bearer {}", byo.api_key))
             .header("Content-Type", "application/json")
@@ -730,8 +793,10 @@ impl BearerClient {
     }
 
     async fn send(&self, path: &str, body: &Value, bearer: &str) -> Result<ApiResponse> {
-        let resp = self
-            .http
+        // AI completions block until the model finishes generating; everything
+        // else answers in request time. See `completion_http` on the struct.
+        let http = if is_ai_path(path) { &self.completion_http } else { &self.http };
+        let resp = http
             .post(format!("{}{}", self.api_url.trim_end_matches('/'), path))
             .header("Authorization", format!("Bearer {}", bearer))
             .header("X-Virtues-Purpose", self.purpose.as_str())
@@ -768,9 +833,55 @@ mod byo_fork_tests {
         assert!(is_ai_path("/v1/ai/chat/completions"));
         // Fixed-cost vendor proxies are per-user bills a provider key cannot
         // pay; they must keep going through the wallet.
-        for path in ["/v1/places/autocomplete", "/v1/exa/search", "/v1/unsplash/search", "/v1/usage"] {
+        for path in ["/v1/places/autocomplete", "/v1/parallel/search", "/v1/unsplash/search", "/v1/usage"] {
             assert!(!is_ai_path(path), "{path} must not divert to BYO");
         }
+    }
+
+    fn completion(status: u16, body: Value) -> ApiResponse {
+        ApiResponse { status, body }
+    }
+
+    #[test]
+    fn a_reasoning_only_completion_reads_as_empty() {
+        // The shape measured on the box: content present but blank, every
+        // output token spent on reasoning.
+        assert!(is_empty_completion(&completion(
+            200,
+            json!({"choices": [{"message": {"content": ""}}],
+                   "usage": {"completion_tokens": 1009, "reasoning_tokens": 1009}}),
+        )));
+        // Whitespace-only is the same nothing.
+        assert!(is_empty_completion(&completion(
+            200,
+            json!({"choices": [{"message": {"content": "  \n "}}]}),
+        )));
+        // No content key at all.
+        assert!(is_empty_completion(&completion(
+            200,
+            json!({"choices": [{"message": {}}]}),
+        )));
+        // No choices to speak of.
+        assert!(is_empty_completion(&completion(200, json!({"choices": []}))));
+    }
+
+    #[test]
+    fn real_answers_and_real_errors_are_not_retried_as_empty() {
+        assert!(!is_empty_completion(&completion(
+            200,
+            json!({"choices": [{"message": {"content": "the day began early"}}]}),
+        )));
+        // A non-2xx keeps its own error handling — retrying it here would
+        // resend a call the caller is about to be told failed.
+        assert!(!is_empty_completion(&completion(
+            429,
+            json!({"choices": [{"message": {"content": ""}}]}),
+        )));
+        // Non-chat AI responses have no `choices`; never judged empty.
+        assert!(!is_empty_completion(&completion(
+            200,
+            json!({"data": [{"embedding": [0.1, 0.2]}]}),
+        )));
     }
 
     fn byo(default_model: Option<&str>) -> crate::api::settings_byo::ByoCredential {

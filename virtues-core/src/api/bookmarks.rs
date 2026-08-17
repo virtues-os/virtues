@@ -227,6 +227,86 @@ pub async fn list_bookmarks(db: &PgPool, q: ListBookmarksQuery) -> Result<Bookma
     })
 }
 
+/// One bookmark, for its detail view.
+///
+/// Returns the tombstoned ones too, unlike the list. A row removed at its
+/// source still has the user's note on it, and a link to it — from a citation,
+/// a notebook, a pinned tab — should open something rather than 404. The
+/// `deleted_at_source` field is in the payload so the view can say so.
+pub async fn get_bookmark(db: &PgPool, id: &str) -> Result<BookmarkDetail> {
+    sqlx::query_as::<_, BookmarkDetail>(&format!(
+        "SELECT id, url, title, description, note, source_platform, bookmark_type,
+                author, tags, thumbnail_url, timestamp, deleted_at_source,
+                enrichment_model, extraction,
+                extraction->>'medium' AS medium,
+                ({STATE_SQL}) AS state
+           FROM data_content_bookmark WHERE id = $1"
+    ))
+    .bind(id)
+    .fetch_optional(db)
+    .await?
+    .ok_or_else(|| Error::NotFound(format!("no bookmark {id}")))
+}
+
+#[derive(Debug, Clone, Serialize, sqlx::FromRow)]
+pub struct BookmarkDetail {
+    pub id: String,
+    pub url: String,
+    pub title: Option<String>,
+    pub description: Option<String>,
+    pub note: Option<String>,
+    pub source_platform: Option<String>,
+    pub bookmark_type: Option<String>,
+    pub author: Option<String>,
+    pub tags: Option<serde_json::Value>,
+    pub thumbnail_url: Option<String>,
+    pub timestamp: crate::types::Timestamp,
+    pub deleted_at_source: Option<crate::types::Timestamp>,
+    pub enrichment_model: Option<String>,
+    /// The whole record, so the view can render its aspects as aspects rather
+    /// than as a JSON blob.
+    pub extraction: Option<serde_json::Value>,
+    pub medium: Option<String>,
+    pub state: String,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct UpdateNoteRequest {
+    /// The user's words. `null` or blank clears it — writing nothing is a
+    /// legitimate edit, and forcing a note to be non-empty forever would make
+    /// the field a trap rather than a margin.
+    pub note: Option<String>,
+}
+
+/// Write the user's note. The one column a person authors.
+///
+/// Deliberately its own endpoint rather than a general PATCH: every other field
+/// on this row is either the source's or the enrichment pass's, and an endpoint
+/// that could write them would eventually be used to.
+pub async fn update_note(db: &PgPool, id: &str, req: UpdateNoteRequest) -> Result<BookmarkDetail> {
+    let note = req
+        .note
+        .as_deref()
+        .map(str::trim)
+        .filter(|n| !n.is_empty());
+
+    let updated = sqlx::query(
+        "UPDATE data_content_bookmark SET note = $2, updated_at = now() WHERE id = $1",
+    )
+    .bind(id)
+    .bind(note)
+    .execute(db)
+    .await?;
+    if updated.rows_affected() == 0 {
+        return Err(Error::NotFound(format!("no bookmark {id}")));
+    }
+
+    // The note is part of the embed text, so editing it changes the document.
+    // Nothing to do here — the indexer keys on md5(embed_text) and will
+    // re-embed this row on its next pass.
+    get_bookmark(db, id).await
+}
+
 /// Save a URL as a bookmark (idempotent on canonical URL).
 pub async fn save_bookmark(db: &PgPool, req: SaveBookmarkRequest) -> Result<SavedBookmark> {
     let url = req.url.trim().to_string();
@@ -430,6 +510,76 @@ mod tests {
 
         sqlx::query("DELETE FROM data_content_bookmark WHERE starts_with(id, $1)")
             .bind(&prefix)
+            .execute(&pool)
+            .await
+            .unwrap();
+    }
+
+    /// The detail endpoints against a real table (needs DATABASE_URL):
+    ///
+    ///     cargo test -p virtues --lib -- --ignored detail_and_note
+    #[tokio::test]
+    #[ignore]
+    async fn detail_and_note_round_trip() {
+        let _ = dotenv::dotenv();
+        let db_url = std::env::var("DATABASE_URL").expect("DATABASE_URL required");
+        let pool = sqlx::PgPool::connect(&db_url).await.expect("connect");
+        let id = format!("test:detail:{}", Uuid::new_v4());
+
+        sqlx::query(
+            "INSERT INTO data_content_bookmark
+               (id, url, title, timestamp, source_stream_id, source_table, source_provider,
+                enrichment_status, extraction, deleted_at_source)
+             VALUES ($1, 'https://example.com/a', 'A', now(), $1, 'test', 'test', 'done',
+                     '{\"medium\":\"article\",\"subject\":[\"x\"]}'::jsonb, now())",
+        )
+        .bind(&id)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        // A tombstoned bookmark must still open. A link to it from a citation
+        // or a pinned tab should find something, not 404 — the list hides it,
+        // the detail does not.
+        let got = get_bookmark(&pool, &id).await.expect("tombstoned row opens");
+        assert_eq!(got.state, "enriched");
+        assert_eq!(got.medium.as_deref(), Some("article"));
+        assert!(got.deleted_at_source.is_some());
+        assert!(got.extraction.is_some(), "extraction record not returned");
+
+        // Write, then clear. Blank must clear rather than store "".
+        let w = update_note(
+            &pool,
+            &id,
+            UpdateNoteRequest {
+                note: Some("  for the reno  ".to_string()),
+            },
+        )
+        .await
+        .unwrap();
+        assert_eq!(w.note.as_deref(), Some("for the reno"), "note not trimmed");
+
+        let cleared = update_note(
+            &pool,
+            &id,
+            UpdateNoteRequest {
+                note: Some("   ".to_string()),
+            },
+        )
+        .await
+        .unwrap();
+        assert_eq!(cleared.note, None, "blank did not clear the note");
+
+        assert!(
+            update_note(&pool, "test:detail:nope", UpdateNoteRequest { note: None })
+                .await
+                .is_err(),
+            "writing a note to a missing bookmark should not silently succeed"
+        );
+        assert!(get_bookmark(&pool, "test:detail:nope").await.is_err());
+
+        sqlx::query("DELETE FROM data_content_bookmark WHERE id = $1")
+            .bind(&id)
             .execute(&pool)
             .await
             .unwrap();

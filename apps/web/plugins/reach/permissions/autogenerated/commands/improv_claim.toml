@@ -1,0 +1,13 @@
+# Automatically generated - DO NOT EDIT!
+
+"$schema" = "../../schemas/schema.json"
+
+[[permission]]
+identifier = "allow-improv-claim"
+description = "Enables the improv_claim command without any pre-configured scope."
+commands.allow = ["improv_claim"]
+
+[[permission]]
+identifier = "deny-improv-claim"
+description = "Denies the improv_claim command without any pre-configured scope."
+commands.deny = ["improv_claim"]

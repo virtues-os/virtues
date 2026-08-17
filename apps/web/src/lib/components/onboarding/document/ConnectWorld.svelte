@@ -19,8 +19,7 @@
 	import { connectIntent, reloadOnReturn } from "$lib/components/sources/connectDispatch";
 	import { listSourceCatalog, listCredentials, type SourceCatalogItem } from "$lib/api/client";
 	import { isTauri, isMacOS, isWindows, isLinux, thisComputerLabel } from "$lib/utils/platform";
-	import { copyFor, type Prominence } from "./sources-copy";
-	import Marginalia from "./Marginalia.svelte";
+	import { copyFor, PROMINENCE_ORDER, type Prominence } from "./sources-copy";
 	import SourceRow from "./SourceRow.svelte";
 
 	interface Props {
@@ -57,7 +56,13 @@
 			.filter((s) => !s.id.startsWith("__"))
 			.map((s) => ({ source: s, copy: copyFor(s.id, s.description ?? "") }))
 			.filter((x) => want.includes(x.copy.prominence))
-			.sort((a, b) => (a.copy.prominence === "anchor" ? -1 : b.copy.prominence === "anchor" ? 1 : 0));
+			.sort((a, b) => {
+				// Group first, then rank within it. Sorting on prominence alone
+				// left ties to catalog order, which put the phone above the Mac —
+				// and the Mac is the one that pays off before the person stands up.
+				const g = PROMINENCE_ORDER.indexOf(a.copy.prominence) - PROMINENCE_ORDER.indexOf(b.copy.prominence);
+				return g !== 0 ? g : (a.copy.rank ?? 99) - (b.copy.rank ?? 99);
+			});
 	});
 
 	// ── connect dispatch + modals ──
@@ -106,12 +111,17 @@
 </script>
 
 <div class="connect-world">
-	<p class="lede">
-		Connect the accounts and devices you want Virtues to read from. Each one stays on the box; nothing is sent to us.
-		Start with one — add the rest whenever.
-	</p>
-	<Marginalia tone="receipt">read-only · everything stays on your box · nothing is sent to Virtues</Marginalia>
+	<!-- THE LEDE AND THE SIDENOTE BOTH LEFT WITH THE DOCUMENT.
 
+	     The lede said what the screen's own lede now says, a paragraph above it,
+	     in nearly the same words. And Marginalia hangs itself at `left: calc(100%
+	     + 2.5rem)` on wide screens, which worked only inside the old three-column
+	     grid that reserved a gutter for it — on a centered screen it flew off the
+	     right edge of the viewport.
+
+	     The receipt it carried is worth keeping, so it moved inline, under the
+	     rows it describes, where it reads as a footer on the list rather than a
+	     note about the page. -->
 	{#if err}
 		<div class="err">{err}</div>
 	{/if}
@@ -137,7 +147,7 @@
 		<p class="aside">Desktop collection for {thisComputerLabel} is coming — your phone, email, and chat history cover you for now.</p>
 	{/if}
 
-	<p class="aside">More — finances, notes, fitness, and the rest — wait for you in the app once you're set up.</p>
+	<p class="receipt">read-only · everything stays on your box · nothing is sent to Virtues</p>
 </div>
 
 <DevicePairModal
@@ -173,11 +183,16 @@
 <style>
 	@reference "../../../../app.css";
 
-	.lede {
-		margin: 0 0 2rem;
-		font-size: 1.0625rem;
-		line-height: 1.6;
-		color: var(--color-foreground-muted);
+	/* The honest line about what connecting costs, sitting under the list it
+	   describes rather than out in a gutter this screen no longer has. */
+	.receipt {
+		margin-top: 1.25rem;
+		padding-top: 1rem;
+		border-top: 1px solid var(--color-border-subtle);
+		font-family: var(--font-mono);
+		font-size: 0.75rem;
+		letter-spacing: -0.01em;
+		color: var(--color-foreground-subtle);
 	}
 
 	.device-block {

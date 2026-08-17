@@ -459,8 +459,11 @@
         </div>
     </div>
 
-    <!-- Terminal Container -->
-    <div class="terminal-container" bind:this={terminalContainer}></div>
+    <!-- Terminal Container. The inner surface carries no padding of its own —
+         see .terminal-surface below for why that matters. -->
+    <div class="terminal-container">
+        <div class="terminal-surface" bind:this={terminalContainer}></div>
+    </div>
 </div>
 
 <style>
@@ -527,17 +530,34 @@
 
     .terminal-container {
         flex: 1;
+        min-height: 0;
+        display: flex;
         padding: 12px;
         overflow: hidden;
         background: var(--color-background);
     }
 
-    /* Ensure xterm fills container */
-    .terminal-container :global(.xterm) {
+    /* The element xterm is opened into, and therefore the one FitAddon measures
+       to decide how many rows and columns fit. It must carry no padding.
+       FitAddon reads getComputedStyle(parent).height, which under the app's
+       global border-box sizing is the *padding* box — so padding on this
+       element is counted as room for cells that then have nowhere to go. At
+       12px each way that is up to a row and a half too many, and the bottom
+       row (a TUI's status line — tmux's, Claude's) is drawn half off the
+       screen. Padding belongs on .terminal-container above, which FitAddon
+       never sees. */
+    .terminal-surface {
+        flex: 1;
+        min-height: 0;
+        min-width: 0;
+    }
+
+    /* Ensure xterm fills the surface */
+    .terminal-surface :global(.xterm) {
         height: 100%;
     }
 
-    .terminal-container :global(.xterm-viewport) {
+    .terminal-surface :global(.xterm-viewport) {
         overflow-y: auto !important;
     }
 

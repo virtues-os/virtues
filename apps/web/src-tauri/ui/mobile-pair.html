@@ -4,22 +4,57 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
     <title>Connect to your box</title>
+    <!--
+      The app's connect screen, and — since 2026-08-10 — the appliance's setup
+      wizard as well.
+
+      TWO FLOWS, ONE SCREEN, chosen by asking the box rather than the user:
+
+        PAIR    the box is already on a network. Find it, type the code. This is
+                every DIY box, and an appliance whose owner used ethernet.
+        SETUP   the phone is joined to an appliance's own `Virtues-XXXX` network
+                and the box has never been claimed. Wifi first, then the code.
+
+      The discriminator is `provision_open`, which is really the box's own two
+      gates answered in one call: `/api/provision/*` exists only for a caller on
+      the AP subnet talking to an unclaimed box. So we never ask "is this a new
+      appliance?" — we ask the box where we are and what it needs.
+
+      ORDER IS PROVISION → PAIR, and it is forced, not chosen. Every
+      provisioning route 404s the moment a device pairs, `maintenance::setup_ap`
+      drops the AP on pair, and the display leaves its setup screen on pair.
+      Pairing first would require relaxing all three.
+
+      WHY THIS AND NOT THE BOX'S CAPTIVE PORTAL. The portal still exists and is
+      still the path for laptops and Android — it is the floor, not the legacy.
+      But it collects the owner's HOME WIFI PASSWORD in a captive webview: no
+      password manager, no autofill, one attempt, and a typo surfaces twenty
+      seconds later as an unexplained switchover failure. Here it is a native
+      field. The larger gain is continuity: the app survives the network handoff
+      that provisioning causes, so setup is one flow instead of two disconnected
+      ones separated by "now go open a different app".
+
+      Vanilla, self-contained, no build step: this page loads before the SPA
+      exists and must work when nothing else does.
+    -->
     <style>
       :root { color-scheme: dark; font-family: -apple-system, system-ui, sans-serif; }
+      * { box-sizing: border-box; }
       body { margin: 0; background: #0b0b0c; color: #e7e7ea;
              padding: max(48px, env(safe-area-inset-top)) 22px 32px; }
       h1 { font-size: 22px; font-weight: 650; margin: 0 0 6px; }
-      p.sub { margin: 0 0 28px; color: #8a8a90; font-size: 14px; line-height: 1.4; }
+      h2 { font-size: 18px; font-weight: 600; margin: 0 0 14px; }
+      p.sub { margin: 0 0 28px; color: #8a8a90; font-size: 14px; line-height: 1.45; }
       label { display: block; font-size: 12px; color: #8a8a90; text-transform: uppercase;
               letter-spacing: .04em; margin: 0 0 6px; }
-      input { width: 100%; box-sizing: border-box; background: #161619; color: #e7e7ea;
+      input { width: 100%; background: #161619; color: #e7e7ea;
               border: 1px solid #2a2a30; border-radius: 12px; padding: 14px; font-size: 16px;
               margin: 0 0 18px; }
       input:focus { outline: none; border-color: #2b6cff; }
       input#code { letter-spacing: .3em; font-variant-numeric: tabular-nums; text-align: center; }
-      button { appearance: none; border: 0; border-radius: 12px; background: #2b6cff; color: #fff;
-               font-size: 16px; font-weight: 600; padding: 15px; width: 100%; }
-      button:disabled { opacity: .5; }
+      button.primary { appearance: none; border: 0; border-radius: 12px; background: #2b6cff;
+               color: #fff; font-size: 16px; font-weight: 600; padding: 15px; width: 100%; }
+      button.primary:disabled { opacity: .4; }
       .msg { margin-top: 16px; font-size: 14px; min-height: 20px; }
       .err { color: #ff8080; }
       .ok { color: #58e08a; }
@@ -31,106 +66,865 @@
       .box b { color: #eafff0; }
       .box .dot { width: 8px; height: 8px; border-radius: 50%; background: #58e08a; flex: none; }
       .box .addr { margin-left: auto; color: #7fae90; font-size: 12px; }
+      .box .boxstate { display: block; font-size: 12px; font-weight: 400; color: #7fae90; }
       .scan { font-size: 12px; color: #6a6a70; margin-bottom: 14px; }
+
+      /* ── setup mode ── */
+      .net { display: flex; align-items: center; gap: 12px; width: 100%; text-align: left;
+             background: #161619; border: 1px solid #2a2a30; border-radius: 12px;
+             padding: 14px; margin-bottom: 8px; color: #e7e7ea; font-size: 16px; }
+      .net .bars { font-family: ui-monospace, Menlo, monospace; color: #6a6a70;
+                   font-size: 13px; letter-spacing: -1px; flex: none; }
+      .net .name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+      .net .lock { margin-left: auto; color: #6a6a70; font-size: 12px; flex: none; }
+      .back { appearance: none; background: none; border: 0; color: #8a8a90; font-size: 14px;
+              padding: 0; margin: 0 0 16px; }
+      .kicker { font-size: 11px; text-transform: uppercase; letter-spacing: .12em;
+                color: #5a5a62; margin: 0 0 10px; }
+      .wait { display: flex; align-items: center; gap: 10px; color: #8a8a90; font-size: 14px;
+              margin-bottom: 18px; }
+      .wait .pip { width: 7px; height: 7px; border-radius: 50%; background: #2b6cff; flex: none;
+                   animation: pulse 1.6s ease-in-out infinite; }
+      @keyframes pulse { 0%,100% { opacity: .25 } 50% { opacity: 1 } }
+      .steps { margin: 26px 0 0; padding: 0; list-style: none; }
+      .steps li { font-size: 13px; color: #6a6a70; line-height: 1.5; padding-left: 18px;
+                  position: relative; margin-bottom: 6px; }
+      .steps li::before { content: "·"; position: absolute; left: 6px; color: #4a4a52; }
+      .hidden { display: none; }
     </style>
   </head>
   <body>
-    <h1>Connect to your box</h1>
-    <p class="sub">On the same Wi-Fi as your Virtues box, enter the 6-digit code it shows. We'll try to find the box automatically.</p>
-
-    <div id="found"></div>
-
-    <form id="form">
-      <label for="server">Box address</label>
-      <input id="server" inputmode="url" autocapitalize="off" autocorrect="off"
-             placeholder="finding your box…" />
-      <label for="code">Pairing code</label>
-      <input id="code" inputmode="numeric" maxlength="7" placeholder="123 456" />
-      <button id="go" type="submit">Pair</button>
-    </form>
-    <div class="msg" id="msg"></div>
-    <p class="hint">The code is shown by <b>virtues pair</b> on the box (or in its Devices screen). It expires after a few minutes.</p>
+    <div id="app"></div>
 
     <script>
       const invoke = window.__TAURI__.core.invoke;
+      const app = document.getElementById('app');
+      const esc = (s) => String(s).replace(/[&<>"']/g, (c) =>
+        ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 
-      // Already paired → straight to the bundled SPA at root (loopback is up).
+      // The box's own AP hands out 10.42.0.x (NetworkManager shared mode). Used
+      // ONLY to tell "the box is still on its setup network" from "the box is on
+      // the owner's LAN now" after a switchover — never as an authorization
+      // signal, which is the box's job and which it does not delegate.
+      const onSetupSubnet = (origin) => /\/\/10\.42\.0\./.test(origin);
+
+      const state = { origin: '', networks: [], chosen: null };
+
+      // ── launch ────────────────────────────────────────────────────────────
       //
-      // `__VIRTUES_PAIRED__` is injected once, when the window is built, and is
-      // never re-evaluated — so after an in-session unpair it still says true
-      // and would bounce the user straight back into the app they just left.
-      // That is why unpairing appeared to do nothing until the app was force
-      // quit: only a fresh launch re-read the pairing.
+      // `__VIRTUES_PAIRED__` is injected once when the window is built and never
+      // re-evaluated, so after an in-session unpair it still says true and would
+      // bounce the user straight back into the app they just left. That is why
+      // unpairing appeared to do nothing until a force quit. Treat it as a fast
+      // path, not the truth: it skips a round trip on the common case and is
+      // then confirmed against the plugin, which reads the real record. If the
+      // check fails we stay here — showing the connect screen to someone paired
+      // is a recoverable annoyance; dropping someone unpaired into the app is not.
+      // `#setup` pins the connect screen open even on a paired phone — for
+      // setting up a SECOND box (the store is single-box, so completing a PAIR
+      // here would overwrite the existing one; the wifi-setup flow is safe).
+      // Also the only way to exercise setup on a dev phone without unpairing.
+      const pinnedOpen = location.hash === '#setup';
+      if (window.__VIRTUES_PAIRED__ && !pinnedOpen) {
+        bootPaired();
+      }
+
+      // A paired phone gets a "opening your box" screen IMMEDIATELY — not the
+      // connect UI. reach_status runs a live probe that can take 10-15s when
+      // the direct path is blocked (office networks) and the tailnet/relay
+      // route has to be found; rendering the connect screen during that
+      // window reads as "your pairing is gone" (it did, live, 2026-08-11,
+      // minutes after the first successful office pairing).
       //
-      // So the injected flag is a fast path, not the truth. It skips a round
-      // trip on the common case (launch while paired) and is then confirmed
-      // against the plugin, which reads the real record. If the check fails we
-      // stay on this screen: showing the connect screen to someone who is
-      // paired is a recoverable annoyance, and dropping someone unpaired into
-      // the app is not.
-      if (window.__VIRTUES_PAIRED__) {
+      // The probe's three answers get three DIFFERENT screens, and only
+      // 'authed' opens the SPA. Loading the SPA on anything less lands on its
+      // legacy connect page — the "old path" that must never appear on a
+      // phone (seen live 2026-08-11, twice, two different ways).
+      function bootPaired() {
+        app.innerHTML = `
+          <h1>Opening your box…</h1>
+          <div class="wait"><span class="pip"></span><span>Connecting</span></div>`;
         invoke('plugin:reach|reach_status')
-          .then((s) => { if (s && s.paired) location.replace('/'); })
-          .catch(() => {});
+          .then((s) => {
+            if (!s || !s.paired) { start(); return; }
+            // The box answered and accepted us — the only ticket into the SPA.
+            if (s.session === 'authed') { location.replace('/'); return; }
+            // Answered and REFUSED our key: box was reset or we were revoked.
+            if (s.session === 'rejected') { renderBoxForgotUs(); return; }
+            // Didn't answer: off, or on a network we can't reach. An offline
+            // box must never silently cost the user their pairing — but it
+            // must not dead-end them either.
+            renderBoxUnreachable();
+          })
+          .catch(() => { start(); });
       }
-      const form = document.getElementById('form');
-      const go = document.getElementById('go');
-      const msg = document.getElementById('msg');
-      const serverInput = document.getElementById('server');
-      const foundEl = document.getElementById('found');
 
-      function say(text, cls) { msg.className = 'msg ' + (cls || ''); msg.textContent = text; }
-
-      // Auto-discover boxes on the LAN (Bonjour). First run triggers the iOS
-      // local-network prompt; allow it. Populates tappable box chips + fills the
-      // address so the user usually just types the code.
-      async function discover() {
-        foundEl.innerHTML = '<div class="scan">Looking for your box on this network…</div>';
-        let resp = { servers: [], debug: '' };
-        try { resp = await invoke('plugin:reach|discover'); } catch (e) { resp.debug = String(e); }
-        const servers = resp.servers || [];
-        const dbg = resp.debug ? `<div class="scan" style="opacity:.6">${resp.debug}</div>` : '';
-        if (!servers.length) {
-          foundEl.innerHTML = dbg +
-            '<div class="scan">No box found automatically. ' +
-            '<a href="#" id="rescan" style="color:#7fa8ff">Search again</a> — ' +
-            'or enter its address below (e.g. <b>192.168.1.233</b>).</div>';
-          serverInput.placeholder = 'virtues.local   or   192.168.1.x';
-          const rs = document.getElementById('rescan');
-          if (rs) rs.addEventListener('click', (e) => { e.preventDefault(); discover(); });
-          return;
-        }
-        foundEl.innerHTML = '';
-        servers.forEach((s, i) => {
-          const b = document.createElement('button');
-          b.type = 'button';
-          b.className = 'box';
-          b.innerHTML = `<span class="dot"></span><b>${s.name}</b><span class="addr">${s.origin.replace('http://','')}</span>`;
-          b.addEventListener('click', () => {
-            serverInput.value = s.origin;
-            document.getElementById('code').focus();
-            [...foundEl.querySelectorAll('.box')].forEach(x => x.style.opacity = .5);
-            b.style.opacity = 1;
-          });
-          foundEl.appendChild(b);
+      function renderBoxUnreachable() {
+        app.innerHTML = `
+          <h1>Can't reach your box</h1>
+          <p class="sub">This phone is paired, but its box isn't answering — it may be
+            off, still starting up, or somewhere this phone can't reach right now.</p>
+          <button class="primary" id="retry">Try again</button><br>
+          <button class="back" id="openanyway" style="margin-top:14px">Open the app anyway</button><br>
+          <button class="back" id="setupnew" style="margin-top:6px">Forget this box and set up another</button>`;
+        document.getElementById('retry').addEventListener('click', bootPaired);
+        document.getElementById('openanyway').addEventListener('click', () => location.replace('/'));
+        // Two taps, inline — window.confirm() is not reliably wired in the
+        // iOS webview, and a silent false would make this button a no-op.
+        let armed = false;
+        const setupnew = document.getElementById('setupnew');
+        setupnew.addEventListener('click', async () => {
+          if (!armed) {
+            armed = true;
+            setupnew.textContent = "Tap again to forget — the box itself isn't touched";
+            return;
+          }
+          try { await invoke('plugin:reach|forget'); } catch { /* already gone */ }
+          start();
         });
-        serverInput.value = servers[0].origin;
-        serverInput.placeholder = 'yourbox.local   or   10.0.0.5';
       }
-      discover();
 
-      form.addEventListener('submit', async (e) => {
-        e.preventDefault();
-        const server = document.getElementById('server').value.trim();
+      function renderBoxForgotUs() {
+        app.innerHTML = `
+          <h1>Your box doesn't recognize this phone</h1>
+          <p class="sub">It answered, but refused this phone's key — usually because the box
+            was reset, or this phone was removed from its devices. Pairing again fixes it.</p>
+          <button class="primary" id="repair">Pair again</button>
+          <p class="hint">This forgets the old connection on this phone only — nothing on the
+            box is touched.</p>`;
+        document.getElementById('repair').addEventListener('click', async () => {
+          try { await invoke('plugin:reach|forget'); } catch { /* already gone */ }
+          start();
+        });
+      }
+
+      // ── discovery ─────────────────────────────────────────────────────────
+
+      async function discoverBoxes() {
+        try {
+          const resp = await invoke('plugin:reach|discover');
+          return { servers: resp.servers || [], debug: resp.debug || '' };
+        } catch (e) {
+          return { servers: [], debug: String(e) };
+        }
+      }
+
+      /**
+       * Which of these boxes is asking to be set up?
+       *
+       * Asked of every candidate rather than only the 10.42.0.x one: the subnet
+       * is a hint about where we are standing, and the box is the authority on
+       * whether provisioning is open. Sequential on purpose — there is at most
+       * a handful, and a phone on a setup AP has exactly one.
+       */
+      async function findSetupBox(servers) {
+        for (const s of servers) {
+          try {
+            if (await invoke('plugin:reach|provision_open', { server: s.origin })) return s;
+          } catch { /* not this one */ }
+        }
+        return null;
+      }
+
+      // start(), but the pair screen leads with an explanation of why the user
+      // was brought here. For handoffs out of flows that decided there is
+      // nothing for them to do.
+      async function startWithBanner(text) {
+        renderSearching();
+        const [lan, ble] = await Promise.all([
+          discoverBoxes(),
+          invoke('plugin:reach|improv_discover', { seconds: 4 }).then(
+            (r) => (r && r.boxes) || [],
+            () => [],
+          ),
+        ]);
+        state.bleBoxes = ble;
+        renderPair(lan.servers, lan.debug, text);
+      }
+
+      async function start() {
+        searchGen++; // retire any live search loop before re-entering
+        renderSearching();
+        // LAN and BLE discovery in parallel. BLE is the PRIMARY setup path —
+        // an unclaimed box advertises the Improv service (state 0x02 = needs
+        // wifi, 0x04 = online but unclaimed) — while LAN discovery covers
+        // already-set-up boxes and platforms without the BLE client (the
+        // invoke returns [] there, so this degrades silently).
+        const [lan, ble] = await Promise.all([
+          discoverBoxes(),
+          invoke('plugin:reach|improv_discover', { seconds: 4 }).then(
+            (r) => (r && r.boxes) || [],
+            () => [],
+          ),
+        ]);
+        state.bleBoxes = ble;
+        // Phone already on the box's SoftAP (manual join): old flow still works.
+        const setupBox = await findSetupBox(lan.servers);
+        if (setupBox) {
+          state.origin = setupBox.origin;
+          return loadNetworks();
+        }
+        // A box in radio range that needs wifi, and no box on the LAN: this is
+        // an unboxing. Go straight to its wifi picker — the flow every other
+        // screen exists to fall back from.
+        const needsWifi = ble.find((b) => b.improvState === 2);
+        if (needsWifi && lan.servers.length === 0) {
+          return bleWifiPicker(needsWifi);
+        }
+        // Online-but-unclaimed over BLE with nothing on the LAN: a network
+        // that isolates clients. Pairing rides BLE (0x83) — go enter the code.
+        if (lan.servers.length === 0 && ble.length) {
+          return renderCodeEntry({ name: ble[0].name || 'Your box', bleId: ble[0].id });
+        }
+        // Nothing anywhere: setup IS the default state, and it keeps looking.
+        if (lan.servers.length === 0) return bleSearchLoop();
+        renderPair(lan.servers, lan.debug);
+      }
+
+      // The unpaired app's DEFAULT screen: Bluetooth-first setup, and it
+      // KEEPS looking. A box that was just plugged in (or reset) takes ~30s
+      // to boot far enough to advertise, and the old one-shot 4s scan at
+      // app-open reliably missed it — dumping the user on the LAN "connect
+      // to your box" screen, which reads as the wrong app entirely (live
+      // complaint, 2026-08-11). Connecting to an already-running box demotes
+      // to the two links at the bottom.
+      let searchGen = 0;
+      async function bleSearchLoop(note) {
+        const gen = ++searchGen;
+        app.innerHTML = `
+          <p class="kicker">Virtues</p>
+          <h1>Set up your box</h1>
+          <p class="sub">${note ? esc(note) + ' ' : ''}Plug it in and stand nearby — it appears
+            here by itself.</p>
+          <div class="wait"><span class="pip"></span><span>Looking over Bluetooth</span></div>
+          <p class="hint" style="margin-top:18px">Already running somewhere?
+            <a href="#" id="rescan" style="color:#7fa8ff">Search this network</a> or
+            <a href="#" id="manual" style="color:#7fa8ff">connect by address</a>.</p>`;
+        document.getElementById('rescan').addEventListener('click', (e) => {
+          e.preventDefault(); start();
+        });
+        document.getElementById('manual').addEventListener('click', (e) => {
+          e.preventDefault(); searchGen++; renderManualPair();
+        });
+        while (gen === searchGen) {
+          let boxes = [];
+          try {
+            const r = await invoke('plugin:reach|improv_discover', { seconds: 4 });
+            boxes = (r && r.boxes) || [];
+          } catch { /* no BLE on this platform — the links above are the path */ }
+          if (gen !== searchGen) return;
+          const needsWifi = boxes.find((b) => b.improvState === 2);
+          if (needsWifi) return bleWifiPicker(needsWifi);
+          if (boxes.length) {
+            return renderCodeEntry({ name: boxes[0].name || 'Your box', bleId: boxes[0].id });
+          }
+          // Peek at the LAN each round too — an already-claimed box never
+          // advertises, and it should still surface without a manual rescan.
+          const { servers } = await discoverBoxes();
+          if (gen !== searchGen) return;
+          if (servers.length) return renderPair(servers, '', note);
+        }
+      }
+
+      // ── BLE SETUP: the primary path ───────────────────────────────────────
+      //
+      // The phone never leaves its own network. The box's wifi list arrives
+      // over BLE (Improv RPC 0x04), the credentials go back over BLE (0x01),
+      // and the join is WATCHED — state notifications — rather than inferred
+      // from a dying socket. Every SoftAP failure mode this screen used to
+      // narrate simply has no equivalent here.
+
+      async function startBleSetup() {
+        app.innerHTML = `
+          <p class="kicker">Setting up a new box</p>
+          <h1>Looking for your box…</h1>
+          <div class="wait"><span class="pip"></span><span>Scanning over Bluetooth</span></div>
+          <p class="sub">Your box shows <b>Get the Virtues app</b> on its screen while
+            it waits to be found.</p>`;
+        let boxes = [];
+        try {
+          const r = await invoke('plugin:reach|improv_discover', { seconds: 5 });
+          boxes = (r && r.boxes) || [];
+        } catch { /* not available on this platform */ }
+        const candidates = boxes.filter((b) => b.improvState === 2);
+        if (candidates.length === 0) {
+          if (boxes.length) {
+            // The advertisement claims "already online" — VERIFY before
+            // believing it: the state byte is baked in when the box's BLE
+            // service starts and can go stale (seen live 2026-08-11: a box
+            // that lost its network kept advertising online for hours, and
+            // this screen told the user to tap a chip that could not exist).
+            // The LAN is the ground truth. Box on it → pair. Not on it → the
+            // advertisement lied; the wifi picker is the honest destination,
+            // and provisioning an actually-online box is harmless anyway.
+            const { servers } = await discoverBoxes();
+            const who = boxes[0].name || 'Your box';
+            if (servers.length) {
+              return startWithBanner(`${who} is already online — tap it below and enter its code.`);
+            }
+            // Online by its own account but invisible on this LAN: a network
+            // that isolates clients (offices). Bluetooth carries the pairing
+            // itself (0x83), so the LAN stops mattering — and if the ad was
+            // stale and the box is actually offline, the code-entry screen's
+            // "Set up its Wi-Fi instead" button is the honest way back.
+            return renderCodeEntry({ name: who, bleId: boxes[0].id });
+          }
+          // Nothing yet — hand over to the persistent search screen, which
+          // keeps scanning until the box boots far enough to advertise.
+          return bleSearchLoop();
+        }
+        // More than one unclaimed box is a real case (two-box household, an
+        // office). Let proximity break the tie visibly.
+        if (candidates.length > 1) return bleBoxChooser(candidates);
+        bleWifiPicker(candidates[0]);
+      }
+
+      function bleBoxChooser(candidates) {
+        const rows = candidates.map((b, i) => `
+          <button class="net" data-i="${i}">
+            <span class="name">${esc(b.name)}</span>
+            <span class="lock">${b.rssi > -60 ? 'very close' : 'in range'}</span>
+          </button>`).join('');
+        app.innerHTML = `
+          <p class="kicker">Setting up a new box</p>
+          <h1>Which box?</h1>
+          <p class="sub">More than one unclaimed box is nearby. The closest one is
+            usually yours.</p>
+          ${rows}`;
+        app.querySelectorAll('.net').forEach((el) => {
+          el.addEventListener('click', () => bleWifiPicker(candidates[+el.dataset.i]));
+        });
+      }
+
+      async function bleWifiPicker(box, errorText) {
+        state.bleBox = box;
+        app.innerHTML = `
+          <p class="kicker">Setting up ${esc(box.name)}</p>
+          <h1>Choose your Wi-Fi</h1>
+          <p class="sub">Asking your box what it can see from where it's plugged in…</p>
+          <div class="wait"><span class="pip"></span><span>Connected over Bluetooth</span></div>`;
+        let r = { networks: [] };
+        try {
+          r = await invoke('plugin:reach|improv_wifi_scan', { id: box.id });
+        } catch (e) {
+          r = { networks: [], error: String(e) };
+        }
+        const rows = (r.networks || []).map((n, i) => `
+          <button class="net" data-i="${i}">
+            <span class="bars">${bars(n.signal)}</span>
+            <span class="name">${esc(n.ssid)}</span>
+            <span class="lock">${n.enterprise ? 'work network' : n.secured ? 'locked' : 'open'}</span>
+          </button>`).join('');
+        app.innerHTML = `
+          <p class="kicker">Setting up ${esc(box.name)}</p>
+          <h1>Choose your Wi-Fi</h1>
+          <p class="sub">These are the networks <b>your box</b> can see from where it is
+            plugged in — not the ones your phone can see.</p>
+          ${errorText ? `<p class="msg err">${esc(errorText)}</p>` : ''}
+          ${r.error && !rows ? `<p class="msg err">${esc(r.error)}</p>` : ''}
+          ${rows || '<p class="sub">Your box couldn\'t see any networks. Move it closer to your router, or plug in ethernet — that skips this step entirely.</p>'}
+          <button class="back" id="rescan">Search again</button><br>
+          <button class="back" id="byname">Join a network by name</button>`;
+        state.bleNetworks = r.networks || [];
+        app.querySelectorAll('.net').forEach((el) => {
+          el.addEventListener('click', () => bleAskPassword(state.bleNetworks[+el.dataset.i]));
+        });
+        document.getElementById('rescan').addEventListener('click', () => bleWifiPicker(box));
+        document.getElementById('byname').addEventListener('click', () => bleManualNetwork());
+      }
+
+      // Typed SSID, for networks the box's scan can't or won't show: hidden
+      // networks, and — the case that forced this into existence (2026-08-11) —
+      // an iPhone hotspot beaconing too rarely for a scan to catch while a
+      // stale cache masked the misses. The join itself doesn't need the scan:
+      // the box probes for the name directly.
+      function bleManualNetwork() {
+        app.innerHTML = `
+          <button class="back" id="back">← Networks</button>
+          <h1>Join by name</h1>
+          <p class="sub">Type the network's name exactly as it appears on other devices —
+            including spaces and capitals.</p>
+          <label for="mssid">Network name</label>
+          <input id="mssid" type="text" autocapitalize="off" autocorrect="off"
+                 spellcheck="false" />
+          <label for="mpsk">Password</label>
+          <input id="mpsk" type="password" autocomplete="current-password"
+                 autocapitalize="off" autocorrect="off" enterkeyhint="go" />
+          <button class="primary" id="join" disabled>Join network</button>
+          <p class="hint">Leave the password empty for an open network.</p>`;
+        const ssid = document.getElementById('mssid');
+        const psk = document.getElementById('mpsk');
+        const go = document.getElementById('join');
+        const ok = () => (go.disabled = !ssid.value.trim());
+        ssid.addEventListener('input', ok);
+        const submit = () => bleJoin(ssid.value.trim(), psk.value);
+        psk.addEventListener('keydown', (e) => { if (e.key === 'Enter' && !go.disabled) submit(); });
+        go.addEventListener('click', submit);
+        document.getElementById('back').addEventListener('click', () => bleWifiPicker(state.bleBox));
+        ssid.focus();
+      }
+
+      function bleAskPassword(net) {
+        if (!net.secured) return bleJoin(net.ssid, '');
+        // 802.1X rides our 0x81 Improv extension — username + password over
+        // the same BLE channel. See ble_provision's EnterpriseSettings.
+        const ent = !!net.enterprise;
+        app.innerHTML = `
+          <button class="back" id="back">← Networks</button>
+          <h2>${esc(net.ssid)}</h2>
+          ${ent ? `
+          <p class="sub">This network uses per-person sign-in. Enter the account its
+            operator gave you.</p>
+          <label for="identity">Username</label>
+          <input id="identity" type="text" autocomplete="username"
+                 autocapitalize="off" autocorrect="off" />` : ''}
+          <label for="psk">${ent ? 'Password' : 'Wi-Fi password'}</label>
+          <input id="psk" type="password" autocomplete="current-password"
+                 autocapitalize="off" autocorrect="off" enterkeyhint="go" />
+          <button class="primary" id="join" disabled>Join network</button>
+          <p class="hint">Your phone stays on its own Wi-Fi the whole time — the box
+            joins on its own, and you'll watch it happen right here.</p>`;
+        const psk = document.getElementById('psk');
+        const idf = document.getElementById('identity');
+        const go = document.getElementById('join');
+        const ok = () => (go.disabled = ent
+          ? !(idf.value.trim() && psk.value)
+          : psk.value.length < 8);
+        psk.addEventListener('input', ok);
+        if (idf) idf.addEventListener('input', ok);
+        const submit = () => bleJoin(net.ssid, psk.value, idf ? idf.value.trim() : null);
+        psk.addEventListener('keydown', (e) => {
+          if (e.key === 'Enter' && !go.disabled) submit();
+        });
+        go.addEventListener('click', submit);
+        document.getElementById('back').addEventListener('click', () => bleWifiPicker(state.bleBox));
+        (idf || psk).focus();
+      }
+
+      async function bleJoin(ssid, password, identity) {
+        const stages = { sent: 'Sending to your box', joining: 'Box is joining', joined: 'Connected — finishing up' };
+        app.innerHTML = `
+          <p class="kicker">Setting up ${esc(state.bleBox.name)}</p>
+          <h1>Joining ${esc(ssid)}</h1>
+          <div class="wait"><span class="pip"></span><span id="stage">Sending to your box</span></div>
+          <p class="sub">Watching it happen over Bluetooth — nothing disconnects, and
+            you don't have to do anything.</p>`;
+        // Live progress if the platform supports plugin events; the final
+        // resolution below is the source of truth either way.
+        let unlisten = null;
+        try {
+          unlisten = await window.__TAURI__.core.addPluginListener(
+            'reach', 'improv-progress',
+            (p) => {
+              const el = document.getElementById('stage');
+              if (el && p && stages[p.stage]) el.textContent = stages[p.stage];
+            });
+        } catch { /* progress is cosmetic */ }
+        let res;
+        try {
+          res = await invoke('plugin:reach|improv_provision', {
+            id: state.bleBox.id, ssid, password, identity: identity || null,
+          });
+        } catch (e) {
+          res = { ok: false, error: String(e) };
+        }
+        if (unlisten) { try { unlisten.unregister(); } catch { /* done */ } }
+        invoke('plugin:reach|improv_disconnect').catch(() => {});
+        if (!res.ok) {
+          return bleWifiPicker(state.bleBox, res.error || 'The box couldn\'t join that network.');
+        }
+        // The box handed us its own address over BLE — no rediscovery scan.
+        // Keep the BLE id on the chip: office networks that isolate clients
+        // make the LAN origin unreachable, and pairing then rides Bluetooth
+        // (RPC 0x83) instead — same code, different wire.
+        const origin = (res.url || '').replace(/\/$/, '');
+        renderPair(
+          [{ name: state.bleBox.name, origin, bleId: state.bleBox.id }],
+          '',
+          `Your box is on ${ssid}. Follow its screen — when a 6-digit code appears, tap the box below.`,
+        );
+      }
+
+      function renderSearching() {
+        app.innerHTML = `
+          <h1>Connect to your box</h1>
+          <p class="sub">Looking for it on this network…</p>
+          <div class="wait"><span class="pip"></span><span>Scanning</span></div>`;
+      }
+
+      // ── NEW BOX: join its setup network ourselves ─────────────────────────
+      //
+      // The app performs the join (`wifi_join` → NEHotspotConfiguration on
+      // iOS): a prefix join against `Virtues-`, so the owner types only the
+      // password off the box's screen — never an SSID, never a trip to
+      // Settings, never a captive sheet. One system dialog, then we are on the
+      // box's network and the normal setup flow takes over.
+      //
+      // On platforms without a programmatic join (Android for now), the invoke
+      // rejects and we fall back to instructing a manual join.
+
+      function renderNewBox(errorText) {
+        app.innerHTML = `
+          <button class="back" id="back">← Back</button>
+          <p class="kicker">Setting up a new box</p>
+          <h1>Connect to your box</h1>
+          <p class="sub">Your box is showing a Wi-Fi password on its screen —
+            under <b>Get the Virtues app</b>. Enter it here and your phone will
+            connect to the box directly.</p>
+          ${errorText ? `<p class="msg err">${esc(errorText)}</p>` : ''}
+          <label for="appwd">Password from the box's screen</label>
+          <input id="appwd" type="text" autocapitalize="off" autocorrect="off"
+                 autocomplete="off" spellcheck="false" enterkeyhint="go"
+                 style="font-family:ui-monospace,Menlo,monospace;letter-spacing:.06em">
+          <button class="primary" id="joinap" disabled>Connect to the box</button>
+          <p class="hint">Your phone will show a "Wants to Join" prompt — tap Join.
+            There's no internet on the box's network; that's normal and temporary.</p>`;
+        const pwd = document.getElementById('appwd');
+        const go = document.getElementById('joinap');
+        pwd.addEventListener('input', () => (go.disabled = pwd.value.length < 8));
+        pwd.addEventListener('keydown', (e) => {
+          if (e.key === 'Enter' && pwd.value.length >= 8) joinSetupNetwork(pwd.value);
+        });
+        go.addEventListener('click', () => joinSetupNetwork(pwd.value));
+        document.getElementById('back').addEventListener('click', start);
+        pwd.focus();
+      }
+
+      async function joinSetupNetwork(passphrase) {
+        app.innerHTML = `
+          <p class="kicker">Setting up a new box</p>
+          <h1>Connecting…</h1>
+          <div class="wait"><span class="pip"></span><span>Joining the box's network</span></div>
+          <p class="sub">If your phone asks to join a <b>Virtues</b> network, tap
+            <b>Join</b>.</p>`;
+        let res;
+        try {
+          res = await invoke('plugin:reach|wifi_join', {
+            ssidPrefix: 'Virtues-',
+            passphrase,
+          });
+        } catch (e) {
+          // No programmatic join on this platform — manual instructions.
+          return renderNewBox(
+            'This phone can\'t join automatically. Join the Virtues network from ' +
+            'your Wi-Fi settings with that same password, then come back here.');
+        }
+        if (!res || !res.joined) {
+          return renderNewBox(res && res.error
+            ? res.error
+            : 'Couldn\'t join. Check the password against the box\'s screen.');
+        }
+        // Joined. The box is at 10.42.0.1; give the association a beat, then
+        // confirm setup is open and hand over to the wifi picker.
+        const deadline = Date.now() + 20_000;
+        const probe = async () => {
+          try {
+            if (await invoke('plugin:reach|provision_open', { server: 'http://10.42.0.1:8000' })) {
+              state.origin = 'http://10.42.0.1:8000';
+              return loadNetworks();
+            }
+          } catch { /* association still settling */ }
+          if (Date.now() > deadline) {
+            return renderNewBox(
+              'Connected, but the box didn\'t answer. Make sure its screen shows ' +
+              '"Get the Virtues app", then try again.');
+          }
+          setTimeout(probe, 2000);
+        };
+        setTimeout(probe, 2500);
+      }
+
+      // ── SETUP: the box has no network yet ─────────────────────────────────
+
+      function bars(signal) {
+        if (signal >= 70) return '▂▄▆';
+        if (signal >= 40) return '▂▄ ';
+        return '▂  ';
+      }
+
+      async function loadNetworks(errorText) {
+        app.innerHTML = `
+          <p class="kicker">Setting up your box</p>
+          <h1>Choose your Wi-Fi</h1>
+          <p class="sub">These are the networks <b>your box</b> can see from where it is
+            plugged in — not the ones your phone can see.</p>
+          <div class="wait"><span class="pip"></span><span>Asking the box what it can see…</span></div>`;
+        let nets = [];
+        let failed = null;
+        try {
+          nets = await invoke('plugin:reach|provision_networks', { server: state.origin });
+        } catch (e) {
+          failed = String(e);
+        }
+        state.networks = nets;
+        renderNetworks(errorText || failed);
+      }
+
+      function renderNetworks(errorText) {
+        const rows = state.networks.map((n, i) => `
+          <button class="net" data-i="${i}">
+            <span class="bars">${bars(n.signal)}</span>
+            <span class="name">${esc(n.ssid)}</span>
+            ${n.secured ? '<span class="lock">locked</span>' : '<span class="lock">open</span>'}
+          </button>`).join('');
+        app.innerHTML = `
+          <p class="kicker">Setting up your box</p>
+          <h1>Choose your Wi-Fi</h1>
+          <p class="sub">These are the networks <b>your box</b> can see from where it is
+            plugged in — not the ones your phone can see.</p>
+          ${errorText ? `<p class="msg err">${esc(errorText)}</p>` : ''}
+          ${rows || '<p class="sub">Your box could not see any networks. Move it closer to your router, or plug in ethernet instead.</p>'}
+          <button class="back" id="rescan">Search again</button>
+          <p class="hint">Ethernet works too — plug the box in and this whole step disappears.</p>`;
+        app.querySelectorAll('.net').forEach((el) => {
+          el.addEventListener('click', () => choose(state.networks[+el.dataset.i]));
+        });
+        document.getElementById('rescan').addEventListener('click', () => loadNetworks());
+      }
+
+      function choose(n) {
+        state.chosen = n;
+        if (!n.secured) return join(null);
+        // 802.1X: credential-per-user wifi (offices, WeWork). Two fields, and
+        // the copy names whose credentials these are — the network operator's
+        // account, not anything Virtues issued.
+        const ent = !!n.enterprise;
+        app.innerHTML = `
+          <button class="back" id="back">← Networks</button>
+          <h2>${esc(n.ssid)}</h2>
+          ${ent ? `
+          <p class="sub">This network uses per-person sign-in. Enter the account its
+            operator gave you.</p>
+          <label for="identity">Username</label>
+          <input id="identity" type="text" autocomplete="username"
+                 autocapitalize="off" autocorrect="off" />` : ''}
+          <label for="psk">${ent ? 'Password' : 'Wi-Fi password'}</label>
+          <!-- type=password + autocomplete: this is the ONE input that made the
+               captive-portal flow worth replacing. iOS offers the saved network
+               password here; in a captive webview it does not. -->
+          <input id="psk" type="password" autocomplete="current-password"
+                 autocapitalize="off" autocorrect="off" enterkeyhint="go" />
+          <button class="primary" id="join" disabled>Join network</button>
+          <p class="hint">${ent
+            ? 'Your sign-in for this network — not the code on your box\'s screen.'
+            : 'This is the password for your own Wi-Fi — the one your phone is normally on. Not the code on your box\'s screen.'}</p>`;
+        const psk = document.getElementById('psk');
+        const idf = document.getElementById('identity');
+        const go = document.getElementById('join');
+        // WPA2's floor is 8; enterprise account passwords have no floor we can
+        // assume, so require anything non-empty (plus a username).
+        const ok = () => (go.disabled = ent
+          ? !(idf.value.trim() && psk.value)
+          : psk.value.length < 8);
+        psk.addEventListener('input', ok);
+        if (idf) idf.addEventListener('input', ok);
+        const submit = () => join(psk.value, idf ? idf.value.trim() : null);
+        psk.addEventListener('keydown', (e) => {
+          if (e.key === 'Enter' && !go.disabled) submit();
+        });
+        go.addEventListener('click', submit);
+        document.getElementById('back').addEventListener('click', () => renderNetworks());
+        (idf || psk).focus();
+      }
+
+      async function join(psk, identity) {
+        const ssid = state.chosen.ssid;
+        renderSwitching(ssid);
+        let res = { outcome: 'unknown', detail: null };
+        try {
+          res = await invoke('plugin:reach|provision_join', {
+            server: state.origin, ssid, psk, identity: identity || null,
+          });
+        } catch {
+          // A dead socket IS the switchover. Fall through to `unknown`.
+        }
+        if (res.outcome === 'failed') {
+          // The box is still on its own AP and still reachable, so we can go
+          // straight back to the list with NetworkManager's own words.
+          return loadNetworks(res.detail || "Couldn't join that network.");
+        }
+        // 'joined' and 'unknown' are the same situation from here: the box's AP
+        // is down either way and the only honest next move is to go and look.
+        watchForBox(ssid);
+      }
+
+      function renderSwitching(ssid) {
+        app.innerHTML = `
+          <p class="kicker">Setting up your box</p>
+          <h1>Joining ${esc(ssid)}</h1>
+          <div class="wait"><span class="pip"></span><span>This takes up to a minute.</span></div>
+          <p class="sub">Your box has to turn off its own setup network to join yours, so your
+            phone will drop off it now. Your phone will go back to your normal Wi-Fi on its own
+            — you don't have to do anything.</p>
+          <ul class="steps">
+            <li>Box leaves its setup network</li>
+            <li>Box joins ${esc(ssid)}</li>
+            <li>Your phone rejoins your Wi-Fi</li>
+            <li>We find the box again and finish up</li>
+          </ul>`;
+      }
+
+      /**
+       * Wait out the handoff, then work out how it went by looking.
+       *
+       * The signal is clean because of a box-side rule: the setup AP is raised
+       * only while the box is unclaimed AND offline. So after this point —
+       *
+       *   a box on the owner's LAN            → the join worked, go and pair
+       *   a box back on 10.42.0.x, setup-open → the join failed and the AP
+       *                                         returned; back to the list
+       *
+       * Before that rule the AP came back on success too, and these two were
+       * indistinguishable. See `maintenance::setup_ap`.
+       */
+      function watchForBox(ssid) {
+        const DEADLINE_MS = 100_000;
+        const started = Date.now();
+        const tick = async () => {
+          const { servers } = await discoverBoxes();
+          const lan = servers.find((s) => !onSetupSubnet(s.origin));
+          if (lan) {
+            state.origin = lan.origin;
+            // Drop the setup-network config we added: the phone should glide
+            // back to its own wifi, not linger on a network that is gone.
+            // Fire-and-forget — cleanup must never block the pair step.
+            invoke('plugin:reach|wifi_forget', { ssidPrefix: 'Virtues-' }).catch(() => {});
+            return renderPair([lan], '', `Your box is on ${ssid}.`);
+          }
+          const setupBox = await findSetupBox(servers);
+          if (setupBox) {
+            state.origin = setupBox.origin;
+            return loadNetworks(
+              `Your box couldn't stay on ${ssid} and went back to its setup network. ` +
+              `Check the password, or try a different network.`);
+          }
+          if (Date.now() - started > DEADLINE_MS) return renderLost(ssid);
+          setTimeout(tick, 4000);
+        };
+        // First look after a beat: the phone has not left the dying AP yet.
+        setTimeout(tick, 5000);
+      }
+
+      function renderLost(ssid) {
+        app.innerHTML = `
+          <h1>Can't see your box</h1>
+          <p class="sub">It may have joined ${esc(ssid)} while your phone is on a different
+            network. Check that your phone is back on your own Wi-Fi, then look again.</p>
+          <button class="primary" id="again">Look again</button>
+          <p class="hint">If it still doesn't appear, the box's screen will show a setup network
+            again when it has given up — you can start over from there. Plugging in ethernet
+            always works.</p>`;
+        document.getElementById('again').addEventListener('click', start);
+      }
+
+      // ── PAIR: the box is on a network; claim it ───────────────────────────
+
+      // The box list. Chips ARE the action: tap a box → code entry for THAT
+      // box. Nobody types an IP unless discovery failed them (the manual link).
+      function renderPair(servers, debug, banner) {
+        state.servers = servers;
+        const chips = servers.map((s, i) => `
+          <button class="box" data-i="${i}">
+            <span class="dot"></span>
+            <span>
+              <b>${esc(s.name)}</b>
+              <span class="boxstate">${s.claimed === false ? 'ready to set up' : s.claimed === true ? 'already set up' : ''}</span>
+            </span>
+            <span class="addr">${esc(s.origin.replace('http://', ''))}</span>
+          </button>`).join('');
+        // Nothing found → the Bluetooth-first setup screen IS the empty
+        // state; it keeps looking and routes itself. This branch only ever
+        // renders a real list.
+        if (!servers.length) return bleSearchLoop(banner);
+        app.innerHTML = `
+          <h1>Connect to your box</h1>
+          <p class="sub">${banner ? esc(banner) + ' ' : ''}Tap your box to pair it.</p>
+          <div id="found">${chips}</div>
+          <button class="back" id="newbox">Setting up a brand-new box? Start here →</button><br>
+          <button class="back" id="manual">Enter an address manually</button>`;
+
+        document.getElementById('newbox').addEventListener('click', () => startBleSetup());
+        document.getElementById('manual').addEventListener('click', () => renderManualPair());
+        const rescan = document.getElementById('rescan');
+        if (rescan) rescan.addEventListener('click', (e) => { e.preventDefault(); start(); });
+        app.querySelectorAll('.box').forEach((el) => {
+          el.addEventListener('click', () => renderCodeEntry(state.servers[+el.dataset.i]));
+        });
+      }
+
+      // Code entry for ONE chosen box. The code is the only thing left to
+      // type, and mistyping the box is fail-closed anyway: a code only works
+      // on the box that displayed it.
+      function renderCodeEntry(server) {
+        app.innerHTML = `
+          <button class="back" id="back">← Boxes</button>
+          <p class="kicker">${esc(server.name)}${server.claimed === false ? ' · ready to set up' : ''}</p>
+          <h1>Enter its code</h1>
+          <p class="sub">The 6 digits on ${esc(server.name)}'s screen right now.</p>
+          <form id="form">
+            <input id="code" inputmode="numeric" maxlength="7" placeholder="123 456" autofocus />
+            <button class="primary" id="go" type="submit">Pair</button>
+          </form>
+          <div class="msg" id="msg"></div>
+          <p class="hint">It rotates every few minutes — a fresh one always works. No screen?
+            Run <b>virtues pair</b> on the box.</p>
+          ${server.bleId ? '<button class="back" id="blewifi">Set up its Wi-Fi instead</button>' : ''}`;
+        document.getElementById('back').addEventListener('click', start);
+        // The escape hatch for a stale "already online" advertisement: if the
+        // user is here but the box actually needs wifi, the picker is a tap
+        // away instead of a dead end.
+        const blewifi = document.getElementById('blewifi');
+        if (blewifi) blewifi.addEventListener('click', () =>
+          bleWifiPicker({ id: server.bleId, name: server.name }));
+        document.getElementById('form').addEventListener('submit', (e) => {
+          e.preventDefault();
+          // A chip carrying a BLE id pairs over Bluetooth — immune to LANs
+          // that isolate clients; the box relays the code to itself (0x83).
+          if (server.bleId) submitPairBle(server); else submitPair(server.origin);
+        });
+        document.getElementById('code').focus();
+      }
+
+      // The old combined form, demoted to the escape hatch for mDNS-hostile
+      // networks and boxes discovery can't see.
+      function renderManualPair() {
+        app.innerHTML = `
+          <button class="back" id="back">← Boxes</button>
+          <h1>Connect by address</h1>
+          <form id="form">
+            <label for="server">Box address</label>
+            <input id="server" inputmode="url" autocapitalize="off" autocorrect="off"
+                   placeholder="virtues.local   or   192.168.1.x" />
+            <label for="code">Pairing code</label>
+            <input id="code" inputmode="numeric" maxlength="7" placeholder="123 456" />
+            <button class="primary" id="go" type="submit">Pair</button>
+          </form>
+          <div class="msg" id="msg"></div>`;
+        document.getElementById('back').addEventListener('click', start);
+        document.getElementById('form').addEventListener('submit', (e) => {
+          e.preventDefault();
+          submitPair(document.getElementById('server').value.trim());
+        });
+      }
+
+      // `server` is the chosen box's origin (chip flow) or whatever the manual
+      // form holds — the caller decides, this just pairs against it.
+      async function submitPair(server) {
+        const msg = document.getElementById('msg');
+        const go = document.getElementById('go');
+        const say = (t, cls) => { msg.className = 'msg ' + (cls || ''); msg.textContent = t; };
         const code = document.getElementById('code').value.replace(/\s+/g, '');
-        if (!server || code.length < 6) { say('Enter the box address and the 6-digit code.', 'err'); return; }
-        go.disabled = true; say('Pairing…');
+        if (!server || code.length < 6) {
+          return say('Enter the 6-digit code from the box\'s screen.', 'err');
+        }
+        go.disabled = true;
+        say('Pairing…');
         try {
           const status = await invoke('plugin:reach|pair', { payload: { server, code } });
           if (status.paired) {
             say('Paired — opening your box…', 'ok');
             // Give the loopback a beat, then load the bundled SPA at root.
-            setTimeout(() => { window.location.replace('/'); }, 400);
+            setTimeout(() => window.location.replace('/'), 400);
           } else {
             say('Pairing did not complete. Check the code and try again.', 'err');
             go.disabled = false;
@@ -139,7 +933,41 @@
           say(String(err), 'err');
           go.disabled = false;
         }
-      });
+      }
+
+      // Pair over the box's Bluetooth (RPC 0x83). The Rust side mints the
+      // device identity, the box redeems the code against its own consume
+      // endpoint, and the pairing persists exactly as the LAN path's would —
+      // so from here on the app can't tell which wire it paired over.
+      async function submitPairBle(server) {
+        const msg = document.getElementById('msg');
+        const go = document.getElementById('go');
+        const say = (t, cls) => { msg.className = 'msg ' + (cls || ''); msg.textContent = t; };
+        const code = document.getElementById('code').value.replace(/\s+/g, '');
+        if (code.length < 6) {
+          return say('Enter the 6-digit code from the box\'s screen.', 'err');
+        }
+        go.disabled = true;
+        say('Pairing over Bluetooth…');
+        try {
+          const res = await invoke('plugin:reach|improv_pair', { id: server.bleId, code });
+          if (res && res.ok) {
+            say('Paired — opening your box…', 'ok');
+            invoke('plugin:reach|improv_disconnect').catch(() => {});
+            setTimeout(() => window.location.replace('/'), 400);
+          } else {
+            say((res && res.error) || 'Pairing did not complete. Check the code and try again.', 'err');
+            go.disabled = false;
+          }
+        } catch (err) {
+          say(String(err), 'err');
+          go.disabled = false;
+        }
+      }
+
+      if (!window.__VIRTUES_PAIRED__ || pinnedOpen) {
+        start();
+      }
     </script>
   </body>
 </html>

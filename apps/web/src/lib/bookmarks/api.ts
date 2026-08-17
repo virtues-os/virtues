@@ -81,6 +81,57 @@ export async function getBookmarksPage(
 	return res.json();
 }
 
+/** The extraction record, as the enrichment pass writes it. */
+export interface ExtractionRecord {
+	description?: string | null;
+	medium?: string | null;
+	subject?: string[];
+	entities?: string[];
+	style?: string | null;
+	likely_queries?: string[];
+}
+
+export interface BookmarkDetailApi extends BookmarkApi {
+	/** Set when the source no longer has it. The row and its note survive. */
+	deleted_at_source: string | null;
+	enrichment_model: string | null;
+	extraction: ExtractionRecord | null;
+}
+
+export async function getBookmark(
+	id: string,
+	fetchFn: FetchFn = fetch
+): Promise<BookmarkDetailApi> {
+	const res = await fetchFn(`/api/bookmarks/${encodeURIComponent(id)}`, {
+		cache: "no-store",
+	});
+	if (!res.ok) throw new Error(`Failed to load bookmark: ${res.status}`);
+	return res.json();
+}
+
+/**
+ * Write the note. Blank clears it — writing nothing is a legitimate edit.
+ *
+ * The note is part of the bookmark's embed text, so an edit changes what the
+ * row is findable by; the indexer picks that up on its next pass.
+ */
+export async function updateBookmarkNote(
+	id: string,
+	note: string | null,
+	fetchFn: FetchFn = fetch
+): Promise<BookmarkDetailApi> {
+	const res = await fetchFn(`/api/bookmarks/${encodeURIComponent(id)}/note`, {
+		method: "PATCH",
+		headers: { "Content-Type": "application/json" },
+		body: JSON.stringify({ note }),
+	});
+	if (!res.ok) {
+		const detail = await res.text().catch(() => "");
+		throw new Error(detail || `Failed to save note: ${res.status}`);
+	}
+	return res.json();
+}
+
 /** Save a URL. Idempotent on the canonicalized URL — re-saving updates. */
 export async function saveBookmark(
 	body: { url: string; note?: string; tags?: string[] },

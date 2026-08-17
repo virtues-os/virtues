@@ -730,15 +730,31 @@
 		display: flex;
 		align-items: flex-start;
 		justify-content: center;
-		/* Bottom inset keeps tall result lists above the home indicator. */
+		/* Bottom inset keeps tall result lists above the home indicator — and,
+		   on a phone, above the keyboard this palette raises the moment it
+		   opens. `--keyboard-inset` is 0 anywhere there isn't one, so the
+		   desktop measure is untouched. */
 		padding-top: max(15vh, env(safe-area-inset-top));
-		padding-bottom: max(16px, env(safe-area-inset-bottom));
+		padding-bottom: max(16px, env(safe-area-inset-bottom), var(--keyboard-inset, 0px));
 		z-index: var(--z-modal);
+	}
+
+	/* 15vh is a comfortable drop on a desktop window and most of the usable
+	   height on a phone with the keyboard up. */
+	@media (max-width: 768px) {
+		.modal-backdrop {
+			padding-top: max(6vh, env(safe-area-inset-top));
+		}
 	}
 
 	.modal {
 		width: 100%;
 		max-width: 520px;
+		/* Fits the space the backdrop's padding leaves, rather than running past
+		   it: a column so the results list is the part that gives. */
+		display: flex;
+		flex-direction: column;
+		max-height: 100%;
 		background: var(--surface);
 		border: 1px solid var(--border);
 		border-radius: 12px;
@@ -795,6 +811,11 @@
 
 	.results {
 		max-height: 400px;
+		/* …but never more than the modal was given. `min-height: 0` is what lets
+		   a flex child shrink below its content — without it the list keeps its
+		   full height and pushes the palette off the bottom of the screen. */
+		flex: 1 1 auto;
+		min-height: 0;
 		overflow-y: auto;
 		padding: 8px;
 	}

@@ -18,7 +18,9 @@ mod endpoint;
 mod server;
 
 pub use client::{PathKind, VirtuesIrohClient};
-pub use endpoint::{build_endpoint, iroh_port, DEFAULT_IROH_PORT, VIRTUES_ALPN};
+pub use endpoint::{
+    build_endpoint, install_crypto_provider, iroh_port, DEFAULT_IROH_PORT, VIRTUES_ALPN,
+};
 pub use server::{serve, AllowPolicy, ProvenPeer, StaticAllow};
 
 // Re-export the iroh types callers need so they don't depend on iroh directly.

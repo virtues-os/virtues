@@ -13,6 +13,7 @@ pub mod auth;
 pub mod billing_state;
 pub mod box_status;
 pub mod devices;
+pub mod display;
 pub mod pair;
 pub mod settings_byo;
 pub mod setup;
@@ -30,7 +31,7 @@ pub mod day_summary;
 pub mod developer;
 pub mod drive;
 pub mod entities;
-pub mod exa;
+pub mod web_search;
 pub mod home;
 pub mod internal;
 pub mod lake;
@@ -40,6 +41,8 @@ pub mod model_catalog;
 pub mod models;
 pub mod entity_article_gen;
 pub mod narrative_identity_gen;
+pub mod narrative_draft;
+pub mod narrative_interview;
 pub mod bookmarks;
 pub mod pages;
 pub mod personas;
@@ -48,6 +51,10 @@ pub mod pins;
 pub mod search_local;
 pub mod places;
 pub mod profile;
+pub mod identity;
+pub mod setup_phrase;
+pub mod network;
+pub mod provision;
 pub mod notebooks;
 pub mod records;
 pub mod refs;
@@ -62,6 +69,7 @@ pub mod unsplash;
 pub mod usage;
 pub mod wiki;
 pub mod lifeline;
+pub mod link_session;
 pub mod wiki_articles;
 pub mod wiki_notes;
 
@@ -112,9 +120,6 @@ pub use drive::{
 pub use entities::{
     create_place, delete_place, get_place, list_places, set_home_place as set_home_place_entity,
     update_place, CreatePlaceRequest, CreatePlaceResponse, Place, UpdatePlaceRequest,
-};
-pub use exa::{
-    search as exa_search, SearchRequest as ExaSearchRequest, SearchResponse as ExaSearchResponse,
 };
 pub use media::{
     get_media, is_audio_type, is_image_type, is_supported_media_type, is_video_type, upload_media,
@@ -190,8 +195,8 @@ pub use updates::{
 };
 pub use search_local::{search_local, LocalSearchRequest, LocalSearchResponse};
 pub use bookmarks::{
-    list_bookmarks, save_bookmark, BookmarkListItem, BookmarkPage, ListBookmarksQuery,
-    SaveBookmarkRequest, SavedBookmark,
+    get_bookmark, list_bookmarks, save_bookmark, update_note, BookmarkDetail, BookmarkListItem,
+    BookmarkPage, ListBookmarksQuery, SaveBookmarkRequest, SavedBookmark, UpdateNoteRequest,
 };
 pub use pins::{
     create_pin, delete_pin, list_pins, reorder_pins, update_pin, CreatePinRequest, Pin,

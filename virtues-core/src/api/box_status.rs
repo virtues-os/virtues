@@ -242,6 +242,16 @@ pub struct SetupState {
     pub setup: Vec<SetupStep>,
     pub setup_complete: bool,
     pub onboarding: Vec<SetupStep>,
+    /// Whether the box has anything to keep a record OF yet.
+    ///
+    /// Deliberately a lower bar than the whole `onboarding` list: this gates a
+    /// REDIRECT, and a gate that waits for the narrative-identity generator
+    /// would hold someone on a page while a background job runs. One connected
+    /// source is the honest line between "a box" and "your box".
+    pub onboarding_complete: bool,
+    /// The owner said no. Prescribe, never enforce — but a door that asks again
+    /// every launch is a wall with extra steps, so the answer is remembered.
+    pub onboarding_skipped: bool,
 }
 
 /// Compute the setup/onboarding state. Reuses [`compute_status`] for the
@@ -426,10 +436,23 @@ pub async fn compute_setup_state(pool: &PgPool) -> Result<SetupState> {
     // weather-report the wizard renders but the user can't "do", and it flips
     // false on any transient LAN blip, which previously bounced a fully-set-up
     // user back into /setup.
-    const REQUIRED_SETUP_STEPS: &[&str] = &["claimed", "account"];
+    //
+    // `account` gates the APPLIANCE only. An appliance is a guided product: its
+    // panel sequences the three steps and the owner bought hardware that
+    // assumes a subscription, so requiring the link there is the intended
+    // shape. A DIY box is somebody's own server — forcing an account on it
+    // contradicts the doctrine outright ("prescribe, never enforce"), and until
+    // now this constant enforced it on both, with `/setup` offering no exit.
+    // That made the promise false for exactly the users it was written for.
+    let requires_account = crate::maintenance::setup_ap::is_appliance();
+    let required: &[&str] = if requires_account {
+        &["claimed", "account"]
+    } else {
+        &["claimed"]
+    };
     let setup_complete = setup
         .iter()
-        .filter(|s| REQUIRED_SETUP_STEPS.contains(&s.id))
+        .filter(|s| required.contains(&s.id))
         .all(|s| s.done);
 
     let onboarding = vec![
@@ -499,11 +522,61 @@ pub async fn compute_setup_state(pool: &PgPool) -> Result<SetupState> {
         },
     ];
 
+    // Only the steps that mean the box has SOMETHING. `first_source` covers the
+    // Mac collector (the common path — iMessage is local, needs no OAuth, and
+    // the owner is already sitting at the machine that has it) as well as any
+    // connected account.
+    let onboarding_required: &[&str] = &["first_source"];
+    let onboarding_complete = onboarding
+        .iter()
+        .filter(|s| onboarding_required.contains(&s.id))
+        .all(|s| s.done);
+
+    let onboarding_skipped = onboarding_skipped(pool).await;
+
     Ok(SetupState {
         setup,
         setup_complete,
         onboarding,
+        onboarding_complete,
+        onboarding_skipped,
     })
+}
+
+/// Has the owner dismissed onboarding?
+///
+/// Stored on the assistant profile's `ui_preferences` rather than its own
+/// table: it is exactly what that column is for — whether a surface is shown —
+/// and a migration for one boolean would be the more expensive mistake. Reads
+/// false on any error, which errs toward OFFERING onboarding rather than
+/// silently swallowing it.
+pub async fn onboarding_skipped(pool: &PgPool) -> bool {
+    sqlx::query_scalar::<_, Option<serde_json::Value>>(
+        "SELECT ui_preferences FROM app_assistant_profile ORDER BY id LIMIT 1",
+    )
+    .fetch_optional(pool)
+    .await
+    .ok()
+    .flatten()
+    .flatten()
+    .and_then(|v| v.get("onboarding_skipped").and_then(|b| b.as_bool()))
+    .unwrap_or(false)
+}
+
+/// Remember that the owner skipped onboarding (or un-skip, to offer it again).
+///
+/// Merges into `ui_preferences` rather than replacing it — this column holds
+/// every other UI preference, and a write that clobbered them would trade one
+/// boolean for all of them.
+pub async fn set_onboarding_skipped(pool: &PgPool, skipped: bool) -> Result<()> {
+    sqlx::query(
+        "UPDATE app_assistant_profile          SET ui_preferences = COALESCE(ui_preferences, '{}'::jsonb)              || jsonb_build_object('onboarding_skipped', $1::bool),              updated_at = now()          WHERE id = (SELECT id FROM app_assistant_profile ORDER BY id LIMIT 1)",
+    )
+    .bind(skipped)
+    .execute(pool)
+    .await
+    .map_err(|e| crate::Error::Database(format!("set onboarding_skipped: {e}")))?;
+    Ok(())
 }
 
 /// Three-state qualifier for the `device_collecting` step (behavior keys off
@@ -587,6 +660,46 @@ pub async fn setup_state_handler(State(state): State<AppState>) -> impl IntoResp
         Ok(setup) => (StatusCode::OK, Json(setup)).into_response(),
         Err(e) => {
             tracing::warn!(error = %e, "setup state failed");
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(serde_json::json!({ "error": e.to_string() })),
+            )
+                .into_response()
+        }
+    }
+}
+
+/// `POST /api/setup/skip-onboarding` — remember that the owner declined.
+///
+/// Authenticated: this changes what the app does on every future launch, and
+/// `/api/setup/state` is deliberately public (the wizard reads it before any
+/// session exists) — so the READ stays open and the WRITE does not.
+///
+/// Takes `{"skipped": bool}` so the same route un-skips. Onboarding that can
+/// only ever be dismissed is a door that locks behind you.
+#[derive(Debug, serde::Deserialize)]
+pub struct SkipOnboardingRequest {
+    #[serde(default = "default_true")]
+    pub skipped: bool,
+}
+
+fn default_true() -> bool {
+    true
+}
+
+pub async fn skip_onboarding_handler(
+    State(state): State<AppState>,
+    _user: crate::middleware::auth::AuthUser,
+    Json(req): Json<SkipOnboardingRequest>,
+) -> impl IntoResponse {
+    match set_onboarding_skipped(state.db.pool(), req.skipped).await {
+        Ok(()) => (
+            StatusCode::OK,
+            Json(serde_json::json!({ "onboarding_skipped": req.skipped })),
+        )
+            .into_response(),
+        Err(e) => {
+            tracing::warn!(error = %e, "skip onboarding failed");
             (
                 StatusCode::INTERNAL_SERVER_ERROR,
                 Json(serde_json::json!({ "error": e.to_string() })),

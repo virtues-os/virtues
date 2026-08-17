@@ -12,7 +12,7 @@
 //!   substance of "expected but didn't run" in the needs-attention strip.
 //!
 //! Both are read off two columns, `last_slot_at` and `next_due_at`, which are
-//! *derived state*: recomputed from `cron_schedule` on every sync pass, never
+//! *derived state*: recomputed from `schedule` on every sync pass, never
 //! authoritative. A row that predates them, or whose schedule was just edited,
 //! heals on the next tick. Nothing here should ever be the only copy of a fact.
 //!

@@ -4,6 +4,7 @@ use sqlx::PgPool;
 use crate::stripe_api::StripeClient;
 use crate::virtues_api_client::VirtuesApiClient;
 
+mod account;
 mod billing_portal;
 mod claim;
 mod credits;
@@ -90,6 +91,7 @@ pub struct AppState {
 
 pub fn router() -> Router<AppState> {
     Router::new()
+        .merge(account::router())
         .merge(health::router())
         .merge(claim::router())
         .merge(link::router())

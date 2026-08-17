@@ -1,0 +1,541 @@
+<!--
+  The letter — the first screen anyone sees after their box is theirs.
+
+  ONE JOB. Make someone believe the box is theirs, and tell them what happens
+  next. An earlier version had nine movements, a two-panel figure, a second
+  figure, and six body sizes; every piece was individually defensible and the
+  whole was a brochure. What survived is what does that one job.
+
+  THE FOUR FEELINGS, one beat each:
+
+    understood     a person wrote this, and names the thing you actually fear
+    excited        tomorrow morning, one concrete object at a concrete time
+    knowledgeable  the figure — where the record is, where the models are
+    safe           the same figure, read the other way
+
+  THE FIGURE REPLACED AN ARGUMENT. The old page drew "as it is" against "as it
+  ought to be", then admitted four paragraphs later that the box borrows hosted
+  models — which read as a claim followed by its own retraction. The two-rail
+  figure has no such seam: it says where each half of the system lives TODAY,
+  which makes the subscription a legible consequence rather than a compromise
+  to defend, and makes its ending a plotted point rather than a promise.
+
+  THREE SIZES, TWO FAMILIES. Serif for the headline and the whole body, mono
+  for labels and states, one small size for captions. Nothing else. The old
+  page ran six body sizes and the mixture was the reason it felt unresolved
+  before anyone could say why.
+-->
+<script lang="ts">
+	import Icon from "$lib/components/Icon.svelte";
+	import OnboardingHeader from "$lib/components/onboarding/OnboardingHeader.svelte";
+	import type { StepId } from "$lib/components/onboarding/steps";
+
+	let {
+		onbegin,
+		passed = [],
+		onjump,
+		back = false,
+		reduced = false,
+	}: {
+		onbegin: () => void;
+		passed?: StepId[];
+		onjump?: (id: StepId) => void;
+		/** Arrived by going backward through the strip. */
+		back?: boolean;
+		reduced?: boolean;
+	} = $props();
+
+	// Up here because they are the likeliest thing on this page to rot, and a
+	// reachable founder is the claim the page rests on — a dead link here costs
+	// more than a typo anywhere else in onboarding.
+	const EMAIL = "adam@virtues.com";
+	const X_URL = "https://x.com/adamjaces";
+	const INSTAGRAM_URL = "https://www.instagram.com/aajaces/";
+	// The long version, for anyone the figure just convinced.
+	const MANIFESTO_URL = "https://virtues.com/library/manifesto";
+</script>
+
+<div class="letter ob-wrap" class:ob-still={reduced} class:ob-back={back}>
+	<div class="ob-sheet">
+		<OnboardingHeader step="letter" done={passed} {onjump} />
+		<h1 class="ob-h1 hero">A small correction to technology.</h1>
+
+		<!-- A face carries an argument about trust in a way a paragraph cannot,
+		     which is exactly the job of this screen. -->
+		<div class="film" role="img" aria-label="A short film from the founder — coming soon">
+			<div class="film-inner">
+				<Icon icon="ri:play-circle-line" width="30" />
+				<span>A word from the founder</span>
+			</div>
+		</div>
+
+		<div class="body">
+			<!-- A BELIEF, THEN A QUESTION, in one breath. The list is categories
+			     and one allusion rather than names: categories cannot be argued
+			     with, and a name invites an argument about that name, which is the
+			     one thing this paragraph cannot afford. The last item does the
+			     work of the name and lets the reader supply it — which lands
+			     harder and will still read the same in ten years.
+
+			     "and … and …" rather than commas inside that item, or the list
+			     reads as six answers instead of four. The repeated conjunction
+			     binds them into one man, and "disordered" is the older, better
+			     word for it: a life whose loves are out of order. -->
+			<p>
+				I'm Adam Jace, and I started Virtues because I believe in subsidiarity — the old
+				idea that a thing belongs at the most local level able to hold it. Nothing is more
+				local than your own life. So ask it plainly. Who would you rather have holding the
+				whole account of yours: a government, a political party, an advertising company, a
+				man with money and an island and a disordered life? Or you.
+			</p>
+
+			<!-- The turn from the question to the product, and the only place the
+			     name gets explained. "Vice is repetitive and profitable" is the
+			     load-bearing line: it says why an entire industry is arranged the
+			     way it is without accusing anyone of malice, and it makes the name
+			     an argument rather than a mood. -->
+			<p>
+				That is why I built Virtues: to put the record of your life somewhere it cannot be
+				turned into advertising, or a feed, or a habit you did not choose. Vice is
+				repetitive and profitable, which is why so much is arranged to produce it. Virtue
+				asks for harder things — attention, memory, an honest account of what you have
+				actually been doing. A record of your own life can give you all three, but only if
+				it is genuinely yours.
+			</p>
+
+			<!-- SHOWN, NOT ASSERTED. Everything above is an argument, and a page of
+			     pure argument is cold. One concrete object at a concrete time is a
+			     thing you can picture — and tomorrow rather than some eventual
+			     capability, because a promise you can check within a day is not an
+			     IOU. -->
+			<p>
+				Tomorrow morning a page will be waiting for you: yesterday, written down — where you
+				went, who you spoke with, what you were working on. Thin at first, having only just
+				met you. Give it a month and it will know your weeks better than you do.
+			</p>
+		</div>
+
+		<!-- ── where it lives ────────────────────────────────────────────────
+		     ONE AXIS, TWO MARKERS. There are exactly two things in this system
+		     worth locating, and the whole argument is that they are at different
+		     points — so they belong on the SAME line, where the distance between
+		     them can be seen rather than described.
+
+		     An earlier attempt gave each its own rail, which put a filled track
+		     and a round handle side by side twice and read unmistakably as two
+		     range sliders: a control, inviting a drag, saying nothing. One line
+		     with marks on it is a scale, and nobody tries to drag a scale. -->
+		<figure class="where">
+			<figcaption class="where-head">What is yours, and what is borrowed</figcaption>
+
+			<div class="axis-fig">
+				<!-- Ordered far marker first so the near one's label paints over it
+				     rather than under, on the narrow widths where they meet. -->
+				<div class="mark here" style="--at: 100%; --h: 5.9rem">
+					<p class="mark-label">The record of your life</p>
+					<p class="mark-state">arrived</p>
+					<span class="tick"></span>
+					<span class="dot"></span>
+				</div>
+
+				<div class="mark transit" style="--at: 34%; --h: 2.2rem">
+					<p class="mark-label">The intelligence that reads it</p>
+					<p class="mark-state">still on the way</p>
+					<span class="tick"></span>
+					<span class="dot"></span>
+				</div>
+
+				<div class="line"></div>
+				<div class="ends">
+					<span>elsewhere</span>
+					<span>your house</span>
+				</div>
+			</div>
+
+			<p class="note">
+				Your record sits on the box in your home and does not leave it. The models are still
+				borrowed, because no intelligence you can run in your own house is yet good enough
+				to be trusted with your life. They are shown only what a question requires, under
+				terms that keep nothing: not stored, not trained on, not logged. That borrowing is
+				the one thing the subscription buys, and it ends when the hardware in your home is
+				equal to the work.
+			</p>
+
+			<p class="further">
+				<a href={MANIFESTO_URL} target="_blank" rel="noreferrer">
+					Our case for subsidiarity in technology
+					<Icon icon="ri:external-link-line" width="13" />
+				</a>
+			</p>
+		</figure>
+
+		<div class="sign">
+			<!-- MASKED, NOT INVERTED. An earlier version inverted black ink assuming
+			     a dark ground, which would have painted white on white for the eight
+			     LIGHT themes — starting with pemberley, the one a new box actually
+			     opens on. Masking paints the ink in whatever the theme's foreground
+			     is, correct on all sixteen with no list to maintain. -->
+			<div class="sig" role="img" aria-label="Adam Jace"></div>
+			<p class="role">Founder, Virtues</p>
+
+			<div class="contacts">
+				<!-- BUNDLED MARKS, NOT FAVICONS. Fetching icons from x.com and
+				     instagram.com would make the page that promises nothing leaves
+				     your box reach out to two ad companies and tell them you opened
+				     it. The icon registry pre-imports everything, so these cost no
+				     network at all. -->
+				<a class="pill" href="mailto:{EMAIL}">
+					<Icon icon="ri:mail-line" width="15" />
+					{EMAIL}
+				</a>
+				<a class="pill" href={X_URL} target="_blank" rel="noreferrer">
+					<Icon icon="ri:twitter-x-fill" width="14" />
+					adamjaces
+				</a>
+				<a class="pill" href={INSTAGRAM_URL} target="_blank" rel="noreferrer">
+					<Icon icon="ri:instagram-line" width="15" />
+					aajaces
+				</a>
+			</div>
+		</div>
+
+		<div class="exit">
+			<button class="ob-btn" onclick={onbegin}>
+				Begin
+				<Icon icon="ri:arrow-right-line" width="16" />
+			</button>
+		</div>
+	</div>
+</div>
+
+<style>
+	/* THE WHOLE TYPE SYSTEM. Three sizes, and every rule below refers to these
+	   rather than inventing its own — which is the specific failure the previous
+	   version accumulated one defensible exception at a time. */
+	.letter {
+		--t-body: 1.0625rem;
+		--t-small: 13px;
+		--t-label: 11px;
+	}
+
+	/* Mono, uppercase, --t-label: the one treatment every label on the page
+	   shares — the axis ends, the marker states, the figure's head. (The eyebrow
+	   moved into OnboardingHeader, which carries the same treatment.) */
+	.ends,
+	.mark-state,
+	.where-head {
+		font-family: var(--font-mono, ui-monospace, monospace);
+		font-size: var(--t-label);
+		letter-spacing: 0.16em;
+		text-transform: uppercase;
+		color: var(--color-foreground-subtle);
+	}
+
+	/* The one screen allowed to be louder than the others: it is the cover, and
+	   everything after it is an interior page. */
+	.hero {
+		font-size: clamp(2rem, 4vw, 2.75rem);
+		line-height: 1.05;
+		letter-spacing: -0.02em;
+	}
+
+	.film {
+		margin: 2rem 0 0;
+		aspect-ratio: 16 / 9;
+		border: 1px solid var(--color-border);
+		border-radius: 12px;
+		background: color-mix(in srgb, var(--color-foreground) 3%, transparent);
+		display: grid;
+		place-items: center;
+	}
+
+	.film-inner {
+		display: flex;
+		flex-direction: column;
+		align-items: center;
+		gap: 0.5rem;
+		color: var(--color-foreground-subtle);
+		font-size: var(--t-small);
+	}
+
+	/* A LETTER, SO IT IS SET LIKE ONE. Serif throughout at a single size — the
+	   old page reserved the serif for two "important" paragraphs, which made the
+	   rest look like interface chrome someone had to get past. */
+	.body {
+		margin-top: 2.25rem;
+		display: flex;
+		flex-direction: column;
+		gap: 1.15rem;
+		font-family: var(--font-serif, Georgia, serif);
+		font-size: var(--t-body);
+		line-height: 1.7;
+		color: var(--color-foreground);
+	}
+
+	.body p {
+		margin: 0;
+	}
+
+	/* ── where it lives ────────────────────────────────────────────────── */
+
+	.where {
+		margin: 3rem 0 0;
+		padding-top: 1.75rem;
+		border-top: 1px solid var(--color-border);
+	}
+
+	.where-head {
+		margin: 0 0 1rem;
+	}
+
+	/* One line, measured from `elsewhere` to `your house`, with both markers on
+	   it. Marker labels stack at different heights (--h) so they never collide,
+	   and the taller stalk lands on the marker that has arrived. */
+	.axis-fig {
+		position: relative;
+		height: 9.5rem;
+	}
+
+	.line {
+		position: absolute;
+		left: 0;
+		right: 0;
+		bottom: 1.75rem;
+		height: 1px;
+		background: var(--color-border);
+	}
+
+	.ends {
+		position: absolute;
+		left: 0;
+		right: 0;
+		bottom: 0;
+		display: flex;
+		justify-content: space-between;
+		letter-spacing: 0.14em;
+	}
+
+	.mark {
+		position: absolute;
+		bottom: 1.75rem;
+		left: var(--at);
+	}
+
+	.dot {
+		position: absolute;
+		bottom: -4.5px;
+		left: -4.5px;
+		width: 9px;
+		height: 9px;
+		border-radius: 50%;
+		background: currentColor;
+	}
+
+	/* The stalk, not a ruler: it exists only to tie a label to a position, so it
+	   stays fainter than either. */
+	.tick {
+		position: absolute;
+		bottom: 0;
+		left: -0.5px;
+		width: 1px;
+		height: var(--h);
+		background: currentColor;
+		opacity: 0.3;
+	}
+
+	.mark-label,
+	.mark-state {
+		position: absolute;
+		bottom: var(--h);
+		margin: 0;
+		white-space: nowrap;
+		line-height: 1.35;
+	}
+
+	.mark-label {
+		font-family: var(--font-serif, Georgia, serif);
+		font-size: var(--t-body);
+		color: var(--color-foreground);
+		padding-bottom: 1.35rem;
+	}
+
+	.mark-state {
+		padding-bottom: 0.5rem;
+		letter-spacing: 0.14em;
+	}
+
+	/* Arrived: the accent, and its label hangs back from the right edge so the
+	   line's end is not crowded. */
+	.here {
+		color: var(--color-primary);
+	}
+
+	.here .mark-label,
+	.here .mark-state {
+		right: 0;
+		text-align: right;
+	}
+
+	.here .mark-state {
+		color: var(--color-primary);
+	}
+
+	/* Hollow, because it has not got there. */
+	.transit {
+		color: var(--color-foreground-subtle);
+	}
+
+	.transit .dot {
+		background: var(--color-background);
+		border: 1.5px solid currentColor;
+	}
+
+	.transit .mark-label,
+	.transit .mark-state {
+		left: 0;
+	}
+
+	/* One movement on load: both markers rise into place along their own stalks,
+	   which is the only motion on the page and says the thing the figure says. */
+	.mark {
+		animation: place 0.8s 0.3s cubic-bezier(0.2, 0.7, 0.2, 1) both;
+	}
+
+	@keyframes place {
+		from {
+			opacity: 0;
+			transform: translateY(6px);
+		}
+		to {
+			opacity: 1;
+			transform: none;
+		}
+	}
+
+	.ob-still .mark {
+		animation: none;
+	}
+
+	@media (prefers-reduced-motion: reduce) {
+		.mark {
+			animation: none;
+		}
+	}
+
+	/* SAME TYPE AS THE LETTER. These sat in the UI sans at 13px, which made the
+	   most important admission on the page read as a footnote in a different
+	   document. Muted rather than smaller is how a caption stays a caption. */
+	.note,
+	.further {
+		font-family: var(--font-serif, Georgia, serif);
+		font-size: var(--t-body);
+		line-height: 1.7;
+		color: var(--color-foreground-muted);
+	}
+
+	.note {
+		margin: 2rem 0 0;
+	}
+
+	.further {
+		margin: 1.15rem 0 0;
+	}
+
+	.further a {
+		display: inline-flex;
+		align-items: center;
+		gap: 0.35rem;
+		color: var(--color-foreground-muted);
+		text-decoration: none;
+		border-bottom: 1px solid var(--color-border);
+		padding-bottom: 2px;
+	}
+
+	.further a:hover {
+		color: var(--color-foreground);
+		border-bottom-color: var(--color-foreground-subtle);
+	}
+
+	/* Narrow: the labels are wider than the gap between the markers, so they
+	   wrap out of `nowrap` and the figure grows a little taller to hold them. */
+	@media (max-width: 620px) {
+		.axis-fig {
+			height: 11rem;
+		}
+
+		.mark-label,
+		.mark-state {
+			white-space: normal;
+			max-width: 11rem;
+		}
+
+		.here .mark-label,
+		.here .mark-state {
+			right: 0;
+		}
+	}
+
+	/* ── sign-off ──────────────────────────────────────────────────────── */
+
+	.sign {
+		margin-top: 2.75rem;
+	}
+
+	.sig {
+		height: 4.6rem;
+		width: 16.9rem;
+		background-color: var(--color-foreground);
+		opacity: 0.85;
+		-webkit-mask: url("/images/adam_signature.png") no-repeat left center / contain;
+		mask: url("/images/adam_signature.png") no-repeat left center / contain;
+	}
+
+	.role {
+		margin: 0.45rem 0 0;
+		font-size: var(--t-small);
+		line-height: 1.6;
+		color: var(--color-foreground-subtle);
+	}
+
+	.contacts {
+		margin-top: 0.9rem;
+		display: flex;
+		flex-wrap: wrap;
+		gap: 0.5rem;
+	}
+
+	.pill {
+		display: inline-flex;
+		align-items: center;
+		gap: 0.4rem;
+		padding: 0.35rem 0.7rem;
+		border: 1px solid var(--color-border);
+		border-radius: 999px;
+		font-size: var(--t-small);
+		color: var(--color-foreground-muted);
+		text-decoration: none;
+		transition:
+			background 0.15s ease,
+			color 0.15s ease;
+	}
+
+	.pill:hover {
+		background: color-mix(in srgb, var(--color-foreground) 7%, transparent);
+		color: var(--color-foreground);
+	}
+
+	/* The signature ends the letter; the button is the way out of it, not the
+	   last line of the sign-off. A rule separates the two. */
+	.exit {
+		margin-top: 3rem;
+		padding-top: 2.25rem;
+		border-top: 1px solid var(--color-border);
+	}
+
+	/* The button itself is .ob-btn; it sits directly under the rule, so it drops
+	   the shared top margin. */
+	.exit .ob-btn {
+		margin-top: 0;
+	}
+
+</style>

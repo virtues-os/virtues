@@ -42,14 +42,26 @@ const RETRY_BACKOFF_BASE_SECS: i64 = 120;
 
 /// Post-transcription hallucination guard. Gemini's failure mode on near-silent
 /// audio is fluent narration of nothing — a "morning routine" invented over a
-/// quiet room. We catch it by proportion: a transcript should be roughly as long
-/// as there was speech to justify it. Allowed length ≈ measured speech-seconds ×
-/// MAX_CHARS_PER_SPEECH_SEC + SLACK; a transcript longer than that, over a chunk
-/// the VAD actually measured, is suppressed to a silent row. 40 chars/sec is ~2×
-/// real fast speech (~20/sec), so dense legitimate speech clears it comfortably;
-/// only text with no acoustic basis trips it. Fires only when the VAD produced a
-/// measurement — a missing measurement never suppresses (fail-open).
-const MAX_CHARS_PER_SPEECH_SEC: f32 = 40.0;
+/// quiet room. We catch it by proportion: a transcript can only be as long as
+/// the RECORDING could physically carry speech.
+///
+/// This budget is anchored to the recording's duration, NOT to the VAD's
+/// measured speech-seconds. That distinction was learned the hard way. The VAD
+/// is an excellent speech *presence* detector and a poor speech *duration*
+/// estimator: on 17 chunks of confirmed conversation (300s each, 81-91% of
+/// energy in the 300-3400Hz voice band) it measured only 5.6-31.5 speech-secs
+/// against 50-86s of actual voice activity — undermeasuring by 1.5-14×, because
+/// MarbleNet fires on onsets and its longest contiguous run was ~3-6s even at
+/// p=0.5. Budgeting against that number deleted ~66 chunks/day of real
+/// conversation for 16 days: every transcript was suppressed to an empty row,
+/// and `drain`'s `t.id IS NULL` made the loss permanent.
+///
+/// 30 chars/sec is ~360 wpm — well past any real speaker, and it sits in the
+/// empirical valley of this box's own 1,243 transcripts, whose genuine-speech
+/// mode tapers out at 24.5 chars/sec while the runaway/looping mode starts
+/// around 45 and runs to 137. Fires only when a duration is known — an unknown
+/// duration never suppresses (fail-open).
+const MAX_CHARS_PER_AUDIO_SEC: f32 = 30.0;
 const HALLUCINATION_SLACK_CHARS: f32 = 80.0;
 
 const SYSTEM_PROMPT: &str = r#"You transcribe short audio clips from a personal wearable mic. Your output is the SOLE source of truth for an automated event timeline and daily summary a person reads about their own life — they never hear the audio; they read what you write as fact. One invented detail — an event that didn't happen, a word no one said, a name no one spoke — is accepted as true and quietly destroys trust in the whole system. Omissions are safe and recoverable: the audio is kept and can be re-processed. Fabrications are not. So report only what you actually hear, and when unsure, leave it out.
@@ -372,15 +384,31 @@ pub async fn drain(db: &PgPool, batch_size: i64) -> Result<(usize, usize, usize)
             // Cost is captured at the BearerClient chokepoint (post_json records
             // the gateway usage.cost into app_ai_calls, tagged "transcription").
             Ok(t) => {
-                // Hallucination guard: a transcript far longer than the measured
-                // speech could justify is fluent narration of near-silence — the
-                // exact failure that wrote a fake morning routine over a quiet
-                // room. Suppress to a silent row rather than trust it. Fires only
-                // when the VAD gave a measurement (Some); None never suppresses.
+                // Hallucination guard: a transcript longer than the recording
+                // could physically carry is fluent narration of near-silence —
+                // the exact failure that wrote a fake morning routine over a
+                // quiet room. Suppress to a silent row rather than trust it.
+                //
+                // Anchored to the recording's duration, never to the VAD's
+                // speech-seconds — see MAX_CHARS_PER_AUDIO_SEC for why that
+                // distinction cost 16 days of conversation. The near-silence
+                // case this guard exists for is already handled upstream: the
+                // VAD gate refuses to call Gemini at all below MIN_SPEECH_SECS,
+                // and it separates cleanly there (17/17 speech vs 0/21 silence
+                // on the same corpus). What's left for this guard is the
+                // runaway transcript, which duration alone catches.
                 let text_len = t.text.trim().chars().count() as f32;
+                let audio_secs: Option<f32> = rec
+                    .duration_seconds
+                    .map(|d| d as f32)
+                    .or_else(|| {
+                        rec.ended_at
+                            .map(|e| (e - rec.started_at).num_milliseconds() as f32 / 1000.0)
+                    })
+                    .filter(|d| *d > 0.0);
                 let over_budget = matches!(
-                    speech_secs,
-                    Some(s) if text_len > s * MAX_CHARS_PER_SPEECH_SEC + HALLUCINATION_SLACK_CHARS
+                    audio_secs,
+                    Some(d) if text_len > d * MAX_CHARS_PER_AUDIO_SEC + HALLUCINATION_SLACK_CHARS
                 );
                 // Degeneracy guard: a transcript that repeats itself is a model
                 // stuck in a loop, not speech.
@@ -415,10 +443,11 @@ pub async fn drain(db: &PgPool, batch_size: i64) -> Result<(usize, usize, usize)
                 if over_budget {
                     tracing::warn!(
                         stream_id = %rec.source_stream_id,
+                        audio_secs = ?audio_secs,
                         speech_secs = ?speech_secs,
                         text_len = text_len as usize,
                         title = %t.title.as_deref().unwrap_or("(none)"),
-                        "suppressing likely hallucination: transcript far exceeds measured speech"
+                        "suppressing likely hallucination: transcript exceeds what the recording could carry"
                     );
                     match insert_silent_transcript(db, rec).await {
                         Ok(_) => skipped += 1,

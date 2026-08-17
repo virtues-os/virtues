@@ -81,8 +81,14 @@ This is the front door for anything the user feeds rather than schedules:
 - **Anything you would otherwise have declined** with "there is no way for the
   user to give it input." Check this list before declining.
 
-Two rules:
+Three rules:
 
+- **List `message` and nothing else** when a message is the only thing that
+  makes the applet do something. The defaults add `manual` and `tool`, and on
+  a tracker those wake it with the synthetic "Run your action instruction now"
+  — a model call that can only report it has nothing to do, which is the no-op
+  prompt this file tells you not to write. Same reasoning as a dashboard
+  having no agent.
 - **A `condition` does not gate a message.** Conditions gate polls. Someone who
   just pressed send is not a poll, and a clock gate would silently swallow what
   they wrote. Same reason manual "Run now" is exempt from rate caps.
@@ -152,10 +158,12 @@ real alternative. Never write a prompt that pretends a tool exists.**
 
 - **Catalog-check-first.** Before writing any SQL or any prompt that names a
   table, confirm it exists: `sql_query` over `information_schema.tables`
-  (`data_*`, `wiki_*`), then a `LIMIT 3` sample for the columns. The check
-  validates `condition`/`until`/`schema_sql` mechanically — **prose is not
-  machine-checked; you are the check.** An imaginary table in a prompt fails
-  softly, nightly, forever.
+  (`data_*`, `wiki_*`), then a `LIMIT 3` sample for the columns.
+  **`data_*` and `wiki_*` table names in your prompt ARE now checked** — a
+  name that is not on this box fails the check with a did-you-mean. Columns
+  are not, and neither is anything you claim in prose, so name columns from a
+  real sample rather than from memory. An imaginary column in a prompt still
+  fails softly, nightly, forever.
 - **Honest downgrades.** No data source → say so; offer to connect one, or a
   manual tracker (`schema_sql` + `message` so the user can log into it).
   Feed/URL watching → needs a fetch verb that doesn't exist yet: decline, or

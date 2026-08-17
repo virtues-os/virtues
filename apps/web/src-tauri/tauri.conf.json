@@ -27,6 +27,10 @@
       "icons/128x128@2x.png",
       "icons/icon.icns"
     ],
+    "resources": {
+      "icons/AppIcon.compiled/Assets.car": "Assets.car",
+      "icons/AppIcon.compiled/AppIcon.icns": "AppIcon.icns"
+    },
     "macOS": {
       "minimumSystemVersion": "10.15",
       "entitlements": "entitlements.plist",

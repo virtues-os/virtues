@@ -1,0 +1,13 @@
+# Automatically generated - DO NOT EDIT!
+
+"$schema" = "../../schemas/schema.json"
+
+[[permission]]
+identifier = "allow-improv-discover"
+description = "Enables the improv_discover command without any pre-configured scope."
+commands.allow = ["improv_discover"]
+
+[[permission]]
+identifier = "deny-improv-discover"
+description = "Denies the improv_discover command without any pre-configured scope."
+commands.deny = ["improv_discover"]

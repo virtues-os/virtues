@@ -355,7 +355,7 @@ fn web_search_tool() -> ToolConfig {
         id: "web_search".to_string(),
         name: "Web Search".to_string(),
         description: "Search the web for current information".to_string(),
-        llm_description: r#"Search the web for current information using Exa AI.
+        llm_description: r#"Search the web for current information.
 
 Use this tool when:
 - User asks about recent events, news, or current information
@@ -367,16 +367,15 @@ Do NOT use when:
 - User is asking about their personal data (use sql_query instead)
 - The question is purely conversational or opinion-based
 
-You synthesize the results yourself — Exa returns evidence, not answers. Two tiers:
-- Default search: fast, for most lookups.
-- deep=true: comprehensive multi-step search for hard, multi-faceted, or
-  thin-result questions (e.g. cross-referenced standings, multi-entity research).
-  Costs more and is slower — escalate to it, don't default to it.
+You synthesize the results yourself — the search returns evidence, not answers.
 
 For time-sensitive topics (news, sports scores, odds, prices, live data) set
 max_age_hours=1 so results are fresh rather than cached.
 
-Returns: Relevant web pages with titles, URLs, summaries, and text excerpts."#.to_string(),
+Set `objective` to what you are actually trying to learn whenever the query
+alone is ambiguous — it disambiguates a short query and improves results.
+
+Returns: Relevant web pages with titles, URLs, and the passages judged relevant."#.to_string(),
         parameters: serde_json::json!({
             "type": "object",
             "required": ["query"],
@@ -392,16 +391,9 @@ Returns: Relevant web pages with titles, URLs, summaries, and text excerpts."#.t
                     "minimum": 1,
                     "maximum": 10
                 },
-                "search_type": {
+                "objective": {
                     "type": "string",
-                    "enum": ["auto", "keyword", "neural"],
-                    "description": "Search type: 'auto' (recommended), 'keyword' for exact matches, 'neural' for semantic",
-                    "default": "auto"
-                },
-                "deep": {
-                    "type": "boolean",
-                    "description": "Escalate to comprehensive multi-step research for hard or thin-result queries. Slower and costlier — off by default.",
-                    "default": false
+                    "description": "What you are trying to learn, in a sentence. Optional, but it disambiguates a short or broad query."
                 },
                 "max_age_hours": {
                     "type": "integer",
@@ -1088,7 +1080,7 @@ fn list_applets_tool() -> ToolConfig {
         id: "list_applets".to_string(),
         name: "List Applets".to_string(),
         description: "List scheduled actions".to_string(),
-        llm_description: r#"List the user's scheduled actions (both system and user-owned). Returns id, name, owner, enabled, cron_schedule, triggers, and last_run for each.
+        llm_description: r#"List the user's scheduled actions (both system and user-owned). Returns id, name, owner, enabled, schedule, triggers, and last_run for each.
 
 Use this when:
 - User asks "what automations do I have?"
@@ -1122,7 +1114,7 @@ fn get_applet_tool() -> ToolConfig {
         id: "get_applet".to_string(),
         name: "Get Applet".to_string(),
         description: "Fetch a single action".to_string(),
-        llm_description: r#"Fetch a single action by id, including its full configuration (agent, cron_schedule, triggers, condition, memory, config) and its last 10 runs with status + summary.
+        llm_description: r#"Fetch a single action by id, including its full configuration (agent, schedule, triggers, condition, memory, config) and its last 10 runs with status + summary.
 
 Use this when:
 - User asks "what does this action do?"
@@ -1155,14 +1147,14 @@ fn edit_applet_tool() -> ToolConfig {
 Editable fields:
 - name (user rows only)
 - agent (user rows only; the LLM prompt)
-- cron_schedule (nullable — set to null to remove)
+- schedule (nullable — set to null to remove)
 - enabled (bool)
 - config (object — full replace)
 - condition (nullable SQL expression; user rows only)
 - triggers (array of cron|manual|tool|api|webhook; user rows only)
 - memory (nullable markdown scratchpad)
 
-System-owned rows (built-in pipelines like day_summary_eod) only accept: enabled, cron_schedule, config, memory. Attempting to edit other fields on a system row will error with a clear message.
+System-owned rows (built-in pipelines like day_summary_eod) only accept: enabled, schedule, config, memory. Attempting to edit other fields on a system row will error with a clear message.
 
 Use this when the user asks to:
 - Change an action's prompt
@@ -1180,7 +1172,7 @@ Use this when the user asks to:
                     "properties": {
                         "name": { "type": "string" },
                         "agent": { "type": ["string", "null"] },
-                        "cron_schedule": { "type": ["string", "null"] },
+                        "schedule": { "type": ["string", "null"] },
                         "enabled": { "type": "boolean" },
                         "config": { "type": "object" },
                         "condition": { "type": ["string", "null"] },
