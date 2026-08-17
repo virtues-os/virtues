@@ -12,6 +12,7 @@ pub mod client;
 pub mod codename;
 pub mod credentials;
 pub mod crypto;
+pub mod data_disk;
 pub mod database;
 pub mod dayline;
 pub mod entity_resolution;
