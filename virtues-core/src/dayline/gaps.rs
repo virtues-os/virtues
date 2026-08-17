@@ -198,11 +198,11 @@ pub async fn classify_day_gaps(pool: &PgPool, date: NaiveDate) -> crate::error::
     let win_end = blocks.last().unwrap().end;
 
     // Visits for the day, each with its RESOLVED place id + name
-    // (data_location_visit → wiki_entity_refs[place] → wiki_places).
+    // (data_location_visit → wiki_refs[place] → wiki_places).
     let visits = sqlx::query(
         "SELECT er.entity_id AS place_id, p.name AS place_name, v.arrival_time, v.departure_time \
          FROM data_location_visit v \
-         JOIN wiki_entity_refs er \
+         JOIN wiki_refs er \
            ON er.source_table = 'data_location_visit' AND er.source_id = v.id \
           AND er.entity_type = 'place' \
          JOIN wiki_places p ON p.id = er.entity_id \

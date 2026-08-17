@@ -85,10 +85,8 @@ export interface WikiDayApi {
 	id: string;
 	date: string; // ISO date string
 	start_timezone: string | null;
-	autobiography: string | null;
-	/** The day's prose from wiki_day_prose: article page first, legacy column as fallback. */
+	/** The day's prose, from wiki_day_prose. The article page is its only home (0106). */
 	article?: string | null;
-	autobiography_sections: Array<{ id: string; heading: string; content: string; authored_by: string; last_edited_at: string }> | null;
 	epigraph: string | null;
 	last_edited_by: string | null;
 	cover_image: string | null;

@@ -534,7 +534,7 @@ async fn embed_one_batch(
             .bind(ts_parsed)
             .bind(chunk.as_str()) // content — the same text we embed, for lexical/BM25
             .bind(ci as i32)
-            .bind(table) // source_table — for the wiki_entity_refs join (entity filtering)
+            .bind(table) // source_table — for the wiki_refs join (entity filtering)
             .bind(bm_len)
             // The model that ACTUALLY produced this vector, not a literal. Two
             // models of the same width put their vectors in different geometries,

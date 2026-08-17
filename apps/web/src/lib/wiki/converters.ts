@@ -216,16 +216,7 @@ export function apiToDayPage(api: WikiDayApi): DayPage {
 		linkedEntities: emptyLinkedEntities(),
 		linkedTemporal: emptyLinkedTemporal(),
 		events: [],
-		autobiography: api.article ?? api.autobiography ?? "",
-		autobiographySections: api.autobiography_sections
-			? api.autobiography_sections.map(s => ({
-				id: s.id,
-				heading: s.heading,
-				content: s.content,
-				authoredBy: s.authored_by as "ai" | "human",
-				lastEditedAt: new Date(s.last_edited_at),
-			}))
-			: undefined,
+		autobiography: api.article ?? "",
 		epigraph: api.epigraph ?? undefined,
 		dataQuality: api.data_quality ?? undefined,
 		newEntityCount: api.new_entity_count ?? 0,
@@ -245,8 +236,7 @@ export function apiToDayPage(api: WikiDayApi): DayPage {
 		linkedPages: [],
 		tags: [],
 		// The day's prose: the article page (via wiki_day_prose) with the
-		// legacy autobiography column as fallback until its drop.
-		content: api.article ?? api.autobiography ?? "",
+		content: api.article ?? "",
 		createdAt: new Date(api.created_at),
 		updatedAt: new Date(api.updated_at),
 		lastEditedBy: (api.last_edited_by as "ai" | "human") ?? "ai",

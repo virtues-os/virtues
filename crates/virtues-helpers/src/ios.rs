@@ -31,7 +31,7 @@ const IOS_STREAM_NS: Uuid = Uuid::from_u128(0x1f9a3c7e_4b2d_5e8f_a1c6_9d0b2e4f6a
 /// primary key every time it is written. `ON CONFLICT (source_stream_id) DO
 /// NOTHING` hides that today — the second write is simply skipped — but it makes
 /// the row's identity accidental: anything that references it by id
-/// (`search_embeddings.record_id`, `wiki_entity_refs.source_id`) is orphaned the
+/// (`search_embeddings.record_id`, `wiki_refs.source_id`) is orphaned the
 /// moment the row is ever rewritten. Deriving the id from the stream id makes a
 /// record's identity a function of the record, which is what it always should
 /// have been.
