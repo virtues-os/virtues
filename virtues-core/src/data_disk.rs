@@ -62,12 +62,29 @@ impl DataDisk {
 }
 
 /// The state root this box is configured with.
+///
+/// **From the install manifest, because nothing sets an env var for it.** This
+/// read `VIRTUES_DATA_DIR` first, which no part of the system writes — the
+/// installer takes `DATA_DIR` at install time and bakes the *derived* absolute
+/// paths (`STORAGE_PATH`, `VIRTUES_MODELS_DIR`, …) into the env file, never the
+/// root itself. So on a box installed with a custom `DATA_DIR` this fell back to
+/// `/var/lib/virtues`, found it was not a mount point, and reported an appliance
+/// as having lost its disk — a false "Storage disconnected" on the panel, which
+/// is the single most alarming thing this module can say.
+///
+/// The env var is still honored first as an override for tests and odd layouts;
+/// it just is not the source of truth any more.
 fn data_dir() -> PathBuf {
-    // The same resolution order the rest of the box uses: the env the systemd
-    // unit passes, then the compiled-in default.
-    std::env::var_os("VIRTUES_DATA_DIR")
-        .map(PathBuf::from)
-        .unwrap_or_else(|| PathBuf::from("/var/lib/virtues"))
+    if let Some(v) = std::env::var_os("VIRTUES_DATA_DIR") {
+        return PathBuf::from(v);
+    }
+    if let Some(d) = crate::install_manifest::get()
+        .as_ref()
+        .and_then(|m| m.data_dir.clone())
+    {
+        return d;
+    }
+    PathBuf::from("/var/lib/virtues")
 }
 
 /// Assess the data disk.
