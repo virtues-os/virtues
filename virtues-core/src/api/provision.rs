@@ -132,20 +132,7 @@ async fn refuse(
     None
 }
 
-/// The same two gates, for `api::portal`.
-///
-/// A separate name rather than making `refuse` public, so the HTML portal and
-/// the JSON API can never drift into different admission rules — they share the
-/// body, and the only thing this adds is the reminder that they must.
-pub(crate) async fn refuse_portal(
-    state: &AppState,
-    peer: &SocketAddr,
-    headers: &HeaderMap,
-) -> Option<axum::response::Response> {
-    refuse(state, peer, headers).await
-}
-
-/// The box's scan, for `api::portal` and `maintenance::setup_ap`'s cache.
+/// The box's scan, for `maintenance::setup_ap`'s cache.
 pub(crate) async fn scan_networks() -> Result<Vec<Network>, String> {
     scan().await
 }

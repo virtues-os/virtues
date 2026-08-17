@@ -1156,87 +1156,24 @@ its devices apart — type its address.",
           <div class="wait"><span class="pip"></span><span>Scanning</span></div>`;
       }
 
-      // ── NEW BOX: join its setup network ourselves ─────────────────────────
+      // The app used to join the box's own setup network itself — a prefix
+      // join against `Virtues-` via NEHotspotConfiguration, with the owner
+      // typing the AP password off the box's screen. Those two screens
+      // (`renderNewBox`, `joinSetupNetwork`) were deleted on 2026-08-17.
       //
-      // The app performs the join (`wifi_join` → NEHotspotConfiguration on
-      // iOS): a prefix join against `Virtues-`, so the owner types only the
-      // password off the box's screen — never an SSID, never a trip to
-      // Settings, never a captive sheet. One system dialog, then we are on the
-      // box's network and the normal setup flow takes over.
+      // They had already been UNREACHABLE for days: nothing called them but
+      // each other, because BLE became the way in and `start()` stopped
+      // routing here. Deleting them is not a behavior change; leaving them was
+      // the risk, since the next person to read this file would reasonably
+      // assume a screen in it can appear.
       //
-      // On platforms without a programmatic join (Android for now), the invoke
-      // rejects and we fall back to instructing a manual join.
-
-      function renderNewBox(errorText) {
-        app.innerHTML = `
-          <button class="back" id="back">← Back</button>
-          <p class="kicker">Setting up a new box</p>
-          <h1>Connect to your box</h1>
-          <p class="sub">Your box is showing a Wi-Fi password on its screen —
-            under <b>Get the Virtues app</b>. Enter it here and your phone will
-            connect to the box directly.</p>
-          ${errorText ? `<p class="msg err">${esc(errorText)}</p>` : ''}
-          <label for="appwd">Password from the box's screen</label>
-          <input id="appwd" type="text" autocapitalize="off" autocorrect="off"
-                 autocomplete="off" spellcheck="false" enterkeyhint="go"
-                 style="font-family:ui-monospace,Menlo,monospace;letter-spacing:.06em">
-          <button class="primary" id="joinap" disabled>Connect to the box</button>
-          <p class="hint">Your phone will show a "Wants to Join" prompt — tap Join.
-            There's no internet on the box's network; that's normal and temporary.</p>`;
-        const pwd = document.getElementById('appwd');
-        const go = document.getElementById('joinap');
-        pwd.addEventListener('input', () => (go.disabled = pwd.value.length < 8));
-        pwd.addEventListener('keydown', (e) => {
-          if (e.key === 'Enter' && pwd.value.length >= 8) joinSetupNetwork(pwd.value);
-        });
-        go.addEventListener('click', () => joinSetupNetwork(pwd.value));
-        document.getElementById('back').addEventListener('click', start);
-        pwd.focus();
-      }
-
-      async function joinSetupNetwork(passphrase) {
-        app.innerHTML = `
-          <p class="kicker">Setting up a new box</p>
-          <h1>Connecting…</h1>
-          <div class="wait"><span class="pip"></span><span>Joining the box's network</span></div>
-          <p class="sub">If your phone asks to join a <b>Virtues</b> network, tap
-            <b>Join</b>.</p>`;
-        let res;
-        try {
-          res = await invoke('plugin:reach|wifi_join', {
-            ssidPrefix: 'Virtues-',
-            passphrase,
-          });
-        } catch (e) {
-          // No programmatic join on this platform — manual instructions.
-          return renderNewBox(
-            'This phone can\'t join automatically. Join the Virtues network from ' +
-            'your Wi-Fi settings with that same password, then come back here.');
-        }
-        if (!res || !res.joined) {
-          return renderNewBox(res && res.error
-            ? res.error
-            : 'Couldn\'t join. Check the password against the box\'s screen.');
-        }
-        // Joined. The box is at 10.42.0.1; give the association a beat, then
-        // confirm setup is open and hand over to the wifi picker.
-        const deadline = Date.now() + 20_000;
-        const probe = async () => {
-          try {
-            if (await invoke('plugin:reach|provision_open', { server: 'http://10.42.0.1:8000' })) {
-              state.origin = 'http://10.42.0.1:8000';
-              return loadNetworks();
-            }
-          } catch { /* association still settling */ }
-          if (Date.now() > deadline) {
-            return renderNewBox(
-              'Connected, but the box didn\'t answer. Make sure its screen shows ' +
-              '"Get the Virtues app", then try again.');
-          }
-          setTimeout(probe, 2000);
-        };
-        setTimeout(probe, 2500);
-      }
+      // What survives below is the LAN provisioning path — `loadNetworks` and
+      // friends against `/api/provision/*`. That is the breakglass
+      // (`setup_ap::AP_BREAKGLASS`): a box whose Bluetooth is dead in the
+      // field can still be raised on its AP and provisioned from a machine
+      // that joins it by hand. It is reached only through `findSetupBox`,
+      // which asks each discovered box whether provisioning is open, so on a
+      // normal LAN it never fires.
 
       // ── SETUP: the box has no network yet ─────────────────────────────────
 
