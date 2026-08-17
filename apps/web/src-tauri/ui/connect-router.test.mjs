@@ -1,6 +1,9 @@
 // Tests for the airlock's routing rules.
 //
-//     node --test apps/web/src-tauri/ui/
+//     node --test "apps/web/src-tauri/ui/*.test.mjs"    (from the repo root)
+//
+// The QUOTED GLOB matters: `node --test <dir>` resolves the directory as a
+// module and fails with MODULE_NOT_FOUND rather than discovering anything.
 //
 // ## Why the test slices the HTML apart
 //
