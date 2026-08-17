@@ -179,7 +179,7 @@ pub async fn run() -> i32 {
         findings.push(Finding {
             what: "pre-move Postgres copy",
             detail: format!("{PG_PRE_MOVE} is still on the boot disk — this is the cluster from before it was relocated, and it would ship inside the image"),
-            fix: "rm -rf /var/lib/postgresql.pre-move",
+            fix: "sudo virtues deprovision   (or: rm -rf /var/lib/postgresql.pre-move)",
         });
     }
 
@@ -289,8 +289,10 @@ pub async fn run() -> i32 {
     1
 }
 
-/// The pre-move copy `relocate_postgres_to_data_dir` leaves behind.
-const PG_PRE_MOVE: &str = "/var/lib/postgresql.pre-move";
+/// The pre-move copy `relocate_postgres_to_data_dir` leaves behind. Defined by
+/// `deprovision`, which removes it, so the checker cannot drift to a different
+/// path than the remedy — the netplan failure in one line.
+use super::deprovision::PG_PRE_MOVE;
 
 enum ClusterState {
     /// A cluster directory with a `PG_VERSION` in it.
