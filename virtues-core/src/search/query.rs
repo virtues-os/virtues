@@ -50,6 +50,18 @@ pub struct SemanticSearchEngine {
 /// 200; the fused top-`recall_limit` feed the reranker.
 const CANDIDATE_POOL: i64 = 200;
 
+/// pgvector's HNSW beam width, and the reason `CANDIDATE_POOL` was a lie.
+///
+/// `hnsw.ef_search` defaults to **40** and nothing in this repo ever set it, so
+/// the dense arm's `LIMIT 200` returned 40 rows while the lexical arm returned
+/// 200 — a 5x asymmetry the fusion never accounted for, and invisible because
+/// the query succeeds and simply has less in it. Measured on a live index:
+/// `LIMIT 200` → 40 rows; `SET hnsw.ef_search = 250` → 200 rows.
+///
+/// Must exceed the LIMIT it serves. At exactly `CANDIDATE_POOL` the index still
+/// prunes below the target, so this carries a margin.
+const HNSW_EF_SEARCH: i64 = CANDIDATE_POOL + CANDIDATE_POOL / 4;
+
 /// Notebook-scoped retrieval (lean v1): additive bonus, in z-score space, for a
 /// candidate chunk that belongs to the active notebook's members. z-scores can be
 /// negative, so we ADD a bonus (≈ one std-dev) rather than multiply — a boost, not
@@ -595,7 +607,15 @@ impl SemanticSearchEngine {
         }
         db_query = db_query.bind(recall_limit);
 
-        let rows = db_query.fetch_all(self.pool.as_ref()).await?;
+        // SET LOCAL, so it needs a transaction and reverts on commit — a bare
+        // `SET` would leave the beam width on whatever pooled connection this
+        // happened to borrow, silently changing every later query that reused it.
+        let mut tx = self.pool.begin().await?;
+        sqlx::query(&format!("SET LOCAL hnsw.ef_search = {HNSW_EF_SEARCH}"))
+            .execute(&mut *tx)
+            .await?;
+        let rows = db_query.fetch_all(&mut *tx).await?;
+        tx.commit().await?;
 
         Ok(rows
             .into_iter()
