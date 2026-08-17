@@ -1,6 +1,7 @@
 //! `virtues doctor` — the box examined.
 //!
-//! Two ledgers (Inference, Reach) and one verdict. The editorial rules:
+//! Three ledgers (Inference, Reach, Appliance) and one verdict. The last is
+//! printed only on hardware we shipped. The editorial rules:
 //!
 //! 1. **Say each fact once.** The old report printed the global IPv6 three
 //!    times (class line, headline, network line); here every fact has one row.
@@ -28,7 +29,98 @@ pub async fn run() -> i32 {
     print_inference(&crate::inference_report::resolution_report(), &mut issues);
     probe_inference(&mut issues).await;
     print_reach(&mut issues).await;
+    print_appliance(&mut issues);
     issues.verdict()
+}
+
+/// The Appliance ledger — the physical box, as opposed to the software on it.
+///
+/// Doctor answered two questions (Inference, Reach) and none of the ones an
+/// appliance owner actually gets stuck on. When someone says "my box is
+/// broken", this is the tool they are told to run, and until now it could not
+/// say whether the data disk was mounted, whether the display was running,
+/// whether the button did anything, or where the database physically lived.
+///
+/// Prints NOTHING on a DIY box. Every row here describes hardware we shipped,
+/// and on somebody's own Linux server each one would be either meaningless or
+/// a false alarm — a state root that is a plain directory is correct there, and
+/// there is no panel and no button to report on.
+fn print_appliance(issues: &mut ui::Issues) {
+    let Some(m) = crate::install_manifest::get().as_ref() else {
+        return;
+    };
+    if !m.appliance {
+        return;
+    }
+    ui::subsection("Appliance");
+    ui::kv("profile", &m.profile);
+
+    // THE DATA DISK. First row because it is the one failure that looks like
+    // health: a box whose NVMe never mounted runs, serves, and quietly writes
+    // the owner's record to the boot card. See `crate::data_disk`.
+    match crate::data_disk::status() {
+        crate::data_disk::DataDisk::Mounted => ui::kv("data disk", "mounted"),
+        crate::data_disk::DataDisk::OnRoot => ui::kv("data disk", "on the root filesystem"),
+        crate::data_disk::DataDisk::Missing => {
+            ui::kv("data disk", "MISSING");
+            issues.error(
+                "the data disk is not mounted — the record belongs on it, and                  Postgres is configured to refuse to start without it",
+                Some("reseat or replace the NVMe, then: sudo systemctl reboot"),
+            );
+        }
+    }
+
+    // Where the database actually is. A relocated cluster is a symlink into the
+    // data disk; an appliance without one is writing every transaction to the
+    // boot card, which is the thing the layout exists to prevent and is
+    // invisible from every other surface.
+    match crate::cli::deprovision::relocated_cluster_dir() {
+        Some(d) => ui::kv("postgres", &format!("{} (on the data disk)", d.display())),
+        None => {
+            ui::kv("postgres", "on the boot medium");
+            issues.warn(
+                "the Postgres cluster was never moved to the data disk — every                  write lands on the boot card, which wears out under database load",
+                Some("re-run the installer to relocate it"),
+            );
+        }
+    }
+
+    // The panel and the button: the only two interfaces an owner has before a
+    // device is paired, and both fail silently by nature — a dead kiosk is a
+    // black screen, and a button nobody wired is indistinguishable from one
+    // nobody pressed.
+    ui::kv("display", unit_state("virtues-display"));
+    ui::kv(
+        "case button",
+        if std::path::Path::new("/etc/systemd/logind.conf.d/10-virtues-power-key.conf").exists() {
+            "armed (hold 3s to forget devices)"
+        } else {
+            "not armed — logind still owns the power key"
+        },
+    );
+
+    // Only interesting before imaging, but this is where someone looks.
+    let applets = crate::cli::deprovision::authored_applets_dir();
+    if let Ok(n) = std::fs::read_dir(&applets).map(|d| d.flatten().count()) {
+        if n > 0 {
+            ui::kv("authored applets", &format!("{n} (owner-written; not shippable)"));
+        }
+    }
+}
+
+/// `active` / `inactive` / `not installed`, for a unit that may legitimately be
+/// absent — a headless appliance has no display.
+fn unit_state(unit: &str) -> &'static str {
+    if !std::path::Path::new(&format!("/etc/systemd/system/{unit}.service")).exists() {
+        return "not installed";
+    }
+    match std::process::Command::new("systemctl")
+        .args(["is-active", "--quiet", unit])
+        .status()
+    {
+        Ok(s) if s.success() => "active",
+        _ => "installed but not running",
+    }
 }
 
 /// The Inference ledger. Shared with `virtues warm-models`, which prints it
