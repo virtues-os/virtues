@@ -193,11 +193,11 @@ never reads.
 
 ## Building the image
 
-The whole of it is `tools/build-master.sh`, which exists so the tail cannot be
+The whole of it is `tools/build-dragon.sh`, which exists so the tail cannot be
 skipped and the version cannot be left to chance:
 
 ```sh
-sudo VIRTUES_VERSION=v0.3.1 sh tools/build-master.sh
+sudo VIRTUES_VERSION=v0.3.1 sh tools/build-dragon.sh
 ```
 
 What it does, and what you would otherwise be doing by hand:
@@ -232,9 +232,66 @@ sudo virtues deprovision --yes && sudo virtues image-check && sudo poweroff
 
 It checks: no `VIRTUES_ENCRYPTION_KEY` in the env file · the first-boot marker
 is armed · `/etc/machine-id` is empty · no SSH host keys · no saved wifi
-connections · no leftover `/var/lib/postgresql.pre-move` · no Postgres cluster
-on the disk, or if there is one, no `virtues` database in it · the lake is
-empty.
+connections **in either place they live** · no wifi password left in
+`/etc/netplan` · the journal actually got vacuumed · no Tailscale node identity
+· no leftover `/var/lib/postgresql.pre-move` · no Postgres cluster on the disk,
+or if there is one, no `virtues` database in it · the lake is empty.
+
+Three of those were added on 2026-08-17, after the first run on real hardware,
+and each existed because a remedy and its check disagreed about where to look:
+
+**The wifi password was not where either of them looked.** On Ubuntu,
+NetworkManager is a netplan *renderer*, not the system of record. Joining a
+network writes `/etc/netplan/90-NM-<uuid>.yaml` holding the SSID, the password
+in plain text, and on a corporate network the 802.1X identity; NM's own profile
+directory stays empty and the copy it runs from lives in `/run`, which is
+tmpfs. So deprovision wiped an empty directory, reported success, and
+image-check inspected the same empty directory and signed the card off. The lab
+board's corporate wifi account would have shipped readable on every unit.
+
+**The journal vacuum could not have worked.** journald names its directory
+after the machine-id, and deprovision cleared machine-id one step *before*
+vacuuming — so `journalctl` answered "No journal files were found", freed 0 B,
+and 520 MB of the master's history stayed on the card while the tick printed.
+The result had been discarded, so nothing noticed for as long as the code
+existed. The gate that caught it was added the same afternoon and fired on its
+first run.
+
+**Tailscale's `tailscaled.state` is a node key** — every clone would join the
+tailnet as the same node. It is flagged rather than removed: logging out a
+remote operator mid-run strands a half-deprovisioned board nobody can reach,
+and it is not our product to silently delete.
+
+The lesson is worth more than the three fixes. **A check that looks somewhere
+its own remedy does not is worse than no check, because it signs off.** Where
+both need a path, one of them now owns the constant and the other imports it.
+
+### Cutting the artifact
+
+Everything above happens on the board and ends at `poweroff`. What follows —
+card out, `dd`, compress, checksum, record — is `tools/cut-image.sh`, run on
+the host with the card in a reader:
+
+```bash
+sudo sh tools/cut-image.sh /dev/disk4 v0.3.1
+```
+
+It refuses the obvious system disks, makes you retype the device, asks whether
+`image-check` passed (it **cannot** verify that itself — the root filesystem is
+ext4 and the host may be a Mac, so it records an operator assertion rather than
+guessing), then reads and compresses in one pass and writes three files that
+must travel together: the `.img.zst`, its `.sha256`, and a `.json` record
+naming the tag, the base OS image and the card size.
+
+**Zero the free space on the board first** (`fstrim`, or fill-and-delete).
+`dd` reads the card whole, so otherwise the image carries gigabytes of noise —
+including everything deprovision just deleted, still recoverable.
+
+Store masters **privately**, and keep every one you ship. The image contains
+Qualcomm firmware from the vendor BSP, which we do not redistribute — the same
+reason the box fetches QAIRT libraries rather than us hosting them. Not GitHub
+Releases (public assets, 2 GB cap); not `virtues.com/downloads`, which is the
+installer's path. A private bucket and an expiring presigned URL.
 
 That last one has two ways to pass and the order matters. On a relocated
 appliance, deprovision removes the whole **cluster**, so there is no server left
