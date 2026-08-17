@@ -111,25 +111,48 @@ pub async fn run() -> i32 {
         }
     }
 
+    // ── A leftover pre-move copy of the cluster ─────────────────────────────
+    // `relocate_postgres_to_data_dir` keeps the original as a rollback and
+    // tells the operator to remove it. On a box that is a rollback; inside an
+    // image it is the master's whole database, shipped to every customer.
+    if Path::new(PG_PRE_MOVE).exists() {
+        findings.push(Finding {
+            what: "pre-move Postgres copy",
+            detail: format!("{PG_PRE_MOVE} is still on the boot disk — this is the cluster from before it was relocated, and it would ship inside the image"),
+            fix: "rm -rf /var/lib/postgresql.pre-move",
+        });
+    }
+
     // ── The database ────────────────────────────────────────────────────────
-    // `box_secrets` holds the iroh secret. Checked by asking Postgres rather
-    // than by trusting that deprovision ran: this is the single most expensive
-    // thing to get wrong, and the whole point of a separate command is to look
-    // again.
-    match database_is_present().await {
-        Some(true) => findings.push(Finding {
-            what: "database still exists",
-            detail: "the `virtues` database is present — box_secrets holds the iroh secret, which IS this box's network identity. Clones would all be the same box.".to_string(),
-            fix: "sudo virtues deprovision",
-        }),
-        Some(false) => {}
-        // Postgres unreachable. Say so rather than passing: "I could not check
-        // the most important thing" must never render as a tick.
-        None => findings.push(Finding {
-            what: "database unreadable",
-            detail: "could not ask Postgres whether the `virtues` database exists — this check cannot pass without an answer".to_string(),
-            fix: "start postgresql, then re-run",
-        }),
+    // `box_secrets` holds the iroh secret. Checked by looking rather than by
+    // trusting that deprovision ran: this is the single most expensive thing
+    // to get wrong, and looking again is the whole point of a separate command.
+    //
+    // Two ways to pass, and the first is the stronger one. On a relocated
+    // appliance, deprovision removes the CLUSTER, not just the database — so
+    // there is no server left to ask, and "Postgres is unreachable" is the
+    // expected, correct end state rather than a failure to check. Asking first
+    // whether the cluster exists is what tells those two apart.
+    match cluster_state() {
+        ClusterState::Absent => {
+            ui::ok("no Postgres cluster on this disk — nothing to leak");
+        }
+        ClusterState::Present => match database_is_present().await {
+            Some(true) => findings.push(Finding {
+                what: "database still exists",
+                detail: "the `virtues` database is present — box_secrets holds the iroh secret, which IS this box's network identity. Clones would all be the same box.".to_string(),
+                fix: "sudo virtues deprovision",
+            }),
+            Some(false) => {}
+            // A cluster exists but will not answer. Unlike the Absent case
+            // above, this genuinely is "I could not check the most important
+            // thing", and that must never render as a tick.
+            None => findings.push(Finding {
+                what: "database unreadable",
+                detail: "a Postgres cluster exists here but would not answer — this check cannot pass without knowing whether the `virtues` database is in it".to_string(),
+                fix: "start postgresql, then re-run",
+            }),
+        },
     }
 
     // ── The lake ────────────────────────────────────────────────────────────
@@ -172,6 +195,48 @@ pub async fn run() -> i32 {
     1
 }
 
+/// The pre-move copy `relocate_postgres_to_data_dir` leaves behind.
+const PG_PRE_MOVE: &str = "/var/lib/postgresql.pre-move";
+
+enum ClusterState {
+    /// A cluster directory with a `PG_VERSION` in it.
+    Present,
+    /// Nothing to ask, and on a deprovisioned appliance that is the goal.
+    Absent,
+}
+
+/// Is there a Postgres cluster on this disk at all?
+///
+/// Looks for `PG_VERSION`, the file `initdb` writes and every Postgres tool
+/// treats as "a cluster lives here" — rather than for the directory, which
+/// exists as an empty shell after a `remove_dir_all` race or a fresh `mkdir`.
+///
+/// Covers both layouts: a relocated appliance (`/var/lib/postgresql` is a
+/// symlink into the data dir) and a DIY box (it is a real directory), because
+/// the path resolves the same way from here either way.
+fn cluster_state() -> ClusterState {
+    cluster_state_of(Path::new(crate::cli::deprovision::PG_LINK))
+}
+
+fn cluster_state_of(root: &Path) -> ClusterState {
+    let Ok(entries) = std::fs::read_dir(root) else {
+        // Missing, or a symlink into a data dir that is not mounted. Both mean
+        // no cluster is reachable on this disk.
+        return ClusterState::Absent;
+    };
+    for e in entries.flatten() {
+        // `<root>/<major>/<cluster>/PG_VERSION`, e.g. `18/main/PG_VERSION`.
+        if let Ok(inner) = std::fs::read_dir(e.path()) {
+            for c in inner.flatten() {
+                if c.path().join("PG_VERSION").exists() {
+                    return ClusterState::Present;
+                }
+            }
+        }
+    }
+    ClusterState::Absent
+}
+
 /// Does the `virtues` database exist?
 ///
 /// `None` means we could not find out, which this command treats as a finding
@@ -205,4 +270,60 @@ fn count_prefixed(dir: &str, prefix: &str) -> Option<usize> {
             })
             .count(),
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn tmp(tag: &str) -> std::path::PathBuf {
+        let d = std::env::temp_dir().join(format!("imgchk-{tag}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&d);
+        std::fs::create_dir_all(&d).unwrap();
+        d
+    }
+
+    #[test]
+    fn a_deprovisioned_appliance_has_no_cluster() {
+        // Deprovision removes the whole cluster on a relocated box, so there is
+        // nothing to ask — and that must read as a PASS, not as "Postgres is
+        // unreachable". Getting this backwards would fail the gate on every
+        // correctly prepared image.
+        let d = tmp("empty");
+        assert!(matches!(cluster_state_of(&d), ClusterState::Absent));
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
+    #[test]
+    fn a_symlink_into_an_unmounted_data_dir_is_absent() {
+        // The state a freshly imaged unit is in before firstboot claims its
+        // disk: the link exists, the target does not.
+        let d = tmp("dangling");
+        let link = d.join("postgresql");
+        std::os::unix::fs::symlink(d.join("nowhere"), &link).unwrap();
+        assert!(matches!(cluster_state_of(&link), ClusterState::Absent));
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
+    #[test]
+    fn an_empty_version_directory_is_not_a_cluster() {
+        // `PG_VERSION` is the file initdb writes and every Postgres tool keys
+        // on. Testing for the DIRECTORY instead would call a bare `mkdir -p
+        // 18/main` — which is exactly what firstboot does moments before
+        // initdb runs — a cluster, and then demand an answer from a server
+        // that was never going to start.
+        let d = tmp("shell");
+        std::fs::create_dir_all(d.join("18/main")).unwrap();
+        assert!(matches!(cluster_state_of(&d), ClusterState::Absent));
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
+    #[test]
+    fn a_real_cluster_is_present() {
+        let d = tmp("real");
+        std::fs::create_dir_all(d.join("18/main")).unwrap();
+        std::fs::write(d.join("18/main/PG_VERSION"), "18\n").unwrap();
+        assert!(matches!(cluster_state_of(&d), ClusterState::Present));
+        let _ = std::fs::remove_dir_all(&d);
+    }
 }

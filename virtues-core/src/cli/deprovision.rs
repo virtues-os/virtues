@@ -117,6 +117,20 @@ pub async fn run(yes: bool, force: bool) -> Result<(), crate::Error> {
         "saved network connections",
     )?;
 
+    // ── 3b. The relocated Postgres cluster ──────────────────────────────────
+    // On an appliance the cluster lives on the data disk and `/var/lib/postgresql`
+    // is a symlink to it. That whole tree is per-unit state — it is where the
+    // record lived — so it goes, and `virtues-firstboot` builds a fresh one on
+    // each unit's own disk.
+    //
+    // Removed rather than left because of where the image comes from: the eMMC
+    // is imaged, and on the master the data dir is a plain directory ON the
+    // eMMC (the NVMe is claimed at first boot, which the master never had). So
+    // a surviving cluster would ship inside every image — the master's
+    // `postgres` superuser, its catalogs, its size — under a path each unit
+    // then hides with a mount and never reads.
+    remove_relocated_cluster();
+
     // ── 4. Logs ─────────────────────────────────────────────────────────────
     let _ = Command::new("journalctl")
         .args(["--rotate", "--vacuum-time=1s"])
@@ -143,6 +157,42 @@ pub async fn run(yes: bool, force: bool) -> Result<(), crate::Error> {
     println!("  On first boot each unit mints its own encryption key, identity,");
     println!("  and host keys via the first-boot unit.");
     Ok(())
+}
+
+/// `/var/lib/postgresql`, which on a relocated appliance is a symlink into the
+/// data dir. Named here so `image_check` can ask the same question.
+pub const PG_LINK: &str = "/var/lib/postgresql";
+
+/// The relocated cluster directory, if this box has one.
+///
+/// `None` on a DIY box, where `/var/lib/postgresql` is a real directory owned
+/// by the distro and emphatically not ours to delete.
+pub fn relocated_cluster_dir() -> Option<std::path::PathBuf> {
+    let md = std::fs::symlink_metadata(PG_LINK).ok()?;
+    if !md.file_type().is_symlink() {
+        return None;
+    }
+    std::fs::read_link(PG_LINK).ok()
+}
+
+/// Delete the relocated cluster, stopping Postgres first.
+///
+/// Best-effort and silent on a DIY box. Stopping first is not politeness: the
+/// postmaster holds the data directory open and writes to it continuously, so
+/// removing it underneath a running server produces a half-deleted cluster and
+/// a process that will not exit cleanly.
+fn remove_relocated_cluster() {
+    let Some(dir) = relocated_cluster_dir() else {
+        return;
+    };
+    // `postgresql@<ver>-main` is `PartOf=postgresql.service`, so stopping the
+    // wrapper propagates to every instance.
+    let _ = Command::new("systemctl").args(["stop", "postgresql"]).output();
+    match std::fs::remove_dir_all(&dir) {
+        Ok(()) => println!("  ✓ removed the Postgres cluster at {}", dir.display()),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+        Err(e) => println!("  ⚠  could not remove {}: {e}", dir.display()),
+    }
 }
 
 /// Path of the marker that licenses `virtues-firstboot` to mint a fresh

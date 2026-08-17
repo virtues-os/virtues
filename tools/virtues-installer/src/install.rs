@@ -1645,6 +1645,168 @@ fn install_firstboot_unit(cfg: &InstallConfig) -> Result<()> {
     Ok(())
 }
 
+/// The Postgres major version this box has a cluster config for, e.g. `18`.
+///
+/// Read from `/etc/postgresql`, which is where Debian keeps cluster
+/// configuration — deliberately not from the data directory, because this is
+/// also called when the data directory is the thing that does not exist yet.
+/// Highest version wins if a box somehow carries two.
+pub fn pg_cluster_version() -> Option<String> {
+    let mut versions: Vec<u32> = fs::read_dir("/etc/postgresql")
+        .ok()?
+        .flatten()
+        .filter_map(|e| e.file_name().to_string_lossy().parse::<u32>().ok())
+        .collect();
+    versions.sort_unstable();
+    versions.last().map(|v| v.to_string())
+}
+
+/// Where a relocated cluster lives, and the symlink that points at it.
+pub fn pg_link_path() -> &'static Path {
+    Path::new("/var/lib/postgresql")
+}
+pub fn pg_relocated_dir(data_dir: &Path) -> std::path::PathBuf {
+    data_dir.join("postgresql")
+}
+/// The pre-move copy, kept until an operator removes it. See below.
+const PG_PRE_MOVE: &str = "/var/lib/postgresql.pre-move";
+
+/// Move the Postgres cluster onto the data disk.
+///
+/// ## Why, in one number
+///
+/// The lab box carried 3.0 GB of Postgres and 8.9 GB of lake. The lake was
+/// already on the data disk; Postgres was not — so the busiest writer on the
+/// box, the one doing a WAL flush per transaction forever, was landing on the
+/// eMMC. The eMMC is soldered: when its endurance is gone the board is scrap,
+/// and there is no way to move the wear back off it afterwards.
+///
+/// ## Why a symlink rather than `data_directory`
+///
+/// Debian's `postgresql.conf` has a `data_directory` setting, and pointing it
+/// at the data disk is the obvious move. It is the wrong one. That path is also
+/// known to `pg_createcluster`, `pg_dropcluster`, `pg_upgradecluster`, the
+/// `postgresql@.service` template's own `RequiresMountsFor`, and every apt
+/// maintainer script — and each of those would then need to be told, or would
+/// quietly disagree with us at the worst moment (a major-version upgrade).
+///
+/// Symlinking `/var/lib/postgresql` moves the whole tree and leaves every one
+/// of those working on vanilla paths that resolve through it. We verified the
+/// unit carries no `ProtectSystem`/`ReadWritePaths` sandbox that a symlink out
+/// of `/var/lib` would trip.
+///
+/// ## Why the original is copied and kept, not moved
+///
+/// This is the only copy of the owner's database. So: stop, **copy**, swap the
+/// symlink in, start, and prove it serves — and only then is the original
+/// redundant. It is left at `/var/lib/postgresql.pre-move` for the operator to
+/// remove, because a rollback that exists is worth more than the disk it costs.
+/// `virtues image-check` reports it as a finding, so it cannot ship inside an
+/// image by being forgotten.
+pub async fn relocate_postgres_to_data_dir(cfg: &InstallConfig) -> Result<()> {
+    let link = pg_link_path();
+    let dest = pg_relocated_dir(&cfg.data_dir);
+
+    // Already done. Checked on the symlink itself (`symlink_metadata`), because
+    // `Path::is_symlink` on a link whose TARGET is missing must still say yes —
+    // which is exactly the state a freshly imaged unit is in.
+    if let Ok(md) = fs::symlink_metadata(link) {
+        if md.file_type().is_symlink() {
+            ui::skip(&format!(
+                "Postgres already lives on the data disk ({})",
+                dest.display()
+            ));
+            return Ok(());
+        }
+    }
+
+    let Some(ver) = pg_cluster_version() else {
+        ui::warn("No Postgres cluster config in /etc/postgresql — skipping relocation");
+        return Ok(());
+    };
+
+    fs::create_dir_all(&cfg.data_dir)
+        .with_context(|| format!("mkdir {}", cfg.data_dir.display()))?;
+
+    // Stop it. `postgresql@<ver>-main` is `PartOf=postgresql.service`, so
+    // stopping the wrapper propagates to the instance — one call, and it is the
+    // one an operator would type.
+    let mut stop = Command::new("systemctl");
+    stop.args(["stop", "postgresql"]);
+    run_step("Stop Postgres for the move", stop).await?;
+
+    // Copy. `-a` carries ownership and modes, and both matter: Postgres refuses
+    // to start on a data directory that is group- or world-readable.
+    if dest.exists() {
+        // A previous interrupted run. The cluster we are about to trust must be
+        // a complete copy of the one we have, not a merge with a partial one.
+        fs::remove_dir_all(&dest)
+            .with_context(|| format!("clearing a partial {}", dest.display()))?;
+    }
+    fs::create_dir_all(&dest).with_context(|| format!("mkdir {}", dest.display()))?;
+    let mut cp = Command::new("cp");
+    cp.args(["-a", &format!("{}/.", link.display()), &dest.display().to_string()]);
+    run_step(
+        &format!("Copy the Postgres cluster to {}", dest.display()),
+        cp,
+    )
+    .await?;
+
+    // Swap. Rename rather than delete — until Postgres has actually served from
+    // the copy, the original is the only thing we know works.
+    let _ = fs::remove_dir_all(PG_PRE_MOVE);
+    fs::rename(link, PG_PRE_MOVE)
+        .with_context(|| format!("moving {} aside", link.display()))?;
+    std::os::unix::fs::symlink(&dest, link)
+        .with_context(|| format!("symlink {} -> {}", link.display(), dest.display()))?;
+
+    // Start, and prove it serves. A failure here is recoverable precisely
+    // because the original is still there, so say how.
+    let mut start = Command::new("systemctl");
+    start.args(["start", &format!("postgresql@{ver}-main")]);
+    let started = start.status().await.map(|s| s.success()).unwrap_or(false);
+    let serving = started && pg_is_ready().await;
+    if !serving {
+        // Put it back. An installer that leaves a box without a database
+        // because it was tidying disk layout is worse than one that never
+        // tried.
+        let _ = fs::remove_file(link);
+        let _ = fs::rename(PG_PRE_MOVE, link);
+        let mut back = Command::new("systemctl");
+        back.args(["start", &format!("postgresql@{ver}-main")]);
+        let _ = back.status().await;
+        return Err(anyhow!(
+            "Postgres would not serve from {} — rolled back to {}. \
+             The cluster is untouched; check `journalctl -u postgresql@{ver}-main`.",
+            dest.display(),
+            link.display()
+        ));
+    }
+
+    ui::ok(&format!("Postgres cluster moved to {}", dest.display()));
+    ui::warn(&format!(
+        "the pre-move copy is at {PG_PRE_MOVE} — remove it once you're satisfied: rm -rf {PG_PRE_MOVE}"
+    ));
+    Ok(())
+}
+
+/// Is Postgres accepting connections?
+async fn pg_is_ready() -> bool {
+    for _ in 0..30 {
+        let ok = Command::new("pg_isready")
+            .args(["-q", "-h", "/var/run/postgresql"])
+            .status()
+            .await
+            .map(|s| s.success())
+            .unwrap_or(false);
+        if ok {
+            return true;
+        }
+        tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+    }
+    false
+}
+
 /// Refuse to start Postgres when the data disk is absent.
 ///
 /// `virtues.service` already carries `RequiresMountsFor=<data dir>`, and its
@@ -1675,8 +1837,18 @@ fn install_postgres_mount_guard(cfg: &InstallConfig) -> Result<()> {
          # its display — but Postgres must NOT start without it, or it initdb's a\n\
          # fresh empty cluster onto the eMMC and every check reports healthy while\n\
          # the owner's record sits unmounted on a disk nobody asked for.\n\
+         #\n\
+         # The template's own `RequiresMountsFor=/var/lib/postgresql/%I` does not\n\
+         # cover this: that path is a SYMLINK into the data dir here, and the\n\
+         # dependency is taken on the path as written, not on what it resolves to.\n\
+         #\n\
+         # After= the first-boot unit, which is what CREATES the cluster on a\n\
+         # freshly claimed disk. Without it Postgres races ahead on a virgin unit,\n\
+         # finds nothing, and fails — recoverably, but with a red unit on the one\n\
+         # screen the owner is watching hardest.\n\
          [Unit]\n\
-         RequiresMountsFor={}\n",
+         RequiresMountsFor={}\n\
+         After=virtues-firstboot.service\n",
         cfg.data_dir.display()
     );
     fs::write(format!("{dir}/10-virtues-data-mount.conf"), body)
@@ -1686,11 +1858,13 @@ fn install_postgres_mount_guard(cfg: &InstallConfig) -> Result<()> {
 }
 
 const FIRSTBOOT_UNIT_TEMPLATE: &str = r#"[Unit]
-Description=Virtues first boot — mint this unit's per-box secrets
+Description=Virtues first boot — claim the data disk, mint this unit's secrets
 Documentation=https://virtues.com/docs
-Before=virtues.service
-# Nothing here touches the network or the database; it only writes the env
-# file, so it can run as early as systemd will let it.
+# Before BOTH, and Postgres is the one that is easy to forget. This claims the
+# data disk and creates the cluster on it; Postgres starting first would find
+# the symlink target missing and fail, and would then need a second, manual
+# start after we had fixed it up underneath.
+Before=virtues.service postgresql.service
 DefaultDependencies=yes
 
 [Service]
@@ -1777,6 +1951,57 @@ if mountpoint -q "$DATA_DIR" 2>/dev/null && [ ! -L /var/log/journal ]; then
     systemd-tmpfiles --create --prefix /var/log/journal >/dev/null 2>&1 || true
     systemctl kill --kill-who=main --signal=SIGUSR2 systemd-journald 2>/dev/null || true
     logger -t virtues-firstboot "journal relocated to $DATA_DIR/journal"
+fi
+
+# ── 1c. Recreate the Postgres cluster on the claimed disk ───────────────────
+# /var/lib/postgresql is a SYMLINK into the data dir on an appliance — the
+# installer moved the cluster there so the busiest writer on the box lands on
+# the replaceable NVMe rather than the soldered eMMC. The image carries the
+# symlink; the disk it points at is blank on every unit. So the cluster has to
+# be made here, once, on the unit.
+#
+# The guard is the narrowest true statement about the job, like the other two:
+# a symlink whose target holds no cluster. A DIY box has no symlink and skips;
+# a second boot has a cluster and skips; a box whose disk failed to mount has
+# no symlink target it can write to and skips, leaving Postgres refusing to
+# start (see the postgresql@.service drop-in) rather than quietly building a
+# fresh empty cluster somewhere nobody meant.
+#
+# NOT guarded on the first-boot marker. The marker licenses key MINTING, which
+# must happen exactly once ever; this must happen once per DISK, and those are
+# different events — a replaced NVMe needs a cluster and must not get a new
+# encryption key.
+PG_VER="$(ls /etc/postgresql 2>/dev/null | sort -n | tail -1)"
+PG_LINK=/var/lib/postgresql
+if [ -L "$PG_LINK" ] && [ -n "$PG_VER" ] && [ ! -e "$PG_LINK/$PG_VER/main/PG_VERSION" ]; then
+    PG_TARGET="$(readlink -f "$PG_LINK" 2>/dev/null || true)"
+    if [ -n "$PG_TARGET" ] && mkdir -p "$PG_TARGET" 2>/dev/null; then
+        chown postgres:postgres "$PG_TARGET"
+        logger -t virtues-firstboot "creating the Postgres cluster on the data disk"
+        # Drop first: the image carries /etc/postgresql/$PG_VER/main from the
+        # master, and pg_createcluster refuses to write over an existing
+        # config. Dropping regenerates it, so the cluster ends up vanilla —
+        # same paths, same conf, nothing hand-edited that an apt upgrade could
+        # disagree with later.
+        pg_dropcluster "$PG_VER" main >/dev/null 2>&1 || true
+        if pg_createcluster "$PG_VER" main --start >/dev/null 2>&1; then
+            # The role and database the app connects as. Peer auth over the
+            # Unix socket maps OS user -> role, so no password exists to set.
+            su -s /bin/sh postgres -c "psql -tAc \"SELECT 1 FROM pg_roles WHERE rolname='virtues'\"" \
+                2>/dev/null | grep -q 1 || \
+                su -s /bin/sh postgres -c "psql -c \"CREATE ROLE virtues WITH LOGIN SUPERUSER\"" >/dev/null 2>&1
+            su -s /bin/sh postgres -c "psql -tAc \"SELECT 1 FROM pg_database WHERE datname='virtues'\"" \
+                2>/dev/null | grep -q 1 || \
+                su -s /bin/sh postgres -c "createdb -O virtues virtues" >/dev/null 2>&1
+            su -s /bin/sh postgres -c "psql -d virtues -c 'CREATE EXTENSION IF NOT EXISTS vector'" >/dev/null 2>&1
+            # No migrations here. `virtues server` runs them at startup, which
+            # keeps ONE migration path for every box rather than a first-boot
+            # copy of it that could drift.
+            logger -t virtues-firstboot "Postgres cluster $PG_VER/main created on the data disk"
+        else
+            logger -t virtues-firstboot "pg_createcluster FAILED - the box will not serve until this is fixed"
+        fi
+    fi
 fi
 
 # ── 2. Mint this unit's encryption key ──────────────────────────────────────
