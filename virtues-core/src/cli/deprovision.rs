@@ -123,7 +123,20 @@ pub async fn run(yes: bool, force: bool) -> Result<(), crate::Error> {
     // command exists to prevent. First boot mints it.
     strip_env_keys(&env_path)?;
 
-    // ── 3. Host identity ────────────────────────────────────────────────────
+    // ── 3. Logs — BEFORE machine-id, and this order is load-bearing ─────────
+    // journald names its directory after the machine-id
+    // (`/var/log/journal/<machine-id>/`) and journalctl resolves the local
+    // journal through it. Clear machine-id first and journalctl answers "No
+    // journal files were found", `--vacuum-time` frees 0 B, and 520 MB of the
+    // master's history stays on the card — which is exactly what it did, while
+    // printing "✓ journal vacuumed", because the result was discarded.
+    //
+    // Both halves of that were bugs. The order is fixed here; the discarding is
+    // fixed by `image-check` now measuring the directory afterwards, which is
+    // what caught this on its first run.
+    vacuum_journal();
+
+    // ── 4. Host identity ────────────────────────────────────────────────────
     // Truncate rather than delete machine-id: systemd treats an empty file as
     // "first boot" and populates it, whereas a *missing* file makes some
     // early-boot units fail outright.
@@ -199,17 +212,6 @@ pub async fn run(yes: bool, force: bool) -> Result<(), crate::Error> {
     // `postgres` superuser, its catalogs, its size — under a path each unit
     // then hides with a mount and never reads.
     remove_relocated_cluster();
-
-    // ── 4. Logs ─────────────────────────────────────────────────────────────
-    // On the lab board this was 403 MB reaching back to 2025-11-25 across 22
-    // boots — the master's entire operational history, shipped inside every
-    // image, and 403 MB of it. The phrase is not in there (it is logged as
-    // "setup phrase rejected", never with the words) but the networks, the
-    // addresses, the hostnames and the stack traces all are.
-    let _ = Command::new("journalctl")
-        .args(["--rotate", "--vacuum-time=1s"])
-        .output();
-    println!("  ✓ journal vacuumed");
 
     // Login records and shell history — the operator's own traces. `wtmp` and
     // `lastlog` are truncated rather than removed: the files are expected to
@@ -319,7 +321,28 @@ fn remove_relocated_cluster() {
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
         Err(e) => println!("  ⚠  could not remove {}: {e}", dir.display()),
     }
+
+    // And the copy the relocation left behind. On a running box that directory
+    // is a rollback — the cluster as it was before it moved to the data disk,
+    // kept deliberately so a botched move can be undone. At imaging time the
+    // rollback is meaningless (the cluster it would restore has just been
+    // deleted) and what remains is simply the master's whole database, sitting
+    // on the boot card, about to be `dd`'d onto every unit.
+    //
+    // image-check flagged it with a manual `rm -rf` and that was the wrong
+    // division of labour: this is per-unit data, deprovision removes per-unit
+    // data, and a step left to a human at the end of a long procedure is a step
+    // that gets skipped.
+    match std::fs::remove_dir_all(PG_PRE_MOVE) {
+        Ok(()) => println!("  ✓ removed the pre-move Postgres copy at {PG_PRE_MOVE}"),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+        Err(e) => println!("  ⚠  could not remove {PG_PRE_MOVE}: {e}"),
+    }
 }
+
+/// The rollback copy `relocate_postgres_to_data_dir` leaves on the boot disk.
+/// Shared with `image-check`, which verifies this removal happened.
+pub const PG_PRE_MOVE: &str = "/var/lib/postgresql.pre-move";
 
 /// Path of the marker that licenses `virtues-firstboot` to mint a fresh
 /// encryption key. Lives beside the env file so it travels with the image.
@@ -466,6 +489,36 @@ async fn wipe_database_as_service_user(force: bool) -> Result<(), crate::Error> 
         ));
     }
     Ok(())
+}
+
+/// Drop the journal: 403 MB reaching back to 2025-11-25 across 22 boots on the
+/// lab board — the master's entire operational history, shipped inside every
+/// image. Not the setup phrase, which is logged as "setup phrase rejected" and
+/// never with the words, but the networks, addresses, hostnames and traces.
+///
+/// Two steps, because neither is sufficient alone. `journalctl --rotate` is the
+/// graceful half: it makes journald close the active file so the data can go.
+/// But vacuuming only ever removes *archived* files, and journald immediately
+/// opens a new active one — so on its own it always leaves something. The
+/// explicit removal afterwards is what makes the result deterministic, which
+/// matters here because the next thing to touch this card is `dd`.
+///
+/// Removing files journald holds open is safe: it keeps writing to the unlinked
+/// inode until it restarts, the space is freed, and nothing reaches the image.
+/// Each unit mints its own machine-id at first boot and gets a fresh directory.
+fn vacuum_journal() {
+    let _ = Command::new("journalctl")
+        .args(["--rotate", "--vacuum-time=1s"])
+        .output();
+
+    // Per-machine subdirectories, not /var/log/journal itself — journald wants
+    // the parent to exist and to keep its ownership and setgid bit.
+    if let Ok(entries) = std::fs::read_dir("/var/log/journal") {
+        for entry in entries.flatten() {
+            let _ = std::fs::remove_dir_all(entry.path());
+        }
+    }
+    println!("  ✓ journal cleared");
 }
 
 /// Shell history for root and every real user. Whoever built the master typed
