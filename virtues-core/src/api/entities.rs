@@ -428,7 +428,7 @@ pub async fn reclassify_person_as_organization(pool: &PgPool, person_id: String)
     // plain UPDATE rather than merge's upsert-then-delete.
     sqlx::query!(
         r#"
-        UPDATE wiki_entity_refs SET entity_id = $1, entity_type = 'organization'
+        UPDATE wiki_refs SET entity_id = $1, entity_type = 'organization'
         WHERE entity_id = $2 AND entity_type = 'person'
         "#,
         &org_id,
@@ -535,7 +535,7 @@ pub async fn create_organization(pool: &PgPool, name: &str) -> Result<String> {
 /// Everything that has to go when a subject is deleted.
 ///
 /// Deleting an entity used to leave a trail: `delete_place` dropped the row and
-/// nothing else, so its `wiki_entity_refs` survived as edges pointing at a
+/// nothing else, so its `wiki_refs` survived as edges pointing at a
 /// vanished id, its article page stayed searchable and citable, and any pin or
 /// notebook item kept a `/place/<id>` url that rendered as a row nothing could
 /// open. None of that is visible from the delete button, which is exactly why
@@ -554,7 +554,7 @@ async fn purge_subject(
     // row goes, since the lookup keys on the subject.
     crate::api::wiki_articles::delete_article(pool, subject_type, id).await?;
 
-    sqlx::query("DELETE FROM wiki_entity_refs WHERE entity_id = $1")
+    sqlx::query("DELETE FROM wiki_refs WHERE entity_id = $1")
         .bind(id)
         .execute(pool)
         .await
@@ -638,7 +638,7 @@ mod entity_crud_tests {
         let id = create_person(&pool, "Sarah").await.unwrap();
 
         sqlx::query(
-            "INSERT INTO wiki_entity_refs (id, entity_type, entity_id, source_table, source_id) \
+            "INSERT INTO wiki_refs (id, entity_type, entity_id, source_table, source_id) \
              VALUES ('r_1', 'person', $1, 'data_communication_message', 'm_1')",
         )
         .bind(&id)
@@ -653,7 +653,7 @@ mod entity_crud_tests {
 
         delete_person(&pool, id.clone()).await.unwrap();
 
-        let refs: i64 = sqlx::query_scalar("SELECT count(*) FROM wiki_entity_refs WHERE entity_id = $1")
+        let refs: i64 = sqlx::query_scalar("SELECT count(*) FROM wiki_refs WHERE entity_id = $1")
             .bind(&id)
             .fetch_one(&pool)
             .await

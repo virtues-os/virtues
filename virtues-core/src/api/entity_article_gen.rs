@@ -3,7 +3,7 @@
 //!
 //! Where the day summary narrates a *day*, this narrates a *relationship*: a
 //! short, grounded article about a person, place, or organization, written
-//! from the raw records that reference it (`wiki_entity_refs`) and revised
+//! from the raw records that reference it (`wiki_refs`) and revised
 //! only when enough NEW evidence has accumulated since the last edition —
 //! growth-gated, not timer-gated, so a quiet entity never burns a model call
 //! and an active one stays current.
@@ -94,7 +94,7 @@ pub async fn refresh_due_entity_articles(pool: &PgPool) -> Result<usize> {
         SELECT a.subject_id, a.subject_type, c.refs
         FROM wiki_articles a
         JOIN LATERAL (
-            SELECT count(*) AS refs FROM wiki_entity_refs r WHERE r.entity_id = a.subject_id
+            SELECT count(*) AS refs FROM wiki_refs r WHERE r.entity_id = a.subject_id
         ) c ON true
         WHERE a.auto_update
           AND a.subject_type IN ('person', 'place', 'organization')
@@ -137,7 +137,7 @@ pub async fn write_entity_article_now(
     }
 
     let refs: i64 = sqlx::query_scalar(
-        "SELECT count(*) FROM wiki_entity_refs WHERE entity_id = $1",
+        "SELECT count(*) FROM wiki_refs WHERE entity_id = $1",
     )
     .bind(subject_id)
     .fetch_one(pool)
@@ -356,8 +356,8 @@ async fn build_dossier(pool: &PgPool, entity: &DueEntity) -> Result<String> {
     let co: Vec<(String, String)> = sqlx::query_as(
         r#"
         SELECT DISTINCT er2.entity_type, er2.entity_id
-        FROM wiki_entity_refs er1
-        JOIN wiki_entity_refs er2
+        FROM wiki_refs er1
+        JOIN wiki_refs er2
           ON er1.source_table = er2.source_table AND er1.source_id = er2.source_id
         WHERE er1.entity_id = $1 AND er2.entity_id <> $1
         LIMIT 12
@@ -387,7 +387,7 @@ async fn build_dossier(pool: &PgPool, entity: &DueEntity) -> Result<String> {
         SELECT DISTINCT d.date, d.epigraph
         FROM wiki_days d
         JOIN wiki_day_prose dp ON dp.day_id = d.id AND dp.prose IS NOT NULL
-        JOIN wiki_entity_refs er ON date(er.timestamp) = d.date
+        JOIN wiki_refs er ON date(er.timestamp) = d.date
         WHERE er.entity_id = $1
         ORDER BY d.date DESC
         LIMIT 6

@@ -64,6 +64,24 @@ pub async fn run(keep_data: bool, yes: bool, force: bool) -> Result<(), crate::E
     // an extension. The `vector` extension, its types, and the schema all
     // survive, so re-migration's `CREATE EXTENSION IF NOT EXISTS` is a no-op.
     // Works regardless of who owns the schema and needs no superuser.
+    //
+    // **And the `applet_*` schemas, which this used to miss entirely.** An
+    // authored applet gets a schema of its own (`faces`/`applet_schema`), so a
+    // wipe scoped to `public` left every one of them — tables, rows and all —
+    // standing in a database that had just reported itself erased. On this
+    // machine that was three schemas of the owner's own life: a calorie diary,
+    // a weekly planner, a readings log.
+    //
+    // The consequence was not a tidiness problem. `deprovision` delegates the
+    // database wipe here, and deprovision is what runs immediately before a
+    // disk is imaged — so the owner's personal applet data would have been
+    // cloned onto every unit shipped from that master, invisibly, since nothing
+    // downstream looks inside the database it was told had been emptied.
+    //
+    // `LIKE 'applet\_%'` with the underscore escaped: unescaped, `_` is a
+    // single-character wildcard and would also match a schema called
+    // `appletx...`. Nothing is named that today, which is exactly when this
+    // sort of thing gets written wrong and stays wrong.
     println!();
     println!("→ dropping all database objects (keeping extensions)…");
     {
@@ -83,6 +101,9 @@ pub async fn run(keep_data: bool, yes: bool, force: bool) -> Result<(), crate::E
                      SELECT 1 FROM pg_depend d WHERE d.objid = t.oid AND d.deptype = 'e') \
                LOOP \
                  EXECUTE format('DROP TYPE IF EXISTS public.%I CASCADE', r.typname); \
+               END LOOP; \
+               FOR r IN SELECT nspname FROM pg_namespace WHERE nspname LIKE 'applet\\_%' LOOP \
+                 EXECUTE format('DROP SCHEMA IF EXISTS %I CASCADE', r.nspname); \
                END LOOP; \
              END $$",
         )

@@ -205,8 +205,8 @@
 	const leadLine = $derived.by(() => {
 		const e = yDay?.epigraph?.trim();
 		if (e) return e.replace(/^["“]|["”]$/g, "");
-		const auto = yDay?.autobiography?.trim();
-		const first = auto?.match(/^.*?[.!?](?:\s|$)/)?.[0]?.trim();
+		const prose = yDay?.article?.trim();
+		const first = prose?.match(/^.*?[.!?](?:\s|$)/)?.[0]?.trim();
 		return first || null;
 	});
 

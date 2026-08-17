@@ -68,13 +68,13 @@ pub async fn build_hourly_context(
     }
 
     // Location visits. The resolved place name lives in `wiki_places` (linked
-    // via `wiki_entity_refs`); `data_location_visit.place_name` is never
+    // via `wiki_refs`); `data_location_visit.place_name` is never
     // populated, so the prior query returned NULL names and the section was
     // empty. JOIN through to the place, and decode the timestamp as DateTime.
     if let Ok(rows) = sqlx::query(
         r#"SELECT p.name AS place_name, v.arrival_time, v.duration_minutes
            FROM data_location_visit v
-           JOIN wiki_entity_refs er
+           JOIN wiki_refs er
              ON er.source_table = 'data_location_visit'
             AND er.source_id = v.id
             AND er.entity_type = 'place'

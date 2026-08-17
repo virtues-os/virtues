@@ -2,7 +2,7 @@
 //!
 //! Gathers a day's structured data (sources, health aggregates, messages),
 //! builds a text prompt, calls an LLM via virtues-api, and saves the result
-//! as the day's autobiography with structured timeline events.
+//! as the day's ARTICLE PAGE with structured timeline events.
 
 use chrono::{NaiveDate, TimeZone};
 use chrono_tz::Tz;
@@ -37,7 +37,8 @@ The dossier is a time-ordered list of the day's evidence, each item formatted fo
 - **Calendar events are PLANS, NOT EVIDENCE.** They are the weakest line in the dossier and are never a boundary on their own — see CALENDAR EVENTS ARE INTENTIONS below.
 - **Device presence** (`[device]` lines) is a stretch the owner was demonstrably AT a machine — typing, clicking, or holding the screen awake. It is weak evidence of WHAT they were doing and strong evidence of WHERE THEY WERE NOT: a body at a keyboard is not a body at a dinner. Read the tail of the line — `screen locked` and `machine slept` mean they stopped; `collector stopped` means WE stopped watching and says nothing at all about them.
 - **Sleep** spans are hard boundaries, BUT DO NOT EMIT YOUR OWN "Sleep" EVENT. The system stamps the authoritative sleep block separately from deterministic sleep-tracking data. Treat the overnight sleep span as a boundary and leave that stretch as "Unknown" — do not label it "Sleep" yourself.
-- **Audio sessions** and **messages** color the day and are CANDIDATE boundaries — weigh them, do not obey them. An audio session's content tells you what a stretch actually was (a conversation, a drive, airport noise, quiet work, sickness in bed) even when there is no location or calendar to anchor it. This is how you name a day spent entirely at home, or entirely on the road, where location never changes.
+- **Audio sessions** color the day and are CANDIDATE boundaries — weigh them, do not obey them. An audio session's content tells you what a stretch actually was (a conversation, a drive, airport noise, quiet work, sickness in bed) even when there is no location or calendar to anchor it. This is how you name a day spent entirely at home, or entirely on the road, where location never changes.
+- **Messages** (`[messages]` lines) are a burst of a single thread, placed in time, with a few excerpts. `you:` is the owner; `them:` is the other person. Content here is the strongest evidence of INTENT in the whole dossier — it says what something was FOR, which no other source can. Read it that way, and read the two rules below before you use it: MESSAGES ARE PLANS, and DO NOT QUOTE PEOPLE.
 - **Health** (heart rate, steps) is texture, never a boundary on its own.
 - **Purchases** (`[purchase]` / `[refund]` lines) are precise evidence of what a stretch was — a meal, a shop, a checkout; the merchant names the activity.
 - **Movement** (`[movement]` lines) tell you when, and how fast, the owner was actually travelling — see MOVEMENT AND TRANSIT.
@@ -51,6 +52,16 @@ A `[calendar]` line records what was SCHEDULED. It is not evidence that anyone w
 - `owner DECLINED` means they did not go. Full stop.
 - `owner never replied`, or NO RSVP tag at all, means NOTHING in either direction — most events carry no RSVP, so its absence is not evidence. Do not read silence as attendance OR as absence.
 - NEVER move detail from one source onto a block named by another. If the `[audio]` inside a calendar block is a piano and a dog at home, then the block IS a piano and a dog at home — it is not a scheduled dinner that happened to have piano music. Detail belongs to the source that recorded it, and borrowing it across sources is how a plan grows false sensory memories.
+
+MESSAGES ARE PLANS TOO — THE CALENDAR RULES APPLY TO THEM:
+A message arranging something is a PLAN, exactly as a calendar entry is, and every rule in the section above applies to it unchanged. "7:30 at the wine bar?" is an intention; it is not evidence that anyone went. This is the easiest mistake to make with message text, because a plan written in a person's own voice reads far more like a memory than a calendar row does — and it is the same failure, with better prose.
+- A `[messages]` plan may NEVER, on its own, name a stretch of the timeline. It needs a TRACE at that hour — a `[visit]`, `[movement]` toward it, a `[purchase]` there, or `[audio]` that matches.
+- Corroborated → name the stretch by what the plan says it was. Uncorroborated → "Unknown". Contradicted by a `[device]` run or a `[visit]` elsewhere → they did not go, and do not mention the plan.
+- A plan for a LATER DAY is not evidence about this day at all. Ignore it.
+- Messages that are not plans — the exchange itself, reacting to something, arranging nothing — are ordinary evidence of what a stretch was, like audio. The distinction is whether the text is about a FUTURE time.
+
+DO NOT QUOTE PEOPLE:
+You may READ every message in the dossier, both directions. You may NOT reproduce another person's words in a `summary`. Their text is here so you can cut and name the day correctly, not so it can be printed back. Write what the exchange was ABOUT ("arranging a coffee at the Hayes cafe for 07:30"), never what either party said in their own words. The owner's own words are the one exception, and even then prefer describing to quoting.
 
 WHAT MAKES A BOUNDARY:
 A boundary is a change of CONTEXT — where you are, what is scheduled, who you are with — never a change of TOPIC. A single conversation at one desk that drifts from work to lunch to weekend plans is ONE event, not three. Do not split on what is being talked about; split on the situation changing.
@@ -148,7 +159,7 @@ pub fn day_boundaries_utc(date: NaiveDate, timezone: Option<&str>) -> (String, S
 
 // ── Public API ───────────────────────────────────────────────────────────────
 
-/// Generate a daily summary from the day's data and save it as the autobiography.
+/// Generate a daily summary from the day's data and save it as the day's article.
 /// How many things you actually DID before a day is worth narrating.
 ///
 /// Not a cost knob — a truth condition. You cannot segment a day into 8–16 events
@@ -389,6 +400,31 @@ pub async fn narrate_day(pool: &PgPool, date: NaiveDate) -> Result<Option<WikiDa
     .fetch_all(pool)
     .await?;
 
+    // ALREADY WRITTEN, AND NOTHING ASKED FOR A REWRITE.
+    //
+    // `segment_day_events` returns early on an unchanged source fingerprint;
+    // narration had no equivalent guard at all, so every caller — the catch-up
+    // queue, the API, the CLI — paid for a fresh best-model call and wrote back
+    // prose that was usually identical. `narrated_at` is the marker the queue
+    // itself keys on, so honouring it here makes a repeat call free rather than
+    // merely redundant.
+    //
+    // Deliberately NOT a content fingerprint: re-narrating a day whose events
+    // genuinely changed is the right behaviour, and the caller that knows they
+    // changed clears `narrated_at`. Guarding on prose alone would make a re-cut
+    // day permanently unwritable.
+    // `WikiDay` does not carry `narrated_at`, so read it directly rather than
+    // widening a struct that a dozen surfaces deserialize.
+    let already: Option<Option<chrono::DateTime<chrono::Utc>>> =
+        sqlx::query_scalar("SELECT narrated_at FROM wiki_days WHERE date = $1")
+            .bind(date)
+            .fetch_optional(pool)
+            .await?;
+    if already.flatten().is_some() {
+        tracing::debug!(date = %date, "already narrated — nothing asked for a rewrite");
+        return Ok(None);
+    }
+
     if events.len() < MIN_EVENTS_TO_NARRATE {
         tracing::info!(
             date = %date,
@@ -473,11 +509,6 @@ pub async fn narrate_day(pool: &PgPool, date: NaiveDate) -> Result<Option<WikiDa
         pool,
         date,
         UpdateWikiDayRequest {
-            // The prose no longer lands here — it goes to the day's ARTICLE
-            // page below. The column keeps its old values until the drop
-            // migration; `wiki_day_prose` (0087) prefers the article.
-            autobiography: None,
-            autobiography_sections: None,
             epigraph: parsed.epigraph,
             last_edited_by: Some("ai".to_string()),
             cover_image: None,
@@ -686,17 +717,17 @@ async fn day_entities_for_refs(pool: &PgPool, start_str: &str, end_str: &str) ->
     use sqlx::Row;
     let rows = sqlx::query(
         "SELECT 'person' AS kind, pe.id AS id, pe.canonical_name AS name \
-         FROM wiki_entity_refs er JOIN wiki_people pe ON pe.id = er.entity_id \
+         FROM wiki_refs er JOIN wiki_people pe ON pe.id = er.entity_id \
          WHERE er.entity_type = 'person' \
            AND er.timestamp >= $1::timestamptz AND er.timestamp <= $2::timestamptz \
          UNION \
          SELECT 'place', p.id, p.name \
-         FROM wiki_entity_refs er JOIN wiki_places p ON p.id = er.entity_id \
+         FROM wiki_refs er JOIN wiki_places p ON p.id = er.entity_id \
          WHERE er.entity_type = 'place' \
            AND er.timestamp >= $1::timestamptz AND er.timestamp <= $2::timestamptz \
          UNION \
          SELECT 'org', o.id, o.canonical_name \
-         FROM wiki_entity_refs er JOIN wiki_orgs o ON o.id = er.entity_id \
+         FROM wiki_refs er JOIN wiki_orgs o ON o.id = er.entity_id \
          WHERE er.entity_type = 'organization' \
            AND er.timestamp >= $1::timestamptz AND er.timestamp <= $2::timestamptz",
     )
@@ -982,11 +1013,192 @@ async fn day_device_presence(
         .collect()
 }
 
+/// One run of messages in a single thread, with the text that makes it legible.
+struct MessageBurst {
+    start: chrono::DateTime<chrono::Utc>,
+    end: chrono::DateTime<chrono::Utc>,
+    /// The person on the other end, resolved where possible. A thread with a
+    /// brand-new correspondent has no `wiki_people` row, so this falls back to
+    /// whatever the message itself carried — the thread is still real and still
+    /// belongs on the spine. That fallback is the whole point: the events that
+    /// matter most are often with someone the graph has never seen.
+    counterpart: String,
+    sent: usize,
+    received: usize,
+    /// `(from_me, text)` — bounded excerpts, oldest first.
+    excerpts: Vec<(bool, String)>,
+}
+
+/// Messages in the window, grouped into per-thread bursts.
+///
+/// # Both directions are READ; only owner-authored text may ever be QUOTED
+///
+/// The detective sees both halves of a conversation, because half of any
+/// arrangement is the other person's half — "7:30 at the usual place?" is as
+/// often theirs as yours, and a detective that only sees your "perfect" cannot
+/// place the event. Reading their words to CUT the day correctly is a different act
+/// from REPRODUCING them to the reader, and the prompt carries that second rule
+/// (see SEGMENT_PROMPT: never quote another person's words in a summary).
+///
+/// This is an egress decision, made deliberately: message bodies now leave the
+/// box for whichever inference endpoint is configured, which under BYO AI is
+/// whatever the user pointed the Chat slot at. Budgets below are what keep that
+/// bounded — a talkative day cannot ship the whole inbox.
+async fn day_message_bursts(
+    pool: &PgPool,
+    start_str: &str,
+    end_str: &str,
+) -> Vec<MessageBurst> {
+    use sqlx::Row;
+
+    /// Messages further apart than this in one thread are separate bursts. A
+    /// conversation has pauses; a reply the next afternoon is a new occasion.
+    const BURST_GAP_MINUTES: i64 = 45;
+    /// A burst this small is a logistics ping, not a stretch of the day. It
+    /// still counts toward its burst — this only stops single acknowledgements
+    /// from each claiming a spine line.
+    const MIN_BURST_MESSAGES: usize = 2;
+    /// Bursts on the spine. Beyond this the dossier stops being a dossier.
+    const MAX_BURSTS: usize = 24;
+    /// Excerpts carried per burst, and the cap on each. Enough to show what the
+    /// exchange was ABOUT; far short of reproducing a conversation.
+    const MAX_EXCERPTS_PER_BURST: usize = 4;
+    const EXCERPT_CHARS: usize = 140;
+
+    // DISTINCT ON (m.id): the refs join can match twice (a message carrying both
+    // a sender and a recipient ref), which would double-count the burst. Order
+    // the tiebreak so a row WITH a resolved name wins over one without.
+    let rows = sqlx::query(
+        "SELECT DISTINCT ON (m.id) \
+                m.id, m.thread_id, m.body, m.timestamp, m.from_name, m.from_identifier, \
+                COALESCE((m.metadata->>'is_from_me')::boolean, false) AS from_me, \
+                pe.canonical_name AS resolved_name \
+         FROM data_communication_message m \
+         LEFT JOIN wiki_refs er \
+           ON er.source_table = 'data_communication_message' AND er.source_id = m.id \
+          AND er.entity_type = 'person' AND er.role IN ('sender', 'recipient') \
+         LEFT JOIN wiki_people pe ON pe.id = er.entity_id \
+         WHERE m.timestamp >= $1::timestamptz AND m.timestamp <= $2::timestamptz \
+         ORDER BY m.id, (pe.canonical_name IS NULL)",
+    )
+    .bind(start_str)
+    .bind(end_str)
+    .fetch_all(pool)
+    .await
+    .unwrap_or_default();
+
+    struct Msg {
+        thread: String,
+        ts: chrono::DateTime<chrono::Utc>,
+        body: Option<String>,
+        from_me: bool,
+        who: Option<String>,
+    }
+
+    let mut msgs: Vec<Msg> = rows
+        .iter()
+        .map(|r| {
+            let from_me: bool = r.try_get("from_me").unwrap_or(false);
+            // A message you SENT has no `from_name` (people.rs fills it only for
+            // the sender of a received message), so the counterpart of an
+            // outbound message is only ever known via the resolved ref or the
+            // thread it sits in — which is why grouping happens first.
+            let who = r
+                .try_get::<Option<String>, _>("resolved_name")
+                .ok()
+                .flatten()
+                .or_else(|| r.try_get::<Option<String>, _>("from_name").ok().flatten())
+                .filter(|s| !s.trim().is_empty());
+            // Threadless channels exist; fall back to the handle so a
+            // conversation still groups, and only then to the message itself.
+            let thread = r
+                .try_get::<Option<String>, _>("thread_id")
+                .ok()
+                .flatten()
+                .filter(|s| !s.trim().is_empty())
+                .or_else(|| r.try_get::<Option<String>, _>("from_identifier").ok().flatten())
+                .unwrap_or_else(|| r.get::<String, _>("id"));
+            Msg {
+                thread,
+                ts: r.get("timestamp"),
+                body: r.try_get::<Option<String>, _>("body").ok().flatten(),
+                from_me,
+                who,
+            }
+        })
+        .collect();
+
+    msgs.sort_by(|a, b| a.thread.cmp(&b.thread).then(a.ts.cmp(&b.ts)));
+
+    let mut bursts: Vec<MessageBurst> = Vec::new();
+    let mut current: Option<(String, Vec<&Msg>)> = None;
+
+    let flush = |acc: &(String, Vec<&Msg>), out: &mut Vec<MessageBurst>| {
+        let group = &acc.1;
+        if group.len() < MIN_BURST_MESSAGES {
+            return;
+        }
+        // The counterpart is a property of the THREAD, not of any one message —
+        // recovered from whichever message in the burst carried a name.
+        let counterpart = group
+            .iter()
+            .find_map(|m| m.who.clone())
+            .unwrap_or_else(|| "unknown".to_string());
+        let sent = group.iter().filter(|m| m.from_me).count();
+        let excerpts = group
+            .iter()
+            .filter_map(|m| {
+                m.body
+                    .as_deref()
+                    .map(str::trim)
+                    .filter(|b| !b.is_empty())
+                    .map(|b| (m.from_me, cap(b, EXCERPT_CHARS)))
+            })
+            .take(MAX_EXCERPTS_PER_BURST)
+            .collect();
+        out.push(MessageBurst {
+            start: group[0].ts,
+            end: group[group.len() - 1].ts,
+            counterpart,
+            sent,
+            received: group.len() - sent,
+            excerpts,
+        });
+    };
+
+    for m in &msgs {
+        match &mut current {
+            Some((thread, group))
+                if *thread == m.thread
+                    && (m.ts - group[group.len() - 1].ts).num_minutes() <= BURST_GAP_MINUTES =>
+            {
+                group.push(m);
+            }
+            _ => {
+                if let Some(acc) = &current {
+                    flush(acc, &mut bursts);
+                }
+                current = Some((m.thread.clone(), vec![m]));
+            }
+        }
+    }
+    if let Some(acc) = &current {
+        flush(acc, &mut bursts);
+    }
+
+    // Busiest first for the cap, so a budget cut drops the thinnest exchanges
+    // rather than the afternoon's; then back into time order for the spine.
+    bursts.sort_by(|a, b| (b.sent + b.received).cmp(&(a.sent + a.received)));
+    bursts.truncate(MAX_BURSTS);
+    bursts.sort_by_key(|b| b.start);
+    bursts
+}
+
 /// Build the DOSSIER: one compact, time-ordered feature list of the day's
 /// evidence, drawn from the CLEAN rollups (visits, calendar, sleep, audio
-/// sessions) plus a messages roll-up and a health snapshot. Each item is capped
-/// per-type, so the whole dossier is bounded by construction — that is what lets
-/// the detective drop the old global truncation.
+/// sessions) plus time-placed message bursts and a health snapshot. Each item is
+/// capped per-type, so the whole dossier is bounded by construction — that is
+/// what lets the detective drop the old global truncation.
 async fn build_dossier(
     pool: &PgPool,
     date: NaiveDate,
@@ -1009,7 +1221,7 @@ async fn build_dossier(
     let visits = sqlx::query(
         "SELECT COALESCE(p.name, v.place_name) AS place, v.arrival_time, v.departure_time \
          FROM data_location_visit v \
-         LEFT JOIN wiki_entity_refs er \
+         LEFT JOIN wiki_refs er \
            ON er.source_table = 'data_location_visit' AND er.source_id = v.id \
           AND er.entity_type = 'place' \
          LEFT JOIN wiki_places p ON p.id = er.entity_id \
@@ -1292,42 +1504,38 @@ async fn build_dossier(
         ));
     }
 
+    // Messages — time-placed BURSTS carrying their text, onto the spine.
+    //
+    // This used to be `GROUP BY who` over the whole day, rendered as
+    // `- 14 with <name>` in a `## Messages` block appended AFTER the spine was
+    // sorted — off the timeline entirely. Two
+    // faults, and they compounded: the detective could not read a single word
+    // anyone wrote, and it could not place a single message in time — so
+    // messages could never corroborate a window, which is the one thing a
+    // boundary needs. Every other source on the spine carries content and a
+    // timestamp; the richest human-intent source in the lake carried neither.
+    // A coffee arranged by text, walked to, and paid for read as an unnamed
+    // purchase next to an unnamed conversation.
+    for b in day_message_bursts(pool, start_str, end_str).await {
+        let mut line = format!(
+            "- [messages] {}–{} — {} with {} ({} sent, {} received)",
+            fmt(&b.start),
+            fmt(&b.end),
+            b.sent + b.received,
+            cap(&b.counterpart, 60),
+            b.sent,
+            b.received
+        );
+        for (from_me, text) in &b.excerpts {
+            line.push_str(&format!(
+                "\n    {} {}",
+                if *from_me { "you:" } else { "them:" },
+                text
+            ));
+        }
+        spine.push((b.start, line));
+    }
     spine.sort_by_key(|(k, _)| *k);
-
-    // Messages — participant names (via entity refs) and counts, not bare totals.
-    // role IN ('sender','recipient'): a message you *received* resolves via its
-    // sender, a message you *sent* via its recipient — so a thread counts toward the
-    // person on the other end regardless of direction (otherwise your own replies
-    // vanish from the tally). COUNT(DISTINCT id) still holds: a 1:1 message carries
-    // exactly one of the two roles, so no double-count.
-    let msgs = sqlx::query(
-        "SELECT COALESCE(pe.canonical_name, m.from_name) AS who, COUNT(DISTINCT m.id) AS n \
-         FROM data_communication_message m \
-         LEFT JOIN wiki_entity_refs er \
-           ON er.source_table = 'data_communication_message' AND er.source_id = m.id \
-          AND er.entity_type = 'person' AND er.role IN ('sender', 'recipient') \
-         LEFT JOIN wiki_people pe ON pe.id = er.entity_id \
-         WHERE m.timestamp >= $1::timestamptz AND m.timestamp <= $2::timestamptz \
-         GROUP BY who ORDER BY n DESC LIMIT 15",
-    )
-    .bind(start_str)
-    .bind(end_str)
-    .fetch_all(pool)
-    .await
-    .unwrap_or_default();
-    let msg_lines: Vec<String> = msgs
-        .iter()
-        .map(|r| {
-            let who = r
-                .try_get::<Option<String>, _>("who")
-                .ok()
-                .flatten()
-                .filter(|s| !s.trim().is_empty())
-                .unwrap_or_else(|| "unknown".to_string());
-            let n: i64 = r.try_get("n").unwrap_or(0);
-            format!("- {} with {}", n, cap(&who, 60))
-        })
-        .collect();
 
     // ── Assemble ──
     let day_of_week = date.format("%A").to_string();
@@ -1347,12 +1555,6 @@ async fn build_dossier(
             out.push_str(line);
             out.push('\n');
         }
-    }
-
-    if !msg_lines.is_empty() {
-        out.push_str("\n## Messages\n");
-        out.push_str(&msg_lines.join("\n"));
-        out.push('\n');
     }
 
     if let Some(h) = build_health_snapshot(pool, start_str, end_str).await {
@@ -1841,13 +2043,13 @@ async fn store_structured_events(
 async fn extract_event_location(pool: &PgPool, start: &str, end: &str) -> Option<String> {
     use sqlx::Row;
     // `data_location_visit.place_name` is never populated by entity resolution —
-    // the resolved name lives in `wiki_places`, linked via `wiki_entity_refs`
+    // the resolved name lives in `wiki_places`, linked via `wiki_refs`
     // (same shape the timeline reader uses). JOIN through to get the real name;
     // selecting the visit's own `place_name` column always returned NULL.
     let row: Option<sqlx::postgres::PgRow> = sqlx::query(
         "SELECT p.name AS place_name \
          FROM data_location_visit v \
-         JOIN wiki_entity_refs er \
+         JOIN wiki_refs er \
            ON er.source_table = 'data_location_visit' \
           AND er.source_id = v.id \
           AND er.entity_type = 'place' \
@@ -2151,6 +2353,105 @@ mod dossier_tests {
         assert!(
             !dossier.contains("owner never replied") && !dossier.contains("accepted"),
             "a NULL response_status must produce NO rsvp claim"
+        );
+    }
+
+    /// The arranged-occasion regression, in miniature. A coffee is arranged by
+    /// text and confirmed that morning; the day page used to render that as a
+    /// bare card transaction next to an unnamed conversation, because the
+    /// detective was handed `- 14 with <name>` and nothing else. Messages must
+    /// arrive PLACED IN TIME and CARRYING THEIR TEXT, or no prompt wording can
+    /// rescue the cut. See docs/attention-plan.md.
+    ///
+    /// Also pins the two properties that make that safe: bursts split on a real
+    /// gap rather than smearing a day into one line, and a thread whose
+    /// counterpart has no `wiki_people` row still reaches the spine — the events
+    /// that matter most are often with someone the graph has never seen.
+    ///
+    /// ```sh
+    /// DATABASE_URL=postgres://virtues:virtues@localhost:5432/virtues_mig_check \
+    ///   cargo test -p virtues dossier_ -- --ignored --nocapture
+    /// ```
+    #[tokio::test]
+    #[ignore = "needs Postgres with the migration chain applied"]
+    async fn dossier_carries_message_bursts_with_text_and_time() {
+        let url = std::env::var("DATABASE_URL").expect("DATABASE_URL");
+        let pool = PgPool::connect(&url).await.expect("connect");
+
+        let date = NaiveDate::from_ymd_opt(2026, 7, 27).unwrap();
+        let (start_str, end_str) = day_boundaries_utc(date, Some("UTC"));
+
+        sqlx::query("DELETE FROM data_communication_message")
+            .execute(&pool)
+            .await
+            .expect("clean");
+
+        // An unresolved correspondent: no wiki_people row, no entity ref. The old
+        // aggregate would have filed this under "unknown"; the burst must still
+        // carry the thread, both directions, and the text.
+        let msgs: [(&str, &str, bool, &str); 5] = [
+            ("m1", "07:02:00", false, "still on for 7:30 at the Hayes cafe?"),
+            ("m2", "07:03:00", true, "yes! see you there"),
+            ("m3", "07:04:00", false, "perfect"),
+            // Four hours later — a SEPARATE occasion, not the same burst.
+            ("m4", "11:20:00", true, "good to catch up"),
+            ("m5", "11:31:00", false, "it really was"),
+        ];
+        for (id, hhmmss, from_me, body) in msgs {
+            sqlx::query(
+                "INSERT INTO data_communication_message \
+                 (id,message_id,thread_id,channel,body,from_identifier,from_name, \
+                  timestamp,source_stream_id,source_table,source_provider,metadata) \
+                 VALUES ($1,$1,'th_demo','imessage',$2,$3,$4, \
+                         $5::timestamptz,$1,'mac_imessage','mac',$6::jsonb)",
+            )
+            .bind(id)
+            .bind(body)
+            .bind(if from_me { "me" } else { "+15550101" })
+            .bind(if from_me { None } else { Some("Sam") })
+            .bind(format!("2026-07-27T{hhmmss}Z"))
+            .bind(format!(r#"{{"is_from_me": {from_me}}}"#))
+            .execute(&pool)
+            .await
+            .expect("seed message");
+        }
+
+        let dossier = build_dossier(&pool, date, &start_str, &end_str, Some("UTC"), None).await;
+        println!("{dossier}");
+
+        assert!(
+            dossier.contains("[messages]"),
+            "messages must reach the dossier as spine lines — this is the whole fix"
+        );
+        assert!(
+            dossier.contains("07:02–07:04"),
+            "a burst must be PLACED IN TIME so it can corroborate a window"
+        );
+        assert!(
+            dossier.contains("11:20–11:31"),
+            "a 4-hour gap is a new occasion, not a continuation of the morning"
+        );
+        assert!(
+            dossier.contains("still on for 7:30 at the Hayes cafe?"),
+            "the received half carries the arrangement — reading both directions \
+             is exactly what lets the detective name the block"
+        );
+        assert!(
+            dossier.contains("yes! see you there"),
+            "the owner's own words must survive too"
+        );
+        assert!(
+            dossier.contains("with Sam"),
+            "an unresolved correspondent still names the thread from the message itself"
+        );
+        assert!(
+            dossier.contains("(1 sent, 2 received)"),
+            "direction counts must be honest — they are what the quoting rule keys on"
+        );
+        assert!(
+            !dossier.contains("## Messages"),
+            "the whole-day aggregate block is gone; a count off the spine taught \
+             the detective nothing it could place"
         );
     }
 }

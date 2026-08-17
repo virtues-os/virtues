@@ -2,7 +2,7 @@
 	EntityRecordsSection.svelte
 
 	The entity page's evidence feed: every raw record that references this
-	entity (via wiki_entity_refs), newest first — the CRM view of a
+	entity (via wiki_refs), newest first — the CRM view of a
 	relationship. Server-paginated: the grid holds one page; search, paging
 	and the ontology chips all travel to the box as a query, so an entity
 	with a hundred thousand records costs one page at a time.
