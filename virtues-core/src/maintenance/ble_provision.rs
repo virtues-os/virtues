@@ -709,8 +709,8 @@ mod server {
                     // and re-polls it — the same call the panel's heartbeat
                     // makes, so the app and the box can never be looking at two
                     // different codes.
-                    let code = crate::api::display::link_session::code_and_poll(&pool).await;
-                    let url = crate::api::display::link_session::verification_url(&pool)
+                    let code = crate::api::link_session::code_and_poll(&pool).await;
+                    let url = crate::api::link_session::verification_url(&pool)
                         .await
                         .unwrap_or_default();
                     let mut g = improv.lock().await;
