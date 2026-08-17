@@ -82,6 +82,9 @@ const BINARIES: &[&str] = &[
 const WEB_DIR: &str = "/usr/local/share/virtues";
 const AVAHI_SERVICE: &str = "/etc/avahi/services/virtues.service";
 const DATA_DIR: &str = "/var/lib/virtues";
+/// Relocated on an appliance (a symlink into the data dir); a real,
+/// distro-owned directory everywhere else.
+const PG_LINK: &str = "/var/lib/postgresql";
 const MODELS_DIR: &str = "/var/lib/virtues/models";
 
 struct Manifest {
@@ -89,6 +92,9 @@ struct Manifest {
     binaries: Vec<&'static str>,
     /// Kiosk shim, first-boot script, polkit rule, dnsmasq drop-in.
     extra_files: Vec<String>,
+    /// `/var/lib/postgresql` is OUR symlink into the data dir, not the
+    /// distro's directory.
+    pg_symlink: bool,
     web_dir: bool,
     avahi: bool,
     data_dir: bool,
@@ -195,6 +201,32 @@ pub async fn run(keep_data: bool, purge_models: bool, force: bool) -> Result<()>
         );
     }
 
+    // ── Undo the Postgres relocation ────────────────────────────────────
+    // On an appliance we symlinked /var/lib/postgresql into the data dir. Both
+    // tiers have to undo it, for different reasons:
+    //
+    //   full purge — the data dir is about to be deleted, and a symlink into
+    //   nothing would leave the machine's Postgres unable to start for anything
+    //   else that ever wanted it. "Shared infra is left alone" is one of this
+    //   command's four rules, and leaving it broken breaks that rule.
+    //
+    //   --keep-data — the cluster survives inside the kept data dir, which is
+    //   the point of the tier; but the symlink is ours, and a reinstall
+    //   recreates it.
+    //
+    // Only ever removes a SYMLINK. A DIY box's /var/lib/postgresql is a real
+    // directory holding somebody's databases and is not ours to touch.
+    if m.pg_symlink {
+        report(
+            std::fs::remove_file(PG_LINK).is_ok(),
+            &format!("removed the {PG_LINK} symlink (Postgres back on its own path)"),
+        );
+        // Give the distro's Postgres somewhere to live again, so a later
+        // `pg_createcluster` or apt reinstall behaves normally.
+        let _ = std::fs::create_dir_all(PG_LINK);
+        run_quiet("sh", &["-c", "chown postgres:postgres /var/lib/postgresql 2>/dev/null || true"]);
+    }
+
     // ── Data tier (skipped with --keep-data) ────────────────────────────
     if keep_data {
         ui::skip(&format!("kept {DATA_DIR} (env, encryption key, lake)"));
@@ -292,6 +324,12 @@ fn probe(purge_models: bool) -> Manifest {
             .collect(),
         web_dir: Path::new(WEB_DIR).exists(),
         avahi: Path::new(AVAHI_SERVICE).exists(),
+        // `symlink_metadata`, not `is_symlink()` on the resolved path: on a box
+        // whose data disk is missing the target does not exist, and that is
+        // precisely a box someone is likely to be uninstalling.
+        pg_symlink: std::fs::symlink_metadata(PG_LINK)
+            .map(|m| m.file_type().is_symlink())
+            .unwrap_or(false),
         data_dir: Path::new(DATA_DIR).exists(),
         // Postgres db/role: probe via the postgres superuser; any failure
         // (postgres not installed, etc.) just means "nothing to drop".
@@ -314,6 +352,7 @@ impl Manifest {
         self.units.is_empty()
             && self.binaries.is_empty()
             && self.extra_files.is_empty()
+            && !self.pg_symlink
             && !self.web_dir
             && !self.avahi
             && !self.data_dir
@@ -345,6 +384,9 @@ fn print_manifest(m: &Manifest, keep_data: bool) {
     }
     for f in &m.extra_files {
         ui::kv_at(MANIFEST_COL, "installed file", f);
+    }
+    if m.pg_symlink {
+        ui::kv_at(MANIFEST_COL, "Postgres path", &format!("{PG_LINK} symlink  (cluster moves back to its own path)"));
     }
     if m.models_dir {
         ui::kv_at(MANIFEST_COL, "GGUF models", &format!("{MODELS_DIR}  (re-download on reinstall)"));

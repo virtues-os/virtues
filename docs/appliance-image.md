@@ -77,26 +77,71 @@ UUID to coordinate and no kernel/module skew possible.
 Three things write continuously, and each needed pointing at the data disk
 explicitly. Two are done; one is not.
 
-| What | Where it lands by default | Status |
+| What | Where it lands by default | How it gets moved |
 |---|---|---|
-| The lake, backups, applet state | already under `DATA_DIR` | ✅ |
-| journald (~140 MB and growing on the lab box) | `/var/log/journal` on root | ✅ symlinked to `$DATA_DIR/journal` by `virtues-firstboot.sh` |
-| **Postgres (3.0 GB on the lab box)** | `/var/lib/postgresql/18/main` on root | ❌ **not yet moved — see below** |
+| The lake, backups, applet state | already under `DATA_DIR` | — |
+| journald (~140 MB and growing on the lab box) | `/var/log/journal` on root | `virtues-firstboot.sh` symlinks it to `$DATA_DIR/journal` |
+| Postgres (3.0 GB on the lab box) | `/var/lib/postgresql/18/main` on root | the installer symlinks `/var/lib/postgresql` → `$DATA_DIR/postgresql` |
 
-Postgres is the largest and busiest of the three, and it is the one still
-landing on the eMMC. Relocating a cluster is not a config edit — the data
-directory has to be created on a disk that is blank at first boot, which means
-the unit has to `initdb` and migrate on that boot rather than inheriting a
-cluster from the image. That is real work with a real failure mode, and it
-wants the bench. **Until it lands, the endurance argument above is only
-two-thirds true.**
+### The Postgres move, in detail
 
-What *is* in place is the guard that makes the failure loud instead of silent.
-`postgresql@.service` now carries a `RequiresMountsFor=<data dir>` drop-in, so
-a box with no data disk refuses to start Postgres rather than `initdb`-ing a
-fresh empty cluster onto the eMMC and reporting itself healthy. `virtues.service`
-already had the same guard; it was on the wrong unit, because Postgres starts
-first.
+It is the largest and busiest of the three — a WAL flush per transaction,
+forever — so it is the one the eMMC most needs to be rid of.
+
+**A symlink, not `data_directory`.** Debian's `postgresql.conf` has a
+`data_directory` setting and pointing it at the data disk is the obvious move.
+It is the wrong one: that path is also known to `pg_createcluster`,
+`pg_dropcluster`, `pg_upgradecluster`, the `postgresql@.service` template's own
+`RequiresMountsFor`, and every apt maintainer script. Each would need telling,
+or would disagree with us at the worst possible moment — a major-version
+upgrade. Symlinking `/var/lib/postgresql` moves the whole tree and leaves all
+of them working on vanilla paths that resolve through it. (Checked: the unit
+carries no `ProtectSystem`/`ReadWritePaths` sandbox that a symlink out of
+`/var/lib` would trip.)
+
+**Copied, not moved.** This is the only copy of the owner's database, so the
+installer stops Postgres, *copies*, swaps the symlink in, starts, and proves it
+serves — and only then is the original redundant. It is left at
+`/var/lib/postgresql.pre-move` for the operator to delete, and `image-check`
+reports it as a finding so it cannot ship inside an image by being forgotten.
+If the new location will not serve, the installer rolls the symlink back and
+restarts on the original.
+
+**Relocated before the database exists.** The installer does it immediately
+after installing Postgres and before `provision_db`, so the cluster being
+copied is a fresh `initdb` with nothing in it. Run later and it would be
+relocating the owner's record.
+
+**On a fresh unit the cluster is built, not inherited.** The image is the eMMC,
+so it carries the symlink but not the disk it points at — every unit's NVMe is
+blank. `virtues-firstboot.sh` therefore claims the disk and then
+`pg_dropcluster` + `pg_createcluster`s a vanilla cluster on it, creates the
+`virtues` role and database, and stops there. Migrations are deliberately *not*
+run at first boot: `virtues server` already runs them at startup, and one
+migration path for every box beats a first-boot copy of it that could drift.
+
+Its guard is the narrowest true statement about the job, like the other two in
+that script: *a symlink whose target holds no cluster*. A DIY box has no
+symlink; a second boot has a cluster; a box whose disk failed to mount has
+nowhere to write. All three skip. And it is deliberately **not** keyed on the
+first-boot marker — that marker licenses key *minting*, which must happen once
+ever, while this must happen once per *disk*. A replaced NVMe needs a cluster
+and must not get a new encryption key.
+
+**Two ordering facts that are easy to get wrong.** `virtues-firstboot.service`
+is `Before=virtues.service postgresql.service`, and the `postgresql@.service`
+drop-in is `After=virtues-firstboot.service` — otherwise Postgres races ahead
+on a virgin unit, finds the symlink target missing, and fails on the one screen
+the owner is watching hardest. And that same drop-in carries
+`RequiresMountsFor=<data dir>`, which the template's own
+`RequiresMountsFor=/var/lib/postgresql/%I` does **not** cover: the dependency is
+taken on the path as written, not on what the symlink resolves to.
+
+**Deprovision removes the cluster,** because it is per-unit state — it is where
+the record lived. It has to: on the master the data dir is a plain directory on
+the eMMC (the master never had a claimed NVMe), so a surviving cluster would
+ship inside every image under a path each unit then hides with a mount and
+never reads.
 
 ## Building the image
 
@@ -123,9 +168,16 @@ sudo virtues deprovision --yes && sudo virtues image-check && sudo poweroff
 
 It checks: no `VIRTUES_ENCRYPTION_KEY` in the env file · the first-boot marker
 is armed · `/etc/machine-id` is empty · no SSH host keys · no saved wifi
-connections · the `virtues` database is gone · the lake is empty. A Postgres it
-cannot reach is a **finding**, not a pass — "I could not check the most
-important thing" must never render as a tick.
+connections · no leftover `/var/lib/postgresql.pre-move` · no Postgres cluster
+on the disk, or if there is one, no `virtues` database in it · the lake is
+empty.
+
+That last one has two ways to pass and the order matters. On a relocated
+appliance, deprovision removes the whole **cluster**, so there is no server left
+to ask and "Postgres is unreachable" is the correct end state. Asking first
+whether a cluster exists is what separates that from the case where one does
+exist and will not answer — which is a **finding**, because "I could not check
+the most important thing" must never render as a tick.
 
 ### Why each of those matters
 
@@ -170,9 +222,14 @@ flasher becomes the *entire* per-unit process. Worth knowing even though the
 recommended layout does not need it — it is the fallback if question 1 goes
 badly.
 
-**3. Postgres onto the data disk.**
-See the table above. Needs a first-boot `initdb` + migrate path and a real
-power-cycle test, because the failure mode is an empty box that looks healthy.
+**3. A real power-cycle test of the first-boot cluster build.**
+The Postgres move is written and the guards are in place, but the path that
+matters most has only been reasoned about: image a unit, boot it with a blank
+NVMe, and confirm `pg_createcluster` runs before Postgres is wanted, the role
+and database appear, and `virtues server` migrates into them. Then do it again
+with the NVMe physically absent and confirm the box boots, Postgres refuses to
+start, and the panel says *"Storage disconnected"* rather than reporting itself
+healthy.
 
 ## Two things to fix on the master while you are in there
 
