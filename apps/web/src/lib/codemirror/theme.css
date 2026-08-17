@@ -1001,10 +1001,12 @@
 	background: var(--color-primary);
 	border-radius: 2px;
 
-	/* 1.5x line height, centered — the over/underhang is what reads as
-	   deliberate. Height itself stays CodeMirror's (it is measured), so the
-	   scale has to be a transform. */
-	transform: scaleY(1.5);
+	/* CodeMirror's inline `height` is the LINE BOX, which carries the 1.7 prose
+	   leading and towers over the glyphs. Left alone (overriding it would fight
+	   the measured geometry) and corrected by a scale the plugin derives from
+	   the font size at the caret, so the bar hugs the type at every level.
+	   Centered, because that is where the text sits in its line box. */
+	transform: scaleY(var(--cm-caret-scale-y, 0.74));
 	transform-origin: center;
 
 	/* Front-loaded curve: leaves fast, settles slow. A symmetric ease at
