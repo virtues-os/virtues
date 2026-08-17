@@ -30,15 +30,33 @@
 -- ---------------------------------------------------------------------------
 
 -- Refuse to run if any day's legacy prose is NOT already on its page.
+--
+-- Re-runnable, like 0105. The check is skipped once the column is gone, and it
+-- is issued through EXECUTE so the reference to `d.autobiography` is never
+-- planned in that case — a static reference would fail to resolve even on the
+-- unreached branch. This matters for a checkout that applied the drop by hand:
+-- without the skip, the next `sqlx migrate run` errors on a missing column and
+-- blocks the whole chain behind it.
 DO $$
 DECLARE stranded INT;
 BEGIN
-    SELECT count(*) INTO stranded
-    FROM wiki_days d
-    LEFT JOIN wiki_articles a ON a.subject_type = 'day' AND a.subject_id = d.id
-    LEFT JOIN app_pages p ON p.id = a.page_id
-    WHERE NULLIF(trim(d.autobiography), '') IS NOT NULL
-      AND NULLIF(trim(p.content), '') IS DISTINCT FROM NULLIF(trim(d.autobiography), '');
+    IF NOT EXISTS (
+        SELECT 1 FROM information_schema.columns
+        WHERE table_schema = 'public'
+          AND table_name = 'wiki_days'
+          AND column_name = 'autobiography'
+    ) THEN
+        RETURN;
+    END IF;
+
+    EXECUTE $q$
+        SELECT count(*)
+        FROM wiki_days d
+        LEFT JOIN wiki_articles a ON a.subject_type = 'day' AND a.subject_id = d.id
+        LEFT JOIN app_pages p ON p.id = a.page_id
+        WHERE NULLIF(trim(d.autobiography), '') IS NOT NULL
+          AND NULLIF(trim(p.content), '') IS DISTINCT FROM NULLIF(trim(d.autobiography), '')
+    $q$ INTO stranded;
 
     IF stranded > 0 THEN
         RAISE EXCEPTION
