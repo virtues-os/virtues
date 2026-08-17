@@ -512,7 +512,7 @@
 			onThisDay = otd;
 
 			// recent is date DESC; the latest narrated day is the featured entry.
-			const featured = recent.find((d) => d.article ?? d.autobiography);
+			const featured = recent.find((d) => d.article);
 			if (featured) {
 				latestEntry = {
 					slug: featured.date,
