@@ -249,9 +249,17 @@ pub struct SetupState {
     /// would hold someone on a page while a background job runs. One connected
     /// source is the honest line between "a box" and "your box".
     pub onboarding_complete: bool,
-    /// The owner said no. Prescribe, never enforce — but a door that asks again
-    /// every launch is a wall with extra steps, so the answer is remembered.
-    pub onboarding_skipped: bool,
+    /// `new` | `onboarding` | `active`, from `app_user_profile`.
+    ///
+    /// The routing gate reads this rather than a flag of its own. A second
+    /// boolean went into `ui_preferences` first, before noticing this column
+    /// already existed and already meant the same life stage — two records of
+    /// where someone is in onboarding is how they drift apart.
+    ///
+    /// `active` means finished OR dismissed, and both stop the redirect:
+    /// prescribe, never enforce, but a door that asks again every launch is a
+    /// wall with extra steps.
+    pub onboarding_status: String,
 }
 
 /// Compute the setup/onboarding state. Reuses [`compute_status`] for the
@@ -532,50 +540,40 @@ pub async fn compute_setup_state(pool: &PgPool) -> Result<SetupState> {
         .filter(|s| onboarding_required.contains(&s.id))
         .all(|s| s.done);
 
-    let onboarding_skipped = onboarding_skipped(pool).await;
+    let onboarding_status = onboarding_status(pool).await;
 
     Ok(SetupState {
         setup,
         setup_complete,
         onboarding,
         onboarding_complete,
-        onboarding_skipped,
+        onboarding_status,
     })
 }
 
-/// Has the owner dismissed onboarding?
+/// Where the owner is in onboarding: `new`, `onboarding`, or `active`.
 ///
-/// Stored on the assistant profile's `ui_preferences` rather than its own
-/// table: it is exactly what that column is for — whether a surface is shown —
-/// and a migration for one boolean would be the more expensive mistake. Reads
-/// false on any error, which errs toward OFFERING onboarding rather than
+/// Reads `new` on any error, which errs toward OFFERING onboarding rather than
 /// silently swallowing it.
-pub async fn onboarding_skipped(pool: &PgPool) -> bool {
-    sqlx::query_scalar::<_, Option<serde_json::Value>>(
-        "SELECT ui_preferences FROM app_assistant_profile ORDER BY id LIMIT 1",
-    )
-    .fetch_optional(pool)
-    .await
-    .ok()
-    .flatten()
-    .flatten()
-    .and_then(|v| v.get("onboarding_skipped").and_then(|b| b.as_bool()))
-    .unwrap_or(false)
+pub async fn onboarding_status(pool: &PgPool) -> String {
+    sqlx::query_scalar::<_, String>("SELECT onboarding_status FROM app_user_profile LIMIT 1")
+        .fetch_optional(pool)
+        .await
+        .ok()
+        .flatten()
+        .unwrap_or_else(|| "new".to_string())
 }
 
-/// Remember that the owner skipped onboarding (or un-skip, to offer it again).
+/// Mark onboarding finished or dismissed — both are `active`.
 ///
-/// Merges into `ui_preferences` rather than replacing it — this column holds
-/// every other UI preference, and a write that clobbered them would trade one
-/// boolean for all of them.
-pub async fn set_onboarding_skipped(pool: &PgPool, skipped: bool) -> Result<()> {
-    sqlx::query(
-        "UPDATE app_assistant_profile          SET ui_preferences = COALESCE(ui_preferences, '{}'::jsonb)              || jsonb_build_object('onboarding_skipped', $1::bool),              updated_at = now()          WHERE id = (SELECT id FROM app_assistant_profile ORDER BY id LIMIT 1)",
-    )
-    .bind(skipped)
-    .execute(pool)
-    .await
-    .map_err(|e| crate::Error::Database(format!("set onboarding_skipped: {e}")))?;
+/// `false` puts it back to `onboarding` so the route can offer it again;
+/// something that can only ever be dismissed is a door that locks behind you.
+pub async fn set_onboarding_done(pool: &PgPool, done: bool) -> Result<()> {
+    sqlx::query("UPDATE app_user_profile SET onboarding_status = $1, updated_at = now()")
+        .bind(if done { "active" } else { "onboarding" })
+        .execute(pool)
+        .await
+        .map_err(|e| crate::Error::Database(format!("set onboarding_status: {e}")))?;
     Ok(())
 }
 
@@ -692,10 +690,12 @@ pub async fn skip_onboarding_handler(
     _user: crate::middleware::auth::AuthUser,
     Json(req): Json<SkipOnboardingRequest>,
 ) -> impl IntoResponse {
-    match set_onboarding_skipped(state.db.pool(), req.skipped).await {
+    match set_onboarding_done(state.db.pool(), req.skipped).await {
         Ok(()) => (
             StatusCode::OK,
-            Json(serde_json::json!({ "onboarding_skipped": req.skipped })),
+            Json(serde_json::json!({
+                "onboarding_status": if req.skipped { "active" } else { "onboarding" }
+            })),
         )
             .into_response(),
         Err(e) => {

@@ -315,6 +315,30 @@ export async function setUpdateChannel(channel: 'stable' | 'prerelease'): Promis
 	if (!res.ok) throw new Error(`Failed to set channel: ${res.statusText}`);
 }
 
+/** One line of the census: a thing the box holds, and how many of it. */
+export interface CensusLine {
+	id: string;
+	/** Plural, lowercase, already in the words a person would use. */
+	label: string;
+	count: number;
+}
+
+export interface Census {
+	/** Only non-empty lines. A box with nothing connected returns []. */
+	lines: CensusLine[];
+	total: number;
+	earliest: string | null;
+	latest: string | null;
+	span_days: number;
+}
+
+/** What the box actually holds, counted — the reveal's first movement. */
+export async function getCensus(): Promise<Census> {
+	const res = await fetch(`${API_BASE}/census`);
+	if (!res.ok) throw new Error(`Failed to read the census: ${res.statusText}`);
+	return res.json();
+}
+
 export interface NarrativeDraft {
 	document: string;
 	core: string;
@@ -2326,8 +2350,10 @@ export interface SetupState {
 	onboarding: SetupStep[];
 	/** The box has something to keep a record of — at least one source. */
 	onboarding_complete: boolean;
-	/** The owner declined, and we remember rather than asking every launch. */
-	onboarding_skipped: boolean;
+	/** `new` | `onboarding` | `active`. `active` means finished OR dismissed —
+	 *  both stop the redirect. Backed by app_user_profile.onboarding_status,
+	 *  which already tracked this life stage before a second flag was added. */
+	onboarding_status: string;
 }
 
 /**
