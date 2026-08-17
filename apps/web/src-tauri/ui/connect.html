@@ -323,7 +323,7 @@
         window.location.href = BOX_URL;
       }
 
-      // ── STEP 4 · THE BOX MAY HAVE SHIPPED MONTHS AGO ──────────────────────
+      // ── THE BOX MAY HAVE SHIPPED MONTHS AGO ───────────────────────────────
       //
       // A box is flashed at manufacture and then sits in a warehouse, so an
       // owner's first minute is often spent on code older than everything they
@@ -387,11 +387,52 @@
               await new Promise((r) => setTimeout(r, 2500));
               return resolve();
             }
-            say('Waiting for your box to come back…');
-            await waitForBoxUrl(180000);
+            // TEN MINUTES, not three.
+            //
+            // Three was chosen for a staged release, which activates in about
+            // fifteen seconds. But the box has usually NOT staged one at this
+            // point in setup, so this has to cover a ~120MB download plus
+            // checksum, preflight, stop, migrations and start — on a Q6A, over
+            // whatever wifi the owner just joined. When it expired, control fell
+            // straight through to `window.location.href = BOX_URL` against a box
+            // that was still restarting, so the owner's first sight of the
+            // product was a browser error page.
+            say('Installing. Your box restarts and will be back in a minute…');
+            const back = await waitForBoxUrl(600000);
+            if (!back) {
+              // Do NOT navigate. Say where it is and let them go when it is
+              // ready — the update is still running on the box and will finish
+              // without us.
+              return renderStillRestarting(resolve);
+            }
             resolve();
           });
         });
+      }
+
+      // The box did not come back inside the window. It is probably fine.
+      //
+      // The honest screen for "I stopped watching", not for "it failed": an
+      // upgrade that is still applying looks identical from out here, and the
+      // box's own panel is showing "Updating — back in a minute" the whole
+      // time. So: no error styling, a way to look again, and a way past.
+      function renderStillRestarting(done) {
+        app.innerHTML = `
+          <p class="kicker">Almost there</p>
+          <h1>Your box is still restarting</h1>
+          <p class="sub">It's applying the update. This can take a few minutes on a
+            fresh box — its own screen is showing the same thing. Nothing is lost if
+            you close this; it finishes on its own.</p>
+          <button class="primary" id="again">Check again</button>
+          <button class="secondary" id="skip">Open anyway</button>`;
+        document.getElementById('again').addEventListener('click', async () => {
+          const b = document.getElementById('again');
+          b.disabled = true;
+          b.textContent = 'Checking…';
+          if (await waitForBoxUrl(60000)) return done();
+          renderStillRestarting(done);
+        });
+        document.getElementById('skip').addEventListener('click', () => done());
       }
 
       /** Open the box's UI for an ALREADY-paired device (no setup beats). */
@@ -937,7 +978,7 @@ its devices apart — type its address.",
         renderLinkStep({ name: state.bleBox.name, origin, bleId: state.bleBox.id }, ssid);
       }
 
-      // ── STEP 2 · LINK ─────────────────────────────────────────────────────
+      // ── LINK ──────────────────────────────────────────────────────────────
       //
       // The step whose absence was discovered as a wall on 2026-08-11: a box
       // onboarded and paired at an office was unreachable by the app in the
@@ -956,7 +997,7 @@ its devices apart — type its address.",
         state.linkServer = server;
         const draw = (statusHtml) => {
           app.innerHTML = `
-            <p class="kicker">Step 2 of 3 · ${esc(server.name)}</p>
+            <p class="kicker">Setting up ${esc(server.name)}</p>
             <h1>Link your box to an account</h1>
             <p class="sub">${ssid ? `It's on ${esc(ssid)}. ` : ''}Your data stays on the box —
               the subscription pays for what connects it: reaching it from anywhere,
