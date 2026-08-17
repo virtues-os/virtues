@@ -97,7 +97,11 @@
 		document.addEventListener("visibilitychange", checkForNewUi);
 
 		// Global dragover handler: Allow drops on document by preventing default
-		// This is a fallback to ensure drops are never blocked by missing handlers
+		// This is a fallback to ensure drops are never blocked by missing handlers.
+		// The matching `drop` guard is in the ROOT layout — cancelling dragover
+		// here is what makes the whole document a drop target, and an unclaimed
+		// drop on that target navigates the window to the file. See
+		// `routes/+layout.svelte`; the two belong together.
 		document.addEventListener("dragover", (e) => {
 			e.preventDefault();
 			if (e.dataTransfer) {
