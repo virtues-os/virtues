@@ -137,10 +137,8 @@ pub async fn run(keep_data: bool, yes: bool, force: bool) -> Result<(), crate::E
 }
 
 /// `--keep-data`: re-open onboarding without deleting anything. Revoke every
-/// paired device (so `claimed` flips false and the setup wizard reappears) and
-/// revoke their device credentials (so the old bearers can't authenticate until
-/// re-pair). Keeps indexed data, source connections, the subscription, the box
-/// identity, and the schema — and runs fine against a live server (these are the
+/// paired device, so `claimed` flips false and setup reappears. Keeps indexed
+/// data, source connections, the subscription, the box identity, and the schema — and runs fine against a live server (these are the
 /// same UPDATEs the dashboard does when you remove a device).
 async fn run_keep_data(database_url: &str, yes: bool) -> Result<(), crate::Error> {
     println!();
@@ -174,14 +172,11 @@ async fn run_keep_data(database_url: &str, yes: bool) -> Result<(), crate::Error
         .map_err(|e| crate::Error::Database(format!("revoke devices: {e}")))?
         .rows_affected();
 
-    let creds = sqlx::query(
-        "UPDATE credentials SET status = 'revoked', updated_at = now() \
-         WHERE device_id IS NOT NULL AND status = 'active'",
-    )
-    .execute(&mut *tx)
-    .await
-    .map_err(|e| crate::Error::Database(format!("revoke device credentials: {e}")))?
-    .rows_affected();
+    // No credentials statement. `credentials` has no `device_id` column and
+    // never has — see `api::pair::revoke_all_devices` for the full account.
+    // This made `virtues reset --keep-data` fail outright, in the same way and
+    // for the same reason.
+    let creds = 0u64;
 
     tx.commit()
         .await
