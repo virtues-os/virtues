@@ -1029,6 +1029,45 @@
 	transition: none;
 }
 
+/* =============================================================================
+   REVIEW MARKS (extensions/review-marks.ts)
+   =============================================================================
+   Proposals, not prose. They must read as provisional at a glance and still be
+   comfortable to read THROUGH, because the surrounding paragraph is what the
+   writer is judging them against — so: tinted grounds and a hairline, never a
+   heavy fill or a badge.
+
+   Horizontal padding only. Vertical padding on an inline mark changes the line
+   box and moves the text, which is the reveal-shifts-the-page problem in
+   another costume. */
+
+.cm-review-ins {
+	background: var(--color-success-subtle);
+	border-bottom: 1px solid var(--color-success);
+	border-radius: 2px;
+	padding: 0 1px;
+}
+
+.cm-review-del {
+	background: var(--color-error-subtle);
+	color: var(--color-foreground-muted);
+	text-decoration: line-through;
+	text-decoration-color: var(--color-error);
+	border-radius: 2px;
+	padding: 0 1px;
+}
+
+/* A remark about the text, not a change to it — so it takes the neutral
+   surface, and no diff color that would imply something to apply. */
+.cm-review-note {
+	background: var(--color-surface-elevated);
+	border: 1px solid var(--color-border-subtle);
+	color: var(--color-foreground-muted);
+	border-radius: 3px;
+	padding: 0 4px;
+	font-size: 0.92em;
+}
+
 /* Widget-owned editable regions get the NATIVE caret back.
    `.cm-content` sets `caret-color: transparent` because the rendered caret
    replaces it — but a table cell is a `contenteditable` inside the widget, and
