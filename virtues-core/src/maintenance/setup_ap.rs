@@ -120,8 +120,16 @@ pub const AP_CON_NAME: &str = "virtues-setup-ap";
 /// server, reached over a network they already run; hijacking its radio to
 /// broadcast an open-ended setup network would be a rude surprise and a real
 /// security change on a machine we are a guest on.
+///
+/// **Read from the install manifest, not sniffed.** This used to test whether
+/// `/etc/systemd/system/virtues-display.service` existed, which conflated
+/// "guided product" with "has a screen". A headless appliance — the same image,
+/// booted on a board with no panel — answered `false` and so refused to serve
+/// Improv, raise a setup AP, or require an account: it turned off its own
+/// onboarding because it could not see itself. The installer knows the answer
+/// because it made the decision; see `install_manifest`.
 pub fn is_appliance() -> bool {
-    std::path::Path::new("/etc/systemd/system/virtues-display.service").exists()
+    crate::install_manifest::appliance()
 }
 
 /// Breakglass: the SoftAP path is RETIRED as of 2026-08-11 — BLE (Improv, incl.

@@ -808,7 +808,7 @@ fn print_pair_hero(display: &str) {
 }
 
 fn print_link_output(minted: &virtues::api::pair::MintedToken) {
-    use virtues::cli::link::{reachable_pair_urls, ssh_context, ssh_forward_host, ssh_handoff_block};
+    use virtues::cli::link::{reachable_box_origins, ssh_context, ssh_forward_host, ssh_handoff_block};
     let is_dev = std::env::var("ENVIRONMENT").map(|v| v == "dev").unwrap_or(false);
     let web_port = std::env::var("VIRTUES_WEB_PORT").unwrap_or_else(|_| "5173".to_string());
     let token = &minted.token;
@@ -837,27 +837,39 @@ fn print_link_output(minted: &virtues::api::pair::MintedToken) {
     if let Some(ssh) = ssh_context() {
         println!();
         let host = ssh_forward_host();
-        for line in ssh_handoff_block(&ssh, &host, token) {
+        for line in ssh_handoff_block(&ssh, &host) {
             println!("{line}");
         }
     }
 
-    // Secondary: browser URLs for users who don't have the app yet.
-    // Less prominent — the app flow is the intended path.
-    let urls = reachable_pair_urls(token, is_dev, &web_port);
+    // WHERE TO GET THE APP — not a browser URL to pair in.
+    //
+    // This block used to read "No app yet? Open in a browser on your network:"
+    // followed by the box's `/pair#t=…` URLs. Those URLs resolve to a page
+    // whose entire job is to say you are on the wrong surface: an allowlisted
+    // iroh key is the credential, a browser tab holds none, and
+    // `/api/pair/consume` rejects `kind: "browser"` outright. So the one line
+    // offered to someone who does NOT have the app sent them to a dead end,
+    // and it was the last thing the DIY installer printed.
+    //
+    // The honest fallback for "no app yet" is where to get one.
     println!();
-    println!("  No app yet? Open in a browser on your network:");
-    for url in &urls {
-        println!("    {}", url.url);
-    }
+    println!("  Don't have the app yet?  https://virtues.com/downloads");
+    println!("    Enter the code above in it. A browser cannot pair — pairing is");
+    println!("    a held key, and a browser tab has none.");
 
-    // The box's global IPv6 — what to type into the app's Advanced "enter its
-    // address" field when mDNS doesn't carry (off-network, isolated wifi). The
-    // box is reached directly here; only shown when it actually has a global v6.
-    if let Some(v6) = virtues::net_check::compute_net_status().ipv6_global {
+    // The box's addresses, for the app's "enter its address" field when mDNS
+    // does not carry — an isolated office LAN, or a box on another subnet.
+    let urls = reachable_box_origins(is_dev, &web_port);
+    if !urls.is_empty() {
         println!();
-        println!("  Box IPv6 (Advanced → \"enter its address\" if it isn't found):");
-        println!("    {v6}");
+        println!("  If the app can't find this box, give it an address:");
+        for url in &urls {
+            println!("    {}", url.url);
+        }
+        if let Some(v6) = virtues::net_check::compute_net_status().ipv6_global {
+            println!("    http://[{v6}]:8000");
+        }
     }
 
     println!("─────────────────────────────────────────────────────────");

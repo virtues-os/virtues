@@ -113,15 +113,22 @@ pub async fn run(cli: Config) -> Result<()> {
     // libpdfium — document text extraction. Mode-independent (CPU parse):
     // every path gets it, Dragon and DIY alike.
     install::install_pdfium(&cfg).await?;
-    install::write_install_manifest(&cfg, &inference)?;
+
+    // Decided here, before anything writes it down. Implied on our own board:
+    // a Dragon exists only to be Virtues, so there is nothing to ask.
+    // `--appliance` is for building an image on hardware the detector doesn't
+    // know yet. The manifest records the answer and the box reads it back —
+    // `setup_ap::is_appliance()` used to re-derive it from whether a unit file
+    // happened to exist, which is a guess about a decision that was made right
+    // here.
+    let appliance = cli.appliance || matches!(inference, InferenceMode::Dragon);
+
+    install::write_install_manifest(&cfg, &inference, appliance)?;
     install::write_env_file(&cfg, &inference, validation.as_ref()).await?;
     install::run_bringup(&cfg).await?;
     install::install_systemd_unit(&cfg).await?;
 
-    // Appliance profile. Implied on our own board: a Dragon exists only to be
-    // Virtues, so there is nothing to ask. `--appliance` is for building an
-    // image on hardware the detector doesn't know yet.
-    if cli.appliance || matches!(inference, InferenceMode::Dragon) {
+    if appliance {
         ui::section("Appliance");
         install::apply_appliance_profile(&cfg).await?;
     }

@@ -314,36 +314,26 @@ pub async fn run(client: Virtues, host: &str, port: u16) -> Result<()> {
             "/api/provision/status",
             get(crate::api::provision::status_handler),
         )
-        // The captive portal, in plain server-rendered HTML.
+        // `/portal` and `/provision` are GONE (2026-08-17), and the deletion is
+        // the point rather than a cleanup.
         //
-        // NOT the SvelteKit `/provision` route, which it replaces as the
-        // captive redirect target. The frontend is `adapter-static` with no SSR
-        // at all, so every page is an empty document until ES modules load —
-        // and iOS's Captive Network Assistant, the browser that actually has to
-        // show this, rendered exactly that: a blank white sheet it would not
-        // let the owner escape from. See api/portal.rs.
+        // They were the browser half of onboarding: a phone joins the setup AP,
+        // a captive sheet opens, the owner hands over their home wifi. Every
+        // part of that is now impossible or unwanted. Pairing needs a held iroh
+        // key, so the browser could provision wifi and then strand the owner one
+        // step from the end — it served a user who cannot exist. The captive
+        // sheet itself was suppressed rather than exploited (iOS renders it in a
+        // stripped WebKit, force-reopens it, and caches it per-SSID across
+        // upgrades). And BLE carries the whole conversation now, on a radio that
+        // survives the switchover the AP path died on.
         //
-        // Same gates as /api/provision/* (shared, not reimplemented) — but the
-        // gates are re-checked per request there, so these are as closed as
-        // their JSON siblings.
-        // The old SPA captive target, retired server-side. Phones CACHE captive
-        // pages per-SSID (seen live: a CNA replayed a three-hour-old /provision
-        // across a box upgrade), so any device that ever met a box remembers
-        // this URL. A permanent redirect is the only way to un-teach them.
-        .route(
-            "/provision",
-            get(|| async {
-                (
-                    axum::http::StatusCode::MOVED_PERMANENTLY,
-                    [(axum::http::header::LOCATION, "/portal")],
-                )
-            }),
-        )
-        .route("/portal", get(crate::api::portal::index_handler))
-        .route("/portal/network", get(crate::api::portal::network_handler))
-        .route("/portal/join", post(crate::api::portal::join_handler))
-        .route("/portal/status", get(crate::api::portal::status_handler))
-        .route("/portal/health", get(crate::api::portal::health_handler))
+        // What replaced them: `maintenance::ble_provision` (Improv), and
+        // `/api/network/*` for a claimed box that needs to move networks.
+        //
+        // The `/provision` → `/portal` redirect is gone with them. It existed to
+        // un-teach phones that had cached the old SPA URL, and every such phone
+        // met a box during the two weeks that flow was live — none of which are
+        // customer boxes.
         // Auth — pair-only model. Public consume + session probe (returns the
         // AuthUser resolved from the request's proven iroh key, if any).
         // /api/pair/{mint,confirm,deny,status} are auth'd and live under the
@@ -1064,18 +1054,18 @@ pub async fn run(client: Virtues, host: &str, port: u16) -> Result<()> {
 
     // Merge public + protected, apply shared state and body limits, then
     // wrap in the security layers (response headers).
-    // Captive-portal probes, intercepted before routing. Apple's second probe
-    // host asks for `/`, which is also the SPA's route, so only the Host header
-    // tells them apart — hence middleware rather than routes. Makes /provision
-    // open by itself when a phone joins the setup AP, and — the half everyone
-    // forgets — stops claiming captivity once the box is actually online.
-    // See api/captive.rs.
+    //
+    // The connectivity-probe interceptor that used to sit outermost here is
+    // gone with `/portal`. It answered iOS/Android/Windows probes with their
+    // vendor's success token so the captive sheet would never open — a real
+    // fix, but for a condition that only arises on the setup AP's own subnet,
+    // and its other half redirected `10.42.0.1/` to a portal that no longer
+    // exists. It also ran a Host-header comparison on every request to every
+    // box forever, to serve a network that a customer box never raises.
     let app = public_routes
         .merge(protected_routes)
         .with_state(state.clone())
         .layer(middleware::from_fn(crate::middleware::security::headers_layer))
-        // Outermost, so an OS connectivity probe never reaches routing at all.
-        .layer(middleware::from_fn(crate::api::captive::intercept))
         .layer(DefaultBodyLimit::max(260 * 1024 * 1024)); // 260MB (slightly above 250MB file limit for multipart overhead)
 
     // API namespaces must NEVER fall through to the SPA fallback below: an

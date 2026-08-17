@@ -6,6 +6,16 @@
 //!    artifact the installer can create, print exactly what was found, and
 //!    delete exactly that list. An uninstall that guesses is how you delete
 //!    the wrong thing on a customized install.
+//!
+//!    That rule was true of the *probe* and false of the list it probed
+//!    from — a `const UNITS` here that still named `virtues-wireguard`
+//!    (deleted with the move to the relay, and actively retired by
+//!    `cli::upgrade`) and had never heard of the display, first-boot or
+//!    captive-redirect units an appliance install writes. So uninstalling an
+//!    appliance left a kiosk enabled against a server that no longer existed,
+//!    a polkit grant for a deleted user, and a wildcard-DNS drop-in. The list
+//!    now comes from `install.json`, written by the thing that created the
+//!    artifacts; see `crate::install_manifest`.
 //! 2. **Two confirmation factors:** root via sudo (the password) + typing the
 //!    box's hostname (proves you know WHICH machine you're wiping — the
 //!    GitHub-delete-repo pattern). `--force` skips the typed phrase for
@@ -31,30 +41,51 @@ use std::process::Command;
 
 use super::ui;
 
-/// Filesystem artifacts the installer creates, probed at runtime.
-const UNITS: &[&str] = &[
+/// Units to look for when `install.json` is absent or says nothing — a box
+/// installed before the manifest carried a unit list.
+///
+/// Every unit the installer has ever written, so an old box is still cleaned
+/// up completely. `virtues-wireguard` stays in THIS list and only this one: it
+/// is exactly the legacy artifact a pre-relay box still has, and the fallback
+/// is where legacy belongs. It must not come back to the declared list.
+const LEGACY_UNITS: &[&str] = &[
+    "virtues-display.service",
     "virtues.service",
-    "virtues-wireguard.service",
     "virtues-embed.service",
     "virtues-rerank.service",
+    "virtues-qnnd.service",
+    "virtues-captive-redirect.service",
+    "virtues-firstboot.service",
+    "virtues-wireguard.service",
 ];
+
+/// Files outside `/etc/systemd/system` that exist only because we put them
+/// there. Same fallback role as [`LEGACY_UNITS`].
+const LEGACY_EXTRA_FILES: &[&str] = &[
+    "/usr/local/lib/virtues/display.py",
+    "/usr/local/sbin/virtues-firstboot.sh",
+    "/etc/polkit-1/rules.d/50-virtues-network.rules",
+    "/etc/NetworkManager/dnsmasq-shared.d/00-virtues-captive.conf",
+];
+
 const BINARIES: &[&str] = &[
     "/usr/local/bin/virtues",
     "/usr/local/bin/virtues-wireguard",
     "/usr/local/bin/llama-server",
+    "/usr/local/bin/virtues-qnnd",
 ];
 const WEB_DIR: &str = "/usr/local/share/virtues";
 const AVAHI_SERVICE: &str = "/etc/avahi/services/virtues.service";
 const DATA_DIR: &str = "/var/lib/virtues";
 const MODELS_DIR: &str = "/var/lib/virtues/models";
-const WG_IFNAME: &str = "wg0";
 
 struct Manifest {
     units: Vec<String>,
     binaries: Vec<&'static str>,
+    /// Kiosk shim, first-boot script, polkit rule, dnsmasq drop-in.
+    extra_files: Vec<String>,
     web_dir: bool,
     avahi: bool,
-    wg_iface: bool,
     data_dir: bool,
     pg: bool,
     system_user: bool,
@@ -110,12 +141,18 @@ pub async fn run(keep_data: bool, purge_models: bool, force: bool) -> Result<()>
         run_quiet("systemctl", &["daemon-reload"]);
     }
 
-    // ── WG interface (the unit normally tears it down; belt & braces) ───
-    if m.wg_iface {
-        report(
-            run_quiet("ip", &["link", "del", WG_IFNAME]),
-            &format!("removed WireGuard interface {WG_IFNAME}"),
-        );
+    // ── Files the units point at ────────────────────────────────────────
+    // After the units, never before: removing the kiosk shim out from under a
+    // running `virtues-display` would leave cage restarting into a missing
+    // script every 5s for as long as the rest of this takes.
+    for f in &m.extra_files {
+        report(std::fs::remove_file(f).is_ok(), &format!("removed {f}"));
+    }
+    // NetworkManager and polkit both re-read their drop-in directories on
+    // their own schedule; nudge them so the grant is gone now rather than at
+    // the next reload.
+    if m.extra_files.iter().any(|f| f.contains("NetworkManager")) {
+        run_quiet("sh", &["-c", "systemctl reload NetworkManager 2>/dev/null || true"]);
     }
 
     // ── Binaries + web UI + mDNS advertisement ──────────────────────────
@@ -185,22 +222,63 @@ pub async fn run(keep_data: bool, purge_models: bool, force: bool) -> Result<()>
     Ok(())
 }
 
+/// Every unit that might belong to us, declared list ∪ legacy list.
+///
+/// The union, not a choice between them: the manifest describes the install as
+/// it is configured NOW, and a box that was once an appliance and is no longer
+/// one — or that predates the unit list — still has the older artifacts on
+/// disk. Taking both and then filtering on existence removes everything that
+/// is actually there and nothing that isn't.
+fn candidate_units() -> Vec<String> {
+    let mut out: Vec<String> = LEGACY_UNITS.iter().map(|u| u.to_string()).collect();
+    if let Some(m) = crate::install_manifest::get().as_ref() {
+        for u in &m.units {
+            // The manifest stores bare names; units are addressed with the
+            // suffix. Tolerate both so a manifest written either way works.
+            let name = if u.ends_with(".service") {
+                u.clone()
+            } else {
+                format!("{u}.service")
+            };
+            if !out.contains(&name) {
+                out.push(name);
+            }
+        }
+    }
+    out
+}
+
+/// Same union, for the files that live outside the unit directory.
+fn candidate_extra_files() -> Vec<String> {
+    let mut out: Vec<String> = LEGACY_EXTRA_FILES.iter().map(|f| f.to_string()).collect();
+    if let Some(m) = crate::install_manifest::get().as_ref() {
+        for f in &m.extra_files {
+            if !out.contains(f) {
+                out.push(f.clone());
+            }
+        }
+    }
+    out
+}
+
 /// Probe every artifact; only existing ones enter the manifest.
 fn probe(purge_models: bool) -> Manifest {
     Manifest {
-        units: UNITS
-            .iter()
+        units: candidate_units()
+            .into_iter()
             .filter(|u| Path::new(&format!("/etc/systemd/system/{u}")).exists())
-            .map(|u| u.to_string())
             .collect(),
         binaries: BINARIES
             .iter()
             .copied()
             .filter(|b| Path::new(b).exists())
             .collect(),
+        extra_files: candidate_extra_files()
+            .into_iter()
+            .filter(|f| Path::new(f).exists())
+            .collect(),
         web_dir: Path::new(WEB_DIR).exists(),
         avahi: Path::new(AVAHI_SERVICE).exists(),
-        wg_iface: Path::new(&format!("/sys/class/net/{WG_IFNAME}")).exists(),
         data_dir: Path::new(DATA_DIR).exists(),
         // Postgres db/role: probe via the postgres superuser; any failure
         // (postgres not installed, etc.) just means "nothing to drop".
@@ -222,9 +300,9 @@ impl Manifest {
     fn is_empty(&self) -> bool {
         self.units.is_empty()
             && self.binaries.is_empty()
+            && self.extra_files.is_empty()
             && !self.web_dir
             && !self.avahi
-            && !self.wg_iface
             && !self.data_dir
             && !self.pg
             && !self.system_user
@@ -252,8 +330,8 @@ fn print_manifest(m: &Manifest, keep_data: bool) {
     if m.avahi {
         ui::kv_at(MANIFEST_COL, "mDNS advertisement", AVAHI_SERVICE);
     }
-    if m.wg_iface {
-        ui::kv_at(MANIFEST_COL, "WireGuard iface", WG_IFNAME);
+    for f in &m.extra_files {
+        ui::kv_at(MANIFEST_COL, "installed file", f);
     }
     if m.models_dir {
         ui::kv_at(MANIFEST_COL, "GGUF models", &format!("{MODELS_DIR}  (re-download on reinstall)"));

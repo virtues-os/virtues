@@ -1340,36 +1340,22 @@ pub async fn apply_appliance_profile(cfg: &InstallConfig) -> Result<()> {
         .context("writing polkit network rule")?;
     ui::ok("NetworkManager control granted to the virtues user");
 
-    // Captive-portal plumbing. Two halves, both needed before an OS probe can
-    // reach `api::captive`:
+    // Retire the captive-portal plumbing, on every run.
     //
-    //   DNS — NetworkManager's shared mode already runs a dnsmasq for the AP,
-    //   and it has a drop-in directory. Resolving every name to the box is what
-    //   puts `captive.apple.com` in front of us at all.
+    // Two artifacts used to go in here so a phone joining the setup AP would
+    // have its connectivity probe answered by the box and a captive sheet
+    // opened onto `/provision`: a dnsmasq drop-in resolving EVERY name to
+    // 10.42.0.1, and a unit that added an iptables :80 → :8000 REDIRECT at
+    // boot. Both are gone with `/portal` (see `server/mod.rs`) — the browser
+    // flow they served could provision wifi and then strand the owner, because
+    // pairing needs a held iroh key that a browser tab does not have.
     //
-    //   PORT — probes go to :80, the box serves :8000. Redirected in nftables
-    //   rather than by binding :80, so nothing changes for a DIY box and the
-    //   rule is scoped to traffic arriving on the AP's own subnet.
-    //
-    // Without these the phone joins the setup network, sees no internet, and is
-    // given no hint that /provision exists.
-    fs::create_dir_all("/etc/NetworkManager/dnsmasq-shared.d")
-        .context("mkdir dnsmasq-shared.d")?;
-    fs::write(
-        "/etc/NetworkManager/dnsmasq-shared.d/00-virtues-captive.conf",
-        "# Installed by virtues-installer (appliance profile).\n\
-         # Every name resolves to the box while it is hosting the setup AP, so\n\
-         # the OS connectivity probe reaches us and opens /provision by itself.\n\
-         address=/#/10.42.0.1\n",
-    )
-    .context("writing dnsmasq captive conf")?;
-
-    fs::write("/etc/systemd/system/virtues-captive-redirect.service", CAPTIVE_REDIRECT_UNIT)
-        .context("writing captive redirect unit")?;
-    let mut en = Command::new("systemctl");
-    en.args(["enable", "virtues-captive-redirect"]);
-    let _ = en.output().await;
-    ui::ok("Captive-portal DNS + :80 redirect installed");
+    // Removed rather than merely not-written, because an appliance built
+    // before this shipped still has them, and a reinstall is the moment we can
+    // reach them. A wildcard-DNS drop-in and a boot-time NAT rule for a subnet
+    // that no longer comes up are two loaded guns aimed at whichever future
+    // network happens to reuse 10.42.0.0/24.
+    retire_captive_artifacts().await;
 
     // Boot: no display manager, no waiting on a network we don't have.
     for args in [
@@ -1407,26 +1393,48 @@ pub async fn apply_appliance_profile(cfg: &InstallConfig) -> Result<()> {
     run_step("Install display kiosk", en).await
 }
 
-/// Redirects :80 to the box's :8000 for traffic arriving on the setup AP.
+/// Tear down the captive-portal artifacts an older appliance install left.
 ///
-/// OS connectivity probes are hard-coded to port 80; the box serves 8000.
-/// Rather than binding a second port in the app (which would change the DIY
-/// box too), this NATs on the way in, scoped to the AP's subnet so nothing on
-/// the owner's LAN is touched. Idempotent — the rule is deleted before it is
-/// added, so a restart does not stack duplicates.
-const CAPTIVE_REDIRECT_UNIT: &str = r#"[Unit]
-Description=Virtues captive portal — redirect :80 to :8000 on the setup AP
-After=network.target
+/// Best-effort throughout: every step is "remove a thing that is probably not
+/// there", and a box that never had them must not see an error. The one part
+/// that matters is ordering — stop the unit before deleting it, so its
+/// `ExecStop` gets to remove the iptables rule it added. Deleting the unit
+/// first would strand a NAT rule with nothing left that knows how to undo it.
+async fn retire_captive_artifacts() {
+    const UNIT: &str = "virtues-captive-redirect";
+    const UNIT_PATH: &str = "/etc/systemd/system/virtues-captive-redirect.service";
+    const DNSMASQ_CONF: &str =
+        "/etc/NetworkManager/dnsmasq-shared.d/00-virtues-captive.conf";
 
-[Service]
-Type=oneshot
-RemainAfterExit=yes
-ExecStart=/bin/sh -c "iptables -t nat -D PREROUTING -s 10.42.0.0/24 -p tcp --dport 80 -j REDIRECT --to-port 8000 2>/dev/null; iptables -t nat -A PREROUTING -s 10.42.0.0/24 -p tcp --dport 80 -j REDIRECT --to-port 8000"
-ExecStop=/bin/sh -c "iptables -t nat -D PREROUTING -s 10.42.0.0/24 -p tcp --dport 80 -j REDIRECT --to-port 8000 2>/dev/null || true"
+    let existed = std::path::Path::new(UNIT_PATH).exists()
+        || std::path::Path::new(DNSMASQ_CONF).exists();
 
-[Install]
-WantedBy=multi-user.target
-"#;
+    for args in [vec!["stop", UNIT], vec!["disable", UNIT]] {
+        let mut c = Command::new("systemctl");
+        c.args(&args);
+        let _ = c.output().await;
+    }
+    let _ = fs::remove_file(UNIT_PATH);
+    let _ = fs::remove_file(DNSMASQ_CONF);
+
+    // The ExecStop above only fires if the unit was loaded and active. Clear
+    // the rule directly too — an appliance that was hard-powered mid-life
+    // never ran it, and the rule is re-added at every boot by a unit we just
+    // deleted, so this is the last chance anything will remove it.
+    let mut ipt = Command::new("iptables");
+    ipt.args([
+        "-t", "nat", "-D", "PREROUTING", "-s", "10.42.0.0/24", "-p", "tcp",
+        "--dport", "80", "-j", "REDIRECT", "--to-port", "8000",
+    ]);
+    let _ = ipt.output().await;
+
+    if existed {
+        let mut c = Command::new("systemctl");
+        c.arg("daemon-reload");
+        let _ = c.output().await;
+        ui::ok("Removed the retired captive-portal DNS + :80 redirect");
+    }
+}
 
 /// Lets `User=virtues` raise the setup AP and join a network. See
 /// `apply_appliance_profile` for why an appliance needs this and a DIY box
@@ -1882,15 +1890,63 @@ pub async fn health_check(cfg: &InstallConfig, mode: &InferenceMode) -> Result<u
 /// guessed (the guessing is what once restarted the wrong sidecars and never
 /// restarted qnnd). Rewritten on every install run — the installer is the
 /// only writer.
-pub fn write_install_manifest(cfg: &InstallConfig, mode: &InferenceMode) -> Result<()> {
+///
+/// ## Why `appliance` and `units` live here
+///
+/// Three consumers used to each keep their own idea of what an install
+/// contains, and all three were wrong in different directions.
+/// `setup_ap::is_appliance()` tested for `virtues-display.service` on disk —
+/// which gates BLE provisioning, the setup AP and the account requirement off
+/// a file that a headless appliance may legitimately not have.
+/// `uninstall.rs` carried a hardcoded unit list that still named
+/// `virtues-wireguard` (deleted long ago) and had never heard of the display,
+/// first-boot or captive units. `upgrade.rs` restarted a third subset.
+///
+/// So the installer — the thing that actually creates them — declares the
+/// full set once, and the others read it. A field added here is a field all
+/// three see; a unit that stops being installed stops being listed.
+pub fn write_install_manifest(
+    cfg: &InstallConfig,
+    mode: &InferenceMode,
+    appliance: bool,
+) -> Result<()> {
     let (profile, sidecars): (&str, Vec<&str>) = match mode {
         InferenceMode::Dragon => ("dragon", vec!["virtues-qnnd"]),
         InferenceMode::Bundled => ("bundled", vec!["virtues-embed", "virtues-rerank"]),
         InferenceMode::Manual { .. } => ("manual", vec![]),
     };
+
+    // Every unit this installer writes, in the order a teardown should stop
+    // them: the display first (it renders the server that is about to go),
+    // then the server, then what the server depends on.
+    let mut units: Vec<&str> = Vec::new();
+    if appliance {
+        units.push("virtues-display");
+    }
+    units.push("virtues");
+    units.extend(sidecars.iter().copied());
+    units.push("virtues-firstboot");
+
+    // Files outside the unit directory that only exist because we put them
+    // there. Uninstall needs the list; nothing else should have to know it.
+    let mut extra_files: Vec<String> = vec![
+        "/usr/local/sbin/virtues-firstboot.sh".to_string(),
+    ];
+    if appliance {
+        extra_files.push("/usr/local/lib/virtues/display.py".to_string());
+        extra_files.push("/etc/polkit-1/rules.d/50-virtues-network.rules".to_string());
+    }
+
     let manifest = serde_json::json!({
         "profile": profile,
+        // Is this a guided product (our hardware, or `--appliance`) rather
+        // than somebody's own Linux server? Decides whether the box may
+        // administer its own radio, require an account, and serve Improv.
+        "appliance": appliance,
         "sidecars": sidecars,
+        "units": units,
+        "extra_files": extra_files,
+        "data_dir": cfg.data_dir,
         "models_dir": cfg.models_dir(),
         "written_by": env!("CARGO_PKG_VERSION"),
     });
