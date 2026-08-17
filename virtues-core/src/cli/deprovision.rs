@@ -70,8 +70,16 @@ pub async fn run(yes: bool, force: bool) -> Result<(), crate::Error> {
     println!("     • chat-authored applets (their code AND their data)");
     println!("   KEEPS: the binary, systemd units, models, QAIRT libs.");
     println!();
-    println!("   This box will lose network access the moment its saved wifi is");
-    println!("   removed. Run it from the console, or from a wired session.");
+    // When the network actually drops depends on where the profile lived, and
+    // saying "immediately" was wrong on the one box this has ever run on. On
+    // Ubuntu the credentials are netplan's, and NetworkManager runs from a copy
+    // in /run — tmpfs — so the link stays up until the reboot that does not
+    // bring it back. Being precise here is not pedantry: an operator who
+    // believes the session is about to drop will not start, and one who
+    // believes it is safe will reboot and lose the box.
+    println!("   Saved wifi is removed. If the link survives this command it is");
+    println!("   running from RAM — it will NOT come back after a reboot. Have a");
+    println!("   console to hand, or use a wired session.");
     println!();
 
     if !yes {
@@ -92,8 +100,22 @@ pub async fn run(yes: bool, force: bool) -> Result<(), crate::Error> {
     // the iroh secret) and clears the lake. Reuse it rather than restating the
     // schema surgery, which has real subtleties about not dropping the `vector`
     // extension. `yes = true` because we just took our own confirmation.
+    //
+    // **As the `virtues` user, in a subprocess, not in-process.** Box installs
+    // talk to Postgres over the Unix socket with peer auth, so the OS user IS
+    // the database identity — and this command must run as root, because
+    // everything after it writes `/etc/machine-id`, `/etc/ssh` and
+    // `/etc/netplan`. Called in-process it therefore tried to connect as role
+    // `root`, which does not exist, and deprovision died at its first step.
+    //
+    // Which means the documented way to build a master — `sudo sh
+    // tools/build-master.sh` — could not complete, and had never been run on
+    // hardware to discover that. `maybe_reexec_as_service_user` in main.rs
+    // handles this for `reset` and friends by becoming the service user for
+    // the whole command; that is the wrong shape here, because the root half
+    // is not optional. So only the database half drops privilege.
     println!("→ wiping database + data lake…");
-    crate::cli::reset::run(false, true, force).await?;
+    wipe_database_as_service_user(force).await?;
 
     // ── 2. The per-unit env secrets ─────────────────────────────────────────
     // Removed, never regenerated here: a key minted on the master is baked into
@@ -398,6 +420,52 @@ fn netplan_wifi_files_in(dir: &str) -> Vec<std::path::PathBuf> {
     }
     out.sort();
     out
+}
+
+/// Run `virtues reset` as whoever owns the database, and fail loudly if it did
+/// not work.
+///
+/// On a box that is `sudo -u virtues`; run as `virtues` already, or on a dev
+/// machine with no box-install marker, it is this process's own reset. The
+/// marker is the same one `maybe_reexec_as_service_user` keys on, so the two
+/// agree about what "a box" means.
+///
+/// The exit status is checked. Deprovision's whole contract is that after it
+/// returns, nothing per-unit is left — a database wipe that silently failed
+/// would leave the iroh secret and every credential in an image about to be
+/// cloned, which is precisely the catastrophe the command exists to prevent.
+async fn wipe_database_as_service_user(force: bool) -> Result<(), crate::Error> {
+    let on_box = Path::new("/var/lib/virtues/virtues.env").exists();
+    let me = Command::new("id")
+        .arg("-un")
+        .output()
+        .ok()
+        .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
+        .unwrap_or_default();
+
+    if !on_box || me == "virtues" {
+        // Same process, current identity — dev machines and the service user.
+        return crate::cli::reset::run(false, true, force).await;
+    }
+
+    let exe = std::env::current_exe()
+        .map_err(|e| crate::Error::Other(format!("locate own binary: {e}")))?;
+    let mut cmd = Command::new("sudo");
+    cmd.arg("-u").arg("virtues").arg(exe).arg("reset").arg("--yes");
+    if force {
+        cmd.arg("--force");
+    }
+    let status = cmd
+        .status()
+        .map_err(|e| crate::Error::Other(format!("run reset as virtues: {e}")))?;
+    if !status.success() {
+        return Err(crate::Error::Other(
+            "database wipe failed — NOT safe to image. The box identity (iroh \
+             secret, credentials) is still in the database."
+                .to_string(),
+        ));
+    }
+    Ok(())
 }
 
 /// Shell history for root and every real user. Whoever built the master typed

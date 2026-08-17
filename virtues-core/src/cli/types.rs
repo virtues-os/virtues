@@ -266,7 +266,7 @@ pub enum Commands {
     },
 
     /// Strip every per-unit identity so this box's disk can be imaged and
-    /// cloned. The LAST command before a box ships or its eMMC is `dd`'d.
+    /// cloned. The LAST command before a box ships or its boot card is `dd`'d.
     ///
     /// Not a reset and not an uninstall — the software stays installed and
     /// configured. It removes only what must be unique per unit: the database
