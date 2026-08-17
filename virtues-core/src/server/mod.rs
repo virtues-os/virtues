@@ -255,15 +255,6 @@ pub async fn run(client: Virtues, host: &str, port: u16) -> Result<()> {
             "/api/setup/state",
             get(crate::api::box_status::setup_state_handler),
         )
-        // The READ above is public (the wizard runs before any session); this
-        // WRITE is not — it changes where every future launch lands.
-        // "In your own words" — the interview behind the narrative identity.
-        // Authenticated both ways: unlike /api/setup/state, nothing here is
-        // public. It is the most personal writing on the box.
-        // What the box actually holds, counted — the reveal's first movement.
-        // Read-only and derived entirely from tables the caller could already
-        // read, so it adds no reach, only arithmetic.
-        .route("/api/census", get(crate::api::census::census_handler))
         // Draft the document from the answers. POST because it spends money and
         // rewrites the document — not something a refresh should trigger.
         .route(

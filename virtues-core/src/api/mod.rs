@@ -51,6 +51,7 @@ pub mod pins;
 pub mod search_local;
 pub mod places;
 pub mod profile;
+pub mod census;
 pub mod identity;
 pub mod setup_phrase;
 pub mod network;
@@ -69,6 +70,7 @@ pub mod unsplash;
 pub mod usage;
 pub mod wiki;
 pub mod lifeline;
+pub mod link_session;
 pub mod wiki_articles;
 pub mod wiki_notes;
 
