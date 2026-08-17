@@ -51,7 +51,6 @@ pub mod pins;
 pub mod search_local;
 pub mod places;
 pub mod profile;
-pub mod census;
 pub mod identity;
 pub mod setup_phrase;
 pub mod network;
