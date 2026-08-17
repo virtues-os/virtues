@@ -14,6 +14,7 @@ import { type EditorState, type Extension, type Range, StateField } from '@codem
 import { Decoration, type DecorationSet, EditorView, WidgetType } from '@codemirror/view';
 import { contextMenu } from '$lib/stores/contextMenu.svelte';
 
+import { createWidgetIcon, disconnectRemeasure, remeasureOnResize } from '../widget-height';
 import { dragJustEnded, isMouseSelecting } from './mouse-freeze';
 
 /**
@@ -48,8 +49,16 @@ class CodeBlockHeaderWidget extends WidgetType {
 	}
 
 	toDOM(view: EditorView) {
+		// A transparent wrapper carries the gap above the block as PADDING.
+		// The header used to hold `margin-top: 0.5rem` itself — margin is
+		// invisible to getBoundingClientRect, so the heightmap was 8px short
+		// under every code block. See widget-height.ts, rule 1.
+		const wrapper = document.createElement('div');
+		wrapper.className = 'cm-code-header-wrap';
+
 		const header = document.createElement('div');
 		header.className = 'cm-code-header';
+		wrapper.appendChild(header);
 
 		// The language label is the picker. With the fences hidden in normal
 		// use, this is how the info string gets set without raw mode.
@@ -91,9 +100,9 @@ class CodeBlockHeaderWidget extends WidgetType {
 		copyBtn.type = 'button';
 		copyBtn.title = 'Copy code';
 
-		const icon = document.createElement('iconify-icon');
-		icon.setAttribute('icon', 'ri:file-copy-line');
-		icon.setAttribute('width', '14');
+		// Box reserved before the SVG resolves — an unsized <iconify-icon>
+		// measures as nothing and then grows the header. widget-height.ts, rule 2.
+		const icon = createWidgetIcon('ri:file-copy-line', 14);
 		copyBtn.appendChild(icon);
 
 		copyBtn.addEventListener('click', (e) => {
@@ -120,7 +129,17 @@ class CodeBlockHeaderWidget extends WidgetType {
 		});
 
 		header.appendChild(copyBtn);
-		return header;
+
+		// Belt and braces: the two rules above should make this never fire, but
+		// a theme change or a font swap can still move the header, and a silent
+		// heightmap drift is the one failure nobody notices until the caret
+		// jumps to position 0.
+		remeasureOnResize(view, wrapper);
+		return wrapper;
+	}
+
+	destroy(dom: HTMLElement) {
+		disconnectRemeasure(dom);
 	}
 
 	eq(other: CodeBlockHeaderWidget) {

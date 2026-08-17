@@ -18,6 +18,7 @@ import { yCollab, yUndoManagerKeymap } from 'y-codemirror.next';
 import type { Awareness } from 'y-protocols/awareness';
 import type { Text as YText } from 'yjs';
 
+import { smoothCaret } from './extensions/caret';
 import { markdownKeybindings } from './extensions/keybindings';
 import { listRenumber } from './extensions/list-renumber';
 import { renderMode, renderModeCompartment } from './extensions/render-mode';
@@ -58,6 +59,11 @@ export function createCodeMirrorEditor(options: CodeMirrorEditorOptions): Editor
 		EditorView.lineWrapping,
 		indentOnInput(),
 		bracketMatching(),
+
+		// The rendered caret (drawSelection + presence/continuity/restraint).
+		// Also what constructs `.cm-selectionLayer`, so the selection rules in
+		// theme.ts finally apply to something.
+		smoothCaret,
 
 		// Keymaps. markdownKeymap sits ahead of defaultKeymap so Enter continues
 		// the surrounding list/quote (insertNewlineContinueMarkup) and Backspace

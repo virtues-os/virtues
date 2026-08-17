@@ -29,6 +29,7 @@ import { livePreview } from './live-preview';
 import { mouseFreeze } from './mouse-freeze';
 import { mediaWidgets } from './media-widgets';
 import { entityLinks } from './ref-links';
+import { reviewMarks } from './review-marks';
 import { shikiHighlight } from './shiki-highlight';
 import { tables } from './tables';
 
@@ -44,6 +45,10 @@ const renderedSurface: Extension = [
 	// The freeze guard ships with the surface, not beside it: it only exists
 	// because reveals move text, and raw mode has no reveals to hold back.
 	mouseFreeze,
+	// Ahead of livePreview: a review span's delimiters are its own, and the
+	// higher precedence keeps the general inline pass from claiming characters
+	// inside a proposal it does not know about.
+	reviewMarks,
 	livePreview,
 	entityLinks,
 	checkboxes,

@@ -465,13 +465,22 @@ pub async fn revoke_all_devices(pool: &PgPool) -> Result<(u64, u64), sqlx::Error
         .execute(&mut *tx)
         .await?
         .rows_affected();
-    let creds = sqlx::query(
-        "UPDATE credentials SET status = 'revoked', updated_at = now() \
-         WHERE device_id IS NOT NULL AND status = 'active'",
-    )
-    .execute(&mut *tx)
-    .await?
-    .rows_affected();
+    // There is no second statement here, and there never should have been one.
+    // This used to also run `UPDATE credentials … WHERE device_id IS NOT NULL`,
+    // against a column `credentials` HAS NEVER HAD — `0004` created that table
+    // without it and no migration ever added it. `device_id` is real on
+    // `app_auth_event`, `app_applets` and `link_session`; on `credentials` it
+    // was only ever a wrong idea about the schema.
+    //
+    // The error propagated, so the transaction rolled back and NOTHING was
+    // revoked. Both doors were dead: the app's start-over button and the case
+    // button. Found by pressing the button on real hardware — the press was
+    // detected correctly and then failed with `column "device_id" does not
+    // exist`, which is a much better outcome than a partial revoke, and is why
+    // the whole thing being in one transaction was worth having.
+    //
+    // A device is a row in `app_device`. Credentials belong to SOURCES.
+    let creds = 0u64;
     tx.commit().await?;
     // The box is unclaimed again, so the Improv service should come back and the
     // panel should return to a setup screen. Both reconcile on their own timers.

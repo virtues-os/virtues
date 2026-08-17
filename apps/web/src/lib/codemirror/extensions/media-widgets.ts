@@ -18,6 +18,8 @@ import { type EditorState, type Extension, type Range, StateField } from '@codem
 import { Decoration, type DecorationSet, type EditorView, EditorView as EditorViewValue, WidgetType } from '@codemirror/view';
 import { contextMenu } from '$lib/stores/contextMenu.svelte';
 import { linkEditor } from '$lib/stores/linkEditor.svelte';
+
+import { createWidgetIcon, disconnectRemeasure, remeasureOnResize } from '../widget-height';
 import { isEntityRoute } from '$lib/utils/refRoutes';
 
 import { collectCodeRanges, inCode } from './code-context';
@@ -89,9 +91,7 @@ function buildFileCardDOM(src: string, name: string): HTMLAnchorElement {
 
 	const ext = getFileExtension(name);
 
-	const icon = document.createElement('iconify-icon');
-	icon.setAttribute('icon', getFileIcon(ext));
-	icon.setAttribute('width', '20');
+	const icon = createWidgetIcon(getFileIcon(ext), 20);
 	icon.className = 'cm-file-card-icon';
 	card.appendChild(icon);
 
@@ -112,9 +112,7 @@ function buildFileCardDOM(src: string, name: string): HTMLAnchorElement {
 
 	card.appendChild(info);
 
-	const dl = document.createElement('iconify-icon');
-	dl.setAttribute('icon', 'ri:download-line');
-	dl.setAttribute('width', '16');
+	const dl = createWidgetIcon('ri:download-line', 16);
 	dl.className = 'cm-file-card-download';
 	card.appendChild(dl);
 
@@ -283,20 +281,8 @@ function showMediaContextMenu(
 
 // Images/video load async and grow AFTER CodeMirror measured the block, which
 // leaves every line below mispositioned (clicks + arrow up/down land on the
-// wrong line). Observe the widget and ask CodeMirror to re-measure when its size
-// settles. requestMeasure is batched, so this is cheap. The observer is stored
-// on the element so destroy() can disconnect it regardless of widget reuse.
-type MeasuredEl = HTMLElement & { _cmResizeObs?: ResizeObserver };
-
-function remeasureOnResize(view: EditorView, el: HTMLElement) {
-	const ro = new ResizeObserver(() => view.requestMeasure());
-	ro.observe(el);
-	(el as MeasuredEl)._cmResizeObs = ro;
-}
-
-function disconnectRemeasure(dom: HTMLElement) {
-	(dom as MeasuredEl)._cmResizeObs?.disconnect();
-}
+// wrong line). `remeasureOnResize` — and the rule behind it — now lives in
+// ../widget-height.ts, shared with the code-block and table widgets.
 
 class ImageWidget extends WidgetType {
 	private displayAlt: string;
@@ -365,10 +351,7 @@ class AudioWidget extends WidgetType {
 		const header = document.createElement('div');
 		header.className = 'cm-audio-header';
 
-		const icon = document.createElement('iconify-icon');
-		icon.setAttribute('icon', 'ri:music-2-line');
-		icon.setAttribute('width', '16');
-		header.appendChild(icon);
+		header.appendChild(createWidgetIcon('ri:music-2-line', 16));
 
 		const nameEl = document.createElement('span');
 		nameEl.className = 'cm-audio-name';

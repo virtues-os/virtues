@@ -49,20 +49,49 @@ esac
 
 command -v curl >/dev/null 2>&1 || die "curl is required but not installed"
 
-# Resolve "latest" via the GitHub Releases API.
+# Resolve "latest" via the GitHub Releases API — the newest stable *Linux* tag.
+#
+# This used to hit `/releases/latest`, which is wrong here for a reason that
+# stayed hidden for months: ONE repo publishes both products. The Linux box ships
+# as `vX.Y.Z` / `edge`, and the macOS app as `mac-vX.Y.Z` / `mac-latest`.
+# `/releases/latest` returns the newest non-prerelease of ANY of them, so which
+# product a Linux box installed depended on which had been released more
+# recently. The Linux tags simply happened to be newer, so it worked.
+#
+# On 2026-08-17 the stable Linux releases were deleted to reset the version line,
+# and `/releases/latest` immediately began answering `mac-latest` — meaning
+# `curl virtues.com/sh | sudo sh` would fetch
+# `.../download/mac-latest/virtues-installer-mac-latest-<arch>-linux` and 404.
+# The Rust upgrader has filtered `mac-` tags for exactly this reason
+# (`is_linux_tag`); the shell entrypoint, which is what actually installs a box,
+# never learned to.
+#
+# Parsed with grep/sed/awk rather than jq: this runs on a bare Ubuntu box before
+# anything of ours is installed, and requiring a JSON parser to bootstrap is how
+# an installer fails on the one machine that matters. GitHub emits `tag_name`,
+# `draft` and `prerelease` in that order per release, so `paste - - -` regroups
+# them into one line each; releases come back newest-first, so the first match
+# wins. Asset objects carry none of those three keys and cannot collide.
 resolve_tag() {
-    local api="https://api.github.com/repos/${GITHUB_OWNER}/${GITHUB_REPO}/releases/latest"
+    local api="https://api.github.com/repos/${GITHUB_OWNER}/${GITHUB_REPO}/releases?per_page=30"
     curl -sSLf -H "Accept: application/vnd.github+json" "$api" 2>/dev/null \
-        | grep -o '"tag_name":[[:space:]]*"[^"]*"' \
-        | head -1 \
-        | sed -E 's/.*"tag_name":[[:space:]]*"([^"]*)"/\1/'
+        | grep -oE '"tag_name":[[:space:]]*"[^"]*"|"(draft|prerelease)":[[:space:]]*(true|false)' \
+        | sed -E 's/.*:[[:space:]]*"?([^"]*)"?$/\1/' \
+        | paste - - - \
+        | awk -F'\t' '$2=="false" && $3=="false" && $1 !~ /^mac-/ { print $1; exit }'
 }
 
 if [ "$VIRTUES_VERSION" = "latest" ]; then
     VIRTUES_VERSION=$(resolve_tag) \
         || die "could not resolve latest release. Pass VIRTUES_VERSION=vX.Y.Z to pin."
+    # Empty means the API answered but no stable *Linux* release exists — a
+    # different situation from the API being unreachable, and worth saying so.
+    # It is the state right after a version-line reset, when only prereleases
+    # are published.
     [ -n "$VIRTUES_VERSION" ] \
-        || die "could not resolve latest release. Pass VIRTUES_VERSION=vX.Y.Z to pin."
+        || die "no stable Linux release is published yet.
+       Install the prerelease channel:  curl -sSL https://virtues.com/sh-pre | sudo sh
+       Or pin a tag:                    VIRTUES_VERSION=vX.Y.Z"
 fi
 
 # Hand the resolved tag down to the installer so it fetches the SAME release's

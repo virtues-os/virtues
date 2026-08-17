@@ -19,7 +19,9 @@
 //!   key for the whole fleet.
 //! * **A shared machine-id** collides in DHCP and journald; **shared SSH host
 //!   keys** make every unit trivially impersonable.
-//! * **Saved wifi** ships the workshop's network password to customers.
+//! * **Saved wifi** ships the workshop's network password to customers — and
+//!   on Ubuntu it is stored by netplan, not by NetworkManager, which is where
+//!   this check used to look and find nothing.
 //!
 //! ## Read-only, on purpose
 //!
@@ -111,6 +113,64 @@ pub async fn run() -> i32 {
         }
     }
 
+    // …and the place the credentials actually are, on Ubuntu. NetworkManager
+    // renders netplan here rather than owning the profile, so the directory
+    // checked above is empty on a box that is very much joined to a network,
+    // and this check passed a card holding a corporate 802.1X password in plain
+    // text. Same helper as `deprovision`, deliberately — a checker that looks
+    // somewhere its own remedy does not is worse than no checker, because it
+    // signs off.
+    let wifi_yaml = super::deprovision::netplan_wifi_files();
+    if !wifi_yaml.is_empty() {
+        findings.push(Finding {
+            what: "wifi credentials in netplan",
+            detail: format!(
+                "{} file(s) under /etc/netplan carry an SSID and its password (and 802.1X identity, on an enterprise network) — readable in plain text on every unit imaged from this card",
+                wifi_yaml.len()
+            ),
+            fix: "sudo virtues deprovision",
+        });
+    }
+
+    // ── The journal, and whether the vacuum actually took ───────────────────
+    // `deprovision` runs `journalctl --rotate --vacuum-time=1s` and discards
+    // the result — so if it fails (no journalctl on PATH, a sealed archive it
+    // will not drop) nothing anywhere notices, and the master's whole history
+    // ships. That is the netplan mistake again in miniature: a remedy no check
+    // confirms. This is the confirmation.
+    //
+    // 64 MB is chosen to sit far above a freshly-vacuumed journal (a few MB of
+    // the current boot) and far below what a built master accumulates — 403 MB
+    // on the lab board, reaching back nine months.
+    if let Some(bytes) = dir_size("/var/log/journal") {
+        const LIMIT: u64 = 64 * 1024 * 1024;
+        if bytes > LIMIT {
+            findings.push(Finding {
+                what: "journal not vacuumed",
+                detail: format!(
+                    "/var/log/journal holds {} MB — the master's own operational history (networks, addresses, hostnames, stack traces), shipped to every unit",
+                    bytes / 1024 / 1024
+                ),
+                fix: "sudo virtues deprovision   (or: journalctl --rotate --vacuum-time=1s)",
+            });
+        }
+    }
+
+    // ── Somebody else's identity, which is not ours to delete ───────────────
+    // Tailscale was on the lab board so we could reach it at all. Its
+    // `tailscaled.state` is a node key: clones would all come up as the same
+    // tailnet node. `deprovision` deliberately does NOT remove it — logging a
+    // remote operator out mid-run would strand a half-deprovisioned box — so
+    // this is flagged for a human with a manual fix, which is also the honest
+    // treatment for a product we do not own.
+    if Path::new("/var/lib/tailscale/tailscaled.state").exists() {
+        findings.push(Finding {
+            what: "Tailscale node identity",
+            detail: "/var/lib/tailscale/tailscaled.state is this board's tailnet key — every clone would join as the same node".to_string(),
+            fix: "sudo tailscale logout && sudo rm -rf /var/lib/tailscale",
+        });
+    }
+
     // ── A leftover pre-move copy of the cluster ─────────────────────────────
     // `relocate_postgres_to_data_dir` keeps the original as a rollback and
     // tells the operator to remove it. On a box that is a rollback; inside an
@@ -119,7 +179,7 @@ pub async fn run() -> i32 {
         findings.push(Finding {
             what: "pre-move Postgres copy",
             detail: format!("{PG_PRE_MOVE} is still on the boot disk — this is the cluster from before it was relocated, and it would ship inside the image"),
-            fix: "rm -rf /var/lib/postgresql.pre-move",
+            fix: "sudo virtues deprovision   (or: rm -rf /var/lib/postgresql.pre-move)",
         });
     }
 
@@ -229,8 +289,10 @@ pub async fn run() -> i32 {
     1
 }
 
-/// The pre-move copy `relocate_postgres_to_data_dir` leaves behind.
-const PG_PRE_MOVE: &str = "/var/lib/postgresql.pre-move";
+/// The pre-move copy `relocate_postgres_to_data_dir` leaves behind. Defined by
+/// `deprovision`, which removes it, so the checker cannot drift to a different
+/// path than the remedy — the netplan failure in one line.
+use super::deprovision::PG_PRE_MOVE;
 
 enum ClusterState {
     /// A cluster directory with a `PG_VERSION` in it.
@@ -314,6 +376,39 @@ async fn database_is_present() -> Option<bool> {
         return None;
     }
     Some(String::from_utf8_lossy(&out.stdout).trim() == "1")
+}
+
+/// Total bytes under `dir`, recursively. `None` if absent — a box with no
+/// persistent journal (log2ram, or `Storage=volatile`) has nothing to ship.
+///
+/// Walks by hand rather than shelling out to `du`: this runs on a box about to
+/// be imaged, and a check that depends on a coreutils binary being present is
+/// a check that silently passes when it is not.
+fn dir_size(dir: &str) -> Option<u64> {
+    fn walk(path: &Path, total: &mut u64) {
+        let Ok(entries) = std::fs::read_dir(path) else {
+            return;
+        };
+        for entry in entries.flatten() {
+            match entry.metadata() {
+                // Symlinks are not followed — `metadata()` on the DirEntry does
+                // follow them, so a link into the data disk would be counted as
+                // journal. `symlink_metadata` reads the link itself.
+                Ok(_) => match std::fs::symlink_metadata(entry.path()) {
+                    Ok(m) if m.is_dir() => walk(&entry.path(), total),
+                    Ok(m) if m.is_file() => *total += m.len(),
+                    _ => {}
+                },
+                Err(_) => {}
+            }
+        }
+    }
+    if !Path::new(dir).exists() {
+        return None;
+    }
+    let mut total = 0u64;
+    walk(Path::new(dir), &mut total);
+    Some(total)
 }
 
 /// How many entries in `dir` start with `prefix`? `None` if the directory is

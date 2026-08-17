@@ -2299,33 +2299,11 @@ pub async fn wiki_update_narrative_identity_handler(
 
 // --- Telos ---
 
-/// Get active telos
-pub async fn wiki_get_active_telos_handler(State(state): State<AppState>) -> Response {
-    api_response(crate::api::get_active_telos(state.db.pool()).await)
-}
 
-/// Get a telos by ID
-pub async fn wiki_get_telos_handler(
-    State(state): State<AppState>,
-    Path(id): Path<String>,
-) -> Response {
-    api_response(crate::api::get_telos(state.db.pool(), &id).await)
-}
 
 // --- Act ---
 
-/// Get an act by ID
-pub async fn wiki_get_act_handler(
-    State(state): State<AppState>,
-    Path(id): Path<String>,
-) -> Response {
-    api_response(crate::api::get_act(state.db.pool(), id).await)
-}
 
-/// List all acts
-pub async fn wiki_list_acts_handler(State(state): State<AppState>) -> Response {
-    api_response(crate::api::list_acts(state.db.pool()).await)
-}
 
 // --- Story ---
 
@@ -2344,21 +2322,7 @@ pub async fn wiki_list_stories_handler(State(state): State<AppState>) -> Respons
 
 // --- Chapter ---
 
-/// Get a chapter by ID
-pub async fn wiki_get_chapter_handler(
-    State(state): State<AppState>,
-    Path(id): Path<String>,
-) -> Response {
-    api_response(crate::api::get_chapter(state.db.pool(), id).await)
-}
 
-/// List chapters for an act
-pub async fn wiki_list_chapters_handler(
-    State(state): State<AppState>,
-    Path(act_id): Path<String>,
-) -> Response {
-    api_response(crate::api::list_chapters_for_act(state.db.pool(), act_id).await)
-}
 
 // --- Day ---
 

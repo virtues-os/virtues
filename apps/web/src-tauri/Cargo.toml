@@ -1,5 +1,12 @@
 [package]
 name = "virtues"
+# NOT the app version — `tauri.conf.json` carries one, and Tauri prefers it, so
+# the shipped bundle is 1.0.21 while this says 1.0.0. Left deliberately unsynced
+# rather than matched: two numbers kept equal by hand drift the first time
+# someone bumps one, and this one is inert. `tauri.conf.json` is the source of
+# truth for the Mac app, and `release-mac.yml` reads it there.
+#
+# (`apps/web/package.json` says 0.0.1 and is likewise unread by either.)
 version = "1.0.0"
 description = "Virtues Desktop App"
 authors = ["Virtues"]
