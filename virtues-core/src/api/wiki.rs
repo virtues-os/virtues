@@ -1146,7 +1146,7 @@ async fn get_day_novelty_counts(pool: &PgPool, date_str: &str) -> Result<(i64, i
              AND NOT EXISTS (
                SELECT 1 FROM wiki_refs r2
                WHERE r2.entity_id = r.entity_id
-                 AND r2.timestamp < ($1 || 'T00:00:00Z')::timestamptz
+                 AND r2.occurred_at < ($1 || 'T00:00:00Z')::timestamptz
              )"#,
     )
     .bind(date_str)
@@ -1164,7 +1164,7 @@ async fn get_day_novelty_counts(pool: &PgPool, date_str: &str) -> Result<(i64, i
              AND NOT EXISTS (
                SELECT 1 FROM wiki_events e2, jsonb_array_elements_text(e2.topics) jt2
                WHERE e2.day_id != e.day_id
-                 AND e2.start_time < e.started_at
+                 AND e2.started_at < e.started_at
                  AND jt2 = jt
              )"#,
     )

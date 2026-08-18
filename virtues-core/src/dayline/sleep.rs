@@ -57,7 +57,11 @@ async fn resolve_sleep_for_date(pool: &PgPool, date: NaiveDate) {
         Ok(v) => v,
         Err(_) => return,
     };
-    let duration_mins: Option<i64> = sleep_row.try_get("duration_minutes").ok();
+    let duration_mins: Option<i64> = sleep_row
+        .try_get::<Option<i32>, _>("duration_minutes")
+        .ok()
+        .flatten()
+        .map(i64::from);
 
     // Clamp start_time to UTC midnight of this date (the day page's boundary).
     let day_midnight: DateTime<Utc> = date.and_hms_opt(0, 0, 0).unwrap().and_utc();

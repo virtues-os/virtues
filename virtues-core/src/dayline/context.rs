@@ -192,7 +192,7 @@ pub async fn build_hourly_context(
     .await
     {
         if let Some(r) = row {
-            let cnt: i32 = r.try_get("cnt").unwrap_or(0);
+            let cnt: i64 = r.try_get("cnt").unwrap_or(0);
             let avg: Option<f64> = r.try_get("avg_bpm").ok().flatten();
             if cnt > 0 {
                 if let Some(a) = avg {

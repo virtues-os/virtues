@@ -444,11 +444,15 @@ impl SemanticSearchEngine {
             next += filters.ontologies.len();
         }
         if filters.date_after.is_some() {
-            filter_sql.push_str(&format!(" AND se.occurred_at >= ${next}"));
+            filter_sql.push_str(&format!(
+                " AND (${next}::timestamptz IS NULL OR se.occurred_at >= ${next})"
+            ));
             next += 1;
         }
         if filters.date_before.is_some() {
-            filter_sql.push_str(&format!(" AND se.occurred_at <= ${next}"));
+            filter_sql.push_str(&format!(
+                " AND (${next}::timestamptz IS NULL OR se.occurred_at <= ${next})"
+            ));
             next += 1;
         }
         let entity_filter = !filters.entities.is_empty();
@@ -582,18 +586,18 @@ impl SemanticSearchEngine {
             db_query = db_query.bind(ont);
         }
         if let Some(da) = &filters.date_after {
-            db_query = db_query.bind(
-                chrono::DateTime::parse_from_rfc3339(da)
-                    .map(|d| d.with_timezone(&chrono::Utc))
-                    .ok(),
-            );
+            let parsed = parse_date_filter(da);
+            if parsed.is_none() {
+                tracing::warn!(value = %da, "unparseable date_after; the filter is ignored");
+            }
+            db_query = db_query.bind(parsed);
         }
         if let Some(db) = &filters.date_before {
-            db_query = db_query.bind(
-                chrono::DateTime::parse_from_rfc3339(db)
-                    .map(|d| d.with_timezone(&chrono::Utc))
-                    .ok(),
-            );
+            let parsed = parse_date_filter(db);
+            if parsed.is_none() {
+                tracing::warn!(value = %db, "unparseable date_before; the filter is ignored");
+            }
+            db_query = db_query.bind(parsed);
         }
         if entity_filter {
             db_query = db_query.bind(filters.entities.clone());
@@ -991,4 +995,27 @@ mod live_filter_matrix {
         }
         println!("all {ran} filter combinations bound and executed");
     }
+}
+
+/// Parse a date filter the way the tool schema advertises it.
+///
+/// The `semantic_search` schema tells the model: *"ISO 8601, e.g.
+/// '2026-01-01'"* — and the code parsed it with `parse_from_rfc3339`, which
+/// requires a full timestamp with an offset and rejects a bare date. The result
+/// was `.ok()` → `None` → a bound NULL, and `occurred_at >= NULL` is never true.
+/// So every date-scoped search the assistant ever ran returned zero rows, and it
+/// reported "nothing in your record for that period" — about a record that had
+/// it.
+///
+/// Accepts what the schema promises (a bare date, read as UTC midnight) and what
+/// a model may send anyway (a full RFC 3339 timestamp).
+fn parse_date_filter(raw: &str) -> Option<chrono::DateTime<chrono::Utc>> {
+    let raw = raw.trim();
+    if let Ok(dt) = chrono::DateTime::parse_from_rfc3339(raw) {
+        return Some(dt.with_timezone(&chrono::Utc));
+    }
+    if let Ok(d) = chrono::NaiveDate::parse_from_str(raw, "%Y-%m-%d") {
+        return Some(d.and_hms_opt(0, 0, 0)?.and_utc());
+    }
+    None
 }
