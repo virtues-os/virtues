@@ -190,6 +190,22 @@ struct Template {
     /// location. Examples: `morning_brief`, `team-pack/actions/foo`.
     #[serde(skip)]
     dir: String,
+
+    /// Every key in the manifest this struct does not name.
+    ///
+    /// Kept because serde discards unknown keys in silence, and this file
+    /// already carries the scar: `description` was in every manifest in the
+    /// tree from the beginning and had no field here, so it was thrown away on
+    /// every load for months and nobody could see it. `runtime = "function"`
+    /// sat in a shipped manifest the same way.
+    ///
+    /// Not `deny_unknown_fields`, deliberately. That would turn an author's
+    /// typo into a hard load failure for an applet that is otherwise fine, and
+    /// authored applets are written by people through chat, not reviewed. A
+    /// warning names the key, keeps the applet working, and is loud enough to
+    /// find — which silence never was.
+    #[serde(flatten)]
+    unknown: std::collections::BTreeMap<String, toml::Value>,
 }
 
 #[derive(Debug, Deserialize, Clone)]
@@ -439,6 +455,18 @@ fn parse_template(manifest_path: &std::path::Path, dir: &str) -> Option<Template
             return None;
         }
     };
+    // Say what was thrown away. See `Template::unknown`.
+    if !tmpl.unknown.is_empty() {
+        let keys: Vec<&str> = tmpl.unknown.keys().map(String::as_str).collect();
+        tracing::warn!(
+            path = %manifest_path.display(),
+            keys = %keys.join(", "),
+            "manifest.toml has keys this build does not understand — they are \
+             being ignored. Either the key is misspelled, or it is from a newer \
+             manifest format than this box runs."
+        );
+    }
+
     if tmpl.id_prefix.is_none() {
         // Migration 0077 rewrote the stored ids to this prefix. `manifest.toml`
         // may still pin an explicit `id_prefix`; none currently does, and one
@@ -1275,6 +1303,38 @@ async fn upsert_row(
 
 #[cfg(test)]
 mod tests {
+    /// An unknown manifest key is CAPTURED, not silently dropped — and the
+    /// known ones still parse around it.
+    ///
+    /// The bug this guards has happened twice: `description` sat in every
+    /// manifest in the tree with no field to receive it, and `runtime =
+    /// "function"` shipped in `bookmark_enrichment`. Both were thrown away on
+    /// every load, in silence, for months. The warning that now fires is only
+    /// as good as the capture, so the capture is what is asserted here.
+    #[test]
+    fn an_unknown_manifest_key_is_kept_and_visible() {
+        let dir = std::env::temp_dir().join(format!("tmpl-unknown-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("manifest.toml");
+        std::fs::write(
+            &path,
+            "name = \"One\"\nowner = \"user\"\nruntime = \"function\"\nnot_a_key = 3\n",
+        )
+        .unwrap();
+
+        let t = super::parse_template(&path, "one").expect("manifest should still load");
+
+        assert_eq!(t.name, "One", "known keys must still parse");
+        let mut unknown: Vec<&str> = t.unknown.keys().map(String::as_str).collect();
+        unknown.sort();
+        assert_eq!(
+            unknown,
+            vec!["not_a_key", "runtime"],
+            "unknown keys must be captured so the loader can name them"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
     use super::*;
 
     /// Both roots are scanned, and an authored applet in the state root
@@ -1597,6 +1657,47 @@ auth = { kind = "via_proxy", start_path = "/google/start" }
                 );
             }
         }
+    }
+
+    #[test]
+    /// No SHIPPED manifest carries a key this build does not understand.
+    ///
+    /// The sibling test above proves unknown keys are captured; this one proves
+    /// the tree has none. It is the guard that would have caught `runtime =
+    /// "function"` in `bookmark_enrichment`, which sat in a shipped manifest
+    /// doing nothing — serde dropped it on every load and there was no signal
+    /// anywhere, because a key that means nothing behaves exactly like a key
+    /// that was never written.
+    ///
+    /// Scoped to the shipped tree on purpose. Authored applets live in the
+    /// state root and are written by people through chat; they get the runtime
+    /// warning, not a failing build.
+    #[test]
+    fn no_shipped_manifest_has_unknown_keys() {
+        let core = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        let applets_dir = core.join(ACTIONS_DIR_FROM_CORE);
+        let Ok(entries) = std::fs::read_dir(&applets_dir) else {
+            return; // not a source checkout
+        };
+        let mut offenders: Vec<String> = Vec::new();
+        for entry in entries.flatten() {
+            let manifest = entry.path().join("manifest.toml");
+            if !manifest.exists() {
+                continue;
+            }
+            let folder = entry.file_name().to_string_lossy().to_string();
+            if let Some(t) = super::parse_template(&manifest, &folder) {
+                for k in t.unknown.keys() {
+                    offenders.push(format!("{folder}/manifest.toml: {k}"));
+                }
+            }
+        }
+        assert!(
+            offenders.is_empty(),
+            "shipped manifests carry keys nothing reads, so they do nothing \
+             silently:\n  {}",
+            offenders.join("\n  ")
+        );
     }
 
     #[test]
