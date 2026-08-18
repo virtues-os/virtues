@@ -1,0 +1,115 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n        UPDATE wiki_events\n        SET\n            user_label = COALESCE($2, user_label),\n            user_location = COALESCE($3, user_location),\n            user_notes = COALESCE($4, user_notes),\n            is_user_edited = true,\n            updated_at = now()\n        WHERE id = $1\n        RETURNING\n            id, day_id, started_at, ended_at,\n            auto_label, auto_location, user_label, user_location, user_notes,\n            source_ontologies, is_unknown, is_transit, is_user_added, is_user_edited,\n            created_at, updated_at\n        ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 1,
+        "name": "day_id",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 2,
+        "name": "started_at",
+        "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 3,
+        "name": "ended_at",
+        "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 4,
+        "name": "auto_label",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 5,
+        "name": "auto_location",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 6,
+        "name": "user_label",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 7,
+        "name": "user_location",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 8,
+        "name": "user_notes",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 9,
+        "name": "source_ontologies",
+        "type_info": "Jsonb"
+      },
+      {
+        "ordinal": 10,
+        "name": "is_unknown",
+        "type_info": "Bool"
+      },
+      {
+        "ordinal": 11,
+        "name": "is_transit",
+        "type_info": "Bool"
+      },
+      {
+        "ordinal": 12,
+        "name": "is_user_added",
+        "type_info": "Bool"
+      },
+      {
+        "ordinal": 13,
+        "name": "is_user_edited",
+        "type_info": "Bool"
+      },
+      {
+        "ordinal": 14,
+        "name": "created_at",
+        "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 15,
+        "name": "updated_at",
+        "type_info": "Timestamptz"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Text",
+        "Text",
+        "Text",
+        "Text"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      false,
+      true,
+      true,
+      true,
+      true,
+      true,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false
+    ]
+  },
+  "hash": "542bb4c9c40643f9b5a259160e2d6f66568f097668985f75c526ab96a50a9c47"
+}

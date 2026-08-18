@@ -189,8 +189,8 @@ async fn fetch_unresolved_transactions(
             t.merchant_name,
             t.merchant_category
         FROM data_financial_transaction t
-        WHERE t.timestamp >= $1
-          AND t.timestamp < $2
+        WHERE t.occurred_at >= $1
+          AND t.occurred_at < $2
           AND t.merchant_name IS NOT NULL
           AND t.merchant_name != ''
           AND NOT EXISTS (
@@ -199,7 +199,7 @@ async fn fetch_unresolved_transactions(
                 AND er.source_id = t.id
                 AND er.role = 'merchant'
           )
-        ORDER BY t.timestamp ASC
+        ORDER BY t.occurred_at ASC
         LIMIT 500
         "#,
         window.start,
@@ -235,7 +235,7 @@ async fn resolve_and_link_merchant(db: &Database, txn: &TransactionRecord) -> Re
 
     // Get transaction timestamp for the entity reference
     let timestamp: Option<chrono::DateTime<chrono::Utc>> = sqlx::query_scalar(
-        "SELECT timestamp FROM data_financial_transaction WHERE id = $1",
+        "SELECT occurred_at FROM data_financial_transaction WHERE id = $1",
     )
     .bind(&txn.id)
     .fetch_optional(db.pool())
@@ -246,7 +246,7 @@ async fn resolve_and_link_merchant(db: &Database, txn: &TransactionRecord) -> Re
     let ref_id = ids::generate_id("eref", &[&txn.id, &org_id, "merchant"]);
     sqlx::query!(
         r#"
-        INSERT INTO wiki_refs (id, entity_type, entity_id, source_table, source_id, role, timestamp)
+        INSERT INTO wiki_refs (id, entity_type, entity_id, source_table, source_id, role, occurred_at)
         VALUES ($1, 'organization', $2, 'data_financial_transaction', $3, 'merchant', $4)
         ON CONFLICT (entity_id, source_table, source_id, role) DO NOTHING
         "#,
@@ -461,13 +461,13 @@ async fn fetch_location_points(db: &Database, window: TimeWindow) -> Result<Vec<
             id,
             latitude,
             longitude,
-            timestamp,
+            occurred_at,
             horizontal_accuracy
         FROM data_location_point
-        WHERE timestamp >= $1
-          AND timestamp < $2
+        WHERE occurred_at >= $1
+          AND occurred_at < $2
           AND (horizontal_accuracy IS NULL OR horizontal_accuracy < $3)
-        ORDER BY timestamp ASC
+        ORDER BY occurred_at ASC
         "#,
         window.start,
         window.end,
@@ -484,7 +484,7 @@ async fn fetch_location_points(db: &Database, window: TimeWindow) -> Result<Vec<
                 id,
                 latitude: row.latitude,
                 longitude: row.longitude,
-                timestamp: row.timestamp,
+                timestamp: row.occurred_at,
                 horizontal_accuracy: row.horizontal_accuracy,
                 _speed: None,
             })
@@ -656,7 +656,7 @@ fn generate_visit_id(centroid_lat: f64, centroid_lon: f64, start_time: DateTime<
 /// rather than minting a new one every time the clusterer re-runs.
 ///
 /// The bug this fixes: the maintenance loop re-clusters a 30-hour window every 15
-/// minutes, and the visit id was `uuid_v5(lat, lon, start_time)`. Across re-runs
+/// minutes, and the visit id was `uuid_v5(lat, lon, started_at)`. Across re-runs
 /// the cluster's earliest point drifts, so the start — and therefore the id —
 /// changes, and `ON CONFLICT (id)` never fires. One 3-hour stay at home became a
 /// dozen overlapping rows (arriving 00:04, 00:19, 00:34…, all departing 03:07),
@@ -683,14 +683,14 @@ async fn write_visit_and_link_place(db: &Database, visit: &Visit) -> Result<()> 
     // backgrounding gap would otherwise leave adjacent rather than overlapping.
     let overlapping: Vec<(String, chrono::DateTime<Utc>, chrono::DateTime<Utc>)> = sqlx::query_as(
         r#"
-        SELECT v.id, v.arrival_time, v.departure_time
+        SELECT v.id, v.started_at, v.ended_at
         FROM data_location_visit v
         JOIN wiki_refs r
           ON r.source_table = 'data_location_visit' AND r.source_id = v.id
              AND r.entity_type = 'place' AND r.entity_id = $1
-        WHERE v.arrival_time   <= $3 + ($4 || ' minutes')::interval
-          AND v.departure_time >= $2 - ($4 || ' minutes')::interval
-        ORDER BY v.arrival_time
+        WHERE v.started_at   <= $3 + ($4 || ' minutes')::interval
+          AND v.ended_at >= $2 - ($4 || ' minutes')::interval
+        ORDER BY v.started_at
         "#,
     )
     .bind(&place_id)
@@ -718,7 +718,7 @@ async fn write_visit_and_link_place(db: &Database, visit: &Visit) -> Result<()> 
 
         sqlx::query(
             "UPDATE data_location_visit \
-             SET arrival_time = $2, departure_time = $3, duration_minutes = $4, \
+             SET started_at = $2, ended_at = $3, duration_minutes = $4, \
                  latitude = $5, longitude = $6, metadata = $7, updated_at = now() \
              WHERE id = $1",
         )
@@ -758,7 +758,7 @@ async fn write_visit_and_link_place(db: &Database, visit: &Visit) -> Result<()> 
     let duration_minutes = (visit.end_time - visit.start_time).num_minutes() as i32;
 
     // Conflict on `source_stream_id`, NOT `id`. A stay carries two identities and
-    // only one of them is stable: `id` is derived from (centroid, start_time) and
+    // only one of them is stable: `id` is derived from (centroid, started_at) and
     // DRIFTS every time re-clustering nudges either, while `source_stream_id` (the
     // first point) does not — and the stable one is what holds the UNIQUE
     // constraint. Guarding `id` meant a re-clustered stay arrived with a fresh id,
@@ -769,15 +769,15 @@ async fn write_visit_and_link_place(db: &Database, visit: &Visit) -> Result<()> 
     // across passes extends in place rather than spawning a rival row.
     let visit_id: String = sqlx::query_scalar(
         "INSERT INTO data_location_visit \
-         (id, latitude, longitude, arrival_time, departure_time, duration_minutes, \
+         (id, latitude, longitude, started_at, ended_at, duration_minutes, \
           source_stream_id, source_table, source_provider, metadata) \
          VALUES ($1, $2, $3, $4, $5, $6, $7, 'location_point', 'ios', $8) \
          ON CONFLICT (source_stream_id) DO UPDATE SET \
-           arrival_time   = LEAST(data_location_visit.arrival_time, EXCLUDED.arrival_time), \
-           departure_time = GREATEST(data_location_visit.departure_time, EXCLUDED.departure_time), \
+           started_at   = LEAST(data_location_visit.started_at, EXCLUDED.started_at), \
+           ended_at = GREATEST(data_location_visit.ended_at, EXCLUDED.ended_at), \
            duration_minutes = GREATEST(0, (EXTRACT(EPOCH FROM \
-             GREATEST(data_location_visit.departure_time, EXCLUDED.departure_time) \
-             - LEAST(data_location_visit.arrival_time, EXCLUDED.arrival_time)) / 60)::int), \
+             GREATEST(data_location_visit.ended_at, EXCLUDED.ended_at) \
+             - LEAST(data_location_visit.started_at, EXCLUDED.started_at)) / 60)::int), \
            latitude = EXCLUDED.latitude, \
            longitude = EXCLUDED.longitude, \
            metadata = EXCLUDED.metadata, \
@@ -801,7 +801,7 @@ async fn write_visit_and_link_place(db: &Database, visit: &Visit) -> Result<()> 
     // by ref), which is what let the collision recur every pass.
     let ref_id = ids::generate_id("eref", &[&visit_id, &place_id, "location"]);
     sqlx::query(
-        "INSERT INTO wiki_refs (id, entity_type, entity_id, source_table, source_id, role, timestamp) \
+        "INSERT INTO wiki_refs (id, entity_type, entity_id, source_table, source_id, role, occurred_at) \
          VALUES ($1, 'place', $2, 'data_location_visit', $3, 'location', $4) \
          ON CONFLICT (entity_id, source_table, source_id, role) DO NOTHING",
     )

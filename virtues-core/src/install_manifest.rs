@@ -36,10 +36,37 @@ use serde::Deserialize;
 use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
 
-/// Where the installer writes it. Inside the shipped tree, not the state root:
-/// it describes the *installation*, and an upgrade replacing that tree is
-/// exactly when it should be rewritten.
-pub const MANIFEST_PATH: &str = "/usr/local/share/virtues/install.json";
+/// Where the installer writes it, under the DEFAULT prefix. Inside the shipped
+/// tree, not the state root: it describes the *installation*, and an upgrade
+/// replacing that tree is exactly when it should be rewritten.
+///
+/// Use [`manifest_path`], not this — the prefix is not always `/usr/local`.
+pub const DEFAULT_MANIFEST_PATH: &str = "/usr/local/share/virtues/install.json";
+
+/// The manifest path for THIS installation, honouring `INSTALL_PREFIX`.
+///
+/// The installer has always supported a custom prefix
+/// (`tools/virtues-installer/src/config.rs` reads `INSTALL_PREFIX` and writes
+/// the manifest to `<prefix>/share/virtues/install.json`), but this side only
+/// ever looked under `/usr/local`. So on a prefixed install the file was
+/// written somewhere the box never read.
+///
+/// The consequence was worse than a missing file, because of what absence
+/// MEANS here: no manifest is not an error, it is the signal for "this is a
+/// DIY install" (see [`appliance`]). A Dragon installed with
+/// `INSTALL_PREFIX=/opt` would therefore come up denying it was an appliance —
+/// no Improv, no setup AP, no forced account, and `data_dir` falling back to
+/// the literal — with nothing logged, because every caller has a defined
+/// behavior for the absent case and took it.
+///
+/// Env var rather than a build-time constant: the same binary is installed
+/// under different prefixes, and it is the installer that knows which.
+pub fn manifest_path() -> PathBuf {
+    match std::env::var_os("INSTALL_PREFIX") {
+        Some(p) if !p.is_empty() => PathBuf::from(p).join("share/virtues/install.json"),
+        _ => PathBuf::from(DEFAULT_MANIFEST_PATH),
+    }
+}
 
 #[derive(Debug, Clone, Default, Deserialize)]
 pub struct InstallManifest {
@@ -78,7 +105,7 @@ pub struct InstallManifest {
 /// and those must not stat a file every few seconds.
 pub fn get() -> &'static Option<InstallManifest> {
     static CACHE: OnceLock<Option<InstallManifest>> = OnceLock::new();
-    CACHE.get_or_init(|| load_from(Path::new(MANIFEST_PATH)))
+    CACHE.get_or_init(|| load_from(&manifest_path()))
 }
 
 /// The read itself, taking a path so it is testable without `/usr/local`.
@@ -151,6 +178,41 @@ pub fn sidecar_units() -> Vec<String> {
 
 #[cfg(test)]
 mod tests {
+    use super::*;
+
+    /// `INSTALL_PREFIX` moves the manifest path, and its absence keeps the
+    /// default.
+    ///
+    /// The installer has always honoured a custom prefix; this side only ever
+    /// looked under `/usr/local`, so on a prefixed box the manifest was written
+    /// where nothing read it. That did not fail loudly — absence is the signal
+    /// for "DIY install", so an appliance quietly stopped being one.
+    #[test]
+    fn manifest_path_follows_the_install_prefix() {
+        // Serialized against other env-mutating tests by construction: this is
+        // the only test in the module and it restores what it finds.
+        let saved = std::env::var_os("INSTALL_PREFIX");
+
+        std::env::remove_var("INSTALL_PREFIX");
+        assert_eq!(manifest_path(), std::path::Path::new(DEFAULT_MANIFEST_PATH));
+
+        std::env::set_var("INSTALL_PREFIX", "/opt");
+        assert_eq!(
+            manifest_path(),
+            std::path::Path::new("/opt/share/virtues/install.json"),
+            "a prefixed install must be found where the installer wrote it"
+        );
+
+        // Empty is treated as unset rather than as the root.
+        std::env::set_var("INSTALL_PREFIX", "");
+        assert_eq!(manifest_path(), std::path::Path::new(DEFAULT_MANIFEST_PATH));
+
+        match saved {
+            Some(v) => std::env::set_var("INSTALL_PREFIX", v),
+            None => std::env::remove_var("INSTALL_PREFIX"),
+        }
+    }
+
     use super::*;
 
     fn write(dir: &Path, body: &str) -> PathBuf {

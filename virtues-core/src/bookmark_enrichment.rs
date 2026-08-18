@@ -300,7 +300,7 @@ async fn claim_next(db: &PgPool) -> Result<Option<Claimed>> {
                         < now() - make_interval(secs =>
                             $3::double precision * power(2, enrichment_attempts))
                    )
-                 ORDER BY timestamp DESC
+                 ORDER BY occurred_at DESC
                  LIMIT 1
                  FOR UPDATE SKIP LOCKED
             )
@@ -567,7 +567,7 @@ mod tests {
             async move {
                 sqlx::query(
                     "INSERT INTO data_content_bookmark
-                       (id, url, timestamp, source_stream_id, source_table, source_provider,
+                       (id, url, occurred_at, source_stream_id, source_table, source_provider,
                         deleted_at_source)
                      VALUES ($1, $2, $3::timestamptz, $1, 'test', 'test',
                              CASE WHEN $4 THEN now() ELSE NULL END)",
@@ -591,7 +591,7 @@ mod tests {
         // claimed first and the assertion below would catch it immediately.
         sqlx::query(
             "INSERT INTO data_content_bookmark
-               (id, url, timestamp, source_stream_id, source_table, source_provider, metadata)
+               (id, url, occurred_at, source_stream_id, source_table, source_provider, metadata)
              VALUES ($1, '/drive/file_abc', '2101-01-01T00:00:00Z'::timestamptz, $1,
                      'test', 'test', '{}'::jsonb),
                     ($2, 'https://instagram.com/p/xyz', '2102-01-01T00:00:00Z'::timestamptz, $2,

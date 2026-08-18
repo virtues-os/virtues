@@ -108,7 +108,7 @@ const MESSAGE_BATCH: i64 = 5_000;
 ///
 /// An unrecognized email address at least carries a display name. A bare phone number
 /// carries nothing, so minting a person per unknown number would fill the graph with
-/// hundreds of ghosts called "+18334160379". They stay unresolved until a contact
+/// hundreds of ghosts called "+18005550199". They stay unresolved until a contact
 /// turns up — the honest state.
 async fn resolve_message_senders(db: &Database) -> Result<usize> {
     normalize_pending_handles(db).await?;
@@ -165,8 +165,8 @@ async fn resolve_message_senders(db: &Database) -> Result<usize> {
         // everything else about the person who sent it.
         sqlx::query!(
             r#"
-            INSERT INTO wiki_refs (id, entity_type, entity_id, source_table, source_id, role, timestamp)
-            SELECT u.ref_id, 'person', u.person_id, 'data_communication_message', u.msg_id, 'sender', m.timestamp
+            INSERT INTO wiki_refs (id, entity_type, entity_id, source_table, source_id, role, occurred_at)
+            SELECT u.ref_id, 'person', u.person_id, 'data_communication_message', u.msg_id, 'sender', m.occurred_at
             FROM UNNEST($1::text[], $2::text[], $3::text[]) AS u(ref_id, person_id, msg_id)
             JOIN data_communication_message m ON m.id = u.msg_id
             ON CONFLICT (entity_id, source_table, source_id, role) DO NOTHING
@@ -209,8 +209,8 @@ async fn resolve_message_senders(db: &Database) -> Result<usize> {
 /// Link the messages *you* sent to the person you sent them to.
 ///
 /// This is the other half of a conversation. The sender pass (above) resolves every
-/// *inbound* message — "+16786463049" → Almu — but says nothing about your replies,
-/// and so "did we ever text Almu?" returned only her side: her three messages, none
+/// *inbound* message — "+15125550137" → Nick — but says nothing about your replies,
+/// and so "did we ever text Nick?" returned only their side: their three messages, none
 /// of yours. The reason is structural, not a bug in the join. A message you sent has
 /// `is_from_me = true`, which the transform records as `from_identifier = "me"` and
 /// `from_handle = ""` — because the chat.db `handle` names the *other* party even on
@@ -300,8 +300,8 @@ async fn resolve_message_recipients(db: &Database) -> Result<usize> {
 
         sqlx::query!(
             r#"
-            INSERT INTO wiki_refs (id, entity_type, entity_id, source_table, source_id, role, timestamp)
-            SELECT u.ref_id, 'person', u.person_id, 'data_communication_message', u.msg_id, 'recipient', m.timestamp
+            INSERT INTO wiki_refs (id, entity_type, entity_id, source_table, source_id, role, occurred_at)
+            SELECT u.ref_id, 'person', u.person_id, 'data_communication_message', u.msg_id, 'recipient', m.occurred_at
             FROM UNNEST($1::text[], $2::text[], $3::text[]) AS u(ref_id, person_id, msg_id)
             JOIN data_communication_message m ON m.id = u.msg_id
             ON CONFLICT (entity_id, source_table, source_id, role) DO NOTHING
@@ -315,7 +315,7 @@ async fn resolve_message_recipients(db: &Database) -> Result<usize> {
 
         // `from_name` is deliberately NOT filled here. It names who *sent* the
         // message — that is you — so writing the recipient's name onto your own row
-        // would render "Almu: <your reply>". The link lives in the ref; the plain
+        // would render "Nick: <your reply>". The link lives in the ref; the plain
         // column stays honest.
 
         resolved += batch;
@@ -494,8 +494,8 @@ async fn fetch_unresolved_emails(db: &Database, window: TimeWindow) -> Result<Ve
             e.from_email,
             e.from_name
         FROM data_communication_email e
-        WHERE e.timestamp >= $1
-          AND e.timestamp < $2
+        WHERE e.occurred_at >= $1
+          AND e.occurred_at < $2
           AND e.from_email IS NOT NULL
           AND e.from_email != ''
           AND NOT EXISTS (
@@ -504,7 +504,7 @@ async fn fetch_unresolved_emails(db: &Database, window: TimeWindow) -> Result<Ve
                 AND er.source_id = e.id
                 AND er.role = 'sender'
           )
-        ORDER BY e.timestamp ASC
+        ORDER BY e.occurred_at ASC
         LIMIT 1000
         "#,
         window.start,
@@ -545,8 +545,8 @@ async fn resolve_and_link_email_sender(db: &Database, email_record: &EmailRecord
     let ref_id = ids::generate_id("eref", &[&email_record.id, &person_id, "sender"]);
     sqlx::query!(
         r#"
-        INSERT INTO wiki_refs (id, entity_type, entity_id, source_table, source_id, role, timestamp)
-        SELECT $1, 'person', $2, 'data_communication_email', $3, 'sender', timestamp
+        INSERT INTO wiki_refs (id, entity_type, entity_id, source_table, source_id, role, occurred_at)
+        SELECT $1, 'person', $2, 'data_communication_email', $3, 'sender', occurred_at
         FROM data_communication_email WHERE id = $3
         ON CONFLICT (entity_id, source_table, source_id, role) DO NOTHING
         "#,
@@ -678,8 +678,8 @@ async fn fetch_calendar_events(db: &Database, window: TimeWindow) -> Result<Vec<
             id,
             attendee_identifiers
         FROM data_calendar_event
-        WHERE start_time >= $1
-          AND start_time < $2
+        WHERE started_at >= $1
+          AND started_at < $2
           AND jsonb_array_length(attendee_identifiers) > 0
         "#,
         window.start,
@@ -716,7 +716,7 @@ async fn resolve_and_link_event_attendees(db: &Database, event: &CalendarEvent) 
 
     // Fetch event start_time for the wiki_refs timestamp
     let timestamp: Option<chrono::DateTime<chrono::Utc>> = sqlx::query_scalar(
-        "SELECT start_time FROM data_calendar_event WHERE id = $1",
+        "SELECT started_at FROM data_calendar_event WHERE id = $1",
     )
     .bind(&event_id_str)
     .fetch_optional(db.pool())
@@ -733,7 +733,7 @@ async fn resolve_and_link_event_attendees(db: &Database, event: &CalendarEvent) 
                     let ref_id = ids::generate_id("eref", &[&event_id_str, &person_id, "attendee"]);
                     sqlx::query!(
                         r#"
-                        INSERT INTO wiki_refs (id, entity_type, entity_id, source_table, source_id, role, timestamp)
+                        INSERT INTO wiki_refs (id, entity_type, entity_id, source_table, source_id, role, occurred_at)
                         VALUES ($1, 'person', $2, 'data_calendar_event', $3, 'attendee', $4)
                         ON CONFLICT (entity_id, source_table, source_id, role) DO NOTHING
                         "#,
@@ -901,7 +901,7 @@ mod tests {
         // Namespaced so the seed can never collide with real rows and always cleans up.
         const P: &str = "test_recipient_pass";
         let person_id = format!("person_{P}");
-        let handle = "+16786463049";
+        let handle = "+15125550137";
         let thread = format!("iMessage;-;{handle};{P}");
 
         async fn cleanup(db: &Database, person_id: &str, thread: &str) {
@@ -938,7 +938,7 @@ mod tests {
             sqlx::query(
                 "INSERT INTO data_communication_message
                    (id, message_id, thread_id, channel, body, from_identifier,
-                    from_handle, is_group_message, timestamp, source_stream_id,
+                    from_handle, is_group_message, occurred_at, source_stream_id,
                     source_table, source_provider, metadata)
                  VALUES ($1,$1,$2,'imessage','hi',$3,$4,false, now(), $1,
                          'mac_imessage','mac', $5::jsonb)",
@@ -957,7 +957,7 @@ mod tests {
 
         sqlx::query(
             "INSERT INTO wiki_people (id, canonical_name, handles)
-             VALUES ($1, 'Almu', $2::jsonb)",
+             VALUES ($1, 'Nick', $2::jsonb)",
         )
         .bind(&person_id)
         .bind(serde_json::json!([handle]))

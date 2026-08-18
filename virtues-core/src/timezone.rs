@@ -63,8 +63,8 @@ pub async fn first_point_timezone(
         r#"
         SELECT latitude, longitude
         FROM data_location_point
-        WHERE timestamp >= $1::timestamptz AND timestamp < $2::timestamptz
-        ORDER BY timestamp ASC
+        WHERE occurred_at >= $1::timestamptz AND occurred_at < $2::timestamptz
+        ORDER BY occurred_at ASC
         LIMIT 1
         "#,
     )

@@ -559,7 +559,7 @@ async fn embed_one_batch(
 
             sqlx::query(
                 "INSERT INTO search_embeddings \
-                 (id, ontology, record_id, text_hash, model, chunk_index, title, preview, author, timestamp, content, source_table, bm25_len, doc_hash) \
+                 (id, ontology, record_id, text_hash, model, chunk_index, title, preview, author, occurred_at, content, source_table, bm25_len, doc_hash) \
                  VALUES ($1, $2, $3, $4, $13, $10, $5, $6, $7, $8, $9, $11, $12, $14) \
                  ON CONFLICT (ontology, record_id, chunk_index) DO UPDATE SET \
                    text_hash = EXCLUDED.text_hash, \
@@ -567,7 +567,7 @@ async fn embed_one_batch(
                    title = EXCLUDED.title, \
                    preview = EXCLUDED.preview, \
                    author = EXCLUDED.author, \
-                   timestamp = EXCLUDED.timestamp, \
+                   occurred_at = EXCLUDED.occurred_at, \
                    content = EXCLUDED.content, \
                    source_table = EXCLUDED.source_table, \
                    bm25_len = EXCLUDED.bm25_len, \
@@ -650,19 +650,11 @@ async fn embed_one_batch(
     }
 
     if batch_count > 0 {
-        sqlx::query(
-            "INSERT INTO search_embedding_progress \
-               (ontology, last_processed_id, total_embedded, last_run_at) \
-             VALUES ($1, '', $2, now()) \
-             ON CONFLICT(ontology) DO UPDATE SET \
-               total_embedded = search_embedding_progress.total_embedded + EXCLUDED.total_embedded, \
-               last_run_at = now()",
-        )
-        .bind(ont_name)
-        .bind(batch_count as i64)
-        .execute(pool)
-        .await?;
-
+        // No progress row is written. `search_embedding_progress` existed for
+        // resumable indexing and never got it — `last_processed_id` was bound
+        // to `''` on every write, so there was nothing to resume from, and the
+        // counter beside it had no reader. The log line below is what anyone
+        // actually used to follow a reindex.
         tracing::info!("Embedded {} records from {}", batch_count, ont_name);
     }
 

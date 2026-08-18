@@ -42,6 +42,25 @@
 # from the full history, one from the squashed file (through `sqlx migrate run`,
 # the way a box would), dump both, and require the diff to be empty. A squash
 # that cannot prove itself is a schema change wearing a cleanup's clothes.
+#
+# ## The proof's blind spot: DATA
+#
+# `pg_dump --schema-only` does not carry rows, and the diff above compares
+# schemas — so a migration that INSERTs a row passes the proof and vanishes.
+#
+# That is not hypothetical. The 2026-08-18 squash silently dropped the bootstrap
+# singletons: the owner's `app_auth_user`, `app_user_profile`,
+# `app_assistant_profile`, and the `search_index_meta` BM25 statistics row. A
+# box built from it would have come up with no owner. ONE test caught it
+# (`the_self_person_cannot_be_deleted`); every other test passed, and the
+# schema diff was clean.
+#
+# So this now WARNS when the history it is collapsing contains INSERTs, and the
+# operator has to carry them into the tail of `0001_initial.sql` by hand. It
+# cannot be automated safely: some of those INSERTs are bootstrap rows that must
+# be kept, and others are backfills of data that only ever existed on an
+# already-populated box (0083 rewrote day articles into pages) and would be
+# meaningless — or wrong — replayed on an empty one.
 
 set -eu
 
@@ -95,6 +114,19 @@ launder() { grep -vE '^\\(restrict|unrestrict|connect)' "$1"; }
 
 COUNT=$(find "$MIG" -name '*.sql' | wc -l | tr -d ' ')
 say "Squashing $COUNT migrations"
+
+# ── 0. Which migrations carry DATA the schema dump will not ─────────────────
+# See "The proof's blind spot" above. Reported before anything else, because it
+# is the one class of loss the proof at the end cannot see.
+DATA_MIGRATIONS=$(grep -lEi '^[[:space:]]*INSERT INTO' "$MIG"/*.sql 2>/dev/null | xargs -n1 basename 2>/dev/null || true)
+if [ -n "$DATA_MIGRATIONS" ]; then
+    printf '\n\033[33m⚠  These migrations INSERT rows. `pg_dump --schema-only` will NOT carry\n'
+    printf '   them, and the schema diff at the end CANNOT detect their absence:\033[0m\n'
+    for m in $DATA_MIGRATIONS; do printf '       %s\n' "$m"; done
+    printf '\033[33m   Decide for each: a bootstrap row belongs at the tail of 0001_initial.sql;\n'
+    printf '   a backfill of already-existing data does not. Then VERIFY by counting\n'
+    printf '   rows in a database built from the squash alone.\033[0m\n'
+fi
 
 # ── 1. The schema, as the full history builds it ────────────────────────────
 psql -d postgres -q -c "DROP DATABASE IF EXISTS $A" -c "CREATE DATABASE $A" >/dev/null 2>&1

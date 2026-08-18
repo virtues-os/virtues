@@ -12,7 +12,7 @@
 --   4. data_health_sleep         (4 sleep records with phase-level stages)
 --   5. data_calendar_event       (5 calendar events)
 --   6. data_communication_message (9 Slack + text messages)
---   7. data_activity_app_usage   (9 app sessions)
+--   7. data_activity_app_session   (9 app sessions)
 --   8. data_health_steps         (14 step readings)
 --   9. data_health_heart_rate    (12 HR readings during run)
 --  10. data_health_workout       (1 run)
@@ -42,7 +42,7 @@ DELETE FROM wiki_days WHERE date IN ('2026-02-12', '2026-02-13', '2026-02-14');
 -- Home (Mueller) — overnight + morning
 INSERT INTO data_location_visit (
     id, place_name, latitude, longitude,
-    arrival_time, departure_time, duration_minutes,
+    started_at, ended_at, duration_minutes,
     source_stream_id, source_table, source_provider
 ) VALUES (
     'lv_demo_home_morning', 'Home', 30.2989, -97.7055,
@@ -53,7 +53,7 @@ INSERT INTO data_location_visit (
 -- Office (Downtown Austin) — morning session, before lunch
 INSERT INTO data_location_visit (
     id, place_name, latitude, longitude,
-    arrival_time, departure_time, duration_minutes,
+    started_at, ended_at, duration_minutes,
     source_stream_id, source_table, source_provider
 ) VALUES (
     'lv_demo_office_am', 'Office', 30.2672, -97.7431,
@@ -64,7 +64,7 @@ INSERT INTO data_location_visit (
 -- Office (Downtown Austin) — afternoon session, after lunch
 INSERT INTO data_location_visit (
     id, place_name, latitude, longitude,
-    arrival_time, departure_time, duration_minutes,
+    started_at, ended_at, duration_minutes,
     source_stream_id, source_table, source_provider
 ) VALUES (
     'lv_demo_office_pm', 'Office', 30.2672, -97.7431,
@@ -75,7 +75,7 @@ INSERT INTO data_location_visit (
 -- Ramen Tatsu-ya (lunch)
 INSERT INTO data_location_visit (
     id, place_name, latitude, longitude,
-    arrival_time, departure_time, duration_minutes,
+    started_at, ended_at, duration_minutes,
     source_stream_id, source_table, source_provider
 ) VALUES (
     'lv_demo_ramen', 'Ramen Tatsu-ya', 30.2700, -97.7400,
@@ -86,7 +86,7 @@ INSERT INTO data_location_visit (
 -- Trader Joe's Seaholm (the anomaly — first visit in user's logged history)
 INSERT INTO data_location_visit (
     id, place_name, latitude, longitude,
-    arrival_time, departure_time, duration_minutes,
+    started_at, ended_at, duration_minutes,
     source_stream_id, source_table, source_provider
 ) VALUES (
     'lv_demo_trader_joes', 'Trader Joe''s — Seaholm', 30.2696, -97.7521,
@@ -97,7 +97,7 @@ INSERT INTO data_location_visit (
 -- Home (Mueller) — evening return after the TJ's detour
 INSERT INTO data_location_visit (
     id, place_name, latitude, longitude,
-    arrival_time, departure_time, duration_minutes,
+    started_at, ended_at, duration_minutes,
     source_stream_id, source_table, source_provider
 ) VALUES (
     'lv_demo_home_evening', 'Home', 30.2989, -97.7055,
@@ -108,7 +108,7 @@ INSERT INTO data_location_visit (
 -- Feb 14: Lady Bird Lake walk
 INSERT INTO data_location_visit (
     id, place_name, latitude, longitude,
-    arrival_time, departure_time, duration_minutes,
+    started_at, ended_at, duration_minutes,
     source_stream_id, source_table, source_provider
 ) VALUES (
     'lv_demo_ladybird', 'Lady Bird Lake', 30.2615, -97.7480,
@@ -122,11 +122,10 @@ INSERT INTO data_location_visit (
 
 -- Primary day: Feb 13 (the detailed one)
 INSERT INTO wiki_days (
-    id, date, start_timezone,
-    autobiography, morning_baseline, epigraph
-) VALUES (
+    id, date, start_timezone, morning_baseline, epigraph
+) VALUES
+(
     'day_2026-02-13', '2026-02-13', 'America/Chicago',
-    'The routine held until 4:12 PM, when you broke your usual commute to visit the Seaholm Trader Joe''s for the first time in your logged history. Your baseline Friday grocery run takes 18 minutes and averages $45. Today you lingered in the aisles for 52 minutes and swiped for $328.50. On the drive home, you sent a voice memo to Maya: "I just bought enough snacks to survive a winter." Despite the heavy spend, your HRV that evening was 12% above your Friday baseline.',
     0.52,
     'The Trader Joe''s detour'
 ) ON CONFLICT DO NOTHING;
@@ -141,21 +140,19 @@ UPDATE wiki_days SET readiness_score = 59, readiness_details = '{"hrv":50,"rhr":
 
 -- Adjacent day: Feb 12 (routine Thursday — for cross-day comparison)
 INSERT INTO wiki_days (
-    id, date, start_timezone,
-    autobiography, morning_baseline
-) VALUES (
+    id, date, start_timezone, morning_baseline
+) VALUES
+(
     'day_2026-02-12', '2026-02-12', 'America/Chicago',
-    'A quiet Thursday. Work from home in the morning, office in the afternoon. Design iteration on the settings page. Leftovers for dinner, read before bed.',
     0.48
 ) ON CONFLICT DO NOTHING;
 
 -- Adjacent day: Feb 14 (Valentine's Saturday — slightly different texture)
 INSERT INTO wiki_days (
-    id, date, start_timezone,
-    autobiography, morning_baseline
-) VALUES (
+    id, date, start_timezone, morning_baseline
+) VALUES
+(
     'day_2026-02-14', '2026-02-14', 'America/Chicago',
-    'Saturday. Short day at the office — sprint demo in the morning, then an early afternoon. Walked Lady Bird Lake. Called Mom. Made pasta and watched a movie.',
     0.55
 ) ON CONFLICT DO NOTHING;
 
@@ -166,16 +163,11 @@ INSERT INTO wiki_days (
 -- Single sleep event for the narrative timeline. Cycle-level scoring is derived
 -- at query time from data_health_sleep stages + heart rate data.
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time,
-    auto_label, auto_location, source_ontologies,
-    is_unknown, is_transit, is_sleep,
-    event_summary, topics, entities,
-    novelty_z, autonomic_z, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, event_summary, topics, entities, novelty_z, autonomic_z, agent_action, avg_hr
 ) VALUES (
     'ev_demo_01', 'day_2026-02-13',
     '2026-02-13T06:00:00Z', '2026-02-13T12:30:00Z',
     'Sleep', 'Home', '["sleep"]',
-    FALSE, FALSE, TRUE,
 
     'Slept 6.5 hours. Four full cycles with good deep sleep in the first two. One brief wake-up around 3 AM.', '["sleep"]', '[]',
     NULL, -1.1, 'NEW', 56
@@ -183,16 +175,11 @@ INSERT INTO wiki_events (
 
 -- E02: Morning routine (06:30-07:15 CST = 12:30-13:15 UTC)
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time,
-    auto_label, auto_location, source_ontologies,
-    is_unknown, is_transit,
-    event_summary, topics, entities,
-    novelty_z, autonomic_z, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, event_summary, topics, entities, novelty_z, autonomic_z, agent_action, avg_hr
 ) VALUES (
     'ev_demo_02', 'day_2026-02-13',
     '2026-02-13T12:30:00Z', '2026-02-13T13:15:00Z',
     'Morning routine', 'Home', '["app_usage"]',
-    FALSE, FALSE,
 
     'Coffee and checking Slack at home before the commute. Three unread PRs from overnight, quick scan of the design channel.', '["routine", "morning"]', '["place_demo_home"]',
     -2.055, -0.3, 'NEW', 66
@@ -200,16 +187,11 @@ INSERT INTO wiki_events (
 
 -- E03: Bike commute (07:15-07:45 CST = 13:15-13:45 UTC)
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time,
-    auto_label, auto_location, source_ontologies,
-    is_unknown, is_transit, is_user_added, is_user_edited,
-    event_summary, topics, entities,
-    novelty_z, autonomic_z, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, autonomic_z, agent_action, avg_hr
 ) VALUES (
     'ev_demo_03', 'day_2026-02-13',
     '2026-02-13T13:15:00Z', '2026-02-13T13:45:00Z',
-    'Bike commute', NULL, '["location_visit", "steps"]',
-    FALSE, TRUE, FALSE, FALSE,
+    'Bike commute', NULL, '["location_visit", "steps"]', FALSE, FALSE,
 
     'Bike commute from Mueller to downtown office. Listened to a Daily Stoic episode on patience. Cool morning, light traffic on the Speedway bike lane.', '["commute", "podcast"]', '["place_demo_home", "place_demo_office"]',
     -1.346, -0.6, 'NEW', 122
@@ -217,16 +199,11 @@ INSERT INTO wiki_events (
 
 -- E04: Coffee and Slack (07:45-08:15 CST = 13:45-14:15 UTC)
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time,
-    auto_label, auto_location, source_ontologies,
-    is_unknown, is_transit,
-    event_summary, topics, entities,
-    novelty_z, autonomic_z, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, event_summary, topics, entities, novelty_z, autonomic_z, agent_action, avg_hr
 ) VALUES (
     'ev_demo_04', 'day_2026-02-13',
     '2026-02-13T13:45:00Z', '2026-02-13T14:15:00Z',
     'Coffee and Slack', 'Office', '["app_usage", "message"]',
-    FALSE, FALSE,
 
     'Grabbed coffee at the office kitchen, caught up on Slack threads and reviewed Maya''s Figma comments on the nav redesign.', '["messaging", "design-review"]', '["place_demo_office", "org_demo_employer", "person_demo_maya"]',
     -1.450, 0.1, 'NEW', 67
@@ -234,16 +211,11 @@ INSERT INTO wiki_events (
 
 -- E05: Design standup (08:15-09:00 CST = 14:15-15:00 UTC)
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time,
-    auto_label, auto_location, source_ontologies,
-    is_unknown, is_transit,
-    event_summary, topics, entities,
-    novelty_z, autonomic_z, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, event_summary, topics, entities, novelty_z, autonomic_z, agent_action, avg_hr
 ) VALUES (
     'ev_demo_05', 'day_2026-02-13',
     '2026-02-13T14:15:00Z', '2026-02-13T15:00:00Z',
     'Design standup', 'Office', '["calendar", "message", "transcription"]',
-    FALSE, FALSE,
 
     'Design team standup with Maya and David. Main topic was the onboarding funnel drop-off at step 3 — form validation errors causing 40% abandonment. Agreed to prototype a simplified flow by Monday.', '["standup", "onboarding", "form-validation", "ux-research", "design", "hiring"]', '["person_demo_maya", "person_demo_david", "place_demo_office", "org_demo_employer"]',
     1.443, 0.8, 'NEW', 74
@@ -251,16 +223,11 @@ INSERT INTO wiki_events (
 
 -- E06: Focused design work (09:00-11:30 CST = 15:00-17:30 UTC)
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time,
-    auto_label, auto_location, source_ontologies,
-    is_unknown, is_transit,
-    event_summary, topics, entities,
-    novelty_z, autonomic_z, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, event_summary, topics, entities, novelty_z, autonomic_z, agent_action, avg_hr
 ) VALUES (
     'ev_demo_06', 'day_2026-02-13',
     '2026-02-13T15:00:00Z', '2026-02-13T17:30:00Z',
     'Focused design work', 'Office', '["app_usage"]',
-    FALSE, FALSE,
 
     'Deep work session in Figma on the navigation redesign. Explored three layout variants for the sidebar collapse pattern. Hit flow state around 10 AM — no Slack interruptions for 90 minutes.', '["design", "figma", "deep-work"]', '["place_demo_office", "org_demo_employer"]',
     0.086, -0.5, 'NEW', 63
@@ -268,16 +235,11 @@ INSERT INTO wiki_events (
 
 -- E07: Lunch with Maya (11:30-12:30 CST = 17:30-18:30 UTC)
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time,
-    auto_label, auto_location, source_ontologies,
-    is_unknown, is_transit,
-    event_summary, topics, entities,
-    novelty_z, autonomic_z, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, event_summary, topics, entities, novelty_z, autonomic_z, agent_action, avg_hr
 ) VALUES (
     'ev_demo_07', 'day_2026-02-13',
     '2026-02-13T17:30:00Z', '2026-02-13T18:30:00Z',
     'Lunch with Maya', 'Ramen Tatsu-ya', '["location_visit", "calendar", "transcription"]',
-    FALSE, FALSE,
 
     'Lunch at Ramen Tatsu-ya with Maya. She''s unsure about the new hire — talked through the tradeoffs of senior vs mid-level for the open role. Also debated whether the nav redesign needs user testing before the sprint demo.', '["social", "ramen", "hiring", "team-decisions", "design"]', '["person_demo_maya", "place_demo_ramen"]',
     0.855, 1.2, 'NEW', 76
@@ -285,16 +247,11 @@ INSERT INTO wiki_events (
 
 -- E08: User research session (12:30-14:15 CST = 18:30-20:15 UTC)
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time,
-    auto_label, auto_location, source_ontologies,
-    is_unknown, is_transit,
-    event_summary, topics, entities,
-    novelty_z, autonomic_z, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, event_summary, topics, entities, novelty_z, autonomic_z, agent_action, avg_hr
 ) VALUES (
     'ev_demo_08', 'day_2026-02-13',
     '2026-02-13T18:30:00Z', '2026-02-13T20:15:00Z',
     'User research session', 'Office', '["calendar", "transcription"]',
-    FALSE, FALSE,
 
     'Moderated usability test with three participants on the navigation redesign. Participant 2 found the breadcrumb pattern confusing — strong signal to revisit. Recorded all sessions for the team async review.', '["ux-research", "usability-testing", "navigation", "breadcrumbs", "design", "recording"]', '["place_demo_office", "org_demo_employer"]',
     0.752, 0.7, 'NEW', 79
@@ -302,16 +259,11 @@ INSERT INTO wiki_events (
 
 -- E09: Office afternoon — design iteration (14:15-16:00 CST = 20:15-22:00 UTC)
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time,
-    auto_label, auto_location, source_ontologies,
-    is_unknown, is_transit,
-    event_summary, topics, entities,
-    novelty_z, autonomic_z, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, event_summary, topics, entities, novelty_z, autonomic_z, agent_action, avg_hr
 ) VALUES (
     'ev_demo_09', 'day_2026-02-13',
     '2026-02-13T20:15:00Z', '2026-02-13T22:00:00Z',
     'Office afternoon', 'Office', '["app_usage", "message"]',
-    FALSE, FALSE,
 
     'Synthesised the research session findings in Figma. Wrote up the breadcrumb confusion + label-on-icon recommendations and posted them to the design channel before wrapping for the day.', '["design", "figma", "wrap-up"]', '["place_demo_office", "org_demo_employer"]',
     -0.18, -0.2, 'NEW', 65
@@ -319,16 +271,11 @@ INSERT INTO wiki_events (
 
 -- E10: Drive to Trader Joe's (16:00-16:12 CST = 22:00-22:12 UTC)
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time,
-    auto_label, auto_location, source_ontologies,
-    is_unknown, is_transit, is_user_added, is_user_edited,
-    event_summary, topics, entities,
-    novelty_z, autonomic_z, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, autonomic_z, agent_action, avg_hr
 ) VALUES (
     'ev_demo_10', 'day_2026-02-13',
     '2026-02-13T22:00:00Z', '2026-02-13T22:12:00Z',
-    'Drive to Seaholm', NULL, '["location_visit"]',
-    FALSE, TRUE, FALSE, FALSE,
+    'Drive to Seaholm', NULL, '["location_visit"]', FALSE, FALSE,
 
     'Twelve-minute drive from the downtown office south to the Seaholm district. Detour off the usual commute home.', '["commute", "errand"]', '[]',
     -0.4, 0.2, 'NEW', 71
@@ -336,16 +283,11 @@ INSERT INTO wiki_events (
 
 -- E11: Trader Joe's grocery run — the anomaly (16:12-17:04 CST = 22:12-23:04 UTC)
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time,
-    auto_label, auto_location, source_ontologies,
-    is_unknown, is_transit,
-    event_summary, topics, entities,
-    novelty_z, autonomic_z, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, event_summary, topics, entities, novelty_z, autonomic_z, agent_action, avg_hr
 ) VALUES (
     'ev_demo_11', 'day_2026-02-13',
     '2026-02-13T22:12:00Z', '2026-02-13T23:04:00Z',
     'Trader Joe''s — Seaholm', 'Trader Joe''s — Seaholm', '["location_visit", "financial_transaction"]',
-    FALSE, FALSE,
 
     'First visit on record to the Seaholm Trader Joe''s. Lingered 52 minutes in the aisles and checked out at $328.50 — versus a $45 average for routine Friday grocery runs. Heaviest single grocery transaction in the trailing 90 days.', '["groceries", "errand", "anomaly"]', '[]',
     2.3, 0.6, 'NEW', 78
@@ -353,16 +295,11 @@ INSERT INTO wiki_events (
 
 -- E12: Drive home with voice memo (17:04-17:34 CST = 23:04-23:34 UTC)
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time,
-    auto_label, auto_location, source_ontologies,
-    is_unknown, is_transit, is_user_added, is_user_edited,
-    event_summary, topics, entities,
-    novelty_z, autonomic_z, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, autonomic_z, agent_action, avg_hr
 ) VALUES (
     'ev_demo_12', 'day_2026-02-13',
     '2026-02-13T23:04:00Z', '2026-02-13T23:34:00Z',
-    'Drive home', NULL, '["location_visit", "transcription"]',
-    FALSE, TRUE, FALSE, FALSE,
+    'Drive home', NULL, '["location_visit", "transcription"]', FALSE, FALSE,
 
     'Drove from Seaholm back to Mueller with a trunk full of groceries. Recorded a short voice memo to Maya from the car: "I just bought enough snacks to survive a winter."', '["commute", "voice-memo"]', '["person_demo_maya", "place_demo_home"]',
     -0.3, -0.4, 'NEW', 68
@@ -370,16 +307,11 @@ INSERT INTO wiki_events (
 
 -- E13: Unpacking groceries (17:34-18:15 CST = 23:34-00:15+1 UTC)
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time,
-    auto_label, auto_location, source_ontologies,
-    is_unknown, is_transit,
-    event_summary, topics, entities,
-    novelty_z, autonomic_z, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, event_summary, topics, entities, novelty_z, autonomic_z, agent_action, avg_hr
 ) VALUES (
     'ev_demo_13', 'day_2026-02-13',
     '2026-02-13T23:34:00Z', '2026-02-14T00:15:00Z',
     'Unpacking groceries', 'Home', '["app_usage"]',
-    FALSE, FALSE,
 
     'Carried five bags in from the car and reorganised the pantry to fit everything. Put on a Khruangbin album while sorting the freezer items.', '["routine", "groceries"]', '["place_demo_home"]',
     -0.9, -0.7, 'NEW', 70
@@ -387,16 +319,11 @@ INSERT INTO wiki_events (
 
 -- E14: Dinner and TV (18:15-19:30 CST = 00:15-01:30+1 UTC)
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time,
-    auto_label, auto_location, source_ontologies,
-    is_unknown, is_transit,
-    event_summary, topics, entities,
-    novelty_z, autonomic_z, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, event_summary, topics, entities, novelty_z, autonomic_z, agent_action, avg_hr
 ) VALUES (
     'ev_demo_14', 'day_2026-02-13',
     '2026-02-14T00:15:00Z', '2026-02-14T01:30:00Z',
     'Dinner and TV', 'Home', '["app_usage"]',
-    FALSE, FALSE,
 
     'Made dinner from the new haul — frozen mandarin chicken and a bag salad — and ate on the couch through two episodes of Severance.', '["leisure", "tv", "dinner"]', '["place_demo_home"]',
     -1.7, -1.1, 'NEW', 63
@@ -404,16 +331,11 @@ INSERT INTO wiki_events (
 
 -- E15: Reading and wind-down (19:30-21:00 CST = 01:30-03:00+1 UTC)
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time,
-    auto_label, auto_location, source_ontologies,
-    is_unknown, is_transit,
-    event_summary, topics, entities,
-    novelty_z, autonomic_z, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, event_summary, topics, entities, novelty_z, autonomic_z, agent_action, avg_hr
 ) VALUES (
     'ev_demo_15', 'day_2026-02-13',
     '2026-02-14T01:30:00Z', '2026-02-14T03:00:00Z',
     'Reading', 'Home', '["app_usage"]',
-    FALSE, FALSE,
 
     'Read 40 pages of Meditations. Lights out around 9. Resting HR before sleep was 60, the lowest reading of the week — HRV trending high through the night.', '["reading", "wind-down"]', '["place_demo_home"]',
     -1.0, -1.4, 'NEW', 60
@@ -424,39 +346,30 @@ INSERT INTO wiki_events (
 -- ─────────────────────────────────────────────────────────────────────────────
 
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time,
-    auto_label, auto_location, source_ontologies,
-    is_unknown, is_transit, is_sleep,
-    event_summary, topics, entities,
-    novelty_z, autonomic_z, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, event_summary, topics, entities, novelty_z, autonomic_z, agent_action, avg_hr
 ) VALUES
 ('ev_feb12_01', 'day_2026-02-12', '2026-02-12T06:00:00Z', '2026-02-12T13:00:00Z',
- 'Sleep', 'Home', '["sleep"]', FALSE, FALSE, TRUE,
+ 'Sleep', 'Home', '["sleep"]',
  'Overnight sleep, 7 hours.', '["sleep"]', '[]',
  NULL, -0.9, 'NEW', 56),
-
 ('ev_feb12_02', 'day_2026-02-12', '2026-02-12T13:00:00Z', '2026-02-12T14:00:00Z',
- 'Morning routine', 'Home', '["app_usage"]', FALSE, FALSE, FALSE,
+ 'Morning routine', 'Home', '["app_usage"]',
  'Morning routine at home, coffee and news.', '["routine", "morning"]', '["place_demo_home"]',
  -0.806, -0.2, 'NEW', 65),
-
 ('ev_feb12_03', 'day_2026-02-12', '2026-02-12T14:00:00Z', '2026-02-12T18:00:00Z',
- 'Work from home', 'Home', '["app_usage", "message"]', FALSE, FALSE, FALSE,
+ 'Work from home', 'Home', '["app_usage", "message"]',
  'Worked from home on design iteration for the settings page.', '["work", "design"]', '["place_demo_home", "org_demo_employer"]',
  0.066, 0.1, 'NEW', 64),
-
 ('ev_feb12_04', 'day_2026-02-12', '2026-02-12T18:00:00Z', '2026-02-12T23:00:00Z',
- 'Office work', 'Office', '["app_usage", "calendar", "message"]', FALSE, FALSE, FALSE,
+ 'Office work', 'Office', '["app_usage", "calendar", "message"]',
  'Afternoon at the office, settings page review meeting with David.', '["work", "meeting"]', '["person_demo_david", "place_demo_office", "org_demo_employer"]',
  -0.432, 0.3, 'NEW', 68),
-
 ('ev_feb12_05', 'day_2026-02-12', '2026-02-12T23:00:00Z', '2026-02-13T01:00:00Z',
- 'Dinner and reading', 'Home', '["app_usage"]', FALSE, FALSE, FALSE,
+ 'Dinner and reading', 'Home', '["app_usage"]',
  'Leftovers for dinner and reading at home.', '["routine", "leisure"]', '["place_demo_home"]',
  0.071, -0.6, 'NEW', 64),
-
 ('ev_feb12_06', 'day_2026-02-12', '2026-02-13T01:00:00Z', '2026-02-13T06:00:00Z',
- 'Sleep', 'Home', '["sleep"]', FALSE, FALSE, TRUE,
+ 'Sleep', 'Home', '["sleep"]',
  'Overnight sleep, 5 hours before Friday.', '["sleep"]', '[]',
  NULL, -0.8, 'NEW', 58) ON CONFLICT DO NOTHING;
 
@@ -465,34 +378,26 @@ INSERT INTO wiki_events (
 -- ─────────────────────────────────────────────────────────────────────────────
 
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time,
-    auto_label, auto_location, source_ontologies,
-    is_unknown, is_transit, is_sleep,
-    event_summary, topics, entities,
-    novelty_z, autonomic_z, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, event_summary, topics, entities, novelty_z, autonomic_z, agent_action, avg_hr
 ) VALUES
 ('ev_feb14_01', 'day_2026-02-14', '2026-02-14T06:00:00Z', '2026-02-14T12:30:00Z',
- 'Sleep', 'Home', '["sleep"]', FALSE, FALSE, TRUE,
+ 'Sleep', 'Home', '["sleep"]',
  'Overnight sleep after game night, 6.5 hours. Less deep than usual early on.', '["sleep"]', '[]',
  NULL, -1.0, 'NEW', 58),
-
 ('ev_feb14_02', 'day_2026-02-14', '2026-02-14T13:00:00Z', '2026-02-14T17:00:00Z',
- 'Sprint demo and office', 'Office', '["calendar", "message", "app_usage"]', FALSE, FALSE, FALSE,
+ 'Sprint demo and office', 'Office', '["calendar", "message", "app_usage"]',
  'Biweekly sprint demo showing navigation redesign progress, then early afternoon.', '["work", "meeting", "design"]', '["person_demo_maya", "person_demo_david", "place_demo_office", "org_demo_employer"]',
  0.484, 0.5, 'NEW', 73),
-
 ('ev_feb14_03', 'day_2026-02-14', '2026-02-14T17:30:00Z', '2026-02-14T19:00:00Z',
- 'Walk at Lady Bird Lake', 'Lady Bird Lake', '["steps", "location_visit"]', FALSE, FALSE, FALSE,
+ 'Walk at Lady Bird Lake', 'Lady Bird Lake', '["steps", "location_visit"]',
  'Walked Lady Bird Lake for 90 minutes on Saturday afternoon.', '["exercise", "outdoors"]', '["place_demo_ladybird"]',
  0.429, 0.2, 'NEW', 92),
-
 ('ev_feb14_04', 'day_2026-02-14', '2026-02-14T19:30:00Z', '2026-02-14T20:30:00Z',
- 'Phone call with Mom', 'Home', '["transcription"]', FALSE, FALSE, FALSE,
+ 'Phone call with Mom', 'Home', '["transcription"]',
  'Weekly phone call with Mom, talked about the house and Dad''s knee surgery.', '["family", "phone-call"]', '["person_demo_mom", "place_demo_home"]',
  0.870, 0.6, 'NEW', 71),
-
 ('ev_feb14_05', 'day_2026-02-14', '2026-02-14T21:00:00Z', '2026-02-15T06:00:00Z',
- 'Dinner and movie', 'Home', '["app_usage"]', FALSE, FALSE, FALSE,
+ 'Dinner and movie', 'Home', '["app_usage"]',
  'Made pasta and watched a movie at home, quiet Valentine''s Saturday evening.', '["leisure", "food"]', '["place_demo_home"]',
  -0.613, -0.7, 'NEW', 66) ON CONFLICT DO NOTHING;
 
@@ -509,7 +414,7 @@ INSERT INTO wiki_events (
 -- Feb 12-13 overnight sleep (7pm-midnight CST = 01:00-06:00 UTC Feb 13, 5 hours — short night)
 -- 3 compressed cycles: heavy deep early, truncated final REM
 INSERT INTO data_health_sleep (
-    id, start_time, end_time, duration_minutes, sleep_quality_score,
+    id, started_at, ended_at, duration_minutes, sleep_quality_score,
     sleep_stages,
     source_stream_id, source_table, source_provider
 ) VALUES (
@@ -540,7 +445,7 @@ INSERT INTO data_health_sleep (
 -- Feb 13 overnight sleep (midnight-6:30am CST = 06:00-12:30 UTC, 6.5 hours)
 -- 4 full cycles: good deep in first two, increasing REM
 INSERT INTO data_health_sleep (
-    id, start_time, end_time, duration_minutes, sleep_quality_score,
+    id, started_at, ended_at, duration_minutes, sleep_quality_score,
     sleep_stages,
     source_stream_id, source_table, source_provider
 ) VALUES (
@@ -575,7 +480,7 @@ INSERT INTO data_health_sleep (
 -- Feb 14 overnight sleep (midnight-6:30am CST = 06:00-12:30 UTC, 6.5 hours — after game night)
 -- 4 cycles: slightly less deep sleep due to late alcohol, more fragmented
 INSERT INTO data_health_sleep (
-    id, start_time, end_time, duration_minutes, sleep_quality_score,
+    id, started_at, ended_at, duration_minutes, sleep_quality_score,
     sleep_stages,
     source_stream_id, source_table, source_provider
 ) VALUES (
@@ -609,7 +514,7 @@ INSERT INTO data_health_sleep (
 -- Feb 14-15 overnight sleep (3pm CST Sat = 21:00 UTC to midnight CST Sun = 06:00 UTC, 9 hours — recovery)
 -- 5 full cycles: excellent deep sleep early, long REM later, well-rested
 INSERT INTO data_health_sleep (
-    id, start_time, end_time, duration_minutes, sleep_quality_score,
+    id, started_at, ended_at, duration_minutes, sleep_quality_score,
     sleep_stages,
     source_stream_id, source_table, source_provider
 ) VALUES (
@@ -655,7 +560,7 @@ INSERT INTO data_calendar_event (
     id, title, description, calendar_name, event_type, status,
     organizer_identifier, attendee_identifiers,
     location_name, conference_url, conference_platform,
-    start_time, end_time, timezone,
+    started_at, ended_at, timezone,
     source_stream_id, source_table, source_provider
 ) VALUES (
     'cal_demo_standup', 'Design Team Standup', 'Daily sync — blockers, progress, plan for the day',
@@ -671,7 +576,7 @@ INSERT INTO data_calendar_event (
     id, title, description, calendar_name, event_type, status,
     organizer_identifier, attendee_identifiers,
     location_name,
-    start_time, end_time, timezone,
+    started_at, ended_at, timezone,
     source_stream_id, source_table, source_provider
 ) VALUES (
     'cal_demo_lunch', 'Lunch', NULL,
@@ -687,7 +592,7 @@ INSERT INTO data_calendar_event (
     id, title, description, calendar_name, event_type, status,
     organizer_identifier, attendee_identifiers,
     location_name, conference_url, conference_platform,
-    start_time, end_time, timezone,
+    started_at, ended_at, timezone,
     source_stream_id, source_table, source_provider
 ) VALUES (
     'cal_demo_research', 'User Research: Navigation Redesign', 'Moderated usability testing with 3 participants. Focus: main nav patterns and settings discoverability.',
@@ -702,7 +607,7 @@ INSERT INTO data_calendar_event (
 INSERT INTO data_calendar_event (
     id, title, description, calendar_name, event_type, status,
     organizer_identifier, attendee_identifiers,
-    start_time, end_time, timezone,
+    started_at, ended_at, timezone,
     source_stream_id, source_table, source_provider
 ) VALUES (
     'cal_demo_feb12', 'Settings Page Review', 'Async design review of settings iteration',
@@ -717,7 +622,7 @@ INSERT INTO data_calendar_event (
     id, title, description, calendar_name, event_type, status,
     organizer_identifier, attendee_identifiers,
     conference_url, conference_platform,
-    start_time, end_time, timezone,
+    started_at, ended_at, timezone,
     source_stream_id, source_table, source_provider
 ) VALUES (
     'cal_demo_feb14', 'Sprint Demo', 'Biweekly sprint demo — show navigation redesign progress',
@@ -736,7 +641,7 @@ INSERT INTO data_calendar_event (
 INSERT INTO data_communication_message (
     id, message_id, thread_id, channel, body,
     from_identifier, from_name, to_identifiers,
-    is_read, is_group_message, timestamp,
+    is_read, is_group_message, occurred_at,
     source_stream_id, source_table, source_provider
 ) VALUES (
     'msg_demo_01', 'slack_msg_001', 'thread_standup_feb13', '#design-team',
@@ -750,7 +655,7 @@ INSERT INTO data_communication_message (
 INSERT INTO data_communication_message (
     id, message_id, thread_id, channel, body,
     from_identifier, from_name, to_identifiers,
-    is_read, is_group_message, timestamp,
+    is_read, is_group_message, occurred_at,
     source_stream_id, source_table, source_provider
 ) VALUES (
     'msg_demo_02', 'slack_msg_002', 'thread_standup_feb13', '#design-team',
@@ -764,7 +669,7 @@ INSERT INTO data_communication_message (
 INSERT INTO data_communication_message (
     id, message_id, thread_id, channel, body,
     from_identifier, from_name, to_identifiers,
-    is_read, is_group_message, timestamp,
+    is_read, is_group_message, occurred_at,
     source_stream_id, source_table, source_provider
 ) VALUES (
     'msg_demo_03', 'slack_msg_003', 'thread_standup_feb13', '#design-team',
@@ -778,7 +683,7 @@ INSERT INTO data_communication_message (
 INSERT INTO data_communication_message (
     id, message_id, channel, body,
     from_identifier, from_name, to_identifiers,
-    is_read, is_group_message, timestamp,
+    is_read, is_group_message, occurred_at,
     source_stream_id, source_table, source_provider
 ) VALUES (
     'msg_demo_04', 'sms_msg_001', 'sms',
@@ -792,7 +697,7 @@ INSERT INTO data_communication_message (
 INSERT INTO data_communication_message (
     id, message_id, channel, body,
     from_identifier, from_name, to_identifiers,
-    is_read, is_group_message, timestamp,
+    is_read, is_group_message, occurred_at,
     source_stream_id, source_table, source_provider
 ) VALUES (
     'msg_demo_05', 'sms_msg_002', 'sms',
@@ -806,7 +711,7 @@ INSERT INTO data_communication_message (
 INSERT INTO data_communication_message (
     id, message_id, channel, body,
     from_identifier, from_name, to_identifiers,
-    is_read, is_group_message, timestamp,
+    is_read, is_group_message, occurred_at,
     source_stream_id, source_table, source_provider
 ) VALUES (
     'msg_demo_06', 'sms_msg_003', 'sms',
@@ -819,87 +724,87 @@ INSERT INTO data_communication_message (
 -- (Evening messages omitted — partial day)
 
 -- ─────────────────────────────────────────────────────────────────────────────
--- 6d. APP USAGE (data_activity_app_usage)
+-- 6d. APP USAGE (data_activity_app_session)
 -- ─────────────────────────────────────────────────────────────────────────────
 
 -- Morning: Instagram scroll (06:35-06:50 CST = 12:35-12:50 UTC)
-INSERT INTO data_activity_app_usage (
+INSERT INTO data_activity_app_session (
     id, app_name, app_bundle_id, app_category,
-    start_time, end_time, window_title,
+    started_at, ended_at, window_title,
     source_stream_id, source_table, source_provider
 ) VALUES (
     'app_demo_01', 'Instagram', 'com.burbn.instagram', 'Social',
     '2026-02-13T12:35:00Z', '2026-02-13T12:50:00Z', NULL,
-    'demo_app_001', 'data_activity_app_usage', 'demo'
+    'demo_app_001', 'data_activity_app_session', 'demo'
 ) ON CONFLICT DO NOTHING;
 
 -- Morning: Apple News (06:50-07:05 CST = 12:50-13:05 UTC)
-INSERT INTO data_activity_app_usage (
+INSERT INTO data_activity_app_session (
     id, app_name, app_bundle_id, app_category,
-    start_time, end_time, window_title,
+    started_at, ended_at, window_title,
     source_stream_id, source_table, source_provider
 ) VALUES (
     'app_demo_02', 'Apple News', 'com.apple.news', 'News',
     '2026-02-13T12:50:00Z', '2026-02-13T13:05:00Z', NULL,
-    'demo_app_002', 'data_activity_app_usage', 'demo'
+    'demo_app_002', 'data_activity_app_session', 'demo'
 ) ON CONFLICT DO NOTHING;
 
 -- Pre-standup: Slack desktop (07:45-08:15 CST = 13:45-14:15 UTC)
-INSERT INTO data_activity_app_usage (
+INSERT INTO data_activity_app_session (
     id, app_name, app_bundle_id, app_category,
-    start_time, end_time, window_title,
+    started_at, ended_at, window_title,
     source_stream_id, source_table, source_provider
 ) VALUES (
     'app_demo_03', 'Slack', 'com.tinyspeck.slackmacgap', 'Productivity',
     '2026-02-13T13:45:00Z', '2026-02-13T14:15:00Z', '#design-team',
-    'demo_app_003', 'data_activity_app_usage', 'demo'
+    'demo_app_003', 'data_activity_app_session', 'demo'
 ) ON CONFLICT DO NOTHING;
 
 -- Deep work: Figma (09:05-11:25 CST = 15:05-17:25 UTC)
-INSERT INTO data_activity_app_usage (
+INSERT INTO data_activity_app_session (
     id, app_name, app_bundle_id, app_category,
-    start_time, end_time, window_title,
+    started_at, ended_at, window_title,
     source_stream_id, source_table, source_provider
 ) VALUES (
     'app_demo_04', 'Figma', 'com.figma.desktop', 'Design',
     '2026-02-13T15:05:00Z', '2026-02-13T17:25:00Z', 'Navigation Redesign v3 — Figma',
-    'demo_app_004', 'data_activity_app_usage', 'demo'
+    'demo_app_004', 'data_activity_app_session', 'demo'
 ) ON CONFLICT DO NOTHING;
 
 -- Post-standup: Notion docs (09:00-09:05 CST = 15:00-15:05 UTC)
-INSERT INTO data_activity_app_usage (
+INSERT INTO data_activity_app_session (
     id, app_name, app_bundle_id, app_category,
-    start_time, end_time, window_title, url,
+    started_at, ended_at, window_title, url,
     source_stream_id, source_table, source_provider
 ) VALUES (
     'app_demo_05', 'Notion', 'notion.id', 'Productivity',
     '2026-02-13T15:00:00Z', '2026-02-13T15:05:00Z',
     'Standup Notes — Feb 13', 'https://notion.so/standup-feb-13',
-    'demo_app_005', 'data_activity_app_usage', 'demo'
+    'demo_app_005', 'data_activity_app_session', 'demo'
 ) ON CONFLICT DO NOTHING;
 
 -- (Evening app usage omitted — partial day)
 
 -- Feb 12: Figma (adjacent day)
-INSERT INTO data_activity_app_usage (
+INSERT INTO data_activity_app_session (
     id, app_name, app_bundle_id, app_category,
-    start_time, end_time, window_title,
+    started_at, ended_at, window_title,
     source_stream_id, source_table, source_provider
 ) VALUES (
     'app_demo_08', 'Figma', 'com.figma.desktop', 'Design',
     '2026-02-12T15:00:00Z', '2026-02-12T17:30:00Z', 'Settings Page v2 — Figma',
-    'demo_app_008', 'data_activity_app_usage', 'demo'
+    'demo_app_008', 'data_activity_app_session', 'demo'
 ) ON CONFLICT DO NOTHING;
 
 -- Feb 12: Slack (adjacent day)
-INSERT INTO data_activity_app_usage (
+INSERT INTO data_activity_app_session (
     id, app_name, app_bundle_id, app_category,
-    start_time, end_time, window_title,
+    started_at, ended_at, window_title,
     source_stream_id, source_table, source_provider
 ) VALUES (
     'app_demo_09', 'Slack', 'com.tinyspeck.slackmacgap', 'Productivity',
     '2026-02-12T18:00:00Z', '2026-02-12T22:30:00Z', '#design-team',
-    'demo_app_009', 'data_activity_app_usage', 'demo'
+    'demo_app_009', 'data_activity_app_session', 'demo'
 ) ON CONFLICT DO NOTHING;
 
 -- ─────────────────────────────────────────────────────────────────────────────
@@ -908,7 +813,7 @@ INSERT INTO data_activity_app_usage (
 -- Step counts captured at intervals. Bike commute and run produce step signals.
 
 INSERT INTO data_health_steps (
-    id, step_count, timestamp,
+    id, step_count, occurred_at,
     source_stream_id, source_table, source_provider
 ) VALUES
 -- Bike commute to work (07:15-07:45 CST = 13:15-13:45 UTC) — pedaling registers as steps
@@ -939,7 +844,7 @@ INSERT INTO data_health_steps (
 -- Elevated readings during the run (16:45-17:30 CST = 22:45-23:30 UTC)
 
 INSERT INTO data_health_heart_rate (
-    id, bpm, timestamp,
+    id, bpm, occurred_at,
     source_stream_id, source_table, source_provider
 ) VALUES
 -- Resting before run
@@ -966,7 +871,7 @@ INSERT INTO data_health_heart_rate (
 
 -- Run at Mueller trails (16:45-17:30 CST = 22:45-23:30 UTC)
 INSERT INTO data_health_workout (
-    id, workout_type, start_time, end_time,
+    id, workout_type, started_at, ended_at,
     duration_minutes, calories_burned, distance_km,
     avg_heart_rate, max_heart_rate,
     source_stream_id, source_table, source_provider
@@ -984,7 +889,7 @@ INSERT INTO data_health_workout (
 -- User research session recording (12:30-14:15 CST = 18:30-20:15 UTC)
 INSERT INTO data_communication_transcription (
     id, text, language, duration_seconds,
-    start_time, end_time,
+    started_at, ended_at,
     speaker_count, title, summary, confidence,
     tags,
     source_stream_id, source_table, source_provider
@@ -1023,7 +928,7 @@ Participant 3: Definitely. Or at least tooltips on hover. Right now I''d have to
 -- Design standup recording (08:15-09:00 CST = 14:15-15:00 UTC)
 INSERT INTO data_communication_transcription (
     id, text, language, duration_seconds,
-    start_time, end_time,
+    started_at, ended_at,
     speaker_count, title, summary, confidence,
     tags, entities, speaker_segments,
     source_stream_id, source_table, source_provider
@@ -1066,7 +971,7 @@ Maya: Perfect. Let''s regroup tomorrow morning with the results.',
 -- Lunch conversation with Maya at Ramen Tatsu-ya (11:30-12:30 CST = 17:30-18:30 UTC)
 INSERT INTO data_communication_transcription (
     id, text, language, duration_seconds,
-    start_time, end_time,
+    started_at, ended_at,
     speaker_count, title, summary, confidence,
     tags, audio_url, metadata,
     source_stream_id, source_table, source_provider
@@ -1111,7 +1016,7 @@ Maya: Do it. Life''s too short to miss a good house.',
 -- Voice memo to Maya from the car after Trader Joe's (5:11 PM CST = 23:11 UTC)
 INSERT INTO data_communication_transcription (
     id, text, language, duration_seconds,
-    start_time, end_time,
+    started_at, ended_at,
     speaker_count, title, summary, confidence,
     tags, entities,
     source_stream_id, source_table, source_provider
@@ -1131,7 +1036,7 @@ INSERT INTO data_communication_transcription (
 -- Feb 14: Phone call with Mom (for adjacent day)
 INSERT INTO data_communication_transcription (
     id, text, language, duration_seconds,
-    start_time, end_time,
+    started_at, ended_at,
     speaker_count, title, summary, confidence,
     source_stream_id, source_table, source_provider
 ) VALUES (
@@ -1165,7 +1070,7 @@ INSERT INTO data_financial_transaction (
     id, account_id, transaction_id,
     amount, currency, merchant_name, merchant_category,
     description, category, is_pending, transaction_type, payment_channel,
-    timestamp, authorized_timestamp,
+    occurred_at, authorized_timestamp,
     source_stream_id, source_table, source_provider, metadata
 ) VALUES (
     'fin_txn_demo_tj', 'fin_acct_demo_checking', 'demo_plaid_txn_001',
@@ -1182,7 +1087,7 @@ INSERT INTO data_financial_transaction (
 -- GPS breadcrumbs during transit and the run. These feed location clustering.
 
 INSERT INTO data_location_point (
-    id, latitude, longitude, horizontal_accuracy, timestamp,
+    id, latitude, longitude, horizontal_accuracy, occurred_at,
     source_stream_id, source_table, source_provider
 ) VALUES
 -- Bike commute: Mueller → Downtown (07:15-07:45 CST = 13:15-13:45 UTC)
@@ -1446,7 +1351,7 @@ INSERT INTO wiki_orgs (
 -- ─────────────────────────────────────────────────────────────────────────────
 
 -- Location visits → places
-INSERT INTO wiki_refs (id, entity_type, entity_id, source_table, source_id, role, timestamp) VALUES
+INSERT INTO wiki_refs (id, entity_type, entity_id, source_table, source_id, role, occurred_at) VALUES
 ('eref_lv_home_morning', 'place', 'place_demo_home', 'data_location_visit', 'lv_demo_home_morning', 'location', '2026-02-13T04:00:00Z'),
 ('eref_lv_office_am', 'place', 'place_demo_office', 'data_location_visit', 'lv_demo_office_am', 'location', '2026-02-13T13:45:00Z'),
 ('eref_lv_office_pm', 'place', 'place_demo_office', 'data_location_visit', 'lv_demo_office_pm', 'location', '2026-02-13T18:30:00Z'),

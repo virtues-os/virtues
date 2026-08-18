@@ -29,11 +29,11 @@ async fn resolve_sleep_for_date(pool: &PgPool, date: NaiveDate) {
 
     // Find sleep record where wake-up (end_time) falls on this date
     let sleep_row: Option<sqlx::postgres::PgRow> = sqlx::query(
-        r#"SELECT id, start_time, end_time, duration_minutes
+        r#"SELECT id, started_at, ended_at, duration_minutes
            FROM data_health_sleep
-           WHERE end_time >= ($1 || 'T00:00:00Z')::timestamptz
-             AND end_time < ($2 || 'T00:00:00Z')::timestamptz
-           ORDER BY end_time DESC LIMIT 1"#,
+           WHERE ended_at >= ($1 || 'T00:00:00Z')::timestamptz
+             AND ended_at < ($2 || 'T00:00:00Z')::timestamptz
+           ORDER BY ended_at DESC LIMIT 1"#,
     )
     .bind(&date_str)
     .bind(&next_date)
@@ -49,15 +49,19 @@ async fn resolve_sleep_for_date(pool: &PgPool, date: NaiveDate) {
 
     // `start_time`/`end_time` are TIMESTAMPTZ — decode them as DateTime<Utc>,
     // not String (a String decode silently fails → empty string → garbage).
-    let sleep_start: DateTime<Utc> = match sleep_row.try_get("start_time") {
+    let sleep_start: DateTime<Utc> = match sleep_row.try_get("started_at") {
         Ok(v) => v,
         Err(_) => return,
     };
-    let sleep_end: DateTime<Utc> = match sleep_row.try_get("end_time") {
+    let sleep_end: DateTime<Utc> = match sleep_row.try_get("ended_at") {
         Ok(v) => v,
         Err(_) => return,
     };
-    let duration_mins: Option<i64> = sleep_row.try_get("duration_minutes").ok();
+    let duration_mins: Option<i64> = sleep_row
+        .try_get::<Option<i32>, _>("duration_minutes")
+        .ok()
+        .flatten()
+        .map(i64::from);
 
     // Clamp start_time to UTC midnight of this date (the day page's boundary).
     let day_midnight: DateTime<Utc> = date.and_hms_opt(0, 0, 0).unwrap().and_utc();
@@ -86,7 +90,7 @@ async fn resolve_sleep_for_date(pool: &PgPool, date: NaiveDate) {
     let avg_hr: Option<f64> = sqlx::query_scalar(
         r#"SELECT AVG(CAST(bpm AS REAL))
            FROM data_health_heart_rate
-           WHERE timestamp >= $1 AND timestamp < $2"#,
+           WHERE occurred_at >= $1 AND occurred_at < $2"#,
     )
     .bind(sleep_start)
     .bind(sleep_end)
@@ -113,7 +117,7 @@ async fn resolve_sleep_for_date(pool: &PgPool, date: NaiveDate) {
         // Update existing sleep event
         let _ = sqlx::query(
             r#"UPDATE wiki_events
-               SET start_time = $1, end_time = $2, avg_hr = $3, event_summary = $4
+               SET started_at = $1, ended_at = $2, avg_hr = $3, event_summary = $4
                WHERE id = $5"#,
         )
         .bind(event_start)
@@ -129,7 +133,7 @@ async fn resolve_sleep_for_date(pool: &PgPool, date: NaiveDate) {
             date_str.replace('-', ""));
         let _ = sqlx::query(
             r#"INSERT INTO wiki_events
-               (id, day_id, start_time, end_time, auto_label, auto_location,
+               (id, day_id, started_at, ended_at, auto_label, auto_location,
                 source_ontologies, kind, event_summary, topics, entities,
                 agent_action, avg_hr, confidence)
                VALUES ($1, $2, $3, $4, 'Sleep', 'Home', '["sleep"]'::jsonb,
@@ -176,16 +180,16 @@ async fn reconcile_overlaps(
     // tail (which begins exactly at `end`) is not itself re-clipped.
     let _ = sqlx::query(
         "INSERT INTO wiki_events \
-           (id, day_id, start_time, end_time, auto_label, auto_location, \
+           (id, day_id, started_at, ended_at, auto_label, auto_location, \
             source_ontologies, kind, is_user_added, is_user_edited, \
             user_hidden, user_created, topics, entities, event_summary, confidence) \
-         SELECT 'ev_' || replace(gen_random_uuid()::text, '-', ''), day_id, $3, end_time, \
+         SELECT 'ev_' || replace(gen_random_uuid()::text, '-', ''), day_id, $3, ended_at, \
                 auto_label, auto_location, source_ontologies, kind, \
                 FALSE, is_user_edited, user_hidden, user_created, topics, entities, \
                 event_summary, confidence \
          FROM wiki_events \
          WHERE day_id = $1 AND is_sleep = FALSE AND is_user_added = FALSE \
-           AND start_time < $2 AND end_time > $3",
+           AND started_at < $2 AND ended_at > $3",
     )
     .bind(day_id)
     .bind(start)
@@ -195,9 +199,9 @@ async fn reconcile_overlaps(
 
     // Straddles the start, OR the (now tail-copied) spanning head → end at `start`.
     let _ = sqlx::query(
-        "UPDATE wiki_events SET end_time = $2 \
+        "UPDATE wiki_events SET ended_at = $2 \
          WHERE day_id = $1 AND is_sleep = FALSE AND is_user_added = FALSE \
-           AND start_time < $2 AND end_time > $2",
+           AND started_at < $2 AND ended_at > $2",
     )
     .bind(day_id)
     .bind(start)
@@ -207,9 +211,9 @@ async fn reconcile_overlaps(
 
     // Straddles the end (starts within, ends after) → begin at `end`.
     let _ = sqlx::query(
-        "UPDATE wiki_events SET start_time = $3 \
+        "UPDATE wiki_events SET started_at = $3 \
          WHERE day_id = $1 AND is_sleep = FALSE AND is_user_added = FALSE \
-           AND start_time >= $2 AND start_time < $3 AND end_time > $3",
+           AND started_at >= $2 AND started_at < $3 AND ended_at > $3",
     )
     .bind(day_id)
     .bind(start)
@@ -225,7 +229,7 @@ async fn reconcile_overlaps(
     let _ = sqlx::query(
         "DELETE FROM wiki_events \
          WHERE day_id = $1 AND is_sleep = FALSE AND is_user_added = FALSE AND is_unknown = TRUE \
-           AND start_time >= $2 AND end_time <= $3",
+           AND started_at >= $2 AND ended_at <= $3",
     )
     .bind(day_id)
     .bind(start)

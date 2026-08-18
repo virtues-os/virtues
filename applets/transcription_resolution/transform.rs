@@ -537,7 +537,7 @@ async fn insert_silent_transcript(db: &PgPool, rec: &PendingRecording) -> Result
     sqlx::query(
         r#"INSERT INTO data_communication_transcription (
             id, audio_url, text, title, summary, language,
-            duration_seconds, start_time, end_time,
+            duration_seconds, started_at, ended_at,
             speaker_count, confidence, tags, entities,
             source_stream_id, source_table, source_provider, metadata
         ) VALUES (
@@ -591,7 +591,7 @@ async fn insert_transcription(
     sqlx::query(
         r#"INSERT INTO data_communication_transcription (
             id, audio_url, text, title, summary, language,
-            duration_seconds, start_time, end_time,
+            duration_seconds, started_at, ended_at,
             speaker_count, confidence, tags, entities,
             source_stream_id, source_table, source_provider, metadata
         ) VALUES (

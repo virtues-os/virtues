@@ -211,13 +211,13 @@ pub async fn compute_autonomic_for_day(pool: &PgPool, date: NaiveDate) -> anyhow
 async fn get_resting_hr(pool: &PgPool, before_date: &str) -> Option<f64> {
     let row: Option<(f64,)> = sqlx::query_as(
         r#"
-        SELECT AVG(bpm) as avg_resting
+        SELECT AVG(bpm)::float8 as avg_resting
         FROM (
             SELECT MIN(bpm) as bpm
             FROM data_health_heart_rate
-            WHERE timestamp < $1
-            GROUP BY DATE(timestamp)
-            ORDER BY DATE(timestamp) DESC
+            WHERE occurred_at < $1
+            GROUP BY DATE(occurred_at)
+            ORDER BY DATE(occurred_at) DESC
             LIMIT 14
         )
         "#,
@@ -236,11 +236,11 @@ async fn get_resting_hr_std(pool: &PgPool, before_date: &str) -> Option<f64> {
     // stddev_samp(); kept in Rust to match the established scoring math.)
     let rows: Vec<(f64,)> = sqlx::query_as(
         r#"
-        SELECT MIN(bpm) as daily_min
+        SELECT MIN(bpm)::float8 as daily_min
         FROM data_health_heart_rate
-        WHERE timestamp < $1
-        GROUP BY DATE(timestamp)
-        ORDER BY DATE(timestamp) DESC
+        WHERE occurred_at < $1
+        GROUP BY DATE(occurred_at)
+        ORDER BY DATE(occurred_at) DESC
         LIMIT 14
         "#,
     )

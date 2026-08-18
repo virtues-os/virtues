@@ -165,7 +165,7 @@ async fn open_session(db: &PgPool, device_id: &str, ev: &Ev) -> Result<usize> {
 
     sqlx::query(
         "INSERT INTO data_activity_app_session (
-             id, device_id, app_name, app_bundle_id, start_time, end_time, window_title,
+             id, device_id, app_name, app_bundle_id, started_at, ended_at, window_title,
              attention, is_open, source_stream_id, source_table, source_provider, metadata
          ) VALUES ($1, $2, $3, $4, $5, $5, $6, 'active', true, $7, $8, $9, $10)
          ON CONFLICT (source_stream_id) DO NOTHING",
@@ -195,7 +195,7 @@ async fn touch_session(db: &PgPool, device_id: &str, ev: &Ev) -> Result<()> {
     let Some(title) = &ev.title else {
         sqlx::query(
             "UPDATE data_activity_app_session
-                SET end_time = greatest(end_time, $1), updated_at = now()
+                SET ended_at = greatest(end_time, $1), updated_at = now()
               WHERE device_id = $2 AND app_bundle_id = $3 AND is_open",
         )
         .bind(ev.at)
@@ -208,7 +208,7 @@ async fn touch_session(db: &PgPool, device_id: &str, ev: &Ev) -> Result<()> {
 
     sqlx::query(
         "UPDATE data_activity_app_session
-            SET end_time = greatest(end_time, $1),
+            SET ended_at = greatest(end_time, $1),
                 window_title = coalesce(window_title, $4),
                 metadata = jsonb_set(
                     metadata, '{titles}',
@@ -247,7 +247,7 @@ async fn open_session_bundle(db: &PgPool, device_id: &str) -> Result<Option<Stri
     let row = sqlx::query(
         "SELECT app_bundle_id FROM data_activity_app_session
           WHERE device_id = $1 AND is_open
-          ORDER BY start_time DESC LIMIT 1",
+          ORDER BY started_at DESC LIMIT 1",
     )
     .bind(device_id)
     .fetch_optional(db)
@@ -266,7 +266,7 @@ async fn close_session(
     // heartbeat, and a negative-duration session is worse than a wrong one.
     sqlx::query(
         "UPDATE data_activity_app_session
-            SET end_time = greatest(end_time, $1), is_open = false, closed_by = $2,
+            SET ended_at = greatest(end_time, $1), is_open = false, closed_by = $2,
                 updated_at = now()
           WHERE device_id = $3 AND is_open",
     )
@@ -278,7 +278,7 @@ async fn close_session(
 
     sqlx::query(
         "DELETE FROM data_activity_app_session
-          WHERE device_id = $1 AND NOT is_open AND end_time - start_time < $2",
+          WHERE device_id = $1 AND NOT is_open AND ended_at - started_at < $2",
     )
     .bind(device_id)
     .bind(MIN_SESSION)
@@ -296,7 +296,7 @@ async fn reap_stale(db: &PgPool, device_id: &str) -> Result<()> {
     sqlx::query(
         "UPDATE data_activity_app_session
             SET is_open = false, closed_by = 'stale', updated_at = now()
-          WHERE device_id = $1 AND is_open AND now() - start_time > $2",
+          WHERE device_id = $1 AND is_open AND now() - started_at > $2",
     )
     .bind(device_id)
     .bind(MAX_OPEN)

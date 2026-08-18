@@ -1,0 +1,54 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n        SELECT round(avg(latitude)::numeric, 6)::float8  AS \"lat!\",\n               round(avg(longitude)::numeric, 6)::float8 AS \"lon!\",\n               count(*)                                  AS \"visits!\",\n               COALESCE(sum(duration_minutes), 0)::float8 AS \"minutes!\",\n               min(started_at)                         AS \"first\",\n               max(COALESCE(ended_at, started_at)) AS \"last\"\n        FROM data_location_visit\n        WHERE started_at >= $1 AND started_at < $2\n          AND latitude IS NOT NULL AND longitude IS NOT NULL\n        GROUP BY round((latitude / $3)::numeric), round((longitude / $3)::numeric)\n        ORDER BY 4 DESC\n        LIMIT 80\n        ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "lat!",
+        "type_info": "Float8"
+      },
+      {
+        "ordinal": 1,
+        "name": "lon!",
+        "type_info": "Float8"
+      },
+      {
+        "ordinal": 2,
+        "name": "visits!",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 3,
+        "name": "minutes!",
+        "type_info": "Float8"
+      },
+      {
+        "ordinal": 4,
+        "name": "first",
+        "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 5,
+        "name": "last",
+        "type_info": "Timestamptz"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Timestamptz",
+        "Timestamptz",
+        "Float8"
+      ]
+    },
+    "nullable": [
+      null,
+      null,
+      null,
+      null,
+      null,
+      null
+    ]
+  },
+  "hash": "740d7411d699e6df647ae1bc7d35c228757eb020a45c7ec161b33e112b532e83"
+}

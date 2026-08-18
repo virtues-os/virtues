@@ -444,11 +444,15 @@ impl SemanticSearchEngine {
             next += filters.ontologies.len();
         }
         if filters.date_after.is_some() {
-            filter_sql.push_str(&format!(" AND se.timestamp >= ${next}"));
+            filter_sql.push_str(&format!(
+                " AND (${next}::timestamptz IS NULL OR se.occurred_at >= ${next})"
+            ));
             next += 1;
         }
         if filters.date_before.is_some() {
-            filter_sql.push_str(&format!(" AND se.timestamp <= ${next}"));
+            filter_sql.push_str(&format!(
+                " AND (${next}::timestamptz IS NULL OR se.occurred_at <= ${next})"
+            ));
             next += 1;
         }
         let entity_filter = !filters.entities.is_empty();
@@ -541,7 +545,7 @@ impl SemanticSearchEngine {
              ), best AS ( \
                SELECT DISTINCT ON (se.record_id) \
                       se.ontology, se.record_id, se.title, se.preview, se.author, \
-                      to_char(se.timestamp AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS\"Z\"') as ts, \
+                      to_char(se.occurred_at AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS\"Z\"') as ts, \
                       se.content, ({wd}*z.dz + {wl}*z.bz{boost})::float8 AS s \
                FROM z JOIN search_embeddings se ON se.id = z.id \
                ORDER BY se.record_id, s DESC, se.id \
@@ -582,18 +586,18 @@ impl SemanticSearchEngine {
             db_query = db_query.bind(ont);
         }
         if let Some(da) = &filters.date_after {
-            db_query = db_query.bind(
-                chrono::DateTime::parse_from_rfc3339(da)
-                    .map(|d| d.with_timezone(&chrono::Utc))
-                    .ok(),
-            );
+            let parsed = parse_date_filter(da);
+            if parsed.is_none() {
+                tracing::warn!(value = %da, "unparseable date_after; the filter is ignored");
+            }
+            db_query = db_query.bind(parsed);
         }
         if let Some(db) = &filters.date_before {
-            db_query = db_query.bind(
-                chrono::DateTime::parse_from_rfc3339(db)
-                    .map(|d| d.with_timezone(&chrono::Utc))
-                    .ok(),
-            );
+            let parsed = parse_date_filter(db);
+            if parsed.is_none() {
+                tracing::warn!(value = %db, "unparseable date_before; the filter is ignored");
+            }
+            db_query = db_query.bind(parsed);
         }
         if entity_filter {
             db_query = db_query.bind(filters.entities.clone());
@@ -612,6 +616,23 @@ impl SemanticSearchEngine {
         // happened to borrow, silently changing every later query that reused it.
         let mut tx = self.pool.begin().await?;
         sqlx::query(&format!("SET LOCAL hnsw.ef_search = {HNSW_EF_SEARCH}"))
+            .execute(&mut *tx)
+            .await?;
+        // Keep scanning the graph when the WHERE clause throws candidates away.
+        //
+        // The dense arm post-filters: HNSW returns `ef_search` nearest rows,
+        // and only then does `AND se.ontology IN (…)` / `AND se.occurred_at >= $n`
+        // discard whatever does not match. So a narrow filter — "what did I do
+        // last March?" — could leave the dense arm returning a handful of rows
+        // instead of a full pool, and the hybrid would quietly degrade to
+        // lexical-only. No error, just worse answers on exactly the questions
+        // people ask most specifically.
+        //
+        // Iterative scan makes pgvector resume the graph walk until it has
+        // enough rows that survive the filter. `relaxed_order` rather than
+        // `strict_order` because the results are re-ranked downstream anyway,
+        // and relaxed is markedly faster.
+        sqlx::query("SET LOCAL hnsw.iterative_scan = relaxed_order")
             .execute(&mut *tx)
             .await?;
         let rows = db_query.fetch_all(&mut *tx).await?;
@@ -974,4 +995,27 @@ mod live_filter_matrix {
         }
         println!("all {ran} filter combinations bound and executed");
     }
+}
+
+/// Parse a date filter the way the tool schema advertises it.
+///
+/// The `semantic_search` schema tells the model: *"ISO 8601, e.g.
+/// '2026-01-01'"* — and the code parsed it with `parse_from_rfc3339`, which
+/// requires a full timestamp with an offset and rejects a bare date. The result
+/// was `.ok()` → `None` → a bound NULL, and `occurred_at >= NULL` is never true.
+/// So every date-scoped search the assistant ever ran returned zero rows, and it
+/// reported "nothing in your record for that period" — about a record that had
+/// it.
+///
+/// Accepts what the schema promises (a bare date, read as UTC midnight) and what
+/// a model may send anyway (a full RFC 3339 timestamp).
+fn parse_date_filter(raw: &str) -> Option<chrono::DateTime<chrono::Utc>> {
+    let raw = raw.trim();
+    if let Ok(dt) = chrono::DateTime::parse_from_rfc3339(raw) {
+        return Some(dt.with_timezone(&chrono::Utc));
+    }
+    if let Ok(d) = chrono::NaiveDate::parse_from_str(raw, "%Y-%m-%d") {
+        return Some(d.and_hms_opt(0, 0, 0)?.and_utc());
+    }
+    None
 }
