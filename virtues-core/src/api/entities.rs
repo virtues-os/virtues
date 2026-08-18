@@ -727,15 +727,6 @@ async fn every_data_table_participates_or_is_exempted(pool: sqlx::PgPool) {
         ),
         // ── Known gaps below. Each is collected today and invisible. ─────────
         (
-            "data_content_conversation",
-            "GAP: imported AI chat history — prose, and should be searchable",
-        ),
-        (
-            "data_environment_weather",
-            "GAP: ambient conditions; needs a decision on whether weather is a \
-             lifeline lane or only day-page context",
-        ),
-        (
             "data_financial_asset",
             "GAP: holdings are collected by plaid_investments_sync and unreachable",
         ),
