@@ -18,6 +18,37 @@ use crate::error::{Error, Result};
 /// or streaming HTTP response needs without ever materializing the object.
 pub type ObjectStream = (u64, BoxStream<'static, std::io::Result<Bytes>>);
 
+/// Resolve a storage key to a path inside the lake, refusing anything that
+/// would escape it.
+///
+/// The key is not trusted. It is built as
+/// `media/{provider}/{stream}/{stream_id}.{audio_format}` and BOTH of those
+/// last two come verbatim out of a device's JSON payload. So a paired phone —
+/// compromised, buggy, or malicious — POSTing
+/// `{"id":"../../../virtues","audio_format":"env"}` produced the key
+/// `media/ios/mic/../../../virtues.env`, and `base_path.join(key)` resolved it
+/// to `/var/lib/virtues/virtues.env`. Overwriting that file destroys
+/// VIRTUES_ENCRYPTION_KEY, at which point every encrypted column on the box is
+/// permanently undecryptable — silently, because nothing reads the key until
+/// something needs to decrypt.
+///
+/// Rejects on the COMPONENTS rather than on the string: a substring test for
+/// `..` misses encodings and absolute paths, while `Component::Normal` admits
+/// exactly "a plain name relative to here" and nothing else.
+fn safe_join(base: &Path, key: &str) -> Result<PathBuf> {
+    use std::path::Component;
+    let rel = Path::new(key);
+    if !rel
+        .components()
+        .all(|c| matches!(c, Component::Normal(_)))
+    {
+        return Err(Error::Other(format!(
+            "unsafe storage key {key:?}: keys must be plain relative paths"
+        )));
+    }
+    Ok(base.join(rel))
+}
+
 /// Storage trait for different backends
 #[async_trait]
 pub trait StorageBackend: Send + Sync {
@@ -198,7 +229,7 @@ impl StorageBackend for FileStorage {
     }
 
     async fn upload(&self, key: &str, data: Vec<u8>) -> Result<()> {
-        let path = self.base_path.join(key);
+        let path = safe_join(&self.base_path, key)?;
 
         // Create parent directories
         if let Some(parent) = path.parent() {
@@ -210,7 +241,7 @@ impl StorageBackend for FileStorage {
     }
 
     async fn upload_from_file(&self, key: &str, src: &Path) -> Result<()> {
-        let path = self.base_path.join(key);
+        let path = safe_join(&self.base_path, key)?;
         if let Some(parent) = path.parent() {
             tokio::fs::create_dir_all(parent).await?;
         }
@@ -224,14 +255,14 @@ impl StorageBackend for FileStorage {
     }
 
     async fn download(&self, key: &str) -> Result<Vec<u8>> {
-        let path = self.base_path.join(key);
+        let path = safe_join(&self.base_path, key)?;
         Ok(tokio::fs::read(path).await?)
     }
 
     async fn read_stream(&self, key: &str, range: Option<(u64, u64)>) -> Result<ObjectStream> {
         use tokio::io::{AsyncReadExt, AsyncSeekExt};
 
-        let path = self.base_path.join(key);
+        let path = safe_join(&self.base_path, key)?;
         let mut file = tokio::fs::File::open(path).await?;
         let total = file.metadata().await?.len();
         let stream: BoxStream<'static, std::io::Result<Bytes>> = match range {
@@ -274,7 +305,7 @@ impl StorageBackend for FileStorage {
     }
 
     async fn delete(&self, key: &str) -> Result<()> {
-        let path = self.base_path.join(key);
+        let path = safe_join(&self.base_path, key)?;
         tokio::fs::remove_file(path).await?;
         Ok(())
     }
@@ -482,5 +513,38 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(downloaded, data);
+    }
+}
+
+#[cfg(test)]
+mod safe_join_tests {
+    use super::safe_join;
+    use std::path::Path;
+
+    /// A device-supplied key must not be able to write outside the lake.
+    ///
+    /// The key is `media/{provider}/{stream}/{stream_id}.{audio_format}` and the
+    /// last two come verbatim from a phone's JSON. `../../../virtues` + `env`
+    /// resolved to `/var/lib/virtues/virtues.env` — overwriting the encryption
+    /// key and making every encrypted column permanently undecryptable.
+    #[test]
+    fn traversal_keys_are_refused() {
+        let base = Path::new("/var/lib/virtues/lake");
+        for k in [
+            "media/ios/mic/../../../virtues.env",
+            "../virtues.env",
+            "/etc/passwd",
+            "media/ios/../../..",
+            "./media/ios/x",
+        ] {
+            assert!(safe_join(base, k).is_err(), "must refuse {k}");
+        }
+    }
+
+    #[test]
+    fn ordinary_keys_still_resolve() {
+        let base = Path::new("/var/lib/virtues/lake");
+        let p = safe_join(base, "media/ios/microphone/abc123.m4a").expect("ordinary key");
+        assert_eq!(p, base.join("media/ios/microphone/abc123.m4a"));
     }
 }

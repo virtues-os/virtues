@@ -1201,8 +1201,13 @@ pub async fn run(client: Virtues, host: &str, port: u16) -> Result<()> {
     .with_graceful_shutdown(shutdown_signal)
     .await?;
 
-    // Note: No flush needed on shutdown - StreamWriter is in-memory only now.
-    // Records are written directly to filesystem during sync/ingest.
+    // Flush queued page edits before the process goes away.
+    //
+    // The note that used to sit here said no flush was needed — true of the old
+    // StreamWriter, never true of the Yjs save queue, which holds the owner's
+    // most recent typing for up to ~2.5s. Without this, every `systemctl
+    // restart virtues` and every self-update dropped it.
+    yjs_state.flush_pending_saves().await;
     tracing::info!("Server shutting down gracefully");
 
     // Note: scheduler runs in background and will stop when the process exits

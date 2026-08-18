@@ -324,7 +324,33 @@ pub async fn segment_day_events(pool: &PgPool, date: NaiveDate) -> Result<u32> {
     let model = crate::api::assistant_profile::get_chat_model(pool).await?;
     let raw_response = call_virtues_api(pool, SEGMENT_PROMPT, &model, &prompt).await?;
 
-    let events = parse_events_salvaging(&raw_response).unwrap_or_default();
+    // An empty parse is a FAILURE, not a day with nothing in it.
+    //
+    // `store_structured_events` deletes every auto event for the day before
+    // inserting, and the fingerprint written below means the day is never
+    // re-cut. So one unparseable model response used to erase a day that had
+    // fourteen good events, replace it with a single "Unknown" block, and mark
+    // the work done — permanently, on a day the owner actually lived. The log
+    // said `events = 0`, which reads exactly like a quiet day.
+    //
+    // Bail before the delete and before the fingerprint, and keep the raw
+    // response at error level so the next run has something to look at. The day
+    // stays un-segmented, which is what "we could not read the answer" should
+    // look like, and the next scheduled pass tries again.
+    let events = match parse_events_salvaging(&raw_response) {
+        Some(ev) if !ev.is_empty() => ev,
+        _ => {
+            tracing::error!(
+                date = %date,
+                response = %raw_response.chars().take(2000).collect::<String>(),
+                "could not parse any events from the model response — leaving the \
+                 day un-segmented rather than erasing it"
+            );
+            return Err(crate::Error::Other(format!(
+                "day {date}: no events could be parsed from the model response"
+            )));
+        }
+    };
     let n = events.len() as u32;
 
     let day_stub = get_or_create_day(pool, date).await?;
