@@ -156,7 +156,7 @@ async fn flush(db: &PgPool, records: &[LiabilityRow]) -> Result<usize> {
             "origination_date",
             "maturity_date",
             "currency",
-            "timestamp",
+            "occurred_at",
             "source_stream_id",
             "source_table",
             "source_provider",

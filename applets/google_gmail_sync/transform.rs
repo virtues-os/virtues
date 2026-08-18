@@ -272,7 +272,7 @@ async fn flush(db: &PgPool, records: &[EmailRow]) -> Result<usize> {
             "is_starred",
             "has_attachments",
             "labels",
-            "timestamp",
+            "occurred_at",
             "source_stream_id",
             "source_table",
             "source_provider",
