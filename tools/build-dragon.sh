@@ -119,6 +119,28 @@ curl -sSL "https://raw.githubusercontent.com/virtues-os/virtues/${VIRTUES_VERSIO
 VIRTUES_VERSION="$VIRTUES_VERSION" sh /tmp/virtues-bootstrap.sh --no-init
 rm -f /tmp/virtues-bootstrap.sh
 
+# ── 2b. The data disk, which only a reboot can claim ────────────────────────
+# The blank NVMe is claimed by virtues-firstboot ON THE NEXT BOOT — that is
+# the same code path every customer unit runs, and the master board must not
+# bypass it. Until that boot happens, /var/lib/virtues is a plain directory on
+# the card and `doctor` fails, correctly, with "the data disk is not mounted".
+# The first fresh-board run, 2026-08-18, proved a virgin board can NEVER pass
+# step 3 without this reboot. Same shape as the kernel checkpoint above:
+# reboot, run me again, and this block is a no-op the second time.
+if ! mountpoint -q /var/lib/virtues 2>/dev/null; then
+    cat <<'CLAIM'
+
+  The data disk has not been claimed yet — that happens on the next boot,
+  by the same first-boot path every customer unit runs.
+
+      sudo reboot
+
+  Then run this script again. It will pick up from here.
+
+CLAIM
+    exit 0
+fi
+
 # ── 3. Prove it works, before destroying the evidence ───────────────────────
 # `doctor` is a report, not a gate — it exits non-zero on real problems, and on
 # a master build that must stop everything: a broken box cloned a hundred times
