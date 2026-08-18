@@ -80,41 +80,51 @@ pub async fn fetch_json<T: DeserializeOwned>(req: reqwest::RequestBuilder) -> Re
     resp.json::<T>().await.context("failed to parse JSON response")
 }
 
-/// Call a Plaid data endpoint through virtues-api's `/v1/services/plaid/*` proxy.
+/// Call a third-party data endpoint through virtues-api's `/v1/services/*`
+/// proxy.
 ///
-/// The box holds only the per-user `access_token`; virtues-api injects the
-/// master `client_id`+`secret` server-side and forwards to Plaid, so the Plaid
-/// app secret never lives on the box. `path` is the Plaid endpoint tail (e.g.
-/// `"transactions/sync"`); `body` carries `access_token` + any params (cursor,
-/// etc.) — NOT client_id/secret. Returns Plaid's response JSON verbatim, so
-/// callers archive/transform it exactly as a direct Plaid call.
-pub async fn plaid_proxy(
+/// The box holds only the per-user token; virtues-api injects the master
+/// application credentials server-side and forwards upstream, so the vendor's
+/// app secret never lives on the box. `service` names the proxied vendor as
+/// virtues-api routes it (`"plaid"`); `path` is the endpoint tail (e.g.
+/// `"transactions/sync"`); `body` carries the per-user token and any params —
+/// never the master credentials. Returns the vendor's response JSON verbatim,
+/// so callers archive and transform it exactly as they would a direct call.
+///
+/// **Takes the service rather than naming one.** This was `plaid_proxy`, with
+/// the vendor and its route welded into a library shared by every applet — so
+/// the generic layer knew one integration by name, and the second vendor to use
+/// the same proxy would have arrived as a copy of it. `/v1/services/{service}/`
+/// is already a namespace on the virtues-api side; this now matches it.
+pub async fn service_proxy(
     pool: &sqlx::PgPool,
+    service: &str,
     path: &str,
     body: &serde_json::Value,
 ) -> Result<serde_json::Value> {
-    let (status, resp_body) = plaid_proxy_raw(pool, path, body).await?;
+    let (status, resp_body) = service_proxy_raw(pool, service, path, body).await?;
     if !(200..300).contains(&status) {
-        anyhow::bail!("plaid proxy /v1/services/plaid/{path} returned {status}: {resp_body}");
+        anyhow::bail!("{service} proxy /v1/services/{service}/{path} returned {status}: {resp_body}");
     }
     Ok(resp_body)
 }
 
-/// Like [`plaid_proxy`] but returns the raw `(status, body)` without erroring on
-/// a non-2xx. For endpoints where a non-2xx is expected/benign (e.g.
-/// `liabilities/get` returns 400 for accounts that don't support liabilities).
-pub async fn plaid_proxy_raw(
+/// Like [`service_proxy`] but returns the raw `(status, body)` without erroring
+/// on a non-2xx. For endpoints where a non-2xx is expected and benign (Plaid's
+/// `liabilities/get` returns 400 for accounts that do not carry that product).
+pub async fn service_proxy_raw(
     pool: &sqlx::PgPool,
+    service: &str,
     path: &str,
     body: &serde_json::Value,
 ) -> Result<(u16, serde_json::Value)> {
     use virtues::virtues_api::client::{BearerClient, Purpose};
 
-    let route = format!("/v1/services/plaid/{path}");
+    let route = format!("/v1/services/{service}/{path}");
     let resp = BearerClient::from_env(pool.clone())
         .with_purpose(Purpose::System)
         .post_json(&route, body)
         .await
-        .with_context(|| format!("plaid proxy call to {route} failed"))?;
+        .with_context(|| format!("{service} proxy call to {route} failed"))?;
     Ok((resp.status, resp.body))
 }
