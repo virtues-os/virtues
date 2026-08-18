@@ -1867,12 +1867,30 @@ pub async fn relocate_postgres_to_data_dir(cfg: &InstallConfig) -> Result<()> {
     fs::create_dir_all(&cfg.data_dir)
         .with_context(|| format!("mkdir {}", cfg.data_dir.display()))?;
 
-    // Stop it. `postgresql@<ver>-main` is `PartOf=postgresql.service`, so
-    // stopping the wrapper propagates to the instance — one call, and it is the
-    // one an operator would type.
+    // Stop it — naming BOTH the wrapper and the instance, and the second name
+    // is the fix for a copy that raced a shutdown. `postgresql@<ver>-main` is
+    // `PartOf=postgresql.service`, so stopping the wrapper does propagate — but
+    // `systemctl stop` only WAITS for the units named on the command line, and
+    // the wrapper is a one-shot that stops instantly. The propagated stop of
+    // the instance runs asynchronously, and on 2026-08-18 the copy below beat
+    // it: the copied pg_wal ended 8 bytes short of the shutdown checkpoint that
+    // the copied pg_control pointed at (Postgres writes the WAL record first,
+    // pg_control second — the copy read them on opposite sides of that write),
+    // and the relocated cluster PANICked with "could not locate a valid
+    // checkpoint record". Naming the instance makes systemctl wait for it.
     let mut stop = Command::new("systemctl");
-    stop.args(["stop", "postgresql"]);
+    stop.args(["stop", "postgresql", &format!("postgresql@{ver}-main")]);
     run_step("Stop Postgres for the move", stop).await?;
+
+    // Belt and braces: the postmaster pid file is removed as the very last act
+    // of a shutdown, after the checkpoint is on disk. If it is still there,
+    // the copy below would be of a cluster that is still writing.
+    for _ in 0..30u8 {
+        if !Path::new(&format!("{}/{ver}/main/postmaster.pid", link.display())).exists() {
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+    }
 
     // Copy. `-a` carries ownership and modes, and both matter: Postgres refuses
     // to start on a data directory that is group- or world-readable.
