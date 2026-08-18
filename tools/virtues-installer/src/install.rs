@@ -2130,7 +2130,20 @@ if [ -L "$PG_LINK" ] && [ -n "$PG_VER" ] && [ ! -e "$PG_LINK/$PG_VER/main/PG_VER
         # same paths, same conf, nothing hand-edited that an apt upgrade could
         # disagree with later.
         pg_dropcluster "$PG_VER" main >/dev/null 2>&1 || true
-        if pg_createcluster "$PG_VER" main --start >/dev/null 2>&1; then
+        # Created WITHOUT --start, and started with pg_ctl directly, NOT
+        # systemd — because this script runs INSIDE a unit that is ordered
+        # Before=postgresql. `pg_createcluster --start` asks systemd to start
+        # the cluster and then waits for it; systemd queues that start behind
+        # this very unit finishing; deadlock, forever, on the first boot of
+        # every unit. Found on the first virgin-board boot, 2026-08-18 — this
+        # branch had never executed before that night (every earlier box got
+        # its cluster from the installer, not from first boot). The temp
+        # server below is stopped again before this script exits; systemd
+        # then starts the cluster through its own ordering, cleanly.
+        PG_CTL="/usr/lib/postgresql/$PG_VER/bin/pg_ctl"
+        PG_MAIN="$PG_LINK/$PG_VER/main"
+        if pg_createcluster "$PG_VER" main >/dev/null 2>&1 && \
+           su -s /bin/sh postgres -c "$PG_CTL -D $PG_MAIN -o '-c config_file=/etc/postgresql/$PG_VER/main/postgresql.conf' -w -t 60 start" >/dev/null 2>&1; then
             # The role and database the app connects as. Peer auth over the
             # Unix socket maps OS user -> role, so no password exists to set.
             #
@@ -2179,6 +2192,10 @@ if [ -L "$PG_LINK" ] && [ -n "$PG_VER" ] && [ ! -e "$PG_LINK/$PG_VER/main/PG_VER
             # No migrations here. `virtues server` runs them at startup, which
             # keeps ONE migration path for every box rather than a first-boot
             # copy of it that could drift.
+            # Hand the running server back to systemd: stop the pg_ctl one so
+            # the ordinary unit start (queued behind this script) finds the
+            # cluster stopped and owns it from here on.
+            su -s /bin/sh postgres -c "$PG_CTL -D $PG_MAIN -w -t 60 stop" >/dev/null 2>&1 || true
             logger -t virtues-firstboot "Postgres cluster $PG_VER/main created on the data disk"
         else
             logger -t virtues-firstboot "pg_createcluster FAILED - the box will not serve until this is fixed"
