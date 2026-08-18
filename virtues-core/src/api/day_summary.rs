@@ -797,7 +797,7 @@ async fn day_movement_segments(
         .iter()
         .map(|r| {
             (
-                r.get::<chrono::DateTime<chrono::Utc>, _>("timestamp"),
+                r.get::<chrono::DateTime<chrono::Utc>, _>("occurred_at"),
                 r.get::<f64, _>("latitude"),
                 r.get::<f64, _>("longitude"),
                 r.try_get::<Option<f64>, _>("speed").ok().flatten(),

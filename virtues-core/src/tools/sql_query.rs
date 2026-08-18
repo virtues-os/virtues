@@ -46,13 +46,13 @@ fn get_table_metadata() -> HashMap<&'static str, TableMetadata> {
     m.insert("data_health_sleep", TableMetadata {
         description: "Sleep sessions with duration and quality metrics",
         category: "health",
-        key_columns: &["start_time", "end_time", "duration_minutes", "sleep_quality_score", "sleep_stages"],
+        key_columns: &["started_at", "ended_at", "duration_minutes", "sleep_quality_score", "sleep_stages"],
         join_hint: None,
     });
     m.insert("data_health_workout", TableMetadata {
         description: "Exercise and workout sessions",
         category: "health",
-        key_columns: &["workout_type", "start_time", "end_time", "duration_minutes", "calories_burned", "distance_km", "avg_heart_rate", "max_heart_rate"],
+        key_columns: &["workout_type", "started_at", "ended_at", "duration_minutes", "calories_burned", "distance_km", "avg_heart_rate", "max_heart_rate"],
         join_hint: Some("JOIN wiki_refs er ON er.source_table = 'data_health_workout' AND er.source_id = data_health_workout.id JOIN wiki_places ON er.entity_id = wiki_places.id AND er.entity_type = 'place'"),
     });
 
@@ -98,7 +98,7 @@ fn get_table_metadata() -> HashMap<&'static str, TableMetadata> {
     m.insert("data_calendar_event", TableMetadata {
         description: "Calendar events with attendees and location",
         category: "calendar",
-        key_columns: &["title", "description", "calendar_name", "event_type", "status", "response_status", "organizer_identifier", "attendee_identifiers", "location_name", "conference_url", "start_time", "end_time", "is_all_day", "timezone"],
+        key_columns: &["title", "description", "calendar_name", "event_type", "status", "response_status", "organizer_identifier", "attendee_identifiers", "location_name", "conference_url", "started_at", "ended_at", "is_all_day", "timezone"],
         join_hint: Some("JOIN wiki_refs er ON er.source_table = 'data_calendar_event' AND er.source_id = data_calendar_event.id"),
     });
 
@@ -136,7 +136,7 @@ fn get_table_metadata() -> HashMap<&'static str, TableMetadata> {
     m.insert("data_activity_app_session", TableMetadata {
         description: "Desktop/mobile app usage sessions",
         category: "activity",
-        key_columns: &["app_name", "app_bundle_id", "app_category", "start_time", "end_time", "window_title", "url"],
+        key_columns: &["app_name", "app_bundle_id", "app_category", "started_at", "ended_at", "window_title", "url"],
         join_hint: None,
     });
     m.insert("data_activity_web_browsing", TableMetadata {
@@ -174,7 +174,7 @@ fn get_table_metadata() -> HashMap<&'static str, TableMetadata> {
     m.insert("data_communication_transcription", TableMetadata {
         description: "Voice/audio transcriptions",
         category: "communication",
-        key_columns: &["text", "language", "duration_seconds", "start_time", "end_time", "speaker_count"],
+        key_columns: &["text", "language", "duration_seconds", "started_at", "ended_at", "speaker_count"],
         join_hint: None,
     });
 
@@ -192,7 +192,7 @@ fn get_table_metadata() -> HashMap<&'static str, TableMetadata> {
     m.insert("data_audio_session", TableMetadata {
         description: "Conversations, derived by grouping adjacent transcription chunks into one sitting",
         category: "communication",
-        key_columns: &["start_time", "end_time", "speaker_mode", "chunk_count", "content"],
+        key_columns: &["started_at", "ended_at", "speaker_mode", "chunk_count", "content"],
         join_hint: None,
     });
     m.insert("data_environment_weather", TableMetadata {
@@ -277,7 +277,7 @@ fn get_table_metadata() -> HashMap<&'static str, TableMetadata> {
     m.insert("wiki_events", TableMetadata {
         description: "Timeline events within a day",
         category: "wiki_temporal",
-        key_columns: &["day_id", "start_time", "end_time", "auto_label", "auto_location", "user_label", "user_location", "user_notes", "is_unknown", "is_transit"],
+        key_columns: &["day_id", "started_at", "ended_at", "auto_label", "auto_location", "user_label", "user_location", "user_notes", "is_unknown", "is_transit"],
         join_hint: Some("JOIN wiki_days ON day_id = wiki_days.id"),
     });
 
@@ -604,6 +604,39 @@ impl SqlQueryTool {
             .map_err(|e| ToolError::ExecutionFailed(format!("Query failed: {}", e)))?;
 
         sqlx::query("SET TRANSACTION READ ONLY")
+            .execute(&mut *tx)
+            .await
+            .map_err(|e| ToolError::ExecutionFailed(format!("Query failed: {}", e)))?;
+
+        // Drop to the least-privileged role for the rest of this transaction.
+        //
+        // READ ONLY is not the boundary the comment above believed it was. It
+        // bounds WRITES; it says nothing about what a superuser may READ, and
+        // the pool role IS a superuser (`CREATE ROLE virtues WITH LOGIN
+        // SUPERUSER`, installer first-boot). So this passed every guard above —
+        // it begins with `select`, contains no forbidden keyword, is short, and
+        // survives the appended LIMIT:
+        //
+        //     SELECT substr(pg_read_file('/var/lib/virtues/virtues.env'),1,4000)
+        //
+        // That file holds VIRTUES_ENCRYPTION_KEY in plaintext, which decrypts
+        // every credential in the vault and the iroh secret that IS this box's
+        // network identity. Verified against a live database: the read
+        // succeeds, and `box_secrets` and `app_credentials` are equally
+        // reachable. The doc comment above already says this tool "runs
+        // unattended, over content nobody reviewed" — so the query text is
+        // steerable by an email or a saved page, and the model can hand the
+        // result to `web_search`, which is also allowlisted.
+        //
+        // `virtues_face_reader` is the role `server/faces.rs` already drops to
+        // for exactly this reason: default-deny, SELECT on `data_*`/`wiki_*`
+        // only. Under it both halves fail closed — `permission denied for
+        // function pg_read_file`, `permission denied for table box_secrets`.
+        // The mechanism was in the tree; this executor simply never used it.
+        //
+        // SET LOCAL, so it reverts with the transaction and cannot leak onto a
+        // pooled connection.
+        sqlx::query("SET LOCAL ROLE virtues_face_reader")
             .execute(&mut *tx)
             .await
             .map_err(|e| ToolError::ExecutionFailed(format!("Query failed: {}", e)))?;

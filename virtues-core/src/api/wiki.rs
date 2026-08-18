@@ -1534,7 +1534,7 @@ pub async fn get_day_events(pool: &PgPool, day_id: String) -> Result<Vec<Tempora
     for (event_id, start, end) in &event_windows {
         let ref_rows: Vec<(String, DateTime<Utc>)> = sqlx::query_as(
             r#"
-            SELECT entity_id, MIN(timestamp) as earliest
+            SELECT entity_id, MIN(occurred_at) as earliest
             FROM wiki_refs
             WHERE occurred_at IS NOT NULL
               AND occurred_at >= $1
@@ -2448,7 +2448,7 @@ pub async fn get_timeline_day(pool: &PgPool, date: NaiveDate) -> Result<Timeline
             let lat: Option<f64> = row.try_get("latitude").ok();
             let lng: Option<f64> = row.try_get("longitude").ok();
             let ts: Option<String> = row
-                .try_get::<Option<DateTime<Utc>>, _>("timestamp")
+                .try_get::<Option<DateTime<Utc>>, _>("occurred_at")
                 .ok()
                 .flatten()
                 .map(|t| t.to_rfc3339());
