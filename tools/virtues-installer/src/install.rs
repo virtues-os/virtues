@@ -588,6 +588,16 @@ StartLimitBurst=5
 Type=simple
 User=virtues
 Group=virtues
+# The Hexagon DSPs load firmware from the rootfs, but the kernel's first
+# request comes at ~0.8s — before the rootfs is mounted — and NOTHING ever
+# retries: no unit, no udev hook, nothing. Both remoteprocs then sit offline
+# for the life of the boot, and every qnnd start dies in transport setup
+# (QNN error 14001) until StartLimit parks the unit. Found on the first
+# fresh-board master build, 2026-08-18. The `+` prefix runs this as root and
+# outside the sandbox (User=, ProtectKernelTunables= do not apply), which it
+# needs to write /sys; it starts any offline DSP and waits for the fastrpc
+# node to appear before the daemon reaches for it.
+ExecStartPre=+/bin/sh -c 'for r in /sys/class/remoteproc/remoteproc*; do [ "$(cat $r/state 2>/dev/null)" = offline ] && echo start > $r/state || :; done; i=0; while [ ! -e /dev/fastrpc-cdsp ] && [ $i -lt 20 ]; do i=$((i+1)); sleep 0.5; done'
 __SUPP_GROUPS____QNN_ENV__ExecStart=__BIN__ __EMBED_BIN__ __RERANK_BIN__ --burst --port 7788 --models-dir __QNN_DIR__
 Restart=on-failure
 RestartSec=5
