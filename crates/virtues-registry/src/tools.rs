@@ -596,9 +596,9 @@ WHERE m.occurred_at > now() - interval '7 days'
 GROUP BY wp.name ORDER BY messages DESC LIMIT 10
 
 -- Sleep patterns last 2 weeks
-SELECT timestamp::date as day, duration_hours, quality
+SELECT started_at::date as day, duration_minutes, sleep_quality_score
 FROM data_health_sleep
-WHERE occurred_at > now() - interval '14 days'
+WHERE started_at > now() - interval '14 days'
 ORDER BY occurred_at DESC
 
 -- Calendar events today
@@ -1278,10 +1278,10 @@ fn dayline_event_tool() -> ToolConfig {
         llm_description: r#"Create, continue, revise, or mark timeline events for the Dayline.
 
 Actions:
-- NEW: Create a new event. Requires: event_summary, started_at, ended_at. Optional: topics, auto_label, source_ontologies.
-- CONTINUE: Extend the current event. Requires: event_id, ended_at. Optional: event_summary (updated), topics.
-- REVISE: Modify a previous event (merge, split, update). Requires: event_id. Optional: event_summary, started_at, ended_at, auto_label, topics.
-- NO_DATA: Mark this time period as unknown. Requires: start_time, ended_at.
+- NEW: Create a new event. Requires: event_summary, start_time, end_time. Optional: topics, auto_label, source_ontologies.
+- CONTINUE: Extend the current event. Requires: event_id, end_time. Optional: event_summary (updated), topics.
+- REVISE: Modify a previous event (merge, split, update). Requires: event_id. Optional: event_summary, start_time, end_time, auto_label, topics.
+- NO_DATA: Mark this time period as unknown. Requires: start_time, end_time.
 
 Event summaries should be 1-3 factual sentences. Be specific: name people, places, apps, projects. Include all data sources, even minor ones."#.to_string(),
         parameters: serde_json::json!({

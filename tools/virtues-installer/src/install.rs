@@ -1165,7 +1165,9 @@ pub async fn write_env_file(
          VIRTUES_PDFIUM_PATH={pdfium_path}\n\
          VIRTUES_APPLETS_DIR={applets_dir}\n\
          VIRTUES_APPLET_STATE_DIR={applet_state_dir}\n\
-         VIRTUES_APPLETS_BIN_DIR={applets_bin_dir}\n",
+         VIRTUES_APPLETS_BIN_DIR={applets_bin_dir}\n\
+         INSTALL_PREFIX={install_prefix}\n",
+        install_prefix = cfg.install_prefix.display(),
         static_dir = cfg.web_dir().display(),
         pdfium_path = cfg.pdfium_lib_path().display(),
         storage_path = cfg.data_dir.join("lake").display(),
