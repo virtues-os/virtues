@@ -207,5 +207,10 @@ cat <<EOF
   NVMe, builds its Postgres cluster, and mints that unit's own identity.
 
 EOF
+# Take the bench with us: this script and its log describe the master's build
+# session (versions, addresses, doctor output) and have no business on a
+# hundred cloned cards. Removed only here, on the success path — on any
+# failure they are exactly what the operator needs.
+rm -f /root/build.log /root/build-dragon.sh /tmp/virtues-bootstrap.sh
 sleep 5
 poweroff
