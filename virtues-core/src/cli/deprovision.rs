@@ -20,6 +20,8 @@
 //!   * the whole database — `box_secrets` holds the iroh secret, `app_device`
 //!     the pairings, `credentials` the source tokens (delegated to `reset`)
 //!   * the data lake
+//!   * database dumps in `backups/` — `upgrade` writes one per upgrade and
+//!     nothing else ever reclaims it
 //!   * `VIRTUES_ENCRYPTION_KEY` from the env file — re-minted per unit on
 //!     first boot, NOT here, because a key minted here would be baked into
 //!     the image and shared by every clone
@@ -65,6 +67,7 @@ pub async fn run(yes: bool, force: bool) -> Result<(), crate::Error> {
     println!("   REMOVES, so each clone mints its own:");
     println!("     • the entire database — iroh identity, pairings, credentials");
     println!("     • the data lake");
+    println!("     • database dumps left by past upgrades");
     println!("     • VIRTUES_ENCRYPTION_KEY (re-minted on first boot)");
     println!("     • machine-id, SSH host keys, saved wifi networks");
     println!("     • chat-authored applets (their code AND their data)");
@@ -199,6 +202,21 @@ pub async fn run(yes: bool, force: bool) -> Result<(), crate::Error> {
     // schemas that hold their DATA are handled in `reset`; this is their CODE.
     remove_authored_applets();
 
+    // ── 3a2. Database dumps ─────────────────────────────────────────────────
+    // `upgrade` writes a pre-upgrade dump so a failed migration can be rolled
+    // back, and nothing has ever reclaimed it. Found on the lab board on
+    // 2026-08-18: a 281 KB `PGDMP` of the owner's whole database, sitting in
+    // `backups/` on a box that `deprovision` had already emptied the lake and
+    // the secrets of, mounted read-only from a different OS on a different
+    // card. Every other check passed. This one had never been asked.
+    //
+    // It does not reach a cloned IMAGE — backups live on the data disk and the
+    // master is the card — which is exactly why it survived review. It reaches
+    // the far more likely thing: the physical board, handed to a second owner,
+    // an RMA, a resale, a cofounder's bench. "Deprovisioned" is the claim that
+    // is supposed to make that safe.
+    remove_backups();
+
     // ── 3b. The relocated Postgres cluster ──────────────────────────────────
     // On an appliance the cluster lives on the data disk and `/var/lib/postgresql`
     // is a symlink to it. That whole tree is per-unit state — it is where the
@@ -284,6 +302,44 @@ fn remove_authored_applets() {
     }
     if n > 0 {
         println!("  ✓ removed {n} authored applet(s) from {}", dir.display());
+    }
+}
+
+/// Where `upgrade` parks its pre-upgrade database dumps.
+///
+/// Public for the same reason `authored_applets_dir` is: `image_check` must
+/// look in the place the cleaner cleans, not in a place that happens to agree
+/// with it today.
+pub fn backups_dir() -> std::path::PathBuf {
+    env_file_path()
+        .parent()
+        .unwrap_or(Path::new("/var/lib/virtues"))
+        .join("backups")
+}
+
+/// Delete every database dump. Best-effort; absent on a box that never upgraded.
+fn remove_backups() {
+    let dir = backups_dir();
+    let Ok(entries) = std::fs::read_dir(&dir) else {
+        return;
+    };
+    let mut n = 0usize;
+    let mut bytes = 0u64;
+    for e in entries.flatten() {
+        let p = e.path();
+        let len = e.metadata().map(|m| m.len()).unwrap_or(0);
+        let ok = if p.is_dir() {
+            std::fs::remove_dir_all(&p).is_ok()
+        } else {
+            std::fs::remove_file(&p).is_ok()
+        };
+        if ok {
+            n += 1;
+            bytes += len;
+        }
+    }
+    if n > 0 {
+        println!("  ✓ removed {n} database dump(s) from {} ({} KB)", dir.display(), bytes / 1024);
     }
 }
 
