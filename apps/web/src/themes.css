@@ -808,59 +808,88 @@
    Magical lamppost glow, warm enchantment
    =================================== */
 [data-theme="narnia"] {
-	/* Code Syntax Highlighting (Tokyo Night) */
+	/* Blueprint. Narnia's most-remembered image is a snowy wood at night with a
+	   single cold lamp in it — which is process blue, white, and one cyan, i.e.
+	   a drafting sheet. Slate rather than saturated navy: at text density the
+	   chroma is itself noise, so it is pulled roughly half-way to neutral and
+	   the register is carried by the ruled ground instead. */
+
+	/* Code Syntax Highlighting (Tokyo Night — already a navy-ground theme) */
 	--shiki-theme: tokyo-night;
 
 	/* Surface Colors */
-	--background: #0C0E13;
-	--surface: #161820;
-	--surface-elevated: #1e2028;
-	--surface-overlay: #262830;
+	--background: #0F1821;
+	--surface: #131E28;
+	--surface-elevated: #18242F;
+	--surface-overlay: #1D2A36;
 
-	/* Content Colors */
-	--foreground: #FAF9F5;
-	--foreground-muted: #e5e5e5;
-	--foreground-subtle: #a8a29e;
-	--foreground-disabled: #78716c;
+	/* Background Treatment — the sheet is ruled at two pitches.
+	   `repeating-linear-gradient` carries its own pitch, which it must: there is
+	   a --surface-elevated-size token but no --background-size, so anything set
+	   here has to be self-sizing.
+	   The rules are DARKER than the ground, not lighter. `.app-shell` and the
+	   pane both composite this with `background-blend-mode: multiply`, and
+	   multiply can only darken — a light grid would vanish there and show only
+	   on `.app-content`. Darker rules read identically under both.
 
-	/* Interactive Colors */
-	--primary: #FF9D52;
-	--primary-hover: #ffb070;
-	--primary-active: #e68840;
-	--primary-subtle: #2d1f15;
+	   ONE pitch, and faint. Two pitches at working strength read as a drawing
+	   when there is a drawing on them and as interference when there is prose —
+	   and the pane is nearly all prose, so the fine field is dropped and the
+	   coarse one sits barely above the ground. */
+	--background-image:
+		repeating-linear-gradient(to bottom,
+			transparent 0 127px, rgba(0, 0, 0, 0.16) 127px 128px),
+		repeating-linear-gradient(to right,
+			transparent 0 127px, rgba(0, 0, 0, 0.16) 127px 128px);
+	/* The desk stays unruled: the grid belongs to the drawing surface, and
+	   nothing on the sidebar may out-shout the page. */
+	--surface-elevated-image: none;
+	--surface-elevated-size: auto;
 
-	--secondary: #FAF9F5;
+	/* Content Colors — drawing white, cooled a trace toward the ground */
+	--foreground: #EDF1F4;
+	--foreground-muted: #C3CBD3;
+	--foreground-subtle: #9BA7B2;
+	--foreground-disabled: #7C8A97;
+
+	/* Interactive Colors — the one cold lamp */
+	--primary: #7CC3DE;
+	--primary-hover: #98D2E8;
+	--primary-active: #62B2D0;
+	--primary-subtle: #14303D;
+
+	--secondary: #EDF1F4;
 	--secondary-hover: #FFFFFF;
-	--secondary-active: #F3F2E9;
+	--secondary-active: #D6DEE5;
 
-	/* Status Colors */
-	--success: #22c55e;
-	--success-subtle: #14532d;
-	--warning: #fbbf24;
-	--warning-subtle: #422006;
-	--error: #ef4444;
-	--error-subtle: #450a0a;
-	--info: #38bdf8;
-	--info-subtle: #082f49;
+	/* Status Colors — desaturated to sit on slate without shouting */
+	--success: #5FBF8F;
+	--success-subtle: #10281F;
+	--warning: #D9A54C;
+	--warning-subtle: #2A2113;
+	--error: #E0736B;
+	--error-subtle: #2C1917;
+	--info: #7CC3DE;
+	--info-subtle: #14303D;
 
 	/* Diff Colors */
-	--diff-add: #22c55e;
-	--diff-add-bg: #14532d;
-	--diff-remove: #ef4444;
-	--diff-remove-bg: #450a0a;
+	--diff-add: #5FBF8F;
+	--diff-add-bg: #10281F;
+	--diff-remove: #E0736B;
+	--diff-remove-bg: #2C1917;
 
-	/* Border Colors */
-	--border: #2a2c34;
-	--border-subtle: #1e2028;
-	--border-strong: #3a3c44;
-	--border-focus: #FF9D52;
+	/* Border Colors — hairlines, the only structure on a drawing */
+	--border: #2A3A49;
+	--border-subtle: #1D2934;
+	--border-strong: #3A4E60;
+	--border-focus: #7CC3DE;
 
-	/* Selection/Highlight - Warm orange tint */
-	--highlight: #3d2a1a;
-	--highlight-foreground: #FAF9F5;
+	/* Selection/Highlight — a wash of the one accent */
+	--highlight: rgba(124, 195, 222, 0.18);
+	--highlight-foreground: #EDF1F4;
 
 	/* Background Inverse */
-	--background-inverse: #0C0E13;
+	--background-inverse: #0F1821;
 }
 
 /* ===================================
@@ -1053,10 +1082,10 @@
 	--shiki-theme: vitesse-dark;
 
 	/* Surface Colors */
-	--background: #141414;
-	--surface: #181818;
-	--surface-elevated: #1e1e1e;
-	--surface-overlay: #242424;
+	--background: #0f0f0f;
+	--surface: #131313;
+	--surface-elevated: #191919;
+	--surface-overlay: #1f1f1f;
 
 	/* Content Colors */
 	--foreground: #D4D4D4;
@@ -1101,7 +1130,7 @@
 	--highlight-foreground: #D4D4D4;
 
 	/* Background Inverse */
-	--background-inverse: #141414;
+	--background-inverse: #0f0f0f;
 }
 
 /* ===================================

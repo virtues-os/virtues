@@ -92,11 +92,19 @@ A dead card is a mail-out and a screwdriver; a dead eMMC is an RMA. Since almost
 nothing writes to it after install, the endurance objection that would normally
 argue for eMMC mostly evaporates.
 
-> **Open BOM question.** Do shipping units have eMMC populated, or are they
-> microSD + NVMe like the lab board? Nothing in the software changes either way
-> — everything below is written against "the boot medium" — but it changes the
-> failure story above, and it decides whether manufacturing is a card duplicator
-> or a per-board USB-C flash.
+> **BOM question — answered 2026-08-18.** Shipping boards arrive with **no OS
+> on internal storage**. The Q6A carries pre-installed SPI boot firmware (UEFI)
+> on a separate chip to run the boot process, but the operating system is ours
+> to supply — so flashing is a manufacturing step we perform, and the
+> card-duplicator story in this document holds.
+>
+> One thing that follows and is NOT yet tested: with UEFI in SPI, a board may be
+> able to boot an NVMe that carries its own ESP, which would remove the microSD
+> from the BOM entirely. The lab board boots from the card (`efibootmgr` shows a
+> single entry on card p2, and the NVMe has no ESP), but that is how this board
+> was set up, not a proof it is the only way. Worth twenty minutes on the bench
+> before the first production run — it is the difference between one medium per
+> unit and two.
 
 ### Moving the writes
 

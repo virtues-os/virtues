@@ -387,7 +387,7 @@ mod tests {
     /// maintenance pass learns there is anything to do.
     #[sqlx::test]
     async fn a_note_stamps_the_article_dirty(pool: PgPool) {
-        sqlx::query("INSERT INTO wiki_people (id, canonical_name) VALUES ('p_1', 'Sarah')")
+        sqlx::query("INSERT INTO wiki_people (id, name) VALUES ('p_1', 'Sarah')")
             .execute(&pool)
             .await
             .unwrap();

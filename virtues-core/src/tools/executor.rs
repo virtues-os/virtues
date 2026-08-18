@@ -777,7 +777,7 @@ impl ToolExecutor {
                 Ok(person) => Ok(ToolResult::success(serde_json::json!({
                     "type": "person",
                     "id": person.id,
-                    "name": person.canonical_name,
+                    "name": person.name,
                     "content": person.content,
                 }))),
                 Err(e) => Ok(ToolResult::error(format!("Failed to fetch person: {}", e))),
@@ -798,7 +798,7 @@ impl ToolExecutor {
                 Ok(org) => Ok(ToolResult::success(serde_json::json!({
                     "type": "organization",
                     "id": org.id,
-                    "name": org.canonical_name,
+                    "name": org.name,
                     "content": org.content,
                 }))),
                 Err(e) => Ok(ToolResult::error(format!("Failed to fetch organization: {}", e))),

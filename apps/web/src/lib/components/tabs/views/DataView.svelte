@@ -45,7 +45,7 @@
 		"title",
 		"subject",
 		"name",
-		"canonical_name",
+		"name",
 		"merchant",
 		"summary",
 		"headline",

@@ -103,7 +103,7 @@ async fn resolve_location_visits(db: &Database, window: TimeWindow) -> Result<us
     // Run density-adaptive clustering
     let visits = cluster_location_points(&points, sampling_rate)?;
 
-    tracing::debug!(visit_count = visits.len(), "Completed clustering");
+    tracing::debug!(ref_count = visits.len(), "Completed clustering");
 
     // Write visits idempotently and link to place entities
     let mut records_written = 0;
@@ -282,8 +282,8 @@ async fn resolve_or_create_merchant_org(
         r#"
         SELECT id
         FROM wiki_orgs
-        WHERE LOWER(canonical_name) = LOWER($1)
-           OR LOWER(canonical_name) = LOWER($2)
+        WHERE LOWER(name) = LOWER($1)
+           OR LOWER(name) = LOWER($2)
         LIMIT 1
         "#,
         merchant_name,
@@ -321,7 +321,7 @@ async fn resolve_or_create_merchant_org(
         r#"
         INSERT INTO wiki_orgs (
             id,
-            canonical_name,
+            name,
             organization_type,
             relationship_type,
             metadata
@@ -338,7 +338,7 @@ async fn resolve_or_create_merchant_org(
 
     tracing::info!(
         org_id = %org_id,
-        canonical_name = %normalized_name,
+        name = %normalized_name,
         organization_type = %organization_type,
         "Created new merchant organization"
     );

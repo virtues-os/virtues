@@ -25,7 +25,7 @@ pub struct Place {
     pub latitude: Option<f64>,
     pub longitude: Option<f64>,
     pub radius_m: Option<f64>,
-    pub visit_count: Option<i32>,
+    pub seen_count: Option<i32>,
     pub metadata: Option<serde_json::Value>,
     pub created_at: chrono::DateTime<chrono::Utc>,
     pub updated_at: chrono::DateTime<chrono::Utc>,
@@ -85,7 +85,7 @@ pub async fn list_places(pool: &PgPool) -> Result<Vec<Place>> {
             latitude,
             longitude,
             radius_m,
-            visit_count,
+            seen_count,
             metadata,
             created_at,
             updated_at
@@ -108,7 +108,7 @@ pub async fn list_places(pool: &PgPool) -> Result<Vec<Place>> {
             latitude: row.latitude,
             longitude: row.longitude,
             radius_m: Some(row.radius_m),
-            visit_count: Some(row.visit_count as i32),
+            seen_count: Some(row.seen_count as i32),
             metadata: Some(row.metadata),
             created_at: row.created_at,
             updated_at: row.updated_at,
@@ -131,7 +131,7 @@ pub async fn get_place(pool: &PgPool, id: String) -> Result<Place> {
             latitude,
             longitude,
             radius_m,
-            visit_count,
+            seen_count,
             metadata,
             created_at,
             updated_at
@@ -153,7 +153,7 @@ pub async fn get_place(pool: &PgPool, id: String) -> Result<Place> {
         latitude: row.latitude,
         longitude: row.longitude,
         radius_m: Some(row.radius_m),
-        visit_count: Some(row.visit_count as i32),
+        seen_count: Some(row.seen_count as i32),
         metadata: Some(row.metadata),
         created_at: row.created_at,
         updated_at: row.updated_at,
@@ -368,8 +368,8 @@ pub async fn set_home_place(pool: &PgPool, place_id: String) -> Result<()> {
 pub async fn reclassify_person_as_organization(pool: &PgPool, person_id: String) -> Result<String> {
     let person = sqlx::query!(
         r#"
-        SELECT canonical_name, emails, phones, handles, nickname,
-               first_interaction, last_interaction, interaction_count,
+        SELECT name, emails, phones, handles, nickname,
+               first_seen, last_seen, seen_count,
                metadata, content, aliases
         FROM wiki_people WHERE id = $1
         "#,
@@ -384,7 +384,7 @@ pub async fn reclassify_person_as_organization(pool: &PgPool, person_id: String)
     // silent no-op against an existing org of the same name.
     let org_id = ids::generate_id(
         ids::WIKI_ORG_PREFIX,
-        &[&person.canonical_name, &person_id],
+        &[&person.name, &person_id],
     );
 
     // What an org has no column for. Kept, not discarded.
@@ -407,15 +407,15 @@ pub async fn reclassify_person_as_organization(pool: &PgPool, person_id: String)
 
     sqlx::query!(
         r#"
-        INSERT INTO wiki_orgs (id, canonical_name, interaction_count, first_interaction,
-                               last_interaction, metadata, content, aliases)
+        INSERT INTO wiki_orgs (id, name, seen_count, first_seen,
+                               last_seen, metadata, content, aliases)
         VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
         "#,
         &org_id,
-        &person.canonical_name,
-        person.interaction_count,
-        person.first_interaction,
-        person.last_interaction,
+        &person.name,
+        person.seen_count,
+        person.first_seen,
+        person.last_seen,
         serde_json::Value::Object(metadata),
         person.content,
         person.aliases,
@@ -499,7 +499,7 @@ pub async fn create_person(pool: &PgPool, name: &str) -> Result<String> {
     let id = ids::generate_id(ids::WIKI_PERSON_PREFIX, &[name, "manual"]);
 
     sqlx::query!(
-        "INSERT INTO wiki_people (id, canonical_name) VALUES ($1, $2) \
+        "INSERT INTO wiki_people (id, name) VALUES ($1, $2) \
          ON CONFLICT (id) DO NOTHING",
         &id,
         name
@@ -520,7 +520,7 @@ pub async fn create_organization(pool: &PgPool, name: &str) -> Result<String> {
     let id = ids::generate_id(ids::WIKI_ORG_PREFIX, &[name, "manual"]);
 
     sqlx::query!(
-        "INSERT INTO wiki_orgs (id, canonical_name) VALUES ($1, $2) \
+        "INSERT INTO wiki_orgs (id, name) VALUES ($1, $2) \
          ON CONFLICT (id) DO NOTHING",
         &id,
         name
@@ -681,4 +681,122 @@ mod entity_crud_tests {
 
         assert!(delete_person(&pool, id).await.is_err());
     }
+/// Every `data_*` table participates in the pipeline, or is exempted by name.
+///
+/// ## What this guards
+///
+/// A `data_*` table is one KIND OF OBSERVATION about the owner's life: one row
+/// is one thing observed at one time, with provenance back to the stream that
+/// delivered it. It is never derived from another table (that is `wiki_*`) and
+/// never product state (that is `app_*`).
+///
+/// An `OntologyDescriptor` is that observation type's PARTICIPATION CONTRACT —
+/// how to read its time, whether to embed it, whether it carries prose worth
+/// extracting entities from, how it reaches a day page, whether it counts as the
+/// owner doing something. (The word "ontology" is doing the work of "record
+/// type" here; there is no concept hierarchy and no inference. See the note at
+/// the top of `crates/virtues-registry/src/ontologies.rs`.)
+///
+/// `search/indexer.rs` decides what is searchable by iterating
+/// `registered_ontologies()`. So a table with no descriptor is written and then
+/// invisible — not searchable, absent from the lifeline, the dayline, and day
+/// summaries. Nothing anywhere reports this: the collector succeeds, the rows
+/// are there, and the data simply never appears.
+///
+/// It had happened SEVEN times before this test existed, including
+/// `data_content_conversation` — imported AI chat history, which is prose, and
+/// was unsearchable.
+///
+/// ## Why exemptions are named rather than inferred
+///
+/// A few tables genuinely should not be indexed, and the only way to tell them
+/// from an oversight is for a person to say so. Adding a table without a
+/// descriptor therefore costs one deliberate line here, which is the point: the
+/// omission becomes a decision instead of an accident.
+#[sqlx::test]
+async fn every_data_table_participates_or_is_exempted(pool: sqlx::PgPool) {
+    /// Tables deliberately without a participation contract, and why.
+    ///
+    /// KNOWN GAPS, not decisions — each needs a product call and then either a
+    /// descriptor or a reason to move up into the exempt list above it:
+    const EXEMPT: &[(&str, &str)] = &[
+        (
+            "data_audio_recording",
+            "the audio blob itself; its WORDS are searchable through \
+             data_communication_transcription, which shares its source_stream_id",
+        ),
+        // ── Known gaps below. Each is collected today and invisible. ─────────
+        (
+            "data_financial_asset",
+            "GAP: holdings are collected by plaid_investments_sync and unreachable",
+        ),
+        (
+            "data_financial_liability",
+            "GAP: debts are collected by plaid_liabilities_sync and unreachable",
+        ),
+        (
+            "data_health_active_energy",
+            "GAP: written by ios_ingest, no lane, no measure",
+        ),
+        (
+            "data_health_distance",
+            "GAP: written by ios_ingest, no lane, no measure",
+        ),
+    ];
+
+    let tables: Vec<String> = sqlx::query_scalar(
+        "SELECT tablename FROM pg_tables \
+         WHERE schemaname = 'public' AND tablename LIKE 'data\\_%' ORDER BY 1",
+    )
+    .fetch_all(&pool)
+    .await
+    .expect("list data_* tables");
+
+    let described: std::collections::HashSet<&str> =
+        virtues_registry::ontologies::registered_ontologies()
+            .iter()
+            .map(|o| o.table_name)
+            .collect();
+    let exempt: std::collections::HashSet<&str> = EXEMPT.iter().map(|(t, _)| *t).collect();
+
+    // 1. No table is silently unreachable.
+    let orphans: Vec<&String> = tables
+        .iter()
+        .filter(|t| !described.contains(t.as_str()) && !exempt.contains(t.as_str()))
+        .collect();
+    assert!(
+        orphans.is_empty(),
+        "these data_* tables have no OntologyDescriptor, so they are collected and \
+         then invisible to search, the lifeline, the dayline and day summaries.\n\
+         Give each one a descriptor, or add it to EXEMPT in this test with the \
+         reason:\n  {orphans:?}"
+    );
+
+    // 2. And no descriptor points at a table that no longer exists — the same
+    //    failure from the other side, which a rename produces.
+    let real: std::collections::HashSet<&str> = tables.iter().map(String::as_str).collect();
+    let dangling: Vec<&str> = described
+        .iter()
+        .copied()
+        .filter(|t| t.starts_with("data_") && !real.contains(t))
+        .collect();
+    assert!(
+        dangling.is_empty(),
+        "these descriptors name a data_* table that does not exist: {dangling:?}"
+    );
+
+    // 3. An exemption for a table that is gone is stale bookkeeping; an
+    //    exemption for a table that HAS a descriptor is a contradiction.
+    for (t, _why) in EXEMPT {
+        assert!(
+            real.contains(t),
+            "EXEMPT names {t}, which is not a table — remove the entry"
+        );
+        assert!(
+            !described.contains(t),
+            "{t} is both EXEMPT and described — delete the EXEMPT entry"
+        );
+    }
+}
+
 }

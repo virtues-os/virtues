@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "\n        SELECT\n            p.id, p.name, p.category, p.address, p.visit_count,\n            COALESCE(r.n, 0) AS \"ref_count!\"\n        FROM wiki_places p\n        LEFT JOIN (\n            SELECT entity_id, count(*) AS n\n            FROM wiki_refs WHERE entity_type = 'place' GROUP BY entity_id\n        ) r ON r.entity_id = p.id\n        ORDER BY COALESCE(r.n, 0) DESC, p.name ASC\n        ",
+  "query": "\n        SELECT\n            p.id, p.name, p.category, p.address, p.seen_count,\n            COALESCE(r.n, 0) AS \"ref_count!\"\n        FROM wiki_places p\n        LEFT JOIN (\n            SELECT entity_id, count(*) AS n\n            FROM wiki_refs WHERE entity_type = 'place' GROUP BY entity_id\n        ) r ON r.entity_id = p.id\n        ORDER BY COALESCE(r.n, 0) DESC, p.name ASC\n        ",
   "describe": {
     "columns": [
       {
@@ -25,7 +25,7 @@
       },
       {
         "ordinal": 4,
-        "name": "visit_count",
+        "name": "seen_count",
         "type_info": "Int8"
       },
       {
@@ -46,5 +46,5 @@
       null
     ]
   },
-  "hash": "f927fc73b70913fe3db319f4b442b1b34d394784b36a788898bc385af32208cb"
+  "hash": "b572230e6a88305d78c85b315e763c0c4ec4f6dbddd91cb22fbc86f3c8e12d5a"
 }

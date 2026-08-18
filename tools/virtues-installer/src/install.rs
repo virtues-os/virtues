@@ -2105,12 +2105,48 @@ if [ -L "$PG_LINK" ] && [ -n "$PG_VER" ] && [ ! -e "$PG_LINK/$PG_VER/main/PG_VER
         if pg_createcluster "$PG_VER" main --start >/dev/null 2>&1; then
             # The role and database the app connects as. Peer auth over the
             # Unix socket maps OS user -> role, so no password exists to set.
+            #
+            # NOT A SUPERUSER, and this must stay in step with `provision_db`,
+            # which is the DIY path's version of these same four statements. It
+            # said `CREATE ROLE virtues WITH LOGIN SUPERUSER` until 2026-08-18,
+            # while `provision_db` had always used `--no-superuser`. So the
+            # appliance — the shape that ships to people — was the one running
+            # with the privilege the other path deliberately refuses.
+            #
+            # What that cost: DATABASE_URL is in the environment of every applet
+            # subprocess, so an applet inherited superuser, and superuser means
+            # `pg_read_file`. That reads /var/lib/virtues/virtues.env, which
+            # holds VIRTUES_ENCRYPTION_KEY in plaintext — every credential in
+            # the vault, and the iroh secret that IS this box's identity. It was
+            # reachable from the SQL agent too, over content nobody reviewed.
+            #
+            # CREATEDB and CREATEROLE are NOT granted. The database is created
+            # below as postgres, and the two separation roles are created and
+            # granted here with ADMIN OPTION, which is what `server/faces.rs`
+            # needs to `SET LOCAL ROLE` into them. In PG16+ a role may only
+            # grant membership it has ADMIN on; without these two lines faces.rs
+            # cannot grant them to itself, no applet table is readable, and the
+            # failure reads as a bug in the applet rather than in bootstrap.
             su -s /bin/sh postgres -c "psql -tAc \"SELECT 1 FROM pg_roles WHERE rolname='virtues'\"" \
                 2>/dev/null | grep -q 1 || \
-                su -s /bin/sh postgres -c "psql -c \"CREATE ROLE virtues WITH LOGIN SUPERUSER\"" >/dev/null 2>&1
+                su -s /bin/sh postgres -c "psql -c \"CREATE ROLE virtues LOGIN\"" >/dev/null 2>&1
+            # Idempotent downgrade, for a box imaged from a master built before
+            # this change. Re-running costs nothing; not running it leaves a
+            # superuser in the field forever.
+            su -s /bin/sh postgres -c "psql -c \"ALTER ROLE virtues NOSUPERUSER NOCREATEDB NOCREATEROLE\"" >/dev/null 2>&1
+            for sep_role in virtues_face_reader virtues_applet_writer; do
+                su -s /bin/sh postgres -c "psql -tAc \"SELECT 1 FROM pg_roles WHERE rolname='$sep_role'\"" \
+                    2>/dev/null | grep -q 1 || \
+                    su -s /bin/sh postgres -c "psql -c \"CREATE ROLE $sep_role NOLOGIN\"" >/dev/null 2>&1
+                # Unconditional: a cluster may carry the role without the grant.
+                su -s /bin/sh postgres -c "psql -c \"GRANT $sep_role TO virtues WITH ADMIN OPTION\"" >/dev/null 2>&1
+            done
             su -s /bin/sh postgres -c "psql -tAc \"SELECT 1 FROM pg_database WHERE datname='virtues'\"" \
                 2>/dev/null | grep -q 1 || \
                 su -s /bin/sh postgres -c "createdb -O virtues virtues" >/dev/null 2>&1
+            # As postgres, so the app role never needs the elevation: pgvector
+            # is not a trusted extension, and migration 0001's
+            # `CREATE EXTENSION IF NOT EXISTS vector` is then a no-op.
             su -s /bin/sh postgres -c "psql -d virtues -c 'CREATE EXTENSION IF NOT EXISTS vector'" >/dev/null 2>&1
             # No migrations here. `virtues server` runs them at startup, which
             # keeps ONE migration path for every box rather than a first-boot

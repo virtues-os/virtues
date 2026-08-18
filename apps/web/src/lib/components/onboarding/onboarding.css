@@ -22,12 +22,21 @@
  *   .ob-ghost   the way past something optional
  */
 
+/* TOP-ANCHORED, NOT CENTERED.
+   Centering looks right on any one screen and wrong across a sequence: a long
+   screen (the letter) overflows and so starts at the top, while a short one
+   (two names) floats to the middle — so the eyebrow and the progress strip
+   jumped down the page on every other step. They are chrome, and chrome that
+   moves is the reader's own position moving under them.
+
+   The cost is empty space below the short screens. That is the correct trade:
+   the strip is a fixed landmark and the content hangs from it. */
 .ob-wrap {
 	min-height: 100vh;
 	display: flex;
-	align-items: center;
+	align-items: flex-start;
 	justify-content: center;
-	padding: 4rem 1.5rem;
+	padding: 4.5rem 1.5rem 6rem;
 }
 
 /* ONE MEASURE. 38rem is the letter's reading column, and every other screen now
@@ -39,12 +48,12 @@
 	max-width: 38rem;
 }
 
-/* The only exception, and it earns it: a list of sources is a set of choices
-   with controls on the right, not a passage of prose, and at the reading
-   measure the rows crush. */
-.ob-sheet.ob-wide {
-	max-width: 46rem;
-}
+/* NO EXCEPTIONS. The sources screen briefly had a wider measure, on the theory
+   that a list of choices wants more room than a passage of prose. It does — but
+   the header is pinned to the sheet, so that one screen slid the eyebrow and the
+   progress strip 64px sideways, which is the same fault as letting them slide
+   down the page. The rows sit fine at the reading measure; they lived in a
+   narrower column than this before the refactor. */
 
 /* ── the page turn ──────────────────────────────────────────────────────
    Sideways, not up. Onboarding is a sequence of leaves in one document, and
@@ -54,7 +63,10 @@
 
    Short (24px) and eased out: a full slide would be a carousel, and a carousel
    invites someone to look for the way back to the previous slide. */
-.ob-sheet {
+/* The animation lives on `.ob-page`, INSIDE the sheet, so the header above it
+   never moves. The header is mounted once by the route and survives every view
+   change; only the leaf below it turns. */
+.ob-page {
 	animation: ob-turn 0.44s cubic-bezier(0.22, 0.68, 0.24, 1) both;
 }
 
@@ -71,7 +83,7 @@
 
 /* Going BACK through the strip turns the other way, so the direction always
    says which way you moved through the document. */
-.ob-back .ob-sheet {
+.ob-page.ob-back {
 	animation-name: ob-turn-back;
 }
 
@@ -86,12 +98,12 @@
 	}
 }
 
-.ob-still .ob-sheet {
+.ob-still .ob-page {
 	animation: none;
 }
 
 @media (prefers-reduced-motion: reduce) {
-	.ob-sheet {
+	.ob-page {
 		animation: none;
 	}
 }
@@ -183,6 +195,11 @@
 /* The way past something genuinely optional — quiet, but never hidden. A skip
    you have to hunt for is a dark pattern with good manners. */
 .ob-ghost {
+	/* Inline-flex because these carry an icon beside their label; without it the
+	   interview's Back arrow stacked above the word. */
+	display: inline-flex;
+	align-items: center;
+	gap: 0.4rem;
 	font-family: var(--font-mono, ui-monospace, monospace);
 	font-size: 12px;
 	color: var(--color-foreground-subtle);

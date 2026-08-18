@@ -20,26 +20,12 @@
 -->
 <script lang="ts">
 	import Icon from "$lib/components/Icon.svelte";
-	import OnboardingHeader from "$lib/components/onboarding/OnboardingHeader.svelte";
-	import type { StepId } from "$lib/components/onboarding/steps";
-	import { QUESTIONS, wordCount, type Question } from "./questions";
+	import { ONBOARDING_QUESTIONS as QUESTIONS, wordCount, type Question } from "./questions";
 	import { getInterviewAnswers, saveInterviewAnswer } from "$lib/api/client";
 	import { onMount, onDestroy } from "svelte";
 
-	let {
-		onfinish,
-		passed = [],
-		onjump,
-		back = false,
-		reduced = false,
-	}: {
-		onfinish: () => void;
-		passed?: StepId[];
-		onjump?: (id: StepId) => void;
-		/** Arrived by going backward through the strip. */
-		back?: boolean;
-		reduced?: boolean;
-	} = $props();
+	// Shell and progress strip belong to the route; this is only the leaf.
+	let { onfinish }: { onfinish: () => void } = $props();
 
 	let idx = $state(0);
 	let answers = $state<Record<string, string>>({});
@@ -107,12 +93,10 @@
 </script>
 
 {#if loading}
-	<div class="ob-wrap"><p class="quiet">Finding what you've written…</p></div>
+	<div><p class="quiet">Finding what you've written…</p></div>
 {:else}
-	<div class="ob-wrap" class:ob-still={reduced} class:ob-back={back}>
-		<div class="ob-sheet">
-			<OnboardingHeader step="words" done={passed} {onjump} />
-
+	<div>
+		<div>
 			<header>
 				<span class="facet">{q.facet}</span>
 				<span class="count">{idx + 1} of {QUESTIONS.length}</span>

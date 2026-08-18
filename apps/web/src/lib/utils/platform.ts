@@ -26,6 +26,26 @@ export const isAppleKeyboard =
 	platformStr.includes('iphone') ||
 	platformStr.includes('ipad');
 
+/**
+ * Running on iOS or iPadOS in the Tauri shell.
+ *
+ * The `macintel` clause is iPadOS, which has reported a desktop `platform`
+ * since iPadOS 13 — so an iPad would otherwise satisfy `isMacOS` above and be
+ * handed a Mac-only screen. `maxTouchPoints` is what separates them; a Mac
+ * reports 0.
+ *
+ * Deliberately a SEPARATE flag rather than narrowing `isMacOS`, which is read
+ * in a dozen places and whose meaning ("the Mac desktop app") is right for all
+ * of them. Anywhere both could match, test this one first.
+ */
+export const isIOS =
+	isTauri &&
+	(platformStr.includes('iphone') ||
+		platformStr.includes('ipad') ||
+		(platformStr.includes('macintel') &&
+			typeof navigator !== 'undefined' &&
+			navigator.maxTouchPoints > 1));
+
 /** Running on Windows (only meaningful in Tauri). */
 export const isWindows = isTauri && platformStr.includes('win');
 

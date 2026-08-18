@@ -48,7 +48,8 @@
 	async function connect() {
 		if (!source) return;
 		if (isThisDevice) {
-			windowShellStore.navigate('/virtues/this-mac', { label: 'This Mac' });
+			// See SourcesCatalog: This Mac is `devices/this` since 2026-08-17.
+			windowShellStore.navigate('/virtues/devices/this', { label: 'This Mac' });
 			return;
 		}
 		await connectFlow.start(source);

@@ -11,9 +11,16 @@
   A STRIP, NOT A STEPPER. Numbered stepper bars claim a rigidity this flow does
   not have: sources are optional, the interview can be left half-written, and
   the order is only mostly fixed. What this shows is position, not permission.
-  The current step carries its name; the rest are marks. Pressing one says what
-  it is and nothing else — it is a legend, and a legend that navigated would be
-  a promise about gating that onboarding cannot keep.
+
+  NOTHING IN THE STRIP EVER RESIZES. Six icons of one fixed size, and the name
+  of where you are lives in the eyebrow on the far left instead. Two earlier
+  versions put that name inside the current pill: it re-laid out the row every
+  time you advanced, which read as a flick. Left-anchored text next to a
+  right-anchored strip can change length without moving anything.
+
+  Pressing a mark goes BACK to a step already behind you; forward marks are
+  disabled, because a strip that could skip the account gate would be lying
+  about what onboarding requires.
 
   IT REPLACED THE LEFT RAIL. The document surface carried a table of contents
   listing these same chapters, so a global strip alongside it would have been
@@ -27,8 +34,20 @@
 	interface Props {
 		/** Where the person is now. */
 		step: StepId;
-		/** Steps finished, for the ones behind the current position. */
+		/** Steps finished — VISUAL WEIGHT ONLY. Never gates navigation. */
 		done?: StepId[];
+		/**
+		 * Steps this person may navigate to, decided by the route.
+		 *
+		 * Separate from `done` because the two answer different questions, and
+		 * conflating them produced a genuinely absurd strip: from the letter,
+		 * Account was clickable and Introductions was not — you could jump PAST a
+		 * step you could not jump TO. `done` is "have you been here", which is
+		 * about drawing; this is "are you entitled to be here", which is about
+		 * gating, and the route computes it with the same predicate that guards
+		 * the URL so the two can never disagree.
+		 */
+		open?: StepId[];
 		/**
 		 * Go back to a step already behind you.
 		 *
@@ -40,18 +59,33 @@
 		onjump?: (id: StepId) => void;
 	}
 
-	let { step, done = [], onjump }: Props = $props();
+	let { step, done = [], open, onjump }: Props = $props();
 
 	const at = $derived(STEPS.findIndex((s) => s.id === step));
 
-	// NEVER FORWARD. Jumping ahead would walk past the account gate, or open the
-	// reveal on an empty box — the strip says where you are, and it must not
-	// become a way of lying about it.
-	const reachable = (id: StepId) => Boolean(onjump) && id !== step && done.includes(id);
+	// NEVER PAST A GATE. Moving ahead within what you are entitled to reach is
+	// fine — Introductions asks for two optional names, and refusing to let
+	// someone step to it is officious. What the strip must never do is offer a
+	// screen the route would bounce: the account gate, or the reveal on a box
+	// with nothing on it.
+	const reachable = (id: StepId) =>
+		Boolean(onjump) && id !== step && (open ?? done).includes(id);
+
+	const label = $derived(STEPS[at]?.label ?? "");
 </script>
 
 <div class="head">
-	<p class="kicker">Virtues Onboarding</p>
+	<!-- THE NAME LIVES HERE, NOT IN THE STRIP.
+	     It used to sit inside the current pill, in flow, so advancing a step took
+	     the label off one icon and put it on another — which re-laid out the whole
+	     row and read as a flick. Here it is left-anchored while the strip is
+	     right-anchored, so the text can change length and nothing else moves at
+	     all. The strip becomes six fixed icons that never resize. -->
+	<p class="kicker">
+		Virtues Onboarding
+		<span class="sep" aria-hidden="true">/</span>
+		<span class="here">{label}</span>
+	</p>
 
 	<nav class="prog" aria-label="Onboarding progress">
 		{#each STEPS as s, i (s.id)}
@@ -63,13 +97,18 @@
 				class:live={reachable(s.id)}
 				disabled={!reachable(s.id)}
 				aria-current={s.id === step ? "step" : undefined}
-				title={s.label}
+				aria-label={s.label}
 				onclick={() => reachable(s.id) && onjump?.(s.id)}
 			>
 				<Icon icon={s.icon} width="14" />
-				<!-- Always rendered, so the name is on the accessibility tree even
-				     while it is collapsed to nothing visually. -->
-				<span class="name"><span class="name-inner">{s.label}</span></span>
+
+				<!-- EVERY OTHER LABEL FLOATS. Expanding a name inline on hover
+				     re-flowed the whole strip — every icon to its right slid over,
+				     under a cursor that was aiming at one of them. Absolute
+				     positioning takes the label out of flow entirely, so a hover
+				     moves nothing. No `title`, or the browser paints its own second
+				     tooltip a second later. -->
+				<span class="tip" aria-hidden="true">{s.label}</span>
 			</button>
 		{/each}
 	</nav>
@@ -80,7 +119,11 @@
 		display: flex;
 		flex-wrap: wrap;
 		align-items: center;
-		gap: 0.5rem 1rem;
+		/* The eyebrow anchors left, the strip rides the right edge, and the space
+		   between them belongs to neither. `gap` is the floor for when the row
+		   wraps on a narrow screen. */
+		justify-content: space-between;
+		gap: 0.5rem 2.5rem;
 		/* The room the h1 beneath it needs to stop feeling crowded. */
 		margin-bottom: 1.75rem;
 	}
@@ -100,10 +143,15 @@
 		gap: 0.2rem;
 	}
 
+	/* Every step is the same size, always. Nothing in this row resizes, so
+	   nothing in it can shift. */
 	.step {
+		position: relative;
 		display: inline-flex;
 		align-items: center;
-		padding: 0.3rem 0.45rem;
+		justify-content: center;
+		width: 1.75rem;
+		height: 1.75rem;
 		border: none;
 		border-radius: 999px;
 		background: none;
@@ -131,9 +179,10 @@
 		color: var(--color-foreground-muted);
 	}
 
+	/* Marked by ink and a disc, not by growing. */
 	.current {
 		color: var(--color-primary);
-		background: color-mix(in srgb, var(--color-primary) 11%, transparent);
+		background: color-mix(in srgb, var(--color-primary) 12%, transparent);
 	}
 
 	.current:hover {
@@ -141,50 +190,75 @@
 		background: color-mix(in srgb, var(--color-primary) 16%, transparent);
 	}
 
-	/* The expand. `max-width` rather than a grid trick because the label is one
-	   line of known-short text and the eased width IS the mobile-tab feel. */
-	.name {
-		display: inline-block;
-		max-width: 0;
-		overflow: hidden;
+	.sep {
+		margin: 0 0.5rem;
+		opacity: 0.4;
+	}
+
+	/* The one thing in the header that changes between screens, and it is
+	   left-anchored so its width belongs to nobody else. */
+	.here {
+		color: var(--color-primary);
+	}
+
+	/* ── the hover label ────────────────────────────────────────────────
+	   Absolutely positioned, so showing it costs the layout nothing. Below the
+	   icon rather than above: the strip sits at the top of the screen, and a
+	   tooltip above it would be clipped by the viewport. */
+	.tip {
+		position: absolute;
+		top: calc(100% + 0.45rem);
+		left: 50%;
+		transform: translateX(-50%) translateY(-2px);
+		z-index: 5;
+		pointer-events: none;
 		white-space: nowrap;
+		padding: 0.3rem 0.5rem;
+		border: 1px solid var(--color-border);
+		border-radius: 7px;
+		background: var(--color-surface-elevated, var(--color-background));
+		box-shadow: 0 4px 14px rgb(0 0 0 / 0.09);
 		font-family: var(--font-mono, ui-monospace, monospace);
-		font-size: 10.5px;
-		letter-spacing: 0.13em;
+		font-size: 10px;
+		letter-spacing: 0.12em;
 		text-transform: uppercase;
+		color: var(--color-foreground-muted);
 		opacity: 0;
-		/* Collapses immediately on leave; the DELAY lives on the open state
-		   below. A label that fires the instant the cursor crosses a 22px target
-		   fires constantly on the way to somewhere else, which is what made the
-		   strip feel twitchy — five names flashing open as the pointer swept the
-		   row. A quarter-second of intent filters that out entirely. */
+		visibility: hidden;
 		transition:
-			max-width 0.28s cubic-bezier(0.2, 0.7, 0.2, 1),
-			opacity 0.18s ease;
+			opacity 0.1s ease,
+			transform 0.1s ease,
+			visibility 0s linear 0.1s;
 	}
 
-	.name-inner {
-		display: inline-block;
-		padding-left: 0.45rem;
-		padding-right: 0.15rem;
-	}
-
-	.live:hover .name,
-	.step:focus-visible .name {
-		max-width: 14rem;
+	/* No delay. The earlier quarter-second was there to stop labels firing as the
+	   pointer swept the row — but that was when the label was IN FLOW and opening
+	   one shoved the other icons sideways. A floating label costs the layout
+	   nothing, so the twitch it was guarding against no longer exists, and the
+	   delay only made the strip feel unresponsive. */
+	.step:hover .tip,
+	.step:focus-visible .tip {
 		opacity: 1;
-		transition-delay: 0.26s;
+		visibility: visible;
+		transform: translateX(-50%) translateY(0);
 	}
 
-	/* Where you are is not a hover state, so it carries no delay and never
-	   collapses. */
-	.current .name {
-		max-width: 14rem;
-		opacity: 1;
+	/* The last two sit near the right edge of a right-aligned strip, so a
+	   centered label would hang off the page. Anchor them by their right edge
+	   instead. */
+	.step:nth-last-child(-n + 2) .tip {
+		left: auto;
+		right: 0;
+		transform: translateY(-2px);
+	}
+
+	.step:nth-last-child(-n + 2):hover .tip,
+	.step:nth-last-child(-n + 2):focus-visible .tip {
+		transform: translateY(0);
 	}
 
 	@media (prefers-reduced-motion: reduce) {
-		.name {
+		.tip {
 			transition: none;
 		}
 	}
