@@ -119,7 +119,7 @@ async fn flush_locations(db: &PgPool, records: &[LocationRow]) -> Result<usize> 
             "vertical_accuracy",
             "speed",
             "course",
-            "timestamp",
+            "occurred_at",
             "source_stream_id",
             "source_table",
             "source_provider",

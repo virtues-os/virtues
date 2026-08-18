@@ -443,10 +443,10 @@ fn hex_digest(bytes: &[u8]) -> String {
 /// objects with a NULL window before this was caught.
 fn time_window(records: &[Value]) -> (Option<DateTime<Utc>>, Option<DateTime<Utc>>) {
     const KEYS: [&str; 7] = [
-        "timestamp",
+        "occurred_at",
         "timestamp_start",
         "date",
-        "start_time",
+        "started_at",
         "startDate",
         "start_date",
         "timestamp_end",
