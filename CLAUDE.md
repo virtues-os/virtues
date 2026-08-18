@@ -23,8 +23,14 @@ discipline replaces it.
 `staging` repeatedly through successive PRs, and work continues on it. That
 keeps each PR a reviewable slice without anyone ever switching branches.
 
-`main` only moves on release (it last moved for v0.3.0) and is routinely ~100
-commits behind `staging`. Never branch from it.
+`main` only moves on release and is routinely far behind `staging`. Never
+branch from it.
+
+> **No stable release exists right now.** v0.1.0/0.2.0/0.3.0 were deleted on
+> 2026-08-18 when the version line was reset to 0.1.0 before launch, so
+> `virtues.com/sh` has nothing to serve until `v0.1.0` is cut. The prerelease
+> channel (`sh-pre`, the `v0.1.0-staging.N` tags) is unaffected and is how you
+> install a box today.
 
 Why `wave` exists rather than working on `staging` directly: `staging.N`
 prereleases cut from `staging`, and real boxes install them with
@@ -82,10 +88,19 @@ Other rules that follow from a shared tree:
   ```
 
   It takes the next number, writes a placeholder, and commits it under the lock
-  — so the number is yours before anyone else looks. Two agents reaching for the
+  — so the number is yours before anyone else looks. (The chain was squashed to
+  a single `0001_initial.sql` on 2026-08-18, so the next number is 0002; the
+  counter reads the directory, so this keeps working.) Two agents reaching for the
   same number is the *default* outcome otherwise, and git will not warn you:
   `sqlx::migrate!` keys on the version, and renumbering after a box has applied
   it breaks that box's upgrades. Migration 52 once killed a box for 3¼ hours.
+
+  **`make migration` COMMITS the placeholder, so renaming it leaves a tracked
+  deletion.** Stage that deletion with your migration or the next thing that
+  checks the tree refuses to run — `tools/squash-migrations.sh` will not touch a
+  migrations directory with uncommitted changes, correctly, because it cannot
+  tell your leftover from another agent's in-flight work. Four accumulated
+  before anyone noticed.
 
   **The placeholder is `.sql.pending`, and you must rename it to `.sql` once the
   SQL is written.** `sqlx::migrate!` globs `*.sql`, so a bare placeholder is a
@@ -128,8 +143,8 @@ If `staging` moves independently (a hotfix, another machine), reconcile from
 git fetch origin && git merge origin/staging
 ```
 
-**Hotfixes to released code** branch from the release tag (e.g. `v0.3.0`), not
-from `main` — the tag stays correct after `main` moves. Merge the fix to both
+**Hotfixes to released code** branch from the release tag (once one exists —
+see above), not from `main` — the tag stays correct after `main` moves. Merge the fix to both
 `main` and `staging`. This is the one case that leaves `wave`, and it needs the
 human.
 
@@ -185,6 +200,24 @@ then `ALTER ROLE virtues WITH PASSWORD 'virtues';` to match `.env`, and
 `postgres` are login roles with no password, so a blanket rule locks them out
 of TCP.
 
+**The `virtues` role is NOT a superuser** (since 2026-08-18). It has exactly
+`LOGIN CREATEDB CREATEROLE`: CREATEDB for `#[sqlx::test]`'s scratch databases,
+CREATEROLE so `server/faces.rs` can provision `virtues_face_reader`. It was
+`SUPERUSER` with the password `virtues`, which — with the pg_hba rule above
+opening loopback TCP — handed the cluster to any local process that guessed
+once. `make db` downgrades an existing role idempotently.
+
+Two consequences worth knowing before you debug a permissions error:
+
+- `pgvector` is not a trusted extension, so `CREATE EXTENSION vector` needs
+  superuser. `make db` installs it into `template1` instead, and every database
+  created afterwards inherits it — which is what makes migration 0001's
+  `CREATE EXTENSION IF NOT EXISTS` a no-op rather than a failure.
+- In PG16+ a CREATEROLE role may only grant membership in roles it has ADMIN
+  on. `make db` grants `virtues_face_reader`/`virtues_applet_writer` to
+  `virtues` WITH ADMIN OPTION for this reason. Without it, faces.rs cannot grant
+  them to itself and the symptom reads as an applet permissions bug.
+
 **One `make dev` serves every agent** — do not start a second one, and do not
 kill the running one. `cargo check` will *block* on the shared target-dir lock
 while `make dev` holds it. That is contention, not a hang; wait it out.
@@ -198,3 +231,54 @@ while `make dev` holds it. That is contention, not a hang; wait it out.
   and must not be committed.
 - Model selection goes through the slot system and registry — no model-id
   literals in code.
+
+### Never commit anything from a real life
+
+No real names, phone numbers, addresses, emails, employers, account numbers, or
+coordinates — in code, comments, docs, tests, seeds, or **commit messages**. Use
+the reserved fictional block the repo already uses: `+1512555xxxx`,
+`@example.com`, names like `Nick` and `David Okafor`.
+
+This leaks twice: the repo is public, and code context reaches model providers
+at runtime. On 2026-08-18 a third party's real mobile and first name were found
+in a doc comment, a test constant, fixture data — and in a commit subject line,
+where no file edit can reach them.
+
+Write the FAILURE CLASS, not the incident. Every one of those comments was
+valuable because it narrated a real bug, and every one survived
+de-identification unchanged.
+
+### Column naming
+
+Renaming 21 columns on 2026-08-17/18 established these. The schema had **seven**
+names for "when this happened" and had grown a configuration field to paper over
+it.
+
+- `occurred_at` — an instant. When the thing happened.
+- `started_at` / `ended_at` — a span.
+- `created_at` / `updated_at` — when WE wrote the row. Never the event; that
+  conflation is what produced `created_time` sitting beside `created_at`.
+- `is_` / `has_` for booleans; no bare adjectives (`active` → `is_active`).
+- A unit suffix on every quantity: `_cents`, `_ms`, `_bytes`, `_meters`.
+- Prefixes stay: `app_` product state, `data_` ingested, `wiki_` derived,
+  `search_` indexes. Not decoration — this schema is shown to an LLM at runtime
+  and drives a table-driven UI, so the prefix is a namespace the model matches.
+- `data_*` singular (one observation); everything else plural.
+
+**Renames the compiler cannot check.** `sqlx::query` is untyped, so a renamed
+column breaks at runtime, not build time. When you rename one, sweep: SQL
+strings, `row.get("…")` accessors **including nested generics like
+`::<DateTime<Utc>, _>`** (a `[^>]*` regex silently misses those), the
+`sql_query.rs` catalog the model reads, and the registry's `timestamp_column`.
+Leave alone: JSON payload keys and tool arguments that merely share a word with
+a column.
+
+### Do not swallow a query error
+
+`.ok()`, `.unwrap_or(0)` and `.unwrap_or_default()` directly on a `fetch_*`
+result turn a broken query into a plausible number, and nothing ever surfaces.
+That is not hypothetical: it is why sleep read "0.0 hours", why every
+date-scoped search returned nothing, why resting heart rate was a hardcoded
+62.0, and why the box reported zero paired devices on every box forever. Use
+`?`. If you genuinely mean "absent is fine", say so in a comment naming what
+absence means.
